@@ -33,6 +33,8 @@ find_package(Threads REQUIRED)
 find_package(SDL2 2.0.18 REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(VORBISFILE REQUIRED IMPORTED_TARGET vorbisfile)
+pkg_check_modules(OGG REQUIRED IMPORTED_TARGET ogg)
+pkg_check_modules(THEORADEC REQUIRED IMPORTED_TARGET theoradec)
 find_library(QA_GIF_LIBRARY NAMES gif REQUIRED)
 
 add_library(qa_core STATIC
@@ -146,8 +148,15 @@ add_library(qa_media STATIC
     src/media/roq_audio.c
     src/media/roq_stream.c
     src/media/roq_decoder.c
-    src/media/roq_playback.c)
-target_link_libraries(qa_media PUBLIC qa_content)
+    src/media/roq_playback.c
+    src/media/ogg.c
+    src/media/ogv.c
+    src/media/cinematic.c
+    src/media/cinematic_scene.c
+    src/media/library.c
+    src/media/material_movies.c)
+target_link_libraries(qa_media PUBLIC qa_content qa_audio qa_scene
+    PRIVATE PkgConfig::OGG PkgConfig::THEORADEC)
 
 add_library(qa_scene STATIC
     src/render/scene/frame.c

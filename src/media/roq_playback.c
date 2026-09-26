@@ -121,6 +121,7 @@ static bool audio(void *context, const qa_roq_event *event, qa_error *error) {
         .pcm = {(const uint8_t *)event->data.audio.samples,
                 event->data.audio.frames * event->data.audio.channels * sizeof(int16_t)},
         .rate = 22050,
+        .native_pcm = true,
         .channels = event->data.audio.channels,
         .sample_bytes = 2,
         .source_sample = playback->source_sample,

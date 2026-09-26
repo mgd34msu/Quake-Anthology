@@ -74,7 +74,9 @@ typedef struct qa_media_audio {
     uint8_t channels, sample_bytes;
     uint64_t source_sample, loop;
     double source_ms, presentation_ms;
-    bool reset;
+    /* Native signed 16-bit from RoQ/OGV; CIN retains little-endian 16-bit
+     * or unsigned 8-bit source bytes. */
+    bool reset, native_pcm;
 } qa_media_audio;
 typedef struct qa_media_tick {
     qa_media_status status;
