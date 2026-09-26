@@ -64,16 +64,19 @@ def check(graph, scope):
             raise ValueError(f"{target['id']} implementation must belong to baseline tasks")
 
     directories = scope["source_directories"]
-    paths = [entry["path"] for entry in directories]
+    root_files = scope["root_source_files"]
+    if not any(entry["path"] == "src/main.ts" for entry in root_files):
+        raise ValueError("source map must include the donor entry src/main.ts")
+    paths = [entry["path"] for entry in directories + root_files]
     if len(paths) != len(set(paths)):
-        raise ValueError("duplicate source directory")
-    for entry in directories:
+        raise ValueError("duplicate source path")
+    for entry in directories + root_files:
         owners = entry["owner_tasks"]
         if not owners or len(owners) != len(set(owners)) or set(owners) - baseline:
             raise ValueError(f"invalid owner tasks for {entry['path']}")
     if graph["ledger_plan_revision"] != scope["ledger_plan_revision"]:
         raise ValueError("graph and source map refer to different ledger revisions")
-    return len(tasks), len(targets), len(directories)
+    return len(tasks), len(targets), len(directories), len(root_files)
 
 
 def main():
@@ -81,11 +84,12 @@ def main():
     try:
         graph = json.loads((root / "docs/dependencies.json").read_text())
         scope = json.loads((root / "docs/source-map.json").read_text())
-        tasks, targets, directories = check(graph, scope)
+        tasks, targets, directories, root_files = check(graph, scope)
     except (OSError, ValueError, KeyError, TypeError) as error:
         print(f"plan check failed: {error}", file=sys.stderr)
         return 1
-    print(f"plan check passed: {tasks} tasks, {targets} targets, {directories} source directories")
+    print(f"plan check passed: {tasks} tasks, {targets} targets, "
+          f"{directories} source directories, {root_files} root source files")
     return 0
 
 
