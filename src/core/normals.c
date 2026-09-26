@@ -1,7 +1,7 @@
 /* Quake normal table. Copyright (C) 1996-1997 Id Software, Inc.
  * SPDX-License-Identifier: GPL-2.0-or-later */
-#include "internal.h"
-static const float normals[162][3] = {
+#include "qa/math.h"
+const qa_vec3 qa_byte_normals[QA_BYTE_NORMAL_COUNT] = {
     {-0.525731f, 0.000000f, 0.850651f},   {-0.442863f, 0.238856f, 0.864188f},
     {-0.295242f, 0.000000f, 0.955423f},   {-0.309017f, 0.500000f, 0.809017f},
     {-0.162460f, 0.262866f, 0.951056f},   {0.000000f, 0.000000f, 1.000000f},
@@ -84,6 +84,20 @@ static const float normals[162][3] = {
     {-0.425325f, 0.688191f, -0.587785f},  {-0.425325f, -0.688191f, -0.587785f},
     {-0.587785f, -0.425325f, -0.688191f}, {-0.688191f, -0.587785f, -0.425325f},
 };
-void model_alias_normal(uint8_t index, float out[3]) {
-    memcpy(out, normals[index], sizeof(normals[index]));
+bool qa_byte_normal(uint8_t index, qa_vec3 *out) {
+    if (index >= QA_BYTE_NORMAL_COUNT || !out) return false;
+    *out = qa_byte_normals[index];
+    return true;
+}
+
+bool qa_normal_byte(qa_vec3 normal, uint8_t *out) {
+    if (!out || !qa_vec_finite(normal)) return false;
+    float best = 0;
+    uint8_t selected = 0;
+    for (unsigned i = 0; i < QA_BYTE_NORMAL_COUNT; ++i) {
+        float dot = qa_vec_dot(normal, qa_byte_normals[i]);
+        if (dot > best) { best = dot; selected = (uint8_t)i; }
+    }
+    *out = selected;
+    return true;
 }

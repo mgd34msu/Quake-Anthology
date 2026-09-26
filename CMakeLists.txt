@@ -40,6 +40,7 @@ add_library(qa_core STATIC
     src/core/strings.c
     src/core/text.c
     src/core/hash.c
+    src/core/normals.c
     src/platform/file.c)
 target_include_directories(qa_core PUBLIC include)
 target_link_libraries(qa_core PUBLIC qa_compile_options m PRIVATE ICU::uc Threads::Threads)
@@ -58,7 +59,6 @@ add_library(qa_content STATIC
     src/formats/image/wad.c
     src/formats/model/model.c
     src/formats/model/alias.c
-    src/formats/model/normals.c
     src/formats/model/md3.c
     src/formats/model/md4.c
     src/formats/model/md5.c

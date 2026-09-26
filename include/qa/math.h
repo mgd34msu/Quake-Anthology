@@ -3,10 +3,19 @@
 #define QA_MATH_H
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <math.h>
 
 typedef struct qa_vec3 { float x, y, z; } qa_vec3;
 typedef struct qa_bounds { qa_vec3 mins, maxs; } qa_bounds;
+
+#define QA_BYTE_NORMAL_COUNT 162u
+extern const qa_vec3 qa_byte_normals[QA_BYTE_NORMAL_COUNT];
+/* Decode rejects unknown indices. Encode requires finite components, does not
+ * normalize, selects the first greatest positive dot product, and maps zero to
+ * index zero. Both leave output unchanged on failure. */
+bool qa_byte_normal(uint8_t index, qa_vec3 *out);
+bool qa_normal_byte(qa_vec3 normal, uint8_t *out);
 
 static inline qa_vec3 qa_v3(float x, float y, float z) { return (qa_vec3){x, y, z}; }
 static inline qa_vec3 qa_vec_add(qa_vec3 a, qa_vec3 b) { return qa_v3(a.x+b.x, a.y+b.y, a.z+b.z); }

@@ -27,11 +27,13 @@ bool qa_spatial_initialize(qa_world *world,qa_bounds bounds,qa_error *error)
     uint32_t next=1; build_sector(world,0,bounds,0,&next); return true;
 }
 
-qa_spatial_member *qa_spatial_prepare(const qa_linked_body *body,const qa_actor_collision *collision,qa_error *error)
+qa_spatial_member *qa_spatial_prepare(qa_world *world,const qa_linked_body *body,const qa_actor_collision *collision,qa_error *error)
 {
-    qa_spatial_member *member=calloc(1,sizeof(*member));
+    qa_spatial_member *member=world->spare_members;
+    if(member!=NULL) world->spare_members=member->retired_next;
+    else member=malloc(sizeof(*member));
     if(member==NULL) { fail(error,QA_ERROR_MEMORY,"Cannot allocate spatial link"); return NULL; }
-    member->actor=(qa_spatial_actor){*body,*collision}; return member;
+    *member=(qa_spatial_member){.actor={*body,*collision}}; return member;
 }
 
 void qa_spatial_remove(qa_world *world,qa_world_body *body)
@@ -47,7 +49,7 @@ void qa_spatial_remove(qa_world *world,qa_world_body *body)
     /* A live visitor may already have captured this generation's next link.
      * Keep its pointers intact until the outermost visit returns. */
     if(world->visit_depth!=0) { member->retired_next=world->retired; world->retired=member; }
-    else free(member);
+    else { member->retired_next=world->spare_members; world->spare_members=member; }
 }
 
 void qa_spatial_publish(qa_world *world,qa_world_body *body,qa_spatial_member *member)
@@ -74,9 +76,13 @@ void qa_spatial_publish(qa_world *world,qa_world_body *body,qa_spatial_member *m
     body->member=member;
 }
 
-static void free_retired(qa_world *world)
+static void recycle_retired(qa_world *world)
 {
-    while(world->retired!=NULL) { qa_spatial_member *next=world->retired->retired_next; free(world->retired); world->retired=next; }
+    while(world->retired!=NULL) {
+        qa_spatial_member *member=world->retired;
+        world->retired=member->retired_next;
+        member->retired_next=world->spare_members; world->spare_members=member;
+    }
 }
 
 void qa_spatial_dispose(qa_world *world)
@@ -86,7 +92,11 @@ void qa_spatial_dispose(qa_world *world)
         while(member!=NULL) { qa_spatial_member *next=member->next; free(member); member=next; }
         world->sectors[index].head=NULL; world->sectors[index].tail=NULL;
     }
-    free_retired(world);
+    recycle_retired(world);
+    while(world->spare_members!=NULL) {
+        qa_spatial_member *member=world->spare_members;
+        world->spare_members=member->retired_next; free(member);
+    }
 }
 
 static bool visit_sector(qa_world *world,uint32_t index,qa_bounds bounds,qa_spatial_raw_fn visit,void *context)
@@ -114,7 +124,7 @@ bool qa_spatial_visit_raw(qa_world *world,qa_bounds bounds,qa_spatial_raw_fn vis
     if(world==NULL || visit==NULL || !qa_collision_bounds_valid(bounds)) return fail(error,QA_ERROR_ARGUMENT,"Invalid spatial visit");
     if(world->visit_depth==UINT32_MAX) return fail(error,QA_ERROR_ARGUMENT,"Spatial visit nesting exhausted");
     ++world->visit_depth; (void)visit_sector(world,0,bounds,visit,context); --world->visit_depth;
-    if(world->visit_depth==0) free_retired(world);
+    if(world->visit_depth==0) recycle_retired(world);
     return true;
 }
 

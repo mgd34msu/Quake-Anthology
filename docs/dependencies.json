@@ -37,6 +37,9 @@
       "criteria": [
         "Ledger and local graph cover all 23 donor functional targets; baseline completion precedes gameplay evaluation and deep enhancement."
       ],
+      "rules": [
+        "Use a soft cap of six concurrent agents across the entire worker tree, excluding the main coordinator. Let existing assignments finish to reduce the current count. Do not spawn, reactivate, or reassign workers while above six; a temporary excess later requires a concrete task need."
+      ],
       "status": "pending"
     },
     {

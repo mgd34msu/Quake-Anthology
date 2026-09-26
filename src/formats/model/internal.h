@@ -29,7 +29,6 @@ void model_bounds_clear(qa_model_bounds *bounds);
 void model_bounds_add(qa_model_bounds *bounds, const float point[3]);
 void model_bounds_union(qa_model_bounds *bounds, const qa_model_bounds *other);
 void model_normalize(float value[3]);
-void model_alias_normal(uint8_t index, float out[3]);
 bool model_mdl(model_reader *r, qa_model *m);
 bool model_md2(model_reader *r, qa_model *m);
 bool model_md3(model_reader *r, qa_model *m);

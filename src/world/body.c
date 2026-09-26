@@ -258,7 +258,7 @@ static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_bod
         memset(&collision,0,sizeof(collision));
         collision.family=qa_collision_geometry_family(world->geometry);
     }
-    qa_spatial_member *member=qa_spatial_prepare(linked,&collision,error);
+    qa_spatial_member *member=qa_spatial_prepare(world,linked,&collision,error);
     if(member==NULL) return false;
     body->linked=true; body->link=*linked; body->link_count=linked->link_count;
     qa_spatial_publish(world,body,member);
@@ -304,6 +304,15 @@ bool qa_world_unlink(qa_world *world,qa_actor_id actor,qa_error *error)
     qa_world_body *body=qa_world_find_body(world,actor);
     if(body==NULL || !body->linked) return true;
     qa_spatial_remove(world,body); body->linked=false; notify_unlink(world,actor); return true;
+}
+
+bool qa_world_suspend_collision(qa_world *world,qa_actor_id actor,qa_error *error)
+{
+    if(world==NULL || qa_actors_get(world->actors,actor)==NULL)
+        return fail(error,QA_ERROR_ARGUMENT,"Actor is not live in this world");
+    qa_world_body *body=qa_world_find_body(world,actor);
+    if(body!=NULL) qa_spatial_remove(world,body);
+    return true;
 }
 
 bool qa_world_linked(const qa_world *world,qa_actor_id actor,qa_linked_body *out)

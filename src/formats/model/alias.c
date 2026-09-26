@@ -43,14 +43,14 @@ static bool alias_vertices(model_reader *r, qa_model_vertex *out, uint32_t count
     if (!p)
         return false;
     for (uint32_t i = 0; i < count; ++i, p += 4) {
-        if (p[3] >= 162)
+        if (p[3] >= QA_BYTE_NORMAL_COUNT)
             return model_fail(r, "alias normal index exceeds table");
         for (unsigned k = 0; k < 3; ++k) {
             out[i].position[k] = (float)p[k] * scale[k] + translate[k];
             if (!isfinite(out[i].position[k]))
                 return model_fail(r, "alias vertex overflows");
         }
-        model_alias_normal(p[3], out[i].normal);
+        model_v3_store(out[i].normal, qa_byte_normals[p[3]]);
         if (bounds)
             model_bounds_add(bounds, out[i].position);
     }

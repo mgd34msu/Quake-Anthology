@@ -76,6 +76,9 @@ bool qa_world_transport_attachments(qa_world *, qa_error *);
  * the authoritative body. Link never dispatches trigger callbacks implicitly. */
 bool qa_world_link(qa_world *, qa_actor_id, const qa_vec3 *origin_override, qa_error *);
 bool qa_world_unlink(qa_world *, qa_actor_id, qa_error *);
+/* Remove collision membership without changing the linked snapshot/count or
+ * invoking unlink hooks. A subsequent normal link publishes collision again. */
+bool qa_world_suspend_collision(qa_world *, qa_actor_id, qa_error *);
 bool qa_world_linked(const qa_world *, qa_actor_id, qa_linked_body *);
 bool qa_world_link_state(const qa_world *, qa_actor_id, qa_body_link_state *);
 bool qa_world_restore_link_state(qa_world *, qa_actor_id, const qa_body_link_state *, qa_error *);
