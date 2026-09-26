@@ -6,7 +6,9 @@ One engine and shared world provide the combined capabilities of the games. Move
 
 The TypeScript project supplies the implementation and product design being ported. `../qsrc` supplies original-source references, and `../qfiles` supplies game assets for development and verification. Game data stays external.
 
-C data structures, algorithms, execution backends, and numeric handling may improve on the TypeScript implementation. Optimizations must preserve functionality and required game behavior.
+Implement Anthology's built-in gameplay as compiled C operating directly on the shared world. Remove machinery needed only by the TypeScript implementation. Existing mod formats receive the compatibility support they require, without routing ordinary gameplay through CPU emulation. C data structures, algorithms, and numeric handling should suit the native implementation while preserving functionality and required game behavior.
+
+Share common engine code, decoded assets, GPU resources, and reusable working buffers across games and players. Performance guides data layout and execution from the first playable implementation, with measurements of frame time, stalls, allocation, copying, and memory use.
 
 - [Deep review and current evidence](docs/review.md)
 - [C architecture and implementation plan](docs/plan.md)

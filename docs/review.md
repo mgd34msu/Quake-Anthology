@@ -36,7 +36,7 @@ Several design choices should survive the rewrite:
 
 These are the accumulated interoperability knowledge worth retaining. Their current object representation is replaceable.
 
-## Guest execution is the clearest measured bottleneck
+## Guest execution dominates the examined TypeScript Q2 workload
 
 The Q2 paths called native execute original x86 or x64 machine code through TypeScript CPU emulation. The rerelease path maps a Windows x64 PE into a private guest address space and initializes its CPU, ABI, and Windows runtime. See `src/app/bootstrap/simulation/rerelease-guest-source.ts:26` and `:49`.
 
@@ -53,9 +53,11 @@ The rerelease interval is 25 ms. All 50 measured application steps exceeded it. 
 
 This was one instrumented run on an AMD Ryzen 9 5900X, pinned to CPU 8, using Bun 1.3.14. A full policy checker ran concurrently. Rendering and physical audio were absent. The fixed guest wall clock makes the workload repeatable, while timing used the real performance clock. The result establishes an over-budget workload, not uncontended throughput, graphical FPS, or a before/after comparison. The [evidence record](evidence/review-2026-09-26.json) retains the numbers and limitations.
 
-C can replace BigInt address/register operations, temporary byte arrays, object-based instructions, and repeated ABI classification with compact fixed-width structures. The source already caches decoded x64 instructions and prepared blocks, so a naive C decoder would discard useful work. Its i386 path has different costs and needs separate measurement.
+The first C design response is to implement built-in gameplay as compiled C calling shared services directly. That removes guest instruction execution from this path. The TypeScript benchmark demonstrates a cost in the donor implementation; it does not establish a need to reproduce its CPU emulator in C.
 
-Binary-mod compatibility also requires instruction-region interception, committed-write observations, nested callbacks, independent address spaces, and restoration. `src/compat/q2/native-mod-region.ts:74` exposes why ordinary `dlopen` cannot replace the whole runtime. Direct native execution and dynamic translation are candidates to qualify, not assumptions that all DLLs become ordinary C calls. QC and QVM deserve compact C interpreters; their performance must be measured separately.
+Original external mods still require their program contracts. Prefer host-native execution for compatible machine-code modules, and implement actual QC/QVM bytecode support separately. Some binary composition paths use instruction-region interception, committed-write observations, nested callbacks, independent address spaces, and restoration. See `src/compat/q2/native-mod-region.ts:74`. Identify which external artifacts need such mechanisms, then choose an appropriate adapter or fallback. Keep those requirements out of built-in C gameplay.
+
+If an external-binary case does require CPU translation or emulation, the donor's instruction caches and ABI knowledge are useful reference material. Their value is specific to that case. No measured C speedup or whole-engine bottleneck ranking follows from this review.
 
 ## Rendering has structural opportunities
 
@@ -118,6 +120,6 @@ Exact test commands, probe identity, input state, and temporary raw-log location
 
 ## Assessment
 
-The project supplies a valuable implementation of unified Quake behavior and a detailed account of difficult compatibility boundaries. The architecture's shared-world intent fits the C rewrite well. The largest avoidable costs lie in guest execution, representation/copying, graphics preparation, and frame-coupled audio.
+The project supplies an implementation of unified Quake behavior and a detailed account of difficult compatibility boundaries. My architectural assessment favors retaining its shared-world intent with native C gameplay and direct service calls. The review identifies guest execution, representation/copying, graphics preparation, and frame-coupled audio as areas to redesign; gains across the complete engine remain unmeasured.
 
 The rewrite should preserve the product and its ownership contracts while replacing mechanisms that work poorly in C. Full interoperability remains the target even where the present checkout has gaps. Success means the games and mixed configurations work correctly and smoothly through real user workflows, with measured performance and explicit completion evidence.
