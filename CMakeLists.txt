@@ -49,12 +49,26 @@ add_library(qa_content STATIC
     src/formats/image/png.c
     src/formats/image/jpeg.c
     src/formats/image/gif.c
-    src/formats/image/wad.c)
+    src/formats/image/wad.c
+    src/formats/model/model.c
+    src/formats/model/alias.c
+    src/formats/model/normals.c
+    src/formats/model/md3.c
+    src/formats/model/md4.c
+    src/formats/model/md5.c
+    src/formats/model/text.c
+    src/formats/model/metadata.c
+    src/formats/model/scales.c
+    src/formats/model/lod.c
+    src/formats/model/transform.c)
 target_link_libraries(qa_content PUBLIC qa_core PRIVATE
     ZLIB::ZLIB PNG::PNG JPEG::JPEG ${QA_GIF_LIBRARY})
 
 add_library(qa_world STATIC src/world/actors.c)
 target_link_libraries(qa_world PUBLIC qa_core)
+
+add_library(qa_gameplay STATIC src/gameplay/operation.c)
+target_link_libraries(qa_gameplay PUBLIC qa_world)
 
 add_executable(quake-anthology src/main.c)
 target_link_libraries(quake-anthology PRIVATE qa_content)
@@ -77,6 +91,10 @@ if(BUILD_TESTING)
     add_executable(image_test tests/image_test.c)
     target_link_libraries(image_test PRIVATE qa_content)
     add_test(NAME image COMMAND image_test)
+
+    add_executable(model_test tests/model_test.c)
+    target_link_libraries(model_test PRIVATE qa_content)
+    add_test(NAME model COMMAND model_test)
 endif()
 
 install(TARGETS quake-anthology RUNTIME DESTINATION bin)
