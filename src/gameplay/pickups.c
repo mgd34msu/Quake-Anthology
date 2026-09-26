@@ -887,16 +887,18 @@ bool qa_supply_ammo_weapon(qa_supply *supply, qa_actor_id actor, qa_item_id weap
 }
 
 bool qa_supply_cargo(qa_supply *supply, qa_actor_id actor, const qa_pickup_cargo *cargo, size_t count,
-                      qa_pickup_selection_mode selection, bool canonical, qa_error *e)
+                      qa_pickup_selection_mode selection, bool canonical, bool *accepted, qa_error *e)
 {
+    if (!accepted) return fail(e, QA_ERROR_ARGUMENT, "Missing cargo acceptance result");
     if (!supply_current(supply, e) || !selection_valid(selection, e) || !cargo_valid(cargo, count, e)) return false;
     supply_enter(supply);
     supply_grants grants = {0}; bool ok = true;
     for (size_t i = 0; ok && i < count; ++i)
         if (cargo[i].weapon) ok = resolve_weapon(supply, &grants, cargo[i].item, canonical, e);
         else ok = resolve_ammo(supply, &grants, (qa_pickup_grant){cargo[i].item, cargo[i].count}, canonical, false, e);
-    qa_supply_options options = {.selection = selection, .canonical = canonical}; bool accepted;
-    if (ok) ok = grant_resolved(supply, actor, &grants, true, &options, &accepted, e);
+    qa_supply_options options = {.selection = selection, .canonical = canonical}; bool granted = false;
+    if (ok) ok = grant_resolved(supply, actor, &grants, true, &options, &granted, e);
+    if (ok) *accepted = granted;
     grants_free(&grants); supply_leave(supply); return ok;
 }
 

@@ -96,7 +96,8 @@ bool qa_supply_maps(const qa_supply *, qa_item_id, bool weapon);
 bool qa_supply_owns(qa_supply *, qa_actor_id, qa_item_id, bool *, qa_error *);
 bool qa_supply_ammo(qa_supply *, qa_actor_id, qa_pickup_grant, bool, bool *, qa_error *);
 bool qa_supply_ammo_weapon(qa_supply *, qa_actor_id, qa_item_id weapon, qa_pickup_grant, qa_pickup_selection_mode, bool only_empty, bool *, qa_error *);
-bool qa_supply_cargo(qa_supply *, qa_actor_id, const qa_pickup_cargo *, size_t, qa_pickup_selection_mode, bool canonical, qa_error *);
+bool qa_supply_cargo(qa_supply *, qa_actor_id, const qa_pickup_cargo *, size_t,
+                      qa_pickup_selection_mode, bool canonical, bool *accepted, qa_error *);
 bool qa_supply_select_weapon(qa_supply *, qa_actor_id, qa_item_id, qa_pickup_selection_mode, qa_error *);
 typedef struct qa_supply_quantity { double amount; bool exact, accepted; } qa_supply_quantity;
 typedef bool (*qa_supply_quantity_fn)(void *, const qa_inventory_entry *, qa_supply_quantity *, qa_error *);
