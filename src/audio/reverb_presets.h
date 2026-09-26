@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef QA_REVERB_PRESETS_H
 #define QA_REVERB_PRESETS_H
 

@@ -1,5 +1,3 @@
-/* Anthology Q3 bg_misc trajectory and game projectile transport.
- * Copyright (C) 1999-2005 Id Software. SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 #include <limits.h>
 

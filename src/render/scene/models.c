@@ -1,5 +1,3 @@
-/* Retained model resources and source-family presentation.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "models/internal.h"
 #include <stdio.h>
 

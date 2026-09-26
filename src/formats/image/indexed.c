@@ -1,5 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later
- * Format and source-policy behavior derived from Anthology's indexed.ts. */
 #include "internal.h"
 
 bool qa_image_decode_qpic(qa_bytes b, qa_image *out, qa_error *e) {

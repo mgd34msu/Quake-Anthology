@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef QAW_Q3_PATCH_H
 #define QAW_Q3_PATCH_H
 

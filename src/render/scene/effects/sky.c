@@ -1,6 +1,3 @@
-/* Sky clipping and cloud coordinates from Quake II gl_warp.c and
- * Quake III tr_sky.c. Copyright (C) 1997-2005 Id Software, Inc.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 #include "qa/scene_effects.h"
 

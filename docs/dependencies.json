@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "project_id": "quake-anthology",
-  "ledger_plan_revision": 3,
+  "ledger_plan_revision": 4,
   "policy": {
     "goal": "Finish the native C rewrite of ../quake-typescript as one engine with full Q1/QW/Q2/Q3, expansion, rerelease, and mod interoperability, then perform a deep performance and enhancement pass.",
     "rules": [
@@ -15,7 +15,8 @@
       "Use vibecheck-jev to claim/report work and its verified status. Keep the full dependency graph and acceptance criteria current.",
       "Coordinator owns shared Git staging and local commits. Workers use exclusive paths and never change ../quake-typescript, ../qsrc, or ../qfiles.",
       "Baseline completion and final release are distinct. Do not claim whole-project completion from scaffolding, parser tools, compilation, or partial subsystems.",
-      "Use a soft cap of six concurrent agents across the entire worker tree, excluding the main coordinator. Let existing assignments finish to reduce the current count. Do not spawn, reactivate, or reassign workers while above six; a temporary excess later requires a concrete task need."
+      "Use a soft cap of six concurrent agents across the entire worker tree, excluding the main coordinator. Let existing assignments finish to reduce the current count. Do not spawn, reactivate, or reassign workers while above six; a temporary excess later requires a concrete task need.",
+      "Keep all licensing and copyright notices in the root LICENSE file. Do not add per-file copyright notices, SPDX headers, or invented contributor attribution."
     ],
     "authorizations": [
       "Implement the entire project autonomously, make sensible C improvements during construction, and continue until the full project is complete.",
@@ -38,7 +39,8 @@
         "Ledger and local graph cover all 23 donor functional targets; baseline completion precedes gameplay evaluation and deep enhancement."
       ],
       "rules": [
-        "Use a soft cap of six concurrent agents across the entire worker tree, excluding the main coordinator. Let existing assignments finish to reduce the current count. Do not spawn, reactivate, or reassign workers while above six; a temporary excess later requires a concrete task need."
+        "Use a soft cap of six concurrent agents across the entire worker tree, excluding the main coordinator. Let existing assignments finish to reduce the current count. Do not spawn, reactivate, or reassign workers while above six; a temporary excess later requires a concrete task need.",
+        "Keep all licensing and copyright notices in the root LICENSE file. Do not add per-file copyright notices, SPDX headers, or invented contributor attribution."
       ],
       "status": "pending"
     },

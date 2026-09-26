@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "qa/binary.h"
 
 #include <float.h>

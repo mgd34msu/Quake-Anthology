@@ -1,6 +1,3 @@
-/* Scene effects adapted from id Software Quake renderers.
- * Copyright (C) 1996-2005 Id Software, Inc.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "effects/internal.h"
 #include "qa/scene_effects.h"
 

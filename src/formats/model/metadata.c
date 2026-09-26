@@ -1,5 +1,3 @@
-/* Q3 player and skin metadata; replacement conventions from Anthology.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 #include <stdio.h>
 

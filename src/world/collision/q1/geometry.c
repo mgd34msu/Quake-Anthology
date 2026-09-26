@@ -1,6 +1,3 @@
-/* Convex BSP clipping and hull reconstruction derived from the Anthology
- * TypeScript implementation and id Software's winding/brush representation.
- * Copyright (C) 1996-2005 Id Software. SPDX-License-Identifier: GPL-2.0-or-later */
 #include "geometry.h"
 #include <stdalign.h>
 #include <string.h>

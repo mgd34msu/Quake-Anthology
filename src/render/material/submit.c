@@ -1,5 +1,3 @@
-/* Ordered material execution adapted from id Software tr_shade.c.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 #include <math.h>
 #include <stdalign.h>

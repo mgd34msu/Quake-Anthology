@@ -1,6 +1,3 @@
-/* Q3 bg_slidemove semantics through Anthology's movement contracts.
- * Copyright (C) 1999-2005 Id Software, Inc.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "local.h"
 
 qa_vec3 q3_clip(qa_vec3 velocity, qa_vec3 normal) {

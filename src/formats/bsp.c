@@ -1,6 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later
- * Disk layouts and compatibility behavior follow quake-typescript's
- * formats/q1-map, q2-map, and q3-map readers. */
 #include "qa/bsp.h"
 #include "qa/binary.h"
 

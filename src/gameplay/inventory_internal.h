@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef QA_INVENTORY_INTERNAL_H
 #define QA_INVENTORY_INTERNAL_H
 #include "qa/inventory.h"

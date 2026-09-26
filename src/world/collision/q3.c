@@ -1,6 +1,3 @@
-/* Q3 collision, derived from id Software cm_trace.c and cm_test.c.
- * Copyright (C) 1999-2005 Id Software, Inc.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "q3/shared.h"
 #include <float.h>
 #include <stdlib.h>

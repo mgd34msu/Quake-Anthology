@@ -1,6 +1,3 @@
-/* Native damage ordering from Quake combat.qc, Quake II g_combat.c and
- * Quake III g_combat.c. Copyright (C) 1996-2005 Id Software.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "combat_internal.h"
 #include <limits.h>
 

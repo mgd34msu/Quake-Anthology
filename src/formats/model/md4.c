@@ -1,5 +1,3 @@
-/* MD4 v1. Copyright (C) 1999-2005 Id Software, Inc.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 
 static bool md4_surface(model_reader *r, qa_model *m, qa_model_mesh *s, size_t base, size_t lod_end,

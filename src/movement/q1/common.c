@@ -1,6 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later
- * Quake movement derived from the Anthology TypeScript movement kernels.
- * Original Quake algorithms Copyright (C) 1996-1997 Id Software, Inc. */
 #include "common.h"
 
 static int32_t *q1_mode(q1_move *m) {

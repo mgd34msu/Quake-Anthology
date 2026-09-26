@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef QA_Q1_GEOMETRY_H
 #define QA_Q1_GEOMETRY_H
 

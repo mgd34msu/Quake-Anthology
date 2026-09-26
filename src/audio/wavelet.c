@@ -1,6 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
-/* Daubechies and mu-law compatibility from id Software's snd_wavelet.c.
- * Copyright (C) 1999-2005 Id Software, Inc. */
 #include "codec_internal.h"
 
 #define WAVELET_MAX_SAMPLES 2048u

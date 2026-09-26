@@ -1,6 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later
- * Material deformations derived from id Software's tr_shade_calc.c,
- * tr_surface.c and tr_shadows.c, Copyright (C) 1999-2005 Id Software, Inc. */
 #include "internal.h"
 
 #include <math.h>

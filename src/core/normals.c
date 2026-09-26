@@ -1,5 +1,3 @@
-/* Quake normal table. Copyright (C) 1996-1997 Id Software, Inc.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "qa/math.h"
 const qa_vec3 qa_byte_normals[QA_BYTE_NORMAL_COUNT] = {
     {-0.525731f, 0.000000f, 0.850651f},   {-0.442863f, 0.238856f, 0.864188f},

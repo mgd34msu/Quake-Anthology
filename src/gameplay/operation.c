@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "qa/operation.h"
 
 #include <stdlib.h>

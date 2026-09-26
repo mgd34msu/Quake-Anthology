@@ -1,5 +1,3 @@
-/* MD5 mesh v10, adapted from Anthology's unified model readers.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 #include <ctype.h>
 #include <errno.h>

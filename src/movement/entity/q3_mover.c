@@ -1,6 +1,3 @@
-/* Native Q3 g_mover push transactions, using Anthology's shared world.
- * Copyright (C) 1999-2005 Id Software, Inc.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 #include <stdlib.h>
 

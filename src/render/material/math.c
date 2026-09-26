@@ -1,5 +1,3 @@
-/* Renderer table, noise and fast-normalization math adapted from id Software
- * tr_init.c, tr_noise.c and q_math.c. SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 #include <math.h>
 #include <stdatomic.h>

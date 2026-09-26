@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef QA_MATERIAL_H
 #define QA_MATERIAL_H
 #include "qa/scene.h"

@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "qa/hash.h"
 #include "qa/binary.h"
 
@@ -180,18 +179,7 @@ bool qa_sha256_parse(const char *text, qa_sha256_digest *out, qa_error *error)
     return true;
 }
 
-/* Derived from the RSA Data Security, Inc. MD4 Message-Digest Algorithm.
- * Copyright (C) 1990-1992 RSA Data Security, Inc. All rights reserved.
- * License to copy and use this software is granted provided that it is
- * identified as the "RSA Data Security, Inc. MD4 Message-Digest Algorithm" in
- * all material mentioning or referencing this software or this function.
- * License is also granted to make and use derivative works provided that such
- * works are identified as "derived from the RSA Data Security, Inc. MD4
- * Message-Digest Algorithm" in all material mentioning or referencing the
- * derived work. RSA Data Security, Inc. makes no representations concerning
- * either the merchantability of this software or the suitability of this
- * software for any particular purpose. It is provided "as is" without express
- * or implied warranty of any kind. */
+
 static void md4_block(qa_md4_context *context, const uint8_t *block)
 {
     static const unsigned int shifts[3][4] = {{3, 7, 11, 19}, {3, 5, 9, 13}, {3, 9, 11, 15}};

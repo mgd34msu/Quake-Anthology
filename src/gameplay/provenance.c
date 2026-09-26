@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "qa/gameplay.h"
 
 bool qa_damage_request_validate(const qa_damage_request *request, qa_error *error) {

@@ -1,6 +1,3 @@
-/* Q3 bg_pmove semantics through Anthology's movement contracts.
- * Copyright (C) 1999-2005 Id Software, Inc.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "local.h"
 
 static void q3_legs(qa_q3_step *step, int32_t animation, bool force) {

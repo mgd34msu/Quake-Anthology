@@ -1,7 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later
- * Quake II brush collision, derived from id Software cmodel.c, q2repro,
- * and the Anthology TypeScript collision implementation.
- * Copyright (C) 1997-2005 Id Software, Inc. */
 #include "internal.h"
 
 #include <limits.h>

@@ -1,5 +1,3 @@
-/* Content adaptation follows the shared Anthology collision boundary.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 
 static int32_t signed_bits(uint32_t bits) { int32_t value; memcpy(&value,&bits,sizeof(value)); return value; }

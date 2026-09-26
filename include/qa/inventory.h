@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef QA_INVENTORY_H
 #define QA_INVENTORY_H
 #include "qa/gameplay.h"

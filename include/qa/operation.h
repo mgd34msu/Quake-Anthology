@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef QA_OPERATION_H
 #define QA_OPERATION_H
 

@@ -1,5 +1,3 @@
-/* Shared model and attachment transforms. Axes are matrix columns.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 static void cross(const float a[3], const float b[3], float out[3]) {
     model_v3_store(out, qa_vec_cross(model_v3(a), model_v3(b)));

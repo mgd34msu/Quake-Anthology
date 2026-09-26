@@ -1,6 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later
- * NetQuake movement from the Anthology TypeScript implementation.
- * Original Quake algorithms Copyright (C) 1996-1997 Id Software, Inc. */
 #include "common.h"
 
 typedef struct nq_move {

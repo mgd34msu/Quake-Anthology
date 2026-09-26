@@ -1,5 +1,3 @@
-/* Lightmaps and BSP point lighting from Q1/Q2 gl_rlight.c/gl_light.c/gl_rsurf.c.
- * Copyright (C) 1996-2005 Id Software, Inc. GPL-2.0-or-later. */
 #include "internal.h"
 #include "qa/binary.h"
 

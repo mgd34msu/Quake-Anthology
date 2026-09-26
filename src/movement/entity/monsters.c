@@ -1,5 +1,3 @@
-/* Anthology movement/q1/monsters.ts and Q2 foundation/monsters/ai.ts.
- * Copyright (C) 1996-2005 Id Software. SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 
 static bool monster_trace(qa_physics *p, qa_actor_id actor,

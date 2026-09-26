@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 
 static double bound(double value, double low, double high) {

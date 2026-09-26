@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "inventory_internal.h"
 #include "qa/operation.h"
 #include <math.h>

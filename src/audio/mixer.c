@@ -1,6 +1,3 @@
-/* Source voice and PCM policy derived from id Software snd_dma.c, snd_mix.c
- * and the Anthology audio mixer. Copyright (C) 1999-2005 Id Software, Inc.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "mixer_internal.h"
 
 #include <inttypes.h>

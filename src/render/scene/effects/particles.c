@@ -1,6 +1,3 @@
-/* Quake r_part.c particle integration and Quake II particle sampling.
- * Copyright (C) 1996-2005 Id Software, Inc.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "qa/scene_effects.h"
 
 void qa_scene_q1_particle_advance(qa_scene_q1_particle_state *particle, double seconds, float gravity)

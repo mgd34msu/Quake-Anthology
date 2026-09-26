@@ -1,5 +1,3 @@
-/* Q3 shader registration and retained scene materials.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "library_internal.h"
 #include <math.h>
 #include <stdlib.h>

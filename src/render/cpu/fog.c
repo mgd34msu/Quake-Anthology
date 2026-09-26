@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 
 static void blend_fog(uint8_t *pixel, qa_vec3 color, double amount,

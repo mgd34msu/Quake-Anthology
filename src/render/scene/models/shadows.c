@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 
 static uint64_t hash_word(uint64_t hash, uint32_t value) {

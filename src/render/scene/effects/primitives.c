@@ -1,6 +1,3 @@
-/* Source rail, lightning and beam geometry from Q3 tr_surface.c and Q2
- * rerelease flare fans. Copyright (C) Id Software and contributors.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 #include "qa/scene_effects.h"
 

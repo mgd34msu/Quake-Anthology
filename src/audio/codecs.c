@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* WAV policies and resampling follow id Software's snd_mem.c. */
 #include "codec_internal.h"
 #include <stdio.h>
@@ -618,24 +617,7 @@ bool qa_audio_resample_source(const qa_audio_sample *sample, uint32_t output_rat
     return true;
 }
 
-/* Intel/DVI ADPCM 1.2, IMA Compatibility Project, May 1992.
- * Copyright 1992 Stichting Mathematisch Centrum, Amsterdam, The Netherlands.
- * All Rights Reserved.
- * Permission to use, copy, modify, and distribute this software and its
- * documentation for any purpose and without fee is hereby granted, provided
- * that the above copyright notice appear in all copies and that both that
- * copyright notice and this permission notice appear in supporting
- * documentation, and that the names of Stichting Mathematisch Centrum or CWI
- * not be used in advertising or publicity pertaining to distribution of the
- * software without specific, written prior permission.
- * STICHTING MATHEMATISCH CENTRUM DISCLAIMS ALL WARRANTIES WITH REGARD TO THIS
- * SOFTWARE, INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS,
- * IN NO EVENT SHALL STICHTING MATHEMATISCH CENTRUM BE LIABLE FOR ANY SPECIAL,
- * INDIRECT OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM
- * LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE
- * OR OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
- * PERFORMANCE OF THIS SOFTWARE.
- */
+
 static const int adpcm_index[16] = {-1, -1, -1, -1, 2, 4, 6, 8, -1, -1, -1, -1, 2, 4, 6, 8};
 static const int adpcm_step[89] = {
     7,     8,     9,     10,    11,    12,    13,    14,    16,    17,    19,   21,    23,

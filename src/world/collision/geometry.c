@@ -1,7 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later
- * Shared BSP topology and visibility, derived from id Software model.c,
- * cmodel.c and cm_test.c and the Anthology TypeScript implementation.
- * Copyright (C) 1996-2005 Id Software, Inc. */
 #include "internal.h"
 #include "qa/binary.h"
 

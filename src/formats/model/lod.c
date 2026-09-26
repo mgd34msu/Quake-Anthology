@@ -1,5 +1,3 @@
-/* Q3 LOD registration order and aliasing semantics.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 #include <stdio.h>
 void qa_model_lods_free(qa_model_lod_set *set) {

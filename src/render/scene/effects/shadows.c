@@ -1,5 +1,3 @@
-/* Q2 rerelease depth atlas preparation, preserving the Anthology TS layout.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 #include "qa/scene_effects.h"
 

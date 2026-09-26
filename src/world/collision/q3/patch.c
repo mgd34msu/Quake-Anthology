@@ -1,6 +1,3 @@
-/* Quake III patch collision, derived from cm_patch.c and cm_polylib.c.
- * Copyright (C) 1999-2005 Id Software, Inc.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "patch.h"
 
 #include <stdlib.h>

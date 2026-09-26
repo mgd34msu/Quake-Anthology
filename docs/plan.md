@@ -6,6 +6,8 @@ Baseline implementation is underway. The [dependency graph](dependency-graph.md)
 
 Use a soft cap of six concurrent workers across the full agent tree, in addition to the main coordinator. Let existing assignments finish to reduce the current count; do not replace finished workers while above six. Temporary excess is allowed when a concrete task needs it.
 
+Keep licensing and copyright notices in the root `LICENSE` file. Do not add per-file notices, SPDX headers, or invented contributor attribution.
+
 The current sequence is to write the complete baseline C code, review its quality and correctness during construction, finish baseline integration, then evaluate gameplay and make deep performance improvements and polish. This order supersedes earlier live-play and performance gates in the review and donor documentation.
 
 Use the TypeScript prototype as an executable reference for its working features, user workflows, and current performance. Extract the behavior each subsystem must provide, then design its C implementation around native execution and shared resources. Useful prototype tests supply regression cases after their expectations are checked against the product requirements and original behavior. Prototype defects and runtime workarounds do not become C requirements.

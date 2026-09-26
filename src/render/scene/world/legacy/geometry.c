@@ -1,6 +1,3 @@
-/* Brush reconstruction and subdivision from Q1/Q2 gl_rsurf.c/gl_warp.c.
- * Copyright (C) 1996-2005 Id Software, Inc.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 
 #include <stdlib.h>

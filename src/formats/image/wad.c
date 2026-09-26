@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 void qa_wad_free(qa_wad *wad) {
     if (wad) {

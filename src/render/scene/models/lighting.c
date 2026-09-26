@@ -1,6 +1,3 @@
-/* Alias normal and shadedot tables, Quake anorms.h / anorm_dots.h.
- * Copyright (C) 1996-1997 Id Software, Inc.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 #include "alias_shadedots.inc"
 

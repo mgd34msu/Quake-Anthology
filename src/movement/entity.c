@@ -1,5 +1,3 @@
-/* Shared body physics from Anthology simulation/physics.ts and new-toss.ts.
- * Copyright (C) 1996-2005 Id Software. SPDX-License-Identifier: GPL-2.0-or-later */
 #include "entity/internal.h"
 #include "qa/movement.h"
 

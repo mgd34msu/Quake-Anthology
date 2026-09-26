@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "world/internal.h"
 #include "qa/scene_effects.h"
 #include "qa/binary.h"

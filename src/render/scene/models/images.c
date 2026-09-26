@@ -1,6 +1,3 @@
-/* Quake skin flood fill and model image selection.
- * Copyright (C) 1996-2001 Id Software, Inc.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 #include <ctype.h>
 #include <stdio.h>

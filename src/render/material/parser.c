@@ -1,5 +1,3 @@
-/* ParseShader/ParseStage semantics from Q3 renderer/tr_shader.c and the
- * Anthology material registration program. SPDX-License-Identifier: GPL-2.0-or-later */
 #include "library_internal.h"
 #include <math.h>
 #include <stdlib.h>

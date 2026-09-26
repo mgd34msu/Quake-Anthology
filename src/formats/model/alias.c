@@ -1,6 +1,3 @@
-/* MDL, MD2 and sprite formats adapted from Anthology's q12-model readers.
- * Copyright (C) 1996-2001 Id Software, Inc.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 
 static bool group_header(model_reader *r, qa_model_group *g) {

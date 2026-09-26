@@ -1,6 +1,3 @@
-/* Temporary collision models, derived from id Software cm_trace.c.
- * Copyright (C) 1999-2005 Id Software, Inc.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "shared.h"
 
 static qa_collision_plane box_plane(qa_bounds bounds, unsigned index) {

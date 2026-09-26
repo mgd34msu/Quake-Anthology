@@ -1,5 +1,3 @@
-/* Sector ordering follows Quake sv_world.c and Quake III sv_world.c.
- * Copyright (C) 1996-2005 Id Software, Inc. GPL-2.0-or-later. */
 #include "collision/world_internal.h"
 
 #include <stdlib.h>

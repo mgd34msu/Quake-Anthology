@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef QA_MODEL_INTERNAL_H
 #define QA_MODEL_INTERNAL_H
 #include "qa/binary.h"

@@ -1,6 +1,3 @@
-/* Q1 r_sprite.c and Q2 gl_rmain.c placement.
- * Copyright (C) 1996-2001 Id Software, Inc.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 
 static bool sprite_axes(const qa_scene_model *model, const qa_scene_model_input *input,

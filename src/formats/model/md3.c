@@ -1,6 +1,3 @@
-/* MD3 v15; source semantics from Anthology's q3-model/md3.ts.
- * Copyright (C) 1999-2005 Id Software, Inc.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 #include <ctype.h>
 

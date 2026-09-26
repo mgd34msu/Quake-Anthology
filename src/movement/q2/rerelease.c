@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Quake II rerelease movement, derived from the Anthology movement provider. */
 #include "../internal.h"
 #include <math.h>

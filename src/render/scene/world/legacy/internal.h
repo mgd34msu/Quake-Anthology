@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef QAW_LEGACY_INTERNAL_H
 #define QAW_LEGACY_INTERNAL_H
 

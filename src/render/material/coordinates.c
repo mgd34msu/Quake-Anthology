@@ -1,5 +1,3 @@
-/* Q3 stage coordinates adapted from tr_shade_calc.c.
- * SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 #include <math.h>
 

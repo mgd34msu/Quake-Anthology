@@ -1,5 +1,3 @@
-/* Quake hull traversal from Anthology and id Software's world.c/model.c.
- * Copyright (C) 1996 Id Software. SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 #include "q1/geometry.h"
 #include <limits.h>

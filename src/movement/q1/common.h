@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
 #ifndef QA_MOVEMENT_Q1_COMMON_H
 #define QA_MOVEMENT_Q1_COMMON_H
 
