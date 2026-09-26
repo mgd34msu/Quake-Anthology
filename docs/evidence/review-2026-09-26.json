@@ -1,0 +1,168 @@
+{
+  "schema_version": 1,
+  "recorded_at": "2026-09-26T21:09:40.005098+00:00",
+  "scope": "Read-only TypeScript review and C planning; no C implementation",
+  "source": {
+    "checkout": "../quake-typescript",
+    "head": "5d6c6e311db6749c0b8f8ffca53ebe2bae69b24e",
+    "initial_status": " M src/compat/q2/rerelease/pickup-profile.ts\n M tests/compat/qvm/game-async.test.ts\n M verification/reference-cases/q1/source-derived.json\n M verification/reference-cases/q2/capture.json\n?? assets/assets\n",
+    "file_count_hashed": 2090,
+    "manifest_sha256": "2b5f75d2c4822c6a69eab9dd1533f8039853dc6c6115a96c997ded2863658a42",
+    "manifest_temporary_path": "/tmp/quake-anthology-review-source-before.json",
+    "changed_inputs_during_probe": []
+  },
+  "environment": {
+    "cpu": "AMD Ryzen 9 5900X 12-Core Processor",
+    "logical_cpus": 24,
+    "architecture": "x86_64",
+    "bun": "1.3.14",
+    "native_probe_affinity_cpu": 8
+  },
+  "native_probe": {
+    "head": "5d6c6e311db6749c0b8f8ffca53ebe2bae69b24e",
+    "source_files_verified_unchanged": 2090,
+    "source_changes_during_probe": [],
+    "active_frames": 100,
+    "entity_counts": [
+      495
+    ],
+    "native_warm": {
+      "n": 50,
+      "median_ms": 48.27911250000034,
+      "p95_ms": 79.65141099999892,
+      "p99_ms": 105.71421099999861,
+      "max_ms": 105.71421099999861,
+      "over_25ms": 50,
+      "over_50ms": 21,
+      "over_100ms": 1
+    },
+    "application_warm": {
+      "n": 50,
+      "median_ms": 53.857817000003706,
+      "p95_ms": 84.6769889999996,
+      "p99_ms": 113.47141799999372,
+      "max_ms": 113.47141799999372,
+      "over_25ms": 50,
+      "over_50ms": 36,
+      "over_100ms": 2
+    },
+    "open_and_run_ms": 38607.561247,
+    "load_before": "1.49 1.14 1.19 4/1823 4052408",
+    "load_after": "2.77 1.53 1.32 5/1822 4052695",
+    "callback_counts": {
+      "top": 200,
+      "nested": 50731
+    },
+    "instruction_sum": 15441218,
+    "edicts_sha256": "c911182c801e7b04c091e6f0222663f84ce94ac012228f6339781b914aeaf8e0",
+    "limitations": [
+      "single current run",
+      "dedicated no rendering or device audio",
+      "policy checker concurrent",
+      "fixed guest wall clock",
+      "CPU 8 affinity",
+      "not baseline-candidate comparison"
+    ],
+    "guest_module": {
+      "id": "q2:official",
+      "artifactPath": "game_x64.dll",
+      "digest": "sha256:045d49c53722d9b922caf14f168dd28a97d4c514a6e443a3140560f8668baccd",
+      "revision": "sha256:045d49c53722d9b922caf14f168dd28a97d4c514a6e443a3140560f8668baccd"
+    },
+    "workload": "Actual Application; complete retail base1; q2 movement/model; selected q3-baseq3 weapons; dedicated; one live idle client; no entity reduction or source substitutions",
+    "command": "taskset -c 8 bun /tmp/quake-anthology-review-native.ts",
+    "driver_sha256": "924fa7ec08fa5b84eea3f3dd8ea20601b85ce93c2c1c457cdd8b5755c75089aa",
+    "driver_temporary_path": "/tmp/quake-anthology-review-native.ts",
+    "raw_result_temporary_path": "/tmp/quake-anthology-review-native.json",
+    "log_temporary_path": "/tmp/quake-anthology-review-native.log"
+  },
+  "checks": [
+    {
+      "name": "typecheck",
+      "command": "bun run typecheck",
+      "result": "fail",
+      "diagnostics": 28,
+      "diagnostic_scope": "tests only",
+      "log": "/tmp/quake-anthology-review-typecheck.log"
+    },
+    {
+      "name": "runtime and movement",
+      "command": "bun test tests/guest/abi/nested.test.ts tests/guest/abi/runner-inline.test.ts tests/guest/core/memory.test.ts tests/guest/floating-point/execution.test.ts tests/compat/qvm/function-hooks.test.ts tests/compat/qvm/committed-stores.test.ts tests/movement",
+      "pass": 137,
+      "fail": 0,
+      "assertions": 1702,
+      "log": "/tmp/quake-anthology-review-runtime-tests.log"
+    },
+    {
+      "name": "protocol persistence settings verification",
+      "command": "bun test tests/network/q1/network.test.ts tests/network/q2/network.test.ts tests/network/q3/network.test.ts tests/persistence/save.test.ts tests/persistence/save-policy.test.ts tests/settings/config.test.ts tests/verification",
+      "pass": 87,
+      "fail": 1,
+      "assertions": 654,
+      "failure": "KEX seats retain independent frame history and positioned sounds; likely stale expectation after splitPlayers/shared frame-history change",
+      "log": "/tmp/quake-anthology-review-protocol-tests.log"
+    },
+    {
+      "name": "presentation input audio",
+      "command": "bun test tests/render/cpu/rasterizer.test.ts tests/render/gl/buffer-reuse.test.ts tests/render/commands/static-lightmaps.test.ts tests/render/commands/shadows.test.ts tests/render/worker-protocol.test.ts tests/render/worker-transport.test.ts tests/input/device-lifetime.test.ts tests/audio/loop-aggregation.test.ts tests/audio/geometry.test.ts --timeout 30000",
+      "pass": 53,
+      "fail": 0,
+      "skip": 4,
+      "assertions": 369700,
+      "log": "/tmp/quake-anthology-review-presentation-tests.log"
+    },
+    {
+      "name": "simulation composition",
+      "command": "bun test tests/first-playable/simulation/actor-order.test.ts tests/first-playable/simulation/provider-frames.test.ts tests/world/gameplay/mod-composition.test.ts tests/world/session/mods.test.ts tests/persistence/provider-ownership.test.ts",
+      "pass": 22,
+      "fail": 0,
+      "skip": 1,
+      "assertions": 151,
+      "executor": "simulation review agent"
+    },
+    {
+      "name": "current KEX viewpoint contract",
+      "command": "bun test tests/network/q2/demo-viewpoints.test.ts",
+      "pass": 1,
+      "fail": 0,
+      "assertions": 2,
+      "log": "/tmp/quake-anthology-review-kex-current.log"
+    },
+    {
+      "name": "full policy",
+      "command": "bun run policy",
+      "result": "unverified",
+      "termination": "review-owned process SIGTERM after 601 seconds without completion",
+      "log": "/tmp/quake-anthology-review-policy.log"
+    }
+  ],
+  "save_export_reproduction": {
+    "command": "bun run /tmp/quake-save-review-sv99Wt.ts",
+    "driver_sha256": "18fc6a58b7664bae28ed74313390ffa7bbc69db88d33b207e3200c4c0066e1d4",
+    "fixture": "real classic id1 progs.dat and e1m1 plus authored stateful PreparedMod fixture",
+    "shared_checkpoint_mod_count": 1,
+    "v5": {
+      "accepted": true,
+      "bytes": 71526,
+      "source_entities": 163,
+      "component_checkpoint_present": false
+    },
+    "v6": {
+      "accepted": true,
+      "bytes": 71530,
+      "source_entities": 163,
+      "component_checkpoint_present": false
+    },
+    "lead_rerun_log": "/tmp/quake-anthology-review-save-export.log",
+    "limit": "simulation/export boundary reproduction; no production-mod menu playthrough"
+  },
+  "unexecuted": [
+    "full test suite",
+    "foreground compiled graphical play",
+    "physical audio/controller checks",
+    "native-peer interoperability matrix",
+    "complete campaigns",
+    "C engine benchmark"
+  ],
+  "retention": "Summary is committed. Referenced /tmp drivers and raw logs are local temporary review artifacts. Commercial guest entity bytes are not committed."
+}
