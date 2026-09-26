@@ -302,10 +302,9 @@ bool qa_move_apply_stance(qa_move_context *c) {
     if (c->state->kind==QA_MOVEMENT_Q2_RERELEASE) {
         if (e->crouched) c->command.buttons|=16u; else c->command.buttons&=~16u;
     } else {
-        int64_t up=c->command.up_move;
-        if (up<0) up=-up;
+        float up=fabsf(c->command.up_move);
         if (up==0) up=1;
-        if (e->crouched) c->command.up_move=(int32_t)-up;
+        if (e->crouched) c->command.up_move=-up;
         else if (c->command.up_move<0) c->command.up_move=0;
         if (c->state->kind==QA_MOVEMENT_QUAKEWORLD&&e->crouched) c->command.buttons&=~2u;
     }
@@ -320,6 +319,7 @@ static bool move_stage(const qa_movement_input *input, const qa_movement_service
     if (!input||!services||!out||!services->trace||!services->point_contents||
         !valid_kind(input->profile.kind)||(stage&&input->profile.kind!=QA_MOVEMENT_NETQUAKE)||
         input->state.kind!=input->profile.kind||input->command.kind!=input->profile.kind||
+        !isfinite(input->command.forward_move)||!isfinite(input->command.side_move)||!isfinite(input->command.up_move)||
         (input->state.kind!=QA_MOVEMENT_NETQUAKE&&
          (!qa_vec_finite(qa_movement_origin(&input->state))||!qa_vec_finite(qa_movement_velocity(&input->state))))||
         input->shape.kind<QA_SHAPE_POINT||input->shape.kind>QA_SHAPE_CAPSULE||

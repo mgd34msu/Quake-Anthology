@@ -80,8 +80,8 @@ static float q3_command_scale(qa_q3_step *step) {
 
 static void q3_direction(qa_q3_step *step) {
     qa_q3_movement_state *state = q3_state(step);
-    int32_t forward = step->context->command.forward_move;
-    int32_t right = step->context->command.side_move;
+    float forward = step->context->command.forward_move;
+    float right = step->context->command.side_move;
     if (forward || right)
         state->movement_direction = forward > 0 ? (right < 0 ? 1 : right > 0 ? 7 : 0) :
             forward < 0 ? (right < 0 ? 3 : right > 0 ? 5 : 4) : right < 0 ? 2 : 6;
@@ -583,7 +583,10 @@ bool qa_move_q3(qa_move_context *context) {
     if (fixed == 0) fixed = 66;
     if (fixed > INT32_MAX || context->command.forward_move < -128 || context->command.forward_move > 127 ||
         context->command.side_move < -128 || context->command.side_move > 127 ||
-        context->command.up_move < -128 || context->command.up_move > 127) {
+        context->command.up_move < -128 || context->command.up_move > 127 ||
+        context->command.forward_move != truncf(context->command.forward_move) ||
+        context->command.side_move != truncf(context->command.side_move) ||
+        context->command.up_move != truncf(context->command.up_move)) {
         qa_error_set(context->error, QA_ERROR_ARGUMENT, 0, "Invalid Q3 movement command or fixed subdivision");
         context->failed = true;
         return false;

@@ -22,7 +22,7 @@ static bool qw_posture(qw_move *m) {
     qa_move_context *c = m->base.c;
     const qa_movement_environment *e = &c->input->environment;
     qa_bounds previous = c->result->bounds, standing = c->input->standing.bounds;
-    int32_t up_move = c->command.up_move;
+    float up_move = c->command.up_move;
     bool wants_crouch = e->has_stance ? e->crouched : up_move < 0;
     bool crouched = !e->flight && wants_crouch;
     qa_trace_shape shape = q1_shape(&m->base);

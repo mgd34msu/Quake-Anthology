@@ -216,7 +216,7 @@ static bool nq_air_move(nq_move *m) {
     const qa_q1_movement_parameters *p = &c->input->profile.data.nq.parameters;
     qa_vec3 forward, right;
     qa_move_angles(s->angles, &forward, &right, NULL);
-    int32_t forward_move = m->time < s->teleport_time_seconds && c->command.forward_move < 0 ? 0 : c->command.forward_move;
+    float forward_move = m->time < s->teleport_time_seconds && c->command.forward_move < 0 ? 0 : c->command.forward_move;
     qa_vec3 wish = qa_vec_add(qa_vec_scale(forward, q1_speed(&m->base, (float)forward_move)),
                                qa_vec_scale(right, q1_speed(&m->base, (float)c->command.side_move)));
     wish.z = s->move_type == Q1_MOVE_WALK ? 0 : q1_speed(&m->base, (float)c->command.up_move);

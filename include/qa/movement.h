@@ -19,7 +19,9 @@ typedef struct qa_movement_ground {
 /* The selected movement family owns the command interpretation. Network
  * codecs fill these fields without choosing a player's movement provider.
  * angle_words are raw source 16-bit words for Q2 classic and Q3; angles are
- * degrees for NQ, QW and Q2 rerelease. side_move is Q3 rightmove. */
+ * degrees for NQ, QW and Q2 rerelease. side_move is Q3 rightmove.
+ * Axes retain Q2 rerelease fractions. Input and protocol adapters apply the
+ * integer encoding of classic commands; signed byte/short values fit exactly. */
 typedef struct qa_movement_command {
     qa_movement_kind kind;
     uint64_t sequence;
@@ -28,7 +30,7 @@ typedef struct qa_movement_command {
     double acknowledged_server_seconds;
     qa_vec3 angles;
     int32_t angle_words[3];
-    int32_t forward_move, side_move, up_move;
+    float forward_move, side_move, up_move;
     uint32_t buttons;
     uint8_t impulse, light_level, weapon;
 } qa_movement_command;
