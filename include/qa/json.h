@@ -21,8 +21,8 @@ void qa_json_destroy(qa_json_document *document);
 qa_json_id qa_json_root(const qa_json_document *document);
 qa_json_kind qa_json_type(const qa_json_document *document, qa_json_id id);
 size_t qa_json_size(const qa_json_document *document, qa_json_id container);
-/* Object indexing preserves source order, including duplicate keys. Lookup
- * returns the last matching key, consistent with JSON.parse object values. */
+/* Indexing is constant-time and preserves source order, including duplicate
+ * keys. Hashed lookup returns the last matching key, as JSON.parse does. */
 qa_json_id qa_json_at(const qa_json_document *document, qa_json_id container, size_t index);
 qa_json_id qa_json_key_at(const qa_json_document *document, qa_json_id object, size_t index);
 qa_json_id qa_json_get(const qa_json_document *document, qa_json_id object, const char *key);

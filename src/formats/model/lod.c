@@ -65,7 +65,7 @@ bool qa_model_md3_lods(const char *path, qa_model_read_file read_file, void *con
             qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "unknown MD3 LOD dispatch identifier");
             goto fail;
         }
-        bool loaded = qa_model_load((qa_bytes){bytes.data, bytes.size}, &set.models[slot], &local);
+        bool loaded = qa_model_load_owned(&bytes, &set.models[slot], &local);
         qa_buffer_free(&bytes);
         if (loaded) {
             set.states[slot] = QA_MODEL_LOD_LOADED;

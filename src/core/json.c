@@ -7,14 +7,23 @@
 
 typedef struct json_node {
     size_t start, end, count;
+    size_t members;
     qa_json_id first, next;
     qa_json_kind kind;
 } json_node;
+
+typedef struct json_key {
+    uint64_t hash;
+    qa_json_id object, key; /* Key zero denotes an empty bucket. */
+} json_key;
 
 struct qa_json_document {
     qa_bytes source;
     json_node *nodes;
     size_t count, capacity;
+    qa_json_id *members;
+    json_key *keys;
+    size_t key_capacity;
 };
 
 typedef struct json_frame {
@@ -120,6 +129,100 @@ static size_t encode_utf8(uint32_t value, uint8_t output[4]) {
     }
     output[0]=(uint8_t)(0xf0u|(value>>18)); output[1]=(uint8_t)(0x80u|((value>>12)&0x3fu));
     output[2]=(uint8_t)(0x80u|((value>>6)&0x3fu)); output[3]=(uint8_t)(0x80u|(value&0x3fu)); return 4;
+}
+
+typedef struct string_reader {
+    qa_bytes source;
+    size_t cursor;
+    uint8_t pending[4];
+    size_t next, count;
+} string_reader;
+
+static string_reader read_string(const qa_json_document *document, qa_json_id id) {
+    const json_node *node=&document->nodes[id];
+    return (string_reader){.source={document->source.data+node->start,node->end-node->start},.cursor=1};
+}
+
+/* Parsed tokens already have validated UTF-8 and escapes. Decode only the
+ * escaped bytes while indexing; ordinary UTF-8 stays in the original buffer. */
+static bool string_byte(string_reader *reader, uint8_t *out) {
+    if (reader->next<reader->count) { *out=reader->pending[reader->next++]; return true; }
+    if (reader->cursor>=reader->source.size-1) return false;
+    uint8_t c=reader->source.data[reader->cursor++];
+    if (c!='\\') { *out=c; return true; }
+    uint32_t code;
+    if (!escape(reader->source,&reader->cursor,&code)) return false;
+    reader->count=encode_utf8(code,reader->pending);
+    reader->next=1; *out=reader->pending[0]; return true;
+}
+
+static uint64_t key_seed(qa_json_id object) {
+    return UINT64_C(14695981039346656037) ^ ((uint64_t)object*UINT64_C(0x9e3779b97f4a7c15));
+}
+static uint64_t key_hash(const qa_json_document *document, qa_json_id object, qa_json_id key) {
+    uint64_t hash=key_seed(object);
+    string_reader reader=read_string(document,key);
+    uint8_t c;
+    while (string_byte(&reader,&c)) { hash^=c; hash*=UINT64_C(1099511628211); }
+    return hash;
+}
+static bool equal_keys(const qa_json_document *document, qa_json_id a, qa_json_id b) {
+    string_reader left=read_string(document,a), right=read_string(document,b);
+    uint8_t ac, bc;
+    for (;;) {
+        bool has_a=string_byte(&left,&ac), has_b=string_byte(&right,&bc);
+        if (has_a!=has_b) return false;
+        if (!has_a) return true;
+        if (ac!=bc) return false;
+    }
+}
+
+static bool build_index(qa_json_document *document, qa_error *error) {
+    size_t members=0, keys=0;
+    for (size_t i=0;i<document->count;++i) {
+        members+=document->nodes[i].count;
+        if (document->nodes[i].kind==QA_JSON_OBJECT) keys+=document->nodes[i].count;
+    }
+    if (members>SIZE_MAX/sizeof(*document->members)) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"JSON child index size overflow"); return false;
+    }
+    if (members) {
+        document->members=malloc(members*sizeof(*document->members));
+        if (!document->members) { qa_error_set(error,QA_ERROR_MEMORY,0,"allocating JSON child index"); return false; }
+    }
+    if (keys) {
+        size_t capacity=16;
+        while (keys>=capacity/2) {
+            if (capacity>SIZE_MAX/2) { qa_error_set(error,QA_ERROR_MEMORY,0,"JSON key index capacity overflow"); return false; }
+            capacity*=2;
+        }
+        if (capacity>SIZE_MAX/sizeof(*document->keys)) {
+            qa_error_set(error,QA_ERROR_MEMORY,0,"JSON key index size overflow"); return false;
+        }
+        document->keys=calloc(capacity,sizeof(*document->keys));
+        if (!document->keys) { qa_error_set(error,QA_ERROR_MEMORY,0,"allocating JSON key index"); return false; }
+        document->key_capacity=capacity;
+    }
+    size_t offset=0;
+    for (size_t i=0;i<document->count;++i) {
+        json_node *node=&document->nodes[i];
+        node->members=offset;
+        for (qa_json_id child=node->first;child!=QA_JSON_NONE && node->count;child=document->nodes[child].next) {
+            document->members[offset++]=child;
+            if (node->kind!=QA_JSON_OBJECT) continue;
+            uint64_t hash=key_hash(document,(qa_json_id)i,child);
+            size_t slot=(size_t)hash&(document->key_capacity-1);
+            while (document->keys[slot].key) {
+                const json_key *existing=&document->keys[slot];
+                if (existing->hash==hash && existing->object==(qa_json_id)i && equal_keys(document,existing->key,child)) break;
+                slot=(slot+1)&(document->key_capacity-1);
+            }
+            /* Later duplicate keys replace lookup identity; ordered iteration
+             * still retains every source member for diagnostics/import policy. */
+            document->keys[slot]=(json_key){hash,(qa_json_id)i,child};
+        }
+    }
+    return true;
 }
 
 static bool string_end(json_parser *parser) {
@@ -268,6 +371,7 @@ bool qa_json_parse(qa_bytes source, qa_json_document **out, qa_error *error) {
     }
     whitespace(&parser);
     if (parser.cursor!=source.size) { fail(&parser,"trailing bytes after JSON value"); goto failure; }
+    if (!build_index(document,error)) goto failure;
     free(frames); *out=document; return true;
 failure:
     free(frames); qa_json_destroy(document); return false;
@@ -275,7 +379,7 @@ failure:
 
 void qa_json_destroy(qa_json_document *document) {
     if (!document) return;
-    free(document->nodes); free(document);
+    free(document->members); free(document->keys); free(document->nodes); free(document);
 }
 
 static const json_node *node_at(const qa_json_document *document, qa_json_id id) {
@@ -293,9 +397,7 @@ size_t qa_json_size(const qa_json_document *document, qa_json_id id) {
 static qa_json_id member(const qa_json_document *document, qa_json_id id, size_t index) {
     const json_node *node=node_at(document,id);
     if (!node || index>=node->count) return QA_JSON_NONE;
-    id=node->first;
-    while (index--) id=document->nodes[id].next;
-    return id;
+    return document->members[node->members+index];
 }
 qa_json_id qa_json_at(const qa_json_document *document, qa_json_id id, size_t index) {
     qa_json_kind kind=qa_json_type(document,id);
@@ -330,11 +432,17 @@ bool qa_json_string_equal(const qa_json_document *document, qa_json_id id, const
     return position==length;
 }
 qa_json_id qa_json_get(const qa_json_document *document, qa_json_id id, const char *key) {
-    if (qa_json_type(document,id)!=QA_JSON_OBJECT) return QA_JSON_NONE;
-    qa_json_id result=QA_JSON_NONE;
-    for (qa_json_id child=document->nodes[id].first;child!=QA_JSON_NONE;child=document->nodes[child].next)
-        if (qa_json_string_equal(document,child,key)) result=document->nodes[child].first;
-    return result;
+    if (!key || qa_json_type(document,id)!=QA_JSON_OBJECT || !document->key_capacity) return QA_JSON_NONE;
+    uint64_t hash=key_seed(id);
+    for (const uint8_t *p=(const uint8_t *)key;*p;++p) { hash^=*p; hash*=UINT64_C(1099511628211); }
+    size_t slot=(size_t)hash&(document->key_capacity-1);
+    while (document->keys[slot].key) {
+        const json_key *entry=&document->keys[slot];
+        if (entry->hash==hash && entry->object==id && qa_json_string_equal(document,entry->key,key))
+            return document->nodes[entry->key].first;
+        slot=(slot+1)&(document->key_capacity-1);
+    }
+    return QA_JSON_NONE;
 }
 
 static bool require_kind(const qa_json_document *document, qa_json_id id, qa_json_kind kind, const void *out, qa_error *error) {

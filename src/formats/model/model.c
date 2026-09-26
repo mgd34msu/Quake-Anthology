@@ -160,37 +160,31 @@ void qa_model_free(qa_model *m) {
     qa_buffer_free(&m->source);
     memset(m, 0, sizeof(*m));
 }
-bool qa_model_load(qa_bytes bytes, qa_model *out, qa_error *error) {
-    if (!out || !bytes.data || bytes.size < 4) {
+bool qa_model_load_owned(qa_buffer *source, qa_model *out, qa_error *error) {
+    if (!source || !out || !source->data || source->size < 4) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model data and output are required");
         return false;
     }
-    qa_model m = {0};
-    model_reader r = {bytes, 0, error, true};
-    m.source.data = model_alloc(&r, bytes.size, 1);
-    if (!r.ok)
-        return false;
-    m.source.size = bytes.size;
-    memcpy(m.source.data, bytes.data, bytes.size);
-    r.bytes.data = m.source.data;
+    qa_model m = {.source = *source};
+    model_reader r = {{m.source.data, m.source.size}, 0, error, true};
     model_bounds_clear(&m.bounds);
     bool ok;
-    if (!memcmp(bytes.data, "IDPO", 4)) {
+    if (!memcmp(r.bytes.data, "IDPO", 4)) {
         m.format = QA_MODEL_MDL;
         ok = model_mdl(&r, &m);
-    } else if (!memcmp(bytes.data, "IDP2", 4)) {
+    } else if (!memcmp(r.bytes.data, "IDP2", 4)) {
         m.format = QA_MODEL_MD2;
         ok = model_md2(&r, &m);
-    } else if (!memcmp(bytes.data, "IDP3", 4)) {
+    } else if (!memcmp(r.bytes.data, "IDP3", 4)) {
         m.format = QA_MODEL_MD3;
         ok = model_md3(&r, &m);
-    } else if (!memcmp(bytes.data, "IDP4", 4)) {
+    } else if (!memcmp(r.bytes.data, "IDP4", 4)) {
         m.format = QA_MODEL_MD4;
         ok = model_md4(&r, &m);
-    } else if (!memcmp(bytes.data, "IDSP", 4)) {
+    } else if (!memcmp(r.bytes.data, "IDSP", 4)) {
         m.format = QA_MODEL_SPR;
         ok = model_sprite(&r, &m, false);
-    } else if (!memcmp(bytes.data, "IDS2", 4)) {
+    } else if (!memcmp(r.bytes.data, "IDS2", 4)) {
         m.format = QA_MODEL_SP2;
         ok = model_sprite(&r, &m, true);
     } else if (model_is_md5(r.bytes)) {
@@ -201,11 +195,29 @@ bool qa_model_load(qa_bytes bytes, qa_model *out, qa_error *error) {
         ok = false;
     }
     if (!ok || !r.ok) {
+        /* Parsed views borrow the caller's source, but none owns it separately. */
+        m.source = (qa_buffer){0};
         qa_model_free(&m);
         return false;
     }
+    *source = (qa_buffer){0};
     *out = m;
     return true;
+}
+bool qa_model_load(qa_bytes bytes, qa_model *out, qa_error *error) {
+    if (!out || !bytes.data || bytes.size < 4) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model data and output are required");
+        return false;
+    }
+    qa_buffer source = {malloc(bytes.size), bytes.size};
+    if (!source.data) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "model source allocation failed");
+        return false;
+    }
+    memcpy(source.data, bytes.data, bytes.size);
+    bool loaded = qa_model_load_owned(&source, out, error);
+    qa_buffer_free(&source);
+    return loaded;
 }
 uint32_t qa_model_group_sample(const qa_model_group *g, double seconds, double sync_base) {
     if (!g || !g->count)

@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
-#include <errno.h>
+#include "qa/text.h"
 
 static bool whitespace(uint8_t c) { return c == ' ' || (c >= '\t' && c <= '\r'); }
 static bool punctuation(uint8_t c) { return c == '{' || c == '}' || c == '(' || c == ')'; }
@@ -58,25 +58,23 @@ bool model_expect(model_reader *r, const char *expected) {
 }
 double model_number(model_reader *r) {
     qa_bytes t = model_token_next(r);
-    char local[128], *text = local;
-    if (!t.data || !t.size || t.size == SIZE_MAX) {
+    if (!t.data || !t.size) {
         model_fail(r, "missing MD5 number");
         return 0;
     }
-    if (t.size >= sizeof(local)) {
-        text = model_alloc(r, t.size + 1, 1);
-        if (!text)
+    double value;
+    qa_error number_error = {0};
+    if (!qa_parse_number(t, &value, &number_error)) {
+        if (number_error.code == QA_ERROR_MEMORY) {
+            if (r->error)
+                *r->error = number_error;
+            r->ok = false;
             return 0;
+        }
+        model_fail(r, "invalid MD5 number");
+        return 0;
     }
-    memcpy(text, t.data, t.size);
-    text[t.size] = '\0';
-    char *end;
-    errno = 0;
-    double value = strtod(text, &end);
-    bool valid = end == text + t.size && isfinite(value);
-    if (text != local)
-        free(text);
-    if (!valid) {
+    if (!isfinite(value)) {
         model_fail(r, "invalid MD5 number");
         return 0;
     }

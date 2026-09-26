@@ -118,9 +118,11 @@ typedef struct qa_model {
 
 /* Auto-detects MDL/MD2/MD3/MD4/MD5mesh/SPR/SP2. Copies source once.
  * Output is unchanged on failure. Release a previous output before replacement.
- * Loaded arrays are shared immutable resources; callers must not mutate them.
- */
+ * Loaded arrays are shared immutable resources; callers must not mutate them. */
 bool qa_model_load(qa_bytes bytes, qa_model *out, qa_error *error);
+/* Adopts source without copying on success and clears it. On failure source and
+ * output are unchanged, so the caller remains responsible for source. */
+bool qa_model_load_owned(qa_buffer *source, qa_model *out, qa_error *error);
 void qa_model_free(qa_model *model);
 /* Full source name for binary or text models. Returned views are borrowed. */
 qa_bytes qa_model_shader_name(const qa_model_shader *shader);
@@ -269,9 +271,12 @@ typedef struct qa_model_replacement {
 bool qa_model_replacement_init(const qa_model *source, const qa_model *md5mesh,
                                const qa_model_animation *animation, qa_model_replacement *out,
                                qa_error *error);
+/* Out-of-range source skin indices use source skin zero. */
 bool qa_model_replacement_skin(const qa_model_replacement *replacement, uint32_t mesh,
                                uint32_t skin, double seconds, double sync_base, char **out,
                                qa_error *error);
+/* Invalid entity frames fall back in the source model's frame domain. Elapsed
+ * Q1 replacement animation includes sync_base before sampling at 2 Hz. */
 uint32_t qa_model_replacement_frame(const qa_model_replacement *replacement, uint32_t entity_frame,
-                                    double seconds);
+                                    double seconds, double sync_base);
 #endif

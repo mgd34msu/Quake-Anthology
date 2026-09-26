@@ -360,13 +360,17 @@ bool qa_model_replacement_skin(const qa_model_replacement *replacement, uint32_t
         goto invalid;
     const qa_model *source = replacement->source;
     if (source->format == QA_MODEL_MD2) {
-        if (skin >= source->skin_count)
+        if (!source->skin_count)
             goto invalid;
+        if (skin >= source->skin_count)
+            skin = 0;
         return qa_model_md5_skin_path(source->skins[skin].name, out, error);
     }
-    if (source->format != QA_MODEL_MDL || skin >= source->skin_group_count ||
+    if (source->format != QA_MODEL_MDL || !source->skin_group_count ||
         !replacement->mesh->meshes[mesh].shader_count)
         goto invalid;
+    if (skin >= source->skin_group_count)
+        skin = 0;
     const qa_model_group *group = &source->skin_groups[skin];
     uint32_t frame = qa_model_group_sample(group, seconds, sync_base) - group->first;
     qa_bytes shader = qa_model_shader_name(&replacement->mesh->meshes[mesh].shaders[0]);
@@ -387,13 +391,25 @@ invalid:
     return false;
 }
 uint32_t qa_model_replacement_frame(const qa_model_replacement *replacement, uint32_t entity_frame,
-                                    double seconds) {
-    if (!replacement || !replacement->animation || !replacement->animation->frame_count)
+                                    double seconds, double sync_base) {
+    if (!replacement || !replacement->source || !replacement->animation ||
+        !replacement->animation->frame_count)
         return 0;
     uint32_t count = replacement->animation->frame_count;
-    if (!replacement->elapsed_animation || !isfinite(seconds))
-        return entity_frame % count;
-    double frame = fmod(floor(seconds * 2), count);
+    if (!replacement->elapsed_animation) {
+        uint32_t source_count = replacement->source->format == QA_MODEL_MDL
+                                    ? replacement->source->frame_group_count
+                                : replacement->source->format == QA_MODEL_MD2
+                                    ? replacement->source->frame_count
+                                    : 0;
+        return source_count && entity_frame < source_count ? entity_frame % count : 0;
+    }
+    if (!isfinite(seconds) || !isfinite(sync_base))
+        return 0;
+    double elapsed = seconds + sync_base;
+    if (!isfinite(elapsed))
+        return 0;
+    double frame = fmod(floor(elapsed * 2), count);
     if (frame < 0)
         frame += count;
     return isfinite(frame) ? (uint32_t)frame : 0;

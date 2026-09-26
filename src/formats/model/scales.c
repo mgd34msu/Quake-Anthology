@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 #include "internal.h"
 #include "qa/json.h"
-#include <ctype.h>
+#include "qa/text.h"
 
 static void report(qa_model_diagnostic fn, void *ctx, const char *message) {
     if (fn)
@@ -83,13 +83,17 @@ bool qa_model_animation_scale_json(qa_model_animation *a, qa_bytes json,
                     positions[joint] = true;
                 continue;
             }
-            char *end;
-            double frame = strtod((const char *)key.data, &end);
-            while (*end && isspace((unsigned char)*end))
-                ++end;
-            bool valid_key = key.size && end == (char *)key.data + key.size &&
-                             !memchr(key.data, 0, key.size) && isfinite(frame) && frame >= 0 &&
-                             frame < a->frame_count && frame == trunc(frame);
+            double frame = 0;
+            qa_error number_error = {0};
+            bool parsed = qa_parse_number((qa_bytes){key.data, key.size}, &frame, &number_error);
+            if (!parsed && number_error.code == QA_ERROR_MEMORY) {
+                if (error)
+                    *error = number_error;
+                goto fail;
+            }
+            bool valid_key = key.size && !memchr(key.data, 0, key.size) && parsed &&
+                             isfinite(frame) && frame >= 0 && frame < a->frame_count &&
+                             frame == trunc(frame);
             double scale = 0;
             if (!valid_key || qa_json_type(doc, value) != QA_JSON_NUMBER ||
                 !qa_json_number(doc, value, &scale, NULL) || !isfinite((float)scale)) {
