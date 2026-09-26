@@ -228,6 +228,9 @@ static bool q3_damage(qa_combat *combat, const qa_combat_policy *policy, const q
     if (!qa_combat_live(combat, request->target)) { *result = (qa_damage_result){0}; return true; }
     int32_t take;
     if (!integer((float)damage - power - regular, &take, error)) return false;
+    result->power_saved = power;
+    result->armor_saved = regular;
+    result->blood = (float)take;
     if (!take) return true;
     if (!current(combat, request, &target, &attacker, &has_attacker, error)) return false;
     int32_t previous_health;

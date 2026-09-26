@@ -7,6 +7,8 @@ These are concrete handoff obligations for the remaining graph nodes. A subsyste
 - The application actor-release fanout must retire world, combat, inventory, pickups, and every attached provider's private state, including providers that do not own the actor. Q2 uses `qa_q2_actor_released`; duplicate owner notification is harmless. Generation reuse must not inherit private arsenal, monster, or mod state.
 - The application physics router must dispatch `qa_q2_physics_read`, `qa_q2_physics_write`, and `qa_q2_physics_touch`. Q2 arsenal ticks run explicitly in the actor's owning source turn. Independent character and arsenal selection must not schedule the same actor twice.
 - Q3 foreign input selections call `qa_q3_arsenal_step` through `qa_q3_controls`; native commands use the Q3 wrapper. Bind movement phase/effect callbacks with prediction authority so prediction cannot apply server damage.
+- Bind `qa_combat_hooks.reaction` to one target-based dispatcher. `qa_combat_apply` already invokes it for native canonical damage. Select the target character/monster provider and invoke its public damage-reaction callback exactly once, including foreign attacks. An attacking arsenal must not invoke a second pain/death callback after damage returns.
+- The Q3 target's `qa_q3_before_reaction` collects shared damage feedback through `qa_combat_hooks.before_reaction`. Its source `ClientEndFrame` calls `qa_q3_player_end_frame` once to publish the accumulated feedback.
 - Q2 map setup supplies the source `.mat` surface names from texinfo through shared world loading.
 - B08 still needs original Q1 Quake64 movement. The unsupported branch is unfinished scope.
 
