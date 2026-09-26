@@ -1,0 +1,609 @@
+{
+  "schema_version": 1,
+  "project_id": "quake-anthology",
+  "ledger_plan_revision": 1,
+  "policy": {
+    "goal": "Finish the native C rewrite of ../quake-typescript as one engine with full Q1/QW/Q2/Q3, expansion, rerelease, and mod interoperability, then perform a deep performance and enhancement pass.",
+    "rules": [
+      "Sequence: write the complete baseline code, review code quality throughout, finish all baseline implementation, then evaluate gameplay/frame time and perform deep performance gains and polish.",
+      "Do not make early playability, FPS, profiling, pixel polish, or campaign playthroughs prerequisites for baseline coding. Use proportionate compile, static, ownership, parser, and logic checks while coding.",
+      "Port Anthology functionality and intent. ../qsrc is reference material and ../qfiles contains external assets; do not replace the target with three original engines.",
+      "Implement built-in gameplay as compiled C with direct shared services. Remove TypeScript-only machinery. Scope external program compatibility to actual requirements.",
+      "Share common code, asset data, GPU resources and buffers. Preserve necessary private state and source behavior. Ordinary C floats are allowed where behavior is retained.",
+      "No functionality cuts, lower quality, removed renderer, fewer entities, reduced AI or lost campaign/mod behavior to gain speed.",
+      "Review actual code as it is implemented. A dependency permits integration/acceptance only after its prerequisites are complete; source implementation may overlap when published interfaces suffice.",
+      "Use vibecheck-jev to claim/report work and its verified status. Keep the full dependency graph and acceptance criteria current.",
+      "Coordinator owns shared Git staging and local commits. Workers use exclusive paths and never change ../quake-typescript, ../qsrc, or ../qfiles.",
+      "Baseline completion and final release are distinct. Do not claim whole-project completion from scaffolding, parser tools, compilation, or partial subsystems."
+    ],
+    "authorizations": [
+      "Implement the entire project autonomously, make sensible C improvements during construction, and continue until the full project is complete.",
+      "Create and commit code, tests, documentation, build files and dependency metadata locally.",
+      "Use read-only source/assets and proportionate local verification.",
+      "Delegate independent bounded implementation tasks with exclusive file ownership."
+    ],
+    "stop_reasons": [
+      "Explicit user request to stop or pause.",
+      "A concrete external prerequisite that cannot be obtained or worked around within authorization; continue independent work and report it."
+    ]
+  },
+  "tasks": [
+    {
+      "id": "B00",
+      "label": "Register the implementation graph",
+      "depends_on": [],
+      "goal": "Publish the complete dependency graph and current user rules to vibecheck-jev; keep a reviewable local copy.",
+      "criteria": [
+        "Ledger and local graph cover all 23 donor functional targets; baseline completion precedes gameplay evaluation and deep enhancement."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B01",
+      "label": "C build and core foundation",
+      "depends_on": [],
+      "goal": "Implement the C17 build, error and ownership types, checked binary access, file I/O, memory utilities, and native executable entry.",
+      "criteria": [
+        "GCC and Clang compile the native target; focused boundary and ownership checks pass; no Bun runtime dependency."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B02",
+      "label": "Archive readers",
+      "depends_on": [
+        "B01"
+      ],
+      "goal": "Implement shared PAK and ZIP/PK3/PK4 readers with ordered entries, normalized paths, stored/deflated extraction, and corruption checks.",
+      "criteria": [
+        "Real archives and focused malformed-input cases are read correctly; stored data can be shared without repeated copying."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B03",
+      "label": "Mounts and shared resource ownership",
+      "depends_on": [
+        "B02"
+      ],
+      "goal": "Implement loose/archive mounts, precedence, content identity, caching, lifetimes, and writable overlays.",
+      "criteria": [
+        "One mount/resource service resolves identities and shares immutable data across game families without merging distinct content."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B04",
+      "label": "Map formats",
+      "depends_on": [
+        "B01"
+      ],
+      "goal": "Implement Q1/Q2/Q3 map formats and required variants, record readers, entity text, visibility, and extensions.",
+      "criteria": [
+        "Donor-supported BSP variants have checked C readers; source records and extensions retain required semantics."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B05",
+      "label": "Models and images",
+      "depends_on": [
+        "B01"
+      ],
+      "goal": "Implement model/image formats, palettes, sprites, animation data, replacements, and attachments.",
+      "criteria": [
+        "All required donor formats have C readers and common retained resources; no supported format silently drops records."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B06",
+      "label": "World identity and collision",
+      "depends_on": [
+        "B04"
+      ],
+      "goal": "Implement generational actors, source slots, authoritative bodies, link state, geometry, collision, and spatial queries.",
+      "criteria": [
+        "One shared world retains source link timing, allocation/reuse, query shapes, and tie ordering in focused checks."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B07",
+      "label": "Session scheduling and lifetime",
+      "depends_on": [
+        "B06"
+      ],
+      "goal": "Implement source clocks, callback order, mutation authority, session lifecycle, transition coordination, and component lifetime.",
+      "criteria": [
+        "Scheduling and nested mutation use explicit owners; session creation, teardown, actor reuse, and rollback checks pass."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B08",
+      "label": "Movement and player commands",
+      "depends_on": [
+        "B06",
+        "B07"
+      ],
+      "goal": "Implement all selected Q1/QW/Q2/Q3 and rerelease movement policies, player command processing, and prediction kernels.",
+      "criteria": [
+        "Native C kernels support independent per-player movement with required source cadence, bounds, and numeric decisions."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B09",
+      "label": "Combat inventory and composition",
+      "depends_on": [
+        "B07"
+      ],
+      "goal": "Implement shared damage, inventory, pickups, capacities, effects, component operations, and attack provenance.",
+      "criteria": [
+        "Each mutation has one authority; ordered transforms, observers, replacements, and private state retain required behavior."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B10",
+      "label": "Q1 built-in gameplay",
+      "depends_on": [
+        "B08",
+        "B09"
+      ],
+      "goal": "Implement Anthology Q1/QW base, expansions, rerelease, monsters, weapons, items, and source gameplay in native C.",
+      "criteria": [
+        "Full Q1 family roster and behavior are implemented through shared services, including mission-pack and rerelease distinctions."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B11",
+      "label": "Q2 built-in gameplay",
+      "depends_on": [
+        "B08",
+        "B09"
+      ],
+      "goal": "Implement Anthology Q2 classic, expansions, rerelease, monsters, weapons, items, and source gameplay in native C.",
+      "criteria": [
+        "Full Q2 family roster and behavior use compiled gameplay; stock and rerelease selections do not invoke CPU emulation."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B12",
+      "label": "Q3 built-in gameplay",
+      "depends_on": [
+        "B08",
+        "B09"
+      ],
+      "goal": "Implement Anthology Q3 and Team Arena gameplay, weapons, items, characters, and source rules in native C.",
+      "criteria": [
+        "Q3 and Team Arena behavior is implemented through shared services and remains independently selectable."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B13",
+      "label": "Campaigns and authored interactions",
+      "depends_on": [
+        "B10",
+        "B11",
+        "B12"
+      ],
+      "goal": "Implement entity target graphs, mission gates, keys, sigils, bosses, hubs, revisits, authored mechanisms, and travel.",
+      "criteria": [
+        "Campaign code preserves authored obligations when actors or equipment are replaced; transitions have one owner."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B14",
+      "label": "Modes objectives and equipment",
+      "depends_on": [
+        "B10",
+        "B11",
+        "B12"
+      ],
+      "goal": "Implement independent match modes, teams, scoring, cross-map objective adaptation, grapples, and offhand equipment.",
+      "criteria": [
+        "Required modes and equipment variants are connected to shared gameplay without coupling map, arsenal, or movement selection."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B15",
+      "label": "Product catalog and configuration",
+      "depends_on": [
+        "B03",
+        "B13",
+        "B14"
+      ],
+      "goal": "Implement installed products, editions, launch recipes, independent selections, preset defaults, and mod catalog.",
+      "criteria": [
+        "Configuration resolves the full feature union with atomic changes and explicit source identities."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B16",
+      "label": "Scene materials and resources",
+      "depends_on": [
+        "B03",
+        "B04",
+        "B05"
+      ],
+      "goal": "Implement shared scene, visibility, materials, models, lights, effects, and frame/resource ownership.",
+      "criteria": [
+        "Required family-specific presentation behavior uses one scene/resource system with CPU/GL backend contracts."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B17",
+      "label": "CPU renderer",
+      "depends_on": [
+        "B16"
+      ],
+      "goal": "Implement the complete software rasterizer and source rendering semantics.",
+      "criteria": [
+        "Clipping, textures, palettes, interpolation, depth, stencil, fog, and blending have implementation and focused checks."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B18",
+      "label": "GL renderer and display",
+      "depends_on": [
+        "B16"
+      ],
+      "goal": "Implement native GL rendering, retained buffers, SDL window/context lifecycle, capture, and backend restart.",
+      "criteria": [
+        "Required render features are wired to real native APIs with correct resource lifetime; no frame-time tuning gate."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B19",
+      "label": "Audio and media",
+      "depends_on": [
+        "B03",
+        "B01"
+      ],
+      "goal": "Implement decoding, music, source voice policy, mixing, per-seat audio, cinematics, synchronization, and devices.",
+      "criteria": [
+        "All required audio/media formats and policies have shared C implementations and lifecycle checks."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B20",
+      "label": "Input and local seats",
+      "depends_on": [
+        "B01",
+        "B08"
+      ],
+      "goal": "Implement keyboard/mouse/controllers, gyro, haptics, text input, device lifetime, and four local seats.",
+      "criteria": [
+        "Per-seat routing and state remain independent; focus loss, unplug, and reassignment release owned input correctly."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B21",
+      "label": "Console settings localization",
+      "depends_on": [
+        "B01",
+        "B03"
+      ],
+      "goal": "Implement commands, cvars, profiles, bindings, settings, text/font resources, localization, and accessibility.",
+      "criteria": [
+        "Source command semantics and persistent configuration are exposed through shared services."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B22",
+      "label": "QC compatibility",
+      "depends_on": [
+        "B03",
+        "B07",
+        "B09"
+      ],
+      "goal": "Implement external QuakeC programs, host imports, private instances, composition, and checkpoints.",
+      "criteria": [
+        "Original QC roles and required extensions connect to shared services; built-in gameplay remains native C."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B23",
+      "label": "QVM compatibility",
+      "depends_on": [
+        "B03",
+        "B07",
+        "B09"
+      ],
+      "goal": "Implement external QVM game, cgame, and UI roles, syscall profiles, private instances, composition, and checkpoints.",
+      "criteria": [
+        "Required QVM semantics and source profiles work through shared engine boundaries without another world."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B24",
+      "label": "Native module compatibility",
+      "depends_on": [
+        "B03",
+        "B07",
+        "B09"
+      ],
+      "goal": "Implement required original native module ABIs using host-native execution where suitable and scoped fallbacks where required.",
+      "criteria": [
+        "Required binary callbacks, private instances, composition, and saved state are implemented; no default port of TS CPU machinery."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B25",
+      "label": "Independent mod integration",
+      "depends_on": [
+        "B14",
+        "B15",
+        "B22",
+        "B23",
+        "B24"
+      ],
+      "goal": "Integrate multiple cross-game mod instances, controls, ownership, dependency order, presentation, commands, and objectives.",
+      "criteria": [
+        "Actual module adapters compose through common operations; enable/disable, private state, and rollback are implemented."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B26",
+      "label": "Bots and navigation",
+      "depends_on": [
+        "B06",
+        "B08",
+        "B09",
+        "B14"
+      ],
+      "goal": "Implement one Q3-derived player-bot core, useful rerelease features, shared navigation generation, and source monster paths.",
+      "criteria": [
+        "Bots use ordinary engine actions and selected gameplay; foreign maps have usable navigation implementation."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B27",
+      "label": "Network transport and codecs",
+      "depends_on": [
+        "B01",
+        "B07"
+      ],
+      "goal": "Implement original protocol dialects, transport, reliability, per-seat connections, IPX/KEX requirements, and Anthology packets.",
+      "criteria": [
+        "Explicit codecs preserve required dialects; one connection authority serves native and mixed sessions."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B28",
+      "label": "Network session and prediction",
+      "depends_on": [
+        "B08",
+        "B09",
+        "B15",
+        "B27"
+      ],
+      "goal": "Integrate authoritative remote play, commands, snapshots, prediction, travel, reconnect, and full mixed-session identities.",
+      "criteria": [
+        "Native and Anthology session state is wired to gameplay with correct command ownership and replay behavior."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B29",
+      "label": "Downloads browser and administration",
+      "depends_on": [
+        "B03",
+        "B21",
+        "B27"
+      ],
+      "goal": "Implement downloads, remounting, server discovery, hosting, authenticated administration, and rotation.",
+      "criteria": [
+        "Required acquisition/discovery/admin flows have production consumers and cleanup behavior."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B30",
+      "label": "Saves recovery and demos",
+      "depends_on": [
+        "B07",
+        "B13",
+        "B25",
+        "B28"
+      ],
+      "goal": "Implement shared/original saves, migration, level-entry autosaves, recovery, demos, MVD/GTV, journals, and VCR.",
+      "criteria": [
+        "Persistence retains all owners; legacy exports reject unrepresentable state; save/demo formats have explicit codecs."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B31",
+      "label": "Progression and player services",
+      "depends_on": [
+        "B13",
+        "B14",
+        "B27"
+      ],
+      "goal": "Implement progress, achievements, records, Q3 unlocks, lobbies, and ranking-provider interface.",
+      "criteria": [
+        "Required local/player services have consumers; only the previously approved unavailable ranking backend remains an extension point."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B32",
+      "label": "Menus HUD and guest presentation",
+      "depends_on": [
+        "B15",
+        "B16",
+        "B19",
+        "B20",
+        "B21",
+        "B25",
+        "B29",
+        "B30",
+        "B31"
+      ],
+      "goal": "Implement native menus, per-seat HUD, source/guest UIs, content selection, independent mod controls, and all settings.",
+      "criteria": [
+        "Every required menu/HUD/service workflow is connected to real engine implementations."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B33",
+      "label": "Tools cameras capture and LLM",
+      "depends_on": [
+        "B16",
+        "B21",
+        "B27"
+      ],
+      "goal": "Implement camera/tools/diagnostics/capture and existing LLM provider, cancellation, and command integration.",
+      "criteria": [
+        "Required public tools and assistance have native application consumers; no invented external service."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "B34",
+      "label": "Application integration and packaging",
+      "depends_on": [
+        "B10",
+        "B11",
+        "B12",
+        "B13",
+        "B14",
+        "B15",
+        "B17",
+        "B18",
+        "B19",
+        "B20",
+        "B21",
+        "B25",
+        "B26",
+        "B28",
+        "B29",
+        "B30",
+        "B31",
+        "B32",
+        "B33"
+      ],
+      "goal": "Wire the complete baseline executable, dedicated mode, startup/shutdown, delivery layout, and asset discovery.",
+      "criteria": [
+        "All required subsystem implementations are linked and reachable; ordinary build/static/correctness checks pass; no placeholders or disconnected feature implementations."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "BASELINE",
+      "label": "Complete baseline release code",
+      "depends_on": [
+        "B00",
+        "B01",
+        "B02",
+        "B03",
+        "B04",
+        "B05",
+        "B06",
+        "B07",
+        "B08",
+        "B09",
+        "B10",
+        "B11",
+        "B12",
+        "B13",
+        "B14",
+        "B15",
+        "B16",
+        "B17",
+        "B18",
+        "B19",
+        "B20",
+        "B21",
+        "B22",
+        "B23",
+        "B24",
+        "B25",
+        "B26",
+        "B27",
+        "B28",
+        "B29",
+        "B30",
+        "B31",
+        "B32",
+        "B33",
+        "B34"
+      ],
+      "goal": "Finish the entire baseline implementation before gameplay evaluation and the deep performance pass.",
+      "criteria": [
+        "All required code exists, is integrated, and builds with reviewed ownership and focused correctness checks; baseline completion is not a claim of polished gameplay or final qualification."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "P01",
+      "label": "Full gameplay and interoperability evaluation",
+      "depends_on": [
+        "BASELINE"
+      ],
+      "goal": "Evaluate completed baseline campaigns, native/mixed modes, mods, saves, networking, rendering, audio, and devices; fix defects.",
+      "criteria": [
+        "Document actual coverage and resolve required behavior failures without removing functionality."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "P02",
+      "label": "Deep performance pass",
+      "depends_on": [
+        "P01"
+      ],
+      "goal": "Profile the complete engine and make deep CPU, GPU, memory, allocation, threading, and latency improvements.",
+      "criteria": [
+        "Matched real workloads demonstrate improvements while preserving required behavior, content, effects, and simulation work."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "P03",
+      "label": "Enhancement and polish",
+      "depends_on": [
+        "P02"
+      ],
+      "goal": "Complete presentation, interaction, responsiveness, and further worthwhile enhancements on the completed engine.",
+      "criteria": [
+        "Enhancements preserve the entire feature union and have proportionate validation."
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "RELEASE",
+      "label": "Final full-project qualification",
+      "depends_on": [
+        "P03"
+      ],
+      "goal": "Qualify the completed and enhanced engine for delivery with all declared required functionality.",
+      "criteria": [
+        "Required campaigns, configurations, mod and peer workflows, packaging, and performance results are accounted for; limitations are explicit and no required work is silently dropped."
+      ],
+      "status": "pending"
+    }
+  ]
+}

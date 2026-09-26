@@ -8,9 +8,11 @@ The TypeScript project supplies the implementation and product design being port
 
 Implement Anthology's built-in gameplay as compiled C operating directly on the shared world. Remove machinery needed only by the TypeScript implementation. Existing mod formats receive the compatibility support they require, without routing ordinary gameplay through CPU emulation. C data structures, algorithms, and numeric handling should suit the native implementation while preserving functionality and required game behavior.
 
-Share common engine code, decoded assets, GPU resources, and reusable working buffers across games and players. Performance guides data layout and execution from the first playable implementation, with measurements of frame time, stalls, allocation, copying, and memory use.
+Share common engine code, decoded assets, GPU resources, and reusable working buffers across games and players. Build the complete baseline with sound ownership, direct native execution, and proportionate correctness checks. After baseline completion, evaluate gameplay, make deep performance improvements, and polish the finished engine.
 
 - [Deep review and current evidence](docs/review.md)
 - [C architecture and implementation plan](docs/plan.md)
+- [Dependency graph and exact prerequisites](docs/dependency-graph.md)
+- [Functional targets and source ownership](docs/source-map.json)
 
-Current stage: review and planning. Engine implementation has not started. Development uses local Git commits; a remote will be added by the project owner later.
+Current stage: baseline C implementation. The [local graph](docs/dependencies.json) records the plan published to vibecheck-jev; the ledger tracks claimed work and verified status. Check graph consistency with `python3 tools/check_plan.py`. Development uses local Git commits; the project owner will add a remote later.

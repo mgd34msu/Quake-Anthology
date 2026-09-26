@@ -1,0 +1,674 @@
+{
+  "schema_version": 1,
+  "ledger_plan_revision": 1,
+  "donor": {
+    "repository": "../quake-typescript",
+    "head": "5d6c6e311db6749c0b8f8ffca53ebe2bae69b24e",
+    "targets_document": "docs/functional-targets/README.md",
+    "source_root": "src",
+    "scope": "Current functional requirements and directory ownership. Historical donor completion counts do not establish C completion."
+  },
+  "interpretation": "Scope accounting only. Tasks own required behavior, not verbatim donor file translations. Shared code and resources serve all games; intentional behavior and private instance state remain separate. Every target is implemented before BASELINE and evaluated through P01, P02, P03, and RELEASE afterward.",
+  "functional_targets": [
+    {
+      "id": "T01",
+      "label": "Session and resource lifetime",
+      "implementation_tasks": [
+        "B03",
+        "B07",
+        "B20",
+        "B21",
+        "B28",
+        "B30",
+        "B34"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T02",
+      "label": "Content and asset loading",
+      "implementation_tasks": [
+        "B02",
+        "B03",
+        "B04",
+        "B05",
+        "B15",
+        "B29"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T03",
+      "label": "Rendering and visual effects",
+      "implementation_tasks": [
+        "B05",
+        "B16",
+        "B17",
+        "B18",
+        "B32"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T04",
+      "label": "Audio and music",
+      "implementation_tasks": [
+        "B19"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T05",
+      "label": "Input and local players",
+      "implementation_tasks": [
+        "B08",
+        "B20",
+        "B21",
+        "B28",
+        "B32"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T06",
+      "label": "Console, cvars, and profiles",
+      "implementation_tasks": [
+        "B21",
+        "B32"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T07",
+      "label": "Network connections and prediction",
+      "implementation_tasks": [
+        "B08",
+        "B27",
+        "B28"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T08",
+      "label": "Downloads and content acquisition",
+      "implementation_tasks": [
+        "B03",
+        "B29"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T09",
+      "label": "Server discovery and administration",
+      "implementation_tasks": [
+        "B21",
+        "B27",
+        "B29",
+        "B32"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T10",
+      "label": "Gamecode and mod execution",
+      "implementation_tasks": [
+        "B09",
+        "B10",
+        "B11",
+        "B12",
+        "B15",
+        "B22",
+        "B23",
+        "B24",
+        "B25",
+        "B30",
+        "B32"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T11",
+      "label": "Collision, movement, and scale",
+      "implementation_tasks": [
+        "B06",
+        "B07",
+        "B08",
+        "B16",
+        "B28"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T12",
+      "label": "Combat, rosters, pickups, and equipment",
+      "implementation_tasks": [
+        "B09",
+        "B10",
+        "B11",
+        "B12",
+        "B14"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T13",
+      "label": "Bots, AI, and navigation",
+      "implementation_tasks": [
+        "B10",
+        "B11",
+        "B12",
+        "B26"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T14",
+      "label": "Map entities and campaigns",
+      "implementation_tasks": [
+        "B04",
+        "B07",
+        "B10",
+        "B11",
+        "B12",
+        "B13"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T15",
+      "label": "Match modes and objectives",
+      "implementation_tasks": [
+        "B14",
+        "B28",
+        "B31"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T16",
+      "label": "Saves, autosaves, and recovery",
+      "implementation_tasks": [
+        "B07",
+        "B13",
+        "B25",
+        "B30",
+        "B32"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T17",
+      "label": "Menus and HUD",
+      "implementation_tasks": [
+        "B15",
+        "B16",
+        "B20",
+        "B21",
+        "B25",
+        "B32"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T18",
+      "label": "Localization and accessibility",
+      "implementation_tasks": [
+        "B19",
+        "B21",
+        "B32"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T19",
+      "label": "Progression and player services",
+      "implementation_tasks": [
+        "B13",
+        "B14",
+        "B31",
+        "B32"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T20",
+      "label": "Demos, recording, and replay",
+      "implementation_tasks": [
+        "B27",
+        "B28",
+        "B30",
+        "B32"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T21",
+      "label": "Cinematics and animated media",
+      "implementation_tasks": [
+        "B16",
+        "B19",
+        "B32"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T22",
+      "label": "Cameras, diagnostics, and tools",
+      "implementation_tasks": [
+        "B16",
+        "B18",
+        "B21",
+        "B33"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    },
+    {
+      "id": "T23",
+      "label": "LLM assistance",
+      "implementation_tasks": [
+        "B21",
+        "B33"
+      ],
+      "qualification_tasks": [
+        "P01",
+        "P02",
+        "P03",
+        "RELEASE"
+      ]
+    }
+  ],
+  "source_directories": [
+    {
+      "path": "src/app",
+      "owner_tasks": [
+        "B07",
+        "B08",
+        "B09",
+        "B10",
+        "B11",
+        "B12",
+        "B13",
+        "B14",
+        "B15",
+        "B16",
+        "B18",
+        "B19",
+        "B20",
+        "B21",
+        "B22",
+        "B23",
+        "B24",
+        "B25",
+        "B26",
+        "B28",
+        "B29",
+        "B30",
+        "B31",
+        "B32",
+        "B33",
+        "B34"
+      ],
+      "allocation": "Split bootstrap simulation, gameplay, selection, presentation, networking, persistence, and services into their typed C owners. B34 owns startup and final application wiring; it does not absorb the large donor simulation class."
+    },
+    {
+      "path": "src/audio",
+      "owner_tasks": [
+        "B19"
+      ],
+      "allocation": "Shared mixer, sample resources, source voice policies, geometry, and native device delivery."
+    },
+    {
+      "path": "src/bots",
+      "owner_tasks": [
+        "B26"
+      ],
+      "allocation": "One player-bot core, shared navigation, source skills and objective behavior."
+    },
+    {
+      "path": "src/camera",
+      "owner_tasks": [
+        "B33"
+      ],
+      "allocation": "Camera services and source camera behavior."
+    },
+    {
+      "path": "src/capture",
+      "owner_tasks": [
+        "B18",
+        "B33"
+      ],
+      "allocation": "Renderer readback and public capture consumers."
+    },
+    {
+      "path": "src/compat",
+      "owner_tasks": [
+        "B10",
+        "B11",
+        "B12",
+        "B22",
+        "B23",
+        "B24",
+        "B25",
+        "B32"
+      ],
+      "allocation": "Compile built-in behavior as C; retain external QC, QVM and native module contracts in scoped adapters. Connect guest game, cgame, UI and composition roles to shared services."
+    },
+    {
+      "path": "src/console",
+      "owner_tasks": [
+        "B21"
+      ],
+      "allocation": "Shared command registration, parsing, execution, completion, and source semantics."
+    },
+    {
+      "path": "src/content",
+      "owner_tasks": [
+        "B02",
+        "B03",
+        "B09",
+        "B10",
+        "B11",
+        "B12",
+        "B14",
+        "B15",
+        "B25"
+      ],
+      "allocation": "Separate archive/mount/cache ownership, catalog/configuration, gameplay roster data, equipment selection, and mod manifests."
+    },
+    {
+      "path": "src/contracts",
+      "owner_tasks": [
+        "B01",
+        "B03",
+        "B06",
+        "B07",
+        "B08",
+        "B09",
+        "B14",
+        "B16",
+        "B22",
+        "B23",
+        "B24",
+        "B25",
+        "B27",
+        "B32"
+      ],
+      "allocation": "Translate required contracts into owning C module interfaces; TypeScript type wrappers and built-in guest-address plumbing are not required architecture."
+    },
+    {
+      "path": "src/core",
+      "owner_tasks": [
+        "B01",
+        "B07",
+        "B08",
+        "B21"
+      ],
+      "allocation": "Native binary/math/memory/RNG support, source scheduling, and shared commands/cvars; retain required numeric decisions rather than JavaScript wrappers."
+    },
+    {
+      "path": "src/debug",
+      "owner_tasks": [
+        "B33"
+      ],
+      "allocation": "Diagnostics and debug drawing consumers."
+    },
+    {
+      "path": "src/formats",
+      "owner_tasks": [
+        "B04",
+        "B05"
+      ],
+      "allocation": "Map readers belong to B04; model and image readers belong to B05. Common checked binary access comes from B01."
+    },
+    {
+      "path": "src/guest",
+      "owner_tasks": [
+        "B24"
+      ],
+      "allocation": "Treat CPU, ABI, executable-loader, operating-system, and floating-point machinery as reference for required external binaries only. Prefer host-native paths and implement a scoped fallback only where a concrete compatibility requirement needs it."
+    },
+    {
+      "path": "src/input",
+      "owner_tasks": [
+        "B20"
+      ],
+      "allocation": "Shared devices and independent local-seat routing, commands, gyro, haptics, and focus lifetime."
+    },
+    {
+      "path": "src/llm",
+      "owner_tasks": [
+        "B33"
+      ],
+      "allocation": "Provider, credential, model/effort, cancellation, and public command integration."
+    },
+    {
+      "path": "src/materials",
+      "owner_tasks": [
+        "B16"
+      ],
+      "allocation": "Shared material interpretation and retained render resources for both backends."
+    },
+    {
+      "path": "src/media",
+      "owner_tasks": [
+        "B19",
+        "B16"
+      ],
+      "allocation": "Shared movie/image/audio decode and timing in B19, with material texture consumers in B16."
+    },
+    {
+      "path": "src/movement",
+      "owner_tasks": [
+        "B08"
+      ],
+      "allocation": "Shared movement operations and independently selectable source kernels."
+    },
+    {
+      "path": "src/network",
+      "owner_tasks": [
+        "B27",
+        "B28",
+        "B29",
+        "B30",
+        "B31"
+      ],
+      "allocation": "Split transport/dialect codecs, session prediction, discovery/download/admin, recorded protocols, and player-service contracts. One connection authority serves them."
+    },
+    {
+      "path": "src/persistence",
+      "owner_tasks": [
+        "B30"
+      ],
+      "allocation": "Save codecs, shared snapshots, import/export eligibility, recovery, and demo continuity."
+    },
+    {
+      "path": "src/platform",
+      "owner_tasks": [
+        "B01",
+        "B18",
+        "B19",
+        "B20",
+        "B27",
+        "B33",
+        "B34"
+      ],
+      "allocation": "Use native OS/library APIs for files, display, audio, input, transport, provider services, and lifecycle. Remove Bun FFI and worker serialization."
+    },
+    {
+      "path": "src/render",
+      "owner_tasks": [
+        "B16",
+        "B17",
+        "B18",
+        "B33"
+      ],
+      "allocation": "Shared scene/commands/resource ownership, complete CPU backend, native GL backend, and capture/debug consumers."
+    },
+    {
+      "path": "src/settings",
+      "owner_tasks": [
+        "B15",
+        "B21",
+        "B29",
+        "B32"
+      ],
+      "allocation": "Resolve source selections in B15, persist common values in B21, expose server settings in B29 and menu controls in B32."
+    },
+    {
+      "path": "src/text",
+      "owner_tasks": [
+        "B21",
+        "B32"
+      ],
+      "allocation": "Shared localization, glyph/font resources, wrapping, captions, and native UI consumers."
+    },
+    {
+      "path": "src/types",
+      "owner_tasks": [
+        "B05"
+      ],
+      "allocation": "Replace PNG TypeScript declarations with the actual C image-decoder API. No declaration-only runtime subsystem is needed."
+    },
+    {
+      "path": "src/ui",
+      "owner_tasks": [
+        "B15",
+        "B19",
+        "B20",
+        "B21",
+        "B25",
+        "B29",
+        "B30",
+        "B31",
+        "B32"
+      ],
+      "allocation": "B32 owns menus/HUD; typed owners supply content, media, input, settings, mods, server browsing, saves, and player services."
+    },
+    {
+      "path": "src/world",
+      "owner_tasks": [
+        "B06",
+        "B07",
+        "B09",
+        "B10",
+        "B11",
+        "B12",
+        "B13",
+        "B14",
+        "B25",
+        "B26"
+      ],
+      "allocation": "One actor/body/link/spatial authority in B06; scheduling in B07; gameplay, campaigns, modes, composition, and AI belong to their dedicated owners."
+    }
+  ]
+}
