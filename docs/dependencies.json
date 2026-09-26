@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "project_id": "quake-anthology",
-  "ledger_plan_revision": 1,
+  "ledger_plan_revision": 2,
   "policy": {
     "goal": "Finish the native C rewrite of ../quake-typescript as one engine with full Q1/QW/Q2/Q3, expansion, rerelease, and mod interoperability, then perform a deep performance and enhancement pass.",
     "rules": [
       "Sequence: write the complete baseline code, review code quality throughout, finish all baseline implementation, then evaluate gameplay/frame time and perform deep performance gains and polish.",
-      "Do not make early playability, FPS, profiling, pixel polish, or campaign playthroughs prerequisites for baseline coding. Use proportionate compile, static, ownership, parser, and logic checks while coding.",
+      "Until all baseline production code is written and integrated in source, do not configure builds, compile, execute tests or programs, run sanitizers, benchmark, or play the game. Review source during implementation; compilation and runtime validation begin in P01 after BASELINE.",
       "Port Anthology functionality and intent. ../qsrc is reference material and ../qfiles contains external assets; do not replace the target with three original engines.",
       "Implement built-in gameplay as compiled C with direct shared services. Remove TypeScript-only machinery. Scope external program compatibility to actual requirements.",
       "Share common code, asset data, GPU resources and buffers. Preserve necessary private state and source behavior. Ordinary C floats are allowed where behavior is retained.",
@@ -19,7 +19,7 @@
     "authorizations": [
       "Implement the entire project autonomously, make sensible C improvements during construction, and continue until the full project is complete.",
       "Create and commit code, tests, documentation, build files and dependency metadata locally.",
-      "Use read-only source/assets and proportionate local verification.",
+      "Read source and assets, edit production code, review source, and commit locally during baseline. Execute builds and validation only after BASELINE.",
       "Delegate independent bounded implementation tasks with exclusive file ownership."
     ],
     "stop_reasons": [
@@ -44,7 +44,7 @@
       "depends_on": [],
       "goal": "Implement the C17 build, error and ownership types, checked binary access, file I/O, memory utilities, and native executable entry.",
       "criteria": [
-        "GCC and Clang compile the native target; focused boundary and ownership checks pass; no Bun runtime dependency."
+        "C17 build definitions, core implementation and native entry are written and source-reviewed; no Bun runtime dependency. Compilation and runtime validation are deferred to P01."
       ],
       "status": "pending"
     },
@@ -56,7 +56,7 @@
       ],
       "goal": "Implement shared PAK and ZIP/PK3/PK4 readers with ordered entries, normalized paths, stored/deflated extraction, and corruption checks.",
       "criteria": [
-        "Real archives and focused malformed-input cases are read correctly; stored data can be shared without repeated copying."
+        "Archive readers implement ordered extraction and malformed-input rejection; stored data is shared without repeated copying. Source review covers ownership and bounds; runtime validation is deferred to P01."
       ],
       "status": "pending"
     },
@@ -104,7 +104,7 @@
       ],
       "goal": "Implement generational actors, source slots, authoritative bodies, link state, geometry, collision, and spatial queries.",
       "criteria": [
-        "One shared world retains source link timing, allocation/reuse, query shapes, and tie ordering in focused checks."
+        "One shared world implements source link timing, allocation/reuse, query shapes, and tie ordering; source review covers those contracts."
       ],
       "status": "pending"
     },
@@ -116,7 +116,7 @@
       ],
       "goal": "Implement source clocks, callback order, mutation authority, session lifecycle, transition coordination, and component lifetime.",
       "criteria": [
-        "Scheduling and nested mutation use explicit owners; session creation, teardown, actor reuse, and rollback checks pass."
+        "Scheduling and nested mutation have explicit owners; creation, teardown, actor reuse, and rollback are implemented and source-reviewed."
       ],
       "status": "pending"
     },
@@ -248,7 +248,7 @@
       ],
       "goal": "Implement the complete software rasterizer and source rendering semantics.",
       "criteria": [
-        "Clipping, textures, palettes, interpolation, depth, stencil, fog, and blending have implementation and focused checks."
+        "Clipping, textures, palettes, interpolation, depth, stencil, fog, and blending are implemented and source-reviewed; execution checks follow BASELINE."
       ],
       "status": "pending"
     },
@@ -273,7 +273,7 @@
       ],
       "goal": "Implement decoding, music, source voice policy, mixing, per-seat audio, cinematics, synchronization, and devices.",
       "criteria": [
-        "All required audio/media formats and policies have shared C implementations and lifecycle checks."
+        "All required audio/media formats and policies have shared C implementations and source-reviewed lifecycle handling."
       ],
       "status": "pending"
     },
@@ -507,7 +507,7 @@
       ],
       "goal": "Wire the complete baseline executable, dedicated mode, startup/shutdown, delivery layout, and asset discovery.",
       "criteria": [
-        "All required subsystem implementations are linked and reachable; ordinary build/static/correctness checks pass; no placeholders or disconnected feature implementations."
+        "All required subsystem implementations have actual source callers and build definitions; no placeholders or disconnected feature implementations. Build execution is deferred to P01."
       ],
       "status": "pending"
     },
@@ -553,19 +553,19 @@
       ],
       "goal": "Finish the entire baseline implementation before gameplay evaluation and the deep performance pass.",
       "criteria": [
-        "All required code exists, is integrated, and builds with reviewed ownership and focused correctness checks; baseline completion is not a claim of polished gameplay or final qualification."
+        "All required production code and application integration are written with reviewed ownership. This is the source-completion gate; compilation, execution checks, gameplay evaluation and final qualification follow in P01 and later phases."
       ],
       "status": "pending"
     },
     {
       "id": "P01",
-      "label": "Full gameplay and interoperability evaluation",
+      "label": "Build verification and full functionality evaluation",
       "depends_on": [
         "BASELINE"
       ],
-      "goal": "Evaluate completed baseline campaigns, native/mixed modes, mods, saves, networking, rendering, audio, and devices; fix defects.",
+      "goal": "After all baseline source is complete, compile, validate correctness and evaluate full campaigns, native/mixed modes, mods, saves, networking, rendering, audio and devices; fix defects.",
       "criteria": [
-        "Document actual coverage and resolve required behavior failures without removing functionality."
+        "Compile with GCC and Clang, run boundary/ownership/logic checks and sanitizers, then evaluate complete campaigns and interoperability. Record actual coverage and resolve required behavior failures without removing functionality."
       ],
       "status": "pending"
     },
