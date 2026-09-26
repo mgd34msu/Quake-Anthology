@@ -104,7 +104,7 @@ void qa_cpu_destroy(qa_cpu_renderer *renderer) {
 }
 bool qa_cpu_resize(qa_cpu_renderer *renderer, uint32_t width, uint32_t height,
                    qa_error *error) {
-  if (!renderer || renderer->opacity_active) {
+  if (!renderer || (renderer->opacity_active && renderer->opacity_value != 1)) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                  "Cannot resize an active CPU opacity scope");
     return false;
@@ -149,7 +149,7 @@ const cpu_framebuffer *cpu_target_find(const qa_cpu_renderer *renderer,
 }
 static bool select_target(qa_cpu_renderer *renderer,
                           const qa_scene_image *image, qa_error *error) {
-  if (renderer->opacity_active) {
+  if (renderer->opacity_active && renderer->opacity_value != 1) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                  "Render target changed inside opacity scope");
     return false;
@@ -300,7 +300,7 @@ static bool begin_opacity(qa_cpu_renderer *renderer, float opacity,
              count * sizeof(*parent->stencil));
     renderer->current = &renderer->opacity;
   }
-  renderer->opacity_parent = parent;
+  renderer->opacity_parent = opacity == 1 ? NULL : parent;
   renderer->opacity_viewport = renderer->view.viewport;
   renderer->opacity_value = opacity;
   renderer->opacity_active = true;
@@ -334,7 +334,8 @@ static bool end_opacity(qa_cpu_renderer *renderer, qa_error *error) {
           parent->color[index + 3] = 255;
       }
   }
-  renderer->current = parent;
+  if (renderer->opacity_value != 1)
+    renderer->current = parent;
   renderer->opacity_parent = NULL;
   renderer->opacity_active = false;
   renderer->opacity_skip = false;
@@ -384,7 +385,7 @@ bool qa_cpu_capture(qa_cpu_renderer *renderer, qa_buffer *out,
   return true;
 }
 bool qa_cpu_present_frame(qa_cpu_renderer *renderer, qa_error *error) {
-  if (!renderer || renderer->opacity_active) {
+  if (!renderer || (renderer->opacity_active && renderer->opacity_value != 1)) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                  "Cannot present an active CPU opacity scope");
     return false;
@@ -538,7 +539,8 @@ bool qa_cpu_execute(qa_cpu_renderer *renderer, const qa_scene_frame *frame,
     }
     if (!ok) {
       if (renderer->opacity_active) {
-        renderer->current = renderer->opacity_parent;
+        if (renderer->opacity_value != 1)
+          renderer->current = renderer->opacity_parent;
         renderer->opacity_parent = NULL;
         renderer->opacity_active = renderer->opacity_skip = false;
       }
@@ -546,7 +548,8 @@ bool qa_cpu_execute(qa_cpu_renderer *renderer, const qa_scene_frame *frame,
     }
   }
   if (renderer->opacity_active) {
-    renderer->current = renderer->opacity_parent;
+    if (renderer->opacity_value != 1)
+      renderer->current = renderer->opacity_parent;
     renderer->opacity_parent = NULL;
     renderer->opacity_active = renderer->opacity_skip = false;
     qa_error_set(error, QA_ERROR_ARGUMENT, frame->command_count,

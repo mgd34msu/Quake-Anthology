@@ -1,0 +1,56 @@
+#ifndef QA_RENDER_GL_H
+#define QA_RENDER_GL_H
+
+#include "qa/display.h"
+#include "qa/scene.h"
+
+typedef struct qa_gl_renderer qa_gl_renderer;
+
+typedef struct qa_gl_options {
+    qa_display *display;
+    uint64_t owner;
+} qa_gl_options;
+
+typedef struct qa_gl_capabilities {
+    unsigned color_bits, alpha_bits, depth_bits, stencil_bits;
+    uint32_t maximum_texture_size, texture_units, vertex_attributes;
+    bool stereo, floating_depth;
+    char vendor[128], renderer[128], version[128], shading_language[128];
+} qa_gl_capabilities;
+
+void qa_gl_options_default(qa_gl_options *options);
+qa_gl_renderer *qa_gl_create(const qa_gl_options *options, qa_error *error);
+/* The display must outlive its renderer. */
+void qa_gl_destroy(qa_gl_renderer *renderer);
+const qa_gl_capabilities *qa_gl_capabilities_get(const qa_gl_renderer *renderer);
+
+/* Executes finalized scene commands in their published order. The call is
+ * synchronous; callers may reset the frame after it returns. */
+bool qa_gl_execute(qa_gl_renderer *renderer, const qa_scene_frame *frame,
+                   qa_error *error);
+bool qa_gl_finish(qa_gl_renderer *renderer, qa_error *error);
+bool qa_gl_set_gamma(qa_gl_renderer *renderer, float gamma, qa_error *error);
+/* Captures tightly packed RGBA8 rows from top to bottom after output gamma. */
+bool qa_gl_capture(qa_gl_renderer *renderer, qa_buffer *out,
+                   uint32_t *width, uint32_t *height, qa_error *error);
+/* Window coordinates use OpenGL's bottom-left origin. */
+bool qa_gl_read_depth(qa_gl_renderer *renderer, uint32_t x, uint32_t y,
+                      float *out, qa_error *error);
+/* Depth-image samples are returned as float32 in texture order: V=0 first. */
+bool qa_gl_capture_depth_image(qa_gl_renderer *renderer,
+                               const qa_scene_image *image, qa_buffer *out,
+                               uint32_t *width, uint32_t *height,
+                               qa_error *error);
+bool qa_gl_set_overdraw(qa_gl_renderer *renderer, bool enabled,
+                        qa_error *error);
+/* Stencil rows follow GL readback order and four-byte row alignment. */
+bool qa_gl_read_overdraw(qa_gl_renderer *renderer, uint8_t *destination,
+                         size_t bytes, qa_error *error);
+
+/* Builds a complete replacement window, context, and renderer before
+ * publishing them. Failure leaves both caller-owned objects unchanged. */
+bool qa_gl_restart(qa_gl_renderer **renderer, qa_display **display,
+                   const qa_display_options *display_options,
+                   const qa_gl_options *renderer_options, qa_error *error);
+
+#endif

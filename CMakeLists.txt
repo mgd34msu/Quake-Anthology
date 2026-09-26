@@ -30,7 +30,7 @@ find_package(PNG REQUIRED)
 find_package(JPEG REQUIRED)
 find_package(ICU REQUIRED COMPONENTS uc)
 find_package(Threads REQUIRED)
-find_package(SDL2 REQUIRED)
+find_package(SDL2 2.0.18 REQUIRED)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(VORBISFILE REQUIRED IMPORTED_TARGET vorbisfile)
 find_library(QA_GIF_LIBRARY NAMES gif REQUIRED)
@@ -190,6 +190,32 @@ add_library(qa_render_cpu STATIC
     src/render/cpu/fragment.c
     src/render/cpu/fog.c)
 target_link_libraries(qa_render_cpu PUBLIC qa_scene)
+
+add_library(qa_display STATIC src/platform/display.c)
+target_link_libraries(qa_display PUBLIC qa_core PRIVATE SDL2::SDL2)
+
+add_library(qa_render_gl STATIC
+    src/render/gl/api.c
+    src/render/gl/program.c
+    src/render/gl/resources.c
+    src/render/gl/passes.c
+    src/render/gl/renderer.c)
+target_link_libraries(qa_render_gl PUBLIC qa_scene qa_display PRIVATE SDL2::SDL2)
+
+add_library(qa_input STATIC
+    src/input/bindings.c
+    src/input/buttons.c
+    src/input/client_commands.c
+    src/input/commands.c
+    src/input/gamepad.c
+    src/input/haptics.c
+    src/input/keys.c
+    src/input/mouse.c
+    src/input/seat.c
+    src/input/settings.c
+    src/input/source_devices.c
+    src/platform/input.c)
+target_link_libraries(qa_input PUBLIC qa_movement qa_console qa_content qa_display SDL2::SDL2)
 
 add_library(qa_network STATIC
     src/network/connections.c
