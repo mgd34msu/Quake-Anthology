@@ -1,0 +1,392 @@
+/* Anthology movement/q1/pusher.ts and shared simulation/physics.ts.
+ * Copyright (C) 1996-2005 Id Software. SPDX-License-Identifier: GPL-2.0-or-later */
+#include "internal.h"
+#include <stdlib.h>
+
+typedef struct ph_pushed {
+    qa_actor_id actor;
+    qa_vec3 origin, angles;
+    float delta_yaw;
+} ph_pushed;
+struct qa_physics_transaction {
+    ph_pushed *entries;
+    size_t count, capacity;
+};
+
+static int candidate_order(qa_physics *p, qa_actor_id a, qa_actor_id b) {
+    if (p->services.source_order) return p->services.source_order(p->services.context, a, b);
+    const qa_actor_record *ar = qa_actors_get(qa_world_actors(p->world), a);
+    const qa_actor_record *br = qa_actors_get(qa_world_actors(p->world), b);
+    uint32_t aslot = ar && ar->has_source ? ar->source_slot : a.slot;
+    uint32_t bslot = br && br->has_source ? br->source_slot : b.slot;
+    if (aslot != bslot) return aslot < bslot ? -1 : 1;
+    if (ar && br && ar->owner != br->owner) return ar->owner < br->owner ? -1 : 1;
+    return a.slot < b.slot ? -1 : a.slot > b.slot;
+}
+
+static bool candidates(qa_physics *p, qa_actor_id **out, size_t *count, qa_error *error) {
+    size_t capacity = qa_actors_count(qa_world_actors(p->world));
+    *count = 0;
+    *out = NULL;
+    if (!capacity) return true;
+    if (capacity > SIZE_MAX/(2*sizeof(qa_actor_id))) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Pusher candidate count overflow"); return false;
+    }
+    qa_actor_id *list = malloc(capacity*2*sizeof(*list));
+    if (!list) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Pusher candidates allocation failed"); return false; }
+    const qa_actor_record *record;
+    uint32_t cursor = 0;
+    while (*count < capacity && qa_actors_next(qa_world_actors(p->world), &cursor, &record)) list[(*count)++] = record->id;
+    qa_actor_id *temporary = list+capacity;
+    for (size_t width = 1; width < *count; width *= 2) {
+        for (size_t start = 0; start < *count; start += 2*width) {
+            size_t middle = start+width < *count ? start+width : *count;
+            size_t end = middle+width < *count ? middle+width : *count;
+            size_t left = start, right = middle, target = start;
+            while (left < middle && right < end)
+                temporary[target++] = candidate_order(p, list[left], list[right]) <= 0 ? list[left++] : list[right++];
+            while (left < middle) temporary[target++] = list[left++];
+            while (right < end) temporary[target++] = list[right++];
+        }
+        memcpy(list, temporary, *count*sizeof(*list));
+    }
+    *out = list;
+    return true;
+}
+
+static bool save_push(struct qa_physics_transaction *transaction, qa_actor_id actor,
+                       const qa_body_state *body, const qa_physics_properties *props,
+                       qa_error *error) {
+    if (transaction->count == transaction->capacity) {
+        size_t capacity = transaction->capacity ? transaction->capacity*2 : 32;
+        if (capacity < transaction->capacity || capacity > SIZE_MAX/sizeof(*transaction->entries)) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Pusher rollback count overflow"); return false;
+        }
+        ph_pushed *entries = realloc(transaction->entries, capacity*sizeof(*entries));
+        if (!entries) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Pusher rollback allocation failed"); return false; }
+        transaction->entries = entries;
+        transaction->capacity = capacity;
+    }
+    transaction->entries[transaction->count++] = (ph_pushed){.actor = actor,
+        .origin = body->origin, .angles = body->angles, .delta_yaw = props->delta_yaw};
+    return true;
+}
+
+static bool restore_q2(qa_physics *p, ph_pushed saved, qa_error *error) {
+    qa_body_state body;
+    qa_physics_properties props;
+    int read = ph_read(p, saved.actor, &body, &props, error);
+    if (read <= 0) return read == 0;
+    body.origin = saved.origin;
+    body.angles = saved.angles;
+    if (!ph_write(p, saved.actor, &body, error)) return false;
+    if ((props.flags & QA_PHYSICS_PLAYER) && ph_live(p, saved.actor)) {
+        if (p->services.read(p->services.context, saved.actor, &props)) {
+            props.delta_yaw = saved.delta_yaw;
+            if (!ph_properties(p, saved.actor, &props, error)) return false;
+        }
+    }
+    return ph_link(p, saved.actor, false, error);
+}
+
+static bool overlaps_strict(qa_bounds a, qa_bounds b) {
+    return a.mins.x < b.maxs.x && a.mins.y < b.maxs.y && a.mins.z < b.maxs.z &&
+           a.maxs.x > b.mins.x && a.maxs.y > b.mins.y && a.maxs.z > b.mins.z;
+}
+
+static qa_vec3 rotated_delta(qa_vec3 origin, qa_vec3 pusher_origin, qa_vec3 move,
+                              qa_vec3 forward, qa_vec3 right, qa_vec3 up) {
+    qa_vec3 offset = qa_vec_sub(qa_vec_add(origin, move), pusher_origin);
+    qa_vec3 rotated = qa_v3(qa_vec_dot(offset, forward), -qa_vec_dot(offset, right), qa_vec_dot(offset, up));
+    return qa_vec_add(move, qa_vec_sub(rotated, offset));
+}
+
+static bool q1_push(qa_physics *p, const qa_physics_push *input,
+                     qa_physics_result *result, qa_error *error) {
+    qa_body_state original, body;
+    qa_physics_properties props;
+    int read = ph_read(p, input->actor, &original, &props, error);
+    if (read <= 0) { result->status = QA_PHYSICS_REMOVED; return read == 0; }
+    if (input->elapsed_ns > INT64_MAX || props.local_time_ns > INT64_MAX-(int64_t)input->elapsed_ns) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 pusher local time overflow"); return false;
+    }
+    bool rotating = ph_moving(input->angular_displacement);
+    int64_t local = props.local_time_ns+(int64_t)input->elapsed_ns;
+    qa_linked_body linked;
+    qa_bounds original_bounds = qa_world_linked(p->world, input->actor, &linked) ?
+        linked.absolute_bounds : qa_bounds_translate(original.bounds, original.origin);
+    props.local_time_ns = local;
+    if (!ph_properties(p, input->actor, &props, error)) return false;
+    if (!ph_moving(input->displacement) && !rotating) return true;
+    read = ph_read(p, input->actor, &body, &props, error);
+    if (read <= 0) { result->status = QA_PHYSICS_REMOVED; return read == 0; }
+    body.origin = qa_vec_add(body.origin, input->displacement);
+    body.angles = qa_vec_add(body.angles, input->angular_displacement);
+    if (!ph_write(p, input->actor, &body, error) || !ph_link(p, input->actor, false, error)) return false;
+    if (!ph_live(p, input->actor) || !qa_world_linked(p->world, input->actor, &linked)) {
+        result->status = QA_PHYSICS_REMOVED; return true;
+    }
+    qa_bounds bounds = rotating ? linked.absolute_bounds : qa_bounds_translate(original_bounds, input->displacement);
+    qa_vec3 pusher_origin = body.origin, forward, right, up;
+    ph_axes(qa_vec_scale(input->angular_displacement, -1), &forward, &right, &up);
+    qa_actor_id *list;
+    size_t count;
+    if (!candidates(p, &list, &count, error)) return false;
+    struct qa_physics_transaction saved = {0};
+    bool ok = true;
+    for (size_t i = 0; i < count && ok; ++i) {
+        qa_actor_id actor = list[i];
+        if (qa_actor_id_equal(actor, input->actor)) continue;
+        read = ph_read(p, actor, &body, &props, error);
+        if (read < 0) { ok = false; break; }
+        if (!read || props.motion == QA_PHYSICS_PUSH || props.motion == QA_PHYSICS_STOP ||
+            props.motion == QA_PHYSICS_STATIONARY || props.motion == QA_PHYSICS_NOCLIP) continue;
+        bool rider = qa_actor_id_equal(body.ground, input->actor) &&
+                     (props.family != QA_COLLISION_Q1 || (props.flags & QA_PHYSICS_ONGROUND));
+        if (!rider) {
+            if (!qa_world_linked(p->world, actor, &linked) || !overlaps_strict(linked.absolute_bounds, bounds)) continue;
+            bool blocked;
+            if (!ph_test_position(p, actor, &blocked, error)) { ok = false; break; }
+            if (!blocked) continue;
+        }
+        if (!(props.flags & QA_PHYSICS_PLAYER)) {
+            props.flags &= ~QA_PHYSICS_ONGROUND;
+            body.ground = ph_none();
+            if (!ph_properties(p, actor, &props, error) || !ph_write(p, actor, &body, error)) { ok = false; break; }
+        }
+        if (!save_push(&saved, actor, &body, &props, error)) { ok = false; break; }
+        qa_vec3 original_position = body.origin;
+        qa_vec3 delta = rotating ? rotated_delta(body.origin, pusher_origin, input->displacement, forward, right, up) : input->displacement;
+        /* Source disables this brush during push, including nested touches. */
+        qa_body_link_state pusher_link;
+        bool had_link = qa_world_link_state(p->world, input->actor, &pusher_link);
+        if (!qa_world_suspend_collision(p->world, input->actor, error)) { ok = false; break; }
+        qa_trace_result trace;
+        ok = qa_physics_push_entity(p, actor, delta, NULL, 0, &trace, error);
+        if (ph_live(p, input->actor)) {
+            if (ok) ok = ph_link(p, input->actor, false, error);
+            else if (had_link) {
+                qa_error ignored;
+                (void)qa_world_restore_link_state(p->world, input->actor, &pusher_link, &ignored);
+            }
+        }
+        if (!ok) break;
+        if (!ph_live(p, input->actor)) { result->status = QA_PHYSICS_REMOVED; break; }
+        qa_body_state live_pusher;
+        qa_physics_properties live_properties;
+        read = ph_read(p, input->actor, &live_pusher, &live_properties, error);
+        if (read < 0) { ok = false; break; }
+        if (!read) { result->status = QA_PHYSICS_REMOVED; break; }
+        pusher_origin = live_pusher.origin;
+        read = ph_read(p, actor, &body, &props, error);
+        if (read < 0) { ok = false; break; }
+        if (!read) continue;
+        bool blocked;
+        if (!ph_test_position(p, actor, &blocked, error)) { ok = false; break; }
+        if (!blocked) {
+            if (rotating) { body.angles = qa_vec_add(body.angles, input->angular_displacement); ok = ph_write(p, actor, &body, error); }
+            continue;
+        }
+        if (body.bounds.mins.x == body.bounds.maxs.x) continue;
+        if (props.solid == QA_PHYSICS_NOT_SOLID || props.solid == QA_PHYSICS_TRIGGER || props.solid == QA_PHYSICS_CORPSE) {
+            body.bounds.mins = qa_v3(0, 0, body.bounds.mins.z);
+            body.bounds.maxs = body.bounds.mins;
+            ok = ph_write(p, actor, &body, error);
+            continue;
+        }
+        body.origin = original_position;
+        if (!ph_write(p, actor, &body, error) || !ph_link(p, actor, true, error)) { ok = false; break; }
+        read = ph_read(p, input->actor, &body, &props, error);
+        if (read < 0) { ok = false; break; }
+        if (!read) { result->status = QA_PHYSICS_REMOVED; break; }
+        body.origin = original.origin;
+        body.angles = original.angles;
+        if (props.local_time_ns < INT64_MIN+(int64_t)input->elapsed_ns) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 pusher rollback time underflow"); ok = false; break;
+        }
+        props.local_time_ns -= (int64_t)input->elapsed_ns;
+        if (!ph_write(p, input->actor, &body, error) || !ph_properties(p, input->actor, &props, error) ||
+            !ph_link(p, input->actor, false, error)) { ok = false; break; }
+        result->status = QA_PHYSICS_BLOCKED;
+        result->obstacle = actor;
+        if (p->services.blocked && !p->services.blocked(p->services.context, input->actor, actor, error)) { ok = false; break; }
+        for (size_t j = 0; j < saved.count; ++j) {
+            ph_pushed entry = saved.entries[j];
+            read = ph_read(p, entry.actor, &body, &props, error);
+            if (read < 0) { ok = false; break; }
+            if (!read) continue;
+            body.origin = entry.origin;
+            if (rotating) body.angles = qa_vec_sub(body.angles, input->angular_displacement);
+            if (!ph_write(p, entry.actor, &body, error) || !ph_link(p, entry.actor, false, error)) { ok = false; break; }
+        }
+        if (!ph_live(p, input->actor)) result->status = QA_PHYSICS_REMOVED;
+        break;
+    }
+    free(saved.entries);
+    free(list);
+    return ok;
+}
+
+static float snap_eighth(float v) { return truncf(v*8+(v > 0 ? 0.5f : -0.5f))*0.125f; }
+
+static bool q2_push(qa_physics *p, const qa_physics_push *input,
+                     struct qa_physics_transaction *saved, bool touch,
+                     qa_physics_result *result, qa_error *error) {
+    qa_body_state body;
+    qa_physics_properties props;
+    int read = ph_read(p, input->actor, &body, &props, error);
+    if (read <= 0) { result->status = QA_PHYSICS_REMOVED; return read == 0; }
+    qa_vec3 move = qa_v3(snap_eighth(input->displacement.x), snap_eighth(input->displacement.y), snap_eighth(input->displacement.z));
+    if (!ph_moving(move) && !ph_moving(input->angular_displacement)) return true;
+    if (!save_push(saved, input->actor, &body, &props, error)) return false;
+    body.origin = qa_vec_add(body.origin, move);
+    body.angles = qa_vec_add(body.angles, input->angular_displacement);
+    if (!ph_write(p, input->actor, &body, error) || !ph_link(p, input->actor, false, error)) return false;
+    qa_linked_body linked;
+    if (!ph_live(p, input->actor) || !qa_world_linked(p->world, input->actor, &linked)) {
+        result->status = QA_PHYSICS_REMOVED; return true;
+    }
+    qa_bounds bounds = linked.absolute_bounds;
+    qa_vec3 forward, right, up;
+    ph_axes(qa_vec_scale(input->angular_displacement, -1), &forward, &right, &up);
+    qa_actor_id *list;
+    size_t count;
+    if (!candidates(p, &list, &count, error)) return false;
+    bool ok = true;
+    for (size_t i = 0; i < count && ok; ++i) {
+        qa_actor_id actor = list[i];
+        if (qa_actor_id_equal(actor, input->actor) || !ph_live(p, input->actor)) continue;
+        read = ph_read(p, actor, &body, &props, error);
+        if (read < 0) { ok = false; break; }
+        if (!read || !qa_world_linked(p->world, actor, &linked) || props.motion == QA_PHYSICS_PUSH ||
+            props.motion == QA_PHYSICS_STOP || props.motion == QA_PHYSICS_STATIONARY || props.motion == QA_PHYSICS_NOCLIP) continue;
+        bool rider = qa_actor_id_equal(body.ground, input->actor), blocked = false;
+        if (!rider) {
+            if (!qa_bounds_overlap(linked.absolute_bounds, bounds)) continue;
+            if (!ph_test_position(p, actor, &blocked, error)) { ok = false; break; }
+            if (!blocked) continue;
+        }
+        qa_body_state pusher;
+        qa_physics_properties pusher_props;
+        read = ph_read(p, input->actor, &pusher, &pusher_props, error);
+        if (read < 0) { ok = false; break; }
+        if (!read) { result->status = QA_PHYSICS_REMOVED; break; }
+        blocked = pusher_props.motion == QA_PHYSICS_STOP && !rider;
+        if (!blocked) {
+            if (!save_push(saved, actor, &body, &props, error)) { ok = false; break; }
+            body.origin = qa_vec_add(body.origin, rotated_delta(body.origin, pusher.origin, move, forward, right, up));
+            if (!rider) body.ground = ph_none();
+            if (!ph_write(p, actor, &body, error)) { ok = false; break; }
+            if (props.flags & QA_PHYSICS_PLAYER) {
+                if (p->services.read(p->services.context, actor, &props)) {
+                    props.delta_yaw += input->angular_displacement.y;
+                    if (!ph_properties(p, actor, &props, error)) { ok = false; break; }
+                }
+            }
+            if (!ph_live(p, input->actor)) { result->status = QA_PHYSICS_REMOVED; break; }
+            if (!ph_live(p, actor)) continue;
+            if (!ph_test_position(p, actor, &blocked, error)) { ok = false; break; }
+            if (!blocked) { ok = ph_link(p, actor, false, error); continue; }
+            read = ph_read(p, actor, &body, &props, error);
+            if (read < 0) { ok = false; break; }
+            if (!read) continue;
+            body.origin = qa_vec_sub(body.origin, move);
+            if (!ph_write(p, actor, &body, error) || !ph_test_position(p, actor, &blocked, error)) { ok = false; break; }
+            if (!blocked) { --saved->count; continue; }
+        }
+        for (size_t j = saved->count; j > 0; --j)
+            if (!restore_q2(p, saved->entries[j-1], error)) { ok = false; break; }
+        if (!ok) break;
+        result->status = QA_PHYSICS_BLOCKED;
+        result->obstacle = actor;
+        if (ph_live(p, input->actor) && p->services.blocked)
+            ok = p->services.blocked(p->services.context, input->actor, actor, error);
+        break;
+    }
+    free(list);
+    if (ok && touch && result->status == QA_PHYSICS_MOVED)
+        for (size_t j = saved->count; j > 0; --j)
+            if (!qa_physics_touch_triggers(p, saved->entries[j-1].actor, error)) return false;
+    return ok;
+}
+
+bool qa_physics_push_pusher(qa_physics *p, const qa_physics_push *input,
+                            qa_physics_result *result, qa_error *error) {
+    if (!p || !input || !result || !qa_vec_finite(input->displacement) || !qa_vec_finite(input->angular_displacement)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid pusher displacement"); return false;
+    }
+    *result = (qa_physics_result){.status = QA_PHYSICS_MOVED};
+    qa_body_state body;
+    qa_physics_properties props;
+    int read = ph_read(p, input->actor, &body, &props, error);
+    if (read <= 0) { result->status = ph_live(p, input->actor) ? QA_PHYSICS_UNMANAGED : QA_PHYSICS_REMOVED; return read == 0; }
+    if (props.family == QA_COLLISION_Q1) return q1_push(p, input, result, error);
+    struct qa_physics_transaction local = {0};
+    struct qa_physics_transaction *saved = p->push_transaction ? p->push_transaction : &local;
+    bool ok = q2_push(p, input, saved, !p->push_transaction, result, error);
+    free(local.entries);
+    return ok;
+}
+
+bool qa_physics_push_team(qa_physics *p, const qa_physics_push *parts, size_t count,
+                          qa_physics_result *result, qa_error *error) {
+    if (!p || !result || (count && !parts) || p->push_transaction) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid or nested pusher team transaction"); return false;
+    }
+    for (size_t i = 0; i < count; ++i)
+        if (!qa_vec_finite(parts[i].displacement) || !qa_vec_finite(parts[i].angular_displacement)) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, i, "Invalid pusher team displacement"); return false;
+        }
+    *result = (qa_physics_result){.status = QA_PHYSICS_MOVED};
+    struct qa_physics_transaction saved = {0};
+    p->push_transaction = &saved;
+    bool ok = true;
+    for (size_t i = 0; i < count; ++i) {
+        if (!ph_live(p, parts[i].actor)) continue;
+        qa_physics_result part;
+        if (!qa_physics_push_pusher(p, &parts[i], &part, error)) { ok = false; break; }
+        if (part.status == QA_PHYSICS_BLOCKED) { *result = part; break; }
+    }
+    p->push_transaction = NULL;
+    if (ok && result->status != QA_PHYSICS_BLOCKED)
+        for (size_t i = saved.count; i > 0; --i)
+            if (!qa_physics_touch_triggers(p, saved.entries[i-1].actor, error)) { ok = false; break; }
+    free(saved.entries);
+    return ok;
+}
+
+bool qa_physics_step_q1_pusher(qa_physics *p, qa_actor_id actor,
+                              const qa_source_frame *frame, bool rotate,
+                              qa_physics_result *result, qa_error *error) {
+    if (!p || !frame || !result) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q1 pusher frame"); return false;
+    }
+    *result = (qa_physics_result){.status = QA_PHYSICS_MOVED};
+    qa_body_state body;
+    qa_physics_properties props;
+    int read = ph_read(p, actor, &body, &props, error);
+    if (read <= 0) { result->status = QA_PHYSICS_REMOVED; return read == 0; }
+    int64_t old_time = props.local_time_ns, think_time = props.next_think_ns;
+    if (frame->elapsed_ns > INT64_MAX || old_time > INT64_MAX-(int64_t)frame->elapsed_ns) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 pusher frame time overflow"); return false;
+    }
+    uint64_t elapsed = think_time < old_time+(int64_t)frame->elapsed_ns ?
+        (think_time > old_time ? (uint64_t)think_time-(uint64_t)old_time : 0) : frame->elapsed_ns;
+    if (elapsed) {
+        float seconds = (float)((double)elapsed*0.000000001);
+        qa_physics_push push = {.actor = actor, .elapsed_ns = elapsed};
+        if (rotate) push.angular_displacement = qa_vec_scale(props.angular_velocity, seconds);
+        else push.displacement = qa_vec_scale(body.velocity, seconds);
+        if (!qa_physics_push_pusher(p, &push, result, error)) return false;
+    }
+    read = ph_read(p, actor, &body, &props, error);
+    if (read <= 0) { result->status = QA_PHYSICS_REMOVED; return read == 0; }
+    if (think_time > old_time && think_time <= props.local_time_ns) {
+        props.next_think_ns = 0;
+        if (!ph_properties(p, actor, &props, error)) return false;
+        if (ph_live(p, actor) && p->services.pusher_think &&
+            !p->services.pusher_think(p->services.context, actor, frame, error)) return false;
+    }
+    if (!ph_live(p, actor)) result->status = QA_PHYSICS_REMOVED;
+    return true;
+}
