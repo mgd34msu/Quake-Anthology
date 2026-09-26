@@ -42,6 +42,9 @@ typedef struct qa_command_tokens {
 bool qa_command_tokenize(const char *text, qa_console_dialect dialect,
                           bool console_text, qa_command_tokens *out, qa_error *error);
 void qa_command_tokens_free(qa_command_tokens *tokens);
+/* First source separator, or length when absent. Quotes protect semicolons;
+ * line feeds always split, and Q3 also splits at carriage returns. */
+size_t qa_command_separator(const char *text, size_t length, qa_console_dialect dialect);
 /* Original command-list filter accepts matching prefixes. */
 bool qa_command_filter(const char *pattern, const char *name, bool case_sensitive);
 

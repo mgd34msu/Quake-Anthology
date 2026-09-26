@@ -739,14 +739,7 @@ bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_e
         if (!copy_context(&context, &first->context, error)) { success = false; break; }
         qac_text text = {0};
         if (!command_text(first, &text, error)) { free((char *)context.script); free(text.data); success = false; break; }
-        bool quoted = false;
-        size_t offset = 0;
-        while (offset < text.size) {
-            char c = text.data[offset];
-            if (c == '"') quoted = !quoted;
-            if ((!quoted && c == ';') || c == '\n' || (context.dialect == QA_CONSOLE_Q3 && c == '\r')) break;
-            ++offset;
-        }
+        size_t offset = qa_command_separator(text.data, text.size, context.dialect);
         size_t maximum = console->options.maximum_command == 0 ? 1024 : console->options.maximum_command;
         if (offset >= maximum) {
             if (context.dialect != QA_CONSOLE_Q3) {

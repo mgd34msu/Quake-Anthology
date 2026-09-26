@@ -4,6 +4,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+size_t qa_command_separator(const char *text, size_t length, qa_console_dialect dialect)
+{
+    bool quoted = false;
+    for (size_t offset = 0; offset < length; ++offset) {
+        char c = text[offset];
+        if (c == '"') quoted = !quoted;
+        if ((!quoted && c == ';') || c == '\n' || (dialect == QA_CONSOLE_Q3 && c == '\r'))
+            return offset;
+    }
+    return length;
+}
+
 bool qac_fail(qa_error *error, qa_status code, const char *message)
 {
     qa_error_set(error, code, 0, "%s", message);
