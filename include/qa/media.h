@@ -115,4 +115,24 @@ bool qa_cin_playback_capture(qa_cin_playback *, qa_cin_playback_checkpoint *, qa
 void qa_cin_playback_checkpoint_free(qa_cin_playback_checkpoint *);
 bool qa_cin_playback_restore(qa_cin_playback *, const qa_cin_playback_checkpoint *, qa_error *);
 
+typedef enum qa_roq_book_mode { QA_ROQ_BOOK_NORMAL, QA_ROQ_BOOK_HALF, QA_ROQ_BOOK_DOUBLE } qa_roq_book_mode;
+/* Zero initialize per movie. All pixel profiles share the same backing bytes,
+ * preserving partial codebook updates and mode changes without type punning. */
+typedef struct qa_roq_codebooks {
+    uint8_t book2[256 * 8 * 4], book4[256 * 32 * 4], book8[256 * 128 * 4];
+} qa_roq_codebooks;
+uint16_t qa_roq_yuv565(uint8_t y, uint8_t u, uint8_t v);
+uint32_t qa_roq_yuv_rgba(uint8_t y, uint8_t u, uint8_t v);
+bool qa_roq_codebook_decode(qa_roq_codebooks *, qa_bytes bytes, uint16_t flags,
+                            qa_roq_book_mode, unsigned bytes_per_pixel, qa_bytes gray,
+                            bool diagnostic_two_only, size_t *consumed, qa_error *);
+typedef enum qa_roq_audio_mode {
+    QA_ROQ_MONO_TO_MONO, QA_ROQ_MONO_TO_STEREO, QA_ROQ_STEREO_TO_STEREO, QA_ROQ_STEREO_TO_MONO
+} qa_roq_audio_mode;
+/* Source size means input bytes except STEREO_TO_MONO, where it means output
+ * mono samples. Output is native signed PCM; returned frames exclude channels. */
+bool qa_roq_audio_decode(qa_bytes input, size_t source_size, uint16_t flags,
+                          qa_roq_audio_mode, bool signed_output, int16_t *output,
+                          size_t sample_capacity, size_t *frames, qa_error *);
+
 #endif

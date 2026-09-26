@@ -138,7 +138,12 @@ add_library(qa_audio STATIC
     src/audio/wavelet.c)
 target_link_libraries(qa_audio PUBLIC qa_content PRIVATE SDL2::SDL2 PkgConfig::VORBISFILE)
 
-add_library(qa_media STATIC src/media/source.c src/media/cin.c src/media/cin_playback.c)
+add_library(qa_media STATIC
+    src/media/source.c
+    src/media/cin.c
+    src/media/cin_playback.c
+    src/media/roq_codebook.c
+    src/media/roq_audio.c)
 target_link_libraries(qa_media PUBLIC qa_content)
 
 add_library(qa_scene STATIC
