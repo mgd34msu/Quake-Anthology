@@ -1,0 +1,54 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+#ifndef QA_COLLISION_INTERNAL_H
+#define QA_COLLISION_INTERNAL_H
+
+#include "qa/collision.h"
+#include <string.h>
+
+typedef struct qa_collision_ops {
+    void (*destroy)(void *);
+    /* Results use the geometry's native family; the shared layer adapts them.
+     * For Q1 policies on Q2/Q3 maps, also classify the reached segment's media. */
+    bool (*trace)(void *, const qa_trace_query *, qa_trace_result *, qa_error *);
+    bool (*point_contents)(void *, const qa_point_query *, qa_point_contents *, qa_error *);
+} qa_collision_ops;
+typedef struct qa_collision_kernel { void *state; const qa_collision_ops *ops; } qa_collision_kernel;
+bool qa_q1_collision_create(const qa_bsp_view *, qa_collision_kernel *, qa_error *);
+bool qa_q2_collision_create(const qa_bsp_view *, qa_collision_kernel *, qa_error *);
+bool qa_q2_collision_set_material(void *, uint32_t texinfo, qa_bytes, qa_error *);
+bool qa_q3_collision_create(const qa_bsp_view *, qa_collision_kernel *, qa_error *);
+/* Temporary actor geometry. Q1 preserves recursive box-hull behavior; Q3
+ * implements boxes and capsules, including capsule-vs-capsule sweeps. */
+bool qa_q1_trace_box(const qa_trace_query *, qa_bounds target, qa_vec3 origin, qa_trace_result *, qa_error *);
+bool qa_q3_trace_shape(const qa_trace_query *, qa_shape_kind target_kind, qa_bounds target, qa_vec3 origin, int32_t contents, qa_trace_result *, qa_error *);
+bool qa_collision_trace_body(const qa_trace_query *, qa_collision_family actor_family, qa_shape_kind, qa_bounds, qa_vec3, int32_t contents, qa_trace_result *, qa_error *);
+void qa_collision_adapt_trace(qa_trace_result *, const qa_trace_policy *);
+void qa_collision_adapt_point(qa_point_contents *, const qa_trace_policy *);
+
+static inline qa_vec3 qa_bsp_to_vec(qa_bsp_vec3 v) { return qa_v3(v.x,v.y,v.z); }
+static inline qa_bounds qa_bsp_to_bounds(qa_bsp_bounds b) { return (qa_bounds){qa_bsp_to_vec(b.min),qa_bsp_to_vec(b.max)}; }
+static inline qa_collision_plane qa_collision_make_plane(qa_vec3 n, float distance, int32_t type) {
+    return (qa_collision_plane){n,distance,type,(uint8_t)((n.x<0.0f?1u:0u)|(n.y<0.0f?2u:0u)|(n.z<0.0f?4u:0u))};
+}
+static inline qa_collision_plane qa_collision_bsp_plane(qa_bsp_plane p) { return qa_collision_make_plane(qa_bsp_to_vec(p.normal),p.distance,p.type); }
+static inline qa_trace_result qa_collision_empty_trace(const qa_trace_query *q, qa_collision_family family) {
+    qa_trace_result result={0}; result.family=family; result.fraction=1.0f; result.end=q->end;
+    result.contents=family==QA_COLLISION_Q1?-1:0; result.model=q->target.inline_model?q->target.model:0; return result;
+}
+static inline bool qa_collision_bounds_valid(qa_bounds b) {
+    return qa_vec_finite(b.mins)&&qa_vec_finite(b.maxs)&&b.mins.x<=b.maxs.x&&b.mins.y<=b.maxs.y&&b.mins.z<=b.maxs.z;
+}
+static inline float qa_vec_component(qa_vec3 v, unsigned axis) { return axis==0?v.x:axis==1?v.y:v.z; }
+static inline void qa_vec_set_component(qa_vec3 *v, unsigned axis, float value) { if(axis==0)v->x=value;else if(axis==1)v->y=value;else v->z=value; }
+/* Quake angle basis: forward, negative-right, up. */
+static inline void qa_collision_basis(qa_vec3 angles, qa_vec3 basis[3]) {
+    const float radians=0.017453292519943295769f;
+    float sy=sinf(angles.y*radians),cy=cosf(angles.y*radians),sp=sinf(angles.x*radians),cp=cosf(angles.x*radians),sr=sinf(angles.z*radians),cr=cosf(angles.z*radians);
+    basis[0]=qa_v3(cp*cy,cp*sy,-sp);
+    basis[1]=qa_v3(sr*sp*cy-cr*sy,sr*sp*sy+cr*cy,sr*cp);
+    basis[2]=qa_v3(cr*sp*cy+sr*sy,cr*sp*sy-sr*cy,cr*cp);
+}
+static inline qa_vec3 qa_collision_to_local(qa_vec3 v,const qa_vec3 basis[3]) { return qa_v3(qa_vec_dot(v,basis[0]),qa_vec_dot(v,basis[1]),qa_vec_dot(v,basis[2])); }
+static inline qa_vec3 qa_collision_from_local(qa_vec3 v,const qa_vec3 basis[3]) { return qa_vec_add(qa_vec_add(qa_vec_scale(basis[0],v.x),qa_vec_scale(basis[1],v.y)),qa_vec_scale(basis[2],v.z)); }
+
+#endif

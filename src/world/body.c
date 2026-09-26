@@ -1,0 +1,389 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+#include "collision/world_internal.h"
+
+#include <stdlib.h>
+#include <string.h>
+
+static bool fail(qa_error *error, qa_status code, const char *message)
+{ qa_error_set(error,code,0,"%s",message); return false; }
+
+qa_world_body *qa_world_raw_body(const qa_world *world, uint32_t slot)
+{
+    if(world==NULL || slot>=world->capacity) return NULL;
+    qa_world_body *page=world->pages[slot>>QA_BODY_PAGE_SHIFT];
+    return page==NULL?NULL:&page[slot&(QA_BODY_PAGE_SIZE-1u)];
+}
+
+qa_world_body *qa_world_find_body(const qa_world *world, qa_actor_id actor)
+{
+    qa_world_body *body=qa_world_raw_body(world,actor.slot);
+    return body!=NULL && body->present && qa_actor_id_equal(body->actor,actor)
+        && qa_actors_get(world->actors,actor)!=NULL?body:NULL;
+}
+
+static qa_world_body *ensure_body(qa_world *world, qa_actor_id actor, qa_error *error)
+{
+    if(world==NULL || qa_actors_get(world->actors,actor)==NULL) {
+        fail(error,QA_ERROR_ARGUMENT,"Body actor is not live in this world"); return NULL;
+    }
+    uint32_t page=actor.slot>>QA_BODY_PAGE_SHIFT;
+    if(world->pages[page]==NULL) {
+        world->pages[page]=calloc(QA_BODY_PAGE_SIZE,sizeof(qa_world_body));
+        if(world->pages[page]==NULL) { fail(error,QA_ERROR_MEMORY,"Cannot allocate body page"); return NULL; }
+    }
+    qa_world_body *body=qa_world_raw_body(world,actor.slot);
+    if(body->present && !qa_actor_id_equal(body->actor,actor)) {
+        fail(error,QA_ERROR_ARGUMENT,"Session did not forward the previous actor release"); return NULL;
+    }
+    return body;
+}
+
+static bool valid_state(const qa_body_state *state)
+{
+    return state!=NULL && qa_vec_finite(state->origin) && qa_vec_finite(state->angles)
+        && qa_vec_finite(state->velocity) && qa_collision_bounds_valid(state->bounds);
+}
+
+bool qa_world_create(qa_actor_registry *actors, qa_collision_geometry *geometry,
+                     const qa_world_hooks *hooks, qa_world **out, qa_error *error)
+{
+    if(actors==NULL || geometry==NULL || out==NULL)
+        return fail(error,QA_ERROR_ARGUMENT,"World needs actors, geometry and output");
+    qa_bounds bounds;
+    if(!qa_collision_model_bounds(geometry,0,&bounds,error)) return false;
+    qa_world *world=calloc(1,sizeof(*world));
+    if(world==NULL) return fail(error,QA_ERROR_MEMORY,"Cannot allocate shared world");
+    world->actors=actors; world->geometry=geometry; world->capacity=qa_actors_capacity(actors);
+    world->page_count=(world->capacity-1u)/QA_BODY_PAGE_SIZE+1u;
+    world->pages=calloc(world->page_count,sizeof(*world->pages));
+    if(world->pages==NULL) { free(world); return fail(error,QA_ERROR_MEMORY,"Cannot allocate body page index"); }
+    if(hooks!=NULL) world->hooks=*hooks;
+    if(!qa_spatial_initialize(world,bounds,error)) { free(world->pages); free(world); return false; }
+    *out=world; return true;
+}
+
+bool qa_world_destroy(qa_world *world, qa_error *error)
+{
+    if(world==NULL) return true;
+    if(world->callback_depth!=0 || world->visit_depth!=0)
+        return fail(error,QA_ERROR_ARGUMENT,"Cannot destroy world during a callback or spatial visit");
+    qa_spatial_dispose(world);
+    for(uint32_t page=0;page<world->page_count;++page) free(world->pages[page]);
+    free(world->pages); free(world); return true;
+}
+
+qa_actor_registry *qa_world_actors(qa_world *world) { return world==NULL?NULL:world->actors; }
+qa_collision_geometry *qa_world_geometry(qa_world *world) { return world==NULL?NULL:world->geometry; }
+
+static void notify_unlink(qa_world *world,qa_actor_id actor)
+{
+    if(world->hooks.unlinked!=NULL) {
+        ++world->callback_depth; world->hooks.unlinked(world->hooks.context,actor); --world->callback_depth;
+    }
+}
+
+typedef struct attached_actor { qa_actor_id actor; uint64_t order; } attached_actor;
+static int attachment_compare(const void *left,const void *right)
+{
+    uint64_t a=((const attached_actor *)left)->order,b=((const attached_actor *)right)->order;
+    return a<b?-1:a>b?1:0;
+}
+
+bool qa_world_actor_released(qa_world *world,qa_actor_record released,qa_error *error)
+{
+    if(world==NULL) return fail(error,QA_ERROR_ARGUMENT,"Missing world for actor release");
+    if(qa_actors_get(world->actors,released.id)!=NULL)
+        return fail(error,QA_ERROR_ARGUMENT,"Actor release must be forwarded after invalidation");
+    size_t child_count=0;
+    for(uint32_t slot=0;slot<world->capacity;++slot) {
+        qa_world_body *child=qa_world_raw_body(world,slot);
+        if(child!=NULL && child->present && child->attached
+            && qa_actor_id_equal(child->attachment.anchor,released.id)) ++child_count;
+    }
+    if(child_count>SIZE_MAX/sizeof(attached_actor)) return fail(error,QA_ERROR_MEMORY,"Attached child snapshot is too large");
+    attached_actor *children=child_count==0?NULL:malloc(child_count*sizeof(*children));
+    if(child_count!=0 && children==NULL) return fail(error,QA_ERROR_MEMORY,"Cannot snapshot attached children for release");
+    size_t written=0;
+    for(uint32_t slot=0;slot<world->capacity;++slot) {
+        qa_world_body *child=qa_world_raw_body(world,slot);
+        if(child==NULL || !child->present || !child->attached
+            || !qa_actor_id_equal(child->attachment.anchor,released.id)) continue;
+        children[written++]=(attached_actor){child->actor,child->attachment_order};
+        child->attached=false;
+    }
+    if(child_count>1) qsort(children,child_count,sizeof(*children),attachment_compare);
+    ++world->callback_depth;
+    qa_world_body *body=qa_world_raw_body(world,released.id.slot);
+    if(body!=NULL && body->present && qa_actor_id_equal(body->actor,released.id)) {
+        bool linked=body->linked;
+        qa_spatial_remove(world,body);
+        memset(body,0,sizeof(*body));
+        if(linked) notify_unlink(world,released.id);
+    }
+    bool success=true;
+    qa_error first={0};
+    for(size_t index=0;index<child_count;++index) {
+        qa_actor_id id=children[index].actor;
+        if(qa_actors_get(world->actors,id)==NULL) continue;
+        qa_error current={0};
+        if(!qa_actors_release(world->actors,id,&current) && success) { first=current; success=false; }
+    }
+    --world->callback_depth;
+    free(children);
+    if(!success && error!=NULL) *error=first;
+    return success;
+}
+
+bool qa_world_body_create(qa_world *world,qa_actor_id actor,const qa_body_state *state,qa_error *error)
+{
+    if(!valid_state(state)) return fail(error,QA_ERROR_ARGUMENT,"Invalid body state");
+    qa_world_body *body=ensure_body(world,actor,error);
+    if(body==NULL) return false;
+    if(body->present) return fail(error,QA_ERROR_ARGUMENT,"Actor already has a body");
+    body->present=true; body->actor=actor; body->state=*state; return true;
+}
+
+bool qa_world_body_bind(qa_world *world,qa_actor_id actor,const qa_body_binding *binding,bool replace,qa_error *error)
+{
+    if(binding==NULL || binding->read==NULL || binding->write==NULL)
+        return fail(error,QA_ERROR_ARGUMENT,"Body binding needs read and write callbacks");
+    qa_world_body *body=ensure_body(world,actor,error);
+    if(body==NULL) return false;
+    if(body->present && !replace) return fail(error,QA_ERROR_ARGUMENT,"Actor already has a body binding");
+    body->actor=actor; body->present=true; body->external=true; body->binding=*binding; return true;
+}
+
+bool qa_world_body_read(qa_world *world,qa_actor_id actor,qa_body_state *out,qa_error *error)
+{
+    qa_world_body *body=qa_world_find_body(world,actor);
+    if(body==NULL || out==NULL) return fail(error,QA_ERROR_NOT_FOUND,"Actor body is unavailable");
+    qa_body_state state;
+    if(body->external) {
+        qa_body_binding binding=body->binding;
+        ++world->callback_depth;
+        bool ok=binding.read(binding.context,&state,error);
+        --world->callback_depth;
+        if(!ok) return false;
+        if(qa_world_find_body(world,actor)!=body) return fail(error,QA_ERROR_NOT_FOUND,"Body retired during read callback");
+        if(!valid_state(&state)) return fail(error,QA_ERROR_FORMAT,"Binding returned invalid body state");
+        body->state=state;
+    } else state=body->state;
+    *out=state; return true;
+}
+
+bool qa_world_body_write(qa_world *world,qa_actor_id actor,const qa_body_state *state,qa_error *error)
+{
+    if(!valid_state(state)) return fail(error,QA_ERROR_ARGUMENT,"Invalid body state");
+    qa_world_body *body=qa_world_find_body(world,actor);
+    if(body==NULL) return qa_world_body_create(world,actor,state,error);
+    if(!body->external) { body->state=*state; return true; }
+    qa_body_state copy=*state; qa_body_binding binding=body->binding;
+    ++world->callback_depth; bool ok=binding.write(binding.context,&copy,error); --world->callback_depth;
+    return ok;
+}
+
+bool qa_world_set_collision(qa_world *world,qa_actor_id actor,const qa_actor_collision *collision,qa_error *error)
+{
+    qa_world_body *body=qa_world_find_body(world,actor);
+    if(body==NULL) return fail(error,QA_ERROR_NOT_FOUND,"Actor body is unavailable");
+    if(collision!=NULL && (collision->family<QA_COLLISION_Q1 || collision->family>QA_COLLISION_Q3
+        || (!collision->inline_model && (collision->shape<QA_SHAPE_BOX || collision->shape>QA_SHAPE_CAPSULE))
+        || collision->role<QA_COLLISION_SOLID || collision->role>QA_COLLISION_TRIGGER))
+        return fail(error,QA_ERROR_ARGUMENT,"Invalid actor collision policy");
+    if(collision!=NULL && collision->inline_model && collision->model>=qa_collision_model_count(world->geometry))
+        return fail(error,QA_ERROR_ARGUMENT,"Actor inline model is unavailable");
+    body->has_collision=collision!=NULL;
+    if(collision!=NULL) body->collision=*collision;
+    return true;
+}
+
+bool qa_world_get_collision(const qa_world *world,qa_actor_id actor,qa_actor_collision *out)
+{
+    qa_world_body *body=qa_world_find_body(world,actor);
+    if(body==NULL || !body->has_collision || out==NULL) return false;
+    *out=body->collision; return true;
+}
+
+bool qa_world_attach(qa_world *world,qa_actor_id actor,const qa_body_attachment *attachment,qa_error *error)
+{
+    qa_world_body *body=qa_world_find_body(world,actor);
+    if(body==NULL || attachment==NULL || !qa_vec_finite(attachment->offset)
+        || attachment->follow<QA_BODY_FOLLOW_TRANSLATION || attachment->follow>QA_BODY_FOLLOW_BOUNDS_MIN)
+        return fail(error,QA_ERROR_ARGUMENT,"Invalid body attachment");
+    qa_world_body *anchor=qa_world_find_body(world,attachment->anchor);
+    if(anchor==NULL) return fail(error,QA_ERROR_NOT_FOUND,"Attachment anchor body is unavailable");
+    for(uint32_t depth=0;anchor!=NULL;++depth) {
+        if(depth>=world->capacity || qa_actor_id_equal(anchor->actor,actor))
+            return fail(error,QA_ERROR_ARGUMENT,"Body attachment cycle");
+        anchor=anchor->attached?qa_world_find_body(world,anchor->attachment.anchor):NULL;
+    }
+    if(!body->attached) {
+        if(world->attachment_order==UINT64_MAX) return fail(error,QA_ERROR_ARGUMENT,"Attachment insertion order exhausted");
+        body->attachment_order=++world->attachment_order;
+    }
+    body->attached=true; body->attachment=*attachment; return true;
+}
+
+bool qa_world_detach(qa_world *world,qa_actor_id actor,qa_error *error)
+{
+    qa_world_body *body=qa_world_find_body(world,actor);
+    if(body==NULL) return fail(error,QA_ERROR_NOT_FOUND,"Actor body is unavailable");
+    body->attached=false; return true;
+}
+
+bool qa_world_attachment(const qa_world *world,qa_actor_id actor,qa_body_attachment *out)
+{
+    qa_world_body *body=qa_world_find_body(world,actor);
+    if(body==NULL || !body->attached || out==NULL) return false;
+    *out=body->attachment; return true;
+}
+
+bool qa_world_next_attachment(const qa_world *world,uint64_t *cursor,qa_actor_id *actor,qa_body_attachment *out)
+{
+    if(world==NULL || cursor==NULL || actor==NULL || out==NULL) return false;
+    const qa_world_body *next=NULL;
+    for(uint32_t slot=0;slot<world->capacity;++slot) {
+        qa_world_body *body=qa_world_raw_body(world,slot);
+        if(body!=NULL && body->present && body->attached && body->attachment_order>*cursor
+            && qa_actors_get(world->actors,body->actor)!=NULL && (next==NULL || body->attachment_order<next->attachment_order)) next=body;
+    }
+    if(next==NULL) return false;
+    *cursor=next->attachment_order; *actor=next->actor; *out=next->attachment; return true;
+}
+
+static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_body *linked,qa_error *error)
+{
+    qa_actor_collision collision=body->collision;
+    if(!body->has_collision) {
+        memset(&collision,0,sizeof(collision));
+        collision.family=qa_collision_geometry_family(world->geometry);
+    }
+    qa_spatial_member *member=qa_spatial_prepare(linked,&collision,error);
+    if(member==NULL) return false;
+    body->linked=true; body->link=*linked; body->link_count=linked->link_count;
+    qa_spatial_publish(world,body,member);
+    qa_linked_body copy=*linked;
+    if(body->external && body->binding.linked!=NULL) {
+        qa_body_binding binding=body->binding;
+        ++world->callback_depth; binding.linked(binding.context,&copy); --world->callback_depth;
+    }
+    body=qa_world_find_body(world,copy.actor);
+    if(body!=NULL && body->linked && body->link_count==copy.link_count && world->hooks.linked!=NULL) {
+        ++world->callback_depth; world->hooks.linked(world->hooks.context,&copy); --world->callback_depth;
+    }
+    return true;
+}
+
+bool qa_world_link(qa_world *world,qa_actor_id actor,const qa_vec3 *origin_override,qa_error *error)
+{
+    if(origin_override!=NULL && !qa_vec_finite(*origin_override)) return fail(error,QA_ERROR_ARGUMENT,"Invalid link origin");
+    qa_body_state state;
+    if(!qa_world_body_read(world,actor,&state,error)) return false;
+    if(origin_override!=NULL) state.origin=*origin_override;
+    qa_world_body *body=qa_world_find_body(world,actor);
+    if(body==NULL) return fail(error,QA_ERROR_NOT_FOUND,"Actor retired while linking");
+    if(body->link_count==UINT64_MAX) return fail(error,QA_ERROR_ARGUMENT,"Body link count exhausted");
+    qa_bounds bounds=qa_bounds_translate(state.bounds,state.origin);
+    if(world->hooks.absolute_bounds!=NULL) {
+        ++world->callback_depth;
+        bool ok=world->hooks.absolute_bounds(world->hooks.context,actor,&state,&bounds,error);
+        --world->callback_depth;
+        if(!ok) return false;
+        body=qa_world_find_body(world,actor);
+        if(body==NULL) return fail(error,QA_ERROR_NOT_FOUND,"Actor retired during link bounds callback");
+    }
+    if(!qa_collision_bounds_valid(bounds)) return fail(error,QA_ERROR_ARGUMENT,"Invalid absolute body bounds");
+    if(body->link_count==UINT64_MAX) return fail(error,QA_ERROR_ARGUMENT,"Body link count exhausted");
+    qa_linked_body linked={actor,state,bounds,body->link_count+1};
+    return publish_link(world,body,&linked,error);
+}
+
+bool qa_world_unlink(qa_world *world,qa_actor_id actor,qa_error *error)
+{
+    if(world==NULL || qa_actors_get(world->actors,actor)==NULL) return fail(error,QA_ERROR_ARGUMENT,"Actor is not live in this world");
+    qa_world_body *body=qa_world_find_body(world,actor);
+    if(body==NULL || !body->linked) return true;
+    qa_spatial_remove(world,body); body->linked=false; notify_unlink(world,actor); return true;
+}
+
+bool qa_world_linked(const qa_world *world,qa_actor_id actor,qa_linked_body *out)
+{
+    qa_world_body *body=qa_world_find_body(world,actor);
+    if(body==NULL || !body->linked || out==NULL) return false;
+    *out=body->link; return true;
+}
+
+bool qa_world_link_state(const qa_world *world,qa_actor_id actor,qa_body_link_state *out)
+{
+    qa_world_body *body=qa_world_find_body(world,actor);
+    if(body==NULL || out==NULL) return false;
+    *out=(qa_body_link_state){body->link_count,body->linked,body->link.state,body->link.absolute_bounds}; return true;
+}
+
+bool qa_world_restore_link_state(qa_world *world,qa_actor_id actor,const qa_body_link_state *saved,qa_error *error)
+{
+    qa_world_body *body=qa_world_find_body(world,actor);
+    if(body==NULL || saved==NULL || (saved->linked && (saved->link_count==0 || !valid_state(&saved->state)
+        || !qa_collision_bounds_valid(saved->absolute_bounds))))
+        return fail(error,QA_ERROR_ARGUMENT,"Invalid saved body link state");
+    if(!saved->linked) {
+        qa_spatial_remove(world,body); body->linked=false; body->link_count=saved->link_count;
+        notify_unlink(world,actor); return true;
+    }
+    qa_linked_body linked={actor,saved->state,saved->absolute_bounds,saved->link_count};
+    return publish_link(world,body,&linked,error);
+}
+
+typedef struct attachment_transport { qa_actor_id actor; qa_body_attachment attachment; } attachment_transport;
+static bool same_float(float left,float right)
+{ return left==right && (left!=0.0f || signbit(left)==signbit(right)); }
+
+bool qa_world_transport_attachments(qa_world *world,qa_error *error)
+{
+    if(world==NULL) return fail(error,QA_ERROR_ARGUMENT,"Missing world");
+    size_t capacity=world->capacity;
+    if(capacity>SIZE_MAX/sizeof(attachment_transport)) return fail(error,QA_ERROR_MEMORY,"Attachment traversal too large");
+    qa_actor_id *visited=calloc(capacity,sizeof(*visited));
+    qa_actor_id *visiting=calloc(capacity,sizeof(*visiting));
+    attachment_transport *chain=malloc(capacity*sizeof(*chain));
+    if(visited==NULL || visiting==NULL || chain==NULL) { free(visited); free(visiting); free(chain); return fail(error,QA_ERROR_MEMORY,"Cannot allocate attachment traversal"); }
+    bool ok=true;
+    uint64_t last_order=0;
+    while(ok) {
+        qa_world_body *body=NULL;
+        for(uint32_t slot=0;slot<world->capacity;++slot) {
+            qa_world_body *candidate=qa_world_raw_body(world,slot);
+            if(candidate!=NULL && candidate->present && candidate->attached && candidate->attachment_order>last_order
+                && (body==NULL || candidate->attachment_order<body->attachment_order)) body=candidate;
+        }
+        if(body==NULL) break;
+        last_order=body->attachment_order;
+        if(qa_actor_id_equal(visited[body->actor.slot],body->actor)) continue;
+        size_t depth=0;
+        while(body!=NULL && body->attached && !qa_actor_id_equal(visited[body->actor.slot],body->actor)) {
+            if(qa_actor_id_equal(visiting[body->actor.slot],body->actor)) { ok=fail(error,QA_ERROR_ARGUMENT,"Body attachment cycle during transport"); break; }
+            visiting[body->actor.slot]=body->actor;
+            chain[depth++]=(attachment_transport){body->actor,body->attachment};
+            body=qa_world_find_body(world,body->attachment.anchor);
+        }
+        while(depth>0 && ok) {
+            attachment_transport entry=chain[--depth];
+            qa_actor_id actor=entry.actor; visited[actor.slot]=actor; visiting[actor.slot]=(qa_actor_id){0};
+            body=qa_world_find_body(world,actor);
+            if(body==NULL) continue;
+            /* Match the source capture before transporting the anchor. A
+             * nested link can change the next transport's attachment only. */
+            qa_body_attachment follow=entry.attachment;
+            if(qa_world_find_body(world,follow.anchor)==NULL) continue;
+            qa_body_state anchor,current;
+            if(!qa_world_body_read(world,follow.anchor,&anchor,error) || !qa_world_body_read(world,actor,&current,error)) { ok=false; break; }
+            qa_vec3 offset=follow.follow==QA_BODY_FOLLOW_CENTER?qa_vec_scale(qa_vec_add(anchor.bounds.mins,anchor.bounds.maxs),0.5f)
+                :follow.follow==QA_BODY_FOLLOW_BOUNDS_MIN?qa_vec_add(anchor.bounds.mins,follow.offset):follow.offset;
+            qa_vec3 origin=qa_vec_add(anchor.origin,offset);
+            if(same_float(origin.x,current.origin.x) && same_float(origin.y,current.origin.y) && same_float(origin.z,current.origin.z)) continue;
+            current.origin=origin;
+            if(!qa_world_body_write(world,actor,&current,error) || !qa_world_link(world,actor,NULL,error)) ok=false;
+        }
+    }
+    free(visited); free(visiting); free(chain); return ok;
+}

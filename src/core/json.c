@@ -1,8 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#define _GNU_SOURCE
 #include "qa/json.h"
+#include "qa/text.h"
 
-#include <locale.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -16,7 +15,6 @@ struct qa_json_document {
     qa_bytes source;
     json_node *nodes;
     size_t count, capacity;
-    locale_t numeric_locale;
 };
 
 typedef struct json_frame {
@@ -226,10 +224,6 @@ bool qa_json_parse(qa_bytes source, qa_json_document **out, qa_error *error) {
     qa_json_document *document=calloc(1,sizeof(*document));
     if (!document) { qa_error_set(error,QA_ERROR_MEMORY,0,"allocating JSON document"); return false; }
     document->source=source;
-    document->numeric_locale=newlocale(LC_NUMERIC_MASK,"C",(locale_t)0);
-    if (!document->numeric_locale) {
-        qa_error_set(error,QA_ERROR_MEMORY,0,"creating JSON numeric locale"); free(document); return false;
-    }
     json_parser parser={document,0,error};
     json_frame *frames=NULL;
     size_t count=0, capacity=0;
@@ -281,7 +275,6 @@ failure:
 
 void qa_json_destroy(qa_json_document *document) {
     if (!document) return;
-    freelocale(document->numeric_locale);
     free(document->nodes); free(document);
 }
 
@@ -357,17 +350,11 @@ bool qa_json_bool(const qa_json_document *document, qa_json_id id, bool *out, qa
 }
 bool qa_json_number(const qa_json_document *document, qa_json_id id, double *out, qa_error *error) {
     if (!require_kind(document,id,QA_JSON_NUMBER,out,error)) return false;
-    qa_bytes source=qa_json_source(document,id);
-    char local[128], *text=local;
-    if (source.size>=sizeof(local)) {
-        if (source.size==SIZE_MAX || !(text=malloc(source.size+1))) {
-            qa_error_set(error,QA_ERROR_MEMORY,document->nodes[id].start,"allocating JSON number text"); return false;
-        }
+    if (!qa_parse_number(qa_json_source(document,id),out,error)) {
+        if (error) error->offset=document->nodes[id].start;
+        return false;
     }
-    memcpy(text,source.data,source.size); text[source.size]=0;
-    double number=strtod_l(text,NULL,document->numeric_locale);
-    if (text!=local) free(text);
-    *out=number; return true;
+    return true;
 }
 
 static bool integer(const qa_json_document *document, qa_json_id id, bool signed_value,

@@ -29,6 +29,7 @@ find_package(ZLIB REQUIRED)
 find_package(PNG REQUIRED)
 find_package(JPEG REQUIRED)
 find_package(ICU REQUIRED COMPONENTS uc)
+find_package(Threads REQUIRED)
 find_library(QA_GIF_LIBRARY NAMES gif REQUIRED)
 
 add_library(qa_core STATIC
@@ -41,7 +42,7 @@ add_library(qa_core STATIC
     src/core/hash.c
     src/platform/file.c)
 target_include_directories(qa_core PUBLIC include)
-target_link_libraries(qa_core PUBLIC qa_compile_options m PRIVATE ICU::uc)
+target_link_libraries(qa_core PUBLIC qa_compile_options m PRIVATE ICU::uc Threads::Threads)
 target_compile_definitions(qa_core PRIVATE _POSIX_C_SOURCE=200809L)
 
 add_library(qa_content STATIC
@@ -69,8 +70,29 @@ add_library(qa_content STATIC
 target_link_libraries(qa_content PUBLIC qa_core PRIVATE
     ZLIB::ZLIB PNG::PNG JPEG::JPEG ${QA_GIF_LIBRARY})
 
-add_library(qa_world STATIC src/world/actors.c)
-target_link_libraries(qa_world PUBLIC qa_core)
+add_library(qa_world STATIC
+    src/world/actors.c
+    src/world/body.c
+    src/world/spatial.c
+    src/world/collision/contents.c
+    src/world/collision/geometry.c
+    src/world/collision/world.c
+    src/world/collision/q1.c
+    src/world/collision/q1/geometry.c
+    src/world/collision/q2.c
+    src/world/collision/q3.c
+    src/world/collision/q3/model.c
+    src/world/collision/q3/patch.c)
+target_link_libraries(qa_world PUBLIC qa_content)
+
+add_library(qa_session STATIC src/session/session.c src/session/scheduler.c)
+target_link_libraries(qa_session PUBLIC qa_world)
+
+add_library(qa_console STATIC
+    src/console/text.c
+    src/console/cvars.c
+    src/console/commands.c)
+target_link_libraries(qa_console PUBLIC qa_core)
 
 add_library(qa_gameplay STATIC src/gameplay/operation.c)
 target_link_libraries(qa_gameplay PUBLIC qa_world)
