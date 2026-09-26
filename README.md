@@ -8,7 +8,7 @@ The TypeScript project supplies the implementation and product design being port
 
 Implement Anthology's built-in gameplay as compiled C operating directly on the shared world. Remove machinery needed only by the TypeScript implementation. Existing mod formats receive the compatibility support they require, without routing ordinary gameplay through CPU emulation. C data structures, algorithms, and numeric handling should suit the native implementation while preserving functionality and required game behavior.
 
-Share common engine code, decoded assets, GPU resources, and reusable working buffers across games and players. Build the complete baseline with sound ownership, direct native execution, and proportionate correctness checks. After baseline completion, evaluate gameplay, make deep performance improvements, and polish the finished engine.
+Share common engine code, decoded assets, GPU resources, and reusable working buffers across games and players. Write and integrate the complete baseline with sound ownership, direct native execution, and source review. Builds, tests, executable runs and sanitizers wait until all baseline source is complete. Then validate functionality, make deep performance improvements, and polish the finished engine.
 
 - [Deep review and current evidence](docs/review.md)
 - [C architecture and implementation plan](docs/plan.md)

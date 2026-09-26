@@ -3,6 +3,7 @@
 #define QA_BSP_H
 
 #include "qa/common.h"
+#include "qa/math.h"
 
 typedef enum qa_bsp_family { QA_BSP_Q1 = 1, QA_BSP_Q2, QA_BSP_Q3 } qa_bsp_family;
 typedef enum qa_bsp_format {
@@ -55,7 +56,7 @@ size_t qa_bsp_record_count(const qa_bsp_view *map, qa_bsp_lump_kind kind);
 bool qa_bsp_record(const qa_bsp_view *map, qa_bsp_lump_kind kind, size_t index,
                    qa_bytes *out, qa_error *error);
 
-typedef struct qa_bsp_vec3 { float x, y, z; } qa_bsp_vec3;
+typedef qa_vec3 qa_bsp_vec3;
 typedef struct qa_bsp_bounds { qa_bsp_vec3 min, max; } qa_bsp_bounds;
 typedef struct qa_bsp_range { uint32_t first, count; } qa_bsp_range;
 typedef struct qa_bsp_plane { qa_bsp_vec3 normal; float distance; int32_t type; } qa_bsp_plane;
@@ -105,6 +106,9 @@ typedef struct qa_bsp_brush { qa_bsp_range sides; int32_t contents, shader; } qa
 typedef struct qa_bsp_brush_side { uint32_t plane; int64_t texinfo; int32_t shader, flags; } qa_bsp_brush_side;
 typedef struct qa_bsp_shader { qa_bytes name; int32_t surface_flags, content_flags; } qa_bsp_shader;
 typedef struct qa_bsp_fog { qa_bytes name; int32_t brush, visible_side; } qa_bsp_fog;
+typedef struct qa_bsp_area { qa_bsp_range portals; } qa_bsp_area;
+typedef struct qa_bsp_area_portal { uint32_t portal, other_area; } qa_bsp_area_portal;
+typedef struct qa_bsp_grid_point { uint8_t ambient[3], directed[3], lat_long[2]; } qa_bsp_grid_point;
 typedef enum qa_bsp_surface_type {
     QA_BSP_SURFACE_PLANAR = 1, QA_BSP_SURFACE_PATCH,
     QA_BSP_SURFACE_TRIANGLES, QA_BSP_SURFACE_FLARE
@@ -137,12 +141,32 @@ bool qa_bsp_read_brush_side(const qa_bsp_view *, size_t, qa_bsp_brush_side *, qa
 bool qa_bsp_read_shader(const qa_bsp_view *, size_t, qa_bsp_shader *, qa_error *);
 bool qa_bsp_read_fog(const qa_bsp_view *, size_t, qa_bsp_fog *, qa_error *);
 bool qa_bsp_read_surface(const qa_bsp_view *, size_t, qa_bsp_surface *, qa_error *);
+bool qa_bsp_read_area(const qa_bsp_view *, size_t, qa_bsp_area *, qa_error *);
+bool qa_bsp_read_area_portal(const qa_bsp_view *, size_t, qa_bsp_area_portal *, qa_error *);
+bool qa_bsp_read_grid_point(const qa_bsp_view *, size_t, qa_bsp_grid_point *, qa_error *);
 /* Reads leaf indices, surfedges, and Q3 indices, preserving unsigned u16/u32
  * index ranges while retaining signed surfedges and Q3 index values. */
 bool qa_bsp_read_index(const qa_bsp_view *, qa_bsp_lump_kind, size_t, int64_t *, qa_error *);
 
 /* Full geometry/reference validation. Does not build another copy of the map. */
 bool qa_bsp_validate(const qa_bsp_view *map, qa_error *error);
+
+/* IBSP44 shader declarations are derived and interned once. IBSP46 keeps its
+ * original shader IDs. Every string borrows the BSP; only index tables own RAM. */
+typedef struct qa_bsp_materials {
+    qa_bsp_shader *shaders;
+    uint32_t *surfaces, *brushes, *sides;
+    size_t shader_count, surface_count, brush_count, side_count;
+} qa_bsp_materials;
+bool qa_bsp_build_materials(const qa_bsp_view *, qa_bsp_materials *, qa_error *);
+void qa_bsp_materials_free(qa_bsp_materials *);
+/* Q3 model membership is returned in source index order. IBSP44 tree-defined
+ * models share the original surfaces/brushes instead of cloning them. */
+bool qa_bsp_model_members(const qa_bsp_view *, size_t model, bool brushes,
+                          uint32_t *output, size_t capacity, size_t *count, qa_error *);
+size_t qa_bsp_surface_triangle_count(const qa_bsp_surface *);
+bool qa_bsp_surface_triangle(const qa_bsp_view *, const qa_bsp_surface *, size_t triangle,
+                             uint32_t indices[3], qa_error *);
 
 typedef enum qa_bsp_texture_storage { QA_BSP_TEXTURE_MISSING, QA_BSP_TEXTURE_EXTERNAL, QA_BSP_TEXTURE_EMBEDDED } qa_bsp_texture_storage;
 typedef struct qa_bsp_texture {
@@ -165,6 +189,7 @@ typedef struct qa_bsp_decoupled_lightmap {
     uint16_t width, height;
     int64_t lighting_offset;
     float projection[2][4];
+    bool ignored_lighting_offset;
 } qa_bsp_decoupled_lightmap;
 bool qa_bsp_read_decoupled_lightmap(const qa_bsp_view *, size_t, qa_bsp_decoupled_lightmap *, qa_error *);
 

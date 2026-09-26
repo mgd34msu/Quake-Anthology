@@ -666,6 +666,34 @@ bool qa_bsp_read_index(const qa_bsp_view *map, qa_bsp_lump_kind kind, size_t ind
     return true;
 }
 
+bool qa_bsp_read_area(const qa_bsp_view *map, size_t index, qa_bsp_area *out, qa_error *error)
+{
+    record_reader r;
+    if (!begin_record(map,QA_BSP_AREAS,index,out,&r,error)) return false;
+    qa_bsp_area area;
+    area.portals.count = r_u32(&r); area.portals.first = r_u32(&r);
+    *out = area;
+    return true;
+}
+
+bool qa_bsp_read_area_portal(const qa_bsp_view *map, size_t index, qa_bsp_area_portal *out, qa_error *error)
+{
+    record_reader r;
+    if (!begin_record(map,QA_BSP_AREA_PORTALS,index,out,&r,error)) return false;
+    qa_bsp_area_portal portal;
+    portal.portal = r_u32(&r); portal.other_area = r_u32(&r);
+    *out = portal;
+    return true;
+}
+
+bool qa_bsp_read_grid_point(const qa_bsp_view *map, size_t index, qa_bsp_grid_point *out, qa_error *error)
+{
+    record_reader r;
+    if (!begin_record(map,QA_BSP_LIGHTGRID,index,out,&r,error)) return false;
+    memcpy(out->ambient,r.bytes.data,3); memcpy(out->directed,r.bytes.data + 3,3); memcpy(out->lat_long,r.bytes.data + 6,2);
+    return true;
+}
+
 bool qa_bsp_decode_rle(qa_bytes input, int64_t offset, uint8_t *output,
                         size_t output_size, qa_error *error)
 {
@@ -703,8 +731,8 @@ bool qa_bsp_visibility(const qa_bsp_view *map, int32_t selector, bool phs,
     if (map->family == QA_BSP_Q1) {
         if (phs) return fail(error, QA_ERROR_UNSUPPORTED, 0, "Q1 BSP has no stored PHS");
         qa_bsp_leaf leaf;
-        if (selector < 0 || !qa_bsp_read_leaf(map, (size_t)selector, &leaf, error))
-            return fail(error, QA_ERROR_ARGUMENT, 0, "invalid Q1 visibility leaf");
+        if (selector < 0) return fail(error, QA_ERROR_ARGUMENT, 0, "invalid Q1 visibility leaf");
+        if (!qa_bsp_read_leaf(map, (size_t)selector, &leaf, error)) return false;
         size_t leaves = qa_bsp_record_count(map, QA_BSP_LEAVES);
         size_t count = leaves == 0 ? 0 : leaves - 1;
         if (qa_bsp_record_count(map, QA_BSP_MODELS) > 0) {
@@ -999,12 +1027,14 @@ bool qa_bsp_read_decoupled_lightmap(const qa_bsp_view *map, size_t index, qa_bsp
         return fail(error, QA_ERROR_FORMAT, extension.offset, "decoupled lightmap count differs from faces");
     if (index >= faces) return fail(error, QA_ERROR_ARGUMENT, extension.offset, "lightmap index out of bounds");
     record_reader r = {{extension.bytes.data + index * 40,40},0,SIZE_MAX,extension.offset + index * 40};
-    qa_bsp_decoupled_lightmap result;
+    qa_bsp_decoupled_lightmap result = {0};
     result.width = r_u16(&r); result.height = r_u16(&r);
     uint32_t offset = r_u32(&r);
     result.lighting_offset = offset == UINT32_MAX ? -1 : (int64_t)offset;
-    if (map->family == QA_BSP_Q2 && result.lighting_offset >= (int64_t)map->lumps[QA_BSP_LIGHTING].bytes.size)
+    if (map->family == QA_BSP_Q2 && result.lighting_offset >= (int64_t)map->lumps[QA_BSP_LIGHTING].bytes.size) {
         result.lighting_offset = -1;
+        result.ignored_lighting_offset = true;
+    }
     for (size_t axis = 0; axis < 2; ++axis)
         for (size_t i = 0; i < 4; ++i) result.projection[axis][i] = r_float(&r);
     if (!end_record(&r, error)) return false;
@@ -1315,4 +1345,514 @@ const qa_bsp_lightgrid_sample *qa_bsp_lightgrid_lookup(const qa_bsp_lightgrid *g
     }
     size_t first = leaf->first_sample + ((size_t)leaf->size[0] * ((size_t)leaf->size[1] * relative[2] + relative[1]) + relative[0]) * grid->style_count;
     return grid->samples + first;
+}
+
+static bool reference(int64_t value, size_t count, size_t offset, const char *label, qa_error *error)
+{
+    if (value < 0 || (uint64_t)value >= count) {
+        qa_error_set(error, QA_ERROR_FORMAT, offset, "invalid %s reference", label);
+        return false;
+    }
+    return true;
+}
+
+static bool range_reference(qa_bsp_range range, size_t count, size_t offset, const char *label, qa_error *error)
+{
+    if (range.first > count || range.count > count - range.first) {
+        qa_error_set(error, QA_ERROR_FORMAT, offset, "invalid %s range", label);
+        return false;
+    }
+    return true;
+}
+
+static bool child_reference(const qa_bsp_view *map, int32_t child, size_t offset, qa_error *error)
+{
+    return child >= 0
+        ? reference(child,qa_bsp_record_count(map,QA_BSP_NODES),offset,"node",error)
+        : reference(-1 - (int64_t)child,qa_bsp_record_count(map,QA_BSP_LEAVES),offset,"leaf",error);
+}
+
+typedef struct tree_frame { uint32_t index; unsigned next_child; } tree_frame;
+
+static bool validate_tree(const qa_bsp_view *map, bool clips, qa_error *error)
+{
+    qa_bsp_lump_kind kind = clips ? QA_BSP_CLIPNODES : QA_BSP_NODES;
+    size_t count = qa_bsp_record_count(map,kind);
+    if (count == 0) return true;
+    void *color_storage = NULL, *stack_storage = NULL;
+    if (!allocate_array(count,1,&color_storage,error)
+        || !allocate_array(count,sizeof(tree_frame),&stack_storage,error)) {
+        free(color_storage); free(stack_storage); return false;
+    }
+    uint8_t *colors = color_storage;
+    tree_frame *stack = stack_storage;
+    bool valid = true;
+    for (size_t root = 0; root < count && valid; ++root) {
+        if (colors[root] == 2) continue;
+        size_t depth = 1;
+        stack[0] = (tree_frame){(uint32_t)root,0}; colors[root] = 1;
+        while (depth > 0 && valid) {
+            tree_frame *frame = &stack[depth - 1];
+            if (frame->next_child == 2) { colors[frame->index] = 2; --depth; continue; }
+            int32_t children[2];
+            if (clips) {
+                qa_bsp_clipnode node;
+                if (!qa_bsp_read_clipnode(map,frame->index,&node,error)) { valid = false; break; }
+                memcpy(children,node.children,sizeof(children));
+            } else {
+                qa_bsp_node node;
+                if (!qa_bsp_read_node(map,frame->index,&node,error)) { valid = false; break; }
+                memcpy(children,node.children,sizeof(children));
+            }
+            int32_t child = children[frame->next_child++];
+            if (child < 0) continue;
+            size_t offset = map->lumps[kind].offset + (size_t)frame->index * map->lumps[kind].stride;
+            if (!reference(child,count,offset,"tree child",error)) { valid = false; break; }
+            if (colors[child] == 1) { valid = fail(error,QA_ERROR_FORMAT,offset,"cycle in BSP tree"); break; }
+            if (colors[child] == 2) continue;
+            colors[child] = 1;
+            stack[depth++] = (tree_frame){(uint32_t)child,0};
+        }
+    }
+    free(color_storage); free(stack_storage);
+    return valid;
+}
+
+static bool validate_q3_surfaces(const qa_bsp_view *map, qa_error *error)
+{
+    size_t vertices = qa_bsp_record_count(map,QA_BSP_VERTICES);
+    size_t fogs = qa_bsp_record_count(map,QA_BSP_FOGS), lightmaps = qa_bsp_record_count(map,QA_BSP_LIGHTING);
+    void *storage = NULL;
+    if (!allocate_array(vertices,1,&storage,error)) return false;
+    uint8_t *lightmap_use = storage;
+    bool valid = true;
+    for (size_t i = 0; i < qa_bsp_record_count(map,QA_BSP_SURFACES) && valid; ++i) {
+        qa_bsp_surface surface;
+        if (!qa_bsp_read_surface(map,i,&surface,error)) { valid = false; break; }
+        size_t offset = map->lumps[QA_BSP_SURFACES].offset + i * map->lumps[QA_BSP_SURFACES].stride;
+        if (map->format == QA_BSP_IBSP46) {
+            if (!reference(surface.shader,qa_bsp_record_count(map,QA_BSP_SHADERS),offset,"surface shader",error)) { valid = false; break; }
+        } else if (surface.brush_side >= 0
+            && !reference(surface.brush_side,qa_bsp_record_count(map,QA_BSP_BRUSH_SIDES),offset,"surface brush side",error)) { valid = false; break; }
+        bool retail_flare = surface.type == QA_BSP_SURFACE_FLARE && surface.fog == 0 && fogs == 0;
+        if (surface.fog != -1 && !retail_flare && !reference(surface.fog,fogs,offset,"surface fog",error)) { valid = false; break; }
+        if (!range_reference(surface.vertices,vertices,offset,"surface vertices",error)
+            || !range_reference(surface.indices,qa_bsp_record_count(map,QA_BSP_INDICES),offset,"surface indices",error)) { valid = false; break; }
+        bool planar = surface.type == QA_BSP_SURFACE_PLANAR || surface.type == QA_BSP_SURFACE_PATCH;
+        if (planar && surface.lightmap < -4) { valid = fail(error,QA_ERROR_FORMAT,offset,"invalid lightmap sentinel"); break; }
+        bool lit = planar && surface.lightmap >= 0 && (size_t)surface.lightmap < lightmaps;
+        for (size_t vertex = surface.vertices.first; vertex < (size_t)surface.vertices.first + surface.vertices.count; ++vertex) {
+            if (lit) lightmap_use[vertex] = 2;
+            else if (lightmap_use[vertex] != 2) lightmap_use[vertex] = 1;
+        }
+        for (size_t index = surface.indices.first; index < (size_t)surface.indices.first + surface.indices.count; ++index) {
+            int64_t local;
+            if (!qa_bsp_read_index(map,QA_BSP_INDICES,index,&local,error)
+                || !reference(local,surface.vertices.count,map->lumps[QA_BSP_INDICES].offset + index * 4,"surface local vertex",error)) { valid = false; break; }
+        }
+    }
+    for (size_t i = 0; i < vertices && valid; ++i) {
+        if (lightmap_use[i] == 1) continue;
+        qa_bsp_vertex vertex;
+        if (!qa_bsp_read_vertex(map,i,&vertex,error)) { valid = false; break; }
+        if (!isfinite(vertex.lightmap_coord[0]) || !isfinite(vertex.lightmap_coord[1]))
+            valid = fail(error,QA_ERROR_FORMAT,map->lumps[QA_BSP_VERTICES].offset + i * 44 + 20,"non-finite used lightmap coordinate");
+    }
+    free(storage);
+    return valid;
+}
+
+bool qa_bsp_validate(const qa_bsp_view *map, qa_error *error)
+{
+    if (map == NULL) return fail(error,QA_ERROR_ARGUMENT,0,"missing BSP view");
+    size_t counts[QA_BSP_LUMP_COUNT];
+    for (size_t i = 0; i < QA_BSP_LUMP_COUNT; ++i) counts[i] = qa_bsp_record_count(map,(qa_bsp_lump_kind)i);
+    if (map->family == QA_BSP_Q2 && (counts[QA_BSP_MODELS] == 0 || counts[QA_BSP_NODES] == 0 || counts[QA_BSP_LEAVES] == 0))
+        return fail(error,QA_ERROR_FORMAT,0,"Q2 map requires models, nodes and leaves");
+    qa_entities entities = {0};
+    if (!qa_entities_parse(map->lumps[QA_BSP_ENTITIES].bytes,map->family == QA_BSP_Q3 ? QA_ENTITY_Q3 : QA_ENTITY_Q1,&entities,error)) return false;
+    qa_entities_free(&entities);
+    for (size_t i = 0; i < counts[QA_BSP_PLANES]; ++i) {
+        qa_bsp_plane plane;
+        if (!qa_bsp_read_plane(map,i,&plane,error)) return false;
+    }
+    for (size_t i = 0; i < counts[QA_BSP_VERTICES]; ++i) {
+        qa_bsp_vertex vertex;
+        if (!qa_bsp_read_vertex(map,i,&vertex,error)) return false;
+    }
+    size_t texture_count = 0, q1_light_count = 0;
+    bool extra_brushes = false;
+    if (map->family == QA_BSP_Q1) {
+        if (!qa_bsp_texture_count(map,&texture_count,error)) return false;
+        for (size_t i = 0; i < texture_count; ++i) {
+            qa_bsp_texture texture;
+            if (!qa_bsp_read_texture(map,i,&texture,error)) return false;
+        }
+        qa_bsp_lighting lighting;
+        qa_bsp_q1_metadata metadata;
+        if (!qa_bsp_select_lighting(map,(qa_bytes){0},&lighting,error) || !qa_bsp_read_q1_metadata(map,&metadata,error)) return false;
+        q1_light_count = lighting.sample_count;
+        if (metadata.hdr_lighting.size / 4 > q1_light_count) q1_light_count = metadata.hdr_lighting.size / 4;
+        qa_bsp_extension extension;
+        if (qa_bsp_find_extension(map,"FACENORMALS",&extension,NULL)) {
+            qa_bsp_face_normals normals;
+            if (!qa_bsp_read_face_normals(map,&normals,error)) return false;
+        }
+        if (qa_bsp_find_extension(map,"DECOUPLED_LM",&extension,NULL)) {
+            if (extension.bytes.size % 40 != 0 || extension.bytes.size / 40 != counts[QA_BSP_FACES])
+                return fail(error,QA_ERROR_FORMAT,extension.offset,"decoupled lightmap count differs from faces");
+            for (size_t i = 0; i < counts[QA_BSP_FACES]; ++i) {
+                qa_bsp_decoupled_lightmap lightmap;
+                if (!qa_bsp_read_decoupled_lightmap(map,i,&lightmap,error)) return false;
+            }
+        }
+        if (qa_bsp_find_extension(map,"BRUSHLIST",&extension,NULL)) {
+            qa_bsp_brush_list list = {0};
+            qa_error local = {0};
+            if (!qa_bsp_read_brush_list(map,&list,&local)) {
+                if (local.code != QA_ERROR_UNSUPPORTED) { if (error != NULL) *error = local; return false; }
+            } else { extra_brushes = true; qa_bsp_brush_list_free(&list); }
+        }
+    }
+    for (size_t i = 0; i < counts[QA_BSP_EDGES]; ++i) {
+        qa_bsp_edge edge;
+        if (!qa_bsp_read_edge(map,i,&edge,error)) return false;
+        for (size_t j = 0; j < 2; ++j)
+            if (!reference(edge.vertices[j],counts[QA_BSP_VERTICES],map->lumps[QA_BSP_EDGES].offset + i * map->lumps[QA_BSP_EDGES].stride,"edge vertex",error)) return false;
+    }
+    const qa_bsp_lump_kind index_lumps[] = {QA_BSP_SURFEDGES,QA_BSP_LEAF_FACES,QA_BSP_LEAF_BRUSHES};
+    for (size_t type = 0; type < 3; ++type) {
+        qa_bsp_lump_kind kind = index_lumps[type];
+        size_t total = type == 0 ? counts[QA_BSP_EDGES] : type == 1
+            ? counts[map->family == QA_BSP_Q3 ? QA_BSP_SURFACES : QA_BSP_FACES] : counts[QA_BSP_BRUSHES];
+        for (size_t i = 0; i < counts[kind]; ++i) {
+            int64_t value;
+            if (!qa_bsp_read_index(map,kind,i,&value,error)) return false;
+            if (kind == QA_BSP_SURFEDGES && value < 0) value = -value;
+            if (!reference(value,total,map->lumps[kind].offset + i * map->lumps[kind].stride,"BSP array index",error)) return false;
+        }
+    }
+    for (size_t i = 0; i < counts[QA_BSP_TEXINFO]; ++i) {
+        qa_bsp_texinfo texture;
+        if (!qa_bsp_read_texinfo(map,i,&texture,error)) return false;
+        size_t offset = map->lumps[QA_BSP_TEXINFO].offset + i * map->lumps[QA_BSP_TEXINFO].stride;
+        if (map->family == QA_BSP_Q1 && texture_count > 0 && !reference(texture.texture,texture_count,offset,"mip texture",error)) return false;
+        if (map->family == QA_BSP_Q2 && texture.next > 0 && !reference(texture.next,counts[QA_BSP_TEXINFO],offset,"animated texture",error)) return false;
+    }
+    for (size_t i = 0; i < counts[QA_BSP_FACES]; ++i) {
+        qa_bsp_face face;
+        if (!qa_bsp_read_face(map,i,&face,error)) return false;
+        size_t offset = map->lumps[QA_BSP_FACES].offset + i * map->lumps[QA_BSP_FACES].stride;
+        if (!reference(face.plane,counts[QA_BSP_PLANES],offset,"face plane",error)
+            || !reference(face.texinfo,counts[QA_BSP_TEXINFO],offset,"face texture",error)
+            || !range_reference(face.edges,counts[QA_BSP_SURFEDGES],offset,"face edges",error)) return false;
+        if (map->family == QA_BSP_Q1) {
+            if (face.lighting_offset != -1 && q1_light_count > 0 && !reference(face.lighting_offset,q1_light_count,offset,"face lighting",error)) return false;
+        } else if (face.edges.count < 3 || face.lighting_offset < -1
+            || (map->lumps[QA_BSP_LIGHTING].bytes.size > 0 && face.lighting_offset >= 0 && (size_t)face.lighting_offset >= map->lumps[QA_BSP_LIGHTING].bytes.size))
+            return fail(error,QA_ERROR_FORMAT,offset,"invalid Q2 face edge count or light offset");
+    }
+    for (size_t i = 0; i < counts[QA_BSP_LEAVES]; ++i) {
+        qa_bsp_leaf leaf;
+        if (!qa_bsp_read_leaf(map,i,&leaf,error)) return false;
+        size_t offset = map->lumps[QA_BSP_LEAVES].offset + i * map->lumps[QA_BSP_LEAVES].stride;
+        if (!range_reference(leaf.faces,counts[QA_BSP_LEAF_FACES],offset,"leaf faces",error)
+            || !range_reference(leaf.brushes,counts[QA_BSP_LEAF_BRUSHES],offset,"leaf brushes",error)) return false;
+        qa_bytes vis = map->lumps[QA_BSP_VISIBILITY].bytes;
+        if (map->family == QA_BSP_Q1) {
+            if (leaf.visibility_offset != -1 && vis.size > 0 && !reference(leaf.visibility_offset,vis.size,offset,"leaf visibility",error)) return false;
+        } else {
+            if (leaf.cluster < -1 || (vis.size > 0 && leaf.cluster != -1 && !reference(leaf.cluster,qa_load_u32le(vis.data),offset,"leaf cluster",error)))
+                return fail(error,QA_ERROR_FORMAT,offset,"invalid leaf cluster");
+            if (map->family == QA_BSP_Q2) {
+                if (i == 0 && leaf.contents != 1) return fail(error,QA_ERROR_FORMAT,offset,"Q2 leaf zero is not solid");
+                if (!reference(leaf.area,counts[QA_BSP_AREAS],offset,"leaf area",error)) return false;
+            } else if (leaf.area < -1) return fail(error,QA_ERROR_FORMAT,offset,"invalid leaf area");
+        }
+    }
+    for (size_t i = 0; i < counts[QA_BSP_NODES]; ++i) {
+        qa_bsp_node node;
+        if (!qa_bsp_read_node(map,i,&node,error)) return false;
+        size_t offset = map->lumps[QA_BSP_NODES].offset + i * map->lumps[QA_BSP_NODES].stride;
+        if (!reference(node.plane,counts[QA_BSP_PLANES],offset,"node plane",error)
+            || !range_reference(node.faces,counts[QA_BSP_FACES],offset,"node faces",error)
+            || !child_reference(map,node.children[0],offset,error) || !child_reference(map,node.children[1],offset,error)) return false;
+    }
+    for (size_t i = 0; i < counts[QA_BSP_CLIPNODES]; ++i) {
+        qa_bsp_clipnode node;
+        if (!qa_bsp_read_clipnode(map,i,&node,error)) return false;
+        size_t offset = map->lumps[QA_BSP_CLIPNODES].offset + i * map->lumps[QA_BSP_CLIPNODES].stride;
+        if (!reference(node.plane,counts[QA_BSP_PLANES],offset,"clipnode plane",error)) return false;
+        for (size_t child = 0; child < 2; ++child)
+            if (node.children[child] >= 0 && !reference(node.children[child],counts[QA_BSP_CLIPNODES],offset,"clipnode child",error)) return false;
+    }
+    for (size_t i = 0; i < counts[QA_BSP_BRUSHES]; ++i) {
+        qa_bsp_brush brush;
+        if (!qa_bsp_read_brush(map,i,&brush,error)) return false;
+        size_t offset = map->lumps[QA_BSP_BRUSHES].offset + i * map->lumps[QA_BSP_BRUSHES].stride;
+        if (!range_reference(brush.sides,counts[QA_BSP_BRUSH_SIDES],offset,"brush sides",error)) return false;
+        if (map->format == QA_BSP_IBSP46 && !reference(brush.shader,counts[QA_BSP_SHADERS],offset,"brush shader",error)) return false;
+    }
+    for (size_t i = 0; i < counts[QA_BSP_BRUSH_SIDES]; ++i) {
+        qa_bsp_brush_side side;
+        if (!qa_bsp_read_brush_side(map,i,&side,error)) return false;
+        size_t offset = map->lumps[QA_BSP_BRUSH_SIDES].offset + i * map->lumps[QA_BSP_BRUSH_SIDES].stride;
+        if (!reference(side.plane,counts[QA_BSP_PLANES],offset,"brush plane",error)) return false;
+        if (map->family == QA_BSP_Q2 && side.texinfo != -1 && !reference(side.texinfo,counts[QA_BSP_TEXINFO],offset,"brush texture",error)) return false;
+        if (map->format == QA_BSP_IBSP46 && !reference(side.shader,counts[QA_BSP_SHADERS],offset,"brush shader",error)) return false;
+    }
+    for (size_t i = 0; i < counts[QA_BSP_MODELS]; ++i) {
+        qa_bsp_model model;
+        if (!qa_bsp_read_model(map,i,&model,error)) return false;
+        size_t offset = map->lumps[QA_BSP_MODELS].offset + i * map->lumps[QA_BSP_MODELS].stride;
+        if (map->format != QA_BSP_IBSP44 && !range_reference(model.faces,counts[map->family == QA_BSP_Q3 ? QA_BSP_SURFACES : QA_BSP_FACES],offset,"model faces",error)) return false;
+        if (map->format == QA_BSP_IBSP46) {
+            if (!range_reference(model.brushes,counts[QA_BSP_BRUSHES],offset,"model brushes",error)) return false;
+        } else if (!child_reference(map,model.headnodes[0],offset,error)) return false;
+        if (map->family == QA_BSP_Q1) {
+            size_t leaves = counts[QA_BSP_LEAVES] == 0 ? 0 : counts[QA_BSP_LEAVES] - 1;
+            if (model.visible_leaves < 0 || (size_t)model.visible_leaves > leaves)
+                return fail(error,QA_ERROR_FORMAT,offset,"invalid model visible leaf count");
+            for (size_t hull = 1; hull < 3; ++hull)
+                if (model.headnodes[hull] >= 0 && (counts[QA_BSP_CLIPNODES] > 0 || !extra_brushes)
+                    && !reference(model.headnodes[hull],counts[QA_BSP_CLIPNODES],offset,"model clip headnode",error)) return false;
+        }
+    }
+    for (size_t i = 0; i < counts[QA_BSP_AREAS]; ++i) {
+        qa_bsp_area area;
+        if (!qa_bsp_read_area(map,i,&area,error)) return false;
+        if (!range_reference(area.portals,counts[QA_BSP_AREA_PORTALS],map->lumps[QA_BSP_AREAS].offset + i * 8,"area portals",error)) return false;
+    }
+    for (size_t i = 0; i < counts[QA_BSP_AREA_PORTALS]; ++i) {
+        qa_bsp_area_portal portal;
+        if (!qa_bsp_read_area_portal(map,i,&portal,error)) return false;
+        size_t offset = map->lumps[QA_BSP_AREA_PORTALS].offset + i * 8;
+        if (!reference(portal.portal,counts[QA_BSP_AREA_PORTALS],offset,"area portal",error)
+            || !reference(portal.other_area,counts[QA_BSP_AREAS],offset,"portal area",error)) return false;
+    }
+    for (size_t i = 0; i < counts[QA_BSP_FOGS]; ++i) {
+        qa_bsp_fog fog;
+        if (!qa_bsp_read_fog(map,i,&fog,error)) return false;
+        size_t offset = map->lumps[QA_BSP_FOGS].offset + i * map->lumps[QA_BSP_FOGS].stride;
+        if (!reference(fog.brush,counts[QA_BSP_BRUSHES],offset,"fog brush",error)) return false;
+        qa_bsp_brush brush;
+        if (!qa_bsp_read_brush(map,(size_t)fog.brush,&brush,error)) return false;
+        if (fog.visible_side != -1 && !reference(fog.visible_side,brush.sides.count,offset,"fog visible side",error)) return false;
+    }
+    if (!validate_tree(map,false,error) || !validate_tree(map,true,error)) return false;
+    return map->family != QA_BSP_Q3 || validate_q3_surfaces(map,error);
+}
+
+typedef struct material_entry { qa_bytes raw_name; int32_t flags, contents; uint32_t id; bool occupied; } material_entry;
+
+static uint64_t material_hash(qa_bytes name, int32_t flags, int32_t contents)
+{
+    uint64_t hash = UINT64_C(14695981039346656037);
+    for (size_t i = 0; i < name.size; ++i) { hash ^= name.data[i]; hash *= UINT64_C(1099511628211); }
+    hash ^= (uint32_t)flags; hash *= UINT64_C(1099511628211);
+    hash ^= (uint32_t)contents; hash *= UINT64_C(1099511628211);
+    return hash;
+}
+
+static uint32_t intern_material(qa_bsp_materials *materials, material_entry *table, size_t mask,
+                                qa_bytes name, int32_t flags, int32_t contents)
+{
+    size_t slot = (size_t)material_hash(name,flags,contents) & mask;
+    while (table[slot].occupied) {
+        if (table[slot].flags == flags && table[slot].contents == contents && same_bytes(table[slot].raw_name,name))
+            return table[slot].id;
+        slot = (slot + 1) & mask;
+    }
+    uint32_t id = (uint32_t)materials->shader_count++;
+    table[slot] = (material_entry){name,flags,contents,id,true};
+    materials->shaders[id] = (qa_bsp_shader){string_span(name.data,name.size),flags,contents};
+    return id;
+}
+
+bool qa_bsp_build_materials(const qa_bsp_view *map, qa_bsp_materials *out, qa_error *error)
+{
+    if (map == NULL || out == NULL || map->family != QA_BSP_Q3)
+        return fail(error,QA_ERROR_ARGUMENT,0,"material table requires Q3 BSP");
+    qa_bsp_materials result = {
+        .surface_count = qa_bsp_record_count(map,QA_BSP_SURFACES),
+        .brush_count = qa_bsp_record_count(map,QA_BSP_BRUSHES),
+        .side_count = qa_bsp_record_count(map,QA_BSP_BRUSH_SIDES)
+    };
+    size_t maximum = qa_bsp_record_count(map,QA_BSP_SHADERS);
+    if (map->format == QA_BSP_IBSP44) {
+        if (result.surface_count > UINT32_MAX - result.brush_count
+            || result.surface_count + result.brush_count > UINT32_MAX - result.side_count)
+            return fail(error,QA_ERROR_MEMORY,0,"material table is too large");
+        maximum = result.surface_count + result.brush_count + result.side_count;
+    }
+    void *shaders = NULL, *surfaces = NULL, *brushes = NULL, *sides = NULL;
+    bool allocated = allocate_array(maximum,sizeof(*result.shaders),&shaders,error)
+        && allocate_array(result.surface_count,sizeof(*result.surfaces),&surfaces,error)
+        && allocate_array(result.brush_count,sizeof(*result.brushes),&brushes,error)
+        && allocate_array(result.side_count,sizeof(*result.sides),&sides,error);
+    result.shaders = shaders; result.surfaces = surfaces; result.brushes = brushes; result.sides = sides;
+    if (!allocated) { qa_bsp_materials_free(&result); return false; }
+    if (map->format == QA_BSP_IBSP46) {
+        result.shader_count = maximum;
+        for (size_t i = 0; i < maximum; ++i)
+            if (!qa_bsp_read_shader(map,i,&result.shaders[i],error)) goto failed;
+        for (size_t i = 0; i < result.surface_count; ++i) {
+            qa_bsp_surface surface;
+            if (!qa_bsp_read_surface(map,i,&surface,error) || !reference(surface.shader,maximum,0,"surface shader",error)) goto failed;
+            result.surfaces[i] = (uint32_t)surface.shader;
+        }
+        for (size_t i = 0; i < result.brush_count; ++i) {
+            qa_bsp_brush brush;
+            if (!qa_bsp_read_brush(map,i,&brush,error) || !reference(brush.shader,maximum,0,"brush shader",error)) goto failed;
+            result.brushes[i] = (uint32_t)brush.shader;
+        }
+        for (size_t i = 0; i < result.side_count; ++i) {
+            qa_bsp_brush_side side;
+            if (!qa_bsp_read_brush_side(map,i,&side,error) || !reference(side.shader,maximum,0,"side shader",error)) goto failed;
+            result.sides[i] = (uint32_t)side.shader;
+        }
+    } else {
+        static const uint8_t blank[64] = {0};
+        void *names_storage = NULL, *contents_storage = NULL, *table_storage = NULL;
+        size_t table_size = 1;
+        if (maximum > SIZE_MAX / 2) { fail(error,QA_ERROR_MEMORY,0,"material hash table is too large"); goto failed; }
+        while (table_size < maximum * 2) {
+            if (table_size > SIZE_MAX / 2) { fail(error,QA_ERROR_MEMORY,0,"material hash table is too large"); goto failed; }
+            table_size *= 2;
+        }
+        if (!allocate_array(result.side_count,sizeof(qa_bytes),&names_storage,error)
+            || !allocate_array(result.side_count,sizeof(int32_t),&contents_storage,error)
+            || !allocate_array(table_size,sizeof(material_entry),&table_storage,error)) {
+            free(names_storage); free(contents_storage); free(table_storage); goto failed;
+        }
+        qa_bytes *names = names_storage;
+        int32_t *contents = contents_storage;
+        material_entry *table = table_storage;
+        bool valid = true;
+        for (size_t i = 0; i < result.side_count; ++i) names[i] = (qa_bytes){blank,sizeof(blank)};
+        for (size_t i = 0; i < result.surface_count; ++i) {
+            qa_bytes raw;
+            if (!qa_bsp_record(map,QA_BSP_SURFACES,i,&raw,error)) { valid = false; break; }
+            int32_t side = qa_load_i32le(raw.data + 68);
+            if (side < 0) continue;
+            if (!reference(side,result.side_count,0,"surface brush side",error)) { valid = false; break; }
+            names[side] = (qa_bytes){raw.data,64};
+        }
+        for (size_t i = 0; i < result.brush_count && valid; ++i) {
+            qa_bsp_brush brush;
+            if (!qa_bsp_read_brush(map,i,&brush,error) || !range_reference(brush.sides,result.side_count,0,"brush sides",error)) { valid = false; break; }
+            for (size_t side = brush.sides.first; side < (size_t)brush.sides.first + brush.sides.count; ++side) contents[side] = brush.contents;
+            qa_bytes name = brush.sides.first < result.side_count ? names[brush.sides.first] : (qa_bytes){blank,sizeof(blank)};
+            result.brushes[i] = intern_material(&result,table,table_size - 1,name,0,brush.contents);
+        }
+        for (size_t i = 0; i < result.side_count && valid; ++i) {
+            qa_bsp_brush_side side;
+            if (!qa_bsp_read_brush_side(map,i,&side,error)) { valid = false; break; }
+            result.sides[i] = intern_material(&result,table,table_size - 1,names[i],side.flags,contents[i]);
+        }
+        for (size_t i = 0; i < result.surface_count && valid; ++i) {
+            qa_bytes raw;
+            if (!qa_bsp_record(map,QA_BSP_SURFACES,i,&raw,error)) { valid = false; break; }
+            int32_t side_index = qa_load_i32le(raw.data + 68), flags = 0, content_flags = 0;
+            if (side_index >= 0) {
+                qa_bsp_brush_side side;
+                if (!qa_bsp_read_brush_side(map,(size_t)side_index,&side,error)) { valid = false; break; }
+                flags = side.flags; content_flags = contents[side_index];
+            }
+            result.surfaces[i] = intern_material(&result,table,table_size - 1,(qa_bytes){raw.data,64},flags,content_flags);
+        }
+        free(names_storage); free(contents_storage); free(table_storage);
+        if (!valid) goto failed;
+    }
+    *out = result;
+    return true;
+failed:
+    qa_bsp_materials_free(&result);
+    return false;
+}
+
+void qa_bsp_materials_free(qa_bsp_materials *materials)
+{
+    if (materials == NULL) return;
+    free(materials->shaders); free(materials->surfaces); free(materials->brushes); free(materials->sides);
+    *materials = (qa_bsp_materials){0};
+}
+
+bool qa_bsp_model_members(const qa_bsp_view *map, size_t model_index, bool brushes,
+                          uint32_t *output, size_t capacity, size_t *count, qa_error *error)
+{
+    if (map == NULL || count == NULL || (capacity > 0 && output == NULL) || map->family != QA_BSP_Q3)
+        return fail(error,QA_ERROR_ARGUMENT,0,"invalid Q3 model member request");
+    qa_bsp_model model;
+    if (!qa_bsp_read_model(map,model_index,&model,error)) return false;
+    size_t total = qa_bsp_record_count(map,brushes ? QA_BSP_BRUSHES : QA_BSP_SURFACES);
+    if (!model.membership_from_tree) {
+        qa_bsp_range range = brushes ? model.brushes : model.faces;
+        if (!range_reference(range,total,0,"model members",error)) return false;
+        *count = range.count;
+        if (range.count > capacity) return fail(error,QA_ERROR_ARGUMENT,0,"model member output is too small");
+        for (size_t i = 0; i < range.count; ++i) output[i] = range.first + (uint32_t)i;
+        return true;
+    }
+    size_t nodes = qa_bsp_record_count(map,QA_BSP_NODES);
+    void *members_storage = NULL, *seen_storage = NULL, *stack_storage = NULL;
+    if (nodes > (SIZE_MAX - 1) / 2) return fail(error,QA_ERROR_MEMORY,0,"model traversal is too large");
+    if (!allocate_array(total,1,&members_storage,error) || !allocate_array(nodes,1,&seen_storage,error)
+        || !allocate_array(nodes * 2 + 1,sizeof(int32_t),&stack_storage,error)) {
+        free(members_storage); free(seen_storage); free(stack_storage); return false;
+    }
+    uint8_t *members = members_storage, *seen = seen_storage;
+    int32_t *stack = stack_storage;
+    size_t pending = 1, found = 0;
+    stack[0] = model.headnodes[0];
+    bool valid = true;
+    while (pending > 0 && valid) {
+        int32_t next = stack[--pending];
+        if (!child_reference(map,next,0,error)) { valid = false; break; }
+        if (next >= 0) {
+            if (seen[next]) continue;
+            seen[next] = 1;
+            qa_bsp_node node;
+            if (!qa_bsp_read_node(map,(size_t)next,&node,error)) { valid = false; break; }
+            stack[pending++] = node.children[0]; stack[pending++] = node.children[1];
+        } else {
+            qa_bsp_leaf leaf;
+            if (!qa_bsp_read_leaf(map,(size_t)(-1 - (int64_t)next),&leaf,error)) { valid = false; break; }
+            qa_bsp_range range = brushes ? leaf.brushes : leaf.faces;
+            qa_bsp_lump_kind lump = brushes ? QA_BSP_LEAF_BRUSHES : QA_BSP_LEAF_FACES;
+            if (!range_reference(range,qa_bsp_record_count(map,lump),0,"leaf members",error)) { valid = false; break; }
+            for (size_t i = range.first; i < (size_t)range.first + range.count; ++i) {
+                int64_t member;
+                if (!qa_bsp_read_index(map,lump,i,&member,error) || !reference(member,total,0,"model member",error)) { valid = false; break; }
+                if (!members[member]) { members[member] = 1; ++found; }
+            }
+        }
+    }
+    *count = found;
+    if (valid && found > capacity) valid = fail(error,QA_ERROR_ARGUMENT,0,"model member output is too small");
+    if (valid) for (size_t i = 0, write = 0; i < total; ++i) if (members[i]) output[write++] = (uint32_t)i;
+    free(members_storage); free(seen_storage); free(stack_storage);
+    return valid;
+}
+
+size_t qa_bsp_surface_triangle_count(const qa_bsp_surface *surface)
+{
+    if (surface == NULL || (surface->type != QA_BSP_SURFACE_PLANAR && surface->type != QA_BSP_SURFACE_TRIANGLES)) return 0;
+    return surface->triangle_fan ? surface->vertices.count >= 3 ? surface->vertices.count - 2 : 0 : surface->indices.count / 3;
+}
+
+bool qa_bsp_surface_triangle(const qa_bsp_view *map, const qa_bsp_surface *surface, size_t triangle,
+                             uint32_t indices[3], qa_error *error)
+{
+    if (map == NULL || surface == NULL || indices == NULL || triangle >= qa_bsp_surface_triangle_count(surface))
+        return fail(error,QA_ERROR_ARGUMENT,0,"invalid surface triangle");
+    if (surface->triangle_fan) {
+        indices[0] = 0; indices[1] = (uint32_t)triangle + 1; indices[2] = (uint32_t)triangle + 2;
+    } else for (size_t i = 0; i < 3; ++i) {
+        int64_t value;
+        if (!qa_bsp_read_index(map,QA_BSP_INDICES,(size_t)surface->indices.first + triangle * 3 + i,&value,error)
+            || !reference(value,surface->vertices.count,0,"surface vertex",error)) return false;
+        indices[i] = (uint32_t)value;
+    }
+    return true;
 }

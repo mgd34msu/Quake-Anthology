@@ -28,6 +28,7 @@ endif()
 find_package(ZLIB REQUIRED)
 find_package(PNG REQUIRED)
 find_package(JPEG REQUIRED)
+find_package(ICU REQUIRED COMPONENTS uc)
 find_library(QA_GIF_LIBRARY NAMES gif REQUIRED)
 
 add_library(qa_core STATIC
@@ -35,9 +36,11 @@ add_library(qa_core STATIC
     src/core/binary.c
     src/core/arena.c
     src/core/json.c
+    src/core/strings.c
+    src/core/text.c
     src/platform/file.c)
 target_include_directories(qa_core PUBLIC include)
-target_link_libraries(qa_core PUBLIC qa_compile_options m)
+target_link_libraries(qa_core PUBLIC qa_compile_options m PRIVATE ICU::uc)
 target_compile_definitions(qa_core PRIVATE _POSIX_C_SOURCE=200809L)
 
 add_library(qa_content STATIC
