@@ -107,6 +107,23 @@ add_library(qa_gameplay STATIC
     src/gameplay/provenance.c)
 target_link_libraries(qa_gameplay PUBLIC qa_world)
 
+add_library(qa_movement STATIC
+    src/movement/common.c
+    src/movement/prediction.c
+    src/movement/entity.c
+    src/movement/entity/monsters.c
+    src/movement/entity/pushers.c
+    src/movement/entity/q3_mover.c
+    src/movement/entity/trajectory.c
+    src/movement/q1/common.c
+    src/movement/q1/netquake.c
+    src/movement/q1/quakeworld.c
+    src/movement/q2/classic.c
+    src/movement/q2/rerelease.c
+    src/movement/q3/move.c
+    src/movement/q3/slide.c)
+target_link_libraries(qa_movement PUBLIC qa_session)
+
 add_library(qa_audio STATIC
     src/audio/bank.c
     src/audio/codecs.c
@@ -120,6 +137,48 @@ add_library(qa_audio STATIC
     src/audio/streams.c
     src/audio/wavelet.c)
 target_link_libraries(qa_audio PUBLIC qa_content PRIVATE SDL2::SDL2 PkgConfig::VORBISFILE)
+
+add_library(qa_scene STATIC
+    src/render/scene/frame.c
+    src/render/scene/math.c
+    src/render/scene/resources.c
+    src/render/scene/sort.c
+    src/render/scene/models.c
+    src/render/scene/models/draw.c
+    src/render/scene/models/images.c
+    src/render/scene/models/lighting.c
+    src/render/scene/models/shadows.c
+    src/render/scene/models/sprites.c
+    src/render/scene/models/topology.c
+    src/render/scene/world.c
+    src/render/scene/world/legacy.c
+    src/render/scene/world/legacy/geometry.c
+    src/render/scene/world/legacy/lighting.c
+    src/render/scene/world/legacy/textures.c
+    src/render/scene/world/q3.c
+    src/render/scene/world/q3/patch.c
+    src/render/scene/effects.c
+    src/render/scene/effects/particles.c
+    src/render/scene/effects/primitives.c
+    src/render/scene/effects/shadows.c
+    src/render/scene/effects/sky.c
+    src/render/scene/effects/stencil.c
+    src/render/material/color.c
+    src/render/material/coordinates.c
+    src/render/material/deform.c
+    src/render/material/library.c
+    src/render/material/math.c
+    src/render/material/parser.c
+    src/render/material/submit.c)
+target_link_libraries(qa_scene PUBLIC qa_world)
+
+add_library(qa_render_cpu STATIC
+    src/render/cpu/renderer.c
+    src/render/cpu/raster.c
+    src/render/cpu/texture.c
+    src/render/cpu/fragment.c
+    src/render/cpu/fog.c)
+target_link_libraries(qa_render_cpu PUBLIC qa_scene)
 
 add_executable(quake-anthology src/main.c)
 target_link_libraries(quake-anthology PRIVATE qa_content)

@@ -1,0 +1,574 @@
+/* Retained model resources and source-family presentation.
+ * SPDX-License-Identifier: GPL-2.0-or-later */
+#include "models/internal.h"
+#include <stdio.h>
+
+static bool model_array(size_t count, size_t size, void **out, qa_error *error) {
+    if (count > SIZE_MAX / size) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "model array exceeds addressable storage"); return false;
+    }
+    *out = calloc(count ? count : 1, size);
+    if (!*out) { qa_error_set(error, QA_ERROR_MEMORY, 0, "retained model array allocation failed"); return false; }
+    return true;
+}
+
+bool qa_scene_model_create(const qa_model *source, qa_scene_resources *resources,
+                           qa_material_library *materials, const qa_scene_image_options *options,
+                           qa_scene_model **out, qa_error *error) {
+    if (!source || !resources || !options || !out ||
+        (options->family == QA_SCENE_Q3 && !materials) ||
+        (options->palette_rgb.size && (options->palette_rgb.size != 768 || !options->palette_rgb.data)) ||
+        (options->translation.size && (options->translation.size != 256 || !options->translation.data))) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid retained model services or palette options"); return false;
+    }
+    qa_scene_model *model = calloc(1, sizeof(*model));
+    if (!model) { qa_error_set(error, QA_ERROR_MEMORY, 0, "retained model allocation failed"); return false; }
+    model->source = source; model->resources = resources; model->materials = materials;
+    model->identity = qa_scene_identity(); model->options = *options;
+    model->options.usage = source->format == QA_MODEL_SPR || source->format == QA_MODEL_SP2 ?
+        QA_IMAGE_USAGE_SPRITE : QA_IMAGE_USAGE_SKIN;
+    if (options->palette_rgb.size) {
+        memcpy(model->palette, options->palette_rgb.data, sizeof(model->palette));
+        model->options.palette_rgb = (qa_bytes){model->palette, sizeof(model->palette)};
+    } else if (source->format == QA_MODEL_MDL || source->format == QA_MODEL_SPR || options->family == QA_SCENE_Q2) {
+        qa_bytes palette;
+        qa_scene_family palette_family = source->format == QA_MODEL_MDL || source->format == QA_MODEL_SPR ? QA_SCENE_Q1 : options->family;
+        if (!qa_scene_resources_palette(resources, palette_family, &palette, error)) goto fail;
+        if (palette.size != sizeof(model->palette)) {
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "model palette has the wrong size"); goto fail;
+        }
+        memcpy(model->palette, palette.data, sizeof(model->palette));
+        model->options.palette_rgb = (qa_bytes){model->palette, sizeof(model->palette)};
+    }
+    if (options->translation.size) {
+        memcpy(model->translation, options->translation.data, sizeof(model->translation));
+        model->options.translation = (qa_bytes){model->translation, sizeof(model->translation)};
+    }
+    if (source->format == QA_MODEL_SP2) {
+        model->options.transparent = true; model->options.transparent_index = 255;
+        model->options.mipmap = false;
+    }
+    void *allocation;
+    if (!model_array(source->mesh_count, sizeof(*model->meshes), &allocation, error)) goto fail;
+    model->meshes = allocation;
+    for (uint32_t i = 0; i < source->mesh_count; ++i) if (!scene_model_topology(model, i, error)) goto fail;
+    if (!model_array(source->skin_count, sizeof(*model->skins), &allocation, error)) goto fail;
+    model->skins = allocation;
+    for (uint32_t i = 0; i < source->skin_count; ++i) {
+        if (source->format == QA_MODEL_MDL) {
+            char name[96];
+            snprintf(name, sizeof(name), "*model:%llu:skin:%u", (unsigned long long)model->identity, i);
+            if (!scene_model_indexed(model, name, source->skins[i].pixels, source->skin_width,
+                                      source->skin_height, false, &model->skins[i], error)) goto fail;
+        } else if (source->skins[i].name[0] && !scene_model_external(model, source->skins[i].name, &model->skins[i], error)) goto fail;
+    }
+    if (!model_array(source->sprite_count, sizeof(*model->sprites), &allocation, error)) goto fail;
+    model->sprites = allocation;
+    for (uint32_t i = 0; i < source->sprite_count; ++i) {
+        const qa_model_sprite *sprite = &source->sprites[i];
+        if (source->format == QA_MODEL_SPR) {
+            char name[96];
+            snprintf(name, sizeof(name), "*model:%llu:sprite:%u", (unsigned long long)model->identity, i);
+            if (!scene_model_indexed(model, name, sprite->pixels, sprite->width, sprite->height,
+                                      true, &model->sprites[i], error)) goto fail;
+        } else if (!scene_model_external(model, sprite->image, &model->sprites[i], error)) goto fail;
+    }
+    *out = model;
+    return true;
+fail:
+    qa_scene_model_destroy(model); return false;
+}
+
+static void replacement_destroy(qa_scene_model *model) {
+    if (model->replacement_skins) {
+        for (uint32_t i = 0; i < model->source->mesh_count; ++i) free(model->replacement_skins[i]);
+        free(model->replacement_skins); model->replacement_skins = NULL;
+    }
+    qa_scene_model *replacement = model->replacement;
+    while (replacement) {
+        qa_scene_model *next = replacement->replacement_next;
+        qa_scene_model_destroy(replacement); replacement = next;
+    }
+    model->replacement = NULL;
+    model->replacement_source = NULL;
+}
+
+void qa_scene_model_destroy(qa_scene_model *model) {
+    if (!model) return;
+    replacement_destroy(model);
+    scene_model_topology_destroy(model);
+    scene_model_images_destroy(model);
+    scene_model_shadow_identity *identity = model->shadow_identities;
+    while (identity) { scene_model_shadow_identity *next = identity->next; free(identity); identity = next; }
+    free(model);
+}
+
+uint32_t qa_scene_model_effect_flags(const qa_scene_model *model) {
+    if (!model) return 0;
+    if (model->source->format == QA_MODEL_MDL) return (uint32_t)model->source->flags;
+    if (model->replacement_source) return (uint32_t)model->replacement_source->flags;
+    return model->replacement ? (uint32_t)model->replacement->replacement_source->flags : 0;
+}
+
+uint32_t qa_scene_model_select_lod(const qa_scene_model_input *input, uint32_t count,
+                                   float radius, float lod_scale, float lod_bias) {
+    if (!input || !count || !isfinite(radius) || !isfinite(lod_scale) || !isfinite(lod_bias)) return 0;
+    int64_t lod = 0;
+    if (count > 1) {
+        float distance = qa_vec_dot(input->view.axis[0], model_origin(input)) - qa_vec_dot(input->view.axis[0], input->view.origin);
+        const float *matrix = input->view.projection.m;
+        float projected = 0;
+        if (distance > 0) {
+            float numerator = radius * matrix[5] - distance * matrix[9] + matrix[13];
+            float denominator = radius * matrix[7] - distance * matrix[11] + matrix[15];
+            projected = fminf(numerator / denominator, 1);
+        }
+        float fraction = projected != 0 ? 1 - projected * fminf(lod_scale, 20) : 0;
+        float selected = fraction * (float)count;
+        if (!isfinite(selected)) selected = 0;
+        if (selected >= (float)(count - 1)) lod = count - 1;
+        else if (selected > 0) lod = (int64_t)selected;
+    }
+    double biased = (double)lod + lod_bias;
+    if (biased <= 0) return 0;
+    if (biased >= count - 1) return count - 1;
+    return (uint32_t)biased;
+}
+
+static bool replacement_skin_path(const qa_model_replacement *replacement, uint32_t mesh,
+                                   uint32_t skin, uint32_t frame, char **out, qa_error *error) {
+    if (replacement->source->format == QA_MODEL_MD2)
+        return qa_model_md5_skin_path(replacement->source->skins[skin].name, out, error);
+    const qa_model_mesh *surface = &replacement->mesh->meshes[mesh];
+    if (!surface->shader_count) { *out = NULL; return true; }
+    qa_bytes shader = qa_model_shader_name(&surface->shaders[0]);
+    if (shader.size == SIZE_MAX || (shader.size && (!shader.data || memchr(shader.data, 0, shader.size)))) {
+        qa_error_set(error, QA_ERROR_FORMAT, mesh, "invalid replacement shader name"); return false;
+    }
+    char *name = malloc(shader.size + 1);
+    if (!name) { qa_error_set(error, QA_ERROR_MEMORY, mesh, "replacement shader name allocation failed"); return false; }
+    memcpy(name, shader.data, shader.size); name[shader.size] = 0;
+    char *base = NULL;
+    bool ok = qa_model_q1_skin_path(name, skin, frame, &base, error);
+    free(name);
+    if (!ok) return false;
+    size_t length = strlen(base);
+    char *path = realloc(base, length + 5);
+    if (!path) { free(base); qa_error_set(error, QA_ERROR_MEMORY, 0, "replacement skin extension allocation failed"); return false; }
+    memcpy(path + length, ".lmp", 5); *out = path; return true;
+}
+
+static bool prepare_replacement(qa_scene_model *model, const qa_model_replacement *replacement,
+                                 qa_error *error) {
+    if (!replacement->source || !replacement->mesh || !replacement->animation ||
+        (replacement->source->format != QA_MODEL_MDL && replacement->source->format != QA_MODEL_MD2) ||
+        (replacement->source != model->source && replacement->mesh != model->source) ||
+        replacement->mesh->format != QA_MODEL_MD5 ||
+        replacement->mesh->bone_count != replacement->animation->joint_count || !replacement->animation->frame_count) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "replacement does not belong to this retained model"); return false;
+    }
+    qa_scene_model **link = &model->replacement;
+    while (*link) {
+        qa_scene_model *retained = *link;
+        const qa_model_replacement *description = retained->replacement_source;
+        if (description->mesh == replacement->mesh && description->animation == replacement->animation &&
+            description->flags == replacement->flags && description->elapsed_animation == replacement->elapsed_animation) {
+            *link = retained->replacement_next;
+            retained->replacement_next = model->replacement;
+            model->replacement = retained;
+            return true;
+        }
+        link = &retained->replacement_next;
+    }
+    qa_scene_model *next = NULL;
+    if (!qa_scene_model_create(replacement->mesh, model->resources, model->materials, &model->options, &next, error)) return false;
+    next->replacement_description = *replacement;
+    next->replacement_source = &next->replacement_description;
+    next->replacement_skin_count = replacement->source->skin_count;
+    void *allocation;
+    if (!model_array(next->source->mesh_count, sizeof(*next->replacement_skins), &allocation, error)) goto fail;
+    next->replacement_skins = allocation;
+    for (uint32_t mesh = 0; mesh < next->source->mesh_count; ++mesh) {
+        if (!model_array(next->replacement_skin_count, sizeof(*next->replacement_skins[mesh]), &allocation, error)) goto fail;
+        next->replacement_skins[mesh] = allocation;
+        const qa_model *skin_source = replacement->source;
+        uint32_t groups = skin_source->format == QA_MODEL_MDL ? skin_source->skin_group_count : skin_source->skin_count;
+        for (uint32_t skin = 0; skin < groups; ++skin) {
+            uint32_t count = skin_source->format == QA_MODEL_MDL ? skin_source->skin_groups[skin].count : 1;
+            uint32_t first = skin_source->format == QA_MODEL_MDL ? skin_source->skin_groups[skin].first : skin;
+            for (uint32_t frame = 0; frame < count; ++frame) {
+                char *path = NULL;
+                if (!replacement_skin_path(replacement, mesh, skin, frame, &path, error)) goto fail;
+                if (!path) continue;
+                bool ok = scene_model_external(next, path, &next->replacement_skins[mesh][first + frame], error);
+                free(path);
+                if (!ok) goto fail;
+            }
+        }
+    }
+    next->replacement_next = model->replacement;
+    model->replacement = next;
+    return true;
+fail:
+    qa_scene_model_destroy(next); return false;
+}
+
+static void repair_frames(const qa_scene_model *model, qa_scene_model_input *input) {
+    const qa_model *source = input->replacement ? input->replacement->source : model->source;
+    uint32_t count = source->frame_group_count ? source->frame_group_count : source->frame_count;
+    if (source->format == QA_MODEL_MD5) count = input->animation ? input->animation->frame_count : 1;
+    if (!count) count = 1;
+    if (source->format == QA_MODEL_SP2 || (source->format == QA_MODEL_MD5 && !input->replacement) ||
+        (input->family == QA_SCENE_Q3 && (input->flags & 512))) {
+        input->frame %= count; input->old_frame %= count;
+    }
+    bool bad = input->frame >= count, old_bad = input->old_frame >= count;
+    if ((input->family == QA_SCENE_Q3 || source->format == QA_MODEL_MD2) && (bad || old_bad))
+        input->frame = input->old_frame = 0;
+    else { if (bad) input->frame = 0; if (old_bad) input->old_frame = 0; }
+    if (input->frame == input->old_frame && source->format != QA_MODEL_MD2) input->back_lerp = 0;
+    if (input->replacement && input->replacement->elapsed_animation) {
+        input->frame = qa_model_replacement_frame(input->replacement, input->frame, input->seconds, input->sync_base);
+        input->old_frame = input->frame; input->back_lerp = 0;
+    } else if (input->replacement) {
+        input->frame = qa_model_replacement_frame(input->replacement, input->frame, input->seconds, input->sync_base);
+        input->old_frame = qa_model_replacement_frame(input->replacement, input->old_frame, input->seconds, input->sync_base);
+    } else if (source->frame_group_count) {
+        input->frame = qa_model_group_sample(&source->frame_groups[input->frame], input->seconds, input->sync_base);
+        input->old_frame = qa_model_group_sample(&source->frame_groups[input->old_frame], input->seconds, input->sync_base);
+    }
+}
+
+static bool select_image(qa_scene_model *model, const qa_scene_model_input *input, uint32_t index,
+                          scene_model_image **out, qa_error *error) {
+    const qa_model_mesh *mesh = &model->source->meshes[index];
+    *out = NULL;
+    bool custom_allowed = model->source->format != QA_MODEL_MDL;
+    bool shell_image = scene_model_has_shell(input) &&
+        (model->source->format == QA_MODEL_MD2 || model->source->format == QA_MODEL_MD5);
+    if ((input->custom_material && custom_allowed) || shell_image) return true;
+    if (input->custom_skin && custom_allowed) {
+        char generated[32];
+        const char *name = mesh->name;
+        if (model->source->format == QA_MODEL_MD5) { snprintf(generated, sizeof(generated), "mesh%u", index); name = generated; }
+        else if (model->source->format == QA_MODEL_MD2 || model->source->format == QA_MODEL_MDL) name = "alias";
+        for (size_t i = 0; i < input->custom_skin->count; ++i)
+            if (!strcmp(input->custom_skin->mappings[i].surface, name))
+                return scene_model_external(model, input->custom_skin->mappings[i].shader, out, error);
+        return true;
+    }
+    const qa_model *skin_source = input->replacement ? input->replacement->source : model->source;
+    if (skin_source->format == QA_MODEL_MDL) {
+        uint32_t skin = input->skin < skin_source->skin_group_count ? input->skin : 0;
+        if (!skin_source->skin_group_count) return true;
+        skin = qa_model_group_sample(&skin_source->skin_groups[skin], input->seconds, input->sync_base);
+        *out = input->replacement ? model->replacement_skins[index][skin] : model->skins[skin];
+    } else if (skin_source->format == QA_MODEL_MD2) {
+        if (!skin_source->skin_count) return true;
+        uint32_t skin = input->skin < skin_source->skin_count ? input->skin : 0;
+        *out = input->replacement ? model->replacement_skins[index][skin] : model->skins[skin];
+    } else if (mesh->shader_count) {
+        uint32_t skin = model->source->format == QA_MODEL_MD3 ? input->skin % mesh->shader_count :
+            input->skin < mesh->shader_count ? input->skin : 0;
+        *out = model->meshes[index].shaders[skin];
+    }
+    return true;
+}
+
+static bool casts_shadow(const qa_scene_model *model, const qa_scene_model_input *input) {
+    if (input->view_model || model->source->format == QA_MODEL_SPR || model->source->format == QA_MODEL_SP2) return false;
+    if (input->family == QA_SCENE_Q2) return !(input->flags & (4u | 16u | 32u | 128u | 8192u | 0x00200000u));
+    if (input->family == QA_SCENE_Q3 && (input->flags & (4u | 8u | 64u))) return false;
+    return input->color.w >= 1;
+}
+
+static qa_model_bounds cull_bounds(const qa_scene_model *model, const qa_scene_model_input *original,
+                                    const qa_scene_mesh *mesh) {
+    const qa_model *source = original->replacement ? original->replacement->source : model->source;
+    if (source->format == QA_MODEL_MDL) return source->bounds;
+    if (source->format == QA_MODEL_MD2 && source->frame_count) {
+        uint32_t current = original->frame, previous = original->old_frame;
+        if (current >= source->frame_count || previous >= source->frame_count) current = previous = 0;
+        qa_bounds bounds = model_bounds_empty();
+        const uint32_t frames[2] = {current, previous};
+        for (unsigned i = 0; i < 2; ++i) {
+            const qa_model_frame *frame = &source->frames[frames[i]];
+            qa_vec3 translation = model_vec(frame->translation);
+            model_bounds_add(&bounds, translation);
+            model_bounds_add(&bounds, qa_vec_add(translation, qa_vec_scale(model_vec(frame->scale), 255)));
+        }
+        return (qa_model_bounds){{bounds.mins.x, bounds.mins.y, bounds.mins.z}, {bounds.maxs.x, bounds.maxs.y, bounds.maxs.z}};
+    }
+    return (qa_model_bounds){{mesh->bounds.mins.x, mesh->bounds.mins.y, mesh->bounds.mins.z},
+                            {mesh->bounds.maxs.x, mesh->bounds.maxs.y, mesh->bounds.maxs.z}};
+}
+
+static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *input, uint32_t index,
+                           qa_scene_frame *frame, qa_scene_mesh *out, qa_error *error) {
+    const qa_model_mesh *source = &model->source->meshes[index];
+    scene_model_mesh *retained = &model->meshes[index];
+    *out = retained->retained;
+    if (!out->vertex_count) return true;
+    size_t source_vertex_count = source->vertex_count;
+    if (source_vertex_count > SIZE_MAX / sizeof(qa_model_vertex) || out->vertex_count > SIZE_MAX / sizeof(qa_scene_vertex)) {
+        qa_error_set(error, QA_ERROR_MEMORY, index, "model frame geometry exceeds addressable storage"); return false;
+    }
+    qa_model_vertex *sampled = qa_arena_alloc(&frame->storage, source->vertex_count * sizeof(*sampled), _Alignof(qa_model_vertex), error);
+    qa_scene_vertex *vertices = qa_arena_alloc(&frame->storage, out->vertex_count * sizeof(*vertices), _Alignof(qa_scene_vertex), error);
+    if (!sampled || !vertices) return false;
+    bool alias = model->source->format == QA_MODEL_MDL || model->source->format == QA_MODEL_MD2;
+    if (alias) {
+        qa_vec3 delta = qa_v3(0, 0, 0);
+        if (model->source->format == QA_MODEL_MD2 && input->back_lerp != 0) {
+            qa_model_transform inverse;
+            if (!qa_model_transform_inverse(&input->transform, &inverse)) {
+                qa_error_set(error, QA_ERROR_ARGUMENT, 0, "MD2 origin compensation requires a nonsingular transform"); return false;
+            }
+            float world_delta[3], local_delta[3];
+            model_store(world_delta, qa_vec_sub(input->previous_origin, model_origin(input)));
+            qa_model_transform_direction(&inverse, world_delta, local_delta); delta = model_vec(local_delta);
+        }
+        if (!qa_model_sample_alias(model->source, input->frame, input->old_frame, input->back_lerp,
+                                    delta, sampled, source->vertex_count, error)) return false;
+    } else if (model->source->format == QA_MODEL_MD5) {
+        if (!qa_model_skin_md5(model->source, index, input->pose, input->pose_count,
+                                sampled, source->vertex_count, error)) return false;
+    } else if (!qa_model_sample_mesh(model->source, index, input->frame, input->old_frame,
+                                      input->back_lerp, sampled, source->vertex_count, error)) return false;
+    qa_vec3 light = scene_model_alias_light(input);
+    bool shell = scene_model_has_shell(input);
+    out->bounds = model_bounds_empty();
+    for (size_t i = 0; i < out->vertex_count; ++i) {
+        uint32_t source_index = retained->sources[i];
+        const qa_model_vertex *point = &sampled[source_index];
+        vertices[i] = retained->vertices[i];
+        vertices[i].position = model_vec(point->position); vertices[i].normal = model_vec(point->normal);
+        if (shell && (model->source->format == QA_MODEL_MD2 || model->source->format == QA_MODEL_MD5))
+            vertices[i].position = qa_vec_add(vertices[i].position, qa_vec_scale(vertices[i].normal, 4));
+        vertices[i].color = input->color;
+        if (!input->shadow_only && input->family != QA_SCENE_Q3) {
+            uint8_t normal = retained->normal_indices ? retained->normal_indices[(size_t)input->frame * source->vertex_count + source_index] : 255;
+            float shade = shell ? 1 : scene_model_shade(input, point->normal, normal);
+            if (!shell && input->family == QA_SCENE_Q1 && model->source->format == QA_MODEL_MDL && input->back_lerp != 0) {
+                size_t old_index = (size_t)input->old_frame * source->vertex_count + source_index;
+                shade = shade * (1 - input->back_lerp) + scene_model_shade(input,
+                    source->vertices[old_index].normal, retained->normal_indices[old_index]) * input->back_lerp;
+            }
+            vertices[i].color.x *= light.x * shade;
+            vertices[i].color.y *= light.y * shade;
+            vertices[i].color.z *= light.z * shade;
+        }
+        model_bounds_add(&out->bounds, vertices[i].position);
+    }
+    out->identity = 0; out->revision = frame->sequence; out->vertices = vertices;
+    return true;
+}
+
+static bool model_submit(qa_scene_model *, const qa_scene_model_input *, qa_scene_frame *, unsigned, qa_error *);
+
+static void beam_axes(qa_vec3 direction, uint32_t roll_degrees, qa_model_transform *transform) {
+    const float pi = 3.14159265358979323846f;
+    float yaw = 0, pitch;
+    if (direction.x == 0 && direction.y == 0) pitch = direction.z > 0 ? 90 : 270;
+    else {
+        yaw = direction.x != 0 ? atan2f(direction.y, direction.x) * 180 / pi : direction.y > 0 ? 90 : 270;
+        if (yaw < 0) yaw += 360;
+        float forward = sqrtf(direction.x * direction.x + direction.y * direction.y);
+        pitch = atan2f(direction.z, forward) * 180 / pi;
+        if (pitch < 0) pitch += 360;
+    }
+    float yaw_radians = (float)(yaw * 0.01745329251994329577);
+    float pitch_radians = (float)(-pitch * 0.01745329251994329577);
+    float roll_radians = (float)(roll_degrees * 0.01745329251994329577);
+    float sy = sinf(yaw_radians), cy = cosf(yaw_radians), sp = sinf(pitch_radians), cp = cosf(pitch_radians);
+    float sr = sinf(roll_radians), cr = cosf(roll_radians);
+    model_store(transform->axes[0], qa_v3(cp * cy, cp * sy, -sp));
+    model_store(transform->axes[1], qa_v3(-((-sr * sp) * cy + (-cr * -sy)),
+        -((-sr * sp) * sy + (-cr * cy)), sr * cp));
+    model_store(transform->axes[2], qa_v3((cr * sp) * cy + (-sr * -sy), (cr * sp) * sy + (-sr * cy), cr * cp));
+}
+
+static bool model_beam(qa_scene_model *model, const qa_scene_model_input *input,
+                        qa_scene_frame *frame, unsigned depth, qa_error *error) {
+    double segment_length = input->beam_segment_length == 0 ? 30 : input->beam_segment_length;
+    if (!isfinite(segment_length) || segment_length <= 0) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model beam segment length must be positive"); return false;
+    }
+    qa_vec3 difference = qa_vec_sub(input->previous_origin, model_origin(input));
+    double distance = sqrt((double)difference.x * difference.x + (double)difference.y * difference.y + (double)difference.z * difference.z);
+    if (!isfinite(distance)) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model beam distance is nonfinite"); return false; }
+    if (distance == 0) return true;
+    if (ceil(distance / segment_length) > (double)(SIZE_MAX / sizeof(qa_scene_draw))) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "model beam has too many segments"); return false;
+    }
+    qa_vec3 direction = qa_v3((float)(difference.x / distance), (float)(difference.y / distance), (float)(difference.z / distance));
+    double seed_number = trunc(input->seconds * 1000) + input->entity;
+    if (!isfinite(seed_number) || fabs(seed_number) > 9007199254740991.0) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model beam random seed is outside source integer range"); return false;
+    }
+    double wrapped = fmod(seed_number, 4294967296.0);
+    if (wrapped < 0) wrapped += 4294967296.0;
+    uint32_t random = (uint32_t)wrapped;
+    uint32_t count = model->source->frame_group_count ? model->source->frame_group_count : model->source->frame_count;
+    if (!count) count = input->animation ? input->animation->frame_count : 1;
+    if (!count) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model beam has no source frames"); return false; }
+    for (double offset = 0; offset < distance; offset += segment_length) {
+        double length = fmin(distance - offset, segment_length);
+        qa_scene_model_input segment = *input;
+        segment.model_beam = false; segment.attachments = NULL; segment.attachment_count = 0;
+        segment.pose = NULL; segment.pose_count = 0;
+        random = random * UINT32_C(69069) + 1;
+        segment.frame = segment.old_frame = (random & 32767u) % count; segment.back_lerp = 0;
+        random = random * UINT32_C(69069) + 1;
+        beam_axes(direction, (random & 32767u) % 360u, &segment.transform);
+        segment.transform.scale[0] = (float)(length / segment_length);
+        segment.transform.scale[1] = segment.transform.scale[2] = 1;
+        qa_vec3 origin = model_origin(input);
+        model_store(segment.transform.origin, qa_v3((float)(origin.x + direction.x * (offset + length * 0.5)),
+            (float)(origin.y + direction.y * (offset + length * 0.5)), (float)(origin.z + direction.z * (offset + length * 0.5))));
+        segment.flags = 8192;
+        if (!model_submit(model, &segment, frame, depth, error)) return false;
+    }
+    return true;
+}
+
+static bool submit_attachments(qa_scene_model *model, const qa_scene_model_input *input,
+                                qa_scene_frame *frame, unsigned depth, qa_error *error) {
+    for (size_t i = 0; i < input->attachment_count; ++i) {
+        const qa_scene_model_attachment *attachment = &input->attachments[i];
+        if (!attachment->tag || !attachment->model || !attachment->input) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, i, "model attachment requires tag, model and input"); return false;
+        }
+        qa_model_tag tag;
+        float tag_scale = 1;
+        if (model->source->format == QA_MODEL_MD3) {
+            if (!qa_model_lerp_tag(model->source, attachment->tag, input->old_frame, input->frame,
+                                   1 - input->back_lerp, &tag)) continue;
+        } else if (model->source->format == QA_MODEL_MD5) {
+            size_t length = strlen(attachment->tag);
+            uint32_t joint;
+            for (joint = 0; joint < model->source->bone_count; ++joint) {
+                qa_bytes name = qa_model_bone_name(&model->source->bones[joint]);
+                if (name.size == length && !memcmp(name.data, attachment->tag, length)) break;
+            }
+            if (joint >= model->source->bone_count || joint >= input->pose_count) continue;
+            qa_model_joint_tag(&input->pose[joint], &tag); tag_scale = input->pose[joint].scale;
+        } else continue;
+        qa_model_transform local_tag = {0}, world_tag;
+        memcpy(local_tag.origin, tag.origin, sizeof(local_tag.origin));
+        memcpy(local_tag.axes, tag.axes, sizeof(local_tag.axes));
+        local_tag.scale[0] = local_tag.scale[1] = local_tag.scale[2] = tag_scale;
+        qa_model_transform_compose(&input->transform, &local_tag, &world_tag);
+        qa_scene_model_input child = *attachment->input;
+        qa_model_transform_compose(&world_tag, &attachment->input->transform, &child.transform);
+        float delta[3], moved[3];
+        model_store(delta, qa_vec_sub(child.previous_origin, model_origin(attachment->input)));
+        qa_model_transform_direction(&world_tag, delta, moved);
+        child.previous_origin = qa_vec_add(model_origin(&child), model_vec(moved));
+        child.view = input->view; child.seconds = input->seconds;
+        child.ambient = input->ambient; child.directed = input->directed; child.light_direction = input->light_direction;
+        child.shadow_only = input->shadow_only;
+        if (!model_submit(attachment->model, &child, frame, depth + 1, error)) return false;
+    }
+    return true;
+}
+
+static bool model_submit(qa_scene_model *model, const qa_scene_model_input *original,
+                          qa_scene_frame *frame, unsigned depth, qa_error *error) {
+    if (depth >= 64) { qa_error_set(error, QA_ERROR_ARGUMENT, depth, "model attachment graph is cyclic or too deep"); return false; }
+    qa_scene_model_input input = *original;
+    if (!isfinite(input.back_lerp) || input.back_lerp < 0 || input.back_lerp > 1 ||
+        !isfinite(input.seconds) || !isfinite(input.sync_base) || !isfinite(input.color.w) ||
+        (input.attachment_count && !input.attachments) || (input.pose_count && !input.pose) ||
+        (input.render_text_count && !input.render_texts) ||
+        (input.shadow_light_count && !input.shadow_lights) ||
+        (input.custom_skin && input.custom_skin->count && !input.custom_skin->mappings) ||
+        !qa_vec_finite(input.previous_origin) || !qa_vec_finite(input.ambient) ||
+        !qa_vec_finite(input.directed) || !qa_vec_finite(input.light_direction) ||
+        !isfinite(input.color.x) || !isfinite(input.color.y) || !isfinite(input.color.z) ||
+        !isfinite(input.shadow_plane) || !isfinite(input.shader_time) || !isfinite(input.rotation)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid scene model pose or optional span"); return false;
+    }
+    for (unsigned i = 0; i < 3; ++i) {
+        if (!isfinite(input.transform.origin[i]) || !isfinite(input.transform.scale[i]) ||
+            !qa_vec_finite(model_vec(input.transform.axes[i]))) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, i, "scene model transform is nonfinite"); return false;
+        }
+    }
+    if (input.model_beam) return model_beam(model, &input, frame, depth, error);
+    if (input.shadow_only && !casts_shadow(model, &input)) return true;
+    if (input.shadow_only && input.family == QA_SCENE_Q2) input.flags &= ~(1024u | 2048u | 4096u | 65536u | 131072u);
+    if (input.family == QA_SCENE_Q2 && (input.flags & 128)) {
+        if (model->options.palette_rgb.size != 768) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 beam requires its source palette"); return false;
+        }
+        unsigned color = (input.skin & 255u) * 3;
+        qa_scene_vec4 tint = {model->palette[color] / 255.0f, model->palette[color + 1] / 255.0f,
+                              model->palette[color + 2] / 255.0f, input.color.w};
+        return qa_scene_beam(frame, &input.view, model_origin(&input), input.previous_origin,
+                              (float)input.frame, tint, qa_scene_white(model->resources), error);
+    }
+    if (input.replacement) {
+        if (!prepare_replacement(model, input.replacement, error)) return false;
+        model = model->replacement; input.animation = input.replacement->animation;
+    }
+    repair_frames(model, &input);
+    if (model->source->format == QA_MODEL_MD5 && !input.pose) {
+        if (input.animation) {
+            size_t joint_count = input.animation->joint_count;
+            if (input.animation->joint_count != model->source->bone_count ||
+                joint_count > SIZE_MAX / sizeof(qa_model_pose)) {
+                qa_error_set(error, QA_ERROR_ARGUMENT, 0, "MD5 animation does not match retained mesh"); return false;
+            }
+            qa_model_pose *pose = qa_arena_alloc(&frame->storage,
+                input.animation->joint_count * sizeof(*pose), _Alignof(qa_model_pose), error);
+            if (!pose || !qa_model_animation_sample(input.animation, input.frame, input.old_frame,
+                input.back_lerp, pose, input.animation->joint_count, error)) return false;
+            input.pose = pose; input.pose_count = input.animation->joint_count;
+        } else { input.pose = model->source->bind_pose; input.pose_count = model->source->bone_count; }
+    }
+    bool visible = true;
+    if (!input.shadow_only) {
+        if (input.family == QA_SCENE_Q3) {
+            if ((input.flags & 2) && !input.view.clip_enabled && input.shadow_mode != 2 && input.shadow_mode != 3) visible = false;
+            if ((input.flags & 4) && input.view.clip_enabled) visible = false;
+        }
+        if (input.family == QA_SCENE_Q2 && (input.flags & 4) && input.left_hand == 2) visible = false;
+    }
+    if (visible && (model->source->format == QA_MODEL_SPR || model->source->format == QA_MODEL_SP2)) {
+        if (!scene_model_sprite_submit(model, &input, input.frame, frame, error)) return false;
+    } else if (visible) {
+        uint32_t first = 0, count = model->source->mesh_count;
+        if (model->source->lod_count) {
+            uint32_t lod = input.lod < model->source->lod_count ? input.lod : model->source->lod_count - 1;
+            first = model->source->lods[lod].first_mesh; count = model->source->lods[lod].mesh_count;
+        }
+        for (uint32_t i = first; i < first + count; ++i) {
+            qa_scene_mesh mesh;
+            scene_model_image *image;
+            if (!mesh_geometry(model, &input, i, frame, &mesh, error) || !select_image(model, &input, i, &image, error)) return false;
+            bool weapon = input.family == QA_SCENE_Q2 && (input.view_model || (input.flags & 4));
+            if (!input.no_cull && !input.shadow_only && !weapon && mesh.vertex_count) {
+                qa_model_bounds local = cull_bounds(model, original, &mesh), world;
+                qa_model_transform_bounds(&input.transform, &local, &world);
+                qa_bounds bounds = {model_vec(world.min), model_vec(world.max)};
+                qa_scene_plane planes[6];
+                size_t plane_count = qa_scene_frustum(&input.view, planes);
+                if (!qa_scene_bounds_visible(bounds, planes, plane_count)) continue;
+            }
+            if (!scene_model_emit(model, &input, &mesh, image, scene_model_has_shell(&input), false, frame, error)) return false;
+        }
+    }
+    return submit_attachments(model, &input, frame, depth, error);
+}
+
+bool qa_scene_model_submit(qa_scene_model *model, const qa_scene_model_input *input,
+                           qa_scene_frame *frame, qa_error *error) {
+    if (!model || !input || !frame) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model, input and frame are required"); return false; }
+    size_t commands = frame->command_count;
+    size_t groups = frame->group_count;
+    if (model_submit(model, input, frame, 0, error)) return true;
+    frame->command_count = commands;
+    frame->group_count = groups;
+    return false;
+}
