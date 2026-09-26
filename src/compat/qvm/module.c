@@ -1,0 +1,200 @@
+#include "internal.h"
+
+#include <stdlib.h>
+#include <string.h>
+
+#define CHECKPOINT_HEADER 112u
+
+static bool safe_point(const qa_qvm *vm, qa_error *error)
+{
+    if (!qa_qvm_mutable(vm,error)) return false;
+    return (!qa_qvm_execution_active(vm) && vm->write_delivery_depth == 0 && vm->lifecycle_depth == 0)
+        || qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"QVM operation requires a completed source call and write delivery");
+}
+
+bool qa_qvm_create(qa_qvm_image *image, const qa_qvm_options *options, qa_qvm **out, qa_error *error)
+{
+    if (image == NULL || options == NULL || out == NULL
+        || (unsigned)options->role > QA_QVM_UI || (unsigned)options->abi > QA_QVM_Q3_116N
+        || (unsigned)options->semantics > QA_QVM_COMPILED_SEMANTICS
+        || (options->checkpoint == NULL) != (options->restore == NULL))
+        return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"invalid QVM instance options");
+    qa_qvm *vm = calloc(1,sizeof(*vm));
+    if (vm == NULL) return qa_qvm_error(error,QA_ERROR_MEMORY,0,"allocating QVM instance");
+    vm->data = calloc(image->memory_size,1);
+    if (vm->data == NULL) { free(vm); return qa_qvm_error(error,QA_ERROR_MEMORY,0,"allocating private QVM memory"); }
+    vm->image = image;
+    vm->options = *options;
+    vm->api_version = options->role == QA_QVM_GAME ? (options->abi == QA_QVM_Q3_MODERN ? 8u : 7u)
+        : options->role == QA_QVM_CGAME ? (options->abi == QA_QVM_Q3_MODERN ? 4u : 3u)
+        : options->abi == QA_QVM_Q3_MODERN ? 6u : 4u;
+    vm->data_size = image->memory_size;
+    vm->data_mask = (uint32_t)image->memory_size - 1;
+    vm->next_watch = 1;
+    if (image->initialized.size > 0) memcpy(vm->data,image->initialized.data,image->initialized.size);
+    if (!qa_qvm_execution_create(vm,error)) { free(vm->data); free(vm); return false; }
+    qa_qvm_image_retain(image);
+    *out = vm;
+    return true;
+}
+
+bool qa_qvm_destroy(qa_qvm *vm, qa_error *error)
+{
+    if (vm == NULL) return true;
+    if (!safe_point(vm,error)) return false;
+    vm->retired = true;
+    qa_qvm_memory_close(vm);
+    qa_qvm_execution_destroy(vm);
+    qa_qvm_image_release(vm->image);
+    free(vm->data); free(vm);
+    return true;
+}
+
+bool qa_qvm_restart(qa_qvm *vm, qa_bytes replacement, qa_error *error)
+{
+    if (!safe_point(vm,error)) return false;
+    qa_buffer initialized = {0};
+    size_t allocation;
+    if (!qa_qvm_parse_restart(replacement,&initialized,&allocation,error)) return false;
+    if (allocation > vm->data_size) {
+        qa_buffer_free(&initialized);
+        return qa_qvm_error(error,QA_ERROR_FORMAT,28,"QVM restart exceeds original allocation");
+    }
+    qa_qvm_memory_close(vm);
+    qa_qvm_execution_reset(vm);
+    /* The original restart clears only the replacement allocation. Older
+     * bytes above that allocation remain addressable through the original mask. */
+    memset(vm->data,0,allocation);
+    if (initialized.size > 0) memcpy(vm->data,initialized.data,initialized.size);
+    qa_buffer_free(&initialized);
+    return true;
+}
+
+bool qa_qvm_active(const qa_qvm *vm) { return vm != NULL && qa_qvm_execution_active(vm); }
+qa_qvm_role qa_qvm_get_role(const qa_qvm *vm) { return vm == NULL ? QA_QVM_GAME : vm->options.role; }
+qa_qvm_abi qa_qvm_get_abi(const qa_qvm *vm) { return vm == NULL ? QA_QVM_Q3_MODERN : vm->options.abi; }
+uint32_t qa_qvm_api_version(const qa_qvm *vm) { return vm == NULL ? 0 : vm->api_version; }
+const qa_sha256_digest *qa_qvm_digest(const qa_qvm *vm) { return vm == NULL ? NULL : &vm->image->digest; }
+
+bool qa_qvm_call_argument(const qa_qvm_call *call, size_t index, int32_t *out, qa_error *error)
+{
+    if (out == NULL || call == NULL || index >= call->argument_count)
+        return qa_qvm_error(error,QA_ERROR_ARGUMENT,index,"QVM argument index is outside call");
+    if (!qa_qvm_execution_token(call,error)) return false;
+    if (index > (UINT32_MAX - call->argument_base) / 4u)
+        return qa_qvm_error(error,QA_ERROR_ARGUMENT,index,"QVM argument address overflow");
+    uint32_t offset = call->argument_base + (uint32_t)index * 4u;
+    if (!qa_qvm_raw_range(call->vm,offset,4,error)) return false;
+    *out = qa_load_i32le(call->vm->data + offset);
+    return true;
+}
+
+bool qa_qvm_call_set_argument(const qa_qvm_call *call, size_t index, int32_t value, qa_error *error)
+{
+    int32_t previous;
+    if (!qa_qvm_call_argument(call,index,&previous,error)) return false;
+    uint8_t bytes[4];
+    qa_store_u32le(bytes,(uint32_t)value);
+    return qa_qvm_write(call->vm,call->argument_base + (uint32_t)index * 4u,(qa_bytes){bytes,4},error);
+}
+
+static void checkpoint_digest(qa_bytes bytes, qa_sha256_digest *out)
+{
+    qa_sha256_context hash;
+    qa_sha256_init(&hash);
+    qa_sha256_update(&hash,(qa_bytes){bytes.data,80});
+    qa_sha256_update(&hash,(qa_bytes){bytes.data + CHECKPOINT_HEADER,bytes.size - CHECKPOINT_HEADER});
+    qa_sha256_final(&hash,out);
+}
+
+bool qa_qvm_checkpoint(qa_qvm *vm, qa_buffer *out, qa_error *error)
+{
+    if (out == NULL) return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"missing QVM checkpoint output");
+    if (!safe_point(vm,error)) return false;
+    if (vm->options.checkpoint == NULL)
+        return qa_qvm_error(error,QA_ERROR_UNSUPPORTED,0,"QVM host has not bound checkpoint services");
+    qa_buffer host = {0};
+    ++vm->lifecycle_depth;
+    bool captured = vm->options.checkpoint(vm->options.context,&host,error);
+    --vm->lifecycle_depth;
+    if (!captured) { qa_buffer_free(&host); return false; }
+    if ((host.size > 0 && host.data == NULL) || host.size > SIZE_MAX - CHECKPOINT_HEADER - vm->data_size) {
+        qa_buffer_free(&host);
+        return qa_qvm_error(error,QA_ERROR_FORMAT,0,"invalid QVM host checkpoint");
+    }
+    qa_buffer state = {calloc(1,CHECKPOINT_HEADER + vm->data_size + host.size),CHECKPOINT_HEADER + vm->data_size + host.size};
+    if (state.data == NULL) { qa_buffer_free(&host); return qa_qvm_error(error,QA_ERROR_MEMORY,0,"allocating QVM checkpoint"); }
+    memcpy(state.data,"QAVM",4);
+    qa_store_u32le(state.data + 4,1);
+    qa_store_u32le(state.data + 8,(uint32_t)vm->options.role);
+    qa_store_u32le(state.data + 12,(uint32_t)vm->options.abi);
+    qa_store_u32le(state.data + 16,(uint32_t)vm->options.semantics);
+    qa_store_u32le(state.data + 20,vm->api_version);
+    qa_store_u64le(state.data + 24,(uint64_t)vm->data_size);
+    qa_store_u64le(state.data + 32,(uint64_t)host.size);
+    qa_store_u64le(state.data + 40,vm->write_sequence);
+    memcpy(state.data + 48,vm->image->digest.bytes,32);
+    memcpy(state.data + CHECKPOINT_HEADER,vm->data,vm->data_size);
+    if (host.size > 0) memcpy(state.data + CHECKPOINT_HEADER + vm->data_size,host.data,host.size);
+    qa_sha256_digest digest;
+    checkpoint_digest((qa_bytes){state.data,state.size},&digest);
+    memcpy(state.data + 80,digest.bytes,32);
+    qa_buffer_free(&host);
+    *out = state;
+    return true;
+}
+
+bool qa_qvm_restore(qa_qvm *vm, qa_bytes state, qa_error *error)
+{
+    if (!safe_point(vm,error)) return false;
+    if (vm->options.restore == NULL)
+        return qa_qvm_error(error,QA_ERROR_UNSUPPORTED,0,"QVM host has not bound restore services");
+    if (state.data == NULL || state.size < CHECKPOINT_HEADER || memcmp(state.data,"QAVM",4) != 0
+        || qa_load_u32le(state.data + 4) != 1 || qa_load_u32le(state.data + 8) != (uint32_t)vm->options.role
+        || qa_load_u32le(state.data + 12) != (uint32_t)vm->options.abi
+        || qa_load_u32le(state.data + 16) != (uint32_t)vm->options.semantics || qa_load_u32le(state.data + 20) != vm->api_version
+        || qa_load_u64le(state.data + 24) != vm->data_size
+        || vm->data_size > state.size - CHECKPOINT_HEADER
+        || qa_load_u64le(state.data + 32) != state.size - CHECKPOINT_HEADER - vm->data_size
+        || memcmp(state.data + 48,vm->image->digest.bytes,32) != 0)
+        return qa_qvm_error(error,QA_ERROR_FORMAT,0,"QVM checkpoint artifact, profile, or envelope mismatch");
+    qa_sha256_digest digest;
+    checkpoint_digest(state,&digest);
+    if (memcmp(digest.bytes,state.data + 80,32) != 0)
+        return qa_qvm_error(error,QA_ERROR_FORMAT,80,"QVM checkpoint checksum mismatch");
+    /* Host restoration sees the restored guest RAM, as in the donor. A host
+     * restore error leaves the committed RAM visible and must be reported. */
+    qa_qvm_memory_close(vm);
+    qa_qvm_execution_reset(vm);
+    memmove(vm->data,state.data + CHECKPOINT_HEADER,vm->data_size);
+    uint64_t saved_sequence = qa_load_u64le(state.data + 40);
+    if (saved_sequence > vm->write_sequence) vm->write_sequence = saved_sequence;
+    qa_bytes host = {state.data + CHECKPOINT_HEADER + vm->data_size,state.size - CHECKPOINT_HEADER - vm->data_size};
+    ++vm->lifecycle_depth;
+    bool restored = vm->options.restore(vm->options.context,host,error);
+    --vm->lifecycle_depth;
+    return restored;
+}
+
+const char *qa_qvm_role_name(qa_qvm_role role)
+{
+    switch (role) {
+    case QA_QVM_GAME: return "qagame";
+    case QA_QVM_CGAME: return "cgame";
+    case QA_QVM_UI: return "ui";
+    }
+    return "invalid";
+}
+
+bool qa_qvm_validate_ui(qa_qvm *vm, int32_t *api_version, qa_error *error)
+{
+    if (!qa_qvm_live(vm,error)) return false;
+    if (vm->options.role != QA_QVM_UI) return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"QVM module is not a UI");
+    int32_t command = 0, version;
+    if (!qa_qvm_invoke(vm,0,&command,1,&version,error)) return false;
+    if (version != 4 && !(vm->options.abi == QA_QVM_Q3_MODERN && version == 6))
+        return qa_qvm_error(error,QA_ERROR_UNSUPPORTED,0,"QVM UI returned an unsupported API version");
+    vm->api_version = (uint32_t)version;
+    if (api_version != NULL) *api_version = version;
+    return true;
+}

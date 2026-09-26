@@ -180,6 +180,78 @@ add_library(qa_render_cpu STATIC
     src/render/cpu/fog.c)
 target_link_libraries(qa_render_cpu PUBLIC qa_scene)
 
+add_library(qa_network STATIC
+    src/network/connections.c
+    src/network/dosbox.c
+    src/network/ipx.c
+    src/network/message.c
+    src/network/q1/channels.c
+    src/network/q1/checksum.c
+    src/network/q1/commands.c
+    src/network/q1/demos.c
+    src/network/q1/discovery.c
+    src/network/q1/handshake.c
+    src/network/q1/history.c
+    src/network/q1/netquake.c
+    src/network/q1/quakeworld.c
+    src/network/q1/scalar.c
+    src/network/q1/session.c
+    src/network/q1/token.c
+    src/network/q2/channel.c
+    src/network/q2/checksum.c
+    src/network/q2/codec.c
+    src/network/q2/connectionless.c
+    src/network/q2/fog.c
+    src/network/q2/frames.c
+    src/network/q2/gtv.c
+    src/network/q2/handshake.c
+    src/network/q2/kex_channel.c
+    src/network/q2/kex_discovery.c
+    src/network/q2/kex_game.c
+    src/network/q2/kex_lan.c
+    src/network/q2/kex_packet.c
+    src/network/q2/messages.c
+    src/network/q2/mvd.c
+    src/network/q2/q2pro.c
+    src/network/q2/q2pro_fields.c
+    src/network/q2/r1q2.c
+    src/network/q2/rerelease.c
+    src/network/q2/temp_entities.c
+    src/network/q2/vanilla.c
+    src/network/q2/zpacket.c
+    src/network/q3/admission.c
+    src/network/q3/channel.c
+    src/network/q3/client.c
+    src/network/q3/clock.c
+    src/network/q3/codec.c
+    src/network/q3/delta.c
+    src/network/q3/huffman.c
+    src/network/q3/messages.c
+    src/network/q3/pak_references.c
+    src/network/q3/pure.c
+    src/network/q3/server.c
+    src/network/q3/visibility.c
+    src/network/reliability.c
+    src/network/socks.c
+    src/network/transport.c
+    src/network/unified/channel.c
+    src/network/unified/commands.c
+    src/network/unified/composition.c
+    src/network/unified/document.c
+    src/network/unified/packet.c
+    src/network/unified/schema.c)
+target_link_libraries(qa_network PUBLIC qa_world PRIVATE ZLIB::ZLIB)
+
+add_library(qa_qvm STATIC
+    src/compat/qvm/compatibility.c
+    src/compat/qvm/execute.c
+    src/compat/qvm/image.c
+    src/compat/qvm/intrinsics.c
+    src/compat/qvm/memory.c
+    src/compat/qvm/module.c
+    src/compat/qvm/records.c)
+target_link_libraries(qa_qvm PUBLIC qa_content)
+
 add_executable(quake-anthology src/main.c)
 target_link_libraries(quake-anthology PRIVATE qa_content)
 target_compile_definitions(quake-anthology PRIVATE QA_VERSION="${PROJECT_VERSION}")
