@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "project_id": "quake-anthology",
-  "ledger_plan_revision": 2,
+  "ledger_plan_revision": 3,
   "policy": {
     "goal": "Finish the native C rewrite of ../quake-typescript as one engine with full Q1/QW/Q2/Q3, expansion, rerelease, and mod interoperability, then perform a deep performance and enhancement pass.",
     "rules": [
@@ -14,7 +14,8 @@
       "Review actual code as it is implemented. A dependency permits integration/acceptance only after its prerequisites are complete; source implementation may overlap when published interfaces suffice.",
       "Use vibecheck-jev to claim/report work and its verified status. Keep the full dependency graph and acceptance criteria current.",
       "Coordinator owns shared Git staging and local commits. Workers use exclusive paths and never change ../quake-typescript, ../qsrc, or ../qfiles.",
-      "Baseline completion and final release are distinct. Do not claim whole-project completion from scaffolding, parser tools, compilation, or partial subsystems."
+      "Baseline completion and final release are distinct. Do not claim whole-project completion from scaffolding, parser tools, compilation, or partial subsystems.",
+      "Use a soft cap of six concurrent agents across the entire worker tree, excluding the main coordinator. Let existing assignments finish to reduce the current count. Do not spawn, reactivate, or reassign workers while above six; a temporary excess later requires a concrete task need."
     ],
     "authorizations": [
       "Implement the entire project autonomously, make sensible C improvements during construction, and continue until the full project is complete.",
