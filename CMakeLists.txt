@@ -143,7 +143,10 @@ add_library(qa_media STATIC
     src/media/cin.c
     src/media/cin_playback.c
     src/media/roq_codebook.c
-    src/media/roq_audio.c)
+    src/media/roq_audio.c
+    src/media/roq_stream.c
+    src/media/roq_decoder.c
+    src/media/roq_playback.c)
 target_link_libraries(qa_media PUBLIC qa_content)
 
 add_library(qa_scene STATIC

@@ -135,4 +135,113 @@ bool qa_roq_audio_decode(qa_bytes input, size_t source_size, uint16_t flags,
                           qa_roq_audio_mode, bool signed_output, int16_t *output,
                           size_t sample_capacity, size_t *frames, qa_error *);
 
+typedef struct qa_roq_scratch qa_roq_scratch;
+typedef struct qa_roq_decoder qa_roq_decoder;
+typedef enum qa_roq_end_policy { QA_ROQ_COMPLETE, QA_ROQ_CINEMATIC } qa_roq_end_policy;
+typedef enum qa_roq_event_kind { QA_ROQ_END, QA_ROQ_INFO, QA_ROQ_METADATA, QA_ROQ_FRAME, QA_ROQ_AUDIO } qa_roq_event_kind;
+typedef struct qa_roq_event {
+    qa_roq_event_kind kind;
+    union {
+        struct { uint32_t width, height; } info;
+        struct { qa_bytes rgba; uint64_t index; double time_ms; size_t physical_offset; } frame;
+        struct { const int16_t *samples; size_t frames; uint8_t channels; } audio;
+    } data;
+} qa_roq_event;
+typedef struct qa_roq_decoder_options {
+    qa_roq_end_policy end_policy;
+    bool silent;
+    /* NULL creates private scratch. Sharing is explicit for original Q3
+     * cinematic handles, whose owner serializes decoding and rendering. */
+    qa_roq_scratch *scratch;
+} qa_roq_decoder_options;
+typedef struct qa_roq_decode_hooks {
+    void *context;
+    bool (*before_stereo)(void *, qa_error *);
+    bool (*info)(void *, uint32_t width, uint32_t height, qa_error *);
+    bool (*audio)(void *, const qa_roq_event *, qa_error *);
+} qa_roq_decode_hooks;
+typedef struct qa_roq_stream_checkpoint {
+    uint64_t position, played, buffer_offset;
+    uint32_t chunk_offset, buffered_length, next_size;
+    uint16_t next_id, next_flags, packet_remaining;
+    uint8_t header[8];
+    bool has_next, invalid, retained_eof, buffered_next;
+} qa_roq_stream_checkpoint;
+typedef struct qa_roq_checkpoint {
+    qa_sha256_digest content;
+    uint64_t input_size;
+    qa_roq_stream_checkpoint stream;
+    qa_buffer scratch;
+    uint32_t width, height;
+    uint16_t rate;
+    int64_t next_frame;
+    qa_roq_end_policy end_policy;
+    uint8_t unknown_chunk;
+    bool silent;
+} qa_roq_checkpoint;
+bool qa_roq_scratch_create(qa_roq_scratch **out, qa_error *);
+void qa_roq_scratch_retain(qa_roq_scratch *);
+void qa_roq_scratch_release(qa_roq_scratch *);
+void qa_roq_scratch_clear(qa_roq_scratch *, bool clear_codebooks);
+bool qa_roq_decoder_create(qa_media_input *, const qa_roq_decoder_options *, qa_roq_decoder **out, qa_error *);
+void qa_roq_decoder_destroy(qa_roq_decoder *);
+/* Borrowed payloads remain valid until the next decoder operation using the
+ * same scratch. Callbacks run before the next chunk is selected and must not
+ * mutate this decoder. A failed dispatch requires rewind or restore. */
+bool qa_roq_decoder_chunk(qa_roq_decoder *, const qa_roq_decode_hooks *, qa_roq_event *, qa_error *);
+bool qa_roq_decoder_next(qa_roq_decoder *, qa_roq_event *, qa_error *);
+bool qa_roq_decoder_rewind(qa_roq_decoder *, qa_error *);
+uint16_t qa_roq_decoder_rate(const qa_roq_decoder *);
+void qa_roq_decoder_dimensions(const qa_roq_decoder *, uint32_t *width, uint32_t *height);
+bool qa_roq_decoder_in_packet(const qa_roq_decoder *);
+bool qa_roq_decoder_invalid(const qa_roq_decoder *);
+bool qa_roq_decoder_reset_after_run(const qa_roq_decoder *);
+/* Original uploads can address the retained physical image allocation beyond
+ * the currently published frame. The returned range is always bounds checked. */
+bool qa_roq_decoder_view(const qa_roq_decoder *, size_t offset, size_t length, qa_bytes *, qa_error *);
+bool qa_roq_decoder_capture(qa_roq_decoder *, qa_roq_checkpoint *, qa_error *);
+bool qa_roq_decoder_restore(qa_roq_decoder *, const qa_roq_checkpoint *, qa_error *);
+void qa_roq_checkpoint_free(qa_roq_checkpoint *);
+
+typedef struct qa_media_clock {
+    void *context;
+    double (*sample)(void *);
+} qa_media_clock;
+typedef struct qa_roq_playback qa_roq_playback;
+typedef struct qa_roq_playback_options {
+    bool loop, hold, silent, shader;
+    qa_roq_scratch *scratch;
+    void *context;
+    bool (*audio)(void *, const qa_media_audio *, qa_error *);
+    bool (*before_audio_reset)(void *, qa_error *);
+    bool (*info)(void *, uint32_t width, uint32_t height, qa_error *);
+    bool (*frame)(void *, const qa_media_frame *, size_t physical_offset, qa_error *);
+    void (*diagnostic)(void *, const char *);
+} qa_roq_playback_options;
+typedef struct qa_roq_playback_checkpoint {
+    qa_roq_checkpoint decoder;
+    uint32_t epoch_ms, last_ms;
+    int64_t decoded_frames;
+    uint64_t source_sample, loop;
+    qa_media_status status;
+    qa_media_frame frame;
+    qa_buffer pixels;
+    size_t physical_offset;
+    bool has_frame, pending_loop, repeat, hold, silent, shader;
+} qa_roq_playback_checkpoint;
+bool qa_roq_playback_create(qa_media_input *, const qa_roq_playback_options *, qa_media_clock,
+                            qa_roq_playback **out, qa_error *);
+void qa_roq_playback_destroy(qa_roq_playback *);
+bool qa_roq_playback_tick(qa_roq_playback *, qa_media_clock, qa_media_tick *, qa_error *);
+/* Full reset clears retained image/codebook state; restart preserves it. */
+bool qa_roq_playback_restart(qa_roq_playback *, qa_media_clock, bool full_reset, qa_error *);
+const qa_media_frame *qa_roq_playback_frame(const qa_roq_playback *);
+/* Shader and UI uploads retain the original physical-buffer sampling rules.
+ * The image is borrowed until the next playback operation. */
+bool qa_roq_playback_image(qa_roq_playback *, bool shader, uint32_t draw_width,
+                           uint32_t draw_height, bool dirty, qa_media_frame *, qa_error *);
+bool qa_roq_playback_capture(qa_roq_playback *, qa_roq_playback_checkpoint *, qa_error *);
+bool qa_roq_playback_restore(qa_roq_playback *, const qa_roq_playback_checkpoint *, qa_error *);
+void qa_roq_playback_checkpoint_free(qa_roq_playback_checkpoint *);
+
 #endif
