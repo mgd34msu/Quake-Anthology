@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "checked_at": "2026-09-26T21:16:35.082755+00:00",
+  "purpose": "Verify the six claims challenged after the review response",
+  "source_head": "5d6c6e311db6749c0b8f8ffca53ebe2bae69b24e",
+  "source_evidence": [
+    {
+      "path": "docs/project-plan.md",
+      "sha256": "dc659d34d7b22e6937f6b2a52afd696d6e8bb88bcb647b2bd04ea0a58e9f8cb5"
+    },
+    {
+      "path": "docs/functional-targets/README.md",
+      "sha256": "750edec7643efe77c0511918cebf22e6c983a050835d1bb9b6326b742cfb8033"
+    },
+    {
+      "path": "docs/verification-plan.md",
+      "sha256": "2e89a161457c6f1351852f64423a5cd24d0975fa7a93b0bb21eba5de8f5f63ad"
+    },
+    {
+      "path": "docs/mod-compatibility.md",
+      "sha256": "7662109a1de30abb00e6bbd0322fcf61ef838e59667e3457f475e8f95304aa45"
+    },
+    {
+      "path": "src/materials/evaluate.ts",
+      "sha256": "1a25e40bcbea4af3a7a6369179cbdaaadd99b53d073c17fbc27d925bb352b8d0"
+    },
+    {
+      "path": "src/render/gl/buffers.ts",
+      "sha256": "a55fb387288debfe7bfe0acf5b48414d11dafe2540566e488e3da33fba17abff"
+    },
+    {
+      "path": "src/world/spatial/index.ts",
+      "sha256": "520df2e7f5b69378a14607c004e4c4216d955d24a52977a5cb0d54354788c2ce"
+    },
+    {
+      "path": "src/app/bootstrap/simulation/runtime.ts",
+      "sha256": "cd9af8b3df77552ac2ead8b88ddbbb856bb3dca4a702be608ed078355ecb4e82"
+    },
+    {
+      "path": "src/app/bootstrap/application.ts",
+      "sha256": "ae6d72f07aaf39cc484382e2a7ab2737f0644a559e4f62e101ce378ebebce351"
+    }
+  ],
+  "test_logs": {
+    "runtime-tests": {
+      "path": "/tmp/quake-anthology-review-runtime-tests.log",
+      "sha256": "0457751201b29fd8dede62e54d879e947408f9fc2b82cae2c758a715df283ce7",
+      "counts": {
+        "pass": 137,
+        "fail": 0,
+        "skip": 0
+      },
+      "fresh_execution": false
+    },
+    "protocol-tests": {
+      "path": "/tmp/quake-anthology-review-protocol-tests.log",
+      "sha256": "369d19a8130dff3bc50572be21664a758b3c6fa3fe898cf33d94991563b4fc78",
+      "counts": {
+        "pass": 87,
+        "fail": 1,
+        "skip": 0
+      },
+      "fresh_execution": false
+    },
+    "presentation-tests": {
+      "path": "/tmp/quake-anthology-review-presentation-tests.log",
+      "sha256": "74529f18c0f12ce9e7f0adce8c4f0f967d4941a67553669ae80524a1b6373469",
+      "counts": {
+        "pass": 53,
+        "fail": 0,
+        "skip": 4
+      },
+      "fresh_execution": false
+    },
+    "kex-current": {
+      "path": "/tmp/quake-anthology-review-kex-current.log",
+      "sha256": "e11f6d9553ab245e183db1e204448d6ec7011e6f60092095cfdd61733527bfe0",
+      "counts": {
+        "pass": 1,
+        "fail": 0,
+        "skip": 0
+      },
+      "fresh_execution": false
+    },
+    "simulation-recheck": {
+      "path": "/tmp/quake-anthology-review-simulation-recheck.log",
+      "sha256": "948f8c011f7b4c791e480d8c5caa5d5a47a882a66f841f95b69c0f1cc9ad31bf",
+      "counts": {
+        "pass": 22,
+        "fail": 0,
+        "skip": 1
+      },
+      "fresh_execution": true
+    }
+  },
+  "distinct_test_totals": {
+    "pass": 300,
+    "fail": 1,
+    "skip": 5
+  },
+  "typecheck": {
+    "log": "/tmp/quake-anthology-review-typecheck.log",
+    "sha256": "69e59539c6968111255efaef37074fe3218a25c2667ecfe7dedde5441b68a455",
+    "diagnostics": 28,
+    "all_under_tests": true,
+    "fresh_execution": false
+  },
+  "recorded_probe_recalculation": {
+    "raw_log": "/tmp/quake-anthology-review-native.json",
+    "sha256": "310f9b0e0f81430cf2404443a67da36dc0ce0539e4bbe87dcaf13db194dbe5af",
+    "fresh_execution": false,
+    "active_frames": 100,
+    "application_steps": 100,
+    "warm_application_median_ms": 53.857817000003706,
+    "warm_runframe_median_ms": 48.27911250000034,
+    "entity_counts": [
+      495
+    ],
+    "limitations": "Original single instrumented dedicated run; concurrent policy checker; no C comparison or graphical FPS measurement"
+  },
+  "save_export_fresh_reproduction": {
+    "command": "bun run /tmp/quake-save-review-sv99Wt.ts",
+    "log": "/tmp/quake-anthology-review-save-export-recheck.log",
+    "sha256": "e213832d71b2676521756ecebe320c00adad9776c29c2f401a3dabf9abb090eb",
+    "shared_mod_count": 1,
+    "exports": [
+      {
+        "version": 5,
+        "accepted": true,
+        "bytes": 71526,
+        "entities": 163,
+        "hasModCheckpoint": false
+      },
+      {
+        "version": 6,
+        "accepted": true,
+        "bytes": 71530,
+        "entities": 163,
+        "hasModCheckpoint": false
+      }
+    ],
+    "scope": "Real id1 content plus authored prepared-component fixture; simulation/export boundary, not a production-mod menu playthrough"
+  },
+  "claim_qualifications": {
+    "review_scope": "Inspected core documentation and selected major implementation paths; not every source line or every gameplay workflow.",
+    "product_scope": "C rewrite is the user requirement. One authoritative world and full feature union are explicit in source project-plan.md and functional-targets/README.md; implementation is still prospective.",
+    "performance": "Material vertex allocation, GL repacking, and spatial snapshot copying are observed mechanisms. Alternative C layouts and their performance gains are proposals requiring measurement; required snapshot semantics must remain.",
+    "early_interoperability": "Testing mixed gameplay early is an architectural recommendation intended to expose integration problems before bulk implementation. Lower correction cost has not been measured."
+  }
+}
