@@ -59,6 +59,7 @@ typedef struct qa_model_frame {
     qa_model_bounds bounds;
     float origin[3], radius;
     float scale[3], translation[3];
+    qa_bytes packed_vertices; /* Borrowed source vertex records: x/y/z/normal bytes. */
 } qa_model_frame;
 typedef struct qa_model_group {
     uint32_t first, count;

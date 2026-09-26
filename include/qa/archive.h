@@ -68,6 +68,11 @@ bool qa_archive_paths_equal(const char *left, const char *right,
 bool qa_archive_find(const qa_archive *archive, const char *path,
                       qa_archive_comparison comparison, size_t start_ordinal,
                       const qa_archive_entry **out, qa_error *error);
+/* Indexed lookup without allocating or normalizing a path. The caller supplies
+ * a path already normalized by its mount/resource boundary. */
+bool qa_archive_find_normalized(const qa_archive *archive, const char *path,
+                                 qa_archive_comparison comparison, size_t start_ordinal,
+                                 const qa_archive_entry **out, qa_error *error);
 
 /* Stored data borrows the archive and expires when it closes. Deflated data
  * owns its allocation and survives close. Release either with data_free.

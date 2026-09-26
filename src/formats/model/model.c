@@ -279,6 +279,35 @@ bool qa_model_sample_alias(const qa_model *model, uint32_t frame, uint32_t old_f
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid alias model or origin compensation");
         return false;
     }
+    if (model->format == QA_MODEL_MD2) {
+        if (!model->mesh_count || frame >= model->frame_count || old_frame >= model->frame_count ||
+            !isfinite(back) || back < 0 || back > 1 || count < model->meshes[0].vertex_count ||
+            (!vertices && model->meshes[0].vertex_count)) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid MD2 alias pose or output span");
+            return false;
+        }
+        const qa_model_frame *current = &model->frames[frame], *old = &model->frames[old_frame];
+        const qa_model_mesh *surface = &model->meshes[0];
+        float move[3], old_scale[3], new_scale[3];
+        float delta[3] = {previous_origin_delta.x, previous_origin_delta.y,
+                          previous_origin_delta.z};
+        for (unsigned axis = 0; axis < 3; ++axis) {
+            move[axis] = back * (delta[axis] + old->translation[axis]) +
+                         (1 - back) * current->translation[axis];
+            old_scale[axis] = back * old->scale[axis];
+            new_scale[axis] = (1 - back) * current->scale[axis];
+        }
+        for (uint32_t i = 0; i < surface->vertex_count; ++i) {
+            for (unsigned axis = 0; axis < 3; ++axis)
+                vertices[i].position[axis] =
+                    move[axis] + old->packed_vertices.data[(size_t)i * 4 + axis] * old_scale[axis] +
+                    current->packed_vertices.data[(size_t)i * 4 + axis] * new_scale[axis];
+            memcpy(vertices[i].normal,
+                   surface->vertices[(size_t)frame * surface->vertex_count + i].normal,
+                   sizeof(vertices[i].normal));
+        }
+        return true;
+    }
     if (!qa_model_sample_mesh(model, 0, frame, old_frame, back, vertices, count, error))
         return false;
     qa_vec3 delta = qa_vec_scale(previous_origin_delta, back);

@@ -12,6 +12,7 @@ struct qa_archive {
     qa_bytes bytes;
     qa_buffer owned;
     qa_archive_entry *entries;
+    const qa_archive_entry **name_index[3];
     size_t count;
 };
 
@@ -261,13 +262,10 @@ static unsigned char ascii_lower(unsigned char c)
     return c >= 'A' && c <= 'Z' ? (unsigned char)(c + ('a' - 'A')) : c;
 }
 
-bool qa_archive_paths_equal(const char *left, const char *right,
-                             qa_archive_comparison comparison)
+static int compare_paths(const char *left, const char *right,
+                         qa_archive_comparison comparison)
 {
-    if (left == NULL || right == NULL ||
-        (comparison != QA_ARCHIVE_EXACT && comparison != QA_ARCHIVE_ASCII_INSENSITIVE &&
-         comparison != QA_ARCHIVE_CASE_INSENSITIVE)) return false;
-    if (comparison == QA_ARCHIVE_EXACT) return strcmp(left, right) == 0;
+    if (comparison == QA_ARCHIVE_EXACT) return strcmp(left, right);
     while (*left != '\0' && *right != '\0') {
         unsigned char a = ascii_lower((unsigned char)*left++);
         unsigned char b = ascii_lower((unsigned char)*right++);
@@ -275,9 +273,50 @@ bool qa_archive_paths_equal(const char *left, const char *right,
             if ((a >= 0xc0 && a <= 0xd6) || (a >= 0xd8 && a <= 0xde)) a += 0x20;
             if ((b >= 0xc0 && b <= 0xd6) || (b >= 0xd8 && b <= 0xde)) b += 0x20;
         }
-        if (a != b) return false;
+        if (a != b) return a < b ? -1 : 1;
     }
-    return *left == *right;
+    unsigned char a = (unsigned char)*left, b = (unsigned char)*right;
+    return a == b ? 0 : a < b ? -1 : 1;
+}
+
+bool qa_archive_paths_equal(const char *left, const char *right,
+                            qa_archive_comparison comparison)
+{
+    return left != NULL && right != NULL &&
+        (comparison == QA_ARCHIVE_EXACT || comparison == QA_ARCHIVE_ASCII_INSENSITIVE ||
+         comparison == QA_ARCHIVE_CASE_INSENSITIVE) && compare_paths(left, right, comparison) == 0;
+}
+
+static int compare_entries(const void *left, const void *right, qa_archive_comparison comparison)
+{
+    const qa_archive_entry *a = *(const qa_archive_entry *const *)left;
+    const qa_archive_entry *b = *(const qa_archive_entry *const *)right;
+    int order = compare_paths(a->path, b->path, comparison);
+    if (order != 0) return order;
+    return a->ordinal == b->ordinal ? 0 : a->ordinal < b->ordinal ? -1 : 1;
+}
+
+static int compare_exact(const void *left, const void *right)
+{ return compare_entries(left, right, QA_ARCHIVE_EXACT); }
+static int compare_ascii(const void *left, const void *right)
+{ return compare_entries(left, right, QA_ARCHIVE_ASCII_INSENSITIVE); }
+static int compare_latin1(const void *left, const void *right)
+{ return compare_entries(left, right, QA_ARCHIVE_CASE_INSENSITIVE); }
+
+static bool index_names(qa_archive *archive, qa_error *error)
+{
+    if (archive->count == 0) return true;
+    if (archive->count > SIZE_MAX / sizeof(*archive->name_index[0]))
+        return fail(error, QA_ERROR_MEMORY, 0, "archive name index size overflow");
+    int (*const compare[3])(const void *, const void *) = {compare_exact, compare_ascii, compare_latin1};
+    for (size_t policy = 0; policy < 3; ++policy) {
+        const qa_archive_entry **index = malloc(archive->count * sizeof(*index));
+        if (index == NULL) return fail(error, QA_ERROR_MEMORY, 0, "allocating archive name index");
+        archive->name_index[policy] = index;
+        for (size_t i = 0; i < archive->count; ++i) index[i] = &archive->entries[i];
+        qsort(index, archive->count, sizeof(*index), compare[policy]);
+    }
+    return true;
 }
 
 bool qa_archive_open_memory(qa_bytes bytes, qa_archive_kind kind,
@@ -293,7 +332,8 @@ bool qa_archive_open_memory(qa_bytes bytes, qa_archive_kind kind,
     if (archive == NULL) return fail(error, QA_ERROR_MEMORY, 0, "allocating archive");
     archive->kind = kind;
     archive->bytes = bytes;
-    if (!(kind == QA_ARCHIVE_PAK ? parse_pak(archive, error) : parse_zip(archive, error))) {
+    if (!(kind == QA_ARCHIVE_PAK ? parse_pak(archive, error) : parse_zip(archive, error)) ||
+        !index_names(archive, error)) {
         qa_archive_close(archive);
         return false;
     }
@@ -327,6 +367,7 @@ void qa_archive_close(qa_archive *archive)
         free((void *)archive->entries[i].path);
     }
     free(archive->entries);
+    for (size_t policy = 0; policy < 3; ++policy) free(archive->name_index[policy]);
     qa_buffer_free(&archive->owned);
     free(archive);
 }
@@ -380,13 +421,37 @@ bool qa_archive_find(const qa_archive *archive, const char *path,
         return fail(error, QA_ERROR_ARGUMENT, 0, "invalid archive search arguments");
     char *normalized = qa_archive_normalize_path(path, error);
     if (normalized == NULL) return false;
-    for (size_t i = start_ordinal; i < archive->count; ++i) {
-        if (qa_archive_paths_equal(archive->entries[i].path, normalized, comparison)) {
-            *out = &archive->entries[i];
-            break;
-        }
-    }
+    bool success = qa_archive_find_normalized(archive, normalized, comparison, start_ordinal, out, error);
     free(normalized);
+    return success;
+}
+
+bool qa_archive_find_normalized(const qa_archive *archive, const char *path,
+                                 qa_archive_comparison comparison, size_t start_ordinal,
+                                 const qa_archive_entry **out, qa_error *error)
+{
+    if (out == NULL) return fail(error, QA_ERROR_ARGUMENT, 0, "archive search output is NULL");
+    *out = NULL;
+    size_t policy;
+    switch (comparison) {
+    case QA_ARCHIVE_EXACT: policy = 0; break;
+    case QA_ARCHIVE_ASCII_INSENSITIVE: policy = 1; break;
+    case QA_ARCHIVE_CASE_INSENSITIVE: policy = 2; break;
+    default: return fail(error, QA_ERROR_ARGUMENT, 0, "invalid archive comparison");
+    }
+    if (archive == NULL || path == NULL)
+        return fail(error, QA_ERROR_ARGUMENT, 0, "invalid archive search arguments");
+    if (start_ordinal >= archive->count) return true;
+    const qa_archive_entry *const *index = archive->name_index[policy];
+    size_t first = 0, end = archive->count;
+    while (first < end) {
+        size_t middle = first + (end - first) / 2;
+        int order = compare_paths(index[middle]->path, path, comparison);
+        if (order < 0 || (order == 0 && index[middle]->ordinal < start_ordinal)) first = middle + 1;
+        else end = middle;
+    }
+    if (first < archive->count && compare_paths(index[first]->path, path, comparison) == 0)
+        *out = index[first];
     return true;
 }
 

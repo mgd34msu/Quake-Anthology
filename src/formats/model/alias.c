@@ -246,6 +246,7 @@ bool model_md2(model_reader *r, qa_model *m) {
         model_vec(r, f->translation, 3);
         model_string(r, f->name, 16);
         model_bounds_clear(&f->bounds);
+        f->packed_vertices = (qa_bytes){r->bytes.data + r->pos, (size_t)vertices * 4};
         if (!alias_vertices(r, s->vertices + (size_t)i * vertices, vertices, f->scale,
                             f->translation, &f->bounds))
             return false;
