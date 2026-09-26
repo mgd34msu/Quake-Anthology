@@ -30,6 +30,9 @@ find_package(PNG REQUIRED)
 find_package(JPEG REQUIRED)
 find_package(ICU REQUIRED COMPONENTS uc)
 find_package(Threads REQUIRED)
+find_package(SDL2 REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(VORBISFILE REQUIRED IMPORTED_TARGET vorbisfile)
 find_library(QA_GIF_LIBRARY NAMES gif REQUIRED)
 
 add_library(qa_core STATIC
@@ -94,8 +97,29 @@ add_library(qa_console STATIC
     src/console/commands.c)
 target_link_libraries(qa_console PUBLIC qa_core)
 
-add_library(qa_gameplay STATIC src/gameplay/operation.c)
+add_library(qa_gameplay STATIC
+    src/gameplay/operation.c
+    src/gameplay/armor.c
+    src/gameplay/combat.c
+    src/gameplay/inventory.c
+    src/gameplay/pickups.c
+    src/gameplay/policies.c
+    src/gameplay/provenance.c)
 target_link_libraries(qa_gameplay PUBLIC qa_world)
+
+add_library(qa_audio STATIC
+    src/audio/bank.c
+    src/audio/codecs.c
+    src/audio/device.c
+    src/audio/engine.c
+    src/audio/environments.c
+    src/audio/mixer.c
+    src/audio/music.c
+    src/audio/output.c
+    src/audio/reverb.c
+    src/audio/streams.c
+    src/audio/wavelet.c)
+target_link_libraries(qa_audio PUBLIC qa_content PRIVATE SDL2::SDL2 PkgConfig::VORBISFILE)
 
 add_executable(quake-anthology src/main.c)
 target_link_libraries(quake-anthology PRIVATE qa_content)
