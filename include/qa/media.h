@@ -59,4 +59,60 @@ bool qa_cin_sample_range(uint64_t frame, uint32_t rate, uint64_t *start, uint64_
  * with the palette updated by a prefetched frame. */
 bool qa_cin_rgba(qa_bytes pixels, qa_bytes palette, void *rgba, size_t capacity, qa_error *);
 
+typedef enum qa_media_status {
+    QA_MEDIA_PLAYING, QA_MEDIA_PAUSED, QA_MEDIA_HELD, QA_MEDIA_ENDED, QA_MEDIA_STOPPED
+} qa_media_status;
+typedef struct qa_media_frame {
+    qa_bytes rgba;
+    uint32_t width, height;
+    uint64_t index, loop;
+    double source_ms, presentation_ms;
+} qa_media_frame;
+typedef struct qa_media_audio {
+    qa_bytes pcm;
+    uint32_t rate;
+    uint8_t channels, sample_bytes;
+    uint64_t source_sample, loop;
+    double source_ms, presentation_ms;
+    bool reset;
+} qa_media_audio;
+typedef struct qa_media_tick {
+    qa_media_status status;
+    const qa_media_frame *frame;
+    bool changed, looped;
+} qa_media_tick;
+typedef struct qa_cin_playback qa_cin_playback;
+typedef struct qa_cin_playback_options {
+    bool loop, hold, silent;
+    void *context;
+    /* Callbacks borrow payloads and may enqueue output. They must not mutate
+     * this playback. A callback failure faults this playback until restart. */
+    bool (*audio)(void *, const qa_media_audio *, qa_error *);
+    void (*dropped_frame)(void *, uint64_t requested, uint64_t decoded);
+} qa_cin_playback_options;
+typedef struct qa_cin_picture_checkpoint {
+    qa_buffer pixels;
+    uint64_t index;
+    bool present;
+} qa_cin_picture_checkpoint;
+typedef struct qa_cin_playback_checkpoint {
+    qa_cin_checkpoint decoder;
+    qa_cin_picture_checkpoint picture, pending;
+    double epoch_ms;
+    uint64_t loop;
+    qa_media_status status;
+    bool repeat, hold, silent;
+} qa_cin_playback_checkpoint;
+bool qa_cin_playback_create(qa_cin_asset *, const qa_cin_playback_options *, double now_ms,
+                            qa_cin_playback **out, qa_error *);
+void qa_cin_playback_destroy(qa_cin_playback *);
+bool qa_cin_playback_restart(qa_cin_playback *, double now_ms, qa_error *);
+bool qa_cin_playback_tick(qa_cin_playback *, double now_ms, bool game_focus,
+                          qa_media_tick *out, qa_error *);
+/* Borrowed until the next playback operation. */
+const qa_media_frame *qa_cin_playback_frame(qa_cin_playback *);
+bool qa_cin_playback_capture(qa_cin_playback *, qa_cin_playback_checkpoint *, qa_error *);
+void qa_cin_playback_checkpoint_free(qa_cin_playback_checkpoint *);
+bool qa_cin_playback_restore(qa_cin_playback *, const qa_cin_playback_checkpoint *, qa_error *);
+
 #endif
