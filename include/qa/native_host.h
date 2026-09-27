@@ -232,6 +232,8 @@ bool qa_native_host_destroy(qa_native_host *, qa_error *);
 
 qa_native_instance *qa_native_host_instance(qa_native_host *);
 qa_native_profile qa_native_host_profile(const qa_native_host *);
+bool qa_native_host_q3_memory(qa_native_host *, qa_qvm_role, qa_qvm_abi,
+                               qa_native_host_guest_memory *, qa_error *);
 
 /* Dispatch after the shared registry invalidates the released ID. Clears only
  * matching owned/borrowed bindings; repeated notifications are harmless. */

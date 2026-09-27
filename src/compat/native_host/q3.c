@@ -32,6 +32,15 @@ static qa_native_host_guest_memory guest_memory(qa_native_host *host)
         .read_string = guest_string};
 }
 
+bool qa_native_host_q3_memory(qa_native_host *host, qa_qvm_role role, qa_qvm_abi abi,
+                               qa_native_host_guest_memory *out, qa_error *error)
+{
+    if (!host || host->destroying || !host->instance || !out || host->q3_role != role || host->q3_abi != abi ||
+        (host->profile != QA_NATIVE_Q3_VMMAIN && host->profile != QA_NATIVE_QUAKE_LIVE_GAME_API10))
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 memory owner identity mismatch");
+    *out = guest_memory(host); return true;
+}
+
 static bool dispatch(qa_native_host *host, int32_t service,
                              const qa_native_value *arguments, size_t argument_count,
                              const qa_native_signature *fixed_signature,
