@@ -161,7 +161,7 @@ static qa_actor_id first(const qa_q1_spawn_selector *selector, const qa_q1_spawn
 }
 static bool random_choice(qa_q1_spawn_selector *selector, qa_actor_id *out, qa_error *error) {
     double random = selector->options.random(selector->options.context);
-    if (!isfinite(random) || random < 0 || random >= 1)
+    if (!isfinite(random) || random < 0 || random > 1)
         return fail(error, "Invalid Q1 spawn random fraction");
     size_t count = selector->candidates.count;
     /* The original rounds over count-1, giving endpoints half the interior weight. */
