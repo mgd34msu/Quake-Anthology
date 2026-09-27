@@ -6,9 +6,13 @@ bool q1_map_is_mover(q1_map_kind kind) {
 }
 bool q1_map_move(qa_q1_game *g, q1_actor *entity, qa_vec3 destination, q1_map_action done,
                  qa_error *error) {
+    qa_actor_id id = entity->id;
     qa_body_state body;
-    if (!qa_world_body_read(g->services.world, entity->id, &body, error))
+    if (!qa_world_body_read(g->services.world, id, &body, error))
         return false;
+    entity = q1_entity(g, id);
+    if (!entity || !entity->map)
+        return true;
     qa_vec3 delta = qa_vec_sub(destination, body.origin);
     double duration = qa_vec_length(delta) / (double)entity->speed;
     if (!qa_vec_finite(destination) || !isfinite(duration) || !(entity->speed > 0))
@@ -18,7 +22,10 @@ bool q1_map_move(qa_q1_game *g, q1_actor *entity, qa_vec3 destination, q1_map_ac
     move->destination = destination;
     move->done = done;
     move->moving = true;
-    return qa_world_body_write(g->services.world, entity->id, &body, error) &&
+    if (!qa_world_body_write(g->services.world, id, &body, error))
+        return false;
+    entity = q1_entity(g, id);
+    return !entity || !entity->map ||
            q1_map_schedule(g, entity, fmax(.1, duration), Q1_MAP_MOVE_DONE, error);
 }
 static const char *door_sound(const q1_actor *entity, bool moving) {
@@ -180,7 +187,7 @@ static bool helper_trigger(qa_q1_game *g, q1_actor *owner, q1_map_kind kind, qa_
 }
 bool q1_map_mover_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_map_state *state = entity->map;
-    if (state->kind == Q1_MAP_TRAIN)
+    if (state->kind == Q1_MAP_TRAIN || state->kind == Q1_MAP_TRAIN2)
         return q1_map_train_spawn(g, entity, error);
     if (!state->has_inline_model)
         return q1_map_fail(error, "Q1 brush mover has no inline model");
@@ -378,9 +385,8 @@ bool q1_map_mover_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa
         entity->map->pending.mover.activated = true;
         return plat_move(g, entity, false, error);
     case Q1_MAP_TRAIN:
-        return entity->map->pending.mover.position != Q1_MAP_TOP ||
-               entity->map->pending.mover.activated ||
-               q1_map_train_think(g, entity, Q1_MAP_TRAIN_NEXT, error);
+    case Q1_MAP_TRAIN2:
+        return q1_map_train_use(g, entity, activator, error);
     default:
         return true;
     }
@@ -480,9 +486,9 @@ bool q1_map_mover_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_e
 bool q1_map_mover_blocked(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *error) {
     q1_map_kind kind = entity->map->kind;
     if (kind != Q1_MAP_DOOR && kind != Q1_MAP_PLAT && kind != Q1_MAP_SECRET_DOOR &&
-        kind != Q1_MAP_TRAIN)
+        kind != Q1_MAP_TRAIN && kind != Q1_MAP_TRAIN2)
         return true;
-    if (kind == Q1_MAP_SECRET_DOOR || kind == Q1_MAP_TRAIN) {
+    if (kind == Q1_MAP_SECRET_DOOR || kind == Q1_MAP_TRAIN || kind == Q1_MAP_TRAIN2) {
         if (entity->map->cooldown > g->time)
             return true;
         entity->map->cooldown = g->time + .5;

@@ -236,6 +236,7 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/lavaman.c
     src/gameplay/q1/maps/bosses.c
     src/gameplay/q1/maps/addon_misc.c
+    src/gameplay/q1/maps/hipnotic_brushes.c
     src/gameplay/q1/maps/hipnotic_misc.c
     src/gameplay/q1/maps/hipnotic_particles.c
     src/gameplay/q1/maps/movers.c

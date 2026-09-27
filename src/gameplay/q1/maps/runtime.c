@@ -84,6 +84,10 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
             (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER, .value.number = entity->map->style};
         return true;
     }
+    if (entity->map && !strcmp(key, "event")) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = entity->map->event};
+        return true;
+    }
     if (entity->map && !strcmp(key, "mangle")) {
         *out =
             (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR, .value.vector = entity->map->mangle};
@@ -279,13 +283,13 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
         return q1_map_fail(error, "invalid Q1 authored direction");
     q1_map_state *state = entity->map;
     const char *input[] = {
-        source->model,  source->map,    source->noise,   source->noise1,
-        source->noise2, source->noise3, source->endtext, source->intermissiontext,
-        source->netname};
+        source->model,   source->map,    source->noise,   source->noise1,
+        source->noise2,  source->noise3, source->endtext, source->intermissiontext,
+        source->netname, source->event};
     qa_string_id *output[] = {
         &state->original_model, &state->map,      &state->noise[0], &state->noise[1],
         &state->noise[2],       &state->noise[3], &state->endtext,  &state->intermissiontext,
-        &state->netname};
+        &state->netname,        &state->event};
     for (size_t i = 0; i < sizeof(input) / sizeof(*input); ++i)
         if (input[i] && input[i][0] &&
             !qa_builtin_resource(&g->services, input[i], output[i], error))
@@ -340,6 +344,9 @@ static q1_map_kind classify(const char *name) {
                    {"func_door_secret", Q1_MAP_SECRET_DOOR},
                    {"func_plat", Q1_MAP_PLAT},
                    {"func_train", Q1_MAP_TRAIN},
+                   {"func_train2", Q1_MAP_TRAIN2},
+                   {"func_bobbingwater", Q1_MAP_BOBBING_WATER},
+                   {"func_pushable", Q1_MAP_PUSHABLE},
                    {"misc_teleporttrain", Q1_MAP_TRAIN},
                    {"func_episodegate", Q1_MAP_GATE},
                    {"func_bossgate", Q1_MAP_GATE},
@@ -428,7 +435,9 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     if (g->options.program != QA_Q1_MG3 &&
         (kind == Q1_MAP_CANCEL_PAUSE || kind == Q1_MAP_SWITCH_PATH))
         kind = Q1_MAP_FIELDS;
-    if (g->options.program != QA_Q1_HIPNOTIC && kind == Q1_MAP_FOLLOW)
+    if (g->options.program != QA_Q1_HIPNOTIC &&
+        (kind == Q1_MAP_FOLLOW || kind == Q1_MAP_TRAIN2 || kind == Q1_MAP_BOBBING_WATER ||
+         kind == Q1_MAP_PUSHABLE))
         kind = Q1_MAP_FIELDS;
     *handled = kind != Q1_MAP_FIELDS;
     if (!*handled && !spawn->map_fields)
@@ -440,6 +449,8 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     if (!*handled)
         return true;
     entity->kind = Q1_MAP;
+    if (kind == Q1_MAP_BOBBING_WATER || kind == Q1_MAP_PUSHABLE)
+        return q1_map_hip_brush_spawn(g, entity, error);
     if (kind == Q1_MAP_SACRIFICE)
         return q1_map_sacrifice_spawn(g, entity, error);
     if (q1_map_is_mover(kind))
@@ -606,6 +617,8 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
 }
 bool q1_map_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contact *contact,
                   qa_error *error) {
+    if (entity->map && entity->map->kind == Q1_MAP_PUSHABLE_PROXY)
+        return q1_map_pushable_touch(g, entity, contact->other, error);
     if (entity->map && entity->map->touch_enabled && entity->map->kind >= Q1_MAP_PARTICLE_FIELD)
         return q1_map_hip_particles_touch(g, entity, contact->other, error);
     if (entity->map && entity->map->touch_enabled && q1_map_is_mover(entity->map->kind))
@@ -643,6 +656,8 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_map_state *state = entity->map;
     q1_map_action action = state->action;
     state->action = Q1_MAP_IDLE;
+    if (action == Q1_MAP_BOB_WATER)
+        return q1_map_bob_water(g, entity, error);
     if (action == Q1_MAP_SACRIFICE_ANIMATE || action == Q1_MAP_SACRIFICE_FLOAT)
         return q1_map_sacrifice_think(g, entity, action, error);
     if (action >= Q1_MAP_MOVE_DONE && action <= Q1_MAP_TRAIN_WAIT)

@@ -7,7 +7,7 @@
  * strings and retains typed fields beside the native actor continuation. */
 typedef struct qa_q1_map_fields {
     const char *model, *map, *noise, *noise1, *noise2, *noise3;
-    const char *endtext, *intermissiontext, *netname;
+    const char *endtext, *intermissiontext, *netname, *event;
     qa_vec3 mangle, movedir, view_offset;
     bool has_movedir, has_view_offset;
     float height, lip, width, length, pause_time;

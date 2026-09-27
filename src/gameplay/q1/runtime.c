@@ -166,8 +166,10 @@ bool q1_sound(qa_q1_game *g, qa_actor_id actor, const char *path, int32_t channe
                               .attenuation = attenuation,
                               .volume = 1};
     qa_body_state body;
-    if (qa_world_body_read(g->services.world, actor, &body, NULL))
-        event.origin = body.origin;
+    if (!qa_world_body_read(g->services.world, actor, &body, error))
+        return false;
+    event.origin =
+        qa_vec_add(body.origin, qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), .5f));
     return qa_builtin_resource(&g->services, path, &event.resource, error) &&
            qa_builtin_emit(&g->services, &event, error);
 }

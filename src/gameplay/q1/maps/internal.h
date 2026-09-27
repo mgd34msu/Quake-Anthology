@@ -27,11 +27,15 @@ typedef enum q1_map_kind {
     Q1_MAP_LIGHT,
     Q1_MAP_BARREL,
     Q1_MAP_DELAY,
+    Q1_MAP_BOBBING_WATER,
+    Q1_MAP_PUSHABLE,
+    Q1_MAP_PUSHABLE_PROXY,
     Q1_MAP_DOOR,
     Q1_MAP_BUTTON,
     Q1_MAP_SECRET_DOOR,
     Q1_MAP_PLAT,
     Q1_MAP_TRAIN,
+    Q1_MAP_TRAIN2,
     Q1_MAP_DOOR_TRIGGER,
     Q1_MAP_PLAT_TRIGGER,
     Q1_MAP_GATE,
@@ -100,7 +104,8 @@ typedef enum q1_map_action {
     Q1_MAP_SOUND_REPEAT,
     Q1_MAP_EXPLODER_FIRE,
     Q1_MAP_SACRIFICE_ANIMATE,
-    Q1_MAP_SACRIFICE_FLOAT
+    Q1_MAP_SACRIFICE_FLOAT,
+    Q1_MAP_BOB_WATER
 } q1_map_action;
 typedef enum q1_map_position { Q1_MAP_BOTTOM, Q1_MAP_UP, Q1_MAP_TOP, Q1_MAP_DOWN } q1_map_position;
 typedef struct q1_door_group {
@@ -113,13 +118,15 @@ typedef struct q1_map_movement {
     q1_door_group *group;
     q1_map_action done;
     q1_map_position position;
+    qa_actor_id goal;
+    float next_speed;
     bool moving, activated;
 } q1_map_movement;
 struct q1_map_state {
     struct q1_map_state *allocated_next, *pool_next;
     q1_map_kind kind;
     q1_map_action action;
-    qa_string_id original_model, map, noise[4], endtext, intermissiontext, netname;
+    qa_string_id original_model, map, noise[4], endtext, intermissiontext, netname, event;
     qa_vec3 movedir, mangle, view_offset;
     float height, lip, width, length, pause_time, volume, duration, distance, initial_think;
     int32_t sounds, style, color_map, impulse;
@@ -133,6 +140,11 @@ struct q1_map_state {
         qa_target_use delayed;
         qa_q1_campaign_timer finale;
         q1_map_movement mover;
+        qa_vec3 push_origin;
+        struct {
+            float amplitude;
+            double last_time;
+        } bob;
         struct {
             qa_vec3 start, end;
             unsigned plane;
@@ -187,6 +199,10 @@ bool q1_map_mover_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
 bool q1_map_move(qa_q1_game *, q1_actor *, qa_vec3, q1_map_action, qa_error *);
 bool q1_map_train_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_train_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
+bool q1_map_train_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_map_hip_brush_spawn(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_map_pushable_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_map_bob_water(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_special_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_special_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_special_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
