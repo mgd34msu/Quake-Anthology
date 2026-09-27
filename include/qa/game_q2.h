@@ -269,6 +269,9 @@ bool qa_q2_weapon_tick(qa_q2_game *, qa_actor_id, const qa_q2_weapon_input *, ui
                        uint64_t frame_ns, qa_error *);
 bool qa_q2_weapon_silencer(qa_q2_game *, qa_actor_id, int charges, qa_error *);
 bool qa_q2_actor_released(qa_q2_game *, qa_actor_record, qa_error *);
+/* Release native tracker continuations attached to this generation, including
+ * targets whose character is supplied by another provider. */
+bool qa_q2_clear_trackers(qa_q2_game *, qa_actor_id target, qa_error *);
 bool qa_q2_physics_read(qa_q2_game *, qa_actor_id, qa_physics_properties *);
 bool qa_q2_physics_write(qa_q2_game *, qa_actor_id, const qa_physics_properties *, qa_error *);
 bool qa_q2_touch(qa_q2_game *, const qa_touch_contact *, qa_error *);

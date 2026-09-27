@@ -121,6 +121,23 @@ bool qa_q2_actor_released(qa_q2_game *g, qa_actor_record record, qa_error *e) {
     }
     return true;
 }
+bool qa_q2_clear_trackers(qa_q2_game *g, qa_actor_id target, qa_error *e) {
+    if (!g || !target.registry) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 tracker target");
+        return false;
+    }
+    q2_actor *a = g->first_actor;
+    while (a) {
+        /* Retired nodes keep their successors until the next source frame. */
+        q2_actor *next = a->live_next;
+        if (q2_actor_live(g, a->id) && a->projectile.kind == Q2_TRACKER_DAEMON &&
+            qa_actor_id_equal(a->projectile.enemy, target) &&
+            !qa_session_release(g->services.session, a->id, e))
+            return false;
+        a = next;
+    }
+    return true;
+}
 static void released(void *context, qa_session *session, qa_actor_record record) {
     (void)session;
     qa_q2_game *g = context;

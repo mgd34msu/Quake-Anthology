@@ -617,8 +617,9 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             return false;
         return !q1_alive(g, entity->id) || q1_remove(g, entity, error);
     }
+    default:
+        return q1_map_fail(error, "unknown Q1 map continuation");
     }
-    return q1_map_fail(error, "unknown Q1 map continuation");
 }
 
 bool q1_map_timer(qa_q1_game *g, const char *name, q1_actor **out, qa_error *error) {
