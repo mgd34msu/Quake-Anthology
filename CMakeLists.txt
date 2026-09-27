@@ -398,6 +398,22 @@ target_link_libraries(qa_modes PUBLIC qa_game_q1 qa_game_q2 qa_game_q3)
 add_library(qa_bots STATIC src/bots/actions.c)
 target_link_libraries(qa_bots PUBLIC qa_builtin qa_navigation)
 
+add_library(qa_catalog STATIC
+    src/content/catalog/behaviors.c
+    src/content/catalog/catalog.c
+    src/content/catalog/discovery.c
+    src/content/catalog/metadata.c
+    src/content/catalog/mounts.c
+    src/content/catalog/products.c)
+target_link_libraries(qa_catalog PUBLIC qa_content)
+
+add_library(qa_configuration STATIC
+    src/session/configuration/draft.c
+    src/session/configuration/presets.c
+    src/session/configuration/transaction.c
+    src/session/configuration/validate.c)
+target_link_libraries(qa_configuration PUBLIC qa_catalog qa_modes qa_session)
+
 add_library(qa_audio STATIC
     src/audio/bank.c
     src/audio/codecs.c

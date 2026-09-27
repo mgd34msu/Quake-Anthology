@@ -9,15 +9,16 @@ add_library(qa_data STATIC
     src/core/json.c
     src/core/number.c
     src/core/hash.c
+    src/platform/filesystem.c
     src/platform/mapping.c)
 target_include_directories(qa_data PUBLIC include)
 target_link_libraries(qa_data PUBLIC qa_compile_options Threads::Threads)
 if(UNIX)
-    target_sources(qa_data PRIVATE src/platform/file.c)
+    target_sources(qa_data PRIVATE src/platform/file.c src/platform/filesystem_posix.c)
     target_link_libraries(qa_data PUBLIC m)
     target_compile_definitions(qa_data PRIVATE _POSIX_C_SOURCE=200809L)
 elseif(WIN32)
-    target_sources(qa_data PRIVATE src/platform/file_windows.c)
+    target_sources(qa_data PRIVATE src/platform/file_windows.c src/platform/filesystem_windows.c)
 endif()
 
 add_library(qa_native STATIC

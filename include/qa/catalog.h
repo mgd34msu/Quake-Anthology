@@ -1,0 +1,131 @@
+#ifndef QA_CATALOG_H
+#define QA_CATALOG_H
+
+#include "qa/session.h"
+#include "qa/vfs.h"
+#include "qa/builtin.h"
+
+typedef struct qa_catalog qa_catalog;
+typedef uint32_t qa_product_id;
+#define QA_PRODUCT_NONE 0u
+typedef enum qa_product_edition {
+    QA_EDITION_CLASSIC, QA_EDITION_RERELEASE, QA_EDITION_QUAKEWORLD, QA_EDITION_DEMO
+} qa_product_edition;
+typedef enum qa_content_availability {
+    QA_CONTENT_INSTALLED, QA_CONTENT_MISSING, QA_CONTENT_INVALID
+} qa_content_availability;
+typedef enum qa_program_kind {
+    QA_PROGRAM_BUILTIN, QA_PROGRAM_QUAKEC, QA_PROGRAM_QVM, QA_PROGRAM_NATIVE
+} qa_program_kind;
+
+typedef struct qa_product {
+    qa_product_id id, base;
+    const char *key, *identity, *title, *campaign, *directory;
+    qa_game_family family;
+    qa_product_edition edition;
+    qa_content_availability availability;
+    bool builtin;
+    const char *const *requirements;
+    size_t requirement_count;
+    /* External programs describe a package, never select built-in execution. */
+    const char *program;
+    qa_program_kind program_kind;
+    qa_product_id program_product;
+} qa_product;
+typedef struct qa_catalog_mount {
+    /* Catalog identity; scoped VFS views have their own mount identities. */
+    qa_mount_id id;
+    const char *path;
+    qa_archive_kind format;
+    bool writable;
+    const qa_sha256_digest *digest;
+} qa_catalog_mount;
+typedef struct qa_catalog_map {
+    const char *path;
+    qa_mount_id mount;
+    size_t member;
+    bool archived;
+} qa_catalog_map;
+typedef struct qa_catalog_start {
+    const char *episode, *bsp, *path, *title, *start_items;
+    bool singleplayer, cooperative, capture_the_flag;
+} qa_catalog_start;
+typedef struct qa_catalog_episode {
+    const char *id, *command, *name, *activity;
+    bool needs_skill_select;
+} qa_catalog_episode;
+typedef enum qa_mod_purpose { QA_MOD_ADDITION, QA_MOD_GAME_TYPE } qa_mod_purpose;
+typedef struct qa_catalog_mod {
+    qa_product_id product;
+    const char *key, *id, *title;
+    qa_mod_purpose purpose;
+    qa_program_kind runtime;
+    const char *const *requires, *const *conflicts;
+    size_t requires_count, conflicts_count;
+    const char *declaration_path, *program_path;
+    qa_sha256_digest declaration_digest, program_digest;
+    qa_bytes declaration;
+    const char *unavailable;
+    /* A matching digest is discovery evidence. B25 must qualify the complete
+     * declaration against the program before constructing its private state. */
+} qa_catalog_mod;
+typedef struct qa_catalog_weapon_behavior {
+    qa_product_id product;
+    const char *id, *title, *artifact_path;
+    qa_program_kind runtime;
+    qa_builtin_projectile_role role;
+    const char *declaration_path;
+    qa_sha256_digest declaration_digest, artifact_digest;
+    /* Exact detached entry bytes; B25 qualifies its
+     * source functions and fields before it is executable. */
+    qa_bytes entry;
+    const char *unavailable;
+} qa_catalog_weapon_behavior;
+
+typedef struct qa_catalog_options {
+    qa_resource_pool *resources;
+    const char *content_root, *user_root;
+    uint64_t generation;
+    bool discover_mods;
+} qa_catalog_options;
+bool qa_catalog_discover(const qa_catalog_options *, qa_catalog **, qa_error *);
+void qa_catalog_retain(qa_catalog *);
+void qa_catalog_release(qa_catalog *);
+uint64_t qa_catalog_generation(const qa_catalog *);
+size_t qa_catalog_count(const qa_catalog *);
+const qa_product *qa_catalog_at(const qa_catalog *, size_t);
+const qa_product *qa_catalog_product(const qa_catalog *, qa_product_id);
+/* Accepts the product key or its persistent family:edition:package identity. */
+const qa_product *qa_catalog_find(const qa_catalog *, const char *);
+const qa_catalog_mount *qa_catalog_mount_at(const qa_catalog *, size_t);
+size_t qa_catalog_mount_count(const qa_catalog *);
+bool qa_catalog_product_mounts(const qa_catalog *, qa_product_id,
+                               const qa_mount_id **, size_t *);
+const qa_catalog_map *qa_catalog_maps(const qa_catalog *, qa_product_id, size_t *);
+const qa_catalog_start *qa_catalog_starts(const qa_catalog *, qa_product_id,
+                                         const qa_catalog_episode **, size_t *);
+size_t qa_catalog_mod_count(const qa_catalog *);
+const qa_catalog_mod *qa_catalog_mod_at(const qa_catalog *, size_t);
+const qa_catalog_mod *qa_catalog_mod_find(const qa_catalog *, const char *key);
+size_t qa_catalog_weapon_behavior_count(const qa_catalog *);
+const qa_catalog_weapon_behavior *qa_catalog_weapon_behavior_at(const qa_catalog *, size_t);
+const qa_catalog_weapon_behavior *qa_catalog_weapon_behavior_find(const qa_catalog *,
+                                                                  qa_product_id, const char *id);
+bool qa_catalog_mod_key(const char *key);
+/* A scoped view includes only this product and its base, with native search
+ * precedence. It retains pool resources independently of the catalog. */
+bool qa_catalog_open(const qa_catalog *, qa_product_id, qa_vfs **, qa_error *);
+typedef struct qa_catalog_mount_selection {
+    qa_product_id assets, geometry, combat;
+    bool explicit_presentation;
+    const qa_product_id *additional;
+    size_t additional_count;
+} qa_catalog_mount_selection;
+bool qa_catalog_mount_plan(const qa_catalog *, const qa_catalog_mount_selection *,
+                            qa_vfs **, qa_error *);
+/* Network game directories are a single safe name. This maps known products;
+ * callers rediscover a newly downloaded package before selecting it. */
+bool qa_catalog_remote(const qa_catalog *, qa_product_id base, const char *directory,
+                        qa_product_id *out, qa_error *);
+
+#endif

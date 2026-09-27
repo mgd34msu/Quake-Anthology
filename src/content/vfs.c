@@ -1,26 +1,16 @@
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE
-#endif
 #include "qa/vfs.h"
 #include "qa/binary.h"
+#include "qa/filesystem.h"
 
-#include <dirent.h>
-#include <errno.h>
-#include <fcntl.h>
 #include <inttypes.h>
 #include <limits.h>
-#include <linux/openat2.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <sys/syscall.h>
-#include <unistd.h>
 
 typedef struct package {
     struct package *next;
     size_t references;
-    struct stat identity;
+    qa_fs_identity identity;
     qa_sha256_digest digest;
     qa_buffer storage;
     qa_archive *archive;
@@ -36,7 +26,7 @@ struct qa_resource {
     char *path;
     package *archive;
     size_t ordinal;
-    struct stat identity;
+    qa_fs_identity identity;
     qa_sha256_digest digest;
     qa_archive_data data;
 };
@@ -55,8 +45,9 @@ typedef struct mount {
     qa_mount_id id;
     qa_archive_comparison comparison;
     package *archive;
-    int descriptor;
-    struct stat identity;
+    qa_fs_file *archive_file;
+    qa_fs_root *root;
+    qa_fs_identity identity;
     bool writable;
     bool user_overlay;
     bool referenced;
@@ -89,7 +80,7 @@ struct qa_vfs {
 };
 
 struct qa_vfs_file {
-    int descriptor;
+    qa_fs_stream *stream;
     char *path;
     qa_vfs_write_mode mode;
     uint64_t position;
@@ -99,52 +90,37 @@ static bool demo_package_allowed(const package *archive, qa_error *error);
 static void prioritize_mounts(const qa_vfs *vfs, mount **order);
 static void prioritize_ids(qa_vfs *vfs, qa_mount_id *order);
 
-static void io_error(qa_error *error, const char *operation, const char *path)
+static char *copy_string(const char *source)
 {
-    int code = errno;
-    qa_error_set(error, code == ENOENT || code == ENOTDIR ? QA_ERROR_NOT_FOUND : QA_ERROR_IO,
-                 0, "%s %s: %s", operation, path, strerror(code));
+    size_t length = strlen(source);
+    char *copy = length == SIZE_MAX ? NULL : malloc(length + 1);
+    if (copy != NULL) memcpy(copy, source, length + 1);
+    return copy;
 }
 
-static bool stat_fd(int descriptor, struct stat *identity)
+static char *copy_string_n(const char *source, size_t length)
 {
-    int result;
-    do {
-        result = fstat(descriptor, identity);
-    } while (result < 0 && errno == EINTR);
-    return result == 0;
+    if (length == SIZE_MAX) return NULL;
+    char *copy = malloc(length + 1);
+    if (copy != NULL) {
+        memcpy(copy, source, length);
+        copy[length] = '\0';
+    }
+    return copy;
 }
 
-static bool same_file(const struct stat *left, const struct stat *right)
+static size_t identity_bucket(const qa_fs_identity *identity, size_t bucket_count)
 {
-    return left->st_dev == right->st_dev && left->st_ino == right->st_ino &&
-           left->st_size == right->st_size && left->st_mtim.tv_sec == right->st_mtim.tv_sec &&
-           left->st_mtim.tv_nsec == right->st_mtim.tv_nsec &&
-           left->st_ctim.tv_sec == right->st_ctim.tv_sec && left->st_ctim.tv_nsec == right->st_ctim.tv_nsec;
+    return (size_t)qa_fs_identity_hash(identity) & (bucket_count - 1);
 }
 
-static size_t identity_bucket(const struct stat *identity, size_t bucket_count)
-{
-    const uint64_t words[] = {
-        (uint64_t)identity->st_dev, (uint64_t)identity->st_ino, (uint64_t)identity->st_size,
-        (uint64_t)identity->st_mtim.tv_sec, (uint64_t)identity->st_mtim.tv_nsec,
-        (uint64_t)identity->st_ctim.tv_sec, (uint64_t)identity->st_ctim.tv_nsec
-    };
-    uint64_t hash = UINT64_C(14695981039346656037);
-    for (size_t i = 0; i < sizeof(words) / sizeof(words[0]); i++)
-        hash = (hash ^ words[i]) * UINT64_C(1099511628211);
-    hash ^= hash >> 33;
-    hash *= UINT64_C(0xff51afd7ed558ccd);
-    hash ^= hash >> 33;
-    return (size_t)hash & (bucket_count - 1);
-}
-
-static qa_resource *loose_lookup(const qa_resource_pool *pool, const struct stat *identity)
+static qa_resource *loose_lookup(const qa_resource_pool *pool,
+                                 const qa_fs_identity *identity)
 {
     if (pool->loose_bucket_count == 0) return NULL;
     size_t bucket = identity_bucket(identity, pool->loose_bucket_count);
     for (qa_resource *resource = pool->loose_buckets[bucket]; resource != NULL; resource = resource->identity_next)
-        if (same_file(&resource->identity, identity)) return resource;
+        if (qa_fs_identity_equal(&resource->identity, identity)) return resource;
     return NULL;
 }
 
@@ -386,19 +362,15 @@ qa_vfs *qa_vfs_clone(const qa_vfs *vfs, qa_error *error)
     qa_vfs *copy = qa_vfs_create(vfs->pool, error);
     if (copy == NULL) return NULL;
     copy->next_mount = vfs->next_mount;
+    copy->next_temporary = vfs->next_temporary;
     if (vfs->count != 0) copy->mounts = calloc(vfs->count, sizeof(*copy->mounts));
     if (vfs->count != 0 && copy->mounts == NULL) goto memory_failure;
     for (size_t i = 0; i < vfs->count; i++) {
         mount *source = malloc(sizeof(*source));
         if (source == NULL) goto memory_failure;
         *source = *vfs->mounts[i];
-        source->descriptor = fcntl(source->descriptor, F_DUPFD_CLOEXEC, 0);
-        if (source->descriptor < 0) {
-            io_error(error, "cannot retain", "mount descriptor");
-            free(source);
-            qa_vfs_destroy(copy);
-            return NULL;
-        }
+        qa_fs_file_retain(source->archive_file);
+        qa_fs_root_retain(source->root);
         source->referenced = false;
         if (source->archive != NULL) source->archive->references++;
         copy->mounts[copy->count++] = source;
@@ -409,7 +381,7 @@ qa_vfs *qa_vfs_clone(const qa_vfs *vfs, qa_error *error)
         if (item == NULL) goto memory_failure;
         *prefix_tail = item;
         prefix_tail = &item->next;
-        item->prefix = strdup(prefix->prefix);
+        item->prefix = copy_string(prefix->prefix);
         if (copy->count != 0) item->order = malloc(copy->count * sizeof(*item->order));
         if (item->prefix == NULL || (copy->count != 0 && item->order == NULL)) goto memory_failure;
         if (copy->count != 0) memcpy(item->order, prefix->order, copy->count * sizeof(*item->order));
@@ -420,8 +392,8 @@ qa_vfs *qa_vfs_clone(const qa_vfs *vfs, qa_error *error)
         if (item == NULL) goto memory_failure;
         *link_tail = item;
         link_tail = &item->next;
-        item->source = strdup(link->source);
-        item->target = strdup(link->target);
+        item->source = copy_string(link->source);
+        item->target = copy_string(link->target);
         item->mount = link->mount;
         if (item->source == NULL || item->target == NULL) goto memory_failure;
     }
@@ -442,7 +414,8 @@ memory_failure:
 static void mount_free(mount *source)
 {
     if (source->archive != NULL) package_release(source->archive);
-    (void)close(source->descriptor);
+    qa_fs_file_close(source->archive_file);
+    qa_fs_root_close(source->root);
     free(source);
 }
 
@@ -472,58 +445,24 @@ void qa_vfs_destroy(qa_vfs *vfs)
     free(vfs);
 }
 
-static bool snapshot_read(int descriptor, const struct stat *identity,
-                          qa_buffer *out, qa_error *error)
-{
-    char path[64];
-    (void)snprintf(path, sizeof(path), "/proc/self/fd/%d", descriptor);
-    qa_buffer bytes = {0};
-    if (!qa_file_read_all(path, &bytes, error)) return false;
-    struct stat after;
-    if (!stat_fd(descriptor, &after)) {
-        io_error(error, "cannot inspect", path);
-        qa_buffer_free(&bytes);
-        return false;
-    }
-    if (!same_file(identity, &after)) {
-        qa_error_set(error, QA_ERROR_IO, 0, "resource changed while being read");
-        qa_buffer_free(&bytes);
-        return false;
-    }
-    *out = bytes;
-    return true;
-}
-
 static package *package_open(qa_resource_pool *pool, const char *path,
-                              qa_archive_kind kind, int *out_descriptor,
-                              struct stat *out_identity, qa_error *error)
+                              qa_archive_kind kind, qa_fs_file **out_file,
+                              qa_fs_identity *out_identity, qa_error *error)
 {
-    int descriptor = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
-    if (descriptor < 0) {
-        io_error(error, "cannot open archive", path);
+    qa_fs_file *file = NULL;
+    qa_fs_identity identity;
+    if (!qa_fs_file_open(path, &file, &identity, error))
         return NULL;
-    }
-    struct stat identity;
-    if (!stat_fd(descriptor, &identity)) {
-        io_error(error, "cannot inspect archive", path);
-        (void)close(descriptor);
-        return NULL;
-    }
-    if (!S_ISREG(identity.st_mode)) {
-        qa_error_set(error, QA_ERROR_IO, 0, "archive is not a regular file: %s", path);
-        (void)close(descriptor);
-        return NULL;
-    }
     qa_archive_kind extension_kind = kind == QA_ARCHIVE_AUTO ? qa_archive_kind_for_path(path) : kind;
     for (package *archive = pool->packages; archive != NULL; archive = archive->next) {
         qa_archive_kind existing_kind = qa_archive_get_kind(archive->archive);
         bool matches_kind = kind == QA_ARCHIVE_AUTO ?
             (existing_kind == QA_ARCHIVE_PAK || extension_kind == QA_ARCHIVE_AUTO || extension_kind == existing_kind) :
             kind == existing_kind;
-        if (same_file(&archive->identity, &identity) &&
+        if (qa_fs_identity_equal(&archive->identity, &identity) &&
             matches_kind) {
             archive->references++;
-            *out_descriptor = descriptor;
+            *out_file = file;
             *out_identity = identity;
             return archive;
         }
@@ -531,13 +470,13 @@ static package *package_open(qa_resource_pool *pool, const char *path,
     package *archive = calloc(1, sizeof(*archive));
     if (archive == NULL) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate archive source");
-        (void)close(descriptor);
+        qa_fs_file_close(file);
         return NULL;
     }
     archive->identity = identity;
     archive->references = 1;
-    if (!snapshot_read(descriptor, &identity, &archive->storage, error)) {
-        (void)close(descriptor);
+    if (!qa_fs_file_read_snapshot(file, &identity, &archive->storage, error)) {
+        qa_fs_file_close(file);
         package_release(archive);
         return NULL;
     }
@@ -553,35 +492,35 @@ static package *package_open(qa_resource_pool *pool, const char *path,
             memcmp(previous->storage.data, archive->storage.data, archive->storage.size) == 0) {
             package_release(archive);
             previous->references++;
-            *out_descriptor = descriptor;
+            *out_file = file;
             *out_identity = identity;
             return previous;
         }
     }
     if (!qa_archive_open_memory((qa_bytes){archive->storage.data, archive->storage.size},
                                 kind, &archive->archive, error)) {
-        (void)close(descriptor);
+        qa_fs_file_close(file);
         package_release(archive);
         return NULL;
     }
     size_t member_count = qa_archive_count(archive->archive);
     if (member_count > SIZE_MAX / sizeof(*archive->members)) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "archive resource index overflow");
-        (void)close(descriptor);
+        qa_fs_file_close(file);
         package_release(archive);
         return NULL;
     }
     if (member_count != 0) archive->members = calloc(member_count, sizeof(*archive->members));
     if (member_count != 0 && archive->members == NULL) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate archive resource index");
-        (void)close(descriptor);
+        qa_fs_file_close(file);
         package_release(archive);
         return NULL;
     }
     archive->next = pool->packages;
     pool->packages = archive;
     archive->references++;
-    *out_descriptor = descriptor;
+    *out_file = file;
     *out_identity = identity;
     return archive;
 }
@@ -634,7 +573,9 @@ bool qa_vfs_mount_archive(qa_vfs *vfs, const char *path, qa_archive_kind kind,
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate mount");
         return false;
     }
-    source->archive = package_open(vfs->pool, path, kind, &source->descriptor, &source->identity, error);
+    source->archive = package_open(vfs->pool, path, kind,
+                                   &source->archive_file,
+                                   &source->identity, error);
     if (source->archive == NULL) {
         free(source);
         return false;
@@ -659,18 +600,16 @@ bool qa_vfs_mount_directory(qa_vfs *vfs, const char *path,
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid directory mount");
         return false;
     }
-    int descriptor = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    if (descriptor < 0) {
-        io_error(error, "cannot open directory", path);
+    qa_fs_root *root = NULL;
+    if (!qa_fs_root_open(path, &root, error))
         return false;
-    }
     mount *source = calloc(1, sizeof(*source));
     if (source == NULL) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate mount");
-        (void)close(descriptor);
+        qa_fs_root_close(root);
         return false;
     }
-    source->descriptor = descriptor;
+    source->root = root;
     source->comparison = comparison;
     source->writable = writable;
     if (!add_mount(vfs, source, out, error)) {
@@ -1005,12 +944,12 @@ static char *link_prefix(const char *prefix, bool allow_empty, qa_error *error)
     }
     size_t length = strlen(prefix);
     if (length == 0) {
-        char *empty = strdup("");
+        char *empty = copy_string("");
         if (empty == NULL) qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate resource link");
         return empty;
     }
     bool trailing = prefix[length - 1] == '/' || prefix[length - 1] == '\\';
-    char *input = strndup(prefix, length - (trailing ? 1u : 0u));
+    char *input = copy_string_n(prefix, length - (trailing ? 1u : 0u));
     if (input == NULL) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate resource link");
         return NULL;
@@ -1080,149 +1019,21 @@ bool qa_vfs_set_link(qa_vfs *vfs, const char *source_prefix, qa_mount_id id,
     return true;
 }
 
-static int open_beneath(int root, const char *path, int flags)
+static bool loose_name_equal(const char *left, const char *right,
+                             void *context)
 {
-    struct open_how how = {
-        .flags = (uint64_t)(unsigned int)(flags | O_CLOEXEC | O_NONBLOCK),
-        .resolve = RESOLVE_BENEATH | RESOLVE_NO_MAGICLINKS
-    };
-    int descriptor;
-    do {
-        descriptor = (int)syscall(SYS_openat2, root, path, &how, sizeof(how));
-    } while (descriptor < 0 && errno == EINTR);
-    if (descriptor >= 0 || errno != EXDEV) return descriptor;
-
-    /* Absolute symlinks to files inside the root are legitimate content. Resolve
-     * their spelling, then reopen beneath the retained directory descriptor so
-     * a concurrent symlink replacement cannot redirect the actual open. */
-    char root_fd[64];
-    (void)snprintf(root_fd, sizeof(root_fd), "/proc/self/fd/%d", root);
-    size_t root_length = strlen(root_fd), path_length = strlen(path);
-    if (path_length > SIZE_MAX - root_length - 2) {
-        errno = ENAMETOOLONG;
-        return -1;
-    }
-    char *candidate = malloc(root_length + path_length + 2);
-    if (candidate == NULL) {
-        errno = ENOMEM;
-        return -1;
-    }
-    (void)snprintf(candidate, root_length + path_length + 2, "%s/%s", root_fd, path);
-    char *canonical_root = realpath(root_fd, NULL);
-    char *canonical_path = canonical_root == NULL ? NULL : realpath(candidate, NULL);
-    free(candidate);
-    if (canonical_path == NULL) {
-        int code = errno;
-        free(canonical_root);
-        errno = code;
-        return -1;
-    }
-    size_t length = strlen(canonical_root);
-    const char *relative = NULL;
-    if (length == 1 && canonical_root[0] == '/') relative = canonical_path + 1;
-    else if (strncmp(canonical_root, canonical_path, length) == 0 && canonical_path[length] == '/')
-        relative = canonical_path + length + 1;
-    if (relative != NULL) {
-        do {
-            descriptor = (int)syscall(SYS_openat2, root, relative, &how, sizeof(how));
-        } while (descriptor < 0 && errno == EINTR);
-    } else {
-        descriptor = -1;
-        errno = EXDEV;
-    }
-    int code = errno;
-    free(canonical_path);
-    free(canonical_root);
-    errno = code;
-    return descriptor;
+    const qa_archive_comparison *comparison = context;
+    return qa_archive_paths_equal(left, right, *comparison);
 }
 
-static char *resolve_spelling(const mount *source, const char *path, qa_error *error)
+static char *resolve_spelling(const mount *source, const char *path,
+                              qa_error *error)
 {
-    char *resolved = strdup(path);
-    if (resolved == NULL) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate loose path");
+    qa_archive_comparison comparison = source->comparison;
+    char *resolved = NULL;
+    if (!qa_fs_root_resolve(source->root, path, loose_name_equal,
+                            &comparison, true, &resolved, error))
         return NULL;
-    }
-    if (source->comparison == QA_ARCHIVE_EXACT) return resolved;
-    size_t offset = 0;
-    while (path[offset] != '\0') {
-        const char *separator = strchr(path + offset, '/');
-        size_t length = separator == NULL ? strlen(path + offset) : (size_t)(separator - (path + offset));
-        char *part = strndup(path + offset, length);
-        if (part == NULL) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate path component");
-            free(resolved);
-            return NULL;
-        }
-        int descriptor;
-        if (offset == 0) descriptor = open_beneath(source->descriptor, ".", O_RDONLY | O_DIRECTORY);
-        else {
-            resolved[offset - 1] = '\0';
-            descriptor = open_beneath(source->descriptor, resolved, O_RDONLY | O_DIRECTORY);
-            resolved[offset - 1] = '/';
-        }
-        if (descriptor < 0) {
-            io_error(error, "cannot open content directory", path);
-            free(part);
-            free(resolved);
-            return NULL;
-        }
-        DIR *directory = fdopendir(descriptor);
-        if (directory == NULL) {
-            io_error(error, "cannot list content directory", path);
-            (void)close(descriptor);
-            free(part);
-            free(resolved);
-            return NULL;
-        }
-        char *choice = NULL;
-        bool exact = false, ambiguous = false, failed = false;
-        for (;;) {
-            errno = 0;
-            struct dirent *entry = readdir(directory);
-            if (entry == NULL) {
-                if (errno != 0) {
-                    io_error(error, "cannot list content directory", path);
-                    failed = true;
-                }
-                break;
-            }
-            if (!qa_archive_paths_equal(entry->d_name, part, source->comparison)) continue;
-            if (strcmp(entry->d_name, part) == 0) {
-                free(choice);
-                choice = strdup(entry->d_name);
-                exact = true;
-                if (choice == NULL) {
-                    qa_error_set(error, QA_ERROR_MEMORY, offset, "cannot allocate path component");
-                    failed = true;
-                }
-                break;
-            }
-            if (choice != NULL) ambiguous = true;
-            else {
-                choice = strdup(entry->d_name);
-                if (choice == NULL) {
-                    qa_error_set(error, QA_ERROR_MEMORY, offset, "cannot allocate path component");
-                    failed = true;
-                    break;
-                }
-            }
-        }
-        (void)closedir(directory);
-        free(part);
-        if (failed || choice == NULL || (ambiguous && !exact)) {
-            if (!failed) qa_error_set(error, ambiguous ? QA_ERROR_FORMAT : QA_ERROR_NOT_FOUND,
-                                      offset, ambiguous ? "ambiguous content path: %s" : "resource not found: %s", path);
-            free(choice);
-            free(resolved);
-            return NULL;
-        }
-        memcpy(resolved + offset, choice, length);
-        free(choice);
-        offset += length;
-        if (separator != NULL) offset++;
-    }
     return resolved;
 }
 
@@ -1233,7 +1044,7 @@ static qa_resource *new_resource(qa_resource_pool *pool, const char *path, qa_er
         return NULL;
     }
     qa_resource *resource = calloc(1, sizeof(*resource));
-    if (resource != NULL) resource->path = strdup(path);
+    if (resource != NULL) resource->path = copy_string(path);
     if (resource == NULL || resource->path == NULL) {
         free(resource);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate resource");
@@ -1264,12 +1075,11 @@ static bool acquire_archive(qa_resource_pool *pool, const mount *source,
                              const char *path, qa_resource **out, qa_error *error)
 {
     package *archive = source->archive;
-    struct stat current;
-    if (!stat_fd(source->descriptor, &current)) {
-        io_error(error, "cannot inspect archive for", path);
+    bool unchanged = false;
+    if (!qa_fs_file_path_unchanged(source->archive_file, &source->identity,
+                                   &unchanged, error))
         return false;
-    }
-    if (!same_file(&source->identity, &current)) {
+    if (!unchanged) {
         qa_error_set(error, QA_ERROR_IO, 0, "mounted archive changed: %s", path);
         return false;
     }
@@ -1318,28 +1128,16 @@ static bool acquire_loose(qa_resource_pool *pool, const mount *source,
 {
     char *resolved = resolve_spelling(source, path, error);
     if (resolved == NULL) return false;
-    int descriptor = open_beneath(source->descriptor, resolved, O_RDONLY);
-    if (descriptor < 0) {
-        io_error(error, "cannot open resource", path);
-        free(resolved);
-        return false;
-    }
-    struct stat identity;
-    if (!stat_fd(descriptor, &identity)) {
-        io_error(error, "cannot inspect resource", path);
-        (void)close(descriptor);
-        free(resolved);
-        return false;
-    }
-    if (!S_ISREG(identity.st_mode)) {
-        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "resource is not a regular file: %s", path);
-        (void)close(descriptor);
+    qa_fs_file *file = NULL;
+    qa_fs_identity identity;
+    if (!qa_fs_root_file_open(source->root, resolved, &file, &identity,
+                              error)) {
         free(resolved);
         return false;
     }
     qa_resource *cached = loose_lookup(pool, &identity);
     if (cached != NULL) {
-        (void)close(descriptor);
+        qa_fs_file_close(file);
         free(resolved);
         qa_resource_retain(cached);
         *out = cached;
@@ -1348,15 +1146,16 @@ static bool acquire_loose(qa_resource_pool *pool, const mount *source,
     qa_resource *resource = new_resource(pool, resolved, error);
     free(resolved);
     if (resource == NULL) {
-        (void)close(descriptor);
+        qa_fs_file_close(file);
         return false;
     }
-    if (!snapshot_read(descriptor, &identity, &resource->data.owned, error)) {
-        (void)close(descriptor);
+    if (!qa_fs_file_read_snapshot(file, &identity,
+                                  &resource->data.owned, error)) {
+        qa_fs_file_close(file);
         qa_resource_release(resource);
         return false;
     }
-    (void)close(descriptor);
+    qa_fs_file_close(file);
     resource->data.bytes = (qa_bytes){resource->data.owned.data, resource->data.owned.size};
     resource->identity = identity;
     qa_sha256(resource->data.bytes, &resource->digest);
@@ -1528,7 +1327,7 @@ static bool listing_add(qa_vfs_listing *listing, size_t *capacity,
         listing->names = names;
         *capacity = next;
     }
-    char *copy = strdup(name);
+    char *copy = copy_string(name);
     if (copy == NULL) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate file listing name");
         return false;
@@ -1604,54 +1403,36 @@ bool qa_vfs_list(qa_vfs *vfs, const char *path, const char *extension,
         } else {
             if (!source->user_overlay && (vfs->pure_count != 0 || vfs->q3_demo)) continue;
             qa_error local = {0};
-            char *resolved = length == 0 ? strdup(".") : resolve_spelling(source, directory, &local);
+            char *resolved = resolve_spelling(source, directory, &local);
             if (resolved == NULL) {
-                if (length != 0 && local.code == QA_ERROR_NOT_FOUND) continue;
+                if (local.code == QA_ERROR_NOT_FOUND) continue;
                 if (error != NULL) *error = local;
-                if (length == 0) qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate listing directory");
                 goto fail;
             }
-            int descriptor = open_beneath(source->descriptor, resolved, O_RDONLY | O_DIRECTORY);
+            qa_fs_listing entries = {0};
+            bool opened = qa_fs_root_list(source->root, resolved,
+                                          &entries, &local);
             free(resolved);
-            if (descriptor < 0) {
-                if (errno == ENOENT || errno == ENOTDIR) continue;
-                io_error(error, "cannot open listing directory", directory);
+            if (!opened) {
+                if (local.code == QA_ERROR_NOT_FOUND) continue;
+                if (error != NULL) *error = local;
                 goto fail;
             }
-            DIR *entries = fdopendir(descriptor);
-            if (entries == NULL) {
-                io_error(error, "cannot list directory", directory);
-                (void)close(descriptor);
-                goto fail;
-            }
-            for (;;) {
-                errno = 0;
-                struct dirent *entry = readdir(entries);
-                if (entry == NULL) {
-                    if (errno != 0) {
-                        io_error(error, "cannot list directory", directory);
-                        (void)closedir(entries);
-                        goto fail;
-                    }
-                    break;
-                }
-                if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
-                struct stat info;
-                if (fstatat(descriptor, entry->d_name, &info, AT_SYMLINK_NOFOLLOW) < 0) {
-                    if (errno == ENOENT) continue;
-                    io_error(error, "cannot inspect listed file", entry->d_name);
-                    (void)closedir(entries);
-                    goto fail;
-                }
+            for (size_t j = 0; j < entries.count; ++j) {
+                const qa_fs_entry *entry = &entries.entries[j];
                 bool directories = strcmp(extension, "/") == 0;
-                if (S_ISLNK(info.st_mode) || directories != S_ISDIR(info.st_mode) ||
-                    (!directories && !has_suffix(entry->d_name, extension))) continue;
-                if (!listing_add(&listing, &capacity, entry->d_name, error)) {
-                    (void)closedir(entries);
+                if (entry->kind == QA_FS_LINK || entry->kind == QA_FS_OTHER
+                    || directories != (entry->kind == QA_FS_DIRECTORY)
+                    || (!directories
+                        && (entry->kind != QA_FS_REGULAR
+                            || !has_suffix(entry->name, extension))))
+                    continue;
+                if (!listing_add(&listing, &capacity, entry->name, error)) {
+                    qa_fs_listing_free(&entries);
                     goto fail;
                 }
             }
-            (void)closedir(entries);
+            qa_fs_listing_free(&entries);
         }
     }
     *out = listing;
@@ -1659,37 +1440,6 @@ bool qa_vfs_list(qa_vfs *vfs, const char *path, const char *extension,
 fail:
     qa_vfs_listing_free(&listing);
     return false;
-}
-
-static int writable_parent(const mount *source, char *path, bool create,
-                            char **leaf, qa_error *error)
-{
-    int descriptor = openat(source->descriptor, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    if (descriptor < 0) {
-        io_error(error, "cannot open writable root for", path);
-        return -1;
-    }
-    char *component = path;
-    char *separator;
-    while ((separator = strchr(component, '/')) != NULL) {
-        *separator = '\0';
-        if (create && mkdirat(descriptor, component, 0700) < 0 && errno != EEXIST) {
-            io_error(error, "cannot create writable directory", component);
-            (void)close(descriptor);
-            return -1;
-        }
-        int next = openat(descriptor, component, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-        if (next < 0) {
-            io_error(error, "cannot open writable directory", component);
-            (void)close(descriptor);
-            return -1;
-        }
-        (void)close(descriptor);
-        descriptor = next;
-        component = separator + 1;
-    }
-    *leaf = component;
-    return descriptor;
 }
 
 static mount *writable_mount(qa_vfs *vfs, qa_mount_id id, qa_error *error)
@@ -1717,79 +1467,9 @@ bool qa_vfs_write(qa_vfs *vfs, qa_mount_id id, const char *path,
     }
     char *normalized = resource_path(path, error);
     if (normalized == NULL) return false;
-    char *leaf = NULL;
-    int parent = writable_parent(source, normalized, true, &leaf, error);
-    if (parent < 0) {
-        free(normalized);
-        return false;
-    }
-    struct stat previous;
-    if (fstatat(parent, leaf, &previous, AT_SYMLINK_NOFOLLOW) == 0) {
-        if (!S_ISREG(previous.st_mode)) {
-            qa_error_set(error, QA_ERROR_IO, 0, "write target is not a regular file: %s", path);
-            (void)close(parent);
-            free(normalized);
-            return false;
-        }
-    } else if (errno != ENOENT) {
-        io_error(error, "cannot inspect write target", path);
-        (void)close(parent);
-        free(normalized);
-        return false;
-    }
-    char temporary[80];
-    int descriptor = -1;
-    for (unsigned int attempt = 0; attempt < 64; attempt++) {
-        (void)snprintf(temporary, sizeof(temporary), ".qa-write-%ld-%" PRIu64,
-                       (long)getpid(), vfs->next_temporary++);
-        if (strcmp(temporary, leaf) == 0) continue;
-        descriptor = openat(parent, temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
-        if (descriptor >= 0 || errno != EEXIST) break;
-    }
-    if (descriptor < 0) {
-        io_error(error, "cannot create temporary file for", path);
-        (void)close(parent);
-        free(normalized);
-        return false;
-    }
-    bool success = false, temporary_exists = true;
-    size_t offset = 0;
-    while (offset < bytes.size) {
-        size_t amount = bytes.size - offset;
-        if (amount > (size_t)SSIZE_MAX) amount = (size_t)SSIZE_MAX;
-        ssize_t written = write(descriptor, bytes.data + offset, amount);
-        if (written < 0 && errno == EINTR) continue;
-        if (written <= 0) {
-            if (written == 0) errno = EIO;
-            io_error(error, "cannot write", path);
-            goto done;
-        }
-        offset += (size_t)written;
-    }
-    if (fsync(descriptor) < 0) {
-        io_error(error, "cannot sync", path);
-        goto done;
-    }
-    if (close(descriptor) < 0) {
-        descriptor = -1;
-        io_error(error, "cannot close", path);
-        goto done;
-    }
-    descriptor = -1;
-    if (renameat(parent, temporary, parent, leaf) < 0) {
-        io_error(error, "cannot replace", path);
-        goto done;
-    }
-    temporary_exists = false;
-    success = true;
-    if (fsync(parent) < 0) {
-        io_error(error, "cannot sync parent of", path);
-        success = false;
-    }
-done:
-    if (descriptor >= 0) (void)close(descriptor);
-    if (temporary_exists) (void)unlinkat(parent, temporary, 0);
-    (void)close(parent);
+    uint64_t nonce = vfs->next_temporary++;
+    bool success = qa_fs_root_replace(source->root, normalized, bytes,
+                                      nonce, error);
     free(normalized);
     return success;
 }
@@ -1800,20 +1480,7 @@ bool qa_vfs_remove(qa_vfs *vfs, qa_mount_id id, const char *path, qa_error *erro
     if (source == NULL) return false;
     char *normalized = resource_path(path, error);
     if (normalized == NULL) return false;
-    char *leaf = NULL;
-    int parent = writable_parent(source, normalized, false, &leaf, error);
-    if (parent < 0) {
-        free(normalized);
-        return false;
-    }
-    struct stat info;
-    bool success = false;
-    if (fstatat(parent, leaf, &info, AT_SYMLINK_NOFOLLOW) < 0) io_error(error, "cannot inspect", path);
-    else if (!S_ISREG(info.st_mode)) qa_error_set(error, QA_ERROR_IO, 0, "remove target is not a regular file: %s", path);
-    else if (unlinkat(parent, leaf, 0) < 0) io_error(error, "cannot remove", path);
-    else if (fsync(parent) < 0) io_error(error, "cannot sync parent of", path);
-    else success = true;
-    (void)close(parent);
+    bool success = qa_fs_root_remove(source->root, normalized, error);
     free(normalized);
     return success;
 }
@@ -1831,63 +1498,27 @@ static bool open_stream(qa_vfs *vfs, qa_mount_id id, const char *path,
     if (source == NULL) return false;
     char *normalized = resource_path(path, error);
     if (normalized == NULL) return false;
-    char *parent_path = strdup(normalized);
-    if (parent_path == NULL) {
+    qa_vfs_file *file = malloc(sizeof(*file));
+    if (file == NULL) {
         free(normalized);
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate writable file path");
+        qa_error_set(error, QA_ERROR_MEMORY, 0,
+                     "cannot allocate writable file");
         return false;
     }
     bool append = mode != QA_VFS_WRITE;
-    char *leaf = NULL;
-    int parent = writable_parent(source, parent_path, !resume || append, &leaf, error);
-    if (parent < 0) {
-        free(parent_path);
-        free(normalized);
-        return false;
-    }
-    int flags = O_WRONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC;
-    if (!resume || append) flags |= O_CREAT;
-    if (append) flags |= O_APPEND;
-    int descriptor;
-    do {
-        descriptor = openat(parent, leaf, flags, 0600);
-    } while (descriptor < 0 && errno == EINTR);
-    if (descriptor < 0) io_error(error, "cannot open writable file", path);
-    (void)close(parent);
-    free(parent_path);
-    if (descriptor < 0) {
-        free(normalized);
-        return false;
-    }
-    struct stat info;
-    if (!stat_fd(descriptor, &info)) {
-        io_error(error, "cannot inspect writable file", path);
-        (void)close(descriptor);
-        free(normalized);
-        return false;
-    }
-    if (!S_ISREG(info.st_mode) || info.st_size < 0) {
-        qa_error_set(error, QA_ERROR_IO, 0, "writable file is not a regular file: %s", path);
-        (void)close(descriptor);
-        free(normalized);
-        return false;
-    }
-    qa_vfs_file *file = malloc(sizeof(*file));
-    if (file == NULL) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate writable file");
-        (void)close(descriptor);
-        free(normalized);
-        return false;
-    }
-    if (!resume && mode == QA_VFS_WRITE && ftruncate(descriptor, 0) < 0) {
-        io_error(error, "cannot truncate writable file", path);
-        (void)close(descriptor);
-        free(normalized);
+    qa_fs_stream_mode fs_mode = mode == QA_VFS_WRITE ? QA_FS_STREAM_WRITE
+        : mode == QA_VFS_APPEND ? QA_FS_STREAM_APPEND
+                                : QA_FS_STREAM_APPEND_SYNC;
+    qa_fs_stream *stream = NULL;
+    uint64_t initial_size = 0;
+    if (!qa_fs_root_stream_open(source->root, normalized, fs_mode, resume,
+                                &stream, &initial_size, error)) {
         free(file);
+        free(normalized);
         return false;
     }
-    *file = (qa_vfs_file){descriptor, normalized, mode,
-                        resume ? position : (append ? (uint64_t)info.st_size : 0)};
+    *file = (qa_vfs_file){stream, normalized, mode,
+                          resume ? position : (append ? initial_size : 0)};
     *out = file;
     return true;
 }
@@ -1918,32 +1549,22 @@ bool qa_vfs_file_write(qa_vfs_file *file, qa_bytes bytes, size_t *written, qa_er
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid writable file buffer or position");
         return false;
     }
-    size_t offset = 0;
-    while (offset < bytes.size) {
-        size_t count = bytes.size - offset;
-        if (count > (size_t)SSIZE_MAX) count = (size_t)SSIZE_MAX;
-        ssize_t amount = file->mode == QA_VFS_WRITE ?
-            pwrite(file->descriptor, bytes.data + offset, count, (off_t)file->position) :
-            write(file->descriptor, bytes.data + offset, count);
-        if (amount < 0 && errno == EINTR) continue;
-        if (amount <= 0) {
-            if (amount == 0) errno = EIO;
-            io_error(error, "cannot write", file->path);
-            return false;
-        }
-        offset += (size_t)amount;
-        if (written != NULL) *written = offset;
-        if (file->mode == QA_VFS_WRITE) file->position += (uint64_t)amount;
-        else {
-            struct stat info;
-            if (!stat_fd(file->descriptor, &info)) {
-                io_error(error, "cannot inspect appended file", file->path);
-                return false;
-            }
-            file->position = (uint64_t)info.st_size;
-        }
+    size_t amount = 0;
+    uint64_t resulting_size = file->position;
+    bool ok = qa_fs_stream_write(file->stream, bytes, file->position,
+                                 &amount, &resulting_size, error);
+    if (written != NULL) *written = amount;
+    if (file->mode == QA_VFS_WRITE) {
+        file->position += amount;
+    } else if (bytes.size != 0 && ok) {
+        file->position = resulting_size;
+    } else if (amount != 0) {
+        qa_error ignored = {0};
+        uint64_t current;
+        if (qa_fs_stream_size(file->stream, &current, &ignored))
+            file->position = current;
     }
-    return true;
+    return ok;
 }
 
 bool qa_vfs_file_seek(qa_vfs_file *file, int64_t offset,
@@ -1956,12 +1577,8 @@ bool qa_vfs_file_seek(qa_vfs_file *file, int64_t offset,
     uint64_t base = 0;
     if (origin == QA_VFS_SEEK_CURRENT) base = file->position;
     else if (origin == QA_VFS_SEEK_END) {
-        struct stat info;
-        if (!stat_fd(file->descriptor, &info)) {
-            io_error(error, "cannot inspect seek target", file->path);
+        if (!qa_fs_stream_size(file->stream, &base, error))
             return false;
-        }
-        base = (uint64_t)info.st_size;
     }
     uint64_t magnitude = offset < 0 ? (uint64_t)(-(offset + 1)) + 1 : (uint64_t)offset;
     if ((offset < 0 && magnitude > base) ||
@@ -1982,7 +1599,7 @@ qa_vfs_file_state qa_vfs_file_capture(const qa_vfs_file *file)
 void qa_vfs_file_close(qa_vfs_file *file)
 {
     if (file == NULL) return;
-    (void)close(file->descriptor);
+    qa_fs_stream_close(file->stream);
     free(file->path);
     free(file);
 }
