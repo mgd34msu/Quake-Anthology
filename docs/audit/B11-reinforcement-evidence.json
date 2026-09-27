@@ -1,0 +1,14 @@
+{
+  "commit": "ba1021ee6839e75adabfe522c9054949c8436a1f",
+  "prefix": "B11 bounded reinforcement and map-lifecycle source packet.\nCommit: ba1021e. The following six files are complete source from this commit.\nThis is not the whole B11 implementation. The original graph criteria remain unchanged.\nIndependent source reviews covered retained reinforcement selection/placement, shared physics admission, and map reset. Root found swallowed foreign combat-provider errors and signed-counter overflow; these files contain the corrected paths. The related caller/checkpoint corrections were reviewed separately but are not included in this packet. Full Medic revival, remaining species/AI behavior and application integration are unfinished. Full private/shared save transaction wiring is unfinished. No compiler/build/test/game/parser/generator/executable or performance probe ran. Do not accept B11 based on this bounded source or confuse honest incomplete reporting with criterion fulfillment.\n\n",
+  "paths": [
+    "src/gameplay/q2/monsters/reinforcements.h",
+    "src/gameplay/q2/monsters/reinforcements.c",
+    "src/gameplay/q2/monsters/spawn.c",
+    "src/gameplay/q2/monsters/spawn.h",
+    "src/gameplay/q2/monsters/spawn_growth.c",
+    "src/gameplay/q2/map.c"
+  ],
+  "bytes": 55698,
+  "sha256": "8154ec3f53330490a6ffb4a1ebef4ea46ebb3c433aebc523af9fc57b4e970e66"
+}
