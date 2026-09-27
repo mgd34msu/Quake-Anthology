@@ -36,7 +36,21 @@ notification order. The shared Q3 info-string writer now removes the first exact
 key and preserves source prepend/large-buffer append behavior; lookup uses ASCII
 case folding. Its existing checked failure contract leaves input unchanged.
 
+The native local lobby registry and retained membership owner are implemented.
+They preserve prepared composition, readiness, seat capacity, host publication,
+joining, match generations, completion/return and leave. Room versions share
+immutable composition bytes and interned strings; membership copies only when
+a retained reader needs the old version. Synchronous callbacks run from the
+application transition queue with retained views. Failed host publication
+attempts both room reset and bound-host teardown.
+
+An independent reviewer read all three lobby files and both complete donor
+owners, plus shared string/address/whitespace contracts. It found no confirmed
+defect after checking copy-on-write allocation, mutable-registry callback
+lifetime, stale generations, poll counters and cleanup. The composition must
+already be admitted; account authentication remains a separate service.
+
 Application event/UI consumers, arena archive transactions and round deduplication,
-local lobby services and the ranking-provider consumer remain under
-implementation. B31 remains incomplete.
+actual lobby transition consumers, account and local ranking services, and the
+ranking-provider consumer remain under implementation. B31 remains incomplete.
 No engine configuration, compilation or execution ran.
