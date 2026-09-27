@@ -193,6 +193,12 @@ typedef struct qa_launch_resource {
 typedef struct qa_configuration_hooks {
     void *context;
     bool (*safe)(void *);
+    /* Optional pure construction fingerprint, computed before state reuse.
+     * Include only choice-derived inputs consumed by provider construction;
+     * use the same normalized values in the constructor. User options already
+     * participate in identity. Routing roles alone must not reset state. */
+    bool (*instance_configuration)(void *, const qa_launch_instance *,
+                                    const qa_launch_choices *, qa_sha256_digest *, qa_error *);
     bool (*prepare_instance)(void *, const qa_launch_instance *, void **state, qa_error *);
     void (*close_instance)(void *, void *state);
     bool (*prepare_publication)(void *, const qa_launch_snapshot *previous,

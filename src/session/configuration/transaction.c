@@ -99,13 +99,14 @@ static void hash_resource(qa_sha256_context *h, const qa_resource *resource)
     const qa_sha256_digest *digest = qa_resource_digest(resource);
     qa_sha256_update(h, (qa_bytes){digest->bytes, sizeof(digest->bytes)});
 }
-static void instance_identity(instance_owner *owner)
+static bool instance_identity(instance_owner *owner, const qa_launch_choices *choices,
+                               qa_error *error)
 {
     qa_launch_instance *v = &owner->view;
     const qa_launch_provider *p = &v->selection;
     const qa_product *product = qa_catalog_product(owner->identity->catalog, p->product);
     qa_sha256_context h; qa_sha256_init(&h);
-    hash_text(&h, "anthology-provider-v2"); hash_text(&h, p->instance);
+    hash_text(&h, "anthology-provider-v3"); hash_text(&h, p->instance);
     hash_text(&h, product->identity); hash_text(&h, p->implementation);
     hash_text(&h, p->artifact); hash_text(&h, p->component);
     hash_u64(&h, p->runtime);
@@ -116,6 +117,14 @@ static void instance_identity(instance_owner *owner)
     hash_u64(&h, clock->maximum_frame_ns); hash_u64(&h, clock->initial_lead_ns);
     hash_u64(&h, clock->maximum_steps);
     hash_u64(&h, p->options.size); qa_sha256_update(&h, p->options);
+    hash_u64(&h, owner->hooks.instance_configuration != NULL);
+    if (owner->hooks.instance_configuration) {
+        qa_sha256_digest configuration = {0};
+        if (!owner->hooks.instance_configuration(owner->hooks.context, v, choices,
+                                                  &configuration, error))
+            return false;
+        qa_sha256_update(&h, (qa_bytes){configuration.bytes, sizeof(configuration.bytes)});
+    }
     hash_resource(&h, v->artifact); hash_resource(&h, v->declaration);
     hash_u64(&h, v->interface_count);
     for (size_t i = 0; i < v->interface_count; ++i) {
@@ -137,6 +146,7 @@ static void instance_identity(instance_owner *owner)
         if (mount.digest) qa_sha256_update(&h, (qa_bytes){mount.digest->bytes, sizeof(mount.digest->bytes)});
     }
     qa_sha256_final(&h, &v->identity);
+    return true;
 }
 
 static uint64_t instance_roles(const qa_launch_choices *v, const char *name)
@@ -244,7 +254,7 @@ static bool prepare_instance(qa_configuration_transaction *transaction, const qa
         }
     }
     if (!selected_behaviors(owner, &candidate->draft->choices, error)) goto fail;
-    instance_identity(owner);
+    if (!instance_identity(owner, &candidate->draft->choices, error)) goto fail;
     if (transaction->previous) for (size_t i = 0; i < transaction->previous->instance_count; ++i) {
         instance_owner *previous = transaction->previous->instances[i].owner;
         if (strcmp(previous->view.selection.instance, selection->instance) ||
