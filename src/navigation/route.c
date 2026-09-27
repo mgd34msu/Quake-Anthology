@@ -256,6 +256,62 @@ bool qa_navigation_route(qa_navigation *n, qa_nav_workspace *w, const qa_nav_rou
         return true;
     }
 }
+bool qa_navigation_admit_edge(qa_navigation *n, qa_actor_id actor, uint32_t id, qa_vec3 origin,
+                              qa_nav_route *route, qa_error *e) {
+    uint32_t index = n ? nav_edge_index(n->graph, id) : QA_NAV_NO_INDEX;
+    if (!route || index == QA_NAV_NO_INDEX || !qa_vec_finite(origin)) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, id, "Invalid navigation edge admission");
+        return false;
+    }
+    route->found = false;
+    route->node_count = route->edge_count = route->point_count = 0;
+    route->travel_seconds = 0;
+    qa_nav_graph_release(route->graph);
+    route->graph = NULL;
+    nav_refresh(n);
+    bool allowed;
+    if (!nav_edge_allowed(n, NULL, actor, index, NULL, &allowed, e)) return false;
+    if (!allowed) return true;
+    const qa_nav_edge *edge = n->graph->edges + index;
+    if (!nav_route_point(route, origin, e)) return false;
+    nav_prediction prediction = {.navigation = n};
+    bool admitted;
+    bool ok = traverse(n, &prediction, actor, index, route, &admitted, e);
+    nav_prediction_close(&prediction);
+    if (!ok || !admitted) return ok;
+    if (!nav_reserve((void **)&route->nodes, &route->node_capacity, 2, sizeof(*route->nodes), e) ||
+        !nav_reserve((void **)&route->edges, &route->edge_capacity, 1, sizeof(*route->edges), e))
+        return false;
+    route->nodes[0] = edge->from;
+    route->nodes[1] = edge->to;
+    route->edges[0] = edge->id;
+    route->node_count = 2;
+    route->edge_count = 1;
+    route->generation = n->generation;
+    route->graph = n->graph;
+    qa_nav_graph_retain(route->graph);
+    route->found = true;
+    return true;
+}
+bool qa_navigation_admit_movement(qa_navigation *n, qa_actor_id actor, qa_vec3 from, qa_vec3 to,
+                                  qa_nav_travel mode, qa_nav_route *route, qa_error *e) {
+    if (!n || !route || !qa_vec_finite(from) || !qa_vec_finite(to) || (unsigned)mode >= QA_NAV_TRAVEL_COUNT) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid direct navigation movement admission");
+        return false;
+    }
+    route->found = false;
+    route->node_count = route->edge_count = route->point_count = 0;
+    route->travel_seconds = 0;
+    qa_nav_graph_release(route->graph);
+    route->graph = NULL;
+    if (!nav_route_point(route, from, e)) return false;
+    nav_prediction prediction = {.navigation = n};
+    bool admitted;
+    bool ok = nav_predict(&prediction, actor, from, to, mode, route, &admitted, e);
+    nav_prediction_close(&prediction);
+    if (ok) route->found = admitted;
+    return ok;
+}
 bool qa_navigation_route_valid(qa_navigation *n, qa_actor_id actor, const qa_nav_route *route,
                                bool *valid, qa_error *e) {
     if (n == NULL || route == NULL || valid == NULL ||

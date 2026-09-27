@@ -186,10 +186,22 @@ void qa_navigation_destroy(qa_navigation *);
 bool qa_nav_workspace_create(qa_nav_workspace **, qa_error *);
 void qa_nav_workspace_destroy(qa_nav_workspace *);
 bool qa_navigation_enable(qa_navigation *, uint32_t area, bool enabled, bool *previous, qa_error *);
+bool qa_navigation_enabled(const qa_navigation *, uint32_t area, bool *enabled, bool *overridden);
 bool qa_navigation_block(qa_navigation *, uint32_t edge, bool blocked, qa_error *);
 uint64_t qa_navigation_generation(qa_navigation *);
 const qa_nav_node *qa_navigation_node(const qa_navigation *, uint32_t);
 const qa_nav_edge *qa_navigation_edge(const qa_navigation *, uint32_t);
+/* Immutable borrowed graph/adjacency views; valid until runtime destruction. */
+const qa_nav_graph_view *qa_navigation_graph(const qa_navigation *);
+size_t qa_navigation_outgoing_count(const qa_navigation *, uint32_t node);
+const qa_nav_edge *qa_navigation_outgoing(const qa_navigation *, uint32_t node, size_t index);
+/* Both directions in graph insertion order, retaining parallel edges. */
+size_t qa_navigation_adjacent_count(const qa_navigation *, uint32_t node);
+typedef struct qa_nav_adjacency_cursor { uint32_t outgoing, incoming; } qa_nav_adjacency_cursor;
+/* Zero the cursor before visiting a node. Both incident lists merge in graph
+ * insertion order without scanning previously visited edges. */
+const qa_nav_edge *qa_navigation_adjacent_next(const qa_navigation *, uint32_t node,
+                                               qa_nav_adjacency_cursor *);
 bool qa_navigation_area(qa_navigation *, qa_actor_id, qa_vec3, uint32_t *, bool *found, qa_error *);
 bool qa_navigation_nearest(qa_navigation *, qa_actor_id, qa_vec3, float radius, uint32_t *,
                            bool *found, qa_error *);
@@ -243,6 +255,14 @@ typedef struct qa_nav_route {
 bool qa_navigation_route(qa_navigation *, qa_nav_workspace *, const qa_nav_route_query *,
                          qa_nav_route *, qa_error *);
 void qa_nav_route_free(qa_nav_route *);
+/* Admits one authored connection through the selected real movement kernel.
+ * Reuses the route's trajectory storage and returns found=false if rejected. */
+bool qa_navigation_admit_edge(qa_navigation *, qa_actor_id, uint32_t edge, qa_vec3 origin,
+                              qa_nav_route *, qa_error *);
+/* Direct movement admission does not impose graph area/edge enablement. It is
+ * used for geometric probes such as suspended goals and barrier jumps. */
+bool qa_navigation_admit_movement(qa_navigation *, qa_actor_id, qa_vec3 from, qa_vec3 to,
+                                  qa_nav_travel, qa_nav_route *, qa_error *);
 bool qa_navigation_route_valid(qa_navigation *, qa_actor_id, const qa_nav_route *, bool *,
                                qa_error *);
 typedef struct qa_nav_estimate {

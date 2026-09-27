@@ -99,6 +99,52 @@ const qa_nav_edge *qa_navigation_edge(const qa_navigation *n, uint32_t id) {
     uint32_t index = nav_edge_index(n->graph, id);
     return index == QA_NAV_NO_INDEX ? NULL : n->graph->edges + index;
 }
+const qa_nav_graph_view *qa_navigation_graph(const qa_navigation *n) {
+    return n ? &n->graph->view : NULL;
+}
+size_t qa_navigation_outgoing_count(const qa_navigation *n, uint32_t id) {
+    uint32_t node = n ? nav_node_index(n->graph, id) : QA_NAV_NO_INDEX;
+    return node == QA_NAV_NO_INDEX ? 0 : n->graph->first_out[node + 1] - n->graph->first_out[node];
+}
+const qa_nav_edge *qa_navigation_outgoing(const qa_navigation *n, uint32_t id, size_t index) {
+    uint32_t node = n ? nav_node_index(n->graph, id) : QA_NAV_NO_INDEX;
+    if (node == QA_NAV_NO_INDEX || index >= qa_navigation_outgoing_count(n, id))
+        return NULL;
+    return n->graph->edges + n->graph->outgoing[n->graph->first_out[node] + index];
+}
+size_t qa_navigation_adjacent_count(const qa_navigation *n, uint32_t id) {
+    uint32_t node = n ? nav_node_index(n->graph, id) : QA_NAV_NO_INDEX;
+    if (node == QA_NAV_NO_INDEX) return 0;
+    return (size_t)(n->graph->first_out[node + 1] - n->graph->first_out[node]) +
+           (size_t)(n->graph->first_in[node + 1] - n->graph->first_in[node]);
+}
+const qa_nav_edge *qa_navigation_adjacent_next(const qa_navigation *n, uint32_t id,
+                                               qa_nav_adjacency_cursor *cursor) {
+    uint32_t node = n ? nav_node_index(n->graph, id) : QA_NAV_NO_INDEX;
+    if (node == QA_NAV_NO_INDEX || !cursor) return NULL;
+    const qa_nav_graph *g = n->graph;
+    if (cursor->outgoing > g->first_out[node + 1] - g->first_out[node] ||
+        cursor->incoming > g->first_in[node + 1] - g->first_in[node]) return NULL;
+    uint32_t out = g->first_out[node] + cursor->outgoing;
+    uint32_t in = g->first_in[node] + cursor->incoming;
+    uint32_t out_end = g->first_out[node + 1], in_end = g->first_in[node + 1];
+    if (out == out_end && in == in_end) return NULL;
+    if (in == in_end || (out < out_end && g->outgoing[out] <= g->incoming[in])) {
+        ++cursor->outgoing;
+        return g->edges + g->outgoing[out];
+    }
+    ++cursor->incoming;
+    return g->edges + g->incoming[in];
+}
+bool qa_navigation_enabled(const qa_navigation *n, uint32_t area, bool *enabled, bool *overridden) {
+    uint32_t index = n ? nav_node_index(n->graph, area) : QA_NAV_NO_INDEX;
+    if (index == QA_NAV_NO_INDEX || !enabled || !overridden) return false;
+    const qa_nav_node *node = &n->graph->nodes[index];
+    *overridden = n->enabled[index] >= 0;
+    *enabled = *overridden ? n->enabled[index] != 0 :
+        !(node->source.kind == QA_NAV_ORIGIN_AAS && (node->flags & 8));
+    return true;
+}
 bool qa_navigation_enable(qa_navigation *n, uint32_t area, bool enabled, bool *previous,
                           qa_error *e) {
     uint32_t index = n == NULL ? QA_NAV_NO_INDEX : nav_node_index(n->graph, area);

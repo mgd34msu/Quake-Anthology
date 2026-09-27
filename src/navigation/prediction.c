@@ -44,15 +44,20 @@ static bool firing(void *context, const qa_movement_call *call) {
     nav_prediction *p = context;
     return p->supplied.firing != NULL && p->supplied.firing(p->supplied.context, call);
 }
-static bool is_bsp(void *context, const qa_trace_result *trace) {
+static bool is_bsp(void *context, const qa_trace_result *trace, bool *out, qa_error *e) {
     nav_prediction *p = context;
     if (p->supplied.is_bsp != NULL)
-        return p->supplied.is_bsp(p->supplied.context, trace);
+        return p->supplied.is_bsp(p->supplied.context, trace, out, e);
+    *out = trace->hit == QA_TRACE_HIT_WORLD;
+    if (trace->hit != QA_TRACE_HIT_ACTOR) return true;
     qa_actor_collision collision;
-    return trace->hit == QA_TRACE_HIT_WORLD ||
-           (trace->hit == QA_TRACE_HIT_ACTOR &&
-            qa_world_get_collision(p->navigation->services.world, trace->actor, &collision) &&
-            collision.inline_model);
+    qa_error local = {0};
+    if (!qa_world_get_collision(p->navigation->services.world, trace->actor, &collision, &local)) {
+        if (e && local.code) *e = local;
+        return !local.code;
+    }
+    *out = collision.inline_model;
+    return true;
 }
 void nav_prediction_close(nav_prediction *p) {
     if (p->has_lease)
@@ -257,7 +262,7 @@ bool qa_navigation_predict(qa_navigation *n, qa_nav_workspace *w, const qa_nav_p
                            qa_nav_prediction_result *out, qa_error *e) {
     if (n == NULL || w == NULL || q == NULL || out == NULL || !qa_vec_finite(q->origin) ||
         !qa_vec_finite(q->velocity) || !qa_vec_finite(q->command_move) ||
-        (q->presence != 2 && q->presence != 4) || q->frame_ms == 0 || q->frame_ms > 255) {
+        (q->presence != 2 && q->presence != 4) || q->frame_ms == 0) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid selected movement projection query");
         return false;
     }
