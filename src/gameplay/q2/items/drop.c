@@ -162,6 +162,7 @@ bool qa_q2_item_drop_monster(qa_q2_game *g, qa_actor_id owner, const char *name,
 }
 bool q2_item_food_cube(qa_q2_game *g, qa_actor_id source, qa_vec3 origin, float scale, int health,
                        qa_vec3 velocity, qa_error *e) {
+    (void)source;
     const qa_q2_item_definition *d = qa_q2_item_lookup(g, "item_foodcube");
     if (!d || !isfinite(scale) || scale <= 0 || !qa_vec_finite(origin) ||
         !qa_vec_finite(velocity)) {
@@ -169,22 +170,63 @@ bool q2_item_food_cube(qa_q2_game *g, qa_actor_id source, qa_vec3 origin, float 
         return false;
     }
     qa_actor_id id;
-    if (!q2_item_drop_definition(g, source, d, &(qa_q2_drop_options){0}, health, &id, e))
+    if (!qa_builtin_spawn_actor(
+            &g->services,
+            &(qa_builtin_spawn){.owner = g->options.owner,
+                                .definition = g->item_runtime->food_classname,
+                                .body = {.origin = origin, .velocity = velocity}},
+            &id, e))
         return false;
-    if (!id.registry)
+    bool handled;
+    if (!qa_q2_item_spawn_actor(
+            g, id,
+            &(qa_q2_item_spawn){.classname = d->classname, .count = health, .spawnflags = 0x10000},
+            &handled, e))
+        goto fail;
+    if (!q2_actor_live(g, id))
         return true;
     q2_actor *a = q2_actor_get(g, id, false, e);
     if (!a)
-        return false;
+        goto fail;
+    a->physics.motion = QA_PHYSICS_TOSS;
+    a->item->visual.scale = scale;
+    if (g->options.edition != QA_Q2_RERELEASE)
+        return true;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, id, &body, e))
-        return false;
-    body.origin = origin;
-    body.velocity = velocity;
-    a->item->visual.scale = scale;
-    return qa_world_body_write(g->services.world, id, &body, e) &&
-           (!q2_actor_live(g, id) || (qa_world_link(g->services.world, id, NULL, e) &&
-                                      (!q2_actor_live(g, id) || q2_item_visual(g, a, e))));
+        goto fail;
+    body.angles.y = q2_random(g) * 360;
+    if (!qa_world_body_write(g->services.world, id, &body, e))
+        goto fail;
+    if (!q2_actor_live(g, id))
+        return true;
+    a->item->due_ns = g->now_ns;
+    if (!q2_item_tick(g, a, e))
+        goto fail;
+    if (!q2_actor_live(g, id))
+        return true;
+    a->item->think = Q2_ITEM_IDLE;
+    a->item->due_ns = 0;
+    qa_string_id sound;
+    if (!qa_world_body_read(g->services.world, id, &body, e) ||
+        !qa_builtin_resource(&g->services, "misc/fhit3.wav", &sound, e) ||
+        !qa_builtin_emit(&g->services,
+                         &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,
+                                             .family = QA_GAME_Q2,
+                                             .provider = g->options.owner,
+                                             .actor = id,
+                                             .origin = body.origin,
+                                             .resource = sound,
+                                             .volume = 1,
+                                             .attenuation = 1,
+                                             .time_ns = g->now_ns},
+                         e))
+        goto fail;
+    return true;
+fail:
+    if (q2_actor_live(g, id))
+        qa_session_release(g->services.session, id, NULL);
+    return false;
 }
 bool qa_q2_item_give(qa_q2_game *g, qa_actor_id player, const char *name, int count, bool *accepted,
                      qa_error *e) {

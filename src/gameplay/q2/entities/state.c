@@ -19,26 +19,17 @@ qa_string_id q2_actor_field(qa_q2_game *g, qa_actor_id id, const char *key) {
                ? value.value.text
                : 0;
 }
-static bool actor_number(qa_q2_game *g, qa_actor_id id, const char *key, double *out) {
-    qa_target_field value;
-    qa_targets *targets = g->entity_runtime->services.targets;
-    if (!targets || !qa_targets_field(targets, id, key, &value))
-        return false;
-    if (value.kind == QA_TARGET_FIELD_TEXT)
-        return number(g, value.value.text, out);
-    if (value.kind != QA_TARGET_FIELD_NUMBER || !isfinite(value.value.number))
-        return false;
-    *out = value.value.number;
-    return true;
-}
 float q2_actor_field_float(qa_q2_game *g, qa_actor_id id, const char *key, float fallback) {
     double value;
-    return actor_number(g, id, key, &value) && value >= -FLT_MAX && value <= FLT_MAX ? (float)value
-                                                                                     : fallback;
+    return qa_targets_number(g->entity_runtime->services.targets, id, key, &value) &&
+                   value >= -FLT_MAX && value <= FLT_MAX
+               ? (float)value
+               : fallback;
 }
 uint32_t q2_actor_field_flags(qa_q2_game *g, qa_actor_id id, const char *key) {
     double value;
-    if (!actor_number(g, id, key, &value) || value < INT32_MIN || value > UINT32_MAX)
+    if (!qa_targets_number(g->entity_runtime->services.targets, id, key, &value) ||
+        value < INT32_MIN || value > UINT32_MAX)
         return 0;
     value = trunc(value);
     return (uint32_t)(value < 0 ? value + 4294967296.0 : value);
@@ -82,18 +73,42 @@ static bool field(void *context, qa_actor_id id, const char *key, qa_target_fiel
     if (!a)
         return false;
     q2_entity_state *s = a->entity;
+    if (!strcmp(key, "origin") || !strcmp(key, "angles") || !strcmp(key, "velocity") ||
+        !strcmp(key, "mins") || !strcmp(key, "maxs")) {
+        qa_body_state body;
+        if (!qa_world_body_read(g->services.world, id, &body, NULL))
+            return false;
+        qa_vec3 vector = !strcmp(key, "origin")     ? body.origin
+                         : !strcmp(key, "angles")   ? body.angles
+                         : !strcmp(key, "velocity") ? body.velocity
+                         : !strcmp(key, "mins")     ? body.bounds.mins
+                                                    : body.bounds.maxs;
+        *value = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR, .value.vector = vector};
+        return true;
+    }
+    if (!strcmp(key, "movedir")) {
+        *value = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR, .value.vector = s->direction};
+        return true;
+    }
+    if (!strcmp(key, "health")) {
+        qa_combat_state combat;
+        *value = (qa_target_field){
+            .kind = QA_TARGET_FIELD_NUMBER,
+            .value.number =
+                qa_combat_read(g->services.combat, id, &combat, NULL) ? combat.health : s->health};
+        return true;
+    }
     const struct {
         const char *key;
         double value;
-    } numbers[] = {{"spawnflags", s->spawnflags},
+    } numbers[] = {{"spawnflags", a->item ? a->item->spawn.spawnflags : s->spawnflags},
                    {"speed", s->speed},
                    {"accel", s->accel},
                    {"decel", s->decel},
                    {"wait", s->wait},
-                   {"delay", s->delay},
+                   {"delay", a->item ? a->item->spawn.delay : s->delay},
                    {"dmg", s->damage},
-                   {"health", s->health},
-                   {"count", s->count},
+                   {"count", a->item ? a->item->spawn.count : s->count},
                    {"style", s->style},
                    {"volume", s->volume},
                    {"attenuation", s->attenuation}};
@@ -106,11 +121,13 @@ static bool field(void *context, qa_actor_id id, const char *key, qa_target_fiel
     const struct {
         const char *key;
         qa_string_id value;
-    } texts[] = {{"classname", s->classname},
+    } texts[] = {{"classname", a->item && a->item->definition
+                                   ? q2_item_classname(g, a->item->definition)
+                                   : s->classname},
                  {"targetname", s->targetname},
-                 {"target", s->target},
-                 {"killtarget", s->killtarget},
-                 {"message", s->message},
+                 {"target", a->item ? a->item->spawn.target : s->target},
+                 {"killtarget", a->item ? a->item->spawn.killtarget : s->killtarget},
+                 {"message", a->item ? a->item->spawn.message : s->message},
                  {"team", s->team},
                  {"map", s->map},
                  {"noise", s->noise}};
@@ -385,7 +402,7 @@ bool qa_q2_entity_authored(qa_q2_game *g, qa_actor_id id, qa_authored_target *ou
     if (a->item) {
         const qa_q2_item_spawn *s = &a->item->spawn;
         if (a->item->definition)
-            out->classname = a->item->definition->classname_id;
+            out->classname = q2_item_classname(g, a->item->definition);
         out->target = s->target;
         out->killtarget = s->killtarget;
         out->message = s->message;

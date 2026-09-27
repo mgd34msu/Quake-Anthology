@@ -8,7 +8,8 @@ bool q2_items_init(qa_q2_game *g, qa_error *e) {
     }
     g->item_runtime->options.weapon_respawn_seconds = 30;
     g->item_runtime->options.instanced_coop = g->options.edition == QA_Q2_RERELEASE;
-    return q2_item_catalog(g, e);
+    return qa_builtin_resource(&g->services, "foodcube", &g->item_runtime->food_classname, e) &&
+           q2_item_catalog(g, e);
 }
 void q2_items_close(qa_q2_game *g) {
     if (g->item_runtime) {

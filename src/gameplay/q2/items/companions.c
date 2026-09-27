@@ -596,7 +596,8 @@ bool q2_item_traits(qa_q2_game *g, qa_actor_id id, qa_builtin_actor_traits *out)
         return false;
     const qa_actor_record *record = qa_actors_get(qa_session_actors(g->services.session), id);
     *out = (qa_builtin_actor_traits){
-        .classname = a->item->definition ? a->item->definition->classname_id : record->definition,
+        .classname =
+            a->item->definition ? q2_item_classname(g, a->item->definition) : record->definition,
         .owner = a->item->owner,
         .damageable_target = a->item->companion && a->item->companion->kind == Q2_DOPPLEGANGER};
     return true;

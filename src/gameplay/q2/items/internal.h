@@ -57,7 +57,11 @@ typedef struct q2_items {
     size_t action_count;
     qa_q2_item_options options;
     uint32_t cubes;
+    qa_string_id food_classname;
 } q2_items;
+static inline qa_string_id q2_item_classname(qa_q2_game *g, const qa_q2_item_definition *d) {
+    return d->kind == QA_Q2_ITEM_FOOD ? g->item_runtime->food_classname : d->classname_id;
+}
 
 q2_power_state *q2_powers(qa_q2_game *, qa_actor_id, qa_error *);
 bool q2_item_bind_actions(qa_q2_game *, qa_actor_id, q2_power_state *, qa_error *);
