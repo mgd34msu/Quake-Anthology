@@ -109,6 +109,9 @@ typedef struct qa_q2_character_weapon {
 } qa_q2_character_weapon;
 typedef struct qa_q2_player_services {
     void *context;
+    /* Read-only projection of shared cinematic control. The application owns
+     * its pose, movement continuation and lifetime, including reset at spawn. */
+    bool (*controlled)(void *, qa_actor_id);
     bool (*movement)(void *, qa_actor_id, qa_q2_player_movement *, qa_error *);
     bool (*set_movement)(void *, qa_actor_id, const qa_q2_player_motion *, qa_error *);
     bool (*emit)(void *, const qa_q2_player_event *, qa_error *);
@@ -241,6 +244,7 @@ bool qa_q2_player_connect(qa_q2_game *, const char *, bool bot, qa_q2_connection
 bool qa_q2_player_admit(qa_q2_game *, qa_actor_id, const qa_q2_player_admission *, qa_error *);
 bool qa_q2_player_userinfo(qa_q2_game *, qa_actor_id, const char *, qa_error *);
 bool qa_q2_player_read(qa_q2_game *, qa_actor_id, qa_q2_player_info *);
+bool qa_q2_player_controlled(const qa_q2_game *, qa_actor_id);
 bool qa_q2_player_projection(qa_q2_game *, qa_actor_id, qa_builtin_player_info *);
 bool qa_q2_player_score(qa_q2_game *, qa_actor_id, int score, int ping, qa_error *);
 bool qa_q2_player_spawn(qa_q2_game *, qa_actor_id, bool restore_loadout, const qa_q2_landmark *,

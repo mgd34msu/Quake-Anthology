@@ -118,6 +118,25 @@ q2_actor *q2_client(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     }
     return a;
 }
+bool qa_q2_player_controlled(const qa_q2_game *g, qa_actor_id id) {
+    return g && g->player_runtime && g->player_runtime->services.controlled &&
+           g->player_runtime->services.controlled(g->player_runtime->services.context, id);
+}
+bool qa_q2_clear_input(qa_q2_game *g, qa_actor_id id, qa_error *e) {
+    q2_actor *a = g ? q2_actor_get(g, id, false, e) : NULL;
+    if (!a) {
+        qa_error_set(e, QA_ERROR_NOT_FOUND, 0, "Q2 input owner is not admitted");
+        return false;
+    }
+    a->input.attack = a->input.latched_attack = false;
+    a->input.holster = a->input.latched_holster = false;
+    a->weapon.latched_attack = a->weapon.fire_buffered = false;
+    if (a->client) {
+        a->client->buttons = a->client->latched_buttons = 0;
+        a->client->weapon_thunk = false;
+    }
+    return true;
+}
 bool q2_player_clear_powerups(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (!qa_q2_powerups_clear(g, a->id, e) ||
         !qa_combat_set_powered_armor(g->services.combat, a->id, &(qa_powered_armor){0}, e))

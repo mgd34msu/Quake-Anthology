@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/game_q2_items.h"
+#include "qa/game_q2_player.h"
 
 static bool run(q2_weapon_call *, qa_error *);
 static q2_actor *weapon_actor(qa_q2_game *g, qa_actor_id id, qa_error *e) {
@@ -452,6 +453,8 @@ bool qa_q2_weapon_tick(qa_q2_game *g, qa_actor_id id, const qa_q2_weapon_input *
         !isfinite(in->view_height) || (unsigned)in->hand > QA_Q2_CENTER_HAND ||
         (unsigned)in->source_rules > QA_Q2_WEAPON_RULES_LMCTF || frame == 0)
         return false;
+    if (qa_q2_player_controlled(g, id))
+        return !q2_actor_live(g, id) || qa_q2_clear_input(g, id, e);
     g->now_ns = now;
     g->frame_ns = frame;
     q2_weapon_call c;

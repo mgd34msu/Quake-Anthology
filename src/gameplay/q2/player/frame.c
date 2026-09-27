@@ -18,6 +18,8 @@ bool q2_client_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (a->projectile.kind != Q2_PROJECTILE_NONE || !a->client || a->client->corpse ||
         !a->client->info.connected || g->player_runtime->intermission)
         return true;
+    if (qa_q2_player_controlled(g, a->id))
+        return !q2_actor_live(g, a->id) || qa_q2_clear_input(g, a->id, e);
     q2_client_state *s = a->client;
     q2_players *p = g->player_runtime;
     bool rr = g->options.edition == QA_Q2_RERELEASE;
@@ -95,6 +97,8 @@ bool qa_q2_player_after_movement(qa_q2_game *g, qa_actor_id id, qa_error *e) {
         return false;
     if (a->projectile.kind != Q2_PROJECTILE_NONE)
         return true;
+    if (qa_q2_player_controlled(g, id))
+        return !q2_actor_live(g, id) || qa_q2_clear_input(g, id, e);
     qa_q2_player_movement m;
     if (!q2_player_observe(g, a, &m, e))
         return false;
@@ -140,6 +144,8 @@ bool qa_q2_player_end_frame(qa_q2_game *g, qa_actor_id id, qa_error *e) {
         return false;
     if (a->projectile.kind != Q2_PROJECTILE_NONE)
         return true;
+    if (qa_q2_player_controlled(g, id))
+        return !q2_actor_live(g, id) || qa_q2_clear_input(g, id, e);
     qa_q2_player_movement m;
     if (!q2_player_observe(g, a, &m, e))
         return false;

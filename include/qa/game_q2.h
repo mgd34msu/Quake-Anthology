@@ -278,6 +278,9 @@ bool qa_q2_weapon_can_drop(qa_q2_game *, qa_actor_id, qa_q2_weapon, bool *, qa_e
 bool qa_q2_weapon_tick(qa_q2_game *, qa_actor_id, const qa_q2_weapon_input *, uint64_t now_ns,
                        uint64_t frame_ns, qa_error *);
 bool qa_q2_weapon_silencer(qa_q2_game *, qa_actor_id, int charges, qa_error *);
+/* Clears owned input latches only, without callbacks, allocation, weapon
+ * advancement, or changes to cooked grenades and reserved ammunition. */
+bool qa_q2_clear_input(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_actor_released(qa_q2_game *, qa_actor_record, qa_error *);
 /* Release native tracker continuations attached to this generation, including
  * targets whose character is supplied by another provider. */
