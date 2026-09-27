@@ -4,30 +4,30 @@ bool q3_killbox(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     qa_body_state body;
     if (!qa_world_body_read(game->options.services.world, actor, &body, error))
         return false;
-    qa_actor_id candidates[1024];
-    size_t count;
-    bool overflow;
-    if (!qa_world_query(game->options.services.world, qa_bounds_translate(body.bounds, body.origin),
-                        QA_COLLISION_SOLID, candidates, 1024, &count, &overflow, error))
+    q3_snapshot_frame *frame = q3_bounds_snapshot(
+        game, qa_bounds_translate(body.bounds, body.origin), QA_COLLISION_SOLID, error);
+    if (!frame)
         return false;
-    if (count > 1024)
-        count = 1024;
-    (void)overflow;
-    for (size_t i = 0; i < count; ++i) {
-        if (qa_actor_id_equal(candidates[i], actor))
+    bool ok = true;
+    for (size_t i = 0; i < frame->snapshot.count; ++i) {
+        qa_actor_id candidate = frame->snapshot.ids[i];
+        if (qa_actor_id_equal(candidate, actor))
             continue;
         qa_combat_state state;
         qa_error ignored = {0};
-        if (!qa_combat_read(game->options.services.combat, candidates[i], &state, &ignored) ||
+        if (!qa_combat_read(game->options.services.combat, candidate, &state, &ignored) ||
             !state.can_take_damage)
             continue;
-        if (!q3_damage(game, candidates[i], actor, actor, QA_Q3_W_NONE, 18, 8, 100000,
+        if (!q3_damage(game, candidate, actor, actor, QA_Q3_W_NONE, 18, 8, 100000,
                        qa_v3(0, 0, 0), body.origin, false, NULL, error))
-            return false;
+            ok = false;
+        if (!ok)
+            break;
         if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
-            return true;
+            break;
     }
-    return true;
+    frame->active = false;
+    return ok;
 }
 bool qa_q3_teleport(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin, qa_vec3 angles,
                     qa_error *error) {
@@ -88,11 +88,25 @@ bool qa_q3_teleport(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin, qa_vec3
     }
     return true;
 }
+static bool portal_rollback(qa_q3_game *game, qa_actor_id player, qa_actor_id portal,
+                            qa_actor_id previous_portal, qa_actor_id published_portal,
+                            qa_q3_holdable previous_holdable, bool holdable_changed,
+                            qa_error *error) {
+    q3_actor *entry = q3_actor_get(game, player);
+    if (entry && entry->kind == Q3_ACTOR_PLAYER) {
+        if (qa_actor_id_equal(entry->state.player.portal, published_portal))
+            entry->state.player.portal = previous_portal;
+        if (holdable_changed && entry->state.player.holdable == QA_Q3_H_PORTAL)
+            entry->state.player.holdable = previous_holdable;
+    }
+    return q3_rollback_spawn(game, portal, error);
+}
 static bool portal_drop(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry)
         return true;
     qa_actor_id destination = entry->state.player.portal;
+    qa_q3_holdable previous_holdable = entry->state.player.holdable;
     bool source = destination.registry != 0;
     qa_body_state body;
     if (!qa_world_body_read(game->options.services.world, actor, &body, error))
@@ -109,8 +123,7 @@ static bool portal_drop(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     qa_builtin_spawn spawn = {.owner = game->options.owner,
                               .body = body,
                               .collision = &collision,
-                              .combat = &combat,
-                              .link = true};
+                              .combat = &combat};
     qa_actor_id portal;
     if (!qa_builtin_spawn_actor(&game->options.services, &spawn, &portal, error))
         return false;
@@ -124,16 +137,23 @@ static bool portal_drop(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
                          .activate_at = q3_add_time(game->now_ms, source ? 1000 : INT_MAX / 2),
                          .angles = body.angles,
                          .source = source}};
+    if (!qa_world_link(game->options.services.world, portal, NULL, error))
+        return q3_rollback_spawn(game, portal, error);
+    p = q3_actor_get(game, portal);
+    if (!p)
+        return q3_fail(error, "Q3 portal retired during admission");
     if (source && q3_actor_get(game, destination)) {
         qa_body_state dest;
         if (!qa_world_body_read(game->options.services.world, destination, &dest, error))
-            return false;
+            return q3_rollback_spawn(game, portal, error);
         p->state.portal.fallback = dest.origin;
     }
     entry = q3_actor_get(game, actor);
     if (!entry)
-        return true;
-    entry->state.player.portal = source ? (qa_actor_id){0} : portal;
+        return !q3_actor_get(game, portal) ||
+               qa_session_release(game->options.services.session, portal, error);
+    qa_actor_id published_portal = source ? (qa_actor_id){0} : portal;
+    entry->state.player.portal = published_portal;
     if (!source)
         entry->state.player.holdable = QA_Q3_H_PORTAL;
     qa_string_id resource;
@@ -141,7 +161,8 @@ static bool portal_drop(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
                              source ? "models/powerups/teleporter/tele_enter.md3"
                                     : "models/powerups/teleporter/tele_exit.md3",
                              &resource, error))
-        return false;
+        return portal_rollback(game, actor, portal, destination, published_portal,
+                               previous_holdable, !source, error);
     qa_builtin_event event = {.kind = QA_BUILTIN_ITEM,
                               .family = QA_GAME_Q3,
                               .provider = game->options.owner,
@@ -149,7 +170,15 @@ static bool portal_drop(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
                               .origin = body.origin,
                               .resource = resource,
                               .time_ns = (uint64_t)(uint32_t)game->now_ms * UINT64_C(1000000)};
-    return qa_builtin_emit(&game->options.services, &event, error);
+    if (!qa_builtin_emit(&game->options.services, &event, error))
+        return portal_rollback(game, actor, portal, destination, published_portal,
+                               previous_holdable, !source, error);
+    if (!q3_actor_get(game, portal)) {
+        q3_fail(error, "Q3 portal retired during admission");
+        return portal_rollback(game, actor, portal, destination, published_portal,
+                               previous_holdable, !source, error);
+    }
+    return true;
 }
 bool q3_portal_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
@@ -233,18 +262,17 @@ static bool kamikaze_area(qa_q3_game *game, qa_actor_id explosion, qa_actor_id a
                           qa_vec3 origin, float radius, float damage, bool shock, qa_error *error) {
     radius = fmaxf(1, radius);
     qa_vec3 extent = qa_v3(radius, radius, radius);
-    qa_actor_id candidates[1024];
-    size_t count;
-    bool overflow;
-    if (!qa_world_query(game->options.services.world,
-                        (qa_bounds){qa_vec_sub(origin, extent), qa_vec_add(origin, extent)},
-                        QA_COLLISION_BOTH, candidates, 1024, &count, &overflow, error))
+    q3_snapshot_frame *frame = q3_bounds_snapshot(
+        game, (qa_bounds){qa_vec_sub(origin, extent), qa_vec_add(origin, extent)},
+        QA_COLLISION_BOTH, error);
+    if (!frame)
         return false;
-    if (count > 1024)
-        count = 1024;
-    (void)overflow;
-    for (size_t i = 0; i < count; ++i) {
-        qa_actor_id actor = candidates[i];
+    bool ok = true;
+    for (size_t i = 0; i < frame->snapshot.count; ++i) {
+        qa_actor_id actor = frame->snapshot.ids[i];
+        if (actor.slot >= game->capacity ||
+            !qa_actors_get(qa_session_actors(game->options.services.session), actor))
+            continue;
         q3_kamikaze_cooldown *cooldown = &game->kamikaze_cooldowns[actor.slot];
         if (!qa_actor_id_equal(cooldown->actor, actor))
             *cooldown = (q3_kamikaze_cooldown){.actor = actor};
@@ -262,25 +290,33 @@ static bool kamikaze_area(qa_q3_game *game, qa_actor_id explosion, qa_actor_id a
             continue;
         qa_vec3 direction = qa_vec_add(qa_vec_sub(linked.state.origin, origin), qa_v3(0, 0, 24));
         if (!q3_damage(game, actor, attacker, explosion, QA_Q3_W_NONE, 26, 1u | 16u, damage,
-                       direction, origin, true, NULL, error))
-            return false;
+                       direction, origin, true, NULL, error)) {
+            ok = false;
+            break;
+        }
         if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
             continue;
         cooldown = &game->kamikaze_cooldowns[actor.slot];
         if (shock && q3_is_player(game, actor)) {
             qa_body_state body;
-            if (!qa_world_body_read(game->options.services.world, actor, &body, error))
-                return false;
+            if (!qa_world_body_read(game->options.services.world, actor, &body, error)) {
+                ok = false;
+                break;
+            }
             qa_vec3 horizontal = qa_vec_normalize(qa_v3(direction.x, direction.y, 0));
             body.velocity = qa_v3(horizontal.x * 400, horizontal.y * 400, 100);
-            if (!qa_world_body_write(game->options.services.world, actor, &body, error))
-                return false;
+            if (!qa_world_body_write(game->options.services.world, actor, &body, error)) {
+                ok = false;
+                break;
+            }
             if (game->options.services.motion_changed) {
                 qa_builtin_motion_change change = {.reason = QA_BUILTIN_MOTION_LAUNCH,
                                                    .body = body};
                 if (!game->options.services.motion_changed(game->options.services.context, actor,
-                                                           &change, error))
-                    return false;
+                                                           &change, error)) {
+                    ok = false;
+                    break;
+                }
             }
         }
         if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
@@ -291,7 +327,8 @@ static bool kamikaze_area(qa_q3_game *game, qa_actor_id explosion, qa_actor_id a
         else
             cooldown->damage_after = q3_add_time(game->now_ms, 3000);
     }
-    return true;
+    frame->active = false;
+    return ok;
 }
 bool q3_kamikaze_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);

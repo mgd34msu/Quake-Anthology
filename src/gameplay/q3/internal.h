@@ -17,6 +17,11 @@ typedef qa_q3_projectile_state q3_missile;
 typedef qa_q3_item_state q3_item_state;
 typedef qa_q3_actor_state q3_actor;
 typedef qa_q3_kamikaze_cooldown q3_kamikaze_cooldown;
+typedef struct q3_snapshot_frame {
+    struct q3_snapshot_frame *next;
+    qa_builtin_actor_snapshot snapshot;
+    bool active;
+} q3_snapshot_frame;
 struct qa_q3_game {
     qa_q3_options options;
     q3_actor *actors;
@@ -28,12 +33,15 @@ struct qa_q3_game {
     uint64_t attack_sequence;
     qa_actor_id body_queue[8];
     uint32_t body_queue_index;
+    q3_snapshot_frame *snapshot_frames;
     qa_physics physics;
     bool policy_registered;
 };
 q3_actor *q3_actor_get(qa_q3_game *, qa_actor_id);
 const q3_actor *q3_actor_const(const qa_q3_game *, qa_actor_id);
 bool q3_fail(qa_error *, const char *);
+bool q3_rollback_spawn(qa_q3_game *, qa_actor_id, qa_error *);
+q3_snapshot_frame *q3_bounds_snapshot(qa_q3_game *, qa_bounds, qa_collision_role, qa_error *);
 bool q3_use_holdable(qa_q3_game *, qa_actor_id, qa_q3_holdable, qa_error *);
 bool q3_player_state_valid(const qa_q3_player_state *);
 void q3_force_view(qa_q3_player_state *, qa_vec3, int32_t lock_ms);

@@ -7,7 +7,6 @@ typedef struct radius_context {
 } radius_context;
 static bool radius_prepare(void *context, qa_damage_request *request, bool *allowed,
                            qa_error *error) {
-    (void)error;
     radius_context *call = context;
     request->amount = truncf(request->amount);
     request->knockback = request->amount;
@@ -15,7 +14,11 @@ static bool radius_prepare(void *context, qa_damage_request *request, bool *allo
         request->attack.combat_provider = call->game->options.hooks.combat_provider(
             call->game->options.hooks.context, request->target, request->attack.combat_provider);
     *allowed = request->amount >= 0;
-    if (*allowed && q3_accuracy(call->game, request->target, call->attacker))
+    if (!*allowed)
+        return true;
+    if (!qa_attack_next(&call->game->attack_sequence, &request->attack, error))
+        return false;
+    if (q3_accuracy(call->game, request->target, call->attacker))
         call->accuracy = true;
     return true;
 }
@@ -23,17 +26,12 @@ bool q3_radius(qa_q3_game *game, qa_actor_id inflictor, qa_actor_id attacker, qa
                int32_t method, qa_vec3 origin, float damage, float radius, qa_actor_id ignore,
                bool *accuracy, qa_error *error) {
     radius = fmaxf(radius, 1);
-    qa_actor_id candidates[1024];
-    size_t count;
-    bool overflow;
     qa_vec3 extent = qa_v3(radius, radius, radius);
-    if (!qa_world_query(game->options.services.world,
-                        (qa_bounds){qa_vec_sub(origin, extent), qa_vec_add(origin, extent)},
-                        QA_COLLISION_BOTH, candidates, 1024, &count, &overflow, error))
+    q3_snapshot_frame *frame = q3_bounds_snapshot(
+        game, (qa_bounds){qa_vec_sub(origin, extent), qa_vec_add(origin, extent)},
+        QA_COLLISION_BOTH, error);
+    if (!frame)
         return false;
-    if (count > 1024)
-        count = 1024;
-    (void)overflow;
     radius_context context = {game, attacker, false};
     qa_builtin_radius attack = {
         .origin = origin,
@@ -48,8 +46,8 @@ bool q3_radius(qa_q3_game *game, qa_actor_id inflictor, qa_actor_id attacker, qa
         .check_visibility = true,
         .trace = qa_collision_default_policy(QA_COLLISION_Q3),
         .has_candidates = true,
-        .candidates = candidates,
-        .candidate_count = count,
+        .candidates = frame->snapshot.ids,
+        .candidate_count = frame->snapshot.count,
         .context = &context,
         .prepare = radius_prepare,
         .attack = {.time_ns = (uint64_t)(uint32_t)game->now_ms * UINT64_C(1000000),
@@ -63,9 +61,8 @@ bool q3_radius(qa_q3_game *game, qa_actor_id inflictor, qa_actor_id attacker, qa
                    .powerup_applied = true,
                    .cause = {.kind = QA_CAUSE_Q3, .source.q3 = {method, 1}}}};
     attack.trace.contents_mask = 1;
-    if (!qa_attack_next(&game->attack_sequence, &attack.attack, error))
-        return false;
     bool ok = qa_builtin_radius_damage(&game->options.services, &attack, NULL, error);
+    frame->active = false;
     if (accuracy)
         *accuracy = context.accuracy;
     return ok;
@@ -201,12 +198,17 @@ bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3
                                        .body = spawn.body};
     bool changed = false;
     if (!qa_builtin_launch_projectile(&game->options.services, &launch, &changed, error))
-        return false;
+        return q3_rollback_spawn(game, actor, error);
     entry = q3_actor_get(game, actor);
+    if (!entry) {
+        if (out)
+            *out = (qa_actor_id){0};
+        return true;
+    }
     if (changed && entry) {
         qa_body_state body;
         if (!qa_world_body_read(game->options.services.world, actor, &body, error))
-            return false;
+            return q3_rollback_spawn(game, actor, error);
         entry->state.missile.trajectory.base = body.origin;
         entry->state.missile.trajectory.delta = body.velocity;
         entry->state.missile.trajectory.time_ms = game->now_ms;

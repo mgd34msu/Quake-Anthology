@@ -189,6 +189,28 @@ bool qa_q3_item_availability(qa_q3_game *game, qa_actor_id actor, bool available
     return qa_world_set_collision(game->options.services.world, actor, &collision, error) &&
            qa_world_link(game->options.services.world, actor, NULL, error);
 }
+static qa_actor_id item_ground_actor(const qa_q3_game *game, const qa_trace_result *trace) {
+    if (trace->hit == QA_TRACE_HIT_ACTOR)
+        return trace->actor;
+    if (trace->hit == QA_TRACE_HIT_WORLD && game->options.services.physics)
+        return game->options.services.physics->world_actor;
+    return (qa_actor_id){0};
+}
+static int32_t item_ground_number(const qa_q3_game *game, const qa_trace_result *trace) {
+    if (trace->hit == QA_TRACE_HIT_WORLD)
+        return 1022;
+    if (trace->hit != QA_TRACE_HIT_ACTOR)
+        return 1023;
+    int32_t number = q3_entity_number(game, trace->actor);
+    return number >= 0 && number < 1022 ? number : 1023;
+}
+static int32_t source_float_schedule(int32_t time, float seconds) {
+    float milliseconds = seconds * 1000.0f;
+    float scheduled = (float)time + milliseconds;
+    return scheduled >= -2147483648.0f && scheduled < 2147483648.0f
+               ? (int32_t)truncf(scheduled)
+               : INT32_MIN;
+}
 static float respawn_seconds(qa_q3_game *game, const qa_q3_item *item) {
     switch (item->kind) {
     case QA_Q3_ITEM_WEAPON:
@@ -272,6 +294,8 @@ bool qa_q3_spawn_item(qa_q3_game *game, const qa_q3_item_spawn *input, qa_actor_
                                        .velocity = input->velocity,
                                        .bounds = {qa_v3(-15, -15, -15), qa_v3(15, 15, 15)}},
                               .collision = &collision};
+    int32_t ground_entity_number = input->dropped ? -1 : 0;
+    bool on_ground = false;
     if (!input->dropped && !input->suspended) {
         qa_trace_query query = {.start = input->origin,
                                 .end = qa_vec_add(input->origin, qa_v3(0, 0, -4096)),
@@ -284,7 +308,9 @@ bool qa_q3_spawn_item(qa_q3_game *game, const qa_q3_item_spawn *input, qa_actor_
         if (trace.start_solid)
             return q3_fail(error, "Q3 item spawned inside solid geometry");
         spawn.body.origin = trace.end;
-        spawn.body.ground = trace.actor;
+        spawn.body.ground = item_ground_actor(game, &trace);
+        ground_entity_number = item_ground_number(game, &trace);
+        on_ground = trace.hit != QA_TRACE_HIT_NONE;
     }
     qa_actor_id actor;
     if (!qa_builtin_spawn_actor(&game->options.services, &spawn, &actor, error))
@@ -295,8 +321,8 @@ bool qa_q3_spawn_item(qa_q3_game *game, const qa_q3_item_spawn *input, qa_actor_
         .kind = Q3_ACTOR_ITEM,
         .state.item = {.spawn = *input,
                        .bounce = 0.5f,
-                       .on_ground = !input->dropped,
-                       .ground_entity_number = input->dropped ? -1 : 1022,
+                       .on_ground = on_ground,
+                       .ground_entity_number = ground_entity_number,
                        .trajectory = {.type = input->dropped ? QA_TRAJECTORY_GRAVITY
                                                              : QA_TRAJECTORY_STATIONARY,
                                       .base = spawn.body.origin,
@@ -305,13 +331,15 @@ bool qa_q3_spawn_item(qa_q3_game *game, const qa_q3_item_spawn *input, qa_actor_
                        .expire_at = input->dropped ? q3_add_time(game->now_ms, 30000) : 0}};
     if (items[input->item_index].kind == QA_Q3_ITEM_POWERUP && !input->dropped) {
         entry->state.item.hidden = true;
-        entry->state.item.respawn_at =
-            q3_add_time(game->now_ms, (int32_t)((45 + q3_random(game) * 15) * 1000));
+        float delay_seconds = 45.0f + q3_crandom(game) * 15.0f;
+        entry->state.item.respawn_at = source_float_schedule(game->now_ms, delay_seconds);
         if (!qa_world_set_collision(game->options.services.world, actor, NULL, error))
-            return false;
+            return q3_rollback_spawn(game, actor, error);
     }
     if (!qa_world_link(game->options.services.world, actor, NULL, error))
-        return false;
+        return q3_rollback_spawn(game, actor, error);
+    if (!q3_actor_get(game, actor))
+        return q3_fail(error, "Q3 item retired during admission");
     *out = actor;
     return true;
 }
@@ -629,11 +657,10 @@ bool q3_item_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     if (normal.z > 0 && velocity.z < 40) {
         body.origin = qa_physics_q3_snap(qa_vec_add(trace.end, qa_v3(0, 0, 1)));
         body.velocity = qa_v3(0, 0, 0);
-        body.ground = trace.actor;
+        body.ground = item_ground_actor(game, &trace);
         item->trajectory = (qa_trajectory){.type = QA_TRAJECTORY_STATIONARY, .base = body.origin};
-        item->on_ground = true;
-        item->ground_entity_number =
-            trace.hit == QA_TRACE_HIT_WORLD ? 1022 : q3_entity_number(game, trace.actor);
+        item->on_ground = trace.hit != QA_TRACE_HIT_NONE;
+        item->ground_entity_number = item_ground_number(game, &trace);
     } else {
         body.origin = qa_vec_add(body.origin, normal);
         body.velocity = velocity;

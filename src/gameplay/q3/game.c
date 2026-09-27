@@ -4,6 +4,59 @@ bool q3_fail(qa_error *error, const char *message) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message);
     return false;
 }
+bool q3_rollback_spawn(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+    qa_error original = {0}, cleanup = {0};
+    bool preserve = error && error->code != QA_OK;
+    if (preserve)
+        original = *error;
+    if (game && qa_actors_get(qa_session_actors(game->options.services.session), actor))
+        (void)qa_session_release(game->options.services.session, actor, &cleanup);
+    if (error) {
+        if (preserve)
+            *error = original;
+        else if (cleanup.code != QA_OK)
+            *error = cleanup;
+    }
+    return false;
+}
+q3_snapshot_frame *q3_bounds_snapshot(qa_q3_game *game, qa_bounds bounds,
+                                       qa_collision_role role, qa_error *error) {
+    if (!game) {
+        q3_fail(error, "missing Q3 spatial query provider");
+        return NULL;
+    }
+    q3_snapshot_frame *frame = game->snapshot_frames;
+    while (frame && frame->active)
+        frame = frame->next;
+    if (!frame) {
+        frame = calloc(1, sizeof(*frame));
+        if (!frame) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating nested Q3 spatial snapshot");
+            return NULL;
+        }
+        if (!qa_builtin_snapshot_reserve(&frame->snapshot, game->capacity, error)) {
+            free(frame);
+            return NULL;
+        }
+        frame->next = game->snapshot_frames;
+        game->snapshot_frames = frame;
+    }
+    frame->active = true;
+    frame->snapshot.count = 0;
+    bool overflow = false;
+    if (!qa_world_query(game->options.services.world, bounds, role, frame->snapshot.ids,
+                        frame->snapshot.capacity, &frame->snapshot.count, &overflow, error)) {
+        frame->active = false;
+        return NULL;
+    }
+    if (overflow) {
+        frame->active = false;
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0,
+                     "Q3 spatial query exceeded the actor registry capacity");
+        return NULL;
+    }
+    return frame;
+}
 int32_t q3_add_time(int32_t a, int32_t b) {
     uint32_t bits = (uint32_t)a + (uint32_t)b;
     int32_t value;
@@ -133,6 +186,12 @@ bool qa_q3_destroy(qa_q3_game *game, qa_error *error) {
     if (game->policy_registered) {
         if (!qa_combat_unregister_policy(game->options.services.combat, game->options.owner, error))
             return false;
+    }
+    while (game->snapshot_frames) {
+        q3_snapshot_frame *next = game->snapshot_frames->next;
+        qa_builtin_snapshot_free(&game->snapshot_frames->snapshot);
+        free(game->snapshot_frames);
+        game->snapshot_frames = next;
     }
     free(game->kamikaze_cooldowns);
     free(game->actors);
