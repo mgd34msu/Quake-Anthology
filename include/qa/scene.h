@@ -377,6 +377,9 @@ typedef struct qa_scene_fog_volume {
 /* Returns the first source fog containing the sphere. A miss clears out. */
 bool qa_scene_world_fog_for_sphere(const qa_scene_world *, qa_vec3, float,
                                   qa_scene_fog_volume *out);
+/* Inclusive bounds overlap, in source fog order. Invalid bounds or a miss clear out. */
+bool qa_scene_world_fog_for_bounds(const qa_scene_world *, qa_bounds,
+                                  qa_scene_fog_volume *out);
 
 typedef struct qa_scene_model_input qa_scene_model_input;
 typedef struct qa_scene_model_attachment {

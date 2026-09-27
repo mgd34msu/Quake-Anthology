@@ -298,6 +298,12 @@ void qaw_destroy_q3(qa_scene_world *world) {
     free(data->lightmaps); free(data->fogs); free(data->grid); free(data); world->q3_data = NULL;
 }
 
+static qa_scene_fog_volume fog_volume(const q3_fog *fog, size_t index)
+{
+    return (qa_scene_fog_volume){(uint32_t)index + 1, fog->fog, fog->tc_scale,
+        fog->has_surface, fog->surface};
+}
+
 bool qaw_q3_fog_for_sphere(const qa_scene_world *world, qa_vec3 origin, float radius,
                            qa_scene_fog_volume *out) {
     *out = (qa_scene_fog_volume){0};
@@ -308,7 +314,24 @@ bool qaw_q3_fog_for_sphere(const qa_scene_world *world, qa_vec3 origin, float ra
         if (!fog->active || origin.x - radius >= fog->bounds.maxs.x || origin.x + radius <= fog->bounds.mins.x ||
             origin.y - radius >= fog->bounds.maxs.y || origin.y + radius <= fog->bounds.mins.y ||
             origin.z - radius >= fog->bounds.maxs.z || origin.z + radius <= fog->bounds.mins.z) continue;
-        *out = (qa_scene_fog_volume){(uint32_t)i + 1, fog->fog, fog->tc_scale, fog->has_surface, fog->surface};
+        *out = fog_volume(fog, i);
+        return true;
+    }
+    return false;
+}
+
+bool qaw_q3_fog_for_bounds(const qa_scene_world *world, qa_bounds bounds,
+                           qa_scene_fog_volume *out)
+{
+    *out = (qa_scene_fog_volume){0};
+    const q3_data *data = world->q3_data;
+    if (!data) return false;
+    for (size_t i = 0; i < data->fog_count; ++i) {
+        const q3_fog *fog = data->fogs + i;
+        if (!fog->active || bounds.maxs.x < fog->bounds.mins.x || bounds.mins.x > fog->bounds.maxs.x ||
+            bounds.maxs.y < fog->bounds.mins.y || bounds.mins.y > fog->bounds.maxs.y ||
+            bounds.maxs.z < fog->bounds.mins.z || bounds.mins.z > fog->bounds.maxs.z) continue;
+        *out = fog_volume(fog, i);
         return true;
     }
     return false;

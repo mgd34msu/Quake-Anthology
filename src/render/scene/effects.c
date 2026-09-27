@@ -146,11 +146,11 @@ bool qa_scene_portal_surface_visible(const qa_scene_mesh *mesh, const qa_scene_v
     return front != 0 && (mirror || shortest <= range * range);
 }
 
-bool qa_scene_particle(qa_scene_frame *frame, const qa_scene_view *view, qa_vec3 origin,
-                       float radius, float rotation, qa_scene_vec4 color,
-                       const qa_scene_image *image, bool additive, qa_error *error)
+bool qa_scene_sprite_geometry(qa_scene_frame *frame, const qa_scene_view *view, qa_vec3 origin,
+                              float radius, float rotation, qa_scene_vec4 color,
+                              qa_scene_mesh *out, qa_error *error)
 {
-    if (!frame || !view || !qa_vec_finite(origin) || !isfinite(radius) || !isfinite(rotation)) {
+    if (!frame || !view || !out || !qa_vec_finite(origin) || !isfinite(radius) || !isfinite(rotation)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid particle parameters");
         return false;
     }
@@ -180,6 +180,16 @@ bool qa_scene_particle(qa_scene_frame *frame, const qa_scene_view *view, qa_vec3
     const uint32_t order[6] = {0, 1, 3, 3, 1, 2};
     memcpy(indices, order, sizeof(order));
     qa_effect_bounds(&mesh);
+    *out = mesh;
+    return true;
+}
+
+bool qa_scene_particle(qa_scene_frame *frame, const qa_scene_view *view, qa_vec3 origin,
+                       float radius, float rotation, qa_scene_vec4 color,
+                       const qa_scene_image *image, bool additive, qa_error *error)
+{
+    qa_scene_mesh mesh;
+    if (!qa_scene_sprite_geometry(frame, view, origin, radius, rotation, color, &mesh, error)) return false;
     qa_scene_draw draw;
     qa_effect_draw(&draw, view, &mesh, image, additive);
     return qa_scene_frame_draw(frame, &draw, error);

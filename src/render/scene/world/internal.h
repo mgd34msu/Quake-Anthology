@@ -88,6 +88,7 @@ bool qaw_submit_q3(qa_scene_world *, qaw_surface *, const qa_material_context *,
                    const qa_scene_world_input *, qa_scene_frame *, qa_error *);
 bool qaw_sample_q3_light(const qa_scene_world *, qa_vec3, qa_vec3 *, qa_vec3 *, qa_vec3 *);
 bool qaw_q3_fog_for_sphere(const qa_scene_world *, qa_vec3, float, qa_scene_fog_volume *);
+bool qaw_q3_fog_for_bounds(const qa_scene_world *, qa_bounds, qa_scene_fog_volume *);
 bool qaw_submit_material_sky(const qa_scene_world *, const qa_material *, const qa_material *,
                               const qa_scene_mesh *, const qa_material_context *,
                               const qa_scene_world_input *, qa_scene_frame *, qa_error *);

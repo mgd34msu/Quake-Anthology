@@ -51,6 +51,10 @@ bool qa_scene_q3_beam(qa_scene_frame *, const qa_scene_view *, qa_vec3 origin,
                       const qa_scene_state *previous_state, qa_error *);
 bool qa_scene_poly_geometry(qa_scene_frame *, const qa_scene_vertex *, size_t,
                             qa_scene_mesh *, qa_error *);
+/* Geometry is owned by the frame until reset; no draw or material is emitted. */
+bool qa_scene_sprite_geometry(qa_scene_frame *, const qa_scene_view *, qa_vec3 origin,
+                              float radius, float rotation, qa_scene_vec4,
+                              qa_scene_mesh *, qa_error *);
 bool qa_scene_default_model(qa_scene_frame *, const qa_scene_view *, qa_scene_matrix model,
                             const qa_scene_image *white, const qa_scene_state *, qa_error *);
 
