@@ -1,12 +1,15 @@
 #include "internal.h"
 
-static bool append(qa_script_lexer *l, uint8_t **bytes, size_t *count, size_t *capacity,
-                   uint8_t value, qa_error *e) {
-    if (*count + 1 >= l->options.token_limit)
-        return script_error(l, "String exceeds script token limit", e);
-    if (!script_grow((void **)bytes, capacity, *count + 1, 1, e))
+static bool writable(qa_script_lexer *l, qa_script_token *out, uint8_t **bytes, qa_error *e) {
+    if (*bytes)
+        return true;
+    uint8_t *storage = qa_arena_alloc(&l->arena, l->options.token_limit, 1, e);
+    if (!storage)
         return false;
-    (*bytes)[(*count)++] = value;
+    memcpy(storage, out->text.data, out->text.size);
+    storage[out->text.size] = 0;
+    out->text.data = storage;
+    *bytes = storage;
     return true;
 }
 static bool escape(qa_script_lexer *l, uint8_t *out, qa_error *e) {
@@ -46,8 +49,12 @@ static bool escape(qa_script_lexer *l, uint8_t *out, qa_error *e) {
         uint32_t value = 0;
         if (c == 'x')
             script_advance(l, 1);
-        else if (!script_digit(c))
-            return script_error(l, "Unknown string escape", e);
+        else if (!script_digit(c)) {
+            script_report_error(l, "Unknown string escape");
+            *out = 0;
+            return true;
+        }
+        size_t start = l->state.offset;
         for (;;) {
             c = script_peek(l, 0);
             bool hex = (l->options.flags & QA_SCRIPT_STRICT_NUMBERS) != 0
@@ -55,14 +62,21 @@ static bool escape(qa_script_lexer *l, uint8_t *out, qa_error *e) {
                            : script_digit(c) || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
             if (radix == 16 ? !hex : !script_digit(c))
                 break;
-            uint32_t digit = script_digit(c) ? c - '0' : c >= 'a' ? c - 'a' + 10 : c - 'A' + 10;
-            if (value > ((uint32_t)INT32_MAX - digit) / radix)
-                return script_error(l, "String escape exceeds source integer range", e);
-            value = value * radix + digit;
             script_advance(l, 1);
         }
+        for (size_t i = start; i < l->state.offset; ++i) {
+            c = l->input.data[i];
+            uint32_t digit = script_digit(c) ? c - '0' : c >= 'a' ? c - 'a' + 10 : c - 'A' + 10;
+            if (value > ((uint32_t)INT32_MAX - digit) / radix)
+                return script_unsupported(l, "String escape exceeds source integer range", e);
+            value = value * radix + digit;
+        }
         if (value > 255) {
+            --l->state.offset;
+            --l->state.column;
             script_warning(l, "Too large value in escape character");
+            ++l->state.offset;
+            ++l->state.column;
             value = 255;
         }
         *out = (uint8_t)value;
@@ -73,18 +87,18 @@ static bool escape(qa_script_lexer *l, uint8_t *out, qa_error *e) {
     return true;
 }
 bool script_quoted(qa_script_lexer *l, qa_script_token *out, qa_error *e) {
-    uint8_t quote = script_peek(l, 0), *bytes = l->scratch;
-    size_t count = 0, capacity = l->scratch_capacity;
+    uint8_t quote = script_peek(l, 0), *bytes = NULL;
+    size_t count = 1;
     size_t start = l->state.offset;
-    bool transformed = false;
-    bool ok = append(l, &bytes, &count, &capacity, quote, e);
+    out->kind = quote == '"' ? QA_SCRIPT_STRING : QA_SCRIPT_LITERAL;
+    out->text = (qa_bytes){l->input.data + start, count};
     script_advance(l, 1);
-    while (ok) {
+    for (;;) {
+        if (count >= l->options.token_limit - 2)
+            return script_error(l, "String exceeds script token limit", e);
         uint8_t c = script_peek(l, 0);
-        if (c == 0 || c == '\n') {
-            ok = script_error(l, c == 0 ? "Missing trailing quote" : "Newline inside string", e);
-            break;
-        }
+        if (c == 0 || c == '\n')
+            return script_error(l, c == 0 ? "Missing trailing quote" : "Newline inside string", e);
         if (c == quote) {
             script_advance(l, 1);
             if ((l->options.flags & QA_SCRIPT_NO_STRING_CONCAT) != 0)
@@ -95,33 +109,27 @@ bool script_quoted(qa_script_lexer *l, qa_script_token *out, qa_error *e) {
                 l->state = saved;
                 break;
             }
-            transformed = true;
+            if (!writable(l, out, &bytes, e))
+                return false;
             script_advance(l, 1);
             continue;
         }
         if (c == '\\' && (l->options.flags & QA_SCRIPT_NO_STRING_ESCAPES) == 0) {
-            transformed = true;
-            ok = escape(l, &c, e);
+            if (!writable(l, out, &bytes, e) || !escape(l, &c, e))
+                return false;
         } else
             script_advance(l, 1);
-        if (ok)
-            ok = append(l, &bytes, &count, &capacity, c, e);
-    }
-    if (ok)
-        ok = append(l, &bytes, &count, &capacity, quote, e);
-    if (ok) {
-        const uint8_t *text = transformed
-                                  ? (const uint8_t *)script_string(&l->arena, bytes, count, e)
-                                  : l->input.data + start;
-        if (text == NULL)
-            ok = false;
-        else {
-            out->kind = quote == '"' ? QA_SCRIPT_STRING : QA_SCRIPT_LITERAL;
-            out->text = (qa_bytes){(const uint8_t *)text, count};
-            out->subtype = (uint32_t)count;
+        if (bytes) {
+            bytes[count] = c;
+            bytes[count + 1] = 0;
         }
+        out->text.size = ++count;
     }
-    l->scratch = bytes;
-    l->scratch_capacity = capacity;
-    return ok;
+    if (bytes) {
+        bytes[count] = quote;
+        bytes[count + 1] = 0;
+    }
+    out->text.size = ++count;
+    out->subtype = (uint32_t)count;
+    return true;
 }

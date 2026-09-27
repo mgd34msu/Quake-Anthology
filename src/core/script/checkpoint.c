@@ -1,8 +1,5 @@
 #include "internal.h"
 
-typedef struct checkpoint_storage {
-    qa_arena arena;
-} checkpoint_storage;
 static void *array(qa_arena *arena, size_t count, size_t stride, size_t alignment, qa_error *e) {
     if (count == 0)
         return NULL;
@@ -64,16 +61,16 @@ static size_t find_expansion(const script_expansion *const *expansions, size_t c
     return SIZE_MAX;
 }
 bool qa_script_capture(const qa_script *s, qa_script_checkpoint *out, qa_error *e) {
-    if (s == NULL || out == NULL) {
-        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing script checkpoint source/output");
+    if (s == NULL || out == NULL || s->read_count != 0) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid or active script checkpoint source/output");
         return false;
     }
-    checkpoint_storage *storage = calloc(1, sizeof(*storage));
+    script_checkpoint_storage *storage = calloc(1, sizeof(*storage));
     if (storage == NULL) {
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating script checkpoint");
         return false;
     }
-    qa_script_checkpoint result = {.version = 1,
+    qa_script_checkpoint result = {.version = SCRIPT_CHECKPOINT_VERSION,
                                    .storage = storage,
                                    .frame_count = s->frame_count,
                                    .stack_count = s->stack_count,
@@ -81,7 +78,8 @@ bool qa_script_capture(const qa_script *s, qa_script_checkpoint *out, qa_error *
                                    .condition_count = s->condition_count,
                                    .expansions = s->expansions,
                                    .outputs = s->outputs,
-                                   .empty_expansion = s->empty_expansion};
+                                   .empty_expansion = s->empty_expansion,
+                                   .source_failure = s->source_failure};
     qa_arena *arena = &storage->arena;
     const script_macro **macros = NULL;
     size_t mc = 0, mcap = 0;
@@ -175,12 +173,13 @@ bool qa_script_capture(const qa_script *s, qa_script_checkpoint *out, qa_error *
             goto fail;
         if (fs[i].lexer.unread && !copy_token(arena, &f->lexer->state.token, &fs[i].lexer.token, e))
             goto fail;
+        if (!fs[i].lexer.unread)
+            fs[i].lexer.token = (qa_script_token){0};
     }
     if (s->stack_count != 0)
         memcpy(stack, s->stack, s->stack_count * sizeof(*stack));
     for (size_t i = 0; i < s->queue_count; ++i) {
         qs[i].expansion = find_expansion(expansions, ec, s->queue[i].expansion);
-        qs[i].processed = s->queue[i].processed;
         if (!copy_token(arena, &s->queue[i].token, &qs[i].token, e))
             goto fail;
     }
@@ -188,7 +187,8 @@ bool qa_script_capture(const qa_script *s, qa_script_checkpoint *out, qa_error *
         cs[i] = (qa_script_condition_state){s->conditions[i].frame, s->conditions[i].skip,
                                             s->conditions[i].was_else};
     if (!copy_options(arena, &s->options, &result.options, e) ||
-        !copy_location(arena, s->last_location, &result.last_location, e))
+        !copy_location(arena, s->last_location, &result.last_location, e) ||
+        !copy_token(arena, &s->raw_token, &result.raw_token, e))
         goto fail;
     if (s->services.date != NULL) {
         result.date = script_string(arena, s->services.date, strlen(s->services.date), e);
@@ -215,7 +215,7 @@ fail:
 void qa_script_checkpoint_free(qa_script_checkpoint *checkpoint) {
     if (checkpoint == NULL)
         return;
-    checkpoint_storage *storage = checkpoint->storage;
+    script_checkpoint_storage *storage = checkpoint->storage;
     if (storage != NULL) {
         qa_arena_destroy(&storage->arena);
         free(storage);
@@ -235,12 +235,18 @@ static bool token_valid(const qa_script_token *t, size_t limit) {
            t->text.size < limit && (t->text.size == 0 || t->text.data != NULL) &&
            (t->leading_whitespace.size == 0 || t->leading_whitespace.data != NULL);
 }
-static bool valid(const qa_script_checkpoint *c, qa_error *e) {
-    if (c == NULL || c->version != 1 || c->options.globals != NULL || c->options.token_limit < 4 ||
-        c->options.token_limit > UINT32_MAX || c->options.maximum_include_depth == 0 ||
-        c->options.maximum_expansions == 0 || c->options.maximum_queued_tokens == 0 ||
-        c->options.maximum_output_tokens == 0 || c->options.maximum_defines == 0 ||
-        c->options.maximum_expression_tokens == 0 || c->options.maximum_source_tokens == 0 ||
+static bool raw_token_valid(const qa_script_token *t, size_t limit) {
+    return t->kind >= QA_SCRIPT_PRIMITIVE && t->kind <= QA_SCRIPT_PUNCTUATION &&
+           t->text.size <= limit && (t->text.size == 0 || t->text.data != NULL) &&
+           (t->leading_whitespace.size == 0 || t->leading_whitespace.data != NULL);
+}
+bool script_checkpoint_valid(const qa_script_checkpoint *c, qa_error *e) {
+    if (c == NULL || c->version != SCRIPT_CHECKPOINT_VERSION || c->options.globals != NULL ||
+        c->options.token_limit < 4 || c->options.token_limit > UINT32_MAX ||
+        c->options.maximum_include_depth == 0 || c->options.maximum_expansions == 0 ||
+        c->options.maximum_queued_tokens == 0 || c->options.maximum_output_tokens == 0 ||
+        c->options.maximum_defines == 0 || c->options.maximum_expression_tokens == 0 ||
+        c->options.maximum_source_tokens == 0 ||
         c->stack_count > c->options.maximum_include_depth ||
         c->queue_count > c->options.maximum_queued_tokens ||
         c->expansions > c->options.maximum_expansions ||
@@ -249,7 +255,8 @@ static bool valid(const qa_script_checkpoint *c, qa_error *e) {
         (c->stack_count != 0 && c->stack == NULL) ||
         (c->expansion_count != 0 && c->expansion_states == NULL) ||
         (c->queue_count != 0 && c->queue == NULL) ||
-        (c->condition_count != 0 && c->conditions == NULL))
+        (c->condition_count != 0 && c->conditions == NULL) ||
+        !raw_token_valid(&c->raw_token, c->options.token_limit))
         goto bad;
     size_t active = 0;
     for (size_t i = 0; i < c->macro_count; ++i) {
@@ -303,14 +310,12 @@ static bool valid(const qa_script_checkpoint *c, qa_error *e) {
             (c->queue[i].expansion != SIZE_MAX && c->queue[i].expansion >= c->expansion_count))
             goto bad;
     }
-    size_t prior = 0;
+    /* A recognized lexer failure can discard an included frame before EOF,
+     * leaving its conditions in source order until later directive handling. */
     for (size_t i = 0; i < c->condition_count; ++i) {
-        size_t frame = c->conditions[i].frame, index = 0;
-        while (index < c->stack_count && c->stack[index] != frame)
-            ++index;
-        if (index == c->stack_count || index < prior || c->frames[frame].condition_base > i)
+        size_t frame = c->conditions[i].frame;
+        if (frame >= c->frame_count || c->frames[frame].condition_base > i)
             goto bad;
-        prior = index;
     }
     return true;
 bad:
@@ -323,7 +328,7 @@ bool qa_script_restore(const qa_script_services *services, const qa_script_check
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid restored script services/output");
         return false;
     }
-    if (!valid(c, e))
+    if (!script_checkpoint_valid(c, e))
         return false;
     qa_script *s = calloc(1, sizeof(*s));
     if (s == NULL) {
@@ -334,10 +339,12 @@ bool qa_script_restore(const qa_script_services *services, const qa_script_check
     s->expansions = c->expansions;
     s->outputs = c->outputs;
     s->empty_expansion = c->empty_expansion;
+    s->source_failure = c->source_failure;
     script_macro **macros = NULL;
     script_expansion *expansions = NULL;
     if (!copy_options(&s->arena, &c->options, &s->options, e) ||
-        !copy_location(&s->arena, c->last_location, &s->last_location, e))
+        !copy_location(&s->arena, c->last_location, &s->last_location, e) ||
+        !copy_token(&s->arena, &c->raw_token, &s->raw_token, e))
         goto fail;
     if (c->date != NULL) {
         s->services.date = script_string(&s->arena, c->date, strlen(c->date), e);
@@ -409,7 +416,6 @@ bool qa_script_restore(const qa_script_services *services, const qa_script_check
             goto fail;
         q->expansion =
             c->queue[i].expansion == SIZE_MAX ? NULL : expansions + c->queue[i].expansion;
-        q->processed = c->queue[i].processed;
         ++s->queue_count;
     }
     for (size_t i = 0; i < c->condition_count; ++i) {

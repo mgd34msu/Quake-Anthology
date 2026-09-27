@@ -56,6 +56,7 @@ target_compile_definitions(qa_core PRIVATE _POSIX_C_SOURCE=200809L)
 
 add_library(qa_script STATIC
     src/core/script/checkpoint.c
+    src/core/script/codec.c
     src/core/script/defines.c
     src/core/script/directives.c
     src/core/script/expansion.c

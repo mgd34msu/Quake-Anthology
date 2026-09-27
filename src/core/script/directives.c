@@ -335,8 +335,14 @@ bool script_directive(qa_script *s, script_queued_token hash, qa_error *e) {
         size_t count;
         if (!script_line(s, &tokens, &count, e))
             return false;
-        bool ok = script_macro_parse(&s->macros, tokens, count, s->options.maximum_defines, e);
+        qa_error failure = {0};
+        bool ok =
+            script_macro_parse(&s->macros, tokens, count, s->options.maximum_defines, &failure);
         free(tokens);
+        if (!ok && failure.code == QA_ERROR_FORMAT)
+            return script_fail(s, location, failure.message, e);
+        if (!ok && e)
+            *e = failure;
         return ok;
     }
     if (qa_script_token_is(name, "undef")) {

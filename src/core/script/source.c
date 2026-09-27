@@ -1,6 +1,8 @@
 #include "internal.h"
+#include <stdio.h>
 
 bool script_fail(qa_script *s, qa_script_location location, const char *message, qa_error *e) {
+    s->source_failure = true;
     qa_error_set(e, QA_ERROR_FORMAT, location.offset, "%s:%u:%u: %s",
                  location.path == NULL ? "<script>" : location.path, location.line, location.column,
                  message);
@@ -38,6 +40,11 @@ bool script_include(qa_script *s, const qa_script_include *request, qa_error *e)
     if (!s->services.read(s->services.context, request, &resource, &found, e))
         return false;
     if (!found) {
+        if (request->kind != QA_SCRIPT_ROOT) {
+            char message[256];
+            snprintf(message, sizeof(message), "file %s not found", request->requested_path);
+            return script_fail(s, qa_script_position(s), message, e);
+        }
         qa_error_set(e, QA_ERROR_NOT_FOUND, 0, "Script resource not found: %s",
                      request->requested_path);
         return false;
@@ -99,30 +106,36 @@ bool script_raw(qa_script *s, script_queued_token *out, bool *found, qa_error *e
     }
     while (s->stack_count != 0) {
         script_frame *frame = s->frames + s->stack[s->stack_count - 1];
-        qa_script_token token;
-        if (!qa_script_lexer_next(frame->lexer, &token, found, e))
+        *out = (script_queued_token){0};
+        bool ok = qa_script_lexer_next(frame->lexer, &out->token, found, e);
+        if (!ok && !frame->lexer->source_failure)
             return false;
         if (*found) {
             if (frame->token_count >= s->options.maximum_source_tokens)
-                return script_fail(s, token.location, "Source token limit exceeded", e);
+                return script_fail(s, out->token.location, "Source token limit exceeded", e);
             ++frame->token_count;
-            *out = (script_queued_token){token, NULL};
-            s->last_location = token.location;
+            s->last_location = out->token.location;
             return true;
         }
         s->last_location = qa_script_lexer_position(frame->lexer);
-        while (s->condition_count > frame->condition_base) {
+        while (script_peek(frame->lexer, 0) == 0 && s->condition_count != 0 &&
+               s->conditions[s->condition_count - 1].frame == s->stack[s->stack_count - 1]) {
             script_warn(s, s->last_location, "Missing #endif at end of script");
             if (s->conditions[--s->condition_count].skip)
                 --s->skipping;
         }
         if (s->stack_count == 1) {
             *found = false;
-            return true;
+            s->source_failure = !ok;
+            return ok;
         }
         frame->active = false;
         --s->stack_count;
+        s->source_failure = false;
+        if (e != NULL)
+            *e = (qa_error){0};
     }
+    *out = (script_queued_token){0};
     *found = false;
     return true;
 }
@@ -262,6 +275,7 @@ void qa_script_close(qa_script *s) {
     free(s->stack);
     free(s->queue);
     free(s->conditions);
+    free(s->reads);
     qa_arena_destroy(&s->macros.arena);
     qa_arena_destroy(&s->arena);
     qa_script_defines_release(s->globals);

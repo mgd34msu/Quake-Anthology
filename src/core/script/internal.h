@@ -20,12 +20,13 @@ struct qa_script_lexer {
     qa_script_punctuation *owned_punctuations;
     int32_t *owned_index;
     size_t punctuation_count;
-    uint8_t *scratch;
-    size_t scratch_capacity;
+    bool source_failure;
 };
 bool script_grow(void **, size_t *, size_t, size_t, qa_error *);
 char *script_string(qa_arena *, const void *, size_t, qa_error *);
 bool script_error(qa_script_lexer *, const char *, qa_error *);
+void script_report_error(qa_script_lexer *, const char *);
+bool script_unsupported(qa_script_lexer *, const char *, qa_error *);
 void script_warning(qa_script_lexer *, const char *);
 bool script_number(qa_script_lexer *, qa_script_token *, qa_error *);
 bool script_quoted(qa_script_lexer *, qa_script_token *, qa_error *);
@@ -64,7 +65,6 @@ typedef struct script_expansion {
 typedef struct script_queued_token {
     qa_script_token token;
     const script_expansion *expansion;
-    bool processed;
 } script_queued_token;
 typedef struct script_frame {
     qa_script_resource resource;
@@ -91,7 +91,16 @@ struct qa_script {
     size_t expansions, outputs;
     bool empty_expansion;
     qa_script_location last_location;
+    qa_script_token raw_token;
+    script_queued_token *reads;
+    size_t read_count, read_capacity;
+    bool source_failure;
 };
+typedef struct script_checkpoint_storage {
+    qa_arena arena;
+} script_checkpoint_storage;
+enum { SCRIPT_CHECKPOINT_VERSION = 2 };
+bool script_checkpoint_valid(const qa_script_checkpoint *, qa_error *);
 typedef struct script_eval_value {
     int32_t integer;
     double number;

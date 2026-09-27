@@ -79,10 +79,20 @@ bool script_error(qa_script_lexer *l, const char *message, qa_error *e) {
     qa_script_location location = qa_script_lexer_position(l);
     qa_error_set(e, QA_ERROR_FORMAT, location.offset, "%s:%u:%u: %s", l->path, location.line,
                  location.column, message);
+    l->source_failure = (l->options.flags & QA_SCRIPT_NO_ERRORS) == 0;
+    script_report_error(l, message);
+    return false;
+}
+void script_report_error(qa_script_lexer *l, const char *message) {
     if ((l->options.flags & QA_SCRIPT_NO_ERRORS) == 0 && l->options.diagnostic != NULL) {
+        qa_script_location location = qa_script_lexer_position(l);
         qa_script_diagnostic d = {QA_SCRIPT_ERROR, location, message};
         l->options.diagnostic(l->options.context, &d);
     }
+}
+bool script_unsupported(qa_script_lexer *l, const char *message, qa_error *e) {
+    l->source_failure = false;
+    qa_error_set(e, QA_ERROR_UNSUPPORTED, l->state.offset, "%s", message);
     return false;
 }
 void script_warning(qa_script_lexer *l, const char *message) {
@@ -208,7 +218,6 @@ void qa_script_lexer_close(qa_script_lexer *l) {
         return;
     free(l->owned_punctuations);
     free(l->owned_index);
-    free(l->scratch);
     qa_arena_destroy(&l->arena);
     free(l);
 }
@@ -233,56 +242,61 @@ bool qa_script_lexer_next(qa_script_lexer *l, qa_script_token *out, bool *found,
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid script token request");
         return false;
     }
+    l->source_failure = false;
+    *found = false;
     if (l->state.unread) {
         *out = l->state.token;
         l->state.unread = false;
         *found = true;
         return true;
     }
+    *out = (qa_script_token){0};
     size_t whitespace = l->state.offset;
     uint32_t before = l->state.line;
     script_whitespace(l);
-    *found = script_peek(l, 0) != 0;
-    if (!*found)
+    if (script_peek(l, 0) == 0)
         return true;
-    qa_script_token token = {
+    *out = (qa_script_token){
         .location = qa_script_lexer_position(l),
         .lines_crossed = l->state.line - before,
         .leading_whitespace = {l->input.data + whitespace, l->state.offset - whitespace}};
     size_t start = l->state.offset;
     uint8_t c = script_peek(l, 0);
     if (c == '"' || c == '\'') {
-        if (!script_quoted(l, &token, e))
+        if (!script_quoted(l, out, e))
             return false;
     } else if (script_digit(c) || (c == '.' && script_digit(script_peek(l, 1)))) {
-        if (!script_number(l, &token, e))
+        if (!script_number(l, out, e))
             return false;
-    } else if ((l->options.flags & QA_SCRIPT_PRIMITIVE_TOKENS) != 0 && c != ';') {
+    } else if ((l->options.flags & QA_SCRIPT_PRIMITIVE_TOKENS) != 0) {
+        out->text = (qa_bytes){l->input.data + start, 0};
         while ((c = script_peek(l, 0)) > 32 && c < 128 && c != ';') {
-            script_advance(l, 1);
-            if (l->state.offset - start >= l->options.token_limit)
+            if (out->text.size >= l->options.token_limit)
                 return script_error(l, "Primitive exceeds script token limit", e);
+            script_advance(l, 1);
+            out->text.size = l->state.offset - start;
         }
-        token.kind = QA_SCRIPT_PRIMITIVE;
-        token.text = (qa_bytes){l->input.data + start, l->state.offset - start};
+        if (out->text.size == l->options.token_limit)
+            return script_unsupported(l, "Primitive token has no source string terminator", e);
     } else if (script_alpha(c)) {
+        out->kind = QA_SCRIPT_NAME;
+        out->text = (qa_bytes){l->input.data + start, 0};
         while (script_name(script_peek(l, 0))) {
             script_advance(l, 1);
+            out->text.size = l->state.offset - start;
             if (l->state.offset - start >= l->options.token_limit)
                 return script_error(l, "Name exceeds script token limit", e);
         }
-        token.kind = QA_SCRIPT_NAME;
-        token.text = (qa_bytes){l->input.data + start, l->state.offset - start};
-        token.subtype = (uint32_t)token.text.size;
+        out->subtype = (uint32_t)out->text.size;
     } else {
         int32_t index = l->heads[c];
         while (index >= 0) {
             const char *text = l->punctuations[index].text;
             size_t size = strlen(text);
             if (size <= l->input.size - start && memcmp(l->input.data + start, text, size) == 0) {
-                token.kind = QA_SCRIPT_PUNCTUATION;
-                token.text = (qa_bytes){(const uint8_t *)text, size};
-                token.subtype = l->punctuations[index].id;
+                out->kind = QA_SCRIPT_PUNCTUATION;
+                out->text = (qa_bytes){(const uint8_t *)text, size};
+                out->subtype = l->punctuations[index].id;
                 script_advance(l, size);
                 break;
             }
@@ -291,7 +305,7 @@ bool qa_script_lexer_next(qa_script_lexer *l, qa_script_token *out, bool *found,
         if (index < 0)
             return script_error(l, "Cannot read script token", e);
     }
-    *out = token;
+    *found = true;
     return true;
 }
 bool qa_script_lexer_unread(qa_script_lexer *l, const qa_script_token *token, qa_error *e) {
@@ -326,6 +340,8 @@ bool qa_script_lexer_restore(qa_script_lexer *l, const qa_script_lexer_state *st
         return false;
     }
     qa_script_lexer_state copy = *state;
+    if (!copy.unread)
+        copy.token = (qa_script_token){0};
     if (copy.unread) {
         char *text = script_string(&l->arena, copy.token.text.data, copy.token.text.size, e);
         char *whitespace = script_string(&l->arena, copy.token.leading_whitespace.data,

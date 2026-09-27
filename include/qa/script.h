@@ -124,6 +124,8 @@ typedef struct qa_script_lexer qa_script_lexer;
 bool qa_script_lexer_open(const char *path, qa_bytes, const qa_script_lexer_options *,
                           qa_script_lexer **, qa_error *);
 void qa_script_lexer_close(qa_script_lexer *);
+/* Valid reads always publish the current token, including cleared EOF output
+ * and partially written tokens on failure. */
 bool qa_script_lexer_next(qa_script_lexer *, qa_script_token *, bool *found, qa_error *);
 bool qa_script_lexer_unread(qa_script_lexer *, const qa_script_token *, qa_error *);
 void qa_script_lexer_reset(qa_script_lexer *);
@@ -155,6 +157,8 @@ typedef struct qa_script_resource {
 } qa_script_resource;
 typedef struct qa_script_services {
     void *context;
+    /* Callbacks must not close or mutate the active source. Handle owners may
+     * retire a handle immediately and defer source close until its call ends. */
     bool (*read)(void *, const qa_script_include *, qa_script_resource *, bool *found, qa_error *);
     void (*release)(void *, qa_script_resource *);
     void (*diagnostic)(void *, const qa_script_diagnostic *);
@@ -181,6 +185,14 @@ bool qa_script_open(const char *path, const qa_script_services *, const qa_scrip
                     qa_script **, qa_error *);
 void qa_script_close(qa_script *);
 bool qa_script_next(qa_script *, qa_script_token *, bool *found, qa_error *);
+/* Every qa_script_next publishes its current token, including partial failure and the
+ * cleared EOF token. Text is borrowed through source close. Raw text may fill
+ * token_limit bytes after an overflow; a source ABI must reject that missing
+ * terminator rather than silently truncate it. */
+bool qa_script_raw_token(const qa_script *, qa_script_token *);
+/* Distinguishes recognized source-language failure from service, allocation,
+ * or unsupported-profile failure. Inspect after qa_script_next returns false. */
+bool qa_script_source_failure(const qa_script *);
 bool qa_script_unread(qa_script *, const qa_script_token *, qa_error *);
 bool qa_script_define(qa_script *, const char *definition, qa_error *);
 bool qa_script_undefine(qa_script *, const char *name, qa_error *);
@@ -214,7 +226,6 @@ typedef struct qa_script_expansion_state {
 typedef struct qa_script_queued_state {
     qa_script_token token;
     size_t expansion;
-    bool processed;
 } qa_script_queued_state;
 typedef struct qa_script_condition_state {
     size_t frame;
@@ -234,11 +245,18 @@ typedef struct qa_script_checkpoint {
     size_t expansions, outputs;
     bool empty_expansion;
     qa_script_location last_location;
+    qa_script_token raw_token;
+    bool source_failure;
     void *storage;
 } qa_script_checkpoint;
 bool qa_script_capture(const qa_script *, qa_script_checkpoint *, qa_error *);
 bool qa_script_restore(const qa_script_services *, const qa_script_checkpoint *, qa_script **,
                        qa_error *);
 void qa_script_checkpoint_free(qa_script_checkpoint *);
+/* Canonical, versioned little-endian encoding. Both leave output unchanged on
+ * failure. Release existing output before success replaces it. Decoded spans
+ * belong to the checkpoint, independently of the encoded input. */
+bool qa_script_checkpoint_encode(const qa_script_checkpoint *, qa_buffer *, qa_error *);
+bool qa_script_checkpoint_decode(qa_bytes, qa_script_checkpoint *, qa_error *);
 
 #endif
