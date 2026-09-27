@@ -83,7 +83,7 @@ static bool frame_event(qa_q2_game *g, q2_actor *a, qa_error *e) {
 static bool disarm(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     qa_combat_state state;
     qa_error ignored;
-    if (!qa_combat_read(g->services.combat, id, &state, &ignored))
+    if (!qa_combat_read_traits(g->services.combat, id, &state, &ignored))
         return true;
     state.can_take_damage = false;
     return qa_combat_set_traits(g->services.combat, id, &state, e);

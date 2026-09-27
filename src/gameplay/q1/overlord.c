@@ -29,22 +29,22 @@ bool q1_spawnpoint_empty(qa_q1_game *g, qa_actor_id marker, qa_vec3 origin) {
     }
     return true;
 }
-qa_actor_id q1_overlord_destination(qa_q1_game *g) {
+bool q1_overlord_destination(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
     qa_body_state player = {0};
-    uint32_t cursor = 0;
-    const qa_actor_record *record;
-    while (qa_actors_next(qa_session_actors(g->services.session), &cursor, &record)) {
-        qa_q1_target traits;
-        if (q1_target(g, record->id, &traits) && traits.player) {
-            (void)qa_world_body_read(g->services.world, record->id, &player, NULL);
-            break;
-        }
-    }
+    q1_actor_snapshot *players;
+    if (!q1_snapshot_players(g, &players, error))
+        return false;
+    qa_actor_id observer = players->count        ? players->actors[0]
+                           : g->services.physics ? g->services.physics->world_actor
+                                                 : (qa_actor_id){0};
+    (void)qa_world_body_read(g->services.world, observer, &player, NULL);
+    players->borrowed = false;
     qa_builtin_angle_vectors(player.angles, &g->forward, &g->right, &g->up);
     qa_vec3 forward = g->forward;
     qa_actor_id best = {0}, farthest = {0};
     float distance = 0;
-    cursor = 0;
+    uint32_t cursor = 0;
+    const qa_actor_record *record;
     while (qa_actors_next(qa_session_actors(g->services.session), &cursor, &record)) {
         if (!q1_classnamed(g, record->id, "info_overlord_destination"))
             continue;
@@ -61,12 +61,15 @@ qa_actor_id q1_overlord_destination(qa_q1_game *g) {
             farthest = record->id;
         }
     }
-    return best.registry ? best : farthest;
+    *out = best.registry ? best : farthest;
+    return true;
 }
 static bool teleport(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!(entity->spawnflags & 2) || q1_random(g) > 0.75f)
         return true;
-    qa_actor_id marker = q1_overlord_destination(g);
+    qa_actor_id marker;
+    if (!q1_overlord_destination(g, &marker, error))
+        return false;
     if (!marker.registry)
         return true;
     qa_body_state body, target;

@@ -309,8 +309,11 @@ bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
         a->physics.flags |= QA_PHYSICS_DEAD;
         if (!qa_world_body_write(g->services.world, a->id, &body, e))
             goto fail;
-        combat.can_take_damage = true;
-        if (!qa_combat_set_traits(g->services.combat, a->id, &combat, e))
+        qa_combat_state traits;
+        if (!qa_combat_read_traits(g->services.combat, a->id, &traits, e))
+            goto fail;
+        traits.can_take_damage = true;
+        if (!qa_combat_set_traits(g->services.combat, a->id, &traits, e))
             goto fail;
         if (combat.health < -40 && !s->gibbed) {
             if (!(rr && means == 47 && combat.health < -80) && !throw_gibs(g, a, damage, e))

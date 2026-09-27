@@ -96,7 +96,7 @@ bool q2_spawn_gib(qa_q2_game *g, qa_actor_id source, const char *model, float da
     }
     qa_combat_state combat;
     qa_error ignored;
-    if (qa_combat_read(g->services.combat, id, &combat, &ignored)) {
+    if (qa_combat_read_traits(g->services.combat, id, &combat, &ignored)) {
         combat.can_take_damage = true;
         if (!qa_combat_set_traits(g->services.combat, id, &combat, e))
             return false;

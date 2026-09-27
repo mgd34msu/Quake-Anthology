@@ -60,7 +60,9 @@ static bool child(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (entity->owner.registry ||
         entity->state.monster.source.morph.children > 1u + g->options.skill)
         return true;
-    qa_actor_id marker = q1_overlord_destination(g);
+    qa_actor_id marker;
+    if (!q1_overlord_destination(g, &marker, error))
+        return false;
     if (!marker.registry)
         return true;
     qa_body_state target;

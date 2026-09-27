@@ -316,7 +316,7 @@ bool q2_target_extra_spawn(qa_q2_game *g, q2_actor *a, bool *handled, qa_error *
         return q2_entity_schedule(g, a, Q2ET_LASER_START, 1);
     case Q2E_LIGHTRAMP: {
         const char *message = qa_strings_cstr(qa_session_strings(g->services.session), s->message);
-        if (strlen(message) != 2 || message[0] < 'a' || message[0] > 'z' || message[1] < 'a' ||
+        if (!message || strlen(message) != 2 || message[0] < 'a' || message[0] > 'z' || message[1] < 'a' ||
             message[1] > 'z' || message[0] == message[1] || !s->target || g->options.deathmatch)
             return qa_session_release(g->services.session, a->id, e);
         s->direction = qa_v3((float)(message[0] - 97), (float)(message[1] - 97), 0);

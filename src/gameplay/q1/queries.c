@@ -1,6 +1,6 @@
 #include "internal.h"
 
-bool q1_snapshot_actors(qa_q1_game *g, q1_actor_snapshot **out, qa_error *error) {
+static bool snapshot_acquire(qa_q1_game *g, bool players, q1_actor_snapshot **out, qa_error *error) {
     q1_actor_snapshot *snapshot = g->snapshots;
     while (snapshot && snapshot->borrowed)
         snapshot = snapshot->next;
@@ -13,13 +13,21 @@ bool q1_snapshot_actors(qa_q1_game *g, q1_actor_snapshot **out, qa_error *error)
         snapshot->next = g->snapshots;
         g->snapshots = snapshot;
     }
-    if (!qa_builtin_observations(&g->services, &snapshot->shared, error))
+    if (!(players ? qa_builtin_players(&g->services, &snapshot->shared, error)
+                  : qa_builtin_observations(&g->services, &snapshot->shared, error)))
         return false;
     snapshot->actors = snapshot->shared.ids;
     snapshot->count = snapshot->shared.count;
     snapshot->borrowed = true;
     *out = snapshot;
     return true;
+}
+
+bool q1_snapshot_actors(qa_q1_game *g, q1_actor_snapshot **out, qa_error *error) {
+    return snapshot_acquire(g, false, out, error);
+}
+bool q1_snapshot_players(qa_q1_game *g, q1_actor_snapshot **out, qa_error *error) {
+    return snapshot_acquire(g, true, out, error);
 }
 
 bool q1_radius_snapshot(qa_q1_game *g, qa_vec3 origin, float radius, q1_actor_snapshot **out,

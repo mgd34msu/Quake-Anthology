@@ -21,7 +21,7 @@ static bool health(qa_q2_game *g, q2_actor *a, float value, float mass, bool dam
 }
 static bool damageable(qa_q2_game *g, q2_actor *a, bool enabled, qa_error *e) {
     qa_combat_state state;
-    if (!qa_combat_read(g->services.combat, a->id, &state, e))
+    if (!qa_combat_read_traits(g->services.combat, a->id, &state, e))
         return false;
     state.can_take_damage = enabled;
     return qa_combat_set_traits(g->services.combat, a->id, &state, e);
@@ -650,7 +650,7 @@ bool q2_scenery_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor_id a
         return q2_entity_schedule(g, a, Q2ET_SCENERY, (float)g->frame_ns / Q2_NS);
     case Q2S_STRING: {
         const char *text = qa_strings_cstr(qa_session_strings(g->services.session), s->message);
-        size_t length = strlen(text);
+        size_t length = text ? strlen(text) : 0;
         for (q2_actor *member = g->first_actor; member;) {
             q2_actor *next = member->live_next;
             q2_entity_state *m = member->entity;

@@ -34,7 +34,7 @@ static bool nuke_blast(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
     qa_body_state body;
     qa_combat_state combat;
     if (!qa_world_body_read(g->services.world, id, &body, e) ||
-        !qa_combat_read(g->services.combat, id, &combat, e))
+        !qa_combat_read_traits(g->services.combat, id, &combat, e))
         return false;
     combat.can_take_damage = false;
     if (!qa_combat_set_traits(g->services.combat, id, &combat, e))
