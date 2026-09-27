@@ -374,6 +374,10 @@ bool q2_trap_capture_gibs(qa_q2_game *g, q2_actor *trap, qa_error *e) {
     q2_trace_frame *scratch = q2_scratch_acquire(g, e);
     if (scratch == NULL)
         return false;
+    if (!qa_builtin_snapshot_reserve(&scratch->snapshot, g->capacity, e)) {
+        scratch->active = false;
+        return false;
+    }
     scratch->snapshot.count = 0;
     for (q2_actor *a = g->first_actor; a != NULL; a = a->live_next)
         if (a->physics_bound)

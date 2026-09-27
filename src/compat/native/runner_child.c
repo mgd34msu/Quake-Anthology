@@ -149,13 +149,25 @@ static size_t child_import_result_bytes(native_child_state *state, uint32_t slot
     return 0;
 }
 
+static bool child_attach_callback(native_child_state *state, qa_native_instance *instance,
+                                  qa_native_instance **previous, qa_error *error) {
+    if (!instance || (state->instance && state->instance != instance) ||
+        (!state->instance && (native_active_instance != instance ||
+                              instance->module != state->module)))
+        return native_fail(error, QA_ERROR_ARGUMENT, 0,
+                           "native runner callback belongs to another instance");
+    *previous = state->instance;
+    state->instance = instance;
+    return true;
+}
+
 static bool child_import(void *context, qa_native_instance *instance,
                          const qa_native_import_call *call, qa_native_value *result,
                          qa_error *error) {
     native_child_state *state = context;
-    if (instance != state->instance)
-        return native_fail(error, QA_ERROR_ARGUMENT, call->slot,
-                           "native runner import belongs to another instance");
+    qa_native_instance *previous;
+    if (!child_attach_callback(state, instance, &previous, error))
+        return false;
     native_wire_buffer request = {0};
     qa_buffer response = {0}, storage = {0};
     size_t result_bytes = child_import_result_bytes(state, call->slot);
@@ -190,13 +202,18 @@ static bool child_import(void *context, qa_native_instance *instance,
     native_wire_buffer_free(&request);
     qa_buffer_free(&response);
     qa_buffer_free(&storage);
-    return child_finish_response(state, received, ok, error);
+    bool completed = child_finish_response(state, received, ok, error);
+    state->instance = previous;
+    return completed;
 }
 
 static bool child_describe_syscall(void *context, int32_t service,
                                    const qa_native_value_type **types, size_t *count,
                                    qa_error *error) {
     native_child_state *state = context;
+    qa_native_instance *previous;
+    if (!child_attach_callback(state, native_active_instance, &previous, error))
+        return false;
     native_wire_buffer request = {0};
     qa_buffer response = {0};
     bool received = false;
@@ -223,7 +240,9 @@ static bool child_describe_syscall(void *context, int32_t service,
     }
     native_wire_buffer_free(&request);
     qa_buffer_free(&response);
-    if (!child_finish_response(state, received, ok, error))
+    bool completed = child_finish_response(state, received, ok, error);
+    state->instance = previous;
+    if (!completed)
         return false;
     state->syscall_type_count = (size_t)encoded_count;
     *types = state->syscall_types;
@@ -235,9 +254,9 @@ static bool child_syscall(void *context, qa_native_instance *instance, int32_t s
                           const qa_native_value *arguments, size_t argument_count, intptr_t *result,
                           qa_error *error) {
     native_child_state *state = context;
-    if (instance != state->instance)
-        return native_fail(error, QA_ERROR_ARGUMENT, service,
-                           "native runner syscall belongs to another instance");
+    qa_native_instance *previous;
+    if (!child_attach_callback(state, instance, &previous, error))
+        return false;
     native_wire_buffer request = {0};
     qa_buffer response = {0};
     bool received = false;
@@ -255,7 +274,9 @@ static bool child_syscall(void *context, qa_native_instance *instance, int32_t s
     }
     native_wire_buffer_free(&request);
     qa_buffer_free(&response);
-    if (child_finish_response(state, received, ok, error)) {
+    bool completed = child_finish_response(state, received, ok, error);
+    state->instance = previous;
+    if (completed) {
         *result = (intptr_t)encoded;
         return true;
     }
