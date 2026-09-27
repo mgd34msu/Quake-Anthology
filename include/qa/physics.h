@@ -69,6 +69,10 @@ typedef struct qa_physics_services {
     /* Q2 monster AI owns hazards, bad areas, alternate-fly steering and
      * special ground decisions. NULL accepts an otherwise valid ground move. */
     bool (*accept_ground)(void *, qa_actor_id, qa_vec3 destination, bool *accepted, qa_error *);
+    /* Source AI may redirect a step or handle it without geometry. Runs after
+     * walk eligibility/yaw, including source probes with commit=false. */
+    bool (*before_monster_step)(void *, qa_actor_id, qa_vec3 *displacement,
+                                bool *handled, qa_error *);
 } qa_physics_services;
 typedef struct qa_physics {
     qa_world *world;

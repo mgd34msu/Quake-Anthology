@@ -186,6 +186,17 @@ bool qa_physics_monster_step(qa_physics *p, qa_actor_id actor, qa_vec3 move,
     int read = ph_read(p, actor, &body, &props, error);
     if (read <= 0) return read == 0;
     bool q1 = props.family == QA_COLLISION_Q1;
+    if (!q1 && p->services.before_monster_step) {
+        bool handled;
+        if (!p->services.before_monster_step(p->services.context, actor, &move, &handled, error)) return false;
+        if (handled) { *moved = true; return true; }
+        if (!ph_live(p, actor)) return true;
+        if (!qa_vec_finite(move)) {
+            qa_error_set(error, QA_ERROR_FORMAT, actor.slot, "Monster step policy returned invalid displacement");
+            return false;
+        }
+        if (!p->services.read(p->services.context, actor, &props) || !ph_live(p, actor)) return true;
+    }
     qa_vec3 destination = qa_vec_add(body.origin, move);
     if (props.flags & (QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING)) {
         bool flying = (props.flags & QA_PHYSICS_FLYING) != 0;

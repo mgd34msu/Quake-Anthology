@@ -16,6 +16,16 @@ Movement BSP classification and ground admission now separate failure from
 an ordinary negative gameplay answer. Q1 grapple callers reacquire hook and
 player generations after the new metadata callback.
 
+Q2 source AI also has a checked pre-step policy at the shared movement boundary.
+It can reverse displacement around a Tesla bad area or report the source's
+handled move while recovering an old enemy. Root and the Q2 owner independently
+compared placement and return behavior with sourceMoveStep and the Rogue
+beforeMove policy: source yaw/eligibility precede it, even noncommitting probes
+call it, and a handled move returns success before geometry. The continuing
+path preserves the captured body, refreshes properties and checks actor
+liveness and finite displacement. The concrete native policy/application
+binding is tracked with the active Q2 work.
+
 Independent review of the root change found two surrounding interoperability
 issues. Raw Q3 entity/owner numbers now compare only inside the same canonical
 actor-owner domain; foreign providers use canonical actor IDs. Q3 server
