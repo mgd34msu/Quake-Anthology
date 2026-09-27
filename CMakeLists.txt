@@ -404,12 +404,31 @@ target_link_libraries(qa_modes PUBLIC qa_game_q1 qa_game_q2 qa_game_q3)
 
 add_library(qa_bots STATIC
     src/bots/actions.c
+    src/bots/library/bsp.c
+    src/bots/library/character.c
+    src/bots/library/core.c
+    src/bots/library/genetic.c
+    src/bots/library/items.c
+    src/bots/library/structure.c
+    src/bots/library/variables.c
+    src/bots/library/weapons.c
+    src/bots/library/weights.c
+    src/bots/library/weights_mutate.c
+    src/bots/library/weights_parse.c
+    src/bots/chat/asset.c
+    src/bots/chat/checkpoint.c
+    src/bots/chat/construct.c
+    src/bots/chat/integrity.c
+    src/bots/chat/parse.c
+    src/bots/chat/reply_parse.c
+    src/bots/chat/state.c
+    src/bots/chat/strings.c
     src/bots/navigation/core.c
     src/bots/navigation/info.c
     src/bots/navigation/jump_pad.c
     src/bots/navigation/prediction.c
     src/bots/navigation/routes.c)
-target_link_libraries(qa_bots PUBLIC qa_builtin qa_navigation)
+target_link_libraries(qa_bots PUBLIC qa_builtin qa_navigation qa_script qa_content)
 
 add_library(qa_catalog STATIC
     src/content/catalog/behaviors.c
