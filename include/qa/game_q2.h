@@ -369,6 +369,25 @@ float qa_q2_grapple_gravity_scale(qa_q2_game *, qa_actor_id);
  * once. Send REMOVING while the last actor/body pose is still available. */
 bool qa_q2_hand_grenade_configure(qa_q2_game *, qa_actor_id, const qa_q2_hand_grenade_options *,
                                   qa_error *);
+typedef struct qa_q2_hand_grenade_admission {
+    qa_q2_game *game;
+    qa_actor_id actor;
+    qa_q2_hand_grenade_options options;
+    qa_inventory_entry initial_ammo;
+    uint64_t revision, body_serial;
+    void *expected_actor, *prepared_actor;
+    bool missing_ammo, active;
+} qa_q2_hand_grenade_admission;
+/* The successful prepare output has one owner and must not be copied. It owns
+ * only its unattached allocation. Prepare canonical initial_ammo even when an
+ * entry exists: inventory admission preserves its current count. Validate all
+ * participants, then commit without intervening callbacks. Abort consumes any
+ * remaining preparation, including after a failed or successful commit. */
+bool qa_q2_hand_grenade_prepare(qa_q2_game *, qa_actor_id, const qa_q2_hand_grenade_options *,
+                                qa_q2_hand_grenade_admission *, qa_error *);
+bool qa_q2_hand_grenade_validate(const qa_q2_hand_grenade_admission *, qa_error *);
+bool qa_q2_hand_grenade_commit(qa_q2_hand_grenade_admission *, qa_error *);
+void qa_q2_hand_grenade_abort(qa_q2_hand_grenade_admission *);
 bool qa_q2_hand_grenade_step(qa_q2_game *, qa_actor_id, const qa_q2_hand_grenade_input *,
                              uint64_t now_ns, uint64_t frame_ns, qa_error *);
 bool qa_q2_hand_grenade_read(qa_q2_game *, qa_actor_id, qa_q2_hand_grenade_state *, bool *bound,

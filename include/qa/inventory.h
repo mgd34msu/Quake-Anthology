@@ -36,6 +36,17 @@ typedef bool (*qa_inventory_committed_fn)(void *, const qa_inventory_change *, q
 typedef enum qa_inventory_operation_kind { QA_INVENTORY_GIVE, QA_INVENTORY_CONSUME, QA_INVENTORY_CONFIGURE, QA_INVENTORY_ADJUST } qa_inventory_operation_kind;
 typedef struct qa_inventory_request { qa_actor_id actor; qa_item_id item; double amount; qa_inventory_entry entry; } qa_inventory_request;
 typedef struct qa_inventory_result { double amount; bool consumed; } qa_inventory_result;
+typedef struct qa_inventory_admission qa_inventory_admission;
+
+/* Setup preserves admitted values. New native entries belong to canonical
+ * storage, including on actors whose primary inventory is external.
+ * Prepare/validate may call source readers; commit allocates nothing and calls
+ * no provider. Success consumes the token; abort consumes an uncommitted token. */
+bool qa_inventory_prepare_entries(qa_inventory *, qa_actor_id, const qa_inventory_entry *,
+                                  size_t, qa_inventory_admission **, qa_error *);
+bool qa_inventory_admission_validate(qa_inventory_admission *, qa_error *);
+bool qa_inventory_admission_commit(qa_inventory_admission *, qa_error *);
+void qa_inventory_admission_abort(qa_inventory_admission *);
 
 bool qa_inventory_create(qa_actor_registry *, qa_inventory **, qa_error *);
 bool qa_inventory_destroy(qa_inventory *, qa_error *);
@@ -50,6 +61,10 @@ bool qa_inventory_bind_definitions(qa_inventory *, qa_actor_id, qa_actor_owner,
     const qa_item_definition *, size_t,
     bool (*invoke)(void *, qa_item_id, qa_item_action, qa_error *), void *context,
     qa_inventory_lease *, qa_error *);
+bool qa_inventory_replace_definitions(qa_inventory *, qa_actor_id, qa_actor_owner,
+    const qa_item_definition *, size_t,
+    bool (*invoke)(void *, qa_item_id, qa_item_action, qa_error *), void *context,
+    qa_inventory_lease previous, qa_inventory_lease *, qa_error *);
 bool qa_inventory_lease_current(qa_inventory *, qa_inventory_lease);
 bool qa_inventory_close_items(qa_inventory *, qa_inventory_lease, qa_error *);
 bool qa_inventory_source_stored(qa_inventory *, qa_inventory_lease, const qa_inventory_change *, size_t, qa_error *);
@@ -73,7 +88,8 @@ bool qa_inventory_preview_give(const qa_inventory_entry *, double, qa_inventory_
 typedef struct qa_inventory_source_group { qa_actor_owner owner; qa_item_admission *items; size_t count; bool definitions_only; } qa_inventory_source_group;
 typedef struct qa_inventory_source_snapshot {
     qa_inventory_entry *primary;
-    size_t primary_count;
+    size_t primary_count, primary_native_count;
+    bool primary_external;
     qa_inventory_source_group *groups;
     size_t group_count;
 } qa_inventory_source_snapshot;

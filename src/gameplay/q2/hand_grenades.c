@@ -52,23 +52,27 @@ static bool bump(q2_actor *a, qa_error *e) {
     ++a->hand_revision;
     return true;
 }
-bool qa_q2_hand_grenade_configure(qa_q2_game *g, qa_actor_id id,
-                                  const qa_q2_hand_grenade_options *options, qa_error *e) {
-    if (g == NULL || !options_valid(options)) {
+bool qa_q2_hand_grenade_prepare(qa_q2_game *g, qa_actor_id id,
+                                const qa_q2_hand_grenade_options *options,
+                                qa_q2_hand_grenade_admission *out, qa_error *e) {
+    if (g == NULL || out == NULL || !options_valid(options) || !q2_actor_live(g, id) ||
+        id.slot >= g->capacity) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 hand grenade allowance");
         return false;
     }
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, id, &body, e) ||
+    uint64_t body_serial = qa_world_body_storage_serial(g->services.world, id);
+    if (!body_serial ||
         !qa_inventory_has(g->services.inventory, id)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0,
                      "Q2 hand grenades require an existing shared body and inventory");
         return false;
     }
-    q2_actor *a = q2_actor_get(g, id, true, e);
-    if (a == NULL)
+    q2_actor *a = find(g, id);
+    if ((a && a->hand_revision == UINT64_MAX) || (!a && g->actor_sequence == UINT64_MAX)) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 grenade admission revision exhausted");
         return false;
-    if (a->hand_grenade_bound && reserved(a->hand_grenade.action.kind) &&
+    }
+    if (a && a->hand_grenade_bound && reserved(a->hand_grenade.action.kind) &&
         a->hand_grenade.options.infinite_ammo != options->infinite_ammo) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0,
                      "Cannot change Q2 grenade resource policy while reserved");
@@ -77,26 +81,103 @@ bool qa_q2_hand_grenade_configure(qa_q2_game *g, qa_actor_id id,
     qa_inventory_entry entry;
     qa_error read_error = {0};
     qa_item_id ammo = g->ammo[QA_Q2_GRENADES];
+    qa_q2_hand_grenade_admission staged = {.game = g, .actor = id, .options = *options,
+                                           .initial_ammo = {.item = ammo,
+                                                            .count = options->initial_ammo,
+                                                            .capacity = options->capacity},
+                                           .revision = a ? a->hand_revision : 0,
+                                           .body_serial = body_serial,
+                                           .expected_actor = a, .active = true};
     if (!qa_inventory_entry_read(g->services.inventory, id, ammo, &entry, &read_error)) {
         if (read_error.code != QA_ERROR_NOT_FOUND) {
             if (e != NULL)
                 *e = read_error;
             return false;
         }
-        entry = (qa_inventory_entry){
-            .item = ammo, .count = options->initial_ammo, .capacity = options->capacity};
-        if (!qa_inventory_configure(g->services.inventory, id, &entry, NULL, NULL, e))
-            return false;
-        if (!q2_actor_live(g, id))
-            return true;
+        staged.missing_ammo = true;
     }
-    if (!bump(a, e))
+    if (!qa_q2_hand_grenade_validate(&staged, e))
         return false;
-    a->hand_grenade.options = *options;
+    if (!a) {
+        staged.prepared_actor = calloc(1, sizeof(q2_actor));
+        if (!staged.prepared_actor) {
+            qa_error_set(e, QA_ERROR_MEMORY, 0, "Preparing Q2 grenade actor state");
+            return false;
+        }
+    }
+    *out = staged;
+    return true;
+}
+bool qa_q2_hand_grenade_validate(const qa_q2_hand_grenade_admission *staged, qa_error *e) {
+    if (!staged || !staged->active || !staged->game ||
+        !q2_actor_live(staged->game, staged->actor) ||
+        staged->actor.slot >= staged->game->capacity) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Inactive Q2 grenade admission");
+        return false;
+    }
+    q2_actor *a = find(staged->game, staged->actor);
+    if (a != staged->expected_actor || (a && (a->hand_revision != staged->revision ||
+                                             a->hand_revision == UINT64_MAX)) ||
+        (!a && staged->game->actor_sequence == UINT64_MAX)) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 grenade state changed during admission");
+        return false;
+    }
+    if (!staged->body_serial ||
+        qa_world_body_storage_serial(staged->game->services.world, staged->actor) !=
+            staged->body_serial ||
+        !qa_inventory_has(staged->game->services.inventory, staged->actor)) {
+        qa_error_set(e, QA_ERROR_NOT_FOUND, 0, "Q2 grenade shared state retired during admission");
+        return false;
+    }
+    return true;
+}
+bool qa_q2_hand_grenade_commit(qa_q2_hand_grenade_admission *staged, qa_error *e) {
+    if (!qa_q2_hand_grenade_validate(staged, e))
+        return false;
+    q2_actor *a = staged->expected_actor;
+    if (!a) {
+        a = staged->prepared_actor;
+        if (!a) {
+            qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing prepared Q2 grenade actor state");
+            return false;
+        }
+        q2_actor_publish_prepared(staged->game, a, staged->actor, true);
+        staged->prepared_actor = NULL;
+    }
+    ++a->hand_revision;
+    a->hand_grenade.options = staged->options;
     if (!a->hand_grenade_bound)
         a->hand_grenade.action = (qa_q2_hand_action){.kind = QA_Q2_HAND_IDLE};
     a->hand_grenade_bound = true;
+    staged->active = false;
     return true;
+}
+void qa_q2_hand_grenade_abort(qa_q2_hand_grenade_admission *staged) {
+    if (!staged)
+        return;
+    free(staged->prepared_actor);
+    *staged = (qa_q2_hand_grenade_admission){0};
+}
+bool qa_q2_hand_grenade_configure(qa_q2_game *g, qa_actor_id id,
+                                  const qa_q2_hand_grenade_options *options, qa_error *e) {
+    qa_q2_hand_grenade_admission staged = {0};
+    if (!qa_q2_hand_grenade_prepare(g, id, options, &staged, e))
+        return false;
+    qa_inventory_admission *inventory = NULL;
+    bool ok = qa_inventory_prepare_entries(g->services.inventory, id, &staged.initial_ammo,
+                                            1, &inventory, e) &&
+              qa_inventory_admission_validate(inventory, e) &&
+              qa_q2_hand_grenade_validate(&staged, e);
+    if (ok) {
+        ok = qa_inventory_admission_commit(inventory, e);
+        if (ok)
+            inventory = NULL;
+    }
+    if (ok)
+        ok = qa_q2_hand_grenade_commit(&staged, e);
+    qa_inventory_admission_abort(inventory);
+    qa_q2_hand_grenade_abort(&staged);
+    return ok;
 }
 bool qa_q2_hand_grenade_read(qa_q2_game *g, qa_actor_id id, qa_q2_hand_grenade_state *out,
                              bool *bound, qa_error *e) {

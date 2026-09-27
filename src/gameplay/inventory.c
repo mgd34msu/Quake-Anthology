@@ -19,6 +19,7 @@ typedef struct item_group {
 typedef struct inventory_store {
     qa_actor_id actor;
     uint64_t serial;
+    uint64_t revision;
     size_t references;
     bool local, attached;
     qa_inventory_entry *entries;
@@ -27,6 +28,21 @@ typedef struct inventory_store {
     item_group *groups;
     struct pickup_claim *pickups;
 } inventory_store;
+
+typedef struct admission_entry {
+    qa_inventory_entry initial;
+    item_group *owner;
+    bool missing;
+} admission_entry;
+
+struct qa_inventory_admission {
+    qa_inventory *table;
+    inventory_store *store;
+    uint64_t revision;
+    size_t count, missing;
+    bool validated;
+    admission_entry entries[];
+};
 
 typedef struct pickup_claim {
     struct pickup_claim *next;
@@ -48,6 +64,31 @@ void qa_inventory_unhold(qa_inventory *table) { --table->calls; }
 
 static bool fail(qa_error *e, qa_status status, const char *message)
 { qa_error_set(e, status, 0, "%s", message); return false; }
+
+static void store_changed(inventory_store *store)
+{ if (store->revision != UINT64_MAX) ++store->revision; }
+
+static size_t local_index(const inventory_store *store, qa_item_id item)
+{
+    for (size_t i = 0; i < store->count; ++i)
+        if (store->entries[i].item == item) return i;
+    return store->count;
+}
+
+static bool reserve_entries(inventory_store *store, size_t needed, qa_error *e)
+{
+    if (needed <= store->capacity) return true;
+    if (needed > SIZE_MAX / sizeof(*store->entries))
+        return fail(e, QA_ERROR_MEMORY, "Inventory size overflow");
+    size_t capacity = store->capacity > SIZE_MAX / 2 ? needed : store->capacity * 2;
+    if (capacity < 8) capacity = 8;
+    if (capacity < needed || capacity > SIZE_MAX / sizeof(*store->entries)) capacity = needed;
+    qa_inventory_entry *entries = realloc(store->entries, capacity * sizeof(*entries));
+    if (!entries) return fail(e, QA_ERROR_MEMORY, "Cannot grow inventory");
+    store->entries = entries;
+    store->capacity = capacity;
+    return true;
+}
 
 static void free_group(item_group *group)
 {
@@ -176,8 +217,17 @@ static bool binding_count(qa_inventory *table, inventory_store *store, item_grou
     if (!require_current(table, store, group, e)) return false;
     if (!group && store->local) { *out = store->count; return true; }
     qa_inventory_binding binding = group ? group->binding : store->primary;
+    uint64_t revision = store->revision;
     *out = binding.count(binding.context);
-    return require_current(table, store, group, e);
+    if (!require_current(table, store, group, e)) return false;
+    if (store->revision != revision)
+        return fail(e, QA_ERROR_NOT_FOUND, "Inventory changed during count callback");
+    if (!group) {
+        if (*out > SIZE_MAX - store->count)
+            return fail(e, QA_ERROR_FORMAT, "Inventory entry count overflow");
+        *out += store->count;
+    }
+    return true;
 }
 
 static bool binding_at(qa_inventory *table, inventory_store *store, item_group *group,
@@ -185,13 +235,17 @@ static bool binding_at(qa_inventory *table, inventory_store *store, item_group *
 {
     if (!require_current(table, store, group, e)) return false;
     qa_inventory_entry entry;
-    if (!group && store->local) {
+    if (!group && (store->local || index < store->count)) {
         if (index >= store->count) return fail(e, QA_ERROR_NOT_FOUND, "Inventory index out of range");
         entry = store->entries[index];
     } else {
         qa_inventory_binding binding = group ? group->binding : store->primary;
+        uint64_t revision = store->revision;
+        if (!group) index -= store->count;
         if (!binding.at(binding.context, index, &entry, e)) return false;
         if (!require_current(table, store, group, e)) return false;
+        if (store->revision != revision)
+            return fail(e, QA_ERROR_NOT_FOUND, "Inventory changed during entry callback");
     }
     return qa_inventory_validate_entry(&entry, out, e);
 }
@@ -200,11 +254,16 @@ static bool find_in(qa_inventory *table, inventory_store *store, item_group *gro
                     qa_item_id item, qa_inventory_entry *out, bool *found, qa_error *e)
 {
     size_t count;
+    uint64_t revision = store->revision;
     *found = false;
     if (!binding_count(table, store, group, &count, e)) return false;
+    if (store->revision != revision)
+        return fail(e, QA_ERROR_NOT_FOUND, "Inventory changed during item lookup");
     for (size_t i = 0; i < count; ++i) {
         qa_inventory_entry entry;
         if (!binding_at(table, store, group, i, &entry, e)) return false;
+        if (store->revision != revision)
+            return fail(e, QA_ERROR_NOT_FOUND, "Inventory changed during item lookup");
         if (entry.item == item) {
             if (*found) return fail(e, QA_ERROR_ARGUMENT, "Duplicate inventory item in storage");
             *out = entry; *found = true;
@@ -213,27 +272,120 @@ static bool find_in(qa_inventory *table, inventory_store *store, item_group *gro
     return true;
 }
 
+void qa_inventory_admission_abort(qa_inventory_admission *admission)
+{
+    if (!admission) return;
+    release_store(admission->table, admission->store);
+    free(admission);
+}
+
+bool qa_inventory_admission_validate(qa_inventory_admission *admission, qa_error *e)
+{
+    if (!admission) return fail(e, QA_ERROR_ARGUMENT, "Missing inventory admission");
+    admission->validated = false;
+    inventory_store *store = admission->store;
+    qa_inventory *table = admission->table;
+    if (!require_current(table, store, NULL, e)) return false;
+    uint64_t revision = store->revision;
+    if (revision == UINT64_MAX)
+        return fail(e, QA_ERROR_ARGUMENT, "Inventory admission revision exhausted");
+    admission->missing = 0;
+    for (size_t i = 0; i < admission->count; ++i) {
+        admission_entry *entry = &admission->entries[i];
+        entry->owner = group_for(store, entry->initial.item);
+        qa_inventory_entry existing;
+        bool found;
+        if (!find_in(table, store, entry->owner, entry->initial.item, &existing, &found, e))
+            return false;
+        if (store->revision != revision || group_for(store, entry->initial.item) != entry->owner)
+            return fail(e, QA_ERROR_NOT_FOUND, "Inventory changed during admission");
+        if (entry->owner && !found)
+            return fail(e, QA_ERROR_FORMAT, "Item owner omitted an admitted inventory entry");
+        entry->missing = !found;
+        admission->missing += !found;
+    }
+    if (admission->missing > SIZE_MAX - store->count)
+        return fail(e, QA_ERROR_MEMORY, "Inventory admission size overflow");
+    if (!reserve_entries(store, store->count + admission->missing, e)) return false;
+    admission->revision = revision;
+    admission->validated = true;
+    return true;
+}
+
+bool qa_inventory_prepare_entries(qa_inventory *table, qa_actor_id actor,
+                                  const qa_inventory_entry *entries, size_t count,
+                                  qa_inventory_admission **out, qa_error *e)
+{
+    if (!out || (count && !entries) ||
+        count > (SIZE_MAX - sizeof(qa_inventory_admission)) / sizeof(admission_entry))
+        return fail(e, QA_ERROR_ARGUMENT, "Invalid inventory admission");
+    inventory_store *store = acquire(table, actor);
+    if (!store) return fail(e, QA_ERROR_NOT_FOUND, "Inventory admission actor is unavailable");
+    qa_inventory_admission *admission = calloc(1, sizeof(*admission) + count * sizeof(admission_entry));
+    if (!admission) {
+        release_store(table, store);
+        return fail(e, QA_ERROR_MEMORY, "Cannot allocate inventory admission");
+    }
+    admission->table = table;
+    admission->store = store;
+    admission->count = count;
+    for (size_t i = 0; i < count; ++i) {
+        if (!qa_inventory_validate_entry(&entries[i], &admission->entries[i].initial, e))
+            goto failed;
+        for (size_t j = 0; j < i; ++j) {
+            if (entries[j].item == entries[i].item) {
+                fail(e, QA_ERROR_ARGUMENT, "Duplicate inventory admission item");
+                goto failed;
+            }
+        }
+    }
+    if (!qa_inventory_admission_validate(admission, e)) goto failed;
+    *out = admission;
+    return true;
+failed:
+    qa_inventory_admission_abort(admission);
+    return false;
+}
+
+bool qa_inventory_admission_commit(qa_inventory_admission *admission, qa_error *e)
+{
+    if (!admission || !admission->validated)
+        return fail(e, QA_ERROR_ARGUMENT, "Inventory admission has not been validated");
+    inventory_store *store = admission->store;
+    qa_inventory *table = admission->table;
+    if (!require_current(table, store, NULL, e)) return false;
+    if (store->revision != admission->revision)
+        return fail(e, QA_ERROR_NOT_FOUND, "Inventory changed after admission validation");
+    for (size_t i = 0; i < admission->count; ++i) {
+        admission_entry *entry = &admission->entries[i];
+        if (group_for(store, entry->initial.item) != entry->owner)
+            return fail(e, QA_ERROR_NOT_FOUND, "Inventory item owner changed after validation");
+    }
+    for (size_t i = 0; i < admission->count; ++i)
+        if (admission->entries[i].missing)
+            store->entries[store->count++] = admission->entries[i].initial;
+    if (admission->missing) store_changed(store);
+    qa_inventory_admission_abort(admission);
+    return true;
+}
+
 static bool write_entry(qa_inventory *table, inventory_store *store, item_group *group,
                         const qa_inventory_entry *entry, qa_error *e)
 {
     if (!require_current(table, store, group, e)) return false;
     if (group_for(store, entry->item) != group) return fail(e, QA_ERROR_NOT_FOUND, "Inventory item owner changed before its store");
-    if (!group && store->local) {
-        size_t i;
-        for (i = 0; i < store->count; ++i) if (store->entries[i].item == entry->item) break;
-        if (i == store->count && store->count == store->capacity) {
-            size_t capacity = store->capacity ? store->capacity * 2 : 8;
-            if (capacity < store->capacity || capacity > SIZE_MAX / sizeof(*store->entries))
-                return fail(e, QA_ERROR_MEMORY, "Inventory size overflow");
-            qa_inventory_entry *entries = realloc(store->entries, capacity * sizeof(*entries));
-            if (!entries) return fail(e, QA_ERROR_MEMORY, "Cannot grow inventory");
-            store->entries = entries; store->capacity = capacity;
-        }
+    size_t i = local_index(store, entry->item);
+    if (!group && (store->local || i < store->count)) {
+        if (i == store->count &&
+            (store->count == SIZE_MAX || !reserve_entries(store, store->count + 1, e)))
+            return false;
         store->entries[i] = *entry;
         if (i == store->count) ++store->count;
+        store_changed(store);
         return true;
     }
     qa_inventory_binding binding = group ? group->binding : store->primary;
+    store_changed(store);
     if (!binding.write(binding.context, entry, e)) return false;
     return require_current(table, store, group, e);
 }
@@ -390,6 +542,7 @@ bool qa_inventory_bind_items(qa_inventory *table, qa_actor_id actor,
     item_group **link = &store->groups;
     while (*link) link = &(*link)->next;
     *link = group;
+    store_changed(store);
     *out = (qa_inventory_lease){actor, group->serial}; ok = true; goto done;
 failed:
     free_group(group);
@@ -397,15 +550,29 @@ done:
     release_store(table, store); return ok;
 }
 
-bool qa_inventory_bind_definitions(qa_inventory *table, qa_actor_id actor,
+static item_group *lease_group(inventory_store *, uint64_t);
+
+bool qa_inventory_replace_definitions(qa_inventory *table, qa_actor_id actor,
     qa_actor_owner owner, const qa_item_definition *definitions, size_t count,
     bool (*invoke)(void *, qa_item_id, qa_item_action, qa_error *), void *context,
-    qa_inventory_lease *out, qa_error *e)
+    qa_inventory_lease previous, qa_inventory_lease *out, qa_error *e)
 {
-    if (!out || !count || !definitions || count > SIZE_MAX / sizeof(qa_item_admission))
+    if (!out || (count && !definitions) || count > SIZE_MAX / sizeof(qa_item_admission))
         return fail(e, QA_ERROR_ARGUMENT, "Invalid native item definitions");
     inventory_store *store = acquire(table, actor);
     if (!store) return fail(e, QA_ERROR_NOT_FOUND, "Native definitions require primary inventory");
+    item_group *old = previous.serial ? lease_group(store, previous.serial) : NULL;
+    if (previous.serial && (!qa_actor_id_equal(previous.actor, actor) || !old ||
+                            !old->definitions_only || old->owner != owner)) {
+        release_store(table, store);
+        return fail(e, QA_ERROR_ARGUMENT, "Native definition replacement lease is not owned");
+    }
+    if (!count) {
+        if (old) { old->active = false; store_changed(store); }
+        *out = (qa_inventory_lease){0};
+        release_store(table, store);
+        return true;
+    }
     item_group *group = calloc(1, sizeof(*group));
     bool ok = false;
     if (!group) { fail(e, QA_ERROR_MEMORY, "Cannot allocate native definitions"); goto done; }
@@ -417,8 +584,21 @@ bool qa_inventory_bind_definitions(qa_inventory *table, qa_actor_id actor,
         const qa_item_definition *definition = &definitions[i];
         if (!definition->item || definition->owner != owner || !definition->label || !*definition->label ||
             (definition->actions & ~(uint32_t)(QA_ITEM_USE | QA_ITEM_DROP)) ||
-            (definition->actions && !invoke) || definition_for(store, definition->item)) {
+            (definition->actions && !invoke)) {
             fail(e, QA_ERROR_ARGUMENT, "Native item definition conflicts with owner or actions"); goto failed;
+        }
+        bool replacing_item = false;
+        for (size_t j = 0; old && j < old->count; ++j)
+            if (old->items[j].definition.item == definition->item) replacing_item = true;
+        for (item_group *other = store->groups; other; other = other->next) {
+            if (!other->active || other == old) continue;
+            for (size_t j = 0; j < other->count; ++j) {
+                if (other->items[j].definition.item == definition->item) {
+                    if (replacing_item && !other->definitions_only) continue;
+                    fail(e, QA_ERROR_ARGUMENT, "Native item definition already has an owner");
+                    goto failed;
+                }
+            }
         }
         for (size_t j = 0; j < i; ++j) if (definitions[j].item == definition->item) {
             fail(e, QA_ERROR_ARGUMENT, "Duplicate native item definition"); goto failed;
@@ -432,14 +612,26 @@ bool qa_inventory_bind_definitions(qa_inventory *table, qa_actor_id actor,
     }
     if (table->serial == UINT64_MAX) { fail(e, QA_ERROR_ARGUMENT, "Inventory lease serial exhausted"); goto failed; }
     group->serial = ++table->serial; group->active = true;
+    if (old) old->active = false;
     item_group **link = &store->groups;
     while (*link) link = &(*link)->next;
     *link = group;
+    store_changed(store);
     *out = (qa_inventory_lease){actor, group->serial}; ok = true; goto done;
 failed:
     free_group(group);
 done:
     release_store(table, store); return ok;
+}
+
+bool qa_inventory_bind_definitions(qa_inventory *table, qa_actor_id actor,
+    qa_actor_owner owner, const qa_item_definition *definitions, size_t count,
+    bool (*invoke)(void *, qa_item_id, qa_item_action, qa_error *), void *context,
+    qa_inventory_lease *out, qa_error *e)
+{
+    if (!count) return fail(e, QA_ERROR_ARGUMENT, "Invalid native item definitions");
+    return qa_inventory_replace_definitions(table, actor, owner, definitions, count,
+                                            invoke, context, (qa_inventory_lease){0}, out, e);
 }
 
 static item_group *lease_group(inventory_store *store, uint64_t serial)
@@ -464,6 +656,7 @@ bool qa_inventory_close_items(qa_inventory *table, qa_inventory_lease lease, qa_
     if (!store) return true;
     item_group *group = lease_group(store, lease.serial);
     if (group) {
+        store_changed(store);
         group->active = false;
         for (size_t i = 0; !group->definitions_only && i < group->count; ++i) {
             pickup_claim *claim = store->pickups;
@@ -509,6 +702,7 @@ bool qa_inventory_entries(qa_inventory *table, qa_actor_id actor, qa_inventory_e
     if (!count || (capacity && !out)) return fail(e, QA_ERROR_ARGUMENT, "Invalid inventory output buffer");
     inventory_store *store = acquire(table, actor);
     if (!store) { *count = 0; return true; }
+    uint64_t revision = store->revision;
     size_t total = 0, primary_count;
     bool ok = binding_count(table, store, NULL, &primary_count, e);
     for (size_t i = 0; ok && i < primary_count; ++i) {
@@ -524,6 +718,8 @@ bool qa_inventory_entries(qa_inventory *table, qa_actor_id actor, qa_inventory_e
             if (ok) { if (total < capacity) out[total] = entry; ++total; }
         }
     }
+    if (ok && store->revision != revision)
+        ok = fail(e, QA_ERROR_NOT_FOUND, "Inventory changed during enumeration");
     if (ok) { *count = total; if (out && total > capacity) ok = fail(e, QA_ERROR_ARGUMENT, "Inventory output buffer is too small"); }
     release_store(table, store); return ok;
 }
@@ -535,7 +731,7 @@ bool qa_inventory_mutable_capacity(qa_inventory *table, qa_actor_id actor, qa_it
     item_group *group = group_for(store, item);
     qa_inventory_entry entry; bool found;
     bool ok = find_in(table, store, group, item, &entry, &found, NULL) && found;
-    if (ok && (group || !store->local)) {
+    if (ok && (group || (!store->local && local_index(store, item) == store->count))) {
         qa_inventory_binding binding = group ? group->binding : store->primary;
         ok = binding.mutable_capacity && binding.mutable_capacity(binding.context, item) && current(table, store, group);
     }
@@ -766,6 +962,7 @@ bool qa_inventory_source_stored(qa_inventory *table, qa_inventory_lease lease,
     if ((count && !changes) || count > SIZE_MAX / sizeof(*changes)) return fail(e, QA_ERROR_ARGUMENT, "Invalid source inventory changes");
     inventory_store *store = acquire(table, lease.actor);
     if (!store) return fail(e, QA_ERROR_NOT_FOUND, "Committed inventory source retired");
+    store_changed(store);
     item_group *group = lease_group(store, lease.serial);
     bool ok = group ? group_validate(table, store, group, e) : fail(e, QA_ERROR_NOT_FOUND, "Committed inventory source retired");
     qa_inventory_change *snapshots = count ? calloc(count, sizeof(*snapshots)) : NULL;
@@ -857,19 +1054,20 @@ bool qa_inventory_source_items(qa_inventory *table, qa_actor_id actor,
     if (!out) return fail(e, QA_ERROR_ARGUMENT, "Missing source inventory snapshot output");
     inventory_store *store = acquire(table, actor);
     if (!store) return fail(e, QA_ERROR_NOT_FOUND, "Source inventory actor retired");
-    qa_inventory_source_snapshot result = {0};
+    uint64_t revision = store->revision;
+    qa_inventory_source_snapshot result = {.primary_native_count = store->count,
+                                           .primary_external = !store->local};
     size_t groups = 0;
     for (item_group *g = store->groups; g; g = g->next) if (g->active) ++groups;
     bool ok = true;
-    if (groups == 0) goto done;
     ok = binding_count(table, store, NULL, &result.primary_count, e);
     if (!ok) goto done;
     if (result.primary_count > SIZE_MAX / sizeof(*result.primary) || groups > SIZE_MAX / sizeof(*result.groups)) {
         ok = fail(e, QA_ERROR_MEMORY, "Source inventory snapshot size overflow"); goto done;
     }
     result.primary = result.primary_count ? malloc(result.primary_count * sizeof(*result.primary)) : NULL;
-    result.groups = calloc(groups, sizeof(*result.groups));
-    if ((!result.primary && result.primary_count) || !result.groups) {
+    result.groups = groups ? calloc(groups, sizeof(*result.groups)) : NULL;
+    if ((!result.primary && result.primary_count) || (groups && !result.groups)) {
         ok = fail(e, QA_ERROR_MEMORY, "Cannot allocate source inventory snapshot"); goto done;
     }
     for (size_t i = 0; ok && i < result.primary_count; ++i) ok = binding_at(table, store, NULL, i, &result.primary[i], e);
@@ -890,6 +1088,8 @@ bool qa_inventory_source_items(qa_inventory *table, qa_actor_id actor,
     }
     if (ok && result.group_count != groups) ok = fail(e, QA_ERROR_ARGUMENT, "Source inventory changed during snapshot");
 done:
+    if (ok && (!current(table, store, NULL) || store->revision != revision))
+        ok = fail(e, QA_ERROR_NOT_FOUND, "Inventory changed during source snapshot");
     release_store(table, store);
     if (ok) *out = result;
     else qa_inventory_source_snapshot_free(&result);

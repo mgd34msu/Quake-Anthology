@@ -151,6 +151,7 @@ typedef struct q2_hand_spec {
 } q2_hand_spec;
 
 q2_actor *q2_actor_get(qa_q2_game *, qa_actor_id, bool create, qa_error *);
+void q2_actor_publish_prepared(qa_q2_game *, q2_actor *, qa_actor_id, bool new_storage);
 void q2_actor_order(qa_q2_game *, q2_actor *, uint64_t);
 bool q2_actor_live(qa_q2_game *, qa_actor_id);
 float q2_random(qa_q2_game *);

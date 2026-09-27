@@ -18,6 +18,21 @@ bool qa_q2_run_actor(qa_q2_game *g, qa_actor_id id, qa_q2_actor_fn callback, voi
     g->current_actor = previous;
     return ok;
 }
+void q2_actor_publish_prepared(qa_q2_game *g, q2_actor *a, qa_actor_id id, bool new_storage) {
+    if (new_storage) {
+        a->all_next = g->all_actors;
+        g->all_actors = a;
+    }
+    a->id = id;
+    g->actors[id.slot] = a;
+    a->source_order = ++g->actor_sequence;
+    a->live_previous = g->last_actor;
+    if (g->last_actor != NULL)
+        g->last_actor->live_next = a;
+    else
+        g->first_actor = a;
+    g->last_actor = a;
+}
 q2_actor *q2_actor_get(qa_q2_game *g, qa_actor_id id, bool create, qa_error *e) {
     if (g == NULL || id.slot >= g->capacity || !q2_actor_live(g, id)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 actor is not live in this session");
@@ -33,7 +48,8 @@ q2_actor *q2_actor_get(qa_q2_game *g, qa_actor_id id, bool create, qa_error *e) 
             qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 actor source order exhausted");
             return NULL;
         }
-        if (g->spare_actors != NULL) {
+        bool new_storage = g->spare_actors == NULL;
+        if (!new_storage) {
             a = g->spare_actors;
             g->spare_actors = a->free_next;
             q2_monster_release_state(a);
@@ -49,18 +65,8 @@ q2_actor *q2_actor_get(qa_q2_game *g, qa_actor_id id, bool create, qa_error *e) 
                 qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 actor extension");
                 return NULL;
             }
-            a->all_next = g->all_actors;
-            g->all_actors = a;
         }
-        a->id = id;
-        g->actors[id.slot] = a;
-        a->source_order = ++g->actor_sequence;
-        a->live_previous = g->last_actor;
-        if (g->last_actor != NULL)
-            g->last_actor->live_next = a;
-        else
-            g->first_actor = a;
-        g->last_actor = a;
+        q2_actor_publish_prepared(g, a, id, new_storage);
     }
     return a;
 }
