@@ -6,7 +6,8 @@ bool qa_q1_game_path_read(const qa_q1_game *g, qa_actor_id actor, qa_q1_path_sta
     if (!entity || !entity->native || !out)
         return false;
     *out = (qa_q1_path_state){.owner = entity->owner};
-    if (entity->map && entity->map->kind == Q1_MAP_ENDING_ACTOR) {
+    if (entity->map &&
+        (entity->map->kind == Q1_MAP_ENDING_ACTOR || entity->map->kind == Q1_MAP_BUZZSAW)) {
         out->move_target = entity->map->pending.follower.move_target;
         out->pause_until = entity->map->pause_time;
         out->path = entity->target;

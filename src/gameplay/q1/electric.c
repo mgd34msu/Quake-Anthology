@@ -22,10 +22,28 @@ bool q1_lightning_rays(qa_q1_game *g, qa_actor_id attacker, qa_actor_id inflicto
             duplicate |= qa_actor_id_equal(hit[j], trace.actor);
         if (duplicate)
             continue;
-        bool damageable = q1_damageable(g, trace.actor);
+        qa_combat_state combat;
+        qa_error observed = {0};
+        bool present = qa_combat_read(g->services.combat, trace.actor, &combat, &observed);
+        if (!q1_alive(g, inflictor))
+            return true;
+        if (!q1_alive(g, trace.actor))
+            continue;
+        if (!present && observed.code != QA_OK && observed.code != QA_ERROR_NOT_FOUND) {
+            if (error)
+                *error = observed;
+            return false;
+        }
+        bool damageable = present && combat.can_take_damage;
         if (damageable || (flags & Q1_LIGHTNING_REMEMBER_ALL))
             hit[count++] = trace.actor;
         if (damageable) {
+            double particles = blood > 0 ? ceilf(blood) : 0;
+            if (!isfinite(blood) || particles > INT32_MAX) {
+                qa_error_set(error, QA_ERROR_ARGUMENT, trace.actor.slot,
+                             "Q1 lightning particle count is outside integer range");
+                return false;
+            }
             qa_builtin_event event = {.kind = flags & Q1_LIGHTNING_PARTICLES ? QA_BUILTIN_PARTICLES
                                                                              : QA_BUILTIN_IMPACT,
                                       .family = QA_GAME_Q1,
@@ -35,11 +53,15 @@ bool q1_lightning_rays(qa_q1_game *g, qa_actor_id attacker, qa_actor_id inflicto
                                       .origin = trace.end,
                                       .direction = direction,
                                       .value = blood,
-                                      .count = (int32_t)blood,
+                                      .count = (int32_t)particles,
                                       .code = color};
             if (!(flags & Q1_LIGHTNING_DAMAGE_FIRST) &&
                 !qa_builtin_emit(&g->services, &event, error))
                 return false;
+            if (!q1_alive(g, inflictor))
+                return true;
+            if (!q1_alive(g, trace.actor))
+                continue;
             bool ok = cause ? q1_damage_typed(g, trace.actor, inflictor, attacker, damage, weapon,
                                               QA_Q1_ARMOR_NORMAL, death_type, error)
                             : q1_damage(g, trace.actor, inflictor, attacker, damage, weapon, error);

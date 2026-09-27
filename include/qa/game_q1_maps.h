@@ -13,7 +13,7 @@ typedef struct qa_q1_map_fields {
     bool has_movedir, has_view_offset;
     float height, lip, width, length, pause_time;
     float volume, duration, distance, next_think_seconds;
-    float spawn_multi, spawn_silent, gravity, current_ammo, pain_finished;
+    float spawn_multi, spawn_silent, gravity, current_ammo, pain_finished, weapon, frags;
     int32_t sounds, style, world_type, color_map, impulse;
     float counter_value;
     int32_t particle_color;
@@ -110,6 +110,8 @@ bool qa_q1_game_rogue_path_touch(qa_q1_game *, qa_actor_id corner, qa_actor_id f
 /* Threewave spectator door/teleporter passage, after its velocity update. */
 bool qa_q1_game_map_observer_nearby(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_game_map_after_physics(qa_q1_game *, qa_actor_id, qa_error *);
+/* Rogue player order is earthquake, selected team/rune frame, then after_physics. */
+bool qa_q1_game_rogue_earthquake(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_game_time_machine_crash(qa_q1_game *, qa_error *);
 /* Native gameplay resets precede this campaign transition. The new-game flag
  * changes departing travel health only; current live health remains intact. */

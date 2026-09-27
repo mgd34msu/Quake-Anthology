@@ -172,25 +172,32 @@ bool qa_q1_game_rogue_path_touch(qa_q1_game *g, qa_actor_id corner, qa_actor_id 
     if (!g || !g->maps || !handled)
         return q1_map_fail(error, "invalid Rogue path contact");
     *handled = false;
-    q1_actor *actor = ending_actor(g, follower);
-    if (!actor || !qa_actor_id_equal(actor->map->pending.follower.move_target, corner))
+    q1_actor *actor = q1_entity(g, follower);
+    if (!actor || !actor->map ||
+        (actor->map->kind != Q1_MAP_ENDING_ACTOR && actor->map->kind != Q1_MAP_BUZZSAW) ||
+        !qa_actor_id_equal(actor->map->pending.follower.move_target, corner))
         return true;
+    q1_map_kind kind = actor->map->kind;
     qa_authored_target fields;
     if (!qa_targets_read(g->maps->options.targets, corner, &fields))
         return true;
     qa_actor_id next = {0};
     (void)qa_targets_first(g->maps->options.targets, fields.target, &next);
-    actor = ending_actor(g, follower);
-    if (!actor || !q1_alive(g, corner) ||
+    actor = q1_entity(g, follower);
+    if (!actor || !actor->map || actor->map->kind != kind || !q1_alive(g, corner) ||
         !qa_actor_id_equal(actor->map->pending.follower.move_target, corner))
         return true;
     actor->physics.goal = actor->map->pending.follower.move_target = next;
     qa_body_state to = {0}, from;
-    if ((next.registry && !qa_world_body_read(g->services.world, next, &to, error)) ||
-        !qa_world_body_read(g->services.world, follower, &from, error))
+    if (next.registry && !qa_world_body_read(g->services.world, next, &to, error))
         return false;
-    actor = ending_actor(g, follower);
-    if (!actor)
+    actor = q1_entity(g, follower);
+    if (!actor || !actor->map || actor->map->kind != kind || (next.registry && !q1_alive(g, next)))
+        return true;
+    if (!qa_world_body_read(g->services.world, follower, &from, error))
+        return false;
+    actor = q1_entity(g, follower);
+    if (!actor || !actor->map || actor->map->kind != kind || (next.registry && !q1_alive(g, next)))
         return true;
     qa_vec3 delta = qa_vec_sub(to.origin, from.origin);
     float yaw = atan2f(delta.y, delta.x) * 57.29577951308232f;
@@ -198,7 +205,8 @@ bool qa_q1_game_rogue_path_touch(qa_q1_game *g, qa_actor_id corner, qa_actor_id 
     if (!next.registry)
         actor->map->pause_time = g->time + 999999;
     *handled = true;
-    return true;
+    return next.registry || kind != Q1_MAP_BUZZSAW ||
+           q1_map_schedule(g, actor, .1, Q1_MAP_SAW_STAND, error);
 }
 static bool run(qa_q1_game *g, qa_actor_id id, qa_error *error) {
     if (!escape_lava(g, id, error))

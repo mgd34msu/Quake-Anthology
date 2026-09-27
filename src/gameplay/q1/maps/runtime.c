@@ -150,9 +150,13 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
             (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER, .value.number = entity->map->style};
         return true;
     }
-    if (entity->map && !strcmp(key, "currentammo")) {
-        *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
-                                 .value.number = entity->map->current_ammo};
+    if (entity->map &&
+        (!strcmp(key, "currentammo") || !strcmp(key, "weapon") || !strcmp(key, "frags"))) {
+        *out =
+            (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+                              .value.number = !strcmp(key, "weapon")  ? entity->map->weapon
+                                              : !strcmp(key, "frags") ? entity->map->frags
+                                                                      : entity->map->current_ammo};
         return true;
     }
     if (entity->map && entity->map->kind == Q1_MAP_ENDING_ACTOR) {
@@ -174,6 +178,20 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
                                  .value.number = entity->map->cooldown};
         return true;
     }
+    if (entity->map && q1_map_is_rogue_hazard(entity->map->kind)) {
+        const q1_map_state *state = entity->map;
+        bool cooldown = (state->kind == Q1_MAP_BUZZSAW && !strcmp(key, "pain_finished")) ||
+                        (state->kind == Q1_MAP_LTRAIL_START && !strcmp(key, "ltrailLastUsed"));
+        bool active = (state->kind >= Q1_MAP_LTRAIL_START && !strcmp(key, "items")) ||
+                      (state->kind <= Q1_MAP_BUZZSAW && !strcmp(key, "attack_finished"));
+        if (cooldown || active || (state->kind == Q1_MAP_BUZZSAW && !strcmp(key, "pausetime"))) {
+            *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+                                     .value.number = cooldown ? state->cooldown
+                                                     : active ? state->active_until
+                                                              : state->pause_time};
+            return true;
+        }
+    }
     if (entity->map && (!strcmp(key, "height") ||
                         (entity->map->kind == Q1_MAP_ROGUE_PLAT && !strcmp(key, "cnt")))) {
         *out =
@@ -192,6 +210,14 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
         !strcmp(key, "rogue:elvButnDir")) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
                                  .value.number = g->maps->elevator_direction};
+        return true;
+    }
+    if (g->maps && qa_actor_id_equal(actor, g->maps->world_actor) &&
+        (!strcmp(key, "rogue:earthquake_active") || !strcmp(key, "rogue:earthquake_intensity"))) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+                                 .value.number = !strcmp(key, "rogue:earthquake_active")
+                                                     ? g->maps->rogue_quake_active
+                                                     : g->maps->rogue_quake_intensity};
         return true;
     }
     if (g->maps && qa_actor_id_equal(actor, g->maps->world_actor) &&
@@ -413,7 +439,8 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
         source->length,        source->pause_time,   source->volume,
         source->duration,      source->distance,     source->next_think_seconds,
         source->counter_value, source->spawn_multi,  source->spawn_silent,
-        source->gravity,       source->current_ammo, source->pain_finished};
+        source->gravity,       source->current_ammo, source->pain_finished,
+        source->weapon,        source->frags};
     for (size_t i = 0; i < sizeof(numbers) / sizeof(*numbers); ++i)
         if (!isfinite(numbers[i]))
             return q1_map_fail(error, "nonfinite Q1 authored field");
@@ -458,6 +485,8 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
     state->spawn_silent = source->spawn_silent;
     state->gravity = source->gravity;
     state->current_ammo = source->current_ammo;
+    state->weapon = source->weapon;
+    state->frags = source->frags;
     if (state->kind == Q1_MAP_TIME_MACHINE)
         state->cooldown = source->pain_finished;
     if (source->model && source->model[0] == '*') {
@@ -488,6 +517,13 @@ static q1_map_kind classify(const char *name) {
                    {"func_elvtr_button", Q1_MAP_ELEVATOR_BUTTON},
                    {"item_time_machine", Q1_MAP_TIME_MACHINE},
                    {"item_time_core", Q1_MAP_TIME_CORE},
+                   {"earthquake", Q1_MAP_ROGUE_QUAKE},
+                   {"trigger_earthquake", Q1_MAP_ROGUE_QUAKE_FIELD},
+                   {"trigger_earthquake_kill", Q1_MAP_ROGUE_QUAKE_KILL},
+                   {"buzzsaw", Q1_MAP_BUZZSAW},
+                   {"ltrail_start", Q1_MAP_LTRAIL_START},
+                   {"ltrail_relay", Q1_MAP_LTRAIL_RELAY},
+                   {"ltrail_end", Q1_MAP_LTRAIL_END},
                    {"func_counter", Q1_MAP_HIP_COUNTER},
                    {"func_oncount", Q1_MAP_ONCOUNT},
                    {"trigger_command", Q1_MAP_ONCOUNT},
@@ -595,7 +631,8 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
                   qa_error *error) {
     q1_map_kind kind = classify(spawn->classname);
     if (g->options.program != QA_Q1_ROGUE &&
-        (kind == Q1_MAP_PENDULUM || q1_map_is_rogue_plat(kind) || q1_map_is_time_actor(kind)))
+        (kind == Q1_MAP_PENDULUM || q1_map_is_rogue_plat(kind) || q1_map_is_time_actor(kind) ||
+         q1_map_is_rogue_hazard(kind)))
         kind = Q1_MAP_FIELDS;
     if (g->options.program != QA_Q1_MG3 &&
         (kind == Q1_MAP_CANCEL_PAUSE || kind == Q1_MAP_SWITCH_PATH))
@@ -616,6 +653,8 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     if (!*handled)
         return true;
     entity->kind = Q1_MAP;
+    if (q1_map_is_rogue_hazard(kind))
+        return q1_map_rogue_hazard_spawn(g, entity, error);
     if (q1_map_is_time_actor(kind))
         return q1_map_time_spawn(g, entity, error);
     if (q1_map_is_rogue_plat(kind))
@@ -768,6 +807,8 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
                 qa_error *error) {
     if (!entity->map || !entity->map->use_enabled)
         return true;
+    if (q1_map_is_rogue_hazard(entity->map->kind))
+        return q1_map_rogue_hazard_use(g, entity, other, activator, error);
     if (q1_map_is_rogue_plat(entity->map->kind))
         return q1_map_rogue_plat_use(g, entity, other, activator, error);
     if (entity->map->kind == Q1_MAP_PENDULUM)
@@ -802,6 +843,8 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
 }
 bool q1_map_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contact *contact,
                   qa_error *error) {
+    if (entity->map && entity->map->touch_enabled && q1_map_is_rogue_hazard(entity->map->kind))
+        return q1_map_rogue_hazard_touch(g, entity, contact->other, error);
     if (entity->map && entity->map->touch_enabled && q1_map_is_rogue_plat(entity->map->kind))
         return q1_map_rogue_plat_touch(g, entity, contact->other, error);
     if (entity->map && entity->map->touch_enabled && entity->map->kind == Q1_MAP_PENDULUM)
@@ -855,6 +898,8 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_map_state *state = entity->map;
     q1_map_action action = state->action;
     state->action = Q1_MAP_IDLE;
+    if (action >= Q1_MAP_ROGUE_QUAKE_START && action <= Q1_MAP_LTRAIL_CHAIN)
+        return q1_map_rogue_hazard_think(g, entity, action, error);
     if (action >= Q1_MAP_ENDING_CONTROL && action <= Q1_MAP_CAMERA_TRACK)
         return q1_map_ending_think(g, entity, action, error);
     if (action >= Q1_MAP_TIME_BOOM_THINK && action <= Q1_MAP_TIME_CRASH_THINK)

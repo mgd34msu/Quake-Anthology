@@ -50,6 +50,13 @@ typedef enum q1_map_kind {
     Q1_MAP_TIME_STOP,
     Q1_MAP_ENDING_ACTOR,
     Q1_MAP_CAMERA_TRACKER,
+    Q1_MAP_ROGUE_QUAKE,
+    Q1_MAP_ROGUE_QUAKE_FIELD,
+    Q1_MAP_ROGUE_QUAKE_KILL,
+    Q1_MAP_BUZZSAW,
+    Q1_MAP_LTRAIL_START,
+    Q1_MAP_LTRAIL_RELAY,
+    Q1_MAP_LTRAIL_END,
     Q1_MAP_DOOR,
     Q1_MAP_BUTTON,
     Q1_MAP_SECRET_DOOR,
@@ -145,7 +152,15 @@ typedef enum q1_map_action {
     Q1_MAP_ENDING_RUN,
     Q1_MAP_ENDING_FIRE,
     Q1_MAP_ENDING_TELEPORT,
-    Q1_MAP_CAMERA_TRACK
+    Q1_MAP_CAMERA_TRACK,
+    Q1_MAP_ROGUE_QUAKE_START,
+    Q1_MAP_ROGUE_QUAKE_STOP,
+    Q1_MAP_ROGUE_QUAKE_RUMBLE,
+    Q1_MAP_SAW_START,
+    Q1_MAP_SAW_FLY,
+    Q1_MAP_SAW_STAND,
+    Q1_MAP_LTRAIL_FIRE,
+    Q1_MAP_LTRAIL_CHAIN
 } q1_map_action;
 typedef enum q1_map_position { Q1_MAP_BOTTOM, Q1_MAP_UP, Q1_MAP_TOP, Q1_MAP_DOWN } q1_map_position;
 typedef enum q1_time_reaction { Q1_TIME_NO_REACTION, Q1_TIME_PAIN, Q1_TIME_CRASH } q1_time_reaction;
@@ -178,7 +193,7 @@ struct q1_map_state {
     qa_string_id spawn_function, spawn_classname;
     qa_vec3 movedir, mangle, view_offset;
     float height, lip, width, length, pause_time, volume, duration, distance, initial_think;
-    float spawn_multi, spawn_silent, gravity, current_ammo;
+    float spawn_multi, spawn_silent, gravity, current_ammo, weapon, frags;
     int32_t sounds, style, color_map, impulse;
     uint32_t inline_model;
     float counter_value;
@@ -235,6 +250,8 @@ struct q1_map_runtime {
     bool quake_active;
     bool final_new_game_travel;
     bool rogue_cutscene, rogue_ending_started;
+    bool rogue_quake_active;
+    float rogue_quake_intensity;
     uint8_t rogue_actor_stage;
     uint32_t total_secrets, found_secrets;
 };
@@ -290,6 +307,14 @@ bool q1_map_time_reaction(qa_q1_game *, q1_actor *, const qa_damage_outcome *, q
 bool q1_map_time_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
 bool q1_map_rogue_ending(qa_q1_game *, qa_actor_id player, qa_error *);
 bool q1_map_ending_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
+static inline bool q1_map_is_rogue_hazard(q1_map_kind kind) {
+    return kind >= Q1_MAP_ROGUE_QUAKE && kind <= Q1_MAP_LTRAIL_END;
+}
+bool q1_map_rogue_hazard_spawn(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_map_rogue_hazard_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_actor_id, qa_error *);
+bool q1_map_rogue_hazard_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_map_rogue_hazard_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
+bool q1_map_rogue_shake(qa_q1_game *, qa_actor_id, float intensity, qa_error *);
 bool q1_map_finale_emit(qa_q1_game *, uint32_t stage, const char *text, qa_error *);
 bool q1_map_train_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_train_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
