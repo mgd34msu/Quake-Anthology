@@ -66,6 +66,6 @@ The grouped diagram shows phase order. The table below records every direct prer
 
 [source-map.json](source-map.json) assigns all 23 functional targets and the donor's 27 top-level source directories to the relevant C tasks. One donor directory can contribute to several C modules. Shared implementations retain intentional policies and private state. These assignments account for scope and do not establish implementation or runtime coverage.
 
-B00 through B34 include proportionate build, static, parser, memory-ownership, and logic checks. They do not wait for early play sessions, frame-time budgets, broad profiling, or polish. Gameplay evaluation begins at P01 after the entire baseline is implemented. Deep performance work follows at P02.
+B00 through B34 include writing build definitions and reviewing source for parser behavior, memory ownership and logic. Build configuration, compilation, parser or test execution, sanitizers and program runs begin at P01 after the entire baseline source is implemented and integrated. Deep performance work follows at P02.
 
-Run `python3 tools/check_plan.py` from the repository root to check the graph and target assignments. The checker verifies prerequisites, cycles, baseline ordering, and scope references. It does not approve code or replace vibecheck-jev's work reports.
+At P01, run `python3 tools/check_plan.py` from the repository root to check the graph and target assignments. The checker verifies prerequisites, cycles, baseline ordering, and scope references. It does not approve code or replace vibecheck-jev's work reports.
