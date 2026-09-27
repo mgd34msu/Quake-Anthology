@@ -101,8 +101,9 @@ target_link_libraries(qa_console PUBLIC qa_core)
 
 add_library(qa_text STATIC
     src/text/localization.c
-    src/text/captions.c)
-target_link_libraries(qa_text PUBLIC qa_content)
+    src/text/captions.c
+    src/text/media_captions.c)
+target_link_libraries(qa_text PUBLIC qa_content qa_audio)
 
 add_library(qa_qc STATIC
     src/compat/qc/program.c
