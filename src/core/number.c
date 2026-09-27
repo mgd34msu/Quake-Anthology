@@ -108,3 +108,18 @@ bool qa_parse_number(qa_bytes input, double *out, qa_error *error) {
     *out = value;
     return true;
 }
+
+bool qa_parse_atof(const char *text, double *out, qa_error *error) {
+    if (!text || !out) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid atof input");
+        return false;
+    }
+    if (!ready(error))
+        return false;
+#if defined(_WIN32)
+    *out = _strtod_l(text, NULL, numeric_locale);
+#else
+    *out = strtod_l(text, NULL, numeric_locale);
+#endif
+    return true;
+}

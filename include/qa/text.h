@@ -17,6 +17,10 @@ bool qa_unicode_whitespace(uint32_t scalar);
  * Leading/trailing ASCII whitespace is accepted. The caller applies finite,
  * integral or domain bounds as needed. Output is unchanged on failure. */
 bool qa_parse_number(qa_bytes input, double *out, qa_error *error);
+/* C-locale atof prefix conversion of a NUL-terminated byte string. No numeric
+ * prefix produces zero; overflow/underflow and nonfinite values are preserved.
+ * False reports an argument/resource failure, never a rejected numeric token. */
+bool qa_parse_atof(const char *text, double *out, qa_error *error);
 /* Finite double serialization in the same C locale, with round-trip precision. */
 bool qa_format_number(double value, char out[32], qa_error *error);
 

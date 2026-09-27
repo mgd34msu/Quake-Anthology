@@ -46,6 +46,7 @@ find_library(QA_GIF_LIBRARY NAMES gif REQUIRED)
 
 add_library(qa_core STATIC
     src/core/arena.c
+    src/core/common_parse.c
     src/core/json_writer.c
     src/core/strings.c
     src/core/text.c
