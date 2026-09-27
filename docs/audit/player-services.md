@@ -50,7 +50,20 @@ defect after checking copy-on-write allocation, mutable-registry callback
 lifetime, stale generations, poll counters and cleanup. The composition must
 already be admitted; account authentication remains a separate service.
 
+The shared ranking-provider lifecycle is implemented: optional begin, account
+login/create and join, typed integer/string reports, poll, reset/spectate,
+disconnect and complete cleanup. Source slots resolve to independent 64-bit
+account IDs at flush; -1 denotes the match. Provider failure exposes unavailable
+state. End attempts all active logouts and finalization despite earlier failures.
+Single-player and disabled ranking never call the provider. No backend is invented.
+
+An independent reviewer read the complete lifecycle and donor `rankings.ts`,
+including denial versus failure, duplicate-account admission, notification order,
+disconnect-finally and end cleanup. It found no confirmed bounded defect. Native
+gameplay emits typed source reports to the application queue rather than invoking
+providers during simulation; those actual producers/queue consumers are ongoing.
+
 Application event/UI consumers, arena archive transactions and round deduplication,
 actual lobby transition consumers, account and local ranking services, and the
-ranking-provider consumer remain under implementation. B31 remains incomplete.
+ranking-provider application consumer remain under implementation. B31 remains incomplete.
 No engine configuration, compilation or execution ran.
