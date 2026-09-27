@@ -1010,6 +1010,40 @@ bool qa_q1_game_physics_write(qa_q1_game *g, qa_actor_id actor, const qa_physics
     entity->physics = *state;
     return true;
 }
+bool qa_q1_game_water_transition(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+    if (!g) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "missing Q1 water-transition owner");
+        return false;
+    }
+    if (!q1_entity(g, actor))
+        return true;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, actor, &body, error))
+        return false;
+    if (!q1_entity(g, actor))
+        return true;
+    qa_point_query query = {.point = body.origin,
+                            .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
+    qa_point_contents contents;
+    if (!qa_world_point_contents(g->services.world, &query, &contents, error))
+        return false;
+    q1_actor *entity = q1_entity(g, actor);
+    if (!entity)
+        return true;
+    /* The native Q1 host exposes its six material names, unlike QC's raw
+     * contents interface. Unknown source values become empty here. */
+    int32_t value = contents.contents <= -2 && contents.contents >= -6 ? contents.contents : -1;
+    qa_q1_water_transition_result transition =
+        qa_q1_water_transition(entity->physics.water_type, value);
+    if (transition.splash && !q1_sound(g, actor, "misc/h2ohit1.wav", 0, 1, error))
+        return false;
+    entity = q1_entity(g, actor);
+    if (entity) {
+        entity->physics.water_type = transition.water_type;
+        entity->physics.water_level = transition.water_level;
+    }
+    return true;
+}
 qa_item_id qa_q1_weapon_item(const qa_q1_game *g, qa_q1_weapon weapon) {
     return g && weapon < QA_Q1_WEAPON_COUNT ? g->weapons[weapon] : 0;
 }

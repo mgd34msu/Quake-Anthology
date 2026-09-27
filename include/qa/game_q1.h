@@ -354,6 +354,9 @@ bool qa_q1_game_reaction(qa_q1_game *, const qa_damage_outcome *, qa_error *);
 bool qa_q1_game_presentation(const qa_q1_game *, qa_actor_id, qa_q1_presentation *);
 bool qa_q1_game_physics_read(const qa_q1_game *, qa_actor_id, qa_physics_properties *);
 bool qa_q1_game_physics_write(qa_q1_game *, qa_actor_id, const qa_physics_properties *, qa_error *);
+/* Native STEP after think, and surviving TOSS collisions. Character movement
+ * runs its own selected movement callback and must not dispatch this twice. */
+bool qa_q1_game_water_transition(qa_q1_game *, qa_actor_id, qa_error *);
 void qa_q1_game_actor_released(qa_q1_game *, qa_actor_record);
 qa_item_id qa_q1_weapon_item(const qa_q1_game *, qa_q1_weapon);
 qa_item_id qa_q1_ammo_item(const qa_q1_game *, qa_q1_ammo);

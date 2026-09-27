@@ -344,15 +344,13 @@ static bool nq_ideal_pitch(nq_move *m) {
 static bool nq_water_transition(nq_move *m) {
     qa_nq_movement_state *s = &m->base.c->state->data.nq;
     int32_t contents;
-    if (!q1_contents(&m->base, s->origin, &contents)) return false;
-    int32_t previous = s->water_type, level, type;
-    bool splash;
-    if (previous == 0) { type = contents; level = 1; splash = false; }
-    else if (contents <= Q1_CONTENTS_WATER) { type = contents; level = 1; splash = previous == Q1_CONTENTS_EMPTY; }
-    else { type = Q1_CONTENTS_EMPTY; level = contents; splash = previous != Q1_CONTENTS_EMPTY; }
-    if (splash && !q1_sound(&m->base, "misc/h2ohit1.wav")) return false;
-    s->water_type = type;
-    s->water_level = level;
+    if (!q1_contents(&m->base, s->origin, &contents))
+        return false;
+    qa_q1_water_transition_result transition = qa_q1_water_transition(s->water_type, contents);
+    if (transition.splash && !q1_sound(&m->base, "misc/h2ohit1.wav"))
+        return false;
+    s->water_type = transition.water_type;
+    s->water_level = transition.water_level;
     return true;
 }
 

@@ -84,9 +84,15 @@ typedef struct qa_q1_map_options {
     bool (*server_command)(void *, qa_string_id command, qa_error *);
 } qa_q1_map_options;
 
-/* Bind before authored spawning. All service owners outlive the native game;
- * binding is immutable for that game instance. */
+/* Bind before authored spawning. Service owners remain valid until the next
+ * begin_map call or destruction of the native game. */
 bool qa_q1_game_maps_bind(qa_q1_game *, const qa_q1_map_options *, qa_error *);
+/* After session world retirement and geometry publication, before spawning:
+ * requires an empty registry, completed release fanout and a session safe
+ * point. Replaces map services and resets map clocks, counters and actor
+ * continuations. Retains provider RNG, attack sequence, resources and pooled
+ * storage. The caller owns campaign state and player carry across retirement. */
+bool qa_q1_game_begin_map(qa_q1_game *, const qa_q1_map_options *, qa_error *);
 /* Link authored door groups after all map entities have been admitted. */
 bool qa_q1_game_maps_finish(qa_q1_game *, qa_error *);
 /* These adapters handle native actors only, for application owner dispatch. */

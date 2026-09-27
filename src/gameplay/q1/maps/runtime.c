@@ -6,14 +6,22 @@ bool q1_map_fail(qa_error *error, const char *message) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message);
     return false;
 }
-bool qa_q1_game_maps_bind(qa_q1_game *g, const qa_q1_map_options *options, qa_error *error) {
-    if (!g || !options || g->maps || !options->targets || !options->level ||
-        !options->server_flags || !options->static_model || !options->ambient ||
-        !options->lightstyle || !options->set_skill || !options->secret_found ||
-        !g->services.actor_traits || !g->services.physics || !g->services.physics->services.read ||
+static bool map_options_valid(const qa_q1_game *g, const qa_q1_map_options *options,
+                              qa_error *error) {
+    if (!g || !options || !options->targets || !options->level || !options->server_flags ||
+        !options->static_model || !options->ambient || !options->lightstyle ||
+        !options->set_skill || !options->secret_found || !g->services.actor_traits ||
+        !g->services.physics || !g->services.physics->services.read ||
         !g->services.physics->services.write || !g->services.motion_changed ||
         (!!options->path_read != !!options->path_change))
         return q1_map_fail(error, "invalid Q1 map service binding");
+    return true;
+}
+bool qa_q1_game_maps_bind(qa_q1_game *g, const qa_q1_map_options *options, qa_error *error) {
+    if (!map_options_valid(g, options, error))
+        return false;
+    if (g->maps)
+        return q1_map_fail(error, "Q1 map services already bound");
     g->maps = calloc(1, sizeof(*g->maps));
     if (!g->maps) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q1 map runtime");
@@ -21,6 +29,64 @@ bool qa_q1_game_maps_bind(qa_q1_game *g, const qa_q1_map_options *options, qa_er
     }
     g->maps->options = *options;
     g->maps->lightning_end = -1;
+    return true;
+}
+static void door_groups_free(q1_door_group *group) {
+    while (group) {
+        q1_door_group *next = group->next;
+        free(group->members);
+        free(group);
+        group = next;
+    }
+}
+bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_error *error) {
+    if (!map_options_valid(g, options, error))
+        return false;
+    if (!g->maps || !qa_session_safe(g->services.session) ||
+        qa_actors_count(qa_session_actors(g->services.session)))
+        return q1_map_fail(error, "Q1 map reset requires a retired world at a safe point");
+    if (!qa_strings_text(qa_session_strings(g->services.session), options->current_map).size)
+        return q1_map_fail(error, "Q1 map reset requires an interned map identity");
+    for (q1_actor_snapshot *snapshot = g->snapshots; snapshot; snapshot = snapshot->next)
+        if (snapshot->borrowed)
+            return q1_map_fail(error, "Q1 map reset has an active actor query");
+    for (uint32_t slot = 0; slot < g->capacity; ++slot)
+        if (g->actors[slot] || g->players[slot])
+            return q1_map_fail(error, "Q1 map reset requires completed actor release callbacks");
+
+    qa_q1_map_options replacement = *options;
+    q1_map_state *states = g->maps->allocated;
+    door_groups_free(g->maps->door_groups);
+    *g->maps = (q1_map_runtime){.options = replacement, .allocated = states, .lightning_end = -1};
+    while (states) {
+        q1_map_state *next = states->allocated_next;
+        *states = (q1_map_state){.allocated_next = next, .pool_next = g->maps->spare};
+        g->maps->spare = states;
+        states = next;
+    }
+    g->spare_actors = g->retired_actors = NULL;
+    for (q1_actor *actor = g->allocated_actors; actor; actor = actor->allocation_next) {
+        q1_actor *next = actor->allocation_next;
+        *actor = (q1_actor){.allocation_next = next, .pool_next = g->spare_actors};
+        g->spare_actors = actor;
+    }
+    g->spare_players = g->retired_players = NULL;
+    for (q1_player *player = g->allocated_players; player; player = player->allocation_next) {
+        q1_player *next = player->allocation_next;
+        *player = (q1_player){.allocation_next = next, .pool_next = g->spare_players};
+        g->spare_players = player;
+    }
+    for (q1_actor_snapshot *snapshot = g->snapshots; snapshot; snapshot = snapshot->next)
+        snapshot->count = snapshot->shared.count = 0;
+    g->total_monsters = g->killed_monsters = g->hellknight_melee = 0;
+    g->authored_gremlins = g->spawned_gremlins = 0;
+    g->sight_actor = g->horn_charmer = (qa_actor_id){0};
+    g->time = g->elapsed = g->sight_time = 0;
+    g->time_ns = 0;
+    g->forward = g->right = g->up = qa_v3(0, 0, 0);
+    g->run_straight = g->enemy_visible = false;
+    g->rune_knight_melee = g->enemy_range = 0;
+    g->options.world_type = 0;
     return true;
 }
 static bool target_read(void *context, qa_actor_id actor, qa_authored_target *out) {
@@ -184,13 +250,7 @@ void q1_map_destroy(qa_q1_game *g) {
         free(state);
         state = next;
     }
-    q1_door_group *group = g->maps->door_groups;
-    while (group) {
-        q1_door_group *next = group->next;
-        free(group->members);
-        free(group);
-        group = next;
-    }
+    door_groups_free(g->maps->door_groups);
     free(g->maps);
     g->maps = NULL;
 }

@@ -8,6 +8,20 @@ typedef enum qa_movement_kind {
     QA_MOVEMENT_Q2_RERELEASE, QA_MOVEMENT_Q3
 } qa_movement_kind;
 typedef enum qa_q1_edition { QA_Q1_CLASSIC, QA_Q1_RERELEASE, QA_Q1_QUAKE64 } qa_q1_edition;
+typedef struct qa_q1_water_transition_result {
+    int32_t water_type, water_level;
+    bool splash;
+} qa_q1_water_transition_result;
+/* Source initialization and exit levels are meaningful, including negative
+ * water_level values. Callers emit the splash before committing this state. */
+static inline qa_q1_water_transition_result qa_q1_water_transition(int32_t previous_type,
+                                                                   int32_t contents) {
+    if (previous_type == 0)
+        return (qa_q1_water_transition_result){contents, 1, false};
+    if (contents <= -3)
+        return (qa_q1_water_transition_result){contents, 1, previous_type == -1};
+    return (qa_q1_water_transition_result){-1, contents, previous_type != -1};
+}
 typedef enum qa_q1_solid { QA_Q1_SOLID_NOT, QA_Q1_SOLID_TRIGGER, QA_Q1_SOLID_BOX, QA_Q1_SOLID_SLIDEBOX, QA_Q1_SOLID_BSP, QA_Q1_SOLID_CORPSE } qa_q1_solid;
 typedef struct qa_movement_ground {
     qa_trace_hit hit;
