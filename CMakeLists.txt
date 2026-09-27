@@ -99,7 +99,11 @@ add_library(qa_console STATIC
     src/console/cvars.c
     src/console/commands.c
     src/console/field.c
-    src/console/source_field.c)
+    src/console/source_field.c
+    src/console/buffer.c
+    src/console/documentation.c
+    src/console/discovery.c
+    src/console/seat.c)
 target_link_libraries(qa_console PUBLIC qa_core)
 
 add_library(qa_text STATIC

@@ -65,6 +65,14 @@ enum qa_q2_cvar_flags {
 };
 
 typedef struct qa_cvars qa_cvars;
+typedef struct qa_console_documentation {
+    const char *usage;
+    const char *const *examples;
+    size_t example_count;
+    const char *const *allowed_values;
+    size_t allowed_count;
+    bool has_allowed_values;
+} qa_console_documentation;
 typedef struct qa_cvar_view {
     const char *name;
     const char *value;
@@ -79,6 +87,7 @@ typedef struct qa_cvar_view {
     bool modified;
     bool console_created;
     size_t handle;
+    const qa_console_documentation *documentation;
 } qa_cvar_view;
 
 typedef enum qa_cvar_effect_kind {
@@ -118,6 +127,8 @@ size_t qa_cvars_handle_count(const qa_cvars *registry);
 bool qa_cvars_register(qa_cvars *registry, const char *name, const char *default_value,
                         uint32_t flags, uint64_t owner, const char *description,
                         qa_error *error);
+bool qa_cvars_document(qa_cvars *, const char *name, uint64_t owner,
+                       const qa_console_documentation *, qa_error *);
 /* Bindings validate before publication and observe committed values. They use
  * the same notification lifetime rule as registry output/effect callbacks. */
 bool qa_cvars_bind(qa_cvars *registry, const char *name, const qa_cvar_binding *binding,
@@ -209,6 +220,7 @@ typedef struct qa_console_entry {
     const char *alias_text;
     uint64_t owner;
     bool engine_command;
+    const qa_console_documentation *documentation;
 } qa_console_entry;
 
 qa_console *qa_console_create(const qa_console_options *options, qa_error *error);
@@ -221,7 +233,13 @@ bool qa_console_register(qa_console *console, const char *name, const char *desc
                            uint64_t owner, bool engine_command, qa_command_handler handler,
                            void *user, qa_error *error);
 bool qa_console_unregister(qa_console *console, const char *name, uint64_t owner);
+/* Documentation is copied; NULL removes it. Registration owns its lifetime. */
+bool qa_console_document(qa_console *, const char *name, uint64_t owner,
+                         const qa_console_documentation *, qa_error *);
+qa_cvars *qa_console_visible_cvars(qa_console *, const qa_command_context *, size_t ordinal);
+qa_cvars *qa_console_cvar_owner(qa_console *, const qa_command_context *, const char *name);
 const qa_console_entry *qa_console_entry_at(const qa_console *console, size_t ordinal);
+const qa_console_entry *qa_console_context_entry_at(const qa_console *, const qa_command_context *, size_t ordinal);
 const qa_console_entry *qa_console_find(const qa_console *console,
                                          const qa_command_context *context,
                                          const char *name);

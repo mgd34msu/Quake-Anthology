@@ -157,6 +157,17 @@ static qa_cvars *visible_cvars(qa_console *console, const qa_command_context *co
     return index == 0 ? cvar_owner(console, context, "") : NULL;
 }
 
+qa_cvars *qa_console_visible_cvars(qa_console *console, const qa_command_context *context, size_t index)
+{
+    if (!console) return NULL;
+    return visible_cvars(console, context_for(console, context), index);
+}
+
+qa_cvars *qa_console_cvar_owner(qa_console *console, const qa_command_context *context, const char *name)
+{
+    return console && name ? cvar_owner(console, context_for(console, context), name) : NULL;
+}
+
 static size_t buffer_limit(const qa_console *console, qa_console_dialect dialect)
 {
     return console->options.maximum_buffer != 0 ? console->options.maximum_buffer :
@@ -241,6 +252,7 @@ static void free_command(command_entry *entry)
 {
     free((char *)entry->view.name);
     free((char *)entry->view.description);
+    qac_document_free(entry->view.documentation);
     free(entry);
 }
 
@@ -293,27 +305,30 @@ bool qa_console_set_profile(qa_console *console, qa_console_dialect dialect,
     return true;
 }
 
+#define COMMAND(n, d, u) {.name = n, .description = d, .engine_command = true, \
+    .documentation = &(const qa_console_documentation){.usage = u}}
 static const qa_console_entry builtin_entries[] = {
-    {"stuffcmds", "Execute startup commands", NULL, 0, true},
-    {"exec", "Execute a content script", NULL, 0, true},
-    {"echo", "Print console text", NULL, 0, true},
-    {"alias", "Define a command alias", NULL, 0, true},
-    {"cmd", "Forward a command to the server", NULL, 0, true},
-    {"wait", "Pause queued commands", NULL, 0, true},
-    {"cmdlist", "List console commands", NULL, 0, true},
-    {"set", "Set a console variable", NULL, 0, true},
-    {"cvarlist", "List visible console variables", NULL, 0, true},
-    {"toggle", "Toggle or cycle a variable", NULL, 0, true},
-    {"sets", "Set a server-info variable", NULL, 0, true},
-    {"setu", "Set a user-info variable", NULL, 0, true},
-    {"seta", "Set an archived variable", NULL, 0, true},
-    {"reset", "Restore a variable default", NULL, 0, true},
-    {"cvar_restart", "Restart the Q3 cvar registry", NULL, 0, true},
-    {"vstr", "Execute a variable as commands", NULL, 0, true},
-    {"inc", "Increase a numeric variable", NULL, 0, true},
-    {"dec", "Decrease a numeric variable", NULL, 0, true},
-    {"resetall", "Restore variable defaults", NULL, 0, true}
+    COMMAND("stuffcmds", "Execute startup commands", "stuffcmds"),
+    COMMAND("exec", "Execute a content script", "exec <filename>"),
+    COMMAND("echo", "Print console text", "echo <text>"),
+    COMMAND("alias", "Define a command alias", "alias [name [commands]]"),
+    COMMAND("cmd", "Forward a command to the server", "cmd <command>"),
+    COMMAND("wait", "Pause queued commands", "wait [frames]"),
+    COMMAND("cmdlist", "List console commands", "cmdlist [filter]"),
+    COMMAND("set", "Set a console variable", "set <name> <value>"),
+    COMMAND("cvarlist", "List visible console variables", "cvarlist [filter]"),
+    COMMAND("toggle", "Toggle or cycle a variable", "toggle <name> [values...]"),
+    COMMAND("sets", "Set a server-info variable", "sets <name> <value>"),
+    COMMAND("setu", "Set a user-info variable", "setu <name> <value>"),
+    COMMAND("seta", "Set an archived variable", "seta <name> <value>"),
+    COMMAND("reset", "Restore a variable default", "reset <name>"),
+    COMMAND("cvar_restart", "Restart the Q3 cvar registry", "cvar_restart"),
+    COMMAND("vstr", "Execute a variable as commands", "vstr <name>"),
+    COMMAND("inc", "Increase a numeric variable", "inc <name> [amount]"),
+    COMMAND("dec", "Decrease a numeric variable", "dec <name> [amount]"),
+    COMMAND("resetall", "Restore variable defaults", "resetall")
 };
+#undef COMMAND
 
 static bool builtin_allowed(qa_console_dialect dialect, const char *name)
 {
@@ -377,14 +392,30 @@ bool qa_console_unregister(qa_console *console, const char *name, uint64_t owner
     return false;
 }
 
+bool qa_console_document(qa_console *console, const char *name, uint64_t owner,
+                          const qa_console_documentation *doc, qa_error *error)
+{
+    if (console && name)
+        for (command_entry *entry = console->commands; entry; entry = entry->next)
+            if (entry->view.owner == owner && !strcmp(entry->view.name, name))
+                return qac_document_replace(&entry->view.documentation, doc, error);
+    return qac_fail(error, QA_ERROR_NOT_FOUND, "command documentation owner not found");
+}
+
 const qa_console_entry *qa_console_entry_at(const qa_console *console, size_t ordinal)
+{
+    return qa_console_context_entry_at(console, NULL, ordinal);
+}
+
+const qa_console_entry *qa_console_context_entry_at(const qa_console *console,
+                                                   const qa_command_context *context, size_t ordinal)
 {
     if (console == NULL) return NULL;
     for (command_entry *entry = console->commands; entry != NULL; entry = entry->next)
         if (ordinal-- == 0) return &entry->view;
     if (!console->options.disable_builtins)
         for (size_t i = 0; i < sizeof(builtin_entries) / sizeof(builtin_entries[0]); ++i)
-            if (builtin_allowed(context_for(console, NULL)->dialect, builtin_entries[i].name) && ordinal-- == 0)
+            if (builtin_allowed(context_for(console, context)->dialect, builtin_entries[i].name) && ordinal-- == 0)
                 return &builtin_entries[i];
     return NULL;
 }

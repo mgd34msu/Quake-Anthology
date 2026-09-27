@@ -32,5 +32,7 @@ bool qac_parse_token(const char *text, size_t length, size_t start,
                       qac_token *out, qa_error *error);
 int32_t qac_integer(const char *value);
 float qac_number(const char *value, qa_console_dialect dialect);
+void qac_document_free(const qa_console_documentation *);
+bool qac_document_replace(const qa_console_documentation **, const qa_console_documentation *, qa_error *);
 
 #endif

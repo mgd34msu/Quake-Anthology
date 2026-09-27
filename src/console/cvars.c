@@ -72,7 +72,17 @@ static void free_variable(cvar *entry)
     free((char *)entry->view.reset_value);
     free((char *)entry->view.latched_value);
     free((char *)entry->view.description);
+    qac_document_free(entry->view.documentation);
     free(entry);
+}
+
+bool qa_cvars_document(qa_cvars *registry, const char *name, uint64_t owner,
+                        const qa_console_documentation *doc, qa_error *error)
+{
+    cvar *entry = find_variable(registry, name);
+    if (!entry || entry->view.owner != owner)
+        return qac_fail(error, QA_ERROR_NOT_FOUND, "cvar documentation owner not found");
+    return qac_document_replace(&entry->view.documentation, doc, error);
 }
 
 static void numbers(qa_cvars *registry, cvar *entry)

@@ -26,6 +26,7 @@ These are concrete handoff obligations for the remaining graph nodes. A subsyste
 - Original client-module command adapters call `qa_input_client_dispatch` with their explicit producer instance. Ordinary user-console dispatch passes zero. A console command's owner is not a substitute for the producer instance.
 - B21 persists typed seat bindings and controller settings; B34 applies those profiles to actual devices and command builders.
 - Native console/menu fields share UTF-8 scalar iteration and retained editing storage. Source Q3 guest fields use the distinct 256-byte field API and shared overstrike value; after restoring raw source fields, keep cursor and text bounds valid before editing. B32/B34 route clipboard, key/text events, completion names and persisted command history to the appropriate field owner.
+- Each local seat owns `qa_seat_console`, with its original command context and routed input events. Bind focus/chat/connection callbacks; pass the focused chat team explicitly. Candidate console publication retains the existing scrollback/history and replays only staged candidate output. Register discovery commands once and destroy them before their command registry. `qa_console_buffer_row` and selected completion help borrow storage for drawing; do not copy scrollback each frame. B32 still supplies console drawing, and B33/B34 connect capture/config/dump/log/dedicated/LLM commands.
 
 ## Scene and media
 
