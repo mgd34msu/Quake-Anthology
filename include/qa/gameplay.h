@@ -5,6 +5,8 @@
 #include "qa/math.h"
 
 typedef uint32_t qa_item_id;
+/* Session-interned identity; zero is unteamed. Original protocol team numbers
+ * are translated by their adapters, never used as private shared-world IDs. */
 typedef uint32_t qa_team_id;
 typedef struct qa_operation qa_operation;
 typedef struct qa_combat qa_combat;
