@@ -188,15 +188,38 @@ static bool combat_context(void *context, const qa_damage_request *request,
     (void)error;
     qa_q1_game *g = context;
     q1_player *player = q1_player_get(g, request->attack.attacker);
-    qa_physics_properties physics;
-    bool has_physics = g->services.physics && g->services.physics->services.read &&
-                       g->services.physics->services.read(g->services.physics->services.context,
-                                                          request->target, &physics);
+    qa_q1_target traits = {0};
+    bool walk = q1_target(g, request->target, &traits) && traits.player;
+    qa_vec3 origin = {0};
+    qa_body_state body;
+    bool has_origin =
+        request->attack.projectile.registry &&
+        qa_world_body_read(g->services.world, request->attack.projectile, &body, NULL);
+    if (has_origin) {
+        origin = qa_vec_add(body.origin,
+                            qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), 0.5f));
+    } else {
+        qa_linked_body linked;
+        qa_actor_id inflictor = request->attack.inflictor;
+        bool world = g->services.physics
+                         ? qa_actor_id_equal(inflictor, g->services.physics->world_actor)
+                         : q1_classnamed(g, inflictor, "worldspawn");
+        has_origin =
+            inflictor.registry && !world && qa_world_linked(g->services.world, inflictor, &linked);
+        if (has_origin)
+            origin = qa_vec_scale(
+                qa_vec_add(linked.absolute_bounds.mins, linked.absolute_bounds.maxs), 0.5f);
+    }
+    bool has_momentum =
+        has_origin && qa_world_body_read(g->services.world, request->target, &body, NULL);
     *out = (qa_combat_context){
         .armor.alive = target->health > 0,
         .game.q1 = {.quad = player && player->power_expires[QA_Q1_QUAD] > g->time,
-                    .walk = has_physics && (physics.motion == QA_PHYSICS_STEP ||
-                                            (physics.flags & QA_PHYSICS_PLAYER)),
+                    .walk = walk,
+                    .has_momentum_direction = has_momentum,
+                    .momentum_direction = has_momentum
+                                              ? qa_vec_normalize(qa_vec_sub(body.origin, origin))
+                                              : qa_v3(0, 0, 0),
                     .teamplay = g->options.teamplay}};
     return true;
 }
@@ -607,6 +630,17 @@ bool q1_damage(qa_q1_game *g, qa_actor_id target, qa_actor_id inflictor, qa_acto
                            attack.cause.kind == QA_CAUSE_Q1 ? attack.cause.source.q1.death_type : 0,
                            error);
 }
+static void damage_geometry(qa_q1_game *g, qa_damage_request *request) {
+    qa_body_state source, target;
+    request->point = qa_world_body_read(g->services.world, request->target, &target, NULL)
+                         ? target.origin
+                         : qa_v3(0, 0, 0);
+    request->direction =
+        qa_world_body_read(g->services.world, request->attack.inflictor, &source, NULL)
+            ? qa_vec_normalize(qa_vec_sub(request->point, source.origin))
+            : qa_v3(0, 0, 0);
+    request->knockback = request->amount;
+}
 bool q1_damage_typed(qa_q1_game *g, qa_actor_id target, qa_actor_id inflictor, qa_actor_id attacker,
                      float amount, qa_q1_weapon weapon, qa_q1_armor_effect armor,
                      qa_string_id death_type, qa_error *error) {
@@ -620,12 +654,7 @@ bool q1_damage_typed(qa_q1_game *g, qa_actor_id target, qa_actor_id inflictor, q
         return false;
     if (g->host.combat_provider)
         request.attack.combat_provider = g->host.combat_provider(g->host.context, target);
-    qa_body_state from, to;
-    if (qa_world_body_read(g->services.world, inflictor, &from, NULL) &&
-        qa_world_body_read(g->services.world, target, &to, NULL)) {
-        request.direction = qa_vec_sub(to.origin, from.origin);
-        request.point = to.origin;
-    }
+    damage_geometry(g, &request);
     qa_damage_outcome outcome = {0};
     bool ok = qa_combat_apply(g->services.combat, &request, &outcome, error);
     qa_damage_outcome_free(&outcome);
@@ -647,6 +676,7 @@ static bool radius_prepare(void *context, qa_damage_request *request, bool *allo
     qa_q1_game *g = context;
     if (g->host.combat_provider)
         request->attack.combat_provider = g->host.combat_provider(g->host.context, request->target);
+    damage_geometry(g, request);
     return qa_attack_next(&g->attack_sequence, &request->attack, error);
 }
 bool q1_radius(qa_q1_game *g, qa_actor_id inflictor, qa_actor_id attacker, float amount,
@@ -664,6 +694,7 @@ bool q1_radius_typed(qa_q1_game *g, qa_actor_id inflictor, qa_actor_id attacker,
                                 .damage = amount,
                                 .distance_scale = 0.5f,
                                 .self_scale = 0.5f,
+                                .knockback_scale = 1,
                                 .ignore = ignore,
                                 .visibility_pass = inflictor,
                                 .trace = qa_collision_default_policy(QA_COLLISION_Q1),
@@ -675,7 +706,15 @@ bool q1_radius_typed(qa_q1_game *g, qa_actor_id inflictor, qa_actor_id attacker,
     if (cause &&
         !qa_builtin_resource(&g->services, cause, &radius.attack.cause.source.q1.death_type, error))
         return false;
-    return qa_builtin_radius_damage(&g->services, &radius, NULL, error);
+    q1_actor_snapshot *snapshot;
+    if (!q1_snapshot_actors(g, &snapshot, error))
+        return false;
+    radius.has_candidates = true;
+    radius.candidates = snapshot->actors;
+    radius.candidate_count = snapshot->count;
+    bool ok = qa_builtin_radius_damage(&g->services, &radius, NULL, error);
+    snapshot->borrowed = false;
+    return ok;
 }
 bool q1_can_damage(qa_q1_game *g, qa_actor_id target, qa_actor_id from, bool *out,
                    qa_error *error) {
