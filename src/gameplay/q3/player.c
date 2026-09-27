@@ -8,7 +8,7 @@ bool qa_q3_activate_holdable(qa_q3_game *game, qa_actor_id actor, qa_q3_holdable
         (game->options.product == QA_Q3_ARENA && expected > QA_Q3_H_MEDKIT))
         return q3_fail(error, "invalid Q3 holdable activation");
     qa_q3_player_state *player = &entry->state.player;
-    if (player->holdable != expected)
+    if (player->cutscene.active || player->holdable != expected)
         return true;
     qa_combat_state combat;
     if (!qa_combat_read(game->options.services.combat, actor, &combat, error))
@@ -157,15 +157,62 @@ bool qa_q3_player_set_view(qa_q3_game *game, qa_actor_id actor, qa_vec3 angles, 
     entry->state.player.view_height = height;
     return true;
 }
+static int32_t q3_angle_word(float angle) {
+    return (int32_t)((uint32_t)(int32_t)(fmodf(angle, 360) * 65536 / 360) & 65535u);
+}
+static void q3_cutscene_movement(qa_movement_state *state, qa_movement_command *command,
+                                 const qa_q3_cutscene_state *cutscene) {
+    qa_q3_movement_state *movement = &state->data.q3;
+    movement->movement_type = 4;
+    movement->origin = cutscene->origin;
+    movement->velocity = qa_v3(0, 0, 0);
+    movement->view_angles = cutscene->angles;
+    movement->ground = (qa_movement_ground){0};
+    if (!command)
+        return;
+    const float angles[3] = {cutscene->angles.x, cutscene->angles.y, cutscene->angles.z};
+    command->buttons = 0;
+    command->forward_move = command->side_move = command->up_move = 0;
+    for (size_t i = 0; i < 3; ++i)
+        command->angle_words[i] =
+            (int32_t)(((uint32_t)q3_angle_word(angles[i]) -
+                       (uint32_t)movement->delta_angle_words[i]) &
+                      65535u);
+}
+bool qa_q3_character_cutscene(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin,
+                              qa_vec3 angles, qa_vec3 view_offset, qa_error *error) {
+    q3_actor *entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER ||
+        !(entry->state.player.selections & QA_Q3_CHARACTER) || !qa_vec_finite(origin) ||
+        !qa_vec_finite(angles) || !qa_vec_finite(view_offset))
+        return q3_fail(error, "invalid Q3 cutscene player state");
+    qa_q3_cutscene_state cutscene = {
+        .origin = origin, .angles = angles, .view_offset = view_offset, .active = true};
+    entry->state.player.cutscene = cutscene;
+    entry->state.player.view_angles = angles;
+    entry->state.player.view_height = view_offset.z;
+    entry->state.player.ground_entity_number = 1023;
+    entry->state.player.noclip = false;
+    entry->state.player.gauntlet_contact = false;
+    return true;
+}
+bool qa_q3_character_cutscene_clear(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+    q3_actor *entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER ||
+        !(entry->state.player.selections & QA_Q3_CHARACTER))
+        return q3_fail(error, "invalid Q3 cutscene player clear");
+    entry->state.player.cutscene = (qa_q3_cutscene_state){0};
+    return true;
+}
 void q3_force_view(qa_q3_player_state *player, qa_vec3 angles, int32_t lock_ms) {
     player->view_angles = angles;
     player->ground_entity_number = 1023;
     player->delta_pitch_word =
-        ((int32_t)(fmodf(angles.x, 360) * 65536 / 360) & 65535) - player->last_command_angles[0];
+        q3_angle_word(angles.x) - player->last_command_angles[0];
     player->delta_yaw_word =
-        ((int32_t)(fmodf(angles.y, 360) * 65536 / 360) & 65535) - player->last_command_angles[1];
+        q3_angle_word(angles.y) - player->last_command_angles[1];
     player->delta_roll_word =
-        ((int32_t)(fmodf(angles.z, 360) * 65536 / 360) & 65535) - player->last_command_angles[2];
+        q3_angle_word(angles.z) - player->last_command_angles[2];
     ++player->teleport_revision;
     player->teleport_lock_ms = lock_ms;
 }
@@ -183,6 +230,9 @@ bool q3_player_state_valid(const qa_q3_player_state *state) {
         !isfinite(state->fractional_weapon_ms) || state->fractional_weapon_ms < 0 ||
         state->fractional_weapon_ms >= 1 || !qa_vec_finite(state->view_angles) ||
         !qa_vec_finite(state->grapple_point) || !isfinite(state->view_height) ||
+        !qa_vec_finite(state->cutscene.origin) || !qa_vec_finite(state->cutscene.angles) ||
+        !qa_vec_finite(state->cutscene.view_offset) ||
+        (state->cutscene.active && !(state->selections & QA_Q3_CHARACTER)) ||
         !qa_vec_finite(state->damage_from) || !isfinite(state->damage_blood) ||
         !isfinite(state->damage_armor) || !isfinite(state->damage_knockback) ||
         !state->selections || (state->selections & ~(uint32_t)QA_Q3_ALL_SELECTIONS))
@@ -330,6 +380,7 @@ bool qa_q3_spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_state
     player->max_health = player->handicap;
     player->view_angles = spawn->angles;
     player->view_height = 26;
+    player->cutscene = (qa_q3_cutscene_state){0};
     if (!(player->selections & QA_Q3_CHARACTER) && game->options.services.actor_traits) {
         qa_builtin_actor_traits traits = {0};
         if (game->options.services.actor_traits(game->options.services.context, actor, &traits)) {
@@ -460,6 +511,8 @@ bool qa_q3_arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_control
         elapsed_ms < 0 || elapsed_ms > INT_MAX - 1024.0f)
         return q3_fail(error, "invalid Q3 arsenal command");
     qa_q3_player_state *player = &entry->state.player;
+    if (player->cutscene.active)
+        return true;
     bool attack = command->attack, use = command->use_holdable;
     qa_combat_state combat;
     if (!qa_combat_read(game->options.services.combat, actor, &combat, error))
@@ -940,12 +993,19 @@ bool qa_q3_movement_environment(qa_q3_game *game, qa_actor_id actor, qa_movement
     qa_combat_state combat;
     if (!qa_combat_read(game->options.services.combat, actor, &combat, error))
         return false;
-    qa_q3_player_state *p = &entry->state.player;
     out->health = combat.health;
+    entry = q3_actor_get(game, actor);
+    if (!entry)
+        return true;
+    qa_q3_player_state *p = &entry->state.player;
     out->flight = p->powerups[QA_Q3_P_FLIGHT] != 0;
     out->haste = p->persistent != QA_Q3_P_SCOUT && p->powerups[QA_Q3_P_HASTE] != 0;
     out->invulnerable = p->invulnerability_until > game->now_ms;
     out->speed_multiplier = p->persistent == QA_Q3_P_SCOUT ? 1.5f : 1;
+    if (p->cutscene.active) {
+        out->has_mode = true;
+        out->mode = QA_MOVEMENT_MODE_FREEZE;
+    }
     if (out->invulnerable) {
         out->fixed_pose = out->fixed_crouched = true;
         out->pose = (qa_movement_posture){
@@ -964,7 +1024,7 @@ bool qa_q3_prepare_movement(qa_q3_game *game, qa_actor_id actor, qa_movement_inp
         return q3_fail(error, "invalid Q3 movement input");
     qa_q3_player_state *player = &entry->state.player;
     player->gauntlet_contact = false;
-    if (!input->prediction && input->command.kind == QA_MOVEMENT_Q3 &&
+    if (!player->cutscene.active && !input->prediction && input->command.kind == QA_MOVEMENT_Q3 &&
         player->weapon == QA_Q3_W_GAUNTLET && !(input->command.buttons & 2u) &&
         (input->command.buttons & 1u) && player->weapon_time_ms <= 0) {
         bool hit = false;
@@ -985,7 +1045,17 @@ bool qa_q3_prepare_movement(qa_q3_game *game, qa_actor_id actor, qa_movement_inp
                                             .view_height = -16};
     }
     input->invulnerability_bounds = (qa_bounds){qa_v3(-42, -42, -42), qa_v3(42, 42, 42)};
-    return qa_q3_movement_environment(game, actor, &input->environment, error);
+    if (!qa_q3_movement_environment(game, actor, &input->environment, error))
+        return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry)
+        return true;
+    player = &entry->state.player;
+    if (player->cutscene.active && input->state.kind == QA_MOVEMENT_Q3) {
+        q3_cutscene_movement(&input->state, &input->command, &player->cutscene);
+        input->view_offset = player->cutscene.view_offset;
+    }
+    return true;
 }
 static bool expand_invulnerability(qa_q3_game *game, qa_actor_id actor, qa_q3_player_state *player,
                                    qa_error *error) {
@@ -1022,6 +1092,11 @@ qa_movement_control qa_q3_movement_phase(void *context, qa_movement_phase phase,
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return QA_MOVEMENT_CONTINUE;
     qa_q3_player_state *p = &entry->state.player;
+    if (p->cutscene.active) {
+        if (call->state->kind == QA_MOVEMENT_Q3)
+            q3_cutscene_movement(call->state, call->command, &p->cutscene);
+        return QA_MOVEMENT_CONTINUE;
+    }
     if (phase == QA_MOVE_INPUT_BEGIN) {
         p->last_command_ms = game->now_ms;
         if (call->command->kind == QA_MOVEMENT_Q3)
@@ -1129,6 +1204,8 @@ qa_movement_control qa_q3_movement_effect(void *context, const qa_movement_effec
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return QA_MOVEMENT_CONTINUE;
     qa_q3_player_state *p = &entry->state.player;
+    if (p->cutscene.active)
+        return QA_MOVEMENT_CONTINUE;
     if (effect->kind == QA_MOVE_EFFECT_EVENT && call->state->kind == QA_MOVEMENT_Q3) {
         if (!q3_player_event(game, call->actor, effect->value, effect->parameter, error))
             return QA_MOVEMENT_ERROR;

@@ -91,6 +91,10 @@ typedef enum qa_q3_external_slot {
     QA_Q3_SLOT_HOLSTERED,
     QA_Q3_SLOT_RESUME_REQUESTED
 } qa_q3_external_slot;
+typedef struct qa_q3_cutscene_state {
+    qa_vec3 origin, angles, view_offset;
+    bool active;
+} qa_q3_cutscene_state;
 typedef struct qa_q3_player_state {
     uint32_t selections, flags, event_sequence, spawn_count;
     qa_q3_weapon weapon, requested_weapon;
@@ -117,6 +121,7 @@ typedef struct qa_q3_player_state {
     qa_string_id loop_sound;
     float fractional_weapon_ms, view_height;
     qa_vec3 view_angles, grapple_point;
+    qa_q3_cutscene_state cutscene;
     qa_actor_id hook, attached_mine, persistent_item, portal;
     bool spectator, dead, gibbed, respawned, use_item_held, fire_held, grapple_pull;
     bool damage_from_world, noclip, invulnerability_expanded, death_cleanup_done, gauntlet_contact;
@@ -183,6 +188,12 @@ bool qa_q3_bind_player_rollback(qa_q3_game *, qa_q3_player_binding *, qa_error *
 bool qa_q3_player_read(const qa_q3_game *, qa_actor_id, qa_q3_player_state *);
 bool qa_q3_player_set_view(qa_q3_game *, qa_actor_id, qa_vec3 angles, float view_height,
                            qa_error *);
+/* Private character presentation and input suppression only. The application
+ * mutates the independently selected movement family plus the shared body,
+ * combat traits, link and motion discontinuity. A player spawn clears this. */
+bool qa_q3_character_cutscene(qa_q3_game *, qa_actor_id, qa_vec3 origin, qa_vec3 angles,
+                              qa_vec3 view_offset, qa_error *);
+bool qa_q3_character_cutscene_clear(qa_q3_game *, qa_actor_id, qa_error *);
 bool qa_q3_actor_traits(const qa_q3_game *, qa_actor_id, qa_builtin_actor_traits *);
 bool qa_q3_player_restore(qa_q3_game *, qa_actor_id, const qa_q3_player_state *, qa_error *);
 bool qa_q3_spawn_player(qa_q3_game *, qa_actor_id, const qa_body_state *, qa_team_id, qa_error *);
