@@ -19,6 +19,10 @@ counter_stop must preserve its original starter. The author reviewed existing
 map callbacks for their explicit assignments. A native touch-disabled flag also
 preserves remove_touch's effect for non-map actors and native clones.
 
+A subsequent author review found that usekey's omitted donor sound channel means
+voice (`entity-services.ts`), not automatic channel zero. Both failure and success
+sounds were corrected to channel 2 after root checked that default.
+
 Source checks only: no compilation, parser execution, tests or gameplay. Complete
 Q1 authored hazards/rotation/Rogue behavior, private continuation codecs and
 application integration remain open under the original B10/B13 requirements.

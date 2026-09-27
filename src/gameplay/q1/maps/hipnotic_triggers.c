@@ -92,7 +92,7 @@ static bool use_key(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_e
                                            world_type == 2   ? "doors/basetry.wav"
                                            : world_type == 1 ? "doors/runetry.wav"
                                                              : "doors/medtry.wav",
-                                           0, 1, error);
+                                           2, 1, error);
     }
     entity->map->touch_enabled = entity->map->use_enabled = false;
     entity->message = QA_STRING_NONE;
@@ -101,7 +101,7 @@ static bool use_key(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_e
                   world_type == 2   ? "doors/baseuse.wav"
                   : world_type == 1 ? "doors/runeuse.wav"
                                     : "doors/meduse.wav",
-                  0, 1, error))
+                  2, 1, error))
         return false;
     entity = trigger(g, id);
     return !entity || q1_map_targets(g, entity, activator, error);
