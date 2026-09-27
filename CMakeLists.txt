@@ -144,6 +144,26 @@ add_library(qa_movement STATIC
     src/movement/q3/slide.c)
 target_link_libraries(qa_movement PUBLIC qa_session)
 
+add_library(qa_builtin STATIC
+    src/gameplay/builtin/services.c
+    src/gameplay/builtin/random.c
+    src/gameplay/builtin/attacks.c)
+target_link_libraries(qa_builtin PUBLIC qa_session qa_gameplay qa_movement)
+
+add_library(qa_game_q3 STATIC
+    src/gameplay/q3/game.c
+    src/gameplay/q3/weapons.c
+    src/gameplay/q3/missiles.c
+    src/gameplay/q3/player.c
+    src/gameplay/q3/items.c
+    src/gameplay/q3/holdables.c
+    src/gameplay/q3/movers.c
+    src/gameplay/q3/death.c
+    src/gameplay/q3/feedback.c
+    src/gameplay/q3/view.c
+    src/gameplay/q3/checkpoint.c)
+target_link_libraries(qa_game_q3 PUBLIC qa_builtin)
+
 add_library(qa_audio STATIC
     src/audio/bank.c
     src/audio/codecs.c

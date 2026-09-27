@@ -1,0 +1,421 @@
+#include "internal.h"
+
+typedef struct q3_attack_geometry {
+    qa_vec3 muzzle, forward, right, up;
+    float factor;
+} q3_attack_geometry;
+static bool attack_geometry(qa_q3_game *game, qa_actor_id actor, q3_attack_geometry *out,
+                            qa_error *error) {
+    q3_actor *entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return q3_fail(error, "Q3 weapon requires an admitted player");
+    qa_body_state body;
+    if (!qa_world_body_read(game->options.services.world, actor, &body, error))
+        return false;
+    qa_q3_player_state *player = &entry->state.player;
+    qa_builtin_angle_vectors(player->view_angles, &out->forward, &out->right, &out->up);
+    out->muzzle = qa_vec_add(body.origin, qa_v3(0, 0, player->view_height));
+    out->muzzle = qa_physics_q3_snap(qa_vec_add(out->muzzle, qa_vec_scale(out->forward, 14)));
+    out->factor = q3_damage_factor(game, player);
+    return true;
+}
+static bool target_state(qa_q3_game *game, qa_actor_id actor, qa_combat_state *state) {
+    qa_error ignored = {0};
+    return qa_actors_get(qa_session_actors(game->options.services.session), actor) &&
+           qa_combat_read(game->options.services.combat, actor, state, &ignored) &&
+           state->can_take_damage;
+}
+static bool player_target(qa_q3_game *game, qa_actor_id actor) { return q3_is_player(game, actor); }
+bool q3_invulnerability(qa_q3_game *game, qa_actor_id actor, qa_vec3 direction, qa_vec3 point,
+                        qa_vec3 *impact, qa_vec3 *normal, bool *hit, qa_error *error) {
+    *hit = false;
+    const q3_actor *entry = q3_actor_const(game, actor);
+    if (game->options.product != QA_Q3_TEAM_ARENA || !entry || entry->kind != Q3_ACTOR_PLAYER ||
+        entry->state.player.invulnerability_until <= game->now_ms)
+        return true;
+    qa_body_state body;
+    if (!qa_world_body_read(game->options.services.world, actor, &body, error))
+        return false;
+    qa_vec3 backwards = qa_vec_scale(qa_vec_normalize(direction), -1);
+    qa_vec3 offset = qa_vec_sub(point, body.origin);
+    float b = 2 * qa_vec_dot(backwards, offset), c = qa_vec_dot(offset, offset) - 42 * 42;
+    float discriminant = b * b - 4 * c;
+    if (discriminant < 0)
+        return true;
+    *impact = qa_vec_add(point, qa_vec_scale(backwards, (-b + sqrtf(discriminant)) * 0.5f));
+    *normal = qa_vec_normalize(qa_vec_sub(*impact, body.origin));
+    *hit = true;
+    return q3_event(game, actor, (qa_actor_id){0}, QA_BUILTIN_IMPACT, 71, 0, body.origin, *impact,
+                    *normal, error);
+}
+static bool shielded(qa_q3_game *game, qa_actor_id actor) {
+    const q3_actor *entry = q3_actor_const(game, actor);
+    return game->options.product == QA_Q3_TEAM_ARENA && entry && entry->kind == Q3_ACTOR_PLAYER &&
+           entry->state.player.invulnerability_until > game->now_ms;
+}
+static qa_vec3 reflected_end(qa_vec3 start, qa_vec3 point, qa_vec3 normal) {
+    qa_vec3 incoming = qa_vec_sub(point, start);
+    qa_vec3 reflected =
+        qa_vec_sub(incoming, qa_vec_scale(normal, 2 * qa_vec_dot(incoming, normal)));
+    return qa_vec_add(point, qa_vec_scale(qa_vec_normalize(reflected), 8192));
+}
+static bool impact_event(qa_q3_game *game, qa_actor_id shooter, qa_q3_weapon weapon,
+                         const qa_trace_result *trace, qa_vec3 point, bool bullet,
+                         qa_error *error) {
+    qa_combat_state state;
+    bool flesh = trace->hit == QA_TRACE_HIT_ACTOR && target_state(game, trace->actor, &state) &&
+                 player_target(game, trace->actor);
+    uint8_t normal = 0;
+    (void)qa_normal_byte(trace->contact_plane.normal, &normal);
+    int32_t code = bullet ? (flesh ? 48 : 49) : (flesh ? 50 : 51);
+    return q3_event(game, shooter, trace->actor, QA_BUILTIN_IMPACT, code,
+                    flesh ? q3_entity_number(game, trace->actor) : (int32_t)normal, point,
+                    qa_v3((float)weapon, 0, 0), trace->contact_plane.normal, error);
+}
+static bool bullet(qa_q3_game *game, qa_actor_id shooter, qa_q3_weapon weapon,
+                   q3_attack_geometry attack, float spread, float damage, qa_error *error) {
+    float angle = q3_random(game) * Q3_PI * 2;
+    float vertical = sinf(angle) * q3_crandom(game) * spread * 16;
+    float horizontal = cosf(angle) * q3_crandom(game) * spread * 16;
+    qa_vec3 end =
+        qa_vec_add(qa_vec_add(qa_vec_add(attack.muzzle, qa_vec_scale(attack.forward, 131072)),
+                              qa_vec_scale(attack.right, horizontal)),
+                   qa_vec_scale(attack.up, vertical));
+    qa_actor_id pass = shooter;
+    for (unsigned i = 0; i < 10; ++i) {
+        qa_trace_result trace;
+        if (!q3_trace(game, attack.muzzle, end, pass, Q3_MASK_SHOT, &trace, error))
+            return false;
+        if (trace.surface_flags & Q3_SURF_NOIMPACT)
+            return true;
+        qa_vec3 point = qa_physics_q3_snap_towards(trace.end, attack.muzzle);
+        qa_combat_state target;
+        bool damageable =
+            trace.hit == QA_TRACE_HIT_ACTOR && target_state(game, trace.actor, &target);
+        if (!impact_event(game, shooter, weapon, &trace, point, true, error))
+            return false;
+        if (!qa_actors_get(qa_session_actors(game->options.services.session), shooter))
+            return true;
+        if (damageable && q3_accuracy(game, trace.actor, shooter))
+            q3_credit_accuracy(game, shooter);
+        if (!damageable)
+            break;
+        if (shielded(game, trace.actor)) {
+            qa_vec3 impact, normal;
+            bool hit;
+            if (!q3_invulnerability(game, trace.actor, attack.forward, point, &impact, &normal,
+                                    &hit, error))
+                return false;
+            if (hit) {
+                end = reflected_end(attack.muzzle, impact, normal);
+                attack.muzzle = impact;
+                pass = (qa_actor_id){0};
+            } else {
+                attack.muzzle = point;
+                pass = trace.actor;
+            }
+            continue;
+        }
+        return q3_damage(game, trace.actor, shooter, shooter, weapon, 3, 0,
+                         truncf(damage * attack.factor), attack.forward, point, false, NULL, error);
+    }
+    return true;
+}
+bool q3_gauntlet(qa_q3_game *game, qa_actor_id shooter, bool *hit, qa_error *error) {
+    *hit = false;
+    q3_attack_geometry attack;
+    if (!attack_geometry(game, shooter, &attack, error))
+        return false;
+    qa_trace_result trace;
+    if (!q3_trace(game, attack.muzzle, qa_vec_add(attack.muzzle, qa_vec_scale(attack.forward, 32)),
+                  shooter, Q3_MASK_SHOT, &trace, error))
+        return false;
+    qa_combat_state state;
+    if ((trace.surface_flags & Q3_SURF_NOIMPACT) || trace.hit != QA_TRACE_HIT_ACTOR ||
+        !target_state(game, trace.actor, &state))
+        return true;
+    *hit = true;
+    if (player_target(game, trace.actor) &&
+        !impact_event(game, shooter, QA_Q3_W_GAUNTLET, &trace, trace.end, false, error))
+        return false;
+    q3_actor *entry = q3_actor_get(game, shooter);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
+    if (entry->state.player.powerups[QA_Q3_P_QUAD] && !q3_player_event(game, shooter, 61, 0, error))
+        return false;
+    return q3_damage(game, trace.actor, shooter, shooter, QA_Q3_W_GAUNTLET, 2, 0,
+                     truncf(50 * attack.factor), attack.forward, trace.end, false, NULL, error);
+}
+static bool lightning(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry attack,
+                      qa_error *error) {
+    qa_actor_id pass = shooter;
+    for (unsigned i = 0; i < 10; ++i) {
+        qa_trace_result trace;
+        if (!q3_trace(game, attack.muzzle,
+                      qa_vec_add(attack.muzzle, qa_vec_scale(attack.forward, 768)), pass,
+                      Q3_MASK_SHOT, &trace, error))
+            return false;
+        if (i && !q3_event(game, shooter, (qa_actor_id){0}, QA_BUILTIN_BEAM, 73, 0, attack.muzzle,
+                           qa_physics_q3_snap(trace.end), qa_v3(0, 0, 0), error))
+            return false;
+        if (trace.hit == QA_TRACE_HIT_NONE)
+            return true;
+        qa_combat_state state;
+        if (trace.hit == QA_TRACE_HIT_ACTOR && target_state(game, trace.actor, &state)) {
+            if (shielded(game, trace.actor)) {
+                qa_vec3 impact, normal;
+                bool hit;
+                if (!q3_invulnerability(game, trace.actor, attack.forward, trace.end, &impact,
+                                        &normal, &hit, error))
+                    return false;
+                if (hit) {
+                    qa_vec3 end = reflected_end(attack.muzzle, impact, normal);
+                    attack.muzzle = impact;
+                    attack.forward = qa_vec_normalize(qa_vec_sub(end, impact));
+                    pass = (qa_actor_id){0};
+                } else {
+                    attack.muzzle = trace.end;
+                    pass = trace.actor;
+                }
+                continue;
+            }
+            if (!q3_damage(game, trace.actor, shooter, shooter, QA_Q3_W_LIGHTNING, 11, 0,
+                           truncf(8 * attack.factor), attack.forward, trace.end, false, NULL,
+                           error))
+                return false;
+        }
+        if (!(trace.surface_flags & Q3_SURF_NOIMPACT) &&
+            !impact_event(game, shooter, QA_Q3_W_LIGHTNING, &trace, trace.end, false, error))
+            return false;
+        if (q3_accuracy(game, trace.actor, shooter))
+            q3_credit_accuracy(game, shooter);
+        break;
+    }
+    return true;
+}
+static qa_vec3 perpendicular(qa_vec3 direction) {
+    qa_vec3 axis = qa_v3(1, 0, 0);
+    float smallest = fabsf(direction.x);
+    if (fabsf(direction.y) < smallest) {
+        axis = qa_v3(0, 1, 0);
+        smallest = fabsf(direction.y);
+    }
+    if (fabsf(direction.z) < smallest)
+        axis = qa_v3(0, 0, 1);
+    return qa_vec_normalize(qa_vec_sub(axis, qa_vec_scale(direction, qa_vec_dot(axis, direction))));
+}
+static float seeded_crandom(uint32_t *seed) {
+    *seed = *seed * UINT32_C(69069) + 1;
+    return 2.0f * ((float)(*seed & 65535u) / 65536.0f - 0.5f);
+}
+static bool shotgun(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry attack,
+                    qa_error *error) {
+    qa_vec3 direction = qa_physics_q3_snap(qa_vec_scale(attack.forward, 4096));
+    uint32_t seed = q3_rand(game) & 255u;
+    if (!q3_event(game, shooter, (qa_actor_id){0}, QA_BUILTIN_SHOT, 54, (int32_t)seed,
+                  attack.muzzle, direction, qa_v3(0, 0, 0), error))
+        return false;
+    qa_vec3 forward = qa_vec_normalize(direction), right = perpendicular(forward),
+            up = qa_vec_cross(forward, right);
+    bool credited = false;
+    for (unsigned pellet = 0; pellet < 11; ++pellet) {
+        if (!q3_actor_get(game, shooter))
+            break;
+        float horizontal = seeded_crandom(&seed) * 700 * 16;
+        float vertical = seeded_crandom(&seed) * 700 * 16;
+        qa_vec3 start = attack.muzzle;
+        qa_vec3 end = qa_vec_add(qa_vec_add(qa_vec_add(start, qa_vec_scale(forward, 131072)),
+                                            qa_vec_scale(right, horizontal)),
+                                 qa_vec_scale(up, vertical));
+        qa_actor_id pass = shooter;
+        for (unsigned reflection = 0; reflection < 10; ++reflection) {
+            qa_trace_result trace;
+            if (!q3_trace(game, start, end, pass, Q3_MASK_SHOT, &trace, error))
+                return false;
+            qa_combat_state state;
+            if ((trace.surface_flags & Q3_SURF_NOIMPACT) || trace.hit != QA_TRACE_HIT_ACTOR ||
+                !target_state(game, trace.actor, &state))
+                break;
+            if (shielded(game, trace.actor)) {
+                qa_vec3 impact, normal;
+                bool hit;
+                if (!q3_invulnerability(game, trace.actor, attack.forward, trace.end, &impact,
+                                        &normal, &hit, error))
+                    return false;
+                if (hit) {
+                    end = reflected_end(start, impact, normal);
+                    start = impact;
+                    pass = (qa_actor_id){0};
+                } else {
+                    start = trace.end;
+                    pass = trace.actor;
+                }
+                continue;
+            }
+            if (!q3_damage(game, trace.actor, shooter, shooter, QA_Q3_W_SHOTGUN, 1, 0,
+                           truncf(10 * attack.factor), attack.forward, trace.end, false, NULL,
+                           error))
+                return false;
+            if (!credited && q3_accuracy(game, trace.actor, shooter)) {
+                q3_credit_accuracy(game, shooter);
+                credited = true;
+            }
+            break;
+        }
+    }
+    return true;
+}
+static bool rail(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry attack,
+                 qa_error *error) {
+    qa_actor_id removed[4];
+    size_t removed_count = 0;
+    qa_vec3 end = qa_vec_add(attack.muzzle, qa_vec_scale(attack.forward, 8192));
+    qa_actor_id pass = shooter;
+    qa_trace_result trace = {0};
+    int hits = 0;
+    bool ok = true, traced = false;
+    for (unsigned i = 0; i < 4 && q3_actor_get(game, shooter); ++i) {
+        if (!q3_trace(game, attack.muzzle, end, pass, Q3_MASK_SHOT, &trace, error)) {
+            ok = false;
+            break;
+        }
+        traced = true;
+        if (trace.hit != QA_TRACE_HIT_ACTOR)
+            break;
+        qa_combat_state state;
+        if (target_state(game, trace.actor, &state)) {
+            if (shielded(game, trace.actor)) {
+                qa_vec3 impact, normal;
+                bool hit;
+                if (!q3_invulnerability(game, trace.actor, attack.forward, trace.end, &impact,
+                                        &normal, &hit, error)) {
+                    ok = false;
+                    break;
+                }
+                if (hit) {
+                    end = reflected_end(attack.muzzle, impact, normal);
+                    qa_vec3 start =
+                        qa_vec_add(qa_vec_add(attack.muzzle, qa_vec_scale(attack.right, 4)),
+                                   qa_vec_scale(attack.up, -1));
+                    if (!q3_event(game, shooter, (qa_actor_id){0}, QA_BUILTIN_BEAM, 53, 255,
+                                  qa_physics_q3_snap_towards(trace.end, attack.muzzle), start,
+                                  qa_v3(0, 0, 0), error)) {
+                        ok = false;
+                        break;
+                    }
+                    attack.muzzle = impact;
+                    pass = (qa_actor_id){0};
+                }
+            } else {
+                if (q3_accuracy(game, trace.actor, shooter))
+                    ++hits;
+                if (!q3_damage(game, trace.actor, shooter, shooter, QA_Q3_W_RAIL, 10, 0,
+                               truncf(100 * attack.factor), attack.forward, trace.end, false, NULL,
+                               error)) {
+                    ok = false;
+                    break;
+                }
+            }
+        }
+        if (trace.contents & 1)
+            break;
+        if (qa_actors_get(qa_session_actors(game->options.services.session), trace.actor)) {
+            if (!qa_world_suspend_collision(game->options.services.world, trace.actor, error)) {
+                ok = false;
+                break;
+            }
+            removed[removed_count++] = trace.actor;
+        }
+    }
+    for (size_t i = 0; i < removed_count; ++i) {
+        if (!qa_actors_get(qa_session_actors(game->options.services.session), removed[i]))
+            continue;
+        qa_error restore_error = {0};
+        if (!qa_world_link(game->options.services.world, removed[i], NULL, &restore_error) && ok) {
+            ok = false;
+            if (error)
+                *error = restore_error;
+        }
+    }
+    if (!ok)
+        return false;
+    if (traced) {
+        uint8_t normal = 0;
+        (void)qa_normal_byte(trace.contact_plane.normal, &normal);
+        qa_vec3 start = qa_vec_add(qa_vec_add(attack.muzzle, qa_vec_scale(attack.right, 4)),
+                                   qa_vec_scale(attack.up, -1));
+        if (!q3_event(game, shooter, (qa_actor_id){0}, QA_BUILTIN_BEAM, 53,
+                      trace.surface_flags & Q3_SURF_NOIMPACT ? 255 : normal,
+                      qa_physics_q3_snap_towards(trace.end, attack.muzzle), start,
+                      trace.contact_plane.normal, error))
+            return false;
+    }
+    q3_actor *entry = q3_actor_get(game, shooter);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
+    qa_q3_player_state *player = &entry->state.player;
+    if (!hits)
+        player->rail_streak = 0;
+    else {
+        player->rail_streak = q3_add_time(player->rail_streak, hits);
+        player->accuracy_hits = q3_add_time(player->accuracy_hits, 1);
+        if (player->rail_streak >= 2) {
+            player->rail_streak -= 2;
+            player->impressive_count = q3_add_time(player->impressive_count, 1);
+            player->flags = (player->flags & ~UINT32_C(0x38848)) | 0x8000u;
+            player->reward_until = q3_add_time(game->now_ms, 2000);
+        }
+    }
+    return true;
+}
+bool qa_q3_fire_weapon(qa_q3_game *game, qa_actor_id shooter, qa_q3_weapon weapon,
+                       qa_error *error) {
+    if (!game || weapon < QA_Q3_W_NONE || weapon >= QA_Q3_WEAPON_COUNT ||
+        (game->options.product == QA_Q3_ARENA && weapon > QA_Q3_W_GRAPPLE))
+        return q3_fail(error, "weapon outside selected Q3 product");
+    q3_attack_geometry attack;
+    if (!attack_geometry(game, shooter, &attack, error))
+        return false;
+    q3_actor *entry = q3_actor_get(game, shooter);
+    if (weapon != QA_Q3_W_GAUNTLET && weapon != QA_Q3_W_GRAPPLE)
+        entry->state.player.accuracy_shots =
+            q3_add_time(entry->state.player.accuracy_shots, weapon == QA_Q3_W_NAIL ? 15 : 1);
+    switch (weapon) {
+    case QA_Q3_W_NONE:
+    case QA_Q3_W_GAUNTLET:
+        return true;
+    case QA_Q3_W_MACHINEGUN:
+        return bullet(game, shooter, weapon, attack, 200,
+                      game->options.rules.game_type == 3 ? 5 : 7, error);
+    case QA_Q3_W_CHAINGUN:
+        return bullet(game, shooter, weapon, attack, 600, 7, error);
+    case QA_Q3_W_SHOTGUN:
+        return shotgun(game, shooter, attack, error);
+    case QA_Q3_W_LIGHTNING:
+        return lightning(game, shooter, attack, error);
+    case QA_Q3_W_RAIL:
+        return rail(game, shooter, attack, error);
+    case QA_Q3_W_GRAPPLE:
+        if (entry->state.player.fire_held || entry->state.player.hook.registry)
+            return true;
+        entry->state.player.fire_held = true;
+        break;
+    case QA_Q3_W_GRENADE:
+    case QA_Q3_W_PROX:
+        attack.forward.z += 0.2f;
+        attack.forward = qa_vec_normalize(attack.forward);
+        break;
+    default:
+        break;
+    }
+    unsigned count = weapon == QA_Q3_W_NAIL ? 15u : 1u;
+    for (unsigned i = 0; i < count; ++i) {
+        if (!q3_actor_get(game, shooter))
+            break;
+        qa_actor_id missile;
+        if (!q3_launch(game, shooter, weapon, attack.muzzle, attack.forward, attack.right,
+                       attack.up, attack.factor, &missile, error))
+            return false;
+    }
+    return true;
+}
