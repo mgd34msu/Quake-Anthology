@@ -16,12 +16,12 @@ The ledger API refuses both updates to terminal work and new claims against term
 | B07 | Source correction reviewed | BEFORE/AFTER scheduling and sequence ordering corrected in d728f87; DURING remains at source physics callback sites. Initial incomplete judgment preserved. |
 | B08 | Incomplete | Q1/shared packet received incomplete Jev outcome; application movement ownership remains open. |
 | B09 | Incomplete | Direct Jev comparison incomplete; shared mutation/composition consumers missing. Historical completion is not accepted. |
-| B10 | Correction in progress | Damage8320e03, roster490c6a8, boss/path4a649f2, Hipnotic paths3d1ab17, trains/brushesbc550fa and map-reset/shared-water770187f source-reviewed. Full animation-row review recorded in q1-shared.md; remaining authored mechanisms, continuation saves, and application bindings stay open. |
-| B11 | Correction in progress | Native monster lifecycle4c0c1ee, player/item correctionsba40a9d and independently corrected proboscisb832502 committed. Latest Jev comparison remains incomplete (0.98 probability, criterion0.02). Remaining AI/summons and application bindings stay open. |
+| B10 | Correction in progress | Reviewed source includes Hipnotic spawn/templatesf1de0cf, triggers78b5dea and Rogue pendulum/shared soundc82361f, in addition to earlier boss, player, train and shared-water corrections. Remaining authored mechanisms, continuation saves and application bindings stay open. |
+| B11 | Correction in progress | Native lifecycle4c0c1ee, player/item correctionsba40a9d, proboscisb832502 and retained reinforcements/map lifecycleba1021e committed after bounded independent reviews. Reinforcement foreign-read errors and signed counter overflow corrected. Latest Jev comparison remains incomplete (0.98 probability, criterion0.02); full Medic revival, remaining AI/species and application bindings stay open. |
 | B12 | Correction in progress | Full spatial snapshots, per-target attack identity, item grounding/scheduling, spawn rollback committed df02525. Authored map and item team/use lifecycle in progress. Jev incomplete. |
 | B13 | Incomplete | All three family audit packets identify outstanding authored responsibilities. |
 | B14 | Correction in progress | Per-mode state/object ownership and staged equipment admission committed3d78421 after independent review. Jev still incomplete; application composition and save integration remain open. |
-| B15 | Incomplete | Portable catalog/configuration3432c40, shared publication admissionsd481feb/788ceb5 and configuration teardown3cf1f54 committed after source review. Concrete application ownership/publication remains under implementation. Original Jev incomplete verdict retained. |
+| B15 | Incomplete | Portable catalog/configuration3432c40, shared publication admissionsd481feb/788ceb5, teardown3cf1f54, snapshot-local roles638633d and construction identity56916cf independently source-reviewed. Concrete application ownership/publication and normalized constructor-profile consumer remain under implementation. Original Jev incomplete verdict retained. |
 | B16 | Incomplete | Presentation packet; resource/application integration remains open. Jev selected incomplete. |
 | B17 | Insufficient evidence | Jev did not accept the CPU-renderer packet; its reading and source evidence are retained. |
 | B18 | Source correction reviewed | Retained scene geometry and GL buffer retirement independently reviewed and committed986a9cc. Application consumer missing; Jev incomplete. |
@@ -29,10 +29,10 @@ The ledger API refuses both updates to terminal work and new claims against term
 | B20 | Incomplete | Input/seat packet plus shared Q3 catcher/key/console-field ownership64fdbef. Application routing remains incomplete. Jev selected incomplete. |
 | B21 | Incomplete | Console/settings/text packet and missing application consumers. Jev selected incomplete. |
 | B22 | Incomplete | Full written QC source reviewed; source fixes committed d728f87. Concrete host/composition consumers missing. Direct Jev incomplete. |
-| B23 | Incomplete | Shared ABI01ec076, source-script continuation/codec1cdb424, and Q3 source trace semanticsaa3b3d2 committed. Latest hosted Jev comparison incomplete (0.98 probability, criterion0.06); concrete role and application services still being written. |
-| B24 | Correction in progress | Host ABI layouts/target2a7d5a1 and typed imports/reverse actor retirementaa3b3d2 source-reviewed. Full module continuation and concrete Q3/application consumers remain open. Direct Jev incomplete. |
+| B23 | Incomplete | Shared ABI01ec076, source-script continuation/codec1cdb424, source trace semanticsaa3b3d2 and COM_Parseb98ea10 committed. Six concrete game-host files source-reviewed; a guest write/replacement-actor defect was corrected and reread. Safe foreign guest-slot reservation and remaining role/application services stay open. Latest hosted Jev comparison incomplete (0.98 probability, criterion0.06). |
+| B24 | Correction in progress | Host ABI layouts/target2a7d5a1 and typed imports/reverse actor retirementaa3b3d2 source-reviewed. Native HOST_ONLY checkpoint lacks module heap/data continuation; concrete source evidence in native-module-continuation.md. Full native continuation and Q3/application consumers remain open. Direct Jev incomplete. |
 | B25 | Incomplete | Full existing compatibility source reviewed; actual independent module composition adapters remain missing. Direct Jev incomplete. |
-| B26 | Incomplete | Native actions2c48f23, parser/codec1cdb424 and independently reviewed shared navigation query integration1d901e2 committed. Goal/movement controllers and player-bot integration remain active. Latest Jev continuation comparison incomplete (0.89 probability, criterion0.03). |
+| B26 | Incomplete | Native actions2c48f23, parser/codec1cdb424, shared navigation1d901e2 and shared resource/chat library08ab341 committed after bounded source review. Goal/movement controllers await independent review; runtime, decisions, roster and application work continue. Latest exact chat-source subset judgment incomplete (0.97 probability, criterion0.03), recorded in B26-chat-acceptance.json; it is not a whole-B26 audit. |
 | B27 | Incomplete | All written network bodies reviewed; KEX wrapped ACK and complete retry roster corrections committed657a333. Connected application consumers missing. Direct Jev incomplete. |
 | B28 | Incomplete | Full written protocol/prediction source reviewed; shared application owner remains missing. Direct Jev incomplete. |
 | B29 | Incomplete | Acquisition/browser/admin application workflows remain missing. Direct Jev incomplete. |
@@ -43,3 +43,9 @@ The ledger API refuses both updates to terminal work and new claims against term
 | B34 | Incomplete | Entry still supplies archive/BSP inspection. Concrete application bootstrap, publication, and shared lifetime ownership assigned; full application and packaging remain unfinished. |
 
 An individual source correction does not close its parent task. A task needs sufficient source evidence against its original criteria, independent re-review of its corrections, and the actual Jev judgment. P01 runtime qualification still follows the complete baseline. No project build or executable was run for this register.
+
+Explicit installed Jev progress was recorded at cursor 607, AUDIT revision 10,
+against commit `56916cffeb4cef113a9cb11f97324bafbeca59c9`. Its incidental
+stalled-work check passed; that is not task acceptance. Automatic client hook
+delivery remains unverified. Direct task judgments and their bounded source
+packets remain the evidence for the outcomes above.
