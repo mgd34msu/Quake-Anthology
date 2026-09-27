@@ -4,7 +4,7 @@ bool qa_q3_bind_player(qa_q3_game *game, qa_actor_id actor, uint32_t selections,
                        qa_error *error) {
     if (!game || actor.slot >= game->capacity ||
         !qa_actors_get(qa_session_actors(game->options.services.session), actor) || !selections ||
-        (selections & ~15u))
+        (selections & ~(uint32_t)QA_Q3_ALL_SELECTIONS))
         return q3_fail(error, "invalid Q3 player admission");
     q3_actor *entry = &game->actors[actor.slot];
     if (entry->kind && (!qa_actor_id_equal(entry->actor, actor) || entry->kind != Q3_ACTOR_PLAYER))
@@ -95,7 +95,7 @@ bool q3_player_state_valid(const qa_q3_player_state *state) {
         !qa_vec_finite(state->grapple_point) || !isfinite(state->view_height) ||
         !qa_vec_finite(state->damage_from) || !isfinite(state->damage_blood) ||
         !isfinite(state->damage_armor) || !isfinite(state->damage_knockback) ||
-        !state->selections || (state->selections & ~15u))
+        !state->selections || (state->selections & ~(uint32_t)QA_Q3_ALL_SELECTIONS))
         return false;
     for (size_t i = 0; i < 3; ++i)
         if (state->last_command_angles[i] < 0 || state->last_command_angles[i] > 65535)
@@ -376,7 +376,7 @@ bool qa_q3_arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_control
         return false;
     if (combat.health > 0 && !attack && !use)
         player->respawned = false;
-    if (!attack) {
+    if (!attack && !command->grapple_independent) {
         player->fire_held = false;
         qa_actor_id hook = player->hook;
         if (!command->prediction && q3_actor_get(game, hook) &&

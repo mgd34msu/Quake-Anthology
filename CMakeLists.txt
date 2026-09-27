@@ -29,6 +29,7 @@ find_package(ZLIB REQUIRED)
 find_package(PNG REQUIRED)
 find_package(JPEG REQUIRED)
 find_package(ICU REQUIRED COMPONENTS uc)
+find_package(Freetype REQUIRED)
 find_package(Threads REQUIRED)
 find_package(SDL2 2.0.18 REQUIRED)
 find_package(PkgConfig REQUIRED)
@@ -111,8 +112,17 @@ target_link_libraries(qa_console PUBLIC qa_core)
 add_library(qa_text STATIC
     src/text/localization.c
     src/text/captions.c
-    src/text/media_captions.c)
-target_link_libraries(qa_text PUBLIC qa_content qa_audio)
+    src/text/media_captions.c
+    src/text/font/library.c
+    src/text/font/kfont.c
+    src/text/font/freetype.c
+    src/text/font/q3.c
+    src/text/font/layout.c
+    src/text/font/ui.c
+    src/text/font/world.c
+    src/text/font/console.c)
+target_link_libraries(qa_text PUBLIC qa_content qa_audio qa_scene qa_console
+    PRIVATE Freetype::Freetype)
 
 add_library(qa_qc STATIC
     src/compat/qc/program.c
@@ -172,7 +182,8 @@ target_link_libraries(qa_game_q3 PUBLIC qa_builtin)
 
 add_library(qa_campaign STATIC
     src/campaign/travel.c
-    src/campaign/unit.c)
+    src/campaign/unit.c
+    src/campaign/targets.c)
 target_link_libraries(qa_campaign PUBLIC qa_session)
 
 add_library(qa_audio STATIC

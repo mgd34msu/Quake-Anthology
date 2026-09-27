@@ -74,7 +74,9 @@ typedef enum qa_q3_selection {
     QA_Q3_ARSENAL = 1u << 1,
     QA_Q3_EFFECTS = 1u << 2,
     QA_Q3_COMBAT = 1u << 3,
-    QA_Q3_NATIVE_PLAYER = 15u
+    QA_Q3_EQUIPMENT = 1u << 4,
+    QA_Q3_NATIVE_PLAYER = 15u,
+    QA_Q3_ALL_SELECTIONS = QA_Q3_NATIVE_PLAYER | QA_Q3_EQUIPMENT
 } qa_q3_selection;
 typedef enum qa_q3_weapon_phase {
     QA_Q3_READY,
@@ -172,6 +174,8 @@ typedef struct qa_q3_controls {
     bool attack, use_holdable, prediction;
     bool gauntlet_contact_known, gauntlet_contact;
     qa_q3_weapon requested_weapon;
+    /* Independent equipment owns hook press/release while primary fire is idle. */
+    bool grapple_independent;
 } qa_q3_controls;
 /* Foreign input dialects provide semantic controls here; their button words
  * are never interpreted as Q3 commands. Prediction consumes the same weapon
