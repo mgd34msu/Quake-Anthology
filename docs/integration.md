@@ -33,6 +33,9 @@ These are concrete handoff obligations for the remaining graph nodes. A subsyste
 
 ## Network and compatibility
 
+- QC's interpreter core is integrated, but its engine provider must implement the remaining host builtins, entity spawn/callback dispatch, declared shared combat/inventory/pickup projection, explicit guest composition boundaries, and protocol destinations. Select QW `qwprogs.dat` with `progs.dat` fallback; reserve client slots before dynamic edicts. Forward every actor release. Restore host/provider state after shared actors and world exist; travel creates a fresh instance while retaining source client parms/serverflags. Interpreter support alone does not close B22.
+- Text catalogs and subtitle tracks are immutable shared resources resolved through the requesting VFS. Bind them to private viewing-seat timelines; refresh language/source selection before visiting captions, and use the cinematic or delivered audio clock. Font/layout and application display consumers remain B21/B32/B34 work.
+
 - B28 supplies actual gameplay, snapshots, prediction, and seat ownership to the committed codecs. B29 supplies download/browser/admin consumers, including mDNS port 5353. B30 supplies demo/MVD/GTV/TCP consumers.
 - Re-admission on composition change retains connection identity and seats through `connections_restart`. Restore must update the unified receiver's actor registry and authenticated controlled-actor callback.
 - Q3 connection callbacks must implement clear-active, download-size, and rejected-pure-snapshot behavior. Q2 MVD frame reads require max-client and dummy-slot policy.

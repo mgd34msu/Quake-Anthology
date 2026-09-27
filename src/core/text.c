@@ -6,6 +6,40 @@
 #include <string.h>
 #include <threads.h>
 #include <unicode/ucasemap.h>
+#include <unicode/utf8.h>
+
+bool qa_utf8_repair(qa_bytes input, qa_buffer *out, qa_error *error) {
+    if (!out || (!input.data && input.size) || input.size > INT32_MAX) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid UTF-8 resource input"); return false;
+    }
+    int32_t length = (int32_t)input.size, at = 0;
+    size_t needed = 0;
+    while (at < length) {
+        int32_t begin = at;
+        UChar32 code;
+        U8_NEXT(input.data, at, length, code);
+        size_t count = code < 0 ? 3 : (size_t)(at - begin);
+        if (count >= SIZE_MAX - needed) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "UTF-8 resource size overflow"); return false;
+        }
+        needed += count;
+    }
+    uint8_t *data = malloc(needed + 1);
+    if (!data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating UTF-8 resource text"); return false; }
+    at = 0;
+    size_t written = 0;
+    while (at < length) {
+        int32_t begin = at;
+        UChar32 code;
+        U8_NEXT(input.data, at, length, code);
+        size_t count = code < 0 ? 3 : (size_t)(at - begin);
+        if (code < 0) memcpy(data + written, "\xef\xbf\xbd", 3);
+        else memcpy(data + written, input.data + begin, count);
+        written += count;
+    }
+    data[written] = 0;
+    *out = (qa_buffer){data, written}; return true;
+}
 
 /* Immutable process-lifetime locale shared by parsers and decoding threads.
  * No setlocale calls: menus/localization cannot change asset number parsing. */

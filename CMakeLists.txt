@@ -99,6 +99,20 @@ add_library(qa_console STATIC
     src/console/commands.c)
 target_link_libraries(qa_console PUBLIC qa_core)
 
+add_library(qa_text STATIC
+    src/text/localization.c
+    src/text/captions.c)
+target_link_libraries(qa_text PUBLIC qa_content)
+
+add_library(qa_qc STATIC
+    src/compat/qc/program.c
+    src/compat/qc/memory.c
+    src/compat/qc/machine.c
+    src/compat/qc/builtins.c
+    src/compat/qc/instance.c
+    src/compat/qc/checkpoint.c)
+target_link_libraries(qa_qc PUBLIC qa_session qa_gameplay)
+
 add_library(qa_gameplay STATIC
     src/gameplay/operation.c
     src/gameplay/armor.c
