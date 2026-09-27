@@ -144,6 +144,10 @@ typedef enum qa_damage_effect_stage {
     QA_DAMAGE_LETHAL_HEALTH, QA_DAMAGE_BEFORE_MOMENTUM, QA_DAMAGE_POWER_ALLOWED,
     QA_DAMAGE_AFTER_POWER, QA_DAMAGE_AFTER_HEALTH
 } qa_damage_effect_stage;
+/* *_ALLOWED and PROTECTION_APPLIES use allowed as their gate. BEFORE_HEALTH
+ * receives full pre-armor damage for reflection and may veto health loss;
+ * changing its amount does not repeat absorption. AFTER_POWER/AFTER_ARMOR
+ * transform the remaining amount. Each family retains its source ordering. */
 typedef struct qa_damage_effect { float amount; bool allowed; qa_reaction reaction; } qa_damage_effect;
 typedef struct qa_combat_hooks {
     void *context;

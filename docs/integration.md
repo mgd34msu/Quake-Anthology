@@ -19,6 +19,7 @@ These are concrete handoff obligations for the remaining graph nodes. A subsyste
 - Q2 map setup supplies the source `.mat` surface names from texinfo through shared world loading.
 - B08 still needs original Q1 Quake64 movement. The unsupported branch is unfinished scope.
 - Match roster teams and scores belong to B14. Bind the shared combat team hook to that roster plus the selected friendly-damage policy; disabling LMCTF friendly damage must not remove roster/objective membership. Nonplayer teams use their primary combat traits.
+- Attached mode effects receive armor gates, post-powered-armor transforms, invulnerability applicability and the pre-health reflection/veto boundary in every combat family. Q1 retains its armor gate before both channels; Q2/Q3 gate each channel separately. A health veto keeps already committed armor and momentum changes; Q2/Q3 feedback reports no blood. Configure each selected combat provider's base team flags from the active mode so an earlier family team rejection does not preempt mode reflection. Recheck full actor generations after nested callbacks.
 - Q3 offhand grapples bind `QA_Q3_EQUIPMENT` without selecting a primary arsenal. Set `qa_q3_controls.grapple_independent` while equipment owns hook press/release; otherwise the original primary-fire release behavior applies.
 - Wrap Q2 entity physics and blocked callbacks that occur outside `qa_q2_actor_tick` in `qa_q2_run_actor`. Nested use/touch/reaction calls retain the enclosing source-turn actor. Checkpoints require no active Q2 actor scope.
 
