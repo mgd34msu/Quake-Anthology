@@ -9,7 +9,7 @@
 struct qa_archive {
     qa_archive_kind kind;
     qa_bytes bytes;
-    qa_buffer owned;
+    qa_file_mapping *mapping;
     qa_archive_entry *entries;
     const qa_archive_entry **name_index[3];
     size_t count;
@@ -346,15 +346,16 @@ bool qa_archive_open_file(const char *path, qa_archive_kind kind,
     if (out == NULL) return fail(error, QA_ERROR_ARGUMENT, 0, "archive output is NULL");
     *out = NULL;
     if (path == NULL) return fail(error, QA_ERROR_ARGUMENT, 0, "archive path is NULL");
-    qa_buffer bytes = {0};
-    if (!qa_file_read_all(path, &bytes, error)) return false;
+    qa_file_mapping *mapping = NULL;
+    if (!qa_file_map(path, &mapping, error)) return false;
+    qa_bytes bytes = qa_file_mapping_bytes(mapping);
     if (kind == QA_ARCHIVE_AUTO && !(bytes.size >= 4 && memcmp(bytes.data, "PACK", 4) == 0))
         kind = qa_archive_kind_for_path(path);
-    if (!qa_archive_open_memory((qa_bytes){bytes.data, bytes.size}, kind, out, error)) {
-        qa_buffer_free(&bytes);
+    if (!qa_archive_open_memory(bytes, kind, out, error)) {
+        qa_file_mapping_close(mapping);
         return false;
     }
-    (*out)->owned = bytes;
+    (*out)->mapping = mapping;
     return true;
 }
 
@@ -367,7 +368,7 @@ void qa_archive_close(qa_archive *archive)
     }
     free(archive->entries);
     for (size_t policy = 0; policy < 3; ++policy) free(archive->name_index[policy]);
-    qa_buffer_free(&archive->owned);
+    qa_file_mapping_close(archive->mapping);
     free(archive);
 }
 

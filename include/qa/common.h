@@ -39,4 +39,12 @@ void qa_buffer_free(qa_buffer *buffer);
  * Release any previous out buffer before replacing it. Empty files use NULL. */
 bool qa_file_read_all(const char *path, qa_buffer *out, qa_error *error);
 
+typedef struct qa_file_mapping qa_file_mapping;
+/* Immutable installed content may borrow mapped bytes through close. The file
+ * must not be modified or truncated while retained; replacement by rename is
+ * allowed. No heap copy of the file is made, and pages are loaded on demand. */
+bool qa_file_map(const char *path, qa_file_mapping **out, qa_error *error);
+qa_bytes qa_file_mapping_bytes(const qa_file_mapping *);
+void qa_file_mapping_close(qa_file_mapping *);
+
 #endif

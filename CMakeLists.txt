@@ -25,6 +25,12 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     endif()
 endif()
 
+option(QA_NATIVE_HELPER_ONLY "Configure only the target-ABI native compatibility helper" OFF)
+include(cmake/Native.cmake)
+if(QA_NATIVE_HELPER_ONLY)
+    return()
+endif()
+
 find_package(ZLIB REQUIRED)
 find_package(PNG REQUIRED)
 find_package(JPEG REQUIRED)
@@ -39,18 +45,13 @@ pkg_check_modules(THEORADEC REQUIRED IMPORTED_TARGET theoradec)
 find_library(QA_GIF_LIBRARY NAMES gif REQUIRED)
 
 add_library(qa_core STATIC
-    src/core/common.c
-    src/core/binary.c
     src/core/arena.c
-    src/core/json.c
     src/core/json_writer.c
     src/core/strings.c
     src/core/text.c
-    src/core/hash.c
-    src/core/normals.c
-    src/platform/file.c)
+    src/core/normals.c)
 target_include_directories(qa_core PUBLIC include)
-target_link_libraries(qa_core PUBLIC qa_compile_options m PRIVATE ICU::uc Threads::Threads)
+target_link_libraries(qa_core PUBLIC qa_data PRIVATE ICU::uc)
 target_compile_definitions(qa_core PRIVATE _POSIX_C_SOURCE=200809L)
 
 add_library(qa_content STATIC
