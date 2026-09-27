@@ -310,8 +310,10 @@ bool qa_configuration_destroy(qa_configuration *manager, qa_error *error)
         manager->busy = false;
         return error_message(error, "configuration destruction requires a safe point");
     }
-    manager->hooks.publish(manager->hooks.context, manager->current, NULL, NULL);
-    qa_launch_snapshot_release(manager->current); free(manager); return true;
+    qa_launch_snapshot *previous = manager->current;
+    manager->current = NULL;
+    manager->hooks.publish(manager->hooks.context, previous, NULL, NULL);
+    qa_launch_snapshot_release(previous); free(manager); return true;
 }
 uint64_t qa_configuration_generation(const qa_configuration *manager) { return manager ? manager->generation : 0; }
 const qa_launch_snapshot *qa_configuration_current(const qa_configuration *manager) { return manager ? manager->current : NULL; }

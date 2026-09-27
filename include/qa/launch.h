@@ -165,16 +165,25 @@ typedef struct qa_launch_resource {
 } qa_launch_resource;
 
 /* B25/B34 prepare native or qualified external state in detached ownership.
- * No callback may mutate the live session before publish. prepare_publication
- * allocates/validates bindings, operation registrations, roster changes and
- * removals; rollback destroys only this candidate. publish is an infallible
- * safe-point pointer/ownership exchange, without resource acquisition. It must
- * detach removed instances and attach new instances exactly once. Retained
- * instances keep their state; changed bindings are described by both snapshots.
- * close_instance can run later when an old snapshot's final reader releases.
+ * Preparation may warm the session's append-only string table, because an
+ * aborted candidate cannot change or invalidate an existing string identity.
+ * It must not otherwise mutate the live session. prepare_publication reserves
+ * and validates bindings, registrations, roster changes and removals;
+ * rollback releases only that candidate work.
+ *
+ * Before publish, every failure is reversible and leaves the active snapshot
+ * unchanged. The manager installs the candidate snapshot before publish.
+ * publish may then retire actors, detach removed instances and replace world
+ * geometry exactly once. Those callbacks can fail after committed mutations;
+ * the hook owner must capture that failure, enter its faulted state, and must
+ * neither retry release callbacks nor claim rollback. publish itself therefore
+ * has no error return. Retained instances keep their state; changed bindings
+ * are described by both snapshots. A private instance is closed only after it
+ * has detached and its final snapshot reader releases it.
+ *
  * A non-NULL prepare_instance output transfers ownership even on failure, and
- * is then closed by the manager. Hook context must outlive all snapshots.
- * The manager is single-threaded; callbacks may inspect snapshots but cannot
+ * is then closed by the manager. Hook context must outlive all snapshots. The
+ * manager is single-threaded; callbacks may inspect snapshots but cannot
  * reenter a mutating configuration operation on the same manager. */
 typedef struct qa_configuration_hooks {
     void *context;

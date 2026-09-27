@@ -30,6 +30,14 @@ work, and resets provider clocks while retaining world ownership. Actor-release
 failure faults the session after committed retirements and cannot restore those
 actors. It shares the retirement implementation with world replacement.
 
+Configuration teardown installs a NULL current snapshot before calling its
+publication hook, retaining the previous snapshot through that callback. The
+application owner independently checked this ordering. The launch contract now
+distinguishes reversible preparation from destructive publication: a callback
+failure after publication faults the application and is neither retried nor
+reported as a rolled-back change. Old snapshots may continue retaining detached
+provider state, so their close-hook context must outlive their final readers.
+
 The application owner independently read the root-written session, scheduler,
 combat and world changes, requested explicit retiring-owner reservation for
 full-capacity replacement, and rereviewed that correction. No further defect was
