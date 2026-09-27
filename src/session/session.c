@@ -13,7 +13,15 @@ typedef struct component_state {
     bool active;
     bool retiring;
     bool in_frame;
+    qa_component_admission *reservation;
 } component_state;
+
+struct qa_component_admission {
+    qa_session *session;
+    component_state *slot;
+    qa_component component;
+    qa_scheduler_admission *scheduler;
+};
 
 typedef struct actor_execution {
     qa_actor_id actor;
@@ -40,6 +48,7 @@ struct qa_session {
     qa_session_options options;
     uint64_t elapsed_ns;
     uint64_t next_order;
+    uint32_t admissions;
     uint32_t notification_depth;
     bool stepping;
     bool transitioning;
@@ -294,20 +303,74 @@ const qa_invocation *qa_session_current(const qa_session *session) { return sess
 
 bool qa_session_add(qa_session *session, const qa_component *value, qa_error *error)
 {
-    if (!qa_session_safe(session) || value == NULL || !valid_clock(&value->clock))
+    qa_component_admission *token;
+    if (!qa_session_prepare_component(session, value, 0, &token, error)) return false;
+    if (qa_component_admission_commit(token, error)) return true;
+    qa_component_admission_abort(token);
+    return false;
+}
+
+bool qa_session_prepare_component(qa_session *session, const qa_component *value, qa_actor_owner retiring_owner,
+                                   qa_component_admission **out, qa_error *error)
+{
+    if (!qa_session_safe(session) || value == NULL || out == NULL || !valid_clock(&value->clock))
         return fail(error, QA_ERROR_ARGUMENT, "Invalid component or unsafe registration");
     if (qa_strings_text(session->strings, value->owner).data == NULL)
         return fail(error, QA_ERROR_ARGUMENT, "Component owner is not interned in this session");
-    if (component(session, value->owner) != NULL) return fail(error, QA_ERROR_ARGUMENT, "Component owner already registered");
-    if (session->next_order == UINT64_MAX) return fail(error, QA_ERROR_MEMORY, "Component order exhausted");
-    component_state *empty = NULL;
-    for (uint32_t i = 0; i < session->options.component_capacity; ++i)
-        if (!session->components[i].active) { empty = &session->components[i]; break; }
-    if (empty == NULL) return fail(error, QA_ERROR_MEMORY, "Component capacity exhausted");
-    if (!qa_scheduler_register(session->scheduler, value->owner, value->clock.kind, error)) return false;
-    *empty = (component_state){.component = *value, .clock = initial_clock(session, value),
-                               .order = session->next_order++, .active = true};
+    if (component(session, value->owner) != NULL && value->owner != retiring_owner)
+        return fail(error, QA_ERROR_ARGUMENT, "Component owner already registered");
+    component_state *slot = retiring_owner ? component(session, retiring_owner) : NULL;
+    if (retiring_owner && (slot == NULL || slot->reservation != NULL))
+        return fail(error, QA_ERROR_ARGUMENT, "Retiring component is absent or reserved");
+    if (UINT64_MAX - session->next_order <= session->admissions)
+        return fail(error, QA_ERROR_MEMORY, "Component order exhausted");
+    for (uint32_t i = 0; i < session->options.component_capacity; ++i) {
+        component_state *entry = &session->components[i];
+        if (entry->reservation != NULL && entry->reservation->component.owner == value->owner)
+            return fail(error, QA_ERROR_ARGUMENT, "Component owner already reserved");
+        if (slot == NULL && !entry->active && entry->reservation == NULL) slot = entry;
+    }
+    if (slot == NULL) return fail(error, QA_ERROR_MEMORY, "Component capacity exhausted");
+    qa_component_admission *token = malloc(sizeof(*token));
+    if (token == NULL) return fail(error, QA_ERROR_MEMORY, "Cannot allocate component admission");
+    *token = (qa_component_admission){.session = session, .slot = slot, .component = *value};
+    if (!qa_scheduler_prepare(session->scheduler, value->owner, value->clock.kind, retiring_owner, &token->scheduler, error)) {
+        free(token);
+        return false;
+    }
+    slot->reservation = token;
+    ++session->admissions;
+    *out = token;
     return true;
+}
+
+bool qa_component_admission_validate(qa_component_admission *token, qa_error *error)
+{
+    if (token == NULL || !qa_session_safe(token->session) || token->slot->reservation != token
+        || token->slot->active || component(token->session, token->component.owner) != NULL)
+        return fail(error, QA_ERROR_ARGUMENT, "Component admission requires an idle unregistered owner");
+    return qa_scheduler_admission_validate(token->scheduler, error);
+}
+
+bool qa_component_admission_commit(qa_component_admission *token, qa_error *error)
+{
+    if (!qa_component_admission_validate(token, error)) return false;
+    if (!qa_scheduler_admission_commit(token->scheduler, error)) return false;
+    qa_session *session = token->session;
+    *token->slot = (component_state){.component = token->component,
+        .clock = initial_clock(session, &token->component), .order = session->next_order++, .active = true};
+    --session->admissions;
+    free(token);
+    return true;
+}
+
+void qa_component_admission_abort(qa_component_admission *token)
+{
+    if (token == NULL) return;
+    qa_scheduler_admission_abort(token->scheduler);
+    token->slot->reservation = NULL;
+    --token->session->admissions;
+    free(token);
 }
 
 bool qa_session_remove(qa_session *session, qa_actor_owner owner, qa_error *error)
@@ -329,7 +392,7 @@ bool qa_session_remove(qa_session *session, qa_actor_owner owner, qa_error *erro
         if (actor->owner == owner) (void)qa_actors_release(session->actors, actor->id, NULL);
     (void)qa_scheduler_unregister(session->scheduler, owner, NULL);
     qa_component retired = entry->component;
-    *entry = (component_state){0};
+    *entry = (component_state){.reservation = entry->reservation};
     if (retired.close != NULL) retired.close(retired.state);
     session->transitioning = false;
     if (session->faulted) { if (error != NULL) *error = session->error; return false; }
@@ -637,26 +700,44 @@ bool qa_session_advance(qa_session *session, uint64_t elapsed_ns, qa_error *erro
     return ok;
 }
 
+static bool retire_world(qa_session *session, qa_error *error)
+{
+    session->faulted = false;
+    session->error = (qa_error){0};
+    qa_error current = {0};
+    if (!qa_actors_clear(session->actors, &current)) fault(session, &current);
+    if (!qa_scheduler_clear(session->scheduler, &current)) fault(session, &current);
+    if (session->faulted) {
+        if (error != NULL) *error = session->error;
+        return false;
+    }
+    for (uint32_t i = 0; i < session->options.component_capacity; ++i)
+        if (session->components[i].active) session->components[i].clock = initial_clock(session, &session->components[i].component);
+    return true;
+}
+
+bool qa_session_retire_world(qa_session *session, qa_error *error)
+{
+    if (!qa_session_safe(session)) return fail(error, QA_ERROR_ARGUMENT, "World retirement requires a safe point");
+    session->transitioning = true;
+    bool ok = retire_world(session, error);
+    session->transitioning = false;
+    return ok;
+}
+
 bool qa_session_replace_world(qa_session *session, void *candidate, qa_cleanup_fn close, qa_error *error)
 {
     if (!qa_session_safe(session) || (candidate != NULL && candidate == session->world))
         return fail(error, QA_ERROR_ARGUMENT, "World publication requires a distinct candidate and a safe point");
     session->transitioning = true;
-    session->faulted = false;
-    session->error = (qa_error){0};
-    (void)qa_actors_clear(session->actors, NULL);
-    (void)qa_scheduler_clear(session->scheduler, NULL);
-    if (session->faulted) {
+    if (!retire_world(session, error)) {
         session->transitioning = false;
-        if (error != NULL) *error = session->error;
         return false;
     }
     void *old = session->world;
     qa_cleanup_fn old_close = session->close_world;
     session->world = candidate;
     session->close_world = close;
-    for (uint32_t i = 0; i < session->options.component_capacity; ++i)
-        if (session->components[i].active) session->components[i].clock = initial_clock(session, &session->components[i].component);
     if (old_close != NULL) old_close(old);
     session->transitioning = false;
     return true;
@@ -666,6 +747,8 @@ bool qa_session_destroy(qa_session *session, qa_error *error)
 {
     if (session == NULL) return true;
     if (!qa_session_safe(session)) return fail(error, QA_ERROR_ARGUMENT, "Session destroy requires a safe point");
+    if (session->admissions != 0 || qa_scheduler_has_admissions(session->scheduler))
+        return fail(error, QA_ERROR_ARGUMENT, "Abort component and scheduler admissions before session destruction");
     session->transitioning = true;
     (void)qa_actors_clear(session->actors, NULL);
     for (;;) {

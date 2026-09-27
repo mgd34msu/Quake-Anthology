@@ -66,6 +66,8 @@ bool qa_world_destroy(qa_world *world, qa_error *error)
     if(world==NULL) return true;
     if(world->callback_depth!=0 || world->visit_depth!=0)
         return fail(error,QA_ERROR_ARGUMENT,"Cannot destroy world during a callback or spatial visit");
+    if(world->geometry_admission!=NULL)
+        return fail(error,QA_ERROR_ARGUMENT,"Abort geometry admission before world destruction");
     qa_spatial_dispose(world);
     for(uint32_t page=0;page<world->page_count;++page) free(world->pages[page]);
     free(world->pages); free(world); return true;
@@ -73,6 +75,65 @@ bool qa_world_destroy(qa_world *world, qa_error *error)
 
 qa_actor_registry *qa_world_actors(qa_world *world) { return world==NULL?NULL:world->actors; }
 qa_collision_geometry *qa_world_geometry(qa_world *world) { return world==NULL?NULL:world->geometry; }
+
+struct qa_world_geometry_admission {
+    qa_world *world;
+    qa_collision_geometry *geometry;
+    qa_spatial_sector sectors[QA_SPATIAL_SECTORS];
+};
+
+bool qa_world_prepare_geometry(qa_world *world,qa_collision_geometry *geometry,
+                                qa_world_geometry_admission **out,qa_error *error)
+{
+    if(world==NULL || geometry==NULL || out==NULL || world->callback_depth!=0
+        || world->visit_depth!=0 || world->geometry_admission!=NULL)
+        return fail(error,QA_ERROR_ARGUMENT,"Geometry preparation requires an idle world without an admission");
+    qa_bounds bounds;
+    if(!qa_collision_model_bounds(geometry,0,&bounds,error)) return false;
+    qa_world candidate={0};
+    if(!qa_spatial_initialize(&candidate,bounds,error)) return false;
+    qa_world_geometry_admission *token=malloc(sizeof(*token));
+    if(token==NULL) return fail(error,QA_ERROR_MEMORY,"Cannot allocate geometry admission");
+    token->world=world; token->geometry=geometry;
+    memcpy(token->sectors,candidate.sectors,sizeof(token->sectors));
+    world->geometry_admission=token;
+    *out=token;
+    return true;
+}
+
+bool qa_world_geometry_admission_validate(qa_world_geometry_admission *token,qa_error *error)
+{
+    if(token==NULL) return fail(error,QA_ERROR_ARGUMENT,"Missing geometry admission");
+    qa_world *world=token->world;
+    if(world->geometry_admission!=token || world->callback_depth!=0 || world->visit_depth!=0
+        || qa_actors_count(world->actors)!=0 || world->retired!=NULL)
+        return fail(error,QA_ERROR_ARGUMENT,"Geometry publication requires an idle empty world");
+    for(uint32_t slot=0;slot<world->capacity;++slot) {
+        qa_world_body *body=qa_world_raw_body(world,slot);
+        if(body!=NULL && (body->present || body->member!=NULL))
+            return fail(error,QA_ERROR_ARGUMENT,"Forward all body releases before geometry publication");
+    }
+    for(uint32_t i=0;i<QA_SPATIAL_SECTORS;++i)
+        if(world->sectors[i].head!=NULL || world->sectors[i].tail!=NULL)
+            return fail(error,QA_ERROR_ARGUMENT,"Geometry publication found retained spatial links");
+    return true;
+}
+
+bool qa_world_geometry_admission_commit(qa_world_geometry_admission *token,qa_error *error)
+{
+    if(!qa_world_geometry_admission_validate(token,error)) return false;
+    token->world->geometry=token->geometry;
+    memcpy(token->world->sectors,token->sectors,sizeof(token->sectors));
+    qa_world_geometry_admission_abort(token);
+    return true;
+}
+
+void qa_world_geometry_admission_abort(qa_world_geometry_admission *token)
+{
+    if(token==NULL) return;
+    token->world->geometry_admission=NULL;
+    free(token);
+}
 
 static void notify_unlink(qa_world *world,qa_actor_id actor)
 {

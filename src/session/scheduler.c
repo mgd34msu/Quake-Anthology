@@ -9,7 +9,15 @@ typedef struct provider_clock {
     qa_clock_kind kind;
     uint64_t order;
     bool active;
+    qa_scheduler_admission *reservation;
 } provider_clock;
+
+struct qa_scheduler_admission {
+    qa_scheduler *scheduler;
+    provider_clock *slot;
+    qa_actor_owner owner;
+    qa_clock_kind kind;
+};
 
 typedef struct pending_think {
     qa_think think;
@@ -30,6 +38,7 @@ struct qa_scheduler {
     uint32_t heap_count;
     uint32_t dispatch_depth;
     uint64_t next_order;
+    uint32_t admissions;
     pending_think cursor;
     bool mixed;
     bool advancing;
@@ -168,6 +177,11 @@ bool qa_scheduler_active(const qa_scheduler *scheduler)
     return scheduler != NULL && (scheduler->advancing || scheduler->dispatch_depth != 0);
 }
 
+bool qa_scheduler_has_admissions(const qa_scheduler *scheduler)
+{
+    return scheduler != NULL && scheduler->admissions != 0;
+}
+
 bool qa_scheduler_clear(qa_scheduler *scheduler, qa_error *error)
 {
     if (scheduler == NULL || qa_scheduler_active(scheduler))
@@ -183,6 +197,8 @@ bool qa_scheduler_clear(qa_scheduler *scheduler, qa_error *error)
 bool qa_scheduler_destroy(qa_scheduler *scheduler, qa_error *error)
 {
     if (scheduler == NULL) return true;
+    if (scheduler->admissions != 0)
+        return fail(error, QA_ERROR_ARGUMENT, "Abort scheduler admissions before destruction");
     if (!qa_scheduler_clear(scheduler, error)) return false;
     free(scheduler->pending); free(scheduler->heap); free(scheduler->providers); free(scheduler);
     return true;
@@ -191,17 +207,66 @@ bool qa_scheduler_destroy(qa_scheduler *scheduler, qa_error *error)
 bool qa_scheduler_register(qa_scheduler *scheduler, qa_actor_owner owner,
                             qa_clock_kind kind, qa_error *error)
 {
-    if (scheduler == NULL || qa_scheduler_active(scheduler) || kind < QA_CLOCK_NETQUAKE || kind > QA_CLOCK_Q3)
+    qa_scheduler_admission *token;
+    if (!qa_scheduler_prepare(scheduler, owner, kind, 0, &token, error)) return false;
+    if (qa_scheduler_admission_commit(token, error)) return true;
+    qa_scheduler_admission_abort(token);
+    return false;
+}
+
+bool qa_scheduler_prepare(qa_scheduler *scheduler, qa_actor_owner owner, qa_clock_kind kind,
+                           qa_actor_owner retiring_owner, qa_scheduler_admission **out, qa_error *error)
+{
+    if (scheduler == NULL || out == NULL || qa_scheduler_active(scheduler) || kind < QA_CLOCK_NETQUAKE || kind > QA_CLOCK_Q3)
         return fail(error, QA_ERROR_ARGUMENT, "Invalid scheduler provider registration");
-    if (provider(scheduler, owner) != NULL) return fail(error, QA_ERROR_ARGUMENT, "Duplicate scheduler provider");
-    if (scheduler->next_order == UINT64_MAX) return fail(error, QA_ERROR_MEMORY, "Provider ordering exhausted");
+    if (provider(scheduler, owner) != NULL && owner != retiring_owner)
+        return fail(error, QA_ERROR_ARGUMENT, "Duplicate scheduler provider");
+    provider_clock *slot = retiring_owner ? provider(scheduler, retiring_owner) : NULL;
+    if (retiring_owner && (slot == NULL || slot->reservation != NULL))
+        return fail(error, QA_ERROR_ARGUMENT, "Retiring scheduler provider is absent or reserved");
+    if (UINT64_MAX - scheduler->next_order <= scheduler->admissions)
+        return fail(error, QA_ERROR_MEMORY, "Provider ordering exhausted");
     for (uint32_t i = 0; i < scheduler->provider_capacity; ++i) {
-        if (!scheduler->providers[i].active) {
-            scheduler->providers[i] = (provider_clock){owner, kind, scheduler->next_order++, true};
-            return true;
-        }
+        provider_clock *entry = &scheduler->providers[i];
+        if (entry->reservation != NULL && entry->reservation->owner == owner)
+            return fail(error, QA_ERROR_ARGUMENT, "Scheduler provider already reserved");
+        if (slot == NULL && !entry->active && entry->reservation == NULL) slot = entry;
     }
-    return fail(error, QA_ERROR_MEMORY, "Scheduler provider capacity exhausted");
+    if (slot == NULL) return fail(error, QA_ERROR_MEMORY, "Scheduler provider capacity exhausted");
+    qa_scheduler_admission *token = malloc(sizeof(*token));
+    if (token == NULL) return fail(error, QA_ERROR_MEMORY, "Cannot allocate scheduler admission");
+    *token = (qa_scheduler_admission){scheduler, slot, owner, kind};
+    slot->reservation = token;
+    ++scheduler->admissions;
+    *out = token;
+    return true;
+}
+
+bool qa_scheduler_admission_validate(qa_scheduler_admission *token, qa_error *error)
+{
+    if (token == NULL || qa_scheduler_active(token->scheduler) || token->slot->reservation != token
+        || token->slot->active || provider(token->scheduler, token->owner) != NULL)
+        return fail(error, QA_ERROR_ARGUMENT, "Scheduler admission requires an idle unregistered provider");
+    return true;
+}
+
+bool qa_scheduler_admission_commit(qa_scheduler_admission *token, qa_error *error)
+{
+    if (!qa_scheduler_admission_validate(token, error)) return false;
+    qa_scheduler *scheduler = token->scheduler;
+    *token->slot = (provider_clock){.owner = token->owner, .kind = token->kind,
+        .order = scheduler->next_order++, .active = true};
+    --scheduler->admissions;
+    free(token);
+    return true;
+}
+
+void qa_scheduler_admission_abort(qa_scheduler_admission *token)
+{
+    if (token == NULL) return;
+    token->slot->reservation = NULL;
+    --token->scheduler->admissions;
+    free(token);
 }
 
 bool qa_scheduler_unregister(qa_scheduler *scheduler, qa_actor_owner owner, qa_error *error)

@@ -54,6 +54,15 @@ bool qa_world_create(qa_actor_registry *, qa_collision_geometry *, const qa_worl
 bool qa_world_destroy(qa_world *, qa_error *);
 qa_actor_registry *qa_world_actors(qa_world *);
 qa_collision_geometry *qa_world_geometry(qa_world *);
+typedef struct qa_world_geometry_admission qa_world_geometry_admission;
+/* Geometry remains borrowed. Prepare leaves the current world untouched;
+ * validate/commit require an empty registry and all body releases forwarded.
+ * Commit preserves the world pointer, allocates/calls nothing, and consumes
+ * success. Abort consumes a pending token. Close tokens before the world. */
+bool qa_world_prepare_geometry(qa_world *, qa_collision_geometry *, qa_world_geometry_admission **, qa_error *);
+bool qa_world_geometry_admission_validate(qa_world_geometry_admission *, qa_error *);
+bool qa_world_geometry_admission_commit(qa_world_geometry_admission *, qa_error *);
+void qa_world_geometry_admission_abort(qa_world_geometry_admission *);
 /* The session must forward every registry release here, after invalidation,
  * before provider teardown. It unlinks the released generation and releases
  * attached children through the same registry, including nested attachments. */

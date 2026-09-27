@@ -276,10 +276,14 @@ bool qa_q1_mg3_progress_read(const qa_q1_game *, qa_actor_id, qa_q1_mg3_progress
 bool qa_q1_mg3_progress_restore(qa_q1_game *, qa_actor_id, const qa_q1_mg3_progress *, qa_error *);
 bool qa_q1_mg3_hammer_body_frame(const qa_q1_game *, qa_actor_id, int32_t *);
 
+/* Creation prepares private provider state and interns resource identities.
+ * The application admits the borrowed component and combat policy together,
+ * then removes both and forwards actor releases before destroying the game. */
 bool qa_q1_game_create(const qa_builtin_services *, const qa_q1_options *, const qa_q1_host *,
                        qa_q1_game **, qa_error *);
 void qa_q1_game_destroy(qa_q1_game *);
 bool qa_q1_game_component(qa_q1_game *, qa_component *, qa_error *);
+bool qa_q1_game_combat_policy(qa_q1_game *, qa_combat_policy *, qa_error *);
 bool qa_q1_game_spawn(qa_q1_game *, const qa_q1_spawn *, qa_actor_id *, qa_error *);
 bool qa_q1_game_clone(qa_q1_game *, qa_actor_id source, qa_actor_id *, qa_error *);
 bool qa_q1_game_use_from(qa_q1_game *, qa_actor_id, qa_actor_id other, qa_actor_id activator,

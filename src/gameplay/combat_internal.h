@@ -35,6 +35,8 @@ struct qa_combat {
     qa_combat_hooks hooks;
     qa_combat_policy *policies;
     size_t policy_count, policy_capacity;
+    qa_combat_policy_admission *admissions;
+    size_t admission_count;
     size_t active_calls, active_hits;
     uint64_t next_serial;
     qa_operation *damage;

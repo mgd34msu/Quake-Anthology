@@ -218,6 +218,15 @@ bool qa_combat_destroy(qa_combat *, qa_error *);
 bool qa_combat_idle(const qa_combat *);
 void qa_combat_actor_released(qa_combat *, qa_actor_record);
 bool qa_combat_register_policy(qa_combat *, const qa_combat_policy *, qa_error *);
+typedef struct qa_combat_policy_admission qa_combat_policy_admission;
+/* Prepare reserves capacity without publishing a policy. Remove an existing
+ * owner before replacement commit. Commit allocates/calls nothing and consumes
+ * success; abort consumes a pending token. Combat must outlive its tokens. */
+bool qa_combat_prepare_policy(qa_combat *, const qa_combat_policy *, bool replace_owner,
+                               qa_combat_policy_admission **, qa_error *);
+bool qa_combat_policy_admission_validate(qa_combat_policy_admission *, qa_error *);
+bool qa_combat_policy_admission_commit(qa_combat_policy_admission *, qa_error *);
+void qa_combat_policy_admission_abort(qa_combat_policy_admission *);
 bool qa_combat_unregister_policy(qa_combat *, qa_actor_owner, qa_error *);
 bool qa_combat_create_actor(qa_combat *, qa_actor_id, const qa_combat_state *, qa_error *);
 uint64_t qa_combat_storage_serial(const qa_combat *, qa_actor_id);

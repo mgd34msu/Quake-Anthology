@@ -140,7 +140,9 @@ bool q1_target(qa_q1_game *g, qa_actor_id actor, qa_q1_target *target) {
                        : entity && entity->kind == Q1_MONSTER &&
                                entity->state.monster.species->species == QA_Q1_LAVA_MAN
                            ? 48
-                       : entity && entity->kind == Q1_MONSTER && entity->state.monster.addon.boss == Q1_BOSS_OLDNEW ? 24
+                       : entity && entity->kind == Q1_MONSTER &&
+                               entity->state.monster.addon.boss == Q1_BOSS_OLDNEW
+                           ? 24
                        : entity && (entity->physics.flags & QA_PHYSICS_SWIMMING) ? 10
                                                                                  : 25,
         .invisible = player && player->power_expires[QA_Q1_INVISIBILITY] > g->time,
@@ -320,12 +322,6 @@ bool qa_q1_game_create(const qa_builtin_services *services, const qa_q1_options 
         goto fail;
     if (!q1_pickup_supply_create(g, error))
         goto fail;
-    qa_combat_policy policy = {.provider = options->combat_provider,
-                               .family = QA_GAME_Q1,
-                               .context = g,
-                               .describe = combat_context};
-    if (!qa_combat_register_policy(services->combat, &policy, error))
-        goto fail;
     *out = g;
     return true;
 fail:
@@ -342,7 +338,6 @@ void qa_q1_game_destroy(qa_q1_game *g) {
     if (!g)
         return;
     q1_map_destroy(g);
-    (void)qa_combat_unregister_policy(g->services.combat, g->options.combat_provider, NULL);
     qa_supply_destroy(g->source_supply);
     while (g->allocated_actors) {
         q1_actor *next = g->allocated_actors->allocation_next;
@@ -378,6 +373,17 @@ bool qa_q1_game_component(qa_q1_game *g, qa_component *out, qa_error *error) {
         .actor_frame = actor_frame,
         .actor_released = released};
     g->component_admitted = true;
+    return true;
+}
+bool qa_q1_game_combat_policy(qa_q1_game *g, qa_combat_policy *out, qa_error *error) {
+    if (!g || !out) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing Q1 provider or combat policy output");
+        return false;
+    }
+    *out = (qa_combat_policy){.provider = g->options.combat_provider,
+                              .family = QA_GAME_Q1,
+                              .context = g,
+                              .describe = combat_context};
     return true;
 }
 void qa_q1_game_actor_released(qa_q1_game *g, qa_actor_record actor) {
@@ -972,7 +978,9 @@ bool qa_q1_game_actor_traits(const qa_q1_game *g, qa_actor_id actor, qa_builtin_
                        : entity && entity->kind == Q1_MONSTER &&
                                entity->state.monster.species->species == QA_Q1_LAVA_MAN
                            ? 48
-                       : entity && entity->kind == Q1_MONSTER && entity->state.monster.addon.boss == Q1_BOSS_OLDNEW ? 24
+                       : entity && entity->kind == Q1_MONSTER &&
+                               entity->state.monster.addon.boss == Q1_BOSS_OLDNEW
+                           ? 24
                        : entity && (entity->physics.flags & QA_PHYSICS_SWIMMING) ? 10
                                                                                  : 25,
         .invisible = player && player->power_expires[QA_Q1_INVISIBILITY] > g->time,

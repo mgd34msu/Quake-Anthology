@@ -41,6 +41,7 @@ struct qa_world {
     qa_spatial_member *retired, *spare_members;
     uint32_t visit_depth, callback_depth;
     uint64_t attachment_order, body_serial;
+    qa_world_geometry_admission *geometry_admission;
 };
 qa_world_body *qa_world_find_body(const qa_world *, qa_actor_id);
 qa_world_body *qa_world_raw_body(const qa_world *, uint32_t);

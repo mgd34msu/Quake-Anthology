@@ -50,6 +50,7 @@ typedef struct qa_think_result {
 } qa_think_result;
 
 typedef struct qa_scheduler qa_scheduler;
+typedef struct qa_scheduler_admission qa_scheduler_admission;
 
 /* Mixed ordering compares provider registration order first. Both modes then
  * compare source slot and think sequence; provider order and host slot break
@@ -60,6 +61,14 @@ bool qa_scheduler_create(qa_actor_registry *actors, uint32_t provider_capacity,
 bool qa_scheduler_destroy(qa_scheduler *scheduler, qa_error *error);
 bool qa_scheduler_register(qa_scheduler *scheduler, qa_actor_owner provider,
                             qa_clock_kind kind, qa_error *error);
+/* Reservations are invisible to dispatch. A nonzero retiring_owner reserves
+ * that active provider's slot; it must be unregistered before commit. Commit consumes success;
+ * abort consumes a pending token. The scheduler must outlive its tokens. */
+bool qa_scheduler_prepare(qa_scheduler *, qa_actor_owner, qa_clock_kind, qa_actor_owner retiring_owner,
+                           qa_scheduler_admission **, qa_error *);
+bool qa_scheduler_admission_validate(qa_scheduler_admission *, qa_error *);
+bool qa_scheduler_admission_commit(qa_scheduler_admission *, qa_error *);
+void qa_scheduler_admission_abort(qa_scheduler_admission *);
 bool qa_scheduler_unregister(qa_scheduler *scheduler, qa_actor_owner provider,
                               qa_error *error);
 bool qa_scheduler_schedule(qa_scheduler *scheduler, const qa_think *think, qa_error *error);
@@ -76,6 +85,7 @@ bool qa_scheduler_advance(qa_scheduler *scheduler, const qa_source_frame *frames
                           size_t count, qa_think_boundary boundary, qa_error *error);
 bool qa_scheduler_clear(qa_scheduler *scheduler, qa_error *error);
 bool qa_scheduler_active(const qa_scheduler *scheduler);
+bool qa_scheduler_has_admissions(const qa_scheduler *scheduler);
 bool qa_frame_project(const qa_source_frame *frame, qa_actor_owner provider,
                        qa_clock_kind kind, qa_source_frame *out, qa_error *error);
 

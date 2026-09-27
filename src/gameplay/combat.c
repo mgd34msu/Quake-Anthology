@@ -145,6 +145,7 @@ bool qa_combat_idle(const qa_combat *combat) { return combat && !combat->active_
 bool qa_combat_destroy(qa_combat *combat, qa_error *error) {
     if (!combat) return true;
     if (!qa_combat_idle(combat)) return qa_combat_argument(error, "cannot destroy active combat");
+    if (combat->admissions) return qa_combat_argument(error, "abort policy admissions before combat destruction");
     if (!qa_operation_destroy(combat->damage, error)) return false;
     free(combat->records); free(combat->policies); free(combat); return true;
 }
@@ -157,20 +158,74 @@ static bool next_serial(qa_combat *combat, uint64_t *out, qa_error *error) {
     if (combat->next_serial == UINT64_MAX) return qa_combat_argument(error, "combat ownership identity exhausted");
     *out = combat->next_serial++; return true;
 }
-bool qa_combat_register_policy(qa_combat *combat, const qa_combat_policy *policy, qa_error *error) {
-    if (!combat || !policy || !policy->describe || policy->family < QA_GAME_Q1 || policy->family > QA_GAME_Q3)
+struct qa_combat_policy_admission {
+    qa_combat *combat;
+    qa_combat_policy policy;
+    qa_combat_policy_admission *previous, *next;
+};
+
+bool qa_combat_prepare_policy(qa_combat *combat, const qa_combat_policy *policy, bool replace_owner,
+                               qa_combat_policy_admission **out, qa_error *error) {
+    if (!combat || !policy || !out || !policy->describe || policy->family < QA_GAME_Q1 || policy->family > QA_GAME_Q3)
         return qa_combat_argument(error, "invalid combat policy");
     if (!qa_combat_idle(combat)) return qa_combat_argument(error, "cannot change policies during combat");
-    for (size_t i = 0; i < combat->policy_count; ++i) if (combat->policies[i].provider == policy->provider)
+    for (size_t i = 0; !replace_owner && i < combat->policy_count; ++i) if (combat->policies[i].provider == policy->provider)
         return qa_combat_argument(error, "combat policy provider already registered");
-    if (combat->policy_count == combat->policy_capacity) {
-        size_t capacity = combat->policy_capacity ? combat->policy_capacity * 2 : 8;
-        if (capacity < combat->policy_capacity || capacity > SIZE_MAX / sizeof(*combat->policies)) return memory_error(error);
+    for (qa_combat_policy_admission *pending = combat->admissions; pending; pending = pending->next)
+        if (pending->policy.provider == policy->provider)
+            return qa_combat_argument(error, "combat policy provider already reserved");
+    if (combat->admission_count >= SIZE_MAX - combat->policy_count) return memory_error(error);
+    size_t required = combat->policy_count + combat->admission_count + 1;
+    if (required > combat->policy_capacity) {
+        size_t limit = SIZE_MAX / sizeof(*combat->policies);
+        if (required > limit) return memory_error(error);
+        size_t capacity = combat->policy_capacity > limit / 2 ? limit : combat->policy_capacity * 2;
+        if (capacity < required) capacity = required;
+        if (capacity < 8 && limit >= 8) capacity = 8;
         qa_combat_policy *policies = realloc(combat->policies, capacity * sizeof(*policies));
         if (!policies) return memory_error(error);
         combat->policies = policies; combat->policy_capacity = capacity;
     }
-    combat->policies[combat->policy_count++] = *policy; return true;
+    qa_combat_policy_admission *token = malloc(sizeof(*token));
+    if (!token) return memory_error(error);
+    *token = (qa_combat_policy_admission){.combat = combat, .policy = *policy, .next = combat->admissions};
+    if (token->next) token->next->previous = token;
+    combat->admissions = token;
+    ++combat->admission_count;
+    *out = token;
+    return true;
+}
+
+bool qa_combat_policy_admission_validate(qa_combat_policy_admission *token, qa_error *error) {
+    if (!token || !qa_combat_idle(token->combat)) return qa_combat_argument(error, "policy admission requires idle combat");
+    for (size_t i = 0; i < token->combat->policy_count; ++i)
+        if (token->combat->policies[i].provider == token->policy.provider)
+            return qa_combat_argument(error, "remove existing policy before admission");
+    return true;
+}
+
+void qa_combat_policy_admission_abort(qa_combat_policy_admission *token) {
+    if (!token) return;
+    if (token->previous) token->previous->next = token->next;
+    else token->combat->admissions = token->next;
+    if (token->next) token->next->previous = token->previous;
+    --token->combat->admission_count;
+    free(token);
+}
+
+bool qa_combat_policy_admission_commit(qa_combat_policy_admission *token, qa_error *error) {
+    if (!qa_combat_policy_admission_validate(token, error)) return false;
+    token->combat->policies[token->combat->policy_count++] = token->policy;
+    qa_combat_policy_admission_abort(token);
+    return true;
+}
+
+bool qa_combat_register_policy(qa_combat *combat, const qa_combat_policy *policy, qa_error *error) {
+    qa_combat_policy_admission *token;
+    if (!qa_combat_prepare_policy(combat, policy, false, &token, error)) return false;
+    if (qa_combat_policy_admission_commit(token, error)) return true;
+    qa_combat_policy_admission_abort(token);
+    return false;
 }
 bool qa_combat_unregister_policy(qa_combat *combat, qa_actor_owner provider, qa_error *error) {
     if (!qa_combat_idle(combat)) return qa_combat_argument(error, "cannot change policies during combat");

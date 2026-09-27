@@ -81,6 +81,16 @@ bool qa_session_destroy(qa_session *session, qa_error *error);
 /* Component state transfers only on successful add. Removal retires its actors
  * and scheduling before close; foreign actors must first rebind their execution. */
 bool qa_session_add(qa_session *session, const qa_component *component, qa_error *error);
+typedef struct qa_component_admission qa_component_admission;
+/* Prepare reserves capacity without registering callbacks. A nonzero retiring_owner
+ * reserves that active owner's slot; remove it before commit. This also supports
+ * switching to a different owner at full capacity. Commit and abort consume tokens.
+ * Commit allocates nothing, calls no provider, and retains the token on failure. */
+bool qa_session_prepare_component(qa_session *, const qa_component *, qa_actor_owner retiring_owner,
+                                   qa_component_admission **, qa_error *);
+bool qa_component_admission_validate(qa_component_admission *, qa_error *);
+bool qa_component_admission_commit(qa_component_admission *, qa_error *);
+void qa_component_admission_abort(qa_component_admission *);
 bool qa_session_remove(qa_session *session, qa_actor_owner owner, qa_error *error);
 bool qa_session_pause(qa_session *session, qa_actor_owner owner, bool paused, qa_error *error);
 bool qa_session_clock(const qa_session *session, qa_actor_owner owner, qa_clock_state *out);
@@ -125,5 +135,9 @@ void *qa_session_world(const qa_session *session);
  * not resurrected. Connections and seats stay outside this world swap. */
 bool qa_session_replace_world(qa_session *session, void *candidate,
                                qa_cleanup_fn close, qa_error *error);
+/* Destructive map travel with a stable world object: releases every actor,
+ * clears scheduled thinks and resets provider clocks. A release failure faults
+ * the session after already committed retirements; world ownership is unchanged. */
+bool qa_session_retire_world(qa_session *, qa_error *);
 
 #endif
