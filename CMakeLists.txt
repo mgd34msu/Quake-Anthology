@@ -77,6 +77,14 @@ add_library(qa_content STATIC
 target_link_libraries(qa_content PUBLIC qa_core PRIVATE
     ZLIB::ZLIB PNG::PNG JPEG::JPEG ${QA_GIF_LIBRARY})
 
+add_library(qa_navigation_assets STATIC
+    src/navigation/asset.c
+    src/navigation/aas_file.c
+    src/navigation/aas_validate.c
+    src/navigation/aas_sample.c
+    src/navigation/nav_file.c)
+target_link_libraries(qa_navigation_assets PUBLIC qa_core)
+
 add_library(qa_world STATIC
     src/world/actors.c
     src/world/body.c
