@@ -1042,6 +1042,11 @@ qa_movement_control qa_q3_movement_phase(void *context, qa_movement_phase phase,
         p->delta_pitch_word = movement->delta_angle_words[0];
         p->delta_yaw_word = movement->delta_angle_words[1];
         p->delta_roll_word = movement->delta_angle_words[2];
+        p->pmove_frame_count = movement->movement_frame;
+        p->jumppad_frame = movement->jump_pad_frame;
+        p->jumppad_entity = movement->jump_pad.registry
+                                ? q3_entity_number(game, movement->jump_pad)
+                                : 0;
         if (!call->prediction && !expand_invulnerability(game, call->actor, p, error))
             return QA_MOVEMENT_ERROR;
         if (p->invulnerability_expanded)

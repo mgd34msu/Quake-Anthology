@@ -85,10 +85,15 @@ const q3_actor *q3_actor_const(const qa_q3_game *game, qa_actor_id actor) {
 }
 uint32_t q3_rand(qa_q3_game *game) {
     game->rng = game->rng * UINT32_C(69069) + 1u;
-    return game->rng;
+    return game->rng & UINT32_C(0x7fff);
 }
-float q3_random(qa_q3_game *game) { return (float)(q3_rand(game) & 32767u) / 32767.0f; }
-float q3_crandom(qa_q3_game *game) { return 2.0f * (q3_random(game) - 0.5f); }
+float q3_random(qa_q3_game *game) {
+    return q3_source_float_divide((float)q3_rand(game), 32767.0f);
+}
+float q3_crandom(qa_q3_game *game) {
+    return q3_source_float_multiply(
+        2.0f, q3_source_float_add(q3_random(game), -0.5f));
+}
 
 qa_q3_rules qa_q3_default_rules(void) {
     return (qa_q3_rules){.proximity_timeout_ms = 20000,
@@ -169,26 +174,22 @@ bool qa_q3_create(const qa_q3_options *options, qa_q3_game **out, qa_error *erro
     }
     if (!q3_item_register(game, error))
         goto fail;
-    qa_combat_policy policy = {.provider = options->owner,
-                               .family = QA_GAME_Q3,
-                               .context = game,
-                               .describe = q3_combat_describe};
-    if (!qa_combat_register_policy(options->services.combat, &policy, error))
-        goto fail;
-    game->policy_registered = true;
     *out = game;
     return true;
 fail:
-    (void)qa_q3_destroy(game, NULL);
+    free(game->kamikaze_cooldowns);
+    free(game->player_binding_tokens);
+    free(game->actors);
+    free(game);
     return false;
 }
 bool qa_q3_destroy(qa_q3_game *game, qa_error *error) {
     if (!game)
         return true;
-    if (game->policy_registered) {
-        if (!qa_combat_unregister_policy(game->options.services.combat, game->options.owner, error))
-            return false;
-    }
+    if (!qa_session_safe(game->options.services.session) ||
+        !qa_combat_idle(game->options.services.combat))
+        return q3_fail(error, "Q3 provider destruction requires a safe point");
+    q3_map_destroy(game);
     while (game->snapshot_frames) {
         q3_snapshot_frame *next = game->snapshot_frames->next;
         qa_builtin_snapshot_free(&game->snapshot_frames->snapshot);
@@ -420,12 +421,22 @@ bool qa_q3_frame(qa_q3_game *game, int32_t previous, int32_t now, qa_error *erro
         return q3_fail(error, "missing Q3 game");
     game->previous_ms = previous;
     game->now_ms = now;
-    return true;
+    return q3_map_frame_begin(game, error);
 }
 bool qa_q3_actor_frame(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+    bool handled = false;
+    if (!q3_map_actor_frame(game, actor, &handled, error))
+        return false;
+    if (handled)
+        return true;
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry)
         return true;
+    if (entry->kind == Q3_ACTOR_PLAYER &&
+        entry->state.player.jumppad_frame != entry->state.player.pmove_frame_count) {
+        entry->state.player.jumppad_frame = 0;
+        entry->state.player.jumppad_entity = 0;
+    }
     switch (entry->kind) {
     case Q3_ACTOR_MISSILE:
         return q3_missile_step(game, actor, error);
@@ -465,6 +476,7 @@ bool qa_q3_actor_frame(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
 void qa_q3_actor_released(qa_q3_game *game, qa_actor_record record) {
     if (!game || record.id.slot >= game->capacity)
         return;
+    q3_map_actor_released(game, record);
     if (qa_actor_id_equal(game->kamikaze_cooldowns[record.id.slot].actor, record.id))
         game->kamikaze_cooldowns[record.id.slot] = (q3_kamikaze_cooldown){0};
     game->player_binding_tokens[record.id.slot] = 0;
@@ -523,13 +535,21 @@ static void component_release(void *context, qa_session *session, qa_actor_recor
     (void)session;
     qa_q3_actor_released(context, actor);
 }
-static void component_close(void *context) { (void)qa_q3_destroy(context, NULL); }
 qa_component qa_q3_component(qa_q3_game *game) {
     return (qa_component){.owner = game->options.owner,
                           .clock = qa_clock_defaults(QA_CLOCK_Q3),
                           .state = game,
-                          .close = component_close,
                           .begin_frame = component_begin,
                           .actor_frame = component_actor,
                           .actor_released = component_release};
+}
+
+bool qa_q3_combat_policy(qa_q3_game *game, qa_combat_policy *out, qa_error *error) {
+    if (!game || !out)
+        return q3_fail(error, "missing Q3 provider or combat policy output");
+    *out = (qa_combat_policy){.provider = game->options.owner,
+                              .family = QA_GAME_Q3,
+                              .context = game,
+                              .describe = q3_combat_describe};
+    return true;
 }

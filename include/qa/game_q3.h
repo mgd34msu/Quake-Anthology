@@ -110,6 +110,7 @@ typedef struct qa_q3_player_state {
     int32_t delta_pitch_word, delta_roll_word, teleport_lock_ms;
     uint64_t teleport_revision;
     int32_t damage_event, damage_count, damage_pitch, damage_yaw, last_command_ms;
+    int32_t fly_sound_after, jumppad_entity, jumppad_frame, pmove_frame_count;
     int32_t last_command_angles[3];
     float damage_blood, damage_armor, damage_knockback;
     qa_vec3 damage_from;
@@ -154,10 +155,10 @@ typedef struct qa_q3_options {
 } qa_q3_options;
 qa_q3_rules qa_q3_default_rules(void);
 bool qa_q3_create(const qa_q3_options *, qa_q3_game **, qa_error *);
-/* Registering this component transfers game ownership to the session on
- * successful qa_session_add. A separately selected provider can instead be
- * driven at the selected source stages through the functions below. */
+/* Component and combat policy descriptors borrow the game. Their owner must
+ * detach both before destroying the game. */
 qa_component qa_q3_component(qa_q3_game *);
+bool qa_q3_combat_policy(qa_q3_game *, qa_combat_policy *, qa_error *);
 bool qa_q3_destroy(qa_q3_game *, qa_error *);
 bool qa_q3_set_rules(qa_q3_game *, const qa_q3_rules *, qa_error *);
 qa_item_id qa_q3_weapon_item(const qa_q3_game *, qa_q3_weapon, bool ammo);
@@ -259,6 +260,7 @@ typedef struct qa_q3_mover_definition {
     qa_actor_id team_leader;
     qa_actor_id activator;
     qa_string_id target;
+    qa_string_id loop_sound;
     bool crusher, map_controlled;
 } qa_q3_mover_definition;
 bool qa_q3_bind_mover(qa_q3_game *, qa_actor_id, const qa_q3_mover_definition *, qa_error *);
@@ -379,7 +381,7 @@ typedef struct qa_q3_entity_view {
     qa_q3_entity_kind kind;
     qa_body_state body;
     qa_trajectory position, angular;
-    uint32_t flags, selections, powerups, item_index;
+    uint32_t flags, selections, powerups, item_index, constant_light;
     qa_q3_weapon weapon;
     int32_t legs_animation, torso_animation, time_ms, expire_ms, source_number;
     qa_string_id loop_sound;

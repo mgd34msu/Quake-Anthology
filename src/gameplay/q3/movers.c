@@ -96,9 +96,15 @@ static bool mover_write(void *context, qa_actor_id actor, const qa_q3_mover_stat
     }
     return true;
 }
-static bool set_state(qa_q3_game *game, qa_actor_id actor, int32_t state, int32_t time,
-                      qa_error *error) {
+bool q3_mover_set_state(qa_q3_game *game, qa_actor_id actor, int32_t state, int32_t time,
+                        qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_MOVER)
+        return true;
+    qa_body_state body;
+    if (!qa_world_body_read(game->options.services.world, actor, &body, error))
+        return false;
+    entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_MOVER)
         return true;
     qa_q3_mover_definition *mover = &entry->state.mover;
@@ -117,16 +123,16 @@ static bool set_state(qa_q3_game *game, qa_actor_id actor, int32_t state, int32_
                                    : qa_vec_sub(mover->first, mover->second);
         position->delta = qa_vec_scale(delta, 1000.0f / (float)position->duration_ms);
     }
-    qa_body_state body;
-    if (!qa_world_body_read(game->options.services.world, actor, &body, error))
-        return false;
     if (!qa_trajectory_position(position, game->now_ms, 800, &body.origin, error))
         return false;
-    return qa_world_body_write(game->options.services.world, actor, &body, error) &&
+    if (!qa_world_body_write(game->options.services.world, actor, &body, error))
+        return false;
+    entry = q3_actor_get(game, actor);
+    return !entry || entry->kind != Q3_ACTOR_MOVER ||
            qa_world_link(game->options.services.world, actor, NULL, error);
 }
-static bool match_team(qa_q3_game *game, qa_actor_id leader, int32_t state, int32_t time,
-                       qa_error *error) {
+bool q3_mover_match_team(qa_q3_game *game, qa_actor_id leader, int32_t state, int32_t time,
+                         qa_error *error) {
     qa_actor_id actor = leader;
     for (uint32_t visited = 0; actor.registry; ++visited) {
         if (visited >= game->capacity)
@@ -135,7 +141,7 @@ static bool match_team(qa_q3_game *game, qa_actor_id leader, int32_t state, int3
         if (!entry || entry->kind != Q3_ACTOR_MOVER)
             break;
         qa_actor_id next = entry->state.mover.state.team_next;
-        if (!set_state(game, actor, state, time, error))
+        if (!q3_mover_set_state(game, actor, state, time, error))
             return false;
         actor = next;
     }
@@ -156,10 +162,11 @@ bool qa_q3_use_mover(qa_q3_game *game, qa_actor_id actor, qa_actor_id activator,
     }
     qa_q3_mover_definition *mover = &entry->state.mover;
     mover->activator = activator;
-    if (mover->map_controlled)
-        return q3_fail(error, "custom Q3 mover use belongs to its map controller");
-    if (mover->state_index == 0)
-        return match_team(game, actor, 2, q3_add_time(game->now_ms, 50), error);
+    if (mover->state_index == 0) {
+        if (!q3_mover_match_team(game, actor, 2, q3_add_time(game->now_ms, 50), error))
+            return false;
+        return q3_map_mover_used(game, actor, 0, 2, error);
+    }
     if (mover->state_index == 1) {
         mover->next_think_ms = q3_add_time(game->now_ms, mover->wait_ms);
         return true;
@@ -168,8 +175,12 @@ bool qa_q3_use_mover(qa_q3_game *game, qa_actor_id actor, qa_actor_id activator,
     int32_t partial = q3_sub_time(game->now_ms, mover->state.position.time_ms);
     if (partial > total)
         partial = total;
-    return match_team(game, actor, mover->state_index == 3 ? 2 : 3,
-                      q3_sub_time(game->now_ms, q3_sub_time(total, partial)), error);
+    int32_t before = mover->state_index;
+    int32_t after = before == 3 ? 2 : 3;
+    if (!q3_mover_match_team(game, actor, after,
+                             q3_sub_time(game->now_ms, q3_sub_time(total, partial)), error))
+        return false;
+    return q3_map_mover_used(game, actor, before, after, error);
 }
 static bool mover_action(void *context, qa_q3_mover_action action, qa_actor_id actor,
                          qa_actor_id other, int32_t now, qa_error *error) {
@@ -184,27 +195,29 @@ static bool mover_action(void *context, qa_q3_mover_action action, qa_actor_id a
         qa_body_state body;
         if (!qa_world_body_read(game->options.services.world, actor, &body, error))
             return false;
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_MISSILE)
+            return true;
         if (!q3_event(game, actor, other, QA_BUILTIN_IMPACT, 67, 0, body.origin, qa_v3(0, 0, 0),
                       qa_v3(0, 0, 0), error))
             return false;
-        return q3_missile_explode(game, actor, error);
+        return !q3_actor_get(game, actor) || q3_missile_explode(game, actor, error);
     }
     if (entry->kind != Q3_ACTOR_MOVER)
         return true;
     qa_q3_mover_definition mover = entry->state.mover;
-    if (mover.map_controlled) {
-        if (!game->options.hooks.mover_action)
-            return q3_fail(error, "Q3 mover has no map controller");
-        return game->options.hooks.mover_action(game->options.hooks.context, action, actor, other,
-                                                now, error);
-    }
     if (action == QA_Q3_MOVER_BLOCKED) {
         q3_actor *victim = q3_actor_get(game, other);
-        bool player = q3_is_player(game, other);
+        bool player = victim && victim->kind == Q3_ACTOR_PLAYER;
         qa_builtin_actor_traits traits = {0};
-        if (!player && game->options.services.actor_traits)
-            (void)game->options.services.actor_traits(game->options.services.context, other,
-                                                      &traits);
+        if (!player && game->options.services.actor_traits &&
+            game->options.services.actor_traits(game->options.services.context, other,
+                                                 &traits))
+            player = traits.player;
+        if (!q3_actor_get(game, actor) ||
+            !qa_actors_get(qa_session_actors(game->options.services.session), other))
+            return true;
+        victim = q3_actor_get(game, other);
         if (!player && !traits.monster) {
             if (victim && victim->kind == Q3_ACTOR_ITEM) {
                 size_t count;
@@ -218,6 +231,9 @@ static bool mover_action(void *context, qa_q3_mover_action action, qa_actor_id a
             qa_body_state body;
             if (!qa_world_body_read(game->options.services.world, other, &body, error))
                 return false;
+            if (!q3_actor_get(game, actor) ||
+                !qa_actors_get(qa_session_actors(game->options.services.session), other))
+                return true;
             if (!q3_event(game, other, actor, QA_BUILTIN_ITEM, 41, 0, body.origin, qa_v3(0, 0, 0),
                           qa_v3(0, 0, 0), error))
                 return false;
@@ -231,9 +247,16 @@ static bool mover_action(void *context, qa_q3_mover_action action, qa_actor_id a
         if (!mover.crusher && q3_actor_get(game, actor) &&
             !qa_q3_use_mover(game, actor, other, error))
             return false;
+    } else if (mover.map_controlled) {
+        bool handled = false;
+        if (!q3_map_mover_action(game, action, actor, other, now, &handled, error))
+            return false;
+        if (!handled)
+            return q3_fail(error, "custom Q3 mover action has no map controller");
     } else if (action == QA_Q3_MOVER_REACHED) {
         if (mover.state_index == 2) {
-            if (!set_state(game, actor, 1, now, error))
+            if (!q3_mover_set_state(game, actor, 1, now, error) ||
+                !q3_map_mover_used(game, actor, 2, 1, error))
                 return false;
             entry = q3_actor_get(game, actor);
             if (!entry)
@@ -244,14 +267,20 @@ static bool mover_action(void *context, qa_q3_mover_action action, qa_actor_id a
                     game->options.services.context, actor,
                     mover.activator.registry ? mover.activator : actor, mover.target, 0, 0, error))
                 return false;
-        } else if (mover.state_index == 3 && !set_state(game, actor, 0, now, error))
-            return false;
+        } else if (mover.state_index == 3) {
+            if (!q3_mover_set_state(game, actor, 0, now, error) ||
+                !q3_map_mover_used(game, actor, 3, 0, error))
+                return false;
+        }
     } else if (action == QA_Q3_MOVER_THINK && mover.next_think_ms && now >= mover.next_think_ms) {
         entry->state.mover.next_think_ms = 0;
-        if (mover.state_index == 1 && !match_team(game, actor, 3, now, error))
-            return false;
+        if (mover.state_index == 1) {
+            if (!q3_mover_match_team(game, actor, 3, now, error) ||
+                !q3_map_mover_used(game, actor, 1, 3, error))
+                return false;
+        }
     }
-    return !game->options.hooks.mover_action ||
+    return !q3_actor_get(game, actor) || !game->options.hooks.mover_action ||
            game->options.hooks.mover_action(game->options.hooks.context, action, actor, other, now,
                                             error);
 }

@@ -369,7 +369,15 @@ add_library(qa_game_q3 STATIC
     src/gameplay/q3/death.c
     src/gameplay/q3/feedback.c
     src/gameplay/q3/view.c
-    src/gameplay/q3/checkpoint.c)
+    src/gameplay/q3/checkpoint.c
+    src/gameplay/q3/map/runtime.c
+    src/gameplay/q3/map/spawn.c
+    src/gameplay/q3/map/items.c
+    src/gameplay/q3/map/targets.c
+    src/gameplay/q3/map/triggers.c
+    src/gameplay/q3/map/misc.c
+    src/gameplay/q3/map/movers.c
+    src/gameplay/q3/map/checkpoint.c)
 target_link_libraries(qa_game_q3 PUBLIC qa_builtin)
 
 add_library(qa_player_services STATIC

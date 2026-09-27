@@ -179,15 +179,18 @@ bool qa_q3_item_availability(qa_q3_game *game, qa_actor_id actor, bool available
     entry->state.item.hidden = !available;
     entry->state.item.respawn_at = respawn;
     entry->state.item.expire_at = expire;
-    if (!available)
-        return qa_world_set_collision(game->options.services.world, actor, NULL, error) &&
-               qa_world_unlink(game->options.services.world, actor, error);
     qa_actor_collision collision = {.family = QA_COLLISION_Q3,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = Q3_CONTENTS_TRIGGER,
                                     .role = QA_COLLISION_TRIGGER};
-    return qa_world_set_collision(game->options.services.world, actor, &collision, error) &&
-           qa_world_link(game->options.services.world, actor, NULL, error);
+    if (!qa_world_set_collision(game->options.services.world, actor,
+                                available ? &collision : NULL, error))
+        return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_ITEM)
+        return true;
+    return available ? qa_world_link(game->options.services.world, actor, NULL, error)
+                     : qa_world_unlink(game->options.services.world, actor, error);
 }
 static qa_actor_id item_ground_actor(const qa_q3_game *game, const qa_trace_result *trace) {
     if (trace->hit == QA_TRACE_HIT_ACTOR)
@@ -203,13 +206,6 @@ static int32_t item_ground_number(const qa_q3_game *game, const qa_trace_result 
         return 1023;
     int32_t number = q3_entity_number(game, trace->actor);
     return number >= 0 && number < 1022 ? number : 1023;
-}
-static int32_t source_float_schedule(int32_t time, float seconds) {
-    float milliseconds = seconds * 1000.0f;
-    float scheduled = (float)time + milliseconds;
-    return scheduled >= -2147483648.0f && scheduled < 2147483648.0f
-               ? (int32_t)truncf(scheduled)
-               : INT32_MIN;
 }
 static float respawn_seconds(qa_q3_game *game, const qa_q3_item *item) {
     switch (item->kind) {
@@ -239,6 +235,8 @@ static bool denied_powerup(qa_q3_game *game, qa_actor_id pickup, qa_actor_id rec
     qa_combat_state receiver;
     if (!qa_combat_read(game->options.services.combat, recipient, &receiver, error))
         return false;
+    if (!q3_actor_get(game, pickup) || !q3_actor_get(game, recipient))
+        return true;
     for (uint32_t i = 0; i < game->capacity; ++i) {
         q3_actor *candidate = &game->actors[i];
         if (candidate->kind != Q3_ACTOR_PLAYER || qa_actor_id_equal(candidate->actor, recipient) ||
@@ -248,12 +246,22 @@ static bool denied_powerup(qa_q3_game *game, qa_actor_id pickup, qa_actor_id rec
         qa_combat_state combat;
         if (!qa_combat_read(game->options.services.combat, actor, &combat, error))
             return false;
+        if (!q3_actor_get(game, pickup) || !q3_actor_get(game, recipient))
+            return true;
+        candidate = q3_actor_get(game, actor);
+        if (!candidate || candidate->kind != Q3_ACTOR_PLAYER)
+            continue;
         if (combat.health <= 0 ||
             (game->options.rules.game_type >= 3 && receiver.team == combat.team))
             continue;
         qa_body_state body;
         if (!qa_world_body_read(game->options.services.world, actor, &body, error))
             return false;
+        if (!q3_actor_get(game, pickup) || !q3_actor_get(game, recipient))
+            return true;
+        candidate = q3_actor_get(game, actor);
+        if (!candidate || candidate->kind != Q3_ACTOR_PLAYER)
+            continue;
         qa_vec3 delta = qa_vec_sub(origin, body.origin), forward;
         if (qa_vec_length(delta) > 192)
             continue;
@@ -263,6 +271,8 @@ static bool denied_powerup(qa_q3_game *game, qa_actor_id pickup, qa_actor_id rec
         qa_trace_result trace;
         if (!q3_trace(game, body.origin, origin, (qa_actor_id){0}, 1, &trace, error))
             return false;
+        if (!q3_actor_get(game, pickup) || !q3_actor_get(game, recipient))
+            return true;
         if (trace.fraction != 1)
             continue;
         candidate = q3_actor_get(game, actor);
@@ -274,47 +284,66 @@ static bool denied_powerup(qa_q3_game *game, qa_actor_id pickup, qa_actor_id rec
     }
     return true;
 }
-bool qa_q3_spawn_item(qa_q3_game *game, const qa_q3_item_spawn *input, qa_actor_id *out,
-                      qa_error *error) {
-    if (!game)
-        return q3_fail(error, "missing Q3 item provider");
+static bool item_spawn_valid(qa_q3_game *game, const qa_q3_item_spawn *input) {
     size_t count;
     qa_q3_items(game->options.product, &count);
-    if (!input || !out || !input->item_index || input->item_index >= count ||
-        !qa_vec_finite(input->origin) || !qa_vec_finite(input->velocity) ||
-        !isfinite(input->wait_seconds) || !isfinite(input->random_seconds) ||
-        fabsf(input->wait_seconds) + fabsf(input->random_seconds) > 2147483)
-        return q3_fail(error, "invalid Q3 item spawn");
+    return input && input->item_index && input->item_index < count &&
+           qa_vec_finite(input->origin) && qa_vec_finite(input->velocity) &&
+           isfinite(input->wait_seconds) && isfinite(input->random_seconds) &&
+           fabsf(input->wait_seconds) + fabsf(input->random_seconds) <= 2147483;
+}
+bool q3_item_bind_existing(qa_q3_game *game, qa_actor_id actor,
+                           const qa_q3_item_spawn *input, bool available,
+                           bool initial_powerup_delay, bool *placed, qa_error *error) {
+    if (placed)
+        *placed = false;
+    if (!game || !item_spawn_valid(game, input) || actor.slot >= game->capacity ||
+        !qa_actors_get(qa_session_actors(game->options.services.session), actor) ||
+        game->actors[actor.slot].kind)
+        return q3_fail(error, "invalid existing Q3 item admission");
+    qa_body_state body;
+    if (!qa_world_body_read(game->options.services.world, actor, &body, error))
+        return false;
+    if (!qa_actors_get(qa_session_actors(game->options.services.session), actor) ||
+        game->actors[actor.slot].kind)
+        return true;
+    body.origin = input->origin;
+    body.velocity = input->velocity;
+    body.bounds = (qa_bounds){qa_v3(-15, -15, -15), qa_v3(15, 15, 15)};
+    body.ground = (qa_actor_id){0};
     qa_actor_collision collision = {.family = QA_COLLISION_Q3,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = Q3_CONTENTS_TRIGGER,
                                     .role = QA_COLLISION_TRIGGER};
-    qa_builtin_spawn spawn = {.owner = game->options.owner,
-                              .body = {.origin = input->origin,
-                                       .velocity = input->velocity,
-                                       .bounds = {qa_v3(-15, -15, -15), qa_v3(15, 15, 15)}},
-                              .collision = &collision};
-    int32_t ground_entity_number = input->dropped ? -1 : 0;
+    int32_t ground_entity_number = input->dropped ? -1 : 1023;
     bool on_ground = false;
     if (!input->dropped && !input->suspended) {
         qa_trace_query query = {.start = input->origin,
                                 .end = qa_vec_add(input->origin, qa_v3(0, 0, -4096)),
-                                .shape = {.kind = QA_SHAPE_BOX, .bounds = spawn.body.bounds},
+                                .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds},
+                                .pass_actor = actor,
                                 .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
         query.policy.contents_mask = 1;
         qa_trace_result trace;
         if (!qa_world_trace(game->options.services.world, &query, &trace, error))
             return false;
+        if (trace.start_solid && placed)
+            return true;
         if (trace.start_solid)
             return q3_fail(error, "Q3 item spawned inside solid geometry");
-        spawn.body.origin = trace.end;
-        spawn.body.ground = item_ground_actor(game, &trace);
+        body.origin = trace.end;
+        body.ground = item_ground_actor(game, &trace);
         ground_entity_number = item_ground_number(game, &trace);
         on_ground = trace.hit != QA_TRACE_HIT_NONE;
     }
-    qa_actor_id actor;
-    if (!qa_builtin_spawn_actor(&game->options.services, &spawn, &actor, error))
+    if (!qa_actors_get(qa_session_actors(game->options.services.session), actor) ||
+        game->actors[actor.slot].kind)
+        return true;
+    if (!qa_world_body_write(game->options.services.world, actor, &body, error))
         return false;
+    if (!qa_actors_get(qa_session_actors(game->options.services.session), actor) ||
+        game->actors[actor.slot].kind)
+        return true;
     q3_actor *entry = &game->actors[actor.slot];
     *entry = (q3_actor){
         .actor = actor,
@@ -325,21 +354,53 @@ bool qa_q3_spawn_item(qa_q3_game *game, const qa_q3_item_spawn *input, qa_actor_
                        .ground_entity_number = ground_entity_number,
                        .trajectory = {.type = input->dropped ? QA_TRAJECTORY_GRAVITY
                                                              : QA_TRAJECTORY_STATIONARY,
-                                      .base = spawn.body.origin,
+                                      .base = body.origin,
                                       .delta = input->velocity,
                                       .time_ms = game->now_ms},
                        .expire_at = input->dropped ? q3_add_time(game->now_ms, 30000) : 0}};
-    if (items[input->item_index].kind == QA_Q3_ITEM_POWERUP && !input->dropped) {
+    if (initial_powerup_delay && items[input->item_index].kind == QA_Q3_ITEM_POWERUP &&
+        !input->dropped) {
+        available = false;
         entry->state.item.hidden = true;
-        float delay_seconds = 45.0f + q3_crandom(game) * 15.0f;
-        entry->state.item.respawn_at = source_float_schedule(game->now_ms, delay_seconds);
-        if (!qa_world_set_collision(game->options.services.world, actor, NULL, error))
-            return q3_rollback_spawn(game, actor, error);
+        float delay_seconds = q3_source_float_add(
+            45.0f, q3_source_float_multiply(q3_crandom(game), 15.0f));
+        entry->state.item.respawn_at = q3_source_float_schedule(game->now_ms, delay_seconds);
     }
-    if (!qa_world_link(game->options.services.world, actor, NULL, error))
-        return q3_rollback_spawn(game, actor, error);
+    if (!available) {
+        entry->state.item.hidden = true;
+        if (!qa_world_set_collision(game->options.services.world, actor, NULL, error))
+            return false;
+        if (!q3_actor_get(game, actor))
+            return true;
+        if (!qa_world_unlink(game->options.services.world, actor, error))
+            return false;
+        if (q3_actor_get(game, actor) && placed)
+            *placed = true;
+        return true;
+    }
+    if (!qa_world_set_collision(game->options.services.world, actor, &collision, error))
+        return false;
     if (!q3_actor_get(game, actor))
-        return q3_fail(error, "Q3 item retired during admission");
+        return true;
+    if (!qa_world_link(game->options.services.world, actor, NULL, error))
+        return false;
+    if (q3_actor_get(game, actor) && placed)
+        *placed = true;
+    return true;
+}
+bool qa_q3_spawn_item(qa_q3_game *game, const qa_q3_item_spawn *input, qa_actor_id *out,
+                      qa_error *error) {
+    if (!game || !out || !item_spawn_valid(game, input))
+        return q3_fail(error, "invalid Q3 item spawn");
+    qa_builtin_spawn spawn = {.owner = game->options.owner,
+                              .body = {.origin = input->origin,
+                                       .velocity = input->velocity,
+                                       .bounds = {qa_v3(-15, -15, -15), qa_v3(15, 15, 15)}}};
+    qa_actor_id actor;
+    if (!qa_builtin_spawn_actor(&game->options.services, &spawn, &actor, error))
+        return false;
+    if (!q3_item_bind_existing(game, actor, input, true, true, NULL, error))
+        return q3_rollback_spawn(game, actor, error);
     *out = actor;
     return true;
 }
@@ -347,14 +408,28 @@ typedef struct pickup_context {
     qa_q3_game *game;
     qa_actor_id item;
     float respawn;
-    bool accepted;
+    bool accepted, allow_hidden;
 } pickup_context;
+static bool pickup_original_live(qa_q3_game *game, const qa_pickup_offer *offer,
+                                 q3_actor **pickup, q3_actor **recipient) {
+    q3_actor *item = q3_actor_get(game, offer->pickup);
+    q3_actor *player = q3_actor_get(game, offer->recipient);
+    if (!item || item->kind != Q3_ACTOR_ITEM || !player ||
+        player->kind != Q3_ACTOR_PLAYER)
+        return false;
+    if (pickup)
+        *pickup = item;
+    if (recipient)
+        *recipient = player;
+    return true;
+}
 static bool pickup_eligible(void *context, const qa_pickup_offer *offer, bool *eligible,
                             qa_error *error) {
     pickup_context *call = context;
     q3_actor *item = q3_actor_get(call->game, offer->pickup);
     qa_combat_state combat;
-    *eligible = item && item->kind == Q3_ACTOR_ITEM && !item->state.item.hidden;
+    *eligible = item && item->kind == Q3_ACTOR_ITEM &&
+                (call->allow_hidden || !item->state.item.hidden);
     if (!*eligible)
         return true;
     qa_error local = {0};
@@ -374,11 +449,9 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
                             qa_error *error) {
     pickup_context *call = context;
     qa_q3_game *game = call->game;
-    q3_actor *entity = q3_actor_get(game, offer->pickup),
-             *recipient = q3_actor_get(game, offer->recipient);
+    q3_actor *entity, *recipient;
     *accepted = false;
-    if (!entity || entity->kind != Q3_ACTOR_ITEM || !recipient ||
-        recipient->kind != Q3_ACTOR_PLAYER)
+    if (!pickup_original_live(game, offer, &entity, &recipient))
         return true;
     qa_q3_player_state *player = &recipient->state.player;
     const qa_q3_item *item = &items[entity->state.item.spawn.item_index];
@@ -386,6 +459,9 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
     qa_combat_state combat;
     if (!qa_combat_read(game->options.services.combat, offer->recipient, &combat, error))
         return false;
+    if (!pickup_original_live(game, offer, &entity, &recipient))
+        return true;
+    player = &recipient->state.player;
     float maximum = (float)player->max_health;
     int32_t quantity = spawn.count ? spawn.count : item->quantity;
     double given;
@@ -396,6 +472,8 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
         int32_t ammo;
         if (!q3_ammo_read(game, offer->recipient, (qa_q3_weapon)item->tag, &ammo, error))
             return false;
+        if (!pickup_original_live(game, offer, NULL, NULL))
+            return true;
         if (spawn.count < 0)
             quantity = 0;
         else if (!spawn.dropped && game->options.rules.game_type != 3)
@@ -403,6 +481,8 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
         if (!qa_inventory_give(game->options.services.inventory, offer->recipient,
                                game->weapon_items[item->tag], 1, &given, error))
             return false;
+        if (!pickup_original_live(game, offer, NULL, NULL))
+            return true;
         if (!q3_add_ammo(game, offer->recipient, (qa_q3_weapon)item->tag, quantity, error))
             return false;
         break;
@@ -413,6 +493,8 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
         int32_t ammo;
         if (!q3_ammo_read(game, offer->recipient, (qa_q3_weapon)item->tag, &ammo, error))
             return false;
+        if (!pickup_original_live(game, offer, NULL, NULL))
+            return true;
         if (ammo >= 200)
             return true;
         if (!q3_add_ammo(game, offer->recipient, (qa_q3_weapon)item->tag, quantity, error))
@@ -466,6 +548,9 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
             game->options.hooks.source_team
                 ? game->options.hooks.source_team(game->options.hooks.context, offer->recipient)
                 : 0;
+        if (!pickup_original_live(game, offer, &entity, &recipient))
+            return true;
+        player = &recipient->state.player;
         if (player->persistent || game->options.product != QA_Q3_TEAM_ARENA ||
             ((spawn.team_restriction & 2) && team != 1) ||
             ((spawn.team_restriction & 4) && team != 2))
@@ -476,14 +561,25 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
         if (player->persistent == QA_Q3_P_GUARD) {
             player->max_health *= 2;
             if (!qa_combat_set_health(game->options.services.combat, offer->recipient,
-                                      (float)player->max_health, error) ||
-                !qa_combat_set_regular_points(game->options.services.combat, offer->recipient,
-                                              (float)player->max_health, NULL, error))
+                                      (float)player->max_health, error))
                 return false;
-        } else if (player->persistent == QA_Q3_P_SCOUT &&
-                   !qa_combat_set_regular_points(game->options.services.combat, offer->recipient, 0,
-                                                 NULL, error))
-            return false;
+            if (!pickup_original_live(game, offer, &entity, &recipient))
+                return true;
+            player = &recipient->state.player;
+            if (!qa_combat_set_regular_points(game->options.services.combat,
+                                              offer->recipient,
+                                              (float)player->max_health, NULL,
+                                              error))
+                return false;
+        } else if (player->persistent == QA_Q3_P_SCOUT) {
+            if (!qa_combat_set_regular_points(game->options.services.combat,
+                                              offer->recipient, 0, NULL,
+                                              error))
+                return false;
+        }
+        if (!pickup_original_live(game, offer, &entity, &recipient))
+            return true;
+        player = &recipient->state.player;
         memset(player->ammo_time_ms, 0, sizeof(player->ammo_time_ms));
         break;
     }
@@ -496,6 +592,8 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
     default:
         return q3_fail(error, "invalid Q3 pickup kind");
     }
+    if (!pickup_original_live(game, offer, NULL, NULL))
+        return true;
     *accepted = true;
     return true;
 }
@@ -518,6 +616,8 @@ static bool pickup_complete(void *context, const qa_pickup_offer *offer, bool ac
         qa_body_state body;
         if (!qa_world_body_read(game->options.services.world, offer->pickup, &body, error))
             return false;
+        if (!q3_actor_get(game, offer->pickup))
+            return true;
         if (!q3_event(game, offer->pickup, offer->recipient, QA_BUILTIN_ITEM, 20,
                       (int32_t)spawn.item_index, body.origin, qa_v3(0, 0, 0), qa_v3(0, 0, 0),
                       error))
@@ -535,18 +635,37 @@ static bool pickup_complete(void *context, const qa_pickup_offer *offer, bool ac
     if (spawn.dropped)
         return qa_session_release(game->options.services.session, offer->pickup, error);
     float seconds = spawn.wait_seconds ? spawn.wait_seconds : call->respawn;
-    if (spawn.wait_seconds != -1 && spawn.random_seconds)
-        seconds = fmaxf(1, seconds + q3_crandom(game) * spawn.random_seconds);
-    int32_t respawn = seconds > 0 ? q3_add_time(game->now_ms, (int32_t)(seconds * 1000)) : 0;
+    int32_t respawn_seconds = q3_source_float_to_int(seconds);
+    if (spawn.wait_seconds != -1 && spawn.random_seconds) {
+        float adjusted = q3_source_float_add(
+            (float)respawn_seconds,
+            q3_source_float_multiply(q3_crandom(game), spawn.random_seconds));
+        respawn_seconds = q3_source_float_to_int(adjusted);
+        if (respawn_seconds < 1)
+            respawn_seconds = 1;
+    }
+    uint32_t respawn_bits = (uint32_t)respawn_seconds * UINT32_C(1000);
+    int32_t respawn_delay;
+    memcpy(&respawn_delay, &respawn_bits, sizeof(respawn_delay));
+    int32_t respawn = respawn_seconds > 0
+                          ? q3_add_time(game->now_ms, respawn_delay)
+                          : 0;
+    bool map_handled = false;
+    if (!q3_map_item_picked(game, offer->pickup, respawn, entry->state.item.expire_at,
+                            &map_handled, error))
+        return false;
+    if (map_handled)
+        return true;
     return qa_q3_item_availability(game, offer->pickup, false, respawn, entry->state.item.expire_at,
                                    error);
 }
-bool qa_q3_touch_item(qa_q3_game *game, qa_actor_id item_actor, qa_actor_id recipient,
-                      bool *accepted, qa_error *error) {
+bool q3_item_touch(qa_q3_game *game, qa_actor_id item_actor, qa_actor_id recipient,
+                   bool allow_hidden, bool *accepted, qa_error *error) {
     if (accepted)
         *accepted = false;
     q3_actor *entry = q3_actor_get(game, item_actor);
-    if (!entry || entry->kind != Q3_ACTOR_ITEM || entry->state.item.hidden)
+    if (!entry || entry->kind != Q3_ACTOR_ITEM ||
+        (!allow_hidden && entry->state.item.hidden))
         return true;
     uint32_t index = entry->state.item.spawn.item_index;
     const qa_q3_item *item = &items[index];
@@ -568,7 +687,8 @@ bool qa_q3_touch_item(qa_q3_game *game, qa_actor_id item_actor, qa_actor_id reci
                              .grant = item->kind == QA_Q3_ITEM_TEAM ? QA_PICKUP_MAP_COUPLED
                                       : resource.kind               ? QA_PICKUP_RESOURCE_GRANT
                                                                     : QA_PICKUP_SOURCE_EFFECT};
-    pickup_context context = {game, item_actor, respawn_seconds(game, item), false};
+    pickup_context context = {game, item_actor, respawn_seconds(game, item), false,
+                              allow_hidden};
     qa_pickup_continuation continuation = {.context = &context,
                                            .eligible = pickup_eligible,
                                            .original = pickup_original,
@@ -579,6 +699,10 @@ bool qa_q3_touch_item(qa_q3_game *game, qa_actor_id item_actor, qa_actor_id reci
     if (accepted)
         *accepted = context.accepted;
     return true;
+}
+bool qa_q3_touch_item(qa_q3_game *game, qa_actor_id item_actor, qa_actor_id recipient,
+                      bool *accepted, qa_error *error) {
+    return q3_item_touch(game, item_actor, recipient, false, accepted, error);
 }
 bool q3_item_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
@@ -595,10 +719,15 @@ bool q3_item_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     if (item->hidden) {
         if (!item->respawn_at || game->now_ms < item->respawn_at)
             return true;
+        int32_t expire_at = item->expire_at;
         qa_body_state body;
         if (!qa_world_body_read(game->options.services.world, actor, &body, error))
             return false;
-        return qa_q3_item_availability(game, actor, true, 0, item->expire_at, error) &&
+        if (!q3_actor_get(game, actor))
+            return true;
+        if (!qa_q3_item_availability(game, actor, true, 0, expire_at, error))
+            return false;
+        return !q3_actor_get(game, actor) ||
                q3_event(game, actor, (qa_actor_id){0}, QA_BUILTIN_ITEM, 40, 0, body.origin,
                         qa_v3(0, 0, 0), qa_v3(0, 0, 0), error);
     }
@@ -670,6 +799,13 @@ bool q3_item_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     return qa_world_body_write(game->options.services.world, actor, &body, error);
 }
 bool qa_q3_touch(qa_q3_game *game, const qa_touch_contact *contact, qa_error *error) {
+    bool handled = false;
+    if (!game || !contact)
+        return q3_fail(error, "invalid Q3 touch");
+    if (!q3_map_touch(game, contact, &handled, error))
+        return false;
+    if (handled)
+        return true;
     q3_actor *entry = q3_actor_get(game, contact->self);
     if (!entry)
         return true;

@@ -13,10 +13,38 @@
 #define Q3_SURF_NOIMPACT 16
 #define Q3_PI 3.14159265358979323846f
 
+static inline float q3_source_float_multiply(float left, float right) {
+    volatile float value = left * right;
+    return value;
+}
+
+static inline float q3_source_float_add(float left, float right) {
+    volatile float value = left + right;
+    return value;
+}
+
+static inline float q3_source_float_divide(float left, float right) {
+    volatile float value = left / right;
+    return value;
+}
+
+static inline int32_t q3_source_float_to_int(float value) {
+    return isfinite(value) && value >= -2147483648.0f && value < 2147483648.0f
+               ? (int32_t)truncf(value)
+               : INT32_MIN;
+}
+
+static inline int32_t q3_source_float_schedule(int32_t now, float seconds) {
+    float milliseconds = q3_source_float_multiply(seconds, 1000.0f);
+    return q3_source_float_to_int(q3_source_float_add((float)now, milliseconds));
+}
+
 typedef qa_q3_projectile_state q3_missile;
 typedef qa_q3_item_state q3_item_state;
 typedef qa_q3_actor_state q3_actor;
 typedef qa_q3_kamikaze_cooldown q3_kamikaze_cooldown;
+typedef struct q3_map_runtime q3_map_runtime;
+struct qa_q3_map_actor_state;
 typedef struct q3_snapshot_frame {
     struct q3_snapshot_frame *next;
     qa_builtin_actor_snapshot snapshot;
@@ -36,8 +64,8 @@ struct qa_q3_game {
     qa_actor_id body_queue[8];
     uint32_t body_queue_index;
     q3_snapshot_frame *snapshot_frames;
+    q3_map_runtime *map;
     qa_physics physics;
-    bool policy_registered;
 };
 q3_actor *q3_actor_get(qa_q3_game *, qa_actor_id);
 const q3_actor *q3_actor_const(const qa_q3_game *, qa_actor_id);
@@ -76,6 +104,10 @@ bool q3_missile_step(qa_q3_game *, qa_actor_id, qa_error *);
 bool q3_missile_explode(qa_q3_game *, qa_actor_id, qa_error *);
 bool q3_missile_trigger(qa_q3_game *, qa_actor_id mine, qa_actor_id player, qa_error *);
 bool q3_item_step(qa_q3_game *, qa_actor_id, qa_error *);
+bool q3_item_bind_existing(qa_q3_game *, qa_actor_id, const qa_q3_item_spawn *, bool available,
+                           bool initial_powerup_delay, bool *placed, qa_error *);
+bool q3_item_touch(qa_q3_game *, qa_actor_id item, qa_actor_id recipient,
+                   bool allow_hidden, bool *accepted, qa_error *);
 bool q3_kamikaze_step(qa_q3_game *, qa_actor_id, qa_error *);
 bool q3_portal_step(qa_q3_game *, qa_actor_id, qa_error *);
 bool q3_combat_describe(void *, const qa_damage_request *, const qa_combat_state *,
@@ -94,4 +126,19 @@ bool q3_start_kamikaze(qa_q3_game *, qa_actor_id source, qa_actor_id attacker, b
 bool q3_cancel_kamikaze_timers(qa_q3_game *, qa_actor_id, qa_error *);
 bool q3_schedule_kamikaze(qa_q3_game *, qa_actor_id, qa_vec3 origin, qa_error *);
 bool q3_death_rewards(qa_q3_game *, qa_actor_id, const qa_damage_request *, qa_error *);
+bool q3_mover_set_state(qa_q3_game *, qa_actor_id, int32_t, int32_t, qa_error *);
+bool q3_mover_match_team(qa_q3_game *, qa_actor_id, int32_t, int32_t, qa_error *);
+bool q3_map_frame_begin(qa_q3_game *, qa_error *);
+bool q3_map_actor_frame(qa_q3_game *, qa_actor_id, bool *handled, qa_error *);
+bool q3_map_touch(qa_q3_game *, const qa_touch_contact *, bool *handled, qa_error *);
+bool q3_map_item_picked(qa_q3_game *, qa_actor_id, int32_t respawn_at, int32_t expire_at,
+                        bool *handled, qa_error *);
+void q3_map_actor_released(qa_q3_game *, qa_actor_record);
+void q3_map_destroy(qa_q3_game *);
+bool q3_map_mover_action(qa_q3_game *, qa_q3_mover_action, qa_actor_id, qa_actor_id, int32_t,
+                         bool *, qa_error *);
+bool q3_map_mover_used(qa_q3_game *, qa_actor_id, int32_t, int32_t, qa_error *);
+bool q3_map_mover_sync_state(qa_q3_game *, struct qa_q3_map_actor_state *, qa_error *);
+void q3_map_mover_presentation(const qa_q3_game *, qa_actor_id, const char **,
+                               const char **, uint32_t *);
 #endif

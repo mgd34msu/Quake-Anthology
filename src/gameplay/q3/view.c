@@ -62,6 +62,9 @@ bool qa_q3_entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_v
         view.kind = QA_Q3_ENTITY_MOVER;
         view.position = entry->state.mover.state.position;
         view.angular = entry->state.mover.state.angular;
+        view.loop_sound = entry->state.mover.loop_sound;
+        q3_map_mover_presentation(game, actor, &view.model, &view.secondary_model,
+                                  &view.constant_light);
         break;
     case Q3_ACTOR_PORTAL:
         view.kind = QA_Q3_ENTITY_PORTAL;

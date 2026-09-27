@@ -63,6 +63,7 @@ static bool actor_valid(const qa_q3_game *game, const q3_actor *actor, qa_error 
                trajectory_valid(&m->state.position, error) &&
                trajectory_valid(&m->state.angular, error) &&
                qa_vec_finite(m->state.proximity_direction) && string_valid(game, m->target) &&
+               string_valid(game, m->loop_sound) &&
                reference_valid(game, m->team_leader, error) &&
                reference_valid(game, m->activator, error) &&
                reference_valid(game, m->state.team_next, error) &&
