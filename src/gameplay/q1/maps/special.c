@@ -1,7 +1,7 @@
 #include "internal.h"
 #include <stdio.h>
 
-static bool make_static(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+bool q1_map_make_static(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
@@ -72,7 +72,7 @@ bool q1_map_special_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             if (!q1_alive(g, entity->id))
                 return true;
         }
-        return make_static(g, entity, error);
+        return q1_map_make_static(g, entity, error);
     case Q1_MAP_AMBIENT:
         return ambient(g, entity, body.origin, error);
     case Q1_MAP_SIGIL: {

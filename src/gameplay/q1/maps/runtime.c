@@ -238,9 +238,10 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
                    qa_error *error) {
     if (!source)
         return true;
-    const float numbers[] = {source->height,   source->lip,        source->width,
-                             source->length,   source->pause_time, source->volume,
-                             source->duration, source->distance,   source->next_think_seconds};
+    const float numbers[] = {source->height,       source->lip,        source->width,
+                             source->length,       source->pause_time, source->volume,
+                             source->duration,     source->distance,   source->next_think_seconds,
+                             source->counter_value};
     for (size_t i = 0; i < sizeof(numbers) / sizeof(*numbers); ++i)
         if (!isfinite(numbers[i]))
             return q1_map_fail(error, "nonfinite Q1 authored field");
@@ -274,6 +275,8 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
     state->style = source->style;
     state->color_map = source->color_map;
     state->impulse = source->impulse;
+    state->counter_value = source->counter_value;
+    state->particle_color = source->particle_color;
     if (source->model && source->model[0] == '*') {
         const char *number = source->model + 1;
         char *end;
@@ -346,6 +349,9 @@ static q1_map_kind classify(const char *name) {
                    {"func_rubble2", Q1_MAP_RUBBLE_SOURCE},
                    {"func_rubble3", Q1_MAP_RUBBLE_SOURCE},
                    {"func_earthquake", Q1_MAP_EARTHQUAKE},
+                   {"func_particlefield", Q1_MAP_PARTICLE_FIELD},
+                   {"func_togglewall", Q1_MAP_TOGGLE_WALL},
+                   {"wallsprite", Q1_MAP_WALL_SPRITE},
                    {"trigger_multiple", Q1_MAP_MULTI},
                    {"trigger_once", Q1_MAP_MULTI},
                    {"trigger_secret", Q1_MAP_MULTI},
@@ -392,6 +398,8 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     entity->kind = Q1_MAP;
     if (q1_map_is_mover(kind))
         return q1_map_mover_spawn(g, entity, error);
+    if (kind >= Q1_MAP_PARTICLE_FIELD)
+        return q1_map_hip_particles_spawn(g, entity, error);
     if (kind >= Q1_MAP_SOUND)
         return q1_map_hip_misc_spawn(g, entity, error);
     if (kind >= Q1_MAP_GATE)
@@ -509,6 +517,8 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
         return true;
     if (q1_map_is_mover(entity->map->kind))
         return q1_map_mover_use(g, entity, activator, error);
+    if (entity->map->kind >= Q1_MAP_PARTICLE_FIELD)
+        return q1_map_hip_particles_use(g, entity, other, error);
     if (entity->map->kind >= Q1_MAP_SOUND)
         return q1_map_hip_misc_use(g, entity, activator, error);
     if (entity->map->kind >= Q1_MAP_GATE)
@@ -525,6 +535,8 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
 }
 bool q1_map_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contact *contact,
                   qa_error *error) {
+    if (entity->map && entity->map->touch_enabled && entity->map->kind >= Q1_MAP_PARTICLE_FIELD)
+        return q1_map_hip_particles_touch(g, entity, contact->other, error);
     if (entity->map && entity->map->touch_enabled && q1_map_is_mover(entity->map->kind))
         return q1_map_mover_touch(g, entity, contact->other, error);
     if (entity->map && entity->map->touch_enabled && entity->map->kind >= Q1_MAP_SOUND)

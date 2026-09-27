@@ -69,6 +69,8 @@ void qa_targets_unbind_context(qa_targets *, qa_actor_id, const void *expected_c
 void qa_targets_changed(qa_targets *);
 bool qa_targets_read(const qa_targets *, qa_actor_id, qa_authored_target *);
 bool qa_targets_field(const qa_targets *, qa_actor_id, const char *key, qa_target_field *value);
+/* Numeric native fields stay typed; authored text is parsed at this boundary. */
+bool qa_targets_number(const qa_targets *, qa_actor_id, const char *key, double *value);
 bool qa_targets_first(qa_targets *, qa_string_id name, qa_actor_id *);
 /* Zero the cursor before traversal. Each call queries the current index;
  * callbacks may remove, add or rename targets between calls. Tied source slots

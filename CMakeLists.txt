@@ -192,12 +192,14 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/gremlin.c
     src/gameplay/q1/gremlin_ai.c
     src/gameplay/q1/gremlin_weapons.c
+    src/gameplay/q1/heavy.c
     src/gameplay/q1/hipnotic_weapons.c
     src/gameplay/q1/horde.c
     src/gameplay/q1/infected.c
     src/gameplay/q1/lavaman.c
     src/gameplay/q1/maps/bosses.c
     src/gameplay/q1/maps/hipnotic_misc.c
+    src/gameplay/q1/maps/hipnotic_particles.c
     src/gameplay/q1/maps/movers.c
     src/gameplay/q1/maps/observer.c
     src/gameplay/q1/maps/runtime.c

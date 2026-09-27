@@ -13,6 +13,8 @@ typedef struct qa_q1_map_fields {
     float height, lip, width, length, pause_time;
     float volume, duration, distance, next_think_seconds;
     int32_t sounds, style, world_type, color_map, impulse;
+    float counter_value;
+    int32_t particle_color;
 } qa_q1_map_fields;
 
 typedef struct qa_q1_static_model {

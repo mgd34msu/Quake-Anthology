@@ -49,7 +49,10 @@ typedef enum q1_map_kind {
     Q1_MAP_EXPLODER,
     Q1_MAP_RUBBLE_SOURCE,
     Q1_MAP_RUBBLE,
-    Q1_MAP_EARTHQUAKE
+    Q1_MAP_EARTHQUAKE,
+    Q1_MAP_PARTICLE_FIELD,
+    Q1_MAP_TOGGLE_WALL,
+    Q1_MAP_WALL_SPRITE
 } q1_map_kind;
 typedef enum q1_map_action {
     Q1_MAP_IDLE,
@@ -115,12 +118,18 @@ struct q1_map_state {
     float height, lip, width, length, pause_time, volume, duration, distance, initial_think;
     int32_t sounds, style, color_map, impulse;
     uint32_t inline_model;
-    double cooldown;
+    float counter_value;
+    int32_t particle_color;
+    double cooldown, active_until;
     bool has_inline_model, has_movedir, touch_enabled, use_enabled, dormant, effect_active;
     union {
         qa_target_use delayed;
         qa_q1_campaign_timer finale;
         q1_map_movement mover;
+        struct {
+            qa_vec3 start, end;
+            unsigned plane;
+        } particles;
     } pending;
 };
 struct q1_map_runtime {
@@ -147,6 +156,7 @@ bool q1_map_targets(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_player(qa_q1_game *, qa_actor_id);
 bool q1_map_grounded(qa_q1_game *, q1_actor *, qa_actor_id);
 bool q1_map_ambient(qa_q1_game *, qa_vec3, const char *, float, qa_error *);
+bool q1_map_make_static(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_lightstyle(qa_q1_game *, q1_actor *, const char *, qa_error *);
 bool q1_map_trigger_init(qa_q1_game *, q1_actor *, bool zero_direction, qa_error *);
 qa_vec3 q1_map_direction(qa_vec3 angles);
@@ -178,5 +188,8 @@ bool q1_map_hip_misc_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_hip_misc_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_hip_misc_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_hip_misc_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
+bool q1_map_hip_particles_spawn(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_map_hip_particles_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_map_hip_particles_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 
 #endif

@@ -1,5 +1,6 @@
 #include "qa/targets.h"
 #include "qa/arena.h"
+#include "qa/text.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -147,6 +148,23 @@ bool qa_targets_field(const qa_targets *targets, qa_actor_id actor, const char *
         return false;
     }
     *out = value;
+    return true;
+}
+bool qa_targets_number(const qa_targets *targets, qa_actor_id actor, const char *key, double *out) {
+    qa_target_field value;
+    if (!targets || !qa_targets_field(targets, actor, key, &value))
+        return false;
+    if (value.kind == QA_TARGET_FIELD_NUMBER) {
+        *out = value.value.number;
+        return true;
+    }
+    if (value.kind != QA_TARGET_FIELD_TEXT)
+        return false;
+    qa_bytes text = qa_strings_text(qa_session_strings(targets->options.session), value.value.text);
+    double number;
+    if (!text.size || !qa_parse_number(text, &number, NULL) || !isfinite(number))
+        return false;
+    *out = number;
     return true;
 }
 static int compare(const void *left, const void *right) {
