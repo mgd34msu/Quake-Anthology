@@ -372,6 +372,11 @@ add_library(qa_game_q3 STATIC
     src/gameplay/q3/checkpoint.c)
 target_link_libraries(qa_game_q3 PUBLIC qa_builtin)
 
+add_library(qa_player_services STATIC
+    src/player_services/progress.c
+    src/player_services/progress_file.c)
+target_link_libraries(qa_player_services PUBLIC qa_core)
+
 add_library(qa_campaign STATIC
     src/campaign/travel.c
     src/campaign/unit.c

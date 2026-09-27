@@ -3,6 +3,8 @@
 #endif
 #include "qa/text.h"
 
+#include <fenv.h>
+#include <limits.h>
 #include <locale.h>
 #include <math.h>
 #include <stdio.h>
@@ -67,6 +69,56 @@ bool qa_format_number(double value, char out[32], qa_error *error) {
 #endif
     if (count < 0 || count >= 32) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "formatting number");
+        return false;
+    }
+    return true;
+}
+
+bool qa_format_fixed(double value, unsigned digits, char *out, size_t capacity, qa_error *error) {
+    if (out && capacity)
+        out[0] = 0;
+    if (!out || !capacity || digits > INT_MAX) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid fixed number output");
+        return false;
+    }
+    if (!isfinite(value)) {
+        const char *text = isnan(value) ? "nan" : signbit(value) ? "-inf" : "inf";
+        size_t size = strlen(text) + 1;
+        if (capacity < size) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, size, "fixed number output is too small");
+            return false;
+        }
+        memcpy(out, text, size);
+        return true;
+    }
+    if ((size_t)digits + (digits ? 3u : 2u) > capacity) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, capacity, "fixed number output is too small");
+        return false;
+    }
+    if (!ready(error))
+        return false;
+    int previous_rounding = fegetround();
+    if (previous_rounding < 0 || fesetround(FE_TONEAREST) != 0) {
+        qa_error_set(error, QA_ERROR_IO, 0, "selecting numeric rounding");
+        return false;
+    }
+#if defined(_WIN32)
+    int count = _snprintf_l(out, capacity, "%.*f", numeric_locale, (int)digits, value);
+#else
+    locale_t previous = uselocale(numeric_locale);
+    if (!previous) {
+        (void)fesetround(previous_rounding);
+        qa_error_set(error, QA_ERROR_IO, 0, "selecting numeric locale");
+        return false;
+    }
+    int count = snprintf(out, capacity, "%.*f", (int)digits, value);
+    uselocale(previous);
+#endif
+    int restored = fesetround(previous_rounding);
+    if (count < 0 || (size_t)count >= capacity || restored != 0) {
+        out[0] = 0;
+        qa_error_set(error, count < 0 || restored ? QA_ERROR_IO : QA_ERROR_ARGUMENT,
+                     count < 0 ? 0 : (size_t)count + 1, "formatting fixed number");
         return false;
     }
     return true;

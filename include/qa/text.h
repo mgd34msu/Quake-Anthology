@@ -11,6 +11,7 @@ bool qa_utf8_lower(qa_bytes input, qa_buffer *out, qa_error *error);
 bool qa_utf8_repair(qa_bytes input, qa_buffer *out, qa_error *error);
 /* Allocation-free scalar iteration, replacing malformed subsequences. */
 bool qa_utf8_next(qa_bytes, size_t *cursor, uint32_t *scalar);
+bool qa_utf8_valid(qa_bytes);
 size_t qa_utf8_encode(uint32_t scalar, char out[4]);
 bool qa_unicode_whitespace(uint32_t scalar);
 /* Full-token conversion in the C numeric locale, independent of UI language.
@@ -23,5 +24,8 @@ bool qa_parse_number(qa_bytes input, double *out, qa_error *error);
 bool qa_parse_atof(const char *text, double *out, qa_error *error);
 /* Finite double serialization in the same C locale, with round-trip precision. */
 bool qa_format_number(double value, char out[32], qa_error *error);
+/* Fixed decimal C-locale formatting, rounding ties to even. Nonfinite values
+ * use nan/inf/-inf. Capacity includes NUL; failure empties a valid output. */
+bool qa_format_fixed(double value, unsigned digits, char *out, size_t capacity, qa_error *error);
 
 #endif

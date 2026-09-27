@@ -5,14 +5,27 @@
 #include <unicode/ucasemap.h>
 #include <unicode/utf8.h>
 
-bool qa_utf8_next(qa_bytes input, size_t *cursor, uint32_t *scalar) {
-    if (*cursor >= input.size)
-        return false;
+static UChar32 next_code(qa_bytes input, size_t *cursor) {
     size_t remaining = input.size - *cursor;
     int32_t at = 0, length = (int32_t)(remaining < 4 ? remaining : 4);
     UChar32 code;
     U8_NEXT(input.data + *cursor, at, length, code);
     *cursor += (size_t)at;
+    return code;
+}
+bool qa_utf8_valid(qa_bytes input) {
+    if ((!input.data && input.size) || input.size > PTRDIFF_MAX)
+        return false;
+    size_t cursor = 0;
+    while (cursor < input.size)
+        if (next_code(input, &cursor) < 0)
+            return false;
+    return true;
+}
+bool qa_utf8_next(qa_bytes input, size_t *cursor, uint32_t *scalar) {
+    if (*cursor >= input.size)
+        return false;
+    UChar32 code = next_code(input, cursor);
     *scalar = code < 0 ? UINT32_C(0xfffd) : (uint32_t)code;
     return true;
 }
