@@ -1,0 +1,3 @@
+claims-done overclaims=0.06
+REVIEW blocked-external 0.30: Full source inspection of main.c, CMakeLists.txt, cmake/Native.cmake and configuration sources found the executable only dispatches content inspection utilities. It does not compose session, display, seats, console, rendering, audio or dedicated mode. P-01 in docs/audit/presentation.md leaves B34 incomplete. Baseline execution remains prohibited.
+stop-reason: 1 passages read

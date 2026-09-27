@@ -1,0 +1,3 @@
+claims-done overclaims=0.05
+EXCUSE 0.54: Source audit found retained GL mesh VBO and IBO entries have no successful-cache retirement except renderer destruction/restart. Scene worlds allocate new identities; map destruction therefore leaves old entries resident. P-02 in docs/audit/presentation.md records the exact paths. The authorized focused fix is next. B18 remains incomplete.
+stop-reason: 1 passages read

@@ -50,6 +50,11 @@ def check(graph, scope):
         raise ValueError("BASELINE must depend directly on every task B00 through B34")
     if "AUDIT" not in by_id["BASELINE"]["depends_on"]:
         raise ValueError("BASELINE must depend on the retrospective source audit")
+    for predecessor, successor in zip(
+        ("BASELINE", "P01", "P02", "P03"), ("P01", "P02", "P03", "RELEASE")
+    ):
+        if predecessor not in ancestors[successor]:
+            raise ValueError(f"{successor} must follow {predecessor}")
 
     targets = scope["functional_targets"]
     target_ids = [target["id"] for target in targets]

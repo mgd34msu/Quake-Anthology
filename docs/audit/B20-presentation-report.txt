@@ -1,0 +1,3 @@
+claims-done overclaims=0.06
+EXCUSE 0.84: All assigned input, SDL input platform and public headers were source-reviewed; evidence is in docs/audit/presentation.md. Per-seat routing and release paths exist, but executable join/leave and gameplay consumption remain missing. B20 remains incomplete. No device tests or project execution occurred.
+stop-reason: 1 passages read

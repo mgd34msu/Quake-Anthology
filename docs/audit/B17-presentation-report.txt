@@ -1,0 +1,3 @@
+claims-done overclaims=0.17
+EXCUSE 0.56: Source audit of all six CPU renderer files and include/qa/render_cpu.h is recorded in docs/audit/presentation.md. Source has clipping, sampling, interpolation, depth, stencil, fog and blending paths. Supplemental criterion judgment found insufficient evidence for full acceptance. B17 remains unaccepted; no execution occurred under the baseline phase restriction.
+stop-reason: 1 passages read

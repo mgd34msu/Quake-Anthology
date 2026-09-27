@@ -1,0 +1,3 @@
+claims-done overclaims=0.09
+EXCUSE 0.70: Source audit of all src/render/scene and src/render/material files and public contracts is recorded in docs/audit/presentation.md. Family world, model, material and effect implementations share scene resources, but application composition is absent and GL mesh retirement is defective. B16 remains open; source coverage does not establish full behavior parity.
+stop-reason: 1 passages read

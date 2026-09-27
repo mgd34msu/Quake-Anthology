@@ -1,0 +1,3 @@
+claims-done overclaims=0.11
+EXCUSE 0.69: All assigned audio and media sources and headers were source-reviewed; evidence and full manifest are in docs/audit/presentation.md. Decoders, voice policy, music, cinematic clocks and device paths exist, but the application does not compose their lifecycle. B19 remains incomplete and no playback or device execution was performed.
+stop-reason: 1 passages read

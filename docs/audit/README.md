@@ -14,6 +14,8 @@ Plan revision 6 and the root AUDIT claim produced recorded Jev verdicts. The pla
 
 Nine tasks retain historical `complete` reports: B00-B07 and B09. They are not verified completions. The ledger rejects reopening terminal work records, so AUDIT is an explicit prerequisite of BASELINE and tracks the re-review and corrections without rewriting history. Do not use those nine reports as evidence that their acceptance criteria passed Jev.
 
+The [open recovery register](status.md) tracks every original B00-B34 scope under the nonterminal AUDIT work. It records the old terminal reports separately from current acceptance and corrective work. Terminal task history is not an authorization to bypass an unresolved original criterion.
+
 ## Review assignments
 
 | Reviewer | Production scope | Existing graph tasks |
@@ -37,5 +39,7 @@ Submit that evidence through the installed Jev `check report --project quake-ant
 Root also submits each task packet to the same Jev service using `/home/buzzkill/.local/share/vibecheck-jev/judge-task.mjs Bxx REPORT`. This supplemental question explicitly asks whether the work fulfills the graph goal and every criterion, with `supported`, `incomplete`, and `insufficient_evidence` outcomes, and asks separately about each criterion. It does not substitute a report-honesty pass for acceptance. The resulting JSON retains the model, questions, probabilities, graph/evidence hashes, and request identity. This is a direct Jev comparison in addition to the plugin's report check; it is not a built-in plugin ledger verdict.
 
 The initial B00 packet did not pass these checks: the report check flagged overclaiming at 0.65, and direct comparison selected incomplete with probabilities 0.38 incomplete, 0.35 supported, and 0.27 insufficient evidence. The root's graph work therefore remains unaccepted by this audit; an independent worker is reviewing its evidence. These results are retained without lowering thresholds or retrying unchanged evidence for a favorable answer.
+
+The independent B00 review subsequently found six missing direct target-owner allocations. Those were corrected and independently re-reviewed, along with the phase-order checker and per-task recovery register. A new combined packet still received an incomplete Jev outcome, with probability 0.85 and criterion reading 0.41. The report check returned overclaims 0.36 and stop-reason flags. All outputs remain in `B00-recheck-*`; B00 is not accepted. No unchanged retry or threshold adjustment was made.
 
 Confirmed defects go to the original source owner for correction, followed by independent re-review and another Jev judgment. Missing implementation stays open under its original graph task. Root integrates local commits. Full source audit coverage, resolved defects, and actual judgments are required to close AUDIT; runtime qualification remains P01 after the entire baseline source is complete.
