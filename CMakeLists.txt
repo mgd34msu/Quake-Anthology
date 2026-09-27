@@ -395,6 +395,9 @@ add_library(qa_modes STATIC
     src/gameplay/modes/vote.c)
 target_link_libraries(qa_modes PUBLIC qa_game_q1 qa_game_q2 qa_game_q3)
 
+add_library(qa_bots STATIC src/bots/actions.c)
+target_link_libraries(qa_bots PUBLIC qa_builtin qa_navigation)
+
 add_library(qa_audio STATIC
     src/audio/bank.c
     src/audio/codecs.c

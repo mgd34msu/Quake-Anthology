@@ -1,0 +1,321 @@
+#include "qa/bot_actions.h"
+#include "qa/builtin.h"
+
+#include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+/* This source bit deliberately aliases CROUCH in the public input record. */
+#define BOT_JUMPED_LAST_FRAME UINT32_C(0x80)
+#define BOT_COMMAND_CAPACITY 32000
+
+struct qa_bot_actions {
+    qa_bot_action_services services;
+    qa_bot_input *inputs;
+    uint32_t capacity;
+    bool initialized;
+};
+
+static bool action_fail(qa_error *e, const char *message) {
+    qa_error_set(e, QA_ERROR_ARGUMENT, 0, "%s", message);
+    return false;
+}
+static qa_bot_input *action_input(const qa_bot_actions *actions, uint32_t client, qa_error *e) {
+    if (!actions || !actions->initialized || client >= actions->capacity) {
+        action_fail(e, "bot action client is outside the initialized instance");
+        return NULL;
+    }
+    return &actions->inputs[client];
+}
+bool qa_bot_actions_create(uint32_t clients, const qa_bot_action_services *services,
+                           qa_bot_actions **out, qa_error *e) {
+    if (!services || !out)
+        return action_fail(e, "invalid bot action services or output");
+    qa_bot_actions *actions = calloc(1, sizeof(*actions));
+    if (!actions) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "allocating bot actions");
+        return false;
+    }
+    actions->services = *services;
+    if (!qa_bot_actions_setup(actions, clients, e)) {
+        free(actions);
+        return false;
+    }
+    *out = actions;
+    return true;
+}
+void qa_bot_actions_destroy(qa_bot_actions *actions) {
+    if (actions) {
+        qa_bot_actions_shutdown(actions);
+        free(actions);
+    }
+}
+uint32_t qa_bot_actions_capacity(const qa_bot_actions *actions) {
+    return actions ? actions->capacity : 0;
+}
+bool qa_bot_actions_setup(qa_bot_actions *actions, uint32_t clients, qa_error *e) {
+    if (!actions || clients > INT32_MAX / 40 || clients > SIZE_MAX / sizeof(qa_bot_input))
+        return action_fail(e, "bot action capacity exceeds source allocation range");
+    qa_bot_input *inputs = clients ? calloc(clients, sizeof(*inputs)) : NULL;
+    if (clients && !inputs) {
+        qa_error_set(e, QA_ERROR_MEMORY, clients, "allocating bot input records");
+        return false;
+    }
+    free(actions->inputs);
+    actions->inputs = inputs;
+    actions->capacity = clients;
+    actions->initialized = true;
+    return true;
+}
+void qa_bot_actions_shutdown(qa_bot_actions *actions) {
+    if (!actions)
+        return;
+    free(actions->inputs);
+    actions->inputs = NULL;
+    actions->initialized = false;
+}
+bool qa_bot_actions_add(qa_bot_actions *actions, uint32_t client, uint32_t flags, qa_error *e) {
+    qa_bot_input *input = action_input(actions, client, e);
+    if (!input)
+        return false;
+    input->action_flags |= flags;
+    return true;
+}
+bool qa_bot_actions_weapon(qa_bot_actions *actions, uint32_t client, int32_t weapon, qa_error *e) {
+    qa_bot_input *input = action_input(actions, client, e);
+    if (!input)
+        return false;
+    input->weapon = weapon;
+    return true;
+}
+bool qa_bot_actions_jump(qa_bot_actions *actions, uint32_t client, bool delayed, qa_error *e) {
+    qa_bot_input *input = action_input(actions, client, e);
+    if (!input)
+        return false;
+    uint32_t flag = delayed ? QA_BOT_DELAYED_JUMP : QA_BOT_JUMP;
+    if (input->action_flags & BOT_JUMPED_LAST_FRAME)
+        input->action_flags &= ~flag;
+    else
+        input->action_flags |= flag;
+    return true;
+}
+bool qa_bot_actions_move(qa_bot_actions *actions, uint32_t client, qa_vec3 direction, float speed,
+                         qa_error *e) {
+    qa_bot_input *input = action_input(actions, client, e);
+    if (!input)
+        return false;
+    input->direction = direction;
+    input->speed = speed > 400 ? 400 : speed < -400 ? -400 : speed;
+    return true;
+}
+bool qa_bot_actions_view(qa_bot_actions *actions, uint32_t client, qa_vec3 angles, qa_error *e) {
+    qa_bot_input *input = action_input(actions, client, e);
+    if (!input)
+        return false;
+    input->view_angles = angles;
+    return true;
+}
+bool qa_bot_actions_input(qa_bot_actions *actions, uint32_t client, float think_time,
+                          qa_bot_input *out, qa_error *e) {
+    if (!out)
+        return action_fail(e, "missing bot input output");
+    qa_bot_input *input = action_input(actions, client, e);
+    if (!input)
+        return false;
+    input->think_time = think_time;
+    *out = *input;
+    return true;
+}
+bool qa_bot_actions_read(const qa_bot_actions *actions, uint32_t client, qa_bot_input *out,
+                         qa_error *e) {
+    if (!out)
+        return action_fail(e, "missing bot input output");
+    const qa_bot_input *input = action_input(actions, client, e);
+    if (!input)
+        return false;
+    *out = *input;
+    return true;
+}
+bool qa_bot_actions_restore(qa_bot_actions *actions, uint32_t client, const qa_bot_input *saved,
+                            qa_error *e) {
+    if (!saved)
+        return action_fail(e, "missing saved bot input");
+    qa_bot_input *input = action_input(actions, client, e);
+    if (!input)
+        return false;
+    *input = *saved;
+    return true;
+}
+bool qa_bot_actions_reset(qa_bot_actions *actions, uint32_t client, qa_error *e) {
+    qa_bot_input *input = action_input(actions, client, e);
+    if (!input)
+        return false;
+    bool jumped = (input->action_flags & QA_BOT_JUMP) != 0;
+    input->think_time = 0;
+    input->direction = (qa_vec3){0};
+    input->speed = 0;
+    input->action_flags = jumped ? BOT_JUMPED_LAST_FRAME : 0;
+    return true;
+}
+void qa_bot_actions_end_regular(qa_bot_actions *actions, int32_t client, float think_time) {
+    (void)actions;
+    (void)client;
+    (void)think_time;
+}
+bool qa_bot_actions_text(qa_bot_actions *actions, int32_t client, qa_bot_text_action action,
+                         int32_t recipient, const char *text, qa_error *e) {
+    if (!actions || !actions->services.command || !text || action < QA_BOT_COMMAND ||
+        action > QA_BOT_DROP_INVENTORY)
+        return action_fail(e, "invalid bot command action");
+    if (action == QA_BOT_COMMAND)
+        return actions->services.command(actions->services.context, client, text, e);
+    const char *prefix = "";
+    char target[32];
+    switch (action) {
+    case QA_BOT_SAY: prefix = "say "; break;
+    case QA_BOT_SAY_TEAM: prefix = "say_team "; break;
+    case QA_BOT_TELL:
+        snprintf(target, sizeof(target), "tell %d, ", recipient);
+        prefix = target;
+        break;
+    case QA_BOT_USE_ITEM: prefix = "use "; break;
+    case QA_BOT_DROP_ITEM: prefix = "drop "; break;
+    case QA_BOT_USE_INVENTORY: prefix = "invuse "; break;
+    case QA_BOT_DROP_INVENTORY: prefix = "invdrop "; break;
+    case QA_BOT_COMMAND: break;
+    }
+    size_t first = strlen(prefix), length = strlen(text);
+    if (length >= BOT_COMMAND_CAPACITY - first)
+        return action_fail(e, "bot formatted command exceeds source va buffer");
+    char command[BOT_COMMAND_CAPACITY];
+    memcpy(command, prefix, first);
+    memcpy(command + first, text, length + 1);
+    return actions->services.command(actions->services.context, client, command, e);
+}
+
+static int32_t source_integer(float value) {
+    return value >= -2147483648.0f && value < 2147483648.0f ? (int32_t)value : INT32_MIN;
+}
+static float angle_mod(float angle) {
+    return (float)((uint32_t)source_integer(angle * (65536.0f / 360.0f)) & 65535u) *
+           (360.0f / 65536.0f);
+}
+float qa_bot_angle_difference(float angle, float ideal) {
+    float difference = angle - ideal;
+    if (angle > ideal) {
+        if (difference > 180)
+            difference -= 360;
+    } else if (difference < -180)
+        difference += 360;
+    return difference;
+}
+float qa_bot_change_angle(float angle, float ideal, float speed) {
+    angle = angle_mod(angle);
+    ideal = angle_mod(ideal);
+    if (angle == ideal)
+        return angle;
+    float move = -qa_bot_angle_difference(angle, ideal);
+    if (move > speed)
+        move = speed;
+    else if (move < -speed)
+        move = -speed;
+    return angle_mod(angle + move);
+}
+void qa_bot_change_view(qa_bot_view_state *state, float factor, float maximum, float elapsed,
+                        bool challenge) {
+    if (!state)
+        return;
+    if (state->ideal.x > 180)
+        state->ideal.x -= 360;
+    if (maximum < 240)
+        maximum = 240;
+    maximum *= elapsed;
+    float angles[2] = {state->angles.x, state->angles.y};
+    float ideals[2] = {state->ideal.x, state->ideal.y};
+    float velocity[2] = {state->velocity.x, state->velocity.y};
+    for (unsigned i = 0; i < 2; ++i) {
+        if (challenge) {
+            int32_t integer = source_integer(qa_bot_angle_difference(angles[i], ideals[i]));
+            float difference = integer == INT32_MIN ? (float)INT32_MIN : (float)abs(integer);
+            float speed = difference * factor;
+            angles[i] = qa_bot_change_angle(angles[i], ideals[i], speed > maximum ? maximum : speed);
+        } else {
+            angles[i] = angle_mod(angles[i]);
+            ideals[i] = angle_mod(ideals[i]);
+            float desired = qa_bot_angle_difference(angles[i], ideals[i]) * factor;
+            velocity[i] += velocity[i] - desired;
+            if (velocity[i] > 180)
+                velocity[i] = maximum;
+            if (velocity[i] < -180)
+                velocity[i] = -maximum;
+            float speed = velocity[i] > maximum ? maximum :
+                          velocity[i] < -maximum ? -maximum : velocity[i];
+            angles[i] = angle_mod(angles[i] + speed);
+            velocity[i] *= .45f * (1 - factor);
+        }
+    }
+    state->angles.x = angles[0] > 180 ? angles[0] - 360 : angles[0];
+    state->angles.y = angles[1];
+    state->ideal.x = ideals[0];
+    state->ideal.y = ideals[1];
+    state->velocity.x = velocity[0];
+    state->velocity.y = velocity[1];
+}
+void qa_bot_view_delta(qa_bot_view_state *state, const int32_t delta[3], bool add) {
+    if (!state || !delta)
+        return;
+    float sign = add ? 1 : -1;
+    state->angles.x = angle_mod(state->angles.x + sign * (float)delta[0] * (360.0f / 65536.0f));
+    state->angles.y = angle_mod(state->angles.y + sign * (float)delta[1] * (360.0f / 65536.0f));
+    state->angles.z = angle_mod(state->angles.z + sign * (float)delta[2] * (360.0f / 65536.0f));
+}
+static int32_t command_angle(float angle, int32_t delta) {
+    uint32_t word = ((uint32_t)source_integer(angle * 65536.0f / 360.0f) - (uint32_t)delta) & 65535;
+    return word >= 32768 ? (int32_t)word - 65536 : (int32_t)word;
+}
+static int32_t command_byte(int32_t value) {
+    uint32_t byte = (uint32_t)value & 255;
+    return byte >= 128 ? (int32_t)byte - 256 : (int32_t)byte;
+}
+bool qa_bot_input_q3_command(const qa_bot_input *input, const int32_t delta[3], int32_t time,
+                             qa_movement_command *out, qa_error *e) {
+    if (!input || !delta || !out)
+        return action_fail(e, "invalid bot command conversion");
+    uint32_t flags = input->action_flags;
+    if (flags & QA_BOT_DELAYED_JUMP)
+        flags = (flags | QA_BOT_JUMP) & ~(uint32_t)QA_BOT_DELAYED_JUMP;
+    qa_movement_command command = {.kind = QA_MOVEMENT_Q3, .server_time_ms = time,
+        .angles = input->view_angles, .weapon = (uint8_t)input->weapon};
+    static const struct { uint32_t action, button; } buttons[] = {
+        {QA_BOT_RESPAWN | QA_BOT_ATTACK, 1}, {QA_BOT_TALK, 2}, {QA_BOT_GESTURE, 8},
+        {QA_BOT_USE, 4}, {QA_BOT_WALK, 16}, {QA_BOT_AFFIRMATIVE, 32}, {QA_BOT_NEGATIVE, 64},
+        {QA_BOT_GET_FLAG, 128}, {QA_BOT_GUARD_BASE, 256}, {QA_BOT_PATROL, 512}, {QA_BOT_FOLLOW_ME, 1024}
+    };
+    for (size_t i = 0; i < sizeof(buttons) / sizeof(*buttons); ++i)
+        if (flags & buttons[i].action)
+            command.buttons |= buttons[i].button;
+    command.angle_words[0] = command_angle(input->view_angles.x, delta[0]);
+    command.angle_words[1] = command_angle(input->view_angles.y, delta[1]);
+    command.angle_words[2] = command_angle(input->view_angles.z, delta[2]);
+    qa_vec3 forward, right;
+    qa_builtin_angle_vectors(qa_v3(input->direction.z != 0 ? input->view_angles.x : 0,
+                                  input->view_angles.y, 0), &forward, &right, NULL);
+    float speed = input->speed * 127.0f / 400.0f;
+    int32_t f = command_byte(source_integer(qa_vec_dot(forward, input->direction) * speed));
+    int32_t r = command_byte(source_integer(qa_vec_dot(right, input->direction) * speed));
+    int32_t z = source_integer(forward.z);
+    float vertical = z == INT32_MIN ? (float)INT32_MIN : (float)abs(z);
+    int32_t u = command_byte(source_integer(vertical * input->direction.z * speed));
+    if (flags & QA_BOT_MOVE_FORWARD) f += 127;
+    if (flags & QA_BOT_MOVE_BACK) f -= 127;
+    if (flags & QA_BOT_MOVE_LEFT) r -= 127;
+    if (flags & QA_BOT_MOVE_RIGHT) r += 127;
+    if (flags & QA_BOT_JUMP) u += 127;
+    if (flags & QA_BOT_CROUCH) u -= 127;
+    command.forward_move = (float)command_byte(f);
+    command.side_move = (float)command_byte(r);
+    command.up_move = (float)command_byte(u);
+    *out = command;
+    return true;
+}
