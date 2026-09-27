@@ -77,6 +77,9 @@ bool qa_targets_set_target(qa_targets *, qa_actor_id, qa_string_id, qa_error *);
 bool qa_targets_field(const qa_targets *, qa_actor_id, const char *key, qa_target_field *value);
 /* Numeric native fields stay typed; authored text is parsed at this boundary. */
 bool qa_targets_number(const qa_targets *, qa_actor_id, const char *key, double *value);
+/* Native vectors or exactly three finite float-range text components.
+ * Missing/invalid fields leave the output unchanged. */
+bool qa_targets_vector(const qa_targets *, qa_actor_id, const char *key, qa_vec3 *value);
 bool qa_targets_first(qa_targets *, qa_string_id name, qa_actor_id *);
 /* Zero the cursor before traversal. Each call queries the current index;
  * callbacks may remove, add or rename targets between calls. Tied source slots
@@ -88,6 +91,11 @@ bool qa_targets_next_authored(qa_targets *, const char *classname, qa_target_cur
                               qa_actor_id *);
 bool qa_targets_pick(qa_targets *, qa_string_id name, uint32_t random, size_t maximum_choices,
                      qa_actor_id *);
+/* Invoke only this actor's use callback, preserving both source identities.
+ * Absent/stale bindings and actors without use are no-ops. Nested callbacks
+ * may retire or replace the binding; the replacement is never invoked here. */
+bool qa_targets_invoke(qa_targets *, qa_actor_id target, qa_actor_id other,
+                       qa_actor_id activator, qa_error *);
 /* Source invocation reads current fields. Explicit requests serve authored
  * substitutions and delayed actors; their initial fields are value snapshots.
  */

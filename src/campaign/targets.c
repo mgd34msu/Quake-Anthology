@@ -1,6 +1,7 @@
 #include "qa/targets.h"
 #include "qa/arena.h"
 #include "qa/text.h"
+#include <float.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -208,6 +209,43 @@ bool qa_targets_number(const qa_targets *targets, qa_actor_id actor, const char 
     *out = number;
     return true;
 }
+static bool field_space(uint8_t c) {
+    return c == ' ' || (c >= '\t' && c <= '\r');
+}
+bool qa_targets_vector(const qa_targets *targets, qa_actor_id actor, const char *key,
+                        qa_vec3 *out) {
+    qa_target_field value;
+    if (!targets || !key || !out || !qa_targets_field(targets, actor, key, &value))
+        return false;
+    if (value.kind == QA_TARGET_FIELD_VECTOR) {
+        *out = value.value.vector;
+        return true;
+    }
+    if (value.kind != QA_TARGET_FIELD_TEXT)
+        return false;
+    qa_bytes text = qa_strings_text(qa_session_strings(targets->options.session), value.value.text);
+    float components[3];
+    size_t cursor = 0;
+    for (size_t i = 0; i < 3; ++i) {
+        while (cursor < text.size && field_space(text.data[cursor]))
+            ++cursor;
+        size_t begin = cursor;
+        while (cursor < text.size && !field_space(text.data[cursor]))
+            ++cursor;
+        double number;
+        if (begin == cursor ||
+            !qa_parse_number((qa_bytes){text.data + begin, cursor - begin}, &number, NULL) ||
+            !isfinite(number) || number < -FLT_MAX || number > FLT_MAX)
+            return false;
+        components[i] = (float)number;
+    }
+    while (cursor < text.size && field_space(text.data[cursor]))
+        ++cursor;
+    if (cursor != text.size)
+        return false;
+    *out = qa_v3(components[0], components[1], components[2]);
+    return true;
+}
 static int compare(const void *left, const void *right) {
     const target_index *a = left, *b = right;
     if (a->name != b->name)
@@ -367,21 +405,28 @@ static bool snapshot(qa_targets *targets, qa_string_id name, qa_actor_id **out, 
     return true;
 }
 typedef struct use_invocation {
+    qa_targets *router;
     qa_target_binding target;
+    uint64_t serial;
     qa_actor_id source, activator;
 } use_invocation;
 static bool invoke(void *context, qa_session *session, qa_error *error) {
     (void)session;
     use_invocation *use = context;
+    if (!binding(use->router, use->target.actor) ||
+        use->router->binding_serial[use->target.actor.slot] != use->serial)
+        return true;
     return use->target.use(use->target.context, use->target.actor, use->source, use->activator,
                            error);
 }
-static bool dispatch(qa_targets *targets, qa_actor_id actor, const qa_target_use *request,
-                     qa_error *error) {
+bool qa_targets_invoke(qa_targets *targets, qa_actor_id actor, qa_actor_id other,
+                       qa_actor_id activator, qa_error *error) {
+    if (!targets)
+        return fail(error, "Target invocation requires the shared router");
     const qa_target_binding *entry = binding(targets, actor);
     if (!entry || !entry->use)
         return true;
-    use_invocation use = {*entry, request->source, request->activator};
+    use_invocation use = {targets, *entry, targets->binding_serial[actor.slot], other, activator};
     return qa_session_invoke(targets->options.session, actor, QA_INVOKE_USE, invoke, &use, error);
 }
 static bool named(const qa_targets *targets, qa_string_id id, const char *text) {
@@ -428,7 +473,8 @@ static bool use_now(qa_targets *targets, qa_target_use request, qa_error *error)
         if (!snapshot(targets, request.fields.target, &actors, &count, error))
             return false;
         for (size_t i = 0; i < count; ++i)
-            if (live(targets, actors[i]) && !dispatch(targets, actors[i], &request, error))
+            if (live(targets, actors[i]) &&
+                !qa_targets_invoke(targets, actors[i], request.source, request.activator, error))
                 return false;
     } else {
         qa_target_cursor cursor = {0};
@@ -444,7 +490,8 @@ static bool use_now(qa_targets *targets, qa_target_use request, qa_error *error)
                                    named(targets, destination.classname, "func_areaportal") &&
                                    (named(targets, request.fields.classname, "func_door") ||
                                     named(targets, request.fields.classname, "func_door_rotating"));
-                if (!skip_portal && !dispatch(targets, current, &request, error))
+                if (!skip_portal &&
+                    !qa_targets_invoke(targets, current, request.source, request.activator, error))
                     return false;
             }
             if (!live(targets, request.source)) {
