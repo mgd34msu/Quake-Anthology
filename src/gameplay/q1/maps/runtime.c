@@ -154,6 +154,20 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = entity->map->event};
         return true;
     }
+    if (entity->map && (!strcmp(key, "spawnfunction") || !strcmp(key, "spawnclassname"))) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
+                                 .value.text = !strcmp(key, "spawnfunction")
+                                                   ? entity->map->spawn_function
+                                                   : entity->map->spawn_classname};
+        return true;
+    }
+    if (entity->map && (!strcmp(key, "spawnmulti") || !strcmp(key, "spawnsilent"))) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+                                 .value.number = !strcmp(key, "spawnmulti")
+                                                     ? entity->map->spawn_multi
+                                                     : entity->map->spawn_silent};
+        return true;
+    }
     if (entity->map && !strcmp(key, "mangle")) {
         *out =
             (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR, .value.vector = entity->map->mangle};
@@ -331,10 +345,10 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
                    qa_error *error) {
     if (!source)
         return true;
-    const float numbers[] = {source->height,       source->lip,        source->width,
-                             source->length,       source->pause_time, source->volume,
-                             source->duration,     source->distance,   source->next_think_seconds,
-                             source->counter_value};
+    const float numbers[] = {source->height,        source->lip,         source->width,
+                             source->length,        source->pause_time,  source->volume,
+                             source->duration,      source->distance,    source->next_think_seconds,
+                             source->counter_value, source->spawn_multi, source->spawn_silent};
     for (size_t i = 0; i < sizeof(numbers) / sizeof(*numbers); ++i)
         if (!isfinite(numbers[i]))
             return q1_map_fail(error, "nonfinite Q1 authored field");
@@ -343,13 +357,13 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
         return q1_map_fail(error, "invalid Q1 authored direction");
     q1_map_state *state = entity->map;
     const char *input[] = {
-        source->model,   source->map,    source->noise,   source->noise1,
-        source->noise2,  source->noise3, source->endtext, source->intermissiontext,
-        source->netname, source->event};
+        source->model,   source->map,    source->noise,          source->noise1,
+        source->noise2,  source->noise3, source->endtext,        source->intermissiontext,
+        source->netname, source->event,  source->spawn_function, source->spawn_classname};
     qa_string_id *output[] = {
-        &state->original_model, &state->map,      &state->noise[0], &state->noise[1],
-        &state->noise[2],       &state->noise[3], &state->endtext,  &state->intermissiontext,
-        &state->netname,        &state->event};
+        &state->original_model, &state->map,      &state->noise[0],       &state->noise[1],
+        &state->noise[2],       &state->noise[3], &state->endtext,        &state->intermissiontext,
+        &state->netname,        &state->event,    &state->spawn_function, &state->spawn_classname};
     for (size_t i = 0; i < sizeof(input) / sizeof(*input); ++i)
         if (input[i] && input[i][0] &&
             !qa_builtin_resource(&g->services, input[i], output[i], error))
@@ -375,6 +389,8 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
     state->impulse = source->impulse;
     state->counter_value = source->counter_value;
     state->particle_color = source->particle_color;
+    state->spawn_multi = source->spawn_multi;
+    state->spawn_silent = source->spawn_silent;
     if (source->model && source->model[0] == '*') {
         const char *number = source->model + 1;
         char *end;
@@ -398,6 +414,8 @@ static q1_map_kind classify(const char *name) {
         const char *name;
         q1_map_kind kind;
     } classes[] = {{"worldspawn", Q1_MAP_WORLD},
+                   {"func_spawn", Q1_MAP_SPAWNER},
+                   {"func_spawn_small", Q1_MAP_SPAWNER},
                    {"func_wall", Q1_MAP_WALL},
                    {"func_door", Q1_MAP_DOOR},
                    {"func_button", Q1_MAP_BUTTON},
@@ -497,7 +515,7 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
         kind = Q1_MAP_FIELDS;
     if (g->options.program != QA_Q1_HIPNOTIC &&
         (kind == Q1_MAP_FOLLOW || kind == Q1_MAP_TRAIN2 || kind == Q1_MAP_BOBBING_WATER ||
-         kind == Q1_MAP_PUSHABLE))
+         kind == Q1_MAP_PUSHABLE || kind == Q1_MAP_SPAWNER))
         kind = Q1_MAP_FIELDS;
     *handled = kind != Q1_MAP_FIELDS;
     if (!*handled && !spawn->map_fields)
@@ -509,6 +527,8 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     if (!*handled)
         return true;
     entity->kind = Q1_MAP;
+    if (kind == Q1_MAP_SPAWNER)
+        return q1_map_hip_spawner_spawn(g, entity, spawn, error);
     if (kind == Q1_MAP_BOBBING_WATER || kind == Q1_MAP_PUSHABLE)
         return q1_map_hip_brush_spawn(g, entity, error);
     if (kind == Q1_MAP_SACRIFICE)
@@ -651,6 +671,8 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
                 qa_error *error) {
     if (!entity->map || !entity->map->use_enabled)
         return true;
+    if (entity->map->kind == Q1_MAP_SPAWNER)
+        return q1_map_hip_spawner_use(g, entity, error);
     if (entity->map->kind == Q1_MAP_CANCEL_PAUSE || entity->map->kind == Q1_MAP_SWITCH_PATH)
         return q1_map_path_use(g, entity, error);
     if (entity->map->kind == Q1_MAP_SACRIFICE) {

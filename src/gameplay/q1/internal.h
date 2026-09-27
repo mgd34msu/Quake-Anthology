@@ -71,7 +71,8 @@ typedef enum q1_think_kind {
     Q1_THINK_HEAVY_SOURCE_DIE,
     Q1_THINK_GHOST_BUBBLES,
     Q1_THINK_HOMING_FLAME,
-    Q1_THINK_BOSS_CHILD
+    Q1_THINK_BOSS_CHILD,
+    Q1_THINK_SPAWN_TEMPLATE
 } q1_think_kind;
 typedef enum q1_projectile_kind {
     Q1_SPIKE,
@@ -396,6 +397,9 @@ void q1_map_destroy(qa_q1_game *);
 void q1_map_frame_begin(qa_q1_game *);
 bool q1_map_collision(const q1_actor *, qa_actor_collision *);
 bool q1_map_bind_target(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_spawn_template(qa_q1_game *, const qa_q1_spawn *, const qa_body_state *, qa_actor_id *,
+                       qa_error *);
+bool q1_map_spawn_template_wait(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_multi_explosion_begin(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_mg3_hammer_fire(qa_q1_game *, q1_player *, qa_error *);
 bool q1_mg3_hammer_strike(qa_q1_game *, q1_actor *, qa_error *);

@@ -8,9 +8,17 @@ bool qa_q1_game_clone(qa_q1_game *g, qa_actor_id actor, qa_actor_id *out, qa_err
         return false;
     }
     q1_actor *target;
-    if (!q1_create(g, "", source->kind, source->owner, &target, error))
+    const char *classname =
+        qa_strings_cstr(qa_session_strings(g->services.session), source->classname);
+    if (!q1_create(g, classname, source->kind, source->owner, &target, error))
         return false;
     qa_actor_id id = target->id;
+    source = q1_entity(g, actor);
+    if (!source) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, actor.slot,
+                     "native Q1 clone source retired during allocation");
+        goto fail;
+    }
     q1_actor *allocation = target->allocation_next;
     *target = *source;
     target->id = id;
@@ -57,6 +65,12 @@ bool qa_q1_game_clone(qa_q1_game *g, qa_actor_id actor, qa_actor_id *out, qa_err
     if (qa_combat_power_inventory(g->services.combat, actor, &power_inventory, &power_item) &&
         !qa_combat_bind_power_inventory(g->services.combat, id, power_inventory, power_item, error))
         goto fail;
+    target = q1_entity(g, id);
+    if (!target) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, id.slot,
+                     "native Q1 clone retired during shared-state copying");
+        goto fail;
+    }
     if (target->physics.motion != QA_PHYSICS_PUSH && target->think != Q1_THINK_NONE &&
         target->next_think >= 0 &&
         !q1_schedule(g, target, target->next_think - g->time, target->think, error))
@@ -64,6 +78,6 @@ bool qa_q1_game_clone(qa_q1_game *g, qa_actor_id actor, qa_actor_id *out, qa_err
     *out = id;
     return true;
 fail:
-    (void)q1_remove(g, target, NULL);
+    (void)qa_session_release(g->services.session, id, NULL);
     return false;
 }

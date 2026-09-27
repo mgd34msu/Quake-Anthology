@@ -523,6 +523,8 @@ bool q1_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return true;
     case Q1_THINK_MAP:
         return q1_map_think(g, entity, error);
+    case Q1_THINK_SPAWN_TEMPLATE:
+        return q1_map_spawn_template_wait(g, entity, error);
     case Q1_THINK_MG3_HAMMER:
         return q1_mg3_hammer_strike(g, entity, error);
     case Q1_THINK_REMOVE:
@@ -738,7 +740,8 @@ bool q1_can_damage(qa_q1_game *g, qa_actor_id target, qa_actor_id from, bool *ou
                                  error);
 }
 
-bool qa_q1_game_spawn(qa_q1_game *g, const qa_q1_spawn *spawn, qa_actor_id *out, qa_error *error) {
+static bool spawn_actor(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_state *initial,
+                        qa_actor_id *out, qa_error *error) {
     if (!g || !spawn || !spawn->classname || !out) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Q1 native spawn");
         return false;
@@ -763,6 +766,8 @@ bool qa_q1_game_spawn(qa_q1_game *g, const qa_q1_spawn *spawn, qa_actor_id *out,
                                 .source_slot = spawn->source_slot,
                                 .body = {.origin = spawn->origin, .angles = spawn->angles},
                                 .combat = &combat};
+    if (initial)
+        request.body = *initial;
     qa_actor_id actor;
     if (!qa_builtin_spawn_actor(&g->services, &request, &actor, error))
         return false;
@@ -849,6 +854,17 @@ bool qa_q1_game_spawn(qa_q1_game *g, const qa_q1_spawn *spawn, qa_actor_id *out,
 fail:
     (void)qa_session_release(g->services.session, actor, NULL);
     return false;
+}
+bool qa_q1_game_spawn(qa_q1_game *g, const qa_q1_spawn *spawn, qa_actor_id *out, qa_error *error) {
+    return spawn_actor(g, spawn, NULL, out, error);
+}
+bool q1_spawn_template(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_state *body,
+                       qa_actor_id *out, qa_error *error) {
+    int32_t previous = g->options.deathmatch;
+    g->options.deathmatch = 0;
+    bool ok = spawn_actor(g, spawn, body, out, error);
+    g->options.deathmatch = previous;
+    return ok;
 }
 bool qa_q1_game_touch(qa_q1_game *g, const qa_touch_contact *contact, qa_error *error) {
     q1_actor *entity = q1_entity(g, contact->self);

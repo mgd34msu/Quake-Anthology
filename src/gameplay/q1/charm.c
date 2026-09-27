@@ -2,11 +2,14 @@
 
 bool qa_q1_monster_charm(qa_q1_game *g, qa_actor_id actor, qa_actor_id charmer, qa_error *error) {
     q1_actor *entity = g ? q1_entity(g, actor) : NULL;
-    if (!entity || entity->kind != Q1_MONSTER || !q1_alive(g, charmer)) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
-                     "charm requires a native monster and live charmer");
+    if (!entity || entity->kind != Q1_MONSTER) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "charm requires a native monster");
         return false;
     }
+    qa_saved_actor_id reference;
+    if (!qa_actors_save_reference(qa_session_actors(g->services.session), charmer, &reference,
+                                  error))
+        return false;
     entity->state.monster.charmer = charmer;
     return true;
 }

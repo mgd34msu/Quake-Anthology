@@ -8,10 +8,12 @@
 typedef struct qa_q1_map_fields {
     const char *model, *map, *noise, *noise1, *noise2, *noise3;
     const char *endtext, *intermissiontext, *netname, *event;
+    const char *spawn_function, *spawn_classname;
     qa_vec3 mangle, movedir, view_offset;
     bool has_movedir, has_view_offset;
     float height, lip, width, length, pause_time;
     float volume, duration, distance, next_think_seconds;
+    float spawn_multi, spawn_silent;
     int32_t sounds, style, world_type, color_map, impulse;
     float counter_value;
     int32_t particle_color;
