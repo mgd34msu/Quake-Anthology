@@ -1,4 +1,3 @@
-/* WAV policies and resampling follow id Software's snd_mem.c. */
 #include "codec_internal.h"
 #include <stdio.h>
 

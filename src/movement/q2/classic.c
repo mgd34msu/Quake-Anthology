@@ -1,5 +1,3 @@
-/* Quake II movement, id Software / ZeniMax. Adapted from Anthology's
- * movement/q2/classic.ts and swept-body.ts. */
 #include "../internal.h"
 
 enum {

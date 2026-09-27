@@ -1,4 +1,3 @@
-/* Source draw ordering: id Software tr_main.c, GPL-2.0-or-later. */
 #include "qa/material.h"
 
 #include <stdlib.h>
