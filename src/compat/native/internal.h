@@ -13,7 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define NATIVE_CHECKPOINT_VERSION 1u
+#define NATIVE_CHECKPOINT_VERSION 2u
 #define NATIVE_MAX_ARGUMENTS 32u
 #define NATIVE_MAX_STRING (1024u * 1024u)
 #define NATIVE_DEFAULT_MAX_FRAME (256u * 1024u * 1024u)

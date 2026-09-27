@@ -314,7 +314,8 @@ static bool child_load(native_child_state *state, native_wire_reader *reader,
                        native_wire_buffer *body, qa_error *error) {
     if (state->instance || state->module)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native runner already loaded a module");
-    uint32_t profile, os, arch, abi, pointer_bytes, tick_rate, frame_bits, frame_milliseconds;
+    uint32_t profile, os, arch, abi, pointer_bytes, tick_rate, frame_bits, frame_milliseconds,
+        q3_role;
     uint8_t has_declaration;
     const uint8_t *digest_bytes;
     qa_buffer source = {0};
@@ -326,6 +327,7 @@ static bool child_load(native_child_state *state, native_wire_reader *reader,
         !native_wire_get_u32(reader, &tick_rate, error) ||
         !native_wire_get_u32(reader, &frame_bits, error) ||
         !native_wire_get_u32(reader, &frame_milliseconds, error) ||
+        !native_wire_get_u32(reader, &q3_role, error) ||
         !native_wire_get_u8(reader, &has_declaration, error) ||
         !native_wire_get_raw(reader, 64u, &digest_bytes, error) ||
         !native_wire_get_string(reader, &source, error) ||
@@ -334,7 +336,7 @@ static bool child_load(native_child_state *state, native_wire_reader *reader,
         profile > QA_NATIVE_QUAKE_LIVE_GAME_API10 || os > QA_NATIVE_OS_MACOS ||
         arch > QA_NATIVE_ARCH_AARCH64 || abi > QA_NATIVE_ABI_AAPCS64 ||
         (pointer_bytes != 4u && pointer_bytes != 8u) || has_declaration > 1u ||
-        dependency_count > 4096u) {
+        dependency_count > 4096u || q3_role > QA_QVM_UI) {
         qa_buffer_free(&source);
         return native_fail(error, QA_ERROR_FORMAT, reader->offset,
                            "native runner load request is invalid");
@@ -380,6 +382,7 @@ static bool child_load(native_child_state *state, native_wire_reader *reader,
         ok = qa_native_module_load(image, (const char *)source.data, (qa_native_profile)profile,
                                    &artifact, &state->module, error);
     qa_native_options options = {.context = state,
+                                 .q3_role = (qa_qvm_role)q3_role,
                                  .import = child_import,
                                  .describe_syscall = child_describe_syscall,
                                  .syscall = child_syscall,

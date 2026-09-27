@@ -405,16 +405,6 @@ static const native_signature_spec *import_spec(qa_native_instance *instance, ui
     return NULL;
 }
 
-static const native_signature_spec *entry_spec(qa_native_instance *instance, const char *name) {
-    const native_profile_spec *profile = native_profile(instance->module->info.profile);
-    if (!profile)
-        return NULL;
-    for (size_t index = 0; index < profile->entry_count; ++index)
-        if (!strcmp(profile->entries[index].name, name))
-            return &profile->entries[index];
-    return NULL;
-}
-
 static bool send_reply(native_runner_connection *connection, const native_wire_frame *request,
                        const native_wire_buffer *body, const qa_error *failure, qa_error *error) {
     native_wire_buffer payload = {0};
@@ -929,6 +919,7 @@ static bool encode_load(qa_native_instance *instance, native_wire_buffer *payloa
         !native_wire_put_u32(payload, instance->options.tick_rate, error) ||
         !native_wire_put_u32(payload, frame_bits, error) ||
         !native_wire_put_u32(payload, instance->options.frame_milliseconds, error) ||
+        !native_wire_put_u32(payload, (uint32_t)instance->options.q3_role, error) ||
         !native_wire_put_u8(payload, instance->has_declaration ? 1u : 0u, error) ||
         !native_wire_put_raw(payload, instance->declaration.bytes,
                              sizeof(instance->declaration.bytes), error) ||
@@ -1111,10 +1102,11 @@ static bool runner_sync_entities(qa_native_instance *instance, qa_error *error) 
 bool native_runner_call(qa_native_instance *instance, const char *entry,
                         const qa_native_value *arguments, size_t count, qa_native_value *result,
                         qa_error *error) {
-    const native_signature_spec *spec = entry_spec(instance, entry);
-    if (!spec)
+    const native_entry_binding *binding = native_entry(instance, entry);
+    if (!binding)
         return native_fail(error, QA_ERROR_NOT_FOUND, 0,
                            "native runner entry is not in the selected profile");
+    const native_signature_spec *spec = &binding->spec;
     if (!runner_arguments_ready(instance, &spec->signature, arguments, count, error) ||
         !runner_result_ready(&spec->signature.result, result, error))
         return false;

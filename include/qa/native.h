@@ -4,6 +4,7 @@
 #include "qa/actors.h"
 #include "qa/hash.h"
 #include "qa/json.h"
+#include "qa/qvm.h"
 
 typedef struct qa_native_module qa_native_module;
 typedef struct qa_native_instance qa_native_instance;
@@ -181,6 +182,7 @@ typedef bool (*qa_native_host_restore_fn)(void *context, qa_bytes state, qa_erro
  * identity and region records are copied into the instance. */
 typedef struct qa_native_options {
     void *context;
+    qa_qvm_role q3_role;
     qa_native_import_fn import;
     qa_native_syscall_describe_fn describe_syscall;
     qa_native_syscall_fn syscall;
@@ -347,6 +349,7 @@ typedef enum qa_native_checkpoint_kind {
 typedef struct qa_native_checkpoint {
     qa_native_checkpoint_kind kind;
     qa_native_profile profile;
+    qa_qvm_role q3_role;
     qa_native_image_info image;
     qa_sha256_digest declaration;
     bool has_declaration;

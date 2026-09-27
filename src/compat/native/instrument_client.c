@@ -2,18 +2,12 @@
 
 #include "dr_api.h"
 #include "drmgr.h"
+#include "wire_constants.h"
 
 #include <stdint.h>
 #include <string.h>
 
-#define QA_HOOK_MAGIC 0x524e4151u
-#define QA_HOOK_VERSION 1u
-#define QA_HOOK_REPLY 0x8000u
-#define QA_HOOK_READ 4u
-#define QA_HOOK_WRITE 5u
-#define QA_HOOK_REGION 69u
 #define QA_HOOK_MAX_FRAME (256u * 1024u * 1024u)
-#define QA_HOOK_REPLY_BYTES_OVERHEAD 28u
 #define QA_HOOK_STATE_BYTES (16u * 8u + 16u * 16u + 16u)
 #ifdef X64
 #define QA_HOOK_SIMD_COUNT 16u
@@ -124,8 +118,8 @@ static bool send_frame(uint16_t opcode, uint64_t reply_to, const uint8_t *payloa
         return false;
     uint8_t header[40] = {0};
     uint64_t current = ++sequence;
-    store_u32(header, QA_HOOK_MAGIC);
-    store_u16(header + 4u, QA_HOOK_VERSION);
+    store_u32(header, NATIVE_WIRE_MAGIC);
+    store_u16(header + 4u, NATIVE_WIRE_VERSION);
     store_u16(header + 6u, opcode);
     store_u32(header + 8u, call_depth);
     store_u64(header + 16u, current);
@@ -141,8 +135,8 @@ static bool send_frame(uint16_t opcode, uint64_t reply_to, const uint8_t *payloa
 
 static bool receive_frame(hook_frame *out) {
     uint8_t header[40];
-    if (!read_exact(hook_input, header, sizeof(header)) || load_u32(header) != QA_HOOK_MAGIC ||
-        load_u16(header + 4u) != QA_HOOK_VERSION)
+    if (!read_exact(hook_input, header, sizeof(header)) || load_u32(header) != NATIVE_WIRE_MAGIC ||
+        load_u16(header + 4u) != NATIVE_WIRE_VERSION)
         return false;
     uint64_t payload_size = load_u64(header + 32u);
     if (payload_size > QA_HOOK_MAX_FRAME || !hook_u64_fits_size(payload_size))
@@ -185,20 +179,20 @@ static bool send_operation_reply(const hook_frame *request, bool ok, const uint8
         memcpy(payload + 20u, message, message_size);
     if (ok && body_size)
         memcpy(payload + 20u, body, body_size);
-    bool sent = send_frame((uint16_t)(request->opcode | QA_HOOK_REPLY), request->sequence, payload,
+    bool sent = send_frame((uint16_t)(request->opcode | NATIVE_WIRE_REPLY), request->sequence, payload,
                            payload_size, NULL);
     dr_global_free(payload, payload_size);
     return sent;
 }
 
 static bool service_memory_request(const hook_frame *frame) {
-    if (frame->opcode == QA_HOOK_READ) {
+    if (frame->opcode == NATIVE_WIRE_READ) {
         if (frame->payload_size != 16u)
             return send_operation_reply(frame, false, NULL, 0,
                                         "instrumented read request is invalid");
         app_pc source = (app_pc)(ptr_uint_t)load_u64(frame->payload);
         uint64_t count = load_u64(frame->payload + 8u);
-        if (count > QA_HOOK_MAX_FRAME - QA_HOOK_REPLY_BYTES_OVERHEAD || !hook_u64_fits_size(count))
+        if (count > QA_HOOK_MAX_FRAME - NATIVE_WIRE_REPLY_BYTES_OVERHEAD || !hook_u64_fits_size(count))
             return send_operation_reply(frame, false, NULL, 0,
                                         "instrumented read range is too large");
         size_t body_size = 8u + (size_t)count;
@@ -214,7 +208,7 @@ static bool service_memory_request(const hook_frame *frame) {
         dr_global_free(body, body_size);
         return sent;
     }
-    if (frame->opcode == QA_HOOK_WRITE) {
+    if (frame->opcode == NATIVE_WIRE_WRITE) {
         if (frame->payload_size < 16u)
             return send_operation_reply(frame, false, NULL, 0,
                                         "instrumented write request is invalid");
@@ -266,7 +260,7 @@ static bool region_request(uint32_t id, uint32_t phase, const hook_state *state,
         return false;
     ++call_depth;
     uint64_t request_sequence;
-    if (!send_frame(QA_HOOK_REGION, 0, payload, sizeof(payload), &request_sequence)) {
+    if (!send_frame(NATIVE_WIRE_REGION, 0, payload, sizeof(payload), &request_sequence)) {
         --call_depth;
         return false;
     }
@@ -277,8 +271,8 @@ static bool region_request(uint32_t id, uint32_t phase, const hook_state *state,
             return false;
         }
         bool reply =
-            frame.opcode == (QA_HOOK_REGION | QA_HOOK_REPLY) && frame.reply_to == request_sequence;
-        bool request = !(frame.opcode & QA_HOOK_REPLY) && !frame.reply_to;
+            frame.opcode == (NATIVE_WIRE_REGION | NATIVE_WIRE_REPLY) && frame.reply_to == request_sequence;
+        bool request = !(frame.opcode & NATIVE_WIRE_REPLY) && !frame.reply_to;
         if ((reply && frame.depth != call_depth) ||
             (request && (call_depth == UINT32_MAX || frame.depth != call_depth + 1u))) {
             free_frame(&frame);

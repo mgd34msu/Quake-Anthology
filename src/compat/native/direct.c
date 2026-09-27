@@ -324,7 +324,7 @@ bool native_direct_open(qa_native_instance *instance, qa_error *error) {
         return false;
     }
     instance->loader_handle = handle;
-#if defined(__linux__) && defined(RTLD_DI_LINKMAP)
+#if defined(__linux__)
     struct link_map *mapping = NULL;
     if (dlinfo(handle, RTLD_DI_LINKMAP, &mapping) || !mapping) {
         qa_error_set(error, QA_ERROR_IO, 0, "dynamic loader did not report the native image base");

@@ -1,8 +1,11 @@
 #include "internal.h"
 
-#define CHECKPOINT_HEADER_BYTES 148u
+#define CHECKPOINT_HEADER_BYTES 152u
 
 static bool checkpoint_kind_matches_profile(const qa_native_checkpoint *checkpoint) {
+    if ((unsigned)checkpoint->q3_role > QA_QVM_UI ||
+        (checkpoint->profile != QA_NATIVE_Q3_VMMAIN && checkpoint->q3_role != QA_QVM_GAME))
+        return false;
     return (checkpoint->kind == QA_NATIVE_CHECKPOINT_Q2_CLASSIC &&
             checkpoint->profile == QA_NATIVE_Q2_GAME_API3) ||
            (checkpoint->kind == QA_NATIVE_CHECKPOINT_Q2_RERELEASE &&
@@ -160,6 +163,7 @@ bool qa_native_checkpoint_capture(qa_native_instance *instance,
                 : profile == QA_NATIVE_Q2_GAME_API2023 ? QA_NATIVE_CHECKPOINT_Q2_RERELEASE
                                                        : QA_NATIVE_CHECKPOINT_HOST_ONLY,
         .profile = profile,
+        .q3_role = instance->options.q3_role,
         .image = instance->module->info.image,
         .declaration = instance->declaration,
         .has_declaration = instance->has_declaration,
@@ -191,6 +195,7 @@ static bool same_identity(const qa_native_instance *instance,
     const qa_native_image_info *image = &instance->module->info.image;
     if (!checkpoint_kind_matches_profile(checkpoint) ||
         checkpoint->profile != instance->module->info.profile ||
+        checkpoint->q3_role != instance->options.q3_role ||
         checkpoint->image.format != image->format ||
         checkpoint->image.target.os != image->target.os ||
         checkpoint->image.target.arch != image->target.arch ||
@@ -351,6 +356,7 @@ bool qa_native_checkpoint_encode(const qa_native_checkpoint *checkpoint, qa_buff
     store_u32(&cursor, NATIVE_CHECKPOINT_VERSION);
     store_u32(&cursor, (uint32_t)checkpoint->kind);
     store_u32(&cursor, (uint32_t)checkpoint->profile);
+    store_u32(&cursor, (uint32_t)checkpoint->q3_role);
     store_u32(&cursor, (uint32_t)checkpoint->image.format);
     store_u32(&cursor, (uint32_t)checkpoint->image.target.os);
     store_u32(&cursor, (uint32_t)checkpoint->image.target.arch);
@@ -421,13 +427,14 @@ bool qa_native_checkpoint_decode(qa_bytes encoded, qa_native_checkpoint *out, qa
     qa_native_checkpoint checkpoint = {0};
     checkpoint.kind = (qa_native_checkpoint_kind)load_u32(&cursor);
     checkpoint.profile = (qa_native_profile)load_u32(&cursor);
+    checkpoint.q3_role = (qa_qvm_role)load_u32(&cursor);
     checkpoint.image.format = (qa_native_image_format)load_u32(&cursor);
     checkpoint.image.target.os = (qa_native_os)load_u32(&cursor);
     checkpoint.image.target.arch = (qa_native_arch)load_u32(&cursor);
     checkpoint.image.target.abi = (qa_native_abi)load_u32(&cursor);
     uint32_t pointer_bytes = load_u32(&cursor);
     if (pointer_bytes != 4 && pointer_bytes != 8)
-        return native_fail(error, QA_ERROR_FORMAT, 36,
+        return native_fail(error, QA_ERROR_FORMAT, 40,
                            "native checkpoint pointer width is invalid");
     checkpoint.image.target.pointer_bytes = (uint8_t)pointer_bytes;
     checkpoint.image.preferred_base = load_u64(&cursor);
@@ -476,7 +483,7 @@ bool qa_native_checkpoint_decode(qa_bytes encoded, qa_native_checkpoint *out, qa
     checkpoint.has_host = (flags & 32u) != 0;
     if ((!checkpoint.has_game && game_size) || (!checkpoint.has_level && level_size) ||
         (!checkpoint.has_host && host_size))
-        return native_fail(error, QA_ERROR_FORMAT, 120,
+        return native_fail(error, QA_ERROR_FORMAT, 124,
                            "native checkpoint contains an undeclared part");
     if (!decode_buffer(&cursor, (size_t)game_size, &checkpoint.game, error) ||
         !decode_buffer(&cursor, (size_t)level_size, &checkpoint.level, error) ||

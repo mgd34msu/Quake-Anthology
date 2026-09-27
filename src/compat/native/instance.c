@@ -11,6 +11,11 @@ static bool exact_target(qa_native_target left, qa_native_target right) {
 
 bool native_instance_setup_identity(qa_native_instance *instance, const qa_native_options *options,
                                     qa_error *error) {
+    if ((unsigned)options->q3_role > QA_QVM_UI ||
+        (instance->module->info.profile != QA_NATIVE_Q3_VMMAIN &&
+         options->q3_role != QA_QVM_GAME))
+        return native_fail(error, QA_ERROR_ARGUMENT, 0,
+                           "native vmMain role does not match the module profile");
     if (options->dependency_count && !options->dependencies)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native dependency count requires dependency records");
@@ -220,9 +225,11 @@ static bool entry_allowed(qa_native_instance *instance, const native_entry_bindi
             return native_fail(error, QA_ERROR_ARGUMENT, 0,
                                "native Q3 vmMain requires a command argument");
         int32_t command = arguments[0].as.i32;
-        if (instance->lifecycle == QA_NATIVE_LOADED && command != 0)
+        int32_t init = instance->options.q3_role == QA_QVM_UI ? 1 : 0;
+        bool api_query = instance->options.q3_role == QA_QVM_UI && command == 0;
+        if (instance->lifecycle == QA_NATIVE_LOADED && command != init && !api_query)
             return native_fail(error, QA_ERROR_ARGUMENT, 0,
-                               "native Q3 module must receive GAME_INIT first");
+                               "native Q3 module must receive its role's initialization first");
         return true;
     }
     if (instance->module->info.profile == QA_NATIVE_QUAKE_LIVE_GAME_API10) {
@@ -288,9 +295,10 @@ bool qa_native_call(qa_native_instance *instance, const char *entry,
         return false;
     if (instance->module->info.profile == QA_NATIVE_Q3_VMMAIN) {
         int32_t command = arguments[0].as.i32;
-        if (command == 0)
+        int32_t init = instance->options.q3_role == QA_QVM_UI ? 1 : 0;
+        if (command == init)
             instance->lifecycle = QA_NATIVE_INITIALIZED;
-        else if (command == 1)
+        else if (command == init + 1)
             instance->lifecycle = QA_NATIVE_SHUT_DOWN;
     } else if (!strcmp(entry, "PreInit") || !strcmp(entry, "RegisterCvars")) {
         instance->lifecycle = QA_NATIVE_PREINITIALIZED;
@@ -337,7 +345,7 @@ bool qa_native_shutdown(qa_native_instance *instance, qa_error *error) {
         qa_native_value arguments[13] = {{0}};
         for (size_t index = 0; index < 13; ++index)
             arguments[index].type = QA_NATIVE_I32;
-        arguments[0].as.i32 = 1;
+        arguments[0].as.i32 = instance->options.q3_role == QA_QVM_UI ? 2 : 1;
         qa_native_value result = {0};
         return qa_native_call(instance, "vmMain", arguments, 13, &result, error);
     }
