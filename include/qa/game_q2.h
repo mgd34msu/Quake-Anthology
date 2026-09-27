@@ -257,6 +257,10 @@ qa_component qa_q2_component(qa_q2_game *);
 /* Requires a detached instance at a session safe point. Remove an admitted
  * component before destroying its instance; keep the shared services alive. */
 bool qa_q2_destroy(qa_q2_game *, qa_error *);
+/* After shared world retirement and source clock reset, before actor admission.
+ * Registry must be empty. Names are interned before publication; zero spawn
+ * point means empty. Connection identity and player carry stay with the host. */
+bool qa_q2_begin_map(qa_q2_game *, qa_string_id map_name, qa_string_id spawn_point, qa_error *);
 const qa_q2_weapon_definition *qa_q2_weapon_definition_at(const qa_q2_game *, qa_q2_weapon);
 qa_q2_weapon qa_q2_weapon_from_classname(const qa_q2_game *, const char *);
 bool qa_q2_weapon_bind(qa_q2_game *, qa_actor_id, qa_q2_weapon, qa_error *);
@@ -292,7 +296,7 @@ typedef struct qa_q2_projectile_view {
     uint64_t effects;
     uint32_t render_flags;
     int frame, skin;
-    float scale;
+    float scale, alpha;
     qa_vec3 beam_end;
     bool visible, beam;
 } qa_q2_projectile_view;
@@ -321,7 +325,7 @@ typedef struct qa_q2_projectile_checkpoint {
     uint32_t render_flags, gib_flags;
     qa_string_id classname, model, loop_sound;
     int direct_mod, splash_mod, frame, phase, wait, skin;
-    float scale;
+    float scale, alpha;
     bool hand, held, armed, visible, gekk, dodgeable;
 } qa_q2_projectile_checkpoint;
 typedef struct qa_q2_actor_checkpoint {
@@ -350,6 +354,9 @@ bool qa_q2_actor_capture(qa_q2_game *, qa_actor_id, qa_q2_actor_checkpoint *, qa
 bool qa_q2_actor_restore(qa_q2_game *, qa_actor_id, const qa_q2_actor_checkpoint *, qa_error *);
 bool qa_q2_bad_area(qa_q2_game *, qa_actor_id actor, qa_vec3 origin, qa_actor_id *hazard,
                     qa_error *);
+bool qa_q2_accept_ground(qa_q2_game *, qa_actor_id, qa_vec3 origin, bool *accepted, qa_error *);
+bool qa_q2_before_monster_step(qa_q2_game *, qa_actor_id, qa_vec3 *displacement,
+                               bool *handled, qa_error *);
 bool qa_q2_spawn_bad_area(qa_q2_game *, qa_bounds absolute, uint64_t lifespan_ns, qa_actor_id owner,
                           qa_actor_id *area, qa_error *);
 bool qa_q2_mark_tesla_area(qa_q2_game *, qa_actor_id observer, qa_actor_id tesla, bool *created,

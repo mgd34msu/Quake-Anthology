@@ -453,6 +453,28 @@ bool qa_q2_entity_use_targets(qa_q2_game *g, qa_actor_id id, qa_actor_id activat
     }
     return q2_entity_targets(g, a, activator, ignore_delay, e);
 }
+bool qa_q2_entity_defer_targets(qa_q2_game *g, const qa_target_use *request, qa_error *e) {
+    qa_clock_kind dialect = g && g->options.edition == QA_Q2_RERELEASE
+                                ? QA_CLOCK_Q2_RERELEASE : QA_CLOCK_Q2_CLASSIC;
+    if (!g || !request || request->dialect != dialect ||
+        !isfinite(request->fields.delay_seconds) || request->fields.delay_seconds == 0) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 delayed target request");
+        return false;
+    }
+    q2_actor *actor;
+    if (!q2_entity_native_spawn(g, "DelayedUse", &(qa_body_state){0}, Q2E_DELAYED_USE,
+                                &actor, e))
+        return false;
+    q2_entity_state *state = actor->entity;
+    state->activator = request->activator;
+    state->message = request->fields.message;
+    state->target = request->fields.target;
+    state->killtarget = request->fields.killtarget;
+    actor->physics_bound = true;
+    actor->physics.motion = QA_PHYSICS_STATIONARY;
+    actor->physics.solid = QA_PHYSICS_NOT_SOLID;
+    return q2_entity_schedule(g, actor, Q2ET_DELAYED_USE, request->fields.delay_seconds);
+}
 bool q2_entity_damage(qa_q2_game *g, q2_actor *a, qa_actor_id target, qa_actor_id credit,
                       float amount, float kick, int mod, uint32_t flags, qa_error *e) {
     qa_body_state body;

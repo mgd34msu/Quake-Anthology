@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "reinforcements.h"
 #include "../entities/internal.h"
 #include "qa/game_q2_items.h"
 #include "../items/internal.h"
@@ -434,22 +435,26 @@ bool q2m_lifecycle_killed(q2m_context *context, qa_error *error) {
     struct qa_q2_monster *monster = context->monster;
     if (monster->dead || monster->death_notified)
         return true;
-    monster->death_notified = true;
     q2_actor *commander = q2_actor_get(context->game, monster->commander, false, NULL);
     if (commander && commander->monster && commander->monster->definition) {
         struct qa_q2_monster *leader = commander->monster;
         q2m_species species = leader->definition->species;
-        if (monster->spawned_by == Q2M_SPAWN_CARRIER && species == Q2M_CARRIER)
-            leader->monster_slots++;
-        else if (monster->spawned_by == Q2M_SPAWN_MEDIC && species == Q2M_MEDIC_COMMANDER) {
-            if (context->game->options.edition == QA_Q2_RERELEASE)
-                leader->monster_used -= monster->monster_slots;
-            else
-                leader->monster_slots++;
+        if (monster->spawned_by == Q2M_SPAWN_CARRIER && species == Q2M_CARRIER) {
+            if (!q2m_summon_add(&leader->monster_slots, 1, error))
+                return false;
+        } else if (monster->spawned_by == Q2M_SPAWN_MEDIC && species == Q2M_MEDIC_COMMANDER) {
+            bool ok = context->game->options.edition == QA_Q2_RERELEASE
+                ? q2m_summon_subtract(&leader->monster_used, monster->monster_slots, error)
+                : q2m_summon_add(&leader->monster_slots, 1, error);
+            if (!ok)
+                return false;
         } else if (monster->spawned_by == Q2M_SPAWN_WIDOW &&
-                   (species == Q2M_WIDOW || species == Q2M_WIDOW2) && leader->monster_used > 0)
-            leader->monster_used--;
+                   (species == Q2M_WIDOW || species == Q2M_WIDOW2) && leader->monster_used > 0) {
+            if (!q2m_summon_subtract(&leader->monster_used, 1, error))
+                return false;
+        }
     }
+    monster->death_notified = true;
     qa_monster_mission mission;
     bool present;
     if (!q2m_mission(context, &mission, &present, error))

@@ -158,8 +158,14 @@ static bool lead(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float dama
                 return false;
             qa_actor_collision collision;
             bool dead = damageable(c->game, target, &combat) && combat.health <= 0;
-            bool monster = qa_world_get_collision(c->game->services.world, target, &collision) &&
-                           collision.monster;
+            qa_error observed = {0};
+            bool monster = qa_world_get_collision(c->game->services.world, target, &collision,
+                                                   &observed) && collision.monster;
+            if (observed.code) {
+                if (e)
+                    *e = observed;
+                return false;
+            }
             if (c->rerelease &&
                 (((uint32_t)trace.contents & UINT32_C(0x04000000)) != 0 || (monster && dead))) {
                 bool duplicate = false;
@@ -249,8 +255,14 @@ static bool rail_run(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, float 
                                c->game->services.physics->services.read(
                                    c->game->services.physics->services.context, target, &physical);
             qa_actor_collision collision;
+            qa_error observed = {0};
             bool has_collision =
-                qa_world_get_collision(c->game->services.world, target, &collision);
+                qa_world_get_collision(c->game->services.world, target, &collision, &observed);
+            if (observed.code) {
+                if (e)
+                    *e = observed;
+                return false;
+            }
             bool box = has_physics ? physical.solid == QA_PHYSICS_BOX
                                    : has_collision && !collision.inline_model &&
                                          collision.role != QA_COLLISION_TRIGGER;

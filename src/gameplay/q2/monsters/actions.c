@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "reinforcements.h"
 #include "qa/game_q2_entities.h"
 
 typedef struct q2m_transition {
@@ -1713,7 +1714,7 @@ static bool carrier_spawn_child(q2m_context *context, qa_error *error) {
   if (!qa_q2_rogue_find_spawn_point(context->game, carrier_spawn_start(context),
                                     flyer, 32.0f, &found, &point, error))
     return false;
-  if (!found)
+  if (!found || !q2m_alive(context))
     return true;
   uint64_t elapsed =
       context->game->now_ns >= context->monster->timestamp_ns
@@ -1722,16 +1723,17 @@ static bool carrier_spawn_child(q2m_context *context, qa_error *error) {
   unsigned phase = (unsigned)((elapsed + Q2M_TENTH) / (5 * Q2M_TENTH));
   const char *classname = phase == 2 ? "monster_kamikaze" : "monster_flyer";
   qa_actor_id child;
-  if (!q2m_spawn_reinforcement(context, classname, Q2M_SPAWN_CARRIER, point,
-                               &child, error))
+  if (!q2m_create_reinforcement(context, classname, point, &child, error))
     return false;
   if (!q2m_alive(context))
     return true;
-  if (!q2m_sound(context, "medic_commander/monsterspawn1.wav", 4, 1.0f, error))
+  if (!q2m_sound(context, "medic_commander/monsterspawn1.wav", 4, 0.0f, error))
     return false;
   if (!q2m_alive(context) || child.registry == 0 ||
       child.slot >= context->game->capacity)
     return true;
+  if (!q2m_summon_subtract(&context->monster->monster_slots, 1, error))
+    return false;
   q2_actor *actor = context->game->actors[child.slot];
   if (actor == NULL || !qa_actor_id_equal(actor->id, child) ||
       actor->monster == NULL)
@@ -1741,8 +1743,19 @@ static bool carrier_spawn_child(q2m_context *context, qa_error *error) {
                          .monster = actor->monster,
                          .elapsed = context->elapsed};
   if (!q2m_refresh(&spawned, error))
+    return !q2m_alive(&spawned);
+  spawned.monster->start_due_ns = context->game->now_ns;
+  bool handled;
+  if (!q2m_lifecycle_tick(&spawned, &handled, error))
     return false;
+  if (!q2m_alive(context) || !q2m_alive(&spawned))
+    return true;
+  spawned.monster->spawned_by = Q2M_SPAWN_CARRIER;
+  spawned.monster->do_not_count = spawned.monster->ignore_shots = true;
+  spawned.monster->commander = context->actor->id;
   if (context->monster->enemy.registry != 0 && enemy_alive(context)) {
+    if (!q2m_alive(context) || !q2m_alive(&spawned))
+      return true;
     if (!q2m_found_target(&spawned, context->monster->enemy, error))
       return false;
     if (!q2m_alive(&spawned))
@@ -1750,20 +1763,27 @@ static bool carrier_spawn_child(q2m_context *context, qa_error *error) {
     if (phase == 1 || phase == 3) {
       spawned.monster->lefty = phase == 3;
       spawned.monster->attack_state = Q2M_SLIDING;
-      return q2m_set_move(&spawned, "flyer_move_attack3", true, error);
+      return q2m_set_move(&spawned, "flyer_move_attack3", false, error);
     }
     if (phase == 2) {
       spawned.monster->lefty = false;
       spawned.monster->attack_state = Q2M_STRAIGHT;
-      spawned.monster->charging = true;
+      if (!q2m_set_move(&spawned, "flyer_move_kamikaze", false, error))
+        return false;
+      if (!q2m_alive(&spawned))
+        return true;
       qa_combat_state traits;
       if (!qa_combat_read_traits(context->game->services.combat, child, &traits, error))
         return false;
+      if (!q2m_alive(&spawned))
+        return true;
       traits.mass = 100.0f;
       if (!qa_combat_set_traits(context->game->services.combat, child,
                                 &traits, error))
         return false;
-      return q2m_set_move(&spawned, "flyer_move_kamikaze", true, error);
+      if (q2m_alive(&spawned))
+        spawned.monster->charging = true;
+      return true;
     }
   }
   return true;
@@ -2129,7 +2149,7 @@ static bool conditional_transition(q2m_context *context, const char *callback,
     const char *move = "widow2_move_attack_post_beam";
     if (repeat)
       move = q2m_random(context->game) < 0.7f ||
-                     monster->monster_slots - monster->monster_used < 2
+                     !q2m_summon_has_slots(monster, 2)
                  ? "widow2_move_attack_beam"
                  : "widow2_move_spawn";
     return q2m_set_move(context, move, false, error);
@@ -2144,33 +2164,6 @@ static bool conditional_transition(q2m_context *context, const char *callback,
 
   *handled = false;
   return true;
-}
-
-static bool spawn_action(q2m_context *context, const char *callback,
-                         qa_error *error) {
-  if (has(callback, "start") || has(callback, "prep") ||
-      has(callback, "ready") || has(callback, "determine") ||
-      has(callback, "spawngrows")) {
-    context->monster->manual_steering =
-        has(callback, "start") || has(callback, "prep");
-    return q2m_emit(context, QA_BUILTIN_TELEPORT, "q2:spawn-grow", 0,
-                    context->body.origin, context->body.origin, 1.0f, error);
-  }
-  qa_vec3 forward;
-  qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
-  const char *classname =
-      has(callback, "widow") ? "monster_stalker"
-      : has(callback, "carrier")
-          ? (q2m_random(context->game) < 0.5f ? "monster_flyer"
-                                              : "monster_kamikaze")
-          : "monster_infantry";
-  q2m_spawned_by by = has(callback, "widow")     ? Q2M_SPAWN_WIDOW
-                      : has(callback, "carrier") ? Q2M_SPAWN_CARRIER
-                                                 : Q2M_SPAWN_MEDIC;
-  return q2m_spawn_reinforcement(
-      context, classname, by,
-      qa_vec_add(context->body.origin, qa_vec_scale(forward, 72.0f)), NULL,
-      error);
 }
 
 static bool reattack(q2m_context *context, const char *callback,
@@ -3677,6 +3670,10 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
     return false;
   if (handled)
     return true;
+  if (!q2m_summon_callback(context, callback, &handled, error))
+    return false;
+  if (handled)
+    return true;
   if (!conditional_transition(context, callback, &handled, error))
     return false;
   if (handled)
@@ -4043,9 +4040,6 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
             q2m_attack(context, Q2M_ATTACK_BEAM, 25.0f, error));
   if (strcmp(callback, "guardian_kick") == 0)
     return q2m_melee(context, 80.0f, 85.0f, 700.0f, error);
-
-  if (has(callback, "spawn") && !has(callback, "spawned"))
-    return spawn_action(context, callback, error);
 
   if (has(callback, "refire") || has(callback, "reattack"))
     return reattack(context, callback, error);

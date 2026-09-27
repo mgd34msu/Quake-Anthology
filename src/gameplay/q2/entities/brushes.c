@@ -591,7 +591,11 @@ bool q2_brush_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contact,
 }
 bool q2_brush_blocked(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_error *e) {
     q2_entity_state *s = a->entity;
-    bool creature = q2_target_creature(g, other, NULL);
+    bool creature;
+    if (!q2_target_creature(g, other, &creature, NULL, e))
+        return false;
+    if (!q2_actor_live(g, a->id))
+        return true;
     if (s->kind == Q2E_SECRET_DOOR && is_second(g, a, "func_door_secret2"))
         return (a->physics.flags & QA_PHYSICS_TEAM_SLAVE) || !q2_target_damageable(g, other) ||
                q2_entity_damage(g, a, other, a->id, s->damage, 0, 20, 0, e);

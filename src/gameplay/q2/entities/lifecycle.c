@@ -205,6 +205,12 @@ bool q2_entity_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     a->entity->due_ns = 0;
     if (think == Q2ET_FREE)
         return qa_session_release(g->services.session, a->id, e);
+    if (think == Q2ET_DELAYED_USE) {
+        qa_actor_id id = a->id;
+        if (!q2_entity_targets(g, a, a->entity->activator, true, e))
+            return false;
+        return !q2_actor_live(g, id) || qa_session_release(g->services.session, id, e);
+    }
     if (think == Q2ET_DYNAMIC_LIGHT)
         return q2_light_think(g, a, e);
     if (think >= Q2ET_TURRET_INIT && think <= Q2ET_TURRET_DRIVER)

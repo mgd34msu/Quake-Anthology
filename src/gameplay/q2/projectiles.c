@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "monsters/reinforcements.h"
 
 static bool live(qa_q2_game *g, qa_actor_id id) { return q2_actor_live(g, id); }
 bool q2_target_damageable(qa_q2_game *g, qa_actor_id id) {
@@ -7,30 +8,49 @@ bool q2_target_damageable(qa_q2_game *g, qa_actor_id id) {
     return live(g, id) && qa_combat_read(g->services.combat, id, &state, &ignored) &&
            state.can_take_damage;
 }
-bool q2_target_creature(qa_q2_game *g, qa_actor_id id, bool *player) {
-    bool ignored_player;
+bool q2_target_creature(qa_q2_game *g, qa_actor_id id, bool *creature, bool *player, qa_error *e) {
+    bool ignored_player, ignored_creature;
     if (player == NULL)
         player = &ignored_player;
     *player = false;
+    if (!creature)
+        creature = &ignored_creature;
+    *creature = false;
+    if (!live(g, id))
+        return true;
     qa_builtin_actor_traits traits = {0};
     if (g->services.actor_traits != NULL &&
         g->services.actor_traits(g->services.context, id, &traits)) {
-        *player = traits.player;
-        return traits.player || traits.monster;
+        if (live(g, id)) {
+            *player = traits.player;
+            *creature = traits.player || traits.monster;
+        }
+        return true;
     }
     qa_physics_properties properties;
-    if (g->services.physics != NULL &&
+    if (g->services.physics != NULL && g->services.physics->services.read != NULL &&
         g->services.physics->services.read(g->services.physics->services.context, id,
                                            &properties)) {
-        *player = (properties.flags & QA_PHYSICS_PLAYER) != 0;
-        if (*player || (properties.flags & QA_PHYSICS_MONSTER) != 0)
+        if (!live(g, id))
             return true;
+        *player = (properties.flags & QA_PHYSICS_PLAYER) != 0;
+        if (*player || (properties.flags & QA_PHYSICS_MONSTER) != 0) {
+            *creature = true;
+            return true;
+        }
     }
     qa_actor_collision collision;
-    if (!qa_world_get_collision(g->services.world, id, &collision))
-        return false;
+    qa_error observed = {0};
+    if (!qa_world_get_collision(g->services.world, id, &collision, &observed)) {
+        if (observed.code && e)
+            *e = observed;
+        return observed.code == QA_OK;
+    }
+    if (!live(g, id))
+        return true;
     *player = ((uint32_t)collision.contents & Q2_PLAYER_CONTENTS) != 0;
-    return collision.monster || *player;
+    *creature = collision.monster || *player;
+    return true;
 }
 bool q2_projectile_event(qa_q2_game *g, qa_actor_id id, qa_builtin_event_kind kind,
                          const char *path, int code, qa_vec3 origin, qa_vec3 end, qa_error *e) {
@@ -110,7 +130,8 @@ static bool check_dodge(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, flo
                         qa_error *e) {
     qa_q2_game *g = c->game;
     bool player = false;
-    q2_target_creature(g, c->actor->id, &player);
+    if (!q2_target_creature(g, c->actor->id, NULL, &player, e))
+        return false;
     if (c->rerelease || !player)
         return true;
     if (g->options.skill == 0 && q2_random(g) > 0.25f)
@@ -125,8 +146,10 @@ static bool check_dodge(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, flo
         return false;
     if (trace.hit != QA_TRACE_HIT_ACTOR)
         return true;
-    bool target_player = false;
-    if (!q2_target_creature(g, trace.actor, &target_player) || target_player)
+    bool target_player, creature;
+    if (!q2_target_creature(g, trace.actor, &creature, &target_player, e))
+        return false;
+    if (!creature || target_player)
         return true;
     qa_combat_state combat;
     qa_error ignored = {0};
@@ -208,16 +231,18 @@ static bool grenade_explode(qa_q2_game *g, qa_actor_id id, qa_actor_id direct, q
                                qa_v3(0, 0, 0), e) &&
            (!live(g, id) || qa_session_release(g->services.session, id, e));
 }
-static bool bfg_target(qa_q2_game *g, qa_actor_id id) {
-    bool player = false;
-    if (q2_target_creature(g, id, &player))
+static bool bfg_target(qa_q2_game *g, qa_actor_id id, bool *eligible, qa_error *e) {
+    if (!q2_target_creature(g, id, eligible, NULL, e))
+        return false;
+    if (*eligible)
         return true;
     qa_builtin_actor_traits traits = {0};
     if (g->services.actor_traits != NULL)
         g->services.actor_traits(g->services.context, id, &traits);
     const char *name = qa_strings_cstr(qa_session_strings(g->services.session), traits.classname);
-    return (name != NULL && strcmp(name, "misc_explobox") == 0) ||
-           (g->options.edition == QA_Q2_RERELEASE && traits.damageable_target);
+    *eligible = live(g, id) && ((name != NULL && strcmp(name, "misc_explobox") == 0) ||
+           (g->options.edition == QA_Q2_RERELEASE && traits.damageable_target));
+    return true;
 }
 static bool bfg_effect_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, qa_vec3 origin,
                            const qa_builtin_actor_snapshot *targets, qa_error *e) {
@@ -228,8 +253,13 @@ static bool bfg_effect_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p
         if (qa_actor_id_equal(target, id) || qa_actor_id_equal(target, p->owner) ||
             !q2_target_damageable(g, target))
             continue;
-        if (g->options.edition == QA_Q2_RERELEASE && !bfg_target(g, target))
-            continue;
+        if (g->options.edition == QA_Q2_RERELEASE) {
+            bool eligible;
+            if (!bfg_target(g, target, &eligible, e))
+                return false;
+            if (!eligible)
+                continue;
+        }
         qa_body_state body, blast;
         if (!qa_world_body_read(g->services.world, target, &body, e) ||
             !qa_world_body_read(g->services.world, id, &blast, e))
@@ -309,7 +339,10 @@ static bool bfg_fly_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, q
         if (qa_actor_id_equal(target, id) || qa_actor_id_equal(target, p->owner) ||
             !q2_target_damageable(g, target))
             continue;
-        if (!bfg_target(g, target))
+        bool eligible;
+        if (!bfg_target(g, target, &eligible, e))
+            return false;
+        if (!eligible)
             continue;
         if (g->hooks.can_target != NULL && g->options.edition == QA_Q2_RERELEASE &&
             !g->hooks.can_target(g->hooks.context, p->owner, target))
@@ -359,8 +392,10 @@ static bool bfg_fly_run(qa_q2_game *g, qa_actor_id id, const q2_projectile *p, q
                 if (g->services.actor_traits != NULL)
                     g->services.actor_traits(g->services.context, hit, &hit_traits);
             }
-            bool player;
-            if (!q2_target_creature(g, hit, &player) &&
+            bool creature;
+            if (!q2_target_creature(g, hit, &creature, NULL, e))
+                return false;
+            if (!creature &&
                 !(g->options.edition == QA_Q2_RERELEASE && hit_traits.damageable_target)) {
                 qa_builtin_event spark = {.kind = QA_BUILTIN_IMPACT,
                                           .family = QA_GAME_Q2,
@@ -463,8 +498,10 @@ static bool tracker_touch(qa_q2_game *g, qa_actor_id id, const q2_projectile *p,
         qa_combat_state health;
         if (!qa_combat_read(g->services.combat, contact->other, &health, e))
             return false;
-        bool player, is_creature = q2_target_creature(g, contact->other, &player),
-                     living = is_creature && health.health > 0;
+        bool player, is_creature;
+        if (!q2_target_creature(g, contact->other, &is_creature, &player, e))
+            return false;
+        bool living = is_creature && health.health > 0;
         qa_attack attack = q2_projectile_attack(g, id, p, 51, 260);
         if (!q2_damage(g, &attack, contact->other,
                        living        ? 0
@@ -515,8 +552,9 @@ static bool tracker_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         if (p.kind == Q2_TRACKER_DAEMON && live(g, p.enemy) && p.enemy.slot < g->capacity) {
             q2_actor *victim = g->actors[p.enemy.slot];
             bool player = false;
-            q2_target_creature(g, p.enemy, &player);
-            if (victim != NULL && qa_actor_id_equal(victim->id, p.enemy) && victim->physics_bound &&
+            if (!q2_target_creature(g, p.enemy, NULL, &player, e))
+                return false;
+            if (live(g, p.enemy) && victim != NULL && qa_actor_id_equal(victim->id, p.enemy) && victim->physics_bound &&
                 !player)
                 victim->extra_effects &= ~UINT64_C(0x80000000);
         }
@@ -527,7 +565,8 @@ static bool tracker_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         return qa_session_release(g->services.session, id, e);
     }
     bool player;
-    q2_target_creature(g, p.enemy, &player);
+    if (!q2_target_creature(g, p.enemy, NULL, &player, e))
+        return false;
     qa_vec3 center = qa_vec_add(
         target.origin, qa_vec_scale(qa_vec_add(target.bounds.mins, target.bounds.maxs), 0.5f));
     if (p.kind == Q2_TRACKER_DAEMON) {
@@ -806,8 +845,10 @@ bool q2_tracker_target(q2_weapon_call *c, qa_vec3 start, qa_vec3 direction, qa_a
     qa_builtin_actor_traits traits = {0};
     if (g->services.actor_traits != NULL)
         g->services.actor_traits(g->services.context, trace.actor, &traits);
-    bool player;
-    if (!q2_target_creature(g, trace.actor, &player) && !traits.damageable_target)
+    bool creature;
+    if (!q2_target_creature(g, trace.actor, &creature, NULL, e))
+        return false;
+    if (!creature && !traits.damageable_target)
         return true;
     qa_combat_state health;
     if (!qa_combat_read(g->services.combat, trace.actor, &health, e))
@@ -833,8 +874,9 @@ bool q2_launch_behavior(qa_q2_game *g, q2_actor *a, qa_builtin_projectile_role r
     if (changed != NULL)
         *changed = false;
     bool player;
-    q2_target_creature(g, a->projectile.owner, &player);
-    if (!player)
+    if (!q2_target_creature(g, a->projectile.owner, NULL, &player, e))
+        return false;
+    if (!player || !live(g, a->id))
         return true;
     qa_builtin_weapon_launch launch = {.projectile = a->id,
                                        .shooter = a->projectile.owner,
@@ -868,7 +910,12 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
     if (kind == Q2_TRAP || kind == Q2_TESLA || kind == Q2_PROX)
         return q2_mine_spawn(c, kind, start, direction, damage, speed, range, splash, fuse, held,
                              e);
-    bool player = false, monster = q2_target_creature(g, c->actor->id, &player) && !player;
+    bool player, creature;
+    if (!q2_target_creature(g, c->actor->id, &creature, &player, e))
+        return false;
+    if (!live(g, c->actor->id))
+        return true;
+    bool monster = creature && !player;
     const char *name = kind == Q2_BOLT        ? "bolt"
                        : kind == Q2_ROCKET    ? "rocket"
                        : kind == Q2_BFG_BALL  ? "bfg blast"
@@ -1135,6 +1182,9 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
     return true;
 }
 bool q2_projectile_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    if (a->projectile.kind == Q2_RERELEASE_SPAWN_GROWTH ||
+        a->projectile.kind == Q2_RERELEASE_SPAWN_BEAM)
+        return q2m_rerelease_growth_tick(g, a, e);
     if (a->projectile.kind == Q2_PROBOSCIS || a->projectile.kind == Q2_PROBOSCIS_SEGMENT)
         return q2_proboscis_tick(g, a, e);
     qa_actor_id id = a->id;

@@ -431,8 +431,12 @@ bool q2_door_touch(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_error *e) {
 }
 bool q2_door_blocked(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_error *e) {
     q2_entity_state *s = a->entity;
-    bool creature = q2_target_creature(g, other, NULL),
-         smart =
+    bool creature;
+    if (!q2_target_creature(g, other, &creature, NULL, e))
+        return false;
+    if (!q2_actor_live(g, a->id))
+        return true;
+    bool smart =
              s->kind == Q2E_WATER && (s->spawnflags & 2) && g->options.edition == QA_Q2_RERELEASE;
     if (q2_target_damageable(g, other) &&
         !q2_entity_damage(g, a, other, a->id, creature ? (smart ? 100 : s->damage) : 100000, 1,

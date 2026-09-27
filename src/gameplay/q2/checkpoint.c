@@ -120,6 +120,7 @@ bool qa_q2_actor_capture(qa_q2_game *g, qa_actor_id id, qa_q2_actor_checkpoint *
                                                       .splash_mod = p->splash_mod,
                                                       .frame = p->frame,
                                                       .phase = p->phase,
+                                                      .alpha = p->alpha,
                                                       .wait = p->wait,
                                                       .skin = p->skin,
                                                       .scale = p->scale,
@@ -173,15 +174,18 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
         return false;
     }
     const qa_q2_projectile_checkpoint *p = &s->projectile;
-    if (p->kind > Q2_PROBOSCIS_SEGMENT ||
+    if (p->kind > Q2_RERELEASE_SPAWN_BEAM ||
         (p->kind == Q2_PROBOSCIS &&
          (p->phase < Q2_PROBOSCIS_FLYING || p->phase > Q2_PROBOSCIS_RETURNED)) ||
         (p->kind == Q2_PROBOSCIS_SEGMENT && p->phase != 0) ||
+        ((p->kind == Q2_RERELEASE_SPAWN_GROWTH || p->kind == Q2_RERELEASE_SPAWN_BEAM) &&
+         p->phase != 0) ||
         !qa_vec_finite(p->movedir) || !isfinite(p->damage) ||
         !isfinite(p->kick) || !isfinite(p->radius_damage) || !isfinite(p->radius) ||
         p->radius < 0 || !isfinite(p->gravity) || !isfinite(p->speed) || p->speed < 0 ||
         !isfinite(p->delay) || !isfinite(p->captured_mass) || !isfinite(p->turn_fraction) ||
-        !isfinite(p->scale) || p->scale < 0 || !valid_resource(g, p->classname) ||
+        !isfinite(p->scale) || p->scale < 0 || !isfinite(p->alpha) ||
+        p->alpha < 0 || p->alpha > 1 || !valid_resource(g, p->classname) ||
         !valid_resource(g, p->model) || !valid_resource(g, p->loop_sound) ||
         !valid_resource(g, s->weapon.loop_sound) || !valid_resource(g, s->weapon.view_model) ||
         p->attack.attacker.registry != 0 || p->attack.inflictor.registry != 0 ||
@@ -220,6 +224,7 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
                               .wait = p->wait,
                               .skin = p->skin,
                               .scale = p->scale,
+                              .alpha = p->alpha,
                               .hand = p->hand,
                               .held = p->held,
                               .armed = p->armed,

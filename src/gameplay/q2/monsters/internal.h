@@ -251,6 +251,7 @@ typedef struct q2m_sound_target {
 } q2m_sound_target;
 
 struct qa_q2_monster {
+  struct q2m_summon_state *summons;
   const q2m_definition *definition;
   const q2m_move_set *move_set;
   const q2m_move *move, *next_move;
@@ -283,7 +284,8 @@ struct qa_q2_monster {
   qa_vec3 controller_direction;
   qa_attack last_attack;
   float pending_damage, pending_kick;
-  int monster_slots, monster_used, water_level, water_type;
+  int64_t monster_slots, monster_used;
+  int water_level, water_type;
   uint64_t last_link_count;
   q2m_attack_state attack_state;
   q2m_spawned_by spawned_by;
@@ -291,7 +293,7 @@ struct qa_q2_monster {
   qa_actor_id controller_owner, controller_target;
   float controller_damage;
   uint64_t controller_ns;
-  bool has_saved_goal, good_guy, target_anger, ignore_shots, do_not_count;
+  bool has_saved_goal, good_guy, target_anger, ignore_shots, do_not_count, source_blocked;
   bool brutal, medic, resurrecting, can_take_damage, dead, corpse, gibbed;
   bool stand_ground, temporary_stand_ground, hold_frame, ducked, dodging;
   bool charging, manual_steering, combat_point, lefty, had_visibility;
@@ -321,6 +323,7 @@ bool q2m_lifecycle_use(q2m_context *, qa_actor_id, qa_error *);
 bool q2m_lifecycle_killed(q2m_context *, qa_error *);
 bool q2m_lifecycle_route(q2m_context *, bool found_target, bool *routed, qa_error *);
 bool q2m_show(q2m_context *, qa_error *);
+void q2m_free_monster(struct qa_q2_monster *);
 bool q2m_health_target(q2m_context *, qa_error *);
 
 const q2m_move_set *q2m_moves_named(const char *);
@@ -397,8 +400,6 @@ bool q2m_corpse(q2m_context *, qa_error *);
 bool q2m_start_boss_explosion(q2m_context *, qa_error *);
 bool q2m_boss_explosion_tick(q2m_context *, qa_error *);
 bool q2m_finish_boss_death(q2m_context *, qa_error *);
-bool q2m_spawn_reinforcement(q2m_context *, const char *, q2m_spawned_by,
-                             qa_vec3, qa_actor_id *, qa_error *);
 bool q2m_world_effects(q2m_context *, qa_error *);
 bool q2m_touch(q2m_context *, const qa_touch_contact *, qa_error *);
 bool q2m_kamikaze(q2m_context *, qa_error *);

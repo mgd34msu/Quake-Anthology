@@ -55,7 +55,9 @@ static bool nuke_blast(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
         qa_builtin_actor_traits traits = {0};
         if (g->services.actor_traits != NULL)
             g->services.actor_traits(g->services.context, target, &traits);
-        bool player = false, creature = q2_target_creature(g, target, &player);
+        bool player, creature;
+        if (!q2_target_creature(g, target, &creature, &player, e))
+            return false;
         if (!creature && !traits.damageable_target)
             continue;
         qa_body_state other;
@@ -236,7 +238,15 @@ bool q2_nuke_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
         if (((uint32_t)contents.contents & 24u) != 0)
             return nuke_explode(g, a, e);
         qa_actor_collision collision;
-        if (qa_world_get_collision(g->services.world, a->id, &collision)) {
+        qa_error observed = {0};
+        bool has_collision = qa_world_get_collision(g->services.world, a->id, &collision,
+                                                     &observed);
+        if (observed.code) {
+            if (e)
+                *e = observed;
+            return false;
+        }
+        if (has_collision) {
             collision.owner = (qa_actor_id){0};
             if (!qa_world_set_collision(g->services.world, a->id, &collision, e))
                 return false;

@@ -141,7 +141,13 @@ bool q2_player_copy_corpse(qa_q2_game *g, q2_actor *a, qa_error *e) {
         !qa_world_body_write(g->services.world, corpse->id, &body, e))
         return false;
     qa_actor_collision collision;
-    bool has = qa_world_get_collision(g->services.world, a->id, &collision);
+    qa_error observed = {0};
+    bool has = qa_world_get_collision(g->services.world, a->id, &collision, &observed);
+    if (observed.code) {
+        if (e)
+            *e = observed;
+        return false;
+    }
     if (!qa_world_set_collision(g->services.world, corpse->id, has ? &collision : NULL, e) ||
         !qa_world_link(g->services.world, corpse->id, NULL, e))
         return false;

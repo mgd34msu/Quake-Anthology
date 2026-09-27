@@ -364,8 +364,10 @@ bool qa_q2_projectile_read(qa_q2_game *g, qa_actor_id id, qa_q2_projectile_view 
                                    .frame = p->frame,
                                    .skin = p->skin,
                                    .scale = p->scale,
+                                   .alpha = p->kind == Q2_RERELEASE_SPAWN_GROWTH ? p->alpha : 1,
                                    .visible = p->visible,
-                                   .beam = p->kind == Q2_PROBOSCIS_SEGMENT,
+                                   .beam = p->kind == Q2_PROBOSCIS_SEGMENT ||
+                                           p->kind == Q2_RERELEASE_SPAWN_BEAM,
                                    .beam_end = p->movedir};
     return true;
 }

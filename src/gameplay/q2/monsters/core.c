@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "reinforcements.h"
 
 static bool actor_current(const q2m_context *context) {
   qa_actor_id id = context->actor->id;
@@ -1178,6 +1179,9 @@ static bool initialize_body(qa_q2_game *game, q2_actor *actor,
                               : QA_PHYSICS_STEP;
   actor->physics.solid = QA_PHYSICS_BOX;
   actor->physics.flags = QA_PHYSICS_MONSTER;
+  if ((game->options.product == QA_Q2_ROGUE || game->options.edition == QA_Q2_RERELEASE) &&
+      (monster->definition->species == Q2M_WIDOW || monster->definition->species == Q2M_WIDOW2))
+    actor->physics.flags |= QA_PHYSICS_KEEP_MOVE_WHILE_TURNING;
   if (monster->definition->locomotion == Q2M_FLY)
     actor->physics.flags |= QA_PHYSICS_FLYING;
   if (monster->definition->locomotion == Q2M_SWIM)
@@ -1276,7 +1280,7 @@ bool qa_q2_monster_spawn(qa_q2_game *game, qa_actor_id id,
   monster->move_set = move_set;
   monster->move = q2m_move_named(monster, definition->initial_move);
   if (monster->move == NULL) {
-    free(monster);
+    q2m_free_monster(monster);
     qa_error_set(error, QA_ERROR_FORMAT, 0,
                  "Native Q2 monster %s lacks initial move %s",
                  options->classname, definition->initial_move);
@@ -1425,7 +1429,7 @@ bool qa_q2_monster_spawn(qa_q2_game *game, qa_actor_id id,
       !initialize_combat(game, actor, monster, error)) {
     actor->monster = NULL;
     actor->physics_bound = false;
-    free(monster);
+    q2m_free_monster(monster);
     return false;
   }
   qa_actor_collision collision = {
@@ -1439,17 +1443,27 @@ bool qa_q2_monster_spawn(qa_q2_game *game, qa_actor_id id,
                                      error)) {
     actor->monster = NULL;
     actor->physics_bound = false;
-    free(monster);
+    q2m_free_monster(monster);
     return false;
   }
   q2m_context context = {.game = game, .actor = actor, .monster = monster};
   if (!q2m_refresh(&context, error)) {
     actor->monster = NULL;
     actor->physics_bound = false;
-    free(monster);
+    q2m_free_monster(monster);
     return false;
   }
   monster->initialized = true;
+  if (!q2m_summon_initialize(&context, error)) {
+    if (q2m_alive(&context)) {
+      actor->monster = NULL;
+      actor->physics_bound = false;
+      q2m_free_monster(monster);
+    }
+    return false;
+  }
+  if (!q2m_alive(&context))
+    return true;
   bool automatic = !(definition->species == Q2M_TURRET && (monster->spawnflags & 128u));
   if (!q2m_lifecycle_admitted(&context, automatic, error))
     return false;
@@ -1465,7 +1479,7 @@ bool qa_q2_monster_spawn(qa_q2_game *game, qa_actor_id id,
   if (!q2m_link(&context, error)) {
     actor->monster = NULL;
     actor->physics_bound = false;
-    free(monster);
+    q2m_free_monster(monster);
     return false;
   }
   return q2m_alive(&context) ? q2m_show(&context, error) : true;
@@ -1474,8 +1488,16 @@ bool qa_q2_monster_spawn(qa_q2_game *game, qa_actor_id id,
 void q2_monster_release_state(q2_actor *actor) {
   if (actor == NULL)
     return;
-  free(actor->monster);
+  q2m_free_monster(actor->monster);
   actor->monster = NULL;
+}
+
+void q2m_free_monster(struct qa_q2_monster *monster) {
+  if (monster) {
+    q2m_summon_clear(monster->summons);
+    free(monster->summons);
+    free(monster);
+  }
 }
 
 bool q2_monster_traits(qa_q2_game *game, qa_actor_id id,

@@ -44,7 +44,9 @@ typedef enum q2_projectile_kind {
     Q2_LMCTF_PLASMA_SPREAD,
     Q2_LMCTF_PLASMA_BOUNCE,
     Q2_PROBOSCIS,
-    Q2_PROBOSCIS_SEGMENT
+    Q2_PROBOSCIS_SEGMENT,
+    Q2_RERELEASE_SPAWN_GROWTH,
+    Q2_RERELEASE_SPAWN_BEAM
 } q2_projectile_kind;
 typedef enum q2_proboscis_phase {
     Q2_PROBOSCIS_FLYING,
@@ -75,7 +77,7 @@ typedef struct q2_projectile {
     uint32_t render_flags, gib_flags;
     qa_string_id classname, model, loop_sound;
     int skin;
-    float scale;
+    float scale, alpha;
     bool hand, held, armed, visible, gekk, dodgeable;
 } q2_projectile;
 typedef struct q2_actor {
@@ -218,7 +220,7 @@ bool q2_tracker_target(q2_weapon_call *, qa_vec3, qa_vec3, qa_actor_id *, qa_err
 bool q2_launch_behavior(qa_q2_game *, q2_actor *, qa_builtin_projectile_role, bool *changed,
                         qa_error *);
 bool q2_target_damageable(qa_q2_game *, qa_actor_id);
-bool q2_target_creature(qa_q2_game *, qa_actor_id, bool *player);
+bool q2_target_creature(qa_q2_game *, qa_actor_id, bool *creature, bool *player, qa_error *);
 bool q2_projectile_event(qa_q2_game *, qa_actor_id, qa_builtin_event_kind, const char *, int,
                          qa_vec3, qa_vec3, qa_error *);
 bool q2_projectile_loop(qa_q2_game *, q2_actor *, const char *, bool stop_previous, qa_error *);
@@ -238,6 +240,7 @@ bool q2_radius_damage(qa_q2_game *, const qa_builtin_radius *, size_t *, qa_erro
 bool q2_definitions(qa_q2_game *, qa_error *);
 bool q2_monsters_init(qa_q2_game *, qa_error *);
 void q2_monsters_close(qa_q2_game *);
+void q2_monsters_begin_map(qa_q2_game *);
 void q2_monsters_release_actor(qa_q2_game *, qa_actor_id);
 bool q2_monster_tick(qa_q2_game *, q2_actor *, qa_error *);
 void q2_monster_release_state(q2_actor *);

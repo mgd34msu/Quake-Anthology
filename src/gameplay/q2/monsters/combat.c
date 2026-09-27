@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "reinforcements.h"
 #include "qa/game_q2_entities.h"
 #include "muzzle_data.h"
 
@@ -676,27 +677,11 @@ bool q2m_attack(q2m_context *context, q2m_attack_kind kind, float damage,
   if (kind == Q2M_ATTACK_HIT)
     return q2m_melee(context, 80.0f, damage, damage * 2.0f, error);
   if (kind == Q2M_ATTACK_SUMMON) {
-    const char *classname =
-        context->monster->definition->species == Q2M_CARRIER
-            ? (q2m_random(context->game) < 0.5f ? "monster_flyer"
-                                                : "monster_kamikaze")
-        : context->monster->definition->species == Q2M_WIDOW ||
-                context->monster->definition->species == Q2M_WIDOW2
-            ? "monster_stalker"
-        : q2m_random(context->game) < 0.5f ? "monster_infantry"
-                                           : "monster_gunner";
-    q2m_spawned_by by =
-        context->monster->definition->species == Q2M_CARRIER ? Q2M_SPAWN_CARRIER
-        : context->monster->definition->species == Q2M_WIDOW ||
-                context->monster->definition->species == Q2M_WIDOW2
-            ? Q2M_SPAWN_WIDOW
-            : Q2M_SPAWN_MEDIC;
-    qa_vec3 forward;
-    qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
-    return q2m_spawn_reinforcement(
-        context, classname, by,
-        qa_vec_add(context->body.origin, qa_vec_scale(forward, 72.0f)), NULL,
-        error);
+    if (!context->monster->summons) {
+      qa_error_set(error, QA_ERROR_FORMAT, 0, "Medic summon attack lacks retained choices");
+      return false;
+    }
+    return q2m_medic_finish_summons(context, context->monster->summons, error);
   }
 
   float speed = monster_projectile_speed(context, kind);
@@ -2414,59 +2399,6 @@ bool q2m_release(q2m_context *context, qa_error *error) {
     return true;
   return qa_session_release(context->game->services.session, context->actor->id,
                             error);
-}
-
-bool q2m_spawn_reinforcement(q2m_context *context, const char *classname,
-                             q2m_spawned_by spawned_by, qa_vec3 origin,
-                             qa_actor_id *spawned, qa_error *error) {
-  if (spawned != NULL)
-    *spawned = (qa_actor_id){0};
-  if (!q2m_alive(context) || classname == NULL)
-    return true;
-  qa_actor_definition definition;
-  if (!qa_builtin_resource(&context->game->services, classname, &definition,
-                           error))
-    return false;
-  qa_builtin_spawn spawn = {
-      .owner = context->game->options.owner,
-      .definition = definition,
-      .body = {.origin = origin, .angles = context->body.angles},
-      .link = false,
-  };
-  qa_actor_id child;
-  if (!qa_builtin_spawn_actor(&context->game->services, &spawn, &child, error))
-    return false;
-  qa_q2_monster_spawn_options options = {
-      .classname = classname,
-      .health_multiplier = 1.0f,
-      .enemy = context->monster->enemy,
-      .commander = context->actor->id,
-      .summoned = true,
-  };
-  if (!qa_q2_monster_spawn(context->game, child, &options, error)) {
-    qa_error original = *error;
-    qa_error ignored = {0};
-    qa_session_release(context->game->services.session, child, &ignored);
-    *error = original;
-    return false;
-  }
-  if (spawned != NULL)
-    *spawned = child;
-  if (!q2m_alive(context))
-    return true;
-  q2_actor *child_actor = context->game->actors[child.slot];
-  if (child_actor != NULL && qa_actor_id_equal(child_actor->id, child) &&
-      child_actor->monster != NULL)
-    child_actor->monster->spawned_by = spawned_by;
-  if (spawned_by == Q2M_SPAWN_WIDOW)
-    ++context->monster->monster_used;
-  else if (spawned_by == Q2M_SPAWN_MEDIC &&
-           context->game->options.edition == QA_Q2_RERELEASE)
-    ++context->monster->monster_used;
-  else if (context->monster->monster_slots > 0)
-    --context->monster->monster_slots;
-  return q2m_emit(context, QA_BUILTIN_TELEPORT, "q2:spawn", 0, origin, origin,
-                  1.0f, error);
 }
 
 static qa_attack environmental_attack(q2m_context *context, int means,

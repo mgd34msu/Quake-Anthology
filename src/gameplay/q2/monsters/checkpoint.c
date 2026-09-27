@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "reinforcements.h"
 
 static bool save_reference(qa_q2_game *game, qa_actor_id id,
                            qa_q2_saved_reference *out, qa_error *error) {
@@ -136,7 +137,7 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
   }
   const struct qa_q2_monster *monster = actor->monster;
   qa_q2_monster_checkpoint saved = {
-      .version = 3,
+      .version = 5,
       .start_phase = (uint32_t)monster->start_phase,
       .combat_target = monster->combat_target,
       .start_due_ns = monster->start_due_ns,
@@ -229,6 +230,7 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
       .stand_ground = monster->stand_ground,
       .temporary_stand_ground = monster->temporary_stand_ground,
       .hold_frame = monster->hold_frame,
+      .source_blocked = monster->source_blocked,
       .ducked = monster->ducked,
       .dodging = monster->dodging,
       .charging = monster->charging,
@@ -277,6 +279,18 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
       !copy_name(saved.next_move, sizeof(saved.next_move),
                  monster->next_move->name, error))
     return false;
+  if (monster->summons) {
+    const q2m_summon_state *summons = monster->summons;
+    saved.has_summons = true;
+    saved.summon_strength = summons->classic_strength;
+    saved.summon_count = (uint32_t)summons->chosen_count;
+    for (size_t i = 0; i < summons->chosen_count; ++i) {
+      if (!copy_name(saved.summons[i].classname, sizeof(saved.summons[i].classname),
+                      summons->chosen[i].definition->classname, error))
+        return false;
+      saved.summons[i].strength = summons->chosen[i].strength;
+    }
+  }
   if (!save_reference(game, monster->enemy, &saved.enemy, error) ||
       !save_reference(game, monster->old_enemy, &saved.old_enemy, error) ||
       !save_reference(game, monster->last_player_enemy,
@@ -352,7 +366,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   if (!callback_boundary(game, error))
     return false;
   bool controller = saved->controller_kind != Q2M_CONTROLLER_NONE;
-  if (saved->version != 3 || saved->start_phase > Q2M_START_MANUAL ||
+  if (saved->version != 5 || saved->start_phase > Q2M_START_MANUAL ||
       saved->controller_kind > Q2M_CONTROLLER_MAKRON_SPAWN ||
       !valid_name(saved->definition, sizeof(saved->definition), controller) ||
       !valid_name(saved->move, sizeof(saved->move), controller) ||
@@ -364,7 +378,6 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
         saved->fly_min_distance < 0.0f ||
         saved->fly_max_distance < saved->fly_min_distance ||
         saved->fly_acceleration < 0.0f || saved->fly_speed < 0.0f ||
-        saved->monster_slots < 0 || saved->monster_used < 0 ||
         saved->water_level < 0 || saved->water_level > 3)) ||
       !saved->initialized ||
       saved->last_attack.attacker.registry != 0 ||
@@ -376,7 +389,8 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   }
   if (controller &&
       (saved->definition[0] != '\0' || saved->move[0] != '\0' ||
-       saved->next_move[0] != '\0')) {
+       saved->next_move[0] != '\0' || saved->has_summons || saved->summon_count ||
+       saved->summon_strength)) {
     qa_error_set(error, QA_ERROR_FORMAT, 0,
                  "Invalid Q2 monster controller checkpoint");
     return false;
@@ -400,16 +414,16 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
                            &monster->controller_owner, error) ||
         !resolve_reference(game, saved->controller_target,
                            &monster->controller_target, error)) {
-      free(monster);
+      q2m_free_monster(monster);
       return false;
     }
     q2_actor *actor = q2_actor_get(game, id, true, error);
     if (actor == NULL) {
-      free(monster);
+      q2m_free_monster(monster);
       return false;
     }
     if (actor->projectile.kind != Q2_PROJECTILE_NONE) {
-      free(monster);
+      q2m_free_monster(monster);
       qa_error_set(error, QA_ERROR_FORMAT, id.slot,
                    "Projectile actor cannot restore monster controller state");
       return false;
@@ -421,7 +435,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
     actor->physics.motion = QA_PHYSICS_STATIONARY;
     actor->physics.solid = QA_PHYSICS_NOT_SOLID;
     actor->physics.clip_mask = 0;
-    free(previous);
+    q2m_free_monster(previous);
     return true;
   }
   const q2m_definition *definition =
@@ -453,7 +467,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
       (saved->next_frame != 0 &&
        (saved->next_frame < frame_move->first_frame ||
         saved->next_frame > frame_move->last_frame))) {
-    free(monster);
+    q2m_free_monster(monster);
     qa_error_set(error, QA_ERROR_FORMAT, 0,
                  "Q2 monster checkpoint move is invalid");
     return false;
@@ -542,6 +556,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   Q2M_RESTORE(stand_ground);
   Q2M_RESTORE(temporary_stand_ground);
   Q2M_RESTORE(hold_frame);
+  Q2M_RESTORE(source_blocked);
   Q2M_RESTORE(ducked);
   Q2M_RESTORE(dodging);
   Q2M_RESTORE(charging);
@@ -576,21 +591,56 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   monster->sound_target.origin = saved->sound_target.origin;
   monster->sound_target.time_ns = saved->sound_target.time_ns;
   monster->sound_target.present = saved->sound_target.present;
+  bool source_medic = definition->species == Q2M_MEDIC_COMMANDER ||
+      (definition->species == Q2M_MEDIC && (game->options.edition == QA_Q2_RERELEASE ||
+                                           game->options.product == QA_Q2_ROGUE));
+  if (saved->summon_count > 5 || saved->summon_strength < 0 || saved->summon_strength > 6 ||
+      saved->has_summons != source_medic ||
+      (!saved->has_summons && (saved->summon_count || saved->summon_strength))) {
+    q2m_free_monster(monster);
+    qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid retained medic reinforcement state");
+    return false;
+  }
+  if (saved->has_summons) {
+    monster->summons = calloc(1, sizeof(*monster->summons));
+    if (!monster->summons) {
+      q2m_free_monster(monster);
+      qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring medic reinforcement choices");
+      return false;
+    }
+    monster->summons->classic_strength = saved->summon_strength;
+    monster->summons->chosen_count = saved->summon_count;
+    for (size_t i = 0; i < saved->summon_count; ++i) {
+      const qa_q2_reinforcement_checkpoint *choice = &saved->summons[i];
+      const q2m_definition *reinforcement =
+          valid_name(choice->classname, sizeof(choice->classname), false)
+              ? q2m_definition_for(game, choice->classname) : NULL;
+      if (!reinforcement) {
+        q2m_free_monster(monster);
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Unknown saved medic reinforcement");
+        return false;
+      }
+      qa_bounds bounds = game->options.edition == QA_Q2_RERELEASE ? reinforcement->bounds
+          : reinforcement->species == Q2M_GLADIATOR ? (qa_bounds){{-32,-32,-24},{32,32,64}}
+                                                     : (qa_bounds){{-16,-16,-24},{16,16,32}};
+      monster->summons->chosen[i] = (q2m_reinforcement){reinforcement, choice->strength, bounds};
+    }
+  }
   if (!resolve_all(game, saved, monster, error) ||
       !qa_builtin_resource(&game->services, definition->classname,
                            &monster->classname, error) ||
       !qa_builtin_resource(&game->services, definition->model, &monster->model,
                            error)) {
-    free(monster);
+    q2m_free_monster(monster);
     return false;
   }
   q2_actor *actor = q2_actor_get(game, id, true, error);
   if (actor == NULL) {
-    free(monster);
+    q2m_free_monster(monster);
     return false;
   }
   if (actor->projectile.kind != Q2_PROJECTILE_NONE) {
-    free(monster);
+    q2m_free_monster(monster);
     qa_error_set(error, QA_ERROR_FORMAT, id.slot,
                  "Projectile actor cannot restore active monster state");
     return false;
@@ -598,6 +648,6 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   struct qa_q2_monster *previous = actor->monster;
   actor->monster = monster;
   actor->physics_bound = true;
-  free(previous);
+  q2m_free_monster(previous);
   return true;
 }

@@ -79,7 +79,7 @@ static bool sound(qa_q2_game *g, qa_actor_id id, qa_actor_id owner, const char *
 static bool loop(qa_q2_game *g, q2_actor *hook, const char *path, qa_error *e) {
     return q2_projectile_loop(g, hook, path, true, e);
 }
-static q2_anchor anchor(qa_q2_game *g, qa_actor_id id, qa_q2_grapple_kind kind) {
+static q2_anchor anchor(qa_q2_game *g, qa_actor_id id, qa_q2_grapple_kind kind, qa_error *error) {
     if (!q2_actor_live(g, id))
         return ANCHOR_NONE;
     if (g->services.physics != NULL && qa_actor_id_equal(id, g->services.physics->world_actor))
@@ -88,6 +88,8 @@ static q2_anchor anchor(qa_q2_game *g, qa_actor_id id, qa_q2_grapple_kind kind) 
     if (g->services.actor_traits != NULL)
         g->services.actor_traits(g->services.context, id, &traits);
     const qa_actor_record *record = qa_actors_get(qa_session_actors(g->services.session), id);
+    if (!record)
+        return ANCHOR_NONE;
     const char *name =
         qa_strings_cstr(qa_session_strings(g->services.session),
                         traits.classname != 0 ? traits.classname : record->definition);
@@ -112,7 +114,7 @@ static q2_anchor anchor(qa_q2_game *g, qa_actor_id id, qa_q2_grapple_kind kind) 
         return ANCHOR_NONE;
     }
     qa_actor_collision collision;
-    if (!qa_world_get_collision(g->services.world, id, &collision))
+    if (!qa_world_get_collision(g->services.world, id, &collision, error))
         return ANCHOR_NONE;
     return traits.player                            ? ANCHOR_PLAYER
            : collision.inline_model                 ? ANCHOR_BRUSH
@@ -270,7 +272,15 @@ static bool attach(qa_q2_game *g, q2_actor *hook, qa_actor_id target, q2_anchor 
     hook->projectile.enemy = target;
     hook->physics.solid = lm ? QA_PHYSICS_TRIGGER : QA_PHYSICS_NOT_SOLID;
     qa_actor_collision collision;
-    if (lm && qa_world_get_collision(g->services.world, hook->id, &collision)) {
+    qa_error observed = {0};
+    bool has_collision = lm && qa_world_get_collision(g->services.world, hook->id, &collision,
+                                                       &observed);
+    if (observed.code) {
+        if (e)
+            *e = observed;
+        return false;
+    }
+    if (has_collision) {
         collision.role = QA_COLLISION_TRIGGER;
         if (!qa_world_set_collision(g->services.world, hook->id, &collision, e))
             return false;
@@ -293,7 +303,15 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
         (lm && hook->projectile.enemy.registry != 0 &&
          !qa_actor_id_equal(hook->projectile.enemy, contact->other)))
         return true;
-    q2_anchor classification = anchor(g, contact->other, kind);
+    qa_error observed = {0};
+    q2_anchor classification = anchor(g, contact->other, kind, &observed);
+    if (observed.code) {
+        if (e)
+            *e = observed;
+        return false;
+    }
+    if (!q2_actor_live(g, hook_id))
+        return true;
     if ((contact->has_surface && (contact->surface.flags & 4u) != 0) ||
         (lm && (classification == ANCHOR_NONE || classification == ANCHOR_BOX ||
                 dead(g, contact->other) ||
@@ -347,7 +365,8 @@ bool q2_grapple_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *
             bool repeated = qa_actor_id_equal(hook->projectile.enemy, contact->other);
             if (!repeated || (frame % 7 == 0 && frame != hook->projectile.effect_ns)) {
                 bool player = false;
-                q2_target_creature(g, contact->other, &player);
+                if (!q2_target_creature(g, contact->other, NULL, &player, e))
+                    return false;
                 if (g->hooks.grapple_player_hit != NULL)
                     player = g->hooks.grapple_player_hit(g->hooks.context, contact->other);
                 if (player &&
@@ -659,7 +678,15 @@ static bool pull_ctf(qa_q2_game *g, q2_actor *a, bool damage_pulse, qa_error *e)
     bool rr = g->options.edition == QA_Q2_RERELEASE;
     qa_actor_id target = hook->projectile.enemy;
     if (target.registry != 0) {
-        q2_anchor classification = anchor(g, target, QA_Q2_CTF_GRAPPLE);
+        qa_error observed = {0};
+        q2_anchor classification = anchor(g, target, QA_Q2_CTF_GRAPPLE, &observed);
+        if (observed.code) {
+            if (e)
+                *e = observed;
+            return false;
+        }
+        if (!q2_actor_live(g, hook_id))
+            return true;
         if (classification == ANCHOR_NONE)
             return reset_hook(g, hook, e);
         qa_body_state other;

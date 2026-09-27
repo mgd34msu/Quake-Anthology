@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "reinforcements.h"
 
 enum { Q2M_TRAIL_POINTS = 8 };
 
@@ -132,6 +133,13 @@ void q2_monsters_close(qa_q2_game *game) {
   free(game->monster_runtime->alerts);
   free(game->monster_runtime);
   game->monster_runtime = NULL;
+}
+
+void q2_monsters_begin_map(qa_q2_game *game) {
+  q2_monsters_runtime *runtime = game->monster_runtime;
+  *runtime = (q2_monsters_runtime){.services = runtime->services,
+      .trails = runtime->trails, .trail_capacity = runtime->trail_capacity,
+      .alerts = runtime->alerts, .alert_capacity = runtime->alert_capacity};
 }
 
 void qa_q2_monsters_checkpoint_free(qa_q2_monsters_checkpoint *checkpoint) {
@@ -532,38 +540,60 @@ static float vector_yaw(qa_vec3 direction) {
 }
 
 static bool actor_traits(q2m_context *context, qa_actor_id id,
-                         qa_builtin_actor_traits *traits) {
+                         qa_builtin_actor_traits *traits, qa_error *error) {
   *traits = (qa_builtin_actor_traits){0};
   if (qa_actors_get(qa_session_actors(context->game->services.session), id) ==
       NULL)
-    return false;
+    return true;
   if (context->game->services.actor_traits != NULL &&
       context->game->services.actor_traits(context->game->services.context, id,
                                            traits))
     return true;
+  *traits = (qa_builtin_actor_traits){0};
   qa_actor_collision collision;
-  if (qa_world_get_collision(context->game->services.world, id, &collision)) {
+  qa_error observed = {0};
+  if (qa_world_get_collision(context->game->services.world, id, &collision, &observed)) {
     traits->monster = collision.monster;
     traits->player = ((uint32_t)collision.contents & Q2_PLAYER_CONTENTS) != 0;
     traits->view_height = 22.0f;
-    return traits->monster || traits->player;
   }
-  return false;
+  if (observed.code && error)
+    *error = observed;
+  return observed.code == QA_OK;
 }
 
 static bool target_alive(q2m_context *context, qa_actor_id id,
-                         qa_builtin_actor_traits *traits, qa_body_state *body) {
+                         qa_builtin_actor_traits *traits, qa_body_state *body,
+                         bool *living, qa_error *error) {
+  *living = false;
+  if (!id.registry || qa_actor_id_equal(id, context->actor->id))
+    return true;
+  if (!actor_traits(context, id, traits, error))
+    return false;
+  if (!q2m_alive(context) || !q2_actor_live(context->game, id) ||
+      (!traits->player && !traits->monster && !traits->damageable_target) ||
+      traits->spectator || traits->no_target)
+    return true;
   qa_combat_state combat;
-  qa_error ignored = {0};
-  return id.registry != 0 && !qa_actor_id_equal(id, context->actor->id) &&
-         actor_traits(context, id, traits) &&
-         (traits->player || traits->monster || traits->damageable_target) &&
-         !traits->spectator &&
-         !traits->no_target &&
-         qa_combat_read(context->game->services.combat, id, &combat,
-                        &ignored) &&
-         combat.health > 0.0f &&
-         qa_world_body_read(context->game->services.world, id, body, &ignored);
+  qa_error observed = {0};
+  if (!qa_combat_read(context->game->services.combat, id, &combat, &observed)) {
+    if (observed.code == QA_ERROR_NOT_FOUND || !q2_actor_live(context->game, id))
+      return true;
+    if (error)
+      *error = observed;
+    return false;
+  }
+  if (!q2m_alive(context) || !q2_actor_live(context->game, id) || combat.health <= 0)
+    return true;
+  if (!qa_world_body_read(context->game->services.world, id, body, &observed)) {
+    if (observed.code == QA_ERROR_NOT_FOUND || !q2_actor_live(context->game, id))
+      return true;
+    if (error)
+      *error = observed;
+    return false;
+  }
+  *living = q2m_alive(context) && q2_actor_live(context->game, id);
+  return true;
 }
 
 static bool in_front(q2m_context *context, qa_actor_id id) {
@@ -607,8 +637,27 @@ bool q2m_visible(q2m_context *context, qa_actor_id id, bool *visible,
   *visible = false;
   qa_builtin_actor_traits traits;
   qa_body_state target;
-  bool alive = target_alive(context, id, &traits, &target);
-  if (!q2m_alive(context) || !alive)
+  if (!q2m_alive(context) || !q2_actor_live(context->game, id))
+    return true;
+  qa_error observed = {0};
+  if (!qa_world_body_read(context->game->services.world, id, &target, &observed)) {
+    if (observed.code == QA_ERROR_NOT_FOUND || !q2_actor_live(context->game, id))
+      return true;
+    if (error)
+      *error = observed;
+    return false;
+  }
+  if (!q2m_alive(context) || !q2_actor_live(context->game, id))
+    return true;
+  if (!qa_world_body_read(context->game->services.world, context->actor->id,
+                          &context->body, error))
+    return !q2m_alive(context);
+  if (!q2m_alive(context) || !q2_actor_live(context->game, id))
+    return true;
+  if (!actor_traits(context, id, &traits, error))
+    return false;
+  if (!q2m_alive(context) ||
+      !q2_actor_live(context->game, id))
     return true;
   qa_trace_query query = {
       .start = qa_vec_add(context->body.origin,
@@ -623,8 +672,7 @@ bool q2m_visible(q2m_context *context, qa_actor_id id, bool *visible,
     return false;
   if (!q2m_alive(context))
     return true;
-  *visible = trace.fraction == 1.0f || (trace.hit == QA_TRACE_HIT_ACTOR &&
-                                        qa_actor_id_equal(trace.actor, id));
+  *visible = q2_actor_live(context->game, id) && trace.fraction == 1.0f;
   return true;
 }
 
@@ -635,7 +683,9 @@ bool q2m_clear_shot(q2m_context *context, qa_vec3 start, bool *clear,
   qa_actor_id target_id = monster->enemy;
   qa_builtin_actor_traits traits;
   qa_body_state target;
-  bool alive = target_alive(context, target_id, &traits, &target);
+  bool alive;
+  if (!target_alive(context, target_id, &traits, &target, &alive, error))
+    return false;
   if (!q2m_alive(context) || !alive)
     return true;
   qa_vec3 end =
@@ -656,11 +706,18 @@ bool q2m_clear_shot(q2m_context *context, qa_vec3 start, bool *clear,
     return false;
   if (!q2m_alive(context))
     return true;
+  bool player = false;
+  if (trace.hit == QA_TRACE_HIT_ACTOR && !qa_actor_id_equal(trace.actor, target_id) &&
+      trace.fraction != 1.0f && context->game->options.edition == QA_Q2_RERELEASE) {
+    if (!actor_traits(context, trace.actor, &traits, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    player = traits.player;
+  }
   *clear = trace.fraction == 1.0f ||
            (trace.hit == QA_TRACE_HIT_ACTOR &&
-            (qa_actor_id_equal(trace.actor, target_id) ||
-             (context->game->options.edition == QA_Q2_RERELEASE &&
-              actor_traits(context, trace.actor, &traits) && traits.player)));
+            (qa_actor_id_equal(trace.actor, target_id) || player));
   return true;
 }
 
@@ -693,7 +750,9 @@ bool q2m_face_enemy(q2m_context *context, qa_error *error) {
 bool q2m_found_target(q2m_context *context, qa_actor_id id, qa_error *error) {
   qa_builtin_actor_traits traits;
   qa_body_state target;
-  bool alive = target_alive(context, id, &traits, &target);
+  bool alive;
+  if (!target_alive(context, id, &traits, &target, &alive, error))
+    return false;
   if (!q2m_alive(context) || !alive)
     return true;
   if (context->game->hooks.can_target != NULL) {
@@ -763,11 +822,20 @@ static const char *trait_classname(q2m_context *context,
                    traits->classname);
 }
 
-static bool clear_medic_target(q2m_context *context) {
+static bool clear_medic_target(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   q2_actor *patient = native_monster_actor(context->game, monster->enemy);
-  if (patient != NULL)
+  if (patient != NULL) {
+    q2m_context other = {.game = context->game, .actor = patient, .monster = patient->monster};
     patient->monster->resurrecting = false;
+    patient->extra_effects &= ~UINT64_C(256);
+    patient->monster->render_flags &= ~(1024u | 2048u | 4096u);
+    if (!q2m_damageable(&other, true, error) ||
+        (q2m_alive(&other) && !q2m_show(&other, error)))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+  }
   monster->medic = false;
   monster->resurrect_target = (qa_actor_id){0};
   return true;
@@ -776,11 +844,16 @@ static bool clear_medic_target(q2m_context *context) {
 static bool target_tesla(q2m_context *context, qa_actor_id tesla,
                          qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
-  if (monster->medic)
-    clear_medic_target(context);
+  if (monster->medic && !clear_medic_target(context, error))
+    return false;
+  if (!q2m_alive(context))
+    return true;
   qa_builtin_actor_traits current = {0};
-  if (monster->enemy.registry != 0 &&
-      actor_traits(context, monster->enemy, &current) && current.player)
+  if (!actor_traits(context, monster->enemy, &current, error))
+    return false;
+  if (!q2m_alive(context))
+    return true;
+  if (current.player)
     monster->last_player_enemy = monster->enemy;
   if (qa_actor_id_equal(monster->enemy, tesla))
     return true;
@@ -791,8 +864,125 @@ static bool target_tesla(q2m_context *context, qa_actor_id tesla,
   context->actor->physics.goal = tesla;
   if ((monster->definition->flags & Q2M_HAS_RANGED) == 0)
     return q2m_found_target(context, tesla, error);
-  return context->combat.health <= 0.0f ||
-         q2m_set_move(context, monster->definition->attack_move, true, error);
+  return context->combat.health <= 0.0f || q2m_source_attack(context, false, error);
+}
+
+bool qa_q2_before_monster_step(qa_q2_game *game, qa_actor_id id, qa_vec3 *displacement,
+                               bool *handled, qa_error *error) {
+  if (!game || !displacement || !handled || !qa_vec_finite(*displacement)) {
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q2 monster displacement");
+    return false;
+  }
+  *handled = false;
+  q2_actor *actor = native_monster_actor(game, id);
+  if (!actor || (game->options.product != QA_Q2_ROGUE &&
+                 game->options.edition != QA_Q2_RERELEASE))
+    return true;
+  q2m_context context = {.game = game, .actor = actor, .monster = actor->monster};
+  if (!q2m_refresh(&context, error))
+    return !q2m_alive(&context);
+  if (context.combat.health <= 0)
+    return true;
+  qa_actor_id area_id;
+  if (!qa_q2_bad_area(game, id, context.body.origin, &area_id, error))
+    return false;
+  if (!q2m_alive(&context))
+    return true;
+  struct qa_q2_monster *monster = context.monster;
+  if (area_id.registry) {
+    monster->hazard = area_id;
+    qa_builtin_actor_traits traits;
+    if (!actor_traits(&context, monster->enemy, &traits, error))
+      return false;
+    if (!q2m_alive(&context))
+      return true;
+    const char *name = trait_classname(&context, &traits);
+    const char *tesla = game->options.edition == QA_Q2_RERELEASE ? "tesla_mine" : "tesla";
+    if (name && !strcmp(name, tesla)) {
+      qa_body_state area;
+      if (!qa_world_body_read(game->services.world, area_id, &area, error))
+        return false;
+      if (!q2m_alive(&context) || !q2_actor_live(game, area_id))
+        return true;
+      qa_vec3 forward;
+      qa_builtin_angle_vectors(context.body.angles, &forward, NULL, NULL);
+      float bad_dot = qa_vec_dot(forward, qa_vec_normalize(qa_vec_sub(area.origin, context.body.origin)));
+      float move_dot = qa_vec_dot(forward, qa_vec_normalize(*displacement));
+      if ((bad_dot < 0 && move_dot < 0) || (bad_dot > 0 && move_dot > 0))
+        *displacement = qa_vec_scale(*displacement, -1);
+    }
+  } else if (monster->hazard.registry) {
+    monster->hazard = (qa_actor_id){0};
+    if (monster->old_enemy.registry) {
+      qa_actor_id previous = monster->old_enemy;
+      monster->enemy = monster->goal = previous;
+      actor->physics.enemy = actor->physics.goal = previous;
+      if (!q2m_found_target(&context, previous, error))
+        return false;
+      *handled = true;
+    }
+  }
+  return true;
+}
+
+bool qa_q2_accept_ground(qa_q2_game *game, qa_actor_id id, qa_vec3 origin,
+                         bool *accepted, qa_error *error) {
+  if (!game || !accepted || !qa_vec_finite(origin)) {
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q2 ground decision");
+    return false;
+  }
+  *accepted = true;
+  q2_actor *actor = native_monster_actor(game, id);
+  if (!actor || (game->options.product != QA_Q2_ROGUE &&
+                 game->options.edition != QA_Q2_RERELEASE))
+    return true;
+  q2m_context context = {.game = game, .actor = actor, .monster = actor->monster};
+  if (!q2m_refresh(&context, error))
+    return !q2m_alive(&context);
+  if (context.combat.health <= 0 || context.monster->hazard.registry)
+    return true;
+  qa_actor_id area_id;
+  if (!qa_q2_bad_area(game, id, origin, &area_id, error))
+    return false;
+  if (!q2m_alive(&context) || !area_id.registry)
+    return true;
+  *accepted = false;
+  q2_actor *area = q2_actor_get(game, area_id, false, NULL);
+  if (!area || area->projectile.kind != Q2_BAD_AREA)
+    return true;
+  qa_actor_id owner = area->projectile.owner;
+  qa_builtin_actor_traits owner_traits, enemy_traits;
+  if (!actor_traits(&context, owner, &owner_traits, error))
+    return false;
+  if (!q2m_alive(&context))
+    return true;
+  const char *owner_name = trait_classname(&context, &owner_traits);
+  const char *tesla_name = game->options.edition == QA_Q2_RERELEASE ? "tesla_mine" : "tesla";
+  if (!owner_name || strcmp(owner_name, tesla_name))
+    return true;
+  qa_actor_id enemy = context.monster->enemy;
+  if (!actor_traits(&context, enemy, &enemy_traits, error))
+    return false;
+  if (!q2m_alive(&context))
+    return true;
+  const char *enemy_name = trait_classname(&context, &enemy_traits);
+  const char *protected_name = game->options.edition == QA_Q2_RERELEASE ? "tesla_mine" : "telsa";
+  bool engage = !q2_actor_live(game, enemy);
+  if (!engage && (!enemy_name || strcmp(enemy_name, protected_name))) {
+    bool visible = false;
+    if (enemy_traits.player && !q2m_visible(&context, enemy, &visible, error))
+      return false;
+    if (!q2m_alive(&context))
+      return true;
+    engage = !enemy_traits.player || !visible;
+  }
+  if (engage) {
+    if (!target_tesla(&context, owner, error))
+      return false;
+    if (q2m_alive(&context))
+      context.monster->source_blocked = true;
+  }
+  return true;
 }
 
 bool q2m_react_to_damage(q2m_context *context, qa_actor_id attacker,
@@ -800,12 +990,16 @@ bool q2m_react_to_damage(q2m_context *context, qa_actor_id attacker,
   if (!q2m_alive(context) || attacker.registry == 0)
     return true;
   struct qa_q2_monster *monster = context->monster;
-  const bool rogue = context->game->options.product == QA_Q2_ROGUE;
+  const bool rogue = context->game->options.product == QA_Q2_ROGUE ||
+                     context->game->options.edition == QA_Q2_RERELEASE;
 
   if (rogue && monster->last_attack.inflictor.registry != 0) {
     qa_builtin_actor_traits inflictor_traits = {0};
-    if (actor_traits(context, monster->last_attack.inflictor,
-                     &inflictor_traits)) {
+    if (!actor_traits(context, monster->last_attack.inflictor, &inflictor_traits, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    {
       const char *name = trait_classname(context, &inflictor_traits);
       const char *tesla_name = context->game->options.edition == QA_Q2_RERELEASE
                                    ? "tesla_mine"
@@ -833,8 +1027,9 @@ bool q2m_react_to_damage(q2m_context *context, qa_actor_id attacker,
       qa_actor_id_equal(attacker, monster->enemy))
     return true;
   qa_builtin_actor_traits attacker_traits = {0};
-  if (!actor_traits(context, attacker, &attacker_traits) ||
-      (!attacker_traits.player && !attacker_traits.monster))
+  if (!actor_traits(context, attacker, &attacker_traits, error))
+    return false;
+  if (!q2m_alive(context) || (!attacker_traits.player && !attacker_traits.monster))
     return true;
   q2_actor *other = native_monster_actor(context->game, attacker);
   bool attacker_good = attacker_traits.no_source_friendly_fire ||
@@ -857,7 +1052,10 @@ bool q2m_react_to_damage(q2m_context *context, qa_actor_id attacker,
     if (monster->enemy.registry != 0 && monster->medic) {
       if (q2_actor_live(context->game, monster->enemy) && fraction > 0.25f)
         return true;
-      clear_medic_target(context);
+      if (!clear_medic_target(context, error))
+        return false;
+      if (!q2m_alive(context))
+        return true;
     }
     if (context->game->options.edition == QA_Q2_RERELEASE)
       monster->react_ns = q2m_after(
@@ -869,9 +1067,11 @@ bool q2m_react_to_damage(q2m_context *context, qa_actor_id attacker,
   if (attacker_traits.player) {
     monster->sound_target.present = false;
     qa_builtin_actor_traits current_traits = {0};
-    if (monster->enemy.registry != 0 &&
-        actor_traits(context, monster->enemy, &current_traits) &&
-        current_traits.player) {
+    if (!actor_traits(context, monster->enemy, &current_traits, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    if (current_traits.player) {
       bool visible;
       if (!q2m_visible(context, monster->enemy, &visible, error))
         return false;
@@ -907,9 +1107,12 @@ bool q2m_react_to_damage(q2m_context *context, qa_actor_id attacker,
       retaliate = other_name == NULL || strcmp(self_name, other_name) != 0;
     }
     qa_builtin_actor_traits current_traits = {0};
-    if (monster->enemy.registry != 0 &&
-        actor_traits(context, monster->enemy, &current_traits) &&
-        current_traits.player)
+    if (!actor_traits(context, monster->enemy, &current_traits, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    other = native_monster_actor(context->game, attacker);
+    if (current_traits.player)
       monster->old_enemy = monster->enemy;
     if (retaliate)
       chosen = attacker;
@@ -947,7 +1150,9 @@ static bool hear_target(q2m_context *context, bool *found, qa_error *error) {
     return true;
   qa_builtin_actor_traits traits;
   qa_body_state body;
-  bool alive = target_alive(context, noise.owner, &traits, &body);
+  bool alive;
+  if (!target_alive(context, noise.owner, &traits, &body, &alive, error))
+    return false;
   if (!q2m_alive(context) || !alive || !traits.player)
     return true;
   if (context->game->hooks.can_target != NULL) {
@@ -1017,8 +1222,10 @@ static bool visual_candidate(q2m_context *context, qa_actor_id candidate,
   *accepted = false;
   qa_builtin_actor_traits traits;
   qa_body_state target;
-  if (!target_alive(context, candidate, &traits, &target) ||
-      !q2m_alive(context))
+  bool living;
+  if (!target_alive(context, candidate, &traits, &target, &living, error))
+    return false;
+  if (!living || !q2m_alive(context))
     return true;
   float distance = q2m_distance(context, candidate);
   if (context->game->options.edition == QA_Q2_RERELEASE) {
@@ -1272,7 +1479,9 @@ bool q2m_find_target(q2m_context *context, bool *found, qa_error *error) {
   }
 
   qa_builtin_actor_traits selected;
-  if (!actor_traits(context, candidate, &selected) || !q2m_alive(context))
+  if (!actor_traits(context, candidate, &selected, error))
+    return false;
+  if (!q2m_alive(context))
     return true;
   if (selected.monster && candidate.slot < context->game->capacity &&
       context->game->actors[candidate.slot] != NULL &&
@@ -1333,7 +1542,9 @@ bool q2m_check_attack(q2m_context *context, bool *selected, qa_error *error) {
   }
   qa_builtin_actor_traits traits;
   qa_body_state target;
-  bool enemy_alive = target_alive(context, monster->enemy, &traits, &target);
+  bool enemy_alive;
+  if (!target_alive(context, monster->enemy, &traits, &target, &enemy_alive, error))
+    return false;
   if (!q2m_alive(context))
     return true;
   if (!enemy_alive) {
@@ -1365,6 +1576,8 @@ bool q2m_check_attack(q2m_context *context, bool *selected, qa_error *error) {
     monster->search_ns = q2m_after(context->game->now_ns, 5.0);
   }
   float distance = q2m_distance(context, monster->enemy);
+  if (!q2m_alive(context))
+    return true;
   if (distance <= 80.0f && (monster->definition->flags & Q2M_HAS_MELEE) != 0) {
     monster->attack_state = Q2M_MELEE;
     *selected = true;
@@ -1426,6 +1639,10 @@ static bool select_species_attack(q2m_context *context, const char **move,
   struct qa_q2_monster *monster = context->monster;
   q2m_species species = monster->definition->species;
   float distance = q2m_distance(context, monster->enemy);
+  if (!q2m_alive(context)) {
+    *move = NULL;
+    return true;
+  }
   bool melee = monster->attack_state == Q2M_MELEE;
   bool blind = monster->attack_state == Q2M_BLIND;
   float random;
@@ -1586,16 +1803,34 @@ static bool select_species_attack(q2m_context *context, const char **move,
                              : "makron_move_attack5";
     break;
   case Q2M_MEDIC:
-  case Q2M_MEDIC_COMMANDER:
+  case Q2M_MEDIC_COMMANDER: {
+    if (context->game->options.edition == QA_Q2_CLASSIC &&
+        context->game->options.product != QA_Q2_ROGUE && species == Q2M_MEDIC) {
+      *move = monster->medic ? "medic_move_attackCable" : "medic_move_attackBlaster";
+      break;
+    }
+    monster->dodging = false;
+    if (monster->attack_state == Q2M_SLIDING)
+      monster->attack_state = Q2M_STRAIGHT;
+    if (monster->source_blocked) {
+      if (!q2m_set_move(context, "medic_move_callReinforcements", false, error))
+        return false;
+      if (!q2m_alive(context))
+        return true;
+      monster->source_blocked = false;
+    }
+    float luck = q2m_random(context->game);
+    bool commander = context->combat.mass > 400;
+    bool slots = context->game->options.edition == QA_Q2_RERELEASE
+                   ? monster->monster_slots > monster->monster_used : monster->monster_slots > 2;
     if (monster->medic)
-      *move = "medic_move_attackCable";
-    else if (species == Q2M_MEDIC_COMMANDER &&
-             (blind || (distance >= 80.0f && monster->monster_slots > 2 &&
-                        q2m_random(context->game) > 0.2f)))
-      *move = "medic_move_callReinforcements";
+      *move = commander && luck > .8f && slots ? "medic_move_callReinforcements"
+                                               : "medic_move_attackCable";
     else
-      *move = "medic_move_attackBlaster";
+      *move = blind || (commander && luck > .2f && distance >= 80 && slots)
+                ? "medic_move_callReinforcements" : "medic_move_attackBlaster";
     break;
+  }
   case Q2M_SUPERTANK:
     *move = distance <= 160.0f || q2m_random(context->game) < 0.3f
                 ? "supertank_move_attack1"
@@ -1659,9 +1894,9 @@ static bool select_species_attack(q2m_context *context, const char **move,
       *move = q2m_random(context->game) < 0.5f ? "stalker_move_swing_l"
                                                : "stalker_move_swing_r";
     else {
-      if (context->game->options.skill > 0 &&
-          q2m_random(context->game) >
-              1.0f - 0.5f / (float)context->game->options.skill)
+      float luck = q2m_random(context->game);
+      if (context->game->options.skill == 0 ||
+          luck > 1.0f - 0.5f / (float)context->game->options.skill)
         monster->attack_state = Q2M_STRAIGHT;
       else {
         if (q2m_random(context->game) <= 0.5f)
@@ -1732,20 +1967,14 @@ static bool select_species_attack(q2m_context *context, const char **move,
   case Q2M_WIDOW:
     if (melee)
       *move = "widow_move_attack_kick";
-    else if (monster->monster_used < monster->monster_slots &&
-             q2m_random(context->game) < 0.35f)
-      *move = "widow_move_spawn";
     else
-      *move = q2m_random(context->game) < 0.65f
-                  ? "widow_move_attack_pre_blaster"
-                  : "widow_move_attack_pre_rail";
+      return q2m_widow_attack_move(context, false, distance, move, error);
     break;
   case Q2M_WIDOW2:
     if (melee)
       *move = "widow2_move_tongs";
     else
-      *move = q2m_random(context->game) < 0.75f ? "widow2_move_attack_pre_beam"
-                                                : "widow2_move_attack_disrupt";
+      return q2m_widow_attack_move(context, true, distance, move, error);
     break;
   case Q2M_ARACHNID: {
     qa_body_state target;
@@ -1783,6 +2012,23 @@ static bool select_species_attack(q2m_context *context, const char **move,
     break;
   }
   return true;
+}
+
+bool q2m_source_attack(q2m_context *context, bool melee, qa_error *error) {
+  if (!q2m_alive(context))
+    return true;
+  qa_builtin_actor_traits traits;
+  qa_body_state enemy;
+  bool living;
+  if (!target_alive(context, context->monster->enemy, &traits, &enemy, &living, error))
+    return false;
+  if (!q2m_alive(context) || !living)
+    return true;
+  context->monster->attack_state = melee ? Q2M_MELEE : Q2M_MISSILE;
+  const char *move;
+  if (!select_species_attack(context, &move, error))
+    return false;
+  return !q2m_alive(context) || move == NULL || q2m_set_move(context, move, false, error);
 }
 
 static bool attack_selected(q2m_context *context, qa_error *error) {
@@ -2276,9 +2522,13 @@ static bool try_step(q2m_context *context, float yaw, float distance,
     *moved = true;
     return true;
   }
-  return qa_physics_step_direction(context->game->services.physics,
-                                   context->actor->id, yaw, distance,
-                                   context->elapsed, moved, error);
+  if (!qa_physics_step_direction(context->game->services.physics,
+                                  context->actor->id, yaw, distance,
+                                  context->elapsed, moved, error))
+    return false;
+  if (*moved && q2m_alive(context))
+    context->monster->source_blocked = false;
+  return true;
 }
 
 static bool chase_goal(q2m_context *context, qa_vec3 goal, float distance,
@@ -2393,20 +2643,6 @@ bool q2m_move_to_goal(q2m_context *context, float distance, qa_error *error) {
   if (!has_goal)
     return true;
   monster->ideal_yaw = vector_yaw(qa_vec_sub(goal, context->body.origin));
-  qa_actor_id hazard = {0};
-  if (!qa_q2_bad_area(context->game, context->actor->id, context->body.origin,
-                      &hazard, error))
-    return false;
-  if (hazard.registry != 0) {
-    qa_body_state bad;
-    if (qa_world_body_read(context->game->services.world, hazard, &bad,
-                           &ignored))
-      monster->ideal_yaw =
-          vector_yaw(qa_vec_sub(context->body.origin, bad.origin));
-    monster->hazard = hazard;
-  } else {
-    monster->hazard = (qa_actor_id){0};
-  }
   context->actor->physics.goal = goal_actor;
   context->actor->physics.enemy = monster->enemy;
   context->actor->physics.ideal_yaw = monster->ideal_yaw;
@@ -2421,16 +2657,27 @@ bool q2m_move_to_goal(q2m_context *context, float distance, qa_error *error) {
         monster->charging)) &&
       !try_step(context, monster->ideal_yaw, distance, &moved, error))
     return false;
+  if (!moved && q2m_alive(context) && monster->source_blocked) {
+    monster->source_blocked = false;
+    return true;
+  }
   if (!moved && q2m_alive(context) &&
       !chase_goal(context, goal, distance, &moved, error))
     return false;
   return !q2m_alive(context) || q2m_refresh(context, error);
 }
 
-static bool frame_move(q2m_context *context, float distance, qa_error *error) {
+static bool walk_move(q2m_context *context, float yaw, float distance, bool *moved, qa_error *error) {
   if (!qa_physics_walk_move(context->game->services.physics, context->actor->id,
-                            context->body.angles.y, distance, context->elapsed,
-                            true, true, &(bool){false}, error))
+                            yaw, distance, context->elapsed, true, true, moved, error))
+    return false;
+  if (q2m_alive(context))
+    context->monster->source_blocked = false;
+  return true;
+}
+
+static bool frame_move(q2m_context *context, float distance, qa_error *error) {
+  if (!walk_move(context, context->body.angles.y, distance, &(bool){false}, error))
     return false;
   return !q2m_alive(context) || q2m_refresh(context, error);
 }
@@ -2572,23 +2819,14 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind, const char *source_ai,
                            ? distance
                            : distance * monster->move->sidestep_scale;
       bool moved = false;
-      if (!qa_physics_walk_move(context->game->services.physics,
-                                context->actor->id, monster->ideal_yaw + side,
-                                sideways, context->elapsed, true, true, &moved,
-                                error))
+      if (!walk_move(context, monster->ideal_yaw + side, sideways, &moved, error))
         return false;
       if (!q2m_alive(context) || moved)
         return true;
       monster->lefty = !monster->lefty;
-      return qa_physics_walk_move(context->game->services.physics,
-                                  context->actor->id, monster->ideal_yaw - side,
-                                  sideways, context->elapsed, true, true,
-                                  &moved, error);
+      return walk_move(context, monster->ideal_yaw - side, sideways, &moved, error);
     }
-    return qa_physics_walk_move(context->game->services.physics,
-                                context->actor->id, context->body.angles.y,
-                                distance, context->elapsed, true, true,
-                                &(bool){false}, error);
+    return walk_move(context, context->body.angles.y, distance, &(bool){false}, error);
   case Q2M_AI_MOVE:
     return frame_move(context, distance, error);
   case Q2M_AI_SOLDIER_MOVE: {
@@ -2624,10 +2862,7 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind, const char *source_ai,
       return q2m_face_enemy(context, error);
     if (strcmp(source_ai, "ai_move2") == 0) {
       if (distance != 0.0f &&
-          !qa_physics_walk_move(context->game->services.physics,
-                                context->actor->id, context->body.angles.y,
-                                distance, context->elapsed, true, true,
-                                &(bool){false}, error))
+          !walk_move(context, context->body.angles.y, distance, &(bool){false}, error))
         return false;
       return !q2m_alive(context) || q2m_change_yaw(context, error);
     }
@@ -2635,9 +2870,7 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind, const char *source_ai,
         strcmp(source_ai, "ai_move_slide_right") == 0) {
       float yaw = context->body.angles.y +
                   (strstr(source_ai, "left") != NULL ? 90.0f : -90.0f);
-      return qa_physics_walk_move(
-          context->game->services.physics, context->actor->id, yaw, distance,
-          context->elapsed, true, true, &(bool){false}, error);
+      return walk_move(context, yaw, distance, &(bool){false}, error);
     }
     if (strcmp(source_ai, "parasite_charge_proboscis") == 0)
       return q2m_parasite_charge(context, distance, error);

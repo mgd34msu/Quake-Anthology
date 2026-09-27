@@ -49,7 +49,8 @@ bool q2_green_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contact,
     }
     if (hurt && q2_actor_live(g, contact->other)) {
         bool player;
-        q2_target_creature(g, p.owner, &player);
+        if (!q2_target_creature(g, p.owner, NULL, &player, e))
+            return false;
         qa_attack attack = q2_projectile_attack(g, id, &p, player ? 50 : 43, 4);
         if (!q2_damage(g, &attack, contact->other, p.damage, 1, body.velocity, body.origin,
                        contact->has_plane ? contact->plane.normal : qa_v3(0, 0, 0), false, e))
@@ -148,7 +149,8 @@ static bool heat_rocket_run(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapsho
         if (!q2_actor_live(g, target))
             continue;
         bool player;
-        q2_target_creature(g, target, &player);
+        if (!q2_target_creature(g, target, NULL, &player, e))
+            return false;
         if (!player || qa_actor_id_equal(target, p->owner))
             continue;
         qa_combat_state health;

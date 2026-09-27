@@ -190,7 +190,8 @@ typedef enum q2_entity_kind {
     Q2E_EYE,
     Q2E_SPINNING,
     Q2E_CAMERA,
-    Q2E_CAMERA_DUMMY
+    Q2E_CAMERA_DUMMY,
+    Q2E_DELAYED_USE
 } q2_entity_kind;
 typedef enum q2_entity_think {
     Q2ET_NONE,
@@ -238,7 +239,8 @@ typedef enum q2_entity_think {
     Q2ET_CAMERA_DUMMY,
     Q2ET_PLAYER_SECURITY,
     Q2ET_PLAYER_COOP_FIX,
-    Q2ET_PLAYER_START_DROP
+    Q2ET_PLAYER_START_DROP,
+    Q2ET_DELAYED_USE
 } q2_entity_think;
 typedef enum q2_move_done {
     Q2MD_NONE,
@@ -394,6 +396,8 @@ bool qa_q2_entity_target(qa_q2_game *, qa_actor_id, qa_string_id *targetname, qa
 bool qa_q2_entity_authored(qa_q2_game *, qa_actor_id, qa_authored_target *);
 bool qa_q2_entity_use_targets(qa_q2_game *, qa_actor_id, qa_actor_id activator, bool ignore_delay,
                               qa_error *);
+/* Shared target delay dispatch creates a native DelayedUse actor. */
+bool qa_q2_entity_defer_targets(qa_q2_game *, const qa_target_use *, qa_error *);
 bool qa_q2_entity_visual(qa_q2_game *, qa_actor_id, qa_q2_visual *, qa_error *);
 bool qa_q2_entity_team(qa_q2_game *, qa_actor_id, qa_actor_id *master, qa_actor_id *next);
 bool qa_q2_entity_field(qa_q2_game *, qa_actor_id, const char *key, qa_string_id *value);

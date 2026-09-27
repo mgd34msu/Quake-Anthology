@@ -7,6 +7,11 @@
 #define QA_Q2_MONSTER_NAME_CAPACITY 48
 #define QA_Q2_MONSTER_MOVE_CAPACITY 64
 
+typedef struct qa_q2_reinforcement_checkpoint {
+  char classname[QA_Q2_MONSTER_NAME_CAPACITY];
+  int strength;
+} qa_q2_reinforcement_checkpoint;
+
 typedef enum qa_q2_monster_count {
   QA_Q2_MONSTER_COUNT_TOTAL,
   QA_Q2_MONSTER_COUNT_KILLED
@@ -115,9 +120,14 @@ typedef struct qa_q2_monster_checkpoint {
   qa_q2_saved_reference attack_attacker, attack_inflictor, attack_projectile;
   float pending_damage, pending_kick, controller_damage;
   uint64_t controller_ns;
-  int monster_slots, monster_used, water_level, water_type;
+  int64_t monster_slots, monster_used;
+  int water_level, water_type;
+  bool has_summons;
+  int summon_strength;
+  uint32_t summon_count;
+  qa_q2_reinforcement_checkpoint summons[5];
   uint64_t last_link_count;
-  bool has_saved_goal, good_guy, target_anger, ignore_shots, do_not_count;
+  bool has_saved_goal, good_guy, target_anger, ignore_shots, do_not_count, source_blocked;
   bool brutal, medic, resurrecting, can_take_damage, dead, corpse, gibbed;
   bool stand_ground, temporary_stand_ground, hold_frame, ducked, dodging;
   bool charging, manual_steering, combat_point, lefty, had_visibility;

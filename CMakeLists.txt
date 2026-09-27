@@ -315,6 +315,7 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/items/random.c
     src/gameplay/q2/items/touch.c
     src/gameplay/q2/lmctf_plasma.c
+    src/gameplay/q2/map.c
     src/gameplay/q2/mines.c
     src/gameplay/q2/mission_bolts.c
     src/gameplay/q2/monsters/actions.c
@@ -326,8 +327,10 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/monsters/lifecycle.c
     src/gameplay/q2/monsters/moves.c
     src/gameplay/q2/monsters/proboscis.c
+    src/gameplay/q2/monsters/reinforcements.c
     src/gameplay/q2/monsters/roster.c
     src/gameplay/q2/monsters/spawn.c
+    src/gameplay/q2/monsters/spawn_growth.c
     src/gameplay/q2/nuke.c
     src/gameplay/q2/player/admission.c
     src/gameplay/q2/player/checkpoint.c

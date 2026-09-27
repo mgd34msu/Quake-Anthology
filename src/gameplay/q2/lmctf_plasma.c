@@ -219,7 +219,8 @@ bool q2_lmctf_plasma_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_er
     qa_vec3 normal = contact->has_plane ? contact->plane.normal : qa_v3(0, 0, 0);
     float damage = (bounce ? 39.0f : 28.0f) * (g->lmctf_plasma_quad ? 4.0f : 1.0f);
     bool hurt = q2_target_damageable(g, contact->other), player = false;
-    q2_target_creature(g, p.owner, &player);
+    if (!q2_target_creature(g, p.owner, NULL, &player, e))
+        return false;
     if (player && !q2_projectile_noise(g, &p, body.origin, e))
         return false;
     if (!q2_actor_live(g, a->id))

@@ -173,8 +173,12 @@ static bool field(qa_q2_game *g, q2_actor *mine, q2_projectile_kind kind, qa_bou
 }
 static bool clear_collision_owner(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_actor_collision collision;
-    if (!qa_world_get_collision(g->services.world, a->id, &collision))
-        return true;
+    qa_error observed = {0};
+    if (!qa_world_get_collision(g->services.world, a->id, &collision, &observed)) {
+        if (observed.code && e)
+            *e = observed;
+        return observed.code == QA_OK;
+    }
     collision.owner = (qa_actor_id){0};
     return qa_world_set_collision(g->services.world, a->id, &collision, e);
 }
@@ -208,7 +212,9 @@ static bool prox_open(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sna
         qa_error ignored;
         if (!qa_world_body_read(g->services.world, target, &other, &ignored))
             continue;
-        bool player, is_creature = q2_target_creature(g, target, &player);
+        bool player, is_creature;
+        if (!q2_target_creature(g, target, &is_creature, &player, e))
+            return false;
         qa_combat_state health;
         bool living = is_creature &&
                       qa_combat_read(g->services.combat, target, &health, &ignored) &&
@@ -300,7 +306,9 @@ static bool tesla_active(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *
             return false;
         if (health.health < 1)
             continue;
-        bool player, is_creature = q2_target_creature(g, target, &player);
+        bool player, is_creature;
+        if (!q2_target_creature(g, target, &is_creature, &player, e))
+            return false;
         if (player && !g->options.deathmatch)
             continue;
         if (g->options.edition == QA_Q2_RERELEASE && player && g->hooks.can_target != NULL &&
@@ -473,7 +481,9 @@ static bool trap_think(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
             if (seen)
                 return explode(g, a, false, e);
         }
-        bool player, is_creature = q2_target_creature(g, target, &player);
+        bool player, is_creature;
+        if (!q2_target_creature(g, target, &is_creature, &player, e))
+            return false;
         qa_combat_state combat;
         if (!is_creature || (rerelease && player && !g->options.deathmatch) ||
             !qa_combat_read(g->services.combat, target, &combat, &ignored) || combat.health <= 0)
@@ -506,7 +516,8 @@ static bool trap_think(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
         qa_vec3 delta = qa_vec_sub(body.origin, target.origin);
         float distance = qa_vec_length(delta);
         bool player;
-        q2_target_creature(g, best, &player);
+        if (!q2_target_creature(g, best, NULL, &player, e))
+            return false;
         if (rerelease) {
             float max = player ? 290 : 150;
             target.velocity =
@@ -677,8 +688,10 @@ bool q2_mine_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) 
     if (p->kind == Q2_BAD_AREA || p->kind == Q2_TESLA_FIELD || p->kind == Q2_TRAP)
         return true;
     if (p->kind == Q2_PROX_FIELD) {
-        bool player;
-        if (!q2_target_creature(g, contact->other, &player))
+        bool creature;
+        if (!q2_target_creature(g, contact->other, &creature, NULL, e))
+            return false;
+        if (!creature)
             return true;
         if (!q2_actor_live(g, p->owner))
             return qa_session_release(g->services.session, a->id, e);
@@ -724,11 +737,13 @@ bool q2_mine_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) 
         if ((content & 24u) != 0)
             return explode(g, a, false, e);
     }
-    bool player;
+    bool creature;
     qa_builtin_actor_traits traits = {0};
     if (g->services.actor_traits != NULL)
         g->services.actor_traits(g->services.context, contact->other, &traits);
-    if (q2_target_creature(g, contact->other, &player) || traits.damageable_target)
+    if (!q2_target_creature(g, contact->other, &creature, NULL, e))
+        return false;
+    if (creature || traits.damageable_target)
         return qa_actor_id_equal(contact->other, p->owner) || explode(g, a, false, e);
     qa_physics_motion motion = QA_PHYSICS_STATIONARY;
     if (contact->other.registry != 0 &&
@@ -929,13 +944,19 @@ bool qa_q2_bad_area(qa_q2_game *g, qa_actor_id actor, qa_vec3 origin, qa_actor_i
         return false;
     qa_bounds bounds = qa_bounds_translate(body.bounds, origin);
     *hazard = (qa_actor_id){0};
-    for (size_t i = 0; i < g->capacity; ++i) {
-        q2_actor *a = g->actors[i];
-        if (a == NULL || a->projectile.kind != Q2_BAD_AREA)
+    for (q2_actor *a = g->first_actor; a; a = a->live_next) {
+        if (!q2_actor_live(g, actor))
+            return true;
+        if (!q2_actor_live(g, a->id) || a->projectile.kind != Q2_BAD_AREA ||
+            a->physics.solid != QA_PHYSICS_TRIGGER)
             continue;
         qa_body_state area;
         if (!qa_world_body_read(g->services.world, a->id, &area, e))
             return false;
+        if (!q2_actor_live(g, actor))
+            return true;
+        if (!q2_actor_live(g, a->id))
+            continue;
         if (qa_bounds_overlap(bounds, qa_bounds_translate(area.bounds, area.origin))) {
             *hazard = a->id;
             break;
