@@ -868,7 +868,7 @@ bool q1_spawn_template(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_st
 }
 bool qa_q1_game_touch(qa_q1_game *g, const qa_touch_contact *contact, qa_error *error) {
     q1_actor *entity = q1_entity(g, contact->self);
-    if (!entity)
+    if (!entity || entity->touch_disabled)
         return true;
     if (entity->kind == Q1_MAP)
         return q1_map_touch(g, entity, contact, error);
@@ -895,12 +895,12 @@ bool qa_q1_game_use(qa_q1_game *g, qa_actor_id actor, qa_actor_id activator, qa_
 bool qa_q1_game_use_from(qa_q1_game *g, qa_actor_id actor, qa_actor_id other, qa_actor_id activator,
                          qa_error *error) {
     q1_actor *entity = q1_entity(g, actor);
+    if (entity && entity->kind == Q1_MAP)
+        return q1_map_use(g, entity, other, activator, error);
     if (entity)
         entity->activator = activator;
     if (entity && q1_classnamed(g, actor, "trigger_boss_teleport"))
         return q1_final_teleport(g, (entity->spawnflags & 1) != 0, error);
-    if (entity && entity->kind == Q1_MAP)
-        return q1_map_use(g, entity, other, activator, error);
     if (entity && entity->kind == Q1_PICKUP)
         return q1_pickup_use(g, entity, error);
     if (entity && entity->kind == Q1_MONSTER && entity->state.monster.addon.normal_use &&

@@ -241,6 +241,7 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/maps/hipnotic_misc.c
     src/gameplay/q1/maps/hipnotic_particles.c
     src/gameplay/q1/maps/hipnotic_spawn.c
+    src/gameplay/q1/maps/hipnotic_triggers.c
     src/gameplay/q1/maps/movers.c
     src/gameplay/q1/maps/observer.c
     src/gameplay/q1/maps/paths.c

@@ -11,9 +11,13 @@ qa_vec3 q1_map_direction(qa_vec3 angles) {
     return forward;
 }
 bool q1_map_trigger_init(qa_q1_game *g, q1_actor *entity, bool zero_direction, qa_error *error) {
+    qa_actor_id id = entity->id;
     qa_body_state body;
-    if (!qa_world_body_read(g->services.world, entity->id, &body, error))
+    if (!qa_world_body_read(g->services.world, id, &body, error))
         return false;
+    entity = q1_entity(g, id);
+    if (!entity || !entity->map)
+        return true;
     q1_map_state *state = entity->map;
     bool authored =
         addon(g) && (state->has_movedir || qa_vec_dot(state->movedir, state->movedir) != 0);
@@ -25,7 +29,7 @@ bool q1_map_trigger_init(qa_q1_game *g, q1_actor *entity, bool zero_direction, q
     entity->model = QA_STRING_NONE;
     entity->physics.solid = QA_PHYSICS_TRIGGER;
     entity->physics.motion = QA_PHYSICS_STATIONARY;
-    return qa_world_body_write(g->services.world, entity->id, &body, error);
+    return qa_world_body_write(g->services.world, id, &body, error);
 }
 static bool remove_addon_trigger(qa_q1_game *g, q1_actor *entity) {
     if (!addon(g))

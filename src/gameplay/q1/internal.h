@@ -292,7 +292,7 @@ typedef struct q1_actor {
     float max_health, delay, wait, speed, damage, count, alpha, scale;
     uint32_t spawnflags, effects;
     int32_t frame, skin;
-    bool active, native, aimed_damage, consumed_corpse, axe_hit;
+    bool active, native, aimed_damage, consumed_corpse, axe_hit, touch_disabled;
     union {
         q1_monster monster;
         q1_projectile projectile;

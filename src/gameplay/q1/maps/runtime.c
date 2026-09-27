@@ -150,6 +150,15 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
             (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER, .value.number = entity->map->style};
         return true;
     }
+    if (entity->map &&
+        ((entity->map->kind == Q1_MAP_HIP_COUNTER && !strcmp(key, "counter_state")) ||
+         !strcmp(key, "gravity"))) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+                                 .value.number = !strcmp(key, "counter_state")
+                                                     ? entity->map->counter_value
+                                                     : entity->map->gravity};
+        return true;
+    }
     if (entity->map && !strcmp(key, "event")) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = entity->map->event};
         return true;
@@ -348,7 +357,8 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
     const float numbers[] = {source->height,        source->lip,         source->width,
                              source->length,        source->pause_time,  source->volume,
                              source->duration,      source->distance,    source->next_think_seconds,
-                             source->counter_value, source->spawn_multi, source->spawn_silent};
+                             source->counter_value, source->spawn_multi, source->spawn_silent,
+                             source->gravity};
     for (size_t i = 0; i < sizeof(numbers) / sizeof(*numbers); ++i)
         if (!isfinite(numbers[i]))
             return q1_map_fail(error, "nonfinite Q1 authored field");
@@ -391,6 +401,7 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
     state->particle_color = source->particle_color;
     state->spawn_multi = source->spawn_multi;
     state->spawn_silent = source->spawn_silent;
+    state->gravity = source->gravity;
     if (source->model && source->model[0] == '*') {
         const char *number = source->model + 1;
         char *end;
@@ -414,6 +425,16 @@ static q1_map_kind classify(const char *name) {
         const char *name;
         q1_map_kind kind;
     } classes[] = {{"worldspawn", Q1_MAP_WORLD},
+                   {"func_counter", Q1_MAP_HIP_COUNTER},
+                   {"func_oncount", Q1_MAP_ONCOUNT},
+                   {"trigger_command", Q1_MAP_ONCOUNT},
+                   {"trigger_usekey", Q1_MAP_USE_KEY},
+                   {"trigger_remove", Q1_MAP_REMOVE_TRIGGER},
+                   {"trigger_setgravity", Q1_MAP_GRAVITY_TRIGGER},
+                   {"trigger_decoy_use", Q1_MAP_DECOY_TRIGGER},
+                   {"trigger_waterfall", Q1_MAP_WATERFALL},
+                   {"trigger_damagethreshold", Q1_MAP_THRESHOLD},
+                   {"func_breakawaywall", Q1_MAP_BREAKAWAY},
                    {"func_spawn", Q1_MAP_SPAWNER},
                    {"func_spawn_small", Q1_MAP_SPAWNER},
                    {"func_wall", Q1_MAP_WALL},
@@ -515,7 +536,7 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
         kind = Q1_MAP_FIELDS;
     if (g->options.program != QA_Q1_HIPNOTIC &&
         (kind == Q1_MAP_FOLLOW || kind == Q1_MAP_TRAIN2 || kind == Q1_MAP_BOBBING_WATER ||
-         kind == Q1_MAP_PUSHABLE || kind == Q1_MAP_SPAWNER))
+         kind == Q1_MAP_PUSHABLE || kind == Q1_MAP_SPAWNER || q1_map_is_hip_trigger(kind)))
         kind = Q1_MAP_FIELDS;
     *handled = kind != Q1_MAP_FIELDS;
     if (!*handled && !spawn->map_fields)
@@ -527,6 +548,8 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     if (!*handled)
         return true;
     entity->kind = Q1_MAP;
+    if (q1_map_is_hip_trigger(kind))
+        return q1_map_hip_trigger_spawn(g, entity, error);
     if (kind == Q1_MAP_SPAWNER)
         return q1_map_hip_spawner_spawn(g, entity, spawn, error);
     if (kind == Q1_MAP_BOBBING_WATER || kind == Q1_MAP_PUSHABLE)
@@ -671,6 +694,8 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
                 qa_error *error) {
     if (!entity->map || !entity->map->use_enabled)
         return true;
+    if (q1_map_is_hip_trigger(entity->map->kind))
+        return q1_map_hip_trigger_use(g, entity, other, activator, error);
     if (entity->map->kind == Q1_MAP_SPAWNER)
         return q1_map_hip_spawner_use(g, entity, error);
     if (entity->map->kind == Q1_MAP_CANCEL_PAUSE || entity->map->kind == Q1_MAP_SWITCH_PATH)
@@ -699,6 +724,8 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
 }
 bool q1_map_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contact *contact,
                   qa_error *error) {
+    if (entity->map && entity->map->touch_enabled && q1_map_is_hip_trigger(entity->map->kind))
+        return q1_map_hip_trigger_touch(g, entity, contact->other, error);
     if (entity->map && entity->map->kind == Q1_MAP_PUSHABLE_PROXY)
         return q1_map_pushable_touch(g, entity, contact->other, error);
     if (entity->map && entity->map->touch_enabled && entity->map->kind >= Q1_MAP_PARTICLE_FIELD)
@@ -718,6 +745,8 @@ bool q1_map_blocked(qa_q1_game *g, q1_actor *entity, qa_actor_id obstacle, qa_er
 }
 bool q1_map_reaction(qa_q1_game *g, q1_actor *entity, const qa_damage_outcome *outcome,
                      qa_error *error) {
+    if (entity->map->kind == Q1_MAP_THRESHOLD)
+        return q1_map_hip_trigger_reaction(g, entity, outcome, error);
     if (q1_map_is_mover(entity->map->kind))
         return q1_map_mover_reaction(g, entity, outcome, error);
     if (outcome->result.reaction != QA_REACTION_DEATH)
@@ -738,6 +767,8 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_map_state *state = entity->map;
     q1_map_action action = state->action;
     state->action = Q1_MAP_IDLE;
+    if (action == Q1_MAP_COUNTER_START || action == Q1_MAP_COUNTER_TICK)
+        return q1_map_hip_trigger_think(g, entity, action, error);
     if (action == Q1_MAP_BOB_WATER)
         return q1_map_bob_water(g, entity, error);
     if (action == Q1_MAP_SACRIFICE_ANIMATE || action == Q1_MAP_SACRIFICE_FLOAT)
