@@ -1,5 +1,82 @@
 #include "internal.h"
 
+static bool horde_enabled(qa_q1_game *g, bool *enabled, qa_error *error) {
+    if (g->host.horde) {
+        *enabled = g->host.horde(g->host.context);
+        return true;
+    }
+    float value = 0;
+    if (g->services.cvar) {
+        qa_string_id name;
+        if (!qa_builtin_resource(&g->services, "horde", &name, error) ||
+            !g->services.cvar(g->services.context, name, &value, error))
+            return false;
+    }
+    *enabled = value != 0;
+    return true;
+}
+
+bool qa_q1_horde_after_death(qa_q1_game *g, qa_actor_id actor, bool enabled, qa_error *error) {
+    if (!g) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "missing Q1 game");
+        return false;
+    }
+    q1_actor *entity = q1_entity(g, actor);
+    if (!enabled || !entity || entity->physics.motion != QA_PHYSICS_BOUNCE)
+        return true;
+    qa_bytes model = qa_strings_text(qa_session_strings(g->services.session), entity->model);
+    if (model.size < 8 || memcmp(model.data, "progs/h_", 8))
+        return true;
+    return q1_schedule(g, entity, 1, Q1_THINK_HORDE_HEAD_WAIT, error);
+}
+
+bool q1_horde_head_think(qa_q1_game *g, q1_actor *entity, q1_think_kind kind, qa_error *error) {
+    if (kind == Q1_THINK_HORDE_HEAD_WAIT) {
+        bool enabled;
+        if (!horde_enabled(g, &enabled, error))
+            return false;
+        if (!enabled)
+            return true;
+        if (entity->alpha == 0)
+            entity->alpha = 1;
+        return q1_schedule(g, entity, 10 + q1_random(g) * 5, Q1_THINK_HORDE_HEAD_STEP, error);
+    }
+    if (entity->alpha <= 0)
+        return q1_remove(g, entity, error);
+    entity->alpha -= (float)g->elapsed;
+    return q1_schedule(g, entity, 0, Q1_THINK_HORDE_HEAD_STEP, error);
+}
+
+bool qa_q1_horde_axe_chain(qa_q1_game *g, qa_actor_id actor, uint32_t hits, double expires,
+                           qa_error *error) {
+    if (!g || !isfinite(expires)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Q1 Horde axe chain");
+        return false;
+    }
+    q1_player *player = q1_player_allocate(g, actor, error);
+    if (!player)
+        return false;
+    player->horde_axe_chain = hits;
+    player->horde_axe_chain_until = expires;
+    return true;
+}
+
+bool q1_horde_axe_delay(qa_q1_game *g, q1_player *player, float *interval, qa_error *error) {
+    if (player->weapon != QA_Q1_AXE ||
+        (g->options.program != QA_Q1_DOPA && g->options.program != QA_Q1_MG1) ||
+        !(qa_q1_game_campaign_flags(g) & 4))
+        return true;
+    bool enabled;
+    if (!horde_enabled(g, &enabled, error))
+        return false;
+    if (!enabled)
+        return true;
+    bool chop = player->horde_axe_chain >= 2 && g->time < player->horde_axe_chain_until;
+    player->animation_base = chop ? 1 : 5;
+    *interval = chop ? 0.8f : player->horde_axe_chain > 1 ? 0.6f : 0.4f;
+    return true;
+}
+
 bool qa_q1_horde_spawn(qa_q1_game *g, const char *classname, qa_vec3 origin, qa_vec3 angles,
                        qa_actor_id manager, qa_actor_id enemy, qa_actor_id *out, qa_error *error) {
     if (!g || !classname || !out || !qa_vec_finite(origin) || !qa_vec_finite(angles)) {

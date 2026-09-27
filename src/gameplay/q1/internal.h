@@ -62,7 +62,10 @@ typedef enum q1_think_kind {
     Q1_THINK_HOOK_LAUNCH,
     Q1_THINK_MAP,
     Q1_THINK_MG3_HAMMER,
-    Q1_THINK_MG3_ITEM_START
+    Q1_THINK_MG3_ITEM_START,
+    Q1_THINK_DEMODOG_EXPLODE,
+    Q1_THINK_HORDE_HEAD_WAIT,
+    Q1_THINK_HORDE_HEAD_STEP
 } q1_think_kind;
 typedef enum q1_projectile_kind {
     Q1_SPIKE,
@@ -88,7 +91,8 @@ typedef enum q1_projectile_kind {
     Q1_WRATH_MISSILE,
     Q1_LAVAMAN_BALL,
     Q1_DRAGON_FIREBALL,
-    Q1_MG3_OGRE_ROCKET
+    Q1_MG3_OGRE_ROCKET,
+    Q1_DEMODOG_GRENADE
 } q1_projectile_kind;
 typedef enum q1_ai {
     Q1_AI_STAND,
@@ -145,6 +149,8 @@ typedef struct q1_monster {
     bool refired, sliding, lefty, counted_death, jump_touch, horde;
     struct {
         bool enabled, waiting, path_wait, started, rocket_ogre, allow_path;
+        bool infected, transformed, risen, infection_count_pending, demodog;
+        uint8_t infected_kind, corpse;
         uint8_t projectiles, projectile_max, combat_style;
         double damage_at;
         qa_actor_id move_target;
@@ -284,6 +290,8 @@ typedef struct q1_player {
     qa_q1_mg3_progress mg3_progress;
     qa_actor_id mg3_hammer_target;
     double mg3_hammer_until;
+    double horde_axe_chain_until;
+    uint32_t horde_axe_chain;
     int32_t mg3_hammer_body;
     bool mg3_infinite_ammo, mg3_hammer_glow;
     qa_actor_id killer;
@@ -345,6 +353,7 @@ void q1_map_destroy(qa_q1_game *);
 void q1_map_frame_begin(qa_q1_game *);
 bool q1_map_collision(const q1_actor *, qa_actor_collision *);
 bool q1_map_bind_target(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_map_multi_explosion_begin(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_mg3_hammer_fire(qa_q1_game *, q1_player *, qa_error *);
 bool q1_mg3_hammer_strike(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_mg3_weapon_frame(qa_q1_game *, q1_player *, qa_error *);
@@ -364,6 +373,19 @@ bool q1_hipnotic_hammer_base(qa_q1_game *, q1_player *, qa_vec3, qa_q1_weapon, q
 extern const q1_frame_operation q1_frame_operations[];
 extern const size_t q1_frame_count;
 uint16_t q1_frame_index(const char *);
+uint16_t q1_infected_frame(uint16_t);
+const q1_species *q1_infected_form(qa_q1_species, unsigned corpse);
+bool q1_infected_action(qa_q1_game *, q1_actor *, q1_frame_action, qa_error *);
+bool q1_infected_die(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_monster_count_kill(qa_q1_game *, q1_actor *, qa_actor_id killer, qa_error *);
+bool q1_monster_death_report(qa_q1_game *, q1_actor *, qa_actor_id killer, bool count, qa_error *);
+bool q1_demodog_action(qa_q1_game *, q1_actor *, q1_frame_action, qa_error *);
+bool q1_demodog_die(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_demodog_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_demodog_grenade_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_demodog_explode(qa_q1_game *, q1_actor *, qa_actor_id ignore, qa_error *);
+bool q1_horde_head_think(qa_q1_game *, q1_actor *, q1_think_kind, qa_error *);
+bool q1_horde_axe_delay(qa_q1_game *, q1_player *, float *interval, qa_error *);
 const q1_species *q1_species_find(const char *);
 q1_actor *q1_entity(qa_q1_game *, qa_actor_id);
 const q1_actor *q1_entity_const(const qa_q1_game *, qa_actor_id);

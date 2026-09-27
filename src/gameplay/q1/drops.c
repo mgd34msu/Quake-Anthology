@@ -59,7 +59,12 @@ static bool consume(qa_q1_game *g, qa_actor_id actor, qa_item_id item, double co
     if (count <= 0)
         return true;
     bool consumed;
-    return qa_inventory_consume(g->services.inventory, actor, item, count, &consumed, error);
+    if (!qa_inventory_consume(g->services.inventory, actor, item, count, &consumed, error))
+        return false;
+    if (!consumed)
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+                     "Q1 drop inventory changed during admitted consumption");
+    return consumed;
 }
 static bool selected_changed(qa_q1_game *g, qa_actor_id actor, qa_item_id acquired,
                              qa_error *error) {
@@ -199,6 +204,11 @@ static bool toss_weapon(qa_q1_game *g, qa_actor_id actor, const qa_q1_drop_input
     }
     if (!definition)
         return true;
+    double owned;
+    if (!count_item(g, actor, g->weapons[definition->weapon], &owned, error))
+        return false;
+    if (owned < 1)
+        return true;
     q1_actor *item;
     if (!q1_create(g, definition->classname, Q1_PICKUP, actor, &item, error))
         return false;
@@ -214,7 +224,9 @@ static bool toss_weapon(qa_q1_game *g, qa_actor_id actor, const qa_q1_drop_input
     if (!q1_alive(g, actor) || !q1_alive(g, item->id))
         goto retired;
     if (rogue && definition->powered < QA_Q1_WEAPON_COUNT) {
-        if (!consume(g, actor, g->weapons[definition->powered], 1, error))
+        double powered;
+        if (!count_item(g, actor, g->weapons[definition->powered], &powered, error) ||
+            (powered >= 1 && !consume(g, actor, g->weapons[definition->powered], 1, error)))
             goto fail;
         if (!q1_alive(g, actor) || !q1_alive(g, item->id))
             goto retired;
@@ -293,6 +305,8 @@ bool qa_q1_drop_backpack(qa_q1_game *g, qa_actor_id actor, qa_item_id selected, 
         return false;
     }
     *out = (qa_actor_id){0};
+    if (!g->options.coop && g->options.deathmatch == 0)
+        return true;
     q1_player *player = q1_player_get(g, actor);
     bool rogue = g->options.program == QA_Q1_ROGUE, hip = g->options.program == QA_Q1_HIPNOTIC;
     if ((rogue || hip) && !player)

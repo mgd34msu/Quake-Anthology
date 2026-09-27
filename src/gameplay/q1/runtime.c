@@ -533,6 +533,11 @@ bool q1_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return q1_axe_strike(g, entity, error);
     case Q1_THINK_EXPLODE:
         return q1_explode(g, entity, (qa_actor_id){0}, error);
+    case Q1_THINK_DEMODOG_EXPLODE:
+        return q1_demodog_explode(g, entity, (qa_actor_id){0}, error);
+    case Q1_THINK_HORDE_HEAD_WAIT:
+    case Q1_THINK_HORDE_HEAD_STEP:
+        return q1_horde_head_think(g, entity, kind, error);
     case Q1_THINK_VORE:
     case Q1_THINK_SPRITE:
     case Q1_THINK_WIZARD:

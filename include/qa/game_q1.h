@@ -227,6 +227,47 @@ typedef struct qa_q1_player_view {
 typedef struct qa_q1_mg3_progress {
     uint32_t health, shells, nails, rockets, cells, bloody;
 } qa_q1_mg3_progress;
+typedef struct qa_q1_obituary_actor {
+    qa_actor_id actor;
+    qa_string_id name, classname, kill_string;
+    qa_team_id team;
+    qa_q1_weapon weapon;
+    float health;
+    int32_t water_type;
+    uint8_t water_level;
+    double quad_expires, invulnerable_expires;
+    bool player, monster, brush;
+} qa_q1_obituary_actor;
+typedef struct qa_q1_obituary_input {
+    qa_q1_obituary_actor victim;
+    const qa_q1_obituary_actor *attacker, *telefrag_owner;
+    qa_string_id death_type;
+    qa_string_id inflictor_classname, attacker_death_type;
+    qa_team_id victim_saved_team;
+    uint32_t gamecfg;
+    int32_t teamplay;
+    void *tag_context;
+    bool (*tag_score)(void *, qa_actor_id victim, qa_actor_id attacker, int32_t *, qa_error *);
+} qa_q1_obituary_input;
+typedef struct qa_q1_obituary_result {
+    qa_string_id text, achievement;
+    qa_builtin_message_arg arguments[2];
+    size_t argument_count;
+    qa_actor_id credited_actor, achievement_actor;
+    int32_t score_delta;
+} qa_q1_obituary_result;
+typedef enum qa_q1_client_notice {
+    QA_Q1_CLIENT_CONNECT,
+    QA_Q1_CLIENT_DISCONNECT,
+    QA_Q1_CLIENT_SUICIDE,
+    QA_Q1_CLIENT_EXIT
+} qa_q1_client_notice;
+/* Decisions only: the selected mode commits score and the application publishes
+ * feedback once, before the native character reaction and item drops. */
+bool qa_q1_obituary(qa_q1_game *, const qa_q1_obituary_input *, qa_q1_obituary_result *,
+                    qa_error *);
+bool qa_q1_client_notice_result(qa_q1_game *, qa_actor_id, qa_string_id name, qa_q1_client_notice,
+                                int32_t frags, qa_q1_obituary_result *, qa_error *);
 bool qa_q1_mg3_progress_read(const qa_q1_game *, qa_actor_id, qa_q1_mg3_progress *);
 bool qa_q1_mg3_progress_restore(qa_q1_game *, qa_actor_id, const qa_q1_mg3_progress *, qa_error *);
 bool qa_q1_mg3_hammer_body_frame(const qa_q1_game *, qa_actor_id, int32_t *);
@@ -279,6 +320,8 @@ bool qa_q1_grapple_weapon_tick(qa_q1_game *, qa_actor_id, const qa_q1_input *, b
 bool qa_q1_grapple_weapon_read(const qa_q1_game *, qa_actor_id, qa_q1_grapple_weapon_view *);
 bool qa_q1_horde_spawn(qa_q1_game *, const char *classname, qa_vec3 origin, qa_vec3 angles,
                        qa_actor_id manager, qa_actor_id enemy, qa_actor_id *, qa_error *);
+bool qa_q1_horde_after_death(qa_q1_game *, qa_actor_id, bool enabled, qa_error *);
+bool qa_q1_horde_axe_chain(qa_q1_game *, qa_actor_id, uint32_t hits, double expires, qa_error *);
 bool qa_q1_monster_charm(qa_q1_game *, qa_actor_id monster, qa_actor_id charmer, qa_error *);
 bool qa_q1_grapple_pulling(const qa_q1_game *, qa_actor_id);
 bool qa_q1_game_invulnerable(const qa_q1_game *, qa_actor_id);

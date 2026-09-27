@@ -143,6 +143,8 @@ bool q1_explode(qa_q1_game *g, q1_actor *entity, qa_actor_id direct, qa_error *e
 
 bool q1_projectile_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
                          const qa_touch_contact *contact, qa_error *error) {
+    if (entity->state.projectile.kind == Q1_DEMODOG_GRENADE)
+        return q1_demodog_grenade_touch(g, entity, other, error);
     if (entity->state.projectile.kind >= Q1_HIP_LASER)
         return q1_expansion_touch(g, entity, other, contact, error);
     if (qa_actor_id_equal(other, entity->owner))

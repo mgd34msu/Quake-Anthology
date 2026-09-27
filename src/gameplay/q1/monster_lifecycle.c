@@ -32,6 +32,8 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
                      qa_error *error) {
     q1_monster *m = &entity->state.monster;
     qa_q1_species species = m->species->species;
+    if (m->addon.infected && m->addon.corpse && !m->addon.risen)
+        return true;
     if ((entity->physics.flags & QA_PHYSICS_MONSTER) && !retaliate(g, entity, attacker, error))
         return false;
     if (!q1_alive(g, entity->id))
@@ -73,7 +75,9 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
     case QA_Q1_DOG:
         if (!q1_sound(g, entity->id, "dog/dpain1.wav", 2, 1, error))
             return false;
-        frame = q1_random(g) > 0.5f ? "dog_pain1" : "dog_painb1";
+        frame = m->addon.demodog      ? (q1_random(g) > 0.5f ? "demodog_pain1" : "demodog_painb1")
+                : q1_random(g) > 0.5f ? "dog_pain1"
+                                      : "dog_painb1";
         break;
     case QA_Q1_ZOMBIE:
         if (!qa_combat_set_health(g->services.combat, entity->id, 60, error))
@@ -135,7 +139,8 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
         break;
     case QA_Q1_ENFORCER:
         r = q1_random(g);
-        if (m->pain_finished > g->time)
+        if (m->pain_finished > g->time ||
+            (m->addon.infected && g->options.skill > 2 && q1_random(g) * 200 > damage))
             return true;
         sound = r < 0.5f ? "enforcer/pain1.wav" : "enforcer/pain2.wav";
         m->pain_finished = g->time + (r < 0.7f ? 1 : 2);
@@ -183,19 +188,18 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
                      "Q1 monster pain controller not admitted");
         return false;
     }
+    if (species == QA_Q1_ARMY && m->addon.enabled) {
+        if (!q1_monster_play(g, entity, frame, error))
+            return false;
+        return !q1_alive(g, entity->id) || !sound || q1_sound(g, entity->id, sound, 2, 1, error);
+    }
     if (sound && !q1_sound(g, entity->id, sound, 2, 1, error))
         return false;
     return !q1_alive(g, entity->id) || q1_monster_play(g, entity, frame, error);
 }
 
-static bool count_kill(qa_q1_game *g, q1_actor *entity, qa_actor_id killer, qa_error *error) {
-    q1_monster *m = &entity->state.monster;
-    if (m->counted_death)
-        return true;
-    m->counted_death = true;
-    bool count = g->host.count_monster_kill
-                     ? g->host.count_monster_kill(g->host.context, entity->id)
-                     : !(m->horde && m->species->species == QA_Q1_ZOMBIE);
+bool q1_monster_death_report(qa_q1_game *g, q1_actor *entity, qa_actor_id killer, bool count,
+                             qa_error *error) {
     if (g->host.monster_killed) {
         if (!g->host.monster_killed(g->host.context, entity->id, killer, count, error))
             return false;
@@ -212,6 +216,22 @@ static bool count_kill(qa_q1_game *g, q1_actor *entity, qa_actor_id killer, qa_e
         if (!qa_builtin_emit(&g->services, &event, error))
             return false;
     }
+    return true;
+}
+bool q1_monster_count_kill(qa_q1_game *g, q1_actor *entity, qa_actor_id killer, qa_error *error) {
+    q1_monster *m = &entity->state.monster;
+    if (m->counted_death)
+        return true;
+    m->counted_death = true;
+    bool count = g->host.count_monster_kill
+                     ? g->host.count_monster_kill(g->host.context, entity->id)
+                     : !(m->horde && m->species->species == QA_Q1_ZOMBIE);
+    if (m->addon.infection_count_pending) {
+        m->addon.infection_count_pending = false;
+        count = false;
+    }
+    if (!q1_monster_death_report(g, entity, killer, count, error))
+        return false;
     if (!q1_alive(g, entity->id))
         return true;
     if (g->options.edition == QA_Q1_RERELEASE && (entity->physics.flags & QA_PHYSICS_MONSTER) &&
@@ -309,10 +329,14 @@ bool q1_monster_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_er
         }
         return g->host.finale(g->host.context, entity->id, false, error);
     }
-    if (!count_kill(g, entity, killer, error))
+    if (!q1_monster_count_kill(g, entity, killer, error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;
+    if (m->addon.infected && (!m->addon.transformed || spec->species == QA_Q1_ZOMBIE))
+        return q1_infected_die(g, entity, error);
+    if (m->addon.demodog)
+        return q1_demodog_die(g, entity, error);
     if (spec->species == QA_Q1_GREMLIN)
         return q1_gremlin_die(g, entity, attacker, error);
     if (spec->species >= QA_Q1_GREMLIN)

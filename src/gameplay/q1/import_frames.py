@@ -14,6 +14,70 @@ def number(value):
     return f"{float(value):.9g}" + ("f" if "." in f"{float(value):.9g}" or "e" in f"{float(value):.9g}" else ".0f")
 
 
+def addon_rows():
+    rows = []
+    def action(name):
+        return {"kind": "action", "name": name}
+    def move(mode, distance=0):
+        return {"kind": "ai", "mode": mode, "distance": distance}
+    def sound(path, chance=None, attenuation=1):
+        return {"kind": "sound", "path": path, "chance": chance, "channel": "voice",
+                "attenuation": attenuation, "comparison": "less"}
+    def frame(name, pose, next_name, operations):
+        rows.append([name, {"frame": pose, "next": next_name, "operations": operations}])
+    def sequence(name, first, distances, mode, end, additions=None, before=False):
+        for step, distance in enumerate(distances, 1):
+            ai = [] if mode is None else [move(mode, distance)]
+            extra = (additions or {}).get(step, [])
+            frame(name + str(step), first + step - 1,
+                  name + str(step + 1) if step < len(distances) else end,
+                  extra + ai if before else ai + extra)
+
+    idle = sound("soldier/idle.wav", 0.2, 2)
+    sequence("infected_army_stand", 0, [0]*8, "stand", "infected_army_stand1")
+    sequence("infected_army_walk", 90, [1,1,1,1,2,3,4,4,2,2,2,1,0,1,1,1,3,3,3,3,2,1,1,1], "walk", "infected_army_walk1", {1:[idle]}, True)
+    sequence("infected_army_run", 73, [11,15,10,10,8,15,10,8], "run", "infected_army_run1", {1:[idle]}, True)
+    sequence("infected_army_atk", 81, [0]*9, "face", "infected_army_run1",
+             {5:[action("grunt:army_atk5")], 7:[action("grunt:army_atk7")]})
+    sequence("infected_army_pain", 40, [0]*6, None, "infected_army_run1", {6:[move("pain",1)]})
+    sequence("infected_army_painb", 46, [0]*14, None, "infected_army_run1",
+             {2:[move("painforward",13)],3:[move("painforward",9)],12:[move("pain",2)]})
+    sequence("infected_army_painc", 60, [0]*13, None, "infected_army_run1",
+             {2:[move("pain",1)],5:[move("painforward",1)],6:[move("painforward",1)],
+              8:[move("pain",1)],9:[move("painforward",4)],10:[move("painforward",3)],
+              11:[move("painforward",6)],12:[move("painforward",8)]})
+    for corpse, pose in [(1,53),(2,62)]:
+        prefix = f"hknight_corpse{corpse}"
+        frame(prefix, pose, prefix + "_2", [{"kind":"solid","solid":"none"}])
+        frame(prefix + "_2", pose, prefix + "_2", [action("infected_corpse_hold")])
+        frame(prefix + "_rise0", pose, prefix + f"_rise{corpse}", [action("infected_test_rise")])
+        poses = [53,52,51,50,49,48,47,46,45,44,43,42,0,1] if corpse == 1 else [62,61,60,59,58,57,56,55,55,0,1]
+        distances = {4:-11,5:-10,10:-7,11:-8,14:-10} if corpse == 1 else {}
+        for step, model in enumerate(poses,1):
+            ops = [action("infected_rise_pain")] if step == 2 else []
+            if step in distances:
+                ops.append(move("forward", distances[step]))
+            if step == len(poses):
+                ops.append(action("infected_resurrect"))
+            frame(prefix + f"_rise{step}", model,
+                  "hknight_run1" if step == len(poses) else prefix + f"_rise{step+1}", ops)
+
+    idle = sound("dog/idle.wav", 0.2, 2)
+    sequence("demodog_stand", 69, [0]*9, "stand", "demodog_stand1")
+    sequence("demodog_walk", 78, [8]*8, "walk", "demodog_walk1", {1:[idle]}, True)
+    sequence("demodog_run", 48, [16,32,32,20,64,32,16,32,32,20,64,32], "run", "demodog_run1", {1:[idle]}, True)
+    sequence("demodog_atta", 0, [0]*8, None, "demodog_run1",
+             {i: [sound("dog/dattack1.wav"),action("demodog_bite")] if i == 4 else [move("charge",10)] for i in range(1,9)})
+    sequence("demodog_leap", 60, [0]*9, None, "demodog_leap9",
+             {1:[move("face")],2:[move("face"),action("demodog_jump")]})
+    sequence("demodog_pain", 26, [0]*6, None, "demodog_run1")
+    sequence("demodog_painb", 32, [0]*16, None, "demodog_run1",
+             {i:[move("pain",v)] for i,v in [(3,4),(4,12),(5,12),(6,2),(8,4),(10,10)]})
+    sequence("demodog_die", 8, [0]*9, None, "demodog_die9")
+    sequence("demodog_dieb", 17, [0]*9, None, "demodog_dieb9")
+    return rows
+
+
 def main():
     donor = pathlib.Path(sys.argv[1])
     destination = pathlib.Path(sys.argv[2])
@@ -37,6 +101,7 @@ def main():
             match = re.fullmatch(r"\s*(\[\"[^\"]+\",\s*\{.*\}\]),?\s*", line)
             if match:
                 rows.append(json.loads(match.group(1)))
+    rows.extend(addon_rows())
     virtual_actions = ["sword_pause", "mummy_wake", "mummy_missile", "wrath_attack", "overlord_missile", "morph_wake", "dragon_activate", "dragon_boom2", "armagon_missile_attack", "Gremlin_MeleeAttack", "Gremlin_MissileAttack", "gremlin_gib"]
     zombie_hang = next(frame["frame"] for name, frame in rows if name == "zombie_paine1")
     rows.append(["zombie_hang1", {"frame": zombie_hang, "next": "zombie_hang1", "operations": []}])
@@ -95,6 +160,11 @@ def main():
                    "        if (comparison == 0) return index;",
                    "        if (comparison < 0) end = middle; else first = middle + 1;",
                    "    }", "    return UINT16_MAX;", "}", ""])
+    pairs = [(indices[name[9:]], indices[name]) for name in indices
+             if name.startswith("infected_army_") and name[9:] in indices]
+    output.extend(["uint16_t q1_infected_frame(uint16_t frame) {", "    switch (frame) {"])
+    output.extend(f"    case {source}: return {target};" for source, target in pairs)
+    output.extend(["    default: return frame;", "    }", "}", ""])
     destination.write_text("\n".join(output))
 
 

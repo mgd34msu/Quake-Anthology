@@ -60,6 +60,8 @@ static bool jump(qa_q1_game *g, q1_actor *entity, bool tar, bool dog, qa_error *
            q1_link(g, entity, error);
 }
 bool q1_monster_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *error) {
+    if (entity->state.monster.addon.demodog)
+        return q1_demodog_touch(g, entity, other, error);
     if (entity->state.monster.species->species == QA_Q1_GREMLIN)
         return q1_gremlin_touch(g, entity, error);
     if (entity->state.monster.species->species == QA_Q1_DRAGON)
@@ -252,6 +254,18 @@ static bool boss_missile(qa_q1_game *g, q1_actor *entity, float side, qa_error *
 }
 
 bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, qa_error *error) {
+    switch (action) {
+    case Q1_ACTION_INFECTED_CORPSE_HOLD:
+    case Q1_ACTION_INFECTED_TEST_RISE:
+    case Q1_ACTION_INFECTED_RISE_PAIN:
+    case Q1_ACTION_INFECTED_RESURRECT:
+        return q1_infected_action(g, entity, action, error);
+    case Q1_ACTION_DEMODOG_BITE:
+    case Q1_ACTION_DEMODOG_JUMP:
+        return q1_demodog_action(g, entity, action, error);
+    default:
+        break;
+    }
     q1_monster *m = &entity->state.monster;
     if (action >= Q1_ACTION_BOSS_IDLE1 && action <= Q1_ACTION_BOSS_IDLE9) {
         if (action == Q1_ACTION_BOSS_IDLE1 && m->enemy.registry && q1_health(g, m->enemy) > 0)

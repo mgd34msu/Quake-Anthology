@@ -633,6 +633,8 @@ bool q1_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
     default:
         return false;
     }
+    if (!q1_horde_axe_delay(g, player, &parameters.interval, error))
+        return false;
     player->attack_finished = g->time + parameters.interval;
     player->weapon_frame = player->continuous
                                ? player->weapon_frame % (weapon == QA_Q1_LIGHTNING ? 4 : 8) + 1

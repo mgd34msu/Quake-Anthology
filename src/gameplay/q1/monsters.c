@@ -81,11 +81,19 @@ bool q1_monster_found(qa_q1_game *g, q1_actor *entity, qa_actor_id target, qa_er
         return true;
     }
     monster->enemy = target;
+    bool mg3 = monster->addon.enabled && g->options.program == QA_Q1_MG3;
+    qa_q1_target observation;
+    if (q1_target(g, target, &observation) && observation.player) {
+        g->sight_actor = entity->id;
+        g->sight_time = g->time;
+    }
+    if (mg3 && monster->species->species == QA_Q1_HELLKNIGHT &&
+        (entity->spawnflags & (65536u | 8388608u)) && monster->pain_finished > g->time)
+        return true;
     monster->search_until = g->time + 5;
     monster->refired = false;
     entity->physics.enemy = target;
     entity->physics.goal = target;
-    bool mg3 = monster->addon.enabled && g->options.program == QA_Q1_MG3;
     if (g->options.program == QA_Q1_HIPNOTIC || mg3 || monster->charmer.registry)
         monster->hostile_until = g->time + 1;
     if (g->options.edition == QA_Q1_RERELEASE || g->options.skill != 3 || mg3)
@@ -99,14 +107,12 @@ bool q1_monster_found(qa_q1_game *g, q1_actor *entity, qa_actor_id target, qa_er
         entity->physics.ideal_yaw =
             qa_builtin_angle_mod(atan2f(delta.y, delta.x) * 57.29577951308232f);
     }
-    qa_q1_target observation;
-    if (q1_target(g, target, &observation) && observation.player) {
-        g->sight_actor = entity->id;
-        g->sight_time = g->time;
-    }
     if (g->host.monster_found && !g->host.monster_found(g->host.context, entity->id, target, error))
         return false;
     const char *sound = monster->species->sight;
+    if (mg3 && monster->species->species == QA_Q1_HELLKNIGHT &&
+        entity->physics.solid == QA_PHYSICS_NOT_SOLID && (entity->spawnflags & (65536u | 8388608u)))
+        sound = "";
     if (monster->species->species == QA_Q1_ENFORCER &&
         (g->options.edition != QA_Q1_RERELEASE || g->options.program == QA_Q1_HIPNOTIC || mg3)) {
         int choice = (int)floorf(q1_random(g) * 3 + 0.5f);
@@ -211,7 +217,7 @@ static bool melee_attack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     const char *animation = NULL;
     switch (entity->state.monster.species->species) {
     case QA_Q1_DOG:
-        animation = "dog_atta1";
+        animation = entity->state.monster.addon.demodog ? "demodog_atta1" : "dog_atta1";
         break;
     case QA_Q1_KNIGHT:
         animation = range(g, entity, true) < 80 ? "knight_atk1" : "knight_runatk1";
@@ -729,6 +735,8 @@ bool q1_monster_frame(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Q1 monster frame outside table");
         return false;
     }
+    if (m->addon.infected && !m->addon.transformed && m->species->species == QA_Q1_ARMY)
+        m->next_frame = q1_infected_frame(m->next_frame);
     const q1_frame *frame = &q1_frames[m->next_frame];
     bool rocket_frame = m->addon.rocket_ogre && q1_rocket_ogre_override(frame->name);
     if (rocket_frame && !strcmp(frame->name, "ogre_stand5") &&
@@ -802,6 +810,14 @@ bool q1_monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec, q
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "native Q1 monsters require shared physics");
         return false;
     }
+    bool infected = strstr(spec->classname, "_infected") != NULL;
+    unsigned corpse = infected && spec->species == QA_Q1_HELLKNIGHT
+                          ? (entity->spawnflags & 65536u)     ? 1
+                            : (entity->spawnflags & 8388608u) ? 2
+                                                              : 0
+                          : 0;
+    if (corpse)
+        spec = q1_infected_form(QA_Q1_HELLKNIGHT, corpse);
     entity->kind = Q1_MONSTER;
     entity->state.monster = (q1_monster){.species = spec,
                                          .current_frame = q1_frame_index(spec->stand),
@@ -816,6 +832,20 @@ bool q1_monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec, q
     }
     q1_monster *monster = &entity->state.monster;
     monster->addon.enabled = addon;
+    monster->addon.infected = infected;
+    monster->addon.infection_count_pending = infected;
+    monster->addon.infected_kind = (uint8_t)spec->species;
+    monster->addon.corpse = (uint8_t)corpse;
+    monster->addon.demodog = !strcmp(spec->classname, "monster_demodog");
+    if (infected || monster->addon.demodog) {
+        const char *name = monster->addon.demodog            ? "monster_dog"
+                           : spec->species == QA_Q1_ARMY     ? "monster_army"
+                           : spec->species == QA_Q1_KNIGHT   ? "monster_knight"
+                           : spec->species == QA_Q1_ENFORCER ? "monster_enforcer"
+                                                             : "monster_hell_knight";
+        if (!qa_builtin_resource(&g->services, name, &entity->classname, error))
+            return false;
+    }
     monster->addon.rocket_ogre = !strcmp(spec->classname, "monster_ogre_rocket");
     if (monster->addon.rocket_ogre) {
         monster->addon.projectiles = monster->addon.projectile_max = 2;
@@ -839,8 +869,9 @@ bool q1_monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec, q
         return false;
     state.bounds = spec->bounds;
     entity->physics.ideal_yaw = state.angles.y;
-    if (addon && spec->species != QA_Q1_DEMON && spec->species != QA_Q1_OGRE &&
-        spec->species != QA_Q1_SHAMBLER && spec->species != QA_Q1_SHALRATH)
+    if (addon && !infected && !monster->addon.demodog && spec->species != QA_Q1_DEMON &&
+        spec->species != QA_Q1_OGRE && spec->species != QA_Q1_SHAMBLER &&
+        spec->species != QA_Q1_SHALRATH)
         state.bounds = (qa_bounds){{-16, -16, -24}, {16, 16, 40}};
     bool hanging = addon && g->options.program == QA_Q1_MG3 && (entity->spawnflags & 8388608u);
     bool crucified = spec->species == QA_Q1_ZOMBIE && ((entity->spawnflags & 1) || hanging);
@@ -869,9 +900,13 @@ bool q1_monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec, q
             entity->spawnflags |= 16384u;
         monster->lefty = true;
         monster->addon.allow_path = spec->species != QA_Q1_FISH && spec->species != QA_Q1_WIZARD;
+        if (infected)
+            monster->addon.allow_path =
+                spec->species == QA_Q1_KNIGHT || spec->species == QA_Q1_HELLKNIGHT;
         monster->addon.combat_style =
-            spec->species == QA_Q1_KNIGHT || spec->species == QA_Q1_DEMON ||
-                    spec->species == QA_Q1_TARBABY || spec->species == QA_Q1_FISH
+            monster->addon.demodog || spec->species == QA_Q1_KNIGHT ||
+                    spec->species == QA_Q1_DEMON || spec->species == QA_Q1_TARBABY ||
+                    spec->species == QA_Q1_FISH
                 ? 2
             : spec->species == QA_Q1_OGRE || spec->species == QA_Q1_HELLKNIGHT ||
                     spec->species == QA_Q1_SHAMBLER

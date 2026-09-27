@@ -3,6 +3,19 @@
 #define HUMAN {{-16, -16, -24}, {16, 16, 40}}
 #define LARGE {{-32, -32, -24}, {32, 32, 64}}
 static const q1_species species[] = {
+    {QA_Q1_ARMY, "monster_army_infected", "progs/soldier.mdl", "h_guard", "soldier/sight1.wav",
+     "infected_army_stand1", "infected_army_walk1", "infected_army_run1", "infected_army_atk1", 30,
+     -35, HUMAN, 0, false},
+    {QA_Q1_KNIGHT, "monster_knight_infected", "progs/knight.mdl", "h_knight", "knight/ksight.wav",
+     "knight_stand1", "knight_walk1", "knight_run1", NULL, 75, -40, HUMAN, 0, true},
+    {QA_Q1_ENFORCER, "monster_enforcer_infected", "progs/enforcer.mdl", "h_mega",
+     "enforcer/sight1.wav", "enf_stand1", "enf_walk1", "enf_run1", "enf_atk1", 80, -35, LARGE, 0,
+     false},
+    {QA_Q1_HELLKNIGHT, "monster_hell_knight_infected", "progs/hknight.mdl", "h_hellkn",
+     "hknight/sight1.wav", "hknight_stand1", "hknight_walk1", "hknight_run1", "hknight_magicc1",
+     250, -40, LARGE, 0, true},
+    {QA_Q1_DOG, "monster_demodog", "progs/dog_explosive.mdl", "h_dog", "dog/dsight.wav",
+     "demodog_stand1", "demodog_walk1", "demodog_run1", "demodog_leap1", 25, -35, LARGE, 0, true},
     {QA_Q1_ARMY, "monster_army", "progs/soldier.mdl", "h_guard", "soldier/sight1.wav",
      "army_stand1", "army_walk1", "army_run1", "army_atk1", 30, -35, HUMAN, 0, false},
     {QA_Q1_DOG,
