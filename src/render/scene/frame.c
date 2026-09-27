@@ -39,6 +39,9 @@ void qa_scene_frame_reset(qa_scene_frame *frame, uint64_t sequence)
     if (frame == NULL) return;
     for (size_t i = 0; i < frame->image_count; ++i) qa_scene_image_release(frame->images[i]);
     frame->image_count = 0;
+    for (size_t i = 0; i < frame->geometry_count; ++i)
+        qa_scene_geometry_release(frame->geometries[i]);
+    frame->geometry_count = 0;
     frame->command_count = 0;
     frame->group_count = 0;
     frame->sequence = sequence;
@@ -52,6 +55,7 @@ void qa_scene_frame_destroy(qa_scene_frame *frame)
     qa_arena_destroy(&frame->storage);
     free(frame->commands);
     free(frame->images);
+    free(frame->geometries);
     free(frame->groups);
     free(frame->sort_groups);
     free(frame->sort_commands);
@@ -76,6 +80,27 @@ static bool pin(qa_scene_frame *frame, const qa_scene_image *image, qa_error *er
     return true;
 }
 
+bool qa_scene_frame_geometry(qa_scene_frame *frame, const qa_scene_geometry *geometry, qa_error *error)
+{
+    if (frame == NULL) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "scene geometry pin requires a frame");
+        return false;
+    }
+    if (geometry == NULL || (frame->geometry_count != 0 &&
+        frame->geometries[frame->geometry_count - 1] == geometry)) return true;
+    if (frame->geometry_count == SIZE_MAX) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "scene geometry reference count overflow");
+        return false;
+    }
+    void *data = frame->geometries;
+    if (!reserve(&data, &frame->geometry_capacity, frame->geometry_count + 1,
+                 sizeof(*frame->geometries), error)) return false;
+    frame->geometries = data;
+    qa_scene_geometry_retain(geometry);
+    frame->geometries[frame->geometry_count++] = geometry;
+    return true;
+}
+
 bool qa_scene_frame_emit(qa_scene_frame *frame, const qa_scene_command *command, qa_error *error)
 {
     if (frame == NULL || command == NULL || command->kind < QA_SCENE_COMMAND_VIEW ||
@@ -95,7 +120,8 @@ bool qa_scene_frame_emit(qa_scene_frame *frame, const qa_scene_command *command,
     frame->commands = data;
     if (copied.kind == QA_SCENE_COMMAND_DRAW) {
         qa_scene_draw *draw = &copied.data.draw;
-        if (draw->texture_count > 2 || (draw->mesh.vertex_count != 0 && draw->mesh.vertices == NULL) ||
+        if (draw->texture_count > 2 || (draw->mesh.identity != 0 && draw->mesh.geometry == NULL) ||
+            (draw->mesh.vertex_count != 0 && draw->mesh.vertices == NULL) ||
             (draw->mesh.index_count != 0 && draw->mesh.indices == NULL) ||
             (draw->light_count != 0 && draw->lights == NULL)) {
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid scene draw storage");
@@ -116,6 +142,9 @@ bool qa_scene_frame_emit(qa_scene_frame *frame, const qa_scene_command *command,
             memcpy(lights, draw->lights, bytes);
             draw->lights = lights;
         }
+        /* Retain separately from commands: shadow extraction and failed surface
+         * submissions rewind command_count while keeping frame arena data. */
+        if (!qa_scene_frame_geometry(frame, draw->mesh.geometry, error)) return false;
     } else if (copied.kind == QA_SCENE_COMMAND_IMAGE) {
         if (copied.data.image == NULL) {
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "scene image update requires a version");

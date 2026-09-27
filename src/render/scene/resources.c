@@ -10,6 +10,11 @@
 
 typedef struct scene_names { qa_strings *strings; size_t references; } scene_names;
 typedef struct image_lineage { uint64_t revision; size_t references; } image_lineage;
+struct qa_scene_geometry {
+    atomic_size_t active, references;
+    qa_scene_vertex *vertices;
+    uint32_t *indices;
+};
 typedef struct owned_image {
     qa_scene_image image;
     scene_names *names;
@@ -38,6 +43,60 @@ struct qa_scene_resources {
 static const char *const format_extensions[] = {".png", ".jpg", ".tga", ".jpeg", ".bmp", ".gif"};
 static bool image_from_rgba(qa_scene_resources *, const char *, const qa_image *,
                             const qa_scene_image_options *, qa_scene_image **, qa_error *);
+
+qa_scene_geometry *qa_scene_geometry_adopt(qa_scene_vertex *vertices, uint32_t *indices,
+                                         qa_error *error)
+{
+    qa_scene_geometry *geometry = malloc(sizeof(*geometry));
+    if (geometry == NULL) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate scene geometry ownership");
+        return NULL;
+    }
+    atomic_init(&geometry->active, 1);
+    atomic_init(&geometry->references, 1);
+    geometry->vertices = vertices;
+    geometry->indices = indices;
+    return geometry;
+}
+
+void qa_scene_geometry_cache_retain(const qa_scene_geometry *borrowed)
+{
+    if (borrowed == NULL) return;
+    qa_scene_geometry *geometry = (qa_scene_geometry *)borrowed;
+    atomic_fetch_add_explicit(&geometry->references, 1, memory_order_relaxed);
+}
+
+void qa_scene_geometry_cache_release(const qa_scene_geometry *borrowed)
+{
+    if (borrowed == NULL) return;
+    qa_scene_geometry *geometry = (qa_scene_geometry *)borrowed;
+    if (atomic_fetch_sub_explicit(&geometry->references, 1, memory_order_acq_rel) == 1)
+        free(geometry);
+}
+
+void qa_scene_geometry_retain(const qa_scene_geometry *borrowed)
+{
+    if (borrowed == NULL) return;
+    qa_scene_geometry *geometry = (qa_scene_geometry *)borrowed;
+    qa_scene_geometry_cache_retain(geometry);
+    atomic_fetch_add_explicit(&geometry->active, 1, memory_order_relaxed);
+}
+
+void qa_scene_geometry_release(const qa_scene_geometry *borrowed)
+{
+    if (borrowed == NULL) return;
+    qa_scene_geometry *geometry = (qa_scene_geometry *)borrowed;
+    if (atomic_fetch_sub_explicit(&geometry->active, 1, memory_order_acq_rel) == 1) {
+        free(geometry->vertices);
+        free(geometry->indices);
+    }
+    qa_scene_geometry_cache_release(geometry);
+}
+
+bool qa_scene_geometry_active(const qa_scene_geometry *geometry)
+{
+    return geometry != NULL && atomic_load_explicit(&geometry->active, memory_order_acquire) != 0;
+}
 
 static void policy_add_format(qa_scene_image_policy *policy, qa_scene_image_format format)
 {

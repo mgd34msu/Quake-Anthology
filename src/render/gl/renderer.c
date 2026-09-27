@@ -151,6 +151,7 @@ void qa_gl_destroy(qa_gl_renderer *renderer)
         while (renderer->meshes != NULL) {
             gl_mesh_entry *entry = renderer->meshes;
             renderer->meshes = entry->next;
+            qa_scene_geometry_cache_release(entry->geometry);
             free(entry);
         }
         free(renderer);
@@ -321,6 +322,7 @@ static bool mesh_resident(const qa_gl_renderer *renderer,
          entry = entry->next)
         if (entry->identity == mesh->identity &&
             entry->revision == mesh->revision &&
+            entry->geometry == mesh->geometry &&
             entry->vertex_count == mesh->vertex_count &&
             entry->index_count == mesh->index_count) return true;
     return false;
@@ -361,6 +363,7 @@ static bool draw_valid(const qa_gl_renderer *renderer,
         !finite3(draw->fog.color) || !isfinite(draw->fog.density) ||
         !isfinite(draw->fog.amount) || !isfinite(draw->shade_scale) ||
         !isfinite(draw->shadow_near) ||
+        (draw->mesh.identity != 0 && draw->mesh.geometry == NULL) ||
         (draw->mesh.vertex_count != 0 && draw->mesh.vertices == NULL) ||
         (draw->mesh.index_count != 0 && draw->mesh.indices == NULL) ||
         (draw->light_count != 0 && draw->lights == NULL) ||
@@ -538,6 +541,7 @@ bool qa_gl_execute(qa_gl_renderer *renderer, const qa_scene_frame *frame,
         return false;
     }
     gl_textures_prune(renderer);
+    gl_meshes_prune(renderer);
     renderer->sequence = frame->sequence;
     for (size_t i = 0; i < frame->command_count; ++i) {
         const qa_scene_command *command = &frame->commands[i];

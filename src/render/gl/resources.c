@@ -332,10 +332,11 @@ static bool mesh_storage(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
     }
     for (gl_mesh_entry *entry = renderer->meshes; entry; entry = entry->next)
         if (entry->identity == mesh->identity && entry->revision == mesh->revision) {
-            if (entry->vertex_count != mesh->vertex_count ||
+            if (entry->geometry != mesh->geometry ||
+                entry->vertex_count != mesh->vertex_count ||
                 entry->index_count != mesh->index_count) {
                 qa_error_set(error, QA_ERROR_ARGUMENT, 0,
-                             "OpenGL retained mesh identity changed shape");
+                             "OpenGL retained mesh identity changed storage");
                 return false;
             }
             *vertices = entry->vertex_buffer;
@@ -364,6 +365,8 @@ static bool mesh_storage(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
     if (!gl_check(renderer, "OpenGL retained mesh upload", error)) goto fail;
     entry->identity = mesh->identity;
     entry->revision = mesh->revision;
+    entry->geometry = mesh->geometry;
+    qa_scene_geometry_cache_retain(entry->geometry);
     entry->vertex_count = mesh->vertex_count;
     entry->index_count = mesh->index_count;
     entry->next = renderer->meshes;
@@ -378,6 +381,23 @@ fail:
         renderer->gl.DeleteBuffers(1, &entry->index_buffer);
     free(entry);
     return false;
+}
+
+void gl_meshes_prune(qa_gl_renderer *renderer)
+{
+    gl_mesh_entry **link = &renderer->meshes;
+    while (*link != NULL) {
+        gl_mesh_entry *entry = *link;
+        if (qa_scene_geometry_active(entry->geometry)) {
+            link = &entry->next;
+            continue;
+        }
+        *link = entry->next;
+        renderer->gl.DeleteBuffers(1, &entry->vertex_buffer);
+        renderer->gl.DeleteBuffers(1, &entry->index_buffer);
+        qa_scene_geometry_cache_release(entry->geometry);
+        free(entry);
+    }
 }
 
 bool gl_mesh_bind(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
@@ -463,6 +483,7 @@ void gl_resources_destroy(qa_gl_renderer *renderer)
         renderer->meshes = entry->next;
         renderer->gl.DeleteBuffers(1, &entry->vertex_buffer);
         renderer->gl.DeleteBuffers(1, &entry->index_buffer);
+        qa_scene_geometry_cache_release(entry->geometry);
         free(entry);
     }
     if (renderer->stream.vertex_buffer != 0)

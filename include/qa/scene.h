@@ -12,6 +12,7 @@ typedef struct qa_material_library qa_material_library;
 typedef struct qa_scene_resources qa_scene_resources;
 typedef struct qa_scene_world qa_scene_world;
 typedef struct qa_scene_model qa_scene_model;
+typedef struct qa_scene_geometry qa_scene_geometry;
 
 typedef struct qa_scene_vec2 { float x, y; } qa_scene_vec2;
 typedef struct qa_scene_vec4 { float x, y, z, w; } qa_scene_vec4;
@@ -102,8 +103,24 @@ typedef struct qa_scene_vertex {
     qa_scene_vec2 texcoord, lightmap;
     qa_scene_vec4 color;
 } qa_scene_vertex;
+/* Takes both malloc-compatible arrays only on success, without copying. Finish
+ * writing before publishing the first frame; replace rather than mutate a
+ * published version. Producer/frame references own the arrays. Retain requires
+ * an existing active reference; cached retirement records cannot be revived.
+ * References are atomic, but callers must synchronize frame publication and never reset a
+ * frame while a backend consumes it. */
+qa_scene_geometry *qa_scene_geometry_adopt(qa_scene_vertex *, uint32_t *, qa_error *);
+void qa_scene_geometry_retain(const qa_scene_geometry *);
+void qa_scene_geometry_release(const qa_scene_geometry *);
+/* Backend residency keeps only the retirement record alive. It cannot prolong
+ * active geometry indefinitely across multiple renderer caches. */
+void qa_scene_geometry_cache_retain(const qa_scene_geometry *);
+void qa_scene_geometry_cache_release(const qa_scene_geometry *);
+bool qa_scene_geometry_active(const qa_scene_geometry *);
 typedef enum qa_scene_primitive { QA_SCENE_TRIANGLES, QA_SCENE_LINES } qa_scene_primitive;
-/* A mesh is a retained immutable resource or storage in its frame's arena. */
+/* Nonzero identity/revision denotes immutable geometry owned by geometry.
+ * Identity zero uses streaming storage. Such a mesh may still borrow retained
+ * indices or vertices; preserve geometry when making that transient copy. */
 typedef struct qa_scene_mesh {
     uint64_t identity, revision;
     const qa_scene_vertex *vertices;
@@ -111,6 +128,7 @@ typedef struct qa_scene_mesh {
     size_t vertex_count, index_count;
     qa_bounds bounds;
     qa_scene_primitive primitive;
+    const qa_scene_geometry *geometry;
 } qa_scene_mesh;
 typedef enum qa_scene_blend {
     QA_BLEND_ZERO, QA_BLEND_ONE, QA_BLEND_SRC_COLOR, QA_BLEND_ONE_MINUS_SRC_COLOR,
@@ -228,8 +246,9 @@ typedef struct qa_scene_group {
     float priority;
     uint32_t entity, fog, dlight, source_sort;
 } qa_scene_group;
-/* Reset only once the consuming backend has completed this frame. Commands are
- * contiguous; pointed-to transient geometry lives in storage. */
+/* Owns its arrays; do not shallow-copy a frame. Reset only once every consuming
+ * backend has completed it. Commands are contiguous; transient geometry lives
+ * in storage. Frame geometry pins survive command rollback until reset. */
 typedef struct qa_scene_frame {
     uint64_t sequence, owner;
     qa_arena storage;
@@ -237,6 +256,8 @@ typedef struct qa_scene_frame {
     size_t command_count, command_capacity;
     const qa_scene_image **images;
     size_t image_count, image_capacity;
+    const qa_scene_geometry **geometries;
+    size_t geometry_count, geometry_capacity;
     qa_scene_group *groups;
     size_t group_count, group_capacity;
     qa_scene_group **sort_groups;
@@ -249,6 +270,9 @@ void qa_scene_frame_reset(qa_scene_frame *, uint64_t sequence);
 void qa_scene_frame_destroy(qa_scene_frame *);
 bool qa_scene_frame_emit(qa_scene_frame *, const qa_scene_command *, qa_error *);
 bool qa_scene_frame_draw(qa_scene_frame *, const qa_scene_draw *, qa_error *);
+/* Pin borrowed retained geometry, including intermediate shadow-caster data,
+ * until reset. No command is emitted. NULL geometry needs no reference. */
+bool qa_scene_frame_geometry(qa_scene_frame *, const qa_scene_geometry *, qa_error *);
 bool qa_scene_frame_image(qa_scene_frame *, const qa_scene_image *, qa_error *);
 /* Publish GIF frame versions before any views, using the global render clock. */
 bool qa_scene_resources_animate(qa_scene_resources *, double seconds, qa_scene_frame *, qa_error *);

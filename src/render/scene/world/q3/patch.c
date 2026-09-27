@@ -93,9 +93,15 @@ static bool install(qaw_surface *surface, patch_work *work, unsigned width, unsi
         indices[cursor++] = a; indices[cursor++] = b; indices[cursor++] = a + 1;
         indices[cursor++] = a + 1; indices[cursor++] = b; indices[cursor++] = b + 1;
     }
-    free(surface->vertices); free(surface->indices);
+    qa_scene_geometry *geometry = qa_scene_geometry_adopt(vertices, indices, error);
+    if (!geometry) {
+        free(vertices); free(indices);
+        return false;
+    }
+    qa_scene_geometry_release(surface->mesh.geometry);
     surface->vertices = vertices; surface->indices = indices;
     surface->mesh.vertices = vertices; surface->mesh.indices = indices;
+    surface->mesh.geometry = geometry;
     surface->mesh.vertex_count = vertex_count; surface->mesh.index_count = index_count;
     ++surface->mesh.revision;
     surface->patch->width = width; surface->patch->height = height;

@@ -88,10 +88,13 @@ bool scene_model_topology(qa_scene_model *model, uint32_t mesh_index, qa_error *
         free(name);
         if (!ok) return false;
     }
+    qa_scene_geometry *geometry = qa_scene_geometry_adopt(mesh->vertices, mesh->indices, error);
+    if (!geometry) return false;
     mesh->retained = (qa_scene_mesh){.identity = qa_scene_identity(),
         .revision = 1, .vertices = mesh->vertices, .indices = mesh->indices,
         .vertex_count = vertex_count, .index_count = corners,
-        .bounds = vertex_count ? bounds : (qa_bounds){0}, .primitive = QA_SCENE_TRIANGLES};
+        .bounds = vertex_count ? bounds : (qa_bounds){0}, .primitive = QA_SCENE_TRIANGLES,
+        .geometry = geometry};
     return true;
 too_large:
     qa_error_set(error, QA_ERROR_MEMORY, mesh_index, "model topology exceeds addressable storage"); return false;
@@ -103,7 +106,9 @@ void scene_model_topology_destroy(qa_scene_model *model) {
     if (!model->meshes) return;
     for (uint32_t i = 0; i < model->source->mesh_count; ++i) {
         scene_model_mesh *mesh = &model->meshes[i];
-        free(mesh->vertices); free(mesh->indices); free(mesh->sources);
+        if (mesh->retained.geometry) qa_scene_geometry_release(mesh->retained.geometry);
+        else { free(mesh->vertices); free(mesh->indices); }
+        free(mesh->sources);
         free(mesh->normal_indices); free(mesh->shaders);
     }
     free(model->meshes);

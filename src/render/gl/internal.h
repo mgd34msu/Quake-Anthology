@@ -160,6 +160,7 @@ typedef struct gl_texture_entry {
 
 typedef struct gl_mesh_entry {
     uint64_t identity, revision;
+    const qa_scene_geometry *geometry;
     size_t vertex_count, index_count;
     GLuint vertex_buffer, index_buffer;
     struct gl_mesh_entry *next;
@@ -225,6 +226,7 @@ bool gl_resources_create(qa_gl_renderer *renderer, qa_error *error);
 bool gl_image_update(qa_gl_renderer *renderer, const qa_scene_image *image,
                      qa_error *error);
 void gl_textures_prune(qa_gl_renderer *renderer);
+void gl_meshes_prune(qa_gl_renderer *renderer);
 void gl_resources_destroy(qa_gl_renderer *renderer);
 bool gl_mesh_bind(qa_gl_renderer *renderer, const qa_scene_mesh *mesh,
                   qa_error *error);

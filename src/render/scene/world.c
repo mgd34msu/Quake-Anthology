@@ -56,10 +56,13 @@ bool qaw_mesh_allocate(qa_scene_world *world, qaw_surface *surface,
     if (vertices != 0 && surface->vertices == NULL) return false;
     surface->indices = world_array(indices, sizeof(*surface->indices), error);
     if (indices != 0 && surface->indices == NULL) return false;
+    qa_scene_geometry *geometry = qa_scene_geometry_adopt(surface->vertices, surface->indices, error);
+    if (geometry == NULL) return false;
     surface->mesh = (qa_scene_mesh){
         .identity = qa_scene_identity(),
         .revision = 1, .vertices = surface->vertices, .indices = surface->indices,
-        .vertex_count = vertices, .index_count = indices, .primitive = QA_SCENE_TRIANGLES
+        .vertex_count = vertices, .index_count = indices, .primitive = QA_SCENE_TRIANGLES,
+        .geometry = geometry
     };
     (void)world;
     return true;
@@ -248,8 +251,12 @@ void qa_scene_world_destroy(qa_scene_world *world)
     if (world->bsp.family == QA_BSP_Q3) qaw_destroy_q3(world);
     else qaw_destroy_legacy(world);
     for (size_t i = 0; i < world->surface_count && world->surfaces != NULL; ++i) {
-        free(world->surfaces[i].vertices);
-        free(world->surfaces[i].indices);
+        if (world->surfaces[i].mesh.geometry != NULL)
+            qa_scene_geometry_release(world->surfaces[i].mesh.geometry);
+        else {
+            free(world->surfaces[i].vertices);
+            free(world->surfaces[i].indices);
+        }
         qa_scene_image_release(world->surfaces[i].lightmap);
     }
     for (size_t i = 0; i < world->model_count && world->models != NULL; ++i) free(world->models[i].surfaces);
@@ -883,6 +890,7 @@ bool qa_scene_world_shadow_caster(qa_scene_world *world, uint32_t model_index,
             if (!qa_material_shadow_mesh(surface->material, &mesh, &context, frame, &mesh, error)) return false;
         } else if (!qaw_legacy_casts_shadow(world, surface, model_index != 0 || transform != NULL)) continue;
         if (mesh.index_count == 0 || mesh.vertex_count == 0) continue;
+        if (!qa_scene_frame_geometry(frame, mesh.geometry, error)) return false;
         caster.bounds = caster.mesh_count == 0 ? mesh.bounds : qa_bounds_union(caster.bounds, mesh.bounds);
         meshes[caster.mesh_count++] = mesh;
     }
