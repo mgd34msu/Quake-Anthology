@@ -16,11 +16,13 @@ typedef struct authored_index {
 struct qa_targets {
     qa_target_options options;
     qa_target_binding *bindings;
+    uint64_t *binding_serial;
     target_index *index;
     authored_index *authored;
     qa_arena scratch;
     size_t count, authored_count, capacity, depth;
     uint64_t actor_revision;
+    uint64_t next_binding_serial;
     bool dirty;
 };
 static bool fail(qa_error *error, const char *text) {
@@ -74,9 +76,10 @@ qa_targets *qa_targets_create(const qa_target_options *options, qa_error *error)
     targets->options = *options;
     targets->capacity = qa_actors_capacity(qa_session_actors(options->session));
     targets->bindings = calloc(targets->capacity, sizeof(*targets->bindings));
+    targets->binding_serial = calloc(targets->capacity, sizeof(*targets->binding_serial));
     targets->index = calloc(targets->capacity, sizeof(*targets->index));
     targets->authored = calloc(targets->capacity, sizeof(*targets->authored));
-    if (!targets->bindings || !targets->index || !targets->authored) {
+    if (!targets->bindings || !targets->binding_serial || !targets->index || !targets->authored) {
         qa_targets_destroy(targets);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating target index");
         return NULL;
@@ -91,16 +94,20 @@ void qa_targets_destroy(qa_targets *targets) {
     free(targets->authored);
     free(targets->index);
     free(targets->bindings);
+    free(targets->binding_serial);
     free(targets);
 }
 bool qa_targets_bind(qa_targets *targets, const qa_target_binding *entry, qa_error *error) {
     qa_authored_target fields;
-    if (!entry || !entry->read || entry->actor.slot >= targets->capacity ||
+    if (!targets || !entry || !entry->read || entry->actor.slot >= targets->capacity ||
         !live(targets, entry->actor) || entry->source < QA_CLOCK_NETQUAKE ||
         entry->source > QA_CLOCK_Q3 || !entry->read(entry->context, entry->actor, &fields) ||
         !valid_fields(targets, &fields))
         return fail(error, "Invalid authored target binding");
+    if (targets->next_binding_serial == UINT64_MAX)
+        return fail(error, "Authored target binding serial exhausted");
     targets->bindings[entry->actor.slot] = *entry;
+    targets->binding_serial[entry->actor.slot] = ++targets->next_binding_serial;
     targets->dirty = true;
     return true;
 }
@@ -108,6 +115,7 @@ void qa_targets_unbind(qa_targets *targets, qa_actor_id actor) {
     if (actor.slot < targets->capacity &&
         qa_actor_id_equal(targets->bindings[actor.slot].actor, actor)) {
         targets->bindings[actor.slot] = (qa_target_binding){0};
+        targets->binding_serial[actor.slot] = 0;
         targets->dirty = true;
     }
 }
@@ -124,6 +132,39 @@ bool qa_targets_read(const qa_targets *targets, qa_actor_id actor, qa_authored_t
     normalize(targets, &fields);
     *out = fields;
     return true;
+}
+static bool set_target_field(qa_targets *targets, qa_actor_id actor, qa_string_id name,
+                              bool targetname, qa_error *error) {
+    if (!targets || !valid_string(targets, name))
+        return fail(error, "Invalid authored target name");
+    const qa_target_binding *entry = binding(targets, actor);
+    if (!entry || !(targetname ? entry->set_targetname : entry->set_target)) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Authored target has no field setter");
+        return false;
+    }
+    qa_target_binding before = *entry;
+    uint64_t serial = targets->binding_serial[actor.slot];
+    targets->dirty = true;
+    bool (*write)(void *, qa_actor_id, qa_string_id, qa_error *) =
+        targetname ? before.set_targetname : before.set_target;
+    bool ok = write(before.context, actor, nonempty(targets, name), error);
+    targets->dirty = true;
+    if (!ok)
+        return false;
+    entry = binding(targets, actor);
+    if (!entry || targets->binding_serial[actor.slot] != serial) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Authored target owner changed during field write");
+        return false;
+    }
+    return true;
+}
+bool qa_targets_set_targetname(qa_targets *targets, qa_actor_id actor, qa_string_id name,
+                               qa_error *error) {
+    return set_target_field(targets, actor, name, true, error);
+}
+bool qa_targets_set_target(qa_targets *targets, qa_actor_id actor, qa_string_id name,
+                           qa_error *error) {
+    return set_target_field(targets, actor, name, false, error);
 }
 bool qa_targets_field(const qa_targets *targets, qa_actor_id actor, const char *key,
                       qa_target_field *out) {

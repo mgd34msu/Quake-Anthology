@@ -32,6 +32,8 @@ typedef struct qa_target_binding {
     /* Optional source field lookup for authored path and mover metadata.
      * Text belongs to the shared session. Native numeric fields stay typed. */
     bool (*field)(void *, qa_actor_id, const char *key, qa_target_field *value);
+    bool (*set_targetname)(void *, qa_actor_id, qa_string_id, qa_error *);
+    bool (*set_target)(void *, qa_actor_id, qa_string_id, qa_error *);
 } qa_target_binding;
 typedef struct qa_target_use {
     qa_actor_id source, activator;
@@ -68,6 +70,10 @@ void qa_targets_unbind_context(qa_targets *, qa_actor_id, const void *expected_c
  * retained index rebuilds only after such changes or registry mutations. */
 void qa_targets_changed(qa_targets *);
 bool qa_targets_read(const qa_targets *, qa_actor_id, qa_authored_target *);
+/* The binding owns the field. Any attempted write invalidates the retained
+ * index, including a callback that mutates its field before returning failure. */
+bool qa_targets_set_targetname(qa_targets *, qa_actor_id, qa_string_id, qa_error *);
+bool qa_targets_set_target(qa_targets *, qa_actor_id, qa_string_id, qa_error *);
 bool qa_targets_field(const qa_targets *, qa_actor_id, const char *key, qa_target_field *value);
 /* Numeric native fields stay typed; authored text is parsed at this boundary. */
 bool qa_targets_number(const qa_targets *, qa_actor_id, const char *key, double *value);
