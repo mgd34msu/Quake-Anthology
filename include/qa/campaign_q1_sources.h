@@ -47,6 +47,7 @@ void qa_q1_campaign_source_destroy(qa_q1_campaign_source *);
 /* The source outlives the level that copies this borrowed-context rule. */
 bool qa_q1_campaign_source_rule(qa_q1_campaign_source *, qa_q1_intermission_rule *, qa_error *);
 bool qa_q1_campaign_source_timer(qa_q1_campaign_source *, qa_q1_campaign_timer, qa_error *);
+bool qa_q1_campaign_source_rogue_end(qa_q1_campaign_source *, qa_error *);
 uint32_t qa_q1_mg1_last_sigil(uint32_t flags);
 uint32_t qa_q1_mg1_clear_last_sigil(uint32_t flags);
 unsigned qa_q1_mg3_rune_count(uint32_t flags);

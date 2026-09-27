@@ -310,7 +310,7 @@ typedef struct q1_character {
     qa_q1_frame_range animation;
     uint16_t animation_frame, walk_frame;
     uint8_t locomotion;
-    bool death_animation, attack_animation, in_water;
+    bool death_animation, attack_animation, in_water, weapon_hidden;
     qa_vec3 view_offset;
     double next_animation, pain_until, air_until, hazard_at;
     float fall_speed, drown_damage;

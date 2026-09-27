@@ -155,6 +155,20 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
                                  .value.number = entity->map->current_ammo};
         return true;
     }
+    if (entity->map && entity->map->kind == Q1_MAP_ENDING_ACTOR) {
+        if (!strcmp(key, "ammo_rockets1") || !strcmp(key, "pausetime")) {
+            *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+                                     .value.number = !strcmp(key, "ammo_rockets1")
+                                                         ? entity->map->pending.follower.rockets
+                                                         : entity->map->pause_time};
+            return true;
+        }
+        if (!strcmp(key, "v_angle")) {
+            *out = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR,
+                                     .value.vector = entity->map->pending.follower.view_angles};
+            return true;
+        }
+    }
     if (entity->map && entity->map->kind == Q1_MAP_TIME_MACHINE && !strcmp(key, "pain_finished")) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
                                  .value.number = entity->map->cooldown};
@@ -181,9 +195,13 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
         return true;
     }
     if (g->maps && qa_actor_id_equal(actor, g->maps->world_actor) &&
-        !strcmp(key, "rogue:cutscene_running")) {
-        *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
-                                 .value.number = g->maps->rogue_cutscene};
+        (!strcmp(key, "rogue:cutscene_running") || !strcmp(key, "rogue:ending_started") ||
+         !strcmp(key, "rogue:actorStage"))) {
+        *out = (qa_target_field){
+            .kind = QA_TARGET_FIELD_NUMBER,
+            .value.number = !strcmp(key, "rogue:actorStage")       ? g->maps->rogue_actor_stage
+                            : !strcmp(key, "rogue:ending_started") ? g->maps->rogue_ending_started
+                                                                   : g->maps->rogue_cutscene};
         return true;
     }
     if (entity->map &&
@@ -837,6 +855,8 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_map_state *state = entity->map;
     q1_map_action action = state->action;
     state->action = Q1_MAP_IDLE;
+    if (action >= Q1_MAP_ENDING_CONTROL && action <= Q1_MAP_CAMERA_TRACK)
+        return q1_map_ending_think(g, entity, action, error);
     if (action >= Q1_MAP_TIME_BOOM_THINK && action <= Q1_MAP_TIME_CRASH_THINK)
         return q1_map_time_think(g, entity, action, error);
     if (action >= Q1_MAP_ROGUE_PLAT_UP && action <= Q1_MAP_ELEVATOR_BUTTON_DONE)

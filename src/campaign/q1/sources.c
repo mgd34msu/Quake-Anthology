@@ -281,3 +281,17 @@ bool qa_q1_campaign_source_timer(qa_q1_campaign_source *source, qa_q1_campaign_t
         return fail(error, "Unknown mission finale timer");
     }
 }
+bool qa_q1_campaign_source_rogue_end(qa_q1_campaign_source *source, qa_error *error) {
+    if (!source || source->options.program != QA_Q1_ROGUE)
+        return fail(error, "Invalid Rogue ending campaign owner");
+    const qa_q1_campaign_source_options *options = &source->options;
+    if (!options->rerelease)
+        return true;
+    if (options->official_campaign && named(source, options->current_map, "r2m8")) {
+        if (!options->achievement(options->context, "ACH_COMPLETE_R2M8", error) ||
+            (options->skill == 3 &&
+             !options->achievement(options->context, "ACH_COMPLETE_R2M8_NIGHTMARE", error)))
+            return false;
+    }
+    return options->schedule(options->context, QA_Q1_CAMPAIGN_CHECK_FINALE, 1, error);
+}

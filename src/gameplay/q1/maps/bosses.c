@@ -94,7 +94,9 @@ bool q1_map_lightning_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator
                                                                     : "boss_shockc1",
                                                       error));
 }
-static bool finale_emit(qa_q1_game *g, uint32_t stage, const char *text, qa_error *error) {
+bool q1_map_finale_emit(qa_q1_game *g, uint32_t stage, const char *text, qa_error *error) {
+    if (!g->maps->options.finale)
+        return q1_map_fail(error, "Q1 finale requires a presentation owner");
     qa_q1_map_finale_view view = g->maps->finale;
     view.stage = stage;
     view.text = QA_STRING_NONE;
@@ -178,7 +180,7 @@ static bool finale_begin(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
         ok = qa_combat_set_traits(g->services.combat, actor, &traits, error);
     }
     qa_builtin_snapshot_free(&players);
-    if (!ok || !finale_emit(g, 1, "", error))
+    if (!ok || !q1_map_finale_emit(g, 1, "", error))
         return false;
     const char *map =
         qa_strings_cstr(qa_session_strings(g->services.session), g->maps->options.current_map);
@@ -216,9 +218,9 @@ static bool finale_finish(qa_q1_game *g, q1_actor *oldone, qa_error *error) {
                                error))
                     return false;
             }
-    if (!finale_emit(g, 4,
-                     qa_q1_finale_text(g->options.edition == QA_Q1_RERELEASE, "$qc_finale_end"),
-                     error))
+    if (!q1_map_finale_emit(
+            g, 4, qa_q1_finale_text(g->options.edition == QA_Q1_RERELEASE, "$qc_finale_end"),
+            error))
         return false;
     q1_actor *victory;
     if (!q1_create(g, "finale_player", Q1_ENTITY, (qa_actor_id){0}, &victory, error))
@@ -258,12 +260,12 @@ bool q1_map_boss_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, qa
             g->maps->finale_dismissed = g->maps->options.finale_finished(g->maps->options.context);
         if (!g->maps->finale_dismissed)
             return q1_map_schedule(g, entity, .1, Q1_MAP_FINALE_WAIT, error);
-        return finale_emit(g, 5, "", error) &&
+        return q1_map_finale_emit(g, 5, "", error) &&
                (!q1_alive(g, entity->id) ||
                 q1_map_schedule(g, entity, 5, Q1_MAP_FINALE_SIX, error));
     }
     if (action == Q1_MAP_FINALE_SIX) {
-        if (!finale_emit(g, 6, "", error))
+        if (!q1_map_finale_emit(g, 6, "", error))
             return false;
         bool ok = g->options.coop
                       ? qa_q1_level_travel(g->maps->options.level, g->maps->finale.map,
@@ -283,13 +285,13 @@ bool q1_map_boss_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, qa
         if (!q1_alive(g, oldone->id))
             return true;
         return q1_sound(g, oldone->id, "misc/r_tele1.wav", 2, 1, error) &&
-               finale_emit(g, 2, "", error) &&
+               q1_map_finale_emit(g, 2, "", error) &&
                (!q1_alive(g, entity->id) ||
                 q1_map_schedule(g, entity, 2, Q1_MAP_FINALE_THREE, error));
     }
     if (action == Q1_MAP_FINALE_THREE) {
         if (!q1_sound(g, oldone->id, "boss2/death.wav", 2, 1, error) ||
-            !style(g, "abcdefghijklmlkjihgfedcb", error) || !finale_emit(g, 3, "", error))
+            !style(g, "abcdefghijklmlkjihgfedcb", error) || !q1_map_finale_emit(g, 3, "", error))
             return false;
         if (q1_alive(g, oldone->id)) {
             oldone->state.monster.next_frame = q1_frame_index("old_thrash1");

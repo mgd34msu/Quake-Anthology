@@ -83,7 +83,22 @@ bool qa_q1_character_read(const qa_q1_game *g, qa_actor_id actor, qa_q1_characte
                                   .motion = alive  ? QA_PHYSICS_STEP
                                             : head ? QA_PHYSICS_BOUNCE
                                                    : QA_PHYSICS_TOSS,
-                                  .weapon_visible = alive};
+                                  .weapon_visible = alive && !c->weapon_hidden};
+    return true;
+}
+bool qa_q1_character_cutscene(qa_q1_game *g, qa_actor_id actor, qa_vec3 view_offset,
+                              bool weapon_visible, qa_error *error) {
+    if (!g || !qa_vec_finite(view_offset)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "invalid Q1 cinematic presentation");
+        return false;
+    }
+    q1_player *player = character(g, actor, error);
+    if (!player)
+        return false;
+    q1_character *c = &player->character_state;
+    c->view_offset = view_offset;
+    c->weapon_hidden = !weapon_visible;
+    c->input.attack = c->input.jump = false;
     return true;
 }
 bool qa_q1_character_frame(qa_q1_game *g, qa_actor_id actor, const qa_q1_character_input *input,

@@ -48,6 +48,8 @@ typedef enum q1_map_kind {
     Q1_MAP_TIME_CORE,
     Q1_MAP_TIME_BOOM,
     Q1_MAP_TIME_STOP,
+    Q1_MAP_ENDING_ACTOR,
+    Q1_MAP_CAMERA_TRACKER,
     Q1_MAP_DOOR,
     Q1_MAP_BUTTON,
     Q1_MAP_SECRET_DOOR,
@@ -138,7 +140,12 @@ typedef enum q1_map_action {
     Q1_MAP_TIME_BOOM_THINK,
     Q1_MAP_TIME_STOP_SHAKE,
     Q1_MAP_TIME_FALL,
-    Q1_MAP_TIME_CRASH_THINK
+    Q1_MAP_TIME_CRASH_THINK,
+    Q1_MAP_ENDING_CONTROL,
+    Q1_MAP_ENDING_RUN,
+    Q1_MAP_ENDING_FIRE,
+    Q1_MAP_ENDING_TELEPORT,
+    Q1_MAP_CAMERA_TRACK
 } q1_map_action;
 typedef enum q1_map_position { Q1_MAP_BOTTOM, Q1_MAP_UP, Q1_MAP_TOP, Q1_MAP_DOWN } q1_map_position;
 typedef enum q1_time_reaction { Q1_TIME_NO_REACTION, Q1_TIME_PAIN, Q1_TIME_CRASH } q1_time_reaction;
@@ -195,6 +202,12 @@ struct q1_map_state {
         uint8_t pendulum_step;
         q1_time_reaction time_reaction;
         struct {
+            qa_actor_id move_target;
+            qa_vec3 view_angles;
+            float rockets;
+            uint8_t fire_stage;
+        } follower;
+        struct {
             float ticks;
             bool running, stop_after_cycle;
         } counter;
@@ -213,7 +226,7 @@ struct q1_map_runtime {
     q1_map_state *allocated, *spare, *retired;
     q1_door_group *door_groups;
     qa_actor_id world_actor, electrodes[2];
-    qa_actor_id time_machine;
+    qa_actor_id time_machine, ending_actor;
     double lightning_end;
     float pendulum_impact, elevator_direction;
     qa_q1_map_finale_view finale;
@@ -221,7 +234,8 @@ struct q1_map_runtime {
     double earthquake_end;
     bool quake_active;
     bool final_new_game_travel;
-    bool rogue_cutscene;
+    bool rogue_cutscene, rogue_ending_started;
+    uint8_t rogue_actor_stage;
     uint32_t total_secrets, found_secrets;
 };
 
@@ -274,6 +288,9 @@ static inline bool q1_map_is_time_actor(q1_map_kind kind) {
 bool q1_map_time_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_time_reaction(qa_q1_game *, q1_actor *, const qa_damage_outcome *, qa_error *);
 bool q1_map_time_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
+bool q1_map_rogue_ending(qa_q1_game *, qa_actor_id player, qa_error *);
+bool q1_map_ending_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
+bool q1_map_finale_emit(qa_q1_game *, uint32_t stage, const char *text, qa_error *);
 bool q1_map_train_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_train_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
 bool q1_map_train_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);

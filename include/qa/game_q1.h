@@ -341,6 +341,10 @@ bool qa_q1_player_environment(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_character_attach(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_character_frame(qa_q1_game *, qa_actor_id, const qa_q1_character_input *, qa_error *);
 bool qa_q1_character_read(const qa_q1_game *, qa_actor_id, qa_q1_character_view *);
+/* Presentation/input only; the selected movement owner retains cinematic
+ * control, camera pose and freeze state. Body/combat changes belong to it. */
+bool qa_q1_character_cutscene(qa_q1_game *, qa_actor_id, qa_vec3 view_offset, bool weapon_visible,
+                              qa_error *);
 bool qa_q1_character_attack_frame(qa_q1_game *, qa_actor_id, qa_q1_character_attack,
                                   unsigned variant, qa_error *);
 bool qa_q1_character_reaction(qa_q1_game *, const qa_damage_outcome *, qa_error *);

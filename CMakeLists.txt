@@ -248,6 +248,7 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/maps/rogue_pendulum.c
     src/gameplay/q1/maps/rogue_plats.c
     src/gameplay/q1/maps/rogue_time.c
+    src/gameplay/q1/maps/rogue_ending.c
     src/gameplay/q1/maps/runtime.c
     src/gameplay/q1/maps/special.c
     src/gameplay/q1/maps/trains.c

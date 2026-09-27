@@ -358,16 +358,25 @@ static bool changelevel(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_e
     return q1_map_schedule(g, entity, .1, Q1_MAP_BEGIN_LEVEL, error);
 }
 static bool path(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *error) {
+    qa_actor_id corner = entity->id;
     if (g->options.program == QA_Q1_MG3)
         return q1_map_path_touch(g, entity, other, error);
     if (g->options.program == QA_Q1_HIPNOTIC)
         return q1_map_hip_path_touch(g, entity, other, error);
+    if (g->options.program == QA_Q1_ROGUE) {
+        bool handled;
+        if (!qa_q1_game_rogue_path_touch(g, corner, other, &handled, error))
+            return false;
+        entity = q1_entity(g, corner);
+        if (handled || !entity || !entity->map || !q1_alive(g, other))
+            return true;
+    }
     if (g->maps->options.path_touch) {
         bool handled = false;
-        if (!g->maps->options.path_touch(g->maps->options.context, entity->id, other, &handled,
-                                         error))
+        if (!g->maps->options.path_touch(g->maps->options.context, corner, other, &handled, error))
             return false;
-        if (handled || !q1_alive(g, entity->id) || !q1_alive(g, other))
+        entity = q1_entity(g, corner);
+        if (handled || !entity || !entity->map || !q1_alive(g, other))
             return true;
     }
     q1_actor *follower = q1_entity(g, other);
@@ -377,6 +386,10 @@ static bool path(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *e
         return true;
     qa_actor_id next = {0};
     (void)qa_targets_first(g->maps->options.targets, entity->target, &next);
+    entity = q1_entity(g, corner);
+    follower = q1_entity(g, other);
+    if (!entity || !entity->map || !follower || follower->kind != Q1_MONSTER)
+        return true;
     follower->state.monster.path = next.registry ? entity->target : QA_STRING_NONE;
     follower->physics.goal = next;
     if (!next.registry) {
@@ -388,6 +401,9 @@ static bool path(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *e
     if (!qa_world_body_read(g->services.world, other, &from, error) ||
         !qa_world_body_read(g->services.world, next, &to, error))
         return false;
+    follower = q1_entity(g, other);
+    if (!follower || follower->kind != Q1_MONSTER)
+        return true;
     qa_vec3 delta = qa_vec_sub(to.origin, from.origin);
     float yaw = atan2f(delta.y, delta.x) * (180.0f / 3.14159265358979323846f);
     follower->physics.ideal_yaw = yaw < 0 ? yaw + 360 : yaw;

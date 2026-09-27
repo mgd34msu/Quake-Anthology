@@ -80,6 +80,10 @@ typedef struct qa_q1_map_options {
      * Supply both callbacks together. */
     bool (*path_read)(void *, qa_actor_id, qa_q1_path_state *);
     bool (*path_change)(void *, qa_actor_id, const qa_q1_path_change *, qa_error *);
+    /* Cinematic control mutates the selected movement/view/weapon owners.
+     * Required when a map starts a cinematic; the map retains its own actors. */
+    bool (*control_player)(void *, qa_actor_id, qa_vec3 origin, qa_vec3 angles, qa_vec3 view_offset,
+                           qa_error *);
     bool (*finale)(void *, const qa_q1_map_finale_view *, qa_error *);
     bool (*finale_finished)(void *);
     bool (*finish_campaign)(void *, qa_error *);
@@ -100,6 +104,9 @@ bool qa_q1_game_maps_finish(qa_q1_game *, qa_error *);
 /* These adapters handle native actors only, for application owner dispatch. */
 bool qa_q1_game_path_read(const qa_q1_game *, qa_actor_id, qa_q1_path_state *);
 bool qa_q1_game_path_change(qa_q1_game *, qa_actor_id, const qa_q1_path_change *, qa_error *);
+/* Follower-owned adapter for native Rogue actors touching any authored corner. */
+bool qa_q1_game_rogue_path_touch(qa_q1_game *, qa_actor_id corner, qa_actor_id follower,
+                                 bool *handled, qa_error *);
 /* Threewave spectator door/teleporter passage, after its velocity update. */
 bool qa_q1_game_map_observer_nearby(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_game_map_after_physics(qa_q1_game *, qa_actor_id, qa_error *);

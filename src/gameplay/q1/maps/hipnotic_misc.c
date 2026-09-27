@@ -255,6 +255,8 @@ bool q1_map_hip_misc_think(qa_q1_game *g, q1_actor *entity, q1_map_action action
 bool qa_q1_game_map_after_physics(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     if (!g || !g->maps || !q1_alive(g, g->maps->world_actor) || !q1_alive(g, actor))
         return true;
+    if (g->options.program == QA_Q1_ROGUE)
+        return q1_map_rogue_ending(g, actor, error);
     if (g->maps->earthquake_end <= g->time) {
         if (!g->maps->quake_active)
             return true;
