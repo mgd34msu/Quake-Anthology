@@ -314,6 +314,8 @@ static bool clear_shot(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *err
 }
 static bool try_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *error) {
     q1_monster *m = &entity->state.monster;
+    if (m->addon.boss == Q1_BOSS_ORB)
+        return q1_orb_check_attack(g, entity, out, error);
     if (m->addon.heavy != Q1_HEAVY_NONE)
         return q1_heavy_check_attack(g, entity, out, error);
     const q1_species *spec = m->species;
@@ -591,6 +593,8 @@ bool q1_monster_ai(qa_q1_game *g, q1_actor *entity, q1_ai ai, float distance, qa
         bool seen;
         if (!q1_monster_visible(g, entity, m->enemy, &seen, error))
             return false;
+        if (m->addon.enabled && g->options.program == QA_Q1_MG3)
+            g->enemy_visible = seen;
         if (seen)
             m->search_until = g->time + 5;
         if (g->options.coop && !m->charmer.registry && m->search_until < g->time) {
@@ -599,6 +603,8 @@ bool q1_monster_ai(qa_q1_game *g, q1_actor *entity, q1_ai ai, float distance, qa
             if (found_target)
                 return true;
         }
+        if (m->addon.enabled && g->options.program == QA_Q1_MG3)
+            g->enemy_range = (uint8_t)q1_mg3_range(entity, range(g, entity, true));
         if (m->attack_state == 3) {
             bool attacking = false;
             if (seen && !try_attack(g, entity, &attacking, error))
@@ -661,6 +667,12 @@ bool q1_monster_ai(qa_q1_game *g, q1_actor *entity, q1_ai ai, float distance, qa
             if (moved)
                 return true;
             m->lefty = !m->lefty;
+            if (m->addon.boss == Q1_BOSS_ORB) {
+                m->sliding = false;
+                m->attack_state = 0;
+                m->next_frame = q1_frame_index(m->species->run);
+                return true;
+            }
             return qa_physics_walk_move(g->services.physics, entity->id, yaw + 180, distance,
                                         (float)g->elapsed, true, true, &moved, error);
         }
@@ -745,6 +757,8 @@ bool q1_monster_frame(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         m->next_frame = q1_infected_frame(m->next_frame);
     if (g->options.program == QA_Q1_MG3 && m->species->species == QA_Q1_LAVA_MAN)
         m->next_frame = q1_mg3_lavaman_frame(m->next_frame);
+    if (m->addon.boss == Q1_BOSS_SHUB_ZOMBIE)
+        m->next_frame = q1_shub_zombie_frame(m->next_frame);
     const q1_frame *frame = &q1_frames[m->next_frame];
     bool rocket_frame = m->addon.rocket_ogre && q1_rocket_ogre_override(frame->name);
     if (rocket_frame && !strcmp(frame->name, "ogre_stand5") &&
@@ -839,6 +853,11 @@ bool q1_monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec, q
             return q1_remove(g, entity, error);
     }
     q1_monster *monster = &entity->state.monster;
+    bool boss_handled;
+    if (!q1_boss_spawn(g, entity, &boss_handled, error))
+        return false;
+    if (boss_handled)
+        return true;
     monster->addon.enabled = addon;
     monster->addon.infected = infected;
     monster->addon.infection_count_pending = infected;
@@ -881,9 +900,9 @@ bool q1_monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec, q
         return false;
     state.bounds = spec->bounds;
     entity->physics.ideal_yaw = state.angles.y;
-    if (addon && !infected && !monster->addon.demodog && spec->species != QA_Q1_DEMON &&
-        spec->species != QA_Q1_OGRE && spec->species != QA_Q1_SHAMBLER &&
-        spec->species != QA_Q1_SHALRATH)
+    if (addon && !infected && !monster->addon.demodog && monster->addon.boss == Q1_BOSS_NONE &&
+        spec->species != QA_Q1_DEMON && spec->species != QA_Q1_OGRE &&
+        spec->species != QA_Q1_SHAMBLER && spec->species != QA_Q1_SHALRATH)
         state.bounds = (qa_bounds){{-16, -16, -24}, {16, 16, 40}};
     bool hanging = addon && g->options.program == QA_Q1_MG3 && (entity->spawnflags & 8388608u);
     bool crucified = spec->species == QA_Q1_ZOMBIE && ((entity->spawnflags & 1) || hanging);

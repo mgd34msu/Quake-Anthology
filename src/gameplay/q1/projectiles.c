@@ -145,6 +145,10 @@ bool q1_projectile_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
                          const qa_touch_contact *contact, qa_error *error) {
     if (entity->state.projectile.kind == Q1_DEMODOG_GRENADE)
         return q1_demodog_grenade_touch(g, entity, other, error);
+    if (entity->state.projectile.kind == Q1_ORB_ROCK)
+        return q1_orb_rock_touch(g, entity, other, error);
+    if (entity->state.projectile.kind == Q1_SHUB_GRENADE)
+        return q1_shub_grenade_touch(g, entity, other, error);
     if (entity->state.projectile.kind == Q1_HEAVY_SPIKE)
         return q1_heavy_spike_touch(g, entity, other, error);
     if (entity->state.projectile.kind == Q1_MG3_LAVAMAN_BALL)

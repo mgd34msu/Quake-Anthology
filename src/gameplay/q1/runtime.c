@@ -502,6 +502,10 @@ bool q1_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     case Q1_THINK_MONSTER_FOUND:
         return !entity->state.monster.enemy.registry ||
                q1_monster_found(g, entity, entity->state.monster.enemy, error);
+    case Q1_THINK_GHOST_BUBBLES:
+        return q1_ghost_bubbles(g, entity, error);
+    case Q1_THINK_HOMING_FLAME:
+        return q1_homing_flame_think(g, entity, error);
     case Q1_THINK_DEATH_BUBBLES:
         return q1_character_bubbles(g, entity, error);
     case Q1_THINK_BUBBLE:
@@ -748,7 +752,9 @@ bool qa_q1_game_spawn(qa_q1_game *g, const qa_q1_spawn *spawn, qa_actor_id *out,
         *out = q1_alive(g, actor) ? actor : (qa_actor_id){0};
         return true;
     }
-    if (!strcmp(spawn->classname, "dragon_corner")) {
+    if (!strcmp(spawn->classname, "info_szombie_spawn")) {
+        entity->wait = -1;
+    } else if (!strcmp(spawn->classname, "dragon_corner")) {
         if (!spawn->targetname || !*spawn->targetname) {
             qa_error_set(error, QA_ERROR_FORMAT, actor.slot, "dragon_corner: no targetname");
             goto fail;

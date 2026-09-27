@@ -32,12 +32,22 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
                      qa_error *error) {
     q1_monster *m = &entity->state.monster;
     qa_q1_species species = m->species->species;
+    if (m->addon.boss == Q1_BOSS_GHOST)
+        return true;
     if (m->addon.infected && m->addon.corpse && !m->addon.risen)
         return true;
     if ((entity->physics.flags & QA_PHYSICS_MONSTER) && !retaliate(g, entity, attacker, error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;
+    if (m->addon.boss == Q1_BOSS_ORB) {
+        if (m->pain_finished > g->time || q1_random(g) * 200 > damage)
+            return true;
+        if (!q1_sound(g, entity->id, "orb/orb_pain.wav", 2, 1, error))
+            return false;
+        m->pain_finished = g->time + 8;
+        return !q1_alive(g, entity->id) || q1_monster_play(g, entity, "orb_pain1", error);
+    }
     if (m->addon.heavy != Q1_HEAVY_NONE)
         return q1_heavy_pain(g, entity, attacker, damage, error);
     if (species == QA_Q1_GREMLIN)
@@ -302,6 +312,8 @@ static bool gib_monster(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 bool q1_monster_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_error *error) {
     q1_monster *m = &entity->state.monster;
     const q1_species *spec = m->species;
+    if (m->addon.boss != Q1_BOSS_NONE)
+        return q1_boss_die(g, entity, attacker, error);
     if (m->charmer.registry)
         entity->effects &= ~8u;
     if (m->counted_death)

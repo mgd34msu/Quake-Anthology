@@ -97,7 +97,10 @@ def main():
                donor / "missionpacks/monsters/tables/hipgrem.ts",
                donor / "addons/monsters/heavy/tables/mg3_super_shambler.ts",
                donor / "addons/monsters/heavy/tables/mg3_rknight.ts",
-               donor / "addons/monsters/heavy/tables/mg3_lavaman.ts"]
+               donor / "addons/monsters/heavy/tables/mg3_lavaman.ts",
+               donor / "addons/monsters/bosses/frames/ghost.ts",
+               donor / "addons/monsters/bosses/frames/orb.ts",
+               donor / "addons/monsters/bosses/frames/szombie.ts"]
     rows = []
     for source in sources:
         for line in source.read_text().splitlines():
@@ -176,6 +179,11 @@ def main():
     pairs = [(indices[name[4:]], indices[name]) for name in indices
              if name.startswith("mg3_lavaman_") and name[4:] in indices]
     output.extend(["uint16_t q1_mg3_lavaman_frame(uint16_t frame) {", "    switch (frame) {"])
+    output.extend(f"    case {source}: return {target};" for source, target in pairs)
+    output.extend(["    default: return frame;", "    }", "}", ""])
+    pairs = [(indices["zombie_"+name[8:]], indices[name]) for name in indices
+             if name.startswith("szombie_") and "zombie_"+name[8:] in indices]
+    output.extend(["uint16_t q1_shub_zombie_frame(uint16_t frame) {", "    switch (frame) {"])
     output.extend(f"    case {source}: return {target};" for source, target in pairs)
     output.extend(["    default: return frame;", "    }", "}", ""])
     destination.write_text("\n".join(output))

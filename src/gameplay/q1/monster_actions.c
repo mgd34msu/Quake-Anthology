@@ -60,6 +60,8 @@ static bool jump(qa_q1_game *g, q1_actor *entity, bool tar, bool dog, qa_error *
            q1_link(g, entity, error);
 }
 bool q1_monster_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *error) {
+    if (entity->state.monster.addon.boss != Q1_BOSS_NONE)
+        return q1_boss_touch(g, entity, other, error);
     if (entity->state.monster.addon.demodog)
         return q1_demodog_touch(g, entity, other, error);
     if (entity->state.monster.species->species == QA_Q1_GREMLIN)
@@ -235,6 +237,8 @@ static bool boss_missile(qa_q1_game *g, q1_actor *entity, float side, qa_error *
 }
 
 bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, qa_error *error) {
+    if (entity->state.monster.addon.boss != Q1_BOSS_NONE)
+        return q1_boss_action(g, entity, action, error);
     if (entity->state.monster.addon.heavy != Q1_HEAVY_NONE)
         return q1_heavy_action(g, entity, action, error);
     switch (action) {

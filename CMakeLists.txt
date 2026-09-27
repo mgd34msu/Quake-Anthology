@@ -192,6 +192,7 @@ add_library(qa_builtin STATIC
 target_link_libraries(qa_builtin PUBLIC qa_session qa_gameplay qa_movement)
 
 add_library(qa_game_q1 STATIC
+    src/gameplay/q1/boss_small.c
     src/gameplay/q1/addon_monsters.c
     src/gameplay/q1/armagon.c
     src/gameplay/q1/character.c
