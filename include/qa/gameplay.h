@@ -133,11 +133,6 @@ typedef struct qa_combat_binding {
     bool has_primary_protection[2];
     qa_actor_owner primary_protection[2];
 } qa_combat_binding;
-typedef struct qa_power_cells_binding {
-    void *context;
-    bool (*read)(void *, float *, qa_error *);
-    bool (*write)(void *, float, qa_error *);
-} qa_power_cells_binding;
 typedef enum qa_damage_effect_stage {
     QA_DAMAGE_BEFORE_QUAD, QA_DAMAGE_AFTER_QUAD, QA_DAMAGE_ARMOR_ALLOWED,
     QA_DAMAGE_PROTECTION_APPLIES, QA_DAMAGE_BEFORE_HEALTH, QA_DAMAGE_AFTER_ARMOR,
@@ -226,7 +221,12 @@ bool qa_combat_create_actor(qa_combat *, qa_actor_id, const qa_combat_state *, q
 bool qa_combat_bind(qa_combat *, qa_actor_id, const qa_combat_binding *, bool replace, qa_error *);
 /* The fuel owner is usually inventory. Effective armor reads it directly;
  * binding it does not create another spendable reservoir. */
-bool qa_combat_bind_power_cells(qa_combat *, qa_actor_id, const qa_power_cells_binding *, qa_error *);
+/* One canonical reservoir per actor. Repeating the same inventory/item pair
+ * is idempotent across providers; inventory must outlive combat. Component
+ * removal closes its inventory leases without detaching this shared fuel. */
+bool qa_combat_bind_power_inventory(qa_combat *, qa_actor_id, qa_inventory *, qa_item_id, qa_error *);
+/* Read-only checkpoint/composition query; false means no reservoir. */
+bool qa_combat_power_inventory(qa_combat *, qa_actor_id, qa_inventory **, qa_item_id *);
 bool qa_combat_read(qa_combat *, qa_actor_id, qa_combat_state *, qa_error *);
 /* Uncomposed primary state for editing traits. Unlike effective read, this
  * cannot copy another provider's temporary protection into primary godmode. */

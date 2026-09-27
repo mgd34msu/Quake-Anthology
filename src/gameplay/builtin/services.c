@@ -1,4 +1,6 @@
 #include "qa/builtin.h"
+#include <stdlib.h>
+#include <string.h>
 
 bool qa_builtin_services_validate(const qa_builtin_services *s, qa_error *error) {
     if (!s || !s->session || !s->world || !s->combat || !s->inventory || !s->emit ||
@@ -46,6 +48,135 @@ bool qa_builtin_emit(const qa_builtin_services *s, const qa_builtin_event *event
 bool qa_builtin_resource(const qa_builtin_services *s, const char *path, qa_string_id *out,
                          qa_error *error) {
     return qa_strings_intern_cstr(qa_session_strings(s->session), path, out, error);
+}
+
+bool qa_builtin_snapshot_reserve(qa_builtin_actor_snapshot *snapshot, size_t capacity,
+                                 qa_error *error) {
+    if (!snapshot || capacity > SIZE_MAX / (2 * sizeof(qa_actor_id))) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid native actor snapshot capacity");
+        return false;
+    }
+    if (capacity <= snapshot->capacity)
+        return true;
+    qa_actor_id *ids = malloc(2 * capacity * sizeof(*ids));
+    if (!ids) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot reserve native actor snapshot");
+        return false;
+    }
+    if (snapshot->count)
+        memcpy(ids, snapshot->ids, snapshot->count * sizeof(*ids));
+    free(snapshot->ids);
+    snapshot->ids = ids;
+    snapshot->sort = ids + capacity;
+    snapshot->capacity = capacity;
+    return true;
+}
+void qa_builtin_snapshot_free(qa_builtin_actor_snapshot *snapshot) {
+    if (!snapshot)
+        return;
+    free(snapshot->ids);
+    *snapshot = (qa_builtin_actor_snapshot){0};
+}
+int qa_builtin_source_order(const qa_builtin_services *s, qa_actor_id a, qa_actor_id b) {
+    if (s->physics && s->physics->services.source_order)
+        return s->physics->services.source_order(s->physics->services.context, a, b);
+    const qa_actor_registry *actors = qa_session_actors(s->session);
+    const qa_actor_record *left = qa_actors_get(actors, a), *right = qa_actors_get(actors, b);
+    uint32_t first = left && left->has_source ? left->source_slot : a.slot;
+    uint32_t second = right && right->has_source ? right->source_slot : b.slot;
+    if (first != second)
+        return first < second ? -1 : 1;
+    if (left && right && left->owner != right->owner)
+        return left->owner < right->owner ? -1 : 1;
+    return a.slot < b.slot ? -1 : a.slot > b.slot;
+}
+static void sort_snapshot(const qa_builtin_services *s, qa_builtin_actor_snapshot *snapshot) {
+    size_t count = snapshot->count;
+    qa_actor_id *ids = snapshot->ids, *temporary = snapshot->sort;
+    for (size_t width = 1; width < count; width *= 2) {
+        for (size_t start = 0; start < count; start += 2 * width) {
+            size_t middle = start + width < count ? start + width : count;
+            size_t end = middle + width < count ? middle + width : count;
+            size_t left = start, right = middle, target = start;
+            while (left < middle && right < end)
+                temporary[target++] = qa_builtin_source_order(s, ids[left], ids[right]) <= 0
+                                          ? ids[left++] : ids[right++];
+            while (left < middle)
+                temporary[target++] = ids[left++];
+            while (right < end)
+                temporary[target++] = ids[right++];
+        }
+        memcpy(ids, temporary, count * sizeof(*ids));
+    }
+}
+bool qa_builtin_observations(const qa_builtin_services *s, qa_builtin_actor_snapshot *snapshot,
+                             qa_error *error) {
+    if (!s || !s->session || !snapshot) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid native actor observation query");
+        return false;
+    }
+    const qa_actor_registry *actors = qa_session_actors(s->session);
+    if (!qa_builtin_snapshot_reserve(snapshot, qa_actors_capacity(actors), error))
+        return false;
+    snapshot->count = 0;
+    const qa_actor_record *record;
+    uint32_t cursor = 0;
+    while (qa_actors_next(actors, &cursor, &record))
+        snapshot->ids[snapshot->count++] = record->id;
+    return true;
+}
+bool qa_builtin_nearby(const qa_builtin_services *s, qa_vec3 origin, float radius,
+                       qa_builtin_actor_snapshot *snapshot, qa_error *error) {
+    if (!s || !s->session || !s->world || !snapshot || !qa_vec_finite(origin) ||
+        !isfinite(radius) || radius < 0) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid native nearby query");
+        return false;
+    }
+    if (!qa_builtin_observations(s, snapshot, error))
+        return false;
+    const qa_actor_registry *actors = qa_session_actors(s->session);
+    size_t total = snapshot->count, accepted = 0;
+    for (size_t i = 0; i < total; ++i) {
+        qa_actor_id id = snapshot->ids[i];
+        if (!qa_actors_get(actors, id))
+            continue;
+        qa_body_state body;
+        qa_error read_error = {0};
+        if (!qa_world_body_read(s->world, id, &body, &read_error)) {
+            if (read_error.code == QA_ERROR_NOT_FOUND)
+                continue;
+            if (error)
+                *error = read_error;
+            snapshot->count = 0;
+            return false;
+        }
+        if (qa_vec_length(qa_vec_sub(body.origin, origin)) <= radius)
+            snapshot->ids[accepted++] = id;
+    }
+    snapshot->count = accepted;
+    sort_snapshot(s, snapshot);
+    return true;
+}
+bool qa_builtin_players(const qa_builtin_services *s, qa_builtin_actor_snapshot *snapshot,
+                        qa_error *error) {
+    if (!s || !s->session || !s->players || !snapshot) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "native gameplay needs the ordered client roster");
+        return false;
+    }
+    if (!qa_builtin_snapshot_reserve(snapshot, qa_actors_capacity(qa_session_actors(s->session)), error))
+        return false;
+    snapshot->count = 0;
+    size_t count = 0;
+    if (!s->players(s->context, snapshot->ids, snapshot->capacity, &count, error))
+        return false;
+    if (count > snapshot->capacity) {
+        qa_error_set(error, QA_ERROR_FORMAT, count, "native player roster exceeds actor capacity");
+        return false;
+    }
+    for (size_t i = 0; i < count; ++i)
+        if (qa_actors_get(qa_session_actors(s->session), snapshot->ids[i]))
+            snapshot->ids[snapshot->count++] = snapshot->ids[i];
+    return true;
 }
 
 void qa_builtin_angle_vectors(qa_vec3 angles, qa_vec3 *forward, qa_vec3 *right, qa_vec3 *up) {

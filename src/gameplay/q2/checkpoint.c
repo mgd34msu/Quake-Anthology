@@ -1,0 +1,277 @@
+#include "internal.h"
+
+static bool reference(qa_q2_game *g, qa_actor_id id, qa_q2_saved_reference *out, qa_error *e) {
+    *out = (qa_q2_saved_reference){0};
+    if (id.registry == 0)
+        return true;
+    if (!qa_actors_save_reference(qa_session_actors(g->services.session), id, &out->actor, e))
+        return false;
+    out->present = true;
+    return true;
+}
+static bool resolve(qa_q2_game *g, qa_q2_saved_reference ref, qa_actor_id *out, qa_error *e) {
+    *out = (qa_actor_id){0};
+    if (!ref.present)
+        return true;
+    const qa_actor_record *record =
+        qa_actors_resolve_saved(qa_session_actors(g->services.session), ref.actor);
+    if (record == NULL)
+        return qa_actors_reference_saved(qa_session_actors(g->services.session), ref.actor, true,
+                                         out, e);
+    *out = record->id;
+    return true;
+}
+static bool idle(qa_q2_game *g, qa_error *e) {
+    if (g->current_actor.registry != 0) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 checkpoint requires a completed actor turn");
+        return false;
+    }
+    if (g->hand_steps != 0) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 checkpoint requires a completed hand action");
+        return false;
+    }
+    for (q2_trace_frame *frame = g->trace_frames; frame != NULL; frame = frame->next)
+        if (frame->active) {
+            qa_error_set(e, QA_ERROR_ARGUMENT, 0,
+                         "Q2 checkpoint requires a gameplay callback boundary");
+            return false;
+        }
+    return true;
+}
+bool qa_q2_runtime_capture(qa_q2_game *g, qa_q2_runtime_checkpoint *out, qa_error *e) {
+    if (g == NULL || out == NULL || !idle(g, e))
+        return false;
+    *out = (qa_q2_runtime_checkpoint){.version = 1,
+                                      .edition = g->options.edition,
+                                      .product = g->options.product,
+                                      .random = g->random,
+                                      .rerelease_index = g->rerelease_random.index,
+                                      .rerelease_draws = g->rerelease_random.draws,
+                                      .sequence = g->sequence,
+                                      .actor_sequence = g->actor_sequence,
+                                      .now_ns = g->now_ns,
+                                      .frame_ns = g->frame_ns,
+                                      .grapple_options = g->grapple_options,
+                                      .lmctf_plasma_quad = g->lmctf_plasma_quad};
+    for (size_t i = 0; i < 624; ++i)
+        out->rerelease_words[i] = g->rerelease_random.words[i];
+    return true;
+}
+bool qa_q2_runtime_restore(qa_q2_game *g, const qa_q2_runtime_checkpoint *state, qa_error *e) {
+    if (g == NULL || state == NULL || state->version != 1 || state->edition != g->options.edition ||
+        state->product != g->options.product || state->random.front >= 31 ||
+        state->random.rear >= 31 || state->rerelease_index > 624 || state->frame_ns == 0) {
+        qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid Q2 runtime checkpoint");
+        return false;
+    }
+    if (!idle(g, e) || !qa_q2_grapple_configure(g, &state->grapple_options, e))
+        return false;
+    g->random = state->random;
+    g->rerelease_random.index = state->rerelease_index;
+    g->rerelease_random.draws = state->rerelease_draws;
+    for (size_t i = 0; i < 624; ++i)
+        g->rerelease_random.words[i] = state->rerelease_words[i];
+    g->sequence = state->sequence;
+    g->actor_sequence = state->actor_sequence;
+    g->now_ns = state->now_ns;
+    g->frame_ns = state->frame_ns;
+    g->lmctf_plasma_quad = state->lmctf_plasma_quad;
+    return true;
+}
+bool qa_q2_actor_capture(qa_q2_game *g, qa_actor_id id, qa_q2_actor_checkpoint *out, qa_error *e) {
+    if (g == NULL || out == NULL || !idle(g, e))
+        return false;
+    q2_actor *a = q2_actor_get(g, id, false, e);
+    if (a == NULL)
+        return false;
+    const q2_projectile *p = &a->projectile;
+    qa_q2_actor_checkpoint snapshot = {.version = 1,
+                                       .source_order = a->source_order,
+                                       .extra_effects = a->extra_effects,
+                                       .weapon_bound = a->weapon_bound,
+                                       .physics_bound = a->physics_bound,
+                                       .weapon = a->weapon,
+                                       .input = a->input,
+                                       .silencer = a->silencer,
+                                       .physics = a->physics,
+                                       .projectile = {.kind = (uint32_t)p->kind,
+                                                      .attack = p->attack,
+                                                      .movedir = p->movedir,
+                                                      .damage = p->damage,
+                                                      .kick = p->kick,
+                                                      .radius_damage = p->radius_damage,
+                                                      .radius = p->radius,
+                                                      .gravity = p->gravity,
+                                                      .speed = p->speed,
+                                                      .delay = p->delay,
+                                                      .captured_mass = p->captured_mass,
+                                                      .turn_fraction = p->turn_fraction,
+                                                      .born_ns = p->born_ns,
+                                                      .expire_ns = p->expire_ns,
+                                                      .next_ns = p->next_ns,
+                                                      .effect_ns = p->effect_ns,
+                                                      .effects = p->effects,
+                                                      .render_flags = p->render_flags,
+                                                      .gib_flags = p->gib_flags,
+                                                      .classname = p->classname,
+                                                      .model = p->model,
+                                                      .loop_sound = p->loop_sound,
+                                                      .direct_mod = p->direct_mod,
+                                                      .splash_mod = p->splash_mod,
+                                                      .frame = p->frame,
+                                                      .phase = p->phase,
+                                                      .wait = p->wait,
+                                                      .skin = p->skin,
+                                                      .scale = p->scale,
+                                                      .hand = p->hand,
+                                                      .held = p->held,
+                                                      .armed = p->armed,
+                                                      .visible = p->visible,
+                                                      .gekk = p->gekk,
+                                                      .dodgeable = p->dodgeable}};
+    qa_q2_projectile_checkpoint *saved = &snapshot.projectile;
+    if (!reference(g, p->attack.attacker, &saved->attacker, e) ||
+        !reference(g, p->attack.inflictor, &saved->inflictor, e) ||
+        !reference(g, p->attack.projectile, &saved->projectile, e) ||
+        !reference(g, p->owner, &saved->owner, e) || !reference(g, p->enemy, &saved->enemy, e) ||
+        !reference(g, p->child, &saved->child, e) ||
+        !reference(g, a->physics.enemy, &snapshot.physics_enemy, e) ||
+        !reference(g, a->physics.goal, &snapshot.physics_goal, e))
+        return false;
+    saved->attack.attacker = saved->attack.inflictor = saved->attack.projectile = (qa_actor_id){0};
+    snapshot.physics.enemy = snapshot.physics.goal = (qa_actor_id){0};
+    for (unsigned i = 0; i < 2; ++i) {
+        snapshot.grapples[i] = a->grapples[i];
+        if (!reference(g, a->grapples[i].hook, &snapshot.grapple_hooks[i], e))
+            return false;
+        snapshot.grapples[i].hook = (qa_actor_id){0};
+    }
+    snapshot.hand_grenade_bound = a->hand_grenade_bound;
+    snapshot.hand_grenade = a->hand_grenade;
+    snapshot.lmctf_plasma_bounce = a->lmctf_plasma_bounce;
+    *out = snapshot;
+    return true;
+}
+static bool valid_resource(qa_q2_game *g, qa_string_id id) {
+    return id == 0 || qa_strings_cstr(qa_session_strings(g->services.session), id) != NULL;
+}
+bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkpoint *s,
+                         qa_error *e) {
+    if (g == NULL || s == NULL || s->version != 1 || s->source_order == 0 || s->silencer < 0 ||
+        !qa_vec_finite(s->input.angles) || !isfinite(s->input.gravity) ||
+        !isfinite(s->input.view_height) || (unsigned)s->input.hand > QA_Q2_CENTER_HAND ||
+        (unsigned)s->input.source_rules > QA_Q2_WEAPON_RULES_LMCTF ||
+        (unsigned)s->physics.motion > QA_PHYSICS_STEP ||
+        (unsigned)s->physics.solid > QA_PHYSICS_CORPSE ||
+        !qa_vec_finite(s->physics.angular_velocity) ||
+        !qa_vec_finite(s->physics.gravity_direction) || !isfinite(s->physics.gravity_scale) ||
+        !isfinite(s->physics.delta_yaw) || !isfinite(s->physics.ideal_yaw) ||
+        !isfinite(s->physics.yaw_speed) || s->physics.enemy.registry != 0 ||
+        s->physics.goal.registry != 0) {
+        qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid Q2 actor checkpoint");
+        return false;
+    }
+    const qa_q2_projectile_checkpoint *p = &s->projectile;
+    if (p->kind > Q2_LMCTF_PLASMA_BOUNCE || !qa_vec_finite(p->movedir) || !isfinite(p->damage) ||
+        !isfinite(p->kick) || !isfinite(p->radius_damage) || !isfinite(p->radius) ||
+        p->radius < 0 || !isfinite(p->gravity) || !isfinite(p->speed) || p->speed < 0 ||
+        !isfinite(p->delay) || !isfinite(p->captured_mass) || !isfinite(p->turn_fraction) ||
+        !isfinite(p->scale) || p->scale < 0 || !valid_resource(g, p->classname) ||
+        !valid_resource(g, p->model) || !valid_resource(g, p->loop_sound) ||
+        !valid_resource(g, s->weapon.loop_sound) || !valid_resource(g, s->weapon.view_model) ||
+        p->attack.attacker.registry != 0 || p->attack.inflictor.registry != 0 ||
+        p->attack.projectile.registry != 0) {
+        qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid Q2 projectile checkpoint");
+        return false;
+    }
+    if (!idle(g, e))
+        return false;
+    q2_projectile restored = {.kind = (q2_projectile_kind)p->kind,
+                              .attack = p->attack,
+                              .movedir = p->movedir,
+                              .damage = p->damage,
+                              .kick = p->kick,
+                              .radius_damage = p->radius_damage,
+                              .radius = p->radius,
+                              .gravity = p->gravity,
+                              .speed = p->speed,
+                              .delay = p->delay,
+                              .captured_mass = p->captured_mass,
+                              .turn_fraction = p->turn_fraction,
+                              .born_ns = p->born_ns,
+                              .expire_ns = p->expire_ns,
+                              .next_ns = p->next_ns,
+                              .effect_ns = p->effect_ns,
+                              .effects = p->effects,
+                              .render_flags = p->render_flags,
+                              .gib_flags = p->gib_flags,
+                              .classname = p->classname,
+                              .model = p->model,
+                              .loop_sound = p->loop_sound,
+                              .direct_mod = p->direct_mod,
+                              .splash_mod = p->splash_mod,
+                              .frame = p->frame,
+                              .phase = p->phase,
+                              .wait = p->wait,
+                              .skin = p->skin,
+                              .scale = p->scale,
+                              .hand = p->hand,
+                              .held = p->held,
+                              .armed = p->armed,
+                              .visible = p->visible,
+                              .gekk = p->gekk,
+                              .dodgeable = p->dodgeable};
+    qa_physics_properties physics = s->physics;
+    if (!resolve(g, p->attacker, &restored.attack.attacker, e) ||
+        !resolve(g, p->inflictor, &restored.attack.inflictor, e) ||
+        !resolve(g, p->projectile, &restored.attack.projectile, e) ||
+        !resolve(g, p->owner, &restored.owner, e) || !resolve(g, p->enemy, &restored.enemy, e) ||
+        !resolve(g, p->child, &restored.child, e) ||
+        !resolve(g, s->physics_enemy, &physics.enemy, e) ||
+        !resolve(g, s->physics_goal, &physics.goal, e))
+        return false;
+    qa_q2_grapple_state grapples[2];
+    for (unsigned i = 0; i < 2; ++i) {
+        grapples[i] = s->grapples[i];
+        if ((unsigned)grapples[i].phase > QA_Q2_GRAPPLE_HANG || grapples[i].hook.registry != 0 ||
+            grapples[i].hook_state < 0 || grapples[i].hook_state > 2 ||
+            grapples[i].hook_length < 0 ||
+            (grapples[i].equipment_bound &&
+             (grapples[i].equipment.weapon !=
+                  (i == QA_Q2_CTF_GRAPPLE ? QA_Q2_GRAPPLE : QA_Q2_LMCTF_HOOK) ||
+              !valid_resource(g, grapples[i].equipment.loop_sound) ||
+              !valid_resource(g, grapples[i].equipment.view_model)))) {
+            qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid Q2 grapple checkpoint");
+            return false;
+        }
+        if ((grapples[i].equipment_bound && !q2_weapon_validate(g, &grapples[i].equipment, e)) ||
+            !resolve(g, s->grapple_hooks[i], &grapples[i].hook, e))
+            return false;
+    }
+    if (s->weapon_bound && !q2_weapon_validate(g, &s->weapon, e))
+        return false;
+    if (s->hand_grenade_bound) {
+        qa_inventory_entry ammo;
+        if (!q2_hand_validate(&s->hand_grenade, e) ||
+            !qa_inventory_entry_read(g->services.inventory, id, g->ammo[QA_Q2_GRENADES], &ammo, e))
+            return false;
+    }
+    q2_actor *a = q2_actor_get(g, id, true, e);
+    if (a == NULL)
+        return false;
+    a->weapon_bound = s->weapon_bound;
+    a->weapon = s->weapon;
+    a->input = s->input;
+    a->silencer = s->silencer;
+    a->physics_bound = s->physics_bound;
+    a->physics = physics;
+    a->projectile = restored;
+    for (unsigned i = 0; i < 2; ++i)
+        a->grapples[i] = grapples[i];
+    a->hand_grenade_bound = s->hand_grenade_bound;
+    a->hand_grenade = s->hand_grenade;
+    a->extra_effects = s->extra_effects;
+    a->lmctf_plasma_bounce = s->lmctf_plasma_bounce;
+    q2_actor_order(g, a, s->source_order);
+    return true;
+}

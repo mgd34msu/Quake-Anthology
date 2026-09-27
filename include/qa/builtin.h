@@ -100,6 +100,9 @@ typedef struct qa_builtin_services {
                         qa_string_id killtarget, float delay, qa_error *);
     bool (*cvar)(void *, qa_string_id name, float *value, qa_error *);
     bool (*actor_traits)(void *, qa_actor_id, qa_builtin_actor_traits *);
+    /* Read-only roster query in client order, including selected foreign
+     * characters. The caller owns the output storage; never retain its pointer. */
+    bool (*players)(void *, qa_actor_id *, size_t capacity, size_t *count, qa_error *);
     /* Body storage is already committed. The selected movement owner updates
      * its continuation and command-angle delta before subsequent commands. */
     bool (*motion_changed)(void *, qa_actor_id, const qa_builtin_motion_change *, qa_error *);
@@ -129,6 +132,22 @@ bool qa_builtin_spawn_actor(const qa_builtin_services *, const qa_builtin_spawn 
                             qa_error *);
 bool qa_builtin_emit(const qa_builtin_services *, const qa_builtin_event *, qa_error *);
 bool qa_builtin_resource(const qa_builtin_services *, const char *, qa_string_id *, qa_error *);
+/* Zero-initialize once, reuse between calls, and free at owner teardown. Each
+ * nested gameplay query needs its own retained snapshot. IDs are observations;
+ * recheck their generations after callbacks before using live actor state. */
+typedef struct qa_builtin_actor_snapshot {
+    qa_actor_id *ids, *sort;
+    size_t count, capacity;
+} qa_builtin_actor_snapshot;
+bool qa_builtin_snapshot_reserve(qa_builtin_actor_snapshot *, size_t, qa_error *);
+void qa_builtin_snapshot_free(qa_builtin_actor_snapshot *);
+/* Nearby includes bodies without collision membership and measures origins,
+ * then sorts using physics.source_order. Players preserves client order. */
+bool qa_builtin_nearby(const qa_builtin_services *, qa_vec3 origin, float radius,
+                       qa_builtin_actor_snapshot *, qa_error *);
+bool qa_builtin_observations(const qa_builtin_services *, qa_builtin_actor_snapshot *, qa_error *);
+bool qa_builtin_players(const qa_builtin_services *, qa_builtin_actor_snapshot *, qa_error *);
+int qa_builtin_source_order(const qa_builtin_services *, qa_actor_id, qa_actor_id);
 /* Update authoritative body fields only; each source retains its own trace and
  * link timing, so a trajectory update does not publish a premature link. */
 bool qa_builtin_launch_projectile(const qa_builtin_services *, const qa_builtin_weapon_launch *,
@@ -169,9 +188,12 @@ typedef struct qa_builtin_radius {
     /* Original families test four horizontal offsets. Eight-corner visibility
      * is available for selected mod policies that explicitly request it. */
     bool check_visibility, corner_visibility;
-    /* Optional source-ordered snapshot from qa_world_query. When supplied,
+    /* Optional caller-owned actor snapshot. When supplied,
      * only these candidates are considered, with generations rechecked. */
     bool has_candidates;
+    /* Candidates already passed the source radius test (for example Q2 uses
+     * origins for admission but centers for falloff). Do not test it twice. */
+    bool candidate_radius_only;
     const qa_actor_id *candidates;
     size_t candidate_count;
     void *context;

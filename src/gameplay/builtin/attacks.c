@@ -135,7 +135,8 @@ bool qa_builtin_radius_damage(const qa_builtin_services *s, const qa_builtin_rad
         radius->radius < 0 || !isfinite(radius->damage) || !isfinite(radius->distance_scale) ||
         !isfinite(radius->self_scale) || !isfinite(radius->knockback_scale) ||
         !isfinite(radius->direction_z_bias) ||
-        (radius->has_candidates && radius->candidate_count && !radius->candidates)) {
+        (radius->has_candidates && radius->candidate_count && !radius->candidates) ||
+        (radius->candidate_radius_only && !radius->has_candidates)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid native radius attack");
         return false;
     }
@@ -172,7 +173,7 @@ bool qa_builtin_radius_damage(const qa_builtin_services *s, const qa_builtin_rad
             radius->distance == QA_RADIUS_BOUNDS
                 ? distance_to_bounds(radius->origin, qa_bounds_translate(body.bounds, body.origin))
                 : qa_vec_length(qa_vec_sub(center, radius->origin));
-        if (distance > radius->radius)
+        if (!radius->candidate_radius_only && distance > radius->radius)
             continue;
         float amount = radius->damage - radius->distance_scale * distance;
         if (qa_actor_id_equal(actor, radius->attack.attacker))

@@ -1,4 +1,5 @@
 #include "combat_internal.h"
+#include "qa/inventory.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -26,6 +27,34 @@ static bool state_valid(const qa_combat_state *state, qa_error *error) {
         ? qa_armor_validate(&state->armor, error) : qa_combat_argument(error, "invalid combat state");
 }
 static qa_combat_cursor *cursor_for(qa_combat *, qa_actor_id);
+static bool fuel_entry(qa_combat *combat, qa_combat_record *entry, qa_inventory_entry *out,
+                        qa_error *error) {
+    qa_actor_id actor = entry->actor;
+    uint64_t serial = entry->serial;
+    ++combat->active_calls;
+    bool ok = qa_inventory_entry_read(entry->power_inventory, actor, entry->power_item, out, error);
+    --combat->active_calls;
+    if (!ok) return false;
+    if (record(combat, actor) != entry || entry->serial != serial)
+        return qa_combat_argument(error, "combat owner changed during power fuel read");
+    if (!isfinite((float)out->count))
+        return qa_combat_argument(error, "power fuel exceeds its float representation");
+    return true;
+}
+static bool fuel_write(qa_combat *combat, qa_combat_record *entry, float count, qa_error *error) {
+    qa_inventory_entry fuel;
+    if (!fuel_entry(combat, entry, &fuel, error)) return false;
+    if (fuel.count == count) return true;
+    qa_actor_id actor = entry->actor;
+    uint64_t serial = entry->serial;
+    fuel.count = count;
+    ++combat->active_calls;
+    bool ok = qa_inventory_configure(entry->power_inventory, actor, &fuel, NULL, NULL, error);
+    --combat->active_calls;
+    if (!ok) return false;
+    return (record(combat, actor) == entry && entry->serial == serial) ||
+           qa_combat_argument(error, "combat owner changed during power fuel write");
+}
 static bool primary_read(qa_combat *combat, qa_combat_record *entry, qa_combat_state *out, qa_error *error) {
     qa_actor_id actor = entry->actor; uint64_t serial = entry->serial;
     bool ok = true;
@@ -40,13 +69,10 @@ static bool primary_read(qa_combat *combat, qa_combat_record *entry, qa_combat_s
 static bool read_state(qa_combat *combat, qa_combat_record *entry, qa_combat_state *out, qa_error *error) {
     qa_actor_id actor = entry->actor; uint64_t serial = entry->serial;
     if (!primary_read(combat, entry, out, error)) return false;
-    if (entry->has_power_cells && !entry->protection[QA_PROTECTION_POWERED].reserved && out->armor.powered.kind != QA_POWER_NONE) {
-        qa_power_cells_binding binding = entry->power_cells;
-        ++combat->active_calls;
-        bool ok = binding.read(binding.context, &out->armor.powered.cells, error);
-        --combat->active_calls;
-        if (!ok) return false;
-        if (record(combat, actor) != entry || entry->serial != serial) return qa_combat_argument(error, "power fuel owner changed during read");
+    if (entry->power_inventory && !entry->protection[QA_PROTECTION_POWERED].reserved && out->armor.powered.kind != QA_POWER_NONE) {
+        qa_inventory_entry fuel;
+        if (!fuel_entry(combat, entry, &fuel, error)) return false;
+        out->armor.powered.cells = (float)fuel.count;
     }
     for (unsigned channel = 0; channel != 2; ++channel) {
         qa_combat_protection *slot = &entry->protection[channel];
@@ -91,14 +117,10 @@ bool qa_combat_primary_read(qa_combat *combat, qa_actor_id actor, qa_combat_stat
     qa_combat_record *entry; qa_combat_state state;
     if (!out || !local || !qa_combat_idle(combat)) return qa_combat_argument(error, "checkpoint requires idle combat");
     if (!require_record(combat, actor, &entry, error) || !primary_read(combat, entry, &state, error)) return false;
-    uint64_t serial = entry->serial;
-    if (entry->has_power_cells && state.armor.powered.kind != QA_POWER_NONE) {
-        qa_power_cells_binding binding = entry->power_cells;
-        ++combat->active_calls;
-        bool ok = binding.read(binding.context, &state.armor.powered.cells, error);
-        --combat->active_calls;
-        if (!ok) return false;
-        if (record(combat, actor) != entry || entry->serial != serial) return qa_combat_argument(error, "primary combat retired during checkpoint read");
+    if (entry->power_inventory && state.armor.powered.kind != QA_POWER_NONE) {
+        qa_inventory_entry fuel;
+        if (!fuel_entry(combat, entry, &fuel, error)) return false;
+        state.armor.powered.cells = (float)fuel.count;
     }
     if (!state_valid(&state, error)) return false;
     *out = state; *local = !entry->external; return true;
@@ -172,6 +194,7 @@ bool qa_combat_bind(qa_combat *combat, qa_actor_id actor, const qa_combat_bindin
         return qa_combat_argument(error, "invalid combat binding");
     qa_combat_record *entry = &combat->records[actor.slot];
     if (cursor_for(combat, actor)) return qa_combat_argument(error, "cannot replace a live damage binding");
+    if (entry->power_admitting) return qa_combat_argument(error, "cannot replace combat during power fuel admission");
     if (record(combat, actor) && !replace) return qa_combat_argument(error, "actor already has combat storage");
     if (record(combat, actor) && (entry->protection[0].reserved || entry->protection[1].reserved))
         return qa_combat_argument(error, "close protection leases before replacing combat storage");
@@ -183,21 +206,42 @@ bool qa_combat_bind(qa_combat *combat, qa_actor_id actor, const qa_combat_bindin
     if (!qa_combat_live(combat, actor) || entry->serial != previous_serial || entry->active != previous_active)
         return qa_combat_argument(error, "combat actor or storage changed during admission");
     uint64_t serial; if (!next_serial(combat, &serial, error)) return false;
-    *entry = (qa_combat_record){.actor = actor, .serial = serial, .active = true, .external = true, .binding = *binding};
+    qa_inventory *power_inventory = previous_active ? entry->power_inventory : NULL;
+    qa_item_id power_item = previous_active ? entry->power_item : 0;
+    *entry = (qa_combat_record){.actor = actor, .serial = serial, .active = true, .external = true,
+        .binding = *binding, .power_inventory = power_inventory, .power_item = power_item};
     return true;
 }
-bool qa_combat_bind_power_cells(qa_combat *combat, qa_actor_id actor, const qa_power_cells_binding *binding, qa_error *error) {
+bool qa_combat_bind_power_inventory(qa_combat *combat, qa_actor_id actor, qa_inventory *inventory,
+                                    qa_item_id item, qa_error *error) {
     qa_combat_record *entry;
-    if (!binding || !binding->read || !binding->write || !combat || cursor_for(combat, actor))
-        return qa_combat_argument(error, "power cells require a complete binding outside their actor's damage call");
+    if (!inventory || !item || !combat)
+        return qa_combat_argument(error, "power cells require an inventory and item");
     if (!require_record(combat, actor, &entry, error)) return false;
-    if (entry->has_power_cells) return qa_combat_argument(error, "power cell reservoir already bound");
-    uint64_t serial = entry->serial; float count = 0;
-    ++combat->active_calls; bool ok = binding->read(binding->context, &count, error); --combat->active_calls;
+    if (entry->power_inventory)
+        return (entry->power_inventory == inventory && entry->power_item == item) ||
+               qa_combat_argument(error, "actor already has a different power cell reservoir");
+    if (entry->power_admitting || cursor_for(combat, actor))
+        return qa_combat_argument(error, "power fuel admission requires an inactive combat binding");
+    uint64_t serial = entry->serial;
+    qa_inventory_entry fuel;
+    entry->power_admitting = true;
+    ++combat->active_calls;
+    bool ok = qa_inventory_entry_read(inventory, actor, item, &fuel, error);
+    --combat->active_calls;
+    bool current_owner = record(combat, actor) == entry && entry->serial == serial;
+    if (current_owner) entry->power_admitting = false;
     if (!ok) return false;
-    if (!isfinite(count) || record(combat, actor) != entry || entry->serial != serial)
+    if (!isfinite((float)fuel.count) || !current_owner)
         return qa_combat_argument(error, "invalid or retired power fuel binding");
-    entry->power_cells = *binding; entry->has_power_cells = true; return true;
+    entry->power_inventory = inventory; entry->power_item = item; return true;
+}
+bool qa_combat_power_inventory(qa_combat *combat, qa_actor_id actor, qa_inventory **inventory,
+                                qa_item_id *item) {
+    qa_combat_record *entry = record(combat, actor);
+    if (inventory) *inventory = entry ? entry->power_inventory : NULL;
+    if (item) *item = entry ? entry->power_item : 0;
+    return entry && entry->power_inventory;
 }
 static qa_combat_cursor *cursor_for(qa_combat *combat, qa_actor_id actor) {
     for (qa_combat_cursor *cursor = combat->current; cursor; cursor = cursor->previous)
@@ -323,13 +367,8 @@ bool qa_combat_set_armor(qa_combat *combat, qa_actor_id actor, const qa_armor *a
                 return qa_combat_argument(error, "powered protection changed during regular armor store");
         }
     }
-    if (!owners[QA_PROTECTION_POWERED] && changed[QA_PROTECTION_POWERED] && entry->has_power_cells && selected.powered.kind != QA_POWER_NONE) {
-        qa_power_cells_binding binding = entry->power_cells;
-        float count;
-        ++combat->active_calls;
-        ok = binding.read(binding.context, &count, error);
-        if (ok && count != selected.powered.cells) ok = binding.write(binding.context, selected.powered.cells, error);
-        --combat->active_calls;
+    if (!owners[QA_PROTECTION_POWERED] && changed[QA_PROTECTION_POWERED] && entry->power_inventory && selected.powered.kind != QA_POWER_NONE) {
+        ok = fuel_write(combat, entry, selected.powered.cells, error);
         if (!ok || !ownership(combat, entry, actor, serial, owners, error)) return false;
     }
     qa_combat_state latest;
@@ -428,7 +467,7 @@ bool qa_combat_reserve_protection(qa_combat *combat, qa_actor_id actor, qa_prote
     qa_combat_protection *slot = &entry->protection[channel];
     if (slot->reserved) return qa_combat_argument(error, "protection channel already reserved");
     const qa_actor_record *identity = qa_actors_get(combat->actors, actor);
-    bool has_owner = entry->external ? entry->binding.has_primary_protection[channel] : channel == QA_PROTECTION_REGULAR || entry->has_power_cells || entry->state.armor.powered.kind != QA_POWER_NONE;
+    bool has_owner = entry->external ? entry->binding.has_primary_protection[channel] : channel == QA_PROTECTION_REGULAR || entry->power_inventory || entry->state.armor.powered.kind != QA_POWER_NONE;
     qa_actor_owner owner = entry->external ? entry->binding.primary_protection[channel] : identity->owner;
     if ((claim->admission == QA_PROTECTION_CLAIM && has_owner) || (claim->admission == QA_PROTECTION_REPLACE_PRIMARY && (!has_owner || owner != claim->expected_owner)))
         return qa_combat_argument(error, "protection claim does not match primary ownership");

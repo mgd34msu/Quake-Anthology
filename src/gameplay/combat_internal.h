@@ -12,10 +12,11 @@ typedef struct qa_combat_protection {
 typedef struct qa_combat_record {
     qa_actor_id actor;
     uint64_t serial;
-    bool active, external, has_power_cells;
+    bool active, external, power_admitting;
     qa_combat_state state;
     qa_combat_binding binding;
-    qa_power_cells_binding power_cells;
+    qa_inventory *power_inventory;
+    qa_item_id power_item;
     qa_combat_protection protection[2];
 } qa_combat_record;
 typedef struct qa_combat_cursor {
