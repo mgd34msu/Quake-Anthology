@@ -41,6 +41,9 @@ typedef enum q1_map_kind {
     Q1_MAP_THRESHOLD,
     Q1_MAP_BREAKAWAY,
     Q1_MAP_PENDULUM,
+    Q1_MAP_ROGUE_PLAT,
+    Q1_MAP_ELEVATOR_BUTTON,
+    Q1_MAP_ROGUE_PLAT_TRIGGER,
     Q1_MAP_DOOR,
     Q1_MAP_BUTTON,
     Q1_MAP_SECRET_DOOR,
@@ -119,7 +122,15 @@ typedef enum q1_map_action {
     Q1_MAP_BOB_WATER,
     Q1_MAP_COUNTER_START,
     Q1_MAP_COUNTER_TICK,
-    Q1_MAP_PENDULUM_SWING
+    Q1_MAP_PENDULUM_SWING,
+    Q1_MAP_ROGUE_PLAT_UP,
+    Q1_MAP_ROGUE_PLAT_DOWN,
+    Q1_MAP_ROGUE_PLAT_TOP,
+    Q1_MAP_ROGUE_PLAT_BOTTOM,
+    Q1_MAP_ELEVATOR_STOP,
+    Q1_MAP_ELEVATOR_BUTTON_WAIT,
+    Q1_MAP_ELEVATOR_BUTTON_RETURN,
+    Q1_MAP_ELEVATOR_BUTTON_DONE
 } q1_map_action;
 typedef enum q1_map_position { Q1_MAP_BOTTOM, Q1_MAP_UP, Q1_MAP_TOP, Q1_MAP_DOWN } q1_map_position;
 typedef struct q1_door_group {
@@ -127,6 +138,12 @@ typedef struct q1_door_group {
     qa_actor_id *members;
     size_t count;
 } q1_door_group;
+typedef struct q1_map_rogue_platform {
+    double last_use, last_move, go_time;
+    float floor, target_floor;
+    uint8_t go_to;
+    bool called, disabled;
+} q1_map_rogue_platform;
 typedef struct q1_map_movement {
     qa_vec3 pos1, pos2, dest1, dest2, destination;
     q1_door_group *group;
@@ -135,6 +152,7 @@ typedef struct q1_map_movement {
     qa_actor_id goal;
     float next_speed;
     bool moving, activated;
+    q1_map_rogue_platform rogue;
 } q1_map_movement;
 struct q1_map_state {
     struct q1_map_state *allocated_next, *pool_next;
@@ -186,7 +204,7 @@ struct q1_map_runtime {
     q1_door_group *door_groups;
     qa_actor_id world_actor, electrodes[2];
     double lightning_end;
-    float pendulum_impact;
+    float pendulum_impact, elevator_direction;
     qa_q1_map_finale_view finale;
     bool finale_started, finale_dismissed;
     double earthquake_end;
@@ -227,6 +245,17 @@ bool q1_map_mover_blocked(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_mover_reaction(qa_q1_game *, q1_actor *, const qa_damage_outcome *, qa_error *);
 bool q1_map_mover_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
 bool q1_map_move(qa_q1_game *, q1_actor *, qa_vec3, q1_map_action, qa_error *);
+bool q1_map_plat_trigger(qa_q1_game *, q1_actor *, q1_map_kind, qa_bounds, float height,
+                         qa_error *);
+static inline bool q1_map_is_rogue_plat(q1_map_kind kind) {
+    return kind >= Q1_MAP_ROGUE_PLAT && kind <= Q1_MAP_ROGUE_PLAT_TRIGGER;
+}
+bool q1_map_rogue_plat_spawn(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_map_rogue_plat_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_actor_id, qa_error *);
+bool q1_map_rogue_plat_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_map_rogue_plat_blocked(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_map_rogue_plat_reaction(qa_q1_game *, q1_actor *, const qa_damage_outcome *, qa_error *);
+bool q1_map_rogue_plat_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
 bool q1_map_train_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_train_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
 bool q1_map_train_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);

@@ -7,6 +7,10 @@ bool q1_map_is_mover(q1_map_kind kind) {
 bool q1_map_move(qa_q1_game *g, q1_actor *entity, qa_vec3 destination, q1_map_action done,
                  qa_error *error) {
     qa_actor_id id = entity->id;
+    float speed = entity->speed;
+    if (!(speed > 0))
+        return q1_map_fail(error, "Q1 mover speed must be positive");
+    q1_map_cancel(g, entity);
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, id, &body, error))
         return false;
@@ -14,8 +18,8 @@ bool q1_map_move(qa_q1_game *g, q1_actor *entity, qa_vec3 destination, q1_map_ac
     if (!entity || !entity->map)
         return true;
     qa_vec3 delta = qa_vec_sub(destination, body.origin);
-    double duration = qa_vec_length(delta) / (double)entity->speed;
-    if (!qa_vec_finite(destination) || !isfinite(duration) || !(entity->speed > 0))
+    double duration = qa_vec_length(delta) / (double)speed;
+    if (!qa_vec_finite(destination) || !isfinite(duration))
         return q1_map_fail(error, "invalid Q1 mover destination or speed");
     body.velocity = duration < .1 ? qa_v3(0, 0, 0) : qa_vec_scale(delta, (float)(1 / duration));
     q1_map_movement *move = &entity->map->pending.mover;
@@ -167,33 +171,69 @@ static bool plat_move(qa_q1_game *g, q1_actor *entity, bool up, qa_error *error)
 }
 static bool helper_trigger(qa_q1_game *g, q1_actor *owner, q1_map_kind kind, qa_bounds bounds,
                            qa_error *error) {
+    qa_actor_id owner_id = owner->id;
+    const char *name = kind == Q1_MAP_DOOR_TRIGGER         ? "door_trigger"
+                       : kind == Q1_MAP_ROGUE_PLAT_TRIGGER ? "rogue_plat2_trigger"
+                                                           : "plat_trigger";
     q1_actor *trigger;
-    if (!q1_create(g, kind == Q1_MAP_DOOR_TRIGGER ? "door_trigger" : "plat_trigger", Q1_MAP,
-                   owner->id, &trigger, error))
+    if (!q1_create(g, name, Q1_MAP, owner_id, &trigger, error))
         return false;
-    if (!q1_map_allocate(g, trigger, error)) {
-        (void)q1_remove(g, trigger, NULL);
-        return false;
-    }
+    qa_actor_id id = trigger->id;
+    if (!q1_map_allocate(g, trigger, error))
+        goto fail;
     trigger->map->kind = kind;
     trigger->map->touch_enabled = true;
     trigger->physics.solid = QA_PHYSICS_TRIGGER;
     qa_body_state body;
-    if (!qa_world_body_read(g->services.world, trigger->id, &body, error))
-        return false;
+    if (!qa_world_body_read(g->services.world, id, &body, error))
+        goto fail;
+    trigger = q1_entity(g, id);
+    if (!trigger)
+        return true;
     body.bounds = bounds;
-    return qa_world_body_write(g->services.world, trigger->id, &body, error) &&
-           q1_link(g, trigger, error);
+    if (!qa_world_body_write(g->services.world, id, &body, error))
+        goto fail;
+    trigger = q1_entity(g, id);
+    if (trigger && !q1_link(g, trigger, error))
+        goto fail;
+    if (!q1_alive(g, owner_id))
+        (void)qa_session_release(g->services.session, id, NULL);
+    return true;
+fail:
+    (void)qa_session_release(g->services.session, id, NULL);
+    return false;
+}
+bool q1_map_plat_trigger(qa_q1_game *g, q1_actor *owner, q1_map_kind kind, qa_bounds bounds,
+                         float height, qa_error *error) {
+    qa_bounds trigger = {qa_vec_add(bounds.mins, qa_v3(25, 25, 0)),
+                         qa_vec_add(bounds.maxs, qa_v3(-25, -25, 8))};
+    trigger.mins.z = trigger.maxs.z - height - 8;
+    if (owner->spawnflags & 1)
+        trigger.maxs.z = trigger.mins.z + 8;
+    if (bounds.maxs.x - bounds.mins.x <= 50) {
+        trigger.mins.x = (bounds.mins.x + bounds.maxs.x) * .5f;
+        trigger.maxs.x = trigger.mins.x + 1;
+    }
+    if (bounds.maxs.y - bounds.mins.y <= 50) {
+        trigger.mins.y = (bounds.mins.y + bounds.maxs.y) * .5f;
+        trigger.maxs.y = trigger.mins.y + 1;
+    }
+    return helper_trigger(g, owner, kind, trigger, error);
 }
 bool q1_map_mover_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    qa_actor_id id = entity->id;
     q1_map_state *state = entity->map;
     if (state->kind == Q1_MAP_TRAIN || state->kind == Q1_MAP_TRAIN2)
         return q1_map_train_spawn(g, entity, error);
     if (!state->has_inline_model)
         return q1_map_fail(error, "Q1 brush mover has no inline model");
     qa_body_state body;
-    if (!qa_world_body_read(g->services.world, entity->id, &body, error))
+    if (!qa_world_body_read(g->services.world, id, &body, error))
         return false;
+    entity = q1_entity(g, id);
+    if (!entity || !entity->map)
+        return true;
+    state = entity->map;
     qa_vec3 size = qa_vec_sub(body.bounds.maxs, body.bounds.mins);
     q1_map_movement *move = &state->pending.mover;
     move->pos1 = body.origin;
@@ -255,29 +295,20 @@ bool q1_map_mover_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         move->position = move->activated ? Q1_MAP_BOTTOM : Q1_MAP_UP;
         if (move->activated)
             body.origin = move->pos2;
-        qa_bounds trigger = {qa_vec_add(body.bounds.mins, qa_v3(25, 25, 0)),
-                             qa_vec_add(body.bounds.maxs, qa_v3(-25, -25, 8))};
-        trigger.mins.z = trigger.maxs.z - (move->pos1.z - move->pos2.z + 8);
-        if (entity->spawnflags & 1)
-            trigger.maxs.z = trigger.mins.z + 8;
-        if (size.x <= 50) {
-            trigger.mins.x = (body.bounds.mins.x + body.bounds.maxs.x) / 2;
-            trigger.maxs.x = trigger.mins.x + 1;
-        }
-        if (size.y <= 50) {
-            trigger.mins.y = (body.bounds.mins.y + body.bounds.maxs.y) / 2;
-            trigger.maxs.y = trigger.mins.y + 1;
-        }
-        if (!helper_trigger(g, entity, Q1_MAP_PLAT_TRIGGER, trigger, error))
+        if (!q1_map_plat_trigger(g, entity, Q1_MAP_PLAT_TRIGGER, body.bounds,
+                                 move->pos1.z - move->pos2.z, error))
             return false;
         break;
     }
     default:
         return q1_map_fail(error, "invalid Q1 authored mover kind");
     }
-    return !q1_alive(g, entity->id) ||
-           (qa_world_body_write(g->services.world, entity->id, &body, error) &&
-            q1_link(g, entity, error));
+    if (!q1_alive(g, id))
+        return true;
+    if (!qa_world_body_write(g->services.world, id, &body, error))
+        return false;
+    entity = q1_entity(g, id);
+    return !entity || q1_link(g, entity, error);
 }
 bool qa_q1_game_maps_finish(qa_q1_game *g, qa_error *error) {
     if (!g || !g->maps)
@@ -525,24 +556,48 @@ bool q1_map_mover_reaction(qa_q1_game *g, q1_actor *entity, const qa_damage_outc
                                          q1_map_mover_use(g, target, attacker, error)));
 }
 bool q1_map_mover_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, qa_error *error) {
+    qa_actor_id id = entity->id;
     q1_map_movement *move = &entity->map->pending.mover;
     if (action == Q1_MAP_MOVE_DONE) {
         if (!move->moving)
             return q1_map_fail(error, "Q1 mover completion has no destination");
-        qa_body_state body;
-        if (!qa_world_body_read(g->services.world, entity->id, &body, error))
-            return false;
-        body.origin = move->destination;
-        body.velocity = qa_v3(0, 0, 0);
-        entity->physics.next_think_ns = 0;
-        move->moving = false;
+        qa_vec3 destination = move->destination;
         action = move->done;
-        if (!qa_world_body_write(g->services.world, entity->id, &body, error) ||
-            !q1_link(g, entity, error))
+        qa_body_state body;
+        if (!qa_world_body_read(g->services.world, id, &body, error))
             return false;
-        if (!q1_alive(g, entity->id))
+        entity = q1_entity(g, id);
+        if (!entity || !entity->map)
             return true;
+        body.origin = destination;
+        if (!qa_world_body_write(g->services.world, id, &body, error))
+            return false;
+        entity = q1_entity(g, id);
+        if (!entity || !entity->map)
+            return true;
+        if (!q1_link(g, entity, error))
+            return false;
+        entity = q1_entity(g, id);
+        if (!entity || !entity->map)
+            return true;
+        if (!qa_world_body_read(g->services.world, id, &body, error))
+            return false;
+        entity = q1_entity(g, id);
+        if (!entity || !entity->map)
+            return true;
+        body.velocity = qa_v3(0, 0, 0);
+        if (!qa_world_body_write(g->services.world, id, &body, error))
+            return false;
+        entity = q1_entity(g, id);
+        if (!entity || !entity->map)
+            return true;
+        move = &entity->map->pending.mover;
+        entity->physics.next_think_ns = -1;
+        entity->next_think = -1;
+        move->moving = false;
     }
+    if (action >= Q1_MAP_ROGUE_PLAT_UP && action <= Q1_MAP_ELEVATOR_BUTTON_DONE)
+        return q1_map_rogue_plat_think(g, entity, action, error);
     switch (action) {
     case Q1_MAP_DOOR_DOWN:
         return q1_map_door_down(g, entity, error);
