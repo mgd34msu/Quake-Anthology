@@ -249,10 +249,12 @@ void qa_modes_destroy(qa_modes *m) {
         for (uint32_t i = 0; i < m->mode_capacity; ++i) {
             mode_instance *v = &m->instances[i];
             free(v->members);
+            free(v->bindings);
             free(v->ghosts);
             free(v->sorted);
             free(v->ranks);
             free(v->spawns);
+            free(v->items);
             mode_horde_free(v);
         }
     qa_builtin_snapshot_free(&m->players_order);
@@ -272,11 +274,13 @@ bool qa_modes_add(qa_modes *m, const qa_mode_rules *rules, qa_mode_id *out, qa_e
             if (v->id.generation == UINT64_MAX)
                 continue;
             mode_member *members = calloc(m->actor_capacity, sizeof(*members));
+            mode_match_owner *bindings = calloc(m->actor_capacity, sizeof(*bindings));
             mode_ghost *ghosts = calloc(m->actor_capacity, sizeof(*ghosts));
             qa_actor_id *sorted = calloc(m->actor_capacity, sizeof(*sorted));
             mode_rank_entry *ranks = calloc(m->actor_capacity, sizeof(*ranks));
-            if (!members || !ghosts || !sorted || !ranks) {
+            if (!members || !bindings || !ghosts || !sorted || !ranks) {
                 free(members);
+                free(bindings);
                 free(ghosts);
                 free(sorted);
                 free(ranks);
@@ -287,6 +291,7 @@ bool qa_modes_add(qa_modes *m, const qa_mode_rules *rules, qa_mode_id *out, qa_e
             *v = (mode_instance){.id = id,
                                  .active = true,
                                  .members = members,
+                                 .bindings = bindings,
                                  .ghosts = ghosts,
                                  .sorted = sorted,
                                  .ranks = ranks,
@@ -323,6 +328,12 @@ bool qa_modes_remove(qa_modes *m, qa_mode_id id, qa_error *e) {
         o->value.carrier = (qa_actor_id){0};
     }
     v->active = false;
+    for (uint32_t i = 0; i < m->objective_capacity; ++i) {
+        mode_objective *objective = &m->objectives[i];
+        if (objective->active && objective->binding.mode.slot == id.slot &&
+            objective->binding.mode.generation == id.generation)
+            *objective = (mode_objective){0};
+    }
     for (uint32_t i = 0; i < m->actor_capacity; ++i) {
         mode_object *o = &m->objects[i];
         if (o->active && o->mode.slot == id.slot && o->mode.generation == id.generation &&
@@ -330,10 +341,12 @@ bool qa_modes_remove(qa_modes *m, qa_mode_id id, qa_error *e) {
             return false;
     }
     free(v->members);
+    free(v->bindings);
     free(v->ghosts);
     free(v->sorted);
     free(v->ranks);
     free(v->spawns);
+    free(v->items);
     mode_horde_free(v);
     *v = (mode_instance){.id = id};
     for (size_t i = 0; i < m->players_order.count; ++i)
@@ -391,75 +404,108 @@ bool qa_modes_at(qa_modes *m, size_t index, qa_mode_id *id, qa_mode_view *out, q
     return false;
 }
 bool qa_modes_player(qa_modes *m, const qa_match_player *value, qa_error *e) {
-    if (!value || !mode_live(m, value->actor) || value->automatic_follow < 0 ||
-        value->automatic_follow > 2 ||
-        (value->follow_target.registry && !mode_live(m, value->follow_target)))
+    if (!value || !mode_live(m, value->actor))
         return mode_fail(e, "invalid match player");
-    mode_player *p = &m->players[value->actor.slot];
-    if (p->active && qa_actor_id_equal(p->value.actor, value->actor)) {
-        int32_t score = p->value.score;
-        qa_team_id team = p->value.team;
+    qa_actor_id actor = value->actor;
+    mode_player *p = &m->players[actor.slot];
+    mode_player before = *p;
+    if (p->active && qa_actor_id_equal(p->value.actor, value->actor))
         p->value = *value;
-        p->value.score = score;
-        p->value.team = team;
-    } else
+    else
         *p = (mode_player){.modes = m, .active = true, .value = *value};
-    return m->callback_depth || qa_builtin_players(&m->options.services, &m->players_order, e);
+    if (!m->callback_depth && !qa_builtin_players(&m->options.services, &m->players_order, e)) {
+        if (mode_live(m, actor) && qa_actor_id_equal(p->value.actor, actor))
+            *p = before;
+        return false;
+    }
+    return true;
 }
-bool qa_modes_player_read(qa_modes *m, qa_actor_id actor, qa_match_player *out, qa_error *e) {
+bool qa_modes_player_read(qa_modes *m, qa_mode_id id, qa_actor_id actor,
+                          qa_mode_player_view *out, qa_error *e) {
     mode_player *p = mode_player_get(m, actor);
-    if (!p || !out)
+    mode_member *member = mode_member_get(m, mode_get(m, id), actor);
+    if (!p || !member || !out)
         return mode_fail(e, "unknown match player");
-    *out = p->value;
-    return qa_modes_score(m, actor, &out->score, e) && qa_modes_team(m, actor, &out->team, e);
+    qa_mode_player_view view = {.mode = id, .connection = p->value, .state = member->player};
+    if (!qa_modes_score(m, id, actor, &view.state.score, e) ||
+        !qa_modes_team(m, id, actor, &view.state.team, e)) return false;
+    *out = view;
+    return true;
 }
-bool qa_modes_bind_player(qa_modes *m, qa_actor_id actor, const qa_match_binding *binding,
+bool qa_modes_bind_player(qa_modes *m, qa_mode_id id, qa_actor_id actor, const qa_match_binding *binding,
                           qa_match_lease *out, qa_error *e) {
-    mode_player *p = mode_player_get(m, actor);
+    mode_instance *v = mode_get(m, id);
+    mode_member *p = mode_member_get(m, v, actor);
     if (!p || !binding || !binding->owner || !binding->score || !binding->set_score ||
-        !binding->team || !binding->set_team || !out || p->serial || m->next_serial == UINT64_MAX)
+        !binding->team || !binding->set_team || !out || v->bindings[actor.slot].serial ||
+        m->next_serial == UINT64_MAX)
         return mode_fail(e, "invalid or already bound match player");
-    p->binding = *binding;
-    p->serial = m->next_serial++;
-    *out = (qa_match_lease){actor, p->serial};
+    mode_match_owner *owner = &v->bindings[actor.slot];
+    *owner = (mode_match_owner){.binding = *binding, .serial = m->next_serial++};
+    p->external_owner = binding->owner;
+    *out = (qa_match_lease){.mode = id, .actor = actor, .serial = owner->serial};
     return true;
 }
 bool qa_modes_unbind_player(qa_modes *m, qa_match_lease lease, qa_error *e) {
-    mode_player *p = mode_player_get(m, lease.actor);
-    if (!p || !lease.serial || p->serial != lease.serial)
+    mode_instance *v = mode_get(m, lease.mode);
+    mode_member *p = mode_member_get(m, v, lease.actor);
+    if (!p || !lease.serial || v->bindings[lease.actor.slot].serial != lease.serial)
         return true;
     int32_t score;
     qa_team_id team;
-    qa_match_binding binding = p->binding;
-    if (!MODE_CALLBACK(m, binding.score(binding.context, &score, e)) ||
-        !MODE_CALLBACK(m, binding.team(binding.context, &team, e)))
+    mode_match_owner *owner = &v->bindings[lease.actor.slot];
+    qa_match_binding binding = owner->binding;
+    if (!MODE_CALLBACK(m, binding.score(binding.context, &score, e)))
         return false;
-    if (!mode_player_get(m, lease.actor) || p->serial != lease.serial)
+    if (!mode_member_get(m, v, lease.actor) || owner->serial != lease.serial)
         return true;
-    p->value.score = score;
-    p->binding = (qa_match_binding){0};
-    p->serial = 0;
-    return qa_modes_set_team(m, lease.actor, team, e);
+    if (!MODE_CALLBACK(m, binding.team(binding.context, &team, e)))
+        return false;
+    if (!mode_member_get(m, v, lease.actor) || owner->serial != lease.serial)
+        return true;
+    p->player.score = score;
+    p->player.team = team;
+    p->external_owner = 0;
+    *owner = (mode_match_owner){0};
+    return true;
 }
-bool qa_modes_score(qa_modes *m, qa_actor_id actor, int32_t *out, qa_error *e) {
-    mode_player *p = mode_player_get(m, actor);
+bool qa_modes_score(qa_modes *m, qa_mode_id id, qa_actor_id actor, int32_t *out, qa_error *e) {
+    mode_instance *v = mode_get(m, id);
+    mode_member *p = mode_member_get(m, v, actor);
     if (!p || !out)
         return mode_fail(e, "unknown score owner");
-    if (p->serial)
-        return MODE_CALLBACK(m, p->binding.score(p->binding.context, out, e));
-    *out = p->value.score;
+    mode_match_owner *owner = &v->bindings[actor.slot];
+    if (owner->serial) {
+        uint64_t serial = owner->serial;
+        qa_match_binding binding = owner->binding;
+        int32_t score;
+        if (!MODE_CALLBACK(m, binding.score(binding.context, &score, e)))
+            return false;
+        if (!mode_member_get(m, v, actor) || owner->serial != serial)
+            return mode_fail(e, "mode score owner changed during read");
+        *out = score;
+        return true;
+    }
+    *out = p->player.score;
     return true;
 }
 bool qa_modes_set_score(qa_modes *m, qa_mode_id id, qa_actor_id actor, int32_t score, qa_error *e) {
     mode_instance *v = mode_get(m, id);
-    mode_player *p = mode_player_get(m, actor);
+    mode_member *p = mode_member_get(m, v, actor);
     if (!v || !p)
         return mode_fail(e, "invalid score mutation");
-    if (p->serial) {
-        if (!MODE_CALLBACK(m, p->binding.set_score(p->binding.context, score, e)))
+    mode_match_owner *owner = &v->bindings[actor.slot];
+    if (owner->serial) {
+        uint64_t serial = owner->serial;
+        qa_match_binding binding = owner->binding;
+        if (!MODE_CALLBACK(m, binding.set_score(binding.context, score, e)))
             return false;
+        if (!mode_member_get(m, v, actor))
+            return true;
+        if (owner->serial != serial)
+            return mode_fail(e, "mode score owner changed during mutation");
     } else
-        p->value.score = score;
+        p->player.score = score;
     for (uint32_t i = 0; i < m->actor_capacity; ++i)
         if (v->ghosts[i].code && qa_actor_id_equal(v->ghosts[i].actor, actor))
             v->ghosts[i].score = score;
@@ -469,7 +515,7 @@ bool qa_modes_set_score(qa_modes *m, qa_mode_id id, qa_actor_id actor, int32_t s
 bool qa_modes_add_score(qa_modes *m, qa_mode_id id, qa_actor_id actor, int32_t amount,
                         qa_error *e) {
     int32_t score;
-    if (!qa_modes_score(m, actor, &score, e) ||
+    if (!qa_modes_score(m, id, actor, &score, e) ||
         !qa_modes_set_score(m, id, actor, mode_add_i32(score, amount), e))
         return false;
     mode_instance *v = mode_get(m, id);
@@ -478,29 +524,41 @@ bool qa_modes_add_score(qa_modes *m, qa_mode_id id, qa_actor_id actor, int32_t a
         mode_stat_add(v, &member->stats.score, amount);
     return true;
 }
-bool qa_modes_team(qa_modes *m, qa_actor_id actor, qa_team_id *out, qa_error *e) {
-    mode_player *p = mode_player_get(m, actor);
-    if (!out || !mode_live(m, actor))
-        return mode_fail(e, "invalid team actor");
-    if (p && p->serial)
-        return MODE_CALLBACK(m, p->binding.team(p->binding.context, out, e));
-    if (p) {
-        *out = p->value.team;
+bool qa_modes_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_id *out, qa_error *e) {
+    mode_instance *v = mode_get(m, id);
+    mode_member *p = mode_member_get(m, v, actor);
+    if (!out || !p)
+        return mode_fail(e, "unknown mode team actor");
+    mode_match_owner *owner = &v->bindings[actor.slot];
+    if (owner->serial) {
+        uint64_t serial = owner->serial;
+        qa_match_binding binding = owner->binding;
+        qa_team_id team;
+        if (!MODE_CALLBACK(m, binding.team(binding.context, &team, e)))
+            return false;
+        if (!mode_member_get(m, v, actor) || owner->serial != serial)
+            return mode_fail(e, "mode team owner changed during read");
+        *out = team;
         return true;
     }
-    qa_combat_state state;
-    if (!qa_combat_read_traits(m->options.services.combat, actor, &state, e))
-        return false;
-    *out = state.team;
+    *out = p->player.team;
     return true;
 }
-bool qa_modes_set_team(qa_modes *m, qa_actor_id actor, qa_team_id team, qa_error *e) {
-    mode_player *p = mode_player_get(m, actor);
+bool qa_modes_set_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_id team, qa_error *e) {
+    mode_instance *v = mode_get(m, id);
+    mode_member *p = mode_member_get(m, v, actor);
     if (!p)
         return mode_fail(e, "unknown team player");
-    if (p->serial)
-        return MODE_CALLBACK(m, p->binding.set_team(p->binding.context, team, e));
-    p->value.team = team;
+    mode_match_owner *owner = &v->bindings[actor.slot];
+    if (owner->serial) {
+        uint64_t serial = owner->serial;
+        qa_match_binding binding = owner->binding;
+        if (!MODE_CALLBACK(m, binding.set_team(binding.context, team, e)))
+            return false;
+        return !mode_member_get(m, v, actor) || owner->serial == serial ||
+            mode_fail(e, "mode team owner changed during mutation");
+    }
+    p->player.team = team;
     return true;
 }
 bool qa_modes_team_totals(qa_modes *m, qa_mode_id id, int64_t totals[3], qa_error *e) {
@@ -514,7 +572,7 @@ bool qa_modes_team_totals(qa_modes *m, qa_mode_id id, int64_t totals[3], qa_erro
         int32_t score;
         if (!mode_member_get(m, v, actor))
             continue;
-        if (!qa_modes_team(m, actor, &team, e) || !qa_modes_score(m, actor, &score, e))
+        if (!qa_modes_team(m, id, actor, &team, e) || !qa_modes_score(m, id, actor, &score, e))
             return false;
         int index = mode_team_index(v, team);
         if (index >= 0)
@@ -522,9 +580,9 @@ bool qa_modes_team_totals(qa_modes *m, qa_mode_id id, int64_t totals[3], qa_erro
     }
     return true;
 }
-bool qa_modes_same_team(qa_modes *m, qa_actor_id a, qa_actor_id b) {
+bool qa_modes_same_team(qa_modes *m, qa_mode_id id, qa_actor_id a, qa_actor_id b) {
     qa_team_id x, y;
-    return qa_modes_team(m, a, &x, NULL) && qa_modes_team(m, b, &y, NULL) && x && x == y;
+    return qa_modes_team(m, id, a, &x, NULL) && qa_modes_team(m, id, b, &y, NULL) && x && x == y;
 }
 bool qa_modes_statistics(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_mode_statistics *out,
                          qa_error *e) {
@@ -564,23 +622,28 @@ bool mode_join(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_team_id team
         return mode_fail(e, "match is locked");
     if (v->members[actor.slot].joined && !qa_modes_drop(m, id, actor, false, e))
         return false;
-    if (!qa_modes_set_team(m, actor, team, e))
-        return false;
-    p = mode_player_get(m, actor);
-    if (!p)
-        return true;
-    p->value.spectator = observer;
-    p->value.ready = false;
-    if (observer)
-        p->value.spectator_since_ns = v->value.time_ns;
     mode_member *member = &v->members[actor.slot];
+    mode_member before = *member;
+    uint64_t binding_serial = v->bindings[actor.slot].serial;
     if (!member->joined || !qa_actor_id_equal(member->actor, actor))
         *member = (mode_member){.actor = actor, .joined = true, .extra_flags = 48};
+    if (!qa_modes_set_team(m, id, actor, team, e)) {
+        if (mode_member_get(m, v, actor) == member &&
+            v->bindings[actor.slot].serial == binding_serial)
+            *member = before;
+        return false;
+    }
+    member = mode_member_get(m, v, actor);
+    if (!member)
+        return true;
+    member->player.spectator = observer;
+    member->player.ready = false;
+    if (observer)
+        member->player.spectator_since_ns = v->value.time_ns;
     member->last_team = team;
-    member->ready = false;
     member->spawn_state = 0;
     if (m->options.hooks.spectator &&
-        !MODE_CALLBACK(m, m->options.hooks.spectator(m->options.hooks.context, actor, observer, e)))
+        !MODE_CALLBACK(m, m->options.hooks.spectator(m->options.hooks.context, id, actor, observer, e)))
         return false;
     return qa_modes_rank(m, id, e);
 }
@@ -603,11 +666,11 @@ bool qa_modes_choose_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team
         qa_actor_id other = m->players_order.ids[ordinal];
         mode_member *member = mode_member_get(m, v, other);
         mode_player *p = mode_player_get(m, other);
-        if (!member || !p || p->value.spectator || qa_actor_id_equal(actor, other))
+        if (!member || !p || member->player.spectator || qa_actor_id_equal(actor, other))
             continue;
         qa_team_id team;
         int32_t score;
-        if (!qa_modes_team(m, other, &team, e) || !qa_modes_score(m, other, &score, e))
+        if (!qa_modes_team(m, id, other, &team, e) || !qa_modes_score(m, id, other, &score, e))
             return false;
         int index = mode_team_index(v, team);
         if (index >= 0) {
@@ -670,7 +733,7 @@ static bool frame(qa_modes *m, qa_mode_id id, uint64_t now, uint64_t elapsed, qa
         if (p->respawn_ns && now >= p->respawn_ns) {
             p->respawn_ns = 0;
             if (m->options.hooks.respawn &&
-                !m->options.hooks.respawn(m->options.hooks.context, p->actor, true, e))
+                !m->options.hooks.respawn(m->options.hooks.context, id, p->actor, true, e))
                 return false;
         }
     }
@@ -687,6 +750,8 @@ bool qa_modes_actor_released(qa_modes *m, qa_actor_record released, qa_error *e)
     if (!m || released.id.slot >= m->actor_capacity)
         return true;
     mode_object *o = &m->objects[released.id.slot];
+    if (o->admitting && qa_actor_id_equal(o->actor, released.id))
+        *o = (mode_object){0};
     if (o->active && qa_actor_id_equal(o->actor, released.id)) {
         mode_instance *v = mode_get(m, o->mode);
         mode_member *carrier = mode_member_get(m, v, o->value.carrier);
@@ -720,15 +785,15 @@ bool qa_modes_actor_released(qa_modes *m, qa_actor_record released, qa_error *e)
     mode_player *p = &m->players[released.id.slot];
     if (!p->active || !qa_actor_id_equal(p->value.actor, released.id))
         return true;
-    for (size_t i = 0; i < m->players_order.count; ++i) {
-        mode_player *other = mode_player_get(m, m->players_order.ids[i]);
-        if (other && qa_actor_id_equal(other->value.follow_target, released.id))
-            other->value.follow_target = (qa_actor_id){0};
-    }
     for (uint32_t i = 0; i < m->mode_capacity; ++i) {
         mode_instance *v = &m->instances[i];
         if (!v->active)
             continue;
+        for (size_t j = 0; j < m->players_order.count; ++j) {
+            mode_member *other = mode_member_get(m, v, m->players_order.ids[j]);
+            if (other && qa_actor_id_equal(other->player.follow_target, released.id))
+                other->player.follow_target = (qa_actor_id){0};
+        }
         mode_member *member = &v->members[released.id.slot];
         if (!member->joined || !qa_actor_id_equal(member->actor, released.id))
             continue;
@@ -746,6 +811,7 @@ bool qa_modes_actor_released(qa_modes *m, qa_actor_record released, qa_error *e)
             }
         }
         *member = (mode_member){0};
+        v->bindings[released.id.slot] = (mode_match_owner){0};
     }
     *p = (mode_player){0};
     return true;

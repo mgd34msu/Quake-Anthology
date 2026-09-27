@@ -41,7 +41,7 @@ bool mode_tag_death(qa_modes *m, mode_instance *v, const qa_damage_outcome *outc
     qa_actor_id attacker = outcome->request.attack.attacker, victim = outcome->request.target;
     mode_member *killer = mode_member_get(m, v, attacker);
     bool self = qa_actor_id_equal(attacker, victim),
-         friendly = killer && qa_modes_same_team(m, attacker, victim);
+         friendly = killer && qa_modes_same_team(m, v->id, attacker, victim);
     if (v->value.rules.source == QA_MODE_ROGUE) {
         bool evaluated = native && native->evaluated_mode.slot == v->id.slot &&
                          native->evaluated_mode.generation == v->id.generation;

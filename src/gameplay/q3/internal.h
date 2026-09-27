@@ -26,6 +26,8 @@ struct qa_q3_game {
     qa_q3_options options;
     q3_actor *actors;
     q3_kamikaze_cooldown *kamikaze_cooldowns;
+    uint64_t *player_binding_tokens;
+    uint64_t player_binding_serial;
     uint32_t capacity, rng, death_animation;
     qa_item_id weapon_items[QA_Q3_WEAPON_COUNT], ammo_items[QA_Q3_WEAPON_COUNT];
     qa_item_id item_ids[52];

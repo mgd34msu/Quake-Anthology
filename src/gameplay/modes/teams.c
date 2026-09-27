@@ -57,16 +57,16 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
     if (team && v->value.rules.kind > QA_MODE_TEAM_DEATHMATCH && mode_team_index(v, team) < 0)
         return mode_fail(e, "team command names an unknown objective team");
     qa_team_id previous;
-    if (!qa_modes_team(m, actor, &previous, e))
+    if (!qa_modes_team(m, v->id, actor, &previous, e))
         return false;
     if (command && v->value.rules.source >= QA_MODE_Q3) {
         if (member->team_switch_ns > v->value.time_ns)
             return true;
         member->team_switch_ns = v->value.time_ns + 5 * MODE_SECOND;
-        if (v->value.rules.kind == QA_MODE_DUEL && !player->value.spectator)
-            player->value.losses = mode_add_i32(player->value.losses, 1);
+        if (v->value.rules.kind == QA_MODE_DUEL && !member->player.spectator)
+            member->player.losses = mode_add_i32(member->player.losses, 1);
     }
-    if (previous == team && player->value.spectator == observer) {
+    if (previous == team && member->player.spectator == observer) {
         *accepted = true;
         return true;
     }
@@ -94,7 +94,7 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
                 qa_actor_id other = m->players_order.ids[i];
                 qa_team_id own;
                 if (qa_actor_id_equal(other, actor) || !mode_member_get(m, v, other) ||
-                    !qa_modes_team(m, other, &own, NULL))
+                    !qa_modes_team(m, v->id, other, &own, NULL))
                     continue;
                 int index = mode_team_index(v, own);
                 if (index >= 0 && index < 2)
@@ -119,9 +119,9 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
         member->spawn_state = 2;
         if (!team_death(m, v, actor, false, e))
             return false;
-        return qa_modes_set_team(m, actor, member->last_team, e);
+        return qa_modes_set_team(m, v->id, actor, member->last_team, e);
     }
-    bool was_spectator = player->value.spectator;
+    bool was_spectator = member->player.spectator;
     if (!was_spectator && (!observer || source == QA_MODE_THREEWAVE || source >= QA_MODE_Q3) &&
         !team_death(m, v, actor, source == QA_MODE_Q2_CTF || source >= QA_MODE_Q3, e))
         return false;
@@ -148,36 +148,38 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
     player = mode_player_get(m, actor);
     if (!player)
         return true;
-    player->value.leader = false;
-    player->value.follow_target = (qa_actor_id){0};
-    player->value.automatic_follow = 0;
-    player->value.observer_team = 0;
+    member->player.leader = false;
+    member->player.follow_target = (qa_actor_id){0};
+    member->player.automatic_follow = 0;
+    member->player.observer_team = 0;
     if (source >= QA_MODE_Q3) {
         qa_team_id affected[] = {previous, team};
         for (int side = 0; side < 2; ++side) {
             if (!affected[side])
                 continue;
-            mode_player *leader = NULL, *first = NULL, *human = NULL;
+            mode_member *leader = NULL, *first = NULL, *human = NULL;
             for (size_t i = 0; i < m->players_order.count; ++i) {
                 qa_actor_id other = m->players_order.ids[i];
                 mode_player *candidate = mode_player_get(m, other);
+                mode_member *participant = mode_member_get(m, v, other);
                 qa_team_id own;
-                if (!candidate || !mode_member_get(m, v, other) ||
-                    !qa_modes_team(m, other, &own, NULL) || own != affected[side])
+                if (!candidate || !participant ||
+                    !qa_modes_team(m, v->id, other, &own, NULL) || own != affected[side])
                     continue;
                 if (!first)
-                    first = candidate;
+                    first = participant;
                 if (!human && !candidate->value.bot)
-                    human = candidate;
-                if (candidate->value.leader)
-                    leader = candidate;
+                    human = participant;
+                if (participant->player.leader)
+                    leader = participant;
             }
-            if (!leader || (side == 1 && leader->value.bot && !player->value.bot)) {
+            mode_player *leader_player = leader ? mode_player_get(m, leader->actor) : NULL;
+            if (!leader_player || (side == 1 && leader_player->value.bot && !player->value.bot)) {
                 if (leader)
-                    leader->value.leader = false;
-                mode_player *next = side == 1 ? player : human ? human : first;
-                if (next)
-                    next->value.leader = true;
+                    leader->player.leader = false;
+                mode_member *next = side == 1 ? member : human ? human : first;
+                if (next && mode_member_get(m, v, next->actor))
+                    next->player.leader = true;
             }
         }
     }
@@ -186,7 +188,7 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
                     observer ? 0 : 1, 0, e))
         return false;
     return !m->options.hooks.respawn ||
-           MODE_CALLBACK(m, m->options.hooks.respawn(m->options.hooks.context, actor, true, e));
+           MODE_CALLBACK(m, m->options.hooks.respawn(m->options.hooks.context, id, actor, true, e));
 }
 bool qa_modes_request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_id team,
                            bool observer, bool automatic, bool *accepted, qa_error *e) {
@@ -197,27 +199,28 @@ bool qa_modes_request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_tea
 }
 static bool followable(qa_modes *m, mode_instance *v, qa_actor_id viewer, qa_actor_id actor) {
     mode_player *p = mode_player_get(m, actor);
-    mode_player *watcher = mode_player_get(m, viewer);
-    if (watcher && watcher->value.observer_team) {
+    mode_member *target = mode_member_get(m, v, actor);
+    mode_member *watcher = mode_member_get(m, v, viewer);
+    if (watcher && watcher->player.observer_team) {
         qa_team_id team;
-        if (!qa_modes_team(m, actor, &team, NULL) || team != watcher->value.observer_team)
+        if (!qa_modes_team(m, v->id, actor, &team, NULL) || team != watcher->player.observer_team)
             return false;
     }
-    return p && mode_member_get(m, v, actor) && p->value.connected && !p->value.connecting &&
-           !p->value.spectator && !qa_actor_id_equal(actor, viewer);
+    return p && target && p->value.connected && !p->value.connecting &&
+           !target->player.spectator && !qa_actor_id_equal(actor, viewer);
 }
 static bool follow(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_actor_id target, int automatic,
                    int cycle, bool *accepted, qa_error *e) {
     mode_instance *v = mode_get(m, id);
-    mode_player *player = mode_player_get(m, actor);
-    if (!v || !player || !mode_member_get(m, v, actor) || !accepted || automatic < 0 ||
+    mode_member *member = mode_member_get(m, v, actor);
+    if (!member || !accepted || automatic < 0 ||
         automatic > 2 || cycle < -1 || cycle > 1)
         return mode_fail(e, "invalid spectator follow command");
     *accepted = false;
     if (cycle) {
         size_t start = SIZE_MAX;
         for (size_t i = 0; i < m->players_order.count; ++i)
-            if (qa_actor_id_equal(m->players_order.ids[i], player->value.follow_target)) {
+            if (qa_actor_id_equal(m->players_order.ids[i], member->player.follow_target)) {
                 start = i;
                 break;
             }
@@ -237,20 +240,20 @@ static bool follow(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_actor_id ta
             return true;
     } else if (target.registry && !followable(m, v, actor, target))
         return true;
-    if (!player->value.spectator) {
+    if (!member->player.spectator) {
         if (v->value.rules.kind == QA_MODE_DUEL)
-            player->value.losses = mode_add_i32(player->value.losses, 1);
+            member->player.losses = mode_add_i32(member->player.losses, 1);
         if (!request_team(m, id, actor, 0, true, false, false, accepted, e))
             return false;
         if (!*accepted)
             return true;
-        player = mode_player_get(m, actor);
-        if (!player)
+        member = mode_member_get(m, v, actor);
+        if (!member)
             return true;
     }
-    player->value.follow_target = automatic ? (qa_actor_id){0} : target;
-    player->value.automatic_follow = (int8_t)automatic;
-    player->value.scoreboard = false;
+    member->player.follow_target = automatic ? (qa_actor_id){0} : target;
+    member->player.automatic_follow = (int8_t)automatic;
+    member->player.scoreboard = false;
     *accepted = true;
     return mode_event(m, v, QA_MODE_ROSTER, actor, target, (qa_actor_id){0}, 0, automatic, 4, e);
 }
@@ -263,21 +266,21 @@ bool qa_modes_follow(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_actor_id 
 bool qa_modes_follow_target(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_actor_id *out,
                             qa_error *e) {
     mode_instance *v = mode_get(m, id);
-    mode_player *player = mode_player_get(m, actor);
-    if (!v || !player || !out)
+    mode_member *member = mode_member_get(m, v, actor);
+    if (!member || !out)
         return mode_fail(e, "invalid spectator target query");
     *out = (qa_actor_id){0};
-    if (!player->value.spectator)
+    if (!member->player.spectator)
         return true;
-    if (!player->value.automatic_follow) {
-        if (followable(m, v, actor, player->value.follow_target))
-            *out = player->value.follow_target;
+    if (!member->player.automatic_follow) {
+        if (followable(m, v, actor, member->player.follow_target))
+            *out = member->player.follow_target;
         return true;
     }
     unsigned count = 0;
     for (size_t i = 0; i < m->players_order.count; ++i)
         if (followable(m, v, actor, m->players_order.ids[i]) &&
-            ++count == (unsigned)player->value.automatic_follow) {
+            ++count == (unsigned)member->player.automatic_follow) {
             *out = m->players_order.ids[i];
             break;
         }
@@ -292,11 +295,18 @@ bool qa_modes_observe(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_id 
         return false;
     if (!*accepted)
         return true;
-    mode_player *player = mode_player_get(m, actor);
-    if (!player)
+    mode_member *member = mode_member_get(m, v, actor);
+    if (!member)
         return true;
-    player->value.observer_team = filter;
+    member->player.observer_team = filter;
     return true;
+}
+bool qa_modes_scoreboard(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool visible, qa_error *e) {
+    mode_member *member = mode_member_get(m, mode_get(m, id), actor);
+    if (!member)
+        return mode_fail(e, "unknown scoreboard participant");
+    member->player.scoreboard = visible;
+    return qa_modes_rank(m, id, e);
 }
 bool qa_modes_suicide(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool *handled, qa_error *e) {
     mode_instance *v = mode_get(m, id);
@@ -305,7 +315,7 @@ bool qa_modes_suicide(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool *handl
     if (!v || !member || !player || !handled)
         return mode_fail(e, "invalid mode suicide");
     *handled = v->value.rules.source == QA_MODE_THREEWAVE;
-    if (!*handled || player->value.spectator || v->value.rules.start_map)
+    if (!*handled || member->player.spectator || v->value.rules.start_map)
         return true;
     if (member->suicide_count > 3)
         return mode_event(m, v, QA_MODE_MESSAGE, actor, (qa_actor_id){0}, (qa_actor_id){0}, 0, 0, 1,
@@ -317,7 +327,7 @@ bool qa_modes_suicide(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool *handl
     if (!mode_event(m, v, QA_MODE_MESSAGE, actor, (qa_actor_id){0}, (qa_actor_id){0}, 0, -2, 2, e))
         return false;
     return !m->options.hooks.respawn ||
-           MODE_CALLBACK(m, m->options.hooks.respawn(m->options.hooks.context, actor, true, e));
+           MODE_CALLBACK(m, m->options.hooks.respawn(m->options.hooks.context, id, actor, true, e));
 }
 static bool observer_move(qa_modes *m, mode_instance *v, mode_member *member,
                           const qa_mode_controls *input, qa_error *e) {
@@ -383,7 +393,7 @@ static bool controls(qa_modes *m, qa_mode_id id, qa_actor_id actor, const qa_mod
     int impulse = input->impulse;
     if (v->value.rules.source == QA_MODE_ROGUE) {
         qa_team_id current;
-        if (!qa_modes_team(m, actor, &current, e))
+        if (!qa_modes_team(m, v->id, actor, &current, e))
             return false;
         bool legal = v->value.rules.teamplay < 4
                          ? current != 0
@@ -403,7 +413,7 @@ static bool controls(qa_modes *m, qa_mode_id id, qa_actor_id actor, const qa_mod
                 ++p->suicide_count;
                 p->spawn_state = 2;
                 if (!team_death(m, v, actor, false, e) ||
-                    !qa_modes_set_team(m, actor, p->last_team, e))
+                    !qa_modes_set_team(m, v->id, actor, p->last_team, e))
                     return false;
             } else {
                 if (p->last_team && !team_death(m, v, actor, false, e))
@@ -411,7 +421,7 @@ static bool controls(qa_modes *m, qa_mode_id id, qa_actor_id actor, const qa_mod
                 if (!legal && !qa_modes_choose_team(m, id, actor, &current, e))
                     return false;
                 if (!qa_modes_set_score(m, id, actor, 0, e) ||
-                    !qa_modes_set_team(m, actor, current, e))
+                    !qa_modes_set_team(m, v->id, actor, current, e))
                     return false;
                 p->last_team = current;
             }
@@ -425,14 +435,14 @@ static bool controls(qa_modes *m, qa_mode_id id, qa_actor_id actor, const qa_mod
     if (v->value.rules.source != QA_MODE_THREEWAVE)
         return true;
     if (p->introduction_frames < 3 && ++p->introduction_frames == 2 &&
-        !mode_event(m, v, player->value.spectator ? QA_MODE_TEAM_PROMPT : QA_MODE_TEAM_RULES, actor,
+        !mode_event(m, v, p->player.spectator ? QA_MODE_TEAM_PROMPT : QA_MODE_TEAM_RULES, actor,
                     (qa_actor_id){0}, (qa_actor_id){0}, p->last_team, v->value.rules.teamplay, 0,
                     e))
         return false;
     if (player->value.bot && !p->last_team)
         impulse = 103;
     if ((impulse >= 100 && impulse <= 104) ||
-        (!input->prompt_supported && player->value.spectator &&
+        (!input->prompt_supported && p->player.spectator &&
          ((impulse >= 1 && impulse <= 3) || input->jump))) {
         *consumed = true;
         if (impulse == 100 && (v->value.rules.teamplay & 64))
@@ -450,9 +460,9 @@ static bool controls(qa_modes *m, qa_mode_id id, qa_actor_id actor, const qa_mod
                                             (qa_actor_id){0}, 0, 0, 0, e);
     }
     qa_team_id current;
-    if (!qa_modes_team(m, actor, &current, e))
+    if (!qa_modes_team(m, v->id, actor, &current, e))
         return false;
-    if (!player->value.spectator && !v->value.rules.start_map && v->value.rules.teamplay >= 0 &&
+    if (!p->player.spectator && !v->value.rules.start_map && v->value.rules.teamplay >= 0 &&
         current != p->last_team) {
         qa_team_id previous = p->last_team;
         if ((v->value.rules.teamplay & 64) && previous) {
@@ -463,19 +473,19 @@ static bool controls(qa_modes *m, qa_mode_id id, qa_actor_id actor, const qa_mod
                 return true;
             ++p->suicide_count;
             p->spawn_state = 2;
-            if (!team_death(m, v, actor, true, e) || !qa_modes_set_team(m, actor, previous, e))
+            if (!team_death(m, v, actor, true, e) || !qa_modes_set_team(m, v->id, actor, previous, e))
                 return false;
         } else {
             if (previous && !team_death(m, v, actor, false, e))
                 return false;
             if (!current && !qa_modes_choose_team(m, id, actor, &current, e))
                 return false;
-            if (!qa_modes_set_team(m, actor, current, e) || !qa_modes_set_score(m, id, actor, 0, e))
+            if (!qa_modes_set_team(m, v->id, actor, current, e) || !qa_modes_set_score(m, id, actor, 0, e))
                 return false;
             p->last_team = current;
         }
     }
-    if (player->value.spectator)
+    if (p->player.spectator)
         return observer_move(m, v, p, input, e);
     if (impulse == 22 || (impulse == 1 && !input->grapple_selected)) {
         *consumed = true;

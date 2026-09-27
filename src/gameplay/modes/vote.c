@@ -16,10 +16,10 @@ static size_t voters(qa_modes *m, mode_instance *v, qa_team_id team) {
         if (!p || !p->value.connected ||
             (v->value.rules.source >= QA_MODE_Q3 && (p->value.bot || p->value.connecting)))
             continue;
-        if (v->value.rules.source >= QA_MODE_Q3 && p->value.spectator)
+        if (v->value.rules.source >= QA_MODE_Q3 && member->player.spectator)
             continue;
         qa_team_id player_team;
-        if (team && (!qa_modes_team(m, member->actor, &player_team, NULL) || player_team != team))
+        if (team && (!qa_modes_team(m, v->id, member->actor, &player_team, NULL) || player_team != team))
             continue;
         ++count;
     }
@@ -47,7 +47,7 @@ bool qa_modes_vote_start(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
     mode_player *initiator = mode_player_get(m, actor);
     if (v->value.rules.voting_disabled || !initiator || !initiator->value.connected ||
         (source >= QA_MODE_Q3 &&
-         (initiator->value.bot || initiator->value.spectator || initiator->value.connecting)) ||
+         (initiator->value.bot || member->player.spectator || initiator->value.connecting)) ||
         (v->value.rules.vote_limit &&
          member->vote_calls[slot] >= (uint32_t)v->value.rules.vote_limit))
         return mode_fail(e, "player cannot initiate this vote");
@@ -72,7 +72,7 @@ bool qa_modes_vote_start(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
         return mode_fail(e, "vote has no eligible players");
     if (team) {
         qa_team_id t;
-        if (!qa_modes_team(m, actor, &t, e))
+        if (!qa_modes_team(m, v->id, actor, &t, e))
             return false;
         if (t != team)
             return mode_fail(e, "vote initiator is outside the voting team");
@@ -114,10 +114,10 @@ bool qa_modes_vote_cast(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_i
     mode_player *p = mode_player_get(m, actor);
     if (!p || !p->value.connected ||
         (v->value.rules.source >= QA_MODE_Q3 &&
-         (p->value.bot || p->value.connecting || p->value.spectator)))
+         (p->value.bot || p->value.connecting || member->player.spectator)))
         return mode_fail(e, "player cannot vote");
     qa_team_id own;
-    if (team && (!qa_modes_team(m, actor, &own, e) || own != team))
+    if (team && (!qa_modes_team(m, v->id, actor, &own, e) || own != team))
         return mode_fail(e, "player is outside voting team");
     int8_t before = member->ballots[slot];
     if (v->value.rules.source != QA_MODE_LMCTF && before)
@@ -166,19 +166,19 @@ static bool execute_vote(qa_modes *m, mode_instance *v, qa_mode_vote *vote, qa_e
                    : mode_fail(e, "kick vote has no connection coordinator");
     }
     if (intent.kind == QA_MATCH_TEAM_LEADER) {
-        mode_player *target = mode_player_get(m, intent.actor);
+        mode_member *target = mode_member_get(m, v, intent.actor);
         qa_team_id team;
-        if (!target || !qa_modes_team(m, intent.actor, &team, e) || team != intent.team)
+        if (!target || !qa_modes_team(m, v->id, intent.actor, &team, e) || team != intent.team)
             return true;
         for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
             uint32_t i = m->players_order.ids[ordinal].slot;
             mode_member *member = &v->members[i];
             mode_player *p = member->joined ? mode_player_get(m, member->actor) : NULL;
             qa_team_id own;
-            if (p && qa_modes_team(m, member->actor, &own, NULL) && own == team)
-                p->value.leader = false;
+            if (p && qa_modes_team(m, v->id, member->actor, &own, NULL) && own == team)
+                member->player.leader = false;
         }
-        target->value.leader = true;
+        target->player.leader = true;
         return mode_event(m, v, QA_MODE_ROSTER, intent.actor, (qa_actor_id){0}, (qa_actor_id){0},
                           team, 1, 0, e);
     }

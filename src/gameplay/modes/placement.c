@@ -26,7 +26,7 @@ static float distance_to_players(qa_modes *m, mode_instance *v, qa_vec3 point, q
         uint32_t i = m->players_order.ids[ordinal].slot;
         mode_member *member = &v->members[i];
         mode_player *p = member->joined ? mode_player_get(m, member->actor) : NULL;
-        if (!p || p->value.spectator || qa_actor_id_equal(p->value.actor, except) ||
+        if (!p || member->player.spectator || qa_actor_id_equal(p->value.actor, except) ||
             !mode_alive(m, p->value.actor))
             continue;
         qa_body_state body;
@@ -184,7 +184,7 @@ bool qa_modes_spawnpoint(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool far
     if (!v || !out || !v->spawn_count)
         return mode_fail(e, "mode has no spawnpoints");
     qa_team_id team = 0;
-    if (mode_player_get(m, actor) && !qa_modes_team(m, actor, &team, e))
+    if (mode_player_get(m, actor) && !qa_modes_team(m, v->id, actor, &team, e))
         return false;
     mode_member *member = mode_member_get(m, v, actor);
     bool initial = !member || !member->spawn_state;

@@ -134,7 +134,7 @@ static size_t living(qa_modes *m, mode_instance *v) {
         uint32_t i = m->players_order.ids[ordinal].slot;
         mode_member *p = &v->members[i];
         mode_player *player = p->joined ? mode_player_get(m, p->actor) : NULL;
-        if (player && !player->value.spectator && mode_alive(m, p->actor))
+        if (player && !p->player.spectator && mode_alive(m, p->actor))
             ++count;
     }
     return count;
@@ -517,7 +517,7 @@ static bool check_wave(qa_modes *m, mode_instance *v, horde_state *h, qa_error *
         mode_member *p = &v->members[i];
         if (p->joined && mode_player_get(m, p->actor) && !mode_alive(m, p->actor) &&
             m->options.hooks.respawn &&
-            !m->options.hooks.respawn(m->options.hooks.context, p->actor, false, e))
+            !m->options.hooks.respawn(m->options.hooks.context, v->id, p->actor, false, e))
             return false;
     }
     h->prepared = false;

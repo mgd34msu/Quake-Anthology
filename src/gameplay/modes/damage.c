@@ -22,7 +22,7 @@ qa_team_id qa_modes_combat_team(qa_modes *m, qa_mode_id id, qa_actor_id actor,
     if (v->value.rules.source == QA_MODE_LMCTF && (v->value.rules.flags & 128u))
         return 0;
     qa_team_id team;
-    return qa_modes_team(m, actor, &team, NULL) ? team : fallback;
+    return qa_modes_team(m, v->id, actor, &team, NULL) ? team : fallback;
 }
 bool qa_modes_damage_effect(qa_modes *m, qa_mode_id id, qa_damage_effect_stage stage,
                             const qa_damage_request *request, qa_damage_effect *effect,
@@ -44,7 +44,7 @@ bool qa_modes_damage_effect(qa_modes *m, qa_mode_id id, qa_damage_effect_stage s
                                             request->attack.cause.source.q1.death_type);
         falling = cause && !strcmp(cause, "falling");
     }
-    if (stage == QA_DAMAGE_BEFORE_QUAD && source == QA_MODE_THREEWAVE && falling &&
+    if (stage == QA_DAMAGE_BEFORE_QUAD && source == QA_MODE_THREEWAVE && target && falling &&
         m->options.hooks.grapple_pulling &&
         m->options.hooks.grapple_pulling(m->options.hooks.context, request->target))
         effect->allowed = false;
@@ -68,7 +68,7 @@ bool qa_modes_damage_effect(qa_modes *m, qa_mode_id id, qa_damage_effect_stage s
             effect->allowed = false;
         if (stage == QA_DAMAGE_PROTECTION_APPLIES && target) {
             qa_team_id team;
-            if (!qa_modes_team(m, target->actor, &team, e))
+            if (!qa_modes_team(m, v->id, target->actor, &team, e))
                 return false;
             if (team != target->last_team)
                 effect->allowed = false;

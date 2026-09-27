@@ -19,7 +19,8 @@ bool mode_ball_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id 
     if (v->value.rules.kind != QA_MODE_DEATHBALL)
         return true;
     if (o->spec.kind == QA_MODE_OBJECT_BALL) {
-        if (!mode_player_get(m, actor))
+        mode_member *member = mode_member_get(m, v, actor);
+        if (!member || member->player.spectator)
             return true;
         qa_body_state ball, player;
         qa_combat_state state;
@@ -79,7 +80,7 @@ bool mode_ball_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id 
         uint32_t i = m->players_order.ids[ordinal].slot;
         mode_member *p = &v->members[i];
         qa_team_id t;
-        if (!p->joined || !mode_player_get(m, p->actor) || !qa_modes_team(m, p->actor, &t, NULL))
+        if (!p->joined || !mode_player_get(m, p->actor) || !qa_modes_team(m, v->id, p->actor, &t, NULL))
             continue;
         bool scorer = qa_actor_id_equal(p->actor, v->last_ball_touch);
         int32_t score = mode_add_i32(amount, scorer ? 5 : 0);

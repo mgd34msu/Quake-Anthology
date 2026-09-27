@@ -22,15 +22,16 @@ bool qa_modes_rank(qa_modes *m, qa_mode_id id, qa_error *e) {
         if (!p || !p->value.connected)
             continue;
         int32_t score;
-        if (!qa_modes_score(m, member->actor, &score, e))
+        if (!qa_modes_score(m, v->id, member->actor, &score, e))
             return false;
         if (!mode_player_get(m, member->actor))
             continue;
         qa_match_player value = p->value;
-        uint8_t group = value.scoreboard ? 3 : value.connecting ? 2 : value.spectator ? 1 : 0;
-        v->ranks[n++] = (mode_rank_entry){value.actor, score, value.spectator_since_ns,
+        const qa_mode_player_state *state = &member->player;
+        uint8_t group = state->scoreboard ? 3 : value.connecting ? 2 : state->spectator ? 1 : 0;
+        v->ranks[n++] = (mode_rank_entry){value.actor, score, state->spectator_since_ns,
                                           (uint32_t)ordinal, group};
-        if (!value.spectator && !value.connecting) {
+        if (!state->spectator && !value.connecting) {
             ++playing;
             if (!value.bot)
                 ++voting;
@@ -94,7 +95,7 @@ static size_t playing_team(qa_modes *m, mode_instance *v, qa_team_id team) {
         mode_player *player = p->joined ? mode_player_get(m, p->actor) : NULL;
         qa_team_id current;
         if (player && player->value.connected && !player->value.connecting &&
-            !player->value.spectator && qa_modes_team(m, p->actor, &current, NULL) &&
+            !p->player.spectator && qa_modes_team(m, v->id, p->actor, &current, NULL) &&
             current == team)
             ++count;
     }
@@ -106,8 +107,7 @@ bool qa_modes_ready(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool ready, q
     mode_player *p = mode_player_get(m, actor);
     if (!member || !p)
         return mode_fail(e, "unknown ready player");
-    p->value.ready = ready;
-    member->ready = ready;
+    member->player.ready = ready;
     if (v->value.rules.source == QA_MODE_Q2_CTF && v->value.rules.competition > 1) {
         if (!ready && v->value.phase == QA_MODE_COUNTDOWN)
             return mode_set_phase(
@@ -121,7 +121,7 @@ bool qa_modes_ready(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool ready, q
             uint32_t i = m->players_order.ids[ordinal].slot;
             mode_member *a = &v->members[i];
             mode_player *x = a->joined ? mode_player_get(m, a->actor) : NULL;
-            if (x && !x->value.spectator && !a->ready)
+            if (x && !a->player.spectator && !a->player.ready)
                 return true;
         }
         return mode_set_phase(
@@ -147,7 +147,7 @@ static bool ghost_assign(qa_modes *m, mode_instance *v, mode_member *p, qa_error
     }
     qa_team_id team;
     int32_t score;
-    if (!qa_modes_team(m, p->actor, &team, e) || !qa_modes_score(m, p->actor, &score, e))
+    if (!qa_modes_team(m, v->id, p->actor, &team, e) || !qa_modes_score(m, v->id, p->actor, &score, e))
         return false;
     mode_player *player = mode_player_get(m, p->actor);
     if (!player)
@@ -192,9 +192,9 @@ static bool begin_play(qa_modes *m, mode_instance *v, qa_error *e) {
             !qa_modes_set_score(m, v->id, p->actor, 0, e))
             return false;
         p->stats = (qa_mode_statistics){0};
-        p->ready = false;
+        p->player.ready = false;
         p->spawn_state = 0;
-        if (player->value.spectator)
+        if (p->player.spectator)
             continue;
         if (v->value.rules.source == QA_MODE_Q2_CTF) {
             if (!ghost_assign(m, v, p, e))
@@ -202,10 +202,10 @@ static bool begin_play(qa_modes *m, mode_instance *v, qa_error *e) {
             p->respawn_ns =
                 v->value.time_ns + MODE_SECOND + (mode_random(m) % 30u) * (MODE_SECOND / 10);
             if (m->options.hooks.spectator &&
-                !m->options.hooks.spectator(m->options.hooks.context, p->actor, true, e))
+                !m->options.hooks.spectator(m->options.hooks.context, v->id, p->actor, true, e))
                 return false;
         } else if (m->options.hooks.respawn &&
-                   !m->options.hooks.respawn(m->options.hooks.context, p->actor, false, e))
+                   !m->options.hooks.respawn(m->options.hooks.context, v->id, p->actor, false, e))
             return false;
     }
     return qa_modes_rank(m, v->id, e);
@@ -273,11 +273,11 @@ static bool intermission(qa_modes *m, mode_instance *v, qa_error *e) {
     v->ready_since_ns = 0;
     v->value.ready_exit = false;
     if (v->value.rules.kind == QA_MODE_DUEL && v->value.playing >= 2) {
-        mode_player *winner = mode_player_get(m, v->sorted[0]),
-                    *loser = mode_player_get(m, v->sorted[1]);
+        mode_member *winner = mode_member_get(m, v, v->sorted[0]),
+                    *loser = mode_member_get(m, v, v->sorted[1]);
         if (winner && loser) {
-            winner->value.wins = mode_add_i32(winner->value.wins, 1);
-            loser->value.losses = mode_add_i32(loser->value.losses, 1);
+            winner->player.wins = mode_add_i32(winner->player.wins, 1);
+            loser->player.losses = mode_add_i32(loser->player.losses, 1);
         }
     }
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
@@ -286,12 +286,12 @@ static bool intermission(qa_modes *m, mode_instance *v, qa_error *e) {
         mode_player *player = p->joined ? mode_player_get(m, p->actor) : NULL;
         if (!player)
             continue;
-        player->value.ready = false;
+        p->player.ready = false;
         if (!mode_alive(m, p->actor) && m->options.hooks.respawn &&
-            !m->options.hooks.respawn(m->options.hooks.context, p->actor, false, e))
+            !m->options.hooks.respawn(m->options.hooks.context, v->id, p->actor, false, e))
             return false;
         if (m->options.hooks.intermission &&
-            !m->options.hooks.intermission(m->options.hooks.context, p->actor, e))
+            !m->options.hooks.intermission(m->options.hooks.context, v->id, p->actor, e))
             return false;
     }
     return true;
@@ -302,12 +302,12 @@ static bool exit_intermission(qa_modes *m, mode_instance *v, qa_error *e) {
     v->restart_sent = true;
     if (v->value.rules.kind == QA_MODE_DUEL) {
         if (v->value.playing >= 2) {
-            mode_player *loser = mode_player_get(m, v->sorted[1]);
+            mode_member *loser = mode_member_get(m, v, v->sorted[1]);
             if (loser) {
-                loser->value.spectator = true;
-                loser->value.spectator_since_ns = v->value.time_ns;
+                loser->player.spectator = true;
+                loser->player.spectator_since_ns = v->value.time_ns;
                 if (m->options.hooks.spectator &&
-                    !m->options.hooks.spectator(m->options.hooks.context, loser->value.actor, true,
+                    !m->options.hooks.spectator(m->options.hooks.context, v->id, loser->actor, true,
                                                 e))
                     return false;
             }
@@ -322,30 +322,30 @@ static bool tied(qa_modes *m, mode_instance *v) {
     if (v->value.playing < 2)
         return false;
     int32_t a, b;
-    return qa_modes_score(m, v->sorted[0], &a, NULL) && qa_modes_score(m, v->sorted[1], &b, NULL) &&
+    return qa_modes_score(m, v->id, v->sorted[0], &a, NULL) && qa_modes_score(m, v->id, v->sorted[1], &b, NULL) &&
            a == b;
 }
 static bool duel_promote(qa_modes *m, mode_instance *v, qa_error *e) {
     if (v->value.playing >= 2)
         return true;
-    mode_player *oldest = NULL;
+    mode_member *oldest = NULL;
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
         uint32_t i = m->players_order.ids[ordinal].slot;
         mode_member *member = &v->members[i];
         mode_player *p = member->joined ? mode_player_get(m, member->actor) : NULL;
-        if (p && p->value.connected && !p->value.connecting && p->value.spectator &&
-            !p->value.scoreboard &&
-            (!oldest || p->value.spectator_since_ns < oldest->value.spectator_since_ns))
-            oldest = p;
+        if (p && p->value.connected && !p->value.connecting && member->player.spectator &&
+            !member->player.scoreboard &&
+            (!oldest || member->player.spectator_since_ns < oldest->player.spectator_since_ns))
+            oldest = member;
     }
     if (!oldest)
         return true;
-    oldest->value.spectator = false;
+    oldest->player.spectator = false;
     if (m->options.hooks.spectator &&
-        !m->options.hooks.spectator(m->options.hooks.context, oldest->value.actor, false, e))
+        !m->options.hooks.spectator(m->options.hooks.context, v->id, oldest->actor, false, e))
         return false;
     if (m->options.hooks.respawn &&
-        !m->options.hooks.respawn(m->options.hooks.context, oldest->value.actor, false, e))
+        !m->options.hooks.respawn(m->options.hooks.context, v->id, oldest->actor, false, e))
         return false;
     return qa_modes_rank(m, v->id, e);
 }
@@ -366,7 +366,7 @@ static bool lmctf_frame(qa_modes *m, mode_instance *v, qa_error *e) {
                 qa_actor_id actor = m->players_order.ids[ordinal];
                 mode_member *p = mode_member_get(m, v, actor);
                 mode_player *player = mode_player_get(m, actor);
-                if (!p || !player || player->value.spectator)
+                if (!p || !player || p->player.spectator)
                     continue;
                 qa_damage_request request = {
                     .target = actor,
@@ -443,7 +443,7 @@ bool mode_match_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
             mode_player *p = member->joined ? mode_player_get(m, member->actor) : NULL;
             if (!p || p->value.bot || !p->value.connected)
                 continue;
-            if (p->value.ready)
+            if (member->player.ready)
                 ++ready;
             else
                 ++not_ready;
@@ -532,7 +532,7 @@ bool mode_match_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
         } else
             for (size_t i = 0; i < v->value.playing; ++i) {
                 int32_t score;
-                if (!qa_modes_score(m, v->sorted[i], &score, e))
+                if (!qa_modes_score(m, v->id, v->sorted[i], &score, e))
                     return false;
                 if (score >= r->frag_limit)
                     return qa_modes_end(m, v->id, 0, e);
@@ -548,7 +548,7 @@ bool qa_modes_ghost_rejoin(qa_modes *m, qa_mode_id id, qa_actor_id actor, uint32
         v->value.phase != QA_MODE_PLAYING)
         return mode_fail(e, "ghost restore requires an active CTF match");
     qa_team_id current;
-    if (!qa_modes_team(m, actor, &current, e))
+    if (!qa_modes_team(m, v->id, actor, &current, e))
         return false;
     if (current)
         return mode_fail(e, "ghost restore requires an unassigned player");
@@ -571,7 +571,7 @@ bool qa_modes_ghost_rejoin(qa_modes *m, qa_mode_id id, qa_actor_id actor, uint32
         member->ghost_code = code;
         ghost->actor = actor;
         return !m->options.hooks.respawn ||
-               m->options.hooks.respawn(m->options.hooks.context, actor, true, e);
+               m->options.hooks.respawn(m->options.hooks.context, v->id, actor, true, e);
     }
     return mode_fail(e, "unknown ghost code");
 }

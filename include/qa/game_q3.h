@@ -164,6 +164,21 @@ qa_item_id qa_q3_weapon_item(const qa_q3_game *, qa_q3_weapon, bool ammo);
 qa_item_id qa_q3_item_identity(const qa_q3_game *, uint32_t item_index);
 bool qa_q3_bind_player(qa_q3_game *, qa_actor_id, uint32_t selections, int32_t handicap,
                        qa_error *);
+typedef struct qa_q3_player_binding {
+    qa_actor_id actor;
+    uint64_t token;
+    uint32_t prior_selections, selections;
+    int32_t handicap;
+    bool created;
+} qa_q3_player_binding;
+/* Zero-initialize the transaction. Begin reserves this actor/generation but
+ * does not publish selections; commit is the only mutation and rollback only
+ * releases that reservation. Competing binds/restores fail while it is open. */
+bool qa_q3_bind_player_begin(qa_q3_game *, qa_actor_id, uint32_t selections, int32_t handicap,
+                             qa_q3_player_binding *, qa_error *);
+bool qa_q3_bind_player_validate(qa_q3_game *, const qa_q3_player_binding *, qa_error *);
+bool qa_q3_bind_player_commit(qa_q3_game *, qa_q3_player_binding *, qa_error *);
+bool qa_q3_bind_player_rollback(qa_q3_game *, qa_q3_player_binding *, qa_error *);
 bool qa_q3_player_read(const qa_q3_game *, qa_actor_id, qa_q3_player_state *);
 bool qa_q3_player_set_view(qa_q3_game *, qa_actor_id, qa_vec3 angles, float view_height,
                            qa_error *);

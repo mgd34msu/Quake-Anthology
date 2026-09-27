@@ -137,9 +137,11 @@ bool qa_q3_create(const qa_q3_options *options, qa_q3_game **out, qa_error *erro
     game->capacity = qa_actors_capacity(qa_session_actors(options->services.session));
     game->actors = calloc(game->capacity, sizeof(*game->actors));
     game->kamikaze_cooldowns = calloc(game->capacity, sizeof(*game->kamikaze_cooldowns));
-    if (!game->actors || !game->kamikaze_cooldowns) {
+    game->player_binding_tokens = calloc(game->capacity, sizeof(*game->player_binding_tokens));
+    if (!game->actors || !game->kamikaze_cooldowns || !game->player_binding_tokens) {
         free(game->actors);
         free(game->kamikaze_cooldowns);
+        free(game->player_binding_tokens);
         free(game);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q3 actor extensions");
         return false;
@@ -194,6 +196,7 @@ bool qa_q3_destroy(qa_q3_game *game, qa_error *error) {
         game->snapshot_frames = next;
     }
     free(game->kamikaze_cooldowns);
+    free(game->player_binding_tokens);
     free(game->actors);
     free(game);
     return true;
@@ -464,6 +467,7 @@ void qa_q3_actor_released(qa_q3_game *game, qa_actor_record record) {
         return;
     if (qa_actor_id_equal(game->kamikaze_cooldowns[record.id.slot].actor, record.id))
         game->kamikaze_cooldowns[record.id.slot] = (q3_kamikaze_cooldown){0};
+    game->player_binding_tokens[record.id.slot] = 0;
     q3_actor *entry = &game->actors[record.id.slot];
     if (qa_actor_id_equal(entry->actor, record.id)) {
         q3_actor retired = *entry;

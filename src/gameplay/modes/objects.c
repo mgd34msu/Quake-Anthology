@@ -18,12 +18,13 @@ static bool native_objective_read(void *context, qa_objective_state *out, qa_err
 bool mode_object_bind_objective(qa_modes *m, mode_object *o, qa_error *e) {
     if (!o->spec.id)
         return true;
-    qa_objective_binding binding = {.owner = m->options.owner,
+    qa_objective_binding binding = {.mode = o->mode, .owner = m->options.owner,
                                     .id = o->spec.id,
                                     .bot_goal = true,
-                                    .context = o,
+                                    .context = &m->objects[o->actor.slot],
                                     .read = native_objective_read};
-    return qa_modes_bind_objective(m, &binding, &o->objective, e);
+    return o->admitting ? mode_reserve_objective(m, &binding, &o->objective, e)
+                        : qa_modes_bind_objective(m, &binding, &o->objective, e);
 }
 bool mode_object_notify(qa_modes *m, mode_instance *v, mode_object *o, qa_error *e) {
     return mode_event(m, v, QA_MODE_OBJECTIVE_CHANGED, o->value.carrier, (qa_actor_id){0}, o->actor,
@@ -31,17 +32,38 @@ bool mode_object_notify(qa_modes *m, mode_instance *v, mode_object *o, qa_error 
 }
 bool mode_object_count(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id actor,
                        double count, qa_error *e) {
-    (void)v;
     if (!o->spec.item)
         return true;
+    qa_item_id item;
+    if (!mode_inventory_item(m, v, o->spec.item, &item, e))
+        return false;
     for (uint32_t i = 0; i < m->actor_capacity; ++i) {
         mode_object *other = &m->objects[i];
-        if (other != o && other->active && other->spec.item == o->spec.item &&
+        if (other != o && other->active && other->mode.slot == v->id.slot &&
+            other->mode.generation == v->id.generation && other->spec.item == o->spec.item &&
             other->value.phase == QA_OBJECTIVE_CARRIED &&
             qa_actor_id_equal(other->value.carrier, actor))
             count += 1;
     }
-    return mode_set_count(m, actor, o->spec.item, count, e);
+    qa_inventory_entry existing;
+    qa_error local = {0};
+    if (!qa_inventory_entry_read(m->options.services.inventory, actor, item, &existing, &local)) {
+        if (local.code != QA_ERROR_NOT_FOUND) {
+            if (e) *e = local;
+            return false;
+        }
+        qa_inventory_entry initial = {.item = item, .capacity = count > 1 ? count : 1,
+            .policy = QA_COUNT_SOURCE_INT32};
+        qa_inventory_admission *admission = NULL;
+        if (!qa_inventory_prepare_entries(m->options.services.inventory, actor, &initial, 1,
+                                          &admission, e))
+            return false;
+        if (!qa_inventory_admission_commit(admission, e)) {
+            qa_inventory_admission_abort(admission);
+            return false;
+        }
+    }
+    return mode_set_count(m, actor, item, count, e);
 }
 bool mode_object_sync(qa_modes *m, mode_object *o, qa_error *e) {
     if (!mode_live(m, o->actor))
@@ -110,6 +132,8 @@ static const char *object_item(mode_instance *v, const qa_mode_object_spec *spec
             return team == 0   ? "q1:ctf/flag/red"
                    : team == 1 ? "q1:ctf/flag/blue"
                                : "q1:ctf/flag/neutral";
+        if (v->value.rules.source == QA_MODE_LMCTF)
+            return "q2:flag";
         if (v->value.rules.source < QA_MODE_Q3)
             return team == 0 ? "q2:item_flag_team1" : "q2:item_flag_team2";
         return team == 0   ? "q3:item/team_CTF_redflag"
@@ -145,10 +169,12 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
         !isfinite(spec->value))
         return mode_fail(e, "invalid native mode object");
     int team = mode_team_index(v, spec->team);
-    if ((spec->kind == QA_MODE_OBJECT_FLAG || spec->kind == QA_MODE_OBJECT_OBELISK) &&
+    if (!spec->command_created &&
+        (spec->kind == QA_MODE_OBJECT_FLAG || spec->kind == QA_MODE_OBJECT_OBELISK) &&
         mode_live(m, v->bases[team >= 0 ? team : 2]))
         return mode_fail(e, "duplicate native objective base");
-    if (v->value.rules.source == QA_MODE_ROGUE && spec->kind == QA_MODE_OBJECT_FLAG) {
+    qa_actor_id created_base = {0};
+    if (!spec->command_created && v->value.rules.source == QA_MODE_ROGUE && spec->kind == QA_MODE_OBJECT_FLAG) {
         qa_mode_object_spec base = *spec;
         base.kind = QA_MODE_OBJECT_FLAG_BASE;
         base.id = 0;
@@ -165,6 +191,7 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
             *out = base_actor;
             return true;
         }
+        created_base = base_actor;
     }
     qa_body_state body = {.origin = spec->origin,
                           .angles = spec->angles,
@@ -199,52 +226,71 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
         .can_take_damage = true,
         .no_knockback = spec->kind == QA_MODE_OBJECT_OBELISK};
     qa_actor_id actor = spec->actor;
+    qa_body_state previous_body = {0};
+    qa_body_link_state previous_link = {0};
+    qa_actor_collision previous_collision = {0};
+    qa_combat_state previous_combat = {0};
+    bool authored = actor.registry != 0, changed_body = false, changed_combat = false;
+    bool reserved = false, omitted = false;
+    bool had_collision = false, had_combat = false, captured_body = false;
+    uint64_t combat_serial = 0, body_serial = 0;
+    bool needs_combat = spec->kind == QA_MODE_OBJECT_BALL ||
+        (spec->kind == QA_MODE_OBJECT_OBELISK && v->value.rules.kind == QA_MODE_OVERLOAD);
+    mode_object pending = {0};
+    mode_object *o = &pending;
     if (actor.registry) {
-        if (!mode_live(m, actor) || mode_object_get(m, actor))
-            return mode_fail(e, "mode actor already claimed or stale");
-        if (spec->retain_body) {
-            if (!qa_world_body_read(m->options.services.world, actor, &body, e))
-                return false;
-            qa_actor_collision authored;
-            if (qa_world_get_collision(m->options.services.world, actor, &authored)) {
-                authored.role = collision.role;
-                collision = authored;
+        if (!mode_live(m, actor) || mode_object_get(m, actor) || m->objects[actor.slot].admitting)
+            goto invalid_actor;
+        m->objects[actor.slot] = (mode_object){.actor = actor, .admitting = true};
+        reserved = true;
+        if (!qa_world_body_read(m->options.services.world, actor, &previous_body, e) ||
+            !qa_world_link_state(m->options.services.world, actor, &previous_link))
+            goto rollback;
+        captured_body = true;
+        body_serial = qa_world_body_storage_serial(m->options.services.world, actor);
+        had_collision = qa_world_get_collision(m->options.services.world, actor, &previous_collision);
+        if (needs_combat) {
+            qa_error local = {0};
+            combat_serial = qa_combat_storage_serial(m->options.services.combat, actor);
+            had_combat = qa_combat_read_traits(m->options.services.combat, actor, &previous_combat, &local);
+            if (!had_combat && local.code != QA_ERROR_NOT_FOUND) {
+                if (e) *e = local;
+                goto rollback;
             }
         }
+        if (spec->retain_body) {
+            body = previous_body;
+            if (had_collision) {
+                qa_collision_role role = collision.role;
+                collision = previous_collision;
+                collision.role = role;
+            }
+        }
+        if (qa_world_body_storage_serial(m->options.services.world, actor) != body_serial) {
+            mode_fail(e, "mode body owner changed during admission read");
+            goto rollback;
+        }
+        changed_body = true;
         if (!qa_world_body_write(m->options.services.world, actor, &body, e) ||
             !qa_world_set_collision(m->options.services.world, actor, &collision, e))
-            return false;
-        if (spec->kind == QA_MODE_OBJECT_BALL ||
-            (spec->kind == QA_MODE_OBJECT_OBELISK && v->value.rules.kind == QA_MODE_OVERLOAD)) {
-            qa_combat_state current;
-            qa_error local = {0};
-            if (qa_combat_read_traits(m->options.services.combat, actor, &current, &local)) {
-                if (!qa_combat_set_traits(m->options.services.combat, actor, &combat, e) ||
-                    !qa_combat_set_health(m->options.services.combat, actor, combat.health, e))
-                    return false;
-            } else if (local.code != QA_ERROR_NOT_FOUND) {
-                if (e)
-                    *e = local;
-                return false;
-            } else if (!qa_combat_create_actor(m->options.services.combat, actor, &combat, e))
-                return false;
-        }
+            goto rollback;
     } else {
         qa_string_id definition;
         if (!qa_builtin_resource(&m->options.services, "anthology:mode-object", &definition, e))
-            return false;
+            goto rollback;
         qa_builtin_spawn spawn = {.owner = m->options.owner,
                                   .definition = definition,
                                   .body = body,
                                   .collision = &collision,
-                                  .link = true};
+                                  .link = false};
         if (spec->kind == QA_MODE_OBJECT_BALL ||
             (spec->kind == QA_MODE_OBJECT_OBELISK && v->value.rules.kind == QA_MODE_OVERLOAD))
             spawn.combat = &combat;
         if (!qa_builtin_spawn_actor(&m->options.services, &spawn, &actor, e))
-            return false;
+            goto rollback;
+        m->objects[actor.slot] = (mode_object){.actor = actor, .admitting = true};
+        reserved = true;
     }
-    mode_object *o = &m->objects[actor.slot];
     *o = (mode_object){.modes = m,
                        .actor = actor,
                        .mode = id,
@@ -252,6 +298,7 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
                        .home = body.origin,
                        .collision = collision,
                        .active = true,
+                       .admitting = true,
                        .has_physics = true,
                        .born_ns = v->value.time_ns,
                        .value = {.mode = id,
@@ -271,12 +318,13 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
             UINT32_C(0x2020003) | (v->value.rules.q2_rerelease ? UINT32_C(0x40000000) : 0);
     const char *model = object_model(v, spec), *item = object_item(v, spec);
     if (model && !qa_builtin_resource(&m->options.services, model, &o->value.model, e))
-        return false;
+        goto rollback;
     if (!o->spec.item && item && !qa_builtin_resource(&m->options.services, item, &o->spec.item, e))
-        return false;
+        goto rollback;
+    qa_item_id scoped_item;
+    if (o->spec.item && !mode_inventory_item(m, v, o->spec.item, &scoped_item, e))
+        goto rollback;
     if (spec->kind == QA_MODE_OBJECT_FLAG) {
-        int index = team >= 0 ? team : 2;
-        v->bases[index] = actor;
         o->value.skin = team > 0 ? team : 0;
         o->value.frame = family(v) == QA_COLLISION_Q2 ? 173 : 0;
         o->value.effects = family(v) == QA_COLLISION_Q1   ? (team == 0 ? 32u : 16u)
@@ -284,14 +332,9 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
                                                           : 0;
     }
     if (spec->kind == QA_MODE_OBJECT_OBELISK) {
-        int index = team >= 0 ? team : 2;
-        v->bases[index] = actor;
         o->next_ns = v->value.time_ns + v->value.rules.obelisk_regen_ns;
     }
-    if (spec->kind == QA_MODE_OBJECT_BALL)
-        v->ball = actor;
     if (spec->kind == QA_MODE_OBJECT_TAG) {
-        v->tag = actor;
         if (v->value.rules.source == QA_MODE_ROGUE) {
             o->value.skin = 1;
             o->value.effects = 8;
@@ -312,14 +355,16 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
     if (spec->kind == QA_MODE_OBJECT_LOCATION) {
         o->has_physics = false;
         o->value.visible = false;
+        if (!o->spec.location && v->next_location == INT32_MAX) {
+            mode_fail(e, "mode location identity exhausted");
+            goto rollback;
+        }
         if (!o->spec.location)
-            o->spec.location = ++v->next_location;
-        else if (o->spec.location > v->next_location)
-            v->next_location = o->spec.location;
+            o->spec.location = v->next_location + 1;
     }
     if (!mode_object_bind_objective(m, o, e))
-        return false;
-    if (!spec->suspended &&
+        goto rollback;
+    if (!spec->suspended && !spec->command_created &&
         (spec->kind == QA_MODE_OBJECT_FLAG || spec->kind == QA_MODE_OBJECT_OBELISK ||
          spec->kind == QA_MODE_OBJECT_FLAG_BASE)) {
         qa_trace_query trace = {.start = body.origin,
@@ -334,32 +379,156 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
                                                             : 128;
         qa_trace_result result;
         if (!qa_world_trace(m->options.services.world, &trace, &result, e))
-            return false;
+            goto rollback;
         if (family(v) == QA_COLLISION_Q1 && (result.all_solid || result.fraction == 1)) {
-            *out = (qa_actor_id){0};
-            return qa_session_release(m->options.services.session, actor, e);
+            omitted = true;
+            goto rollback;
         }
         if (!result.start_solid && result.fraction < 1) {
+            if (authored && qa_world_body_storage_serial(m->options.services.world, actor) != body_serial) {
+                mode_fail(e, "mode body owner changed during placement");
+                goto rollback;
+            }
             body.origin = result.end;
             body.ground = result.actor;
             o->home = body.origin;
             if (!qa_world_body_write(m->options.services.world, actor, &body, e))
-                return false;
+                goto rollback;
         }
     }
     if (family(v) == QA_COLLISION_Q1 &&
         (spec->kind == QA_MODE_OBJECT_FLAG || spec->kind == QA_MODE_OBJECT_FLAG_BASE))
         o->physics.motion = QA_PHYSICS_TOSS;
+    if (authored && qa_world_body_storage_serial(m->options.services.world, actor) != body_serial) {
+        mode_fail(e, "mode body owner changed before link");
+        goto rollback;
+    }
     if (!mode_object_sync(m, o, e))
-        return false;
+        goto rollback;
+    if (!mode_live(m, actor) ||
+        (authored && qa_world_body_storage_serial(m->options.services.world, actor) != body_serial) ||
+        !m->objects[actor.slot].admitting ||
+        !qa_actor_id_equal(m->objects[actor.slot].actor, actor)) {
+        mode_fail(e, "mode object retired during admission");
+        goto rollback;
+    }
+    if (o->objective.serial &&
+        (!m->objectives[o->objective.slot].reserved ||
+         m->objectives[o->objective.slot].serial != o->objective.serial)) {
+        mode_fail(e, "mode objective binding changed during admission");
+        goto rollback;
+    }
+    if (authored && needs_combat) {
+        if (qa_combat_storage_serial(m->options.services.combat, actor) != combat_serial) {
+            mode_fail(e, "mode combat storage changed during admission");
+            goto rollback;
+        }
+        if (had_combat) {
+            changed_combat = true;
+            if (!qa_combat_set_traits(m->options.services.combat, actor, &combat, e))
+                goto rollback;
+            if (qa_combat_storage_serial(m->options.services.combat, actor) != combat_serial) {
+                mode_fail(e, "mode combat owner changed during traits write");
+                goto rollback;
+            }
+            if (!qa_combat_set_health(m->options.services.combat, actor, combat.health, e))
+                goto rollback;
+            if (qa_combat_storage_serial(m->options.services.combat, actor) != combat_serial) {
+                mode_fail(e, "mode combat owner changed during health write");
+                goto rollback;
+            }
+        } else if (!qa_combat_create_actor(m->options.services.combat, actor, &combat, e))
+            goto rollback;
+    }
+    if (!mode_live(m, actor) ||
+        (authored && qa_world_body_storage_serial(m->options.services.world, actor) != body_serial) ||
+        !m->objects[actor.slot].admitting ||
+        !qa_actor_id_equal(m->objects[actor.slot].actor, actor)) {
+        mode_fail(e, "mode actor ownership changed during combat admission");
+        goto rollback;
+    }
+    pending.admitting = false;
+    m->objects[actor.slot] = pending;
+    if (o->objective.serial)
+        (void)mode_commit_objective(m, o->objective);
+    if ((spec->kind == QA_MODE_OBJECT_FLAG && !spec->command_created) ||
+        spec->kind == QA_MODE_OBJECT_OBELISK)
+        v->bases[team >= 0 ? team : 2] = actor;
+    if (spec->kind == QA_MODE_OBJECT_BALL)
+        v->ball = actor;
+    if (spec->kind == QA_MODE_OBJECT_TAG && !spec->command_created)
+        v->tag = actor;
+    if (spec->kind == QA_MODE_OBJECT_LOCATION && o->spec.location > v->next_location)
+        v->next_location = o->spec.location;
     *out = actor;
     return true;
+invalid_actor:
+    mode_fail(e, "mode actor already claimed or stale");
+rollback: {
+        qa_error cleanup = {0}, first = {0};
+        if (o->objective.serial)
+            qa_modes_unbind_objective(m, o->objective, NULL);
+        if (reserved && m->objects[actor.slot].admitting &&
+            qa_actor_id_equal(m->objects[actor.slot].actor, actor))
+            m->objects[actor.slot] = (mode_object){0};
+        if (authored && mode_live(m, actor)) {
+            if (changed_combat &&
+                qa_combat_storage_serial(m->options.services.combat, actor) == combat_serial) {
+                if (!qa_combat_set_traits(m->options.services.combat, actor, &previous_combat, &cleanup))
+                    first = cleanup;
+                if (qa_combat_storage_serial(m->options.services.combat, actor) == combat_serial &&
+                    !qa_combat_set_health(m->options.services.combat, actor, previous_combat.health, &cleanup) &&
+                    !first.code)
+                    first = cleanup;
+            }
+            if (changed_body && captured_body &&
+                qa_world_body_storage_serial(m->options.services.world, actor) == body_serial) {
+                if (!qa_world_body_write(m->options.services.world, actor, &previous_body, &cleanup) && !first.code)
+                    first = cleanup;
+                if (qa_world_body_storage_serial(m->options.services.world, actor) == body_serial &&
+                    !qa_world_set_collision(m->options.services.world, actor,
+                        had_collision ? &previous_collision : NULL, &cleanup) && !first.code)
+                    first = cleanup;
+                if (qa_world_body_storage_serial(m->options.services.world, actor) == body_serial &&
+                    !qa_world_restore_link_state(m->options.services.world, actor, &previous_link, &cleanup) && !first.code)
+                    first = cleanup;
+            }
+        } else if (!authored && mode_live(m, actor) &&
+                   !qa_session_release(m->options.services.session, actor, &cleanup))
+            first = cleanup;
+        if (mode_live(m, created_base) &&
+            !qa_session_release(m->options.services.session, created_base, &cleanup) && !first.code)
+            first = cleanup;
+        if (first.code && e)
+            *e = first;
+        if (omitted && !first.code)
+            *out = (qa_actor_id){0};
+        return omitted && !first.code;
+    }
 }
 bool qa_modes_spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *spec,
                            qa_actor_id *out, qa_error *e) {
     if (!m)
         return mode_fail(e, "invalid mode object service");
-    return MODE_CALLBACK(m, spawn_object(m, id, spec, out, e));
+    qa_mode_object_spec requested;
+    if (spec) {
+        requested = *spec;
+        spec = &requested;
+    }
+    mode_instance *v = mode_get(m, id);
+    bool base = v && spec && !spec->command_created &&
+        (spec->kind == QA_MODE_OBJECT_FLAG || spec->kind == QA_MODE_OBJECT_OBELISK);
+    int index = base ? mode_team_index(v, spec->team) : -1;
+    if (index < 0)
+        index = 2;
+    if (base && v->base_admitting[index])
+        return mode_fail(e, "mode objective base admission already in progress");
+    if (base)
+        v->base_admitting[index] = true;
+    bool ok = MODE_CALLBACK(m, spawn_object(m, id, spec, out, e));
+    if (base)
+        v->base_admitting[index] = false;
+    return ok;
 }
 bool qa_modes_object_read(qa_modes *m, qa_actor_id actor, qa_mode_object_view *out) {
     mode_object *o = mode_object_get(m, actor);
@@ -422,8 +591,8 @@ static bool touch(qa_modes *m, qa_actor_id object, qa_actor_id actor, bool *acce
     if (o->spec.kind == QA_MODE_OBJECT_SPEED || o->spec.kind == QA_MODE_OBJECT_GOAL ||
         o->spec.kind == QA_MODE_OBJECT_BALL)
         return mode_ball_touch(m, v, o, actor, accepted, e);
-    mode_player *p = mode_player_get(m, actor);
-    if (!p || p->value.spectator || !mode_alive(m, actor) || !mode_member_get(m, v, actor))
+    mode_member *p = mode_member_get(m, v, actor);
+    if (!p || p->player.spectator || !mode_alive(m, actor))
         return true;
     if (!o->value.visible || o->value.phase == QA_OBJECTIVE_CARRIED ||
         (qa_actor_id_equal(o->value.previous_owner, actor) && v->value.time_ns < o->owner_until_ns))
@@ -443,7 +612,7 @@ static bool touch(qa_modes *m, qa_actor_id object, qa_actor_id actor, bool *acce
         return mode_obelisk_touch(m, v, o, actor, accepted, e);
     if (o->spec.kind == QA_MODE_OBJECT_CUBE) {
         qa_team_id team;
-        if (!qa_modes_team(m, actor, &team, e))
+        if (!qa_modes_team(m, v->id, actor, &team, e))
             return false;
         if (team != o->spec.team) {
             mode_member *member = mode_member_get(m, v, actor);

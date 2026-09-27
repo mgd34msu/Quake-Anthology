@@ -29,24 +29,65 @@ bool qa_q3_activate_holdable(qa_q3_game *game, qa_actor_id actor, qa_q3_holdable
            q3_use_holdable(game, actor, expected, error);
 }
 
-bool qa_q3_bind_player(qa_q3_game *game, qa_actor_id actor, uint32_t selections, int32_t handicap,
-                       qa_error *error) {
+bool qa_q3_bind_player_begin(qa_q3_game *game, qa_actor_id actor, uint32_t selections,
+                             int32_t handicap, qa_q3_player_binding *binding, qa_error *error) {
     if (!game || actor.slot >= game->capacity ||
         !qa_actors_get(qa_session_actors(game->options.services.session), actor) || !selections ||
-        (selections & ~(uint32_t)QA_Q3_ALL_SELECTIONS))
+        (selections & ~(uint32_t)QA_Q3_ALL_SELECTIONS) || !binding || binding->token ||
+        game->player_binding_tokens[actor.slot])
         return q3_fail(error, "invalid Q3 player admission");
     q3_actor *entry = &game->actors[actor.slot];
     if (entry->kind && (!qa_actor_id_equal(entry->actor, actor) || entry->kind != Q3_ACTOR_PLAYER))
         return q3_fail(error, "actor already has another Q3 behavior");
-    if (!entry->kind) {
-        if (handicap < 1 || handicap > 100)
-            handicap = 100;
-        *entry = (q3_actor){.actor = actor,
+    if (handicap < 1 || handicap > 100)
+        handicap = 100;
+    if (++game->player_binding_serial == 0)
+        ++game->player_binding_serial;
+    game->player_binding_tokens[actor.slot] = game->player_binding_serial;
+    *binding = (qa_q3_player_binding){.actor = actor,
+                                      .token = game->player_binding_serial,
+                                      .prior_selections = entry->kind
+                                                              ? entry->state.player.selections
+                                                              : 0,
+                                      .selections = selections,
+                                      .handicap = handicap,
+                                      .created = !entry->kind};
+    return true;
+}
+static bool binding_matches(qa_q3_game *game, const qa_q3_player_binding *binding,
+                            q3_actor **out, qa_error *error) {
+    if (!game || !binding || !binding->actor.registry || !binding->token ||
+        binding->actor.slot >= game->capacity ||
+        game->player_binding_tokens[binding->actor.slot] != binding->token)
+        return q3_fail(error, "invalid Q3 player binding transaction");
+    if (!qa_actors_get(qa_session_actors(game->options.services.session), binding->actor))
+        return q3_fail(error, "Q3 player binding actor was retired");
+    q3_actor *entry = &game->actors[binding->actor.slot];
+    if ((binding->created && entry->kind) ||
+        (!binding->created &&
+         (!qa_actor_id_equal(entry->actor, binding->actor) || entry->kind != Q3_ACTOR_PLAYER ||
+          entry->state.player.selections != binding->prior_selections)))
+        return q3_fail(error, "Q3 player binding changed during admission");
+    *out = entry;
+    return true;
+}
+bool qa_q3_bind_player_validate(qa_q3_game *game, const qa_q3_player_binding *binding,
+                                qa_error *error) {
+    q3_actor *entry;
+    return binding_matches(game, binding, &entry, error);
+}
+bool qa_q3_bind_player_commit(qa_q3_game *game, qa_q3_player_binding *binding,
+                              qa_error *error) {
+    q3_actor *entry;
+    if (!binding_matches(game, binding, &entry, error))
+        return false;
+    if (binding->created) {
+        *entry = (q3_actor){.actor = binding->actor,
                             .kind = Q3_ACTOR_PLAYER,
                             .state.player = {.weapon = QA_Q3_W_MACHINEGUN,
                                              .requested_weapon = QA_Q3_W_MACHINEGUN,
-                                             .max_health = handicap,
-                                             .handicap = handicap,
+                                             .max_health = binding->handicap,
+                                             .handicap = binding->handicap,
                                              .view_height = 26,
                                              .legs_animation = 22,
                                              .torso_animation = 11,
@@ -55,8 +96,28 @@ bool qa_q3_bind_player(qa_q3_game *game, qa_actor_id actor, uint32_t selections,
                                              .respawned = true,
                                              .ground_entity_number = 1023}};
     }
-    entry->state.player.selections |= selections;
+    entry->state.player.selections |= binding->selections;
+    game->player_binding_tokens[binding->actor.slot] = 0;
+    *binding = (qa_q3_player_binding){0};
     return true;
+}
+bool qa_q3_bind_player_rollback(qa_q3_game *game, qa_q3_player_binding *binding,
+                                qa_error *error) {
+    if (!game || !binding || !binding->token || binding->actor.slot >= game->capacity)
+        return q3_fail(error, "invalid Q3 player binding rollback");
+    uint64_t active = game->player_binding_tokens[binding->actor.slot];
+    if (active && active != binding->token)
+        return q3_fail(error, "Q3 player binding reservation was replaced");
+    if (active == binding->token)
+        game->player_binding_tokens[binding->actor.slot] = 0;
+    *binding = (qa_q3_player_binding){0};
+    return true;
+}
+bool qa_q3_bind_player(qa_q3_game *game, qa_actor_id actor, uint32_t selections, int32_t handicap,
+                       qa_error *error) {
+    qa_q3_player_binding binding = {0};
+    return qa_q3_bind_player_begin(game, actor, selections, handicap, &binding, error) &&
+           qa_q3_bind_player_commit(game, &binding, error);
 }
 bool qa_q3_player_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_player_state *out) {
     const q3_actor *entry = q3_actor_const(game, actor);

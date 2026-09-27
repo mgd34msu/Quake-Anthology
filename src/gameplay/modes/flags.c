@@ -9,7 +9,7 @@ static bool points(qa_modes *m, mode_instance *v, qa_actor_id actor, int32_t amo
 bool mode_flag_reset(qa_modes *m, mode_instance *v, mode_object *o, bool announce, qa_error *e) {
     qa_actor_id previous = o->value.carrier;
     mode_member *member = mode_member_get(m, v, previous);
-    if (member)
+    if (member && qa_actor_id_equal(member->flag, o->actor))
         member->flag = (qa_actor_id){0};
     if (mode_live(m, previous) && !mode_object_count(m, v, o, previous, 0, e))
         return false;
@@ -26,6 +26,12 @@ bool mode_flag_reset(qa_modes *m, mode_instance *v, mode_object *o, bool announc
     o->expire_ns = 0;
     o->dropped = false;
     o->physics.motion = QA_PHYSICS_STATIONARY;
+    if (o->spec.command_created) {
+        if (announce && !mode_event(m, v, QA_MODE_FLAG_RETURNED, (qa_actor_id){0},
+            (qa_actor_id){0}, o->actor, o->spec.team, 0, 0, e))
+            return false;
+        return qa_session_release(m->options.services.session, o->actor, e);
+    }
     qa_body_state body;
     if (!qa_world_body_read(m->options.services.world, o->actor, &body, e))
         return false;
@@ -68,7 +74,7 @@ static bool capture(qa_modes *m, mode_instance *v, mode_object *flag, qa_actor_i
             mode_member *p = &v->members[i];
             mode_player *player = p->joined ? mode_player_get(m, p->actor) : NULL;
             qa_team_id t;
-            if (!player || player->value.spectator || !qa_modes_team(m, p->actor, &t, NULL))
+            if (!player || p->player.spectator || !qa_modes_team(m, v->id, p->actor, &t, NULL))
                 continue;
             if (t == team)
                 ++allies;
@@ -88,7 +94,7 @@ static bool capture(qa_modes *m, mode_instance *v, mode_object *flag, qa_actor_i
         mode_member *p = &v->members[i];
         mode_player *player = p->joined ? mode_player_get(m, p->actor) : NULL;
         qa_team_id t;
-        if (!player || !qa_modes_team(m, p->actor, &t, NULL))
+        if (!player || !qa_modes_team(m, v->id, p->actor, &t, NULL))
             continue;
         if (t != team) {
             p->stats.hurt_carrier = false;
@@ -140,13 +146,16 @@ static bool capture(qa_modes *m, mode_instance *v, mode_object *flag, qa_actor_i
             !mode_flag_reset(m, v, base, false, e))
             return false;
     }
+    if (flag->spec.command_created && mode_live(m, flag->actor) &&
+        !mode_flag_reset(m, v, flag, false, e))
+        return false;
     return qa_modes_rank(m, v->id, e);
 }
 bool mode_flag_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id actor,
                      bool *accepted, qa_error *e) {
     mode_member *p = mode_member_get(m, v, actor);
     qa_team_id team;
-    if (!p || !qa_modes_team(m, actor, &team, e))
+    if (!p || !qa_modes_team(m, v->id, actor, &team, e))
         return p == NULL;
     int own = mode_team_index(v, team);
     if (own < 0)
@@ -196,7 +205,7 @@ bool mode_flag_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id 
                     uint32_t i = m->players_order.ids[ordinal].slot;
                     mode_member *member = &v->members[i];
                     qa_team_id t;
-                    if (member->joined && qa_modes_team(m, member->actor, &t, NULL) && t == team &&
+                    if (member->joined && qa_modes_team(m, v->id, member->actor, &t, NULL) && t == team &&
                         recent(v->value.time_ns, member->stats.carrier_killed_ns, 6,
                                member->stats.carrier_killed)) {
                         member->stats.carrier_killed = false;
@@ -280,9 +289,9 @@ static bool threewave_defense(qa_modes *m, mode_instance *v, mode_member *killer
             mode_member *member = mode_member_get(m, v, actor);
             mode_player *player = mode_player_get(m, actor);
             qa_team_id current;
-            if (!member || !player || player->value.spectator ||
+            if (!member || !player || member->player.spectator ||
                 qa_actor_id_equal(actor, killer->actor) || !member->flag.registry ||
-                !qa_modes_team(m, actor, &current, NULL) || current != team ||
+                !qa_modes_team(m, v->id, actor, &current, NULL) || current != team ||
                 !near_center(m, actor, centers[pass], 550))
                 continue;
             if (!award_defense(m, v, killer, dead->actor, 1, true, e))
@@ -319,7 +328,7 @@ static bool rogue_defense(qa_modes *m, mode_instance *v, mode_member *killer, mo
             qa_team_id current;
             if (p && p->flag.registry && !carrier_bonus &&
                 !qa_actor_id_equal(actor, killer->actor) &&
-                qa_modes_team(m, actor, &current, NULL) && current == team) {
+                qa_modes_team(m, v->id, actor, &current, NULL) && current == team) {
                 if (!award_defense(m, v, killer, dead->actor, 1, true, e))
                     return false;
                 carrier_bonus = true;
@@ -342,10 +351,10 @@ bool mode_flag_bonus(qa_modes *m, mode_instance *v, qa_actor_id attacker, qa_act
                      qa_error *e) {
     mode_member *killer = mode_member_get(m, v, attacker), *dead = mode_member_get(m, v, victim);
     if (!killer || !dead || qa_actor_id_equal(attacker, victim) ||
-        (v->value.rules.source != QA_MODE_ROGUE && qa_modes_same_team(m, attacker, victim)))
+        (v->value.rules.source != QA_MODE_ROGUE && qa_modes_same_team(m, v->id, attacker, victim)))
         return true;
     qa_team_id team;
-    if (!qa_modes_team(m, attacker, &team, e))
+    if (!qa_modes_team(m, v->id, attacker, &team, e))
         return false;
     int index = mode_team_index(v, team);
     if (index < 0)
@@ -360,7 +369,7 @@ bool mode_flag_bonus(qa_modes *m, mode_instance *v, qa_actor_id attacker, qa_act
         int64_t amount = (int64_t)dead->stats.tokens * dead->stats.tokens * 20;
         return points(m, v, attacker, amount > INT32_MAX ? INT32_MAX : (int32_t)amount, e);
     }
-    if (victim_carrier && !lm && !qa_modes_same_team(m, attacker, victim)) {
+    if (victim_carrier && !lm && !qa_modes_same_team(m, v->id, attacker, victim)) {
         killer->stats.carrier_killed = true;
         killer->stats.carrier_killed_ns = now;
         if ((!q1 || now - dead->stats.flag_since_ns >= 2 * MODE_SECOND) &&
@@ -370,7 +379,7 @@ bool mode_flag_bonus(qa_modes *m, mode_instance *v, qa_actor_id attacker, qa_act
             for (uint32_t i = 0; i < m->actor_capacity; ++i) {
                 qa_team_id t;
                 mode_member *p = &v->members[i];
-                if (p->joined && qa_modes_team(m, p->actor, &t, NULL) && t == team)
+                if (p->joined && qa_modes_team(m, v->id, p->actor, &t, NULL) && t == team)
                     p->stats.hurt_carrier = false;
             }
             return true;
@@ -431,7 +440,7 @@ bool mode_flag_bonus(qa_modes *m, mode_instance *v, qa_actor_id attacker, qa_act
         mode_member *p = &v->members[i];
         qa_team_id t;
         if (!p->joined || !p->flag.registry || qa_actor_id_equal(p->actor, attacker) ||
-            !qa_modes_team(m, p->actor, &t, NULL) || t != team)
+            !qa_modes_team(m, v->id, p->actor, &t, NULL) || t != team)
             continue;
         bool near = mode_near(m, attacker, p->actor, lm ? 500 : radius) ||
                     mode_near(m, victim, p->actor, lm ? 500 : radius);

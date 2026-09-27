@@ -8,7 +8,7 @@ bool qa_modes_player_hurt(qa_modes *m, qa_mode_id id, const qa_damage_request *r
     mode_member *target = mode_member_get(m, v, request->target);
     mode_member *attacker = mode_member_get(m, v, request->attack.attacker);
     if (target && attacker && target->flag.registry &&
-        !qa_modes_same_team(m, request->target, request->attack.attacker)) {
+        !qa_modes_same_team(m, v->id, request->target, request->attack.attacker)) {
         attacker->stats.hurt_carrier = true;
         attacker->stats.hurt_carrier_ns = v->value.time_ns;
     }
@@ -22,7 +22,7 @@ bool mode_update_ghosts(qa_modes *m, mode_instance *v, qa_error *e) {
         mode_member *p = ghost->code ? mode_member_get(m, v, ghost->actor) : NULL;
         if (!p || p->ghost_code != ghost->code)
             continue;
-        if (!qa_modes_score(m, ghost->actor, &ghost->score, e))
+        if (!qa_modes_score(m, v->id, ghost->actor, &ghost->score, e))
             return false;
         ghost->stats = p->stats;
     }
@@ -34,6 +34,9 @@ bool qa_modes_player_death_component(qa_modes *m, qa_mode_id id, const qa_damage
     mode_instance *v = mode_get(m, id);
     if (!v || !outcome)
         return mode_fail(e, "invalid mode death");
+    if (ordinary && (ordinary->mode.slot != id.slot || ordinary->mode.generation != id.generation ||
+        (ordinary->recipient.registry && !mode_member_get(m, v, ordinary->recipient))))
+        return mode_fail(e, "source obituary belongs to another mode or participant");
     if (!v->value.rules.enabled)
         return true;
     qa_actor_id victim = outcome->request.target, attacker = outcome->request.attack.attacker;
@@ -42,7 +45,7 @@ bool qa_modes_player_death_component(qa_modes *m, qa_mode_id id, const qa_damage
         return true;
     mode_stat_add(v, &dead->stats.deaths, 1);
     bool self = qa_actor_id_equal(victim, attacker),
-         friendly = killer && !self && qa_modes_same_team(m, victim, attacker);
+         friendly = killer && !self && qa_modes_same_team(m, v->id, victim, attacker);
     if (v->value.rules.kind == QA_MODE_HORDE) {
         qa_actor_id recipient = ordinary ? ordinary->recipient : killer ? attacker : victim;
         int32_t change = ordinary ? ordinary->delta : !killer || self ? -1 : 1;
@@ -71,7 +74,7 @@ bool qa_modes_player_death_component(qa_modes *m, qa_mode_id id, const qa_damage
         if (primary_score && v->value.rules.kind == QA_MODE_TEAM_DEATHMATCH && killer &&
             v->value.rules.source >= QA_MODE_Q3) {
             qa_team_id team;
-            if (!qa_modes_team(m, attacker, &team, e))
+            if (!qa_modes_team(m, v->id, attacker, &team, e))
                 return false;
             if (mode_team_index(v, team) >= 0 && !qa_modes_team_score(m, id, team, change, e))
                 return false;
@@ -101,7 +104,7 @@ bool qa_modes_player_death_component(qa_modes *m, qa_mode_id id, const qa_damage
     if (v->value.rules.kind == QA_MODE_HARVESTER) {
         mode_object *neutral = mode_object_get(m, v->bases[2]);
         qa_team_id team;
-        if (neutral && qa_modes_team(m, victim, &team, e)) {
+        if (neutral && qa_modes_team(m, v->id, victim, &team, e)) {
             qa_mode_object_spec cube = {.kind = QA_MODE_OBJECT_CUBE,
                                         .team = team,
                                         .origin = neutral->home,
@@ -130,7 +133,7 @@ bool qa_modes_player_death_component(qa_modes *m, qa_mode_id id, const qa_damage
             for (size_t i = 0; i < m->players_order.count; ++i) {
                 mode_member *member = mode_member_get(m, v, m->players_order.ids[i]);
                 qa_team_id team;
-                if (member && qa_modes_team(m, member->actor, &team, NULL) &&
+                if (member && qa_modes_team(m, v->id, member->actor, &team, NULL) &&
                     (v->value.rules.teamplay == 5 || team == flag->spec.team))
                     member->stats.hurt_carrier = false;
             }

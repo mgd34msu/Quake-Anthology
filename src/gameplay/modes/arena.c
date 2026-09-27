@@ -6,7 +6,7 @@ bool mode_obelisk_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_
         return true;
     mode_member *p = mode_member_get(m, v, actor);
     qa_team_id team;
-    if (!p || p->stats.tokens <= 0 || !qa_modes_team(m, actor, &team, e))
+    if (!p || p->stats.tokens <= 0 || !qa_modes_team(m, v->id, actor, &team, e))
         return p == NULL || p->stats.tokens <= 0;
     if (!team || team == o->spec.team)
         return true;
@@ -25,21 +25,33 @@ bool mode_obelisk_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_
                       e) &&
            qa_modes_rank(m, v->id, e);
 }
-bool qa_modes_object_damage(qa_modes *m, qa_damage_request *request, bool *allowed, qa_error *e) {
-    if (!m || !request || !allowed)
+bool qa_modes_object_damage(qa_modes *m, qa_mode_id id, qa_damage_request *request,
+                            bool *allowed, qa_error *e) {
+    mode_instance *v = mode_get(m, id);
+    if (!v || !request || !allowed)
         return mode_fail(e, "invalid mode damage admission");
     *allowed = true;
+    if (!v->value.rules.enabled)
+        return true;
     mode_object *o = mode_object_get(m, request->target);
+    if (o && (o->mode.slot != id.slot || o->mode.generation != id.generation))
+        return true;
+    mode_member *target = mode_member_get(m, v, request->target);
+    mode_member *attacker = mode_member_get(m, v, request->attack.attacker);
+    /* Objects belong to their exact instance. Ordinary damage rules belong to
+     * participating targets; unrelated actors in the shared world stay neutral. */
+    if (!o && (!target || target->player.spectator))
+        return true;
     if (o && o->spec.kind == QA_MODE_OBJECT_OBELISK) {
-        mode_instance *v = mode_get(m, o->mode);
         qa_team_id team;
-        if (!v || !v->value.rules.enabled || v->value.rules.kind != QA_MODE_OVERLOAD ||
+        if (v->value.rules.kind != QA_MODE_OVERLOAD ||
             o->value.phase == QA_OBJECTIVE_DESTROYED) {
             *allowed = false;
             return true;
         }
-        if (mode_player_get(m, request->attack.attacker) &&
-            qa_modes_team(m, request->attack.attacker, &team, e)) {
+        if (attacker) {
+            if (!qa_modes_team(m, v->id, request->attack.attacker, &team, e))
+                return false;
             if (team == o->spec.team) {
                 *allowed = false;
                 return true;
@@ -53,66 +65,61 @@ bool qa_modes_object_damage(qa_modes *m, qa_damage_request *request, bool *allow
             }
         }
     }
-    for (uint32_t i = 0; i < m->mode_capacity; ++i) {
-        mode_instance *v = &m->instances[i];
-        if (!v->active || !v->value.rules.enabled)
-            continue;
-        if (v->value.rules.kind == QA_MODE_TAG && v->value.rules.source != QA_MODE_ROGUE &&
-            !qa_actor_id_equal(request->target, v->tag_owner) &&
-            !qa_actor_id_equal(request->attack.attacker, v->tag_owner))
-            request->amount = truncf(request->amount * .75f);
-        if (v->value.rules.kind != QA_MODE_DEATHBALL)
-            continue;
-        if (!qa_actor_id_equal(request->target, v->ball)) {
-            if (!qa_actor_id_equal(request->attack.attacker, v->ball))
-                request->amount = truncf(request->amount * .5f);
-            continue;
-        }
-        request->amount = 1;
-        if (request->attack.cause.kind != QA_CAUSE_Q2)
-            continue;
-        int mod = request->attack.cause.source.q2.means_of_death;
-        float kick = request->knockback;
-        if (kick < 1) {
-            if (mod == 8)
-                kick = 70;
-            else if (mod == 14)
-                kick = 90;
-        } else
-            switch (mod) {
-            case 1:
-                kick *= 3;
-                break;
-            case 2:
-                kick = truncf(kick * 3 / 8);
-                break;
-            case 3:
-            case 11:
-            case 44:
-                kick = truncf(kick / 3);
-                break;
-            case 4:
-            case 9:
-                kick = truncf(kick * 1.5f);
-                break;
-            case 10:
-                kick *= 4;
-                break;
-            case 6:
-            case 15:
-            case 46:
-            case 7:
-            case 16:
-            case 24:
-            case 51:
-            case 41:
-                kick = truncf(kick * .5f);
-                break;
-            default:
-                break;
-            }
-        request->knockback = kick;
+    if (v->value.rules.kind == QA_MODE_TAG && v->value.rules.source != QA_MODE_ROGUE &&
+        !qa_actor_id_equal(request->target, v->tag_owner) &&
+        !qa_actor_id_equal(request->attack.attacker, v->tag_owner))
+        request->amount = truncf(request->amount * .75f);
+    if (v->value.rules.kind != QA_MODE_DEATHBALL)
+        return true;
+    if (!qa_actor_id_equal(request->target, v->ball)) {
+        if (!qa_actor_id_equal(request->attack.attacker, v->ball))
+            request->amount = truncf(request->amount * .5f);
+        return true;
     }
+    request->amount = 1;
+    if (request->attack.cause.kind != QA_CAUSE_Q2)
+        return true;
+    int mod = request->attack.cause.source.q2.means_of_death;
+    float kick = request->knockback;
+    if (kick < 1) {
+        if (mod == 8)
+            kick = 70;
+        else if (mod == 14)
+            kick = 90;
+    } else
+        switch (mod) {
+        case 1:
+            kick *= 3;
+            break;
+        case 2:
+            kick = truncf(kick * 3 / 8);
+            break;
+        case 3:
+        case 11:
+        case 44:
+            kick = truncf(kick / 3);
+            break;
+        case 4:
+        case 9:
+            kick = truncf(kick * 1.5f);
+            break;
+        case 10:
+            kick *= 4;
+            break;
+        case 6:
+        case 15:
+        case 46:
+        case 7:
+        case 16:
+        case 24:
+        case 51:
+        case 41:
+            kick = truncf(kick * .5f);
+            break;
+        default:
+            break;
+        }
+    request->knockback = kick;
     return true;
 }
 bool qa_modes_object_reaction(qa_modes *m, const qa_damage_outcome *outcome, qa_error *e) {
@@ -126,7 +133,7 @@ bool qa_modes_object_reaction(qa_modes *m, const qa_damage_outcome *outcome, qa_
         return true;
     qa_actor_id attacker = outcome->request.attack.attacker;
     if (o->spec.kind == QA_MODE_OBJECT_BALL) {
-        v->last_ball_touch = attacker;
+        v->last_ball_touch = mode_member_get(m, v, attacker) ? attacker : (qa_actor_id){0};
         if (outcome->result.reaction == QA_REACTION_DEATH)
             return mode_ball_reset(m, v, o, e);
         return qa_combat_set_health(m->options.services.combat, o->actor, 50000, e);
@@ -138,7 +145,7 @@ bool qa_modes_object_reaction(qa_modes *m, const qa_damage_outcome *outcome, qa_
         qa_team_id winner = index == 0 ? v->value.rules.teams[1] : v->value.rules.teams[0];
         if (!qa_modes_team_score(m, v->id, winner, 1, e))
             return false;
-        if (mode_player_get(m, attacker) && !qa_modes_add_score(m, v->id, attacker, 100, e))
+        if (mode_member_get(m, v, attacker) && !qa_modes_add_score(m, v->id, attacker, 100, e))
             return false;
         qa_combat_state state;
         if (!qa_combat_read_traits(m->options.services.combat, o->actor, &state, e))
@@ -154,7 +161,7 @@ bool qa_modes_object_reaction(qa_modes *m, const qa_damage_outcome *outcome, qa_
                           winner, 100, 0x800, e) &&
                qa_modes_rank(m, v->id, e);
     }
-    if (mode_player_get(m, attacker)) {
+    if (mode_member_get(m, v, attacker)) {
         float damage = outcome->result.applied_damage / 10;
         int32_t amount = damage >= (float)INT32_MAX ? INT32_MAX : damage < 1 ? 1 : (int32_t)damage;
         if (!qa_modes_add_score(m, v->id, attacker, amount, e))

@@ -360,7 +360,8 @@ bool mode_relic_frame(qa_modes *m, mode_instance *v, qa_actor_id actor, mode_mem
 bool qa_modes_grapple_allowed(qa_modes *m, qa_mode_id id, qa_actor_id owner, qa_actor_id target,
                               bool pulse) {
     mode_instance *v = mode_get(m, id);
-    if (!v)
+    if (!v || !v->value.rules.enabled || !mode_member_get(m, v, owner) ||
+        !mode_member_get(m, v, target))
         return true;
     if (!mode_player_get(m, target))
         return true;
@@ -369,7 +370,7 @@ bool qa_modes_grapple_allowed(qa_modes *m, qa_mode_id id, qa_actor_id owner, qa_
             return true;
         mode_member *a = mode_member_get(m, v, owner), *b = mode_member_get(m, v, target);
         qa_team_id team;
-        if (!a || !qa_modes_team(m, target, &team, NULL))
+        if (!a || !qa_modes_team(m, v->id, target, &team, NULL))
             return true;
         return (pulse && b ? b->last_team : team) != a->last_team;
     }
@@ -377,7 +378,7 @@ bool qa_modes_grapple_allowed(qa_modes *m, qa_mode_id id, qa_actor_id owner, qa_
         return false;
     if (qa_actor_id_equal(owner, target))
         return true;
-    if (qa_modes_same_team(m, owner, target))
+    if (qa_modes_same_team(m, v->id, owner, target))
         return false;
     return true;
 }

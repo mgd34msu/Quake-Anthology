@@ -28,14 +28,14 @@ bool qa_modes_team_info(qa_modes *m, qa_mode_id id, qa_actor_id recipient, qa_mo
                         size_t capacity, size_t *count, qa_error *e) {
     mode_instance *v = mode_get(m, id);
     qa_team_id team;
-    if (!v || !count || (capacity && !rows) || !qa_modes_team(m, recipient, &team, e))
+    if (!v || !count || (capacity && !rows) || !qa_modes_team(m, v->id, recipient, &team, e))
         return mode_fail(e, "invalid team information query");
     *count = 0;
     for (size_t ordinal = 0; ordinal < m->players_order.count && *count < 32; ++ordinal) {
         qa_actor_id actor = m->players_order.ids[ordinal];
         qa_team_id current;
         mode_member *member = mode_member_get(m, v, actor);
-        if (!member || !qa_modes_team(m, actor, &current, NULL) || current != team)
+        if (!member || !qa_modes_team(m, v->id, actor, &current, NULL) || current != team)
             continue;
         if (*count >= capacity)
             return mode_fail(e, "team information output too small");
@@ -65,7 +65,7 @@ bool mode_team_info_frame(qa_modes *m, mode_instance *v, qa_error *e) {
         mode_player *player = mode_player_get(m, actor);
         qa_team_id team;
         if (!member || !player || !player->value.connected || player->value.connecting ||
-            !qa_modes_team(m, actor, &team, NULL) ||
+            !qa_modes_team(m, v->id, actor, &team, NULL) ||
             (team != v->value.rules.teams[0] && team != v->value.rules.teams[1]))
             continue;
         qa_mode_location location;
@@ -78,7 +78,7 @@ bool mode_team_info_frame(qa_modes *m, mode_instance *v, qa_error *e) {
         mode_player *player = mode_player_get(m, actor);
         qa_team_id team;
         if (!mode_member_get(m, v, actor) || !player || !player->value.connected ||
-            player->value.connecting || !qa_modes_team(m, actor, &team, NULL) ||
+            player->value.connecting || !qa_modes_team(m, v->id, actor, &team, NULL) ||
             (team != v->value.rules.teams[0] && team != v->value.rules.teams[1]))
             continue;
         if (!mode_event(m, v, QA_MODE_TEAM_INFO, actor, (qa_actor_id){0}, (qa_actor_id){0}, team, 0,

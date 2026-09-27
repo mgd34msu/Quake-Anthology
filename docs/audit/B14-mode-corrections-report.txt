@@ -1,0 +1,89 @@
+claims-done overclaims=0.07
+EXCUSE 0.49: audit. It does not close B14 or the other Q3 findings.
+REVIEW excuse 0.23: `93f8146e850fd38bf0e6e82cfd461436c48e4ca8` and the working changes listed below.
+EXCUSE 0.66: The additional untracked `src/gameplay/modes/give.c` has SHA-256
+REVIEW blocked-external 0.35: ## Original acceptance standard
+REVIEW excuse 0.36: The existing plan remains unchanged. `docs/dependencies.json:227` records B14:
+- Goal: "Implement independent match modes, teams, scoring, cross-map objective adaptation, grapples, and offhand equipment."
+- Criterion: "Required modes and equipment variants are connected to shared gameplay without coupling map, arsenal, or movement selection."
+EXCUSE 0.55: composition as unfinished required work. The C design therefore supports multiple
+REVIEW blocked-external 0.27: ## Changes and source evidence
+REVIEW allowed-by-rule 0.28: member and binding identity checks. Unbinding preserves the last source score
+EXCUSE 0.69: in `vote.c`, team reports in `team_info.c`, spawn selection in `placement.c`, and
+REVIEW blocked-external 0.34: ### QM-03: damage selects the actual instance
+REVIEW excuse 0.14: without modification for disabled instances, another mode's object, or an
+REVIEW excuse 0.24: means-of-death knockback table. The corresponding C rules remain in `arena.c`.
+REVIEW allowed-by-rule 0.04: `items.c:81`, `qa_modes_item_action`, requires the explicit mode and its scoped
+EXCUSE 0.63: `qa_inventory_replace_definitions`; it no longer closes the old definitions
+REVIEW blocked-external 0.14: before the replacement can succeed or allocates a copy of the old catalog.
+EXCUSE 0.45: inventory-handle collisions across saved modes. Objective bindings and saved
+REVIEW blocked-external 0.32: ### QM-10: staged mode object and equipment admission
+REVIEW blocked-external 0.27: external body read. It stages the mode object and objective registration without
+REVIEW blocked-external 0.30: and link callbacks complete before a missing local combat record is created.
+EXCUSE 0.54: `objectives.c:13` reserves duplicate identity without making it discoverable;
+EXCUSE 0.47: Authored body and combat changes retain their original storage serials. Failure
+REVIEW excuse 0.08: restoration operations avoid overwriting a replacement owner. A cleanup failure
+REVIEW blocked-external 0.78: failure; authored actors are not retired by cleanup. A missing Q1 floor keeps
+REVIEW allowed-by-rule 0.22: the original successful omission behavior after cleanup. Same-base reservations
+REVIEW excuse 0.08: admission without publishing the new equipment selection. At `equipment.c:65`,
+REVIEW blocked-external 0.17: allocation-free commits and local selection publication. Failed preparation
+REVIEW allowed-by-rule 0.07: aborts each reservation. Existing cooked grenade state remains unchanged until
+REVIEW excuse 0.09: side effects; the transaction prevents partial admission of the new selection,
+REVIEW allowed-by-rule 0.11: not cancellation of an already requested physical holster.
+REVIEW blocked-external 0.30: ## Shared dependency review
+REVIEW blocked-external 0.06: primary binding. `world.h`/`body.c` retain the equivalent body serial. External
+REVIEW allowed-by-rule 0.07: body reads/writes and link callbacks reject same-slot replacement; legal actor
+REVIEW excuse 0.32: retirement suppresses stale link notification.
+- `inventory.h`/`inventory.c`: staged admission appends only missing native
+EXCUSE 0.54: entries after validating the store, revision, and owners. Commit has no
+REVIEW blocked-external 0.51: provider calls or allocation. Definition replacement preserves an existing
+REVIEW blocked-external 0.38: external override when refreshing its old native fallback. Source snapshots
+REVIEW blocked-external 0.19: publishes a prepared actor extension and retained values only. These changes
+REVIEW excuse 0.32: reserves a per-slot token without creating a player sidecar or selections.
+REVIEW allowed-by-rule 0.10: reservation and accepts prior retirement cleanup. The Q3 worker owns these
+REVIEW excuse 0.15: uncommitted dependencies. `player.c` contains the token change; the other three
+REVIEW excuse 0.33: files also contain unfinished map work, requiring selective integration or the
+REVIEW excuse 0.26: later coherent map handoff.
+EXCUSE 0.72: bounded correction coverage, not a second claim to cover every Q3 source file.
+- `include/qa/modes.h`
+- `include/qa/modes_save.h`
+- `src/gameplay/modes/arena.c`
+- `src/gameplay/modes/checkpoint.c`
+- `src/gameplay/modes/core.c`
+- `src/gameplay/modes/damage.c`
+- `src/gameplay/modes/deathball.c`
+- `src/gameplay/modes/equipment.c`
+- `src/gameplay/modes/flags.c`
+- `src/gameplay/modes/give.c`
+- `src/gameplay/modes/horde.c`
+- `src/gameplay/modes/internal.h`
+- `src/gameplay/modes/items.c`
+- `src/gameplay/modes/match.c`
+- `src/gameplay/modes/objectives.c`
+- `src/gameplay/modes/objects.c`
+- `src/gameplay/modes/placement.c`
+- `src/gameplay/modes/relics.c`
+- `src/gameplay/modes/scoring.c`
+- `src/gameplay/modes/tag.c`
+- `src/gameplay/modes/team_info.c`
+- `src/gameplay/modes/teams.c`
+- `src/gameplay/modes/vote.c`
+EXCUSE 0.53: changed owned file is intentionally left unread. Files outside this list and
+EXCUSE 0.42: open findings; this packet does not reassess them in full.
+REVIEW excuse 0.16: SPDX, or license notice was introduced. These are source checks. No build,
+REVIEW allowed-by-rule 0.26: The following work still prevents full B14 acceptance:
+REVIEW excuse 0.33: 1. `give.c` remains absent from the mode source list in `CMakeLists.txt` at this
+REVIEW excuse 0.21: B34 must compose mode damage, scoring, inventory actions, source equipment,
+REVIEW allowed-by-rule 0.10: actor release, player phases, and events with the selected shared services.
+REVIEW excuse 0.09: the first enabled mode. One mode's spectator/respawn/intermission intent must
+EXCUSE 0.44: 3. B30 must serialize/remap checkpoint version 2 fields, mode identities, actor
+REVIEW blocked-external 0.21: references, scoped item strings, external owner bindings, and the shared
+REVIEW excuse 0.29: inventory snapshot partition. The typed restore contract uses a prepared
+REVIEW blocked-external 0.69: 4. Q3's dependent admission token changes need coordinator integration. Other
+EXCUSE 0.44: Q3 admission defects in QM-10 and other findings remain with their assigned
+EXCUSE 0.41: owners. This packet does not claim those corrected.
+REVIEW allowed-by-rule 0.13: The named mode ownership defects have source corrections ready for independent
+REVIEW blocked-external 0.42: review. The original B14 goal and criterion remain open until the required
+REVIEW blocked-external 0.16: application composition exists. Report-honesty and task-acceptance judgments are
+REVIEW allowed-by-rule 0.14: recorded separately so an honest incomplete report cannot be mistaken for
+stop-reason: 159 passages read

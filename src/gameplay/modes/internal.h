@@ -14,13 +14,15 @@
 typedef struct mode_player {
     qa_modes *modes;
     qa_match_player value;
-    qa_match_binding binding;
-    uint64_t serial;
     qa_inventory_lease items;
     bool active;
 } mode_player;
 typedef qa_mode_member_state mode_member;
 typedef qa_mode_ghost_state mode_ghost;
+typedef struct mode_match_owner {
+    qa_match_binding binding;
+    uint64_t serial;
+} mode_match_owner;
 typedef struct mode_rank_entry {
     qa_actor_id actor;
     int32_t score;
@@ -32,12 +34,16 @@ typedef struct mode_instance {
     qa_mode_id id;
     qa_mode_view value;
     mode_member *members;
+    mode_match_owner *bindings;
     mode_ghost *ghosts;
     qa_actor_id *sorted;
     mode_rank_entry *ranks;
     qa_mode_spawnpoint *spawns;
     size_t spawn_count;
+    qa_mode_item_binding *items;
+    size_t item_count, item_capacity;
     qa_actor_id bases[3], ball, tag, tag_owner, last_ball_touch;
+    bool base_admitting[3];
     qa_actor_id last_spawns[3];
     qa_mode_vote votes[4];
     uint64_t vote_started[4], ready_since_ns, next_second_ns;
@@ -64,12 +70,12 @@ typedef struct mode_object {
     qa_objective_lease objective;
     uint64_t next_ns, owner_until_ns, animation_ns, expire_ns, born_ns;
     int32_t tag_stage;
-    bool active, targets_used, has_physics, dropped, global_animation;
+    bool active, admitting, targets_used, has_physics, dropped, global_animation;
 } mode_object;
 typedef struct mode_objective {
     qa_objective_binding binding;
     uint64_t serial;
-    bool active;
+    bool active, reserved;
 } mode_objective;
 struct qa_modes {
     qa_modes_options options;
@@ -105,6 +111,9 @@ bool mode_sound(qa_modes *, mode_instance *, qa_actor_id, const char *, float, q
 bool mode_count(qa_modes *, qa_actor_id, qa_item_id, double *, qa_error *);
 bool mode_set_count(qa_modes *, qa_actor_id, qa_item_id, double, qa_error *);
 bool mode_object_count(qa_modes *, mode_instance *, mode_object *, qa_actor_id, double, qa_error *);
+bool mode_inventory_item(qa_modes *, mode_instance *, qa_item_id, qa_item_id *, qa_error *);
+bool mode_reserve_objective(qa_modes *, const qa_objective_binding *, qa_objective_lease *, qa_error *);
+bool mode_commit_objective(qa_modes *, qa_objective_lease);
 bool mode_set_phase(qa_modes *, mode_instance *, qa_mode_phase, uint64_t, qa_error *);
 bool mode_match_frame(qa_modes *, mode_instance *, uint64_t, qa_error *);
 bool mode_vote_frame(qa_modes *, mode_instance *, qa_error *);

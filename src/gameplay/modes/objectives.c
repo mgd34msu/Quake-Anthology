@@ -1,27 +1,52 @@
 #include "internal.h"
 
-static mode_objective *objective_find(qa_modes *m, qa_string_id id) {
+static mode_objective *objective_find(qa_modes *m, qa_mode_id mode, qa_string_id id) {
     if (!m || !id)
         return NULL;
     for (uint32_t i = 0; i < m->objective_capacity; ++i)
-        if (m->objectives[i].active && m->objectives[i].binding.id == id)
+        if (m->objectives[i].active && m->objectives[i].binding.id == id &&
+            m->objectives[i].binding.mode.slot == mode.slot &&
+            m->objectives[i].binding.mode.generation == mode.generation)
             return &m->objectives[i];
     return NULL;
 }
-bool qa_modes_bind_objective(qa_modes *m, const qa_objective_binding *binding,
+bool mode_reserve_objective(qa_modes *m, const qa_objective_binding *binding,
                              qa_objective_lease *out, qa_error *e) {
     if (!m || !binding || !binding->owner || !binding->id || !binding->read || !out ||
-        objective_find(m, binding->id) || m->next_serial == UINT64_MAX)
+        (!binding->mode.generation && binding->mode.slot) ||
+        (binding->mode.generation && !mode_get(m, binding->mode)) ||
+        objective_find(m, binding->mode, binding->id) || m->next_serial == UINT64_MAX)
         return mode_fail(e, "invalid or duplicate objective");
+    for (uint32_t i = 0; i < m->objective_capacity; ++i) {
+        mode_objective *o = &m->objectives[i];
+        if (o->reserved && o->binding.id == binding->id &&
+            o->binding.mode.slot == binding->mode.slot &&
+            o->binding.mode.generation == binding->mode.generation)
+            return mode_fail(e, "objective admission already reserved");
+    }
     for (uint32_t i = 0; i < m->objective_capacity; ++i)
-        if (!m->objectives[i].active) {
+        if (!m->objectives[i].active && !m->objectives[i].reserved) {
             uint64_t serial = m->next_serial++;
             m->objectives[i] =
-                (mode_objective){.binding = *binding, .serial = serial, .active = true};
+                (mode_objective){.binding = *binding, .serial = serial, .reserved = true};
             *out = (qa_objective_lease){i, serial};
             return true;
         }
     return mode_fail(e, "objective capacity exhausted");
+}
+bool mode_commit_objective(qa_modes *m, qa_objective_lease lease) {
+    if (!m || lease.slot >= m->objective_capacity)
+        return false;
+    mode_objective *o = &m->objectives[lease.slot];
+    if (!o->reserved || o->serial != lease.serial)
+        return false;
+    o->reserved = false;
+    o->active = true;
+    return true;
+}
+bool qa_modes_bind_objective(qa_modes *m, const qa_objective_binding *binding,
+                             qa_objective_lease *out, qa_error *e) {
+    return mode_reserve_objective(m, binding, out, e) && mode_commit_objective(m, *out);
 }
 bool qa_modes_unbind_objective(qa_modes *m, qa_objective_lease lease, qa_error *e) {
     (void)e;
@@ -48,15 +73,15 @@ static bool objective_read(qa_modes *m, mode_objective *o, qa_objective_state *o
     *out = state;
     return true;
 }
-bool qa_modes_objective(qa_modes *m, qa_string_id id, qa_objective_state *out, qa_error *e) {
-    mode_objective *o = objective_find(m, id);
+bool qa_modes_objective(qa_modes *m, qa_mode_id mode, qa_string_id id, qa_objective_state *out, qa_error *e) {
+    mode_objective *o = objective_find(m, mode, id);
     if (!o || !out)
         return mode_fail(e, "unknown objective");
     return objective_read(m, o, out, e);
 }
-bool qa_modes_change_objective(qa_modes *m, qa_string_id id, const qa_objective_state *state,
+bool qa_modes_change_objective(qa_modes *m, qa_mode_id mode, qa_string_id id, const qa_objective_state *state,
                                qa_error *e) {
-    mode_objective *o = objective_find(m, id);
+    mode_objective *o = objective_find(m, mode, id);
     if (!o || !state || !o->binding.change || state->phase < QA_OBJECTIVE_HOME ||
         state->phase > QA_OBJECTIVE_COMPLETE ||
         (state->actor.registry && !mode_live(m, state->actor)) ||

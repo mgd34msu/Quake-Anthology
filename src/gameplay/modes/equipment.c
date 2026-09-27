@@ -5,7 +5,7 @@ typedef struct equipment_actor {
     qa_equipment *equipment;
     qa_equipment_state state;
     qa_inventory_lease q3_items;
-    bool active;
+    bool active, configuring;
 } equipment_actor;
 struct qa_equipment {
     qa_equipment_options options;
@@ -37,6 +37,51 @@ static bool selection_valid(qa_equipment *g, const qa_equipment_selection *s) {
          !g->options.primary_resume))
         return false;
     return true;
+}
+typedef struct equipment_admission {
+    qa_q2_hand_grenade_admission q2;
+    qa_q3_player_binding q3;
+    qa_inventory_admission *inventory;
+} equipment_admission;
+static bool admission_abort(qa_equipment *g, equipment_admission *a, qa_error *e) {
+    qa_inventory_admission_abort(a->inventory);
+    a->inventory = NULL;
+    qa_q2_hand_grenade_abort(&a->q2);
+    return !a->q3.token || qa_q3_bind_player_rollback(g->options.q3, &a->q3, e);
+}
+static bool admission_prepare(qa_equipment *g, qa_actor_id actor,
+                              const qa_equipment_selection *selection,
+                              equipment_admission *a, qa_error *e) {
+    if (selection->grapple == QA_GRAPPLE_Q3 &&
+        !qa_q3_bind_player_begin(g->options.q3, actor, QA_Q3_EQUIPMENT, 100, &a->q3, e))
+        return false;
+    if (g->options.q2 &&
+        (!qa_q2_hand_grenade_prepare(g->options.q2, actor, &selection->grenades, &a->q2, e) ||
+         !qa_inventory_prepare_entries(g->options.services.inventory, actor,
+                                       &a->q2.initial_ammo, 1, &a->inventory, e)))
+        return false;
+    return true;
+}
+static bool admission_commit(qa_equipment *g, qa_actor_id actor, equipment_admission *a,
+                             qa_error *e) {
+    /* Inventory validation is the last operation allowed to call source code.
+     * All remaining checks and commits use the retained native records only. */
+    if ((a->inventory && !qa_inventory_admission_validate(a->inventory, e)) ||
+        (a->q2.active && !qa_q2_hand_grenade_validate(&a->q2, e)) ||
+        (a->q3.token && !qa_q3_bind_player_validate(g->options.q3, &a->q3, e)))
+        return false;
+    equipment_actor *p = &g->actors[actor.slot];
+    if (!p->configuring || !qa_actor_id_equal(p->state.actor, actor) ||
+        !qa_actors_get(qa_session_actors(g->options.services.session), actor))
+        return mode_fail(e, "equipment actor changed during admission");
+    if (a->inventory) {
+        if (!qa_inventory_admission_commit(a->inventory, e))
+            return false;
+        a->inventory = NULL;
+    }
+    if (a->q2.active && !qa_q2_hand_grenade_commit(&a->q2, e))
+        return false;
+    return !a->q3.token || qa_q3_bind_player_commit(g->options.q3, &a->q3, e);
 }
 bool qa_equipment_create(const qa_equipment_options *options, qa_equipment **out, qa_error *e) {
     if (!options || !out || !qa_builtin_services_validate(&options->services, e))
@@ -91,44 +136,78 @@ bool qa_equipment_release_grapple(qa_equipment *g, qa_actor_id actor, qa_error *
 bool qa_equipment_admit(qa_equipment *g, qa_actor_id actor, const qa_equipment_selection *selection,
                         qa_error *e) {
     if (!g || !selection_valid(g, selection) || actor.slot >= g->capacity ||
-        !qa_actors_get(qa_session_actors(g->options.services.session), actor))
+        !qa_actors_get(qa_session_actors(g->options.services.session), actor) ||
+        g->actors[actor.slot].configuring)
         return mode_fail(e, "invalid equipment admission");
     if (equipment_get(g, actor))
         return qa_equipment_configure(g, actor, selection, e);
+    qa_equipment_selection wanted = *selection;
+    selection = &wanted;
     equipment_actor *p = &g->actors[actor.slot];
-    *p = (equipment_actor){
-        .equipment = g, .active = true, .state = {.actor = actor, .selection = *selection}};
-    if (selection->grapple == QA_GRAPPLE_Q3 &&
-        !qa_q3_bind_player(g->options.q3, actor, QA_Q3_EQUIPMENT, 100, e))
-        return false;
-    if (g->options.q2 &&
-        !qa_q2_hand_grenade_configure(g->options.q2, actor, &selection->grenades, e))
-        return false;
-    return true;
+    equipment_actor before = *p;
+    *p = (equipment_actor){.equipment = g, .configuring = true, .state.actor = actor};
+    equipment_admission admission = {0};
+    bool ok = admission_prepare(g, actor, selection, &admission, e) &&
+              admission_commit(g, actor, &admission, e);
+    qa_error cleanup = {0};
+    if (!admission_abort(g, &admission, &cleanup)) {
+        if (e) *e = cleanup;
+        ok = false;
+    }
+    if (qa_actor_id_equal(p->state.actor, actor)) {
+        if (ok)
+            *p = (equipment_actor){.equipment = g, .active = true,
+                .state = {.actor = actor, .selection = *selection}};
+        else
+            *p = before;
+    }
+    return ok;
 }
 bool qa_equipment_configure(qa_equipment *g, qa_actor_id actor,
                             const qa_equipment_selection *selection, qa_error *e) {
     equipment_actor *p = equipment_get(g, actor);
-    if (!p || !selection_valid(g, selection))
+    if (!p || p->configuring || !selection_valid(g, selection))
         return mode_fail(e, "invalid equipment configuration");
+    qa_equipment_selection wanted = *selection;
+    selection = &wanted;
+    p->configuring = true;
+    equipment_admission admission = {0};
+    bool ok = false;
+    if (!admission_prepare(g, actor, selection, &admission, e))
+        goto finished;
     if (p->state.selection.grapple != selection->grapple ||
         p->state.selection.binding != selection->binding) {
         if (!qa_equipment_select_grapple(g, actor, false, e) ||
             !qa_equipment_release_grapple(g, actor, e))
-            return false;
+            goto finished;
+        p = equipment_get(g, actor);
+        if (!p) {
+            mode_fail(e, "equipment actor retired during configuration");
+            goto finished;
+        }
         if (p->state.slot_holstering || p->state.slot_lowering) {
             p->state.pending_selection = *selection;
             p->state.configuration_pending = true;
-            return true;
+            ok = true;
+            goto finished;
         }
     }
+    if (!admission_commit(g, actor, &admission, e))
+        goto finished;
     p->state.configuration_pending = false;
     p->state.selection = *selection;
-    if (selection->grapple == QA_GRAPPLE_Q3 &&
-        !qa_q3_bind_player(g->options.q3, actor, QA_Q3_EQUIPMENT, 100, e))
-        return false;
-    return !g->options.q2 ||
-           qa_q2_hand_grenade_configure(g->options.q2, actor, &selection->grenades, e);
+    ok = true;
+finished: {
+        qa_error cleanup = {0};
+        if (!admission_abort(g, &admission, &cleanup)) {
+            if (e) *e = cleanup;
+            ok = false;
+        }
+        p = equipment_get(g, actor);
+        if (p)
+            p->configuring = false;
+        return ok;
+    }
 }
 bool qa_equipment_input(qa_equipment *g, qa_actor_id actor, const qa_equipment_controls *input,
                         qa_error *e) {
@@ -489,7 +568,7 @@ bool qa_equipment_read(qa_equipment *g, qa_actor_id actor, qa_equipment_state *o
 }
 bool qa_equipment_restore(qa_equipment *g, const qa_equipment_state *state, qa_error *e) {
     equipment_actor *p = state ? equipment_get(g, state->actor) : NULL;
-    if (!p || !selection_valid(g, &state->selection) ||
+    if (!p || p->configuring || !selection_valid(g, &state->selection) ||
         (state->configuration_pending && !selection_valid(g, &state->pending_selection)) ||
         (state->slot_lowering && state->selection.grapple != QA_GRAPPLE_Q2_CTF &&
          state->selection.grapple != QA_GRAPPLE_LMCTF) ||
@@ -506,6 +585,6 @@ void qa_equipment_actor_released(qa_equipment *g, qa_actor_record actor) {
     if (!g || actor.id.slot >= g->capacity)
         return;
     equipment_actor *p = &g->actors[actor.id.slot];
-    if (p->active && qa_actor_id_equal(p->state.actor, actor.id))
+    if ((p->active || p->configuring) && qa_actor_id_equal(p->state.actor, actor.id))
         *p = (equipment_actor){0};
 }

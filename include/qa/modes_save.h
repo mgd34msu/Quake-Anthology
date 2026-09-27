@@ -5,6 +5,8 @@
 
 typedef struct qa_mode_member_state {
     qa_actor_id actor;
+    qa_mode_player_state player;
+    qa_actor_owner external_owner;
     qa_mode_statistics stats;
     qa_actor_id relic, flag;
     qa_team_id last_team;
@@ -13,8 +15,11 @@ typedef struct qa_mode_member_state {
     uint32_t ghost_code;
     uint32_t vote_calls[4];
     int8_t ballots[4];
-    bool joined, ready, admin, observer_jump;
+    bool joined, admin, observer_jump;
 } qa_mode_member_state;
+typedef struct qa_mode_item_binding {
+    qa_item_id source, inventory;
+} qa_mode_item_binding;
 typedef struct qa_mode_ghost_state {
     qa_actor_id actor;
     qa_string_id name;
@@ -64,6 +69,8 @@ typedef struct qa_mode_checkpoint {
     size_t ghost_count;
     qa_mode_spawnpoint *spawns;
     size_t spawn_count;
+    qa_mode_item_binding *items;
+    size_t item_count;
     qa_actor_id bases[3], ball, tag, tag_owner, last_ball_touch;
     qa_actor_id last_spawns[3];
     qa_mode_vote votes[4];
@@ -91,9 +98,9 @@ typedef struct qa_mode_object_checkpoint {
 } qa_mode_object_checkpoint;
 typedef struct qa_mode_player_checkpoint {
     qa_match_player value;
-    qa_actor_owner external_owner;
 } qa_mode_player_checkpoint;
 typedef struct qa_mode_objective_checkpoint {
+    qa_mode_id mode;
     qa_actor_owner owner;
     qa_string_id id;
     bool campaign_gate, bot_goal;
@@ -114,7 +121,8 @@ typedef struct qa_modes_checkpoint {
 } qa_modes_checkpoint;
 /* Owned typed memory only. The save codec encodes individual fields, remaps
  * every actor/resource ID, and restores shared stores exactly once. External
- * score/team/objective owners restore and bind themselves before this restore.
+ * objective owners restore and bind themselves before this restore. Score/team
+ * owners resolve per-mode bindings through restore_player_binding during restore.
  * Restore targets a prepared modes service with no active native modes; a
  * failure discards that candidate along with the prepared world. */
 bool qa_modes_checkpoint_capture(qa_modes *, qa_modes_checkpoint *, qa_error *);

@@ -127,17 +127,25 @@ typedef struct qa_mode_rules {
 } qa_mode_rules;
 typedef struct qa_match_player {
     qa_actor_id actor;
+    qa_string_id name;
+    bool connected, connecting, bot;
+} qa_match_player;
+typedef struct qa_mode_player_state {
     qa_actor_id follow_target;
     qa_team_id observer_team;
-    qa_string_id name;
     qa_team_id team;
     int32_t score, wins, losses;
-    bool connected, connecting, bot, spectator, scoreboard, ready, leader;
+    bool spectator, scoreboard, ready, leader;
     uint64_t spectator_since_ns;
     int8_t automatic_follow;
-} qa_match_player;
-/* A lease selects the primary source-owned score and team fields. Reads and
- * changes go through that owner; modes never mirror its counters. */
+} qa_mode_player_state;
+typedef struct qa_mode_player_view {
+    qa_mode_id mode;
+    qa_match_player connection;
+    qa_mode_player_state state;
+} qa_mode_player_view;
+/* A lease selects source-owned score/team fields for exactly one (mode, actor).
+ * Reads and changes go through that owner; other mode instances never use it. */
 typedef struct qa_match_binding {
     qa_actor_owner owner;
     void *context;
@@ -147,6 +155,7 @@ typedef struct qa_match_binding {
     bool (*set_team)(void *, qa_team_id, qa_error *);
 } qa_match_binding;
 typedef struct qa_match_lease {
+    qa_mode_id mode;
     qa_actor_id actor;
     uint64_t serial;
 } qa_match_lease;
@@ -181,6 +190,7 @@ typedef struct qa_objective_state {
     bool complete;
 } qa_objective_state;
 typedef struct qa_objective_binding {
+    qa_mode_id mode; /* Zero generation denotes a shared campaign objective. */
     qa_actor_owner owner;
     qa_string_id id;
     bool campaign_gate, bot_goal;
@@ -225,6 +235,8 @@ typedef struct qa_mode_object_spec {
     int32_t location;
     float value;
     bool authored, suspended, has_bounds, retain_body;
+    /* A command grant owns a carried/drop record without replacing map bases. */
+    bool command_created;
 } qa_mode_object_spec;
 typedef struct qa_mode_object_view {
     qa_mode_id mode;
@@ -256,9 +268,13 @@ typedef struct qa_modes_hooks {
     void *context;
     bool (*event)(void *, const qa_mode_event *, qa_error *);
     bool (*intent)(void *, const qa_match_intent *, qa_error *);
-    bool (*respawn)(void *, qa_actor_id, bool teleport, qa_error *);
-    bool (*intermission)(void *, qa_actor_id, qa_error *);
-    bool (*spectator)(void *, qa_actor_id, bool, qa_error *);
+    bool (*respawn)(void *, qa_mode_id, qa_actor_id, bool teleport, qa_error *);
+    bool (*intermission)(void *, qa_mode_id, qa_actor_id, qa_error *);
+    bool (*spectator)(void *, qa_mode_id, qa_actor_id, bool, qa_error *);
+    /* Restored source owners resolve their binding after shared actors exist.
+     * Called only for saved externally owned score/team state. */
+    bool (*restore_player_binding)(void *, qa_mode_id, qa_actor_id, qa_actor_owner,
+                                   qa_match_binding *, qa_error *);
     bool (*visible)(void *, qa_actor_id from, qa_actor_id to, bool pvs_only);
     qa_actor_owner (*combat_provider)(void *, qa_actor_id, qa_game_family);
     bool (*grapple_pulling)(void *, qa_actor_id);
@@ -305,7 +321,7 @@ bool qa_modes_configure(qa_modes *, qa_mode_id, const qa_mode_rules *, qa_error 
 bool qa_modes_read(qa_modes *, qa_mode_id, qa_mode_view *, qa_error *);
 bool qa_modes_at(qa_modes *, size_t index, qa_mode_id *, qa_mode_view *, qa_error *);
 bool qa_modes_player(qa_modes *, const qa_match_player *, qa_error *);
-bool qa_modes_player_read(qa_modes *, qa_actor_id, qa_match_player *, qa_error *);
+bool qa_modes_player_read(qa_modes *, qa_mode_id, qa_actor_id, qa_mode_player_view *, qa_error *);
 bool qa_modes_join(qa_modes *, qa_mode_id, qa_actor_id, qa_team_id, bool observer, qa_error *);
 /* Command admission follows source death/reset/respawn rules. join is the
  * lower-level connection/restore admission and does not synthesize a death. */
@@ -327,18 +343,19 @@ bool qa_modes_follow(qa_modes *, qa_mode_id, qa_actor_id, qa_actor_id target, in
 bool qa_modes_follow_target(qa_modes *, qa_mode_id, qa_actor_id, qa_actor_id *, qa_error *);
 bool qa_modes_observe(qa_modes *, qa_mode_id, qa_actor_id, qa_team_id filter, bool *accepted,
                       qa_error *);
+bool qa_modes_scoreboard(qa_modes *, qa_mode_id, qa_actor_id, bool visible, qa_error *);
 bool qa_modes_choose_team(qa_modes *, qa_mode_id, qa_actor_id, qa_team_id *, qa_error *);
 bool qa_modes_statistics(qa_modes *, qa_mode_id, qa_actor_id, qa_mode_statistics *, qa_error *);
-bool qa_modes_bind_player(qa_modes *, qa_actor_id, const qa_match_binding *, qa_match_lease *,
+bool qa_modes_bind_player(qa_modes *, qa_mode_id, qa_actor_id, const qa_match_binding *, qa_match_lease *,
                           qa_error *);
 bool qa_modes_unbind_player(qa_modes *, qa_match_lease, qa_error *);
-bool qa_modes_score(qa_modes *, qa_actor_id, int32_t *, qa_error *);
+bool qa_modes_score(qa_modes *, qa_mode_id, qa_actor_id, int32_t *, qa_error *);
 bool qa_modes_set_score(qa_modes *, qa_mode_id, qa_actor_id, int32_t, qa_error *);
 bool qa_modes_add_score(qa_modes *, qa_mode_id, qa_actor_id, int32_t, qa_error *);
-bool qa_modes_team(qa_modes *, qa_actor_id, qa_team_id *, qa_error *);
+bool qa_modes_team(qa_modes *, qa_mode_id, qa_actor_id, qa_team_id *, qa_error *);
 bool qa_modes_team_totals(qa_modes *, qa_mode_id, int64_t totals[3], qa_error *);
-bool qa_modes_set_team(qa_modes *, qa_actor_id, qa_team_id, qa_error *);
-bool qa_modes_same_team(qa_modes *, qa_actor_id, qa_actor_id);
+bool qa_modes_set_team(qa_modes *, qa_mode_id, qa_actor_id, qa_team_id, qa_error *);
+bool qa_modes_same_team(qa_modes *, qa_mode_id, qa_actor_id, qa_actor_id);
 bool qa_modes_team_score(qa_modes *, qa_mode_id, qa_team_id, int32_t, qa_error *);
 bool qa_modes_frame(qa_modes *, qa_mode_id, uint64_t now_ns, uint64_t elapsed_ns, qa_error *);
 bool qa_modes_actor_released(qa_modes *, qa_actor_record, qa_error *);
@@ -350,14 +367,17 @@ bool qa_modes_start(qa_modes *, qa_mode_id, qa_error *);
 bool qa_modes_cancel(qa_modes *, qa_mode_id, qa_error *);
 bool qa_modes_end(qa_modes *, qa_mode_id, qa_string_id reason, qa_error *);
 typedef struct qa_mode_frag {
+    qa_mode_id mode;
     qa_actor_id recipient;
     int32_t delta;
     /* Set when a source obituary has already called a mode scoring policy. */
     qa_mode_id evaluated_mode;
 } qa_mode_frag;
 bool qa_modes_player_death(qa_modes *, qa_mode_id, const qa_damage_outcome *, qa_error *);
+/* apply_ordinary_score is local to this mode: false means its score owner
+ * already applied the ordinary obituary delta, never that another mode scored. */
 bool qa_modes_player_death_component(qa_modes *, qa_mode_id, const qa_damage_outcome *,
-                                     bool primary_score, const qa_mode_frag *ordinary, qa_error *);
+                                     bool apply_ordinary_score, const qa_mode_frag *ordinary, qa_error *);
 bool qa_modes_player_hurt(qa_modes *, qa_mode_id, const qa_damage_request *, qa_error *);
 bool qa_modes_player_respawn(qa_modes *, qa_mode_id, qa_actor_id, qa_error *);
 bool qa_modes_rogue_tag_score(qa_modes *, qa_mode_id, qa_actor_id victim, qa_actor_id attacker,
@@ -396,8 +416,8 @@ bool qa_modes_team_info(qa_modes *, qa_mode_id, qa_actor_id recipient, qa_mode_t
 bool qa_modes_bind_objective(qa_modes *, const qa_objective_binding *, qa_objective_lease *,
                              qa_error *);
 bool qa_modes_unbind_objective(qa_modes *, qa_objective_lease, qa_error *);
-bool qa_modes_objective(qa_modes *, qa_string_id, qa_objective_state *, qa_error *);
-bool qa_modes_change_objective(qa_modes *, qa_string_id, const qa_objective_state *, qa_error *);
+bool qa_modes_objective(qa_modes *, qa_mode_id, qa_string_id, qa_objective_state *, qa_error *);
+bool qa_modes_change_objective(qa_modes *, qa_mode_id, qa_string_id, const qa_objective_state *, qa_error *);
 bool qa_modes_campaign_gates(qa_modes *, bool *complete, qa_error *);
 bool qa_modes_objective_at(qa_modes *, size_t index, qa_objective_binding *, qa_objective_state *,
                            qa_error *);
@@ -409,12 +429,34 @@ bool qa_modes_drop(qa_modes *, qa_mode_id, qa_actor_id player, bool death, qa_er
  * selection changes. Existing native descriptors retain their owner. The
  * command coordinator consults item_action before ordinary inventory action. */
 bool qa_modes_publish_items(qa_modes *, qa_actor_id, qa_error *);
-bool qa_modes_item_action(qa_modes *, qa_actor_id, qa_item_id, qa_item_action, bool *handled,
+typedef enum qa_mode_console_give {
+    QA_MODE_GIVE_PICKUP, QA_MODE_GIVE_INVENTORY_ONLY,
+    QA_MODE_GIVE_INDIVIDUAL_ONLY, QA_MODE_GIVE_FORBIDDEN
+} qa_mode_console_give;
+typedef struct qa_mode_item {
+    qa_item_definition definition;
+    qa_mode_id mode;
+    qa_item_id source_item;
+    const char *classname;
+    double capacity;
+    qa_mode_console_give console_give;
+} qa_mode_item;
+/* B34 adapts one selected mode's catalog to native command item lookup.
+ * Definitions exist before map objects spawn; labels/classnames are static. */
+size_t qa_modes_item_count(qa_modes *, qa_mode_id);
+bool qa_modes_item_at(qa_modes *, qa_mode_id, size_t, qa_mode_item *, qa_error *);
+/* direct is startitems' source grant; false includes shared pickup policy and
+ * ordinary pickup feedback. count=0 selects the source default. */
+bool qa_modes_give_item(qa_modes *, qa_mode_id, qa_actor_id, qa_item_id,
+                        bool direct, int32_t count, bool *accepted, qa_error *);
+/* Item operations accept the scoped definition.item returned by item_at or
+ * the shared inventory catalog, never an unscoped source item identity. */
+bool qa_modes_item_action(qa_modes *, qa_mode_id, qa_actor_id, qa_item_id, qa_item_action, bool *handled,
                           qa_error *);
 bool qa_modes_object_read(qa_modes *, qa_actor_id, qa_mode_object_view *);
 bool qa_modes_object_at(qa_modes *, size_t index, qa_actor_id *, qa_mode_object_view *, qa_error *);
 bool qa_modes_object_reaction(qa_modes *, const qa_damage_outcome *, qa_error *);
-bool qa_modes_object_damage(qa_modes *, qa_damage_request *, bool *allowed, qa_error *);
+bool qa_modes_object_damage(qa_modes *, qa_mode_id, qa_damage_request *, bool *allowed, qa_error *);
 bool qa_modes_physics(qa_modes *, qa_actor_id, qa_physics_properties *);
 bool qa_modes_physics_write(qa_modes *, qa_actor_id, const qa_physics_properties *, qa_error *);
 bool qa_modes_spawnpoints(qa_modes *, qa_mode_id, const qa_mode_spawnpoint *, size_t, qa_error *);
