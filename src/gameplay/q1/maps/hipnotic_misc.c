@@ -2,20 +2,8 @@
 
 static bool sound(qa_q1_game *g, q1_actor *entity, qa_string_id resource, int32_t channel,
                   qa_error *error) {
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, entity->id, &body, error))
-        return false;
-    qa_builtin_event event = {.kind = QA_BUILTIN_SOUND,
-                              .family = QA_GAME_Q1,
-                              .provider = g->options.provider,
-                              .actor = entity->id,
-                              .time_ns = g->time_ns,
-                              .resource = resource,
-                              .origin = body.origin,
-                              .channel = channel,
-                              .volume = entity->map->volume,
-                              .attenuation = entity->speed};
-    return qa_builtin_emit(&g->services, &event, error);
+    return q1_sound_resource(g, entity->id, resource, channel, entity->speed, entity->map->volume,
+                             error);
 }
 static bool play_sound(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_map_state *state = entity->map;
@@ -218,7 +206,7 @@ bool q1_map_hip_misc_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator,
         if (!qa_world_body_read(g->services.world, entity->id, &body, error) ||
             !q1_effect(g, QA_BUILTIN_TELEPORT, entity->id, body.origin, 1, 0, error))
             return false;
-        return !q1_alive(g, entity->id) || q1_sound(g, entity->id, "misc/r_tele1.wav", 0, 1, error);
+        return !q1_alive(g, entity->id) || q1_sound(g, entity->id, "misc/r_tele1.wav", 2, 1, error);
     }
     case Q1_MAP_RUBBLE_SOURCE:
         return rubble(g, entity, error);

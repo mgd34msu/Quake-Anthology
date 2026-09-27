@@ -13,7 +13,7 @@ typedef struct qa_q1_map_fields {
     bool has_movedir, has_view_offset;
     float height, lip, width, length, pause_time;
     float volume, duration, distance, next_think_seconds;
-    float spawn_multi, spawn_silent, gravity;
+    float spawn_multi, spawn_silent, gravity, current_ammo;
     int32_t sounds, style, world_type, color_map, impulse;
     float counter_value;
     int32_t particle_color;

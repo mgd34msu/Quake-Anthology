@@ -150,6 +150,17 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
             (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER, .value.number = entity->map->style};
         return true;
     }
+    if (entity->map && !strcmp(key, "currentammo")) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+                                 .value.number = entity->map->current_ammo};
+        return true;
+    }
+    if (g->maps && qa_actor_id_equal(actor, g->maps->world_actor) &&
+        !strcmp(key, "rogue:impactVelocity")) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+                                 .value.number = g->maps->pendulum_impact};
+        return true;
+    }
     if (entity->map &&
         ((entity->map->kind == Q1_MAP_HIP_COUNTER && !strcmp(key, "counter_state")) ||
          !strcmp(key, "gravity"))) {
@@ -358,7 +369,7 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
                              source->length,        source->pause_time,  source->volume,
                              source->duration,      source->distance,    source->next_think_seconds,
                              source->counter_value, source->spawn_multi, source->spawn_silent,
-                             source->gravity};
+                             source->gravity,       source->current_ammo};
     for (size_t i = 0; i < sizeof(numbers) / sizeof(*numbers); ++i)
         if (!isfinite(numbers[i]))
             return q1_map_fail(error, "nonfinite Q1 authored field");
@@ -402,6 +413,7 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
     state->spawn_multi = source->spawn_multi;
     state->spawn_silent = source->spawn_silent;
     state->gravity = source->gravity;
+    state->current_ammo = source->current_ammo;
     if (source->model && source->model[0] == '*') {
         const char *number = source->model + 1;
         char *end;
@@ -425,6 +437,7 @@ static q1_map_kind classify(const char *name) {
         const char *name;
         q1_map_kind kind;
     } classes[] = {{"worldspawn", Q1_MAP_WORLD},
+                   {"pendulum", Q1_MAP_PENDULUM},
                    {"func_counter", Q1_MAP_HIP_COUNTER},
                    {"func_oncount", Q1_MAP_ONCOUNT},
                    {"trigger_command", Q1_MAP_ONCOUNT},
@@ -531,6 +544,8 @@ static q1_map_kind classify(const char *name) {
 bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, bool *handled,
                   qa_error *error) {
     q1_map_kind kind = classify(spawn->classname);
+    if (g->options.program != QA_Q1_ROGUE && kind == Q1_MAP_PENDULUM)
+        kind = Q1_MAP_FIELDS;
     if (g->options.program != QA_Q1_MG3 &&
         (kind == Q1_MAP_CANCEL_PAUSE || kind == Q1_MAP_SWITCH_PATH))
         kind = Q1_MAP_FIELDS;
@@ -548,6 +563,8 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     if (!*handled)
         return true;
     entity->kind = Q1_MAP;
+    if (kind == Q1_MAP_PENDULUM)
+        return q1_map_pendulum_spawn(g, entity, error);
     if (q1_map_is_hip_trigger(kind))
         return q1_map_hip_trigger_spawn(g, entity, error);
     if (kind == Q1_MAP_SPAWNER)
@@ -694,6 +711,8 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
                 qa_error *error) {
     if (!entity->map || !entity->map->use_enabled)
         return true;
+    if (entity->map->kind == Q1_MAP_PENDULUM)
+        return q1_map_pendulum_use(g, entity, error);
     if (q1_map_is_hip_trigger(entity->map->kind))
         return q1_map_hip_trigger_use(g, entity, other, activator, error);
     if (entity->map->kind == Q1_MAP_SPAWNER)
@@ -724,6 +743,8 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
 }
 bool q1_map_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contact *contact,
                   qa_error *error) {
+    if (entity->map && entity->map->touch_enabled && entity->map->kind == Q1_MAP_PENDULUM)
+        return q1_map_pendulum_touch(g, entity, contact->other, error);
     if (entity->map && entity->map->touch_enabled && q1_map_is_hip_trigger(entity->map->kind))
         return q1_map_hip_trigger_touch(g, entity, contact->other, error);
     if (entity->map && entity->map->kind == Q1_MAP_PUSHABLE_PROXY)
@@ -767,6 +788,8 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_map_state *state = entity->map;
     q1_map_action action = state->action;
     state->action = Q1_MAP_IDLE;
+    if (action == Q1_MAP_PENDULUM_SWING)
+        return q1_map_pendulum_think(g, entity, error);
     if (action == Q1_MAP_COUNTER_START || action == Q1_MAP_COUNTER_TICK)
         return q1_map_hip_trigger_think(g, entity, action, error);
     if (action == Q1_MAP_BOB_WATER)

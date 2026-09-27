@@ -468,6 +468,8 @@ bool q1_classnamed(qa_q1_game *, qa_actor_id, const char *);
 bool q1_model(qa_q1_game *, q1_actor *, const char *, qa_error *);
 bool q1_sound(qa_q1_game *, qa_actor_id, const char *, int32_t channel, float attenuation,
               qa_error *);
+bool q1_sound_resource(qa_q1_game *, qa_actor_id, qa_string_id, int32_t channel, float attenuation,
+                       float volume, qa_error *);
 bool q1_effect(qa_q1_game *, qa_builtin_event_kind, qa_actor_id, qa_vec3, float, int32_t,
                qa_error *);
 bool q1_create(qa_q1_game *, const char *, q1_entity_kind, qa_actor_id owner, q1_actor **,

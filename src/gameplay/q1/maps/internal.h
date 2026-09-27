@@ -40,6 +40,7 @@ typedef enum q1_map_kind {
     Q1_MAP_WATERFALL,
     Q1_MAP_THRESHOLD,
     Q1_MAP_BREAKAWAY,
+    Q1_MAP_PENDULUM,
     Q1_MAP_DOOR,
     Q1_MAP_BUTTON,
     Q1_MAP_SECRET_DOOR,
@@ -117,7 +118,8 @@ typedef enum q1_map_action {
     Q1_MAP_SACRIFICE_FLOAT,
     Q1_MAP_BOB_WATER,
     Q1_MAP_COUNTER_START,
-    Q1_MAP_COUNTER_TICK
+    Q1_MAP_COUNTER_TICK,
+    Q1_MAP_PENDULUM_SWING
 } q1_map_action;
 typedef enum q1_map_position { Q1_MAP_BOTTOM, Q1_MAP_UP, Q1_MAP_TOP, Q1_MAP_DOWN } q1_map_position;
 typedef struct q1_door_group {
@@ -142,7 +144,7 @@ struct q1_map_state {
     qa_string_id spawn_function, spawn_classname;
     qa_vec3 movedir, mangle, view_offset;
     float height, lip, width, length, pause_time, volume, duration, distance, initial_think;
-    float spawn_multi, spawn_silent, gravity;
+    float spawn_multi, spawn_silent, gravity, current_ammo;
     int32_t sounds, style, color_map, impulse;
     uint32_t inline_model;
     float counter_value;
@@ -163,6 +165,7 @@ struct q1_map_state {
         q1_map_movement mover;
         qa_vec3 push_origin;
         qa_actor_id spawn_master;
+        uint8_t pendulum_step;
         struct {
             float ticks;
             bool running, stop_after_cycle;
@@ -183,6 +186,7 @@ struct q1_map_runtime {
     q1_door_group *door_groups;
     qa_actor_id world_actor, electrodes[2];
     double lightning_end;
+    float pendulum_impact;
     qa_q1_map_finale_view finale;
     bool finale_started, finale_dismissed;
     double earthquake_end;
@@ -237,6 +241,10 @@ bool q1_map_hip_trigger_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_actor_id, 
 bool q1_map_hip_trigger_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_hip_trigger_reaction(qa_q1_game *, q1_actor *, const qa_damage_outcome *, qa_error *);
 bool q1_map_hip_trigger_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
+bool q1_map_pendulum_spawn(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_map_pendulum_use(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_map_pendulum_think(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_map_pendulum_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_pushable_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_bob_water(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_special_spawn(qa_q1_game *, q1_actor *, qa_error *);

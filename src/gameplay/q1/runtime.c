@@ -155,23 +155,29 @@ bool q1_target(qa_q1_game *g, qa_actor_id actor, qa_q1_target *target) {
 bool q1_model(qa_q1_game *g, q1_actor *entity, const char *path, qa_error *error) {
     return qa_builtin_resource(&g->services, path, &entity->model, error);
 }
-bool q1_sound(qa_q1_game *g, qa_actor_id actor, const char *path, int32_t channel,
-              float attenuation, qa_error *error) {
+bool q1_sound_resource(qa_q1_game *g, qa_actor_id actor, qa_string_id resource, int32_t channel,
+                       float attenuation, float volume, qa_error *error) {
     qa_builtin_event event = {.kind = QA_BUILTIN_SOUND,
                               .family = QA_GAME_Q1,
                               .provider = g->options.provider,
                               .actor = actor,
+                              .resource = resource,
                               .time_ns = g->time_ns,
                               .channel = channel,
                               .attenuation = attenuation,
-                              .volume = 1};
+                              .volume = volume};
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, actor, &body, error))
         return false;
     event.origin =
         qa_vec_add(body.origin, qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), .5f));
-    return qa_builtin_resource(&g->services, path, &event.resource, error) &&
-           qa_builtin_emit(&g->services, &event, error);
+    return qa_builtin_emit(&g->services, &event, error);
+}
+bool q1_sound(qa_q1_game *g, qa_actor_id actor, const char *path, int32_t channel,
+              float attenuation, qa_error *error) {
+    qa_string_id resource;
+    return qa_builtin_resource(&g->services, path, &resource, error) &&
+           q1_sound_resource(g, actor, resource, channel, attenuation, 1, error);
 }
 bool q1_effect(qa_q1_game *g, qa_builtin_event_kind kind, qa_actor_id actor, qa_vec3 origin,
                float value, int32_t code, qa_error *error) {
