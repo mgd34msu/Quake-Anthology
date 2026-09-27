@@ -60,6 +60,7 @@ qa_collision_geometry *qa_world_geometry(qa_world *);
 bool qa_world_actor_released(qa_world *, qa_actor_record, qa_error *);
 bool qa_world_body_create(qa_world *, qa_actor_id, const qa_body_state *, qa_error *);
 bool qa_world_body_bind(qa_world *, qa_actor_id, const qa_body_binding *, bool replace, qa_error *);
+uint64_t qa_world_body_storage_serial(const qa_world *, qa_actor_id);
 bool qa_world_body_read(qa_world *, qa_actor_id, qa_body_state *, qa_error *);
 bool qa_world_body_write(qa_world *, qa_actor_id, const qa_body_state *, qa_error *);
 bool qa_world_set_collision(qa_world *, qa_actor_id, const qa_actor_collision *, qa_error *); /* NULL disables collision. */

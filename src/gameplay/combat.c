@@ -189,6 +189,12 @@ bool qa_combat_create_actor(qa_combat *combat, qa_actor_id actor, const qa_comba
     *entry = (qa_combat_record){.actor = actor, .serial = serial, .active = true, .state = *state};
     return true;
 }
+uint64_t qa_combat_storage_serial(const qa_combat *combat, qa_actor_id actor) {
+    if (!combat || !qa_actors_get(combat->actors, actor))
+        return 0;
+    const qa_combat_record *entry = &combat->records[actor.slot];
+    return entry->active && qa_actor_id_equal(entry->actor, actor) ? entry->serial : 0;
+}
 bool qa_combat_bind(qa_combat *combat, qa_actor_id actor, const qa_combat_binding *binding, bool replace, qa_error *error) {
     if (!qa_combat_live(combat, actor) || !binding || !binding->read || !binding->write_health || !binding->write_armor)
         return qa_combat_argument(error, "invalid combat binding");

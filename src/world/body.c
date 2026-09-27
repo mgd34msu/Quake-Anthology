@@ -139,6 +139,8 @@ bool qa_world_body_create(qa_world *world,qa_actor_id actor,const qa_body_state 
     qa_world_body *body=ensure_body(world,actor,error);
     if(body==NULL) return false;
     if(body->present) return fail(error,QA_ERROR_ARGUMENT,"Actor already has a body");
+    if(world->body_serial==UINT64_MAX) return fail(error,QA_ERROR_ARGUMENT,"Body storage identity exhausted");
+    body->storage_serial=++world->body_serial;
     body->present=true; body->actor=actor; body->state=*state; return true;
 }
 
@@ -149,7 +151,15 @@ bool qa_world_body_bind(qa_world *world,qa_actor_id actor,const qa_body_binding 
     qa_world_body *body=ensure_body(world,actor,error);
     if(body==NULL) return false;
     if(body->present && !replace) return fail(error,QA_ERROR_ARGUMENT,"Actor already has a body binding");
+    if(world->body_serial==UINT64_MAX) return fail(error,QA_ERROR_ARGUMENT,"Body storage identity exhausted");
+    body->storage_serial=++world->body_serial;
     body->actor=actor; body->present=true; body->external=true; body->binding=*binding; return true;
+}
+
+uint64_t qa_world_body_storage_serial(const qa_world *world,qa_actor_id actor)
+{
+    const qa_world_body *body=qa_world_find_body(world,actor);
+    return body==NULL?0:body->storage_serial;
 }
 
 bool qa_world_body_read(qa_world *world,qa_actor_id actor,qa_body_state *out,qa_error *error)
@@ -158,12 +168,14 @@ bool qa_world_body_read(qa_world *world,qa_actor_id actor,qa_body_state *out,qa_
     if(body==NULL || out==NULL) return fail(error,QA_ERROR_NOT_FOUND,"Actor body is unavailable");
     qa_body_state state;
     if(body->external) {
+        uint64_t serial=body->storage_serial;
         qa_body_binding binding=body->binding;
         ++world->callback_depth;
         bool ok=binding.read(binding.context,&state,error);
         --world->callback_depth;
         if(!ok) return false;
-        if(qa_world_find_body(world,actor)!=body) return fail(error,QA_ERROR_NOT_FOUND,"Body retired during read callback");
+        if(qa_world_find_body(world,actor)!=body || body->storage_serial!=serial)
+            return fail(error,QA_ERROR_NOT_FOUND,"Body storage changed during read callback");
         if(!valid_state(&state)) return fail(error,QA_ERROR_FORMAT,"Binding returned invalid body state");
         body->state=state;
     } else state=body->state;
@@ -176,9 +188,12 @@ bool qa_world_body_write(qa_world *world,qa_actor_id actor,const qa_body_state *
     qa_world_body *body=qa_world_find_body(world,actor);
     if(body==NULL) return qa_world_body_create(world,actor,state,error);
     if(!body->external) { body->state=*state; return true; }
+    uint64_t serial=body->storage_serial;
     qa_body_state copy=*state; qa_body_binding binding=body->binding;
     ++world->callback_depth; bool ok=binding.write(binding.context,&copy,error); --world->callback_depth;
-    return ok;
+    if(!ok) return false;
+    return (qa_world_find_body(world,actor)==body && body->storage_serial==serial)
+        || fail(error,QA_ERROR_NOT_FOUND,"Body storage changed during write callback");
 }
 
 bool qa_world_set_collision(qa_world *world,qa_actor_id actor,const qa_actor_collision *collision,qa_error *error)
@@ -252,6 +267,7 @@ bool qa_world_next_attachment(const qa_world *world,uint64_t *cursor,qa_actor_id
 
 static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_body *linked,qa_error *error)
 {
+    uint64_t serial=body->storage_serial;
     qa_actor_collision collision=body->collision;
     if(!body->has_collision) {
         memset(&collision,0,sizeof(collision));
@@ -267,7 +283,8 @@ static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_bod
         ++world->callback_depth; binding.linked(binding.context,&copy); --world->callback_depth;
     }
     body=qa_world_find_body(world,copy.actor);
-    if(body!=NULL && body->linked && body->link_count==copy.link_count && world->hooks.linked!=NULL) {
+    if(body!=NULL && body->storage_serial==serial && body->linked
+        && body->link_count==copy.link_count && world->hooks.linked!=NULL) {
         ++world->callback_depth; world->hooks.linked(world->hooks.context,&copy); --world->callback_depth;
     }
     return true;
@@ -281,6 +298,7 @@ bool qa_world_link(qa_world *world,qa_actor_id actor,const qa_vec3 *origin_overr
     if(origin_override!=NULL) state.origin=*origin_override;
     qa_world_body *body=qa_world_find_body(world,actor);
     if(body==NULL) return fail(error,QA_ERROR_NOT_FOUND,"Actor retired while linking");
+    uint64_t serial=body->storage_serial;
     if(body->link_count==UINT64_MAX) return fail(error,QA_ERROR_ARGUMENT,"Body link count exhausted");
     qa_bounds bounds=qa_bounds_translate(state.bounds,state.origin);
     if(world->hooks.absolute_bounds!=NULL) {
@@ -289,7 +307,8 @@ bool qa_world_link(qa_world *world,qa_actor_id actor,const qa_vec3 *origin_overr
         --world->callback_depth;
         if(!ok) return false;
         body=qa_world_find_body(world,actor);
-        if(body==NULL) return fail(error,QA_ERROR_NOT_FOUND,"Actor retired during link bounds callback");
+        if(body==NULL || body->storage_serial!=serial)
+            return fail(error,QA_ERROR_NOT_FOUND,"Body storage changed during link bounds callback");
     }
     if(!qa_collision_bounds_valid(bounds)) return fail(error,QA_ERROR_ARGUMENT,"Invalid absolute body bounds");
     if(body->link_count==UINT64_MAX) return fail(error,QA_ERROR_ARGUMENT,"Body link count exhausted");

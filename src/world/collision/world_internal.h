@@ -9,6 +9,7 @@
 typedef struct qa_spatial_member qa_spatial_member;
 typedef struct qa_world_body {
     qa_actor_id actor;
+    uint64_t storage_serial;
     bool present, external, has_collision, attached, linked;
     qa_body_state state;
     qa_body_binding binding;
@@ -39,7 +40,7 @@ struct qa_world {
     qa_spatial_sector sectors[QA_SPATIAL_SECTORS];
     qa_spatial_member *retired, *spare_members;
     uint32_t visit_depth, callback_depth;
-    uint64_t attachment_order;
+    uint64_t attachment_order, body_serial;
 };
 qa_world_body *qa_world_find_body(const qa_world *, qa_actor_id);
 qa_world_body *qa_world_raw_body(const qa_world *, uint32_t);

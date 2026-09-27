@@ -220,6 +220,7 @@ void qa_combat_actor_released(qa_combat *, qa_actor_record);
 bool qa_combat_register_policy(qa_combat *, const qa_combat_policy *, qa_error *);
 bool qa_combat_unregister_policy(qa_combat *, qa_actor_owner, qa_error *);
 bool qa_combat_create_actor(qa_combat *, qa_actor_id, const qa_combat_state *, qa_error *);
+uint64_t qa_combat_storage_serial(const qa_combat *, qa_actor_id);
 bool qa_combat_bind(qa_combat *, qa_actor_id, const qa_combat_binding *, bool replace, qa_error *);
 /* The fuel owner is usually inventory. Effective armor reads it directly;
  * binding it does not create another spendable reservoir. */
