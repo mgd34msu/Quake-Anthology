@@ -66,6 +66,8 @@ static inline qa_string_id q2_item_classname(qa_q2_game *g, const qa_q2_item_def
 q2_power_state *q2_powers(qa_q2_game *, qa_actor_id, qa_error *);
 bool q2_item_bind_actions(qa_q2_game *, qa_actor_id, q2_power_state *, qa_error *);
 const qa_q2_item_definition *q2_item_by_id(qa_q2_game *, qa_item_id);
+bool q2_supplemental_find(qa_q2_game *, const char *, bool names_only, qa_q2_supplemental_item *);
+bool q2_item_console_pickup(qa_q2_game *, qa_actor_id, const qa_q2_item_definition *, qa_error *);
 bool q2_item_catalog(qa_q2_game *, qa_error *);
 bool q2_item_ensure(qa_q2_game *, qa_actor_id, const qa_q2_item_definition *, qa_error *);
 bool q2_item_grant(qa_q2_game *, q2_actor *, qa_actor_id, bool *, qa_error *);

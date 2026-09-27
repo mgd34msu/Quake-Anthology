@@ -148,6 +148,66 @@ bool q2_player_copy_corpse(qa_q2_game *g, q2_actor *a, qa_error *e) {
     return !q2_actor_live(g, corpse->id) ||
            q2_publish_visual(g, corpse->id, &corpse->client->visual, e);
 }
+static bool coop_death(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    q2_players *runtime = g->player_runtime;
+    q2_trace_frame *players = q2_player_roster(g, e);
+    if (!players)
+        return false;
+    bool all_dead = true, okay = true;
+    for (size_t i = 0; i < players->snapshot.count; ++i) {
+        qa_actor_id id = players->snapshot.ids[i];
+        if (!q2_actor_live(g, id))
+            continue;
+        qa_combat_state health = {0};
+        qa_error missing = {0};
+        if (!qa_combat_read(g->services.combat, id, &health, &missing) &&
+            missing.code != QA_ERROR_NOT_FOUND) {
+            if (e)
+                *e = missing;
+            okay = false;
+            break;
+        }
+        if (!q2_actor_live(g, id))
+            continue;
+        q2_actor *native = q2_actor_get(g, id, false, NULL);
+        int lives = native && native->client ? native->client->info.lives : 0;
+        if (health.health > 0 ||
+            (!runtime->deadly_killbox && runtime->rules.coop_lives && lives > 0)) {
+            all_dead = false;
+            break;
+        }
+    }
+    players->active = false;
+    if (!okay || !q2_actor_live(g, a->id))
+        return okay;
+    if (!all_dead) {
+        a->client->respawn_ns = q2_deadline(g->now_ns, 3 * Q2_NS);
+        return true;
+    }
+    runtime->restart_ns = q2_deadline(g->now_ns, 5 * Q2_NS);
+    qa_string_id message;
+    if (!qa_builtin_resource(&g->services, "$g_coop_lose", &message, e))
+        return false;
+    players = q2_player_roster(g, e);
+    if (!players)
+        return false;
+    for (size_t i = 0; i < players->snapshot.count; ++i) {
+        qa_actor_id id = players->snapshot.ids[i];
+        if (q2_actor_live(g, id) &&
+            !qa_builtin_emit(&g->services,
+                             &(qa_builtin_event){.kind = QA_BUILTIN_CENTERPRINT,
+                                                 .family = QA_GAME_Q2,
+                                                 .provider = g->options.owner,
+                                                 .actor = id,
+                                                 .time_ns = g->now_ns,
+                                                 .text = message}, e)) {
+            okay = false;
+            break;
+        }
+    }
+    players->active = false;
+    return okay;
+}
 bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcome, qa_error *e) {
     q2_client_state *s = a->client;
     qa_combat_state combat;
@@ -274,32 +334,12 @@ bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
         if (g->options.cooperative && (rules->coop_squad_respawn || rules->coop_lives)) {
             if (rules->coop_lives && s->info.lives > 0)
                 s->info.lives--;
-            bool all_dead = true;
-            for (size_t i = 0; i < g->capacity; i++) {
-                q2_actor *other = g->actors[i];
-                if (!other || !other->client || !other->client->info.connected)
-                    continue;
-                qa_combat_state health;
-                if (!qa_combat_read(g->services.combat, other->id, &health, e))
-                    goto fail;
-                if (health.health > 0 || (!g->player_runtime->deadly_killbox && rules->coop_lives &&
-                                          other->client->info.lives > 0)) {
-                    all_dead = false;
-                    break;
-                }
-            }
-            if (all_dead) {
-                g->player_runtime->restart_ns = q2_deadline(g->now_ns, 5 * Q2_NS);
-                for (size_t i = 0; i < g->capacity; i++) {
-                    q2_actor *other = g->actors[i];
-                    if (other && other->client && other->client->info.connected &&
-                        !q2_player_print(g, other->id, 2, "$g_coop_lose", e))
-                        goto fail;
-                }
-            } else
-                s->respawn_ns = q2_deadline(g->now_ns, 3 * Q2_NS);
+            if (!coop_death(g, a, e))
+                goto fail;
         }
     }
+    if (!q2_actor_live(g, a->id))
+        goto finish;
     if (movement.animate_q2) {
         body.angles = qa_v3(0, body.angles.y, 0);
         body.bounds.maxs.z = -8;

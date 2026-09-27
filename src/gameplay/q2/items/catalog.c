@@ -201,6 +201,26 @@ const qa_q2_item_definition *q2_item_by_id(qa_q2_game *g, qa_item_id id) {
             return &g->item_runtime->definitions[i];
     return NULL;
 }
+bool q2_supplemental_find(qa_q2_game *g, const char *name, bool names_only,
+                          qa_q2_supplemental_item *out) {
+    const qa_q2_item_options *s = &g->item_runtime->options;
+    if (!name || !s->supplemental_count || !s->supplemental_item)
+        return false;
+    size_t count = s->supplemental_count(s->context);
+    for (size_t i = 0; i < count; ++i) {
+        qa_q2_supplemental_item item;
+        if (!s->supplemental_item(s->context, i, &item))
+            continue;
+        const char *id =
+            qa_strings_cstr(qa_session_strings(g->services.session), item.definition.item);
+        if (same(name, item.definition.label) ||
+            (!names_only && (same(name, item.classname) || (id && same(name, id))))) {
+            *out = item;
+            return true;
+        }
+    }
+    return false;
+}
 bool q2_item_catalog(qa_q2_game *g, qa_error *e) {
     q2_items *r = g->item_runtime;
     r->definitions = calloc(N(base) + N(xatrix) + N(rogue) + N(rerelease) + QA_Q2_WEAPON_COUNT,
@@ -266,7 +286,8 @@ bool q2_item_catalog(qa_q2_game *g, qa_error *e) {
             .coop_stay =
                 i <= QA_Q2_BFG || i == QA_Q2_LMCTF_PLASMA || g->options.edition == QA_Q2_RERELEASE,
             .droppable = i != QA_Q2_BLASTER && i != QA_Q2_GRAPPLE && i != QA_Q2_LMCTF_HOOK,
-            .inventory_only = i == QA_Q2_GRAPPLE || i == QA_Q2_LMCTF_HOOK};
+            .console_give = i == QA_Q2_GRAPPLE || i == QA_Q2_LMCTF_HOOK ? QA_Q2_GIVE_INVENTORY_ONLY
+                                                                        : QA_Q2_GIVE_PICKUP};
     }
     r->actions = calloc(r->count, sizeof(*r->actions));
     if (!r->actions) {
@@ -300,7 +321,7 @@ bool q2_item_catalog(qa_q2_game *g, qa_error *e) {
             d->coop_stay = true;
             d->rotate = false;
             d->respawn_seconds = 0;
-            d->inventory_only = true;
+            d->console_give = QA_Q2_GIVE_INVENTORY_ONLY;
         }
         if (d->kind == QA_Q2_ITEM_HEALTH || d->kind == QA_Q2_ITEM_ARMOR ||
             d->kind == QA_Q2_ITEM_SHARD || d->kind == QA_Q2_ITEM_MAX_HEALTH ||

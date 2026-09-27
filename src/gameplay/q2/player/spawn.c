@@ -138,6 +138,7 @@ bool qa_q2_player_spawn(qa_q2_game *g, qa_actor_id id, bool restore, const qa_q2
                 if (!fresh_inventory(g, a, e))
                     return false;
                 s->info.god = s->info.notarget = false;
+                s->auto_shield_enabled = false;
                 if (a->powers)
                     a->powers->power_cubes = 0;
             }

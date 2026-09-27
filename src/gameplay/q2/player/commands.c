@@ -48,20 +48,23 @@ bool q2_player_publish_inventory(qa_q2_game *g, q2_actor *a, qa_error *e) {
     return ok;
 }
 bool q2_player_scoreboard(qa_q2_game *g, q2_actor *a, bool reliable, qa_error *e) {
+    q2_player_list *list = q2_player_list_acquire(g, true, e);
+    if (!list)
+        return false;
     qa_q2_score_row rows[12];
     size_t count = 0;
-    for (size_t i = 0; i < g->capacity; i++) {
-        q2_actor *other = g->actors[i];
-        if (!other || !other->client || !other->client->info.connected ||
-            other->client->info.spectator)
+    for (size_t i = 0; i < list->count; i++) {
+        const q2_player_row *other = &list->rows[i];
+        const qa_builtin_player_info *s = &other->info;
+        if (s->spectator)
             continue;
-        q2_client_state *s = other->client;
+        uint64_t elapsed = g->now_ns > s->entered_ns ? g->now_ns - s->entered_ns : 0;
         qa_q2_score_row row = {
-            .slot = s->info.slot,
-            .name = s->info.name,
-            .score = s->info.score,
-            .ping = s->info.ping > 999 ? 999 : s->info.ping,
-            .minutes = (int)fmin((double)((g->now_ns - s->entered_ns) / (60 * Q2_NS)), INT_MAX)};
+            .slot = s->slot,
+            .name = s->name,
+            .score = other->score,
+            .ping = s->ping > 999 ? 999 : s->ping,
+            .minutes = (int)fmin((double)(elapsed / (60 * Q2_NS)), INT_MAX)};
         size_t index = 0;
         while (index < count && (rows[index].score > row.score ||
                                  (rows[index].score == row.score && rows[index].slot < row.slot)))
@@ -73,13 +76,15 @@ bool q2_player_scoreboard(qa_q2_game *g, q2_actor *a, bool reliable, qa_error *e
         memmove(rows + index + 1, rows + index, (count - index - 1) * sizeof(*rows));
         rows[index] = row;
     }
-    return q2_player_emit(g,
+    bool okay = q2_player_emit(g,
                           &(qa_q2_player_event){.kind = QA_Q2_PLAYER_SCOREBOARD,
                                                 .actor = a->id,
                                                 .scores = rows,
                                                 .count = count,
                                                 .reliable = reliable},
                           e);
+    list->active = false;
+    return okay;
 }
 static bool select_item(qa_q2_game *g, q2_actor *a, int direction, int filter, qa_error *e) {
     size_t count = qa_q2_item_count(g), start = count - 1;
@@ -131,6 +136,23 @@ static bool use_item(qa_q2_game *g, q2_actor *a, const qa_q2_item_definition *d,
     if (q2_actor_live(g, a->id))
         a->client->info.selected_item = d->item;
     return true;
+}
+static bool supplemental_action(qa_q2_game *g, q2_actor *a, const char *name, qa_item_action action,
+                                bool *handled, qa_error *e) {
+    qa_q2_supplemental_item item;
+    *handled = q2_supplemental_find(g, name, false, &item);
+    if (!*handled)
+        return true;
+    if (!(item.definition.actions & (uint32_t)action))
+        return q2_player_print(
+            g, a->id, 2,
+            action == QA_ITEM_USE ? "Item is not usable.\n" : "Item is not dropable.\n", e);
+    int count;
+    if (!q2_count(g, a->id, item.definition.item, &count, e))
+        return false;
+    return count ? qa_inventory_item_action(g->services.inventory, a->id, item.definition.item,
+                                            action, e)
+                 : q2_player_print(g, a->id, 2, "Out of item.\n", e);
 }
 static bool drop_item(qa_q2_game *g, q2_actor *a, const qa_q2_item_definition *d, qa_error *e) {
     if (!d)
@@ -217,19 +239,117 @@ static bool say(qa_q2_game *g, q2_actor *a, const char *text, bool team, qa_erro
     message[length] = 0;
     team_name(a->client->info.skin, (g->options.deathmatch_flags & 64) != 0, own_team,
               sizeof(own_team));
-    for (size_t i = 0; i < g->capacity; i++) {
-        q2_actor *other = g->actors[i];
-        if (!other || !other->client || !other->client->info.connected)
+    q2_trace_frame *players = q2_player_roster(g, e);
+    if (!players)
+        return false;
+    bool okay = true;
+    for (size_t i = 0; i < players->snapshot.count; i++) {
+        qa_actor_id other = players->snapshot.ids[i];
+        qa_builtin_player_info info;
+        if (!q2_player_info(g, other, &info))
             continue;
         char recipient[256];
-        team_name(other->client->info.skin, (g->options.deathmatch_flags & 64) != 0, recipient,
+        team_name(info.skin, (g->options.deathmatch_flags & 64) != 0, recipient,
                   sizeof(recipient));
         if (team && strcmp(own_team, recipient))
             continue;
-        if (!q2_player_print(g, other->id, 3, message, e))
-            return false;
+        if (!q2_player_print(g, other, 3, message, e)) {
+            okay = false;
+            break;
+        }
     }
-    return true;
+    players->active = false;
+    return okay;
+}
+static bool write_count(qa_q2_game *g, qa_actor_id actor, qa_item_id item, double capacity,
+                        double count, qa_error *e) {
+    qa_inventory_entry entry;
+    qa_error missing = {0};
+    if (!qa_inventory_entry_read(g->services.inventory, actor, item, &entry, &missing)) {
+        if (missing.code != QA_ERROR_NOT_FOUND) {
+            if (e)
+                *e = missing;
+            return false;
+        }
+        entry = (qa_inventory_entry){.item = item, .capacity = capacity};
+    }
+    entry.count = count;
+    entry.policy = QA_COUNT_SOURCE_INT32;
+    return qa_inventory_configure(g->services.inventory, actor, &entry, NULL, NULL, e);
+}
+static bool give_lookup(qa_q2_game *g, const char *requested, const char *first,
+                        const qa_q2_item_definition **native, qa_q2_supplemental_item *extra) {
+    *native = NULL;
+    for (unsigned pass = 0; pass < (g->options.edition == QA_Q2_RERELEASE ? 3u : 2u); ++pass) {
+        const char *text = pass == 0 ? requested : first;
+        if (!text)
+            continue;
+        for (size_t i = 0; i < qa_q2_item_count(g); ++i) {
+            const qa_q2_item_definition *d = qa_q2_item_at(g, i);
+            const char *id = qa_strings_cstr(qa_session_strings(g->services.session), d->item);
+            if (pass < 2 ? equal_name(text, d->name)
+                         : equal_name(text, d->classname) || (id && equal_name(text, id))) {
+                *native = d;
+                return true;
+            }
+        }
+        if (q2_supplemental_find(g, text, pass < 2, extra))
+            return true;
+    }
+    return false;
+}
+static bool give_ammo(qa_q2_game *g, qa_actor_id actor, const qa_q2_item_definition *d, bool exact,
+                      int amount, qa_error *e) {
+    qa_supply *supply = q2_item_supply(g, actor);
+    if (!supply || !qa_supply_maps(supply, d->item, false)) {
+        int previous;
+        if (!q2_count(g, actor, d->item, &previous, e))
+            return false;
+        return write_count(g, actor, d->item, d->capacity,
+                           exact ? amount : (double)previous + d->quantity, e);
+    }
+    qa_pickup_grant grant = {.item = d->item};
+    qa_supply_preview_result preview = {0};
+    if (!qa_supply_preview(
+            supply, actor,
+            &(qa_supply_offer){.kind = QA_SUPPLY_AMMO, .ammo = &grant, .ammo_count = 1}, false,
+            &preview, e))
+        return false;
+    bool okay = true;
+    for (size_t i = 0; i < preview.ammo_count && q2_actor_live(g, actor); ++i) {
+        qa_inventory_entry entry;
+        if (!qa_inventory_entry_read(g->services.inventory, actor, preview.ammo[i].item, &entry,
+                                     e)) {
+            okay = false;
+            break;
+        }
+        double next = exact ? amount : entry.count + d->quantity;
+        entry.count = entry.policy == QA_COUNT_STACK ? fmax(0, next) : next;
+        if (!qa_inventory_configure(g->services.inventory, actor, &entry, NULL, NULL, e)) {
+            okay = false;
+            break;
+        }
+    }
+    qa_supply_preview_free(&preview);
+    return okay;
+}
+static bool power_after_give(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    const qa_q2_item_definition *cells = qa_q2_item_lookup(g, "ammo_cells"),
+                                *shield = qa_q2_item_lookup(g, "item_power_shield"),
+                                *screen = qa_q2_item_lookup(g, "item_power_screen");
+    int fuel, owned;
+    qa_combat_state combat;
+    if (!q2_count(g, a->id, cells->item, &fuel, e) ||
+        !q2_count(g, a->id, shield->item, &owned, e) ||
+        !qa_combat_read(g->services.combat, a->id, &combat, e))
+        return false;
+    int automatic = a->client->auto_shield;
+    bool enough =
+             fuel != 0 && (automatic < 0 || (a->client->auto_shield_enabled && fuel > automatic)),
+         active = combat.armor.powered.kind != QA_POWER_NONE;
+    bool used;
+    return !((active && !enough) || (!active && automatic != -1 && enough)) ||
+           qa_q2_item_use(g, a->id, owned ? shield->item : screen->item, &used, e);
 }
 static bool give(qa_q2_game *g, q2_actor *a, size_t count, const char *const *args, qa_error *e) {
     char requested[1024];
@@ -255,13 +375,13 @@ static bool give(qa_q2_game *g, q2_actor *a, size_t count, const char *const *ar
                 return true;
             if (!handled) {
                 if (category && all && rr) {
-                    bool accepted;
-                    if (!qa_q2_item_give(g, a->id, "item_pack", 0, &accepted, e))
+                    if (!q2_item_console_pickup(g, a->id, qa_q2_item_lookup(g, "item_pack"), e))
                         return false;
                 }
                 for (size_t i = 0; i < qa_q2_item_count(g) && q2_actor_live(g, a->id); i++) {
                     const qa_q2_item_definition *d = qa_q2_item_at(g, i);
-                    if (category ? d->kind != QA_Q2_ITEM_AMMO : !d->weapon || d->inventory_only)
+                    if (category ? d->kind != QA_Q2_ITEM_AMMO
+                                 : !d->weapon || d->console_give == QA_Q2_GIVE_INVENTORY_ONLY)
                         continue;
                     if (!q2_item_ensure(g, a->id, d, e))
                         return false;
@@ -290,8 +410,7 @@ static bool give(qa_q2_game *g, q2_actor *a, size_t count, const char *const *ar
             return true;
     }
     if (all || (!rr && equal_name(requested, "power shield"))) {
-        bool accepted;
-        if (!qa_q2_item_give(g, a->id, "item_power_shield", 0, &accepted, e))
+        if (!q2_item_console_pickup(g, a->id, qa_q2_item_lookup(g, "item_power_shield"), e))
             return false;
         if (!all)
             return true;
@@ -300,90 +419,108 @@ static bool give(qa_q2_game *g, q2_actor *a, size_t count, const char *const *ar
         for (size_t i = 0; i < qa_q2_item_count(g) && q2_actor_live(g, a->id); i++) {
             const qa_q2_item_definition *d = qa_q2_item_at(g, i);
             if (d->weapon || d->kind == QA_Q2_ITEM_AMMO || d->kind == QA_Q2_ITEM_ARMOR ||
-                d->kind == QA_Q2_ITEM_SHARD || d->inventory_only)
+                d->kind == QA_Q2_ITEM_SHARD || d->console_give == QA_Q2_GIVE_INVENTORY_ONLY)
                 continue;
             if (rr &&
                 (d->kind == QA_Q2_ITEM_HEALTH ||
                  (d->kind == QA_Q2_ITEM_MAX_HEALTH && strcmp(d->classname, "item_adrenaline")) ||
-                 d->kind == QA_Q2_ITEM_FOOD || d->kind == QA_Q2_ITEM_PACK))
+                 d->console_give == QA_Q2_GIVE_FORBIDDEN ||
+                 d->console_give == QA_Q2_GIVE_INDIVIDUAL_ONLY))
                 continue;
-            qa_inventory_entry entry = {.item = d->item,
-                                        .count = rr && d->kind == QA_Q2_ITEM_KEY ? 8 : 1,
-                                        .capacity = d->capacity,
-                                        .policy = QA_COUNT_SOURCE_INT32};
-            if (!qa_inventory_configure(g->services.inventory, a->id, &entry, NULL, NULL, e))
+            if (!write_count(g, a->id, d->item, d->capacity,
+                             rr && d->kind == QA_Q2_ITEM_KEY ? 8 : 1, e))
+                return false;
+        }
+        qa_q2_item_options *options = &g->item_runtime->options;
+        size_t extra_count =
+            options->supplemental_count ? options->supplemental_count(options->context) : 0;
+        for (size_t i = 0; i < extra_count && q2_actor_live(g, a->id); ++i) {
+            qa_q2_supplemental_item item;
+            if (!options->supplemental_item(options->context, i, &item) || item.definition.weapon ||
+                item.console_give == QA_Q2_GIVE_INVENTORY_ONLY ||
+                (rr && (item.console_give == QA_Q2_GIVE_INDIVIDUAL_ONLY ||
+                        item.console_give == QA_Q2_GIVE_FORBIDDEN)))
+                continue;
+            if (!write_count(g, a->id, item.definition.item, item.capacity, 1, e))
                 return false;
         }
         if (rr && a->powers)
             a->powers->power_cubes = 0xff;
-        return true;
+        return !rr || !q2_actor_live(g, a->id) || power_after_give(g, a, e);
     }
-    const qa_q2_item_definition *d = qa_q2_item_lookup(g, requested);
-    if (!d && count)
-        d = qa_q2_item_lookup(g, args[0]);
-    if (!d) {
+    const qa_q2_item_definition *d;
+    qa_q2_supplemental_item extra;
+    if (!give_lookup(g, requested, count ? args[0] : NULL, &d, &extra)) {
         bool handled = false;
         if (services->give_item &&
             !services->give_item(services->context, a->id, count, args, &handled, e))
             return false;
         return handled || q2_player_print(g, a->id, 2, "unknown item\n", e);
     }
-    if (d->inventory_only) {
+    qa_q2_console_give policy = d ? d->console_give : extra.console_give;
+    if (rr && policy == QA_Q2_GIVE_FORBIDDEN)
+        return q2_player_print(g, a->id, 2, "Item is not giveable.\n", e);
+    if (!d) {
+        if (policy == QA_Q2_GIVE_INVENTORY_ONLY)
+            return rr ? write_count(g, a->id, extra.definition.item, extra.capacity, 1, e)
+                      : q2_player_print(g, a->id, 2, "non-pickup item\n", e);
+        bool accepted;
+        qa_q2_item_options *options = &g->item_runtime->options;
+        return options->supplemental_give(options->context, a->id, extra.definition.item, false, 0,
+                                          &accepted, e);
+    }
+    qa_supply *supply = q2_item_supply(g, a->id);
+    if ((d->weapon || d->kind == QA_Q2_ITEM_AMMO) &&
+        (!supply || !qa_supply_maps(supply, d->item, d->kind != QA_Q2_ITEM_AMMO)) &&
+        services->give_item) {
+        const char *selected_args[2] = {
+            qa_strings_cstr(qa_session_strings(g->services.session), d->item),
+            count == 2 ? args[1] : NULL};
+        bool handled = false;
+        if (!services->give_item(services->context, a->id,
+                                 d->kind == QA_Q2_ITEM_AMMO && count == 2 ? 2 : 1, selected_args,
+                                 &handled, e))
+            return false;
+        if (handled || !q2_actor_live(g, a->id))
+            return true;
+    }
+    if (d->console_give == QA_Q2_GIVE_INVENTORY_ONLY) {
         if (!rr)
             return q2_player_print(g, a->id, 2, "non-pickup item\n", e);
-        return qa_inventory_configure(
-            g->services.inventory, a->id,
-            &(qa_inventory_entry){d->item, 1, d->capacity, QA_COUNT_SOURCE_INT32}, NULL, NULL, e);
+        return write_count(g, a->id, d->item, d->capacity, 1, e);
     }
-    if (d->kind == QA_Q2_ITEM_AMMO && count == 2) {
-        if (!q2_item_ensure(g, a->id, d, e))
-            return false;
-        qa_inventory_entry entry;
-        if (!qa_inventory_entry_read(g->services.inventory, a->id, d->item, &entry, e))
-            return false;
-        entry.count = argument_integer(args[1]);
-        return qa_inventory_configure(g->services.inventory, a->id, &entry, NULL, NULL, e);
-    }
-    bool accepted;
-    return qa_q2_item_give(g, a->id, d->classname, 0, &accepted, e);
+    if (d->kind == QA_Q2_ITEM_AMMO)
+        return give_ammo(g, a->id, d, count == 2, count == 2 ? argument_integer(args[1]) : 0, e);
+    return q2_item_console_pickup(g, a->id, d, e);
 }
 static bool players_list(qa_q2_game *g, q2_actor *a, bool scores, qa_error *e) {
-    size_t n = 0;
-    for (size_t i = 0; i < g->capacity; i++)
-        if (g->actors[i] && g->actors[i]->client && g->actors[i]->client->info.connected)
-            n++;
-    q2_actor **ordered = n ? malloc(n * sizeof(*ordered)) : NULL;
-    if (n && !ordered) {
-        qa_error_set(e, QA_ERROR_MEMORY, 0, "Listing Q2 players");
+    q2_player_list *list = q2_player_list_acquire(g, true, e);
+    if (!list)
         return false;
-    }
-    size_t count = 0;
-    for (size_t i = 0; i < g->capacity; i++) {
-        q2_actor *other = g->actors[i];
-        if (!other || !other->client || !other->client->info.connected)
-            continue;
-        size_t at = count;
-        while (at && (scores ? ordered[at - 1]->client->info.score > other->client->info.score
-                             : ordered[at - 1]->client->info.slot > other->client->info.slot)) {
+    q2_player_row *ordered = list->rows;
+    size_t count = list->count;
+    for (size_t i = 1; i < count; i++) {
+        q2_player_row row = ordered[i];
+        size_t at = i;
+        while (at && (scores ? ordered[at - 1].score > row.score
+                             : ordered[at - 1].info.slot > row.info.slot)) {
             ordered[at] = ordered[at - 1];
             at--;
         }
-        ordered[at] = other;
-        count++;
+        ordered[at] = row;
     }
     char text[1400];
     size_t used = 0;
     for (size_t i = 0; i < count; i++) {
-        q2_client_state *s = ordered[i]->client;
+        const qa_builtin_player_info *s = &ordered[i].info;
         char line[128];
-        uint64_t seconds = (g->now_ns - s->entered_ns) / Q2_NS;
+        uint64_t seconds = g->now_ns > s->entered_ns ? (g->now_ns - s->entered_ns) / Q2_NS : 0;
         if (scores)
-            snprintf(line, sizeof(line), "%3d %s\n", s->info.score, s->info.name);
+            snprintf(line, sizeof(line), "%3d %s\n", ordered[i].score, s->name);
         else
             snprintf(line, sizeof(line), "%02llu:%02llu %4d %3d %s%s\n",
                      (unsigned long long)(seconds / 60), (unsigned long long)(seconds % 60),
-                     s->info.ping, s->info.score, s->info.name,
-                     s->info.spectator ? " (spectator)" : "");
+                     s->ping, ordered[i].score, s->name, s->spectator ? " (spectator)" : "");
         size_t length = strlen(line);
         if (used + length > 1280) {
             memcpy(text + used, "...\n", 4);
@@ -396,7 +533,7 @@ static bool players_list(qa_q2_game *g, q2_actor *a, bool scores, qa_error *e) {
     text[used] = 0;
     if (scores)
         snprintf(text + used, sizeof(text) - used, "\n%zu players\n", count);
-    free(ordered);
+    list->active = false;
     return q2_player_print(g, a->id, 2, text, e);
 }
 bool qa_q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_t count,
@@ -453,10 +590,18 @@ bool qa_q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, si
     }
     if (p->intermission)
         return true;
-    if (equal_name(command, "use"))
-        return use_item(g, a, qa_q2_item_lookup(g, text), e);
-    if (equal_name(command, "drop"))
-        return drop_item(g, a, qa_q2_item_lookup(g, text), e);
+    if (equal_name(command, "use") || equal_name(command, "drop")) {
+        bool using = equal_name(command, "use");
+        const qa_q2_item_definition *item = qa_q2_item_lookup(g, text);
+        if (!item) {
+            bool handled;
+            if (!supplemental_action(g, a, text, using ? QA_ITEM_USE : QA_ITEM_DROP, &handled, e))
+                return false;
+            if (handled || !q2_actor_live(g, id))
+                return true;
+        }
+        return using ? use_item(g, a, item, e) : drop_item(g, a, item, e);
+    }
     if (equal_name(command, "inven")) {
         s->show_scores = s->show_help = false;
         s->show_inventory = !s->show_inventory;

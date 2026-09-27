@@ -51,14 +51,16 @@ void q2_entities_close(qa_q2_game *g) {
 void q2_entity_release_state(q2_actor *a) {
     if (!a->entity)
         return;
-    q2_entity_unbind(a->entity_game, a);
+    if (!a->item)
+        q2_entity_unbind(a->entity_game, a);
     free(a->entity->fields);
     free(a->entity->mover);
     free(a->entity->turret);
     free(a->entity->q64);
     free(a->entity);
     a->entity = NULL;
-    a->entity_game = NULL;
+    if (!a->item)
+        a->entity_game = NULL;
 }
 static bool authored(void *context, qa_actor_id id, qa_authored_target *fields) {
     return qa_q2_entity_authored(context, id, fields);
@@ -69,8 +71,8 @@ static bool use(void *context, qa_actor_id target, qa_actor_id other, qa_actor_i
 }
 static bool field(void *context, qa_actor_id id, const char *key, qa_target_field *value) {
     qa_q2_game *g = context;
-    q2_actor *a = q2_ent(g, id);
-    if (!a)
+    q2_actor *a = q2_actor_get(g, id, false, NULL);
+    if (!a || (!a->entity && !a->item))
         return false;
     q2_entity_state *s = a->entity;
     if (!strcmp(key, "origin") || !strcmp(key, "angles") || !strcmp(key, "velocity") ||
@@ -86,29 +88,61 @@ static bool field(void *context, qa_actor_id id, const char *key, qa_target_fiel
         *value = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR, .value.vector = vector};
         return true;
     }
-    if (!strcmp(key, "movedir")) {
+    if (s && !strcmp(key, "movedir")) {
         *value = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR, .value.vector = s->direction};
         return true;
     }
     if (!strcmp(key, "health")) {
         qa_combat_state combat;
-        *value = (qa_target_field){
-            .kind = QA_TARGET_FIELD_NUMBER,
-            .value.number =
-                qa_combat_read(g->services.combat, id, &combat, NULL) ? combat.health : s->health};
+        bool has_combat = qa_combat_read(g->services.combat, id, &combat, NULL);
+        if (!has_combat && !s)
+            return false;
+        *value = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+                                   .value.number = has_combat ? combat.health : s->health};
         return true;
     }
+    if (a->item) {
+        const qa_q2_item_spawn *spawn = &a->item->spawn;
+        const struct {
+            const char *key;
+            double value;
+        } item_numbers[] = {
+            {"spawnflags", spawn->spawnflags}, {"delay", spawn->delay}, {"count", spawn->count}};
+        for (size_t i = 0; i < sizeof(item_numbers) / sizeof(*item_numbers); ++i)
+            if (!strcmp(key, item_numbers[i].key)) {
+                *value = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+                                           .value.number = item_numbers[i].value};
+                return true;
+            }
+    }
+    qa_authored_target authored;
+    if (!qa_q2_entity_authored(g, id, &authored))
+        return false;
+    const struct {
+        const char *key;
+        qa_string_id value;
+    } texts[] = {
+        {"classname", authored.classname}, {"targetname", authored.targetname},
+        {"target", authored.target},       {"killtarget", authored.killtarget},
+        {"message", authored.message},     {"team", a->item ? a->item->spawn.team : s->team}};
+    for (size_t i = 0; i < sizeof(texts) / sizeof(*texts); ++i)
+        if (!strcmp(key, texts[i].key)) {
+            *value = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = texts[i].value};
+            return true;
+        }
+    if (!s)
+        return false;
     const struct {
         const char *key;
         double value;
-    } numbers[] = {{"spawnflags", a->item ? a->item->spawn.spawnflags : s->spawnflags},
+    } numbers[] = {{"spawnflags", s->spawnflags},
                    {"speed", s->speed},
                    {"accel", s->accel},
                    {"decel", s->decel},
                    {"wait", s->wait},
-                   {"delay", a->item ? a->item->spawn.delay : s->delay},
+                   {"delay", s->delay},
                    {"dmg", s->damage},
-                   {"count", a->item ? a->item->spawn.count : s->count},
+                   {"count", s->count},
                    {"style", s->style},
                    {"volume", s->volume},
                    {"attenuation", s->attenuation}};
@@ -118,29 +152,22 @@ static bool field(void *context, qa_actor_id id, const char *key, qa_target_fiel
                 (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER, .value.number = numbers[i].value};
             return true;
         }
-    const struct {
-        const char *key;
-        qa_string_id value;
-    } texts[] = {{"classname", a->item && a->item->definition
-                                   ? q2_item_classname(g, a->item->definition)
-                                   : s->classname},
-                 {"targetname", s->targetname},
-                 {"target", a->item ? a->item->spawn.target : s->target},
-                 {"killtarget", a->item ? a->item->spawn.killtarget : s->killtarget},
-                 {"message", a->item ? a->item->spawn.message : s->message},
-                 {"team", s->team},
-                 {"map", s->map},
-                 {"noise", s->noise}};
-    for (size_t i = 0; i < sizeof(texts) / sizeof(*texts); i++)
-        if (!strcmp(key, texts[i].key)) {
-            *value = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = texts[i].value};
-            return true;
-        }
+    if (!strcmp(key, "map") || !strcmp(key, "noise")) {
+        *value = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
+                                   .value.text = !strcmp(key, "map") ? s->map : s->noise};
+        return true;
+    }
     qa_string_id raw = q2_field_id(g, s, key);
     if (!raw)
         return false;
     *value = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = raw};
     return true;
+}
+static bool set_targetname(void *context, qa_actor_id id, qa_string_id name, qa_error *e) {
+    return qa_q2_entity_set_targetname(context, id, name, e);
+}
+static bool set_target(void *context, qa_actor_id id, qa_string_id name, qa_error *e) {
+    return qa_q2_entity_set_target(context, id, name, e);
 }
 bool q2_entity_bind(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_targets *targets = g->entity_runtime->services.targets;
@@ -156,7 +183,9 @@ bool q2_entity_bind(qa_q2_game *g, q2_actor *a, qa_error *e) {
                                               .context = g,
                                               .read = authored,
                                               .use = use,
-                                              .field = field},
+                                              .field = field,
+                                              .set_targetname = set_targetname,
+                                              .set_target = set_target},
                          e))
         return false;
     a->entity_game = g;
@@ -403,6 +432,11 @@ bool qa_q2_entity_authored(qa_q2_game *g, qa_actor_id id, qa_authored_target *ou
         const qa_q2_item_spawn *s = &a->item->spawn;
         if (a->item->definition)
             out->classname = q2_item_classname(g, a->item->definition);
+        else if (!out->classname) {
+            const qa_actor_record *record =
+                qa_actors_get(qa_session_actors(g->services.session), id);
+            out->classname = record->definition;
+        }
         out->target = s->target;
         out->killtarget = s->killtarget;
         out->message = s->message;

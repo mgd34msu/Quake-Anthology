@@ -2,22 +2,28 @@
 #include "qa/game_q2_monsters.h"
 
 bool qa_q2_entity_set_target(qa_q2_game *g, qa_actor_id id, qa_string_id name, qa_error *e) {
-    q2_actor *a = q2_ent(g, id);
-    if (!a) {
+    q2_actor *a = q2_actor_get(g, id, false, NULL);
+    if (!a || (!a->entity && !a->item)) {
         qa_error_set(e, QA_ERROR_NOT_FOUND, 0, "Q2 target owner is missing");
         return false;
     }
-    a->entity->target = name;
+    if (a->item)
+        a->item->spawn.target = name;
+    else
+        a->entity->target = name;
     return true;
 }
 bool qa_q2_entity_set_targetname(qa_q2_game *g, qa_actor_id id, qa_string_id name, qa_error *e) {
-    q2_actor *a = q2_ent(g, id);
-    if (!a) {
+    q2_actor *a = q2_actor_get(g, id, false, NULL);
+    if (!a || (!a->entity && !a->item)) {
         qa_error_set(e, QA_ERROR_NOT_FOUND, 0, "Q2 target name owner is missing");
         return false;
     }
-    qa_string_id previous = a->entity->targetname;
-    a->entity->targetname = name;
+    qa_string_id previous = a->item ? a->item->spawn.targetname : a->entity->targetname;
+    if (a->item)
+        a->item->spawn.targetname = name;
+    else
+        a->entity->targetname = name;
     qa_q2_entity_services *s = &g->entity_runtime->services;
     if (s->targets)
         qa_targets_changed(s->targets);

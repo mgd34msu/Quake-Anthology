@@ -1,3 +1,4 @@
+#include "../entities/internal.h"
 #include "internal.h"
 #include <ctype.h>
 #include <errno.h>
@@ -236,7 +237,7 @@ bool qa_q2_item_give(qa_q2_game *g, qa_actor_id player, const char *name, int co
     }
     *accepted = false;
     const qa_q2_item_definition *d = qa_q2_item_lookup(g, name);
-    if (!d || d->inventory_only)
+    if (!d || d->console_give == QA_Q2_GIVE_INVENTORY_ONLY)
         return true;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, player, &body, e))
@@ -261,7 +262,7 @@ bool qa_q2_item_give(qa_q2_game *g, qa_actor_id player, const char *name, int co
             a->item->spawn = (qa_q2_item_spawn){
                 .classname = d->classname, .count = count, .spawnflags = 0x10000};
             a->item->dispatching = true;
-            ok = q2_item_grant(g, a, player, accepted, e);
+            ok = q2_entity_bind(g, a, e) && q2_item_grant(g, a, player, accepted, e);
             if (ok && *accepted && q2_actor_live(g, id) && q2_actor_live(g, player))
                 ok = q2_item_finish(g, a, player, e);
             if (q2_actor_live(g, id))
@@ -375,7 +376,7 @@ bool qa_q2_items_start(qa_q2_game *g, qa_actor_id player, const char *expression
                     ++cursor;
             }
             const qa_q2_item_definition *d = qa_q2_item_lookup(g, name);
-            if (!d || d->inventory_only) {
+            if (!d || d->console_give == QA_Q2_GIVE_INVENTORY_ONLY) {
                 qa_error_set(e, QA_ERROR_FORMAT, (size_t)(start - expression),
                              "Unknown Q2 starting item: %s", name);
                 return false;

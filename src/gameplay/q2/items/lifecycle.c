@@ -22,6 +22,10 @@ void q2_items_close(qa_q2_game *g) {
 }
 void q2_items_release_state(q2_actor *a) {
     if (a->item) {
+        if (!a->entity) {
+            q2_entity_unbind(a->entity_game, a);
+            a->entity_game = NULL;
+        }
         free(a->item->picked_slots);
         free(a->item->companion);
         free(a->item);
@@ -34,7 +38,11 @@ void q2_items_release_state(q2_actor *a) {
 }
 bool qa_q2_items_configure(qa_q2_game *g, const qa_q2_item_options *options, qa_error *e) {
     if (!g || !options || !isfinite(options->weapon_respawn_seconds) ||
-        options->weapon_respawn_seconds < 0) {
+        options->weapon_respawn_seconds < 0 ||
+        ((options->supplemental_count || options->supplemental_item ||
+          options->supplemental_give) &&
+         !(options->supplemental_count && options->supplemental_item &&
+           options->supplemental_give))) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 item options");
         return false;
     }
@@ -65,6 +73,8 @@ bool q2_item_visual(qa_q2_game *g, q2_actor *a, qa_error *e) {
     return q2_publish_visual(g, a->id, &a->item->visual, e);
 }
 bool q2_item_change_collision(qa_q2_game *g, q2_actor *a, qa_physics_solid solid, qa_error *e) {
+    if (!a->entity_targets && !q2_entity_bind(g, a, e))
+        return false;
     a->physics_bound = true;
     a->physics.solid = solid;
     qa_actor_collision collision = {.family = QA_COLLISION_Q2,

@@ -73,6 +73,9 @@ bool q2_laser_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
                 okay = true;
                 goto out;
             }
+            traits = (qa_builtin_actor_traits){0};
+            if (q2_actor_live(g, actor) && g->services.actor_traits)
+                g->services.actor_traits(g->services.context, actor, &traits);
         }
         if (!actor.registry || (!traits.player && !traits.monster)) {
             if (hit.fraction < 1 && (s->spawnflags & 0x80000000u)) {
@@ -249,7 +252,8 @@ static bool steam_start(qa_q2_game *g, q2_actor *a, qa_error *e) {
     s->count = (s->count ? s->count : 32) & 255;
     if (!s->speed)
         s->speed = 75;
-    s->style = ((int)q2_field_float(g, s, "sounds", 8)) & 255;
+    uint32_t color = q2_actor_field_flags(g, a->id, "sounds");
+    s->style = (int)((color ? color : 8) & 255);
     s->wait *= 1000;
     s->usable = true;
     s->visual.visible = false;
@@ -533,10 +537,8 @@ bool q2_target_extra_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor
         if (r->steam_id > 20000)
             r->steam_id %= 20000;
         r->steam_id++;
-        if (!s->wait) {
-            q2_actor *caller = q2_ent(g, other);
-            s->wait = other.registry ? (caller ? caller->entity->wait : 0) * 1000 : 1000;
-        }
+        if (!s->wait)
+            s->wait = other.registry ? q2_actor_field_float(g, other, "wait", 0) * 1000 : 1000;
         qa_body_state b;
         if (!qa_world_body_read(g->services.world, a->id, &b, e))
             return false;
@@ -567,9 +569,31 @@ bool q2_target_extra_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor
         qa_actor_id target;
         if (!s->target || !q2_map_find(g, NULL, s->killtarget, 0, &target))
             return true;
+        const qa_actor_record *record =
+            qa_actors_get(qa_session_actors(g->services.session), target);
+        if (!record)
+            return true;
+        q2_actor *native = q2_actor_get(g, target, false, NULL);
+        if (record->owner == g->options.owner && native)
+            native->physics.flags |= QA_PHYSICS_MONSTER;
+        else {
+            qa_q2_entity_services *services = &g->entity_runtime->services;
+            if (!services->mark_monster_target) {
+                qa_error_set(e, QA_ERROR_UNSUPPORTED, 0,
+                             "Q2 target anger requires foreign target classification");
+                return false;
+            }
+            if (!services->mark_monster_target(services->context, target, e))
+                return false;
+        }
+        if (!q2_actor_live(g, a->id) || a->entity != s || !q2_actor_live(g, target))
+            return true;
         qa_combat_state c;
         qa_error missing = {0};
-        if (!qa_combat_read_traits(g->services.combat, target, &c, &missing)) {
+        bool has_combat = qa_combat_read_traits(g->services.combat, target, &c, &missing);
+        if (!q2_actor_live(g, a->id) || a->entity != s || !q2_actor_live(g, target))
+            return true;
+        if (!has_combat) {
             if (missing.code != QA_ERROR_NOT_FOUND) {
                 if (e)
                     *e = missing;
@@ -580,23 +604,43 @@ bool q2_target_extra_use(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_actor
                 return false;
         } else if (!qa_combat_set_health(g->services.combat, target, 300, e))
             return false;
-        size_t n = 0;
+        if (!q2_actor_live(g, a->id) || a->entity != s || !q2_actor_live(g, target))
+            return true;
+        qa_target_cursor cursor = {0};
         qa_actor_id monster;
-        while (q2_map_find(g, NULL, s->target, n++, &monster)) {
+        while (qa_targets_next(g->entity_runtime->services.targets, s->target, &cursor, &monster)) {
             if (qa_actor_id_equal(monster, a->id))
                 continue;
             if (!qa_combat_read(g->services.combat, monster, &c, &missing)) {
                 if (missing.code == QA_ERROR_NOT_FOUND)
-                    continue;
-                if (e)
-                    *e = missing;
-                return false;
+                    c.health = 0;
+                else {
+                    if (e)
+                        *e = missing;
+                    return false;
+                }
             }
+            if (!q2_actor_live(g, a->id) || a->entity != s || !q2_actor_live(g, target))
+                return true;
+            if (!q2_actor_live(g, monster))
+                continue;
             if (c.health < 0)
                 return true;
-            if (!qa_q2_monster_target_anger(g, monster, target, e))
-                return false;
-            if (!q2_actor_live(g, a->id))
+            qa_q2_monster_view view;
+            if (qa_q2_monster_read(g, monster, &view)) {
+                if (!qa_q2_monster_target_anger(g, monster, target, e))
+                    return false;
+            } else {
+                qa_q2_entity_services *services = &g->entity_runtime->services;
+                if (!services->target_anger) {
+                    qa_error_set(e, QA_ERROR_UNSUPPORTED, 0,
+                                 "Q2 target anger requires foreign monster control");
+                    return false;
+                }
+                if (!services->target_anger(services->context, monster, target, e))
+                    return false;
+            }
+            if (!q2_actor_live(g, a->id) || a->entity != s || !q2_actor_live(g, target))
                 return true;
         }
         return true;

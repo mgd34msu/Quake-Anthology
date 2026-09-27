@@ -93,6 +93,65 @@ bool qa_q2_players_camera(qa_q2_game *g, qa_vec3 origin, qa_vec3 angles, bool en
     players->active = false;
     return okay;
 }
+static bool prepare_intermission(qa_q2_game *g, bool end_unit, qa_error *e) {
+    q2_trace_frame *players = q2_player_roster(g, e);
+    if (!players)
+        return false;
+    q2_players *p = g->player_runtime;
+    bool okay = false, rr = g->options.edition == QA_Q2_RERELEASE;
+    for (size_t i = 0; i < players->snapshot.count; ++i) {
+        qa_actor_id id = players->snapshot.ids[i];
+        q2_actor *a = q2_actor_get(g, id, false, NULL);
+        if (!a || !a->client || !a->client->info.connected)
+            continue;
+        qa_combat_state combat;
+        if (!qa_combat_read(g->services.combat, id, &combat, e))
+            goto done;
+        if (!q2_actor_live(g, id))
+            continue;
+        if (combat.health <= 0) {
+            if (rr && a->client->has_coop &&
+                (p->rules.coop_instanced_items || p->rules.coop_squad_respawn))
+                a->client->coop.health = a->client->coop.maximum_health;
+            if (!qa_q2_player_spawn(g, id, true, NULL, e))
+                goto done;
+        }
+    }
+    players->active = false;
+    if (!end_unit || !g->options.cooperative)
+        return true;
+    players = q2_player_roster(g, e);
+    if (!players)
+        return false;
+    qa_strings *strings = qa_session_strings(g->services.session);
+    for (size_t i = 0; i < players->snapshot.count; ++i) {
+        qa_actor_id id = players->snapshot.ids[i];
+        if (!q2_actor_live(g, id) || !qa_inventory_has(g->services.inventory, id))
+            continue;
+        qa_inventory_entry *entries;
+        size_t count;
+        if (!q2_player_inventory_copy(g, id, &entries, &count, e))
+            goto done;
+        bool cleared = true;
+        for (size_t j = 0; j < count && q2_actor_live(g, id); ++j) {
+            const char *item = qa_strings_cstr(strings, entries[j].item);
+            if (!item || strncmp(item, "q2:key_", 7))
+                continue;
+            entries[j].count = 0;
+            if (!qa_inventory_configure(g->services.inventory, id, &entries[j], NULL, NULL, e)) {
+                cleared = false;
+                break;
+            }
+        }
+        free(entries);
+        if (!cleared)
+            goto done;
+    }
+    okay = true;
+done:
+    players->active = false;
+    return okay;
+}
 bool qa_q2_players_intermission(qa_q2_game *g, const char *map, const qa_q2_landmark *landmark,
                                 uint32_t flags, qa_error *e) {
     if (!g || !map) {
@@ -115,44 +174,8 @@ bool qa_q2_players_intermission(qa_q2_game *g, const char *map, const qa_q2_land
         p->landmark = *landmark;
     p->exit = false;
     bool rr = g->options.edition == QA_Q2_RERELEASE, end_unit = strchr(map, '*') != NULL;
-    for (size_t i = 0; i < g->capacity; i++) {
-        q2_actor *a = g->actors[i];
-        if (!a || !a->client || !a->client->info.connected)
-            continue;
-        qa_combat_state combat;
-        if (!qa_combat_read(g->services.combat, a->id, &combat, e))
-            return false;
-        if (combat.health <= 0) {
-            if (rr && a->client->has_coop &&
-                (p->rules.coop_instanced_items || p->rules.coop_squad_respawn))
-                a->client->coop.health = a->client->coop.maximum_health;
-            if (!qa_q2_player_spawn(g, a->id, true, NULL, e))
-                return false;
-        }
-        if (!q2_actor_live(g, a->id))
-            continue;
-        if (end_unit && g->options.cooperative)
-            for (size_t j = 0; j < qa_q2_item_count(g); j++) {
-                const qa_q2_item_definition *d = qa_q2_item_at(g, j);
-                if (d->kind != QA_Q2_ITEM_KEY)
-                    continue;
-                qa_inventory_entry entry;
-                qa_error missing = {0};
-                if (!qa_inventory_entry_read(g->services.inventory, a->id, d->item, &entry,
-                                             &missing)) {
-                    if (missing.code == QA_ERROR_NOT_FOUND)
-                        continue;
-                    if (e)
-                        *e = missing;
-                    return false;
-                }
-                entry.count = 0;
-                if (!qa_inventory_configure(g->services.inventory, a->id, &entry, NULL, NULL, e))
-                    return false;
-                if (!q2_actor_live(g, a->id))
-                    break;
-            }
-    }
+    if (!prepare_intermission(g, end_unit, e))
+        return false;
     if (rr && end_unit && !(flags & 16) &&
         !q2_map_event(
             g, &(qa_q2_map_event){.kind = QA_Q2_MAP_END_UNIT, .resource = map_id, .flags = flags},
@@ -248,6 +271,7 @@ bool qa_q2_players_frame(qa_q2_game *g, qa_error *e) {
                 !qa_q2_powerups_clear(g, a->id, e))
                 return false;
             a->client->info.god = a->client->info.notarget = a->client->info.flashlight = false;
+            a->client->auto_shield_enabled = false;
             a->client->info.selected_item = 0;
             a->client->has_coop = false;
             qa_q2_player_carry_free(&a->client->coop);

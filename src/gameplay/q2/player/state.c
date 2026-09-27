@@ -48,6 +48,13 @@ void q2_players_close(qa_q2_game *g) {
         return;
     for (size_t i = 0; i < 5; i++)
         free(g->player_runtime->rule_strings[i]);
+    q2_player_list *list = g->player_runtime->lists;
+    while (list) {
+        q2_player_list *next = list->next;
+        free(list->rows);
+        free(list);
+        list = next;
+    }
     free(g->player_runtime);
     g->player_runtime = NULL;
 }
@@ -68,7 +75,8 @@ void q2_client_release_state(q2_actor *a) {
 }
 bool qa_q2_players_configure(qa_q2_game *g, const qa_q2_player_rules *r,
                              const qa_q2_player_services *s, qa_error *e) {
-    if (!g || !r || !s || !s->movement || !s->set_movement || !s->emit || r->coop_num_lives < 0 ||
+    if (!g || !r || !s || !s->movement || !s->set_movement || !s->emit ||
+        (!!s->score != !!s->score_read) || r->coop_num_lives < 0 ||
         !isfinite(r->roll_speed) || r->roll_speed <= 0 || !isfinite(r->force_respawn_seconds) ||
         r->force_respawn_seconds < 0 || !isfinite(r->flood_seconds) || r->flood_seconds < 0 ||
         !isfinite(r->flood_wait_seconds) || r->flood_wait_seconds < 0 || !isfinite(r->roll_angle) ||
@@ -227,8 +235,9 @@ bool qa_q2_player_carry_capture(qa_q2_game *g, qa_actor_id id, qa_q2_player_carr
                             .power_cubes = powers->power_cubes,
                             .flags = (a->client->info.god ? 16u : 0) |
                                      (a->client->info.notarget ? 32u : 0) |
+                                     (combat.armor.powered.kind != QA_POWER_NONE ? 4096u : 0) |
                                      (a->client->info.flashlight ? 0x400000u : 0) |
-                                     (a->client->auto_shield >= 0 ? 0x40000000u : 0)};
+                                     (a->client->auto_shield_enabled ? 0x40000000u : 0)};
     if (!q2_player_inventory_copy(g, id, &c.inventory, &c.count, e))
         return false;
     *out = c;
@@ -262,6 +271,7 @@ bool qa_q2_player_carry_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_playe
     s->info.god = (c->flags & 16) != 0;
     s->info.notarget = (c->flags & 32) != 0;
     s->info.flashlight = (c->flags & 0x400000) != 0;
+    s->auto_shield_enabled = (c->flags & 0x40000000u) != 0;
     if (a->weapon_bound) {
         a->weapon.weapon = c->weapon;
         a->weapon.pending = QA_Q2_WEAPON_NONE;
@@ -278,6 +288,88 @@ bool qa_q2_player_read(qa_q2_game *g, qa_actor_id id, qa_q2_player_info *out) {
         return false;
     *out = a->client->info;
     return true;
+}
+bool qa_q2_player_projection(qa_q2_game *g, qa_actor_id id, qa_builtin_player_info *out) {
+    q2_actor *a = g ? q2_actor_get(g, id, false, NULL) : NULL;
+    if (!a || !a->client || !a->client->info.connected || !out)
+        return false;
+    q2_client_state *s = a->client;
+    *out = (qa_builtin_player_info){.name = s->info.name,
+                                   .skin = s->info.skin,
+                                   .slot = s->info.slot,
+                                   .ping = s->info.ping,
+                                   .entered_ns = s->entered_ns,
+                                   .view_height = s->info.view_height,
+                                   .killer_yaw = s->killer_yaw,
+                                   .connected = true,
+                                   .spectator = s->info.spectator,
+                                   .dead = s->info.dead};
+    return true;
+}
+bool q2_player_info(qa_q2_game *g, qa_actor_id id, qa_builtin_player_info *out) {
+    if (!q2_actor_live(g, id))
+        return false;
+    if (g->services.player_info)
+        return g->services.player_info(g->services.context, id, out) && out->connected;
+    return qa_q2_player_projection(g, id, out);
+}
+bool q2_player_score_read(qa_q2_game *g, qa_actor_id id, int32_t *out, qa_error *e) {
+    qa_q2_player_services *services = &g->player_runtime->services;
+    if (services->score_read)
+        return services->score_read(services->context, id, out, e);
+    q2_actor *a = q2_client(g, id, e);
+    if (!a)
+        return false;
+    *out = a->client->info.score;
+    return true;
+}
+q2_player_list *q2_player_list_acquire(qa_q2_game *g, bool scores, qa_error *e) {
+    q2_player_list *list = g->player_runtime->lists;
+    while (list && list->active)
+        list = list->next;
+    if (!list) {
+        list = calloc(1, sizeof(*list));
+        if (!list) {
+            qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating nested Q2 player listing");
+            return NULL;
+        }
+        list->next = g->player_runtime->lists;
+        g->player_runtime->lists = list;
+    }
+    list->active = true;
+    list->count = 0;
+    q2_trace_frame *roster = q2_player_roster(g, e);
+    if (!roster)
+        goto fail;
+    if (list->capacity < roster->snapshot.count) {
+        size_t capacity = roster->snapshot.count;
+        if (capacity > SIZE_MAX / sizeof(*list->rows)) {
+            qa_error_set(e, QA_ERROR_MEMORY, 0, "Q2 player listing is too large");
+            goto release;
+        }
+        q2_player_row *rows = realloc(list->rows, capacity * sizeof(*rows));
+        if (!rows) {
+            qa_error_set(e, QA_ERROR_MEMORY, 0, "Growing Q2 player listing");
+            goto release;
+        }
+        list->rows = rows;
+        list->capacity = capacity;
+    }
+    for (size_t i = 0; i < roster->snapshot.count; ++i) {
+        q2_player_row row = {.actor = roster->snapshot.ids[i]};
+        if (!q2_player_info(g, row.actor, &row.info))
+            continue;
+        if (scores && !q2_player_score_read(g, row.actor, &row.score, e))
+            goto release;
+        list->rows[list->count++] = row;
+    }
+    roster->active = false;
+    return list;
+release:
+    roster->active = false;
+fail:
+    list->active = false;
+    return NULL;
 }
 bool qa_q2_player_score(qa_q2_game *g, qa_actor_id id, int score, int ping, qa_error *e) {
     q2_actor *a = q2_client(g, id, e);

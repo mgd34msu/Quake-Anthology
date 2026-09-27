@@ -1,4 +1,5 @@
 #include "../entities/checkpoint_internal.h"
+#include "../entities/internal.h"
 #include "internal.h"
 
 void qa_q2_item_checkpoint_free(qa_q2_item_checkpoint *s) {
@@ -210,6 +211,11 @@ bool qa_q2_item_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_item_checkpoi
     }
     a->item = candidate.item;
     a->powers = candidate.powers;
+    if (a->item && !a->entity_targets && !q2_entity_bind(g, a, e)) {
+        a->item = NULL;
+        a->powers = NULL;
+        goto fail;
+    }
     return true;
 memory:
     qa_error_set(e, QA_ERROR_MEMORY, 0, "Restoring Q2 item state");

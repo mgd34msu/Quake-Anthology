@@ -37,6 +37,18 @@ typedef struct qa_q2_powerups {
     uint64_t quad_until_ns, invulnerability_until_ns, breather_until_ns, enviro_until_ns;
     uint64_t quad_fire_until_ns, double_until_ns, ir_until_ns, invisibility_until_ns;
 } qa_q2_powerups;
+typedef enum qa_q2_console_give {
+    QA_Q2_GIVE_PICKUP,
+    QA_Q2_GIVE_INVENTORY_ONLY,
+    QA_Q2_GIVE_INDIVIDUAL_ONLY,
+    QA_Q2_GIVE_FORBIDDEN
+} qa_q2_console_give;
+typedef struct qa_q2_supplemental_item {
+    qa_item_definition definition;
+    const char *classname;
+    double capacity;
+    qa_q2_console_give console_give;
+} qa_q2_supplemental_item;
 typedef struct qa_q2_item_definition {
     const char *classname, *name, *model, *icon, *sound;
     qa_q2_item_kind kind;
@@ -48,7 +60,8 @@ typedef struct qa_q2_item_definition {
     qa_q2_powerup powerup;
     qa_power_kind powered_armor;
     bool rotate, coop_stay, droppable, ignore_maximum, timed, fill, full_pack;
-    bool infinite_quantity, inventory_only;
+    bool infinite_quantity;
+    qa_q2_console_give console_give;
 } qa_q2_item_definition;
 typedef struct qa_q2_item_options {
     qa_supply *supply;
@@ -61,6 +74,12 @@ typedef struct qa_q2_item_options {
     bool (*intermission)(void *);
     bool (*sphere_camera)(void *, qa_actor_id player, qa_actor_id sphere, qa_vec3 origin,
                           qa_vec3 angles, qa_error *);
+    /* Read-only catalog entries borrow their strings. Their provider owns pickup
+     * behavior and publishes use/drop actions to the shared inventory. */
+    size_t (*supplemental_count)(void *);
+    bool (*supplemental_item)(void *, size_t, qa_q2_supplemental_item *);
+    bool (*supplemental_give)(void *, qa_actor_id, qa_item_id, bool direct, int count, bool *,
+                              qa_error *);
 } qa_q2_item_options;
 typedef struct qa_q2_item_spawn {
     const char *classname;

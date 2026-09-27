@@ -77,7 +77,8 @@ static bool break_apart(qa_q2_game *g, q2_actor *a, qa_actor_id inflictor, qa_ac
     float mass = q2_field_float(g, s, "mass", 75);
     if (!mass)
         mass = 75;
-    int large = (int)fminf(truncf(mass / 100), 8), small = (int)fminf(truncf(mass / 25), 16);
+    int large = (int)q2_clamp(truncf(mass / 100), 0, 8),
+        small = (int)q2_clamp(truncf(mass / 25), 0, 16);
     size = qa_vec_scale(size, .5f);
     for (int i = 0; i < large; i++) {
         qa_vec3 point = random_point(g, body.origin, size);
@@ -898,11 +899,9 @@ bool q2_scenery_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contac
     if (s->scenery == Q2S_BARREL) {
         qa_body_state other, body;
         qa_combat_state state, mine;
-        if (!q2_target_damageable(g, contact->other))
+        if (!qa_world_body_read(g->services.world, contact->other, &other, NULL) ||
+            !qa_combat_read(g->services.combat, contact->other, &state, NULL))
             return true;
-        if (!qa_world_body_read(g->services.world, contact->other, &other, e) ||
-            !qa_combat_read(g->services.combat, contact->other, &state, e))
-            return false;
         if (!other.ground.registry || qa_actor_id_equal(other.ground, a->id))
             return true;
         if (!qa_world_body_read(g->services.world, a->id, &body, e) ||

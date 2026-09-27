@@ -6,6 +6,17 @@
 #include <stdio.h>
 
 typedef qa_q2_player_state q2_client_state;
+typedef struct q2_player_row {
+    qa_actor_id actor;
+    qa_builtin_player_info info;
+    int32_t score;
+} q2_player_row;
+typedef struct q2_player_list {
+    struct q2_player_list *next;
+    q2_player_row *rows;
+    size_t count, capacity;
+    bool active;
+} q2_player_list;
 bool q2_player_same_target(qa_q2_game *, qa_string_id, qa_string_id, bool *, qa_error *);
 bool q2_player_map_is(const char *, const char *);
 typedef struct q2_players {
@@ -21,8 +32,12 @@ typedef struct q2_players {
     qa_q2_landmark landmark;
     qa_vec3 camera_origin, camera_angles;
     qa_q2_player_noise_record noise[2];
+    q2_player_list *lists;
 } q2_players;
 q2_actor *q2_client(qa_q2_game *, qa_actor_id, qa_error *);
+bool q2_player_info(qa_q2_game *, qa_actor_id, qa_builtin_player_info *);
+bool q2_player_score_read(qa_q2_game *, qa_actor_id, int32_t *, qa_error *);
+q2_player_list *q2_player_list_acquire(qa_q2_game *, bool scores, qa_error *);
 bool q2_map_camera_player(qa_q2_game *, qa_actor_id, qa_vec3, qa_vec3, bool, qa_error *);
 bool q2_player_animate_reference(qa_q2_game *, qa_actor_id, const qa_body_state *, qa_q2_visual *,
                                  qa_error *);

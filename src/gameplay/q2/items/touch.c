@@ -215,6 +215,41 @@ bool q2_item_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) 
     a->item->dispatching = false;
     return ok;
 }
+bool q2_item_console_pickup(qa_q2_game *g, qa_actor_id player,
+                            const qa_q2_item_definition *definition, qa_error *e) {
+    if (!g || !definition || !q2_actor_live(g, player)) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 console pickup");
+        return false;
+    }
+    qa_builtin_spawn spawn = {.owner = g->options.owner,
+                              .definition = q2_item_classname(g, definition)};
+    qa_actor_id id;
+    if (!qa_builtin_spawn_actor(&g->services, &spawn, &id, e))
+        return false;
+    bool handled = false;
+    qa_q2_item_spawn item = {.classname = definition->classname};
+    bool ok = qa_q2_item_spawn_actor(g, id, &item, &handled, e);
+    if (ok && handled && q2_actor_live(g, id) && q2_actor_live(g, player)) {
+        q2_actor *actor = q2_actor_get(g, id, false, e);
+        if (!actor || !actor->item) {
+            qa_error_set(e, QA_ERROR_NOT_FOUND, 0, "Missing admitted Q2 console pickup state");
+            ok = false;
+        } else {
+            actor->item->think = Q2_ITEM_IDLE;
+            actor->item->due_ns = 0;
+            actor->item->visible = true;
+            actor->item->touchable = true;
+            qa_touch_contact contact = {.self = id, .other = player};
+            ok = q2_item_touch(g, &contact, e);
+        }
+    }
+    if (q2_actor_live(g, id)) {
+        qa_error ignored = {0};
+        bool removed = qa_session_release(g->services.session, id, ok ? e : &ignored);
+        ok = ok && removed;
+    }
+    return ok;
+}
 bool qa_q2_items_publish_visibility(qa_q2_game *g, qa_actor_id player, qa_error *e) {
     if (!g || !q2_actor_live(g, player)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 item visibility recipient");

@@ -319,6 +319,8 @@ bool qa_q2_player_admit(qa_q2_game *g, qa_actor_id id, const qa_q2_player_admiss
     if (!q2_actor_live(g, id))
         return true;
     if (g->options.edition == QA_Q2_RERELEASE) {
+        if (s->auto_shield >= 0)
+            s->auto_shield_enabled = true;
         s->spawned = true;
         if (!qa_q2_entities_player_reset(g, id, e))
             return false;

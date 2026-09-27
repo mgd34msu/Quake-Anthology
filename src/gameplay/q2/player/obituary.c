@@ -57,15 +57,18 @@ static const q2_obituary kills[] = {{1, "was blasted by", "", "blaster"},
                                     {54, NULL, NULL, "dopple_vengeance"},
                                     {55, NULL, NULL, "dopple_hunter"},
                                     {56, NULL, NULL, "grapple"}};
-static bool score(qa_q2_game *g, q2_actor *victim, qa_actor_id attacker, q2_actor *recipient,
+static bool score(qa_q2_game *g, q2_actor *victim, qa_actor_id attacker, qa_actor_id recipient,
                   int change, int means, qa_error *e) {
-    if (!recipient || !q2_actor_live(g, recipient->id))
+    if (!q2_actor_live(g, recipient))
         return true;
     qa_q2_player_services *s = &g->player_runtime->services;
     if (s->score)
-        return s->score(s->context, victim->id, attacker, recipient->id, change, means, e);
-    int current = recipient->client->info.score;
-    recipient->client->info.score = change > 0 ? (current == INT_MAX ? INT_MAX : current + 1)
+        return s->score(s->context, victim->id, attacker, recipient, change, means, e);
+    q2_actor *native = q2_client(g, recipient, e);
+    if (!native)
+        return false;
+    int current = native->client->info.score;
+    native->client->info.score = change > 0 ? (current == INT_MAX ? INT_MAX : current + 1)
                                                : (current == INT_MIN ? INT_MIN : current - 1);
     return true;
 }
@@ -74,10 +77,11 @@ bool q2_player_obituary(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *out
                   ? outcome->request.attack.cause.source.q2.means_of_death
                   : 0;
     int means = raw & ~0x8000000;
-    q2_actor *attacker = q2_actor_get(g, outcome->request.attack.attacker, false, NULL);
-    if (attacker && (!attacker->client || !attacker->client->info.connected))
-        attacker = NULL;
-    bool self = attacker == a, friendly = (raw & 0x8000000) || (g->options.cooperative && attacker);
+    qa_actor_id attacker = outcome->request.attack.attacker;
+    qa_builtin_player_info attacker_info;
+    bool player_attacker = q2_player_info(g, attacker, &attacker_info);
+    bool self = player_attacker && qa_actor_id_equal(attacker, a->id);
+    bool friendly = (raw & 0x8000000) || (g->options.cooperative && player_attacker);
     bool rr = g->options.edition == QA_Q2_RERELEASE,
          no_loss = outcome->request.attack.cause.kind == QA_CAUSE_Q2 &&
                    outcome->request.attack.cause.source.q2.no_point_loss;
@@ -106,27 +110,27 @@ bool q2_player_obituary(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *out
             snprintf(text, sizeof(text), "$g_mod_self_%s", key);
         } else if (environment)
             snprintf(text, sizeof(text), "$g_mod_generic_%s", environment->localized);
-        else if (attacker)
+        else if (player_attacker)
             snprintf(text, sizeof(text), "$g_mod_kill_%s", kill ? kill->localized : "generic");
         else
             snprintf(text, sizeof(text), "$g_mod_generic_died");
-        q2_actor *recipient = self || environment || !attacker ? a : attacker;
-        int change = recipient == a ? -1 : friendly ? -1 : 1;
-        if (g->options.deathmatch && (change > 0 || !no_loss) &&
-            !score(g, a, outcome->request.attack.attacker, recipient, change, raw, e))
-            return false;
-        else if (attacker && !self && !environment && !g->options.deathmatch &&
-                 !g->options.cooperative && !score(g, a, attacker->id, a, -1, raw, e))
-            return false;
-        if (!q2_actor_live(g, a->id))
-            return true;
         qa_string_id key, victim_name, attacker_name = 0;
-        size_t count = attacker && !self && !environment ? 2 : 1;
+        size_t count = player_attacker && !self && !environment ? 2 : 1;
         if (!qa_builtin_resource(&g->services, text, &key, e) ||
             !qa_builtin_resource(&g->services, name, &victim_name, e) ||
             (count == 2 &&
-             !qa_builtin_resource(&g->services, attacker->client->info.name, &attacker_name, e)))
+             !qa_builtin_resource(&g->services, attacker_info.name, &attacker_name, e)))
             return false;
+        qa_actor_id recipient = self || environment || !player_attacker ? a->id : attacker;
+        int change = qa_actor_id_equal(recipient, a->id) ? -1 : friendly ? -1 : 1;
+        if (g->options.deathmatch && (change > 0 || !no_loss) &&
+            !score(g, a, outcome->request.attack.attacker, recipient, change, raw, e))
+            return false;
+        else if (player_attacker && !self && !environment && !g->options.deathmatch &&
+                 !g->options.cooperative && !score(g, a, attacker, a->id, -1, raw, e))
+            return false;
+        if (!q2_actor_live(g, a->id))
+            return true;
         qa_builtin_message_arg arguments[] = {
             {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = victim_name},
             {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = attacker_name}};
@@ -162,14 +166,14 @@ bool q2_player_obituary(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *out
             snprintf(message, sizeof(message), "killed %s", reflexive);
         cause = message;
     }
-    q2_actor *recipient = a;
+    qa_actor_id recipient = a->id;
     int change = -1;
     if ((g->options.deathmatch || g->options.cooperative) && cause)
         snprintf(text, sizeof(text), "%s %s.\n", name, cause);
-    else if ((g->options.deathmatch || g->options.cooperative) && attacker && kill &&
+    else if ((g->options.deathmatch || g->options.cooperative) && player_attacker && kill &&
              kill->classic) {
         snprintf(text, sizeof(text), "%s %s %s%s\n", name, kill->classic,
-                 attacker->client->info.name, kill->suffix);
+                 attacker_info.name, kill->suffix);
         recipient = attacker;
         change = friendly ? -1 : 1;
     } else

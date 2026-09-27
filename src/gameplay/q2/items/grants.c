@@ -233,7 +233,7 @@ bool q2_item_grant(qa_q2_game *g, q2_actor *a, qa_actor_id recipient, bool *acce
     case QA_Q2_ITEM_POWER:
     case QA_Q2_ITEM_SPHERE:
     case QA_Q2_ITEM_COMPASS: {
-        if (d->inventory_only)
+        if (d->console_give == QA_Q2_GIVE_INVENTORY_ONLY)
             return true;
         if (!q2_item_ensure(g, recipient, d, e) || !q2_count(g, recipient, d->item, &previous, e))
             return false;

@@ -100,6 +100,8 @@ typedef struct qa_q2_entity_services {
                                 qa_error *);
     bool (*path_follower)(void *, qa_actor_id, qa_q2_path_follower *);
     bool (*path_advance)(void *, qa_actor_id, const qa_q2_path_advance *, qa_error *);
+    bool (*target_anger)(void *, qa_actor_id actor, qa_actor_id target, qa_error *);
+    bool (*mark_monster_target)(void *, qa_actor_id, qa_error *);
     bool (*local_time)(void *, int *hour, int *minute, int *second, qa_error *);
     bool (*set_message)(void *, qa_actor_id, qa_string_id, qa_error *);
     bool (*invoke_use)(void *, qa_actor_id, qa_actor_id other, qa_actor_id activator, qa_error *);

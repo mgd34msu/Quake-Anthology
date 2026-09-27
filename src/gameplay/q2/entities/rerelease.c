@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/game_q2_monsters.h"
+#include "qa/text.h"
 
 static qa_q2_fog fog_fields(qa_q2_game *g, q2_entity_state *s, bool off) {
     qa_q2_fog f = {0};
@@ -389,15 +390,24 @@ static bool world_text(qa_q2_game *g, q2_actor *a, qa_error *e) {
         yaw += 180;
         if (yaw > 360)
             yaw -= 360;
-        const char *message = qa_strings_cstr(qa_session_strings(g->services.session), s->message);
-        char text[128];
-        size_t length = strlen(message);
-        if (length > 127)
-            length = 127;
-        memcpy(text, message, length);
-        text[length] = 0;
+        qa_strings *strings = qa_session_strings(g->services.session);
+        qa_bytes message = qa_strings_text(strings, s->message);
+        char text[254];
+        size_t at = 0, length = 0, glyphs = 0;
+        uint32_t scalar;
+        while (glyphs < 127 && qa_utf8_next(message, &at, &scalar)) {
+            if (scalar > 0xffff) {
+                uint32_t pair = scalar - 0x10000;
+                length += qa_utf8_encode((0xd800u + (pair >> 10)) & 255u, text + length);
+                if (++glyphs == 127)
+                    break;
+                scalar = 0xdc00u + (pair & 1023u);
+            }
+            length += qa_utf8_encode(scalar & 255u, text + length);
+            ++glyphs;
+        }
         qa_string_id resource;
-        if (!qa_builtin_resource(&g->services, text, &resource, e))
+        if (!qa_strings_intern(strings, (qa_bytes){(const uint8_t *)text, length}, &resource, e))
             return false;
         if (!q2_map_event(g,
                           &(qa_q2_map_event){.kind = QA_Q2_MAP_WORLD_TEXT,

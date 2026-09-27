@@ -117,6 +117,9 @@ typedef struct qa_q2_player_services {
     bool (*banned)(void *, const char *address);
     bool (*score)(void *, qa_actor_id victim, qa_actor_id attacker, qa_actor_id recipient,
                   int change, int means, qa_error *);
+    /* Nonmutating read. Both score callbacks address the same selected scoring
+     * context and must be provided together. */
+    bool (*score_read)(void *, qa_actor_id, int32_t *, qa_error *);
     bool (*spawned)(void *, qa_actor_id, qa_error *);
     bool (*persistent_inventory)(void *, qa_actor_id, qa_error *);
     bool (*select_spawn)(void *, qa_actor_id, qa_vec3 *, qa_vec3 *, bool *, qa_error *);
@@ -196,7 +199,7 @@ typedef struct qa_q2_player_state {
     size_t flood_count;
     bool use_weapons, use_inventory, requested_spectator, bot, gibbed, weapon_thunk;
     bool animation_duck, animation_run, landmark_free_fall;
-    bool show_scores, show_inventory, show_help, bob_skip, nuke_inside;
+    bool show_scores, show_inventory, show_help, bob_skip, nuke_inside, auto_shield_enabled;
     bool awaiting_respawn, spawned, player_collision, has_coop, has_pending_landmark, squad_spawn,
         corpse;
     qa_q2_landmark pending_landmark;
@@ -238,6 +241,7 @@ bool qa_q2_player_connect(qa_q2_game *, const char *, bool bot, qa_q2_connection
 bool qa_q2_player_admit(qa_q2_game *, qa_actor_id, const qa_q2_player_admission *, qa_error *);
 bool qa_q2_player_userinfo(qa_q2_game *, qa_actor_id, const char *, qa_error *);
 bool qa_q2_player_read(qa_q2_game *, qa_actor_id, qa_q2_player_info *);
+bool qa_q2_player_projection(qa_q2_game *, qa_actor_id, qa_builtin_player_info *);
 bool qa_q2_player_score(qa_q2_game *, qa_actor_id, int score, int ping, qa_error *);
 bool qa_q2_player_spawn(qa_q2_game *, qa_actor_id, bool restore_loadout, const qa_q2_landmark *,
                         qa_error *);
