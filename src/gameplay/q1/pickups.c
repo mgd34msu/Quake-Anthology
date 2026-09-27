@@ -1,0 +1,1082 @@
+#include "internal.h"
+#include "qa/game_q1_maps.h"
+#include <stdio.h>
+
+enum {
+    Q1_ITEM_HEALTH,
+    Q1_ITEM_ARMOR,
+    Q1_ITEM_AMMO,
+    Q1_ITEM_WEAPON,
+    Q1_ITEM_KEY,
+    Q1_ITEM_POWER,
+    Q1_ITEM_BACKPACK,
+    Q1_ITEM_HORN,
+    Q1_ITEM_SPHERE,
+    Q1_ITEM_MG3_SHARD,
+    Q1_ITEM_MG3_UPGRADE,
+    Q1_ITEM_MG3_BLOODY
+};
+static bool mg3_special(const q1_pickup *item) {
+    return item->kind >= Q1_ITEM_MG3_SHARD || item->weapon == QA_Q1_MG3_LASER ||
+           item->weapon == QA_Q1_MG3_MJOLNIR ||
+           (item->kind == Q1_ITEM_POWER && item->count == QA_Q1_LAVA_SUIT);
+}
+
+int q1_weapon_rank(const qa_q1_game *g, qa_q1_weapon weapon) {
+    static const qa_q1_weapon rank[] = {
+        QA_Q1_LIGHTNING,     QA_Q1_ROCKET,  QA_Q1_SUPER_NAILGUN, QA_Q1_GRENADE,
+        QA_Q1_SUPER_SHOTGUN, QA_Q1_NAILGUN, QA_Q1_SHOTGUN,       QA_Q1_AXE};
+    static const qa_q1_weapon hip[] = {QA_Q1_LIGHTNING,     QA_Q1_ROCKET,    QA_Q1_LASER,
+                                       QA_Q1_SUPER_NAILGUN, QA_Q1_PROXIMITY, QA_Q1_GRENADE,
+                                       QA_Q1_SUPER_SHOTGUN, QA_Q1_NAILGUN,   QA_Q1_MJOLNIR};
+    static const qa_q1_weapon rogue[] = {QA_Q1_PLASMA,
+                                         QA_Q1_LIGHTNING,
+                                         QA_Q1_MULTI_ROCKET,
+                                         QA_Q1_ROCKET,
+                                         QA_Q1_LAVA_SUPER_NAILGUN,
+                                         QA_Q1_SUPER_NAILGUN,
+                                         QA_Q1_MULTI_GRENADE,
+                                         QA_Q1_GRENADE,
+                                         QA_Q1_LAVA_NAILGUN,
+                                         QA_Q1_SUPER_SHOTGUN,
+                                         QA_Q1_NAILGUN};
+    static const qa_q1_weapon mg3[] = {QA_Q1_LIGHTNING,     QA_Q1_ROCKET,  QA_Q1_MG3_LASER,
+                                       QA_Q1_SUPER_NAILGUN, QA_Q1_GRENADE, QA_Q1_SUPER_SHOTGUN,
+                                       QA_Q1_NAILGUN};
+    const qa_q1_weapon *order = rank;
+    size_t count = sizeof(rank) / sizeof(*rank);
+    if (g->options.program == QA_Q1_HIPNOTIC) {
+        order = hip;
+        count = sizeof(hip) / sizeof(*hip);
+    }
+    if (g->options.program == QA_Q1_ROGUE) {
+        order = rogue;
+        count = sizeof(rogue) / sizeof(*rogue);
+    }
+    if (g->options.program == QA_Q1_MG3) {
+        order = mg3;
+        count = sizeof(mg3) / sizeof(*mg3);
+    }
+    for (size_t i = 0; i < count; ++i)
+        if (order[i] == weapon)
+            return (int)i;
+    return (int)count;
+}
+static bool supply_weapons(void *context, qa_actor_id actor, const qa_item_id *items, size_t count,
+                           qa_pickup_selection_mode selection, qa_error *error) {
+    qa_q1_game *g = context;
+    q1_player *player = q1_player_get(g, actor);
+    if (!player || !player->arsenal)
+        return true;
+    if (!q1_enable_combos(g, player, error))
+        return false;
+    if (!q1_alive(g, actor))
+        return true;
+    for (size_t i = 0; i < count; ++i)
+        for (unsigned weapon = 0; weapon < QA_Q1_WEAPON_COUNT; ++weapon) {
+            if (items[i] != g->weapons[weapon])
+                continue;
+            qa_q1_weapon selected = q1_combo_weapon(g, player, (qa_q1_weapon)weapon);
+            if (selection == QA_PICKUP_SWITCH_ALWAYS ||
+                (selection == QA_PICKUP_SWITCH_IF_BETTER &&
+                 q1_weapon_rank(g, selected) < q1_weapon_rank(g, player->weapon))) {
+                if (!qa_q1_player_select(g, actor, selected, error))
+                    return false;
+                if (!q1_alive(g, actor))
+                    return true;
+            }
+        }
+    return true;
+}
+static bool supply_ammo(void *context, qa_actor_id actor, const qa_pickup_receipt *receipts,
+                        size_t count, bool auto_switch, qa_error *error) {
+    qa_q1_game *g = context;
+    q1_player *player = q1_player_get(g, actor);
+    if (!player || !player->arsenal)
+        return true;
+    qa_q1_weapon before = q1_best_weapon_before(g, player, receipts, count);
+    if (!q1_enable_combos(g, player, error))
+        return false;
+    if (!q1_alive(g, actor) || !auto_switch || player->weapon != before)
+        return true;
+    return qa_q1_player_select(g, actor, q1_best_weapon(g, player), error);
+}
+bool q1_pickup_supply_create(qa_q1_game *g, qa_error *error) {
+    qa_supply_mapping weapons[QA_Q1_WEAPON_COUNT], ammo[QA_Q1_AMMO_COUNT];
+    for (unsigned i = 0; i < QA_Q1_WEAPON_COUNT; ++i)
+        weapons[i] = (qa_supply_mapping){g->weapons[i], &g->weapons[i], 1};
+    for (unsigned i = 0; i < QA_Q1_AMMO_COUNT; ++i)
+        ammo[i] = (qa_supply_mapping){g->ammo[i], &g->ammo[i], 1};
+    qa_supply_profile profile = {.weapons = weapons,
+                                 .weapon_count = QA_Q1_WEAPON_COUNT,
+                                 .ammo = ammo,
+                                 .ammo_count = QA_Q1_AMMO_COUNT};
+    qa_supply_hooks hooks = {
+        .context = g, .ammo_granted = supply_ammo, .weapon_granted = supply_weapons};
+    return qa_supply_create(g->services.inventory, &profile, &hooks, &g->source_supply, error);
+}
+static qa_supply *supply(qa_q1_game *g, qa_actor_id actor) {
+    qa_supply *selected = g->host.supply ? g->host.supply(g->host.context, actor) : NULL;
+    return selected ? selected : g->source_supply;
+}
+static bool weapon_leave(const qa_q1_game *g) {
+    bool mission = g->options.program == QA_Q1_HIPNOTIC || g->options.program == QA_Q1_ROGUE;
+    return g->options.coop || g->options.deathmatch == 2 ||
+           ((!mission || g->options.edition == QA_Q1_RERELEASE) &&
+            (g->options.deathmatch == 3 || g->options.deathmatch == 5));
+}
+static bool item_name(qa_q1_game *g, q1_actor *entity, const char *name) {
+    qa_bytes text = qa_strings_text(qa_session_strings(g->services.session), entity->classname);
+    size_t length = strlen(name);
+    return text.size == length && !memcmp(text.data, name, length);
+}
+static uint32_t upgrade_flag(qa_q1_game *g) {
+    const char *map =
+        qa_strings_cstr(qa_session_strings(g->services.session), qa_q1_game_map_name(g));
+    if (!map)
+        return 0;
+    static const char *const maps[] = {"map1",    "map2",    "map3",    "map4",    "map5",
+                                       "map6",    "map7",    "map8",    "secret1", "secret2",
+                                       "secret3", "secret4", "secret5", "map2b",   "secret6"};
+    for (unsigned i = 0; i < sizeof(maps) / sizeof(*maps); ++i)
+        if (!strcmp(map, maps[i]))
+            return 1u << i;
+    return 0;
+}
+static bool define_item(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    q1_pickup *item = &entity->state.pickup;
+    const char *model = NULL, *sound = NULL, *id = NULL;
+    char model_buffer[96], id_buffer[128];
+    bool big = (entity->spawnflags & (item_name(g, entity, "item_weapon") ? 8 : 1)) != 0;
+    int bounds = 0;
+    item->weapon = QA_Q1_WEAPON_COUNT;
+    item->duration = 30;
+    if (item_name(g, entity, "item_health")) {
+        item->kind = Q1_ITEM_HEALTH;
+        item->mega = !big && (entity->spawnflags & 2);
+        item->count = big ? 15 : item->mega ? 100 : 25;
+        item->respawn = item->mega ? 120 : 20;
+        model = big ? "maps/b_bh10.bsp" : item->mega ? "maps/b_bh100.bsp" : "maps/b_bh25.bsp";
+        sound = big ? "items/r_item1.wav" : item->mega ? "items/r_item2.wav" : "items/health1.wav";
+    } else if (item_name(g, entity, "item_armor1") || item_name(g, entity, "item_armor2") ||
+               item_name(g, entity, "item_armorInv")) {
+        item->kind = Q1_ITEM_ARMOR;
+        bounds = 1;
+        entity->skin = item_name(g, entity, "item_armor1")   ? 0
+                       : item_name(g, entity, "item_armor2") ? 1
+                                                             : 2;
+        item->absorption = entity->skin == 0 ? 0.3f : entity->skin == 1 ? 0.6f : 0.8f;
+        item->count = entity->skin == 0 ? 100 : entity->skin == 1 ? 150 : 200;
+        item->respawn = 20;
+        model = "progs/armor.mdl";
+        sound = "items/armor1.wav";
+    } else if (item_name(g, entity, "item_key1") || item_name(g, entity, "item_key2")) {
+        bool silver = item_name(g, entity, "item_key1");
+        item->kind = Q1_ITEM_KEY;
+        bounds = 1;
+        item->respawn = -1;
+        item->count = 1;
+        id = silver ? "q1:key/silver" : "q1:key/gold";
+        snprintf(model_buffer, sizeof(model_buffer), "progs/%c_%c_key.mdl",
+                 g->options.world_type == 0   ? 'w'
+                 : g->options.world_type == 1 ? 'm'
+                                              : 'b',
+                 silver ? 's' : 'g');
+        model = model_buffer;
+        sound = g->options.world_type == 2   ? "misc/basekey.wav"
+                : g->options.world_type == 1 ? "misc/runekey.wav"
+                                             : "misc/medkey.wav";
+    } else if (item_name(g, entity, "item_backpack")) {
+        item->kind = Q1_ITEM_BACKPACK;
+        bounds = 1;
+        item->respawn = -1;
+        model = "progs/backpack.mdl";
+        sound = "weapons/lock4.wav";
+    } else {
+        static const struct {
+            const char *name, *model;
+            qa_q1_weapon weapon;
+        } weapons[] = {{"weapon_supershotgun", "g_shot", QA_Q1_SUPER_SHOTGUN},
+                       {"weapon_nailgun", "g_nail", QA_Q1_NAILGUN},
+                       {"weapon_supernailgun", "g_nail2", QA_Q1_SUPER_NAILGUN},
+                       {"weapon_grenadelauncher", "g_rock", QA_Q1_GRENADE},
+                       {"weapon_rocketlauncher", "g_rock2", QA_Q1_ROCKET},
+                       {"weapon_lightning", "g_light", QA_Q1_LIGHTNING},
+                       {"weapon_laser_gun", "g_laserg", QA_Q1_LASER},
+                       {"weapon_mjolnir", "g_hammer", QA_Q1_MJOLNIR},
+                       {"weapon_proximity_gun", "g_prox", QA_Q1_PROXIMITY}};
+        for (size_t i = 0; i < sizeof(weapons) / sizeof(*weapons); ++i)
+            if (item_name(g, entity, weapons[i].name)) {
+                item->kind = Q1_ITEM_WEAPON;
+                item->weapon = weapons[i].weapon;
+                if (g->options.program == QA_Q1_MG3 && item->weapon == QA_Q1_LASER)
+                    item->weapon = QA_Q1_MG3_LASER;
+                if (g->options.program == QA_Q1_MG3 && item->weapon == QA_Q1_MJOLNIR)
+                    item->weapon = QA_Q1_MG3_MJOLNIR;
+                item->item = g->weapons[item->weapon];
+                item->count = item->weapon == QA_Q1_NAILGUN || item->weapon == QA_Q1_SUPER_NAILGUN
+                                  ? 30
+                              : item->weapon == QA_Q1_LIGHTNING ? 15
+                                                                : 5;
+                if (item->weapon == QA_Q1_LASER || item->weapon == QA_Q1_MJOLNIR ||
+                    item->weapon == QA_Q1_MG3_LASER || item->weapon == QA_Q1_MG3_MJOLNIR)
+                    item->count = 30;
+                if (item->weapon == QA_Q1_PROXIMITY)
+                    item->count = 6;
+                item->mission = item->weapon >= QA_Q1_LASER;
+                bounds = 1;
+                item->respawn = 30;
+                sound = "weapons/pkup.wav";
+                snprintf(model_buffer, sizeof(model_buffer), "progs/%s.mdl", weapons[i].model);
+                model = model_buffer;
+                break;
+            }
+        if (!model) {
+            int ammo = -1;
+            const char *prefix = NULL;
+            if (item_name(g, entity, "item_weapon")) {
+                if (entity->spawnflags & 2) {
+                    ammo = QA_Q1_ROCKETS;
+                    prefix = "rock";
+                    item->count = big ? 10 : 5;
+                } else if (entity->spawnflags & 4) {
+                    ammo = QA_Q1_NAILS;
+                    prefix = "nail";
+                    item->count = big ? 40 : 20;
+                } else if (entity->spawnflags & 1) {
+                    ammo = QA_Q1_SHELLS;
+                    prefix = "shell";
+                    item->count = big ? 40 : 20;
+                }
+            } else if (item_name(g, entity, "item_shells")) {
+                ammo = QA_Q1_SHELLS;
+                prefix = "shell";
+                item->count = big ? 40 : 20;
+            } else if (item_name(g, entity, "item_spikes")) {
+                ammo = QA_Q1_NAILS;
+                prefix = "nail";
+                item->count = big ? 50 : 25;
+            } else if (item_name(g, entity, "item_rockets")) {
+                ammo = QA_Q1_ROCKETS;
+                prefix = "rock";
+                item->count = big ? 10 : 5;
+            } else if (item_name(g, entity, "item_cells")) {
+                ammo = QA_Q1_CELLS;
+                prefix = "batt";
+                item->count = big ? 12 : 6;
+            } else if (item_name(g, entity, "item_lava_spikes")) {
+                ammo = QA_Q1_LAVA_NAILS;
+                prefix = "lnail";
+                item->count = big ? 50 : 25;
+                item->mission = true;
+            } else if (item_name(g, entity, "item_multi_rockets")) {
+                ammo = QA_Q1_MULTI_ROCKETS;
+                prefix = "mrock";
+                item->count = big ? 10 : 5;
+                item->mission = true;
+            } else if (item_name(g, entity, "item_plasma")) {
+                ammo = QA_Q1_PLASMA_CELLS;
+                prefix = "plas";
+                item->count = big ? 12 : 6;
+                item->mission = true;
+            }
+            if (ammo >= 0) {
+                item->kind = Q1_ITEM_AMMO;
+                item->item = g->ammo[ammo];
+                sound = "weapons/lock4.wav";
+                item->respawn = g->options.deathmatch == 3 || g->options.deathmatch == 5 ? 15 : 30;
+                if (item->mission && g->options.edition == QA_Q1_CLASSIC)
+                    item->respawn = 30;
+                snprintf(model_buffer, sizeof(model_buffer), "maps/b_%s%d.bsp", prefix,
+                         big ? 1 : 0);
+                model = model_buffer;
+            }
+        }
+        if (!model) {
+            static const struct {
+                const char *name, *model, *sound;
+                qa_q1_power power;
+                float seconds;
+                int bounds;
+            } powers[] = {
+                {"item_artifact_wetsuit", "wetsuit", "misc/weton.wav", QA_Q1_WETSUIT, 30, 2},
+                {"item_artifact_empathy_shields", "empathy", "hipitems/empathy.wav", QA_Q1_EMPATHY,
+                 30, 3},
+                {"item_powerup_shield", "shield", "shield/pickup.wav", QA_Q1_SHIELD, 30, 2},
+                {"item_powerup_belt", "beltup", "belt/pickup.wav", QA_Q1_ANTIGRAV, 45, 2},
+                {NULL, "invulner", "items/protect.wav", QA_Q1_INVULNERABILITY, 30, 2},
+                {NULL, "invisibl", "items/inv1.wav", QA_Q1_INVISIBILITY, 30, 2},
+                {NULL, "quaddama", "items/damage.wav", QA_Q1_QUAD, 30, 2}};
+            int chosen = -1;
+            item->random = item_name(g, entity, "item_random_powerup");
+            if (item->random) {
+                float value = q1_random(g);
+                chosen = value < 0.2f   ? 2
+                         : value < 0.4f ? 3
+                         : value < 0.6f ? 4
+                         : value < 0.8f ? 5
+                                        : 6;
+            } else
+                for (unsigned i = 0; i < 4; ++i)
+                    if (item_name(g, entity, powers[i].name)) {
+                        chosen = (int)i;
+                        break;
+                    }
+            if (chosen >= 0) {
+                item->kind = Q1_ITEM_POWER;
+                item->count = (float)powers[chosen].power;
+                item->duration = powers[chosen].seconds;
+                item->mission = item->artifact = true;
+                item->respawn = item->random && chosen >= 4 ? 30 : 60;
+                bounds = powers[chosen].bounds;
+                sound = powers[chosen].sound;
+                snprintf(model_buffer, sizeof(model_buffer), "progs/%s.mdl", powers[chosen].model);
+                model = model_buffer;
+            } else if (item_name(g, entity, "item_hornofconjuring")) {
+                item->kind = Q1_ITEM_HORN;
+                item->mission = item->artifact = true;
+                item->respawn = 60;
+                bounds = 3;
+                model = "progs/horn.mdl";
+                sound = "hipitems/horn.wav";
+            } else if (item_name(g, entity, "item_sphere")) {
+                item->kind = Q1_ITEM_SPHERE;
+                item->mission = item->artifact = true;
+                item->respawn = 180;
+                bounds = 4;
+                model = "progs/sphere.mdl";
+                sound = "sphere/sphere.wav";
+                entity->physics.angular_velocity = qa_v3(40, 40, 40);
+            }
+        }
+        if (!model) {
+            static const struct {
+                const char *name, *model, *sound;
+                qa_q1_power power;
+            } powers[] = {
+                {"item_artifact_invulnerability", "invulner", "protect", QA_Q1_INVULNERABILITY},
+                {"item_artifact_invisibility", "invisibl", "inv1", QA_Q1_INVISIBILITY},
+                {"item_artifact_envirosuit", "suit", "suit", QA_Q1_SUIT},
+                {"item_artifact_super_damage", "quaddama", "damage", QA_Q1_QUAD}};
+            for (size_t i = 0; i < sizeof(powers) / sizeof(*powers); ++i)
+                if (item_name(g, entity, powers[i].name)) {
+                    item->kind = Q1_ITEM_POWER;
+                    item->count = (float)powers[i].power;
+                    item->artifact = true;
+                    bounds = 2;
+                    item->respawn = powers[i].power == QA_Q1_INVULNERABILITY ||
+                                            powers[i].power == QA_Q1_INVISIBILITY
+                                        ? 300
+                                        : 60;
+                    snprintf(model_buffer, sizeof(model_buffer), "progs/%s.mdl", powers[i].model);
+                    model = model_buffer;
+                    snprintf(id_buffer, sizeof(id_buffer), "items/%s.wav", powers[i].sound);
+                    if (!qa_builtin_resource(&g->services, id_buffer, &item->sound, error))
+                        return false;
+                    break;
+                }
+        }
+    }
+    if (!model && g->options.program == QA_Q1_MG3) {
+        bounds = 1;
+        if (item_name(g, entity, "item_armor_shard")) {
+            item->kind = Q1_ITEM_MG3_SHARD;
+            model = "progs/armorshard.mdl";
+            sound = "items/armor1.wav";
+        } else if (item_name(g, entity, "weapon_bloody_sg") ||
+                   item_name(g, entity, "weapon_bloody_ssg")) {
+            item->kind = Q1_ITEM_MG3_BLOODY;
+            item->weapon =
+                item_name(g, entity, "weapon_bloody_sg") ? QA_Q1_SHOTGUN : QA_Q1_SUPER_SHOTGUN;
+            model =
+                item->weapon == QA_Q1_SHOTGUN ? "progs/g_bloodshot.mdl" : "progs/g_bloodshot2.mdl";
+            sound = "weapons/pkup.wav";
+        } else if (item_name(g, entity, "item_artifact_lavasuit")) {
+            item->kind = Q1_ITEM_POWER;
+            item->count = QA_Q1_LAVA_SUIT;
+            item->artifact = true;
+            bounds = 2;
+            model = "progs/lavasuit.mdl";
+            sound = "items/suit.wav";
+        } else {
+            static const char *const names[] = {"item_upgrade_health", "item_upgrade_shells",
+                                                "item_upgrade_nails", "item_upgrade_rockets",
+                                                "item_upgrade_cells"};
+            static const char *const models[] = {"item_h_player", "backpackshells", "backpacknails",
+                                                 "backpacker", "backpackcells"};
+            for (unsigned i = 0; i < 5; ++i)
+                if (item_name(g, entity, names[i])) {
+                    item->kind = Q1_ITEM_MG3_UPGRADE;
+                    item->upgrade = (uint8_t)i;
+                    if (!item->upgrade_flag)
+                        item->upgrade_flag = upgrade_flag(g);
+                    snprintf(model_buffer, sizeof(model_buffer), "progs/%s.mdl", models[i]);
+                    model = model_buffer;
+                    sound = i == 0 ? "player/tornoff2.wav" : "weapons/lock4.wav";
+                    break;
+                }
+        }
+    }
+    if (!model) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, entity->id.slot,
+                     "Q1 classname has no native pickup definition");
+        return false;
+    }
+    if (!item->item) {
+        if (!id) {
+            qa_bytes name =
+                qa_strings_text(qa_session_strings(g->services.session), entity->classname);
+            if (name.size + 4 > sizeof(id_buffer)) {
+                qa_error_set(error, QA_ERROR_ARGUMENT, name.size, "Q1 item identity too long");
+                return false;
+            }
+            memcpy(id_buffer, "q1:", 3);
+            memcpy(id_buffer + 3, name.data, name.size);
+            id_buffer[name.size + 3] = 0;
+            id = id_buffer;
+        }
+        if (!qa_builtin_resource(&g->services, id, &item->item, error))
+            return false;
+    }
+    if (!q1_model(g, entity, model, error) ||
+        (sound && !qa_builtin_resource(&g->services, sound, &item->sound, error)))
+        return false;
+    item->original_model = entity->model;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, entity->id, &body, error))
+        return false;
+    static const qa_bounds shapes[] = {{{0, 0, 0}, {32, 32, 56}},
+                                       {{-16, -16, 0}, {16, 16, 56}},
+                                       {{-16, -16, -24}, {16, 16, 32}},
+                                       {{-16, -16, 0}, {16, 16, 32}},
+                                       {{-8, -8, -8}, {8, 8, 8}}};
+    body.bounds = shapes[bounds];
+    if (item->kind == Q1_ITEM_MG3_UPGRADE && item->upgrade == 0) {
+        body.origin.z += 8;
+        body.bounds = (qa_bounds){{-16, -16, -8}, {16, 16, 48}};
+    }
+    return qa_world_body_write(g->services.world, entity->id, &body, error);
+}
+
+bool q1_pickup_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    entity->kind = Q1_PICKUP;
+    if (g->options.deathmatch == 0 &&
+        (item_name(g, entity, "item_sphere") || item_name(g, entity, "item_random_powerup")))
+        return q1_remove(g, entity, error);
+    if (!define_item(g, entity, error))
+        return false;
+    entity->physics.solid = QA_PHYSICS_NOT_SOLID;
+    entity->physics.motion = QA_PHYSICS_STATIONARY;
+    if (entity->state.pickup.kind != Q1_ITEM_BACKPACK) {
+        bool delayed = entity->state.pickup.kind == Q1_ITEM_MG3_UPGRADE ||
+                       entity->state.pickup.kind == Q1_ITEM_MG3_BLOODY;
+        return q1_schedule(g, entity, delayed ? 0.5 : 0.2,
+                           delayed ? Q1_THINK_MG3_ITEM_START : Q1_THINK_ITEM_PLACE, error);
+    }
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, entity->id, &body, error))
+        return false;
+    float x = -100 + q1_random(g) * 200, y = -100 + q1_random(g) * 200;
+    body.velocity = qa_v3(x, y, 300);
+    entity->physics.solid = QA_PHYSICS_TRIGGER;
+    entity->physics.motion = QA_PHYSICS_TOSS;
+    entity->physics.flags = 0;
+    return qa_world_body_write(g->services.world, entity->id, &body, error) &&
+           q1_link(g, entity, error);
+}
+
+typedef struct item_touch {
+    qa_q1_game *game;
+    q1_actor *entity;
+    qa_actor_id recipient;
+    qa_pickup_cargo cargo[QA_Q1_AMMO_COUNT + 1];
+    size_t cargo_count;
+    bool original_ran, leave, external;
+} item_touch;
+
+static bool touch_live(const item_touch *touch) {
+    return q1_alive(touch->game, touch->entity->id) && q1_alive(touch->game, touch->recipient);
+}
+static bool item_eligible(void *context, const qa_pickup_offer *offer, bool *eligible,
+                          qa_error *error) {
+    (void)offer;
+    item_touch *touch = context;
+    qa_q1_game *g = touch->game;
+    q1_pickup *item = &touch->entity->state.pickup;
+    qa_q1_target target;
+    *eligible = touch_live(touch) &&
+                (item->kind == Q1_ITEM_HORN || q1_health(g, touch->recipient) > 0) &&
+                q1_target(g, touch->recipient, &target) && target.player;
+    if (*eligible && item->kind == Q1_ITEM_WEAPON && weapon_leave(g)) {
+        bool owned;
+        if (!qa_supply_owns(supply(g, touch->recipient), touch->recipient, item->item, &owned,
+                            error))
+            return false;
+        *eligible = !owned;
+    }
+    return true;
+}
+static bool item_original(void *context, const qa_pickup_offer *offer, bool *taken,
+                          qa_error *error) {
+    item_touch *touch = context;
+    qa_q1_game *g = touch->game;
+    q1_pickup *item = &touch->entity->state.pickup;
+    qa_actor_id actor = touch->recipient;
+    q1_player *player = q1_player_get(g, actor);
+    touch->original_ran = true;
+    *taken = false;
+    switch (item->kind) {
+    case Q1_ITEM_HEALTH: {
+        float health = q1_health(g, actor), limit = item->mega ? 250
+                                                    : player   ? player->max_health
+                                                               : 100;
+        qa_builtin_actor_traits traits;
+        if (!item->mega && g->services.actor_traits &&
+            g->services.actor_traits(g->services.context, actor, &traits))
+            limit = traits.max_health;
+        if (health <= 0 || health >= limit)
+            return true;
+        *taken = true;
+        return qa_combat_set_health(g->services.combat, actor, fminf(limit, health + item->count),
+                                    error);
+    }
+    case Q1_ITEM_ARMOR: {
+        qa_combat_state combat;
+        if (!qa_combat_read(g->services.combat, actor, &combat, error))
+            return false;
+        qa_regular_armor armor = combat.armor.regular;
+        if (armor.kind == QA_ARMOR_SOURCE)
+            return true;
+        float protection = armor.kind == QA_ARMOR_Q1   ? armor.protection.q1_absorption
+                           : armor.kind == QA_ARMOR_Q2 ? armor.protection.q2.normal
+                           : armor.kind == QA_ARMOR_Q3 ? armor.protection.q3_protection
+                                                       : 0;
+        if (armor.points * protection >= item->count * item->absorption)
+            return true;
+        armor = (qa_regular_armor){.kind = QA_ARMOR_Q1,
+                                   .points = item->count,
+                                   .item = item->item,
+                                   .protection.q1_absorption = item->absorption};
+        *taken = true;
+        return qa_combat_set_regular_armor(g->services.combat, actor, &armor, error);
+    }
+    case Q1_ITEM_AMMO:
+        return qa_supply_ammo(supply(g, actor), actor, (qa_pickup_grant){item->item, item->count},
+                              (item->mission && g->options.edition == QA_Q1_CLASSIC) || !player ||
+                                  player->auto_switch != QA_Q1_SWITCH_NEVER,
+                              taken, error);
+    case Q1_ITEM_WEAPON: {
+        int ammo = q1_weapon_ammo(item->weapon);
+        if (item->weapon == QA_Q1_MJOLNIR || item->weapon == QA_Q1_MG3_MJOLNIR)
+            ammo = QA_Q1_CELLS;
+        qa_pickup_grant grant = {ammo >= 0 ? g->ammo[ammo] : 0, item->count};
+        qa_supply_offer weapon = {.kind = QA_SUPPLY_WEAPON,
+                                  .item = item->item,
+                                  .ammo = &grant,
+                                  .ammo_count = ammo >= 0 ? 1 : 0};
+        qa_supply_options options = {.selection = g->options.deathmatch ? QA_PICKUP_SWITCH_IF_BETTER
+                                                                        : QA_PICKUP_SWITCH_ALWAYS};
+        bool owned;
+        if (!qa_supply_owns(supply(g, actor), actor, item->item, &owned, error))
+            return false;
+        bool classic_mission =
+            g->options.edition == QA_Q1_CLASSIC &&
+            (g->options.program == QA_Q1_HIPNOTIC || g->options.program == QA_Q1_ROGUE);
+        if (player && ((!classic_mission && (player->auto_switch == QA_Q1_SWITCH_NEVER ||
+                                             (player->auto_switch == QA_Q1_SWITCH_NEW && owned))) ||
+                       (g->options.program == QA_Q1_ROGUE &&
+                        player->weapon == QA_Q1_ROGUE_GRAPPLE && player->input.attack)))
+            options.selection = QA_PICKUP_SWITCH_NEVER;
+        touch->leave = weapon_leave(g);
+        return qa_supply_apply(supply(g, actor), actor, &weapon, &options, taken, error);
+    }
+    case Q1_ITEM_KEY: {
+        qa_inventory_entry entry;
+        if (!qa_inventory_entry_read(g->services.inventory, actor, item->item, &entry, NULL)) {
+            entry = (qa_inventory_entry){
+                .item = item->item, .capacity = 1, .policy = QA_COUNT_SOURCE_FLOAT};
+            if (!qa_inventory_configure(g->services.inventory, actor, &entry, NULL, NULL, error))
+                return false;
+        }
+        double given;
+        if (!qa_inventory_give(g->services.inventory, actor, item->item, 1, &given, error))
+            return false;
+        *taken = given != 0;
+        touch->leave = g->options.coop;
+        return true;
+    }
+    case Q1_ITEM_POWER:
+        *taken = true;
+        return qa_q1_player_power(g, actor, (qa_q1_power)(unsigned)item->count,
+                                  g->time + item->duration, error);
+    case Q1_ITEM_HORN:
+        *taken = true;
+        return true;
+    case Q1_ITEM_SPHERE:
+        return q1_sphere_pickup(g, touch->entity, actor, taken, error);
+    case Q1_ITEM_BACKPACK: {
+        qa_pickup_selection_mode selection = QA_PICKUP_SWITCH_NEVER;
+        if (item->weapon < QA_Q1_WEAPON_COUNT) {
+            bool owned;
+            if (!qa_supply_owns(supply(g, actor), actor, g->weapons[item->weapon], &owned, error))
+                return false;
+            bool auto_switch = !player || g->options.edition != QA_Q1_RERELEASE ||
+                               player->auto_switch == QA_Q1_SWITCH_ALWAYS ||
+                               (player->auto_switch == QA_Q1_SWITCH_NEW && !owned);
+            bool always = !item->backpack_rank && g->options.edition != QA_Q1_RERELEASE &&
+                          g->options.deathmatch == 0;
+            bool underwater = !always && player && item->avoid_underwater_lightning &&
+                              player->input.water_level != 0 && item->weapon == QA_Q1_LIGHTNING;
+            if (auto_switch && !underwater)
+                selection = always ? QA_PICKUP_SWITCH_ALWAYS : QA_PICKUP_SWITCH_IF_BETTER;
+        }
+        return qa_supply_cargo(supply(g, actor), actor, offer->cargo, offer->cargo_count, selection,
+                               false, taken, error);
+    }
+    case Q1_ITEM_MG3_SHARD: {
+        qa_combat_state combat;
+        if (!qa_combat_read(g->services.combat, actor, &combat, error))
+            return false;
+        qa_regular_armor armor = combat.armor.regular;
+        if (armor.kind == QA_ARMOR_SOURCE)
+            return true;
+        if (armor.kind == QA_ARMOR_Q1 && armor.protection.q1_absorption < 0.3f) {
+            armor.protection.q1_absorption = 0.3f;
+            if (!qa_combat_set_regular_armor(g->services.combat, actor, &armor, error))
+                return false;
+        }
+        if (armor.points >= 200)
+            return true;
+        qa_string_id identity = armor.item;
+        if (armor.kind != QA_ARMOR_Q1 &&
+            !qa_builtin_resource(&g->services, "q1:item_armor1", &identity, error))
+            return false;
+        armor = (qa_regular_armor){
+            .kind = QA_ARMOR_Q1,
+            .item = identity,
+            .points = fminf(200, armor.points + 5),
+            .protection.q1_absorption =
+                armor.kind == QA_ARMOR_Q1 ? fmaxf(0.3f, armor.protection.q1_absorption) : 0.3f};
+        *taken = true;
+        return qa_combat_set_regular_armor(g->services.combat, actor, &armor, error);
+    }
+    case Q1_ITEM_MG3_UPGRADE:
+    case Q1_ITEM_MG3_BLOODY:
+        break;
+    }
+    qa_error_set(error, QA_ERROR_FORMAT, item->kind, "unknown Q1 pickup kind");
+    return false;
+}
+static bool dispatch_targets(item_touch *touch, qa_error *error) {
+    qa_q1_game *g = touch->game;
+    q1_actor *entity = touch->entity;
+    if (!touch_live(touch))
+        return true;
+    if (!qa_strings_text(qa_session_strings(g->services.session), entity->target).size &&
+        !qa_strings_text(qa_session_strings(g->services.session), entity->killtarget).size)
+        return true;
+    if (!g->services.use_targets) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, entity->id.slot,
+                     "Q1 pickup target dispatcher missing");
+        return false;
+    }
+    return g->services.use_targets(g->services.context, entity->id, touch->recipient,
+                                   entity->target, entity->killtarget, entity->delay, error);
+}
+static bool item_complete(void *context, const qa_pickup_offer *offer, bool taken,
+                          qa_error *error) {
+    (void)offer;
+    item_touch *touch = context;
+    qa_q1_game *g = touch->game;
+    q1_actor *entity = touch->entity;
+    if (!taken || !touch_live(touch))
+        return true;
+    q1_pickup *item = &entity->state.pickup;
+    if (!touch->original_ran)
+        touch->leave = item->kind == Q1_ITEM_WEAPON ? weapon_leave(g)
+                                                    : item->kind == Q1_ITEM_KEY && g->options.coop;
+    q1_player *player = q1_player_get(g, touch->recipient);
+    if (g->options.edition == QA_Q1_RERELEASE && item->mega && player)
+        player->mega_rot_at = g->time + 5;
+    qa_builtin_event sound = {
+        .kind = QA_BUILTIN_SOUND,
+        .family = QA_GAME_Q1,
+        .provider = g->options.provider,
+        .actor = touch->recipient,
+        .time_ns = g->time_ns,
+        .resource = item->sound,
+        .channel =
+            item->mission && item->kind != Q1_ITEM_AMMO && item->kind != Q1_ITEM_WEAPON ? 2 : 3,
+        .volume = 1,
+        .attenuation = item->kind == Q1_ITEM_HORN ? 0 : 1};
+    if (!qa_builtin_emit(&g->services, &sound, error))
+        return false;
+    if (!touch_live(touch))
+        return true;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, entity->id, &body, error))
+        return false;
+    qa_builtin_event event = {.kind = QA_BUILTIN_ITEM,
+                              .family = QA_GAME_Q1,
+                              .provider = g->options.provider,
+                              .actor = entity->id,
+                              .other = touch->recipient,
+                              .origin = body.origin,
+                              .resource = item->item,
+                              .time_ns = g->time_ns};
+    if (!qa_builtin_emit(&g->services, &event, error))
+        return false;
+    if (!touch_live(touch))
+        return true;
+    if (touch->external)
+        return true;
+    if (mg3_special(item)) {
+        entity->activator = touch->recipient;
+        if (item->kind >= Q1_ITEM_MG3_SHARD) {
+            if (!dispatch_targets(touch, error))
+                return false;
+            return !q1_alive(g, entity->id) || q1_remove(g, entity, error);
+        }
+        bool lava = item->kind == Q1_ITEM_POWER;
+        if (!lava) {
+            if (!dispatch_targets(touch, error))
+                return false;
+            if (!touch_live(touch))
+                return true;
+            if (touch->leave) {
+                entity->target = 0;
+                return true;
+            }
+        }
+        entity->physics.solid = QA_PHYSICS_NOT_SOLID;
+        entity->model = 0;
+        item->hidden = true;
+        if (!q1_link(g, entity, error))
+            return false;
+        if (lava && !dispatch_targets(touch, error))
+            return false;
+        if (!q1_alive(g, entity->id))
+            return true;
+        if (lava && g->options.coop)
+            entity->target = 0;
+        double respawn = lava ? (g->options.coop         ? 2.5
+                                 : g->options.deathmatch ? 60
+                                                         : entity->wait)
+                         : g->options.deathmatch && g->options.deathmatch != 2 ? 30
+                                                                               : entity->wait;
+        if (respawn > 0)
+            return q1_schedule(g, entity, respawn, Q1_THINK_RESPAWN, error);
+        qa_scheduler_cancel(qa_session_scheduler(g->services.session), entity->id);
+        entity->think = Q1_THINK_NONE;
+        entity->next_think = 0;
+        return true;
+    }
+    if (item->kind == Q1_ITEM_BACKPACK)
+        return q1_remove(g, entity, error);
+    if (touch->leave)
+        return item->kind == Q1_ITEM_WEAPON || dispatch_targets(touch, error);
+    entity->physics.solid = QA_PHYSICS_NOT_SOLID;
+    entity->model = 0;
+    item->hidden = true;
+    if (!q1_link(g, entity, error))
+        return false;
+    if (!touch_live(touch))
+        return true;
+    bool respawns = g->options.deathmatch && item->respawn > 0 &&
+                    (g->options.deathmatch != 2 || item->artifact);
+    bool mission = g->options.program == QA_Q1_HIPNOTIC || g->options.program == QA_Q1_ROGUE;
+    if (mission && g->options.edition == QA_Q1_CLASSIC && g->options.deathmatch != 1 &&
+        (item->kind == Q1_ITEM_WEAPON || item->kind == Q1_ITEM_AMMO || item->kind == Q1_ITEM_ARMOR))
+        respawns = false;
+    if (item->mega && g->options.edition == QA_Q1_CLASSIC) {
+        item->holder = touch->recipient;
+        if (!q1_schedule(g, entity, 5, Q1_THINK_MEGA_ROT, error))
+            return false;
+    } else if (respawns) {
+        if (!q1_schedule(g, entity, item->respawn, Q1_THINK_RESPAWN, error))
+            return false;
+    } else {
+        qa_scheduler_cancel(qa_session_scheduler(g->services.session), entity->id);
+        entity->think = Q1_THINK_NONE;
+    }
+    if (item->kind == Q1_ITEM_HORN) {
+        qa_actor_id previous = g->horn_charmer;
+        g->horn_charmer = touch->recipient;
+        bool result = dispatch_targets(touch, error);
+        g->horn_charmer = previous;
+        return result;
+    }
+    return dispatch_targets(touch, error);
+}
+
+static bool pickup_grant(qa_q1_game *g, q1_actor *entity, qa_actor_id recipient, bool external,
+                         bool *accepted, qa_error *error) {
+    *accepted = false;
+    if (entity->physics.solid != QA_PHYSICS_TRIGGER)
+        return true;
+    q1_pickup *item = &entity->state.pickup;
+    item_touch touch = {.game = g, .entity = entity, .recipient = recipient, .external = external};
+    if (item->kind == Q1_ITEM_BACKPACK) {
+        for (unsigned i = 0; i < QA_Q1_AMMO_COUNT; ++i)
+            touch.cargo[touch.cargo_count++] = (qa_pickup_cargo){g->ammo[i], item->ammo[i], false};
+        if (item->weapon < QA_Q1_WEAPON_COUNT)
+            touch.cargo[touch.cargo_count++] = (qa_pickup_cargo){g->weapons[item->weapon], 1, true};
+    }
+    qa_pickup_offer offer = {.recipient = recipient,
+                             .pickup = entity->id,
+                             .source = g->options.provider,
+                             .item = item->item,
+                             .override_count = entity->count != 0,
+                             .count = entity->count,
+                             .dropped = item->kind == Q1_ITEM_BACKPACK,
+                             .time_ns = g->time_ns,
+                             .cargo = touch.cargo,
+                             .cargo_count = touch.cargo_count};
+    if (item->kind == Q1_ITEM_AMMO || item->kind == Q1_ITEM_WEAPON || item->kind == Q1_ITEM_KEY)
+        offer.default_resource =
+            (qa_pickup_resource){.kind = QA_PICKUP_INVENTORY, .item = item->item};
+    else if (item->kind == Q1_ITEM_ARMOR || item->kind == Q1_ITEM_MG3_SHARD)
+        offer.default_resource =
+            (qa_pickup_resource){.kind = QA_PICKUP_PROTECTION, .channel = QA_PROTECTION_REGULAR};
+    qa_pickup_continuation continuation = {.context = &touch,
+                                           .eligible = item_eligible,
+                                           .original = item_original,
+                                           .complete = item_complete};
+    qa_pickup_outcome outcome;
+    if (!qa_pickups_touch(g->services.pickups, &offer, &continuation, &outcome, error))
+        return false;
+    *accepted = outcome == QA_PICKUP_ACCEPTED;
+    return true;
+}
+bool q1_pickup_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id recipient, qa_error *error) {
+    if (entity->state.pickup.external)
+        return true;
+    if (entity->state.pickup.drop != Q1_DROP_NONE)
+        return q1_drop_touch(g, entity, recipient, error);
+    q1_pickup *item = &entity->state.pickup;
+    if (qa_actor_id_equal(entity->owner, recipient) &&
+        entity->next_think - g->time > 120 - item->owner_delay)
+        return true;
+    if (item->kind == Q1_ITEM_MG3_UPGRADE || item->kind == Q1_ITEM_MG3_BLOODY) {
+        q1_player *player = q1_player_get(g, recipient);
+        if (!player || entity->physics.solid != QA_PHYSICS_TRIGGER)
+            return true;
+        if (item->kind == Q1_ITEM_MG3_UPGRADE) {
+            bool collected;
+            float maximum;
+            if (!q1_mg3_upgrade(g, player, item->upgrade, item->upgrade_flag, &collected, &maximum,
+                                error) ||
+                !q1_message(g, recipient,
+                            collected ? "$mg3_qc_upgrade_fail" : "$mg3_qc_upgrade_success", error))
+                return false;
+        } else {
+            player->mg3_progress.bloody |= item->weapon == QA_Q1_SHOTGUN ? 1u : 2u;
+            double given;
+            qa_inventory_entry entry = {.item = g->weapons[item->weapon],
+                                        .count = 1,
+                                        .capacity = 1,
+                                        .policy = QA_COUNT_SOURCE_FLOAT};
+            if (!qa_inventory_give(g->services.inventory, recipient, g->ammo[QA_Q1_SHELLS], 30,
+                                   &given, error) ||
+                !qa_inventory_configure(g->services.inventory, recipient, &entry, NULL, NULL,
+                                        error) ||
+                !qa_q1_player_select(g, recipient, item->weapon, error) ||
+                !q1_message(g, recipient, "$mg3_map2_secret_weapon", error))
+                return false;
+        }
+        item_touch touch = {
+            .game = g, .entity = entity, .recipient = recipient, .original_ran = true};
+        return item_complete(&touch, NULL, true, error);
+    }
+    bool accepted;
+    return pickup_grant(g, entity, recipient, false, &accepted, error);
+}
+bool qa_q1_pickup_grant_external(qa_q1_game *g, qa_actor_id actor, qa_actor_id recipient,
+                                 bool *accepted, qa_error *error) {
+    q1_actor *entity = q1_entity(g, actor);
+    if (!entity || entity->kind != Q1_PICKUP || !entity->state.pickup.external || !accepted) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+                     "Q1 external pickup requires an externally managed native item");
+        return false;
+    }
+    return pickup_grant(g, entity, recipient, true, accepted, error);
+}
+bool qa_q1_pickup_spawn_external(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_state *body,
+                                 bool bounce, qa_actor_id *out, qa_error *error) {
+    if (!g || !spawn || !spawn->classname || !body || !out) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Q1 external pickup spawn");
+        return false;
+    }
+    q1_actor *entity;
+    if (!q1_create(g, spawn->classname, Q1_PICKUP, (qa_actor_id){0}, &entity, error))
+        return false;
+    entity->spawnflags = spawn->spawnflags;
+    entity->count = spawn->count;
+    if (!define_item(g, entity, error))
+        goto fail;
+    entity->state.pickup.external = true;
+    entity->state.pickup.respawn = -1;
+    entity->physics.motion = bounce ? QA_PHYSICS_BOUNCE : QA_PHYSICS_TOSS;
+    entity->physics.solid = QA_PHYSICS_TRIGGER;
+    entity->physics.flags = QA_PHYSICS_KILL_VELOCITY;
+    if (!qa_world_body_write(g->services.world, entity->id, body, error) ||
+        !q1_link(g, entity, error))
+        goto fail;
+    *out = entity->id;
+    return true;
+fail:
+    (void)q1_remove(g, entity, NULL);
+    return false;
+}
+bool q1_pickup_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    q1_pickup *item = &entity->state.pickup;
+    q1_think_kind kind = entity->think;
+    entity->think = Q1_THINK_NONE;
+    if (kind == Q1_THINK_MG3_ITEM_START) {
+        if (item->kind == Q1_ITEM_MG3_BLOODY &&
+            !(qa_q1_game_campaign_flags(g) & QA_Q1_BLOODY_NIGHTMARE_NEWGAME))
+            return q1_remove(g, entity, error);
+        if (item->kind == Q1_ITEM_MG3_UPGRADE) {
+            q1_actor_snapshot *snapshot;
+            if (!q1_snapshot_actors(g, &snapshot, error))
+                return false;
+            for (size_t i = 0; i < snapshot->count; ++i) {
+                q1_player *player = q1_player_get(g, snapshot->actors[i]);
+                if (!player)
+                    continue;
+                const uint32_t flags[] = {player->mg3_progress.health, player->mg3_progress.shells,
+                                          player->mg3_progress.nails, player->mg3_progress.rockets,
+                                          player->mg3_progress.cells};
+                if (flags[item->upgrade] & item->upgrade_flag) {
+                    entity->alpha = 0.6f;
+                    break;
+                }
+            }
+            snapshot->borrowed = false;
+        }
+        return q1_schedule(g, entity, 0.2, Q1_THINK_ITEM_PLACE, error);
+    }
+    if (kind == Q1_THINK_MEGA_ROT) {
+        q1_player *player = q1_player_get(g, item->holder);
+        float health = q1_health(g, item->holder);
+        if (player && health > player->max_health)
+            return qa_combat_set_health(g->services.combat, item->holder, health - 1, error) &&
+                   q1_schedule(g, entity, 1, Q1_THINK_MEGA_ROT, error);
+        return g->options.deathmatch != 1 || q1_schedule(g, entity, 20, Q1_THINK_RESPAWN, error);
+    }
+    if (kind == Q1_THINK_RESPAWN) {
+        if (item->random && !define_item(g, entity, error))
+            return false;
+        entity->model = item->original_model;
+        entity->physics.solid = QA_PHYSICS_TRIGGER;
+        item->hidden = false;
+        return q1_sound(g, entity->id, "items/itembk2.wav", 2, 1, error) &&
+               q1_link(g, entity, error);
+    }
+    if (kind == Q1_THINK_ITEM_PLACE) {
+        qa_body_state body;
+        if (!qa_world_body_read(g->services.world, entity->id, &body, error))
+            return false;
+        qa_trace_query query = {.start = qa_vec_add(body.origin, qa_v3(0, 0, 6)),
+                                .shape = {.kind = QA_SHAPE_BOX, .bounds = body.bounds},
+                                .pass_actor = entity->id,
+                                .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
+        query.end = qa_vec_add(query.start, qa_v3(0, 0, -256));
+        qa_trace_result trace;
+        if (!qa_world_trace(g->services.world, &query, &trace, error))
+            return false;
+        if (trace.all_solid || trace.fraction == 1)
+            return q1_remove(g, entity, error);
+        body.origin = trace.end;
+        body.velocity = qa_v3(0, 0, 0);
+        body.ground = trace.actor;
+        entity->physics.solid = QA_PHYSICS_TRIGGER;
+        entity->physics.motion = QA_PHYSICS_TOSS;
+        entity->physics.flags = QA_PHYSICS_KILL_VELOCITY | QA_PHYSICS_ONGROUND;
+        if (mg3_special(item) && (entity->spawnflags & 4)) {
+            entity->physics.solid = QA_PHYSICS_NOT_SOLID;
+            entity->model = 0;
+            item->hidden = true;
+        }
+        return qa_world_body_write(g->services.world, entity->id, &body, error) &&
+               q1_link(g, entity, error);
+    }
+    qa_error_set(error, QA_ERROR_FORMAT, kind, "invalid Q1 pickup continuation");
+    return false;
+}
+bool q1_pickup_use(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    q1_pickup *item = &entity->state.pickup;
+    if (item->external || !mg3_special(item) || !(entity->spawnflags & 4))
+        return true;
+    entity->model = item->original_model;
+    entity->physics.solid = QA_PHYSICS_TRIGGER;
+    item->hidden = false;
+    return q1_sound(g, entity->id, "items/itembk2.wav", 2, 1, error) &&
+           (!q1_alive(g, entity->id) || q1_link(g, entity, error));
+}
+bool q1_drop_backpack(qa_q1_game *g, q1_actor *source, qa_q1_weapon weapon,
+                      const float ammo[QA_Q1_AMMO_COUNT], qa_error *error) {
+    bool any = false;
+    for (unsigned i = 0; i < QA_Q1_AMMO_COUNT; ++i)
+        any = any || ammo[i] > 0;
+    if (!any)
+        return true;
+    qa_body_state from;
+    if (!qa_world_body_read(g->services.world, source->id, &from, error))
+        return false;
+    return q1_spawn_backpack(g, from.origin, weapon, ammo, NULL, error);
+}
+bool q1_spawn_backpack(qa_q1_game *g, qa_vec3 origin, qa_q1_weapon weapon,
+                       const float ammo[QA_Q1_AMMO_COUNT], q1_actor **out, qa_error *error) {
+    q1_actor *pack;
+    if (!q1_create(g, "item_backpack", Q1_PICKUP, (qa_actor_id){0}, &pack, error))
+        return false;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, pack->id, &body, error))
+        return false;
+    body.origin = qa_vec_add(origin, qa_v3(0, 0, -24));
+    if (!qa_world_body_write(g->services.world, pack->id, &body, error) ||
+        !q1_pickup_spawn(g, pack, error))
+        return false;
+    pack->state.pickup.weapon = weapon;
+    pack->state.pickup.avoid_underwater_lightning = g->options.edition == QA_Q1_RERELEASE;
+    memcpy(pack->state.pickup.ammo, ammo, sizeof(pack->state.pickup.ammo));
+    if (g->options.edition == QA_Q1_RERELEASE && weapon < QA_Q1_WEAPON_COUNT) {
+        int kind = q1_weapon_ammo(weapon);
+        static const float minimum[] = {5, 20, 5, 15};
+        if (kind >= 0 && kind < 4)
+            pack->state.pickup.ammo[kind] = fmaxf(ammo[kind], minimum[kind]);
+    }
+    if (!q1_schedule(g, pack, 120, Q1_THINK_REMOVE, error))
+        return false;
+    if (out)
+        *out = pack;
+    return true;
+}
+bool q1_toss_backpack(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin, qa_vec3 velocity,
+                      const float ammo[QA_Q1_AMMO_COUNT], q1_actor **out, qa_error *error) {
+    q1_actor *pack;
+    if (!q1_create(g, "item_backpack", Q1_PICKUP, owner, &pack, error))
+        return false;
+    if (!define_item(g, pack, error))
+        goto fail;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, pack->id, &body, error))
+        goto fail;
+    body.origin = origin;
+    body.velocity = velocity;
+    pack->state.pickup.owner_delay = 1;
+    pack->state.pickup.avoid_underwater_lightning = g->options.edition == QA_Q1_RERELEASE;
+    memcpy(pack->state.pickup.ammo, ammo, sizeof(pack->state.pickup.ammo));
+    pack->physics.solid = QA_PHYSICS_TRIGGER;
+    pack->physics.motion = QA_PHYSICS_BOUNCE;
+    if (!qa_world_body_write(g->services.world, pack->id, &body, error) ||
+        !q1_schedule(g, pack, 120, Q1_THINK_REMOVE, error) || !q1_link(g, pack, error))
+        goto fail;
+    *out = pack;
+    return true;
+fail:
+    if (q1_alive(g, pack->id))
+        q1_remove(g, pack, NULL);
+    return false;
+}

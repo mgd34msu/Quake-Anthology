@@ -26,8 +26,21 @@ typedef enum qa_builtin_event_kind {
     QA_BUILTIN_ACHIEVEMENT
 } qa_builtin_event_kind;
 
-/* Resource and text IDs use the session string table. Events are synchronous
- * borrows; a consumer that queues one copies the value before returning. */
+typedef enum qa_builtin_message_arg_kind {
+    QA_BUILTIN_MESSAGE_STRING,
+    QA_BUILTIN_MESSAGE_NUMBER
+} qa_builtin_message_arg_kind;
+typedef struct qa_builtin_message_arg {
+    qa_builtin_message_arg_kind kind;
+    union {
+        qa_string_id text;
+        double number;
+    } value;
+} qa_builtin_message_arg;
+
+/* Resource and text IDs use the session string table. Events and arguments are
+ * synchronous borrows; a queue copies arguments and resolves or retains string
+ * storage before returning. */
 typedef struct qa_builtin_event {
     qa_builtin_event_kind kind;
     qa_game_family family;
@@ -39,6 +52,8 @@ typedef struct qa_builtin_event {
     float volume, attenuation, value;
     int32_t code, channel, count, frame;
     uint32_t flags;
+    const qa_builtin_message_arg *arguments;
+    size_t argument_count;
 } qa_builtin_event;
 
 typedef struct qa_builtin_actor_traits {

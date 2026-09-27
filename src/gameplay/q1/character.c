@@ -1,0 +1,555 @@
+#include "internal.h"
+#include <stdio.h>
+
+static q1_player *character(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+    q1_player *player = q1_player_get(g, actor);
+    if (!player || !player->character) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, actor.slot, "Q1 character is not attached");
+        return NULL;
+    }
+    return player;
+}
+static bool refresh_pose(qa_q1_game *g, q1_player *player, qa_error *error) {
+    q1_character *c = &player->character_state;
+    if (c->life != QA_Q1_ALIVE)
+        return true;
+    qa_q1_character_pose pose = {.axe_pose = c->input.axe_pose};
+    if (g->host.character_pose)
+        (void)g->host.character_pose(g->host.context, player->id, &pose);
+    if (pose.custom_model && (!pose.model || !pose.stand.count || !pose.run.count ||
+                              !pose.pain.count || !pose.death.count)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, player->id.slot,
+                     "Q1 character model needs nonempty animation ranges");
+        return false;
+    }
+    qa_string_id model = pose.custom_model ? pose.model : g->player_model;
+    c->pose = pose;
+    if (model != c->model) {
+        c->model = model;
+        c->animation.count = 0;
+        c->attack_animation = false;
+        c->walk_frame = 0;
+        c->locomotion = 0;
+        c->frame = pose.custom_model ? pose.stand.first : pose.axe_pose ? 17 : 12;
+        c->next_animation = g->time;
+    }
+    return true;
+}
+static void animate(qa_q1_game *g, q1_character *c, qa_q1_frame_range range, bool death,
+                    bool attack) {
+    c->animation = range;
+    c->death_animation = death;
+    c->attack_animation = attack;
+    c->animation_frame = 0;
+    c->frame = range.first;
+    c->next_animation = g->time + 0.1;
+}
+bool qa_q1_character_attach(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+    if (!g) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 character game missing");
+        return false;
+    }
+    q1_player *player = q1_player_allocate(g, actor, error);
+    if (!player)
+        return false;
+    if (player->character)
+        return true;
+    player->character = true;
+    player->character_state = (q1_character){.life = QA_Q1_ALIVE,
+                                             .frame = 12,
+                                             .view_offset = {0, 0, 22},
+                                             .air_until = g->time + 12,
+                                             .drown_damage = 2};
+    return refresh_pose(g, player, error);
+}
+bool qa_q1_character_read(const qa_q1_game *g, qa_actor_id actor, qa_q1_character_view *out) {
+    if (!g || !out || actor.slot >= g->capacity ||
+        !qa_actors_get(qa_session_actors(g->services.session), actor))
+        return false;
+    const q1_player *player = g->players[actor.slot];
+    if (!player || !player->character || !qa_actor_id_equal(player->id, actor))
+        return false;
+    const q1_character *c = &player->character_state;
+    bool alive = c->life == QA_Q1_ALIVE;
+    qa_string_id model = alive && c->input.invisible ? g->eyes_model : c->model;
+    bool head = c->model == g->player_head_model;
+    *out = (qa_q1_character_view){.model = model,
+                                  .frame = alive && c->input.invisible     ? 0
+                                           : alive && c->pose.source_frame ? c->pose.frame
+                                                                           : c->frame,
+                                  .view_offset = c->view_offset,
+                                  .life = c->life,
+                                  .solid = alive ? QA_PHYSICS_BOX : QA_PHYSICS_NOT_SOLID,
+                                  .motion = alive  ? QA_PHYSICS_STEP
+                                            : head ? QA_PHYSICS_BOUNCE
+                                                   : QA_PHYSICS_TOSS,
+                                  .weapon_visible = alive};
+    return true;
+}
+bool qa_q1_character_frame(qa_q1_game *g, qa_actor_id actor, const qa_q1_character_input *input,
+                           qa_error *error) {
+    q1_player *player = character(g, actor, error);
+    if (!player || !input || input->water_level > 3)
+        return false;
+    q1_character *c = &player->character_state;
+    c->input = *input;
+    if (!refresh_pose(g, player, error))
+        return false;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, actor, &body, error))
+        return false;
+    bool source_attack = c->life == QA_Q1_ALIVE && c->pose.source_frame;
+    if (source_attack) {
+        c->animation.count = 0;
+        c->attack_animation = false;
+    }
+    bool grounded = body.ground.registry != 0;
+    qa_builtin_actor_traits traits;
+    if (g->services.actor_traits && g->services.actor_traits(g->services.context, actor, &traits))
+        grounded = traits.grounded;
+    if ((c->life == QA_Q1_DEAD || c->life == QA_Q1_RESPAWNABLE) && grounded) {
+        float speed = qa_vec_length(body.velocity), next = fmaxf(0, speed - 20);
+        body.velocity = speed > 0 ? qa_vec_scale(body.velocity, next / speed) : qa_v3(0, 0, 0);
+        if (!qa_world_body_write(g->services.world, actor, &body, error))
+            return false;
+    }
+    if (g->time >= c->next_animation && !source_attack) {
+        c->next_animation = g->time + 0.1;
+        if (c->animation.count) {
+            ++c->animation_frame;
+            if (c->animation_frame < c->animation.count)
+                c->frame = c->animation.first + c->animation_frame;
+            else {
+                c->animation.count = 0;
+                c->attack_animation = false;
+                if (c->death_animation)
+                    c->life = QA_Q1_DEAD;
+            }
+        }
+        if (!c->animation.count && c->life == QA_Q1_ALIVE) {
+            bool running = body.velocity.x != 0 || body.velocity.y != 0;
+            uint8_t locomotion = running ? 2 : 1;
+            if (c->locomotion != locomotion)
+                c->walk_frame = 0;
+            c->locomotion = locomotion;
+            qa_q1_frame_range range = c->pose.custom_model
+                                          ? running ? c->pose.run : c->pose.stand
+                                          : (qa_q1_frame_range){running ? c->pose.axe_pose ? 0 : 6
+                                                                : c->pose.axe_pose ? 17
+                                                                                   : 12,
+                                                                running            ? 6
+                                                                : c->pose.axe_pose ? 12
+                                                                                   : 5};
+            c->walk_frame %= range.count;
+            c->frame = range.first + c->walk_frame++;
+        }
+    }
+    bool pressed = input->attack || input->jump || input->use;
+    if (c->life == QA_Q1_DEAD && !pressed)
+        c->life = QA_Q1_RESPAWNABLE;
+    else if (c->life == QA_Q1_RESPAWNABLE && pressed) {
+        if (!g->host.request_respawn) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+                         "Q1 character respawn dispatcher missing");
+            return false;
+        }
+        return g->host.request_respawn(g->host.context, actor, error);
+    }
+    return true;
+}
+bool qa_q1_character_attack_frame(qa_q1_game *g, qa_actor_id actor, qa_q1_character_attack attack,
+                                  unsigned variant, qa_error *error) {
+    q1_player *player = character(g, actor, error);
+    if (!player)
+        return false;
+    q1_character *c = &player->character_state;
+    if (c->life != QA_Q1_ALIVE)
+        return true;
+    if (attack > QA_Q1_CHARACTER_LIGHTNING || (attack == QA_Q1_CHARACTER_AXE && variant > 3)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, attack, "invalid Q1 character attack animation");
+        return false;
+    }
+    if (!refresh_pose(g, player, error))
+        return false;
+    if (c->pose.custom_model || c->pose.source_frame) {
+        c->animation.count = 0;
+        c->attack_animation = false;
+        return true;
+    }
+    qa_q1_frame_range range =
+        attack == QA_Q1_CHARACTER_AXE
+            ? (qa_q1_frame_range){(uint16_t)(119 + variant * 6), 6}
+            : (qa_q1_frame_range){
+                  attack == QA_Q1_CHARACTER_SHOTGUN  ? 113
+                  : attack == QA_Q1_CHARACTER_ROCKET ? 107
+                  : attack == QA_Q1_CHARACTER_NAIL   ? 103
+                                                     : 105,
+                  attack == QA_Q1_CHARACTER_NAIL || attack == QA_Q1_CHARACTER_LIGHTNING ? 2 : 6};
+    animate(g, c, range, false, true);
+    return true;
+}
+static bool cause_named(qa_q1_game *g, qa_actor_id actor, const char *name) {
+    qa_string_id classname = 0;
+    q1_actor *entity = q1_entity(g, actor);
+    if (entity)
+        classname = entity->classname;
+    else if (g->services.actor_traits) {
+        qa_builtin_actor_traits traits;
+        if (g->services.actor_traits(g->services.context, actor, &traits))
+            classname = traits.classname;
+    }
+    qa_bytes text = qa_strings_text(qa_session_strings(g->services.session), classname);
+    return text.size == strlen(name) && !memcmp(text.data, name, text.size);
+}
+static bool bubbles(qa_q1_game *g, qa_actor_id actor, unsigned count, qa_error *error) {
+    q1_actor *timer;
+    if (!q1_create(g, "death_bubbles", Q1_TIMER, actor, &timer, error))
+        return false;
+    timer->count = (float)count;
+    return q1_schedule(g, timer, 0.1, Q1_THINK_DEATH_BUBBLES, error);
+}
+static bool pain(qa_q1_game *g, q1_player *player, const qa_damage_outcome *outcome,
+                 qa_error *error) {
+    q1_character *c = &player->character_state;
+    qa_actor_id actor = player->id;
+    if (c->life != QA_Q1_ALIVE || c->input.invisible || c->attack_animation || c->pose.source_frame)
+        return true;
+    if (!refresh_pose(g, player, error))
+        return false;
+    const char *sound = NULL;
+    char buffer[64];
+    float attenuation = 1;
+    if (cause_named(g, outcome->request.attack.attacker, "teledeath")) {
+        sound = "player/teledth1.wav";
+        attenuation = 0;
+    } else if (c->input.water_level == 3 && c->input.water_type == -3) {
+        if (!bubbles(g, actor, 1, error))
+            return false;
+        sound = q1_random(g) > 0.5f ? "player/drown1.wav" : "player/drown2.wav";
+    } else if (c->input.water_type == -4 || c->input.water_type == -5)
+        sound = q1_random(g) > 0.5f ? "player/lburn1.wav" : "player/lburn2.wav";
+    else if (c->pain_until <= g->time) {
+        c->pain_until = g->time + 0.5;
+        if (outcome->request.attack.weapon == g->weapons[QA_Q1_AXE])
+            sound = "player/axhit1.wav";
+        else {
+            snprintf(buffer, sizeof(buffer), "player/pain%d.wav",
+                     (int)floorf(q1_random(g) * 5 + 1.5f));
+            sound = buffer;
+        }
+    }
+    if (sound && !q1_sound(g, actor, sound, 2, attenuation, error))
+        return false;
+    if (!q1_alive(g, actor))
+        return true;
+    qa_q1_frame_range range =
+        c->pose.custom_model ? c->pose.pain : (qa_q1_frame_range){c->pose.axe_pose ? 29 : 35, 6};
+    animate(g, c, range, false, false);
+    return true;
+}
+static bool die(qa_q1_game *g, q1_player *player, const qa_damage_outcome *outcome,
+                qa_error *error) {
+    q1_character *c = &player->character_state;
+    qa_actor_id actor = player->id;
+    if (c->life != QA_Q1_ALIVE)
+        return true;
+    if (!refresh_pose(g, player, error))
+        return false;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, actor, &body, error))
+        return false;
+    qa_vec3 gib_origin = body.origin;
+    c->life = QA_Q1_DYING;
+    c->view_offset = qa_v3(0, 0, -8);
+    if (q1_health(g, actor) < -99 && !qa_combat_set_health(g->services.combat, actor, -99, error))
+        return false;
+    qa_combat_state combat;
+    if (!qa_combat_read_traits(g->services.combat, actor, &combat, error))
+        return false;
+    combat.can_take_damage = false;
+    if (!qa_combat_set_traits(g->services.combat, actor, &combat, error))
+        return false;
+    for (unsigned i = 0; i < QA_Q1_POWER_COUNT; ++i)
+        if (player->power_expires[i] && !qa_q1_player_power(g, actor, (qa_q1_power)i, 0, error))
+            return false;
+    if (!q1_alive(g, actor))
+        return true;
+    if (g->options.deathmatch || g->options.coop) {
+        if (!g->host.drop_inventory) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+                         "Q1 death inventory dispatcher missing");
+            return false;
+        }
+        if (!g->host.drop_inventory(g->host.context, actor, error))
+            return false;
+        if (!q1_alive(g, actor))
+            return true;
+    }
+    if (body.velocity.z < 10)
+        body.velocity.z += q1_random(g) * 300;
+    body.ground = (qa_actor_id){0};
+    if (!qa_world_body_write(g->services.world, actor, &body, error))
+        return false;
+    float health = q1_health(g, actor);
+    if (health < -40) {
+        c->model = g->player_head_model;
+        c->frame = 0;
+        c->animation.count = 0;
+        c->life = QA_Q1_DEAD;
+        c->view_offset = qa_v3(0, 0, 8);
+        float scale = health > -50 ? 0.7f : health > -200 ? 2 : 10;
+        float x = 100 * (q1_random(g) * 2 - 1), y = 100 * (q1_random(g) * 2 - 1),
+              z = 200 + 100 * q1_random(g);
+        body.origin = qa_vec_add(gib_origin, qa_v3(0, 0, -24));
+        body.velocity = qa_vec_scale(qa_v3(x, y, z), scale);
+        body.bounds = (qa_bounds){{-16, -16, 0}, {16, 16, 56}};
+        if (!qa_world_body_write(g->services.world, actor, &body, error))
+            return false;
+        static const char *models[] = {"gib1", "gib2", "gib3"};
+        for (unsigned i = 0; i < 3; ++i)
+            if (!q1_gib_at(g, actor, gib_origin, health, models[i], error))
+                return false;
+        bool teledeath = cause_named(g, outcome->request.attack.attacker, "teledeath") ||
+                         cause_named(g, outcome->request.attack.attacker, "teledeath2");
+        return q1_sound(g, actor,
+                        teledeath             ? "player/teledth1.wav"
+                        : q1_random(g) < 0.5f ? "player/gib.wav"
+                                              : "player/udeath.wav",
+                        2, 0, error);
+    }
+    if (c->input.water_level == 3) {
+        if (!bubbles(g, actor, 20, error) ||
+            !q1_sound(g, actor, "player/h2odeath.wav", 2, 0, error))
+            return false;
+    } else {
+        char sound[64];
+        snprintf(sound, sizeof(sound), "player/death%d.wav", (int)floorf(q1_random(g) * 4 + 1.5f));
+        if (!q1_sound(g, actor, sound, 2, 0, error))
+            return false;
+    }
+    if (!q1_alive(g, actor))
+        return true;
+    if (!qa_world_body_read(g->services.world, actor, &body, error))
+        return false;
+    body.angles.x = body.angles.z = 0;
+    if (!qa_world_body_write(g->services.world, actor, &body, error))
+        return false;
+    qa_q1_frame_range range;
+    if (c->pose.custom_model)
+        range = c->pose.death;
+    else if (c->pose.axe_pose)
+        range = (qa_q1_frame_range){41, 9};
+    else {
+        static const qa_q1_frame_range deaths[] = {{50, 11}, {61, 9}, {70, 15},
+                                                   {85, 9},  {94, 9}, {94, 9}};
+        unsigned choice = (unsigned)(q1_random(g) * 6);
+        if (choice >= 6) {
+            qa_error_set(error, QA_ERROR_FORMAT, choice,
+                         "Q1 death animation random outside authored range");
+            return false;
+        }
+        range = deaths[choice];
+    }
+    animate(g, c, range, true, false);
+    return true;
+}
+bool qa_q1_character_reaction(qa_q1_game *g, const qa_damage_outcome *outcome, qa_error *error) {
+    q1_player *player = q1_player_get(g, outcome->request.target);
+    if (!player || !player->character)
+        return true;
+    if (outcome->result.reaction == QA_REACTION_DEATH)
+        return die(g, player, outcome, error);
+    if (outcome->result.reaction == QA_REACTION_PAIN)
+        return pain(g, player, outcome, error);
+    return true;
+}
+bool qa_q1_character_respawn(qa_q1_game *g, qa_actor_id actor, const float *health,
+                             qa_error *error) {
+    q1_player *player = character(g, actor, error);
+    if (!player)
+        return false;
+    player->character_state = (q1_character){.life = QA_Q1_ALIVE,
+                                             .frame = 12,
+                                             .view_offset = {0, 0, 22},
+                                             .air_until = g->time + 12,
+                                             .drown_damage = 2};
+    if (!refresh_pose(g, player, error))
+        return false;
+    qa_combat_state combat;
+    if (!qa_combat_read_traits(g->services.combat, actor, &combat, error))
+        return false;
+    combat.can_take_damage = true;
+    return qa_combat_set_traits(g->services.combat, actor, &combat, error) &&
+           (!health || qa_combat_set_health(g->services.combat, actor, *health, error));
+}
+bool qa_q1_character_suicide_pose(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+    q1_player *player = character(g, actor, error);
+    if (!player)
+        return false;
+    q1_character *c = &player->character_state;
+    c->frame = 60;
+    c->life = QA_Q1_DEAD;
+    c->animation.count = 0;
+    c->attack_animation = false;
+    c->next_animation = INFINITY;
+    return true;
+}
+bool qa_q1_character_post_move(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+    q1_player *player = character(g, actor, error);
+    if (!player)
+        return false;
+    q1_character *c = &player->character_state;
+    if (c->life != QA_Q1_ALIVE)
+        return true;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, actor, &body, error))
+        return false;
+    bool grounded = body.ground.registry != 0;
+    qa_builtin_actor_traits traits;
+    if (g->services.actor_traits && g->services.actor_traits(g->services.context, actor, &traits))
+        grounded = traits.grounded;
+    if (c->fall_speed < -300 && grounded && q1_health(g, actor) > 0) {
+        if (c->input.water_type == -3) {
+            if (!q1_sound(g, actor, "player/h2ojump.wav", 4, 1, error))
+                return false;
+        } else if (c->fall_speed < -650 && (!g->host.fall_damage_allowed ||
+                                            g->host.fall_damage_allowed(g->host.context, actor))) {
+            if (!q1_environment_damage(g, actor, 5, QA_HAZARD_FALL, error) ||
+                !q1_sound(g, actor, "player/land2.wav", 2, 1, error))
+                return false;
+        } else if (!q1_sound(g, actor, "player/land.wav", 2, 1, error))
+            return false;
+        c->fall_speed = 0;
+    }
+    if (!grounded)
+        c->fall_speed = body.velocity.z;
+    return true;
+}
+bool qa_q1_character_environment(qa_q1_game *g, qa_actor_id actor, bool suit, bool noclip,
+                                 qa_error *error) {
+    q1_player *player = character(g, actor, error);
+    if (!player)
+        return false;
+    q1_character *c = &player->character_state;
+    if (c->life != QA_Q1_ALIVE || noclip)
+        return true;
+    bool lava_suit = player->power_expires[QA_Q1_LAVA_SUIT] > g->time;
+    if (c->input.water_level != 3) {
+        const char *sound = c->air_until < g->time       ? "player/gasp2.wav"
+                            : c->air_until < g->time + 9 ? "player/gasp1.wav"
+                                                         : NULL;
+        if (sound && !q1_sound(g, actor, sound, 2, 1, error))
+            return false;
+        c->air_until = g->time + 12;
+        c->drown_damage = 2;
+    } else if (suit || lava_suit)
+        c->air_until = g->time + 12;
+    else if (c->air_until < g->time && c->pain_until < g->time) {
+        c->drown_damage += 2;
+        if (c->drown_damage > 15)
+            c->drown_damage = 10;
+        if (!q1_environment_damage(g, actor, c->drown_damage, QA_HAZARD_DROWN, error))
+            return false;
+        c->pain_until = g->time + 1;
+    }
+    if (!q1_alive(g, actor))
+        return true;
+    if (!c->input.water_level) {
+        if (c->in_water && !q1_sound(g, actor, "misc/outwater.wav", 4, 1, error))
+            return false;
+        c->in_water = false;
+        return true;
+    }
+    if (c->hazard_at < g->time && c->input.water_type == -5 && !lava_suit) {
+        c->hazard_at = g->time + (suit ? 1 : 0.2);
+        if (!q1_environment_damage(g, actor, 10.0f * c->input.water_level, QA_HAZARD_LAVA, error))
+            return false;
+    } else if (c->hazard_at < g->time && c->input.water_type == -4 && !suit && !lava_suit) {
+        c->hazard_at = g->time + 1;
+        if (!q1_environment_damage(g, actor, 4.0f * c->input.water_level, QA_HAZARD_SLIME, error))
+            return false;
+    }
+    if (!q1_alive(g, actor))
+        return true;
+    if (!c->in_water) {
+        const char *sound = c->input.water_type == -5   ? "player/inlava.wav"
+                            : c->input.water_type == -4 ? "player/slimbrn2.wav"
+                                                        : "player/inh2o.wav";
+        if (!q1_sound(g, actor, sound, 4, 1, error))
+            return false;
+        c->in_water = true;
+        c->hazard_at = 0;
+    }
+    return true;
+}
+
+bool q1_spawn_bubble(qa_q1_game *g, qa_vec3 origin, qa_vec3 velocity, bool split, qa_error *error) {
+    q1_actor *bubble;
+    if (!q1_create(g, "bubble", Q1_TIMER, (qa_actor_id){0}, &bubble, error))
+        return false;
+    bubble->physics.motion = QA_PHYSICS_NOCLIP;
+    bubble->physics.solid = QA_PHYSICS_NOT_SOLID;
+    bubble->frame = split ? 1 : 0;
+    bubble->count = split ? 10 : 0;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, bubble->id, &body, error))
+        return false;
+    body.origin = origin;
+    body.velocity = velocity;
+    body.bounds = (qa_bounds){{-8, -8, -8}, {8, 8, 8}};
+    return q1_model(g, bubble, "progs/s_bubble.spr", error) &&
+           qa_world_body_write(g->services.world, bubble->id, &body, error) &&
+           q1_link(g, bubble, error) && q1_schedule(g, bubble, 0.5, Q1_THINK_BUBBLE, error);
+}
+bool q1_character_bubbles(qa_q1_game *g, q1_actor *timer, qa_error *error) {
+    q1_player *player = q1_player_get(g, timer->owner);
+    if (!player)
+        return q1_remove(g, timer, error);
+    uint8_t water_level =
+        player->character ? player->character_state.input.water_level : player->input.water_level;
+    if (water_level != 3)
+        return true;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, timer->owner, &body, error))
+        return false;
+    if (!q1_spawn_bubble(g, qa_vec_add(body.origin, qa_v3(0, 0, 24)), qa_v3(0, 0, 15), false,
+                         error))
+        return false;
+    timer->count -= 1;
+    return timer->count <= 0 ? q1_remove(g, timer, error)
+                             : q1_schedule(g, timer, 0.1, Q1_THINK_DEATH_BUBBLES, error);
+}
+bool q1_bubble_think(qa_q1_game *g, q1_actor *bubble, qa_error *error) {
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, bubble->id, &body, error))
+        return false;
+    bubble->count += 1;
+    if (bubble->count == 4) {
+        if (!q1_spawn_bubble(g, body.origin, body.velocity, true, error))
+            return false;
+        bubble->frame = 1;
+        bubble->count = 10;
+    }
+    qa_point_query query = {.point = body.origin,
+                            .policy = qa_collision_default_policy(QA_COLLISION_Q1)};
+    qa_point_contents contents;
+    if (!qa_world_point_contents(g->services.world, &query, &contents, error))
+        return false;
+    if (bubble->count >= 20 ||
+        (contents.contents != -3 && contents.contents != -4 && contents.contents != -5))
+        return q1_remove(g, bubble, error);
+    float x = body.velocity.x - 10 + q1_random(g) * 20,
+          y = body.velocity.y - 10 + q1_random(g) * 20,
+          z = body.velocity.z + 10 + q1_random(g) * 10;
+    body.velocity = qa_v3(x > 10    ? 5
+                          : x < -10 ? -5
+                                    : x,
+                          y > 10    ? 5
+                          : y < -10 ? -5
+                                    : y,
+                          z > 30   ? 25
+                          : z < 10 ? 15
+                                   : z);
+    return qa_world_body_write(g->services.world, bubble->id, &body, error) &&
+           q1_schedule(g, bubble, 0.5, Q1_THINK_BUBBLE, error);
+}
