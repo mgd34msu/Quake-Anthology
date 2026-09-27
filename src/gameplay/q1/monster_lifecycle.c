@@ -38,6 +38,8 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
         return false;
     if (!q1_alive(g, entity->id))
         return true;
+    if (m->addon.heavy != Q1_HEAVY_NONE)
+        return q1_heavy_pain(g, entity, attacker, damage, error);
     if (species == QA_Q1_GREMLIN)
         return q1_gremlin_pain(g, entity, attacker, error);
     if (species >= QA_Q1_GREMLIN)
@@ -337,6 +339,8 @@ bool q1_monster_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_er
         return q1_infected_die(g, entity, error);
     if (m->addon.demodog)
         return q1_demodog_die(g, entity, error);
+    if (m->addon.heavy != Q1_HEAVY_NONE)
+        return q1_heavy_die(g, entity, error);
     if (spec->species == QA_Q1_GREMLIN)
         return q1_gremlin_die(g, entity, attacker, error);
     if (spec->species >= QA_Q1_GREMLIN)
@@ -430,6 +434,8 @@ bool q1_monster_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_er
 
 bool q1_monster_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {
     q1_monster *m = &entity->state.monster;
+    if (m->species->species == QA_Q1_LAVA_MAN && g->options.program == QA_Q1_MG3)
+        return q1_lavaman_use(g, entity, activator, error);
     if (m->addon.enabled) {
         if (m->addon.waiting)
             return q1_monster_start(g, entity, error);

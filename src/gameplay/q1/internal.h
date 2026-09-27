@@ -65,7 +65,8 @@ typedef enum q1_think_kind {
     Q1_THINK_MG3_ITEM_START,
     Q1_THINK_DEMODOG_EXPLODE,
     Q1_THINK_HORDE_HEAD_WAIT,
-    Q1_THINK_HORDE_HEAD_STEP
+    Q1_THINK_HORDE_HEAD_STEP,
+    Q1_THINK_HEAVY_SOURCE_DIE
 } q1_think_kind;
 typedef enum q1_projectile_kind {
     Q1_SPIKE,
@@ -92,8 +93,15 @@ typedef enum q1_projectile_kind {
     Q1_LAVAMAN_BALL,
     Q1_DRAGON_FIREBALL,
     Q1_MG3_OGRE_ROCKET,
-    Q1_DEMODOG_GRENADE
+    Q1_DEMODOG_GRENADE,
+    Q1_HEAVY_SPIKE,
+    Q1_MG3_LAVAMAN_BALL
 } q1_projectile_kind;
+typedef enum q1_heavy_kind {
+    Q1_HEAVY_NONE,
+    Q1_HEAVY_SUPER_SHAMBLER,
+    Q1_HEAVY_RUNE_KNIGHT
+} q1_heavy_kind;
 typedef enum q1_ai {
     Q1_AI_STAND,
     Q1_AI_WALK,
@@ -151,11 +159,17 @@ typedef struct q1_monster {
         bool enabled, waiting, path_wait, started, rocket_ogre, allow_path;
         bool infected, transformed, risen, infection_count_pending, demodog;
         uint8_t infected_kind, corpse;
+        q1_heavy_kind heavy;
         uint8_t projectiles, projectile_max, combat_style;
         double damage_at;
         qa_actor_id move_target;
     } addon;
     union {
+        struct {
+            qa_actor_id child;
+            uint32_t lightning_count;
+            int32_t nails;
+        } heavy;
         struct {
             int16_t pitch;
         } eel;
@@ -338,6 +352,7 @@ struct qa_q1_game {
     q1_actor_snapshot *snapshots;
     bool run_straight;
     bool component_admitted;
+    uint8_t rune_knight_melee;
 };
 
 extern const q1_frame q1_frames[];
@@ -384,6 +399,14 @@ bool q1_demodog_die(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_demodog_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_demodog_grenade_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_demodog_explode(qa_q1_game *, q1_actor *, qa_actor_id ignore, qa_error *);
+bool q1_heavy_melee(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_heavy_check_attack(qa_q1_game *, q1_actor *, bool *, qa_error *);
+bool q1_heavy_action(qa_q1_game *, q1_actor *, q1_frame_action, qa_error *);
+bool q1_heavy_pain(qa_q1_game *, q1_actor *, qa_actor_id, float, qa_error *);
+bool q1_heavy_die(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_heavy_spike_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+uint16_t q1_mg3_lavaman_frame(uint16_t);
+bool q1_lavaman_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_horde_head_think(qa_q1_game *, q1_actor *, q1_think_kind, qa_error *);
 bool q1_horde_axe_delay(qa_q1_game *, q1_player *, float *interval, qa_error *);
 const q1_species *q1_species_find(const char *);
@@ -448,9 +471,14 @@ bool q1_missile_velocity(qa_q1_game *, q1_actor *, qa_vec3, qa_error *);
 bool q1_grenade_velocity(qa_q1_game *, q1_player *, qa_vec3 *, qa_error *);
 bool q1_bullets(qa_q1_game *, qa_actor_id, qa_vec3, qa_vec3, unsigned, float, float, qa_q1_weapon,
                 qa_error *);
+enum {
+    Q1_LIGHTNING_DAMAGE_FIRST = 1u,
+    Q1_LIGHTNING_REMEMBER_ALL = 2u,
+    Q1_LIGHTNING_PARTICLES = 4u
+};
 bool q1_lightning_rays(qa_q1_game *, qa_actor_id attacker, qa_actor_id inflictor, qa_vec3 start,
-                       qa_vec3 end, float damage, float blood, int32_t color, qa_q1_weapon,
-                       const char *cause, qa_error *);
+                       qa_vec3 end, float damage, float blood, int32_t color, qa_vec3 direction,
+                       uint32_t flags, qa_q1_weapon, const char *cause, qa_error *);
 bool q1_axe_strike(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_projectile_spawn(qa_q1_game *, qa_actor_id, qa_q1_weapon, q1_projectile_kind, qa_vec3,
                          qa_vec3, q1_actor **, qa_error *);

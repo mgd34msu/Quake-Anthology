@@ -94,15 +94,23 @@ def main():
                donor / "missionpacks/monsters/tables/morph.ts",
                donor / "missionpacks/monsters/tables/dragon.ts",
                donor / "missionpacks/monsters/tables/hiparma.ts",
-               donor / "missionpacks/monsters/tables/hipgrem.ts"]
+               donor / "missionpacks/monsters/tables/hipgrem.ts",
+               donor / "addons/monsters/heavy/tables/mg3_super_shambler.ts",
+               donor / "addons/monsters/heavy/tables/mg3_rknight.ts",
+               donor / "addons/monsters/heavy/tables/mg3_lavaman.ts"]
     rows = []
     for source in sources:
         for line in source.read_text().splitlines():
             match = re.fullmatch(r"\s*(\[\"[^\"]+\",\s*\{.*\}\]),?\s*", line)
             if match:
-                rows.append(json.loads(match.group(1)))
+                row = json.loads(match.group(1))
+                if source.name == "mg3_lavaman.ts":
+                    row[0] = "mg3_" + row[0]
+                    row[1]["next"] = "mg3_" + row[1]["next"]
+                rows.append(row)
     rows.extend(addon_rows())
     virtual_actions = ["sword_pause", "mummy_wake", "mummy_missile", "wrath_attack", "overlord_missile", "morph_wake", "dragon_activate", "dragon_boom2", "armagon_missile_attack", "Gremlin_MeleeAttack", "Gremlin_MissileAttack", "gremlin_gib"]
+    virtual_actions.extend(["supsham_melee", "supsham_missile", "rknight_magic", "rknight_run", "rknight_melee"])
     zombie_hang = next(frame["frame"] for name, frame in rows if name == "zombie_paine1")
     rows.append(["zombie_hang1", {"frame": zombie_hang, "next": "zombie_hang1", "operations": []}])
     names = {name for name, _ in rows}
@@ -163,6 +171,11 @@ def main():
     pairs = [(indices[name[9:]], indices[name]) for name in indices
              if name.startswith("infected_army_") and name[9:] in indices]
     output.extend(["uint16_t q1_infected_frame(uint16_t frame) {", "    switch (frame) {"])
+    output.extend(f"    case {source}: return {target};" for source, target in pairs)
+    output.extend(["    default: return frame;", "    }", "}", ""])
+    pairs = [(indices[name[4:]], indices[name]) for name in indices
+             if name.startswith("mg3_lavaman_") and name[4:] in indices]
+    output.extend(["uint16_t q1_mg3_lavaman_frame(uint16_t frame) {", "    switch (frame) {"])
     output.extend(f"    case {source}: return {target};" for source, target in pairs)
     output.extend(["    default: return frame;", "    }", "}", ""])
     destination.write_text("\n".join(output))

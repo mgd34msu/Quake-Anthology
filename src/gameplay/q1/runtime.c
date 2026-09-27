@@ -538,6 +538,8 @@ bool q1_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     case Q1_THINK_HORDE_HEAD_WAIT:
     case Q1_THINK_HORDE_HEAD_STEP:
         return q1_horde_head_think(g, entity, kind, error);
+    case Q1_THINK_HEAVY_SOURCE_DIE:
+        return q1_heavy_die(g, entity, error);
     case Q1_THINK_VORE:
     case Q1_THINK_SPRITE:
     case Q1_THINK_WIZARD:
@@ -820,7 +822,8 @@ bool qa_q1_game_use_from(qa_q1_game *g, qa_actor_id actor, qa_actor_id other, qa
         return q1_dragon_use(g, entity, error);
     if (entity && entity->kind == Q1_MONSTER &&
         entity->state.monster.species->species == QA_Q1_LAVA_MAN)
-        return q1_lavaman_awake(g, entity, activator, error);
+        return g->options.program == QA_Q1_MG3 ? q1_lavaman_use(g, entity, activator, error)
+                                               : q1_lavaman_awake(g, entity, activator, error);
     if (entity && entity->kind == Q1_MONSTER &&
         entity->state.monster.species->species == QA_Q1_MORPH) {
         entity->state.monster.next_frame = q1_frame_index("morph_wake");

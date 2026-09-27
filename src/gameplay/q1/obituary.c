@@ -1,5 +1,4 @@
 #include "internal.h"
-#include <stdio.h>
 
 typedef struct obituary_text {
     const char *key, *classic;
@@ -119,19 +118,6 @@ static bool named(qa_q1_game *g, qa_string_id id, const char *name) {
 static bool actor_named(qa_q1_game *g, const qa_q1_obituary_actor *actor, const char *name) {
     return actor && named(g, actor->classname, name);
 }
-static size_t placeholder(const char *format, size_t *index) {
-    if (format[0] != '{' || format[1] < '0' || format[1] > '9')
-        return 0;
-    size_t i = 1, number = 0;
-    while (format[i] >= '0' && format[i] <= '9') {
-        unsigned digit = (unsigned)(format[i++] - '0');
-        number = number <= (SIZE_MAX - digit) / 10 ? number * 10 + digit : SIZE_MAX;
-    }
-    if (format[i] != '}')
-        return 0;
-    *index = number;
-    return i + 1;
-}
 static bool message(qa_q1_game *g, qa_q1_obituary_result *out, const char *key,
                     const char *classic_override, qa_string_id first, qa_string_id second,
                     size_t count, qa_error *error) {
@@ -156,44 +142,12 @@ static bool message(qa_q1_game *g, qa_q1_obituary_result *out, const char *key,
         if (!format)
             format = key;
     }
-    const char *arguments[] = {text(g, first), text(g, second)};
-    size_t length = 0;
-    for (size_t i = 0; format[i];) {
-        size_t size = 1, index = 0, span = placeholder(format + i, &index);
-        if (span) {
-            size = index < count ? strlen(arguments[index]) : 0;
-            i += span;
-        } else
-            ++i;
-        if (SIZE_MAX - length < size) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "Q1 obituary text too large");
-            return false;
-        }
-        length += size;
-    }
-    char local[512];
-    char *buffer = length <= sizeof(local) ? local : malloc(length);
-    if (!buffer) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "Q1 obituary text allocation");
+    if (!qa_builtin_resource(&g->services, format, &out->text, error))
         return false;
-    }
-    size_t written = 0;
-    for (size_t i = 0; format[i];) {
-        size_t index = 0, span = placeholder(format + i, &index);
-        if (span) {
-            const char *arg = index < count ? arguments[index] : "";
-            size_t size = strlen(arg);
-            memcpy(buffer + written, arg, size);
-            written += size;
-            i += span;
-        } else
-            buffer[written++] = format[i++];
-    }
-    bool ok = qa_strings_intern(qa_session_strings(g->services.session),
-                                (qa_bytes){(const uint8_t *)buffer, written}, &out->text, error);
-    if (buffer != local)
-        free(buffer);
-    return ok;
+    out->argument_count = count;
+    out->arguments[0] = (qa_builtin_message_arg){QA_BUILTIN_MESSAGE_STRING, {.text = first}};
+    out->arguments[1] = (qa_builtin_message_arg){QA_BUILTIN_MESSAGE_STRING, {.text = second}};
+    return true;
 }
 
 static bool finish(qa_q1_game *g, qa_q1_obituary_result *out, const char *key, const char *classic,
@@ -495,16 +449,12 @@ bool qa_q1_client_notice_result(qa_q1_game *g, qa_actor_id actor, qa_string_id n
     static const char *const keys[] = {"$qc_entered", "$qc_left_game", "$qc_suicides",
                                        "$qc_exited"};
     qa_q1_obituary_result result = {0};
-    qa_string_id score = 0;
-    if (event == QA_Q1_CLIENT_DISCONNECT) {
-        char number[32];
-        snprintf(number, sizeof(number), "%d", frags);
-        if (!qa_builtin_resource(&g->services, number, &score, error))
-            return false;
-    }
-    if (!message(g, &result, keys[event], NULL, name, score,
-                 event == QA_Q1_CLIENT_DISCONNECT ? 2 : 1, error))
+    if (!message(g, &result, keys[event], NULL, name, 0, event == QA_Q1_CLIENT_DISCONNECT ? 2 : 1,
+                 error))
         return false;
+    if (event == QA_Q1_CLIENT_DISCONNECT)
+        result.arguments[1] =
+            (qa_builtin_message_arg){QA_BUILTIN_MESSAGE_NUMBER, {.number = frags}};
     if (event == QA_Q1_CLIENT_SUICIDE) {
         result.credited_actor = actor;
         result.score_delta = -2;

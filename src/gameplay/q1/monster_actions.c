@@ -106,9 +106,11 @@ static bool lightning(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return true;
     if (!q1_monster_face(g, entity, error) || !state_body(g, entity, &body, error))
         return false;
-    ++entity->state.monster.lightning_count;
     if (!q1_effect(g, QA_BUILTIN_MUZZLE, entity->id, body.origin, 0, 0, error))
         return false;
+    if (!q1_alive(g, entity->id))
+        return true;
+    ++entity->state.monster.lightning_count;
     qa_vec3 origin = qa_vec_add(body.origin, qa_v3(0, 0, 40));
     qa_vec3 direction =
         qa_vec_normalize(qa_vec_sub(qa_vec_add(other.origin, qa_v3(0, 0, 16)), origin));
@@ -126,29 +128,8 @@ static bool lightning(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                               .time_ns = g->time_ns};
     if (!qa_builtin_emit(&g->services, &event, error))
         return false;
-    qa_vec3 delta = qa_vec_sub(wall.end, origin), side = qa_v3(-delta.y * 16, -delta.y * 16, 0);
-    qa_vec3 offsets[3] = {{0}, side, qa_vec_scale(side, -1)};
-    qa_actor_id hits[3];
-    size_t count = 0;
-    for (size_t i = 0; i < 3; ++i) {
-        qa_trace_result trace;
-        if (!q1_trace(g, qa_vec_add(origin, offsets[i]), qa_vec_add(wall.end, offsets[i]),
-                      entity->id, true, &trace, error))
-            return false;
-        if (trace.hit != QA_TRACE_HIT_ACTOR || !q1_damageable(g, trace.actor))
-            continue;
-        bool duplicate = false;
-        for (size_t j = 0; j < count; ++j)
-            if (qa_actor_id_equal(hits[j], trace.actor))
-                duplicate = true;
-        if (duplicate)
-            continue;
-        hits[count++] = trace.actor;
-        if (!q1_damage(g, trace.actor, entity->id, entity->id, 10, QA_Q1_WEAPON_COUNT, error) ||
-            !q1_effect(g, QA_BUILTIN_IMPACT, trace.actor, trace.end, 40, 1, error))
-            return false;
-    }
-    return true;
+    return q1_lightning_rays(g, entity->id, entity->id, origin, wall.end, 10, 40, 1, qa_v3(0, 0, 0),
+                             Q1_LIGHTNING_DAMAGE_FIRST, QA_Q1_WEAPON_COUNT, NULL, error);
 }
 static bool knight_shot(qa_q1_game *g, q1_actor *entity, int offset, qa_error *error) {
     qa_body_state body, target;
@@ -254,6 +235,8 @@ static bool boss_missile(qa_q1_game *g, q1_actor *entity, float side, qa_error *
 }
 
 bool q1_monster_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, qa_error *error) {
+    if (entity->state.monster.addon.heavy != Q1_HEAVY_NONE)
+        return q1_heavy_action(g, entity, action, error);
     switch (action) {
     case Q1_ACTION_INFECTED_CORPSE_HOLD:
     case Q1_ACTION_INFECTED_TEST_RISE:

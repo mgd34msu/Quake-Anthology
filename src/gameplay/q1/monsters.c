@@ -110,6 +110,8 @@ bool q1_monster_found(qa_q1_game *g, q1_actor *entity, qa_actor_id target, qa_er
     if (g->host.monster_found && !g->host.monster_found(g->host.context, entity->id, target, error))
         return false;
     const char *sound = monster->species->sight;
+    if (monster->addon.heavy == Q1_HEAVY_RUNE_KNIGHT)
+        sound = q1_random(g) < 0.5f ? "rknight/sight_01.wav" : "rknight/sight_03.wav";
     if (mg3 && monster->species->species == QA_Q1_HELLKNIGHT &&
         entity->physics.solid == QA_PHYSICS_NOT_SOLID && (entity->spawnflags & (65536u | 8388608u)))
         sound = "";
@@ -214,6 +216,8 @@ bool q1_monster_find_target(qa_q1_game *g, q1_actor *entity, bool *out, qa_error
     return true;
 }
 static bool melee_attack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    if (entity->state.monster.addon.heavy != Q1_HEAVY_NONE)
+        return q1_heavy_melee(g, entity, error);
     const char *animation = NULL;
     switch (entity->state.monster.species->species) {
     case QA_Q1_DOG:
@@ -310,6 +314,8 @@ static bool clear_shot(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *err
 }
 static bool try_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *error) {
     q1_monster *m = &entity->state.monster;
+    if (m->addon.heavy != Q1_HEAVY_NONE)
+        return q1_heavy_check_attack(g, entity, out, error);
     const q1_species *spec = m->species;
     *out = false;
     if (spec->species == QA_Q1_GREMLIN) {
@@ -737,6 +743,8 @@ bool q1_monster_frame(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     }
     if (m->addon.infected && !m->addon.transformed && m->species->species == QA_Q1_ARMY)
         m->next_frame = q1_infected_frame(m->next_frame);
+    if (g->options.program == QA_Q1_MG3 && m->species->species == QA_Q1_LAVA_MAN)
+        m->next_frame = q1_mg3_lavaman_frame(m->next_frame);
     const q1_frame *frame = &q1_frames[m->next_frame];
     bool rocket_frame = m->addon.rocket_ogre && q1_rocket_ogre_override(frame->name);
     if (rocket_frame && !strcmp(frame->name, "ogre_stand5") &&
@@ -837,6 +845,10 @@ bool q1_monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec, q
     monster->addon.infected_kind = (uint8_t)spec->species;
     monster->addon.corpse = (uint8_t)corpse;
     monster->addon.demodog = !strcmp(spec->classname, "monster_demodog");
+    monster->addon.heavy =
+        !strcmp(spec->classname, "monster_super_shambler")  ? Q1_HEAVY_SUPER_SHAMBLER
+        : !strcmp(spec->classname, "monster_ranged_knight") ? Q1_HEAVY_RUNE_KNIGHT
+                                                            : Q1_HEAVY_NONE;
     if (infected || monster->addon.demodog) {
         const char *name = monster->addon.demodog            ? "monster_dog"
                            : spec->species == QA_Q1_ARMY     ? "monster_army"
@@ -882,7 +894,14 @@ bool q1_monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec, q
     if (spec->species == QA_Q1_MORPH)
         return q1_morph_spawn(g, entity, error);
     if (spec->species == QA_Q1_LAVA_MAN) {
-        if (entity->spawnflags & 2) {
+        if (g->options.program == QA_Q1_MG3) {
+            monster->addon.enabled = true;
+            entity->spawnflags |= 16384u;
+        }
+        if (g->options.program == QA_Q1_MG3
+                ? qa_strings_text(qa_session_strings(g->services.session), entity->targetname)
+                          .size != 0
+                : (entity->spawnflags & 2) != 0) {
             entity->physics.solid = QA_PHYSICS_NOT_SOLID;
             entity->physics.motion = QA_PHYSICS_STATIONARY;
             entity->model = 0;
@@ -912,6 +931,8 @@ bool q1_monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec, q
                     spec->species == QA_Q1_SHAMBLER
                 ? 3
                 : 1;
+        if (monster->addon.heavy == Q1_HEAVY_RUNE_KNIGHT)
+            monster->addon.combat_style = 1;
         entity->physics.solid = QA_PHYSICS_NOT_SOLID;
         entity->physics.motion = QA_PHYSICS_STATIONARY;
         entity->model = 0;

@@ -141,6 +141,7 @@ static bool plasma_damage(qa_q1_game *g, q1_actor *plasma, qa_vec3 end, qa_error
     if (!qa_world_body_read(g->services.world, plasma->id, &body, error))
         return false;
     return q1_lightning_rays(g, plasma->owner, plasma->id, body.origin, end, 50, 200, 225,
+                             qa_v3(0, 0, 100), Q1_LIGHTNING_REMEMBER_ALL | Q1_LIGHTNING_PARTICLES,
                              QA_Q1_PLASMA, NULL, error);
 }
 static bool plasma_explode(qa_q1_game *g, q1_actor *plasma, qa_actor_id other, qa_error *error) {

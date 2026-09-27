@@ -23,7 +23,9 @@ typedef enum qa_builtin_event_kind {
     QA_BUILTIN_TRAIL,
     QA_BUILTIN_LIGHT,
     QA_BUILTIN_CENTERPRINT,
-    QA_BUILTIN_ACHIEVEMENT
+    QA_BUILTIN_ACHIEVEMENT,
+    QA_BUILTIN_PARTICLES,
+    QA_BUILTIN_EFFECT
 } qa_builtin_event_kind;
 
 typedef enum qa_builtin_message_arg_kind {
@@ -40,7 +42,9 @@ typedef struct qa_builtin_message_arg {
 
 /* Resource and text IDs use the session string table. Events and arguments are
  * synchronous borrows; a queue copies arguments and resolves or retains string
- * storage before returning. */
+ * storage before returning. PARTICLES uses origin, direction, code (palette
+ * color) and count. EFFECT uses family, resource and code for authored effects
+ * without a more specific shared event kind. */
 typedef struct qa_builtin_event {
     qa_builtin_event_kind kind;
     qa_game_family family;

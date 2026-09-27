@@ -213,7 +213,8 @@ bool q1_gremlin_lightning(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return qa_builtin_emit(&g->services, &beam, error) &&
            q1_lightning_rays(g, entity->id, entity->id, start,
                              qa_vec_add(wall.end, qa_vec_scale(direction, 4)), 30, 120, 1,
-                             QA_Q1_LIGHTNING, "electric", error);
+                             qa_v3(0, 0, 0), Q1_LIGHTNING_REMEMBER_ALL, QA_Q1_LIGHTNING, "electric",
+                             error);
 }
 bool q1_gremlin_weapon_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *error) {
     *out = q1_gremlin_has_ammo(entity);

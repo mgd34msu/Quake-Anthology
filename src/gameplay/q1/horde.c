@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_q1_maps.h"
 
 static bool horde_enabled(qa_q1_game *g, bool *enabled, qa_error *error) {
     if (g->host.horde) {

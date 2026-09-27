@@ -326,6 +326,11 @@ bool q1_mission_monster_pain(qa_q1_game *g, q1_actor *entity, float damage, qa_e
                q1_sound(g, entity->id, "wrath/wpain.wav", 2, 1, error);
     }
     case QA_Q1_LAVA_MAN:
+        if (g->options.program == QA_Q1_MG3 && entity->count == 0) {
+            ++entity->count;
+            m->pain_finished = g->time + 2;
+            return q1_monster_play(g, entity, "lavaman_shocka1", error);
+        }
         if (m->pain_finished > g->time || q1_random(g) >= 0.05f)
             return true;
         m->pain_finished = g->time + 2;

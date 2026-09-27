@@ -3,6 +3,10 @@
 #define HUMAN {{-16, -16, -24}, {16, 16, 40}}
 #define LARGE {{-32, -32, -24}, {32, 32, 64}}
 static const q1_species species[] = {
+    {QA_Q1_SHAMBLER, "monster_super_shambler", "progs/shambler_blood.mdl", "h_shams", "",
+     "supsham_stand1", "supsham_walk1", "supsham_run1", "supsham_melee", 2000, -60, LARGE, 0, true},
+    {QA_Q1_HELLKNIGHT, "monster_ranged_knight", "progs/rknight.mdl", "h_hellkn", "",
+     "rknight_stand1", "rknight_walk1", "rknight_run", "rknight_magic", 250, -40, HUMAN, 0, false},
     {QA_Q1_ARMY, "monster_army_infected", "progs/soldier.mdl", "h_guard", "soldier/sight1.wav",
      "infected_army_stand1", "infected_army_walk1", "infected_army_run1", "infected_army_atk1", 30,
      -35, HUMAN, 0, false},

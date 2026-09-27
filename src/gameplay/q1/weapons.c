@@ -487,7 +487,7 @@ static bool lightning(qa_q1_game *g, q1_player *player, qa_error *error) {
         return false;
     qa_vec3 end = qa_vec_add(wall.end, qa_vec_scale(g->forward, 4));
     return q1_lightning_rays(g, player->id, player->id, body.origin, end, 30, 120, 1,
-                             QA_Q1_LIGHTNING, NULL, error);
+                             qa_v3(0, 0, 0), 0, QA_Q1_LIGHTNING, NULL, error);
 }
 
 bool q1_weapon_parameters(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon,

@@ -2510,6 +2510,417 @@ const q1_frame_operation q1_frame_operations[] = {
     {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
     {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
     {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 10.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 9.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 9.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 5.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 6.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 12.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 8.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 3.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 13.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 9.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 7.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 7.0f},
+    {.kind = Q1_FRAME_SOUND,
+     .text = "shambler/sidle.wav",
+     .channel = 2,
+     .attenuation = 2.0f,
+     .chance = 0.8f,
+     .greater = true},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_SUPSHAM_REMOVECHILD},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 20.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 24.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 20.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 20.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 24.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 20.0f},
+    {.kind = Q1_FRAME_SOUND,
+     .text = "shambler/sidle.wav",
+     .channel = 2,
+     .attenuation = 2.0f,
+     .chance = 0.8f,
+     .greater = true},
+    {.kind = Q1_FRAME_SOUND,
+     .text = "shambler/melee1.wav",
+     .channel = 2,
+     .attenuation = 1.0f,
+     .chance = -1.0f,
+     .greater = false},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 2.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 6.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 6.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 5.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 4.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 1.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 0.0f},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_SMASH10},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 5.0f},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_SMASH12},
+    {.kind = Q1_FRAME_SOUND,
+     .text = "shambler/melee2.wav",
+     .channel = 2,
+     .attenuation = 1.0f,
+     .chance = -1.0f,
+     .greater = false},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 5.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 3.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 7.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 3.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 7.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 9.0f},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_SWINGL7},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 4.0f},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_SWINGL9},
+    {.kind = Q1_FRAME_SOUND,
+     .text = "shambler/melee1.wav",
+     .channel = 2,
+     .attenuation = 1.0f,
+     .chance = -1.0f,
+     .greater = false},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 1.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 8.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 14.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 7.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 3.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 6.0f},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_SWINGR7},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 3.0f},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_SWINGR9},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_MAGIC1},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_MAGIC3},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_MAGIC4},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_MAGIC5},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_MAGIC4B},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_MAGIC5},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_MAGIC4},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_MAGIC5},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_SUPSHAM_REMOVECHILD},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_SUPCASTLIGHTNING},
+    {.kind = Q1_FRAME_SOUND,
+     .text = "shambler/sboom.wav",
+     .channel = 1,
+     .attenuation = 1.0f,
+     .chance = -1.0f,
+     .greater = false},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_SUPCASTLIGHTNING},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_SUPCASTLIGHTNING},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_MAGIC1},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_MAGIC_B3},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_MAGIC4},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_SUPER_SHAMBLER_SUPSHAM_MAGIC5},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_SUPSHAM_REMOVECHILD},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_SUPCASTLIGHTNING},
+    {.kind = Q1_FRAME_SOUND,
+     .text = "shambler/sboom.wav",
+     .channel = 1,
+     .attenuation = 1.0f,
+     .chance = -1.0f,
+     .greater = false},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_SUPCASTLIGHTNING},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_SUPCASTLIGHTNING},
+    {.kind = Q1_FRAME_SOLID},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_CLEANUP_ORBS},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_RK_IDLE_SOUND},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 2.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 5.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 5.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 4.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 4.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 2.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 2.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 3.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 3.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 4.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 3.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 4.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 6.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 2.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 2.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 4.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 3.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 3.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 3.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_WALK, .distance = 2.0f},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_RK_IDLE_SOUND},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 2.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 5.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 5.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 4.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 4.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 2.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 2.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 3.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 3.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 4.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 3.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 4.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 6.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 2.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 2.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 4.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 3.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 3.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 3.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 2.0f},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_RK_IDLE_SOUND},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 20.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 25.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 18.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 16.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 14.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 25.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 21.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_RUN, .distance = 13.0f},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_RKNIGHT_PAIN_SOUND},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FORWARD, .distance = 10.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FORWARD, .distance = 8.0f},
+    {.kind = Q1_FRAME_SOLID},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FORWARD, .distance = 7.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FORWARD, .distance = 10.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FORWARD, .distance = 11.0f},
+    {.kind = Q1_FRAME_SOLID},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_RKNIGHT_RKNIGHT_MAGICA8},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_RKNIGHT_RKNIGHT_MAGICA9},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_RKNIGHT_RKNIGHT_MAGICA10},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_RKNIGHT_RKNIGHT_MAGICA11},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_RKNIGHT_RKNIGHT_MAGICA12},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_RKNIGHT_RKNIGHT_MAGICB6},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_RKNIGHT_RKNIGHT_MAGICB7},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_RKNIGHT_RKNIGHT_MAGICB8},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_RKNIGHT_RKNIGHT_MAGICB9},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_RKNIGHT_RKNIGHT_MAGICB10},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_RKNIGHT_RKNIGHT_MAGICB11},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_RKNIGHT_RKNIGHT_MAGICB12},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_RKNIGHT_RKNIGHT_MAGICC6},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_RKNIGHT_RKNIGHT_MAGICC7},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_RKNIGHT_RKNIGHT_MAGICC8},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_RKNIGHT_RKNIGHT_MAGICC9},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_RKNIGHT_RKNIGHT_MAGICC10},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_RKNIGHT_RKNIGHT_MAGICC11},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 9.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 6.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 13.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 4.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 7.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_MELEE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 15.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_MELEE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 8.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_MELEE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 2.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_MELEE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_MELEE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 3.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 1.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 13.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 9.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 11.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 10.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_MELEE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 7.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_MELEE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 12.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_MELEE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 2.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_MELEE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 3.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_MELEE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 2.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_MELEE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_MELEE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_MELEE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 1.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 4.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 5.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 3.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_MELEE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 2.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_MELEE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 2.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_MELEE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 1.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 1.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_MELEE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 3.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_MELEE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 4.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_MELEE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 6.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 7.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_CHARGE, .distance = 3.0f},
+    {.kind = Q1_FRAME_SOUND,
+     .text = "boss1/out1.wav",
+     .channel = 1,
+     .attenuation = 1.0f,
+     .chance = -1.0f,
+     .greater = false},
+    {.kind = Q1_FRAME_SOUND,
+     .text = "boss1/sight1.wav",
+     .channel = 2,
+     .attenuation = 1.0f,
+     .chance = -1.0f,
+     .greater = false},
+    {.kind = Q1_FRAME_SOUND,
+     .text = "boss1/sight1.wav",
+     .channel = 2,
+     .attenuation = 1.0f,
+     .chance = 0.2f,
+     .greater = false},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_STAND},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_STAND},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_STAND},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_STAND},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_STAND},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_STAND},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_STAND},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_STAND},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_WALK},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_RUN},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_MISSILE_1},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_LAVAMAN_MISSILE_2},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_FACE, .distance = 0.0f},
+    {.kind = Q1_FRAME_SOUND,
+     .text = "boss1/pain.wav",
+     .channel = 2,
+     .attenuation = 1.0f,
+     .chance = -1.0f,
+     .greater = false},
+    {.kind = Q1_FRAME_SOUND,
+     .text = "boss1/death.wav",
+     .channel = 2,
+     .attenuation = 1.0f,
+     .chance = -1.0f,
+     .greater = false},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_LAVAMAN_LAVAMAN_DEATH9},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_MG3_LAVAMAN_LAVAMAN_DEATH10},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
+    {.kind = Q1_FRAME_AI, .ai = Q1_AI_STAND, .distance = 0.0f},
     {.kind = Q1_FRAME_SOUND,
      .text = "soldier/idle.wav",
      .channel = 2,
@@ -2668,6 +3079,11 @@ const q1_frame_operation q1_frame_operations[] = {
     {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_GREMLIN_MELEEATTACK},
     {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_GREMLIN_MISSILEATTACK},
     {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_GREMLIN_GIB},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_SUPSHAM_MELEE},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_SUPSHAM_MISSILE},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_RKNIGHT_MAGIC},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_RKNIGHT_RUN},
+    {.kind = Q1_FRAME_ACTION, .action = Q1_ACTION_RKNIGHT_MELEE},
 };
 
 const q1_frame q1_frames[] = {
@@ -5426,226 +5842,632 @@ const q1_frame q1_frames[] = {
     {"gremlin_flip4", 119, 2753, 2163, 0},
     {"gremlin_flip5", 120, 2754, 2163, 0},
     {"gremlin_flip6", 121, 2755, 2163, 1},
-    {"gremlin_flip7", 122, 2968, 2164, 1},
+    {"gremlin_flip7", 122, 3369, 2164, 1},
     {"gremlin_flip8", 123, 2756, 2165, 1},
-    {"infected_army_stand1", 0, 2758, 2166, 1},
-    {"infected_army_stand2", 1, 2759, 2167, 1},
-    {"infected_army_stand3", 2, 2760, 2168, 1},
-    {"infected_army_stand4", 3, 2761, 2169, 1},
-    {"infected_army_stand5", 4, 2762, 2170, 1},
-    {"infected_army_stand6", 5, 2763, 2171, 1},
-    {"infected_army_stand7", 6, 2764, 2172, 1},
-    {"infected_army_stand8", 7, 2757, 2173, 1},
-    {"infected_army_walk1", 90, 2766, 2174, 2},
-    {"infected_army_walk2", 91, 2767, 2176, 1},
-    {"infected_army_walk3", 92, 2768, 2177, 1},
-    {"infected_army_walk4", 93, 2769, 2178, 1},
-    {"infected_army_walk5", 94, 2770, 2179, 1},
-    {"infected_army_walk6", 95, 2771, 2180, 1},
-    {"infected_army_walk7", 96, 2772, 2181, 1},
-    {"infected_army_walk8", 97, 2773, 2182, 1},
-    {"infected_army_walk9", 98, 2774, 2183, 1},
-    {"infected_army_walk10", 99, 2775, 2184, 1},
-    {"infected_army_walk11", 100, 2776, 2185, 1},
-    {"infected_army_walk12", 101, 2777, 2186, 1},
-    {"infected_army_walk13", 102, 2778, 2187, 1},
-    {"infected_army_walk14", 103, 2779, 2188, 1},
-    {"infected_army_walk15", 104, 2780, 2189, 1},
-    {"infected_army_walk16", 105, 2781, 2190, 1},
-    {"infected_army_walk17", 106, 2782, 2191, 1},
-    {"infected_army_walk18", 107, 2783, 2192, 1},
-    {"infected_army_walk19", 108, 2784, 2193, 1},
-    {"infected_army_walk20", 109, 2785, 2194, 1},
-    {"infected_army_walk21", 110, 2786, 2195, 1},
-    {"infected_army_walk22", 111, 2787, 2196, 1},
-    {"infected_army_walk23", 112, 2788, 2197, 1},
-    {"infected_army_walk24", 113, 2765, 2198, 1},
-    {"infected_army_run1", 73, 2790, 2199, 2},
-    {"infected_army_run2", 74, 2791, 2201, 1},
-    {"infected_army_run3", 75, 2792, 2202, 1},
-    {"infected_army_run4", 76, 2793, 2203, 1},
-    {"infected_army_run5", 77, 2794, 2204, 1},
-    {"infected_army_run6", 78, 2795, 2205, 1},
-    {"infected_army_run7", 79, 2796, 2206, 1},
-    {"infected_army_run8", 80, 2789, 2207, 1},
-    {"infected_army_atk1", 81, 2798, 2208, 1},
-    {"infected_army_atk2", 82, 2799, 2209, 1},
-    {"infected_army_atk3", 83, 2800, 2210, 1},
-    {"infected_army_atk4", 84, 2801, 2211, 1},
-    {"infected_army_atk5", 85, 2802, 2212, 2},
-    {"infected_army_atk6", 86, 2803, 2214, 1},
-    {"infected_army_atk7", 87, 2804, 2215, 2},
-    {"infected_army_atk8", 88, 2805, 2217, 1},
-    {"infected_army_atk9", 89, 2789, 2218, 1},
-    {"infected_army_pain1", 40, 2807, 2219, 0},
-    {"infected_army_pain2", 41, 2808, 2219, 0},
-    {"infected_army_pain3", 42, 2809, 2219, 0},
-    {"infected_army_pain4", 43, 2810, 2219, 0},
-    {"infected_army_pain5", 44, 2811, 2219, 0},
-    {"infected_army_pain6", 45, 2789, 2219, 1},
-    {"infected_army_painb1", 46, 2813, 2220, 0},
-    {"infected_army_painb2", 47, 2814, 2220, 1},
-    {"infected_army_painb3", 48, 2815, 2221, 1},
-    {"infected_army_painb4", 49, 2816, 2222, 0},
-    {"infected_army_painb5", 50, 2817, 2222, 0},
-    {"infected_army_painb6", 51, 2818, 2222, 0},
-    {"infected_army_painb7", 52, 2819, 2222, 0},
-    {"infected_army_painb8", 53, 2820, 2222, 0},
-    {"infected_army_painb9", 54, 2821, 2222, 0},
-    {"infected_army_painb10", 55, 2822, 2222, 0},
-    {"infected_army_painb11", 56, 2823, 2222, 0},
-    {"infected_army_painb12", 57, 2824, 2222, 1},
-    {"infected_army_painb13", 58, 2825, 2223, 0},
-    {"infected_army_painb14", 59, 2789, 2223, 0},
-    {"infected_army_painc1", 60, 2827, 2223, 0},
-    {"infected_army_painc2", 61, 2828, 2223, 1},
-    {"infected_army_painc3", 62, 2829, 2224, 0},
-    {"infected_army_painc4", 63, 2830, 2224, 0},
-    {"infected_army_painc5", 64, 2831, 2224, 1},
-    {"infected_army_painc6", 65, 2832, 2225, 1},
-    {"infected_army_painc7", 66, 2833, 2226, 0},
-    {"infected_army_painc8", 67, 2834, 2226, 1},
-    {"infected_army_painc9", 68, 2835, 2227, 1},
-    {"infected_army_painc10", 69, 2836, 2228, 1},
-    {"infected_army_painc11", 70, 2837, 2229, 1},
-    {"infected_army_painc12", 71, 2838, 2230, 1},
-    {"infected_army_painc13", 72, 2789, 2231, 0},
-    {"hknight_corpse1", 53, 2840, 2231, 1},
-    {"hknight_corpse1_2", 53, 2840, 2232, 1},
-    {"hknight_corpse1_rise0", 53, 2842, 2233, 1},
-    {"hknight_corpse1_rise1", 53, 2843, 2234, 0},
-    {"hknight_corpse1_rise2", 52, 2844, 2234, 1},
-    {"hknight_corpse1_rise3", 51, 2845, 2235, 0},
-    {"hknight_corpse1_rise4", 50, 2846, 2235, 1},
-    {"hknight_corpse1_rise5", 49, 2847, 2236, 1},
-    {"hknight_corpse1_rise6", 48, 2848, 2237, 0},
-    {"hknight_corpse1_rise7", 47, 2849, 2237, 0},
-    {"hknight_corpse1_rise8", 46, 2850, 2237, 0},
-    {"hknight_corpse1_rise9", 45, 2851, 2237, 0},
-    {"hknight_corpse1_rise10", 44, 2852, 2237, 1},
-    {"hknight_corpse1_rise11", 43, 2853, 2238, 1},
-    {"hknight_corpse1_rise12", 42, 2854, 2239, 0},
-    {"hknight_corpse1_rise13", 0, 2855, 2239, 0},
-    {"hknight_corpse1_rise14", 1, 438, 2239, 2},
-    {"hknight_corpse2", 62, 2857, 2241, 1},
-    {"hknight_corpse2_2", 62, 2857, 2242, 1},
-    {"hknight_corpse2_rise0", 62, 2860, 2243, 1},
-    {"hknight_corpse2_rise1", 62, 2860, 2244, 0},
-    {"hknight_corpse2_rise2", 61, 2861, 2244, 1},
-    {"hknight_corpse2_rise3", 60, 2862, 2245, 0},
-    {"hknight_corpse2_rise4", 59, 2863, 2245, 0},
-    {"hknight_corpse2_rise5", 58, 2864, 2245, 0},
-    {"hknight_corpse2_rise6", 57, 2865, 2245, 0},
-    {"hknight_corpse2_rise7", 56, 2866, 2245, 0},
-    {"hknight_corpse2_rise8", 55, 2867, 2245, 0},
-    {"hknight_corpse2_rise9", 55, 2868, 2245, 0},
-    {"hknight_corpse2_rise10", 0, 2869, 2245, 0},
-    {"hknight_corpse2_rise11", 1, 438, 2245, 1},
-    {"demodog_stand1", 69, 2871, 2246, 1},
-    {"demodog_stand2", 70, 2872, 2247, 1},
-    {"demodog_stand3", 71, 2873, 2248, 1},
-    {"demodog_stand4", 72, 2874, 2249, 1},
-    {"demodog_stand5", 73, 2875, 2250, 1},
-    {"demodog_stand6", 74, 2876, 2251, 1},
-    {"demodog_stand7", 75, 2877, 2252, 1},
-    {"demodog_stand8", 76, 2878, 2253, 1},
-    {"demodog_stand9", 77, 2870, 2254, 1},
-    {"demodog_walk1", 78, 2880, 2255, 2},
-    {"demodog_walk2", 79, 2881, 2257, 1},
-    {"demodog_walk3", 80, 2882, 2258, 1},
-    {"demodog_walk4", 81, 2883, 2259, 1},
-    {"demodog_walk5", 82, 2884, 2260, 1},
-    {"demodog_walk6", 83, 2885, 2261, 1},
-    {"demodog_walk7", 84, 2886, 2262, 1},
-    {"demodog_walk8", 85, 2879, 2263, 1},
-    {"demodog_run1", 48, 2888, 2264, 2},
-    {"demodog_run2", 49, 2889, 2266, 1},
-    {"demodog_run3", 50, 2890, 2267, 1},
-    {"demodog_run4", 51, 2891, 2268, 1},
-    {"demodog_run5", 52, 2892, 2269, 1},
-    {"demodog_run6", 53, 2893, 2270, 1},
-    {"demodog_run7", 54, 2894, 2271, 1},
-    {"demodog_run8", 55, 2895, 2272, 1},
-    {"demodog_run9", 56, 2896, 2273, 1},
-    {"demodog_run10", 57, 2897, 2274, 1},
-    {"demodog_run11", 58, 2898, 2275, 1},
-    {"demodog_run12", 59, 2887, 2276, 1},
-    {"demodog_atta1", 0, 2900, 2277, 1},
-    {"demodog_atta2", 1, 2901, 2278, 1},
-    {"demodog_atta3", 2, 2902, 2279, 1},
-    {"demodog_atta4", 3, 2903, 2280, 2},
-    {"demodog_atta5", 4, 2904, 2282, 1},
-    {"demodog_atta6", 5, 2905, 2283, 1},
-    {"demodog_atta7", 6, 2906, 2284, 1},
-    {"demodog_atta8", 7, 2887, 2285, 1},
-    {"demodog_leap1", 60, 2908, 2286, 1},
-    {"demodog_leap2", 61, 2909, 2287, 2},
-    {"demodog_leap3", 62, 2910, 2289, 0},
-    {"demodog_leap4", 63, 2911, 2289, 0},
-    {"demodog_leap5", 64, 2912, 2289, 0},
-    {"demodog_leap6", 65, 2913, 2289, 0},
-    {"demodog_leap7", 66, 2914, 2289, 0},
-    {"demodog_leap8", 67, 2915, 2289, 0},
-    {"demodog_leap9", 68, 2915, 2289, 0},
-    {"demodog_pain1", 26, 2917, 2289, 0},
-    {"demodog_pain2", 27, 2918, 2289, 0},
-    {"demodog_pain3", 28, 2919, 2289, 0},
-    {"demodog_pain4", 29, 2920, 2289, 0},
-    {"demodog_pain5", 30, 2921, 2289, 0},
-    {"demodog_pain6", 31, 2887, 2289, 0},
-    {"demodog_painb1", 32, 2923, 2289, 0},
-    {"demodog_painb2", 33, 2924, 2289, 0},
-    {"demodog_painb3", 34, 2925, 2289, 1},
-    {"demodog_painb4", 35, 2926, 2290, 1},
-    {"demodog_painb5", 36, 2927, 2291, 1},
-    {"demodog_painb6", 37, 2928, 2292, 1},
-    {"demodog_painb7", 38, 2929, 2293, 0},
-    {"demodog_painb8", 39, 2930, 2293, 1},
-    {"demodog_painb9", 40, 2931, 2294, 0},
-    {"demodog_painb10", 41, 2932, 2294, 1},
-    {"demodog_painb11", 42, 2933, 2295, 0},
-    {"demodog_painb12", 43, 2934, 2295, 0},
-    {"demodog_painb13", 44, 2935, 2295, 0},
-    {"demodog_painb14", 45, 2936, 2295, 0},
-    {"demodog_painb15", 46, 2937, 2295, 0},
-    {"demodog_painb16", 47, 2887, 2295, 0},
-    {"demodog_die1", 8, 2939, 2295, 0},
-    {"demodog_die2", 9, 2940, 2295, 0},
-    {"demodog_die3", 10, 2941, 2295, 0},
-    {"demodog_die4", 11, 2942, 2295, 0},
-    {"demodog_die5", 12, 2943, 2295, 0},
-    {"demodog_die6", 13, 2944, 2295, 0},
-    {"demodog_die7", 14, 2945, 2295, 0},
-    {"demodog_die8", 15, 2946, 2295, 0},
-    {"demodog_die9", 16, 2946, 2295, 0},
-    {"demodog_dieb1", 17, 2948, 2295, 0},
-    {"demodog_dieb2", 18, 2949, 2295, 0},
-    {"demodog_dieb3", 19, 2950, 2295, 0},
-    {"demodog_dieb4", 20, 2951, 2295, 0},
-    {"demodog_dieb5", 21, 2952, 2295, 0},
-    {"demodog_dieb6", 22, 2953, 2295, 0},
-    {"demodog_dieb7", 23, 2954, 2295, 0},
-    {"demodog_dieb8", 24, 2955, 2295, 0},
-    {"demodog_dieb9", 25, 2955, 2295, 0},
-    {"zombie_hang1", 162, 2956, 2295, 0},
-    {"sword_pause", 65535, 2957, 2295, 1},
-    {"mummy_wake", 65535, 2958, 2296, 1},
-    {"mummy_missile", 65535, 2959, 2297, 1},
-    {"wrath_attack", 65535, 2960, 2298, 1},
-    {"overlord_missile", 65535, 2961, 2299, 1},
-    {"morph_wake", 65535, 2962, 2300, 1},
-    {"dragon_activate", 65535, 2963, 2301, 1},
-    {"dragon_boom2", 65535, 2964, 2302, 1},
-    {"armagon_missile_attack", 65535, 2965, 2303, 1},
-    {"Gremlin_MeleeAttack", 65535, 2966, 2304, 1},
-    {"Gremlin_MissileAttack", 65535, 2967, 2305, 1},
-    {"gremlin_gib", 65535, 2968, 2306, 1},
+    {"supsham_stand1", 0, 2758, 2166, 1},
+    {"supsham_stand2", 1, 2759, 2167, 1},
+    {"supsham_stand3", 2, 2760, 2168, 1},
+    {"supsham_stand4", 3, 2761, 2169, 1},
+    {"supsham_stand5", 4, 2762, 2170, 1},
+    {"supsham_stand6", 5, 2763, 2171, 1},
+    {"supsham_stand7", 6, 2764, 2172, 1},
+    {"supsham_stand8", 7, 2765, 2173, 1},
+    {"supsham_stand9", 8, 2766, 2174, 1},
+    {"supsham_stand10", 9, 2767, 2175, 1},
+    {"supsham_stand11", 10, 2768, 2176, 1},
+    {"supsham_stand12", 11, 2769, 2177, 1},
+    {"supsham_stand13", 12, 2770, 2178, 1},
+    {"supsham_stand14", 13, 2771, 2179, 1},
+    {"supsham_stand15", 14, 2772, 2180, 1},
+    {"supsham_stand16", 15, 2773, 2181, 1},
+    {"supsham_stand17", 16, 2757, 2182, 1},
+    {"supsham_walk1", 17, 2775, 2183, 1},
+    {"supsham_walk2", 18, 2776, 2184, 1},
+    {"supsham_walk3", 19, 2777, 2185, 1},
+    {"supsham_walk4", 20, 2778, 2186, 1},
+    {"supsham_walk5", 21, 2779, 2187, 1},
+    {"supsham_walk6", 22, 2780, 2188, 1},
+    {"supsham_walk7", 23, 2781, 2189, 1},
+    {"supsham_walk8", 24, 2782, 2190, 1},
+    {"supsham_walk9", 25, 2783, 2191, 1},
+    {"supsham_walk10", 26, 2784, 2192, 1},
+    {"supsham_walk11", 27, 2785, 2193, 1},
+    {"supsham_walk12", 28, 2774, 2194, 2},
+    {"supsham_run1", 29, 2787, 2196, 2},
+    {"supsham_run2", 30, 2788, 2198, 1},
+    {"supsham_run3", 31, 2789, 2199, 1},
+    {"supsham_run4", 32, 2790, 2200, 1},
+    {"supsham_run5", 33, 2791, 2201, 1},
+    {"supsham_run6", 34, 2786, 2202, 2},
+    {"supsham_smash1", 35, 2793, 2204, 2},
+    {"supsham_smash2", 36, 2794, 2206, 1},
+    {"supsham_smash3", 37, 2795, 2207, 1},
+    {"supsham_smash4", 38, 2796, 2208, 1},
+    {"supsham_smash5", 39, 2797, 2209, 1},
+    {"supsham_smash6", 40, 2798, 2210, 1},
+    {"supsham_smash7", 41, 2799, 2211, 1},
+    {"supsham_smash8", 42, 2800, 2212, 1},
+    {"supsham_smash9", 43, 2801, 2213, 1},
+    {"supsham_smash10", 44, 2802, 2214, 1},
+    {"supsham_smash11", 45, 2803, 2215, 1},
+    {"supsham_smash12", 46, 2786, 2216, 1},
+    {"supsham_swingl1", 56, 2805, 2217, 2},
+    {"supsham_swingl2", 57, 2806, 2219, 1},
+    {"supsham_swingl3", 58, 2807, 2220, 1},
+    {"supsham_swingl4", 59, 2808, 2221, 1},
+    {"supsham_swingl5", 60, 2809, 2222, 1},
+    {"supsham_swingl6", 61, 2810, 2223, 1},
+    {"supsham_swingl7", 62, 2811, 2224, 1},
+    {"supsham_swingl8", 63, 2812, 2225, 1},
+    {"supsham_swingl9", 64, 2786, 2226, 1},
+    {"supsham_swingr1", 47, 2814, 2227, 2},
+    {"supsham_swingr2", 48, 2815, 2229, 1},
+    {"supsham_swingr3", 49, 2816, 2230, 1},
+    {"supsham_swingr4", 50, 2817, 2231, 1},
+    {"supsham_swingr5", 51, 2818, 2232, 1},
+    {"supsham_swingr6", 52, 2819, 2233, 1},
+    {"supsham_swingr7", 53, 2820, 2234, 1},
+    {"supsham_swingr8", 54, 2821, 2235, 1},
+    {"supsham_swingr9", 55, 2786, 2236, 1},
+    {"supsham_magic1", 65, 2823, 2237, 1},
+    {"supsham_magic2", 66, 2824, 2238, 1},
+    {"supsham_magic3", 67, 2825, 2239, 1},
+    {"supsham_magic4", 68, 2826, 2240, 1},
+    {"supsham_magic5", 69, 2827, 2241, 1},
+    {"supsham_magic4b", 68, 2828, 2242, 1},
+    {"supsham_magic5b", 69, 2829, 2243, 1},
+    {"supsham_magic4c", 68, 2830, 2244, 1},
+    {"supsham_magic5c", 69, 2831, 2245, 1},
+    {"supsham_magic6", 70, 2832, 2246, 3},
+    {"supsham_magic9", 73, 2833, 2249, 1},
+    {"supsham_magic10", 74, 2834, 2250, 1},
+    {"supsham_magic11", 75, 2835, 2251, 0},
+    {"supsham_magic12", 76, 2786, 2251, 0},
+    {"supsham_magic_b1", 65, 2837, 2251, 1},
+    {"supsham_magic_b2", 66, 2838, 2252, 1},
+    {"supsham_magic_b3", 67, 2839, 2253, 1},
+    {"supsham_magic_b4", 68, 2840, 2254, 1},
+    {"supsham_magic_b5", 69, 2841, 2255, 1},
+    {"supsham_magic_b6", 70, 2842, 2256, 3},
+    {"supsham_magic_b9", 73, 2843, 2259, 1},
+    {"supsham_magic_b10", 74, 2844, 2260, 1},
+    {"supsham_magic_b11", 75, 2845, 2261, 0},
+    {"supsham_magic_b12", 76, 2786, 2261, 0},
+    {"supsham_pain1", 77, 2847, 2261, 0},
+    {"supsham_pain2", 78, 2848, 2261, 0},
+    {"supsham_pain3", 79, 2849, 2261, 0},
+    {"supsham_pain4", 80, 2850, 2261, 0},
+    {"supsham_pain5", 81, 2851, 2261, 0},
+    {"supsham_pain6", 82, 2786, 2261, 0},
+    {"supsham_death1", 83, 2853, 2261, 0},
+    {"supsham_death2", 84, 2854, 2261, 0},
+    {"supsham_death3", 85, 2855, 2261, 2},
+    {"supsham_death4", 86, 2856, 2263, 0},
+    {"supsham_death5", 87, 2857, 2263, 0},
+    {"supsham_death6", 88, 2858, 2263, 0},
+    {"supsham_death7", 89, 2859, 2263, 0},
+    {"supsham_death8", 90, 2860, 2263, 0},
+    {"supsham_death9", 91, 2861, 2263, 0},
+    {"supsham_death10", 92, 2862, 2263, 0},
+    {"supsham_death11", 93, 2862, 2263, 0},
+    {"rknight_stand1", 0, 2864, 2263, 1},
+    {"rknight_stand2", 1, 2865, 2264, 1},
+    {"rknight_stand3", 2, 2866, 2265, 1},
+    {"rknight_stand4", 3, 2867, 2266, 1},
+    {"rknight_stand5", 4, 2868, 2267, 1},
+    {"rknight_stand6", 5, 2869, 2268, 1},
+    {"rknight_stand7", 6, 2870, 2269, 1},
+    {"rknight_stand8", 7, 2871, 2270, 1},
+    {"rknight_stand9", 8, 2863, 2271, 1},
+    {"rknight_walk1", 9, 2873, 2272, 2},
+    {"rknight_walk2", 10, 2874, 2274, 1},
+    {"rknight_walk3", 11, 2875, 2275, 1},
+    {"rknight_walk4", 12, 2876, 2276, 1},
+    {"rknight_walk5", 13, 2877, 2277, 1},
+    {"rknight_walk6", 14, 2878, 2278, 1},
+    {"rknight_walk7", 15, 2879, 2279, 1},
+    {"rknight_walk8", 16, 2880, 2280, 1},
+    {"rknight_walk9", 17, 2881, 2281, 1},
+    {"rknight_walk10", 18, 2882, 2282, 1},
+    {"rknight_walk11", 19, 2883, 2283, 1},
+    {"rknight_walk12", 20, 2884, 2284, 1},
+    {"rknight_walk13", 21, 2885, 2285, 1},
+    {"rknight_walk14", 22, 2886, 2286, 1},
+    {"rknight_walk15", 23, 2887, 2287, 1},
+    {"rknight_walk16", 24, 2888, 2288, 1},
+    {"rknight_walk17", 25, 2889, 2289, 1},
+    {"rknight_walk18", 26, 2890, 2290, 1},
+    {"rknight_walk19", 27, 2891, 2291, 1},
+    {"rknight_walk20", 28, 2872, 2292, 1},
+    {"rknight_runb1", 9, 2893, 2293, 2},
+    {"rknight_runb2", 10, 2894, 2295, 1},
+    {"rknight_runb3", 11, 2895, 2296, 1},
+    {"rknight_runb4", 12, 2896, 2297, 1},
+    {"rknight_runb5", 13, 2897, 2298, 1},
+    {"rknight_runb6", 14, 2898, 2299, 1},
+    {"rknight_runb7", 15, 2899, 2300, 1},
+    {"rknight_runb8", 16, 2900, 2301, 1},
+    {"rknight_runb9", 17, 2901, 2302, 1},
+    {"rknight_runb10", 18, 2902, 2303, 1},
+    {"rknight_runb11", 19, 2903, 2304, 1},
+    {"rknight_runb12", 20, 2904, 2305, 1},
+    {"rknight_runb13", 21, 2905, 2306, 1},
+    {"rknight_runb14", 22, 2906, 2307, 1},
+    {"rknight_runb15", 23, 2907, 2308, 1},
+    {"rknight_runb16", 24, 2908, 2309, 1},
+    {"rknight_runb17", 25, 2909, 2310, 1},
+    {"rknight_runb18", 26, 2910, 2311, 1},
+    {"rknight_runb19", 27, 2911, 2312, 1},
+    {"rknight_runb20", 28, 2892, 2313, 1},
+    {"rknight_run1", 29, 2913, 2314, 2},
+    {"rknight_run2", 30, 2914, 2316, 1},
+    {"rknight_run3", 31, 2915, 2317, 1},
+    {"rknight_run4", 32, 2916, 2318, 1},
+    {"rknight_run5", 33, 2917, 2319, 1},
+    {"rknight_run6", 34, 2918, 2320, 1},
+    {"rknight_run7", 35, 2919, 2321, 1},
+    {"rknight_run8", 36, 2912, 2322, 1},
+    {"rknight_pain1", 37, 2921, 2323, 1},
+    {"rknight_pain2", 38, 2922, 2324, 0},
+    {"rknight_pain3", 39, 2923, 2324, 0},
+    {"rknight_pain4", 40, 2924, 2324, 0},
+    {"rknight_pain5", 41, 3373, 2324, 0},
+    {"rknight_die1", 42, 2926, 2324, 1},
+    {"rknight_die2", 43, 2927, 2325, 1},
+    {"rknight_die3", 44, 2928, 2326, 2},
+    {"rknight_die4", 45, 2929, 2328, 0},
+    {"rknight_die5", 46, 2930, 2328, 0},
+    {"rknight_die6", 47, 2931, 2328, 0},
+    {"rknight_die7", 48, 2932, 2328, 0},
+    {"rknight_die8", 49, 2933, 2328, 1},
+    {"rknight_die9", 50, 2934, 2329, 1},
+    {"rknight_die10", 51, 2935, 2330, 0},
+    {"rknight_die11", 52, 2936, 2330, 0},
+    {"rknight_die12", 53, 2936, 2330, 0},
+    {"rknight_dieb1", 54, 2938, 2330, 0},
+    {"rknight_dieb2", 55, 2939, 2330, 0},
+    {"rknight_dieb3", 56, 2940, 2330, 1},
+    {"rknight_dieb4", 57, 2941, 2331, 0},
+    {"rknight_dieb5", 58, 2942, 2331, 0},
+    {"rknight_dieb6", 59, 2943, 2331, 0},
+    {"rknight_dieb7", 60, 2944, 2331, 0},
+    {"rknight_dieb8", 61, 2945, 2331, 0},
+    {"rknight_dieb9", 62, 2945, 2331, 0},
+    {"rknight_magica1", 79, 2947, 2331, 1},
+    {"rknight_magica2", 80, 2948, 2332, 1},
+    {"rknight_magica3", 81, 2949, 2333, 1},
+    {"rknight_magica4", 82, 2950, 2334, 1},
+    {"rknight_magica5", 83, 2951, 2335, 1},
+    {"rknight_magica6", 84, 2952, 2336, 1},
+    {"rknight_magica7", 85, 2953, 2337, 1},
+    {"rknight_magica8", 86, 2954, 2338, 1},
+    {"rknight_magica9", 87, 2955, 2339, 1},
+    {"rknight_magica10", 88, 2956, 2340, 1},
+    {"rknight_magica11", 89, 2957, 2341, 1},
+    {"rknight_magica12", 90, 2958, 2342, 1},
+    {"rknight_magica13", 91, 2959, 2343, 1},
+    {"rknight_magica14", 92, 3373, 2344, 1},
+    {"rknight_magicb1", 93, 2961, 2345, 1},
+    {"rknight_magicb2", 94, 2962, 2346, 1},
+    {"rknight_magicb3", 95, 2963, 2347, 1},
+    {"rknight_magicb4", 96, 2964, 2348, 1},
+    {"rknight_magicb5", 97, 2965, 2349, 1},
+    {"rknight_magicb6", 98, 2966, 2350, 1},
+    {"rknight_magicb7", 99, 2967, 2351, 1},
+    {"rknight_magicb8", 100, 2968, 2352, 1},
+    {"rknight_magicb9", 101, 2969, 2353, 1},
+    {"rknight_magicb10", 102, 2970, 2354, 1},
+    {"rknight_magicb11", 103, 2971, 2355, 1},
+    {"rknight_magicb12", 104, 2972, 2356, 1},
+    {"rknight_magicb13", 105, 3373, 2357, 1},
+    {"rknight_magicc1", 155, 2974, 2358, 1},
+    {"rknight_magicc2", 156, 2975, 2359, 1},
+    {"rknight_magicc3", 157, 2976, 2360, 1},
+    {"rknight_magicc4", 158, 2977, 2361, 1},
+    {"rknight_magicc5", 159, 2978, 2362, 1},
+    {"rknight_magicc6", 160, 2979, 2363, 1},
+    {"rknight_magicc7", 161, 2980, 2364, 1},
+    {"rknight_magicc8", 162, 2981, 2365, 1},
+    {"rknight_magicc9", 163, 2982, 2366, 1},
+    {"rknight_magicc10", 164, 2983, 2367, 1},
+    {"rknight_magicc11", 165, 3373, 2368, 1},
+    {"rknight_slice1", 112, 2985, 2369, 1},
+    {"rknight_slice2", 113, 2986, 2370, 1},
+    {"rknight_slice3", 114, 2987, 2371, 1},
+    {"rknight_slice4", 115, 2988, 2372, 1},
+    {"rknight_slice5", 116, 2989, 2373, 2},
+    {"rknight_slice6", 117, 2990, 2375, 2},
+    {"rknight_slice7", 118, 2991, 2377, 2},
+    {"rknight_slice8", 119, 2992, 2379, 2},
+    {"rknight_slice9", 120, 2993, 2381, 1},
+    {"rknight_slice10", 121, 3373, 2382, 1},
+    {"rknight_smash1", 122, 2995, 2383, 1},
+    {"rknight_smash2", 123, 2996, 2384, 1},
+    {"rknight_smash3", 124, 2997, 2385, 1},
+    {"rknight_smash4", 125, 2998, 2386, 1},
+    {"rknight_smash5", 126, 2999, 2387, 2},
+    {"rknight_smash6", 127, 3000, 2389, 2},
+    {"rknight_smash7", 128, 3001, 2391, 2},
+    {"rknight_smash8", 129, 3002, 2393, 2},
+    {"rknight_smash9", 130, 3003, 2395, 2},
+    {"rknight_smash10", 131, 3004, 2397, 1},
+    {"rknight_smash11", 132, 3373, 2398, 1},
+    {"rknight_watk1", 133, 3006, 2399, 1},
+    {"rknight_watk2", 134, 3007, 2400, 1},
+    {"rknight_watk3", 135, 3008, 2401, 1},
+    {"rknight_watk4", 136, 3009, 2402, 1},
+    {"rknight_watk5", 137, 3010, 2403, 1},
+    {"rknight_watk6", 138, 3011, 2404, 1},
+    {"rknight_watk7", 139, 3012, 2405, 1},
+    {"rknight_watk8", 140, 3013, 2406, 1},
+    {"rknight_watk9", 141, 3014, 2407, 1},
+    {"rknight_watk10", 142, 3015, 2408, 2},
+    {"rknight_watk11", 143, 3016, 2410, 2},
+    {"rknight_watk12", 144, 3017, 2412, 2},
+    {"rknight_watk13", 145, 3018, 2414, 1},
+    {"rknight_watk14", 146, 3019, 2415, 1},
+    {"rknight_watk15", 147, 3020, 2416, 1},
+    {"rknight_watk16", 148, 3021, 2417, 1},
+    {"rknight_watk17", 149, 3022, 2418, 2},
+    {"rknight_watk18", 150, 3023, 2420, 2},
+    {"rknight_watk19", 151, 3024, 2422, 2},
+    {"rknight_watk20", 152, 3025, 2424, 1},
+    {"rknight_watk21", 153, 3026, 2425, 1},
+    {"rknight_watk22", 154, 3373, 2426, 1},
+    {"mg3_lavaman_rise1", 0, 3028, 2427, 1},
+    {"mg3_lavaman_rise2", 1, 3029, 2428, 1},
+    {"mg3_lavaman_rise3", 2, 3030, 2429, 0},
+    {"mg3_lavaman_rise4", 3, 3031, 2429, 0},
+    {"mg3_lavaman_rise5", 4, 3032, 2429, 0},
+    {"mg3_lavaman_rise6", 5, 3033, 2429, 0},
+    {"mg3_lavaman_rise7", 6, 3034, 2429, 0},
+    {"mg3_lavaman_rise8", 7, 3035, 2429, 0},
+    {"mg3_lavaman_rise9", 8, 3036, 2429, 0},
+    {"mg3_lavaman_rise10", 9, 3037, 2429, 0},
+    {"mg3_lavaman_rise11", 10, 3038, 2429, 0},
+    {"mg3_lavaman_rise12", 11, 3039, 2429, 0},
+    {"mg3_lavaman_rise13", 12, 3040, 2429, 0},
+    {"mg3_lavaman_rise14", 13, 3041, 2429, 0},
+    {"mg3_lavaman_rise15", 14, 3042, 2429, 0},
+    {"mg3_lavaman_rise16", 15, 3043, 2429, 0},
+    {"mg3_lavaman_rise17", 16, 3115, 2429, 0},
+    {"mg3_lavaman_idle1", 17, 3045, 2429, 1},
+    {"mg3_lavaman_idle2", 18, 3046, 2430, 1},
+    {"mg3_lavaman_idle3", 19, 3047, 2431, 1},
+    {"mg3_lavaman_idle4", 20, 3048, 2432, 1},
+    {"mg3_lavaman_idle5", 21, 3049, 2433, 1},
+    {"mg3_lavaman_idle6", 20, 3050, 2434, 1},
+    {"mg3_lavaman_idle7", 19, 3051, 2435, 1},
+    {"mg3_lavaman_idle8", 18, 3052, 2436, 1},
+    {"mg3_lavaman_idle9", 17, 3044, 2437, 1},
+    {"mg3_lavaman_walk1", 17, 3054, 2438, 1},
+    {"mg3_lavaman_walk2", 18, 3055, 2439, 1},
+    {"mg3_lavaman_walk3", 19, 3056, 2440, 1},
+    {"mg3_lavaman_walk4", 20, 3057, 2441, 1},
+    {"mg3_lavaman_walk5", 21, 3058, 2442, 1},
+    {"mg3_lavaman_walk6", 22, 3059, 2443, 1},
+    {"mg3_lavaman_walk7", 23, 3060, 2444, 1},
+    {"mg3_lavaman_walk8", 24, 3061, 2445, 1},
+    {"mg3_lavaman_walk9", 25, 3062, 2446, 1},
+    {"mg3_lavaman_walk10", 26, 3063, 2447, 1},
+    {"mg3_lavaman_walk11", 27, 3064, 2448, 1},
+    {"mg3_lavaman_walk12", 28, 3065, 2449, 1},
+    {"mg3_lavaman_walk13", 29, 3066, 2450, 1},
+    {"mg3_lavaman_walk14", 30, 3067, 2451, 1},
+    {"mg3_lavaman_walk15", 31, 3068, 2452, 1},
+    {"mg3_lavaman_walk16", 32, 3069, 2453, 1},
+    {"mg3_lavaman_walk17", 33, 3070, 2454, 1},
+    {"mg3_lavaman_walk18", 34, 3071, 2455, 1},
+    {"mg3_lavaman_walk19", 35, 3072, 2456, 1},
+    {"mg3_lavaman_walk20", 36, 3073, 2457, 1},
+    {"mg3_lavaman_walk21", 37, 3074, 2458, 1},
+    {"mg3_lavaman_walk22", 38, 3075, 2459, 1},
+    {"mg3_lavaman_walk23", 39, 3076, 2460, 1},
+    {"mg3_lavaman_walk24", 40, 3077, 2461, 1},
+    {"mg3_lavaman_walk25", 41, 3078, 2462, 1},
+    {"mg3_lavaman_walk26", 42, 3079, 2463, 1},
+    {"mg3_lavaman_walk27", 43, 3080, 2464, 1},
+    {"mg3_lavaman_walk28", 44, 3081, 2465, 1},
+    {"mg3_lavaman_walk29", 45, 3082, 2466, 1},
+    {"mg3_lavaman_walk30", 46, 3083, 2467, 1},
+    {"mg3_lavaman_walk31", 47, 3053, 2468, 0},
+    {"mg3_lavaman_run1", 17, 3085, 2468, 1},
+    {"mg3_lavaman_run2", 18, 3086, 2469, 1},
+    {"mg3_lavaman_run3", 19, 3087, 2470, 1},
+    {"mg3_lavaman_run4", 20, 3088, 2471, 1},
+    {"mg3_lavaman_run5", 21, 3089, 2472, 1},
+    {"mg3_lavaman_run6", 22, 3090, 2473, 1},
+    {"mg3_lavaman_run7", 23, 3091, 2474, 1},
+    {"mg3_lavaman_run8", 24, 3092, 2475, 1},
+    {"mg3_lavaman_run9", 25, 3093, 2476, 1},
+    {"mg3_lavaman_run10", 26, 3094, 2477, 1},
+    {"mg3_lavaman_run11", 27, 3095, 2478, 1},
+    {"mg3_lavaman_run12", 28, 3096, 2479, 1},
+    {"mg3_lavaman_run13", 29, 3097, 2480, 1},
+    {"mg3_lavaman_run14", 30, 3098, 2481, 1},
+    {"mg3_lavaman_run15", 31, 3099, 2482, 1},
+    {"mg3_lavaman_run16", 32, 3100, 2483, 1},
+    {"mg3_lavaman_run17", 33, 3101, 2484, 1},
+    {"mg3_lavaman_run18", 34, 3102, 2485, 1},
+    {"mg3_lavaman_run19", 35, 3103, 2486, 1},
+    {"mg3_lavaman_run20", 36, 3104, 2487, 1},
+    {"mg3_lavaman_run21", 37, 3105, 2488, 1},
+    {"mg3_lavaman_run22", 38, 3106, 2489, 1},
+    {"mg3_lavaman_run23", 39, 3107, 2490, 1},
+    {"mg3_lavaman_run24", 40, 3108, 2491, 1},
+    {"mg3_lavaman_run25", 41, 3109, 2492, 1},
+    {"mg3_lavaman_run26", 42, 3110, 2493, 1},
+    {"mg3_lavaman_run27", 43, 3111, 2494, 1},
+    {"mg3_lavaman_run28", 44, 3112, 2495, 1},
+    {"mg3_lavaman_run29", 45, 3113, 2496, 1},
+    {"mg3_lavaman_run30", 46, 3114, 2497, 1},
+    {"mg3_lavaman_run31", 47, 3084, 2498, 0},
+    {"mg3_lavaman_fire1", 57, 3116, 2498, 1},
+    {"mg3_lavaman_fire2", 58, 3117, 2499, 0},
+    {"mg3_lavaman_fire3", 59, 3118, 2499, 1},
+    {"mg3_lavaman_fire4", 60, 3119, 2500, 1},
+    {"mg3_lavaman_fire5", 61, 3120, 2501, 0},
+    {"mg3_lavaman_fire6", 62, 3121, 2501, 1},
+    {"mg3_lavaman_fire7", 63, 3122, 2502, 1},
+    {"mg3_lavaman_fire8", 64, 3123, 2503, 1},
+    {"mg3_lavaman_fire9", 65, 3124, 2504, 1},
+    {"mg3_lavaman_fire10", 66, 3125, 2505, 0},
+    {"mg3_lavaman_fire11", 67, 3126, 2505, 1},
+    {"mg3_lavaman_fire12", 68, 3127, 2506, 0},
+    {"mg3_lavaman_fire13", 69, 3128, 2506, 1},
+    {"mg3_lavaman_fire14", 70, 3129, 2507, 1},
+    {"mg3_lavaman_fire15", 71, 3130, 2508, 0},
+    {"mg3_lavaman_fire16", 72, 3131, 2508, 0},
+    {"mg3_lavaman_fire17", 73, 3132, 2508, 1},
+    {"mg3_lavaman_fire18", 74, 3133, 2509, 1},
+    {"mg3_lavaman_fire19", 75, 3134, 2510, 1},
+    {"mg3_lavaman_fire20", 76, 3135, 2511, 1},
+    {"mg3_lavaman_fire21", 77, 3136, 2512, 1},
+    {"mg3_lavaman_fire22", 78, 3137, 2513, 0},
+    {"mg3_lavaman_fire23", 79, 3084, 2513, 0},
+    {"mg3_lavaman_shocka1", 80, 3139, 2513, 1},
+    {"mg3_lavaman_shocka2", 81, 3140, 2514, 0},
+    {"mg3_lavaman_shocka3", 82, 3141, 2514, 0},
+    {"mg3_lavaman_shocka4", 83, 3142, 2514, 0},
+    {"mg3_lavaman_shocka5", 84, 3143, 2514, 0},
+    {"mg3_lavaman_shocka6", 85, 3144, 2514, 0},
+    {"mg3_lavaman_shocka7", 86, 3145, 2514, 0},
+    {"mg3_lavaman_shocka8", 87, 3146, 2514, 0},
+    {"mg3_lavaman_shocka9", 88, 3147, 2514, 0},
+    {"mg3_lavaman_shocka10", 89, 3084, 2514, 0},
+    {"mg3_lavaman_death1", 48, 3149, 2514, 1},
+    {"mg3_lavaman_death2", 49, 3150, 2515, 0},
+    {"mg3_lavaman_death3", 50, 3151, 2515, 0},
+    {"mg3_lavaman_death4", 51, 3152, 2515, 0},
+    {"mg3_lavaman_death5", 52, 3153, 2515, 0},
+    {"mg3_lavaman_death6", 53, 3154, 2515, 0},
+    {"mg3_lavaman_death7", 54, 3155, 2515, 0},
+    {"mg3_lavaman_death8", 55, 3156, 2515, 0},
+    {"mg3_lavaman_death9", 56, 3157, 2515, 1},
+    {"mg3_lavaman_death10", 56, 3157, 2516, 1},
+    {"infected_army_stand1", 0, 3159, 2517, 1},
+    {"infected_army_stand2", 1, 3160, 2518, 1},
+    {"infected_army_stand3", 2, 3161, 2519, 1},
+    {"infected_army_stand4", 3, 3162, 2520, 1},
+    {"infected_army_stand5", 4, 3163, 2521, 1},
+    {"infected_army_stand6", 5, 3164, 2522, 1},
+    {"infected_army_stand7", 6, 3165, 2523, 1},
+    {"infected_army_stand8", 7, 3158, 2524, 1},
+    {"infected_army_walk1", 90, 3167, 2525, 2},
+    {"infected_army_walk2", 91, 3168, 2527, 1},
+    {"infected_army_walk3", 92, 3169, 2528, 1},
+    {"infected_army_walk4", 93, 3170, 2529, 1},
+    {"infected_army_walk5", 94, 3171, 2530, 1},
+    {"infected_army_walk6", 95, 3172, 2531, 1},
+    {"infected_army_walk7", 96, 3173, 2532, 1},
+    {"infected_army_walk8", 97, 3174, 2533, 1},
+    {"infected_army_walk9", 98, 3175, 2534, 1},
+    {"infected_army_walk10", 99, 3176, 2535, 1},
+    {"infected_army_walk11", 100, 3177, 2536, 1},
+    {"infected_army_walk12", 101, 3178, 2537, 1},
+    {"infected_army_walk13", 102, 3179, 2538, 1},
+    {"infected_army_walk14", 103, 3180, 2539, 1},
+    {"infected_army_walk15", 104, 3181, 2540, 1},
+    {"infected_army_walk16", 105, 3182, 2541, 1},
+    {"infected_army_walk17", 106, 3183, 2542, 1},
+    {"infected_army_walk18", 107, 3184, 2543, 1},
+    {"infected_army_walk19", 108, 3185, 2544, 1},
+    {"infected_army_walk20", 109, 3186, 2545, 1},
+    {"infected_army_walk21", 110, 3187, 2546, 1},
+    {"infected_army_walk22", 111, 3188, 2547, 1},
+    {"infected_army_walk23", 112, 3189, 2548, 1},
+    {"infected_army_walk24", 113, 3166, 2549, 1},
+    {"infected_army_run1", 73, 3191, 2550, 2},
+    {"infected_army_run2", 74, 3192, 2552, 1},
+    {"infected_army_run3", 75, 3193, 2553, 1},
+    {"infected_army_run4", 76, 3194, 2554, 1},
+    {"infected_army_run5", 77, 3195, 2555, 1},
+    {"infected_army_run6", 78, 3196, 2556, 1},
+    {"infected_army_run7", 79, 3197, 2557, 1},
+    {"infected_army_run8", 80, 3190, 2558, 1},
+    {"infected_army_atk1", 81, 3199, 2559, 1},
+    {"infected_army_atk2", 82, 3200, 2560, 1},
+    {"infected_army_atk3", 83, 3201, 2561, 1},
+    {"infected_army_atk4", 84, 3202, 2562, 1},
+    {"infected_army_atk5", 85, 3203, 2563, 2},
+    {"infected_army_atk6", 86, 3204, 2565, 1},
+    {"infected_army_atk7", 87, 3205, 2566, 2},
+    {"infected_army_atk8", 88, 3206, 2568, 1},
+    {"infected_army_atk9", 89, 3190, 2569, 1},
+    {"infected_army_pain1", 40, 3208, 2570, 0},
+    {"infected_army_pain2", 41, 3209, 2570, 0},
+    {"infected_army_pain3", 42, 3210, 2570, 0},
+    {"infected_army_pain4", 43, 3211, 2570, 0},
+    {"infected_army_pain5", 44, 3212, 2570, 0},
+    {"infected_army_pain6", 45, 3190, 2570, 1},
+    {"infected_army_painb1", 46, 3214, 2571, 0},
+    {"infected_army_painb2", 47, 3215, 2571, 1},
+    {"infected_army_painb3", 48, 3216, 2572, 1},
+    {"infected_army_painb4", 49, 3217, 2573, 0},
+    {"infected_army_painb5", 50, 3218, 2573, 0},
+    {"infected_army_painb6", 51, 3219, 2573, 0},
+    {"infected_army_painb7", 52, 3220, 2573, 0},
+    {"infected_army_painb8", 53, 3221, 2573, 0},
+    {"infected_army_painb9", 54, 3222, 2573, 0},
+    {"infected_army_painb10", 55, 3223, 2573, 0},
+    {"infected_army_painb11", 56, 3224, 2573, 0},
+    {"infected_army_painb12", 57, 3225, 2573, 1},
+    {"infected_army_painb13", 58, 3226, 2574, 0},
+    {"infected_army_painb14", 59, 3190, 2574, 0},
+    {"infected_army_painc1", 60, 3228, 2574, 0},
+    {"infected_army_painc2", 61, 3229, 2574, 1},
+    {"infected_army_painc3", 62, 3230, 2575, 0},
+    {"infected_army_painc4", 63, 3231, 2575, 0},
+    {"infected_army_painc5", 64, 3232, 2575, 1},
+    {"infected_army_painc6", 65, 3233, 2576, 1},
+    {"infected_army_painc7", 66, 3234, 2577, 0},
+    {"infected_army_painc8", 67, 3235, 2577, 1},
+    {"infected_army_painc9", 68, 3236, 2578, 1},
+    {"infected_army_painc10", 69, 3237, 2579, 1},
+    {"infected_army_painc11", 70, 3238, 2580, 1},
+    {"infected_army_painc12", 71, 3239, 2581, 1},
+    {"infected_army_painc13", 72, 3190, 2582, 0},
+    {"hknight_corpse1", 53, 3241, 2582, 1},
+    {"hknight_corpse1_2", 53, 3241, 2583, 1},
+    {"hknight_corpse1_rise0", 53, 3243, 2584, 1},
+    {"hknight_corpse1_rise1", 53, 3244, 2585, 0},
+    {"hknight_corpse1_rise2", 52, 3245, 2585, 1},
+    {"hknight_corpse1_rise3", 51, 3246, 2586, 0},
+    {"hknight_corpse1_rise4", 50, 3247, 2586, 1},
+    {"hknight_corpse1_rise5", 49, 3248, 2587, 1},
+    {"hknight_corpse1_rise6", 48, 3249, 2588, 0},
+    {"hknight_corpse1_rise7", 47, 3250, 2588, 0},
+    {"hknight_corpse1_rise8", 46, 3251, 2588, 0},
+    {"hknight_corpse1_rise9", 45, 3252, 2588, 0},
+    {"hknight_corpse1_rise10", 44, 3253, 2588, 1},
+    {"hknight_corpse1_rise11", 43, 3254, 2589, 1},
+    {"hknight_corpse1_rise12", 42, 3255, 2590, 0},
+    {"hknight_corpse1_rise13", 0, 3256, 2590, 0},
+    {"hknight_corpse1_rise14", 1, 438, 2590, 2},
+    {"hknight_corpse2", 62, 3258, 2592, 1},
+    {"hknight_corpse2_2", 62, 3258, 2593, 1},
+    {"hknight_corpse2_rise0", 62, 3261, 2594, 1},
+    {"hknight_corpse2_rise1", 62, 3261, 2595, 0},
+    {"hknight_corpse2_rise2", 61, 3262, 2595, 1},
+    {"hknight_corpse2_rise3", 60, 3263, 2596, 0},
+    {"hknight_corpse2_rise4", 59, 3264, 2596, 0},
+    {"hknight_corpse2_rise5", 58, 3265, 2596, 0},
+    {"hknight_corpse2_rise6", 57, 3266, 2596, 0},
+    {"hknight_corpse2_rise7", 56, 3267, 2596, 0},
+    {"hknight_corpse2_rise8", 55, 3268, 2596, 0},
+    {"hknight_corpse2_rise9", 55, 3269, 2596, 0},
+    {"hknight_corpse2_rise10", 0, 3270, 2596, 0},
+    {"hknight_corpse2_rise11", 1, 438, 2596, 1},
+    {"demodog_stand1", 69, 3272, 2597, 1},
+    {"demodog_stand2", 70, 3273, 2598, 1},
+    {"demodog_stand3", 71, 3274, 2599, 1},
+    {"demodog_stand4", 72, 3275, 2600, 1},
+    {"demodog_stand5", 73, 3276, 2601, 1},
+    {"demodog_stand6", 74, 3277, 2602, 1},
+    {"demodog_stand7", 75, 3278, 2603, 1},
+    {"demodog_stand8", 76, 3279, 2604, 1},
+    {"demodog_stand9", 77, 3271, 2605, 1},
+    {"demodog_walk1", 78, 3281, 2606, 2},
+    {"demodog_walk2", 79, 3282, 2608, 1},
+    {"demodog_walk3", 80, 3283, 2609, 1},
+    {"demodog_walk4", 81, 3284, 2610, 1},
+    {"demodog_walk5", 82, 3285, 2611, 1},
+    {"demodog_walk6", 83, 3286, 2612, 1},
+    {"demodog_walk7", 84, 3287, 2613, 1},
+    {"demodog_walk8", 85, 3280, 2614, 1},
+    {"demodog_run1", 48, 3289, 2615, 2},
+    {"demodog_run2", 49, 3290, 2617, 1},
+    {"demodog_run3", 50, 3291, 2618, 1},
+    {"demodog_run4", 51, 3292, 2619, 1},
+    {"demodog_run5", 52, 3293, 2620, 1},
+    {"demodog_run6", 53, 3294, 2621, 1},
+    {"demodog_run7", 54, 3295, 2622, 1},
+    {"demodog_run8", 55, 3296, 2623, 1},
+    {"demodog_run9", 56, 3297, 2624, 1},
+    {"demodog_run10", 57, 3298, 2625, 1},
+    {"demodog_run11", 58, 3299, 2626, 1},
+    {"demodog_run12", 59, 3288, 2627, 1},
+    {"demodog_atta1", 0, 3301, 2628, 1},
+    {"demodog_atta2", 1, 3302, 2629, 1},
+    {"demodog_atta3", 2, 3303, 2630, 1},
+    {"demodog_atta4", 3, 3304, 2631, 2},
+    {"demodog_atta5", 4, 3305, 2633, 1},
+    {"demodog_atta6", 5, 3306, 2634, 1},
+    {"demodog_atta7", 6, 3307, 2635, 1},
+    {"demodog_atta8", 7, 3288, 2636, 1},
+    {"demodog_leap1", 60, 3309, 2637, 1},
+    {"demodog_leap2", 61, 3310, 2638, 2},
+    {"demodog_leap3", 62, 3311, 2640, 0},
+    {"demodog_leap4", 63, 3312, 2640, 0},
+    {"demodog_leap5", 64, 3313, 2640, 0},
+    {"demodog_leap6", 65, 3314, 2640, 0},
+    {"demodog_leap7", 66, 3315, 2640, 0},
+    {"demodog_leap8", 67, 3316, 2640, 0},
+    {"demodog_leap9", 68, 3316, 2640, 0},
+    {"demodog_pain1", 26, 3318, 2640, 0},
+    {"demodog_pain2", 27, 3319, 2640, 0},
+    {"demodog_pain3", 28, 3320, 2640, 0},
+    {"demodog_pain4", 29, 3321, 2640, 0},
+    {"demodog_pain5", 30, 3322, 2640, 0},
+    {"demodog_pain6", 31, 3288, 2640, 0},
+    {"demodog_painb1", 32, 3324, 2640, 0},
+    {"demodog_painb2", 33, 3325, 2640, 0},
+    {"demodog_painb3", 34, 3326, 2640, 1},
+    {"demodog_painb4", 35, 3327, 2641, 1},
+    {"demodog_painb5", 36, 3328, 2642, 1},
+    {"demodog_painb6", 37, 3329, 2643, 1},
+    {"demodog_painb7", 38, 3330, 2644, 0},
+    {"demodog_painb8", 39, 3331, 2644, 1},
+    {"demodog_painb9", 40, 3332, 2645, 0},
+    {"demodog_painb10", 41, 3333, 2645, 1},
+    {"demodog_painb11", 42, 3334, 2646, 0},
+    {"demodog_painb12", 43, 3335, 2646, 0},
+    {"demodog_painb13", 44, 3336, 2646, 0},
+    {"demodog_painb14", 45, 3337, 2646, 0},
+    {"demodog_painb15", 46, 3338, 2646, 0},
+    {"demodog_painb16", 47, 3288, 2646, 0},
+    {"demodog_die1", 8, 3340, 2646, 0},
+    {"demodog_die2", 9, 3341, 2646, 0},
+    {"demodog_die3", 10, 3342, 2646, 0},
+    {"demodog_die4", 11, 3343, 2646, 0},
+    {"demodog_die5", 12, 3344, 2646, 0},
+    {"demodog_die6", 13, 3345, 2646, 0},
+    {"demodog_die7", 14, 3346, 2646, 0},
+    {"demodog_die8", 15, 3347, 2646, 0},
+    {"demodog_die9", 16, 3347, 2646, 0},
+    {"demodog_dieb1", 17, 3349, 2646, 0},
+    {"demodog_dieb2", 18, 3350, 2646, 0},
+    {"demodog_dieb3", 19, 3351, 2646, 0},
+    {"demodog_dieb4", 20, 3352, 2646, 0},
+    {"demodog_dieb5", 21, 3353, 2646, 0},
+    {"demodog_dieb6", 22, 3354, 2646, 0},
+    {"demodog_dieb7", 23, 3355, 2646, 0},
+    {"demodog_dieb8", 24, 3356, 2646, 0},
+    {"demodog_dieb9", 25, 3356, 2646, 0},
+    {"zombie_hang1", 162, 3357, 2646, 0},
+    {"sword_pause", 65535, 3358, 2646, 1},
+    {"mummy_wake", 65535, 3359, 2647, 1},
+    {"mummy_missile", 65535, 3360, 2648, 1},
+    {"wrath_attack", 65535, 3361, 2649, 1},
+    {"overlord_missile", 65535, 3362, 2650, 1},
+    {"morph_wake", 65535, 3363, 2651, 1},
+    {"dragon_activate", 65535, 3364, 2652, 1},
+    {"dragon_boom2", 65535, 3365, 2653, 1},
+    {"armagon_missile_attack", 65535, 3366, 2654, 1},
+    {"Gremlin_MeleeAttack", 65535, 3367, 2655, 1},
+    {"Gremlin_MissileAttack", 65535, 3368, 2656, 1},
+    {"gremlin_gib", 65535, 3369, 2657, 1},
+    {"supsham_melee", 65535, 3370, 2658, 1},
+    {"supsham_missile", 65535, 3371, 2659, 1},
+    {"rknight_magic", 65535, 3372, 2660, 1},
+    {"rknight_run", 65535, 3373, 2661, 1},
+    {"rknight_melee", 65535, 3374, 2662, 1},
 };
 const size_t q1_frame_count = sizeof(q1_frames) / sizeof(*q1_frames);
 
 static const uint16_t name_order[] = {
-    2966, 2967, 2555, 2564, 2565, 2566, 2567, 2568, 2556, 2557, 2558, 2559, 2560, 2561, 2562, 2563,
-    2965, 2489, 2498, 2499, 2500, 2501, 2502, 2503, 2490, 2491, 2492, 2493, 2494, 2495, 2496, 2497,
+    3367, 3368, 2555, 2564, 2565, 2566, 2567, 2568, 2556, 2557, 2558, 2559, 2560, 2561, 2562, 2563,
+    3366, 2489, 2498, 2499, 2500, 2501, 2502, 2503, 2490, 2491, 2492, 2493, 2494, 2495, 2496, 2497,
     2504, 2513, 2514, 2515, 2505, 2506, 2507, 2508, 2509, 2510, 2511, 2512, 2516, 2453, 2462, 2463,
     2464, 2454, 2455, 2456, 2457, 2458, 2459, 2460, 2461, 2519, 2528, 2529, 2530, 2531, 2532, 2533,
     2534, 2520, 2521, 2522, 2523, 2524, 2525, 2526, 2527, 2535, 2544, 2545, 2546, 2547, 2548, 2549,
@@ -5666,13 +6488,13 @@ static const uint16_t name_order[] = {
     1195, 1196, 1179, 1197, 1198, 1199, 1200, 1180, 1181, 1182, 1183, 1184, 1185, 1186, 1130, 1139,
     1140, 1141, 1142, 1143, 1144, 1145, 1146, 1131, 1132, 1133, 1134, 1135, 1136, 1137, 1138, 1201,
     1210, 1202, 1203, 1204, 1205, 1206, 1207, 1208, 1209, 1211, 1220, 1212, 1213, 1214, 1215, 1216,
-    1217, 1218, 1219, 1221, 1230, 1222, 1223, 1224, 1225, 1226, 1227, 1228, 1229, 1853, 1854, 2899,
-    2900, 2901, 2902, 2903, 2904, 2905, 2906, 2938, 2939, 2940, 2941, 2942, 2943, 2944, 2945, 2946,
-    2947, 2948, 2949, 2950, 2951, 2952, 2953, 2954, 2955, 2907, 2908, 2909, 2910, 2911, 2912, 2913,
-    2914, 2915, 2916, 2917, 2918, 2919, 2920, 2921, 2922, 2931, 2932, 2933, 2934, 2935, 2936, 2937,
-    2923, 2924, 2925, 2926, 2927, 2928, 2929, 2930, 2887, 2896, 2897, 2898, 2888, 2889, 2890, 2891,
-    2892, 2893, 2894, 2895, 2870, 2871, 2872, 2873, 2874, 2875, 2876, 2877, 2878, 2879, 2880, 2881,
-    2882, 2883, 2884, 2885, 2886, 242,  251,  252,  253,  254,  255,  256,  243,  244,  245,  246,
+    1217, 1218, 1219, 1221, 1230, 1222, 1223, 1224, 1225, 1226, 1227, 1228, 1229, 1853, 1854, 3300,
+    3301, 3302, 3303, 3304, 3305, 3306, 3307, 3339, 3340, 3341, 3342, 3343, 3344, 3345, 3346, 3347,
+    3348, 3349, 3350, 3351, 3352, 3353, 3354, 3355, 3356, 3308, 3309, 3310, 3311, 3312, 3313, 3314,
+    3315, 3316, 3317, 3318, 3319, 3320, 3321, 3322, 3323, 3332, 3333, 3334, 3335, 3336, 3337, 3338,
+    3324, 3325, 3326, 3327, 3328, 3329, 3330, 3331, 3288, 3297, 3298, 3299, 3289, 3290, 3291, 3292,
+    3293, 3294, 3295, 3296, 3271, 3272, 3273, 3274, 3275, 3276, 3277, 3278, 3279, 3280, 3281, 3282,
+    3283, 3284, 3285, 3286, 3287, 242,  251,  252,  253,  254,  255,  256,  243,  244,  245,  246,
     247,  248,  249,  250,  263,  264,  265,  266,  267,  268,  269,  270,  271,  230,  239,  240,
     241,  231,  232,  233,  234,  235,  236,  237,  238,  257,  258,  259,  260,  261,  262,  224,
     225,  226,  227,  228,  229,  203,  212,  213,  214,  215,  204,  205,  206,  207,  208,  209,
@@ -5682,8 +6504,8 @@ static const uint16_t name_order[] = {
     1459, 1460, 1461, 1462, 1471, 1472, 1473, 1474, 1475, 1476, 1477, 1463, 1464, 1465, 1466, 1467,
     1468, 1469, 1470, 1427, 1436, 1437, 1438, 1428, 1429, 1430, 1431, 1432, 1433, 1434, 1435, 1410,
     1411, 1412, 1413, 1414, 1415, 1416, 1417, 1418, 1419, 1420, 1421, 1422, 1423, 1424, 1425, 1426,
-    2963, 2337, 2338, 2339, 2340, 2341, 2342, 2343, 2344, 2345, 2346, 2347, 2348, 2349, 2350, 2351,
-    2352, 2353, 2354, 2355, 2964, 2400, 2409, 2410, 2411, 2412, 2413, 2414, 2415, 2416, 2417, 2418,
+    3364, 2337, 2338, 2339, 2340, 2341, 2342, 2343, 2344, 2345, 2346, 2347, 2348, 2349, 2350, 2351,
+    2352, 2353, 2354, 2355, 3365, 2400, 2409, 2410, 2411, 2412, 2413, 2414, 2415, 2416, 2417, 2418,
     2401, 2419, 2420, 2402, 2403, 2404, 2405, 2406, 2407, 2408, 2369, 2378, 2379, 2380, 2381, 2370,
     2371, 2372, 2373, 2374, 2375, 2376, 2377, 2382, 2383, 2384, 2385, 2386, 2387, 2388, 2389, 2390,
     2391, 2392, 2393, 2394, 2395, 2396, 2397, 2398, 2399, 2336, 2356, 2365, 2366, 2367, 2368, 2357,
@@ -5705,7 +6527,7 @@ static const uint16_t name_order[] = {
     847,  857,  866,  867,  868,  869,  870,  871,  872,  873,  874,  858,  859,  860,  861,  862,
     863,  864,  865,  2671, 2680, 2681, 2672, 2673, 2674, 2675, 2676, 2677, 2678, 2679, 2737, 2746,
     2747, 2748, 2738, 2739, 2740, 2741, 2742, 2743, 2744, 2745, 2749, 2750, 2751, 2752, 2753, 2754,
-    2755, 2756, 2968, 2704, 2713, 2714, 2715, 2716, 2717, 2718, 2719, 2720, 2721, 2722, 2705, 2723,
+    2755, 2756, 3369, 2704, 2713, 2714, 2715, 2716, 2717, 2718, 2719, 2720, 2721, 2722, 2705, 2723,
     2706, 2707, 2708, 2709, 2710, 2711, 2712, 2682, 2691, 2692, 2693, 2694, 2683, 2684, 2685, 2686,
     2687, 2688, 2689, 2690, 2728, 2729, 2730, 2613, 2622, 2623, 2624, 2625, 2626, 2627, 2628, 2614,
     2615, 2616, 2617, 2618, 2619, 2620, 2621, 2642, 2643, 2644, 2645, 2646, 2647, 2648, 2649, 2650,
@@ -5716,9 +6538,9 @@ static const uint16_t name_order[] = {
     2734, 2735, 2736, 2569, 2578, 2579, 2580, 2581, 2582, 2583, 2584, 2585, 2570, 2571, 2572, 2573,
     2574, 2575, 2576, 2577, 2586, 2595, 2596, 2597, 2587, 2588, 2589, 2590, 2591, 2592, 2593, 2594,
     510,  519,  520,  521,  522,  523,  524,  525,  511,  512,  513,  514,  515,  516,  517,  518,
-    526,  527,  528,  529,  530,  531,  2839, 2840, 2841, 2842, 2851, 2852, 2853, 2854, 2855, 2843,
-    2844, 2845, 2846, 2847, 2848, 2849, 2850, 2856, 2857, 2858, 2859, 2868, 2869, 2860, 2861, 2862,
-    2863, 2864, 2865, 2866, 2867, 451,  460,  461,  462,  452,  453,  454,  455,  456,  457,  458,
+    526,  527,  528,  529,  530,  531,  3240, 3241, 3242, 3243, 3252, 3253, 3254, 3255, 3256, 3244,
+    3245, 3246, 3247, 3248, 3249, 3250, 3251, 3257, 3258, 3259, 3260, 3269, 3270, 3261, 3262, 3263,
+    3264, 3265, 3266, 3267, 3268, 451,  460,  461,  462,  452,  453,  454,  455,  456,  457,  458,
     459,  463,  464,  465,  466,  467,  468,  469,  470,  471,  472,  481,  482,  483,  484,  485,
     473,  474,  475,  476,  477,  478,  479,  480,  486,  495,  496,  497,  498,  487,  488,  489,
     490,  491,  492,  493,  494,  499,  508,  509,  500,  501,  502,  503,  504,  505,  506,  507,
@@ -5727,12 +6549,12 @@ static const uint16_t name_order[] = {
     549,  550,  409,  410,  411,  412,  413,  414,  415,  416,  417,  418,  427,  428,  429,  430,
     431,  432,  433,  434,  435,  436,  419,  437,  420,  421,  422,  423,  424,  425,  426,  553,
     562,  563,  564,  565,  566,  567,  568,  569,  570,  571,  554,  572,  573,  574,  555,  556,
-    557,  558,  559,  560,  561,  2797, 2798, 2799, 2800, 2801, 2802, 2803, 2804, 2805, 2806, 2807,
-    2808, 2809, 2810, 2811, 2812, 2821, 2822, 2823, 2824, 2825, 2813, 2814, 2815, 2816, 2817, 2818,
-    2819, 2820, 2826, 2835, 2836, 2837, 2838, 2827, 2828, 2829, 2830, 2831, 2832, 2833, 2834, 2789,
-    2790, 2791, 2792, 2793, 2794, 2795, 2796, 2757, 2758, 2759, 2760, 2761, 2762, 2763, 2764, 2765,
-    2774, 2775, 2776, 2777, 2778, 2779, 2780, 2781, 2782, 2783, 2766, 2784, 2785, 2786, 2787, 2788,
-    2767, 2768, 2769, 2770, 2771, 2772, 2773, 42,   51,   43,   44,   45,   46,   47,   48,   49,
+    557,  558,  559,  560,  561,  3198, 3199, 3200, 3201, 3202, 3203, 3204, 3205, 3206, 3207, 3208,
+    3209, 3210, 3211, 3212, 3213, 3222, 3223, 3224, 3225, 3226, 3214, 3215, 3216, 3217, 3218, 3219,
+    3220, 3221, 3227, 3236, 3237, 3238, 3239, 3228, 3229, 3230, 3231, 3232, 3233, 3234, 3235, 3190,
+    3191, 3192, 3193, 3194, 3195, 3196, 3197, 3158, 3159, 3160, 3161, 3162, 3163, 3164, 3165, 3166,
+    3175, 3176, 3177, 3178, 3179, 3180, 3181, 3182, 3183, 3184, 3167, 3185, 3186, 3187, 3188, 3189,
+    3168, 3169, 3170, 3171, 3172, 3173, 3174, 42,   51,   43,   44,   45,   46,   47,   48,   49,
     50,   66,   75,   67,   68,   69,   70,   71,   72,   73,   74,   76,   85,   77,   78,   79,
     80,   81,   82,   83,   84,   86,   95,   96,   87,   88,   89,   90,   91,   92,   93,   94,
     52,   53,   54,   55,   64,   65,   56,   57,   58,   59,   60,   61,   62,   63,   23,   24,
@@ -5746,90 +6568,115 @@ static const uint16_t name_order[] = {
     2025, 2026, 2027, 2028, 2029, 2030, 2031, 2032, 2033, 2007, 2034, 2035, 2008, 2009, 2010, 2011,
     2012, 2013, 2059, 2068, 2060, 2061, 2062, 2063, 2064, 2065, 2066, 2067, 1974, 1983, 1984, 1985,
     1986, 1987, 1988, 1989, 1990, 1991, 1992, 1975, 1993, 1994, 1995, 1996, 1997, 1998, 1999, 2000,
-    2001, 2002, 1976, 2003, 2004, 1977, 1978, 1979, 1980, 1981, 1982, 2218, 2219, 2220, 2221, 2222,
-    2223, 2224, 2225, 2226, 2227, 2228, 2229, 2230, 2231, 2232, 2233, 2234, 2235, 2236, 2237, 2238,
-    2239, 2240, 2241, 2242, 2243, 2244, 2245, 2246, 2285, 2294, 2295, 2296, 2297, 2298, 2299, 2300,
-    2301, 2302, 2303, 2286, 2304, 2305, 2287, 2288, 2289, 2290, 2291, 2292, 2293, 2259, 2260, 2261,
-    2262, 2263, 2264, 2265, 2266, 2267, 2247, 2248, 2249, 2250, 2251, 2252, 2253, 2254, 2255, 2256,
-    2257, 2258, 2268, 2277, 2269, 2270, 2271, 2272, 2273, 2274, 2275, 2276, 2278, 2279, 2280, 2281,
-    2282, 2283, 2284, 2207, 2216, 2217, 2208, 2209, 2210, 2211, 2212, 2213, 2214, 2215, 2193, 2962,
-    2306, 2315, 2316, 2317, 2318, 2319, 2320, 2321, 2322, 2323, 2307, 2324, 2325, 2326, 2327, 2328,
-    2329, 2330, 2331, 2332, 2333, 2308, 2334, 2335, 2309, 2310, 2311, 2312, 2313, 2314, 2194, 2203,
-    2204, 2205, 2206, 2195, 2196, 2197, 2198, 2199, 2200, 2201, 2202, 1641, 1650, 1651, 1652, 1653,
-    1642, 1643, 1644, 1645, 1646, 1647, 1648, 1649, 1654, 1663, 1664, 1665, 1666, 1667, 1655, 1656,
-    1657, 1658, 1659, 1660, 1661, 1662, 1668, 1677, 1678, 1679, 1669, 1670, 1671, 1672, 1673, 1674,
-    1675, 1676, 2959, 1680, 1689, 1690, 1691, 1681, 1682, 1683, 1684, 1685, 1686, 1687, 1688, 1692,
-    1701, 1702, 1703, 1704, 1705, 1706, 1707, 1708, 1709, 1710, 1693, 1711, 1712, 1713, 1714, 1715,
-    1716, 1717, 1718, 1719, 1694, 1695, 1696, 1697, 1698, 1699, 1700, 1720, 1729, 1730, 1731, 1732,
-    1733, 1734, 1735, 1736, 1737, 1721, 1722, 1723, 1724, 1725, 1726, 1727, 1728, 1738, 1747, 1748,
-    1749, 1750, 1739, 1740, 1741, 1742, 1743, 1744, 1745, 1746, 1751, 1760, 1761, 1762, 1763, 1764,
-    1765, 1766, 1767, 1768, 1769, 1752, 1770, 1771, 1772, 1773, 1774, 1775, 1776, 1777, 1778, 1779,
-    1753, 1780, 1754, 1755, 1756, 1757, 1758, 1759, 1623, 1632, 1633, 1634, 1635, 1636, 1637, 1638,
-    1639, 1640, 1624, 1625, 1626, 1627, 1628, 1629, 1630, 1631, 1781, 1589, 1598, 1599, 1600, 1601,
-    1602, 1603, 1590, 1591, 1592, 1593, 1594, 1595, 1596, 1597, 2958, 1604, 1613, 1614, 1615, 1616,
-    1617, 1618, 1619, 1620, 1621, 1622, 1605, 1606, 1607, 1608, 1609, 1610, 1611, 1612, 399,  408,
-    400,  401,  402,  403,  404,  405,  406,  407,  385,  394,  395,  396,  397,  398,  386,  387,
-    388,  389,  390,  391,  392,  393,  333,  334,  335,  336,  337,  338,  339,  340,  341,  342,
-    343,  344,  345,  346,  347,  348,  349,  350,  351,  352,  353,  354,  363,  364,  365,  366,
-    367,  368,  369,  355,  356,  357,  358,  359,  360,  361,  362,  370,  379,  380,  381,  382,
-    383,  384,  371,  372,  373,  374,  375,  376,  377,  378,  297,  298,  299,  300,  301,  302,
-    303,  304,  319,  328,  329,  330,  331,  332,  320,  321,  322,  323,  324,  325,  326,  327,
-    272,  273,  274,  275,  276,  277,  278,  279,  280,  305,  314,  315,  316,  317,  318,  306,
-    307,  308,  309,  310,  311,  312,  313,  281,  290,  291,  292,  293,  294,  295,  296,  282,
-    283,  284,  285,  286,  287,  288,  289,  1241, 1250, 1251, 1252, 1253, 1254, 1255, 1256, 1257,
-    1258, 1259, 1242, 1260, 1261, 1262, 1263, 1264, 1265, 1266, 1267, 1268, 1269, 1243, 1270, 1271,
-    1272, 1273, 1274, 1275, 1276, 1277, 1278, 1279, 1244, 1280, 1281, 1282, 1283, 1284, 1285, 1286,
-    1245, 1246, 1247, 1248, 1249, 1287, 1296, 1297, 1298, 1299, 1300, 1301, 1302, 1303, 1304, 1305,
-    1288, 1306, 1289, 1290, 1291, 1292, 1293, 1294, 1295, 2110, 2111, 2112, 2113, 2114, 2115, 2116,
-    2117, 2118, 2119, 2120, 2121, 2122, 2123, 2124, 2125, 2126, 2127, 2128, 2129, 2130, 2131, 2132,
-    2133, 2134, 2135, 2136, 2137, 2138, 2139, 2140, 2141, 2142, 2143, 2144, 2145, 2146, 2147, 2174,
-    2175, 2176, 2177, 2178, 2179, 2180, 2181, 2182, 2183, 2184, 2185, 2186, 2187, 2188, 2189, 2190,
-    2191, 2192, 2961, 2148, 2149, 2150, 2151, 2152, 2153, 2154, 2155, 2156, 2157, 2158, 2159, 2160,
-    2161, 2162, 2163, 2164, 2165, 2166, 2167, 2168, 2169, 2170, 2171, 2172, 2173, 2095, 2096, 2097,
-    2098, 2099, 2100, 2101, 2102, 2103, 2104, 2105, 2106, 2107, 2108, 2109, 2079, 2080, 2081, 2082,
-    2083, 2084, 2085, 2086, 2087, 2088, 2089, 2090, 2091, 2092, 2093, 2094, 1824, 1825, 1826, 1827,
-    1828, 1829, 1830, 1831, 1848, 1849, 1850, 1851, 1852, 1832, 1841, 1842, 1833, 1834, 1835, 1836,
-    1837, 1838, 1839, 1840, 1843, 1844, 1845, 1846, 1847, 1800, 1801, 1802, 1803, 1804, 1805, 1782,
-    1791, 1792, 1793, 1783, 1784, 1785, 1786, 1787, 1788, 1789, 1790, 1806, 1807, 1808, 1809, 1810,
-    1811, 1812, 1813, 1814, 1815, 1816, 1817, 1818, 1819, 1820, 1821, 1822, 1823, 1794, 1795, 1796,
-    1797, 1798, 1799, 752,  761,  762,  753,  754,  755,  756,  757,  758,  759,  760,  768,  769,
-    770,  771,  772,  773,  774,  763,  764,  765,  766,  767,  740,  749,  750,  751,  741,  742,
-    743,  744,  745,  746,  747,  748,  727,  728,  737,  738,  739,  729,  730,  731,  732,  733,
-    734,  735,  736,  656,  665,  666,  657,  658,  659,  660,  661,  662,  663,  664,  640,  647,
-    648,  649,  641,  642,  643,  644,  645,  646,  650,  651,  652,  653,  654,  655,  604,  605,
-    606,  607,  608,  609,  610,  619,  620,  621,  611,  612,  613,  614,  615,  616,  617,  618,
-    575,  584,  585,  586,  587,  588,  589,  590,  591,  576,  577,  578,  579,  580,  581,  582,
-    583,  622,  623,  624,  625,  626,  627,  628,  629,  630,  631,  632,  633,  634,  635,  636,
-    637,  638,  639,  592,  601,  602,  603,  593,  594,  595,  596,  597,  598,  599,  600,  1558,
-    1567, 1559, 1560, 1561, 1562, 1563, 1564, 1565, 1566, 1568, 1577, 1569, 1570, 1571, 1572, 1573,
-    1574, 1575, 1576, 1578, 1587, 1588, 1579, 1580, 1581, 1582, 1583, 1584, 1585, 1586, 2957, 1550,
-    1551, 1552, 1553, 1554, 1555, 1556, 1557, 1549, 837,  838,  827,  828,  829,  830,  776,  831,
-    832,  833,  834,  835,  836,  802,  811,  812,  813,  814,  815,  816,  817,  818,  819,  820,
-    803,  821,  822,  823,  824,  825,  826,  804,  805,  806,  807,  808,  809,  810,  775,  777,
-    786,  787,  788,  789,  790,  791,  792,  793,  794,  795,  778,  796,  797,  798,  799,  800,
-    801,  779,  780,  781,  782,  783,  784,  785,  719,  720,  721,  722,  723,  724,  725,  726,
-    705,  714,  706,  707,  708,  709,  710,  711,  712,  713,  715,  716,  717,  718,  691,  700,
-    701,  702,  703,  704,  692,  693,  694,  695,  696,  697,  698,  699,  683,  684,  685,  686,
-    687,  688,  689,  690,  667,  668,  669,  670,  671,  672,  673,  674,  675,  676,  677,  678,
-    679,  680,  681,  682,  1880, 1881, 1882, 1883, 1884, 1885, 1886, 1887, 1888, 1889, 1890, 1891,
-    1892, 1893, 1894, 1895, 1896, 1897, 1898, 1899, 1900, 1901, 1902, 1903, 1904, 1905, 1906, 1907,
-    1908, 1909, 1910, 1911, 1912, 1913, 1914, 1915, 1916, 1917, 1918, 1919, 1920, 1921, 2960, 1939,
-    1940, 1941, 1942, 1943, 1944, 1945, 1946, 1947, 1922, 1923, 1924, 1925, 1926, 1927, 1928, 1929,
-    1930, 1931, 1932, 1933, 1934, 1935, 1936, 1937, 1938, 1868, 1869, 1870, 1871, 1872, 1873, 1874,
-    1875, 1876, 1877, 1878, 1879, 1855, 1856, 1857, 1858, 1859, 1860, 1861, 1862, 1863, 1864, 1865,
-    1866, 1867, 990,  999,  1000, 1001, 1002, 991,  992,  993,  994,  995,  996,  997,  998,  1003,
-    1012, 1013, 1014, 1015, 1016, 1004, 1005, 1006, 1007, 1008, 1009, 1010, 1011, 1017, 1026, 1027,
-    1028, 1018, 1019, 1020, 1021, 1022, 1023, 1024, 1025, 947,  948,  949,  950,  951,  952,  2956,
-    1029, 1038, 1039, 1040, 1030, 1031, 1032, 1033, 1034, 1035, 1036, 1037, 1041, 1050, 1051, 1052,
-    1053, 1054, 1055, 1056, 1057, 1058, 1059, 1042, 1060, 1061, 1062, 1063, 1064, 1065, 1066, 1067,
-    1068, 1043, 1044, 1045, 1046, 1047, 1048, 1049, 1069, 1078, 1079, 1080, 1081, 1082, 1083, 1084,
-    1085, 1086, 1070, 1071, 1072, 1073, 1074, 1075, 1076, 1077, 1087, 1096, 1097, 1098, 1099, 1088,
-    1089, 1090, 1091, 1092, 1093, 1094, 1095, 1100, 1109, 1110, 1111, 1112, 1113, 1114, 1115, 1116,
-    1117, 1118, 1101, 1119, 1120, 1121, 1122, 1123, 1124, 1125, 1126, 1127, 1128, 1102, 1129, 1103,
-    1104, 1105, 1106, 1107, 1108, 972,  981,  982,  983,  984,  985,  986,  987,  988,  989,  973,
-    974,  975,  976,  977,  978,  979,  980,  932,  941,  942,  943,  944,  945,  946,  933,  934,
-    935,  936,  937,  938,  939,  940,  953,  962,  963,  964,  965,  966,  967,  968,  969,  970,
-    971,  954,  955,  956,  957,  958,  959,  960,  961,
+    2001, 2002, 1976, 2003, 2004, 1977, 1978, 1979, 1980, 1981, 1982, 3148, 3157, 3149, 3150, 3151,
+    3152, 3153, 3154, 3155, 3156, 3115, 3124, 3125, 3126, 3127, 3128, 3129, 3130, 3131, 3132, 3133,
+    3116, 3134, 3135, 3136, 3137, 3117, 3118, 3119, 3120, 3121, 3122, 3123, 3044, 3045, 3046, 3047,
+    3048, 3049, 3050, 3051, 3052, 3027, 3036, 3037, 3038, 3039, 3040, 3041, 3042, 3043, 3028, 3029,
+    3030, 3031, 3032, 3033, 3034, 3035, 3084, 3093, 3094, 3095, 3096, 3097, 3098, 3099, 3100, 3101,
+    3102, 3085, 3103, 3104, 3105, 3106, 3107, 3108, 3109, 3110, 3111, 3112, 3086, 3113, 3114, 3087,
+    3088, 3089, 3090, 3091, 3092, 3138, 3147, 3139, 3140, 3141, 3142, 3143, 3144, 3145, 3146, 3053,
+    3062, 3063, 3064, 3065, 3066, 3067, 3068, 3069, 3070, 3071, 3054, 3072, 3073, 3074, 3075, 3076,
+    3077, 3078, 3079, 3080, 3081, 3055, 3082, 3083, 3056, 3057, 3058, 3059, 3060, 3061, 2218, 2219,
+    2220, 2221, 2222, 2223, 2224, 2225, 2226, 2227, 2228, 2229, 2230, 2231, 2232, 2233, 2234, 2235,
+    2236, 2237, 2238, 2239, 2240, 2241, 2242, 2243, 2244, 2245, 2246, 2285, 2294, 2295, 2296, 2297,
+    2298, 2299, 2300, 2301, 2302, 2303, 2286, 2304, 2305, 2287, 2288, 2289, 2290, 2291, 2292, 2293,
+    2259, 2260, 2261, 2262, 2263, 2264, 2265, 2266, 2267, 2247, 2248, 2249, 2250, 2251, 2252, 2253,
+    2254, 2255, 2256, 2257, 2258, 2268, 2277, 2269, 2270, 2271, 2272, 2273, 2274, 2275, 2276, 2278,
+    2279, 2280, 2281, 2282, 2283, 2284, 2207, 2216, 2217, 2208, 2209, 2210, 2211, 2212, 2213, 2214,
+    2215, 2193, 3363, 2306, 2315, 2316, 2317, 2318, 2319, 2320, 2321, 2322, 2323, 2307, 2324, 2325,
+    2326, 2327, 2328, 2329, 2330, 2331, 2332, 2333, 2308, 2334, 2335, 2309, 2310, 2311, 2312, 2313,
+    2314, 2194, 2203, 2204, 2205, 2206, 2195, 2196, 2197, 2198, 2199, 2200, 2201, 2202, 1641, 1650,
+    1651, 1652, 1653, 1642, 1643, 1644, 1645, 1646, 1647, 1648, 1649, 1654, 1663, 1664, 1665, 1666,
+    1667, 1655, 1656, 1657, 1658, 1659, 1660, 1661, 1662, 1668, 1677, 1678, 1679, 1669, 1670, 1671,
+    1672, 1673, 1674, 1675, 1676, 3360, 1680, 1689, 1690, 1691, 1681, 1682, 1683, 1684, 1685, 1686,
+    1687, 1688, 1692, 1701, 1702, 1703, 1704, 1705, 1706, 1707, 1708, 1709, 1710, 1693, 1711, 1712,
+    1713, 1714, 1715, 1716, 1717, 1718, 1719, 1694, 1695, 1696, 1697, 1698, 1699, 1700, 1720, 1729,
+    1730, 1731, 1732, 1733, 1734, 1735, 1736, 1737, 1721, 1722, 1723, 1724, 1725, 1726, 1727, 1728,
+    1738, 1747, 1748, 1749, 1750, 1739, 1740, 1741, 1742, 1743, 1744, 1745, 1746, 1751, 1760, 1761,
+    1762, 1763, 1764, 1765, 1766, 1767, 1768, 1769, 1752, 1770, 1771, 1772, 1773, 1774, 1775, 1776,
+    1777, 1778, 1779, 1753, 1780, 1754, 1755, 1756, 1757, 1758, 1759, 1623, 1632, 1633, 1634, 1635,
+    1636, 1637, 1638, 1639, 1640, 1624, 1625, 1626, 1627, 1628, 1629, 1630, 1631, 1781, 1589, 1598,
+    1599, 1600, 1601, 1602, 1603, 1590, 1591, 1592, 1593, 1594, 1595, 1596, 1597, 3359, 1604, 1613,
+    1614, 1615, 1616, 1617, 1618, 1619, 1620, 1621, 1622, 1605, 1606, 1607, 1608, 1609, 1610, 1611,
+    1612, 399,  408,  400,  401,  402,  403,  404,  405,  406,  407,  385,  394,  395,  396,  397,
+    398,  386,  387,  388,  389,  390,  391,  392,  393,  333,  334,  335,  336,  337,  338,  339,
+    340,  341,  342,  343,  344,  345,  346,  347,  348,  349,  350,  351,  352,  353,  354,  363,
+    364,  365,  366,  367,  368,  369,  355,  356,  357,  358,  359,  360,  361,  362,  370,  379,
+    380,  381,  382,  383,  384,  371,  372,  373,  374,  375,  376,  377,  378,  297,  298,  299,
+    300,  301,  302,  303,  304,  319,  328,  329,  330,  331,  332,  320,  321,  322,  323,  324,
+    325,  326,  327,  272,  273,  274,  275,  276,  277,  278,  279,  280,  305,  314,  315,  316,
+    317,  318,  306,  307,  308,  309,  310,  311,  312,  313,  281,  290,  291,  292,  293,  294,
+    295,  296,  282,  283,  284,  285,  286,  287,  288,  289,  1241, 1250, 1251, 1252, 1253, 1254,
+    1255, 1256, 1257, 1258, 1259, 1242, 1260, 1261, 1262, 1263, 1264, 1265, 1266, 1267, 1268, 1269,
+    1243, 1270, 1271, 1272, 1273, 1274, 1275, 1276, 1277, 1278, 1279, 1244, 1280, 1281, 1282, 1283,
+    1284, 1285, 1286, 1245, 1246, 1247, 1248, 1249, 1287, 1296, 1297, 1298, 1299, 1300, 1301, 1302,
+    1303, 1304, 1305, 1288, 1306, 1289, 1290, 1291, 1292, 1293, 1294, 1295, 2110, 2111, 2112, 2113,
+    2114, 2115, 2116, 2117, 2118, 2119, 2120, 2121, 2122, 2123, 2124, 2125, 2126, 2127, 2128, 2129,
+    2130, 2131, 2132, 2133, 2134, 2135, 2136, 2137, 2138, 2139, 2140, 2141, 2142, 2143, 2144, 2145,
+    2146, 2147, 2174, 2175, 2176, 2177, 2178, 2179, 2180, 2181, 2182, 2183, 2184, 2185, 2186, 2187,
+    2188, 2189, 2190, 2191, 2192, 3362, 2148, 2149, 2150, 2151, 2152, 2153, 2154, 2155, 2156, 2157,
+    2158, 2159, 2160, 2161, 2162, 2163, 2164, 2165, 2166, 2167, 2168, 2169, 2170, 2171, 2172, 2173,
+    2095, 2096, 2097, 2098, 2099, 2100, 2101, 2102, 2103, 2104, 2105, 2106, 2107, 2108, 2109, 2079,
+    2080, 2081, 2082, 2083, 2084, 2085, 2086, 2087, 2088, 2089, 2090, 2091, 2092, 2093, 2094, 2925,
+    2934, 2935, 2936, 2926, 2927, 2928, 2929, 2930, 2931, 2932, 2933, 2937, 2938, 2939, 2940, 2941,
+    2942, 2943, 2944, 2945, 3372, 2946, 2955, 2956, 2957, 2958, 2959, 2947, 2948, 2949, 2950, 2951,
+    2952, 2953, 2954, 2960, 2969, 2970, 2971, 2972, 2961, 2962, 2963, 2964, 2965, 2966, 2967, 2968,
+    2973, 2982, 2983, 2974, 2975, 2976, 2977, 2978, 2979, 2980, 2981, 3374, 2920, 2921, 2922, 2923,
+    2924, 3373, 2912, 2913, 2914, 2915, 2916, 2917, 2918, 2919, 2892, 2901, 2902, 2903, 2904, 2905,
+    2906, 2907, 2908, 2909, 2910, 2893, 2911, 2894, 2895, 2896, 2897, 2898, 2899, 2900, 2984, 2993,
+    2985, 2986, 2987, 2988, 2989, 2990, 2991, 2992, 2994, 3003, 3004, 2995, 2996, 2997, 2998, 2999,
+    3000, 3001, 3002, 2863, 2864, 2865, 2866, 2867, 2868, 2869, 2870, 2871, 2872, 2881, 2882, 2883,
+    2884, 2885, 2886, 2887, 2888, 2889, 2890, 2873, 2891, 2874, 2875, 2876, 2877, 2878, 2879, 2880,
+    3005, 3014, 3015, 3016, 3017, 3018, 3019, 3020, 3021, 3022, 3023, 3006, 3024, 3025, 3026, 3007,
+    3008, 3009, 3010, 3011, 3012, 3013, 1824, 1825, 1826, 1827, 1828, 1829, 1830, 1831, 1848, 1849,
+    1850, 1851, 1852, 1832, 1841, 1842, 1833, 1834, 1835, 1836, 1837, 1838, 1839, 1840, 1843, 1844,
+    1845, 1846, 1847, 1800, 1801, 1802, 1803, 1804, 1805, 1782, 1791, 1792, 1793, 1783, 1784, 1785,
+    1786, 1787, 1788, 1789, 1790, 1806, 1807, 1808, 1809, 1810, 1811, 1812, 1813, 1814, 1815, 1816,
+    1817, 1818, 1819, 1820, 1821, 1822, 1823, 1794, 1795, 1796, 1797, 1798, 1799, 752,  761,  762,
+    753,  754,  755,  756,  757,  758,  759,  760,  768,  769,  770,  771,  772,  773,  774,  763,
+    764,  765,  766,  767,  740,  749,  750,  751,  741,  742,  743,  744,  745,  746,  747,  748,
+    727,  728,  737,  738,  739,  729,  730,  731,  732,  733,  734,  735,  736,  656,  665,  666,
+    657,  658,  659,  660,  661,  662,  663,  664,  640,  647,  648,  649,  641,  642,  643,  644,
+    645,  646,  650,  651,  652,  653,  654,  655,  604,  605,  606,  607,  608,  609,  610,  619,
+    620,  621,  611,  612,  613,  614,  615,  616,  617,  618,  575,  584,  585,  586,  587,  588,
+    589,  590,  591,  576,  577,  578,  579,  580,  581,  582,  583,  622,  623,  624,  625,  626,
+    627,  628,  629,  630,  631,  632,  633,  634,  635,  636,  637,  638,  639,  592,  601,  602,
+    603,  593,  594,  595,  596,  597,  598,  599,  600,  2852, 2861, 2862, 2853, 2854, 2855, 2856,
+    2857, 2858, 2859, 2860, 2822, 2833, 2834, 2835, 2823, 2824, 2825, 2827, 2829, 2826, 2828, 2830,
+    2831, 2832, 2836, 2843, 2844, 2845, 2837, 2838, 2839, 2840, 2841, 2842, 3370, 3371, 2846, 2847,
+    2848, 2849, 2850, 2851, 2786, 2787, 2788, 2789, 2790, 2791, 2792, 2801, 2802, 2803, 2793, 2794,
+    2795, 2796, 2797, 2798, 2799, 2800, 2757, 2766, 2767, 2768, 2769, 2770, 2771, 2772, 2773, 2758,
+    2759, 2760, 2761, 2762, 2763, 2764, 2765, 2804, 2805, 2806, 2807, 2808, 2809, 2810, 2811, 2812,
+    2813, 2814, 2815, 2816, 2817, 2818, 2819, 2820, 2821, 2774, 2783, 2784, 2785, 2775, 2776, 2777,
+    2778, 2779, 2780, 2781, 2782, 1558, 1567, 1559, 1560, 1561, 1562, 1563, 1564, 1565, 1566, 1568,
+    1577, 1569, 1570, 1571, 1572, 1573, 1574, 1575, 1576, 1578, 1587, 1588, 1579, 1580, 1581, 1582,
+    1583, 1584, 1585, 1586, 3358, 1550, 1551, 1552, 1553, 1554, 1555, 1556, 1557, 1549, 837,  838,
+    827,  828,  829,  830,  776,  831,  832,  833,  834,  835,  836,  802,  811,  812,  813,  814,
+    815,  816,  817,  818,  819,  820,  803,  821,  822,  823,  824,  825,  826,  804,  805,  806,
+    807,  808,  809,  810,  775,  777,  786,  787,  788,  789,  790,  791,  792,  793,  794,  795,
+    778,  796,  797,  798,  799,  800,  801,  779,  780,  781,  782,  783,  784,  785,  719,  720,
+    721,  722,  723,  724,  725,  726,  705,  714,  706,  707,  708,  709,  710,  711,  712,  713,
+    715,  716,  717,  718,  691,  700,  701,  702,  703,  704,  692,  693,  694,  695,  696,  697,
+    698,  699,  683,  684,  685,  686,  687,  688,  689,  690,  667,  668,  669,  670,  671,  672,
+    673,  674,  675,  676,  677,  678,  679,  680,  681,  682,  1880, 1881, 1882, 1883, 1884, 1885,
+    1886, 1887, 1888, 1889, 1890, 1891, 1892, 1893, 1894, 1895, 1896, 1897, 1898, 1899, 1900, 1901,
+    1902, 1903, 1904, 1905, 1906, 1907, 1908, 1909, 1910, 1911, 1912, 1913, 1914, 1915, 1916, 1917,
+    1918, 1919, 1920, 1921, 3361, 1939, 1940, 1941, 1942, 1943, 1944, 1945, 1946, 1947, 1922, 1923,
+    1924, 1925, 1926, 1927, 1928, 1929, 1930, 1931, 1932, 1933, 1934, 1935, 1936, 1937, 1938, 1868,
+    1869, 1870, 1871, 1872, 1873, 1874, 1875, 1876, 1877, 1878, 1879, 1855, 1856, 1857, 1858, 1859,
+    1860, 1861, 1862, 1863, 1864, 1865, 1866, 1867, 990,  999,  1000, 1001, 1002, 991,  992,  993,
+    994,  995,  996,  997,  998,  1003, 1012, 1013, 1014, 1015, 1016, 1004, 1005, 1006, 1007, 1008,
+    1009, 1010, 1011, 1017, 1026, 1027, 1028, 1018, 1019, 1020, 1021, 1022, 1023, 1024, 1025, 947,
+    948,  949,  950,  951,  952,  3357, 1029, 1038, 1039, 1040, 1030, 1031, 1032, 1033, 1034, 1035,
+    1036, 1037, 1041, 1050, 1051, 1052, 1053, 1054, 1055, 1056, 1057, 1058, 1059, 1042, 1060, 1061,
+    1062, 1063, 1064, 1065, 1066, 1067, 1068, 1043, 1044, 1045, 1046, 1047, 1048, 1049, 1069, 1078,
+    1079, 1080, 1081, 1082, 1083, 1084, 1085, 1086, 1070, 1071, 1072, 1073, 1074, 1075, 1076, 1077,
+    1087, 1096, 1097, 1098, 1099, 1088, 1089, 1090, 1091, 1092, 1093, 1094, 1095, 1100, 1109, 1110,
+    1111, 1112, 1113, 1114, 1115, 1116, 1117, 1118, 1101, 1119, 1120, 1121, 1122, 1123, 1124, 1125,
+    1126, 1127, 1128, 1102, 1129, 1103, 1104, 1105, 1106, 1107, 1108, 972,  981,  982,  983,  984,
+    985,  986,  987,  988,  989,  973,  974,  975,  976,  977,  978,  979,  980,  932,  941,  942,
+    943,  944,  945,  946,  933,  934,  935,  936,  937,  938,  939,  940,  953,  962,  963,  964,
+    965,  966,  967,  968,  969,  970,  971,  954,  955,  956,  957,  958,  959,  960,  961,
 };
 
 uint16_t q1_frame_index(const char *name) {
@@ -5851,169 +6698,438 @@ uint16_t q1_frame_index(const char *name) {
 uint16_t q1_infected_frame(uint16_t frame) {
     switch (frame) {
     case 1307:
-        return 2757;
+        return 3158;
     case 1308:
-        return 2758;
+        return 3159;
     case 1309:
-        return 2759;
+        return 3160;
     case 1310:
-        return 2760;
+        return 3161;
     case 1311:
-        return 2761;
+        return 3162;
     case 1312:
-        return 2762;
+        return 3163;
     case 1313:
-        return 2763;
+        return 3164;
     case 1314:
-        return 2764;
+        return 3165;
     case 1315:
-        return 2765;
+        return 3166;
     case 1316:
-        return 2766;
+        return 3167;
     case 1317:
-        return 2767;
+        return 3168;
     case 1318:
-        return 2768;
+        return 3169;
     case 1319:
-        return 2769;
+        return 3170;
     case 1320:
-        return 2770;
+        return 3171;
     case 1321:
-        return 2771;
+        return 3172;
     case 1322:
-        return 2772;
+        return 3173;
     case 1323:
-        return 2773;
+        return 3174;
     case 1324:
-        return 2774;
+        return 3175;
     case 1325:
-        return 2775;
+        return 3176;
     case 1326:
-        return 2776;
+        return 3177;
     case 1327:
-        return 2777;
+        return 3178;
     case 1328:
-        return 2778;
+        return 3179;
     case 1329:
-        return 2779;
+        return 3180;
     case 1330:
-        return 2780;
+        return 3181;
     case 1331:
-        return 2781;
+        return 3182;
     case 1332:
-        return 2782;
+        return 3183;
     case 1333:
-        return 2783;
+        return 3184;
     case 1334:
-        return 2784;
+        return 3185;
     case 1335:
-        return 2785;
+        return 3186;
     case 1336:
-        return 2786;
+        return 3187;
     case 1337:
-        return 2787;
+        return 3188;
     case 1338:
-        return 2788;
+        return 3189;
     case 1339:
-        return 2789;
+        return 3190;
     case 1340:
-        return 2790;
+        return 3191;
     case 1341:
-        return 2791;
+        return 3192;
     case 1342:
-        return 2792;
+        return 3193;
     case 1343:
-        return 2793;
+        return 3194;
     case 1344:
-        return 2794;
+        return 3195;
     case 1345:
-        return 2795;
+        return 3196;
     case 1346:
-        return 2796;
+        return 3197;
     case 1347:
-        return 2797;
+        return 3198;
     case 1348:
-        return 2798;
+        return 3199;
     case 1349:
-        return 2799;
+        return 3200;
     case 1350:
-        return 2800;
+        return 3201;
     case 1351:
-        return 2801;
+        return 3202;
     case 1352:
-        return 2802;
+        return 3203;
     case 1353:
-        return 2803;
+        return 3204;
     case 1354:
-        return 2804;
+        return 3205;
     case 1355:
-        return 2805;
+        return 3206;
     case 1356:
-        return 2806;
+        return 3207;
     case 1357:
-        return 2807;
+        return 3208;
     case 1358:
-        return 2808;
+        return 3209;
     case 1359:
-        return 2809;
+        return 3210;
     case 1360:
-        return 2810;
+        return 3211;
     case 1361:
-        return 2811;
+        return 3212;
     case 1362:
-        return 2812;
+        return 3213;
     case 1363:
-        return 2813;
+        return 3214;
     case 1364:
-        return 2814;
+        return 3215;
     case 1365:
-        return 2815;
+        return 3216;
     case 1366:
-        return 2816;
+        return 3217;
     case 1367:
-        return 2817;
+        return 3218;
     case 1368:
-        return 2818;
+        return 3219;
     case 1369:
-        return 2819;
+        return 3220;
     case 1370:
-        return 2820;
+        return 3221;
     case 1371:
-        return 2821;
+        return 3222;
     case 1372:
-        return 2822;
+        return 3223;
     case 1373:
-        return 2823;
+        return 3224;
     case 1374:
-        return 2824;
+        return 3225;
     case 1375:
-        return 2825;
+        return 3226;
     case 1376:
-        return 2826;
+        return 3227;
     case 1377:
-        return 2827;
+        return 3228;
     case 1378:
-        return 2828;
+        return 3229;
     case 1379:
-        return 2829;
+        return 3230;
     case 1380:
-        return 2830;
+        return 3231;
     case 1381:
-        return 2831;
+        return 3232;
     case 1382:
-        return 2832;
+        return 3233;
     case 1383:
-        return 2833;
+        return 3234;
     case 1384:
-        return 2834;
+        return 3235;
     case 1385:
-        return 2835;
+        return 3236;
     case 1386:
-        return 2836;
+        return 3237;
     case 1387:
-        return 2837;
+        return 3238;
     case 1388:
-        return 2838;
+        return 3239;
+    default:
+        return frame;
+    }
+}
+
+uint16_t q1_mg3_lavaman_frame(uint16_t frame) {
+    switch (frame) {
+    case 1948:
+        return 3027;
+    case 1949:
+        return 3028;
+    case 1950:
+        return 3029;
+    case 1951:
+        return 3030;
+    case 1952:
+        return 3031;
+    case 1953:
+        return 3032;
+    case 1954:
+        return 3033;
+    case 1955:
+        return 3034;
+    case 1956:
+        return 3035;
+    case 1957:
+        return 3036;
+    case 1958:
+        return 3037;
+    case 1959:
+        return 3038;
+    case 1960:
+        return 3039;
+    case 1961:
+        return 3040;
+    case 1962:
+        return 3041;
+    case 1963:
+        return 3042;
+    case 1964:
+        return 3043;
+    case 1965:
+        return 3044;
+    case 1966:
+        return 3045;
+    case 1967:
+        return 3046;
+    case 1968:
+        return 3047;
+    case 1969:
+        return 3048;
+    case 1970:
+        return 3049;
+    case 1971:
+        return 3050;
+    case 1972:
+        return 3051;
+    case 1973:
+        return 3052;
+    case 1974:
+        return 3053;
+    case 1975:
+        return 3054;
+    case 1976:
+        return 3055;
+    case 1977:
+        return 3056;
+    case 1978:
+        return 3057;
+    case 1979:
+        return 3058;
+    case 1980:
+        return 3059;
+    case 1981:
+        return 3060;
+    case 1982:
+        return 3061;
+    case 1983:
+        return 3062;
+    case 1984:
+        return 3063;
+    case 1985:
+        return 3064;
+    case 1986:
+        return 3065;
+    case 1987:
+        return 3066;
+    case 1988:
+        return 3067;
+    case 1989:
+        return 3068;
+    case 1990:
+        return 3069;
+    case 1991:
+        return 3070;
+    case 1992:
+        return 3071;
+    case 1993:
+        return 3072;
+    case 1994:
+        return 3073;
+    case 1995:
+        return 3074;
+    case 1996:
+        return 3075;
+    case 1997:
+        return 3076;
+    case 1998:
+        return 3077;
+    case 1999:
+        return 3078;
+    case 2000:
+        return 3079;
+    case 2001:
+        return 3080;
+    case 2002:
+        return 3081;
+    case 2003:
+        return 3082;
+    case 2004:
+        return 3083;
+    case 2005:
+        return 3084;
+    case 2006:
+        return 3085;
+    case 2007:
+        return 3086;
+    case 2008:
+        return 3087;
+    case 2009:
+        return 3088;
+    case 2010:
+        return 3089;
+    case 2011:
+        return 3090;
+    case 2012:
+        return 3091;
+    case 2013:
+        return 3092;
+    case 2014:
+        return 3093;
+    case 2015:
+        return 3094;
+    case 2016:
+        return 3095;
+    case 2017:
+        return 3096;
+    case 2018:
+        return 3097;
+    case 2019:
+        return 3098;
+    case 2020:
+        return 3099;
+    case 2021:
+        return 3100;
+    case 2022:
+        return 3101;
+    case 2023:
+        return 3102;
+    case 2024:
+        return 3103;
+    case 2025:
+        return 3104;
+    case 2026:
+        return 3105;
+    case 2027:
+        return 3106;
+    case 2028:
+        return 3107;
+    case 2029:
+        return 3108;
+    case 2030:
+        return 3109;
+    case 2031:
+        return 3110;
+    case 2032:
+        return 3111;
+    case 2033:
+        return 3112;
+    case 2034:
+        return 3113;
+    case 2035:
+        return 3114;
+    case 2036:
+        return 3115;
+    case 2037:
+        return 3116;
+    case 2038:
+        return 3117;
+    case 2039:
+        return 3118;
+    case 2040:
+        return 3119;
+    case 2041:
+        return 3120;
+    case 2042:
+        return 3121;
+    case 2043:
+        return 3122;
+    case 2044:
+        return 3123;
+    case 2045:
+        return 3124;
+    case 2046:
+        return 3125;
+    case 2047:
+        return 3126;
+    case 2048:
+        return 3127;
+    case 2049:
+        return 3128;
+    case 2050:
+        return 3129;
+    case 2051:
+        return 3130;
+    case 2052:
+        return 3131;
+    case 2053:
+        return 3132;
+    case 2054:
+        return 3133;
+    case 2055:
+        return 3134;
+    case 2056:
+        return 3135;
+    case 2057:
+        return 3136;
+    case 2058:
+        return 3137;
+    case 2059:
+        return 3138;
+    case 2060:
+        return 3139;
+    case 2061:
+        return 3140;
+    case 2062:
+        return 3141;
+    case 2063:
+        return 3142;
+    case 2064:
+        return 3143;
+    case 2065:
+        return 3144;
+    case 2066:
+        return 3145;
+    case 2067:
+        return 3146;
+    case 2068:
+        return 3147;
+    case 2069:
+        return 3148;
+    case 2070:
+        return 3149;
+    case 2071:
+        return 3150;
+    case 2072:
+        return 3151;
+    case 2073:
+        return 3152;
+    case 2074:
+        return 3153;
+    case 2075:
+        return 3154;
+    case 2076:
+        return 3155;
+    case 2077:
+        return 3156;
+    case 2078:
+        return 3157;
     default:
         return frame;
     }
