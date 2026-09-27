@@ -23,6 +23,8 @@ void qa_text_field_insert(qa_text_field *, qa_bytes utf8);
 void qa_text_field_cursor(qa_text_field *, size_t);
 void qa_text_field_width(qa_text_field *, size_t);
 qa_field_view qa_text_field_read(qa_text_field *);
+bool qa_text_field_overstrike(const qa_text_field *);
+void qa_text_field_set_overstrike(qa_text_field *, bool);
 bool qa_text_field_key(qa_text_field *, int key, const qa_field_controls *, bool *handled,
                        qa_error *);
 bool qa_text_field_complete(qa_text_field *, const char *const *names, size_t count, bool reverse,

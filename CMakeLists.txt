@@ -119,6 +119,7 @@ add_library(qa_session STATIC src/session/session.c src/session/scheduler.c)
 target_link_libraries(qa_session PUBLIC qa_world)
 
 add_library(qa_console STATIC
+    src/core/q3_key.c
     src/console/text.c
     src/console/cvars.c
     src/console/commands.c

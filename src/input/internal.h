@@ -28,6 +28,8 @@ struct qa_input_seat {
     qa_input_pair mouse;
     qa_input_focus focus;
     bool focused;
+    qa_input_catcher *catchers;
+    size_t catcher_count, catcher_capacity;
     uint8_t impulse;
     qa_binding_record **bindings;
     size_t binding_count, binding_capacity;

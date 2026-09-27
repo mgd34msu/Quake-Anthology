@@ -591,6 +591,11 @@ uint32_t qa_cvars_take_modified_flags(qa_cvars *registry)
     return flags;
 }
 
+void qa_cvars_mark_modified_flags(qa_cvars *registry, uint32_t flags)
+{
+    registry->changed_flags |= flags;
+}
+
 void qa_cvars_clear_modified(qa_cvars *registry, const char *name)
 {
     cvar *entry = find_variable(registry, name);

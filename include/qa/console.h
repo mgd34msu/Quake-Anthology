@@ -152,6 +152,7 @@ void qa_cvars_set_server_active(qa_cvars *registry, bool active);
 void qa_cvars_set_high_characters(qa_cvars *registry, bool enabled);
 void qa_cvars_remove_owner(qa_cvars *registry, uint64_t owner);
 uint32_t qa_cvars_take_modified_flags(qa_cvars *registry);
+void qa_cvars_mark_modified_flags(qa_cvars *registry, uint32_t flags);
 void qa_cvars_clear_modified(qa_cvars *registry, const char *name);
 bool qa_cvars_take_userinfo_modified(qa_cvars *registry);
 /* Outputs are owned NUL-terminated text; size excludes the terminator. */

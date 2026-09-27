@@ -114,6 +114,7 @@ void qa_input_seat_destroy(qa_input_seat *s) {
     free(s->bindings);
     free(s->held);
     free(s->ui);
+    free(s->catchers);
     free(s->scratch);
     free(s);
 }
@@ -127,6 +128,51 @@ bool qa_input_seat_has_held(const qa_input_seat *s) {
         if (s->buttons[i].count)
             return true;
     return false;
+}
+bool qa_input_seat_key_down(const qa_input_seat *s, qa_physical_input input) {
+    if (!s) return false;
+    for (size_t i = 0; i < s->held_count; ++i)
+        if (qa_input_physical_equal(s->held[i].input, input)) return true;
+    return false;
+}
+uint32_t qa_input_seat_catcher(const qa_input_seat *s, uint64_t owner) {
+    uint32_t mask = 0;
+    if (!s) return mask;
+    for (size_t i = 0; i < s->catcher_count; ++i) {
+        if (owner && s->catchers[i].owner == owner) return s->catchers[i].mask;
+        if (!owner) mask |= s->catchers[i].mask;
+    }
+    if (!owner) {
+        if (s->focus == QA_INPUT_CONSOLE) mask |= QA_INPUT_CATCH_CONSOLE;
+        else if (s->focus == QA_INPUT_CHAT) mask |= QA_INPUT_CATCH_CHAT;
+        else if (s->focus == QA_INPUT_UI) mask |= QA_INPUT_CATCH_UI;
+    }
+    return mask;
+}
+void qa_input_seat_retire_catcher(qa_input_seat *s, uint64_t owner) {
+    if (!s || !owner) return;
+    for (size_t i = 0; i < s->catcher_count; ++i) if (s->catchers[i].owner == owner) {
+        memmove(s->catchers + i, s->catchers + i + 1,
+                (s->catcher_count - i - 1) * sizeof(*s->catchers));
+        --s->catcher_count; return;
+    }
+}
+bool qa_input_seat_set_catcher(qa_input_seat *s, uint64_t owner, uint32_t mask, qa_error *error) {
+    if (!s || !owner) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input catcher requires a seat and provider owner"); return false;
+    }
+    if (!mask) { qa_input_seat_retire_catcher(s, owner); return true; }
+    for (size_t i = 0; i < s->catcher_count; ++i) if (s->catchers[i].owner == owner) {
+        s->catchers[i].mask = mask; return true;
+    }
+    if (!qa_input_reserve((void **)&s->catchers, &s->catcher_capacity,
+                          s->catcher_count + 1, sizeof(*s->catchers), error)) return false;
+    s->catchers[s->catcher_count++] = (qa_input_catcher){owner, mask}; return true;
+}
+size_t qa_input_seat_catcher_count(const qa_input_seat *s) { return s ? s->catcher_count : 0; }
+bool qa_input_seat_catcher_at(const qa_input_seat *s, size_t index, qa_input_catcher *out) {
+    if (!s || !out || index >= s->catcher_count) return false;
+    *out = s->catchers[index]; return true;
 }
 qa_gamepad_input *qa_input_seat_gamepad(qa_input_seat *s) { return &s->gamepad; }
 qa_gamepad_tuning *qa_input_seat_gamepad_tuning(qa_input_seat *s) { return &s->options.gamepad; }

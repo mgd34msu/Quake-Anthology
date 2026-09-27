@@ -339,6 +339,19 @@ qa_command_context qa_input_seat_context(const qa_input_seat *);
 qa_input_focus qa_input_seat_focus(const qa_input_seat *);
 bool qa_input_seat_focused(const qa_input_seat *);
 bool qa_input_seat_has_held(const qa_input_seat *);
+bool qa_input_seat_key_down(const qa_input_seat *, qa_physical_input);
+enum qa_input_catcher_mask {
+    QA_INPUT_CATCH_CONSOLE = 1, QA_INPUT_CATCH_UI = 2,
+    QA_INPUT_CATCH_GAME = 4, QA_INPUT_CATCH_CHAT = 8
+};
+typedef struct qa_input_catcher { uint64_t owner; uint32_t mask; } qa_input_catcher;
+/* Nonzero owner reads only that provider's source mask. Owner zero reads the
+ * composed mask, including current console/chat/UI focus. */
+uint32_t qa_input_seat_catcher(const qa_input_seat *, uint64_t owner);
+bool qa_input_seat_set_catcher(qa_input_seat *, uint64_t owner, uint32_t mask, qa_error *);
+void qa_input_seat_retire_catcher(qa_input_seat *, uint64_t owner);
+size_t qa_input_seat_catcher_count(const qa_input_seat *);
+bool qa_input_seat_catcher_at(const qa_input_seat *, size_t, qa_input_catcher *);
 qa_gamepad_input *qa_input_seat_gamepad(qa_input_seat *);
 qa_gamepad_tuning *qa_input_seat_gamepad_tuning(qa_input_seat *);
 bool qa_input_seat_profile(qa_input_seat *, qa_console_dialect, qa_error *);

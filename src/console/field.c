@@ -124,6 +124,8 @@ void qa_text_field_width(qa_text_field *field, size_t width) {
     field->width = width;
     visible(field);
 }
+bool qa_text_field_overstrike(const qa_text_field *field) { return field->overstrike; }
+void qa_text_field_set_overstrike(qa_text_field *field, bool value) { field->overstrike = value; }
 qa_field_view qa_text_field_read(qa_text_field *field) {
     if (field->dirty) {
         size_t n = 0;
