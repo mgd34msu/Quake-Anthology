@@ -57,6 +57,8 @@ typedef struct qa_bot_goal_services {
     void (*diagnostic)(void *, const char *);
     void (*report)(void *, qa_script_severity, const char *);
     void (*log)(void *, const char *);
+    bool (*developer)(void *);
+    bool (*debug)(void *);
 } qa_bot_goal_services;
 typedef struct qa_bot_goal_options {
     uint32_t maximum_states, maximum_level_items;

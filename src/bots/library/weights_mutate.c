@@ -68,16 +68,19 @@ typedef struct breed_frame {
     unsigned stage;
     bool second_only;
 } breed_frame;
-bool qa_bot_weights_interbreed(qa_bot_weights *out, const qa_bot_weights *parent1,
-                               const qa_bot_weights *parent2, bool *matched, qa_error *e) {
+static bool interbreed(qa_bot_weights *out, const qa_bot_weights *parent1,
+                         const qa_bot_weights *parent2, void *context,
+                         void (*report)(void *, const char *), bool *matched, qa_error *e) {
     if (out == NULL || parent1 == NULL || parent2 == NULL || matched == NULL) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid fuzzy interbreed request");
         return false;
     }
     *matched = false;
     if (parent1->view.weight_count != parent2->view.weight_count ||
-        parent1->view.weight_count != out->view.weight_count)
+        parent1->view.weight_count != out->view.weight_count) {
+        if (report) report(context, "cannot interbreed weight configs, unequal numweights");
         return true;
+    }
     breed_frame *stack = NULL;
     size_t capacity = 0;
     bool all = true;
@@ -100,6 +103,7 @@ bool qa_bot_weights_interbreed(qa_bot_weights *out, const qa_bot_weights *parent
                 f->stage = 1;
                 if (a->child != QA_BOT_NO_INDEX) {
                     if (b->child == QA_BOT_NO_INDEX || c->child == QA_BOT_NO_INDEX) {
+                        if (report) report(context, "cannot interbreed weight configs, unequal child");
                         all = false;
                         break;
                     }
@@ -113,6 +117,7 @@ bool qa_bot_weights_interbreed(qa_bot_weights *out, const qa_bot_weights *parent
                 }
                 if (a->balanced) {
                     if (!b->balanced || !c->balanced) {
+                        if (report) report(context, "cannot interbreed weight configs, unequal balance");
                         all = false;
                         break;
                     }
@@ -130,6 +135,7 @@ bool qa_bot_weights_interbreed(qa_bot_weights *out, const qa_bot_weights *parent
                 continue;
             }
             if (b->next == QA_BOT_NO_INDEX || c->next == QA_BOT_NO_INDEX) {
+                if (report) report(context, "cannot interbreed weight configs, unequal next");
                 all = false;
                 break;
             }
@@ -142,4 +148,20 @@ bool qa_bot_weights_interbreed(qa_bot_weights *out, const qa_bot_weights *parent
     free(stack);
     *matched = all;
     return true;
+}
+bool qa_bot_weights_interbreed_report(qa_bot_weights *out, const qa_bot_weights *first,
+                                       const qa_bot_weights *second, void *context,
+                                       void (*report)(void *, const char *), bool *matched, qa_error *e) {
+    qa_bot_weights_retain(out);
+    qa_bot_weights_retain((qa_bot_weights *)first);
+    qa_bot_weights_retain((qa_bot_weights *)second);
+    bool ok = interbreed(out, first, second, context, report, matched, e);
+    qa_bot_weights_release(out);
+    qa_bot_weights_release((qa_bot_weights *)first);
+    qa_bot_weights_release((qa_bot_weights *)second);
+    return ok;
+}
+bool qa_bot_weights_interbreed(qa_bot_weights *out, const qa_bot_weights *first,
+                               const qa_bot_weights *second, bool *matched, qa_error *e) {
+    return qa_bot_weights_interbreed_report(out, first, second, NULL, NULL, matched, e);
 }

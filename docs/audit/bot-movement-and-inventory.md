@@ -24,7 +24,16 @@ passes and writes parent/child outputs in source order. Root read all five
 changed resource files and compared donor weight evaluation, weapon selection
 and the complete genetic selection routine. No additional defect was confirmed.
 
-The goal header is integrated as the shared movement/host contract; goal bodies
-are under separate independent review. Bot runtime, decisions, roster, all-owner
+The goal owner and its four implementation units are now integrated after a
+separate independent comparison with the complete donor `goals.ts`. This covers
+map items, locations and camps, source goals, goal stacks and avoidance, fuzzy
+selection, retained weight mappings and checkpoint state. Corrections preserve
+the source missing-weight FATAL report with successful no-op, interbreed
+topology diagnostics, stack-overflow report and dump, item expiry before absent
+navigation, developer/debug routing and the 127-byte classname boundary. Root
+also read the shared topology-report API changes, which retain all three weight
+trees across callbacks. No additional defect remained in that bounded review.
+
+Bot runtime, decisions, roster, all-owner
 continuation and concrete application consumers remain open. This does not
 close B26 or B23. No engine configuration, compilation or execution ran.

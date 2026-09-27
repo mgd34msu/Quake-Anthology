@@ -90,6 +90,9 @@ bool qa_bot_weights_evolve(qa_bot_weights *, const qa_bot_random_source *, qa_er
  * mismatch independently of allocation/argument errors. */
 bool qa_bot_weights_interbreed(qa_bot_weights *, const qa_bot_weights *, const qa_bot_weights *,
                                bool *matched, qa_error *);
+bool qa_bot_weights_interbreed_report(qa_bot_weights *, const qa_bot_weights *,
+                                       const qa_bot_weights *, void *context,
+                                       void (*report)(void *, const char *), bool *matched, qa_error *);
 typedef enum qa_bot_character_value_kind {
     QA_BOT_CHARACTER_UNSET,
     QA_BOT_CHARACTER_INTEGER,
