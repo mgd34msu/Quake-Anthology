@@ -40,8 +40,7 @@ typedef struct qa_archive_data {
 } qa_archive_data;
 
 /* Memory remains borrowed and must be immutable until the archive closes.
- * File opens retain a shared OS mapping, so installed files must stay immutable
- * while open (atomic replacement is allowed). On failure, *out is NULL. */
+ * File opens own their backing bytes. On failure, *out is NULL. */
 bool qa_archive_open_memory(qa_bytes bytes, qa_archive_kind kind,
                             qa_archive **out, qa_error *error);
 bool qa_archive_open_file(const char *path, qa_archive_kind kind,
