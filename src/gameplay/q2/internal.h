@@ -42,8 +42,16 @@ typedef enum q2_projectile_kind {
     Q2_LMCTF_HOOK,
     Q2_SPAWN_GROWTH,
     Q2_LMCTF_PLASMA_SPREAD,
-    Q2_LMCTF_PLASMA_BOUNCE
+    Q2_LMCTF_PLASMA_BOUNCE,
+    Q2_PROBOSCIS,
+    Q2_PROBOSCIS_SEGMENT
 } q2_projectile_kind;
+typedef enum q2_proboscis_phase {
+    Q2_PROBOSCIS_FLYING,
+    Q2_PROBOSCIS_ATTACHED,
+    Q2_PROBOSCIS_RETRACTING,
+    Q2_PROBOSCIS_RETURNED
+} q2_proboscis_phase;
 struct qa_q2_monster;
 struct q2_item_state;
 struct q2_power_state;
@@ -203,6 +211,9 @@ bool q2_projectile_spawn(q2_weapon_call *, q2_projectile_kind, qa_vec3, qa_vec3,
                          float kick, float speed, float radius, float radius_damage, float fuse,
                          int direct_mod, int splash_mod, bool hand, bool held, qa_error *);
 bool q2_projectile_tick(qa_q2_game *, q2_actor *, qa_error *);
+bool q2_proboscis_tick(qa_q2_game *, q2_actor *, qa_error *);
+bool q2_proboscis_touch(qa_q2_game *, const qa_touch_contact *, qa_error *);
+bool q2_proboscis_reaction(qa_q2_game *, q2_actor *, const qa_damage_outcome *, qa_error *);
 bool q2_tracker_target(q2_weapon_call *, qa_vec3, qa_vec3, qa_actor_id *, qa_error *);
 bool q2_launch_behavior(qa_q2_game *, q2_actor *, qa_builtin_projectile_role, bool *changed,
                         qa_error *);

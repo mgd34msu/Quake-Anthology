@@ -154,8 +154,7 @@ static float monster_bfg_radius(const q2m_context *context) {
                                                                : 1000.0f;
 }
 
-static qa_vec3 project_monster_offset(const q2m_context *context,
-                                      qa_vec3 offset) {
+qa_vec3 q2m_project_offset(const q2m_context *context, qa_vec3 offset) {
   qa_vec3 forward, right;
   qa_builtin_angle_vectors(context->body.angles, &forward, &right, NULL);
   float scale = context->game->options.edition == QA_Q2_RERELEASE
@@ -194,7 +193,7 @@ bool q2m_project_flash(const q2m_context *context, int flash, qa_vec3 *start,
   qa_vec3 offset;
   if (!q2m_muzzle_offset(context, flash, &offset, error))
     return false;
-  *start = project_monster_offset(context, offset);
+  *start = q2m_project_offset(context, offset);
   return true;
 }
 
@@ -596,7 +595,7 @@ bool q2m_widow_disrupt(q2m_context *context, qa_error *error) {
   qa_vec3 offset = context->game->options.edition == QA_Q2_RERELEASE
                        ? qa_v3(64.72f, 14.50f, 88.81f)
                        : qa_v3(57.72f, 14.50f, 88.81f);
-  qa_vec3 start = project_monster_offset(context, offset);
+  qa_vec3 start = q2m_project_offset(context, offset);
   bool locked =
       qa_vec_length(qa_vec_sub(context->monster->saved_attack_position,
                                enemy.origin)) < 30.0f;
@@ -1154,6 +1153,24 @@ static bool pain_rerelease_makron(q2m_context *context, float damage,
          q2m_set_move(context, move, true, error);
 }
 
+static bool pain_rerelease_parasite(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *monster = context->monster;
+  monster->skin = context->combat.health < monster->base_health * 0.5f ? 1 : 0;
+  if (context->game->now_ns < monster->pain_ns)
+    return true;
+  if (!q2m_parasite_interrupt(context, false, error))
+    return false;
+  if (!q2m_alive(context))
+    return true;
+  monster->pain_ns = q2m_after(context->game->now_ns, 3.0);
+  const char *sound = q2m_random(context->game) < 0.5f ? "parasite/parpain1.wav"
+                                                     : "parasite/parpain2.wav";
+  if (!q2m_sound(context, sound, 2, 1.0f, error))
+    return false;
+  return !q2m_alive(context) || !reacts_to_pain(context) ||
+         q2m_set_move(context, "parasite_move_pain1", false, error);
+}
+
 bool q2m_pain(q2m_context *context, qa_error *error) {
   if (!q2m_alive(context) || context->monster->dead)
     return true;
@@ -1183,6 +1200,10 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
   case Q2M_MAKRON:
     if (context->game->options.edition == QA_Q2_RERELEASE)
       return pain_rerelease_makron(context, damage, error);
+    break;
+  case Q2M_PARASITE:
+    if (context->game->options.edition == QA_Q2_RERELEASE)
+      return pain_rerelease_parasite(context, error);
     break;
   default:
     break;
@@ -2139,6 +2160,13 @@ bool q2m_die(q2m_context *context, qa_error *error) {
     return false;
   if (!q2m_alive(context))
     return true;
+  if (monster->definition->species == Q2M_PARASITE &&
+      context->game->options.edition == QA_Q2_RERELEASE) {
+    if (!q2m_parasite_interrupt(context, true, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+  }
 
   if (context->game->options.edition == QA_Q2_RERELEASE &&
       (monster->definition->species == Q2M_FLOATER ||

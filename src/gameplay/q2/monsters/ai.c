@@ -1435,6 +1435,19 @@ static bool select_species_attack(q2m_context *context, const char **move,
               ? monster->definition->attack_move
               : monster->definition->attack2_move;
   switch (species) {
+  case Q2M_PARASITE:
+    if (context->game->options.edition == QA_Q2_RERELEASE) {
+      bool clear;
+      if (!q2m_clear_shot(context, q2m_project_offset(context, qa_v3(-1.7f, 0, 1.2f)),
+                          &clear, error))
+        return false;
+      if (!q2m_alive(context))
+        return true;
+      *move = clear ? "parasite_move_fire_proboscis" : NULL;
+      if (clear && !q2m_parasite_interrupt(context, false, error))
+        return false;
+    }
+    break;
   case Q2M_INFANTRY:
   case Q2M_TURRET_DRIVER:
     if (melee ||
@@ -2627,7 +2640,7 @@ bool q2m_run_ai(q2m_context *context, q2m_ai_kind kind, const char *source_ai,
           context->elapsed, true, true, &(bool){false}, error);
     }
     if (strcmp(source_ai, "parasite_charge_proboscis") == 0)
-      return q2m_face_enemy(context, error);
+      return q2m_parasite_charge(context, distance, error);
     qa_error_set(error, QA_ERROR_FORMAT, 0,
                  "%s references unsupported source AI %s",
                  monster->definition->classname, source_ai);

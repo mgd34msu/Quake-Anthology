@@ -3673,6 +3673,10 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
     return true;
   struct qa_q2_monster *monster = context->monster;
   bool handled = false;
+  if (!q2m_parasite_callback(context, callback, &handled, error))
+    return false;
+  if (handled)
+    return true;
   if (!conditional_transition(context, callback, &handled, error))
     return false;
   if (handled)
@@ -3857,7 +3861,6 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
   }
 
   if (strcmp(callback, "parasite_drain_attack") == 0 ||
-      strcmp(callback, "parasite_fire_proboscis") == 0 ||
       strcmp(callback, "parasite_launch") == 0)
     return q2m_melee(context, 256.0f,
                      strcmp(callback, "parasite_drain_attack") == 0 ? 5.0f
@@ -4135,11 +4138,7 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
       has(callback, "thud") || has(callback, "charge"))
     return simple_sound(context, callback, error);
 
-  if (strcmp(callback, "parasite_break_wait") == 0 ||
-      strcmp(callback, "parasite_proboscis_wait") == 0 ||
-      strcmp(callback, "parasite_proboscis_pull_wait") == 0 ||
-      strcmp(callback, "parasite_break_retract") == 0 ||
-      strcmp(callback, "parasite_reel_in") == 0 ||
+  if (strcmp(callback, "parasite_reel_in") == 0 ||
       strcmp(callback, "parasite_walk") == 0 ||
       strcmp(callback, "gekk_swim") == 0 ||
       strcmp(callback, "gekk_search") == 0 || strcmp(callback, "loogie") == 0)

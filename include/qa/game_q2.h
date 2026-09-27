@@ -248,8 +248,14 @@ typedef struct qa_q2_hooks {
     bool (*lag_end)(void *, qa_error *);
 } qa_q2_hooks;
 
+/* Construction retains private state without admitting a session component.
+ * The application owns the instance throughout component admission/retirement. */
 bool qa_q2_create(const qa_builtin_services *, const qa_q2_options *, const qa_q2_hooks *,
                   qa_q2_game **, qa_error *);
+/* Borrowed component; removal never frees the instance. */
+qa_component qa_q2_component(qa_q2_game *);
+/* Requires a detached instance at a session safe point. Remove an admitted
+ * component before destroying its instance; keep the shared services alive. */
 bool qa_q2_destroy(qa_q2_game *, qa_error *);
 const qa_q2_weapon_definition *qa_q2_weapon_definition_at(const qa_q2_game *, qa_q2_weapon);
 qa_q2_weapon qa_q2_weapon_from_classname(const qa_q2_game *, const char *);
@@ -287,7 +293,8 @@ typedef struct qa_q2_projectile_view {
     uint32_t render_flags;
     int frame, skin;
     float scale;
-    bool visible;
+    qa_vec3 beam_end;
+    bool visible, beam;
 } qa_q2_projectile_view;
 bool qa_q2_projectile_read(qa_q2_game *, qa_actor_id, qa_q2_projectile_view *);
 typedef struct qa_q2_saved_reference {

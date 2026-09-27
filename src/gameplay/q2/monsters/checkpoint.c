@@ -136,7 +136,7 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
   }
   const struct qa_q2_monster *monster = actor->monster;
   qa_q2_monster_checkpoint saved = {
-      .version = 2,
+      .version = 3,
       .start_phase = (uint32_t)monster->start_phase,
       .combat_target = monster->combat_target,
       .start_due_ns = monster->start_due_ns,
@@ -288,6 +288,7 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
       !save_reference(game, monster->resurrect_target, &saved.resurrect_target,
                       error) ||
       !save_reference(game, monster->hazard, &saved.hazard, error) ||
+      !save_reference(game, monster->proboscis, &saved.proboscis, error) ||
       !save_reference(game, monster->sound_target.actor,
                       &saved.sound_target.actor, error) ||
       !save_reference(game, monster->sound_target.owner,
@@ -323,6 +324,7 @@ static bool resolve_all(qa_q2_game *game, const qa_q2_monster_checkpoint *saved,
          resolve_reference(game, saved->resurrect_target,
                            &monster->resurrect_target, error) &&
          resolve_reference(game, saved->hazard, &monster->hazard, error) &&
+         resolve_reference(game, saved->proboscis, &monster->proboscis, error) &&
          resolve_reference(game, saved->controller_owner,
                            &monster->controller_owner, error) &&
          resolve_reference(game, saved->controller_target,
@@ -350,7 +352,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   if (!callback_boundary(game, error))
     return false;
   bool controller = saved->controller_kind != Q2M_CONTROLLER_NONE;
-  if (saved->version != 2 || saved->start_phase > Q2M_START_MANUAL ||
+  if (saved->version != 3 || saved->start_phase > Q2M_START_MANUAL ||
       saved->controller_kind > Q2M_CONTROLLER_MAKRON_SPAWN ||
       !valid_name(saved->definition, sizeof(saved->definition), controller) ||
       !valid_name(saved->move, sizeof(saved->move), controller) ||

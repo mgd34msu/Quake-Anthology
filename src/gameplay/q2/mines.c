@@ -893,6 +893,8 @@ bool qa_q2_projectile_reaction(qa_q2_game *g, const qa_damage_outcome *outcome, 
         !qa_actor_id_equal(g->actors[id.slot]->id, id))
         return true;
     q2_actor *a = g->actors[id.slot];
+    if (a->projectile.kind == Q2_PROBOSCIS)
+        return q2_proboscis_reaction(g, a, outcome, e);
     if (a->projectile.kind == Q2_CTF_HOOK || a->projectile.kind == Q2_LMCTF_HOOK)
         return q2_grapple_reaction(g, a, outcome, e);
     if (a->projectile.kind == Q2_GIB || a->projectile.kind == Q2_DEBRIS ||

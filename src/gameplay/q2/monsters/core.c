@@ -1379,6 +1379,9 @@ bool qa_q2_monster_spawn(qa_q2_game *game, qa_actor_id id,
     monster->count = 1;
   if (game->options.edition == QA_Q2_RERELEASE) {
     switch (definition->species) {
+    case Q2M_PARASITE:
+      monster->yaw_speed = 30;
+      break;
     case Q2M_FLIPPER:
       monster->alternate_fly = true;
       monster->fly_acceleration = 30.0f;

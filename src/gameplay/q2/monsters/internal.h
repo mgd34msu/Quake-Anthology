@@ -275,7 +275,7 @@ struct qa_q2_monster {
   uint64_t corpse_check_ns;
   qa_actor_id enemy, old_enemy, goal, move_target, commander, activator;
   qa_actor_id last_player_enemy;
-  qa_actor_id resurrect_target, hazard;
+  qa_actor_id resurrect_target, hazard, proboscis;
   q2m_sound_target sound_target;
   qa_vec3 last_sighting, saved_goal, blind_fire_target;
   qa_vec3 fly_ideal_position, fly_recovery_direction;
@@ -368,6 +368,10 @@ bool q2m_attack_forward(q2m_context *, q2m_attack_kind, float damage,
                         int flash, qa_error *);
 bool q2m_project_flash(const q2m_context *, int flash, qa_vec3 *,
                        qa_error *);
+qa_vec3 q2m_project_offset(const q2m_context *, qa_vec3);
+bool q2m_parasite_callback(q2m_context *, const char *, bool *, qa_error *);
+bool q2m_parasite_interrupt(q2m_context *, bool death, qa_error *);
+bool q2m_parasite_charge(q2m_context *, float, qa_error *);
 bool q2m_muzzle_offset(const q2m_context *, int flash, qa_vec3 *, qa_error *);
 bool q2m_source_shot(q2m_context *, int flash, float lead, qa_vec3 *, qa_vec3 *,
                      bool *available, qa_error *);

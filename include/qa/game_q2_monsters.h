@@ -105,7 +105,7 @@ typedef struct qa_q2_monster_checkpoint {
   uint64_t corpse_check_ns;
   qa_q2_saved_reference enemy, old_enemy, goal, move_target;
   qa_q2_saved_reference last_player_enemy;
-  qa_q2_saved_reference commander, activator, resurrect_target, hazard;
+  qa_q2_saved_reference commander, activator, resurrect_target, hazard, proboscis;
   qa_q2_saved_reference controller_owner, controller_target;
   qa_q2_monster_sound_checkpoint sound_target;
   qa_vec3 last_sighting, saved_goal, blind_fire_target;

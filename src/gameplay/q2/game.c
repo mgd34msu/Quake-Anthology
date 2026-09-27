@@ -277,32 +277,38 @@ bool qa_q2_create(const qa_builtin_services *services, const qa_q2_options *opti
         qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 actor state");
         return false;
     }
-    qa_component component = {.owner = options->owner,
-                              .state = g,
-                              .close = close_game,
-                              .begin_frame = begin_frame,
-                              .end_frame = end_frame,
-                              .actor_frame = actor_frame,
-                              .actor_released = released};
-    component.clock = qa_clock_defaults(options->edition == QA_Q2_CLASSIC ? QA_CLOCK_Q2_CLASSIC
-                                                                          : QA_CLOCK_Q2_RERELEASE);
-    if (options->frame_ns != 0)
-        component.clock.interval_ns = options->frame_ns;
-    g->frame_ns = component.clock.interval_ns;
+    g->frame_ns = qa_q2_component(g).clock.interval_ns;
     if (!q2_definitions(g, e) || !q2_items_init(g, e) || !q2_players_init(g, e) ||
         !q2_entities_init(g, e) || !q2_monsters_init(g, e)) {
-        close_game(g);
-        return false;
-    }
-    if (!qa_session_add(services->session, &component, e)) {
         close_game(g);
         return false;
     }
     *out = g;
     return true;
 }
+qa_component qa_q2_component(qa_q2_game *g) {
+    qa_component component = {.owner = g->options.owner,
+                              .state = g,
+                              .begin_frame = begin_frame,
+                              .end_frame = end_frame,
+                              .actor_frame = actor_frame,
+                              .actor_released = released};
+    component.clock = qa_clock_defaults(g->options.edition == QA_Q2_CLASSIC
+                                            ? QA_CLOCK_Q2_CLASSIC
+                                            : QA_CLOCK_Q2_RERELEASE);
+    if (g->options.frame_ns != 0)
+        component.clock.interval_ns = g->options.frame_ns;
+    return component;
+}
 bool qa_q2_destroy(qa_q2_game *g, qa_error *e) {
-    return g == NULL || qa_session_remove(g->services.session, g->options.owner, e);
+    if (g == NULL)
+        return true;
+    if (!qa_session_safe(g->services.session)) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 provider destruction requires a safe point");
+        return false;
+    }
+    close_game(g);
+    return true;
 }
 bool qa_q2_damage_reaction(qa_q2_game *g, const qa_damage_outcome *outcome, qa_error *e) {
     return q2_item_reaction(g, outcome, e) && qa_q2_projectile_reaction(g, outcome, e) &&
@@ -358,7 +364,9 @@ bool qa_q2_projectile_read(qa_q2_game *g, qa_actor_id id, qa_q2_projectile_view 
                                    .frame = p->frame,
                                    .skin = p->skin,
                                    .scale = p->scale,
-                                   .visible = p->visible};
+                                   .visible = p->visible,
+                                   .beam = p->kind == Q2_PROBOSCIS_SEGMENT,
+                                   .beam_end = p->movedir};
     return true;
 }
 uint64_t qa_q2_actor_extra_effects(qa_q2_game *g, qa_actor_id id) {

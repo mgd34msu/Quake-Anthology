@@ -319,6 +319,7 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/monsters/core.c
     src/gameplay/q2/monsters/lifecycle.c
     src/gameplay/q2/monsters/moves.c
+    src/gameplay/q2/monsters/proboscis.c
     src/gameplay/q2/monsters/roster.c
     src/gameplay/q2/monsters/spawn.c
     src/gameplay/q2/nuke.c

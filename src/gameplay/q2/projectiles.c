@@ -618,6 +618,8 @@ bool qa_q2_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
         !qa_actor_id_equal(g->actors[id.slot]->id, id))
         return true;
     q2_projectile p = g->actors[id.slot]->projectile;
+    if (p.kind == Q2_PROBOSCIS || p.kind == Q2_PROBOSCIS_SEGMENT)
+        return q2_proboscis_touch(g, contact, e);
     if (p.kind == Q2_BFG_BALL && p.armed)
         return true;
     if (p.kind == Q2_LMCTF_PLASMA_SPREAD || p.kind == Q2_LMCTF_PLASMA_BOUNCE)
@@ -1133,6 +1135,8 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
     return true;
 }
 bool q2_projectile_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    if (a->projectile.kind == Q2_PROBOSCIS || a->projectile.kind == Q2_PROBOSCIS_SEGMENT)
+        return q2_proboscis_tick(g, a, e);
     qa_actor_id id = a->id;
     q2_projectile p = a->projectile;
     qa_body_state body;

@@ -173,7 +173,11 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
         return false;
     }
     const qa_q2_projectile_checkpoint *p = &s->projectile;
-    if (p->kind > Q2_LMCTF_PLASMA_BOUNCE || !qa_vec_finite(p->movedir) || !isfinite(p->damage) ||
+    if (p->kind > Q2_PROBOSCIS_SEGMENT ||
+        (p->kind == Q2_PROBOSCIS &&
+         (p->phase < Q2_PROBOSCIS_FLYING || p->phase > Q2_PROBOSCIS_RETURNED)) ||
+        (p->kind == Q2_PROBOSCIS_SEGMENT && p->phase != 0) ||
+        !qa_vec_finite(p->movedir) || !isfinite(p->damage) ||
         !isfinite(p->kick) || !isfinite(p->radius_damage) || !isfinite(p->radius) ||
         p->radius < 0 || !isfinite(p->gravity) || !isfinite(p->speed) || p->speed < 0 ||
         !isfinite(p->delay) || !isfinite(p->captured_mass) || !isfinite(p->turn_fraction) ||
