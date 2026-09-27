@@ -148,6 +148,7 @@ const qa_launch_binding *qa_launch_binding_for(const qa_launch_choices *, qa_lau
 
 typedef struct qa_launch_instance {
     qa_launch_provider selection;
+    /* Snapshot-local selected roles; role changes retain implementation state. */
     uint64_t roles;
     qa_vfs *content;
     const qa_resource *artifact, *declaration;
@@ -155,7 +156,7 @@ typedef struct qa_launch_instance {
     size_t interface_count;
     const qa_catalog_weapon_behavior *const *behaviors;
     size_t behavior_count;
-    qa_sha256_digest identity;
+    qa_sha256_digest identity; /* Implementation/configuration identity, excluding roles. */
     void *state;
 } qa_launch_instance;
 typedef struct qa_launch_resource {
@@ -180,6 +181,10 @@ typedef struct qa_launch_resource {
  * has no error return. Retained instances keep their state; changed bindings
  * are described by both snapshots. A private instance is closed only after it
  * has detached and its final snapshot reader releases it.
+ *
+ * prepare_instance receives stable construction metadata. Its roles are the
+ * initial selection only; current routing comes from the published snapshot.
+ * Snapshot instance views are distinct even when they share private state.
  *
  * A non-NULL prepare_instance output transfers ownership even on failure, and
  * is then closed by the manager. Hook context must outlive all snapshots. The

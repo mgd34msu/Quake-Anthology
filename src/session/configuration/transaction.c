@@ -7,11 +7,15 @@ typedef struct instance_owner {
     qa_configuration_hooks hooks;
     bool prepared;
 } instance_owner;
+typedef struct instance_binding {
+    instance_owner *owner;
+    qa_launch_instance view;
+} instance_binding;
 struct qa_launch_snapshot {
     size_t references;
     qa_launch_draft *draft;
     qa_vfs *mounts;
-    instance_owner **instances;
+    instance_binding *instances;
     size_t instance_count;
     qa_launch_resource *resources;
     size_t resource_count, resource_capacity;
@@ -54,7 +58,7 @@ void qa_launch_snapshot_release(const qa_launch_snapshot *snapshot)
 {
     qa_launch_snapshot *s = (qa_launch_snapshot *)snapshot;
     if (!s || --s->references) return;
-    for (size_t i = s->instance_count; i-- > 0;) owner_release(s->instances[i]);
+    for (size_t i = s->instance_count; i-- > 0;) owner_release(s->instances[i].owner);
     for (size_t i = 0; i < s->resource_count; ++i) qa_resource_release((qa_resource *)s->resources[i].resource);
     free(s->instances); free(s->resources); qa_vfs_destroy(s->mounts);
     qa_launch_draft_destroy(s->draft); free(s);
@@ -66,11 +70,11 @@ qa_catalog *qa_launch_snapshot_catalog(const qa_launch_snapshot *s)
 qa_vfs *qa_launch_snapshot_mounts(const qa_launch_snapshot *s) { return s ? s->mounts : NULL; }
 size_t qa_launch_snapshot_instance_count(const qa_launch_snapshot *s) { return s ? s->instance_count : 0; }
 const qa_launch_instance *qa_launch_snapshot_instance(const qa_launch_snapshot *s, size_t i)
-{ return s && i < s->instance_count ? &s->instances[i]->view : NULL; }
+{ return s && i < s->instance_count ? &s->instances[i].view : NULL; }
 const qa_launch_instance *qa_launch_snapshot_find(const qa_launch_snapshot *s, const char *instance)
 {
     if (s && instance) for (size_t i = 0; i < s->instance_count; ++i)
-        if (!strcmp(s->instances[i]->view.selection.instance, instance)) return &s->instances[i]->view;
+        if (!strcmp(s->instances[i].view.selection.instance, instance)) return &s->instances[i].view;
     return NULL;
 }
 size_t qa_launch_snapshot_resource_count(const qa_launch_snapshot *s) { return s ? s->resource_count : 0; }
@@ -101,10 +105,10 @@ static void instance_identity(instance_owner *owner)
     const qa_launch_provider *p = &v->selection;
     const qa_product *product = qa_catalog_product(owner->identity->catalog, p->product);
     qa_sha256_context h; qa_sha256_init(&h);
-    hash_text(&h, "anthology-provider-v1"); hash_text(&h, p->instance);
+    hash_text(&h, "anthology-provider-v2"); hash_text(&h, p->instance);
     hash_text(&h, product->identity); hash_text(&h, p->implementation);
     hash_text(&h, p->artifact); hash_text(&h, p->component);
-    hash_u64(&h, p->runtime); hash_u64(&h, v->roles);
+    hash_u64(&h, p->runtime);
     hash_u64(&h, qa_catalog_generation(owner->identity->catalog));
     const qa_clock_config *clock = &p->clock;
     hash_u64(&h, clock->kind); hash_u64(&h, clock->initial_time_ns);
@@ -200,6 +204,14 @@ static bool read_interfaces(instance_owner *owner, qa_error *error)
     return true;
 }
 
+static void bind_instance(qa_launch_snapshot *snapshot,instance_owner *owner,uint64_t roles)
+{
+    instance_binding *binding=&snapshot->instances[snapshot->instance_count++];
+    binding->owner=owner;
+    binding->view=owner->view;
+    binding->view.roles=roles;
+}
+
 static bool prepare_instance(qa_configuration_transaction *transaction, const qa_launch_provider *selection,
                               uint64_t roles, qa_error *error)
 {
@@ -234,18 +246,18 @@ static bool prepare_instance(qa_configuration_transaction *transaction, const qa
     if (!selected_behaviors(owner, &candidate->draft->choices, error)) goto fail;
     instance_identity(owner);
     if (transaction->previous) for (size_t i = 0; i < transaction->previous->instance_count; ++i) {
-        instance_owner *previous = transaction->previous->instances[i];
+        instance_owner *previous = transaction->previous->instances[i].owner;
         if (strcmp(previous->view.selection.instance, selection->instance) ||
             !qa_sha256_equal(&previous->view.identity, &owner->view.identity)) continue;
         ++previous->references; owner_release(owner); owner = previous;
-        candidate->instances[candidate->instance_count++] = owner; return true;
+        bind_instance(candidate,owner,roles); return true;
     }
     if (!owner->hooks.prepare_instance(owner->hooks.context, &owner->view, &owner->view.state, error)) {
         owner->prepared = owner->view.state != NULL;
         goto fail;
     }
     owner->prepared = true;
-    candidate->instances[candidate->instance_count++] = owner; return true;
+    bind_instance(candidate,owner,roles); return true;
 fail:
     owner_release(owner); return false;
 }
