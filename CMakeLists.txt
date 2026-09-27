@@ -570,6 +570,10 @@ if(BUILD_TESTING)
     target_link_libraries(archive_test PRIVATE qa_content ZLIB::ZLIB)
     add_test(NAME archive COMMAND archive_test)
 
+    add_executable(vfs_test tests/vfs_test.c)
+    target_link_libraries(vfs_test PRIVATE qa_content ZLIB::ZLIB)
+    add_test(NAME vfs COMMAND vfs_test)
+
     add_executable(bsp_test tests/bsp_test.c)
     target_link_libraries(bsp_test PRIVATE qa_content)
     add_test(NAME bsp COMMAND bsp_test)

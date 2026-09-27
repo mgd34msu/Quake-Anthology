@@ -31,6 +31,7 @@ struct qa_session {
     qa_scheduler *scheduler;
     qa_strings *strings;
     component_state *components;
+    qa_source_frame *active_frames;
     actor_execution *executions;
     actor_turn *turns;
     uint32_t *turn_positions;
@@ -241,10 +242,13 @@ bool qa_session_create(const qa_session_options *options, qa_session **out, qa_e
     if (session == NULL) return fail(error, QA_ERROR_MEMORY, "Cannot allocate session");
     session->options = *options;
     session->components = calloc(options->component_capacity, sizeof(*session->components));
+    session->active_frames = calloc(options->component_capacity, sizeof(*session->active_frames));
     session->executions = calloc(options->actor_capacity, sizeof(*session->executions));
     session->turns = calloc(options->actor_capacity, sizeof(*session->turns));
     session->turn_positions = calloc(options->actor_capacity, sizeof(*session->turn_positions));
-    if (session->components == NULL || session->executions == NULL || session->turns == NULL || session->turn_positions == NULL) {
+    if (session->components == NULL || session->active_frames == NULL
+        || session->executions == NULL || session->turns == NULL
+        || session->turn_positions == NULL) {
         fail(error, QA_ERROR_MEMORY, "Cannot allocate session storage");
         goto failed;
     }
@@ -258,7 +262,8 @@ bool qa_session_create(const qa_session_options *options, qa_session **out, qa_e
 failed:
     (void)qa_actors_destroy(session->actors, NULL);
     qa_strings_destroy(session->strings);
-    free(session->components); free(session->executions); free(session->turns); free(session->turn_positions); free(session);
+    free(session->components); free(session->active_frames); free(session->executions);
+    free(session->turns); free(session->turn_positions); free(session);
     return false;
 }
 
@@ -518,6 +523,18 @@ static component_state *ordered_component(qa_session *session, uint64_t after, b
     return next;
 }
 
+static size_t collect_active_frames(qa_session *session)
+{
+    size_t count = 0;
+    component_state *entry = ordered_component(session, 0, true);
+    while (entry != NULL) {
+        if (entry->in_frame)
+            session->active_frames[count++] = entry->clock.frame;
+        entry = ordered_component(session, entry->order, false);
+    }
+    return count;
+}
+
 bool qa_session_advance(qa_session *session, uint64_t elapsed_ns, qa_error *error)
 {
     if (!qa_session_safe(session) || session->faulted)
@@ -590,7 +607,14 @@ bool qa_session_advance(qa_session *session, uint64_t elapsed_ns, qa_error *erro
             entry = ordered_component(session, entry->order, false);
         }
         if (!ok || session->faulted) { ok = false; break; }
+        size_t frame_count = collect_active_frames(session);
+        if (!qa_scheduler_advance(session->scheduler, session->active_frames, frame_count,
+                                  QA_THINK_BEFORE_PHYSICS, error)
+            || session->faulted) { ok = false; break; }
         if (!actor_frames(session, error) || session->faulted) { ok = false; break; }
+        if (!qa_scheduler_advance(session->scheduler, session->active_frames, frame_count,
+                                  QA_THINK_AFTER_PHYSICS, error)
+            || session->faulted) { ok = false; break; }
         entry = ordered_component(session, 0, true);
         while (entry != NULL) {
             if (entry->in_frame) {
@@ -659,6 +683,7 @@ bool qa_session_destroy(qa_session *session, qa_error *error)
     qa_strings_destroy(session->strings);
     bool ok = !session->faulted;
     if (!ok && error != NULL) *error = session->error;
-    free(session->components); free(session->executions); free(session->turns); free(session->turn_positions); free(session);
+    free(session->components); free(session->active_frames); free(session->executions);
+    free(session->turns); free(session->turn_positions); free(session);
     return ok;
 }

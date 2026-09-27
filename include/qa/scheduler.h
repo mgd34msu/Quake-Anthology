@@ -51,9 +51,9 @@ typedef struct qa_think_result {
 
 typedef struct qa_scheduler qa_scheduler;
 
-/* Mixed ordering compares provider registration order, then source slot. Native
- * ordering compares source slot, then provider registration order. Host slots
- * break remaining ties. Registry ownership remains with the caller. */
+/* Mixed ordering compares provider registration order first. Both modes then
+ * compare source slot and think sequence; provider order and host slot break
+ * exact ties. Registry ownership remains with the caller. */
 bool qa_scheduler_create(qa_actor_registry *actors, uint32_t provider_capacity,
                           bool mixed_order, qa_think_dispatch_fn dispatch,
                           void *context, qa_scheduler **out, qa_error *error);
@@ -70,7 +70,8 @@ bool qa_scheduler_run(qa_scheduler *scheduler, qa_actor_id actor,
                       const qa_source_frame *frame, qa_think_boundary boundary,
                       qa_think_result *out, qa_error *error);
 /* Later source-slot additions are visible; additions at/before the cursor wait
- * for the next traversal. Missing source frames are errors, never substitutions. */
+ * for the next traversal. Only providers represented by frames are eligible;
+ * pending work for other providers remains scheduled. */
 bool qa_scheduler_advance(qa_scheduler *scheduler, const qa_source_frame *frames,
                           size_t count, qa_think_boundary boundary, qa_error *error);
 bool qa_scheduler_clear(qa_scheduler *scheduler, qa_error *error);

@@ -1169,9 +1169,9 @@ static bool traceline(qa_qc_instance *instance, qa_error *error)
         .shape = {QA_SHAPE_POINT, {qa_v3(0,0,0), qa_v3(0,0,0)}},
         .policy = qa_collision_default_policy(QA_COLLISION_Q1),
         .pass_actor = pass};
-    query.policy.q1_move = no_monsters == 2.0f ? QA_Q1_MOVE_MISSILE
-        : no_monsters != 0.0f ? QA_Q1_MOVE_NO_MONSTERS
-                              : QA_Q1_MOVE_NORMAL;
+    float mode = truncf(no_monsters);
+    query.policy.q1_move = mode == 2.0f ? QA_Q1_MOVE_MISSILE
+        : mode == 1.0f ? QA_Q1_MOVE_NO_MONSTERS : QA_Q1_MOVE_NORMAL;
     qa_trace_result trace;
     if (!qa_world_trace(instance->options.host.world, &query, &trace, error)) return false;
     int32_t hit = 0;
@@ -1232,9 +1232,13 @@ static bool findradius(qa_qc_instance *instance, qa_error *error)
     if (!qa_vec_finite(origin) || !isfinite(radius) || radius < 0)
         return qc_fail(error, QA_ERROR_ARGUMENT, 0, "findradius requires finite bounds");
     const qa_qc_definition *chain = qa_qc_program_find_field(instance->program, "chain");
+    const qa_qc_definition *solid = qa_qc_program_find_field(instance->program, "solid");
     if (chain == NULL || chain->type != QA_QC_ENTITY)
         return qc_fail(error, QA_ERROR_FORMAT, 0,
                        "findradius needs the chain entity field");
+    if (solid == NULL || solid->type != QA_QC_FLOAT)
+        return qc_fail(error, QA_ERROR_FORMAT, 0,
+                       "findradius needs the solid float field");
     const qa_actor_registry *actors = qa_session_actors(instance->options.host.session);
     size_t actor_count = qa_actors_count(actors);
     if (actor_count > SIZE_MAX / sizeof(qa_actor_id)
@@ -1275,6 +1279,11 @@ static bool findradius(qa_qc_instance *instance, qa_error *error)
                                    &reference, error)) {
             free(snapshot); free(references); return false;
         }
+        float solidity;
+        if (!qa_qc_entity_float(instance, reference, solid->offset, &solidity, error)) {
+            free(snapshot); free(references); return false;
+        }
+        if (solidity == 0.0f) continue;
         references[reference_count++] = reference;
     }
     free(snapshot);
@@ -1284,6 +1293,11 @@ static bool findradius(qa_qc_instance *instance, qa_error *error)
     for (size_t i = 0; i < reference_count; ++i) {
         qa_actor_id actor;
         if (!qa_qc_reference_actor(instance, references[i], &actor, NULL)) continue;
+        float solidity;
+        if (!qa_qc_entity_float(instance, references[i], solid->offset, &solidity, error)) {
+            free(references); return false;
+        }
+        if (solidity == 0.0f) continue;
         qa_actor_collision collision;
         qa_body_state body;
         if (!qa_world_get_collision(instance->options.host.world,

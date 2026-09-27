@@ -1610,7 +1610,7 @@ bool qa_bsp_validate(const qa_bsp_view *map, qa_error *error)
             size_t leaves = counts[QA_BSP_LEAVES] == 0 ? 0 : counts[QA_BSP_LEAVES] - 1;
             if (model.visible_leaves < 0 || (size_t)model.visible_leaves > leaves)
                 return fail(error,QA_ERROR_FORMAT,offset,"invalid model visible leaf count");
-            for (size_t hull = 1; hull < 3; ++hull)
+            for (size_t hull = 1; hull < 4; ++hull)
                 if (model.headnodes[hull] >= 0 && (counts[QA_BSP_CLIPNODES] > 0 || !extra_brushes)
                     && !reference(model.headnodes[hull],counts[QA_BSP_CLIPNODES],offset,"model clip headnode",error)) return false;
         }

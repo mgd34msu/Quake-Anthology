@@ -52,12 +52,26 @@ static provider_clock *provider(const qa_scheduler *scheduler, qa_actor_owner ow
     return NULL;
 }
 
-static bool before(const qa_scheduler *scheduler, const pending_think *left, const pending_think *right)
+static int compare_position(const qa_scheduler *scheduler, const pending_think *left,
+                            const pending_think *right)
 {
     if (scheduler->mixed && left->provider_order != right->provider_order)
+        return left->provider_order < right->provider_order ? -1 : 1;
+    if (left->source_slot != right->source_slot)
+        return left->source_slot < right->source_slot ? -1 : 1;
+    return 0;
+}
+
+static bool before_invocation(const qa_scheduler *scheduler, const pending_think *left,
+                              const pending_think *right)
+{
+    int position = compare_position(scheduler, left, right);
+    if (position != 0)
+        return position < 0;
+    if (left->think.sequence != right->think.sequence)
+        return left->think.sequence < right->think.sequence;
+    if (left->provider_order != right->provider_order)
         return left->provider_order < right->provider_order;
-    if (left->source_slot != right->source_slot) return left->source_slot < right->source_slot;
-    if (left->provider_order != right->provider_order) return left->provider_order < right->provider_order;
     return left->think.actor.slot < right->think.actor.slot;
 }
 
@@ -74,7 +88,9 @@ static void heap_up(qa_scheduler *scheduler, uint32_t index)
 {
     while (index != 0) {
         uint32_t parent = (index - 1u) / 2u;
-        if (!before(scheduler, &scheduler->pending[scheduler->heap[index]], &scheduler->pending[scheduler->heap[parent]])) break;
+        if (!before_invocation(scheduler, &scheduler->pending[scheduler->heap[index]],
+                               &scheduler->pending[scheduler->heap[parent]]))
+            break;
         heap_swap(scheduler, index, parent);
         index = parent;
     }
@@ -84,9 +100,13 @@ static void heap_down(qa_scheduler *scheduler, uint32_t index)
 {
     while (index < scheduler->heap_count / 2u) {
         uint32_t child = index * 2u + 1u;
-        if (child + 1u < scheduler->heap_count && before(scheduler, &scheduler->pending[scheduler->heap[child + 1u]],
-                                                       &scheduler->pending[scheduler->heap[child]])) ++child;
-        if (!before(scheduler, &scheduler->pending[scheduler->heap[child]], &scheduler->pending[scheduler->heap[index]])) break;
+        if (child + 1u < scheduler->heap_count
+            && before_invocation(scheduler, &scheduler->pending[scheduler->heap[child + 1u]],
+                                 &scheduler->pending[scheduler->heap[child]]))
+            ++child;
+        if (!before_invocation(scheduler, &scheduler->pending[scheduler->heap[child]],
+                               &scheduler->pending[scheduler->heap[index]]))
+            break;
         heap_swap(scheduler, index, child);
         index = child;
     }
@@ -101,9 +121,12 @@ static void heap_remove(qa_scheduler *scheduler, pending_think *pending)
     if (index == scheduler->heap_count) return;
     scheduler->heap[index] = scheduler->heap[scheduler->heap_count];
     scheduler->pending[scheduler->heap[index]].heap_slot = index;
-    if (index != 0 && before(scheduler, &scheduler->pending[scheduler->heap[index]],
-                            &scheduler->pending[scheduler->heap[(index - 1u) / 2u]])) heap_up(scheduler, index);
-    else heap_down(scheduler, index);
+    if (index != 0
+        && before_invocation(scheduler, &scheduler->pending[scheduler->heap[index]],
+                             &scheduler->pending[scheduler->heap[(index - 1u) / 2u]]))
+        heap_up(scheduler, index);
+    else
+        heap_down(scheduler, index);
 }
 
 static void heap_insert(qa_scheduler *scheduler, uint32_t actor_slot)
@@ -212,7 +235,8 @@ bool qa_scheduler_schedule(qa_scheduler *scheduler, const qa_think *think, qa_er
     heap_remove(scheduler, pending);
     *pending = (pending_think){*think, actor->owner, owner->order,
                               actor->has_source ? actor->source_slot : actor->id.slot, NO_HEAP_SLOT, true};
-    bool ahead = !scheduler->has_cursor || before(scheduler, &scheduler->cursor, pending);
+    bool ahead = !scheduler->has_cursor
+        || compare_position(scheduler, &scheduler->cursor, pending) < 0;
     if (!scheduler->advancing || ahead) heap_insert(scheduler, think->actor.slot);
     return true;
 }
@@ -333,13 +357,15 @@ bool qa_scheduler_advance(qa_scheduler *scheduler, const qa_source_frame *frames
     while (scheduler->heap_count != 0) {
         pending_think next = scheduler->pending[scheduler->heap[0]];
         heap_remove(scheduler, &scheduler->pending[next.think.actor.slot]);
-        if (scheduler->has_cursor && !before(scheduler, &scheduler->cursor, &next)) continue;
-        scheduler->cursor = next;
-        scheduler->has_cursor = true;
         const qa_source_frame *frame = NULL;
         for (size_t i = 0; i < count; ++i)
             if (frames[i].provider == next.think.execution_provider) { frame = &frames[i]; break; }
-        if (frame == NULL) { ok = fail(error, QA_ERROR_NOT_FOUND, "Missing think execution frame"); break; }
+        if (frame == NULL) continue;
+        if (scheduler->has_cursor
+            && compare_position(scheduler, &next, &scheduler->cursor) <= 0)
+            continue;
+        scheduler->cursor = next;
+        scheduler->has_cursor = true;
         qa_think_result result;
         if (!qa_scheduler_run(scheduler, next.think.actor, frame, boundary, &result, error)) { ok = false; break; }
     }
