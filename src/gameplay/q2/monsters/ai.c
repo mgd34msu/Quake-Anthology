@@ -1467,73 +1467,6 @@ bool q2m_find_target(q2m_context *context, bool *found, qa_error *error) {
   return true;
 }
 
-static bool check_attack_slot(q2m_context *context, bool *selected, bool *started,
-                              qa_error *error) {
-  struct qa_q2_monster *monster = context->monster;
-  bool handled;
-  if (!q2m_medic_check_attack(context, &handled, selected, started, error))
-    return false;
-  if (handled || !q2m_alive(context))
-    return true;
-  float distance = q2m_distance(context, monster->enemy);
-  if (!q2m_alive(context))
-    return true;
-  if (distance <= 80.0f && (monster->definition->flags & Q2M_HAS_MELEE) != 0) {
-    monster->attack_state = Q2M_MELEE;
-    *selected = true;
-    return true;
-  }
-  if ((monster->definition->flags & Q2M_HAS_RANGED) == 0 ||
-      context->game->now_ns < monster->attack_ns)
-    return true;
-  bool clear;
-  qa_vec3 start =
-      qa_vec_add(context->body.origin, qa_v3(0, 0, monster->view_height));
-  if (!q2m_clear_shot(context, start, &clear, error))
-    return false;
-  if (!q2m_alive(context))
-    return true;
-  if (!clear) {
-    if ((monster->definition->flags & Q2M_BLIND_FIRE) == 0 ||
-        !monster->had_visibility ||
-        context->game->now_ns < monster->trail_ns + Q2M_TENTH)
-      return true;
-    float chance = monster->blind_fire_delay < 1.0f   ? 1.0f
-                   : monster->blind_fire_delay < 7.5f ? 0.4f
-                                                      : 0.1f;
-    monster->blind_fire_delay += 4.0f + q2m_random(context->game) * 3.0f;
-    if (q2m_random(context->game) > chance)
-      return true;
-    monster->attack_state = Q2M_BLIND;
-    *selected = true;
-    return true;
-  }
-  float chance;
-  if (monster->stand_ground)
-    chance = 0.4f;
-  else if (distance < 500.0f)
-    chance = 0.4f;
-  else if (distance < 1000.0f)
-    chance = 0.1f;
-  else
-    chance = 0.02f;
-  if (context->game->options.skill == 0)
-    chance *= 0.5f;
-  else if (context->game->options.skill >= 2)
-    chance *= 2.0f;
-  if (monster->definition->flags & Q2M_BOSS)
-    chance = fmaxf(chance, 0.5f);
-  if (q2m_random(context->game) >= fminf(chance, 1.0f))
-    return true;
-  monster->attack_state = Q2M_MISSILE;
-  monster->attack_ns = q2m_after(
-      context->game->now_ns, context->game->options.edition == QA_Q2_RERELEASE
-                                 ? 1.0 + q2m_random(context->game)
-                                 : 2.0 * q2m_random(context->game));
-  *selected = true;
-  return true;
-}
-
 static void attack_enemy(q2m_context *context, qa_actor_id enemy) {
   context->monster->enemy = context->actor->physics.enemy = enemy;
   if (context->actor->entity != NULL)
@@ -1579,6 +1512,221 @@ static bool attack_health(q2m_context *context, qa_actor_id id, float *health,
     *health = combat.health;
   }
   return true;
+}
+
+static bool nonsolid_target(q2m_context *context, qa_actor_id id, bool *nonsolid,
+                            qa_error *error) {
+  *nonsolid = false;
+  if (!q2_actor_live(context->game, id))
+    return true;
+  q2_actor *native = q2_actor_get(context->game, id, false, NULL);
+  if (native && native->physics_bound) {
+    *nonsolid = native->physics.solid == QA_PHYSICS_NOT_SOLID;
+    return true;
+  }
+  qa_actor_collision collision;
+  qa_error observed = {0};
+  bool present = qa_world_get_collision(context->game->services.world, id, &collision, &observed);
+  if (!q2m_alive(context) || !q2_actor_live(context->game, id))
+    return true;
+  if (observed.code != QA_OK && observed.code != QA_ERROR_NOT_FOUND) {
+    if (error)
+      *error = observed;
+    return false;
+  }
+  *nonsolid = !present;
+  return true;
+}
+
+typedef struct attack_chances {
+  float stand, near, mid, far, strafe;
+} attack_chances;
+
+static bool default_attack(q2m_context *context, bool *selected, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  qa_q2_game *game = context->game;
+  bool rerelease = game->options.edition == QA_Q2_RERELEASE;
+  bool rogue = rerelease || game->options.product == QA_Q2_ROGUE;
+  q2m_species species = m->definition->species;
+  bool boss_profile = species == Q2M_JORG || species == Q2M_MAKRON || species == Q2M_BOSS2;
+  bool classic_boss = boss_profile && !rerelease;
+  bool allow_nonsolid = classic_boss ? species == Q2M_BOSS2 && rogue : rogue;
+  attack_chances profile = {.stand = .7f, .near = .25f, .mid = .06f, .strafe = 1};
+  if (boss_profile)
+    profile = (attack_chances){.stand = .4f,
+        .near = species == Q2M_BOSS2 ? .8f : .4f,
+        .mid = species == Q2M_BOSS2 ? .8f : .2f};
+
+  qa_actor_id enemy = m->enemy;
+  qa_body_state target;
+  bool present;
+  if (!attack_body(context, enemy, &target, &present, error))
+    return false;
+  if (!present || !q2m_alive(context))
+    return true;
+  qa_builtin_actor_traits traits;
+  if (!actor_traits(context, enemy, &traits, error))
+    return false;
+  if (!q2m_alive(context) || !q2_actor_live(game, enemy))
+    return true;
+  qa_vec3 eye = qa_vec_add(target.origin, qa_v3(0, 0, traits.view_height));
+  if (!attack_body(context, context->actor->id, &context->body, &present, error))
+    return false;
+  if (!present || !q2_actor_live(game, enemy))
+    return true;
+  qa_vec3 start = qa_vec_add(context->body.origin, qa_v3(0, 0, m->view_height));
+  float health;
+  if (!attack_health(context, enemy, &health, error))
+    return false;
+  if (!q2m_alive(context) || !q2_actor_live(game, enemy))
+    return true;
+  if (health > 0) {
+    qa_trace_query query = {.start = start, .end = eye, .pass_actor = context->actor->id,
+                            .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+    query.policy.contents_mask = classic_boss ? UINT32_C(0x02000019)
+        : rerelease ? UINT32_C(0x4200001b) : UINT32_C(0x0200001b);
+    qa_trace_result trace;
+    if (!qa_world_trace(game->services.world, &query, &trace, error))
+      return false;
+    if (!q2m_alive(context) || !q2_actor_live(game, enemy))
+      return true;
+    bool hit = trace.hit == QA_TRACE_HIT_ACTOR && qa_actor_id_equal(trace.actor, enemy);
+    if (!hit && rerelease && trace.hit == QA_TRACE_HIT_ACTOR) {
+      qa_builtin_actor_traits obstruction;
+      if (!actor_traits(context, trace.actor, &obstruction, error))
+        return false;
+      if (!q2m_alive(context) || !q2_actor_live(game, enemy))
+        return true;
+      hit = q2_actor_live(game, trace.actor) && obstruction.player;
+    }
+    if (!hit) {
+      bool nonsolid = false;
+      if (allow_nonsolid && !nonsolid_target(context, enemy, &nonsolid, error))
+        return false;
+      if (!q2m_alive(context) || !q2_actor_live(game, enemy))
+        return true;
+      if (!nonsolid || trace.fraction < 1) {
+        if (classic_boss || !rogue || !(m->definition->flags & Q2M_BLIND_FIRE) ||
+            (rerelease && !m->had_visibility) || m->blind_fire_delay > 20)
+          return true;
+        bool visible;
+        if (!q2m_visible(context, enemy, &visible, error))
+          return false;
+        if (!q2m_alive(context) || !q2_actor_live(game, enemy) || visible)
+          return true;
+        if (trace.hit == QA_TRACE_HIT_ACTOR) {
+          qa_builtin_actor_traits obstruction;
+          if (!actor_traits(context, trace.actor, &obstruction, error))
+            return false;
+          if (!q2m_alive(context) || !q2_actor_live(game, enemy) || obstruction.monster)
+            return true;
+        }
+        if (game->now_ns < m->attack_ns ||
+            game->now_ns < q2m_after(m->trail_ns, m->blind_fire_delay))
+          return true;
+        query.end = m->blind_fire_target;
+        query.policy.contents_mask = UINT32_C(0x02000000);
+        if (!qa_world_trace(game->services.world, &query, &trace, error))
+          return false;
+        if (!q2m_alive(context) || !q2_actor_live(game, enemy))
+          return true;
+        if (!trace.all_solid && !trace.start_solid &&
+            (trace.fraction == 1 || (trace.hit == QA_TRACE_HIT_ACTOR &&
+                                    qa_actor_id_equal(trace.actor, enemy)))) {
+          m->attack_state = Q2M_BLIND;
+          *selected = true;
+        }
+        return true;
+      }
+    }
+  }
+
+  if (!attack_body(context, enemy, &target, &present, error))
+    return false;
+  if (!present || !q2m_alive(context))
+    return true;
+  if (!attack_body(context, context->actor->id, &context->body, &present, error))
+    return false;
+  if (!present || !q2_actor_live(game, enemy))
+    return true;
+  float distance = q2m_body_distance(game->options.edition, &context->body, &target);
+  if (classic_boss)
+    m->ideal_yaw = vector_yaw(qa_vec_sub(target.origin, context->body.origin));
+  if (rerelease ? distance <= 20 : distance < 80) {
+    if (!rerelease && !classic_boss && game->options.skill == 0 &&
+        floorf(q2m_random(game) * 4) != 0) {
+      if (rogue)
+        m->attack_state = Q2M_STRAIGHT;
+      return true;
+    }
+    m->attack_state = (m->definition->flags & Q2M_HAS_MELEE) &&
+                             (!rerelease || m->melee_ns <= game->now_ns)
+                         ? Q2M_MELEE : Q2M_MISSILE;
+    *selected = true;
+    return true;
+  }
+  if (rerelease && m->attack_state == Q2M_MELEE && m->melee_ns > game->now_ns)
+    m->attack_state = Q2M_MISSILE;
+  if (!(m->definition->flags & Q2M_HAS_RANGED)) {
+    if (!classic_boss && rogue)
+      m->attack_state = Q2M_STRAIGHT;
+    return true;
+  }
+  if (game->now_ns < m->attack_ns || (!rerelease && distance >= 1000))
+    return true;
+  float chance;
+  if (rerelease)
+    chance = m->stand_ground ? profile.stand : distance <= 440 ? profile.near
+        : distance <= 940 ? profile.mid : profile.far;
+  else if (classic_boss)
+    chance = m->stand_ground ? .4f : species == Q2M_BOSS2 ? .8f
+        : distance < 500 ? .4f : .2f;
+  else {
+    chance = m->stand_ground ? .4f : distance < 500 ? .1f : .02f;
+    chance *= game->options.skill == 0 ? .5f : game->options.skill >= 2 ? 2 : 1;
+  }
+  bool nonsolid = false;
+  if (allow_nonsolid && !nonsolid_target(context, enemy, &nonsolid, error))
+    return false;
+  if (!q2m_alive(context) || !q2_actor_live(game, enemy))
+    return true;
+  bool fire = rerelease ? (!traits.player && nonsolid) || q2m_random(game) < chance
+                       : q2m_random(game) < chance || nonsolid;
+  if (fire) {
+    m->attack_state = Q2M_MISSILE;
+    m->attack_ns = rerelease ? game->now_ns
+                             : q2m_after(game->now_ns, 2 * q2m_random(game));
+    *selected = true;
+    return true;
+  }
+  if (m->definition->locomotion == Q2M_FLY &&
+      (!rerelease || m->strafe_ns <= game->now_ns)) {
+    float chance = classic_boss || !rogue ? .3f : species == Q2M_DAEDALUS ? .8f : .6f;
+    if (!classic_boss && rogue) {
+      const char *name = qa_strings_cstr(qa_session_strings(game->services.session), traits.classname);
+      if (name && (!strcmp(name, "tesla") || (rerelease && !strcmp(name, "tesla_mine"))))
+        chance = 0;
+      else if (rerelease)
+        chance *= profile.strafe;
+    }
+    if (rerelease && chance == 0)
+      return true;
+    q2m_attack_state next = q2m_random(game) < chance ? Q2M_SLIDING : Q2M_STRAIGHT;
+    if (rerelease && next != m->attack_state)
+      m->strafe_ns = q2m_after(game->now_ns, (double)q2_rerelease_time_ms(game, 1000, 3000) / 1000);
+    m->attack_state = next;
+  } else if (rerelease && m->definition->locomotion != Q2M_FLY) {
+    m->attack_state = Q2M_STRAIGHT;
+  }
+  return true;
+}
+
+static bool check_attack_slot(q2m_context *context, bool *selected, bool *started,
+                              qa_error *error) {
+  bool handled;
+  if (!q2m_medic_check_attack(context, &handled, selected, started, error))
+    return false;
+  return handled || !q2m_alive(context) || default_attack(context, selected, error);
 }
 
 static bool pending_attack(const struct qa_q2_monster *monster, bool blind) {
