@@ -15,6 +15,13 @@ at commit, with exhaustion capacity reserved during preparation.
 
 Combat policy preparation reserves array capacity and provider identity without
 exposing a policy. Existing same-owner policy must be removed before commit.
+Operation preparation likewise reserves the hook identity, replacement slot,
+and registration sequence capacity. A nonzero retirement identifies the exact
+old hook; commit requires its removal. The prepared node becomes the published
+node without another allocation. Hooks registered during dispatch remain
+outside that invocation's captured sequence limit. The application owner
+independently reviewed pending conflicts, retirement, identity exhaustion and
+callback ordering; no defect was found in that bounded source review.
 Successful commit consumes each token without allocation or provider callbacks;
 failure leaves it abortable. Abort releases only prepared state. Parent services
 reject destruction while admission tokens remain outstanding.

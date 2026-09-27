@@ -3,12 +3,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct operation_entry {
-    struct operation_entry *next;
+typedef struct qa_operation_admission operation_entry;
+struct qa_operation_admission {
+    operation_entry *next;
+    qa_operation *operation;
     qa_operation_hook hook;
-    uint64_t sequence;
+    uint64_t sequence, retiring;
     bool active;
-} operation_entry;
+};
 
 typedef struct operation_frame {
     struct operation_frame *previous;
@@ -21,11 +23,11 @@ typedef struct operation_frame {
 } operation_frame;
 
 struct qa_operation {
-    operation_entry *entries;
+    operation_entry *entries, *admissions;
     operation_frame *current, *spare;
     size_t request_size, result_size, active_count;
     uint64_t next_sequence, next_invocation;
-    size_t depth;
+    size_t depth, admission_count;
 };
 
 static bool argument(qa_error *error, const char *message) {
@@ -54,6 +56,7 @@ static void sweep(qa_operation *operation) {
 bool qa_operation_destroy(qa_operation *operation, qa_error *error) {
     if (!operation) return true;
     if (operation->depth) return argument(error,"cannot destroy an operation during a callback");
+    if (operation->admissions) return argument(error,"abort hook admissions before operation destruction");
     qa_operation_clear(operation);
     while (operation->spare) {
         operation_frame *frame=operation->spare;
@@ -63,8 +66,13 @@ bool qa_operation_destroy(qa_operation *operation, qa_error *error) {
     free(operation); return true;
 }
 
-bool qa_operation_register(qa_operation *operation, const qa_operation_hook *hook,
-                           qa_operation_registration *out, qa_error *error) {
+static bool conflict(const qa_operation_hook *left, const qa_operation_hook *right) {
+    return (left->owner==right->owner && left->name==right->name) ||
+           (left->kind==QA_OPERATION_REPLACE && right->kind==QA_OPERATION_REPLACE);
+}
+
+bool qa_operation_prepare(qa_operation *operation, const qa_operation_hook *hook,
+                           qa_operation_registration retiring, qa_operation_admission **out, qa_error *error) {
     if (!operation || !hook || !out) return argument(error,"invalid operation registration");
     switch (hook->kind) {
     case QA_OPERATION_TRANSFORM: if (!hook->call.transform) return argument(error,"missing transform callback"); break;
@@ -72,22 +80,67 @@ bool qa_operation_register(qa_operation *operation, const qa_operation_hook *hoo
     case QA_OPERATION_REPLACE: if (!hook->call.replace) return argument(error,"missing replacement callback"); break;
     default: return argument(error,"invalid operation hook kind");
     }
+    bool found=retiring==0;
     for (operation_entry *entry=operation->entries;entry;entry=entry->next) {
         if (!entry->active) continue;
-        if (entry->hook.owner==hook->owner && entry->hook.name==hook->name)
-            return argument(error,"duplicate operation registration");
-        if (entry->hook.kind==QA_OPERATION_REPLACE && hook->kind==QA_OPERATION_REPLACE)
-            return argument(error,"operation already has a replacement");
+        if (entry->sequence==retiring) { found=true; continue; }
+        if (conflict(&entry->hook,hook)) return argument(error,"operation hook conflicts with a live registration");
     }
-    if (operation->next_sequence==UINT64_MAX) return argument(error,"operation registration identity exhausted");
+    if (!found) return argument(error,"retiring operation registration is absent");
+    for (operation_entry *entry=operation->admissions;entry;entry=entry->next)
+        if (conflict(&entry->hook,hook) || (retiring && entry->retiring==retiring))
+            return argument(error,"operation hook or retirement is already reserved");
+    if (UINT64_MAX-operation->next_sequence<=operation->admission_count)
+        return argument(error,"operation registration identity exhausted");
     operation_entry *entry=malloc(sizeof(*entry));
     if (!entry) { qa_error_set(error,QA_ERROR_MEMORY,0,"allocating operation registration"); return false; }
-    *entry=(operation_entry){.hook=*hook,.sequence=operation->next_sequence++,.active=true};
+    *entry=(operation_entry){.operation=operation,.hook=*hook,.retiring=retiring,.next=operation->admissions};
+    operation->admissions=entry; ++operation->admission_count;
+    *out=entry; return true;
+}
+
+bool qa_operation_admission_validate(qa_operation_admission *token, qa_error *error) {
+    if (!token) return argument(error,"missing operation admission");
+    for (operation_entry *entry=token->operation->entries;entry;entry=entry->next)
+        if (entry->active && (entry->sequence==token->retiring || conflict(&entry->hook,&token->hook)))
+            return argument(error,"retire conflicting operation registration before admission");
+    return true;
+}
+
+static void detach_admission(qa_operation_admission *token) {
+    operation_entry **link=&token->operation->admissions;
+    while (*link!=token) link=&(*link)->next;
+    *link=token->next;
+    --token->operation->admission_count;
+}
+
+bool qa_operation_admission_commit(qa_operation_admission *entry,
+                                    qa_operation_registration *out, qa_error *error) {
+    if (!out) return argument(error,"missing operation registration output");
+    if (!qa_operation_admission_validate(entry,error)) return false;
+    qa_operation *operation=entry->operation;
+    detach_admission(entry);
+    entry->sequence=operation->next_sequence++; entry->active=true;
     operation_entry **link=&operation->entries;
-    while (*link && ((*link)->hook.order<hook->order ||
-           ((*link)->hook.order==hook->order && (*link)->sequence<entry->sequence))) link=&(*link)->next;
+    while (*link && ((*link)->hook.order<entry->hook.order ||
+           ((*link)->hook.order==entry->hook.order && (*link)->sequence<entry->sequence))) link=&(*link)->next;
     entry->next=*link; *link=entry; ++operation->active_count;
     *out=entry->sequence; return true;
+}
+
+void qa_operation_admission_abort(qa_operation_admission *token) {
+    if (!token) return;
+    detach_admission(token);
+    free(token);
+}
+
+bool qa_operation_register(qa_operation *operation, const qa_operation_hook *hook,
+                           qa_operation_registration *out, qa_error *error) {
+    if (!out) return argument(error,"missing operation registration output");
+    qa_operation_admission *token;
+    if (!qa_operation_prepare(operation,hook,0,&token,error)) return false;
+    if (qa_operation_admission_commit(token,out,error)) return true;
+    qa_operation_admission_abort(token); return false;
 }
 
 bool qa_operation_unregister(qa_operation *operation, qa_operation_registration registration) {

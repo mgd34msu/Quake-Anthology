@@ -4,6 +4,7 @@
 #include "qa/actors.h"
 
 typedef struct qa_operation qa_operation;
+typedef struct qa_operation_admission qa_operation_admission;
 typedef uint64_t qa_operation_registration;
 /* Retain a continuation value only while its operation exists. Invocation
  * identities are checked, so calling it after the callback returns fails. */
@@ -35,6 +36,15 @@ bool qa_operation_create(size_t request_size, size_t result_size, qa_operation *
 bool qa_operation_destroy(qa_operation *operation, qa_error *error);
 bool qa_operation_register(qa_operation *operation, const qa_operation_hook *hook,
                            qa_operation_registration *out, qa_error *error);
+/* Prepare reserves a hook without exposing it to dispatch. A nonzero retiring
+ * registration reserves its replacement and must be removed before commit.
+ * Commit publishes without allocation/callbacks and consumes success; failure
+ * retains the token. Abort consumes it. The operation must outlive its tokens. */
+bool qa_operation_prepare(qa_operation *, const qa_operation_hook *,
+                           qa_operation_registration retiring, qa_operation_admission **, qa_error *);
+bool qa_operation_admission_validate(qa_operation_admission *, qa_error *);
+bool qa_operation_admission_commit(qa_operation_admission *, qa_operation_registration *, qa_error *);
+void qa_operation_admission_abort(qa_operation_admission *);
 bool qa_operation_unregister(qa_operation *operation, qa_operation_registration registration);
 void qa_operation_remove_owner(qa_operation *operation, qa_actor_owner owner);
 void qa_operation_clear(qa_operation *operation);
