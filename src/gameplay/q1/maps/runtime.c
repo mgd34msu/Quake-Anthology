@@ -71,7 +71,7 @@ q1_map_state *q1_map_allocate(qa_q1_game *g, q1_actor *entity, qa_error *error) 
 }
 void q1_map_actor_released(qa_q1_game *g, q1_actor *entity) {
     if (g->maps && entity->native)
-        qa_targets_unbind(g->maps->options.targets, entity->id);
+        qa_targets_unbind_context(g->maps->options.targets, entity->id, g);
     if (!entity->map)
         return;
     entity->map->pool_next = g->maps->retired;
@@ -94,7 +94,7 @@ void q1_map_destroy(qa_q1_game *g) {
     for (uint32_t i = 0; i < g->capacity; ++i) {
         q1_actor *entity = g->actors[i];
         if (entity && entity->active && entity->native) {
-            qa_targets_unbind(g->maps->options.targets, entity->id);
+            qa_targets_unbind_context(g->maps->options.targets, entity->id, g);
             entity->map = NULL;
         }
     }
@@ -103,6 +103,13 @@ void q1_map_destroy(qa_q1_game *g) {
         q1_map_state *next = state->allocated_next;
         free(state);
         state = next;
+    }
+    q1_door_group *group = g->maps->door_groups;
+    while (group) {
+        q1_door_group *next = group->next;
+        free(group->members);
+        free(group);
+        group = next;
     }
     free(g->maps);
     g->maps = NULL;
@@ -130,13 +137,13 @@ bool q1_map_collision(const q1_actor *entity, qa_actor_collision *collision) {
 }
 bool q1_map_schedule(qa_q1_game *g, q1_actor *entity, double delay, q1_map_action action,
                      qa_error *error) {
-    if (!isfinite(delay) || delay < 0)
+    if (!isfinite(delay) || (delay < 0 && entity->physics.motion != QA_PHYSICS_PUSH))
         return q1_map_fail(error, "invalid Q1 map think delay");
     if (entity->physics.motion == QA_PHYSICS_PUSH) {
         double deadline = (double)entity->physics.local_time_ns + delay * 1000000000.0;
-        if (!isfinite(deadline) || deadline >= (double)INT64_MAX)
+        if (!isfinite(deadline) || deadline >= (double)INT64_MAX || deadline <= (double)INT64_MIN)
             return q1_map_fail(error, "Q1 local map deadline overflow");
-        entity->physics.next_think_ns = (int64_t)fmax(1, deadline);
+        entity->physics.next_think_ns = (int64_t)deadline;
         entity->think = Q1_THINK_MAP;
         entity->next_think = (double)entity->physics.next_think_ns / 1000000000.0;
     } else if (!q1_schedule(g, entity, delay, Q1_THINK_MAP, error))
@@ -234,6 +241,12 @@ static q1_map_kind classify(const char *name) {
         q1_map_kind kind;
     } classes[] = {{"worldspawn", Q1_MAP_WORLD},
                    {"func_wall", Q1_MAP_WALL},
+                   {"func_door", Q1_MAP_DOOR},
+                   {"func_button", Q1_MAP_BUTTON},
+                   {"func_door_secret", Q1_MAP_SECRET_DOOR},
+                   {"func_plat", Q1_MAP_PLAT},
+                   {"func_train", Q1_MAP_TRAIN},
+                   {"misc_teleporttrain", Q1_MAP_TRAIN},
                    {"trigger_multiple", Q1_MAP_MULTI},
                    {"trigger_once", Q1_MAP_MULTI},
                    {"trigger_secret", Q1_MAP_MULTI},
@@ -278,6 +291,8 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     if (!*handled)
         return true;
     entity->kind = Q1_MAP;
+    if (q1_map_is_mover(kind))
+        return q1_map_mover_spawn(g, entity, error);
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
@@ -388,6 +403,8 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
                 qa_error *error) {
     if (!entity->map || !entity->map->use_enabled)
         return true;
+    if (q1_map_is_mover(entity->map->kind))
+        return q1_map_mover_use(g, entity, activator, error);
     if (entity->map->kind == Q1_MAP_WALL) {
         entity->frame = 1 - entity->frame;
         return true;
@@ -400,18 +417,19 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
 }
 bool q1_map_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contact *contact,
                   qa_error *error) {
+    if (entity->map && entity->map->touch_enabled && q1_map_is_mover(entity->map->kind))
+        return q1_map_mover_touch(g, entity, contact->other, error);
     return !entity->map || !entity->map->touch_enabled ||
            q1_map_trigger_touch(g, entity, contact, error);
 }
 bool q1_map_blocked(qa_q1_game *g, q1_actor *entity, qa_actor_id obstacle, qa_error *error) {
-    (void)g;
-    (void)entity;
-    (void)obstacle;
-    (void)error;
-    return true;
+    return !entity->map || !q1_map_is_mover(entity->map->kind) ||
+           q1_map_mover_blocked(g, entity, obstacle, error);
 }
 bool q1_map_reaction(qa_q1_game *g, q1_actor *entity, const qa_damage_outcome *outcome,
                      qa_error *error) {
+    if (q1_map_is_mover(entity->map->kind))
+        return q1_map_mover_reaction(g, entity, outcome, error);
     if (outcome->result.reaction != QA_REACTION_DEATH)
         return true;
     if (entity->map->kind == Q1_MAP_MULTI)
@@ -428,6 +446,8 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_map_state *state = entity->map;
     q1_map_action action = state->action;
     state->action = Q1_MAP_IDLE;
+    if (action >= Q1_MAP_MOVE_DONE)
+        return q1_map_mover_think(g, entity, action, error);
     switch (action) {
     case Q1_MAP_IDLE:
         return true;

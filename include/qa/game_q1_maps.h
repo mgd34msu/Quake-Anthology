@@ -43,6 +43,10 @@ typedef struct qa_q1_map_options {
 /* Bind before authored spawning. All service owners outlive the native game;
  * binding is immutable for that game instance. */
 bool qa_q1_game_maps_bind(qa_q1_game *, const qa_q1_map_options *, qa_error *);
+/* Link authored door groups after all map entities have been admitted. */
+bool qa_q1_game_maps_finish(qa_q1_game *, qa_error *);
+/* Threewave spectator door/teleporter passage, after its velocity update. */
+bool qa_q1_game_map_observer_nearby(qa_q1_game *, qa_actor_id, qa_error *);
 qa_string_id qa_q1_game_map_name(const qa_q1_game *);
 uint32_t qa_q1_game_campaign_flags(const qa_q1_game *);
 qa_string_id qa_q1_game_map_text(const qa_q1_game *, qa_actor_id, qa_q1_campaign_text);

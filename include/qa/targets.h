@@ -5,7 +5,7 @@
 typedef struct qa_authored_target {
     qa_string_id classname, targetname, target, killtarget, message;
     qa_string_id shader_old, shader_new;
-    float delay_seconds;
+    float delay_seconds, wait_seconds;
 } qa_authored_target;
 typedef struct qa_targets qa_targets;
 typedef struct qa_target_binding {
@@ -46,6 +46,8 @@ qa_targets *qa_targets_create(const qa_target_options *, qa_error *);
 void qa_targets_destroy(qa_targets *);
 bool qa_targets_bind(qa_targets *, const qa_target_binding *, qa_error *);
 void qa_targets_unbind(qa_targets *, qa_actor_id);
+/* Provider teardown removes only its own current binding. */
+void qa_targets_unbind_context(qa_targets *, qa_actor_id, const void *expected_context);
 /* Call after changing a bound actor's targetname or source-slot mapping. The
  * retained index rebuilds only after such changes or registry mutations. */
 void qa_targets_changed(qa_targets *);

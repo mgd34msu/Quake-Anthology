@@ -38,10 +38,11 @@ static bool valid_string(const qa_targets *targets, qa_string_id id) {
     return text.data && !memchr(text.data, 0, text.size);
 }
 static bool valid_fields(const qa_targets *targets, const qa_authored_target *fields) {
-    return isfinite(fields->delay_seconds) && valid_string(targets, fields->classname) &&
-           valid_string(targets, fields->targetname) && valid_string(targets, fields->target) &&
-           valid_string(targets, fields->killtarget) && valid_string(targets, fields->message) &&
-           valid_string(targets, fields->shader_old) && valid_string(targets, fields->shader_new);
+    return isfinite(fields->delay_seconds) && isfinite(fields->wait_seconds) &&
+           valid_string(targets, fields->classname) && valid_string(targets, fields->targetname) &&
+           valid_string(targets, fields->target) && valid_string(targets, fields->killtarget) &&
+           valid_string(targets, fields->message) && valid_string(targets, fields->shader_old) &&
+           valid_string(targets, fields->shader_new);
 }
 static qa_string_id nonempty(const qa_targets *targets, qa_string_id id) {
     return qa_strings_text(qa_session_strings(targets->options.session), id).size ? id : 0;
@@ -102,6 +103,10 @@ void qa_targets_unbind(qa_targets *targets, qa_actor_id actor) {
         targets->bindings[actor.slot] = (qa_target_binding){0};
         targets->dirty = true;
     }
+}
+void qa_targets_unbind_context(qa_targets *targets, qa_actor_id actor, const void *context) {
+    if (actor.slot < targets->capacity && targets->bindings[actor.slot].context == context)
+        qa_targets_unbind(targets, actor);
 }
 void qa_targets_changed(qa_targets *targets) { targets->dirty = true; }
 bool qa_targets_read(const qa_targets *targets, qa_actor_id actor, qa_authored_target *out) {

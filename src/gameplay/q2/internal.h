@@ -234,6 +234,7 @@ void q2_entities_close(qa_q2_game *);
 void q2_items_release_state(q2_actor *);
 void q2_client_release_state(q2_actor *);
 void q2_entity_release_state(q2_actor *);
+void q2_entity_unbind(qa_q2_game *, q2_actor *);
 bool q2_item_tick(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_client_tick(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_entity_tick(qa_q2_game *, q2_actor *, qa_error *);

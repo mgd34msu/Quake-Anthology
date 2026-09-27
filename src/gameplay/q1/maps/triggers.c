@@ -1,7 +1,7 @@
 #include "internal.h"
 
 static bool addon(const qa_q1_game *g) { return g->options.program >= QA_Q1_DOPA; }
-static qa_vec3 direction(qa_vec3 angles) {
+qa_vec3 q1_map_direction(qa_vec3 angles) {
     if (!angles.x && !angles.z && angles.y == -1)
         return qa_v3(0, 0, 1);
     if (!angles.x && !angles.z && angles.y == -2)
@@ -20,7 +20,7 @@ bool q1_map_trigger_init(qa_q1_game *g, q1_actor *entity, bool zero_direction, q
     if (!authored)
         state->movedir = zero_direction && !body.angles.x && !body.angles.y && !body.angles.z
                              ? qa_v3(0, 0, 0)
-                             : direction(body.angles);
+                             : q1_map_direction(body.angles);
     body.angles = qa_v3(0, 0, 0);
     entity->model = QA_STRING_NONE;
     entity->physics.solid = QA_PHYSICS_TRIGGER;
@@ -285,7 +285,7 @@ static bool teleport(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_erro
         return false;
     const q1_actor *native = q1_entity_const(g, target);
     qa_vec3 angles = native && native->map ? native->map->mangle : destination.angles;
-    qa_vec3 forward = direction(angles);
+    qa_vec3 forward = q1_map_direction(angles);
     if (!qa_q1_spawn_teleport_fog(g, qa_vec_add(destination.origin, qa_vec_scale(forward, 32)),
                                   NULL, error))
         return false;
@@ -396,7 +396,7 @@ bool q1_map_trigger_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contac
             return true;
         if (!qa_world_body_read(g->services.world, other, &body, error))
             return false;
-        if (qa_vec_dot(direction(body.angles), state->movedir) < 0)
+        if (qa_vec_dot(q1_map_direction(body.angles), state->movedir) < 0)
             return true;
         return q1_map_multi_fire(g, entity, other, error);
     case Q1_MAP_TELEPORT:

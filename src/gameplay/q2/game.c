@@ -104,6 +104,7 @@ bool qa_q2_actor_released(qa_q2_game *g, qa_actor_record record, qa_error *e) {
     if (g != NULL && record.id.slot < g->capacity && g->actors[record.id.slot] != NULL &&
         qa_actor_id_equal(g->actors[record.id.slot]->id, record.id)) {
         q2_actor *a = g->actors[record.id.slot];
+        q2_entity_unbind(g, a);
         g->actors[record.id.slot] = NULL;
         if (a->live_previous != NULL)
             a->live_previous->live_next = a->live_next;
@@ -288,10 +289,10 @@ bool qa_q2_actor_traits(qa_q2_game *g, qa_actor_id id, qa_builtin_actor_traits *
         return q2_monster_traits(g, id, out);
     if (a->client != NULL && a->projectile.kind == Q2_PROJECTILE_NONE)
         return q2_client_traits(g, id, out);
-    if (a->entity != NULL && a->projectile.kind == Q2_PROJECTILE_NONE)
-        return q2_entity_traits(g, id, out);
     if (a->item != NULL && a->projectile.kind == Q2_PROJECTILE_NONE)
         return q2_item_traits(g, id, out);
+    if (a->entity != NULL && a->projectile.kind == Q2_PROJECTILE_NONE)
+        return q2_entity_traits(g, id, out);
     if (a->projectile.kind == Q2_PROJECTILE_NONE)
         return false;
     const qa_actor_record *record = qa_actors_get(qa_session_actors(g->services.session), id);
