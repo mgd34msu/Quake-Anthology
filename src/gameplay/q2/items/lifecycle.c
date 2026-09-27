@@ -1,3 +1,4 @@
+#include "../entities/internal.h"
 #include "internal.h"
 
 bool q2_items_init(qa_q2_game *g, qa_error *e) {
@@ -230,41 +231,51 @@ bool q2_item_finish(qa_q2_game *g, q2_actor *a, qa_actor_id player, qa_error *e)
 static bool respawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_actor *selected = a;
     q2_item_state *item = a->item;
+    size_t count = 1;
     if (item->spawn.team) {
-        size_t count = 0;
+        count = 0;
         qa_actor_id cursor = item->spawn.team_master;
-        for (size_t guard = 0; guard < g->capacity && q2_actor_live(g, cursor); ++guard) {
-            q2_actor *member = q2_actor_get(g, cursor, false, e);
-            if (!member || !member->item)
+        while (q2_actor_live(g, cursor)) {
+            q2_actor *member = q2_actor_get(g, cursor, false, NULL);
+            if (!member || (!member->item && !member->entity))
+                break;
+            if (++count > g->capacity) {
+                qa_error_set(e, QA_ERROR_FORMAT, a->id.slot, "Cyclic Q2 item team chain");
                 return false;
-            ++count;
-            cursor = member->item->spawn.team_next;
-        }
-        if (count) {
-            size_t index = (size_t)(q2_random(g) * (float)count);
-            if (index >= count)
-                index = count - 1;
-            cursor = item->spawn.team_master;
-            for (size_t i = 0; i <= index; ++i) {
-                selected = q2_actor_get(g, cursor, false, e);
-                if (!selected || !selected->item)
-                    return false;
-                cursor = selected->item->spawn.team_next;
             }
+            cursor = member->item ? member->item->spawn.team_next : (qa_actor_id){0};
         }
     }
-    if (g->options.edition == QA_Q2_CLASSIC && !q2_item_randomize(g, &selected, e))
+    float choice = q2_random(g);
+    if (count && item->spawn.team) {
+        size_t index = (size_t)(choice * (float)count);
+        if (index >= count)
+            index = count - 1;
+        qa_actor_id cursor = item->spawn.team_master;
+        for (size_t i = 0; i <= index; ++i) {
+            selected = q2_actor_get(g, cursor, false, e);
+            if (!selected)
+                return false;
+            cursor = selected->item ? selected->item->spawn.team_next : (qa_actor_id){0};
+        }
+    }
+    if (selected->item && selected->item->definition && g->options.edition == QA_Q2_CLASSIC &&
+        !q2_item_randomize(g, &selected, e))
         return false;
     if (!q2_actor_live(g, selected->id))
         return true;
-    selected->item->visible = true;
-    selected->item->touchable = true;
-    if (!q2_item_change_collision(g, selected, QA_PHYSICS_TRIGGER, e))
-        return false;
-    if (!q2_actor_live(g, selected->id))
-        return true;
-    if (!q2_item_visual(g, selected, e))
-        return false;
+    if (selected->item) {
+        selected->item->visible = true;
+        selected->item->touchable = true;
+        if (!q2_item_change_collision(g, selected, QA_PHYSICS_TRIGGER, e) ||
+            (q2_actor_live(g, selected->id) && !q2_item_visual(g, selected, e)))
+            return false;
+    } else {
+        selected->entity->visual.visible = true;
+        if (!q2_entity_solid(g, selected, QA_PHYSICS_TRIGGER, e) ||
+            (q2_actor_live(g, selected->id) && !q2_entity_show(g, selected, e)))
+            return false;
+    }
     if (!q2_actor_live(g, selected->id))
         return true;
     qa_body_state body;
@@ -280,8 +291,8 @@ static bool respawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
                                              .time_ns = g->now_ns},
                          e))
         return false;
-    return !q2_actor_live(g, selected->id) || g->options.edition != QA_Q2_RERELEASE ||
-           q2_item_randomize(g, &selected, e);
+    return !q2_actor_live(g, selected->id) || !selected->item || !selected->item->definition ||
+           g->options.edition != QA_Q2_RERELEASE || q2_item_randomize(g, &selected, e);
 }
 static bool floor_item(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_body_state body;
@@ -309,6 +320,12 @@ static bool floor_item(qa_q2_game *g, q2_actor *a, qa_error *e) {
     a->item->touchable = true;
     qa_physics_solid solid = QA_PHYSICS_TRIGGER;
     if (a->item->spawn.team) {
+        a->physics.flags &= ~QA_PHYSICS_TEAM_SLAVE;
+        if (a->entity) {
+            a->item->spawn.team_master = a->entity->team_master;
+            a->item->spawn.team_next = a->entity->team_next;
+            a->entity->team_next = (qa_actor_id){0};
+        }
         a->item->visible = false;
         solid = QA_PHYSICS_NOT_SOLID;
         if (qa_actor_id_equal(a->item->spawn.team_master, a->id)) {

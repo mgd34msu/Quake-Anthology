@@ -257,7 +257,7 @@ typedef struct q2_motion {
 } q2_motion;
 typedef struct q2_mover {
     qa_vec3 start, end, intermediate, safe_direction;
-    qa_actor_id master, next, destination;
+    qa_actor_id destination;
     float distance, water_divisor;
     int phase, stage;
     bool angular, reversed, activated, ship, moving;
@@ -313,7 +313,7 @@ typedef struct qa_q2_entity_state {
     uint32_t ordinal, spawnflags;
     qa_q2_visual visual;
     qa_actor_collision collision;
-    qa_actor_id activator, owner, enemy, goal;
+    qa_actor_id activator, owner, enemy, goal, team_master, team_next;
     qa_vec3 direction, beam_end;
     float speed, accel, decel, wait, delay, damage, health, random, volume, attenuation;
     uint64_t due_ns, timestamp_ns, debounce_ns, sound_ns, expires_ns;

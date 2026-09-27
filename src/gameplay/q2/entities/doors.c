@@ -50,7 +50,7 @@ static bool sound(qa_q2_game *g, q2_actor *a, bool start, qa_error *e) {
                             : 3;
     if (attenuation == -1)
         attenuation = 0;
-    if ((!s->mover->master.registry || qa_actor_id_equal(s->mover->master, a->id)) &&
+    if ((!s->team_master.registry || qa_actor_id_equal(s->team_master, a->id)) &&
         !q2_entity_sound(g, a, edge, 2, 1, attenuation, 0, e))
         return false;
     return !q2_actor_live(g, a->id) ||
@@ -115,7 +115,7 @@ static bool up(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e) {
 bool q2_door_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e) {
     q2_entity_state *s = a->entity;
     q2_mover *m = s->mover;
-    if (m->master.registry && !qa_actor_id_equal(m->master, a->id))
+    if (s->team_master.registry && !qa_actor_id_equal(s->team_master, a->id))
         return true;
     if (g->options.edition == QA_Q2_RERELEASE && m->angular && (s->spawnflags & 0x10000) &&
         !m->activated) {
@@ -144,7 +144,8 @@ bool q2_door_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e)
             !qa_world_point_contents(
                 g->services.world,
                 &(qa_point_query){
-                    .point = qa_vec_scale(qa_vec_add(b.bounds.mins, b.bounds.maxs), .5f),
+                    .point = qa_vec_add(
+                        b.origin, qa_vec_scale(qa_vec_add(b.bounds.mins, b.bounds.maxs), .5f)),
                     .policy = {.family = QA_COLLISION_Q2, .contents_mask = UINT32_MAX}},
                 &contents, e))
             return false;
@@ -158,9 +159,11 @@ bool q2_door_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e)
     qa_actor_id id = a->id;
     while (q2_actor_live(g, id)) {
         q2_actor *part = q2_ent(g, id);
-        if (!part || !part->entity->mover)
+        if (!part)
             break;
-        qa_actor_id next = part->entity->mover->next;
+        qa_actor_id next = part->entity->team_next;
+        if (!q2_mover_state(part, e))
+            return false;
         part->entity->message = 0;
         part->entity->touchable = false;
         if (!(close ? q2_door_down(g, part, e) : up(g, part, activator, e)))
@@ -203,34 +206,37 @@ bool q2_door_finished(qa_q2_game *g, q2_actor *a, bool top, qa_error *e) {
 bool q2_door_prepare(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_entity_state *s = a->entity;
     q2_mover *m = s->mover;
-    if (m->master.registry && !qa_actor_id_equal(m->master, a->id))
+    if (s->team_master.registry && !qa_actor_id_equal(s->team_master, a->id))
         return true;
     if (g->options.edition == QA_Q2_RERELEASE && !m->angular && (s->spawnflags & 1) &&
         !q2_mover_portals(g, a, true, e))
         return false;
+    if (!q2_actor_live(g, a->id))
+        return true;
     float shortest = fabsf(m->distance);
     qa_bounds bounds = {{INFINITY, INFINITY, INFINITY}, {-INFINITY, -INFINITY, -INFINITY}};
     for (q2_actor *part = a; part;) {
         qa_body_state b;
         if (!qa_world_body_read(g->services.world, part->id, &b, e))
             return false;
-        shortest = fminf(shortest, fabsf(part->entity->mover->distance));
+        shortest = fminf(shortest, part->entity->mover ? fabsf(part->entity->mover->distance) : 0);
         qa_vec3 lo = qa_vec_add(b.origin, b.bounds.mins), hi = qa_vec_add(b.origin, b.bounds.maxs);
         bounds.mins = qa_v3(fminf(bounds.mins.x, lo.x), fminf(bounds.mins.y, lo.y),
                             fminf(bounds.mins.z, lo.z));
         bounds.maxs = qa_v3(fmaxf(bounds.maxs.x, hi.x), fmaxf(bounds.maxs.y, hi.y),
                             fmaxf(bounds.maxs.z, hi.z));
-        part = q2_ent(g, part->entity->mover->next);
+        part = q2_ent(g, part->entity->team_next);
     }
     float time = shortest / s->speed;
     if (time > 0)
         for (q2_actor *part = a; part;) {
             q2_entity_state *p = part->entity;
-            float speed = fabsf(p->mover->distance) / time, ratio = speed / p->speed;
+            float speed = (p->mover ? fabsf(p->mover->distance) : 0) / time,
+                  ratio = speed / p->speed;
             p->accel *= ratio;
             p->decel *= ratio;
             p->speed = speed;
-            part = q2_ent(g, p->mover->next);
+            part = q2_ent(g, p->team_next);
         }
     if (s->health > 0 || (s->targetname && !m->activated))
         return true;
@@ -359,7 +365,7 @@ bool q2_door_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
         } else
             b.origin = m->start;
     }
-    m->master = a->id;
+    s->team_master = a->id;
     if (water) {
         s->accel = s->decel = s->speed;
         if (s->wait == -1)
@@ -439,11 +445,13 @@ bool q2_door_blocked(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_error *e)
     if (smart || (s->spawnflags & 4) || s->wait < 0)
         return true;
     bool reverse = s->mover->phase == 3;
-    q2_actor *master = q2_ent(g, s->mover->master);
+    q2_actor *master = q2_ent(g, s->team_master);
     if (!master)
         master = a;
     for (q2_actor *part = master; part;) {
-        qa_actor_id next = part->entity->mover->next;
+        qa_actor_id next = part->entity->team_next;
+        if (!q2_mover_state(part, e))
+            return false;
         if (!(reverse ? up(g, part, part->entity->activator, e) : q2_door_down(g, part, e)))
             return false;
         if (!q2_actor_live(g, a->id))
@@ -455,11 +463,11 @@ bool q2_door_blocked(qa_q2_game *g, q2_actor *a, qa_actor_id other, qa_error *e)
 bool q2_door_reaction(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *o, qa_error *e) {
     if (o->result.reaction != QA_REACTION_DEATH)
         return true;
-    q2_actor *master = q2_ent(g, a->entity->mover->master);
+    q2_actor *master = q2_ent(g, a->entity->team_master);
     if (!master)
         master = a;
     for (q2_actor *part = master; part;) {
-        qa_actor_id next = part->entity->mover->next;
+        qa_actor_id next = part->entity->team_next;
         if (!health(g, part, false, e))
             return false;
         if (!q2_actor_live(g, master->id))

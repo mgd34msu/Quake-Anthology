@@ -57,18 +57,18 @@ bool qa_q2_entity_capture(qa_q2_game *g, qa_actor_id id, qa_q2_entity_checkpoint
         !q2_save_reference(g, s->owner, &saved.owner, e) ||
         !q2_save_reference(g, s->enemy, &saved.enemy, e) ||
         !q2_save_reference(g, s->goal, &saved.goal, e) ||
+        !q2_save_reference(g, s->team_master, &saved.master, e) ||
+        !q2_save_reference(g, s->team_next, &saved.next, e) ||
         !q2_save_reference(g, s->collision.owner, &saved.collision_owner, e))
         goto fail;
     saved.value.activator = saved.value.owner = saved.value.enemy = saved.value.goal =
         (qa_actor_id){0};
+    saved.value.team_master = saved.value.team_next = (qa_actor_id){0};
     saved.value.collision.owner = (qa_actor_id){0};
     if (s->mover) {
-        if (!q2_save_reference(g, s->mover->master, &saved.master, e) ||
-            !q2_save_reference(g, s->mover->next, &saved.next, e) ||
-            !q2_save_reference(g, s->mover->destination, &saved.destination, e))
+        if (!q2_save_reference(g, s->mover->destination, &saved.destination, e))
             goto fail;
-        saved.value.mover->master = saved.value.mover->next = saved.value.mover->destination =
-            (qa_actor_id){0};
+        saved.value.mover->destination = (qa_actor_id){0};
     }
     if (s->turret) {
         if (!q2_save_reference(g, s->turret->breach, &saved.turret_breach, e))
@@ -82,8 +82,7 @@ fail:
     return false;
 }
 static bool valid_mover(const q2_mover *m) {
-    if (m->master.registry || m->next.registry || m->destination.registry ||
-        (unsigned)m->motion.done > Q2MD_SECRET_NEXT)
+    if (m->destination.registry || (unsigned)m->motion.done > Q2MD_SECRET_NEXT)
         return false;
     const float values[] = {m->distance,
                             m->water_divisor,
@@ -105,7 +104,8 @@ static bool valid_mover(const q2_mover *m) {
 static bool valid_state(qa_q2_game *g, const q2_entity_state *s, qa_error *e) {
     if ((unsigned)s->kind > Q2E_CAMERA_DUMMY || (unsigned)s->think > Q2ET_PLAYER_START_DROP ||
         (unsigned)s->scenery > Q2S_MAL_LASER || s->dispatching || s->activator.registry ||
-        s->owner.registry || s->enemy.registry || s->goal.registry || s->collision.owner.registry ||
+        s->owner.registry || s->enemy.registry || s->goal.registry || s->team_master.registry ||
+        s->team_next.registry || s->collision.owner.registry ||
         (unsigned)s->collision.role > QA_COLLISION_BOTH ||
         (unsigned)s->collision.shape > QA_SHAPE_CAPSULE ||
         (s->collision.family && s->collision.family != QA_COLLISION_Q2) || !s->classname ||
@@ -147,7 +147,7 @@ static bool valid_state(qa_q2_game *g, const q2_entity_state *s, qa_error *e) {
             !isfinite(q->fade_duration))
             return false;
     }
-    if ((s->kind == Q2E_TURRET_BREACH || s->kind == Q2E_TURRET_DRIVER) && (!s->turret || !s->mover))
+    if ((s->kind == Q2E_TURRET_BREACH || s->kind == Q2E_TURRET_DRIVER) && !s->turret)
         return false;
     if ((s->kind == Q2E_EYE || s->kind == Q2E_CAMERA || s->kind == Q2E_CAMERA_DUMMY) && !s->q64)
         return false;
@@ -194,11 +194,11 @@ bool qa_q2_entity_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_entity_chec
         !q2_resolve_reference(g, saved->owner, &s->owner, e) ||
         !q2_resolve_reference(g, saved->enemy, &s->enemy, e) ||
         !q2_resolve_reference(g, saved->goal, &s->goal, e) ||
+        !q2_resolve_reference(g, saved->master, &s->team_master, e) ||
+        !q2_resolve_reference(g, saved->next, &s->team_next, e) ||
         !q2_resolve_reference(g, saved->collision_owner, &s->collision.owner, e))
         goto fail;
-    if (s->mover && (!q2_resolve_reference(g, saved->master, &s->mover->master, e) ||
-                     !q2_resolve_reference(g, saved->next, &s->mover->next, e) ||
-                     !q2_resolve_reference(g, saved->destination, &s->mover->destination, e)))
+    if (s->mover && !q2_resolve_reference(g, saved->destination, &s->mover->destination, e))
         goto fail;
     if (s->turret && !q2_resolve_reference(g, saved->turret_breach, &s->turret->breach, e))
         goto fail;
@@ -368,19 +368,20 @@ bool qa_q2_entities_validate_links(qa_q2_game *g, qa_error *e) {
         return false;
     }
     for (q2_actor *a = g->first_actor; a; a = a->live_next) {
-        if (!a->entity || !a->entity->mover)
-            continue;
-        qa_actor_id next = a->entity->mover->next;
-        size_t visited = 0;
-        while (next.registry) {
-            q2_actor *part = q2_ent(g, next);
-            if (!part)
-                break;
-            if (!part->entity->mover || qa_actor_id_equal(next, a->id) || ++visited > g->capacity) {
-                qa_error_set(e, QA_ERROR_FORMAT, a->id.slot, "Invalid Q2 mover team chain");
-                return false;
+        for (unsigned chain = 0; chain < 2; ++chain) {
+            qa_actor_id next = chain == 0 ? (a->entity ? a->entity->team_next : (qa_actor_id){0})
+                                          : (a->item ? a->item->spawn.team_next : (qa_actor_id){0});
+            size_t visited = 0;
+            while (q2_actor_live(g, next)) {
+                q2_actor *part = q2_actor_get(g, next, false, NULL);
+                if (!part || (!part->entity && !part->item) || qa_actor_id_equal(next, a->id) ||
+                    ++visited > g->capacity) {
+                    qa_error_set(e, QA_ERROR_FORMAT, a->id.slot, "Invalid Q2 entity team chain");
+                    return false;
+                }
+                next = chain == 0 ? (part->entity ? part->entity->team_next : (qa_actor_id){0})
+                                  : (part->item ? part->item->spawn.team_next : (qa_actor_id){0});
             }
-            next = part->entity->mover->next;
         }
     }
     return true;

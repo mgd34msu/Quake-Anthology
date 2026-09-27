@@ -64,6 +64,7 @@ bool q2_mover_touch(qa_q2_game *, q2_actor *, const qa_touch_contact *, bool *, 
 bool q2_mover_blocked(qa_q2_game *, q2_actor *, qa_actor_id, qa_error *);
 bool q2_mover_reaction(qa_q2_game *, q2_actor *, const qa_damage_outcome *, qa_error *);
 bool q2_move_start(qa_q2_game *, q2_actor *, qa_vec3, bool, q2_move_done, qa_error *);
+q2_mover *q2_mover_state(q2_actor *, qa_error *);
 bool q2_move_tick(qa_q2_game *, q2_actor *, q2_entity_think, qa_error *);
 bool q2_move_finished(qa_q2_game *, q2_actor *, q2_move_done, qa_error *);
 bool q2_mover_portals(qa_q2_game *, q2_actor *, bool, qa_error *);

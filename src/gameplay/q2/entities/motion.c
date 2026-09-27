@@ -156,14 +156,24 @@ static bool curve(qa_q2_game *g, q2_actor *a, qa_error *e) {
         return false;
     return schedule_ns(g, a, Q2ET_MOVE_ACCEL, g->frame_ns);
 }
+q2_mover *q2_mover_state(q2_actor *a, qa_error *e) {
+    if (!a->entity->mover) {
+        a->entity->mover = calloc(1, sizeof(*a->entity->mover));
+        if (!a->entity->mover)
+            qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 team member motion");
+    }
+    return a->entity->mover;
+}
 bool q2_move_start(qa_q2_game *g, q2_actor *a, qa_vec3 destination, bool angular, q2_move_done done,
                    qa_error *e) {
     q2_entity_state *s = a->entity;
-    if (!s->mover || !qa_vec_finite(destination) || s->speed <= 0 || s->accel <= 0 ||
-        s->decel <= 0 || !g->frame_ns) {
+    if (!qa_vec_finite(destination) || s->speed <= 0 || s->accel <= 0 || s->decel <= 0 ||
+        !g->frame_ns) {
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid Q2 mover motion parameters");
         return false;
     }
+    if (!q2_mover_state(a, e))
+        return false;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
         return false;
@@ -192,7 +202,7 @@ bool q2_move_start(qa_q2_game *g, q2_actor *a, qa_vec3 destination, bool angular
         }
         return schedule_ns(g, a, Q2ET_MOVE_ACCEL, g->frame_ns);
     }
-    qa_actor_id owner = s->mover->master.registry ? s->mover->master : a->id;
+    qa_actor_id owner = s->team_master.registry ? s->team_master : a->id;
     return qa_actor_id_equal(qa_q2_current_actor(g), owner)
                ? begin(g, a, e)
                : schedule_ns(g, a, Q2ET_MOVE_BEGIN, g->frame_ns);

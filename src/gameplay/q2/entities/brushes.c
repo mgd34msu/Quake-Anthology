@@ -98,7 +98,7 @@ static bool platform_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
     m->end = b.origin;
     m->start = b.origin;
     m->start.z -= height - (second ? lip : 0);
-    m->master = a->id;
+    s->team_master = a->id;
     b.angles = qa_v3(0, 0, 0);
     s->usable = true;
     s->visual.visible = true;
@@ -222,7 +222,7 @@ static bool secret_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
     }
     b.angles = qa_v3(0, 0, 0);
     a->physics.motion = QA_PHYSICS_PUSH;
-    m->master = a->id;
+    s->team_master = a->id;
     if (!s->damage)
         s->damage = 2;
     if (!s->wait)
@@ -274,8 +274,10 @@ static bool secret_use(qa_q2_game *g, q2_actor *a, qa_error *e) {
             return true;
     }
     for (q2_actor *part = a; part;) {
-        q2_mover *m = part->entity->mover;
-        qa_actor_id next = m->next;
+        q2_mover *m = q2_mover_state(part, e);
+        if (!m)
+            return false;
+        qa_actor_id next = part->entity->team_next;
         m->stage = 0;
         if (!q2_move_start(g, part, m->intermediate, false, Q2MD_SECRET_NEXT, e))
             return false;
@@ -643,7 +645,7 @@ bool q2_brush_reaction(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *o, q
     if (!qa_combat_set_traits(g->services.combat, a->id, &health, e))
         return false;
     if (second && (a->physics.flags & QA_PHYSICS_TEAM_SLAVE)) {
-        q2_actor *master = q2_ent(g, a->entity->mover->master);
+        q2_actor *master = q2_ent(g, a->entity->team_master);
         if (master && qa_combat_read_traits(g->services.combat, master->id, &health, e) &&
             health.can_take_damage)
             return q2_brush_reaction(g, master, o, e);

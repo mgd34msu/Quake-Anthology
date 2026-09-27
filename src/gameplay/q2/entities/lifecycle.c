@@ -268,7 +268,11 @@ bool q2_entity_reaction(qa_q2_game *g, const qa_damage_outcome *o, qa_error *e) 
     q2_actor *a = q2_ent(g, o->request.target);
     if (!a || a->projectile.kind != Q2_PROJECTILE_NONE)
         return true;
-    return a->entity->mover ? q2_mover_reaction(g, a, o, e) : q2_scenery_reaction(g, a, o, e);
+    q2_entity_kind kind = a->entity->kind;
+    return kind == Q2E_DOOR || kind == Q2E_BUTTON || kind == Q2E_WATER || kind == Q2E_SECRET_DOOR ||
+                   kind == Q2E_PLAT || kind == Q2E_TRAIN
+               ? q2_mover_reaction(g, a, o, e)
+               : q2_scenery_reaction(g, a, o, e);
 }
 bool qa_q2_entity_field(qa_q2_game *g, qa_actor_id id, const char *key, qa_string_id *value) {
     q2_actor *a = q2_ent(g, id);
@@ -279,43 +283,110 @@ bool qa_q2_entity_field(qa_q2_game *g, qa_actor_id id, const char *key, qa_strin
 }
 bool qa_q2_entity_team(qa_q2_game *g, qa_actor_id id, qa_actor_id *master, qa_actor_id *next) {
     q2_actor *a = q2_ent(g, id);
-    if (!a || !a->entity->mover || !master || !next)
+    if (!a || !master || !next)
         return false;
-    *master = a->entity->mover->master;
-    *next = a->entity->mover->next;
+    *master = a->entity->team_master;
+    *next = a->entity->team_next;
     return true;
+}
+typedef struct team_member {
+    q2_actor *actor;
+    qa_string_id team;
+    uint32_t order;
+    size_t sequence;
+} team_member;
+static int team_compare(const void *left, const void *right) {
+    const team_member *a = left, *b = right;
+    if (a->team != b->team)
+        return a->team < b->team ? -1 : 1;
+    if (a->order != b->order)
+        return a->order < b->order ? -1 : 1;
+    return a->sequence < b->sequence ? -1 : a->sequence > b->sequence;
 }
 bool qa_q2_entities_post_spawn(qa_q2_game *g, qa_error *e) {
     if (!g) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing Q2 provider");
         return false;
     }
+    size_t count = 0;
     for (q2_actor *a = g->first_actor; a; a = a->live_next) {
-        if (!a->entity || !a->entity->mover)
+        if (!a->entity || a->projectile.kind != Q2_PROJECTILE_NONE)
             continue;
         q2_entity_state *s = a->entity;
-        q2_mover *m = s->mover;
-        m->master = a->id;
-        m->next = (qa_actor_id){0};
+        s->team_master = a->id;
+        s->team_next = (qa_actor_id){0};
+        if (a->item)
+            a->item->spawn.team = s->team;
         a->physics.flags &= ~QA_PHYSICS_TEAM_SLAVE;
-        if (!s->team)
-            continue;
-        q2_actor *last = NULL;
-        for (q2_actor *b = g->first_actor; b; b = b->live_next) {
-            if (!b->entity || !b->entity->mover || b->entity->team != s->team)
-                continue;
-            if (!last)
-                m->master = b->id;
-            if (qa_actor_id_equal(b->id, a->id)) {
-                if (!qa_actor_id_equal(m->master, a->id))
-                    a->physics.flags |= QA_PHYSICS_TEAM_SLAVE;
-            }
-            if (last && qa_actor_id_equal(last->id, a->id)) {
-                m->next = b->id;
-                break;
-            }
-            last = b;
-        }
+        count += s->team != 0;
     }
+    if (!count)
+        return true;
+    if (count > SIZE_MAX / sizeof(team_member)) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "Too many Q2 team members");
+        return false;
+    }
+    team_member *members = malloc(count * sizeof(*members));
+    if (!members) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "Grouping Q2 authored teams");
+        return false;
+    }
+    size_t used = 0;
+    for (q2_actor *a = g->first_actor; a; a = a->live_next) {
+        if (!a->entity || !a->entity->team || a->projectile.kind != Q2_PROJECTILE_NONE)
+            continue;
+        const qa_actor_record *record =
+            qa_actors_get(qa_session_actors(g->services.session), a->id);
+        members[used] = (team_member){a, a->entity->team,
+                                      record->has_source ? record->source_slot : a->id.slot, used};
+        ++used;
+    }
+    qsort(members, count, sizeof(*members), team_compare);
+    for (size_t first = 0; first < count;) {
+        size_t end = first + 1;
+        while (end < count && members[end].team == members[first].team)
+            ++end;
+        q2_actor *master = members[first].actor, *last = master;
+        for (size_t i = first + 1; i < end; ++i) {
+            if (members[i].order == members[first].order)
+                continue;
+            q2_actor *member = members[i].actor;
+            last->entity->team_next = member->id;
+            member->entity->team_master = master->id;
+            member->physics.flags |= QA_PHYSICS_TEAM_SLAVE;
+            last = member;
+        }
+        if (g->options.edition == QA_Q2_RERELEASE) {
+            for (size_t i = first; i < end; ++i) {
+                q2_actor *train = members[i].actor;
+                if (train->entity->kind != Q2E_TRAIN || !(train->entity->spawnflags & 8) ||
+                    !(train->physics.flags & QA_PHYSICS_TEAM_SLAVE))
+                    continue;
+                const char *classname = qa_strings_cstr(qa_session_strings(g->services.session),
+                                                        train->entity->classname);
+                if (strcmp(classname, "func_train"))
+                    continue;
+                train->entity->team_master = train->id;
+                train->entity->team_next = (qa_actor_id){0};
+                train->physics.flags &= ~QA_PHYSICS_TEAM_SLAVE;
+                last = train;
+                for (size_t j = first; j < end; ++j) {
+                    q2_actor *member = members[j].actor;
+                    if (member == train)
+                        continue;
+                    last->entity->team_next = member->id;
+                    member->entity->team_master = train->id;
+                    member->entity->team_next = (qa_actor_id){0};
+                    member->entity->speed = train->entity->speed;
+                    member->physics.flags |= QA_PHYSICS_TEAM_SLAVE;
+                    member->physics.motion = QA_PHYSICS_PUSH;
+                    member->physics_bound = true;
+                    last = member;
+                }
+            }
+        }
+        first = end;
+    }
+    free(members);
     return true;
 }

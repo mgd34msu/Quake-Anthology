@@ -82,9 +82,9 @@ bool q2_train_next(qa_q2_game *g, q2_actor *a, qa_error *e) {
         if (!q2_move_start(g, a, goal, false, Q2MD_TRAIN_WAIT, e))
             return false;
         if (g->options.edition == QA_Q2_RERELEASE && (s->spawnflags & 8))
-            for (q2_actor *part = q2_ent(g, m->next); part;) {
+            for (q2_actor *part = q2_ent(g, s->team_next); part;) {
                 q2_entity_state *p = part->entity;
-                qa_actor_id next = p->mover->next;
+                qa_actor_id next = p->team_next;
                 if (!qa_world_body_read(g->services.world, part->id, &body, e))
                     return false;
                 p->speed = s->speed;
@@ -222,7 +222,7 @@ bool q2_train_spawn(qa_q2_game *g, q2_actor *a, qa_error *e) {
     bool crash = !strcmp(name, "misc_crashviper") || !strcmp(name, "misc_transport");
     if (s->mover->ship && !s->target)
         return qa_session_release(g->services.session, a->id, e);
-    s->mover->master = a->id;
+    s->team_master = a->id;
     qa_body_state b;
     if (!qa_world_body_read(g->services.world, a->id, &b, e))
         return false;
