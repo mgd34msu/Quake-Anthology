@@ -60,6 +60,7 @@ static bool finite_checkpoint(const qa_q2_monster_checkpoint *state) {
   const float *values[] = {
       &state->entity_scale,     &state->animation_scale,
       &state->base_health,      &state->health_scaling,
+      &state->max_health,       &state->max_power_armor,
       &state->gib_health,       &state->normal_height,
       &state->view_height,      &state->ideal_yaw,
       &state->yaw_speed,        &state->blind_fire_delay,
@@ -137,7 +138,7 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
   }
   const struct qa_q2_monster *monster = actor->monster;
   qa_q2_monster_checkpoint saved = {
-      .version = 5,
+      .version = 6,
       .start_phase = (uint32_t)monster->start_phase,
       .combat_target = monster->combat_target,
       .start_due_ns = monster->start_due_ns,
@@ -157,6 +158,10 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
       .animation_scale = monster->animation_scale,
       .base_health = monster->base_health,
       .health_scaling = monster->health_scaling,
+      .max_health = monster->max_health,
+      .max_power_armor = monster->max_power_armor,
+      .initial_power_armor = (uint32_t)monster->initial_power_armor,
+      .medic_tries = monster->medic_tries,
       .gib_health = monster->gib_health,
       .normal_height = monster->normal_height,
       .view_height = monster->view_height,
@@ -193,7 +198,6 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
       .timestamp_ns = monster->timestamp_ns,
       .coop_check_ns = monster->coop_check_ns,
       .react_ns = monster->react_ns,
-      .corpse_check_ns = monster->corpse_check_ns,
       .sound_target = {.origin = monster->sound_target.origin,
                        .time_ns = monster->sound_target.time_ns,
                        .present = monster->sound_target.present},
@@ -303,6 +307,9 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
                       error) ||
       !save_reference(game, monster->hazard, &saved.hazard, error) ||
       !save_reference(game, monster->proboscis, &saved.proboscis, error) ||
+      !save_reference(game, monster->healer, &saved.healer, error) ||
+      !save_reference(game, monster->bad_medic[0], &saved.bad_medic[0], error) ||
+      !save_reference(game, monster->bad_medic[1], &saved.bad_medic[1], error) ||
       !save_reference(game, monster->sound_target.actor,
                       &saved.sound_target.actor, error) ||
       !save_reference(game, monster->sound_target.owner,
@@ -339,6 +346,9 @@ static bool resolve_all(qa_q2_game *game, const qa_q2_monster_checkpoint *saved,
                            &monster->resurrect_target, error) &&
          resolve_reference(game, saved->hazard, &monster->hazard, error) &&
          resolve_reference(game, saved->proboscis, &monster->proboscis, error) &&
+         resolve_reference(game, saved->healer, &monster->healer, error) &&
+         resolve_reference(game, saved->bad_medic[0], &monster->bad_medic[0], error) &&
+         resolve_reference(game, saved->bad_medic[1], &monster->bad_medic[1], error) &&
          resolve_reference(game, saved->controller_owner,
                            &monster->controller_owner, error) &&
          resolve_reference(game, saved->controller_target,
@@ -366,7 +376,9 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   if (!callback_boundary(game, error))
     return false;
   bool controller = saved->controller_kind != Q2M_CONTROLLER_NONE;
-  if (saved->version != 5 || saved->start_phase > Q2M_START_MANUAL ||
+  if (saved->version != 6 || saved->start_phase > Q2M_START_MANUAL ||
+      saved->initial_power_armor > QA_POWER_SHIELD || saved->max_power_armor < 0 ||
+      saved->medic_tries > 2 ||
       saved->controller_kind > Q2M_CONTROLLER_MAKRON_SPAWN ||
       !valid_name(saved->definition, sizeof(saved->definition), controller) ||
       !valid_name(saved->move, sizeof(saved->move), controller) ||
@@ -483,6 +495,10 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   Q2M_RESTORE(animation_scale);
   Q2M_RESTORE(base_health);
   Q2M_RESTORE(health_scaling);
+  Q2M_RESTORE(max_health);
+  Q2M_RESTORE(max_power_armor);
+  monster->initial_power_armor = (qa_power_kind)saved->initial_power_armor;
+  Q2M_RESTORE(medic_tries);
   Q2M_RESTORE(gib_health);
   Q2M_RESTORE(normal_height);
   Q2M_RESTORE(view_height);
@@ -519,7 +535,6 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   Q2M_RESTORE(timestamp_ns);
   Q2M_RESTORE(coop_check_ns);
   Q2M_RESTORE(react_ns);
-  Q2M_RESTORE(corpse_check_ns);
   Q2M_RESTORE(old_frame);
   Q2M_RESTORE(render_flags);
   monster->start_phase = (q2m_start_phase)saved->start_phase;

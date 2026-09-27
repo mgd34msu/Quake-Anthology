@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "reinforcements.h"
+#include "medic.h"
 #include "qa/game_q2_entities.h"
 #include "muzzle_data.h"
 
@@ -1156,11 +1157,82 @@ static bool pain_rerelease_parasite(q2m_context *context, qa_error *error) {
          q2m_set_move(context, "parasite_move_pain1", false, error);
 }
 
+static bool pain_medic(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  bool rogue = rerelease || context->game->options.product == QA_Q2_ROGUE;
+  bool commander = context->combat.mass > 400;
+  if (rogue) {
+    m->dodging = false;
+    if (m->attack_state == Q2M_SLIDING)
+      m->attack_state = Q2M_STRAIGHT;
+  }
+  if (rerelease)
+    m->skin = (m->skin & ~1) | (context->combat.health < m->max_health * .5f);
+  else if (context->combat.health < m->max_health * .5f)
+    m->skin = rogue && commander ? 3 : 1;
+  if (context->game->now_ns < m->pain_ns)
+    return true;
+  m->pain_ns = q2m_after(context->game->now_ns, 3);
+  if (!rerelease && (context->game->options.skill == 3 || (rogue && m->medic)))
+    return true;
+  float roll = 0;
+  bool pain2;
+  if (rerelease)
+    roll = q2m_random(context->game);
+  if (rogue && commander) {
+    if (m->pending_damage < 35) {
+      if (!q2m_sound(context, "medic_commander/medpain1.wav", 2, 1, error))
+        return false;
+      if (!q2m_alive(context) || !rerelease || !last_attack_chainfist(m))
+        return true;
+    }
+    if (!rerelease)
+      m->manual_steering = m->hold_frame = false;
+    if (!q2m_sound(context, "medic_commander/medpain2.wav", 2, 1, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    if (!rerelease)
+      roll = q2m_random(context->game);
+    pain2 = roll < fminf(m->pending_damage * .005f, .5f);
+  } else {
+    if (!rerelease)
+      roll = q2m_random(context->game);
+    pain2 = roll >= .5f;
+    if (!rerelease && !q2m_set_move(context,
+        pain2 ? "medic_move_pain2" : "medic_move_pain1", false, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    if (!q2m_sound(context, pain2 ? "medic/medpain2.wav" : "medic/medpain1.wav", 2, 1, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+  }
+  if (rerelease) {
+    if (!reacts_to_pain(context) || (!last_attack_chainfist(m) && m->medic))
+      return true;
+    if (commander)
+      m->manual_steering = m->hold_frame = false;
+  }
+  if ((rerelease || (rogue && commander)) &&
+      !q2m_set_move(context, pain2 ? "medic_move_pain2" : "medic_move_pain1", false, error))
+    return false;
+  if (!q2m_alive(context))
+    return true;
+  if (rogue && m->ducked && !q2m_dispatch(context, "monster_duck_up", error))
+    return false;
+  return !q2m_alive(context) || !rerelease || q2m_medic_abort(context, false, false, false, error);
+}
+
 bool q2m_pain(q2m_context *context, qa_error *error) {
   if (!q2m_alive(context) || context->monster->dead)
     return true;
   struct qa_q2_monster *monster = context->monster;
   q2m_species species = monster->definition->species;
+  if (species == Q2M_MEDIC || species == Q2M_MEDIC_COMMANDER)
+    return pain_medic(context, error);
   float damage = monster->pending_damage;
   if (context->combat.health < monster->base_health * 0.5f)
     monster->skin |= 1;
@@ -1312,15 +1384,6 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
       move = "makron_move_pain6";
       sound = "makron/pain1.wav";
     }
-    break;
-  case Q2M_MEDIC:
-  case Q2M_MEDIC_COMMANDER:
-    move = random < 0.5f ? "medic_move_pain1" : "medic_move_pain2";
-    sound = species == Q2M_MEDIC_COMMANDER
-                ? random < 0.5f ? "medic_commander/medpain1.wav"
-                                : "medic_commander/medpain2.wav"
-            : random < 0.5f ? "medic/medpain1.wav"
-                            : "medic/medpain2.wav";
     break;
   case Q2M_MUTANT:
     move = random < 0.33f   ? "mutant_move_pain1"
@@ -2141,6 +2204,11 @@ bool q2m_die(q2m_context *context, qa_error *error) {
   if (monster->gibbed)
     return true;
 
+  if (!q2m_medic_died(context, error))
+    return false;
+  if (!q2m_alive(context))
+    return true;
+
   if (!q2m_lifecycle_killed(context, error))
     return false;
   if (!q2m_alive(context))
@@ -2167,17 +2235,6 @@ bool q2m_die(q2m_context *context, qa_error *error) {
     if (!q2m_refresh(context, error))
       return false;
     monster = context->monster;
-  }
-
-  if (monster->resurrect_target.registry != 0 &&
-      monster->resurrect_target.slot < context->game->capacity) {
-    q2_actor *patient = context->game->actors[monster->resurrect_target.slot];
-    if (patient != NULL &&
-        qa_actor_id_equal(patient->id, monster->resurrect_target) &&
-        patient->monster != NULL)
-      patient->monster->resurrecting = false;
-    monster->resurrect_target = (qa_actor_id){0};
-    monster->medic = false;
   }
 
   bool crushed = monster->last_attack.cause.kind == QA_CAUSE_Q2 &&

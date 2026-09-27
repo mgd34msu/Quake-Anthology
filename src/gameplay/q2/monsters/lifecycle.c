@@ -54,7 +54,7 @@ static bool traits(q2m_context *context, qa_actor_id actor, qa_builtin_actor_tra
            context->game->services.actor_traits(context->game->services.context, actor, out);
 }
 
-bool q2m_lifecycle_admitted(q2m_context *context, bool automatic, qa_error *error) {
+bool q2m_lifecycle_admitted(q2m_context *context, bool automatic, bool reviving, qa_error *error) {
     struct qa_q2_monster *monster = context->monster;
     if (!monster->good_guy && (monster->spawnflags & 4u))
         monster->spawnflags = (monster->spawnflags & ~4u) | 1u;
@@ -64,7 +64,7 @@ bool q2m_lifecycle_admitted(q2m_context *context, bool automatic, qa_error *erro
     }
     monster->start_phase = automatic ? Q2M_START_PENDING : Q2M_START_MANUAL;
     monster->start_due_ns = q2_deadline(context->game->now_ns, interval(context->game));
-    if (!counted(context))
+    if (!counted(context) || (reviving && context->game->options.edition == QA_Q2_RERELEASE))
         return true;
     qa_monster_mission mission;
     bool present;

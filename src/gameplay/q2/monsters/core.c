@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "reinforcements.h"
+#include "medic.h"
 
 static bool actor_current(const q2m_context *context) {
   qa_actor_id id = context->actor->id;
@@ -1138,10 +1139,13 @@ bool qa_q2_monster_target_anger(qa_q2_game *game, qa_actor_id id,
 
 static bool initialize_body(qa_q2_game *game, q2_actor *actor,
                             struct qa_q2_monster *monster, qa_error *error) {
+  q2m_context context = {.game = game, .actor = actor, .monster = monster};
   qa_body_state body = {0};
-  qa_error ignored = {0};
-  bool has_body =
-      qa_world_body_read(game->services.world, actor->id, &body, &ignored);
+  bool has_body = qa_world_body_storage_serial(game->services.world, actor->id) != 0;
+  if (has_body && !qa_world_body_read(game->services.world, actor->id, &body, error))
+    return false;
+  if (!q2m_alive(&context))
+    return true;
   float scale = monster->entity_scale;
   body.bounds.mins = qa_vec_scale(monster->definition->bounds.mins, scale);
   body.bounds.maxs = qa_vec_scale(monster->definition->bounds.maxs, scale);
@@ -1172,6 +1176,8 @@ static bool initialize_body(qa_q2_game *game, q2_actor *actor,
                                    error)) {
     return false;
   }
+  if (!q2m_alive(&context))
+    return true;
   actor->physics = qa_physics_properties_default(QA_COLLISION_Q2);
   actor->physics.q2_rerelease = game->options.edition == QA_Q2_RERELEASE;
   actor->physics.motion = monster->definition->locomotion == Q2M_STATIONARY
@@ -1200,8 +1206,47 @@ static bool initialize_body(qa_q2_game *game, q2_actor *actor,
   return true;
 }
 
+static bool set_power_cells(q2m_context *context, qa_power_kind kind, float cells,
+                            qa_error *error) {
+  qa_q2_game *game = context->game;
+  qa_actor_id id = context->actor->id;
+  qa_inventory *inventory = game->services.inventory;
+  qa_item_id item = 0;
+  bool bound = qa_combat_power_inventory(game->services.combat, id, &inventory, &item);
+  if (!bound) {
+    inventory = game->services.inventory;
+    if (kind == QA_POWER_NONE && !qa_inventory_has(inventory, id))
+      return true;
+    if (!qa_builtin_resource(&game->services, "q2:monster-power", &item, error))
+      return false;
+  }
+  qa_inventory_entry entry = {.item = item, .count = cells, .capacity = cells};
+  qa_inventory_admission *admission;
+  if (!qa_inventory_prepare_entries(inventory, id, &entry, 1, &admission, error))
+    return false;
+  if (!q2m_alive(context)) {
+    qa_inventory_admission_abort(admission);
+    return true;
+  }
+  if (!qa_inventory_admission_validate(admission, error) || !q2m_alive(context)) {
+    qa_inventory_admission_abort(admission);
+    return !q2m_alive(context);
+  }
+  if (!qa_inventory_admission_commit(admission, error)) {
+    qa_inventory_admission_abort(admission);
+    return false;
+  }
+  if (!qa_inventory_configure(inventory, id, &entry, NULL, NULL, error))
+    return false;
+  if (!q2m_alive(context))
+    return true;
+  return bound || kind == QA_POWER_NONE ||
+         qa_combat_bind_power_inventory(game->services.combat, id, inventory, item, error);
+}
+
 static bool initialize_combat(qa_q2_game *game, q2_actor *actor,
                               struct qa_q2_monster *monster, qa_error *error) {
+  q2m_context context = {.game = game, .actor = actor, .monster = monster};
   qa_combat_state combat = {
       .health = monster->base_health,
       .mass = monster->definition->mass * monster->entity_scale,
@@ -1215,14 +1260,24 @@ static bool initialize_combat(qa_q2_game *game, q2_actor *actor,
     combat.armor.powered.cells =
         monster->definition->flags & Q2M_BOSS ? 400.0f : 200.0f;
   }
-  qa_combat_state previous;
-  qa_error ignored = {0};
-  if (qa_combat_read(game->services.combat, actor->id, &previous, &ignored)) {
-    if (!qa_combat_set_health(game->services.combat, actor->id, combat.health,
-                              error) ||
-        !qa_combat_set_armor(game->services.combat, actor->id, &combat.armor,
-                             error) ||
-        !qa_combat_set_traits(game->services.combat, actor->id, &combat, error))
+  if (qa_combat_storage_serial(game->services.combat, actor->id)) {
+    if (!qa_combat_set_health(game->services.combat, actor->id, combat.health, error))
+      return false;
+    if (!q2m_alive(&context))
+      return true;
+    if (!qa_combat_set_armor(game->services.combat, actor->id, &combat.armor, error))
+      return false;
+    if (!q2m_alive(&context))
+      return true;
+    qa_combat_state traits;
+    if (!qa_combat_read_traits(game->services.combat, actor->id, &traits, error))
+      return false;
+    if (!q2m_alive(&context))
+      return true;
+    traits.mass = combat.mass;
+    traits.can_take_damage = true;
+    traits.invulnerable = false;
+    if (!qa_combat_set_traits(game->services.combat, actor->id, &traits, error))
       return false;
   } else if (!qa_combat_create_actor(game->services.combat, actor->id, &combat,
                                      error)) {
@@ -1231,9 +1286,9 @@ static bool initialize_combat(qa_q2_game *game, q2_actor *actor,
   return true;
 }
 
-bool qa_q2_monster_spawn(qa_q2_game *game, qa_actor_id id,
-                         const qa_q2_monster_spawn_options *options,
-                         qa_error *error) {
+static bool monster_admit(qa_q2_game *game, qa_actor_id id,
+                          const qa_q2_monster_spawn_options *options,
+                          struct qa_q2_monster *previous, qa_error *error) {
   if (game == NULL || options == NULL || options->classname == NULL ||
       options->health_multiplier < 0.0f || options->scale < 0.0f ||
       !isfinite(options->health_multiplier) || !isfinite(options->scale)) {
@@ -1265,7 +1320,7 @@ bool qa_q2_monster_spawn(qa_q2_game *game, qa_actor_id id,
   q2_actor *actor = q2_actor_get(game, id, true, error);
   if (actor == NULL)
     return false;
-  if (actor->monster != NULL) {
+  if (actor->monster != previous) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                  "Q2 actor already has native monster state");
     return false;
@@ -1298,6 +1353,7 @@ bool qa_q2_monster_spawn(qa_q2_game *game, qa_actor_id id,
   monster->health_scaling =
       options->health_multiplier > 0.0f ? options->health_multiplier : 1.0f;
   monster->base_health = definition->health * monster->health_scaling;
+  monster->max_health = monster->base_health;
   if (definition->species == Q2M_CARRIER || definition->species == Q2M_WIDOW ||
       definition->species == Q2M_WIDOW2)
     monster->base_health +=
@@ -1314,6 +1370,7 @@ bool qa_q2_monster_spawn(qa_q2_game *game, qa_actor_id id,
     monster->base_health =
         2800.0f + 1000.0f * game->options.skill +
         (game->options.cooperative ? 500.0f * game->options.skill : 0.0f);
+  monster->max_health = monster->base_health;
   monster->gib_health = definition->species == Q2M_INFANTRY &&
                                 game->options.edition == QA_Q2_RERELEASE
                             ? -65.0f
@@ -1420,18 +1477,44 @@ bool qa_q2_monster_spawn(qa_q2_game *game, qa_actor_id id,
       break;
     }
   }
+  if (previous) {
+    monster->healer = previous->healer;
+    memcpy(monster->bad_medic, previous->bad_medic, sizeof(monster->bad_medic));
+    monster->medic_tries = previous->medic_tries;
+    monster->ignore_shots = previous->ignore_shots || monster->ignore_shots;
+    monster->do_not_count = previous->do_not_count;
+    monster->spawned_by = previous->spawned_by;
+    monster->commander = previous->commander;
+    monster->monster_slots = previous->monster_slots;
+    monster->monster_used = previous->monster_used;
+    q2m_retire_monster(game, previous);
+  }
   actor->monster = monster;
+  q2m_context context = {.game = game, .actor = actor, .monster = monster};
   if (!qa_builtin_resource(&game->services, options->classname,
                            &monster->classname, error) ||
       !qa_builtin_resource(&game->services, definition->model, &monster->model,
                            error) ||
-      !initialize_body(game, actor, monster, error) ||
-      !initialize_combat(game, actor, monster, error)) {
-    actor->monster = NULL;
-    actor->physics_bound = false;
-    q2m_free_monster(monster);
+      !initialize_body(game, actor, monster, error)) {
+    if (q2m_alive(&context)) {
+      actor->monster = NULL;
+      actor->physics_bound = false;
+      q2m_retire_monster(game, monster);
+    }
     return false;
   }
+  if (!q2m_alive(&context))
+    return true;
+  if (!initialize_combat(game, actor, monster, error)) {
+    if (q2m_alive(&context)) {
+      actor->monster = NULL;
+      actor->physics_bound = false;
+      q2m_retire_monster(game, monster);
+    }
+    return false;
+  }
+  if (!q2m_alive(&context))
+    return true;
   qa_actor_collision collision = {
       .family = QA_COLLISION_Q2,
       .shape = QA_SHAPE_BOX,
@@ -1443,14 +1526,15 @@ bool qa_q2_monster_spawn(qa_q2_game *game, qa_actor_id id,
                                      error)) {
     actor->monster = NULL;
     actor->physics_bound = false;
-    q2m_free_monster(monster);
+    q2m_retire_monster(game, monster);
     return false;
   }
-  q2m_context context = {.game = game, .actor = actor, .monster = monster};
   if (!q2m_refresh(&context, error)) {
-    actor->monster = NULL;
-    actor->physics_bound = false;
-    q2m_free_monster(monster);
+    if (q2m_alive(&context)) {
+      actor->monster = NULL;
+      actor->physics_bound = false;
+      q2m_retire_monster(game, monster);
+    }
     return false;
   }
   monster->initialized = true;
@@ -1458,14 +1542,72 @@ bool qa_q2_monster_spawn(qa_q2_game *game, qa_actor_id id,
     if (q2m_alive(&context)) {
       actor->monster = NULL;
       actor->physics_bound = false;
-      q2m_free_monster(monster);
+      q2m_retire_monster(game, monster);
     }
     return false;
   }
   if (!q2m_alive(&context))
     return true;
+  monster->initial_power_armor = context.combat.armor.powered.kind;
+  monster->max_power_armor = context.combat.armor.powered.cells;
+  if (monster->initial_power_armor != QA_POWER_NONE) {
+    if (!set_power_cells(&context, monster->initial_power_armor, monster->max_power_armor, error))
+      return false;
+    if (!q2m_alive(&context))
+      return true;
+  } else if (qa_inventory_has(game->services.inventory, id)) {
+    qa_inventory *inventory = game->services.inventory;
+    qa_item_id item;
+    if (!qa_combat_power_inventory(game->services.combat, id, &inventory, &item) &&
+        !qa_builtin_resource(&game->services, "q2:monster-power", &item, error))
+      return false;
+    qa_inventory_entry fuel;
+    qa_error local = {0};
+    bool found = qa_inventory_entry_read(inventory, id, item, &fuel, &local);
+    if (!q2m_alive(&context))
+      return true;
+    if (!found && local.code != QA_OK && local.code != QA_ERROR_NOT_FOUND) {
+      if (error)
+        *error = local;
+      return false;
+    }
+    if (found) {
+      if (!isfinite(fuel.count) || fuel.count < 0 || fuel.count > FLT_MAX) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, id.slot,
+                     "Q2 monster power reserve is outside float range");
+        return false;
+      }
+      monster->max_power_armor = (float)fuel.count;
+    }
+  }
+  if (previous && game->options.edition == QA_Q2_RERELEASE) {
+    monster->max_health = previous->max_health;
+    monster->base_health = previous->base_health;
+    monster->health_scaling = previous->health_scaling;
+    monster->gib_health = truncf(previous->gib_health * .5f);
+    monster->monster_slots = previous->monster_slots;
+    monster->monster_used = previous->monster_used;
+    monster->spawned_by = previous->spawned_by;
+    monster->commander = previous->commander;
+    monster->initial_power_armor = previous->initial_power_armor;
+    monster->max_power_armor = previous->max_power_armor;
+    qa_armor armor = {.powered = {.kind = monster->initial_power_armor,
+                                  .cells = monster->max_power_armor}};
+    if (!qa_combat_set_health(game->services.combat, id, monster->max_health, error) ||
+        !q2m_alive(&context))
+      return !q2m_alive(&context);
+    if (!qa_combat_set_armor(game->services.combat, id, &armor, error) ||
+        !q2m_alive(&context))
+      return !q2m_alive(&context);
+    if (!set_power_cells(&context, monster->initial_power_armor, monster->max_power_armor, error))
+      return false;
+    if (!q2m_alive(&context))
+      return true;
+    if (!q2m_refresh(&context, error))
+      return !q2m_alive(&context);
+  }
   bool automatic = !(definition->species == Q2M_TURRET && (monster->spawnflags & 128u));
-  if (!q2m_lifecycle_admitted(&context, automatic, error))
+  if (!q2m_lifecycle_admitted(&context, automatic, previous != NULL, error))
     return false;
   if (!q2m_alive(&context))
     return true;
@@ -1477,12 +1619,38 @@ bool qa_q2_monster_spawn(qa_q2_game *game, qa_actor_id id,
                                 floorf(q2m_random(game) * (float)frame_count));
   monster->next_frame_ns = q2m_after(game->now_ns, 0.1);
   if (!q2m_link(&context, error)) {
-    actor->monster = NULL;
-    actor->physics_bound = false;
-    q2m_free_monster(monster);
+    if (q2m_alive(&context)) {
+      actor->monster = NULL;
+      actor->physics_bound = false;
+      q2m_retire_monster(game, monster);
+    }
     return false;
   }
   return q2m_alive(&context) ? q2m_show(&context, error) : true;
+}
+
+bool qa_q2_monster_spawn(qa_q2_game *game, qa_actor_id id,
+                         const qa_q2_monster_spawn_options *options, qa_error *error) {
+  return monster_admit(game, id, options, NULL, error);
+}
+
+bool q2m_revive(q2m_context *context, qa_error *error) {
+  if (!q2m_alive(context))
+    return true;
+  struct qa_q2_monster *previous = context->monster;
+  qa_actor_id id = context->actor->id;
+  qa_q2_monster_spawn_options options = {
+      .classname = previous->definition->classname,
+      .scale = previous->entity_scale,
+      .health_multiplier = previous->health_scaling,
+      .enemy = previous->enemy,
+      .commander = previous->commander,
+  };
+  bool ok = monster_admit(context->game, id, &options, previous, error);
+  if (!q2_actor_live(context->game, id) || context->game->actors[id.slot] != context->actor)
+    return ok;
+  context->monster = context->actor->monster;
+  return ok && (!q2m_alive(context) || q2m_refresh(context, error));
 }
 
 void q2_monster_release_state(q2_actor *actor) {
@@ -1528,7 +1696,7 @@ bool q2_monster_traits(qa_q2_game *game, qa_actor_id id,
   out->grounded = (game->actors[id.slot]->physics.flags & QA_PHYSICS_ONGROUND) != 0;
   out->view_height = monster->view_height;
   out->gib_health = monster->gib_health;
-  out->max_health = monster->base_health;
+  out->max_health = monster->max_health;
   out->hostile_until_ns = monster->hostile_ns;
   return true;
 }

@@ -251,6 +251,7 @@ typedef struct q2m_sound_target {
 } q2m_sound_target;
 
 struct qa_q2_monster {
+  struct qa_q2_monster *retired_next;
   struct q2m_summon_state *summons;
   const q2m_definition *definition;
   const q2m_move_set *move_set;
@@ -264,6 +265,8 @@ struct qa_q2_monster {
   int frame, next_frame, old_frame, skin, style, count;
   uint32_t render_flags;
   float entity_scale, animation_scale, base_health, health_scaling;
+  float max_health, max_power_armor;
+  qa_power_kind initial_power_armor;
   float gib_health, normal_height, view_height, ideal_yaw, yaw_speed;
   float blind_fire_delay, fly_min_distance, fly_max_distance;
   float fly_acceleration, fly_speed;
@@ -273,10 +276,11 @@ struct qa_q2_monster {
   uint64_t air_ns, environment_ns, jump_ns, flies_ns, fly_position_ns;
   uint64_t recovery_ns, death_ns, spawn_ns, timestamp_ns, coop_check_ns;
   uint64_t react_ns;
-  uint64_t corpse_check_ns;
   qa_actor_id enemy, old_enemy, goal, move_target, commander, activator;
   qa_actor_id last_player_enemy;
   qa_actor_id resurrect_target, hazard, proboscis;
+  qa_actor_id healer, bad_medic[2];
+  unsigned medic_tries;
   q2m_sound_target sound_target;
   qa_vec3 last_sighting, saved_goal, blind_fire_target;
   qa_vec3 fly_ideal_position, fly_recovery_direction;
@@ -317,13 +321,14 @@ typedef struct q2m_context {
 qa_vec3 q2m_vector_angles(qa_vec3);
 bool q2m_mission(q2m_context *, qa_monster_mission *, bool *, qa_error *);
 bool q2m_count(q2m_context *, qa_q2_monster_count, qa_error *);
-bool q2m_lifecycle_admitted(q2m_context *, bool automatic, qa_error *);
+bool q2m_lifecycle_admitted(q2m_context *, bool automatic, bool reviving, qa_error *);
 bool q2m_lifecycle_tick(q2m_context *, bool *handled, qa_error *);
 bool q2m_lifecycle_use(q2m_context *, qa_actor_id, qa_error *);
 bool q2m_lifecycle_killed(q2m_context *, qa_error *);
 bool q2m_lifecycle_route(q2m_context *, bool found_target, bool *routed, qa_error *);
 bool q2m_show(q2m_context *, qa_error *);
 void q2m_free_monster(struct qa_q2_monster *);
+void q2m_retire_monster(qa_q2_game *, struct qa_q2_monster *);
 bool q2m_health_target(q2m_context *, qa_error *);
 
 const q2m_move_set *q2m_moves_named(const char *);
@@ -354,10 +359,11 @@ qa_actor_id q2m_current_sight_client(const qa_q2_game *);
 bool q2m_perception_alert(q2m_context *, qa_actor_id, qa_error *);
 bool q2m_react_to_damage(q2m_context *, qa_actor_id, qa_error *);
 float q2m_distance(q2m_context *, qa_actor_id);
+float q2m_body_distance(qa_q2_edition, const qa_body_state *, const qa_body_state *);
 bool q2m_find_target(q2m_context *, bool *found, qa_error *);
 bool q2m_found_target(q2m_context *, qa_actor_id, qa_error *);
 bool q2m_medic_acquire(q2m_context *, bool preserve_enemy, bool *, qa_error *);
-bool q2m_check_attack(q2m_context *, bool *, qa_error *);
+bool q2m_check_attack(q2m_context *, bool *selected, bool *started, qa_error *);
 bool q2m_run_ai(q2m_context *, q2m_ai_kind, const char *, float, qa_error *);
 bool q2m_move_to_goal(q2m_context *, float, qa_error *);
 bool q2m_change_yaw(q2m_context *, qa_error *);

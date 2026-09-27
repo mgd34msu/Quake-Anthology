@@ -98,6 +98,8 @@ typedef struct qa_q2_monster_checkpoint {
   int frame, next_frame, old_frame, skin, style, count;
   uint32_t render_flags;
   float entity_scale, animation_scale, base_health, health_scaling;
+  float max_health, max_power_armor;
+  uint32_t initial_power_armor, medic_tries;
   float gib_health, normal_height, view_height, ideal_yaw, yaw_speed;
   float blind_fire_delay, fly_min_distance, fly_max_distance;
   float fly_acceleration, fly_speed;
@@ -107,10 +109,10 @@ typedef struct qa_q2_monster_checkpoint {
   uint64_t air_ns, environment_ns, jump_ns, flies_ns, fly_position_ns;
   uint64_t recovery_ns, death_ns, spawn_ns, timestamp_ns, coop_check_ns;
   uint64_t react_ns;
-  uint64_t corpse_check_ns;
   qa_q2_saved_reference enemy, old_enemy, goal, move_target;
   qa_q2_saved_reference last_player_enemy;
   qa_q2_saved_reference commander, activator, resurrect_target, hazard, proboscis;
+  qa_q2_saved_reference healer, bad_medic[2];
   qa_q2_saved_reference controller_owner, controller_target;
   qa_q2_monster_sound_checkpoint sound_target;
   qa_vec3 last_sighting, saved_goal, blind_fire_target;

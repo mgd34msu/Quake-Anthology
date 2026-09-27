@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "reinforcements.h"
+#include "medic.h"
 #include "qa/game_q2_entities.h"
 
 typedef struct q2m_transition {
@@ -30,8 +31,6 @@ static const q2m_transition transitions[] = {
     {"gunner_fire_chain", "gunner_move_fire_chain"},
     {"hover_attack", "hover_move_attack1"},
     {"jorg_attack1", "jorg_move_attack1"},
-    {"medic_continue", "medic_move_attackHyperBlaster"},
-    {"medic_quick_attack", "medic_move_attackBlaster"},
     {"parasite_do_fidget", "parasite_move_fidget"},
     {"parasite_refidget", "parasite_move_start_fidget"},
     {"parasite_start_run", "parasite_move_run"},
@@ -360,62 +359,6 @@ static bool soldier_laser_sound(q2m_context *context, bool start,
                            &event.resource, error))
     return false;
   return qa_builtin_emit(&context->game->services, &event, error);
-}
-
-static bool revive_target(q2m_context *context, qa_error *error) {
-  qa_actor_id target = context->monster->resurrect_target.registry != 0
-                           ? context->monster->resurrect_target
-                           : context->monster->enemy;
-  if (target.registry == 0 || target.slot >= context->game->capacity)
-    return true;
-  q2_actor *actor = context->game->actors[target.slot];
-  if (actor == NULL || !qa_actor_id_equal(actor->id, target) ||
-      actor->monster == NULL || !actor->monster->corpse ||
-      actor->projectile.kind != Q2_PROJECTILE_NONE)
-    return true;
-  struct qa_q2_monster *patient = actor->monster;
-  qa_body_state body;
-  if (!qa_world_body_read(context->game->services.world, target, &body, error))
-    return false;
-  patient->dead = false;
-  patient->death_notified = false;
-  patient->corpse = false;
-  patient->gibbed = false;
-  patient->can_take_damage = true;
-  patient->resurrecting = false;
-  patient->enemy = context->monster->old_enemy;
-  patient->move = q2m_move_named(patient, patient->definition->initial_move);
-  patient->next_move = NULL;
-  patient->frame = patient->move->first_frame;
-  body.bounds = patient->definition->bounds;
-  body.bounds.mins = qa_vec_scale(body.bounds.mins, patient->entity_scale);
-  body.bounds.maxs = qa_vec_scale(body.bounds.maxs, patient->entity_scale);
-  actor->physics.motion = patient->definition->locomotion == Q2M_STATIONARY
-                              ? QA_PHYSICS_STATIONARY
-                              : QA_PHYSICS_STEP;
-  actor->physics.solid = QA_PHYSICS_BOX;
-  actor->physics.flags &= ~QA_PHYSICS_DEAD;
-  qa_actor_collision collision = {
-      .family = QA_COLLISION_Q2,
-      .shape = QA_SHAPE_BOX,
-      .contents = (int32_t)UINT32_C(0x02000000),
-      .role = QA_COLLISION_SOLID,
-      .monster = true,
-  };
-  qa_combat_state combat;
-  if (!qa_combat_read_traits(context->game->services.combat, target, &combat, error))
-    return false;
-  combat.health = patient->base_health;
-  combat.can_take_damage = true;
-  return qa_combat_set_health(context->game->services.combat, target,
-                              combat.health, error) &&
-         qa_combat_set_traits(context->game->services.combat, target, &combat,
-                              error) &&
-         qa_world_body_write(context->game->services.world, target, &body,
-                             error) &&
-         qa_world_set_collision(context->game->services.world, target,
-                                &collision, error) &&
-         qa_world_link(context->game->services.world, target, NULL, error);
 }
 
 static q2m_attack_kind attack_kind(q2m_context *context, const char *callback) {
@@ -2193,18 +2136,6 @@ static bool reattack(q2m_context *context, const char *callback,
 
 static bool end_transition(q2m_context *context, const char *callback,
                            bool *handled, qa_error *error) {
-  if (strcmp(callback, "medic_run") == 0) {
-    *handled = true;
-    bool acquired;
-    if (!q2m_medic_acquire(context, true, &acquired, error))
-      return false;
-    return acquired ||
-           set_definition_move(context,
-                               context->monster->stand_ground
-                                   ? context->monster->definition->stand_move
-                                   : context->monster->definition->run_move,
-                               error);
-  }
   if (strcmp(callback, "soldier_stand_up") == 0) {
     *handled = true;
     if (!q2m_set_move(context, "soldier_move_trip", false, error))
@@ -2343,8 +2274,6 @@ static bool foundational_species_callback(q2m_context *context,
   }
   if (strcmp(callback, "brain_chest_closed") == 0) {
     context->combat.armor.powered.kind = QA_POWER_SCREEN;
-    if (context->combat.armor.powered.cells <= 0.0f)
-      context->combat.armor.powered.cells = 100.0f;
     if (!qa_combat_set_armor(context->game->services.combat, context->actor->id,
                              &context->combat.armor, error))
       return false;
@@ -2629,7 +2558,8 @@ static bool foundational_species_callback(q2m_context *context,
 
   if (strcmp(callback, "medic_fire_blaster") == 0) {
     bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
-    bool commander = monster->definition->species == Q2M_MEDIC_COMMANDER;
+    bool rogue = rerelease || context->game->options.product == QA_Q2_ROGUE;
+    bool commander = rogue && context->combat.mass > 400;
     bool blaster = monster->frame == 185 || monster->frame == 188;
     int flash;
     if (rerelease)
@@ -2655,7 +2585,7 @@ static bool foundational_species_callback(q2m_context *context,
         qa_session_strings(context->game->services.session),
         enemy_traits.classname);
     const char *tesla_name = rerelease ? "tesla_mine" : "tesla";
-    bool tesla = enemy_classname != NULL &&
+    bool tesla = rogue && enemy_classname != NULL &&
                  strcmp(enemy_classname, tesla_name) == 0;
     float damage = tesla ? 3.0f : rerelease && blaster ? 6.0f : 2.0f;
     q2m_attack_kind kind =
@@ -3666,6 +3596,10 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
     return true;
   struct qa_q2_monster *monster = context->monster;
   bool handled = false;
+  if (!q2m_medic_callback(context, callback, &handled, error))
+    return false;
+  if (handled)
+    return true;
   if (!q2m_parasite_callback(context, callback, &handled, error))
     return false;
   if (handled)
@@ -3756,39 +3690,6 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
     float health = fminf(monster->base_health, context->combat.health + 1.0f);
     return qa_combat_set_health(context->game->services.combat,
                                 context->actor->id, health, error);
-  }
-  if (strcmp(callback, "medic_cable_attack") == 0)
-    return revive_target(context, error);
-  if (strcmp(callback, "medic_idle") == 0) {
-    const char *path = monster->definition->species == Q2M_MEDIC_COMMANDER
-                           ? "medic_commander/medidle.wav"
-                           : "medic/idle.wav";
-    if (!q2m_sound(context, path, 2, 2.0f, error))
-      return false;
-    if (!q2m_alive(context))
-      return true;
-    bool acquired;
-    return q2m_medic_acquire(context, false, &acquired, error);
-  }
-  if (strcmp(callback, "medic_hook_retract") == 0) {
-    qa_actor_id patient_id = monster->resurrect_target;
-    if (patient_id.registry != 0 && patient_id.slot < context->game->capacity) {
-      q2_actor *patient = context->game->actors[patient_id.slot];
-      if (patient != NULL && qa_actor_id_equal(patient->id, patient_id) &&
-          patient->monster != NULL)
-        patient->monster->resurrecting = false;
-    }
-    monster->medic = false;
-    monster->resurrecting = false;
-    monster->resurrect_target = (qa_actor_id){0};
-    if (monster->old_enemy.registry != 0)
-      monster->enemy = monster->old_enemy;
-    return simple_sound(context, callback, error);
-  }
-  if (strcmp(callback, "medic_hook_launch") == 0) {
-    monster->medic = true;
-    monster->resurrect_target = monster->enemy;
-    return simple_sound(context, callback, error);
   }
   if (strcmp(callback, "change_to_roam") == 0 ||
       strcmp(callback, "roam_goal") == 0) {

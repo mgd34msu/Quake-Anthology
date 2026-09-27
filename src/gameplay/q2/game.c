@@ -166,6 +166,7 @@ static bool begin_frame(void *context, qa_session *session, const qa_source_fram
     }
     /* Source frame entry occurs outside every prior gameplay invocation. Until
      * then retired generations remain address-stable across nested callbacks. */
+    q2_monsters_reclaim(g);
     while (g->retired_actors != NULL) {
         q2_actor *a = g->retired_actors;
         g->retired_actors = a->free_next;
