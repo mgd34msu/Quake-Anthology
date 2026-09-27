@@ -2,6 +2,8 @@
 #include "qa/text.h"
 
 #include <locale.h>
+#include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <threads.h>
@@ -46,6 +48,20 @@ bool qa_utf8_repair(qa_bytes input, qa_buffer *out, qa_error *error) {
 static once_flag numeric_once=ONCE_FLAG_INIT;
 static locale_t numeric_locale;
 static void open_numeric_locale(void) { numeric_locale=newlocale(LC_NUMERIC_MASK,"C",(locale_t)0); }
+
+bool qa_format_number(double value, char out[32], qa_error *error) {
+    if (!out || !isfinite(value)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "cannot serialize nonfinite number"); return false;
+    }
+    call_once(&numeric_once, open_numeric_locale);
+    if (!numeric_locale) { qa_error_set(error, QA_ERROR_MEMORY, 0, "opening numeric locale"); return false; }
+    locale_t previous = uselocale(numeric_locale);
+    if (!previous) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "selecting numeric locale"); return false; }
+    int count = snprintf(out, 32, "%.17g", value);
+    uselocale(previous);
+    if (count < 0 || count >= 32) { qa_error_set(error, QA_ERROR_FORMAT, 0, "formatting number"); return false; }
+    return true;
+}
 
 bool qa_parse_number(qa_bytes input, double *out, qa_error *error) {
     if (!out || !input.size || !input.data || input.size==SIZE_MAX) {

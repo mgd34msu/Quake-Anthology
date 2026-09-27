@@ -53,7 +53,7 @@ bool qa_input_command_source(qa_input_seat *s, const char *text, uint64_t *out, 
     *out = UINT64_C(0x8000000000000000) | id;
     return true;
 }
-static bool physical_valid(qa_physical_input input) {
+bool qa_input_physical_valid(qa_physical_input input) {
     if (input.kind == QA_PHYSICAL_KEY)
         return input.code <= UINT16_MAX;
     if (input.kind == QA_PHYSICAL_MOUSE)
@@ -140,7 +140,7 @@ bool qa_input_seat_profile(qa_input_seat *s, qa_console_dialect dialect, qa_erro
     return true;
 }
 bool qa_input_seat_bind(qa_input_seat *s, const qa_input_binding *binding, qa_error *error) {
-    if (!s || !binding || !physical_valid(binding->input) ||
+    if (!s || !binding || !qa_input_physical_valid(binding->input) ||
         (binding->kind != QA_BIND_ACTION && binding->kind != QA_BIND_COMMAND) ||
         (binding->kind == QA_BIND_ACTION &&
          (binding->action < 0 || binding->action >= QA_INPUT_ACTION_COUNT)) ||
@@ -204,6 +204,24 @@ const qa_input_binding *qa_input_seat_binding(const qa_input_seat *s, qa_physica
     qa_binding_record *b = binding_find(s, input, NULL);
     return b ? &b->view : NULL;
 }
+static void replace_bindings(qa_input_seat *s, qa_input_seat *candidate) {
+    qa_input_seat_unbind_all(s);
+    free(s->bindings);
+    s->bindings = candidate->bindings;
+    s->binding_count = candidate->binding_count;
+    s->binding_capacity = candidate->binding_capacity;
+}
+bool qa_input_seat_replace_bindings(qa_input_seat *s, const qa_input_binding *bindings,
+                                    size_t count, qa_error *error) {
+    if (!s || (count && !bindings)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid replacement binding list"); return false;
+    }
+    qa_input_seat candidate = {0};
+    for (size_t i = 0; i < count; ++i) if (!qa_input_seat_bind(&candidate, &bindings[i], error)) {
+        qa_input_seat_unbind_all(&candidate); free(candidate.bindings); return false;
+    }
+    replace_bindings(s, &candidate); return true;
+}
 bool qa_input_seat_remap_controller(qa_input_seat *s, int32_t device, qa_error *error) {
     if (device < 0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Negative controller instance");
@@ -221,11 +239,7 @@ bool qa_input_seat_remap_controller(qa_input_seat *s, int32_t device, qa_error *
             return false;
         }
     }
-    qa_input_seat_unbind_all(s);
-    free(s->bindings);
-    s->bindings = candidate.bindings;
-    s->binding_count = candidate.binding_count;
-    s->binding_capacity = candidate.binding_capacity;
+    replace_bindings(s, &candidate);
     return true;
 }
 bool qa_input_seat_action(qa_input_seat *s, qa_input_action action, uint64_t source, bool down,
@@ -427,7 +441,7 @@ bool qa_input_seat_event(qa_input_seat *s, const qa_input_event *event, bool *co
     switch (event->kind) {
     case QA_INPUT_EVENT_KEY:
     case QA_INPUT_EVENT_BUTTON:
-        if (!physical_valid(event->input) ||
+        if (!qa_input_physical_valid(event->input) ||
             (event->kind == QA_INPUT_EVENT_KEY ? event->input.kind != QA_PHYSICAL_KEY
                                                : event->input.kind != QA_PHYSICAL_MOUSE &&
                                                      event->input.kind != QA_PHYSICAL_BUTTON)) {
@@ -436,7 +450,7 @@ bool qa_input_seat_event(qa_input_seat *s, const qa_input_event *event, bool *co
         }
         return digital(s, event->input, event->down, event->time_ms, used, error);
     case QA_INPUT_EVENT_AXIS:
-        if (!physical_valid(event->input) || event->input.kind != QA_PHYSICAL_AXIS)
+        if (!qa_input_physical_valid(event->input) || event->input.kind != QA_PHYSICAL_AXIS)
             return false;
         if (!qa_gamepad_axis(&s->gamepad, (qa_controller_axis)event->input.code, event->value,
                              !used && s->focus == QA_INPUT_GAME, error))

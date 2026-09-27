@@ -283,6 +283,7 @@ typedef struct qa_physical_input {
     bool positive;
 } qa_physical_input;
 bool qa_input_physical_parse(const char *, int32_t device, qa_physical_input *out);
+bool qa_input_physical_valid(qa_physical_input);
 bool qa_input_physical_name(qa_physical_input, char *out, size_t size);
 typedef enum qa_binding_kind { QA_BIND_ACTION, QA_BIND_COMMAND } qa_binding_kind;
 typedef struct qa_input_binding {
@@ -342,6 +343,9 @@ qa_gamepad_input *qa_input_seat_gamepad(qa_input_seat *);
 qa_gamepad_tuning *qa_input_seat_gamepad_tuning(qa_input_seat *);
 bool qa_input_seat_profile(qa_input_seat *, qa_console_dialect, qa_error *);
 bool qa_input_seat_bind(qa_input_seat *, const qa_input_binding *, qa_error *);
+/* Validates/copies the complete list before publication. Held presses retain
+ * their original binding until release, including after a settings reload. */
+bool qa_input_seat_replace_bindings(qa_input_seat *, const qa_input_binding *, size_t, qa_error *);
 bool qa_input_seat_unbind(qa_input_seat *, qa_physical_input);
 void qa_input_seat_unbind_all(qa_input_seat *);
 size_t qa_input_seat_binding_count(const qa_input_seat *);

@@ -658,6 +658,16 @@ bool qa_cvars_info(const qa_cvars *registry, uint32_t flags, size_t maximum_leng
     return true;
 }
 
+const char *qa_cvars_archive_value(const qa_cvars *registry, const qa_cvar_view *variable)
+{
+    qa_console_dialect dialect = registry->options.dialect;
+    if ((variable->flags & QA_CVAR_ARCHIVE) == 0 ||
+        (qac_q2(dialect) && (variable->flags & q2_no_archive) != 0) ||
+        (dialect == QA_CONSOLE_Q3 && qac_equal(variable->name, "cl_cdkey"))) return NULL;
+    return dialect == QA_CONSOLE_Q3 && variable->latched_value != NULL
+        ? variable->latched_value : variable->value;
+}
+
 bool qa_cvars_config(const qa_cvars *registry, qa_buffer *out, qa_error *error)
 {
     if (registry == NULL || out == NULL)
@@ -666,10 +676,8 @@ bool qa_cvars_config(const qa_cvars *registry, qa_buffer *out, qa_error *error)
     qa_console_dialect dialect = registry->options.dialect;
     for (const cvar *entry = registry->first; entry != NULL; entry = entry->next) {
         const qa_cvar_view *variable = &entry->view;
-        if ((variable->flags & QA_CVAR_ARCHIVE) == 0 ||
-            (qac_q2(dialect) && (variable->flags & q2_no_archive) != 0) ||
-            (dialect == QA_CONSOLE_Q3 && qac_equal(variable->name, "cl_cdkey"))) continue;
-        const char *value = dialect == QA_CONSOLE_Q3 && variable->latched_value != NULL ? variable->latched_value : variable->value;
+        const char *value = qa_cvars_archive_value(registry, variable);
+        if (!value) continue;
         if (strpbrk(value, "\"\r\n") != NULL) {
             free(result.data);
             return qac_fail(error, QA_ERROR_FORMAT, "cvar value cannot be represented by source config quoting");

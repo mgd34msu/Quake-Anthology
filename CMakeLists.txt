@@ -42,6 +42,7 @@ add_library(qa_core STATIC
     src/core/binary.c
     src/core/arena.c
     src/core/json.c
+    src/core/json_writer.c
     src/core/strings.c
     src/core/text.c
     src/core/hash.c
@@ -240,6 +241,12 @@ add_library(qa_input STATIC
     src/input/source_devices.c
     src/platform/input.c)
 target_link_libraries(qa_input PUBLIC qa_movement qa_console qa_content qa_display SDL2::SDL2)
+
+add_library(qa_settings STATIC
+    src/settings/codec.c
+    src/settings/store.c
+    src/settings/restart.c)
+target_link_libraries(qa_settings PUBLIC qa_input)
 
 add_library(qa_network STATIC
     src/network/connections.c

@@ -13,5 +13,7 @@ bool qa_utf8_repair(qa_bytes input, qa_buffer *out, qa_error *error);
  * Leading/trailing ASCII whitespace is accepted. The caller applies finite,
  * integral or domain bounds as needed. Output is unchanged on failure. */
 bool qa_parse_number(qa_bytes input, double *out, qa_error *error);
+/* Finite double serialization in the same C locale, with round-trip precision. */
+bool qa_format_number(double value, char out[32], qa_error *error);
 
 #endif

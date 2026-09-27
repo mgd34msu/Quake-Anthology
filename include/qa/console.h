@@ -149,6 +149,9 @@ bool qa_cvars_info(const qa_cvars *registry, uint32_t flags, size_t maximum_leng
 /* Source .cfg commands cannot encode literal quotes or line breaks inside a
  * value. Such values return FORMAT; structured settings retain them separately. */
 bool qa_cvars_config(const qa_cvars *registry, qa_buffer *out, qa_error *error);
+/* NULL means excluded by this source's archive rules. Views come from this
+ * registry; returned values remain borrowed until its next mutation. */
+const char *qa_cvars_archive_value(const qa_cvars *, const qa_cvar_view *);
 
 typedef struct qa_console qa_console;
 typedef struct qa_command_invocation {
