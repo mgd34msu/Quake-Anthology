@@ -168,17 +168,26 @@ bool qa_targets_next(qa_targets *targets, qa_string_id name, qa_target_cursor *c
     if (!name)
         return false;
     size_t at = lower(targets, name);
-    while (at < targets->count && targets->index[at].name == name) {
-        target_index current = targets->index[at++];
-        if (cursor->started &&
-            (current.order < cursor->source_order ||
-             (current.order == cursor->source_order && current.actor.slot <= cursor->host_slot)))
-            continue;
-        *cursor = (qa_target_cursor){current.order, current.actor.slot, true};
-        *out = current.actor;
-        return true;
+    if (cursor->started) {
+        size_t high = targets->count;
+        while (at < high) {
+            size_t mid = at + (high - at) / 2;
+            target_index current = targets->index[mid];
+            bool visited = current.name == name && (current.order < cursor->source_order ||
+                                                    (current.order == cursor->source_order &&
+                                                     current.actor.slot <= cursor->host_slot));
+            if (visited)
+                at = mid + 1;
+            else
+                high = mid;
+        }
     }
-    return false;
+    if (at == targets->count || targets->index[at].name != name)
+        return false;
+    target_index current = targets->index[at];
+    *cursor = (qa_target_cursor){current.order, current.actor.slot, true};
+    *out = current.actor;
+    return true;
 }
 bool qa_targets_pick(qa_targets *targets, qa_string_id name, uint32_t random, size_t maximum,
                      qa_actor_id *out) {
