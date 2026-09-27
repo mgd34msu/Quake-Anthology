@@ -36,6 +36,12 @@ static bool effect(qa_combat *combat, const qa_combat_policy *policy, qa_damage_
         --combat->active_calls;
         if (!ok) return false;
     }
+    if (combat->hooks.effect && qa_combat_live(combat, request->target)) {
+        ++combat->active_calls;
+        bool ok = combat->hooks.effect(combat->hooks.context, combat, stage, request, value, error);
+        --combat->active_calls;
+        if (!ok) return false;
+    }
     if (!isfinite(value->amount) || value->reaction < QA_REACTION_NONE || value->reaction > QA_REACTION_DEATH)
         return qa_combat_argument(error, "source damage effect returned an invalid result");
     return true;
@@ -50,6 +56,17 @@ static int32_t signed_word(uint32_t value) {
     return value <= INT32_MAX ? (int32_t)value : (int32_t)(value - UINT32_C(2147483648)) + INT32_MIN;
 }
 static int32_t multiply_integer(int32_t a, int32_t b) { return signed_word((uint32_t)a * (uint32_t)b); }
+/* Q2/Q3 weapons already apply their source power multiplier before damage.
+ * They still expose the same ordered attachment boundaries as native Q1. */
+static bool weapon_damage(qa_combat *combat, const qa_combat_policy *policy,
+    const qa_damage_request *request, qa_damage_effect *value, qa_error *error) {
+    *value = (qa_damage_effect){.amount = request->amount, .allowed = true};
+    if (!effect(combat, policy, QA_DAMAGE_BEFORE_QUAD, request, value, error)) return false;
+    if (!value->allowed || !qa_combat_live(combat, request->target)) { value->allowed = false; return true; }
+    if (!effect(combat, policy, QA_DAMAGE_AFTER_QUAD, request, value, error)) return false;
+    if (!qa_combat_live(combat, request->target)) value->allowed = false;
+    return true;
+}
 static bool absorb(qa_combat *combat, const qa_combat_policy *policy, const qa_damage_request *request,
                     qa_protection_channel channel, float amount, qa_damage_flags flags, float *saved, qa_error *error) {
     qa_combat_state target, attacker; qa_combat_context context; bool has_attacker;
@@ -131,7 +148,15 @@ static bool q2_damage(qa_combat *combat, const qa_combat_policy *policy, const q
     qa_q2_combat_context source = context.game.q2;
     qa_damage_flags flags = qa_attack_flags(&request->attack);
     int32_t damage;
-    if (!integer(request->amount, &damage, error)) return false;
+    qa_damage_effect input;
+    if (!weapon_damage(combat, policy, request, &input, error)) return false;
+    if (!input.allowed) return true;
+    if (policy->effect || combat->hooks.effect) {
+        if (!describe(combat, policy, request, &target, &attacker, &has_attacker, &context, error)) return false;
+        if (!qa_combat_live(combat, request->target) || !target.can_take_damage) return true;
+        source = context.game.q2;
+    }
+    if (!integer(input.amount, &damage, error)) return false;
     if (!self_damage(request) && source.team_damage_enabled && same_team(&target, has_attacker ? &attacker : NULL) && !source.friendly_fire && !source.nuke) damage = 0;
     if (source.easy_skill && !source.deathmatch && source.player) { damage /= 2; if (damage < 1) damage = 1; }
     if (source.defender_sphere && source.player) { damage /= 2; if (damage < 1) damage = 1; }
@@ -179,7 +204,7 @@ static bool q2_damage(qa_combat *combat, const qa_combat_policy *policy, const q
     if (!qa_combat_set_health(combat, request->target, health, error)) return false;
     result->applied_damage = (float)take;
     result->reaction = health <= 0 ? QA_REACTION_DEATH : source.suppress_pain ? QA_REACTION_NONE : QA_REACTION_PAIN;
-    if (policy->effect && qa_combat_live(combat, request->target)) {
+    if ((policy->effect || combat->hooks.effect) && qa_combat_live(combat, request->target)) {
         value = (qa_damage_effect){.amount = result->applied_damage, .allowed = true, .reaction = result->reaction};
         if (!effect(combat, policy, QA_DAMAGE_AFTER_HEALTH, request, &value, error)) return false;
         if (!qa_combat_live(combat, request->target)) { result->reaction = QA_REACTION_NONE; return true; }
@@ -196,10 +221,19 @@ static bool q3_damage(qa_combat *combat, const qa_combat_policy *policy, const q
     if (!qa_combat_live(combat, request->target) || !target.can_take_damage) return true;
     qa_q3_combat_context source = context.game.q3;
     if (source.intermission || source.noclip || (source.missionpack_invulnerability && !source.juiced)) return true;
-    if (!isfinite(source.knockback_scale)) return qa_combat_argument(error, "invalid Q3 knockback scale");
     qa_damage_flags flags = qa_attack_flags(&request->attack);
     int32_t damage;
-    if (!integer(request->amount, &damage, error)) return false;
+    qa_damage_effect input;
+    if (!weapon_damage(combat, policy, request, &input, error)) return false;
+    if (!input.allowed) return true;
+    if (policy->effect || combat->hooks.effect) {
+        if (!describe(combat, policy, request, &target, &attacker, &has_attacker, &context, error)) return false;
+        if (!qa_combat_live(combat, request->target) || !target.can_take_damage) return true;
+        source = context.game.q3;
+        if (source.intermission || source.noclip || (source.missionpack_invulnerability && !source.juiced)) return true;
+    }
+    if (!isfinite(source.knockback_scale)) return qa_combat_argument(error, "invalid Q3 knockback scale");
+    if (!integer(input.amount, &damage, error)) return false;
     if (source.attacker_player && !self_damage(request)) {
         int32_t maximum = source.attacker_guard ? source.attacker_max_health / 2 : source.attacker_max_health;
         damage = multiply_integer(damage, maximum) / 100;

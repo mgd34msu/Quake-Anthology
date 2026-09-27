@@ -138,6 +138,13 @@ typedef struct qa_power_cells_binding {
     bool (*read)(void *, float *, qa_error *);
     bool (*write)(void *, float, qa_error *);
 } qa_power_cells_binding;
+typedef enum qa_damage_effect_stage {
+    QA_DAMAGE_BEFORE_QUAD, QA_DAMAGE_AFTER_QUAD, QA_DAMAGE_ARMOR_ALLOWED,
+    QA_DAMAGE_PROTECTION_APPLIES, QA_DAMAGE_BEFORE_HEALTH, QA_DAMAGE_AFTER_ARMOR,
+    QA_DAMAGE_LETHAL_HEALTH, QA_DAMAGE_BEFORE_MOMENTUM, QA_DAMAGE_POWER_ALLOWED,
+    QA_DAMAGE_AFTER_POWER, QA_DAMAGE_AFTER_HEALTH
+} qa_damage_effect_stage;
+typedef struct qa_damage_effect { float amount; bool allowed; qa_reaction reaction; } qa_damage_effect;
 typedef struct qa_combat_hooks {
     void *context;
     qa_team_id (*team)(void *, qa_actor_id, qa_team_id);
@@ -150,6 +157,10 @@ typedef struct qa_combat_hooks {
      * bubble uses request-aware damage_allowed instead (juiced bypass).
      * Read-only; each provider keeps its own expiry and checkpoint state. */
     bool (*invulnerable)(void *, qa_actor_id);
+    /* Attached effects compose independently of the selected combat policy.
+     * The shared hook follows that policy's local effect once per stage. */
+    bool (*effect)(void *, qa_combat *, qa_damage_effect_stage,
+                    const qa_damage_request *, qa_damage_effect *, qa_error *);
 } qa_combat_hooks;
 typedef enum qa_protection_admission { QA_PROTECTION_CLAIM, QA_PROTECTION_REPLACE_PRIMARY, QA_PROTECTION_REPLACE_CURRENT } qa_protection_admission;
 typedef struct qa_protection_claim {
@@ -170,13 +181,6 @@ typedef struct qa_protection_binding {
     bool (*absorb)(void *, const qa_damage_request *, const qa_damage_geometry *, float, qa_damage_flags, qa_protection_observer *, float *saved, qa_error *);
 } qa_protection_binding;
 
-typedef enum qa_damage_effect_stage {
-    QA_DAMAGE_BEFORE_QUAD, QA_DAMAGE_AFTER_QUAD, QA_DAMAGE_ARMOR_ALLOWED,
-    QA_DAMAGE_PROTECTION_APPLIES, QA_DAMAGE_BEFORE_HEALTH, QA_DAMAGE_AFTER_ARMOR,
-    QA_DAMAGE_LETHAL_HEALTH, QA_DAMAGE_BEFORE_MOMENTUM, QA_DAMAGE_POWER_ALLOWED,
-    QA_DAMAGE_AFTER_POWER, QA_DAMAGE_AFTER_HEALTH
-} qa_damage_effect_stage;
-typedef struct qa_damage_effect { float amount; bool allowed; qa_reaction reaction; } qa_damage_effect;
 typedef struct qa_q1_combat_context { bool quad, walk, has_momentum_direction, skip_base_team_health; int32_t teamplay; qa_vec3 momentum_direction; } qa_q1_combat_context;
 typedef struct qa_q2_combat_context {
     bool player, monster, attacker_player, has_enemy, easy_skill, deathmatch;
