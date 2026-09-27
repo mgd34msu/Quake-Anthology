@@ -1,0 +1,49 @@
+{
+  "commit": "8a0a7d455f408d6f5434acfd79412e3fd50dc05e",
+  "files": [
+    {
+      "path": "include/qa/player_progress.h",
+      "sha256": "4d84590b754b0a74bc189967ef0a41ff3e384c257a820cbbf57c45353fe0a4ae",
+      "bytes": 1949
+    },
+    {
+      "path": "include/qa/arena_progress.h",
+      "sha256": "610dba64e03dd5ff0e7e6e5c71036eaaa5340fb6a5252a829236f7d96fa08c99",
+      "bytes": 2181
+    },
+    {
+      "path": "src/player_services/progress_internal.h",
+      "sha256": "b89f2b509cf8bfe82f9005043c1ea54555565048596880c2fd01ceb43ff77d60",
+      "bytes": 1112
+    },
+    {
+      "path": "src/player_services/progress.c",
+      "sha256": "b8a9a1d4881ed9c307ffb41b0fa4d80d7eb9ed1ca46b6f361ac4852e96c21104",
+      "bytes": 9033
+    },
+    {
+      "path": "src/player_services/progress_file.c",
+      "sha256": "f6b0f503f11de22544040656900df876b5caeefba94d7d268c5a63c425bedcf1",
+      "bytes": 7955
+    },
+    {
+      "path": "src/player_services/arena_progress.c",
+      "sha256": "ebe4c9c6a4133801321be08b819d43bb054cfcfd30ba2e6cc6099421060aa9f9",
+      "bytes": 11748
+    },
+    {
+      "path": "src/network/q3/admission.c",
+      "sha256": "b767f8da96118d0b5f926ab68250d954dbc554f739465f0a2d1c6ab957723757",
+      "bytes": 23011
+    },
+    {
+      "path": "docs/audit/player-services.md",
+      "sha256": "1b44a430c0af82354f1330939ae279ab618a976280d8f496a146735efa31d20e",
+      "bytes": 2611
+    }
+  ],
+  "characters": 60962,
+  "sha256": "982a43de7efa95287dab3f9a7d8919280695c1471b581f24699e84da5ed5c452",
+  "prefix": "B31 SOURCE IMPLEMENTATION SUBSET; ORIGINAL WHOLE-TASK ACCEPTANCE REMAINS OPEN.\nFull files below are the actual committed implementation. Player progress and arena progression are independently source-reviewed native bodies. The source trees have not been compiled or run under the mandatory baseline-first phase.\nDEFINITE UNFINISHED SOURCE OBLIGATIONS: application progress event/UI consumers, actual arena archive and round-deduplication integration, local lobby service flows and ranking-provider consumers. Their future plan is not completion evidence. Current application owner is implementing these. Therefore this packet must not be treated as complete B31 merely because the lower-level code is reviewed.\nThis packet includes complete progress and arena bodies and the shared Q3 info helper, not all application code or all donor source. Judge original graph goal and criteria with those limits.\nCommit: 8a0a7d455f408d6f5434acfd79412e3fd50dc05e\n",
+  "separator": "\n=== FULL FILE {path} ===\n"
+}

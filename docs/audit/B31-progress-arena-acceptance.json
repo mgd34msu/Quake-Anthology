@@ -1,0 +1,45 @@
+{
+  "task_id": "B31",
+  "plan_revision": 6,
+  "graph_sha256": "915c4c50da8fcb60ed206f09f2d325eb7755f4c6f3f48b1c3d97d83d2eb98bae",
+  "evidence_path": "/tmp/qa-B31-progress-arena-report.txt",
+  "evidence_sha256": "982a43de7efa95287dab3f9a7d8919280695c1471b581f24699e84da5ed5c452",
+  "at": "2026-09-27T07:36:35.817Z",
+  "request_id": null,
+  "questions": {
+    "disposition": {
+      "type": "choice",
+      "instructions": "Does the supplied source evidence establish that the implementation fulfills this graph task goal AND all its acceptance criteria? Judge the WORK, not whether the author honestly admits incompleteness. An honest incomplete report is still incomplete implementation. Source-only phase: do not require forbidden compilation or runtime checks as a substitute for the stated source criteria.",
+      "criteria": {
+        "supported": "Concrete sufficient source evidence supports the goal and every criterion; no required source behavior is missing or contradicted.",
+        "incomplete": "Evidence identifies a defect, missing required behavior, disconnected required integration or unmet source criterion.",
+        "insufficient_evidence": "No definite missing behavior is established, but the supplied source evidence is insufficient to establish the full goal and all criteria."
+      }
+    },
+    "criterion_1": {
+      "type": "noul",
+      "instructions": "Does concrete source evidence establish this criterion in full, accounting for the task goal? Do not count a claim, inventory, future plan, unavailable judgment, or honest admission of incomplete work as fulfillment. Criterion: Required local/player services have consumers; only the previously approved unavailable ranking backend remains an extension point."
+    }
+  },
+  "model": "jev-1.13.0",
+  "answers": {
+    "disposition": {
+      "type": "choice",
+      "choice": "incomplete",
+      "confidence": 0.99,
+      "probabilities": {
+        "supported": 0,
+        "incomplete": 0.99,
+        "insufficient_evidence": 0.01
+      }
+    },
+    "criterion_1": {
+      "type": "noul",
+      "noul": 0.03
+    }
+  },
+  "usage": {
+    "input_tokens": 17149,
+    "output_tokens": 72
+  }
+}
