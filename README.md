@@ -15,4 +15,4 @@ Share common engine code, decoded assets, GPU resources, and reusable working bu
 - [Dependency graph and exact prerequisites](docs/dependency-graph.md)
 - [Functional targets and source ownership](docs/source-map.json)
 
-Current stage: baseline C implementation. The [local graph](docs/dependencies.json) records the plan published to vibecheck-jev; the ledger tracks claimed work and verified status. Check graph consistency with `python3 tools/check_plan.py`. Development uses local Git commits; the project owner will add a remote later.
+Current stage: [retrospective source audit](docs/audit/README.md), then continued baseline C implementation. The [local graph](docs/dependencies.json) records the plan published to vibecheck-jev. Historical completion reports recorded before judgment recovery are unverified. The audit compares source evidence against each original task criterion and retains actual Jev judgments. The graph checker is `tools/check_plan.py`; it is not executed during the current source-only phase. Development uses local Git commits; the project owner will add a remote later.

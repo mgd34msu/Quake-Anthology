@@ -1,0 +1,17 @@
+# B00 source evidence
+
+Goal: Publish the complete dependency graph and current user rules to vibecheck-jev; keep a reviewable local copy.
+
+Acceptance criterion: Ledger and local graph cover all 23 donor functional targets; baseline completion precedes gameplay evaluation and deep enhancement.
+
+Source evidence reviewed by the coordinator:
+
+- `../quake-typescript/docs/functional-targets/README.md:30` through line 52 enumerate T01-T23. `docs/source-map.json` explicitly maps every corresponding target identity to B00-B34 implementation owners and P01/P02/P03/RELEASE qualification owners. This is scope allocation, not a claim that those features are implemented.
+- The donor source contains 27 top-level directories and `src/main.ts`. The source-map records each of these exact paths with C task owners. The reviewed directory names are app, audio, bots, camera, capture, compat, console, content, contracts, core, debug, formats, guest, input, llm, materials, media, movement, network, persistence, platform, render, settings, text, types, ui, world.
+- `docs/dependencies.json` contains B00-B34, BASELINE, P01, P02, P03, RELEASE and the user-requested AUDIT. BASELINE directly depends on every B00-B34 task and AUDIT. P01 depends on BASELINE; P02 on P01; P03 on P02; RELEASE on P03. `docs/dependency-graph.md` contains the same direct prerequisite table and phase diagram.
+- Jev ledger plan_edit request `audit-recovery-plan-20260927` returned plan revision 6 with the AUDIT addition and BASELINE dependency. It returned a passed plan-coverage judgment and a flagged brief-scope judgment. The latter is retained, not represented as a pass. The user expressly required immediate retrospective judgment; the audit does not move existing implementation into a later release or alter the source-only phase boundary.
+- `docs/plan.md` states the unified-engine product contract, independently selectable behavior, full game/expansion/rerelease/mod scope, shared services, native built-in execution, ordinary C float permission, no donor source-file copying, local commits, six workers, root-only licensing, and the explicit source-before-build sequence. These are consistent with the task's current user instructions.
+
+Defect found and corrected: `docs/source-map.json` still carried ledger revision 4 while the previous dependency graph carried revision 5. Both now name revision 6, matching the current ledger. The source of `tools/check_plan.py` already checks equal revisions, but was not executed under the user's source-only restriction. It now also requires AUDIT and its direct dependency from BASELINE. The source checker checks task IDs, dependencies and cycles, source assignments, and phase ordering; it does not qualify engine implementation.
+
+B00's graph publication/source allocation criterion is supported by this review. No other task is declared complete by this report. The nine historical completed-task reports were not Jev-verified. Their terminal ledger records cannot be reopened through the work-update API; AUDIT now gates their retrospective source review and corrections before BASELINE. Full project source audit is ongoing, and no game build, test, generator, executable or benchmark was run.

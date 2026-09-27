@@ -2,7 +2,7 @@
 
 This plan ports `../quake-typescript` into a native C engine. It carries forward the unified Anthology product and the full interoperability intent established in its documentation and reaffirmed by the project owner. Original sources in `../qsrc` are fidelity references. Assets in `../qfiles` remain external inputs.
 
-Baseline implementation is underway. The [dependency graph](dependency-graph.md) and [machine-readable plan](dependencies.json) carry the 40 tasks published to vibecheck-jev. Local progress commits are authorized. The owner will add a remote later.
+Baseline implementation is underway. The [dependency graph](dependency-graph.md) and [machine-readable plan](dependencies.json) carry the 41 tasks published to vibecheck-jev. The immediate [recovery audit](audit/README.md) checks all prior work against the original task criteria after discovery that ledger judgments were not running. Local progress commits are authorized. The owner will add a remote later.
 
 Use a soft cap of six concurrent workers across the full agent tree, in addition to the main coordinator. Let existing assignments finish to reduce the current count; do not replace finished workers while above six. Temporary excess is allowed when a concrete task needs it.
 

@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "ledger_plan_revision": 4,
+  "ledger_plan_revision": 6,
   "donor": {
     "repository": "../quake-typescript",
     "head": "5d6c6e311db6749c0b8f8ffca53ebe2bae69b24e",

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "project_id": "quake-anthology",
-  "ledger_plan_revision": 5,
+  "ledger_plan_revision": 6,
   "policy": {
     "goal": "Finish the native C rewrite of ../quake-typescript as one engine with full Q1/QW/Q2/Q3, expansion, rerelease, and mod interoperability, then perform a deep performance and enhancement pass.",
     "rules": [
@@ -31,6 +31,24 @@
     ]
   },
   "tasks": [
+    {
+      "id": "AUDIT",
+      "label": "Audit all prior work against the dependency graph",
+      "goal": "Have independent source readers establish what every existing task actually implements and have Jev judge that evidence against the task's existing graph goal and acceptance criteria; fix confirmed defects and unsupported completion claims.",
+      "depends_on": [],
+      "criteria": [
+        "Every written production source file, public interface, build definition, and existing task report is assigned to a review lane and recorded with a source revision or snapshot.",
+        "For each B00-B34 task, the audit states its existing goal and criteria, source evidence for each criterion, donor behavior comparisons, missing functionality, known defects, and the limits of source-only validation.",
+        "Jev judgments are actually obtained and recorded for task evidence against the existing graph criteria. Unavailable judgments do not count as passes. Reports alone do not count as judgments.",
+        "Confirmed defects are corrected by the source owner and independently re-reviewed. Missing source functionality and unsupported completion claims remain open in their original tasks.",
+        "No project configuration, compilation, tests, executable runs, sanitizer runs, benchmarks, or gameplay evaluation occur during this audit; those remain after BASELINE."
+      ],
+      "rules": [
+        "Read code and donor contracts. Do not replace source evidence with author assertions or treat a model verdict as runtime qualification.",
+        "Use the six existing workers with independent review assignments. Root owns integration and Git. Preserve current edits and exclusive source ownership."
+      ],
+      "status": "pending"
+    },
     {
       "id": "B00",
       "label": "Register the implementation graph",
@@ -556,11 +574,13 @@
         "B31",
         "B32",
         "B33",
-        "B34"
+        "B34",
+        "AUDIT"
       ],
       "goal": "Finish the entire baseline implementation before gameplay evaluation and the deep performance pass.",
       "criteria": [
-        "All required production code and application integration are written with reviewed ownership. This is the source-completion gate; compilation, execution checks, gameplay evaluation and final qualification follow in P01 and later phases."
+        "All required production code and application integration are written with reviewed ownership. This is the source-completion gate; compilation, execution checks, gameplay evaluation and final qualification follow in P01 and later phases.",
+        "AUDIT is complete: all pre-recovery work has source evidence judged by Jev against its existing graph task criteria, and confirmed source defects and unsupported completion claims have been addressed."
       ],
       "status": "pending"
     },

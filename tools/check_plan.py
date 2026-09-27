@@ -12,7 +12,7 @@ def check(graph, scope):
     if len(tasks) != len(by_id):
         raise ValueError("duplicate task ID")
     required = {f"B{i:02}" for i in range(35)}
-    required.update({"BASELINE", "P01", "P02", "P03", "RELEASE"})
+    required.update({"AUDIT", "BASELINE", "P01", "P02", "P03", "RELEASE"})
     if not required <= by_id.keys():
         raise ValueError(f"missing tasks: {sorted(required - by_id.keys())}")
 
@@ -48,6 +48,8 @@ def check(graph, scope):
     baseline = {f"B{i:02}" for i in range(35)}
     if not baseline <= set(by_id["BASELINE"]["depends_on"]):
         raise ValueError("BASELINE must depend directly on every task B00 through B34")
+    if "AUDIT" not in by_id["BASELINE"]["depends_on"]:
+        raise ValueError("BASELINE must depend on the retrospective source audit")
 
     targets = scope["functional_targets"]
     target_ids = [target["id"] for target in targets]

@@ -1,10 +1,11 @@
 # Implementation dependency graph
 
-This view records all 40 tasks in [dependencies.json](dependencies.json), published as vibecheck-jev plan revision 5. The ledger owns current work claims and verified status. Local task status fields retain the published snapshot and are not a live completion report.
+This view records all 41 tasks in [dependencies.json](dependencies.json), published as vibecheck-jev plan revision 6. The ledger owns current work claims. Reports recorded before judgment recovery are unverified; see [the recovery audit](audit/README.md). Local task status fields retain the published snapshot and are not a live completion report.
 
 ```mermaid
 flowchart LR
     BUILD["B00-B34: complete C implementation and code review"] --> BASELINE["BASELINE: all required code integrated"]
+    AUDIT["AUDIT: prior work judged against existing task criteria and defects fixed"] --> BASELINE
     BASELINE --> P01["P01: compile, validate, evaluate functionality"]
     P01 --> P02["P02: deep performance pass"]
     P02 --> P03["P03: enhancement and polish"]
@@ -19,6 +20,7 @@ The grouped diagram shows phase order. The table below records every direct prer
 
 | Task | Work | Direct prerequisites |
 |---|---|---|
+| `AUDIT` | Audit all prior work against existing graph criteria and fix confirmed defects | None; review starts immediately |
 | `B00` | Register the implementation graph | None |
 | `B01` | C build and core foundation | None |
 | `B02` | Archive readers | `B01` |
@@ -54,7 +56,7 @@ The grouped diagram shows phase order. The table below records every direct prer
 | `B32` | Menus HUD and guest presentation | `B15`, `B16`, `B19`, `B20`, `B21`, `B25`, `B29`, `B30`, `B31` |
 | `B33` | Tools cameras capture and LLM | `B16`, `B21`, `B27` |
 | `B34` | Application integration and packaging | `B10`, `B11`, `B12`, `B13`, `B14`, `B15`, `B17`, `B18`, `B19`, `B20`, `B21`, `B25`, `B26`, `B28`, `B29`, `B30`, `B31`, `B32`, `B33` |
-| `BASELINE` | Complete baseline release code | `B00`, `B01`, `B02`, `B03`, `B04`, `B05`, `B06`, `B07`, `B08`, `B09`, `B10`, `B11`, `B12`, `B13`, `B14`, `B15`, `B16`, `B17`, `B18`, `B19`, `B20`, `B21`, `B22`, `B23`, `B24`, `B25`, `B26`, `B27`, `B28`, `B29`, `B30`, `B31`, `B32`, `B33`, `B34` |
+| `BASELINE` | Complete baseline release code | `B00`, `B01`, `B02`, `B03`, `B04`, `B05`, `B06`, `B07`, `B08`, `B09`, `B10`, `B11`, `B12`, `B13`, `B14`, `B15`, `B16`, `B17`, `B18`, `B19`, `B20`, `B21`, `B22`, `B23`, `B24`, `B25`, `B26`, `B27`, `B28`, `B29`, `B30`, `B31`, `B32`, `B33`, `B34`, `AUDIT` |
 | `P01` | Build verification and full functionality evaluation | `BASELINE` |
 | `P02` | Deep performance pass | `P01` |
 | `P03` | Enhancement and polish | `P02` |
