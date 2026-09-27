@@ -28,6 +28,7 @@ typedef struct qa_q1_map_finale_view {
     qa_vec3 origin, angles;
     double exit_after;
 } qa_q1_map_finale_view;
+typedef enum qa_q1_map_ending { QA_Q1_MAP_END_DOPA, QA_Q1_MAP_END_MG3 } qa_q1_map_ending;
 typedef struct qa_q1_map_options {
     qa_targets *targets;
     qa_q1_level *level;
@@ -60,6 +61,10 @@ bool qa_q1_game_maps_finish(qa_q1_game *, qa_error *);
 /* Threewave spectator door/teleporter passage, after its velocity update. */
 bool qa_q1_game_map_observer_nearby(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_game_map_after_physics(qa_q1_game *, qa_actor_id, qa_error *);
+/* Native gameplay resets precede this campaign transition. The new-game flag
+ * changes departing travel health only; current live health remains intact. */
+bool qa_q1_game_map_finish_addon(qa_q1_game *, qa_q1_map_ending, qa_error *);
+bool qa_q1_game_map_new_game_travel(const qa_q1_game *);
 bool qa_q1_game_map_finale(qa_q1_game *, qa_actor_id oldone, bool finish, qa_error *);
 void qa_q1_game_map_dismiss_finale(qa_q1_game *);
 qa_string_id qa_q1_game_map_name(const qa_q1_game *);

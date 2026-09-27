@@ -1,0 +1,371 @@
+#include "internal.h"
+
+static bool current_condition(qa_script *s, qa_script_location location, script_condition **out,
+                              qa_error *e) {
+    if (s->condition_count == 0 || s->stack_count == 0 ||
+        s->conditions[s->condition_count - 1].frame != s->stack[s->stack_count - 1])
+        return script_fail(s, location, "Misplaced script conditional", e);
+    *out = s->conditions + s->condition_count - 1;
+    return true;
+}
+static bool push_condition(qa_script *s, bool skip, qa_error *e) {
+    if (s->stack_count == 0)
+        return script_fail(s, qa_script_position(s), "Conditional after end of source", e);
+    if (!script_grow((void **)&s->conditions, &s->condition_capacity, s->condition_count + 1,
+                     sizeof(*s->conditions), e))
+        return false;
+    s->conditions[s->condition_count++] =
+        (script_condition){skip, false, s->stack[s->stack_count - 1]};
+    if (skip)
+        ++s->skipping;
+    return true;
+}
+bool script_evaluate_stream(qa_script *s, qa_script_location location, bool integer_mode,
+                            bool dollar, script_eval_value *out, qa_error *e) {
+    qa_script_token *tokens = NULL;
+    size_t count = 0, capacity = 0;
+    unsigned depth = 1;
+    bool defined = false;
+    script_queued_token item;
+    bool found;
+    if (dollar) {
+        if (!script_raw(s, &item, &found, e))
+            return false;
+        if (!found || !qa_script_token_is(&item.token, "("))
+            return script_fail(s, location, "Dollar evaluation requires (", e);
+    }
+    for (;;) {
+        if (!(dollar ? script_raw(s, &item, &found, e) : script_line_token(s, &item, &found, e)))
+            goto fail;
+        if (!found)
+            break;
+        qa_script_token *t = &item.token;
+        if (t->kind == QA_SCRIPT_NAME) {
+            if (defined)
+                defined = false;
+            else if (qa_script_token_is(t, "defined"))
+                defined = true;
+            else {
+                script_macro *m = script_macro_find(&s->macros, t->text);
+                if (m == NULL) {
+                    script_fail(s, t->location, "Undefined name in expression", e);
+                    goto fail;
+                }
+                if (!script_expand(s, item, m, e))
+                    goto fail;
+                if (s->empty_expansion) {
+                    script_fail(s, t->location, "Empty macro in expression", e);
+                    goto fail;
+                }
+                continue;
+            }
+        } else if (t->kind == QA_SCRIPT_PUNCTUATION || t->kind == QA_SCRIPT_NUMBER) {
+            if (dollar) {
+                if (qa_script_token_is(t, "(")) {
+                    if (depth == UINT_MAX) {
+                        script_fail(s, location, "Expression nesting overflow", e);
+                        goto fail;
+                    }
+                    ++depth;
+                } else if (qa_script_token_is(t, ")") && --depth == 0)
+                    break;
+            }
+        } else {
+            script_fail(s, t->location, "Invalid token in expression", e);
+            goto fail;
+        }
+        if (count >= s->options.maximum_expression_tokens) {
+            script_fail(s, t->location, "Expression token limit exceeded", e);
+            goto fail;
+        }
+        if (!script_grow((void **)&tokens, &capacity, count + 1, sizeof(*tokens), e))
+            goto fail;
+        tokens[count++] = *t;
+    }
+    if (dollar && depth != 0) {
+        script_fail(s, location, "Unterminated dollar expression", e);
+        goto fail;
+    }
+    bool ok = script_expression(s, tokens, count, integer_mode, out, e);
+    free(tokens);
+    return ok;
+fail:
+    free(tokens);
+    return false;
+}
+static size_t decimal_word(uint32_t value, char *out, unsigned width) {
+    char digits[10];
+    size_t count = 0;
+    do {
+        digits[count++] = (char)('0' + value % 10);
+        value /= 10;
+    } while (value != 0);
+    size_t at = 0;
+    while (count + at < width)
+        out[at++] = '0';
+    while (count != 0)
+        out[at++] = digits[--count];
+    return at;
+}
+/* Fixed two decimals from the binary value, with nearest-even rounding and no
+ * locale or intermediate decimal conversion. The largest double needs 35 limbs. */
+static bool fixed_decimal(double value, char out[320], size_t *length) {
+    if (!isfinite(value)) {
+        const char *text = isnan(value) ? "nan" : "inf";
+        memcpy(out, text, 4);
+        *length = 3;
+        return true;
+    }
+    uint64_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    unsigned exponent = (unsigned)((bits >> 52) & 2047);
+    uint64_t significand = bits & UINT64_C(0xfffffffffffff);
+    if (exponent != 0)
+        significand |= UINT64_C(0x10000000000000);
+    int shift = exponent == 0 ? -1074 : (int)exponent - 1075;
+    uint64_t scaled = significand * 100;
+    if (shift < 0) {
+        unsigned down = (unsigned)-shift;
+        if (down >= 64)
+            scaled = 0;
+        else {
+            uint64_t lower = scaled >> down, mask = (UINT64_C(1) << down) - 1;
+            uint64_t remainder = scaled & mask, half = UINT64_C(1) << (down - 1);
+            scaled = lower + (remainder > half || (remainder == half && (lower & 1) != 0));
+        }
+    }
+    uint32_t limbs[36] = {0};
+    size_t count = 0;
+    do {
+        limbs[count++] = (uint32_t)(scaled % UINT64_C(1000000000));
+        scaled /= UINT64_C(1000000000);
+    } while (scaled != 0);
+    for (int bit = 0; bit < shift; ++bit) {
+        uint64_t carry = 0;
+        for (size_t i = 0; i < count; ++i) {
+            uint64_t doubled = (uint64_t)limbs[i] * 2 + carry;
+            limbs[i] = (uint32_t)(doubled % UINT64_C(1000000000));
+            carry = doubled / UINT64_C(1000000000);
+        }
+        if (carry != 0) {
+            if (count == 36)
+                return false;
+            limbs[count++] = (uint32_t)carry;
+        }
+    }
+    char digits[318];
+    size_t size = decimal_word(limbs[count - 1], digits, 0);
+    for (size_t i = count - 1; i != 0; --i)
+        size += decimal_word(limbs[i - 1], digits + size, 9);
+    size_t at = 0;
+    if (size <= 2) {
+        out[at++] = '0';
+        out[at++] = '.';
+        if (size == 1)
+            out[at++] = '0';
+        memcpy(out + at, digits, size);
+        at += size;
+    } else {
+        memcpy(out, digits, size - 2);
+        at = size - 2;
+        out[at++] = '.';
+        out[at++] = digits[size - 2];
+        out[at++] = digits[size - 1];
+    }
+    out[at] = 0;
+    *length = at;
+    return true;
+}
+bool script_eval_directive(qa_script *s, qa_script_location location, bool integer_mode,
+                           bool dollar, qa_error *e) {
+    script_eval_value value;
+    if (!script_evaluate_stream(s, location, integer_mode, dollar, &value, e))
+        return false;
+    double number = integer_mode ? value.integer : value.number, magnitude = fabs(number);
+    char text[320];
+    size_t size;
+    if (integer_mode) {
+        if (!qa_format_number(magnitude, text, e))
+            return false;
+        size = strlen(text);
+    } else if (!fixed_decimal(magnitude, text, &size))
+        return script_fail(s, location, "Evaluation output overflow", e);
+    if (size >= s->options.token_limit)
+        return script_fail(s, location, "Evaluation output exceeds token limit", e);
+    char *stored = script_string(&s->arena, text, size, e);
+    if (stored == NULL)
+        return false;
+    qa_script_token token = {.kind = QA_SCRIPT_NUMBER,
+                             .subtype = QA_SCRIPT_DECIMAL | QA_SCRIPT_LONG |
+                                        (integer_mode ? QA_SCRIPT_INTEGER : QA_SCRIPT_FLOAT),
+                             .integer = value.integer,
+                             .number = number,
+                             .text = {(const uint8_t *)stored, size},
+                             .location = qa_script_position(s)};
+    if (!script_push(s, (script_queued_token){token, NULL}, e))
+        return false;
+    if (number < 0) {
+        token = (qa_script_token){.kind = QA_SCRIPT_PUNCTUATION,
+                                  .subtype = QA_SCRIPT_SUB,
+                                  .text = script_bytes("-"),
+                                  .location = token.location};
+        if (!script_push(s, (script_queued_token){token, NULL}, e))
+            return false;
+    }
+    return true;
+}
+static bool include_directive(qa_script *s, qa_script_location location, qa_error *e) {
+    script_queued_token item;
+    bool found;
+    if (!script_line_token(s, &item, &found, e))
+        return false;
+    if (!found)
+        return script_fail(s, location, "Include requires a filename", e);
+    qa_script_include request = {.from_path = location.path,
+                                 .include_path = s->options.include_path};
+    if (item.token.kind == QA_SCRIPT_STRING) {
+        qa_bytes value = qa_script_token_value(&item.token);
+        request.kind = QA_SCRIPT_INCLUDE_QUOTED;
+        request.requested_path = script_string(&s->arena, value.data, value.size, e);
+        if (request.requested_path == NULL)
+            return false;
+    } else if (qa_script_token_is(&item.token, "<")) {
+        char *text = NULL;
+        size_t size = strlen(s->options.include_path), capacity = 0;
+        bool closed = false;
+        if (!script_grow((void **)&text, &capacity, size + 1, 1, e))
+            return false;
+        memcpy(text, s->options.include_path, size);
+        for (;;) {
+            if (!script_line_token(s, &item, &found, e)) {
+                free(text);
+                return false;
+            }
+            if (!found)
+                break;
+            if (qa_script_token_is(&item.token, ">")) {
+                closed = true;
+                break;
+            }
+            if (item.token.text.size > SIZE_MAX - size - 1 ||
+                !script_grow((void **)&text, &capacity, size + item.token.text.size + 1, 1, e)) {
+                free(text);
+                return false;
+            }
+            memcpy(text + size, item.token.text.data, item.token.text.size);
+            size += item.token.text.size;
+        }
+        if (!closed)
+            script_warn(s, location, "Include missing trailing >");
+        if (size == strlen(s->options.include_path)) {
+            free(text);
+            return script_fail(s, location, "Empty system include filename", e);
+        }
+        request.kind = QA_SCRIPT_INCLUDE_SYSTEM;
+        request.requested_path = script_string(&s->arena, text, size, e);
+        free(text);
+        if (request.requested_path == NULL)
+            return false;
+    } else
+        return script_fail(s, location, "Invalid include filename", e);
+    return script_include(s, &request, e);
+}
+bool script_directive(qa_script *s, script_queued_token hash, qa_error *e) {
+    script_queued_token item;
+    bool found;
+    if (!script_line_token(s, &item, &found, e))
+        return false;
+    if (!found || item.token.kind != QA_SCRIPT_NAME)
+        return script_fail(s, hash.token.location, "Preprocessor directive requires a name", e);
+    qa_script_token *name = &item.token;
+    qa_script_location location = name->location;
+    if (qa_script_token_is(&hash.token, "$")) {
+        if (!qa_script_token_is(name, "evalint") && !qa_script_token_is(name, "evalfloat"))
+            return script_fail(s, location, "Unknown dollar directive", e);
+        return script_eval_directive(s, location, qa_script_token_is(name, "evalint"), true, e);
+    }
+    if (qa_script_token_is(name, "if")) {
+        script_eval_value value;
+        return script_evaluate_stream(s, location, true, false, &value, e) &&
+               push_condition(s, value.integer == 0, e);
+    }
+    if (qa_script_token_is(name, "ifdef") || qa_script_token_is(name, "ifndef")) {
+        bool invert = qa_script_token_is(name, "ifndef");
+        if (!script_line_token(s, &item, &found, e))
+            return false;
+        if (!found || item.token.kind != QA_SCRIPT_NAME)
+            return script_fail(s, location, "Conditional requires a macro name", e);
+        bool exists = script_macro_find(&s->macros, item.token.text) != NULL;
+        return push_condition(s, invert ? exists : !exists, e);
+    }
+    if (qa_script_token_is(name, "elif") || qa_script_token_is(name, "else") ||
+        qa_script_token_is(name, "endif")) {
+        bool end = qa_script_token_is(name, "endif"), otherwise = qa_script_token_is(name, "else");
+        script_condition *condition;
+        if (!current_condition(s, location, &condition, e))
+            return false;
+        if (!end && condition->was_else)
+            return script_fail(s, location, "Conditional branch after #else", e);
+        bool previous_skip = condition->skip;
+        if (previous_skip)
+            --s->skipping;
+        --s->condition_count;
+        if (end)
+            return true;
+        bool skip;
+        if (otherwise)
+            skip = !previous_skip;
+        else {
+            script_eval_value value;
+            if (!script_evaluate_stream(s, location, true, false, &value, e))
+                return false;
+            skip = value.integer == 0;
+        }
+        if (!push_condition(s, skip, e))
+            return false;
+        s->conditions[s->condition_count - 1].was_else = otherwise;
+        return true;
+    }
+    if (qa_script_token_is(name, "include"))
+        return s->skipping != 0 || include_directive(s, location, e);
+    if (qa_script_token_is(name, "define")) {
+        if (s->skipping != 0)
+            return true;
+        qa_script_token *tokens;
+        size_t count;
+        if (!script_line(s, &tokens, &count, e))
+            return false;
+        bool ok = script_macro_parse(&s->macros, tokens, count, s->options.maximum_defines, e);
+        free(tokens);
+        return ok;
+    }
+    if (qa_script_token_is(name, "undef")) {
+        if (s->skipping != 0)
+            return true;
+        if (!script_line_token(s, &item, &found, e))
+            return false;
+        if (!found || item.token.kind != QA_SCRIPT_NAME)
+            return script_fail(s, location, "Undef requires a macro name", e);
+        bool fixed;
+        (void)script_macro_remove(&s->macros, item.token.text, &fixed);
+        if (fixed)
+            script_warn(s, location, "Cannot undefine fixed macro");
+        return true;
+    }
+    if (qa_script_token_is(name, "eval") || qa_script_token_is(name, "evalfloat"))
+        return script_eval_directive(s, location, qa_script_token_is(name, "eval"), false, e);
+    if (qa_script_token_is(name, "pragma")) {
+        script_warn(s, location, "Pragma directive is unsupported");
+        qa_script_token *tokens;
+        size_t count;
+        if (!script_line(s, &tokens, &count, e))
+            return false;
+        free(tokens);
+        return true;
+    }
+    if (qa_script_token_is(name, "line"))
+        return script_fail(s, location, "Line directive is unsupported", e);
+    if (qa_script_token_is(name, "error"))
+        return script_fail(s, location, "Script #error directive", e);
+    return script_fail(s, location, "Unknown preprocessor directive", e);
+}

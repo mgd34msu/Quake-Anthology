@@ -54,6 +54,19 @@ target_include_directories(qa_core PUBLIC include)
 target_link_libraries(qa_core PUBLIC qa_data PRIVATE ICU::uc)
 target_compile_definitions(qa_core PRIVATE _POSIX_C_SOURCE=200809L)
 
+add_library(qa_script STATIC
+    src/core/script/checkpoint.c
+    src/core/script/defines.c
+    src/core/script/directives.c
+    src/core/script/expansion.c
+    src/core/script/expression.c
+    src/core/script/lexer.c
+    src/core/script/number.c
+    src/core/script/quoted.c
+    src/core/script/read.c
+    src/core/script/source.c)
+target_link_libraries(qa_script PUBLIC qa_core)
+
 add_library(qa_content STATIC
     src/content/archive.c
     src/content/vfs.c
@@ -216,6 +229,7 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/infected.c
     src/gameplay/q1/lavaman.c
     src/gameplay/q1/maps/bosses.c
+    src/gameplay/q1/maps/addon_misc.c
     src/gameplay/q1/maps/hipnotic_misc.c
     src/gameplay/q1/maps/hipnotic_particles.c
     src/gameplay/q1/maps/movers.c

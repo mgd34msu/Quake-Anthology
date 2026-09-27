@@ -352,6 +352,7 @@ static q1_map_kind classify(const char *name) {
                    {"func_particlefield", Q1_MAP_PARTICLE_FIELD},
                    {"func_togglewall", Q1_MAP_TOGGLE_WALL},
                    {"wallsprite", Q1_MAP_WALL_SPRITE},
+                   {"misc_sacrifice", Q1_MAP_SACRIFICE},
                    {"trigger_multiple", Q1_MAP_MULTI},
                    {"trigger_once", Q1_MAP_MULTI},
                    {"trigger_secret", Q1_MAP_MULTI},
@@ -396,6 +397,8 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     if (!*handled)
         return true;
     entity->kind = Q1_MAP;
+    if (kind == Q1_MAP_SACRIFICE)
+        return q1_map_sacrifice_spawn(g, entity, error);
     if (q1_map_is_mover(kind))
         return q1_map_mover_spawn(g, entity, error);
     if (kind >= Q1_MAP_PARTICLE_FIELD)
@@ -515,6 +518,10 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
                 qa_error *error) {
     if (!entity->map || !entity->map->use_enabled)
         return true;
+    if (entity->map->kind == Q1_MAP_SACRIFICE) {
+        entity->activator = activator;
+        return q1_map_sacrifice_gib(g, entity, error);
+    }
     if (q1_map_is_mover(entity->map->kind))
         return q1_map_mover_use(g, entity, activator, error);
     if (entity->map->kind >= Q1_MAP_PARTICLE_FIELD)
@@ -556,6 +563,8 @@ bool q1_map_reaction(qa_q1_game *g, q1_actor *entity, const qa_damage_outcome *o
         return q1_map_mover_reaction(g, entity, outcome, error);
     if (outcome->result.reaction != QA_REACTION_DEATH)
         return true;
+    if (entity->map->kind == Q1_MAP_SACRIFICE)
+        return q1_map_sacrifice_gib(g, entity, error);
     if (entity->map->kind == Q1_MAP_MULTI)
         return !q1_map_grounded(g, entity, outcome->request.attack.attacker) ||
                q1_map_multi_fire(g, entity, outcome->request.attack.attacker, error);
@@ -570,6 +579,8 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_map_state *state = entity->map;
     q1_map_action action = state->action;
     state->action = Q1_MAP_IDLE;
+    if (action == Q1_MAP_SACRIFICE_ANIMATE || action == Q1_MAP_SACRIFICE_FLOAT)
+        return q1_map_sacrifice_think(g, entity, action, error);
     if (action >= Q1_MAP_MOVE_DONE && action <= Q1_MAP_TRAIN_WAIT)
         return q1_map_mover_think(g, entity, action, error);
     if (action >= Q1_MAP_SOUND_REPEAT)

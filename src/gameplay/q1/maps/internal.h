@@ -52,7 +52,8 @@ typedef enum q1_map_kind {
     Q1_MAP_EARTHQUAKE,
     Q1_MAP_PARTICLE_FIELD,
     Q1_MAP_TOGGLE_WALL,
-    Q1_MAP_WALL_SPRITE
+    Q1_MAP_WALL_SPRITE,
+    Q1_MAP_SACRIFICE
 } q1_map_kind;
 typedef enum q1_map_action {
     Q1_MAP_IDLE,
@@ -94,7 +95,9 @@ typedef enum q1_map_action {
     Q1_MAP_FINALE_WAIT,
     Q1_MAP_FINALE_SIX,
     Q1_MAP_SOUND_REPEAT,
-    Q1_MAP_EXPLODER_FIRE
+    Q1_MAP_EXPLODER_FIRE,
+    Q1_MAP_SACRIFICE_ANIMATE,
+    Q1_MAP_SACRIFICE_FLOAT
 } q1_map_action;
 typedef enum q1_map_position { Q1_MAP_BOTTOM, Q1_MAP_UP, Q1_MAP_TOP, Q1_MAP_DOWN } q1_map_position;
 typedef struct q1_door_group {
@@ -142,6 +145,7 @@ struct q1_map_runtime {
     bool finale_started, finale_dismissed;
     double earthquake_end;
     bool quake_active;
+    bool final_new_game_travel;
     uint32_t total_secrets, found_secrets;
 };
 
@@ -191,5 +195,8 @@ bool q1_map_hip_misc_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
 bool q1_map_hip_particles_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_hip_particles_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_hip_particles_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_map_sacrifice_spawn(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_map_sacrifice_gib(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_map_sacrifice_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
 
 #endif
