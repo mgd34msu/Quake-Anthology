@@ -145,6 +145,15 @@ bool qa_navigation_enabled(const qa_navigation *n, uint32_t area, bool *enabled,
         !(node->source.kind == QA_NAV_ORIGIN_AAS && (node->flags & 8));
     return true;
 }
+bool qa_navigation_boarding_elevator(qa_navigation *n, uint32_t area, const qa_nav_edge **edge,
+                                       qa_nav_entity_state *state, bool *found, qa_error *e) {
+    if (!n || !edge || !state || !found) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, area, "Invalid navigation boarding elevator query");
+        return false;
+    }
+    qa_nav_train_ride unused;
+    return nav_boarding(n, area, false, edge, state, &unused, found, e);
+}
 bool qa_navigation_enable(qa_navigation *n, uint32_t area, bool enabled, bool *previous,
                           qa_error *e) {
     uint32_t index = n == NULL ? QA_NAV_NO_INDEX : nav_node_index(n->graph, area);

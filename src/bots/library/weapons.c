@@ -274,6 +274,12 @@ void qa_bot_weapon_selector_destroy(qa_bot_weapon_selector *s) {
 }
 bool qa_bot_weapon_weight(qa_bot_weapon_selector *s, uint32_t weapon, const int32_t *inventory,
                           size_t count, float *out, bool *found, qa_error *e) {
+    qa_bot_inventory_view view = {.data = inventory, .count = count};
+    return qa_bot_weapon_weight_view(s, weapon, &view, out, found, e);
+}
+bool qa_bot_weapon_weight_view(qa_bot_weapon_selector *s, uint32_t weapon,
+                               const qa_bot_inventory_view *inventory, float *out, bool *found,
+                               qa_error *e) {
     if (s == NULL || out == NULL || found == NULL || weapon >= s->config->view.weapon_capacity) {
         qa_error_set(e, QA_ERROR_ARGUMENT, weapon, "Invalid bot weapon evaluation request");
         return false;
@@ -281,11 +287,16 @@ bool qa_bot_weapon_weight(qa_bot_weapon_selector *s, uint32_t weapon, const int3
     *found = s->indices[weapon] >= 0;
     if (!*found)
         return true;
-    return qa_bot_weights_evaluate(s->weights, (uint32_t)s->indices[weapon], inventory, count, NULL,
-                                   s->workspace, out, e);
+    return qa_bot_weights_evaluate_view(s->weights, (uint32_t)s->indices[weapon], inventory, NULL,
+                                        s->workspace, out, e);
 }
 bool qa_bot_weapon_choose(qa_bot_weapon_selector *s, const int32_t *inventory, size_t count,
                           uint32_t *out, qa_error *e) {
+    qa_bot_inventory_view view = {.data = inventory, .count = count};
+    return qa_bot_weapon_choose_view(s, &view, out, e);
+}
+bool qa_bot_weapon_choose_view(qa_bot_weapon_selector *s, const qa_bot_inventory_view *inventory,
+                               uint32_t *out, qa_error *e) {
     if (s == NULL || out == NULL) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing bot weapon choice selector/output");
         return false;
@@ -296,8 +307,8 @@ bool qa_bot_weapon_choose(qa_bot_weapon_selector *s, const int32_t *inventory, s
         if (!s->config->weapons[i].valid || s->indices[i] < 0)
             continue;
         float value;
-        if (!qa_bot_weights_evaluate(s->weights, (uint32_t)s->indices[i], inventory, count, NULL,
-                                     s->workspace, &value, e))
+        if (!qa_bot_weights_evaluate_view(s->weights, (uint32_t)s->indices[i], inventory, NULL,
+                                          s->workspace, &value, e))
             return false;
         if (value > best) {
             best = value;

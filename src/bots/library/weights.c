@@ -223,14 +223,21 @@ static int32_t signed_bits(uint32_t value) {
     memcpy(&out, &value, sizeof(out));
     return out;
 }
-bool qa_bot_weights_evaluate(const qa_bot_weights *w, uint32_t weight, const int32_t *inventory,
-                             size_t inventory_count, const qa_bot_random_source *random,
-                             qa_bot_weight_workspace *work, float *out, qa_error *e) {
-    if (w == NULL || weight >= w->view.weight_count || work == NULL || out == NULL ||
-        (inventory_count != 0 && inventory == NULL) || (random != NULL && random->next == NULL)) {
-        qa_error_set(e, QA_ERROR_ARGUMENT, weight, "Invalid fuzzy evaluation request");
+static bool inventory_value(const qa_bot_inventory_view *inventory, int32_t index, int32_t *out,
+                            qa_error *e) {
+    if (inventory->read)
+        return inventory->read(inventory->context, index, out, e);
+    if (index < 0 || (size_t)index >= inventory->count) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, (size_t)(uint32_t)index,
+                     "Fuzzy inventory index is outside observation");
         return false;
     }
+    *out = inventory->data[index];
+    return true;
+}
+static bool evaluate(const qa_bot_weights *w, uint32_t weight,
+                     const qa_bot_inventory_view *inventory, const qa_bot_random_source *random,
+                     qa_bot_weight_workspace *work, float *out, qa_error *e) {
     if (!bot_grow((void **)&work->frames, &work->capacity, 1, sizeof(*work->frames), e))
         return false;
     work->count = 1;
@@ -253,19 +260,30 @@ bool qa_bot_weights_evaluate(const qa_bot_weights *w, uint32_t weight, const int
             continue;
         }
         if (f->stage == 3) {
-            last = f->scale * f->left + (1 - f->scale) * last;
+            const qa_bot_weight_node *lower = w->view.nodes + f->root,
+                                     *upper = w->view.nodes + f->right;
+            int32_t value;
+            if (!inventory_value(inventory, lower->inventory, &value, e))
+                return false;
+            int32_t numerator = signed_bits((uint32_t)value - (uint32_t)lower->threshold),
+                    denominator =
+                        signed_bits((uint32_t)upper->threshold - (uint32_t)lower->threshold);
+            if (!denominator) {
+                qa_error_set(e, QA_ERROR_FORMAT, f->root,
+                             "Fuzzy interpolation thresholds divide by zero");
+                return false;
+            }
+            float scale = (float)((int64_t)numerator / (int64_t)denominator);
+            last = scale * f->left + (1 - scale) * last;
             --work->count;
             continue;
         }
         uint32_t index = f->root;
         for (;;) {
             const qa_bot_weight_node *n = w->view.nodes + index;
-            if (n->inventory < 0 || (size_t)n->inventory >= inventory_count) {
-                qa_error_set(e, QA_ERROR_ARGUMENT, index,
-                             "Fuzzy inventory index is outside observation");
+            int32_t v;
+            if (!inventory_value(inventory, n->inventory, &v, e))
                 return false;
-            }
-            int32_t v = inventory[n->inventory];
             if (v < n->threshold) {
                 f->stage = 1;
                 if (!leaf(w, index, f->undecided, random, work, &last, e))
@@ -278,16 +296,10 @@ bool qa_bot_weights_evaluate(const qa_bot_weights *w, uint32_t weight, const int
                 break;
             }
             const qa_bot_weight_node *next = w->view.nodes + n->next;
+            if (!inventory_value(inventory, n->inventory, &v, e))
+                return false;
             if (v < next->threshold) {
-                int32_t numerator = signed_bits((uint32_t)v - (uint32_t)n->threshold),
-                        denominator =
-                            signed_bits((uint32_t)next->threshold - (uint32_t)n->threshold);
-                if (denominator == 0) {
-                    qa_error_set(e, QA_ERROR_FORMAT, index,
-                                 "Fuzzy interpolation thresholds divide by zero");
-                    return false;
-                }
-                f->scale = (float)((int64_t)numerator / (int64_t)denominator);
+                f->root = index;
                 f->right = n->next;
                 f->stage = 2;
                 if (!leaf(w, index, f->undecided, random, work, &last, e))
@@ -299,4 +311,29 @@ bool qa_bot_weights_evaluate(const qa_bot_weights *w, uint32_t weight, const int
     }
     *out = last;
     return true;
+}
+bool qa_bot_weights_evaluate_view(const qa_bot_weights *w, uint32_t weight,
+                                  const qa_bot_inventory_view *inventory,
+                                  const qa_bot_random_source *random, qa_bot_weight_workspace *work,
+                                  float *out, qa_error *e) {
+    if (w == NULL || weight >= w->view.weight_count || work == NULL || work->busy || out == NULL ||
+        inventory == NULL ||
+        (inventory->read == NULL && inventory->count != 0 && inventory->data == NULL) ||
+        (random != NULL && random->next == NULL)) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, weight, "Invalid or nested fuzzy evaluation request");
+        return false;
+    }
+    qa_bot_weights *retained = (qa_bot_weights *)w;
+    qa_bot_weights_retain(retained);
+    work->busy = true;
+    bool ok = evaluate(w, weight, inventory, random, work, out, e);
+    work->busy = false;
+    qa_bot_weights_release(retained);
+    return ok;
+}
+bool qa_bot_weights_evaluate(const qa_bot_weights *w, uint32_t weight, const int32_t *inventory,
+                             size_t count, const qa_bot_random_source *random,
+                             qa_bot_weight_workspace *work, float *out, qa_error *e) {
+    qa_bot_inventory_view view = {.data = inventory, .count = count};
+    return qa_bot_weights_evaluate_view(w, weight, &view, random, work, out, e);
 }

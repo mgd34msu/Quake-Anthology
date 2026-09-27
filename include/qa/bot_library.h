@@ -71,6 +71,15 @@ bool qa_bot_weights_restore(const qa_bot_weights_view *, qa_bot_weights **, qa_e
 int32_t qa_bot_weights_find(const qa_bot_weights *, const char *);
 bool qa_bot_weight_workspace_create(qa_bot_weight_workspace **, qa_error *);
 void qa_bot_weight_workspace_destroy(qa_bot_weight_workspace *);
+typedef struct qa_bot_inventory_view {
+    const int32_t *data;
+    size_t count;
+    void *context;
+    bool (*read)(void *, int32_t index, int32_t *, qa_error *);
+} qa_bot_inventory_view;
+bool qa_bot_weights_evaluate_view(const qa_bot_weights *, uint32_t, const qa_bot_inventory_view *,
+                                  const qa_bot_random_source *, qa_bot_weight_workspace *, float *,
+                                  qa_error *);
 bool qa_bot_weights_evaluate(const qa_bot_weights *, uint32_t, const int32_t *inventory, size_t,
                              const qa_bot_random_source *undecided, qa_bot_weight_workspace *,
                              float *, qa_error *);
@@ -124,6 +133,21 @@ typedef struct qa_bot_genetic_selection {
     qa_bot_genetic_status status;
     uint32_t parent1, parent2, child;
 } qa_bot_genetic_selection;
+typedef enum qa_bot_genetic_target {
+    QA_BOT_GENETIC_PARENT1,
+    QA_BOT_GENETIC_PARENT2,
+    QA_BOT_GENETIC_CHILD
+} qa_bot_genetic_target;
+typedef struct qa_bot_genetic_source {
+    const float *ranks;
+    void *context;
+    bool (*read)(void *, int32_t, float *, qa_error *);
+    bool (*write)(void *, qa_bot_genetic_target, int32_t, qa_error *);
+    void (*warning)(void *, const char *);
+} qa_bot_genetic_source;
+bool qa_bot_genetic_select_from(int32_t count, const qa_bot_genetic_source *,
+                                const qa_bot_random_source *, qa_bot_genetic_selection *,
+                                qa_error *);
 bool qa_bot_genetic_select(const float *, size_t, const qa_bot_random_source *,
                            qa_bot_genetic_selection *, qa_error *);
 
@@ -162,6 +186,10 @@ bool qa_bot_weapon_weight(qa_bot_weapon_selector *, uint32_t, const int32_t *, s
                           bool *found, qa_error *);
 bool qa_bot_weapon_choose(qa_bot_weapon_selector *, const int32_t *, size_t, uint32_t *,
                           qa_error *);
+bool qa_bot_weapon_weight_view(qa_bot_weapon_selector *, uint32_t, const qa_bot_inventory_view *,
+                               float *, bool *, qa_error *);
+bool qa_bot_weapon_choose_view(qa_bot_weapon_selector *, const qa_bot_inventory_view *, uint32_t *,
+                               qa_error *);
 typedef struct qa_bot_item_info {
     char classname[32], name[80], model[80];
     int32_t model_index, type, inventory, number;

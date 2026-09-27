@@ -48,6 +48,7 @@ bool qa_bot_navigation_trace(qa_bot_navigation *, qa_vec3 start, qa_vec3 end,
                              const qa_bounds *, qa_actor_id pass, uint32_t q3_mask,
                              qa_trace_result *, qa_error *);
 bool qa_bot_navigation_contents(qa_bot_navigation *, qa_vec3, int32_t *q3_contents, qa_error *);
+bool qa_bot_navigation_selected_contents(qa_bot_navigation *, qa_vec3, qa_point_contents *, qa_error *);
 bool qa_bot_navigation_swimming(qa_bot_navigation *, qa_vec3, bool *, qa_error *);
 bool qa_bot_navigation_drop(qa_bot_navigation *, qa_vec3, qa_bounds, qa_vec3 *, bool *, qa_error *);
 bool qa_bot_navigation_best(qa_bot_navigation *, qa_vec3, qa_bounds, qa_vec3 *, uint32_t *, qa_error *);

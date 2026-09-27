@@ -210,6 +210,8 @@ bool qa_navigation_trace_areas(qa_navigation *, qa_nav_workspace *, qa_vec3, qa_
 bool qa_navigation_bbox_areas(qa_navigation *, qa_nav_workspace *, qa_bounds, uint32_t *, size_t,
                               size_t *, qa_error *);
 bool qa_navigation_edge_allowed(qa_navigation *, qa_actor_id, uint32_t, bool *, qa_error *);
+bool qa_navigation_boarding_elevator(qa_navigation *, uint32_t area, const qa_nav_edge **,
+                                       qa_nav_entity_state *, bool *found, qa_error *);
 typedef struct qa_nav_train_ride {
     qa_nav_train_stop boarding, arrival;
 } qa_nav_train_ride;

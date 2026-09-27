@@ -176,6 +176,13 @@ bool qa_bot_navigation_swimming(qa_bot_navigation *n, qa_vec3 point, bool *out, 
     *out = (contents & (8 | 16 | 32)) != 0;
     return true;
 }
+bool qa_bot_navigation_selected_contents(qa_bot_navigation *n, qa_vec3 point,
+                                         qa_point_contents *out, qa_error *e) {
+    if (!n || !out) return bot_nav_fail(e, "invalid selected bot point contents");
+    qa_point_query query = {.point = point,
+        .policy = qa_navigation_graph(n->runtime)->profile.policy, .pass_actor = n->actor};
+    return qa_world_point_contents(n->world, &query, out, e);
+}
 bool qa_bot_navigation_drop(qa_bot_navigation *n, qa_vec3 origin, qa_bounds bounds,
                             qa_vec3 *out, bool *success, qa_error *e) {
     if (!n || !out || !success) return bot_nav_fail(e, "missing bot floor output");

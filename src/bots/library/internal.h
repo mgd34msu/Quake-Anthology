@@ -27,10 +27,11 @@ struct qa_bot_weights {
 typedef struct bot_weight_frame {
     uint32_t root, right;
     unsigned stage;
-    float scale, left;
+    float left;
     bool undecided;
 } bot_weight_frame;
 struct qa_bot_weight_workspace {
+    bool busy;
     bot_weight_frame *frames;
     size_t count, capacity;
 };

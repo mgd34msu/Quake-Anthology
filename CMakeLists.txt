@@ -442,6 +442,15 @@ add_library(qa_bots STATIC
     src/bots/chat/reply_parse.c
     src/bots/chat/state.c
     src/bots/chat/strings.c
+    src/bots/movement/controller.c
+    src/bots/movement/direction.c
+    src/bots/movement/ground.c
+    src/bots/movement/ladder.c
+    src/bots/movement/queries.c
+    src/bots/movement/routing.c
+    src/bots/movement/special.c
+    src/bots/movement/state.c
+    src/bots/movement/view.c
     src/bots/navigation/core.c
     src/bots/navigation/info.c
     src/bots/navigation/jump_pad.c
