@@ -1,0 +1,124 @@
+#ifndef QA_MODES_SAVE_H
+#define QA_MODES_SAVE_H
+
+#include "qa/horde.h"
+
+typedef struct qa_mode_member_state {
+    qa_actor_id actor;
+    qa_mode_statistics stats;
+    qa_actor_id relic, flag;
+    qa_team_id last_team;
+    uint64_t tech_sound_ns, regen_ns, notice_ns, respawn_ns, team_switch_ns;
+    int32_t regen_frame, extra_flags, location, spawn_state, suicide_count, introduction_frames;
+    uint32_t ghost_code;
+    uint32_t vote_calls[4];
+    int8_t ballots[4];
+    bool joined, ready, admin, observer_jump;
+} qa_mode_member_state;
+typedef struct qa_mode_ghost_state {
+    qa_actor_id actor;
+    qa_string_id name;
+    qa_team_id team;
+    qa_mode_statistics stats;
+    uint32_t code;
+    int32_t score;
+} qa_mode_ghost_state;
+typedef struct qa_horde_monster_state {
+    qa_actor_id actor;
+    bool zombie, counted, death_pending;
+    uint64_t kill_ns;
+} qa_horde_monster_state;
+typedef enum qa_horde_loot_kind {
+    HORDE_AMMO,
+    HORDE_HEALTH,
+    HORDE_ARMOR,
+    HORDE_SILVER,
+    HORDE_GOLD,
+    HORDE_POWER
+} qa_horde_loot_kind;
+typedef struct qa_horde_loot_state {
+    qa_actor_id actor;
+    qa_horde_loot_kind kind;
+    size_t point;
+    qa_item_id item;
+    float amount, capacity, alpha;
+    uint64_t fade_ns;
+} qa_horde_loot_state;
+typedef struct qa_horde_checkpoint {
+    qa_horde_options options;
+    qa_horde_view value;
+    qa_horde_point *points;
+    size_t point_count;
+    qa_horde_monster_state *monsters;
+    size_t monster_count;
+    qa_horde_loot_state *loot;
+    size_t loot_count;
+    bool prepared, checking, finishing;
+} qa_horde_checkpoint;
+typedef struct qa_mode_checkpoint {
+    qa_mode_id id;
+    qa_mode_view value;
+    qa_mode_member_state *members;
+    size_t member_count;
+    qa_mode_ghost_state *ghosts;
+    size_t ghost_count;
+    qa_mode_spawnpoint *spawns;
+    size_t spawn_count;
+    qa_actor_id bases[3], ball, tag, tag_owner, last_ball_touch;
+    qa_actor_id last_spawns[3];
+    qa_mode_vote votes[4];
+    uint64_t vote_started[4], ready_since_ns, next_second_ns;
+    uint64_t flag_sound_ns[3], attack_sound_ns[3];
+    uint64_t relic_spawn_ns, team_location_ns;
+    size_t rune_cursor;
+    int32_t next_location;
+    int32_t tag_count, remaining_seconds;
+    bool countdown_announced, restart_sent, relics_started, rune_forward;
+    qa_horde_checkpoint *horde;
+} qa_mode_checkpoint;
+typedef struct qa_mode_object_checkpoint {
+    qa_actor_id actor;
+    qa_mode_id mode;
+    qa_mode_object_spec spec;
+    qa_mode_object_view value;
+    qa_vec3 home;
+    qa_actor_id base, dropped_actor;
+    qa_actor_collision collision;
+    qa_physics_properties physics;
+    uint64_t next_ns, owner_until_ns, animation_ns, expire_ns, born_ns;
+    int32_t tag_stage;
+    bool targets_used, has_physics, dropped, global_animation;
+} qa_mode_object_checkpoint;
+typedef struct qa_mode_player_checkpoint {
+    qa_match_player value;
+    qa_actor_owner external_owner;
+} qa_mode_player_checkpoint;
+typedef struct qa_mode_objective_checkpoint {
+    qa_actor_owner owner;
+    qa_string_id id;
+    bool campaign_gate, bot_goal;
+} qa_mode_objective_checkpoint;
+typedef struct qa_modes_checkpoint {
+    uint32_t version;
+    uint64_t random, attack_sequence;
+    uint64_t *mode_generations;
+    size_t generation_count;
+    qa_mode_player_checkpoint *players;
+    size_t player_count;
+    qa_mode_checkpoint *modes;
+    size_t mode_count;
+    qa_mode_object_checkpoint *objects;
+    size_t object_count;
+    qa_mode_objective_checkpoint *external_objectives;
+    size_t external_objective_count;
+} qa_modes_checkpoint;
+/* Owned typed memory only. The save codec encodes individual fields, remaps
+ * every actor/resource ID, and restores shared stores exactly once. External
+ * score/team/objective owners restore and bind themselves before this restore.
+ * Restore targets a prepared modes service with no active native modes; a
+ * failure discards that candidate along with the prepared world. */
+bool qa_modes_checkpoint_capture(qa_modes *, qa_modes_checkpoint *, qa_error *);
+bool qa_modes_checkpoint_restore(qa_modes *, const qa_modes_checkpoint *, qa_error *);
+void qa_modes_checkpoint_free(qa_modes_checkpoint *);
+
+#endif

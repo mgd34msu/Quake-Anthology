@@ -314,6 +314,31 @@ add_library(qa_campaign STATIC
     src/campaign/q1/sources.c)
 target_link_libraries(qa_campaign PUBLIC qa_session qa_builtin)
 
+add_library(qa_modes STATIC
+    src/gameplay/modes/arena.c
+    src/gameplay/modes/checkpoint.c
+    src/gameplay/modes/commands.c
+    src/gameplay/modes/core.c
+    src/gameplay/modes/damage.c
+    src/gameplay/modes/deathball.c
+    src/gameplay/modes/equipment.c
+    src/gameplay/modes/flags.c
+    src/gameplay/modes/horde.c
+    src/gameplay/modes/items.c
+    src/gameplay/modes/map.c
+    src/gameplay/modes/match.c
+    src/gameplay/modes/objectives.c
+    src/gameplay/modes/objects.c
+    src/gameplay/modes/placement.c
+    src/gameplay/modes/relics.c
+    src/gameplay/modes/rogue_tag.c
+    src/gameplay/modes/scoring.c
+    src/gameplay/modes/tag.c
+    src/gameplay/modes/team_info.c
+    src/gameplay/modes/teams.c
+    src/gameplay/modes/vote.c)
+target_link_libraries(qa_modes PUBLIC qa_game_q1 qa_game_q2 qa_game_q3)
+
 add_library(qa_audio STATIC
     src/audio/bank.c
     src/audio/codecs.c
