@@ -155,6 +155,11 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
                                  .value.number = entity->map->current_ammo};
         return true;
     }
+    if (entity->map && entity->map->kind == Q1_MAP_TIME_MACHINE && !strcmp(key, "pain_finished")) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+                                 .value.number = entity->map->cooldown};
+        return true;
+    }
     if (entity->map && (!strcmp(key, "height") ||
                         (entity->map->kind == Q1_MAP_ROGUE_PLAT && !strcmp(key, "cnt")))) {
         *out =
@@ -173,6 +178,12 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
         !strcmp(key, "rogue:elvButnDir")) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
                                  .value.number = g->maps->elevator_direction};
+        return true;
+    }
+    if (g->maps && qa_actor_id_equal(actor, g->maps->world_actor) &&
+        !strcmp(key, "rogue:cutscene_running")) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+                                 .value.number = g->maps->rogue_cutscene};
         return true;
     }
     if (entity->map &&
@@ -379,11 +390,12 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
                    qa_error *error) {
     if (!source)
         return true;
-    const float numbers[] = {source->height,        source->lip,         source->width,
-                             source->length,        source->pause_time,  source->volume,
-                             source->duration,      source->distance,    source->next_think_seconds,
-                             source->counter_value, source->spawn_multi, source->spawn_silent,
-                             source->gravity,       source->current_ammo};
+    const float numbers[] = {
+        source->height,        source->lip,          source->width,
+        source->length,        source->pause_time,   source->volume,
+        source->duration,      source->distance,     source->next_think_seconds,
+        source->counter_value, source->spawn_multi,  source->spawn_silent,
+        source->gravity,       source->current_ammo, source->pain_finished};
     for (size_t i = 0; i < sizeof(numbers) / sizeof(*numbers); ++i)
         if (!isfinite(numbers[i]))
             return q1_map_fail(error, "nonfinite Q1 authored field");
@@ -428,6 +440,8 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
     state->spawn_silent = source->spawn_silent;
     state->gravity = source->gravity;
     state->current_ammo = source->current_ammo;
+    if (state->kind == Q1_MAP_TIME_MACHINE)
+        state->cooldown = source->pain_finished;
     if (source->model && source->model[0] == '*') {
         const char *number = source->model + 1;
         char *end;
@@ -454,6 +468,8 @@ static q1_map_kind classify(const char *name) {
                    {"pendulum", Q1_MAP_PENDULUM},
                    {"func_new_plat", Q1_MAP_ROGUE_PLAT},
                    {"func_elvtr_button", Q1_MAP_ELEVATOR_BUTTON},
+                   {"item_time_machine", Q1_MAP_TIME_MACHINE},
+                   {"item_time_core", Q1_MAP_TIME_CORE},
                    {"func_counter", Q1_MAP_HIP_COUNTER},
                    {"func_oncount", Q1_MAP_ONCOUNT},
                    {"trigger_command", Q1_MAP_ONCOUNT},
@@ -561,7 +577,7 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
                   qa_error *error) {
     q1_map_kind kind = classify(spawn->classname);
     if (g->options.program != QA_Q1_ROGUE &&
-        (kind == Q1_MAP_PENDULUM || q1_map_is_rogue_plat(kind)))
+        (kind == Q1_MAP_PENDULUM || q1_map_is_rogue_plat(kind) || q1_map_is_time_actor(kind)))
         kind = Q1_MAP_FIELDS;
     if (g->options.program != QA_Q1_MG3 &&
         (kind == Q1_MAP_CANCEL_PAUSE || kind == Q1_MAP_SWITCH_PATH))
@@ -574,12 +590,16 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     if (!*handled && !spawn->map_fields)
         return true;
     q1_map_state *state = q1_map_allocate(g, entity, error);
-    if (!state || !fields(g, entity, spawn->map_fields, error))
+    if (!state)
         return false;
     state->kind = kind;
+    if (!fields(g, entity, spawn->map_fields, error))
+        return false;
     if (!*handled)
         return true;
     entity->kind = Q1_MAP;
+    if (q1_map_is_time_actor(kind))
+        return q1_map_time_spawn(g, entity, error);
     if (q1_map_is_rogue_plat(kind))
         return q1_map_rogue_plat_spawn(g, entity, error);
     if (kind == Q1_MAP_PENDULUM)
@@ -791,6 +811,8 @@ bool q1_map_blocked(qa_q1_game *g, q1_actor *entity, qa_actor_id obstacle, qa_er
 }
 bool q1_map_reaction(qa_q1_game *g, q1_actor *entity, const qa_damage_outcome *outcome,
                      qa_error *error) {
+    if (q1_map_is_time_actor(entity->map->kind))
+        return q1_map_time_reaction(g, entity, outcome, error);
     if (q1_map_is_rogue_plat(entity->map->kind))
         return q1_map_rogue_plat_reaction(g, entity, outcome, error);
     if (entity->map->kind == Q1_MAP_THRESHOLD)
@@ -815,6 +837,8 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_map_state *state = entity->map;
     q1_map_action action = state->action;
     state->action = Q1_MAP_IDLE;
+    if (action >= Q1_MAP_TIME_BOOM_THINK && action <= Q1_MAP_TIME_CRASH_THINK)
+        return q1_map_time_think(g, entity, action, error);
     if (action >= Q1_MAP_ROGUE_PLAT_UP && action <= Q1_MAP_ELEVATOR_BUTTON_DONE)
         return q1_map_rogue_plat_think(g, entity, action, error);
     if (action == Q1_MAP_PENDULUM_SWING)

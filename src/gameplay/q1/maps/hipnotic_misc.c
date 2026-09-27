@@ -111,11 +111,13 @@ bool q1_map_multi_explosion_begin(qa_q1_game *g, q1_actor *entity, qa_error *err
     return q1_map_targets(g, entity, entity->activator, error);
 }
 static bool explode(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    qa_actor_id id = entity->id;
     if (q1_classnamed(g, entity->id, "func_multi_exploder"))
         return q1_multi_explosion_think(g, entity, error);
     if (!q1_map_targets(g, entity, entity->activator, error))
         return false;
-    if (!q1_alive(g, entity->id))
+    entity = q1_entity(g, id);
+    if (!entity)
         return true;
     qa_string_id resource;
     if (!qa_builtin_resource(&g->services,
@@ -123,29 +125,34 @@ static bool explode(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                              &resource, error) ||
         !sound(g, entity, resource, 0, error))
         return false;
-    if (!q1_alive(g, entity->id))
+    entity = q1_entity(g, id);
+    if (!entity)
         return true;
     if (!q1_radius(g, entity->id, entity->owner, entity->damage, entity->id, QA_Q1_WEAPON_COUNT,
                    error))
         return false;
-    if (!q1_alive(g, entity->id))
+    entity = q1_entity(g, id);
+    if (!entity)
         return true;
     qa_body_state body;
-    if (!qa_world_body_read(g->services.world, entity->id, &body, error))
+    if (!qa_world_body_read(g->services.world, id, &body, error))
         return false;
+    entity = q1_entity(g, id);
+    if (!entity)
+        return true;
     if ((entity->spawnflags & 1) &&
         !q1_effect(g, QA_BUILTIN_EXPLOSION, entity->id, body.origin, 1, 0, error))
         return false;
-    if (!q1_alive(g, entity->id))
+    entity = q1_entity(g, id);
+    if (!entity)
         return true;
-    body.velocity = qa_v3(0, 0, 0);
-    entity->physics.solid = QA_PHYSICS_NOT_SOLID;
-    entity->physics.motion = QA_PHYSICS_STATIONARY;
-    entity->map->touch_enabled = false;
-    entity->frame = 0;
-    return q1_model(g, entity, "progs/s_explod.spr", error) &&
-           qa_world_body_write(g->services.world, entity->id, &body, error) &&
-           q1_link(g, entity, error) && q1_schedule(g, entity, .1, Q1_THINK_SPRITE, error);
+    if (!q1_sprite_prepare(g, entity, error))
+        return false;
+    entity = q1_entity(g, id);
+    if (!entity || !q1_link(g, entity, error))
+        return entity == NULL;
+    entity = q1_entity(g, id);
+    return !entity || q1_schedule(g, entity, .1, Q1_THINK_SPRITE, error);
 }
 static bool rubble(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_body_state source;

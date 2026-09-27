@@ -92,22 +92,39 @@ fail:
     return false;
 }
 
-bool q1_sprite_explosion(qa_q1_game *g, q1_actor *entity, qa_error *error) {
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, entity->id, &body, error))
-        return false;
-    if (!q1_effect(g, QA_BUILTIN_EXPLOSION, entity->id, body.origin, 0, 0, error))
-        return false;
-    if (!q1_alive(g, entity->id))
-        return true;
-    entity->kind = Q1_TIMER;
+bool q1_sprite_prepare(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    qa_actor_id id = entity->id;
+    entity->touch_disabled = true;
     entity->physics.solid = QA_PHYSICS_NOT_SOLID;
     entity->physics.motion = QA_PHYSICS_STATIONARY;
     entity->frame = 0;
+    if (!q1_model(g, entity, "progs/s_explod.spr", error))
+        return false;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, id, &body, error))
+        return false;
+    if (!q1_alive(g, id))
+        return true;
     body.velocity = qa_v3(0, 0, 0);
-    return q1_model(g, entity, "progs/s_explod.spr", error) &&
-           qa_world_body_write(g->services.world, entity->id, &body, error) &&
-           q1_link(g, entity, error) && q1_schedule(g, entity, 0.1, Q1_THINK_SPRITE, error);
+    return qa_world_body_write(g->services.world, id, &body, error);
+}
+bool q1_sprite_explosion(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    qa_actor_id id = entity->id;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, id, &body, error) ||
+        !q1_effect(g, QA_BUILTIN_EXPLOSION, id, body.origin, 0, 0, error))
+        return false;
+    entity = q1_entity(g, id);
+    if (!entity)
+        return true;
+    entity->kind = Q1_TIMER;
+    if (!q1_sprite_prepare(g, entity, error))
+        return false;
+    entity = q1_entity(g, id);
+    if (!entity || !q1_link(g, entity, error))
+        return entity == NULL;
+    entity = q1_entity(g, id);
+    return !entity || q1_schedule(g, entity, .1, Q1_THINK_SPRITE, error);
 }
 bool q1_explode(qa_q1_game *g, q1_actor *entity, qa_actor_id direct, qa_error *error) {
     q1_projectile projectile = entity->state.projectile;

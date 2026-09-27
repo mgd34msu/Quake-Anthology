@@ -416,6 +416,7 @@ bool q1_rocket_ogre_frame(qa_q1_game *, q1_actor *, const char *, qa_error *);
 bool q1_rocket_ogre_override(const char *);
 bool q1_rocket_ogre_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_sprite_explosion(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_sprite_prepare(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_hipnotic_hammer_base(qa_q1_game *, q1_player *, qa_vec3, qa_q1_weapon, qa_error *);
 extern const q1_frame_operation q1_frame_operations[];
 extern const size_t q1_frame_count;

@@ -44,6 +44,10 @@ typedef enum q1_map_kind {
     Q1_MAP_ROGUE_PLAT,
     Q1_MAP_ELEVATOR_BUTTON,
     Q1_MAP_ROGUE_PLAT_TRIGGER,
+    Q1_MAP_TIME_MACHINE,
+    Q1_MAP_TIME_CORE,
+    Q1_MAP_TIME_BOOM,
+    Q1_MAP_TIME_STOP,
     Q1_MAP_DOOR,
     Q1_MAP_BUTTON,
     Q1_MAP_SECRET_DOOR,
@@ -130,9 +134,14 @@ typedef enum q1_map_action {
     Q1_MAP_ELEVATOR_STOP,
     Q1_MAP_ELEVATOR_BUTTON_WAIT,
     Q1_MAP_ELEVATOR_BUTTON_RETURN,
-    Q1_MAP_ELEVATOR_BUTTON_DONE
+    Q1_MAP_ELEVATOR_BUTTON_DONE,
+    Q1_MAP_TIME_BOOM_THINK,
+    Q1_MAP_TIME_STOP_SHAKE,
+    Q1_MAP_TIME_FALL,
+    Q1_MAP_TIME_CRASH_THINK
 } q1_map_action;
 typedef enum q1_map_position { Q1_MAP_BOTTOM, Q1_MAP_UP, Q1_MAP_TOP, Q1_MAP_DOWN } q1_map_position;
+typedef enum q1_time_reaction { Q1_TIME_NO_REACTION, Q1_TIME_PAIN, Q1_TIME_CRASH } q1_time_reaction;
 typedef struct q1_door_group {
     struct q1_door_group *next;
     qa_actor_id *members;
@@ -184,6 +193,7 @@ struct q1_map_state {
         qa_vec3 push_origin;
         qa_actor_id spawn_master;
         uint8_t pendulum_step;
+        q1_time_reaction time_reaction;
         struct {
             float ticks;
             bool running, stop_after_cycle;
@@ -203,6 +213,7 @@ struct q1_map_runtime {
     q1_map_state *allocated, *spare, *retired;
     q1_door_group *door_groups;
     qa_actor_id world_actor, electrodes[2];
+    qa_actor_id time_machine;
     double lightning_end;
     float pendulum_impact, elevator_direction;
     qa_q1_map_finale_view finale;
@@ -210,6 +221,7 @@ struct q1_map_runtime {
     double earthquake_end;
     bool quake_active;
     bool final_new_game_travel;
+    bool rogue_cutscene;
     uint32_t total_secrets, found_secrets;
 };
 
@@ -256,6 +268,12 @@ bool q1_map_rogue_plat_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_rogue_plat_blocked(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_rogue_plat_reaction(qa_q1_game *, q1_actor *, const qa_damage_outcome *, qa_error *);
 bool q1_map_rogue_plat_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
+static inline bool q1_map_is_time_actor(q1_map_kind kind) {
+    return kind >= Q1_MAP_TIME_MACHINE && kind <= Q1_MAP_TIME_STOP;
+}
+bool q1_map_time_spawn(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_map_time_reaction(qa_q1_game *, q1_actor *, const qa_damage_outcome *, qa_error *);
+bool q1_map_time_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
 bool q1_map_train_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_train_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
 bool q1_map_train_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
