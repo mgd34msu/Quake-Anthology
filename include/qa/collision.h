@@ -78,6 +78,7 @@ bool qa_collision_create(const qa_bsp_view *, qa_collision_geometry **out, qa_er
 void qa_collision_destroy(qa_collision_geometry *);
 const qa_bsp_view *qa_collision_bsp(const qa_collision_geometry *);
 qa_collision_family qa_collision_geometry_family(const qa_collision_geometry *);
+uint64_t qa_collision_map_identity(const qa_collision_geometry *);
 size_t qa_collision_model_count(const qa_collision_geometry *);
 bool qa_collision_model_bounds(const qa_collision_geometry *, uint32_t model, qa_bounds *, qa_error *);
 /* Q2 .mat sidecar contents: first 15 bytes up to NUL. Invalid ASCII material

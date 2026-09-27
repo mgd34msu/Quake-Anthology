@@ -301,6 +301,11 @@ qa_collision_family qa_collision_geometry_family(const qa_collision_geometry *ge
     return geometry == NULL ? (qa_collision_family)0 : geometry->family;
 }
 
+uint64_t qa_collision_map_identity(const qa_collision_geometry *geometry)
+{
+    return geometry == NULL ? 0 : geometry->map_identity;
+}
+
 size_t qa_collision_model_count(const qa_collision_geometry *geometry)
 {
     return geometry == NULL ? 0 : geometry->model_count;
