@@ -43,6 +43,13 @@ void qa_inventory_actor_released(qa_inventory *, qa_actor_record);
 bool qa_inventory_create_actor(qa_inventory *, qa_actor_id, const qa_inventory_entry *, size_t, qa_error *);
 bool qa_inventory_bind(qa_inventory *, qa_actor_id, const qa_inventory_binding *, qa_error *);
 bool qa_inventory_bind_items(qa_inventory *, qa_actor_id, const qa_inventory_items *, qa_inventory_lease *, qa_error *);
+/* Native definitions share primary count storage. An explicitly admitted
+ * external item override shadows these actions until its lease closes.
+ * Closing definitions never removes counts or another owner's pickup claim. */
+bool qa_inventory_bind_definitions(qa_inventory *, qa_actor_id, qa_actor_owner,
+    const qa_item_definition *, size_t,
+    bool (*invoke)(void *, qa_item_id, qa_item_action, qa_error *), void *context,
+    qa_inventory_lease *, qa_error *);
 bool qa_inventory_lease_current(qa_inventory *, qa_inventory_lease);
 bool qa_inventory_close_items(qa_inventory *, qa_inventory_lease, qa_error *);
 bool qa_inventory_source_stored(qa_inventory *, qa_inventory_lease, const qa_inventory_change *, size_t, qa_error *);
@@ -63,7 +70,7 @@ bool qa_inventory_adjust(qa_inventory *, qa_actor_id, qa_item_id, double, double
 qa_operation *qa_inventory_operation(qa_inventory *, qa_inventory_operation_kind);
 bool qa_inventory_validate_entry(const qa_inventory_entry *, qa_inventory_entry *normalized, qa_error *);
 bool qa_inventory_preview_give(const qa_inventory_entry *, double, qa_inventory_entry *, double *, bool *writes, qa_error *);
-typedef struct qa_inventory_source_group { qa_actor_owner owner; qa_item_admission *items; size_t count; } qa_inventory_source_group;
+typedef struct qa_inventory_source_group { qa_actor_owner owner; qa_item_admission *items; size_t count; bool definitions_only; } qa_inventory_source_group;
 typedef struct qa_inventory_source_snapshot {
     qa_inventory_entry *primary;
     size_t primary_count;

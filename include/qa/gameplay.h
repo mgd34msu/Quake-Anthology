@@ -146,6 +146,10 @@ typedef struct qa_combat_hooks {
     bool (*before_reaction)(void *, const qa_damage_outcome *, qa_error *);
     bool (*reaction)(void *, const qa_damage_outcome *, qa_error *);
     bool (*confirmed)(void *, const qa_damage_outcome *, qa_error *);
+    /* OR ordinary timed invulnerability with primary godmode. Team Arena's
+     * bubble uses request-aware damage_allowed instead (juiced bypass).
+     * Read-only; each provider keeps its own expiry and checkpoint state. */
+    bool (*invulnerable)(void *, qa_actor_id);
 } qa_combat_hooks;
 typedef enum qa_protection_admission { QA_PROTECTION_CLAIM, QA_PROTECTION_REPLACE_PRIMARY, QA_PROTECTION_REPLACE_CURRENT } qa_protection_admission;
 typedef struct qa_protection_claim {
@@ -216,6 +220,9 @@ bool qa_combat_bind(qa_combat *, qa_actor_id, const qa_combat_binding *, bool re
  * binding it does not create another spendable reservoir. */
 bool qa_combat_bind_power_cells(qa_combat *, qa_actor_id, const qa_power_cells_binding *, qa_error *);
 bool qa_combat_read(qa_combat *, qa_actor_id, qa_combat_state *, qa_error *);
+/* Uncomposed primary state for editing traits. Unlike effective read, this
+ * cannot copy another provider's temporary protection into primary godmode. */
+bool qa_combat_read_traits(qa_combat *, qa_actor_id, qa_combat_state *, qa_error *);
 /* Checkpoint reads exclude component overlays and include authoritative fuel.
  * External source storage is identified by local=false and saves itself. */
 bool qa_combat_primary_read(qa_combat *, qa_actor_id, qa_combat_state *, bool *local, qa_error *);

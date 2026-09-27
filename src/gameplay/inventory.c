@@ -7,7 +7,7 @@
 typedef struct item_group {
     struct item_group *next;
     uint64_t serial;
-    bool active;
+    bool active, definitions_only;
     qa_actor_owner owner;
     qa_item_admission *items;
     size_t count;
@@ -100,7 +100,17 @@ static void release_store(qa_inventory *table, inventory_store *store)
 static item_group *group_for(inventory_store *store, qa_item_id item)
 {
     for (item_group *g = store->groups; g; g = g->next)
-        if (g->active) for (size_t i = 0; i < g->count; ++i)
+        if (g->active && !g->definitions_only) for (size_t i = 0; i < g->count; ++i)
+            if (g->items[i].definition.item == item) return g;
+    return NULL;
+}
+
+static item_group *definition_for(inventory_store *store, qa_item_id item)
+{
+    item_group *storage = group_for(store, item);
+    if (storage) return storage;
+    for (item_group *g = store->groups; g; g = g->next)
+        if (g->active && g->definitions_only) for (size_t i = 0; i < g->count; ++i)
             if (g->items[i].definition.item == item) return g;
     return NULL;
 }
@@ -230,6 +240,8 @@ static bool write_entry(qa_inventory *table, inventory_store *store, item_group 
 
 static bool group_validate(qa_inventory *table, inventory_store *store, item_group *group, qa_error *e)
 {
+    if (group->definitions_only)
+        return fail(e, QA_ERROR_ARGUMENT, "Native definitions have no external storage");
     size_t count;
     if (!binding_count(table, store, group, &count, e)) return false;
     if (count != group->count) return fail(e, QA_ERROR_ARGUMENT, "Source item storage differs from admitted definitions");
@@ -385,6 +397,51 @@ done:
     release_store(table, store); return ok;
 }
 
+bool qa_inventory_bind_definitions(qa_inventory *table, qa_actor_id actor,
+    qa_actor_owner owner, const qa_item_definition *definitions, size_t count,
+    bool (*invoke)(void *, qa_item_id, qa_item_action, qa_error *), void *context,
+    qa_inventory_lease *out, qa_error *e)
+{
+    if (!out || !count || !definitions || count > SIZE_MAX / sizeof(qa_item_admission))
+        return fail(e, QA_ERROR_ARGUMENT, "Invalid native item definitions");
+    inventory_store *store = acquire(table, actor);
+    if (!store) return fail(e, QA_ERROR_NOT_FOUND, "Native definitions require primary inventory");
+    item_group *group = calloc(1, sizeof(*group));
+    bool ok = false;
+    if (!group) { fail(e, QA_ERROR_MEMORY, "Cannot allocate native definitions"); goto done; }
+    group->items = calloc(count, sizeof(*group->items));
+    if (!group->items) { fail(e, QA_ERROR_MEMORY, "Cannot allocate native item catalog"); goto failed; }
+    group->count = count; group->owner = owner; group->definitions_only = true;
+    group->action_context = context; group->invoke = invoke;
+    for (size_t i = 0; i < count; ++i) {
+        const qa_item_definition *definition = &definitions[i];
+        if (!definition->item || definition->owner != owner || !definition->label || !*definition->label ||
+            (definition->actions & ~(uint32_t)(QA_ITEM_USE | QA_ITEM_DROP)) ||
+            (definition->actions && !invoke) || definition_for(store, definition->item)) {
+            fail(e, QA_ERROR_ARGUMENT, "Native item definition conflicts with owner or actions"); goto failed;
+        }
+        for (size_t j = 0; j < i; ++j) if (definitions[j].item == definition->item) {
+            fail(e, QA_ERROR_ARGUMENT, "Duplicate native item definition"); goto failed;
+        }
+        size_t length = strlen(definition->label);
+        char *label = malloc(length + 1);
+        if (!label) { fail(e, QA_ERROR_MEMORY, "Cannot copy native item label"); goto failed; }
+        memcpy(label, definition->label, length + 1);
+        group->items[i].definition = *definition;
+        group->items[i].definition.label = label;
+    }
+    if (table->serial == UINT64_MAX) { fail(e, QA_ERROR_ARGUMENT, "Inventory lease serial exhausted"); goto failed; }
+    group->serial = ++table->serial; group->active = true;
+    item_group **link = &store->groups;
+    while (*link) link = &(*link)->next;
+    *link = group;
+    *out = (qa_inventory_lease){actor, group->serial}; ok = true; goto done;
+failed:
+    free_group(group);
+done:
+    release_store(table, store); return ok;
+}
+
 static item_group *lease_group(inventory_store *store, uint64_t serial)
 {
     for (item_group *group = store->groups; group; group = group->next)
@@ -408,7 +465,7 @@ bool qa_inventory_close_items(qa_inventory *table, qa_inventory_lease lease, qa_
     item_group *group = lease_group(store, lease.serial);
     if (group) {
         group->active = false;
-        for (size_t i = 0; i < group->count; ++i) {
+        for (size_t i = 0; !group->definitions_only && i < group->count; ++i) {
             pickup_claim *claim = store->pickups;
             while (claim && claim->item != group->items[i].definition.item) claim = claim->next;
             if (claim) {
@@ -459,7 +516,7 @@ bool qa_inventory_entries(qa_inventory *table, qa_actor_id actor, qa_inventory_e
         ok = binding_at(table, store, NULL, i, &entry, e);
         if (ok && !group_for(store, entry.item)) { if (total < capacity) out[total] = entry; ++total; }
     }
-    for (item_group *g = store->groups; ok && g; g = g->next) if (g->active) {
+    for (item_group *g = store->groups; ok && g; g = g->next) if (g->active && !g->definitions_only) {
         ok = group_validate(table, store, g, e);
         for (size_t i = 0; ok && i < g->count; ++i) {
             qa_inventory_entry entry;
@@ -517,7 +574,7 @@ bool qa_inventory_item_action(qa_inventory *table, qa_actor_id actor, qa_item_id
     if (action != QA_ITEM_USE && action != QA_ITEM_DROP) return fail(e, QA_ERROR_ARGUMENT, "Invalid item action");
     inventory_store *store = acquire(table, actor);
     if (!store) return fail(e, QA_ERROR_NOT_FOUND, "Item action storage retired");
-    item_group *group = group_for(store, item);
+    item_group *group = definition_for(store, item);
     bool declared = false;
     if (group) for (size_t i = 0; i < group->count; ++i)
         if (group->items[i].definition.item == item) declared = (group->items[i].definition.actions & action) != 0;
@@ -534,7 +591,11 @@ bool qa_inventory_item_definitions(qa_inventory *table, qa_actor_id actor,
     size_t total = 0;
     if (store) {
         for (item_group *g = store->groups; g; g = g->next) if (g->active)
-            for (size_t i = 0; i < g->count; ++i) { if (total < capacity) out[total] = g->items[i].definition; ++total; }
+            for (size_t i = 0; i < g->count; ++i) {
+                if (definition_for(store, g->items[i].definition.item) != g) continue;
+                if (total < capacity) out[total] = g->items[i].definition;
+                ++total;
+            }
         release_store(table, store);
     }
     *count = total;
@@ -816,6 +877,7 @@ bool qa_inventory_source_items(qa_inventory *table, qa_actor_id actor,
         if (result.group_count >= groups) { ok = fail(e, QA_ERROR_ARGUMENT, "Source inventory changed during snapshot"); break; }
         qa_inventory_source_group *group = &result.groups[result.group_count++];
         group->owner = g->owner;
+        group->definitions_only = g->definitions_only;
         group->items = calloc(g->count, sizeof(*group->items));
         if (!group->items) { ok = fail(e, QA_ERROR_MEMORY, "Cannot copy source inventory group"); break; }
         for (size_t i = 0; i < g->count; ++i) {

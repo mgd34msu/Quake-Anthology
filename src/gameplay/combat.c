@@ -67,7 +67,20 @@ static bool read_state(qa_combat *combat, qa_combat_record *entry, qa_combat_sta
         --combat->active_calls;
         if (record(combat, actor) != entry || entry->serial != serial) return qa_combat_argument(error, "combat owner changed during team resolution");
     }
+    if (combat->hooks.invulnerable) {
+        ++combat->active_calls;
+        bool protected = combat->hooks.invulnerable(combat->hooks.context, actor);
+        --combat->active_calls;
+        if (record(combat, actor) != entry || entry->serial != serial)
+            return qa_combat_argument(error, "combat owner changed during protection resolution");
+        out->invulnerable = out->invulnerable || protected;
+    }
     return state_valid(out, error);
+}
+bool qa_combat_read_traits(qa_combat *combat, qa_actor_id actor, qa_combat_state *out, qa_error *error) {
+    qa_combat_record *entry; qa_combat_state state;
+    if (!out || !require_record(combat, actor, &entry, error) || !primary_read(combat, entry, &state, error)) return false;
+    *out = state; return true;
 }
 bool qa_combat_read(qa_combat *combat, qa_actor_id actor, qa_combat_state *out, qa_error *error) {
     qa_combat_record *entry; qa_combat_state state;
