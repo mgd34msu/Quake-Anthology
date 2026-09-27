@@ -250,11 +250,26 @@ uint64_t qa_combat_storage_serial(const qa_combat *combat, qa_actor_id actor) {
     const qa_combat_record *entry = &combat->records[actor.slot];
     return entry->active && qa_actor_id_equal(entry->actor, actor) ? entry->serial : 0;
 }
+bool qa_combat_set_admission(qa_combat *combat, qa_actor_id actor,
+                              const qa_combat_admission *admission, qa_error *error) {
+    qa_combat_record *entry;
+    if (!require_record(combat, actor, &entry, error)) return false;
+    if (entry->external || (admission && !admission->admit))
+        return qa_combat_argument(error, "damage admission requires local combat storage and a callback");
+    if (entry->active_admissions || entry->power_admitting || cursor_for(combat, actor))
+        return qa_combat_argument(error, "cannot change an active actor's damage admission");
+    uint64_t serial;
+    if (!next_serial(combat, &serial, error)) return false;
+    entry->admission = admission ? *admission : (qa_combat_admission){0};
+    entry->serial = serial;
+    return true;
+}
 bool qa_combat_bind(qa_combat *combat, qa_actor_id actor, const qa_combat_binding *binding, bool replace, qa_error *error) {
     if (!qa_combat_live(combat, actor) || !binding || !binding->read || !binding->write_health || !binding->write_armor)
         return qa_combat_argument(error, "invalid combat binding");
     qa_combat_record *entry = &combat->records[actor.slot];
-    if (cursor_for(combat, actor)) return qa_combat_argument(error, "cannot replace a live damage binding");
+    if (cursor_for(combat, actor) || entry->active_admissions)
+        return qa_combat_argument(error, "cannot replace a live damage binding");
     if (entry->power_admitting) return qa_combat_argument(error, "cannot replace combat during power fuel admission");
     if (record(combat, actor) && !replace) return qa_combat_argument(error, "actor already has combat storage");
     if (record(combat, actor) && (entry->protection[0].reserved || entry->protection[1].reserved))
@@ -764,9 +779,19 @@ static bool damage_canonical(void *context, const void *input, void *output, qa_
         bool found = false;
         for (size_t i = 0; i < combat->policy_count; ++i) if (combat->policies[i].provider == request->attack.combat_provider) { policy = combat->policies[i]; found = true; break; }
         if (!found) return qa_combat_argument(error, "attack names an unregistered combat policy");
-        if (entry->external && entry->binding.admit) {
-            qa_combat_binding binding = entry->binding; bool handled = false;
-            ++combat->active_calls; bool ok = binding.admit(binding.context, request, &handled, error); --combat->active_calls;
+        qa_combat_admission admission = entry->external
+            ? (qa_combat_admission){entry->binding.context, entry->binding.admit}
+            : entry->admission;
+        if (admission.admit) {
+            if (entry->active_admissions == SIZE_MAX)
+                return qa_combat_argument(error, "damage admission nesting exhausted");
+            bool handled = false;
+            ++entry->active_admissions;
+            ++combat->active_calls;
+            bool ok = admission.admit(admission.context, request, &handled, error);
+            --combat->active_calls;
+            if (record(combat, request->target) == entry && entry->serial == serial)
+                --entry->active_admissions;
             if (!ok) return false;
             if (handled) goto confirm;
         }

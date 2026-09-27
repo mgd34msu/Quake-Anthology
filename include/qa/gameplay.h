@@ -118,6 +118,11 @@ typedef struct qa_damage_observer qa_damage_observer;
 bool qa_damage_observe(qa_damage_observer *, const qa_damage_mutation *, qa_error *);
 bool qa_damage_before_reaction(qa_damage_observer *, const qa_damage_result *, qa_error *);
 typedef bool (*qa_source_damage_fn)(void *, qa_combat *, const qa_damage_request *, qa_damage_observer *, qa_damage_result *, qa_error *);
+typedef bool (*qa_damage_admit_fn)(void *, const qa_damage_request *, bool *handled, qa_error *);
+typedef struct qa_combat_admission {
+    void *context;
+    qa_damage_admit_fn admit;
+} qa_combat_admission;
 
 typedef struct qa_combat_binding {
     void *context;
@@ -128,7 +133,7 @@ typedef struct qa_combat_binding {
     bool (*write_traits)(void *, const qa_combat_state *, qa_error *);
     bool (*empty_regular_armor)(void *, float points, qa_regular_armor *, bool *selected, qa_error *);
     bool (*normalize_legacy_armor)(void *, const qa_armor *, qa_armor *, qa_error *);
-    bool (*admit)(void *, const qa_damage_request *, bool *handled, qa_error *);
+    qa_damage_admit_fn admit;
     bool (*adjust)(void *, const qa_damage_request *, float *amount, float *knockback, qa_error *);
     qa_source_damage_fn source_damage;
     bool source_armor_stages[2];
@@ -229,6 +234,14 @@ bool qa_combat_policy_admission_commit(qa_combat_policy_admission *, qa_error *)
 void qa_combat_policy_admission_abort(qa_combat_policy_admission *);
 bool qa_combat_unregister_policy(qa_combat *, qa_actor_owner, qa_error *);
 bool qa_combat_create_actor(qa_combat *, qa_actor_id, const qa_combat_state *, qa_error *);
+/* Optional source admission for locally stored combat state, before a selected
+ * policy changes health/armor. handled consumes the hit with no damage reaction.
+ * NULL clears the callback. Cannot change it during this actor's admission or
+ * damage callback, or attach it to external storage (use binding.admit there).
+ * Context lives until explicit clear or actor retirement. Provider restoration
+ * rebinds it; shared state checkpoints contain no callback pointers. Explicit
+ * qa_combat_run_source executors own their admission, as external executors do. */
+bool qa_combat_set_admission(qa_combat *, qa_actor_id, const qa_combat_admission *, qa_error *);
 uint64_t qa_combat_storage_serial(const qa_combat *, qa_actor_id);
 bool qa_combat_bind(qa_combat *, qa_actor_id, const qa_combat_binding *, bool replace, qa_error *);
 /* The fuel owner is usually inventory. Effective armor reads it directly;

@@ -15,6 +15,8 @@ typedef struct qa_combat_record {
     bool active, external, power_admitting;
     qa_combat_state state;
     qa_combat_binding binding;
+    qa_combat_admission admission;
+    size_t active_admissions;
     qa_inventory *power_inventory;
     qa_item_id power_item;
     qa_combat_protection protection[2];
