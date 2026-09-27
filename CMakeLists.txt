@@ -170,6 +170,11 @@ add_library(qa_game_q3 STATIC
     src/gameplay/q3/checkpoint.c)
 target_link_libraries(qa_game_q3 PUBLIC qa_builtin)
 
+add_library(qa_campaign STATIC
+    src/campaign/travel.c
+    src/campaign/unit.c)
+target_link_libraries(qa_campaign PUBLIC qa_session)
+
 add_library(qa_audio STATIC
     src/audio/bank.c
     src/audio/codecs.c

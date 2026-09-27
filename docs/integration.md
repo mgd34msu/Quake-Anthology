@@ -19,6 +19,13 @@ These are concrete handoff obligations for the remaining graph nodes. A subsyste
 - Q2 map setup supplies the source `.mat` surface names from texinfo through shared world loading.
 - B08 still needs original Q1 Quake64 movement. The unsupported branch is unfinished scope.
 
+## Campaign and travel
+
+- `qa_q2_travel_parse` preserves authored map/cinematic/picture/demo chains, unit markers and spawn points. The transition owner follows each target and uses `qa_q2_nextserver` for original command publication.
+- `qa_campaign_unit_stage` retains immutable departed-world snapshots and removes the destination from the candidate cache. Admit and restore the destination before committing its visit at the application safe point. Discarding a failed visit leaves the current unit untouched; a superseded candidate cannot publish. B30 supplies the mandatory snapshot validator, rejecting mismatched locations and nested campaign-unit checkpoints, and explicitly encodes/remaps checkpoint locations.
+- Snapshot creation can transfer an already encoded save buffer with `qa_campaign_world_take`; visits/checkpoints share those bytes by retained handles. Retain the destination restore handle's visit until its bytes have been consumed. Units and their shared string table outlive outstanding visits.
+- Native Q1 reusable teleport fog and teledeath helpers serve authored map teleports and monsters. Bind `force_retouch` to the source phase service; B13 supplies destination/target selection without duplicating those helpers.
+
 ## Input, display, and commands
 
 - The application owns SDL initialization, the event pump, and final SDL shutdown. Forward SDL events to the one input platform registry. Four seat routes retain independent button, text, gyro, and haptic state.
