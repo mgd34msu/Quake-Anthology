@@ -177,7 +177,7 @@ static bool valid_comparison(qa_archive_comparison comparison)
            comparison == QA_ARCHIVE_CASE_INSENSITIVE;
 }
 
-static char *resource_path(const char *path, qa_error *error)
+char *qa_vfs_normalize_path(const char *path, qa_error *error)
 {
     if (path == NULL || path[0] == '\0') {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "resource path is empty");
@@ -885,7 +885,7 @@ bool qa_vfs_set_prefix_order(qa_vfs *vfs, const char *path,
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "VFS is NULL");
         return false;
     }
-    char *normalized = resource_path(path, error);
+    char *normalized = qa_vfs_normalize_path(path, error);
     if (normalized == NULL) return false;
     prefix_order **position = &vfs->prefixes;
     while (*position != NULL && !qa_archive_paths_equal((*position)->prefix, normalized,
@@ -954,7 +954,7 @@ static char *link_prefix(const char *prefix, bool allow_empty, qa_error *error)
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate resource link");
         return NULL;
     }
-    char *normalized = resource_path(input, error);
+    char *normalized = qa_vfs_normalize_path(input, error);
     free(input);
     if (normalized == NULL || !trailing) return normalized;
     size_t normalized_length = strlen(normalized);
@@ -1193,7 +1193,7 @@ bool qa_vfs_acquire_from(qa_vfs *vfs, qa_mount_id id, const char *path,
         qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "unknown mount: %" PRIu64, id);
         return false;
     }
-    char *normalized = resource_path(path, error);
+    char *normalized = qa_vfs_normalize_path(path, error);
     if (normalized == NULL) return false;
     bool result = acquire_mount(vfs, source, normalized, out, error);
     free(normalized);
@@ -1216,7 +1216,7 @@ bool qa_vfs_acquire_filtered(qa_vfs *vfs, const char *path,
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid resource acquisition");
         return false;
     }
-    char *normalized = resource_path(path, error);
+    char *normalized = qa_vfs_normalize_path(path, error);
     if (normalized == NULL) return false;
     qa_error local = {0};
     for (size_t i = 0; i < vfs->count; i++) {
@@ -1258,7 +1258,7 @@ bool qa_vfs_acquire_filtered(qa_vfs *vfs, const char *path,
         memcpy(target, link->target, target_length);
         memcpy(target + target_length, suffix, suffix_length + 1);
         free(normalized);
-        normalized = resource_path(target, error);
+        normalized = qa_vfs_normalize_path(target, error);
         free(target);
         if (normalized == NULL) return false;
         mount *source = find_mount(vfs, link->mount);
@@ -1364,7 +1364,7 @@ bool qa_vfs_list(qa_vfs *vfs, const char *path, const char *extension,
     memcpy(directory, path, length);
     directory[length] = '\0';
     if (length != 0) {
-        char *normalized = resource_path(directory, error);
+        char *normalized = qa_vfs_normalize_path(directory, error);
         if (normalized == NULL) return false;
         memcpy(directory, normalized, length + 1);
         free(normalized);
@@ -1465,7 +1465,7 @@ bool qa_vfs_write(qa_vfs *vfs, qa_mount_id id, const char *path,
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid write buffer");
         return false;
     }
-    char *normalized = resource_path(path, error);
+    char *normalized = qa_vfs_normalize_path(path, error);
     if (normalized == NULL) return false;
     uint64_t nonce = vfs->next_temporary++;
     bool success = qa_fs_root_replace(source->root, normalized, bytes,
@@ -1478,7 +1478,7 @@ bool qa_vfs_remove(qa_vfs *vfs, qa_mount_id id, const char *path, qa_error *erro
 {
     mount *source = writable_mount(vfs, id, error);
     if (source == NULL) return false;
-    char *normalized = resource_path(path, error);
+    char *normalized = qa_vfs_normalize_path(path, error);
     if (normalized == NULL) return false;
     bool success = qa_fs_root_remove(source->root, normalized, error);
     free(normalized);
@@ -1496,7 +1496,7 @@ static bool open_stream(qa_vfs *vfs, qa_mount_id id, const char *path,
     }
     mount *source = writable_mount(vfs, id, error);
     if (source == NULL) return false;
-    char *normalized = resource_path(path, error);
+    char *normalized = qa_vfs_normalize_path(path, error);
     if (normalized == NULL) return false;
     qa_vfs_file *file = malloc(sizeof(*file));
     if (file == NULL) {

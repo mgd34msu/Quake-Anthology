@@ -10,6 +10,10 @@ typedef struct qa_vfs qa_vfs;
 typedef struct qa_vfs_file qa_vfs_file;
 typedef uint64_t qa_mount_id;
 
+/* Shared resource admission without opening a file. The owned result uses
+ * forward slashes and rejects absolute, empty, dot and parent components. */
+char *qa_vfs_normalize_path(const char *path, qa_error *error);
+
 /* A pool shares immutable file versions and decoded members across VFS views.
  * Mutable mount orders remain private to each view. Calls require one owner
  * thread or external synchronization. Destroy releases the caller's reference;
