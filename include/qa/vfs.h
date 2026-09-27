@@ -70,6 +70,9 @@ bool qa_vfs_set_user_overlay(qa_vfs *vfs, qa_mount_id mount, bool enabled,
 bool qa_vfs_set_restrictions(qa_vfs *vfs, const qa_sha256_digest *archives,
                               size_t count, bool q3_demo, qa_error *error);
 const qa_sha256_digest *qa_vfs_archive_digest(const qa_vfs *vfs, qa_mount_id mount);
+/* Borrow the already decoded archive for complete source entry enumeration.
+ * Null for loose or missing mounts; valid until that mount is removed. */
+const qa_archive *qa_vfs_archive(const qa_vfs *vfs, qa_mount_id mount);
 bool qa_vfs_archive_checksums(qa_vfs *vfs, qa_mount_id mount, uint32_t feed,
                                uint32_t *checksum, uint32_t *pure_checksum,
                                qa_error *error);

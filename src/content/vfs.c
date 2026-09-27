@@ -680,8 +680,9 @@ bool qa_vfs_mount_directory(qa_vfs *vfs, const char *path,
     return true;
 }
 
-static mount *find_mount(qa_vfs *vfs, qa_mount_id id)
+static mount *find_mount(const qa_vfs *vfs, qa_mount_id id)
 {
+    if (vfs == NULL) return NULL;
     for (size_t i = 0; i < vfs->count; i++) {
         if (vfs->mounts[i]->id == id) return vfs->mounts[i];
     }
@@ -690,12 +691,14 @@ static mount *find_mount(qa_vfs *vfs, qa_mount_id id)
 
 const qa_sha256_digest *qa_vfs_archive_digest(const qa_vfs *vfs, qa_mount_id id)
 {
-    if (vfs == NULL) return NULL;
-    for (size_t i = 0; i < vfs->count; i++) {
-        if (vfs->mounts[i]->id == id && vfs->mounts[i]->archive != NULL)
-            return &vfs->mounts[i]->archive->digest;
-    }
-    return NULL;
+    const mount *source = find_mount(vfs, id);
+    return source != NULL && source->archive != NULL ? &source->archive->digest : NULL;
+}
+
+const qa_archive *qa_vfs_archive(const qa_vfs *vfs, qa_mount_id id)
+{
+    const mount *source = find_mount(vfs, id);
+    return source != NULL && source->archive != NULL ? source->archive->archive : NULL;
 }
 
 static bool archive_checksums(const package *archive, uint32_t feed,
