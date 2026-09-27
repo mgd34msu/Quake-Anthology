@@ -5,6 +5,7 @@
 struct pending {
     struct pending*next;
     uint16_t reliable;
+    bool sent;
     size_t size;
     uint8_t bytes[QA_KEX_DATAGRAM_BYTES];
 };
@@ -15,7 +16,7 @@ struct qa_kex_channel {
     uint8_t fragment_kind,ack;
     bool fragmented;
     struct pending*head,*tail;
-    size_t pending_bytes,fragment_size,fragment_capacity,expanded_capacity;
+    size_t pending_bytes,pending_count,fragment_size,fragment_capacity,expanded_capacity;
     unsigned retries;
     uint64_t retry_at,received_at;
     uint8_t*fragments,*expanded;
@@ -90,7 +91,9 @@ bool qa_kex_channel_send(qa_kex_channel*c,uint8_t kind,qa_bytes payload,qa_kex_m
     }
     size_t packet_count=data.size<=1393?1:1+(data.size-1393+1393)/1394;
     size_t queued_bytes=data.size+packet_count*6+1;
-    if(mode==QA_KEX_RELIABLE&&queued_bytes>QA_KEX_MESSAGE_BYTES*2-c->pending_bytes) {
+    if(mode==QA_KEX_RELIABLE&&
+       (queued_bytes>QA_KEX_MESSAGE_BYTES*2-c->pending_bytes||
+        packet_count>32767u-c->pending_count)) {
         free(compressed);
         qa_error_set(e,QA_ERROR_ARGUMENT,0,"KEX reliable queue full");
         return false;
@@ -131,6 +134,7 @@ bool qa_kex_channel_send(qa_kex_channel*c,uint8_t kind,qa_bytes payload,qa_kex_m
             }
             pending->next=NULL;
             pending->reliable=rel;
+            pending->sent=false;
             pending->size=size;
             memcpy(pending->bytes,bytes,size);
             if(staged_tail)staged_tail->next=pending;
@@ -156,11 +160,13 @@ bool qa_kex_channel_send(qa_kex_channel*c,uint8_t kind,qa_bytes payload,qa_kex_m
         }
         c->tail=staged_tail;
         c->pending_bytes+=queued_bytes;
+        c->pending_count+=packet_count;
         c->sequence=sequence;
         c->reliable=reliable;
         for(struct pending *p=staged_head;p;p=p->next) {
             qa_error ignored={0};
             if(!c->emit(c->user,(qa_bytes){p->bytes,p->size},&ignored))break;
+            p->sent=true;
         }
     }
     return accepted;
@@ -246,10 +252,18 @@ bool qa_kex_channel_receive(qa_kex_channel*c,qa_bytes bytes,uint64_t now,qa_kex_
             return false;
         }
         uint16_t ack=(uint16_t)(((uint16_t)p.payload.data[1]<<8)|p.payload.data[2]);
-        while(c->head&&c->head->reliable<=ack) {
+        /* The outstanding window stays below half the serial space. Old or
+         * future acknowledgements cannot retire a packet outside that window. */
+        size_t acknowledged=c->head?(uint16_t)(ack-c->head->reliable):0;
+        size_t count=c->head&&acknowledged<c->pending_count?acknowledged+1u:0;
+        struct pending *candidate=c->head;
+        for(size_t i=0;i<count;i++,candidate=candidate->next)
+            if(!candidate->sent) { count=0; break; }
+        while(count--) {
             struct pending*remove=c->head;
             c->head=remove->next;
             c->pending_bytes-=remove->size;
+            c->pending_count--;
             free(remove);
             c->retry_at=now;
             c->retries=0;
@@ -349,6 +363,7 @@ bool qa_kex_channel_tick(qa_kex_channel*c,uint64_t now,qa_error*e) {
         if(!c->emit(c->user,(qa_bytes) {
             c->head->bytes,c->head->size
         },e))return false;
+        c->head->sent=true;
     }
     if(!c->head&&now>=c->received_at&&now-c->received_at>=UINT64_C(5000000000)) {
         if(!qa_kex_channel_send(c,129,(qa_bytes) {

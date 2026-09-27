@@ -388,14 +388,18 @@ static bool join(qa_kex_lan*l,struct peer*p,qa_bytes bytes,qa_error*e) {
     if(l->joined)return true;
     uint64_t first=qa_kex_read_varint(&r);
     if(r.failed||first>255||first+l->options.local_players>255)return qa_net_reader_fail(&r,"Invalid KEX local player index");
-    size_t count=(size_t)first+l->options.local_players;
+    size_t minimum=(size_t)first+l->options.local_players,count=0;
     uint64_t ids[255];
-    for(size_t i=0;i<count;i++) {
-        ids[i]=qa_kex_read_varint(&r);
-        if(!ids[i])return qa_net_reader_fail(&r,"Invalid KEX player identity");
-        for(size_t j=0;j<i;j++)if(ids[i]==ids[j])return qa_net_reader_fail(&r,"Duplicate KEX player identity");
+    while(qa_net_reader_remaining(&r)) {
+        if(count==255)return qa_net_reader_fail(&r,"KEX roster exceeds capacity");
+        ids[count]=qa_kex_read_varint(&r);
+        if(r.failed)return false;
+        if(!ids[count])return qa_net_reader_fail(&r,"Invalid KEX player identity");
+        for(size_t j=0;j<count;j++)if(ids[count]==ids[j])return qa_net_reader_fail(&r,"Duplicate KEX player identity");
+        count++;
     }
     if(!qa_net_reader_finish(&r))return false;
+    if(count<minimum)return qa_net_reader_fail(&r,"KEX local seats exceed received roster");
     for(size_t i=0;i<l->player_count;i++)attrs_free(&l->players[i].attributes);
     for(size_t i=0;i<count;i++)l->players[i]=(struct player) {
         .id=ids[i]
