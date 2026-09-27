@@ -56,6 +56,13 @@ static bool before_audio_reset(void *context, qa_error *error) {
         reset_audio(movie);
     return true;
 }
+static uint32_t audio_audience(const qa_cinematic_options *options) {
+    if (options->audio_audience.kind == QA_CINEMATIC_AUDIO_SEAT)
+        return options->audio_audience.seat;
+    if (options->audio_audience.kind == QA_CINEMATIC_AUDIO_WORLD)
+        return QA_AUDIO_WORLD;
+    return options->target.kind == QA_CINEMATIC_SEAT ? options->target.id.seat : QA_AUDIO_WORLD;
+}
 static bool queue_audio(void *context, const qa_media_audio *sound, qa_error *error) {
     qa_cinematic *movie = context;
     if (movie->suppress_audio)
@@ -100,9 +107,7 @@ static bool queue_audio(void *context, const qa_media_audio *sound, qa_error *er
         return false;
     }
     if (!movie->raw) {
-        uint32_t audience = movie->options.target.kind == QA_CINEMATIC_SEAT
-                                ? movie->options.target.id.seat
-                                : QA_AUDIO_WORLD;
+        uint32_t audience = audio_audience(&movie->options);
         if (!qa_audio_engine_stream(movie->options.audio, movie->options.audio_bus, audience,
                                     movie->options.gain, raw, error)) {
             qa_audio_raw_destroy(raw);
@@ -186,6 +191,9 @@ static void still_digest(const qa_scene_image *image, qa_sha256_digest *out) {
 static bool restore(qa_cinematic *movie, const qa_cinematic_checkpoint *saved, qa_error *error) {
     if (!saved->source || saved->format != movie->format ||
         !same_target(saved->target, movie->options.target) || saved->loop != movie->options.loop ||
+        saved->audio_audience.kind != movie->options.audio_audience.kind ||
+        (saved->audio_audience.kind == QA_CINEMATIC_AUDIO_SEAT &&
+         saved->audio_audience.seat != movie->options.audio_audience.seat) ||
         saved->hold != movie->options.hold || saved->silent != movie->options.silent ||
         !isfinite(saved->elapsed_ms) || saved->elapsed_ms < 0 || saved->status < QA_MEDIA_PLAYING ||
         saved->status > QA_MEDIA_STOPPED || saved->decoder_status < QA_MEDIA_PLAYING ||
@@ -234,9 +242,7 @@ static bool restore(qa_cinematic *movie, const qa_cinematic_checkpoint *saved, q
         if (!qa_audio_raw_restore((qa_bytes){saved->audio.data, saved->audio.size},
                                   qa_audio_engine_rate(movie->options.audio), &raw, error))
             return false;
-        uint32_t audience = movie->options.target.kind == QA_CINEMATIC_SEAT
-                                ? movie->options.target.id.seat
-                                : QA_AUDIO_WORLD;
+        uint32_t audience = audio_audience(&movie->options);
         if (!qa_audio_engine_stream(movie->options.audio, movie->options.audio_bus, audience,
                                     movie->options.gain, raw, error)) {
             qa_audio_raw_destroy(raw);
@@ -253,6 +259,9 @@ bool qa_cinematic_create(const qa_cinematic_source *source, const qa_cinematic_o
         source->format < QA_CINEMATIC_CIN || source->format > QA_CINEMATIC_IMAGE ||
         options->target.kind < QA_CINEMATIC_SEAT || options->target.kind > QA_CINEMATIC_MATERIAL ||
         (options->target.kind == QA_CINEMATIC_SEAT && options->target.id.seat >= 4) ||
+        options->audio_audience.kind < QA_CINEMATIC_AUDIO_TARGET ||
+        options->audio_audience.kind > QA_CINEMATIC_AUDIO_WORLD ||
+        (options->audio_audience.kind == QA_CINEMATIC_AUDIO_SEAT && options->audio_audience.seat >= 4) ||
         !isfinite(options->gain) || options->gain < 0 ||
         (!options->silent && source->format != QA_CINEMATIC_IMAGE && !options->audio))
         return cinematic_fail(error, "Invalid cinematic configuration");
@@ -467,6 +476,7 @@ bool qa_cinematic_capture(qa_cinematic *movie, qa_cinematic_checkpoint *out, qa_
         return cinematic_fail(error, "Cannot checkpoint active or failed cinematic");
     qa_cinematic_checkpoint saved = {.format = movie->format,
                                      .target = movie->options.target,
+                                     .audio_audience = movie->options.audio_audience,
                                      .status = movie->status,
                                      .decoder_status = movie->decoder_status,
                                      .revision = movie->revision,

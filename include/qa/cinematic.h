@@ -40,6 +40,15 @@ typedef enum qa_cinematic_end {
     QA_CINEMATIC_SKIPPED,
     QA_CINEMATIC_STOPPED
 } qa_cinematic_end;
+typedef enum qa_cinematic_audio_kind {
+    QA_CINEMATIC_AUDIO_TARGET,
+    QA_CINEMATIC_AUDIO_SEAT,
+    QA_CINEMATIC_AUDIO_WORLD
+} qa_cinematic_audio_kind;
+typedef struct qa_cinematic_audio_audience {
+    qa_cinematic_audio_kind kind;
+    uint32_t seat;
+} qa_cinematic_audio_audience;
 typedef struct qa_cinematic_options {
     qa_media_clock clock;
     qa_cinematic_target target;
@@ -47,6 +56,9 @@ typedef struct qa_cinematic_options {
     qa_audio_engine *audio;
     uint64_t audio_bus;
     float gain;
+    /* Zero preserves target-derived routing. A material shown in one seat may
+     * explicitly keep its audio private to that seat. Immutable during play. */
+    qa_cinematic_audio_audience audio_audience;
     void *context;
     /* Callbacks may queue transitions; lifetime changes wait until the call
      * returns. The shared audio engine must outlive this cinematic. */
@@ -57,6 +69,7 @@ typedef struct qa_cinematic_checkpoint {
     char *source;
     qa_cinematic_format format;
     qa_cinematic_target target;
+    qa_cinematic_audio_audience audio_audience;
     double elapsed_ms;
     qa_media_status status, decoder_status;
     uint64_t revision, audio_loop;
