@@ -47,8 +47,9 @@ typedef enum q2_projectile_kind {
 struct qa_q2_monster;
 struct q2_item_state;
 struct q2_power_state;
-struct q2_client_state;
-struct q2_entity_state;
+struct qa_q2_player_state;
+struct qa_q2_entity_state;
+struct qa_targets;
 struct q2_items;
 struct q2_players;
 struct q2_entities;
@@ -88,8 +89,10 @@ typedef struct q2_actor {
     struct qa_q2_monster *monster;
     struct q2_item_state *item;
     struct q2_power_state *powers;
-    struct q2_client_state *client;
-    struct q2_entity_state *entity;
+    struct qa_q2_player_state *client;
+    struct qa_q2_entity_state *entity;
+    qa_q2_game *entity_game;
+    struct qa_targets *entity_targets;
 } q2_actor;
 typedef struct q2_trace_frame {
     struct q2_trace_frame *next;
@@ -235,6 +238,9 @@ void q2_items_release_state(q2_actor *);
 void q2_client_release_state(q2_actor *);
 void q2_entity_release_state(q2_actor *);
 void q2_entity_unbind(qa_q2_game *, q2_actor *);
+bool q2_save_reference(qa_q2_game *, qa_actor_id, qa_q2_saved_reference *, qa_error *);
+bool q2_resolve_reference(qa_q2_game *, qa_q2_saved_reference, qa_actor_id *, qa_error *);
+bool q2_checkpoint_idle(qa_q2_game *, qa_error *);
 bool q2_item_tick(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_client_tick(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_entity_tick(qa_q2_game *, q2_actor *, qa_error *);

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "project_id": "quake-anthology",
-  "ledger_plan_revision": 4,
+  "ledger_plan_revision": 5,
   "policy": {
     "goal": "Finish the native C rewrite of ../quake-typescript as one engine with full Q1/QW/Q2/Q3, expansion, rerelease, and mod interoperability, then perform a deep performance and enhancement pass.",
     "rules": [
@@ -16,7 +16,8 @@
       "Coordinator owns shared Git staging and local commits. Workers use exclusive paths and never change ../quake-typescript, ../qsrc, or ../qfiles.",
       "Baseline completion and final release are distinct. Do not claim whole-project completion from scaffolding, parser tools, compilation, or partial subsystems.",
       "Use a soft cap of six concurrent agents across the entire worker tree, excluding the main coordinator. Let existing assignments finish to reduce the current count. Do not spawn, reactivate, or reassign workers while above six; a temporary excess later requires a concrete task need.",
-      "Keep all licensing and copyright notices in the root LICENSE file. Do not add per-file copyright notices, SPDX headers, or invented contributor attribution."
+      "Keep all licensing and copyright notices in the root LICENSE file. Do not add per-file copyright notices, SPDX headers, or invented contributor attribution.",
+      "Do not copy source files from ../quake-typescript or ../qsrc. Write native C implementations from required behavior and contracts, removing duplicated services, avoidable allocations, repeated preparation and TypeScript-specific machinery during implementation. Authored immutable data may be represented in shared C tables; engine implementations must not be transplanted."
     ],
     "authorizations": [
       "Implement the entire project autonomously, make sensible C improvements during construction, and continue until the full project is complete.",

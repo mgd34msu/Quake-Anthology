@@ -174,7 +174,8 @@ typedef struct qa_q3_controls {
     bool attack, use_holdable, prediction;
     bool gauntlet_contact_known, gauntlet_contact;
     qa_q3_weapon requested_weapon;
-    /* Independent equipment owns hook press/release while primary fire is idle. */
+    /* Independent equipment owns hook press/release while primary fire is idle.
+     */
     bool grapple_independent;
 } qa_q3_controls;
 /* Foreign input dialects provide semantic controls here; their button words
@@ -211,7 +212,11 @@ typedef struct qa_q3_grapple_state {
  * its ground plane clears before the ordinary air step. */
 bool qa_q3_grapple_read(const qa_q3_game *, qa_actor_id, qa_q3_grapple_state *);
 bool qa_q3_release_grapple(qa_q3_game *, qa_actor_id, qa_error *);
-bool qa_q3_use_holdable(qa_q3_game *, qa_actor_id, qa_q3_holdable, qa_error *);
+/* Consume the expected retained holdable and emit its source predictable event.
+ * Prediction consumes its private state without applying server-side effects.
+ */
+bool qa_q3_activate_holdable(qa_q3_game *, qa_actor_id, qa_q3_holdable expected, bool prediction,
+                             qa_error *);
 bool qa_q3_movement_environment(qa_q3_game *, qa_actor_id, qa_movement_environment *, qa_error *);
 bool qa_q3_prepare_movement(qa_q3_game *, qa_actor_id, qa_movement_input *, qa_error *);
 qa_movement_control qa_q3_movement_phase(void *, qa_movement_phase, qa_movement_call *, qa_error *);
@@ -336,7 +341,8 @@ typedef struct qa_q3_checkpoint {
 } qa_q3_checkpoint;
 /* Typed checkpoint memory is separate from file/network encoding. The save
  * owner encodes fields explicitly and remaps all actor and string IDs before
- * restore. Shared body, movement, combat and inventory stores are saved once. */
+ * restore. Shared body, movement, combat and inventory stores are saved once.
+ */
 bool qa_q3_checkpoint_capture(const qa_q3_game *, qa_q3_checkpoint *, qa_error *);
 bool qa_q3_checkpoint_restore(qa_q3_game *, const qa_q3_checkpoint *, qa_error *);
 void qa_q3_checkpoint_free(qa_q3_checkpoint *);

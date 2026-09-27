@@ -1,6 +1,6 @@
 # Implementation dependency graph
 
-This view records all 40 tasks in [dependencies.json](dependencies.json), published as vibecheck-jev plan revision 4. The ledger owns current work claims and verified status. Local task status fields retain the published snapshot and are not a live completion report.
+This view records all 40 tasks in [dependencies.json](dependencies.json), published as vibecheck-jev plan revision 5. The ledger owns current work claims and verified status. Local task status fields retain the published snapshot and are not a live completion report.
 
 ```mermaid
 flowchart LR

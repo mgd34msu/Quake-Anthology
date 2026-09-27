@@ -12,6 +12,8 @@ The current sequence is to write the complete baseline C code, review its qualit
 
 Use the TypeScript prototype as an executable reference for its working features, user workflows, and current performance. Extract the behavior each subsystem must provide, then design its C implementation around native execution and shared resources. Useful prototype tests supply regression cases after their expectations are checked against the product requirements and original behavior. Prototype defects and runtime workarounds do not become C requirements.
 
+Do not copy source files from the TypeScript project or original game engines into this project. Write C implementations from the required behavior and contracts. Remove duplicated services, avoidable allocation, repeated preparation and TypeScript-specific machinery during implementation. Authored immutable data can be represented in shared C tables; this does not authorize transplanting engine implementations.
+
 ## Product contract
 
 Build one engine, world, and executable that combines the useful capabilities of Quake, QuakeWorld, Quake II, Quake III Arena, their rereleases, expansions, and mods. Preserve complete native configurations and enable composition across sources. Current compatibility gaps are work to address, not reasons to shrink the intended product.

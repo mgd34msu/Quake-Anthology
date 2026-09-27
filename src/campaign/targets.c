@@ -118,6 +118,31 @@ bool qa_targets_read(const qa_targets *targets, qa_actor_id actor, qa_authored_t
     *out = fields;
     return true;
 }
+bool qa_targets_field(const qa_targets *targets, qa_actor_id actor, const char *key,
+                      qa_target_field *out) {
+    const qa_target_binding *entry = binding(targets, actor);
+    qa_target_field value = {0};
+    if (!entry || !entry->field || !entry->field(entry->context, actor, key, &value))
+        return false;
+    switch (value.kind) {
+    case QA_TARGET_FIELD_TEXT:
+        if (!valid_string(targets, value.value.text))
+            return false;
+        break;
+    case QA_TARGET_FIELD_NUMBER:
+        if (!isfinite(value.value.number))
+            return false;
+        break;
+    case QA_TARGET_FIELD_VECTOR:
+        if (!qa_vec_finite(value.value.vector))
+            return false;
+        break;
+    default:
+        return false;
+    }
+    *out = value;
+    return true;
+}
 static int compare(const void *left, const void *right) {
     const target_index *a = left, *b = right;
     if (a->name != b->name)
@@ -321,17 +346,38 @@ static bool use_now(qa_targets *targets, qa_target_use request, qa_error *error)
     }
     return true;
 }
-bool qa_targets_use_now(qa_targets *targets, const qa_target_use *request, qa_error *error) {
+static bool prepare_request(const qa_targets *targets, const qa_target_use *request,
+                            qa_target_use *normalized, qa_error *error) {
     if (!request || request->dialect < QA_CLOCK_NETQUAKE || request->dialect > QA_CLOCK_Q3 ||
         !valid_fields(targets, &request->fields))
         return fail(error, "Invalid authored target request");
-    qa_target_use normalized = *request;
-    normalize(targets, &normalized.fields);
+    *normalized = *request;
+    normalize(targets, &normalized->fields);
+    return true;
+}
+static bool execute_request(qa_targets *targets, qa_target_use request, qa_error *error) {
     ++targets->depth;
-    bool ok = use_now(targets, normalized, error);
+    bool ok = use_now(targets, request, error);
     if (!--targets->depth)
         qa_arena_reset(&targets->scratch);
     return ok;
+}
+bool qa_targets_use_now(qa_targets *targets, const qa_target_use *request, qa_error *error) {
+    qa_target_use normalized;
+    return prepare_request(targets, request, &normalized, error) &&
+           execute_request(targets, normalized, error);
+}
+bool qa_targets_use_request(qa_targets *targets, const qa_target_use *request, qa_error *error) {
+    qa_target_use normalized;
+    if (!prepare_request(targets, request, &normalized, error))
+        return false;
+    if (normalized.dialect != QA_CLOCK_Q3 && normalized.fields.delay_seconds != 0) {
+        if (!targets->options.defer)
+            return fail(error, "Authored delayed use has no source scheduler owner");
+        normalized.live_fields = false;
+        return targets->options.defer(targets->options.context, &normalized, error);
+    }
+    return execute_request(targets, normalized, error);
 }
 bool qa_targets_use(qa_targets *targets, qa_actor_id source, qa_actor_id activator,
                     uint64_t time_ns, qa_error *error) {
@@ -341,13 +387,5 @@ bool qa_targets_use(qa_targets *targets, qa_actor_id source, qa_actor_id activat
     if (!entry || !qa_targets_read(targets, source, &request.fields))
         return fail(error, "Source has no authored target fields");
     request.dialect = entry->source;
-    if (!valid_fields(targets, &request.fields))
-        return fail(error, "Invalid authored target fields");
-    if (request.dialect != QA_CLOCK_Q3 && request.fields.delay_seconds != 0) {
-        if (!targets->options.defer)
-            return fail(error, "Authored delayed use has no source scheduler owner");
-        request.live_fields = false;
-        return targets->options.defer(targets->options.context, &request, error);
-    }
-    return qa_targets_use_now(targets, &request, error);
+    return qa_targets_use_request(targets, &request, error);
 }

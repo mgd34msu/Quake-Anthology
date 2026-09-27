@@ -1,6 +1,7 @@
 #ifndef QA_Q3_INTERNAL_H
 #define QA_Q3_INTERNAL_H
 #include "qa/game_q3.h"
+
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +34,7 @@ struct qa_q3_game {
 q3_actor *q3_actor_get(qa_q3_game *, qa_actor_id);
 const q3_actor *q3_actor_const(const qa_q3_game *, qa_actor_id);
 bool q3_fail(qa_error *, const char *);
+bool q3_use_holdable(qa_q3_game *, qa_actor_id, qa_q3_holdable, qa_error *);
 bool q3_player_state_valid(const qa_q3_player_state *);
 void q3_force_view(qa_q3_player_state *, qa_vec3, int32_t lock_ms);
 int32_t q3_entity_number(const qa_q3_game *, qa_actor_id);

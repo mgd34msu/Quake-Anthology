@@ -8,6 +8,19 @@ typedef struct qa_authored_target {
     float delay_seconds, wait_seconds;
 } qa_authored_target;
 typedef struct qa_targets qa_targets;
+typedef enum qa_target_field_kind {
+    QA_TARGET_FIELD_TEXT,
+    QA_TARGET_FIELD_NUMBER,
+    QA_TARGET_FIELD_VECTOR
+} qa_target_field_kind;
+typedef struct qa_target_field {
+    qa_target_field_kind kind;
+    union {
+        qa_string_id text;
+        double number;
+        qa_vec3 vector;
+    } value;
+} qa_target_field;
 typedef struct qa_target_binding {
     qa_actor_id actor;
     qa_clock_kind source;
@@ -16,6 +29,9 @@ typedef struct qa_target_binding {
      * nonmutating callback; use may remove, replace or relink any actor. */
     bool (*read)(void *, qa_actor_id, qa_authored_target *);
     bool (*use)(void *, qa_actor_id target, qa_actor_id other, qa_actor_id activator, qa_error *);
+    /* Optional source field lookup for authored path and mover metadata.
+     * Text belongs to the shared session. Native numeric fields stay typed. */
+    bool (*field)(void *, qa_actor_id, const char *key, qa_target_field *value);
 } qa_target_binding;
 typedef struct qa_target_use {
     qa_actor_id source, activator;
@@ -52,6 +68,7 @@ void qa_targets_unbind_context(qa_targets *, qa_actor_id, const void *expected_c
  * retained index rebuilds only after such changes or registry mutations. */
 void qa_targets_changed(qa_targets *);
 bool qa_targets_read(const qa_targets *, qa_actor_id, qa_authored_target *);
+bool qa_targets_field(const qa_targets *, qa_actor_id, const char *key, qa_target_field *value);
 bool qa_targets_first(qa_targets *, qa_string_id name, qa_actor_id *);
 /* Zero the cursor before traversal. Each call queries the current index;
  * callbacks may remove, add or rename targets between calls. Tied source slots
@@ -60,8 +77,11 @@ bool qa_targets_next(qa_targets *, qa_string_id name, qa_target_cursor *, qa_act
 bool qa_targets_pick(qa_targets *, qa_string_id name, uint32_t random, size_t maximum_choices,
                      qa_actor_id *);
 /* Source invocation reads current fields. Explicit requests serve authored
- * substitutions and delayed actors; their initial fields are value snapshots. */
+ * substitutions and delayed actors; their initial fields are value snapshots.
+ */
 bool qa_targets_use(qa_targets *, qa_actor_id source, qa_actor_id activator, uint64_t time_ns,
                     qa_error *);
+/* Authored substitutions retain their snapshot and honor source delay. */
+bool qa_targets_use_request(qa_targets *, const qa_target_use *, qa_error *);
 bool qa_targets_use_now(qa_targets *, const qa_target_use *, qa_error *);
 #endif

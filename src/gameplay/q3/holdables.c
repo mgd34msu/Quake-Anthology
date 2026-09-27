@@ -158,8 +158,8 @@ bool q3_portal_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     return game->now_ms < entry->state.portal.expire_at ||
            qa_session_release(game->options.services.session, actor, error);
 }
-bool qa_q3_use_holdable(qa_q3_game *game, qa_actor_id actor, qa_q3_holdable holdable,
-                        qa_error *error) {
+bool q3_use_holdable(qa_q3_game *game, qa_actor_id actor, qa_q3_holdable holdable,
+                     qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return q3_fail(error, "holdable requires Q3 player state");

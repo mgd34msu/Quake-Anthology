@@ -1,6 +1,6 @@
 #include "internal.h"
 
-static bool reference(qa_q2_game *g, qa_actor_id id, qa_q2_saved_reference *out, qa_error *e) {
+bool q2_save_reference(qa_q2_game *g, qa_actor_id id, qa_q2_saved_reference *out, qa_error *e) {
     *out = (qa_q2_saved_reference){0};
     if (id.registry == 0)
         return true;
@@ -9,7 +9,7 @@ static bool reference(qa_q2_game *g, qa_actor_id id, qa_q2_saved_reference *out,
     out->present = true;
     return true;
 }
-static bool resolve(qa_q2_game *g, qa_q2_saved_reference ref, qa_actor_id *out, qa_error *e) {
+bool q2_resolve_reference(qa_q2_game *g, qa_q2_saved_reference ref, qa_actor_id *out, qa_error *e) {
     *out = (qa_actor_id){0};
     if (!ref.present)
         return true;
@@ -21,7 +21,7 @@ static bool resolve(qa_q2_game *g, qa_q2_saved_reference ref, qa_actor_id *out, 
     *out = record->id;
     return true;
 }
-static bool idle(qa_q2_game *g, qa_error *e) {
+bool q2_checkpoint_idle(qa_q2_game *g, qa_error *e) {
     if (g->current_actor.registry != 0) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 checkpoint requires a completed actor turn");
         return false;
@@ -39,7 +39,7 @@ static bool idle(qa_q2_game *g, qa_error *e) {
     return true;
 }
 bool qa_q2_runtime_capture(qa_q2_game *g, qa_q2_runtime_checkpoint *out, qa_error *e) {
-    if (g == NULL || out == NULL || !idle(g, e))
+    if (g == NULL || out == NULL || !q2_checkpoint_idle(g, e))
         return false;
     *out = (qa_q2_runtime_checkpoint){.version = 1,
                                       .edition = g->options.edition,
@@ -64,7 +64,7 @@ bool qa_q2_runtime_restore(qa_q2_game *g, const qa_q2_runtime_checkpoint *state,
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid Q2 runtime checkpoint");
         return false;
     }
-    if (!idle(g, e) || !qa_q2_grapple_configure(g, &state->grapple_options, e))
+    if (!q2_checkpoint_idle(g, e) || !qa_q2_grapple_configure(g, &state->grapple_options, e))
         return false;
     g->random = state->random;
     g->rerelease_random.index = state->rerelease_index;
@@ -79,7 +79,7 @@ bool qa_q2_runtime_restore(qa_q2_game *g, const qa_q2_runtime_checkpoint *state,
     return true;
 }
 bool qa_q2_actor_capture(qa_q2_game *g, qa_actor_id id, qa_q2_actor_checkpoint *out, qa_error *e) {
-    if (g == NULL || out == NULL || !idle(g, e))
+    if (g == NULL || out == NULL || !q2_checkpoint_idle(g, e))
         return false;
     q2_actor *a = q2_actor_get(g, id, false, e);
     if (a == NULL)
@@ -130,19 +130,20 @@ bool qa_q2_actor_capture(qa_q2_game *g, qa_actor_id id, qa_q2_actor_checkpoint *
                                                       .gekk = p->gekk,
                                                       .dodgeable = p->dodgeable}};
     qa_q2_projectile_checkpoint *saved = &snapshot.projectile;
-    if (!reference(g, p->attack.attacker, &saved->attacker, e) ||
-        !reference(g, p->attack.inflictor, &saved->inflictor, e) ||
-        !reference(g, p->attack.projectile, &saved->projectile, e) ||
-        !reference(g, p->owner, &saved->owner, e) || !reference(g, p->enemy, &saved->enemy, e) ||
-        !reference(g, p->child, &saved->child, e) ||
-        !reference(g, a->physics.enemy, &snapshot.physics_enemy, e) ||
-        !reference(g, a->physics.goal, &snapshot.physics_goal, e))
+    if (!q2_save_reference(g, p->attack.attacker, &saved->attacker, e) ||
+        !q2_save_reference(g, p->attack.inflictor, &saved->inflictor, e) ||
+        !q2_save_reference(g, p->attack.projectile, &saved->projectile, e) ||
+        !q2_save_reference(g, p->owner, &saved->owner, e) ||
+        !q2_save_reference(g, p->enemy, &saved->enemy, e) ||
+        !q2_save_reference(g, p->child, &saved->child, e) ||
+        !q2_save_reference(g, a->physics.enemy, &snapshot.physics_enemy, e) ||
+        !q2_save_reference(g, a->physics.goal, &snapshot.physics_goal, e))
         return false;
     saved->attack.attacker = saved->attack.inflictor = saved->attack.projectile = (qa_actor_id){0};
     snapshot.physics.enemy = snapshot.physics.goal = (qa_actor_id){0};
     for (unsigned i = 0; i < 2; ++i) {
         snapshot.grapples[i] = a->grapples[i];
-        if (!reference(g, a->grapples[i].hook, &snapshot.grapple_hooks[i], e))
+        if (!q2_save_reference(g, a->grapples[i].hook, &snapshot.grapple_hooks[i], e))
             return false;
         snapshot.grapples[i].hook = (qa_actor_id){0};
     }
@@ -184,7 +185,7 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid Q2 projectile checkpoint");
         return false;
     }
-    if (!idle(g, e))
+    if (!q2_checkpoint_idle(g, e))
         return false;
     q2_projectile restored = {.kind = (q2_projectile_kind)p->kind,
                               .attack = p->attack,
@@ -222,13 +223,14 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
                               .gekk = p->gekk,
                               .dodgeable = p->dodgeable};
     qa_physics_properties physics = s->physics;
-    if (!resolve(g, p->attacker, &restored.attack.attacker, e) ||
-        !resolve(g, p->inflictor, &restored.attack.inflictor, e) ||
-        !resolve(g, p->projectile, &restored.attack.projectile, e) ||
-        !resolve(g, p->owner, &restored.owner, e) || !resolve(g, p->enemy, &restored.enemy, e) ||
-        !resolve(g, p->child, &restored.child, e) ||
-        !resolve(g, s->physics_enemy, &physics.enemy, e) ||
-        !resolve(g, s->physics_goal, &physics.goal, e))
+    if (!q2_resolve_reference(g, p->attacker, &restored.attack.attacker, e) ||
+        !q2_resolve_reference(g, p->inflictor, &restored.attack.inflictor, e) ||
+        !q2_resolve_reference(g, p->projectile, &restored.attack.projectile, e) ||
+        !q2_resolve_reference(g, p->owner, &restored.owner, e) ||
+        !q2_resolve_reference(g, p->enemy, &restored.enemy, e) ||
+        !q2_resolve_reference(g, p->child, &restored.child, e) ||
+        !q2_resolve_reference(g, s->physics_enemy, &physics.enemy, e) ||
+        !q2_resolve_reference(g, s->physics_goal, &physics.goal, e))
         return false;
     qa_q2_grapple_state grapples[2];
     for (unsigned i = 0; i < 2; ++i) {
@@ -245,7 +247,7 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
             return false;
         }
         if ((grapples[i].equipment_bound && !q2_weapon_validate(g, &grapples[i].equipment, e)) ||
-            !resolve(g, s->grapple_hooks[i], &grapples[i].hook, e))
+            !q2_resolve_reference(g, s->grapple_hooks[i], &grapples[i].hook, e))
             return false;
     }
     if (s->weapon_bound && !q2_weapon_validate(g, &s->weapon, e))

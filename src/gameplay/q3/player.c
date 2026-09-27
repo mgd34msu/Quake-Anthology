@@ -1,5 +1,34 @@
 #include "internal.h"
 
+bool qa_q3_activate_holdable(qa_q3_game *game, qa_actor_id actor, qa_q3_holdable expected,
+                             bool prediction, qa_error *error) {
+    q3_actor *entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER || expected < QA_Q3_H_NONE ||
+        expected > QA_Q3_H_INVULNERABILITY ||
+        (game->options.product == QA_Q3_ARENA && expected > QA_Q3_H_MEDKIT))
+        return q3_fail(error, "invalid Q3 holdable activation");
+    qa_q3_player_state *player = &entry->state.player;
+    if (player->holdable != expected)
+        return true;
+    qa_combat_state combat;
+    if (!qa_combat_read(game->options.services.combat, actor, &combat, error))
+        return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
+    player = &entry->state.player;
+    if (player->holdable != expected || player->spectator || combat.health <= 0 ||
+        player->respawned ||
+        (expected == QA_Q3_H_MEDKIT && combat.health >= (float)player->max_health + 25))
+        return true;
+    player->use_item_held = true;
+    player->holdable = QA_Q3_H_NONE;
+    if (!q3_player_event(game, actor, 24 + (int32_t)expected, 0, error))
+        return false;
+    return prediction || !q3_actor_get(game, actor) ||
+           q3_use_holdable(game, actor, expected, error);
+}
+
 bool qa_q3_bind_player(qa_q3_game *game, qa_actor_id actor, uint32_t selections, int32_t handicap,
                        qa_error *error) {
     if (!game || actor.slot >= game->capacity ||
@@ -404,15 +433,7 @@ bool qa_q3_arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_control
     if (player->respawned)
         return true;
     if (use && !player->use_item_held) {
-        if (player->holdable != QA_Q3_H_MEDKIT || combat.health < (float)player->max_health + 25) {
-            qa_q3_holdable holdable = player->holdable;
-            player->use_item_held = true;
-            player->holdable = QA_Q3_H_NONE;
-            if (!q3_player_event(game, actor, 24 + (int32_t)holdable, 0, error))
-                return false;
-            return command->prediction || qa_q3_use_holdable(game, actor, holdable, error);
-        }
-        return true;
+        return qa_q3_activate_holdable(game, actor, player->holdable, command->prediction, error);
     }
     if (!use)
         player->use_item_held = false;
