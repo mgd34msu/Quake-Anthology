@@ -333,7 +333,8 @@ static bool move_stage(const qa_movement_input *input, const qa_movement_service
         !isfinite(input->environment.speed_multiplier)||input->environment.speed_multiplier<0) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid movement input, selected family or services"); return false;
     }
-    qa_movement_result result={.actor=input->actor,.command_sequence=input->command.sequence,.state=input->state,
+    qa_movement_result result={.contacts=out->contacts,.contact_capacity=out->contact_capacity,
+        .actor=input->actor,.command_sequence=input->command.sequence,.state=input->state,
         .bounds=input->has_current_bounds?input->current_bounds:input->shape.bounds,.view_height=input->standing.view_height,.view_offset=input->view_offset};
     if (input->shape.kind==QA_SHAPE_POINT) result.bounds=(qa_bounds){0};
     qa_movement_input active_input=*input;
@@ -358,7 +359,11 @@ static bool move_stage(const qa_movement_input *input, const qa_movement_service
     }
     if (!ok&&!c.removed) c.failed=true;
     if (c.input_open) (void)qa_move_phase(&c,c.failed?QA_MOVE_INPUT_ABORT:QA_MOVE_INPUT_END);
-    if (c.failed) { qa_movement_result_free(&result); return false; }
+    if (c.failed) {
+        out->contacts=result.contacts; out->contact_capacity=result.contact_capacity;
+        out->contact_count=0;
+        return false;
+    }
     result.status=c.removed?QA_MOVEMENT_ACTOR_REMOVED:QA_MOVEMENT_ACTIVE;
     *out=result; return true;
 }

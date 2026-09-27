@@ -34,6 +34,11 @@ void qa_q3_prediction_init(qa_q3_prediction *prediction) {
     prediction->predicted.kind=QA_MOVEMENT_Q3;
     prediction->command.kind=QA_MOVEMENT_Q3;
 }
+void qa_q3_prediction_free(qa_q3_prediction *prediction) {
+    if (!prediction) return;
+    qa_movement_result_free(&prediction->scratch);
+    memset(prediction,0,sizeof(*prediction));
+}
 bool qa_q3_prediction_view(qa_movement_state *state, int32_t health, const qa_movement_command *command, qa_error *error) {
     if (!state||!command||state->kind!=QA_MOVEMENT_Q3||command->kind!=QA_MOVEMENT_Q3) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q3 prediction view requires Q3 state and command"); return false;
@@ -159,13 +164,13 @@ bool qa_q3_predict(qa_q3_prediction *p, const qa_q3_prediction_host *host, const
         if (!host->movement_input(host->context,&p->predicted,&p->command,number,physics_time,&input,error)) return false;
         input.state=p->predicted; input.command=p->command; input.command.sequence=number;
         input.prediction=true; input.profile.kind=QA_MOVEMENT_Q3; input.profile.data.q3.fixed_ms=settings->fixed?msec:0;
-        qa_movement_result movement={0};
-        if (!qa_movement_move(&input,&host->movement_services,&movement,error)) return false;
-        if (movement.status==QA_MOVEMENT_ACTOR_REMOVED) {
-            qa_movement_result_free(&movement); result.status=QA_PREDICTION_ACTOR_REMOVED; result.movement=p->predicted; *out=result; return true;
+        qa_movement_result *movement=&p->scratch;
+        if (!qa_movement_move(&input,&host->movement_services,movement,error)) return false;
+        if (movement->status==QA_MOVEMENT_ACTOR_REMOVED) {
+            result.status=QA_PREDICTION_ACTOR_REMOVED; result.movement=p->predicted; *out=result; return true;
         }
-        p->predicted=movement.state; qa_bounds bounds=movement.bounds;
-        qa_movement_result_free(&movement); moved=true;
+        p->predicted=movement->state; qa_bounds bounds=movement->bounds;
+        moved=true;
         if (host->touch_triggers) {
             bool hyperspace=false;
             qa_movement_control state=host->touch_triggers(host->context,&p->predicted,bounds,physics_time,&hyperspace,error);

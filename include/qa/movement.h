@@ -255,7 +255,10 @@ bool qa_movement_set_velocity(qa_movement_state *, qa_vec3, qa_error *);
 /* One accepted source command, including its original subdivision. No world
  * clock is advanced and no second physics simulation is created. Output is
  * published on success, including ACTOR_REMOVED; callbacks may already have
- * committed effects when an error is reported. */
+ * committed effects when an error is reported. Zero-initialize the result once,
+ * reuse it between commands, and free it at owner teardown. Contact storage is
+ * retained; an error preserves prior scalar fields but invalidates contacts.
+ * Nested movement calls require distinct results. */
 bool qa_movement_move(const qa_movement_input *, const qa_movement_services *, qa_movement_result *, qa_error *);
 /* Native NQ accepts all client commands before the entity traversal. These
  * split entries share the same kernel but do not begin/end input application:
@@ -337,6 +340,8 @@ typedef struct qa_q3_prediction_output {
     const void *interpolated_owners;
 } qa_q3_prediction_output;
 typedef struct qa_q3_prediction {
+    /* Reusable contacts, excluded from prediction checkpoints. */
+    qa_movement_result scratch;
     bool initialized;
     qa_movement_state predicted;
     qa_movement_command command;
@@ -361,6 +366,7 @@ typedef struct qa_q3_prediction_host {
     void (*warning)(void *, const char *);
 } qa_q3_prediction_host;
 void qa_q3_prediction_init(qa_q3_prediction *);
+void qa_q3_prediction_free(qa_q3_prediction *);
 bool qa_q3_prediction_view(qa_movement_state *, int32_t health, const qa_movement_command *, qa_error *);
 /* Uses qa_movement_move and the host's ordinary prediction trigger services.
  * Ordered effects go through movement_services.effect; no second actor world

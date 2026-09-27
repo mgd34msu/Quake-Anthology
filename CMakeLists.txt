@@ -168,6 +168,22 @@ add_library(qa_movement STATIC
     src/movement/q3/slide.c)
 target_link_libraries(qa_movement PUBLIC qa_session)
 
+add_library(qa_navigation STATIC
+    src/navigation/checkpoint.c
+    src/navigation/construct.c
+    src/navigation/eligibility.c
+    src/navigation/estimates.c
+    src/navigation/graph.c
+    src/navigation/graph_asset.c
+    src/navigation/prediction.c
+    src/navigation/route.c
+    src/navigation/runtime.c
+    src/navigation/spatial.c
+    src/navigation/train.c
+    src/navigation/travel.c
+    src/navigation/world.c)
+target_link_libraries(qa_navigation PUBLIC qa_navigation_assets qa_movement)
+
 add_library(qa_builtin STATIC
     src/gameplay/builtin/services.c
     src/gameplay/builtin/random.c
