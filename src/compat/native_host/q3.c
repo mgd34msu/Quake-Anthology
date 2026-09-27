@@ -32,8 +32,9 @@ static qa_native_host_guest_memory guest_memory(qa_native_host *host)
         .read_string = guest_string};
 }
 
-bool native_host_q3_dispatch(qa_native_host *host, int32_t service,
+static bool dispatch(qa_native_host *host, int32_t service,
                              const qa_native_value *arguments, size_t argument_count,
+                             const qa_native_signature *fixed_signature,
                              qa_native_value *result, qa_error *error)
 {
     int32_t canonical = service;
@@ -53,8 +54,16 @@ bool native_host_q3_dispatch(qa_native_host *host, int32_t service,
         .engine_service = engine,
         .arguments = arguments,
         .argument_count = argument_count,
+        .fixed_signature = fixed_signature,
         .memory = guest_memory(host)};
     return host->q3.dispatch(host->q3.context, &call, result, error);
+}
+
+bool native_host_q3_dispatch(qa_native_host *host, int32_t service,
+                             const qa_native_value *arguments, size_t argument_count,
+                             qa_native_value *result, qa_error *error)
+{
+    return dispatch(host, service, arguments, argument_count, NULL, result, error);
 }
 
 bool native_host_describe_syscall(void *context, int32_t service,
@@ -157,22 +166,12 @@ static bool locate_game_data(qa_native_host *host, const qa_native_import_call *
         return native_host_fail(error, QA_ERROR_ARGUMENT, call->slot,
                                 "Quake Live client-data descriptor is invalid");
     if (count == 0)
-        return native_host_q3_dispatch(host, (int32_t)call->slot, call->arguments,
-                                       call->argument_count, NULL, error);
+        return dispatch(host, (int32_t)call->slot, call->arguments,
+                          call->argument_count, call->signature, NULL, error);
     if (!table.base)
         return false;
-    if (host->world.session && host->world.world_actor.registry) {
-        qa_native_slot_binding world = {
-            .kind = QA_NATIVE_SLOT_WORLD,
-            .slot = 0,
-            .actor = host->world.world_actor,
-            .owner = host->world.owner,
-            .source_slot = 0};
-        if (!qa_native_bind_slot(host->instance, &world, error))
-            return false;
-    }
-    return native_host_q3_dispatch(host, (int32_t)call->slot, call->arguments,
-                                   call->argument_count, NULL, error);
+    return dispatch(host, (int32_t)call->slot, call->arguments,
+                      call->argument_count, call->signature, NULL, error);
 }
 
 bool native_host_q3_import(qa_native_host *host, const qa_native_import_call *call,
@@ -183,6 +182,6 @@ bool native_host_q3_import(qa_native_host *host, const qa_native_import_call *ca
                                 "fixed Q3 imports require Quake Live API 10");
     if (call->slot == 22)
         return locate_game_data(host, call, error);
-    return native_host_q3_dispatch(host, (int32_t)call->slot, call->arguments,
-                                   call->argument_count, result, error);
+    return dispatch(host, (int32_t)call->slot, call->arguments,
+                      call->argument_count, call->signature, result, error);
 }

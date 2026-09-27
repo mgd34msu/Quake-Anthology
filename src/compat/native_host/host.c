@@ -234,7 +234,7 @@ static void free_records(qa_native_host *host)
 
 bool qa_native_host_destroy(qa_native_host *host, qa_error *error)
 {
-    if (!host || host->destroying)
+    if (!host || host->destroying || host->callback_depth)
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "live native host adapter is required");
     host->destroying = true;

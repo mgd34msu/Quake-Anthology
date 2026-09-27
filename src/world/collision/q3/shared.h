@@ -3,6 +3,13 @@
 
 #include "patch.h"
 
+/* The source swap carries original box extents/position bounds independently
+ * of the substituted capsule's radius and offset. */
+bool qa_q3_trace_capsule_replacement(void *map, const qa_trace_query *,
+                                     qa_vec3 start, qa_vec3 end, qa_q3_shape,
+                                     qa_bounds position_bounds, bool stationary,
+                                     bool point_trace, qa_trace_result *, qa_error *);
+
 static inline bool q3_same_point(qa_vec3 a, qa_vec3 b) {
     return a.x == b.x && a.y == b.y && a.z == b.z;
 }

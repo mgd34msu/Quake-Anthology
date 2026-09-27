@@ -20,7 +20,11 @@ bool qa_q3_collision_create(const qa_bsp_view *, qa_collision_kernel *, qa_error
  * implements boxes and capsules, including capsule-vs-capsule sweeps. */
 bool qa_q1_trace_box(const qa_trace_query *, qa_bounds target, qa_vec3 origin, qa_trace_result *, qa_error *);
 bool qa_q3_trace_shape(const qa_trace_query *, qa_shape_kind target_kind, qa_bounds target, qa_vec3 origin, int32_t contents, qa_trace_result *, qa_error *);
-bool qa_collision_trace_body(const qa_trace_query *, qa_collision_family actor_family, qa_shape_kind, qa_bounds, qa_vec3, int32_t contents, qa_trace_result *, qa_error *);
+bool qa_q3_trace_model_source(void *, const qa_trace_query *, uint32_t, bool,
+                               qa_trace_result *, qa_error *);
+bool qa_q3_trace_box_source(const qa_trace_query *, qa_bounds, bool, qa_trace_result *, qa_error *);
+bool qa_q3_trace_capsule_source(const qa_trace_query *, qa_bounds, bool transformed,
+                                void *replacement_map, qa_trace_result *, qa_error *);
 void qa_collision_adapt_trace(qa_trace_result *, const qa_trace_policy *);
 void qa_collision_adapt_point(qa_point_contents *, const qa_trace_policy *);
 

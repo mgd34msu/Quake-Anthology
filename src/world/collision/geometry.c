@@ -365,6 +365,48 @@ bool qa_collision_point_contents(qa_collision_geometry *geometry, const qa_point
     return true;
 }
 
+bool qa_collision_trace_q3_capsule(qa_collision_geometry *geometry, const qa_trace_query *query,
+                                   qa_bounds bounds, bool transformed,
+                                   qa_trace_result *out, qa_error *error)
+{
+    if (geometry == NULL || query == NULL || out == NULL || query->policy.family != QA_COLLISION_Q3
+        || !valid_policy(&query->policy))
+        return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid source Q3 capsule trace query");
+    void *replacement = geometry->family == QA_COLLISION_Q3 && geometry->model_count > 255
+                            ? geometry->kernel.state : NULL;
+    return qa_q3_trace_capsule_source(query, bounds, transformed, replacement, out, error);
+}
+
+bool qa_collision_trace_q3_model(qa_collision_geometry *geometry, const qa_trace_query *query,
+                                 uint32_t model, bool transformed, qa_trace_result *out, qa_error *error)
+{
+    if (geometry == NULL || query == NULL || out == NULL || model >= geometry->model_count
+        || query->policy.family != QA_COLLISION_Q3 || !valid_policy(&query->policy)
+        || !qa_vec_finite(query->start) || !qa_vec_finite(query->end)
+        || (transformed && (!qa_vec_finite(query->target.origin) || !qa_vec_finite(query->target.angles)))
+        || (unsigned)query->shape.kind > QA_SHAPE_CAPSULE
+        || (query->shape.kind != QA_SHAPE_POINT && !qa_collision_bounds_valid(query->shape.bounds)))
+        return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid source Q3 model trace query");
+    qa_trace_query local = *query;
+    local.target.inline_model = true;
+    local.target.model = model;
+    if (!transformed) local.target.origin = local.target.angles = qa_v3(0, 0, 0);
+    if (geometry->family != QA_COLLISION_Q3) return qa_collision_trace(geometry, &local, out, error);
+    qa_trace_result result;
+    if (!qa_q3_trace_model_source(geometry->kernel.state, &local, model, transformed, &result, error)) return false;
+    qa_collision_adapt_trace(&result, &local.policy);
+    *out = result;
+    return true;
+}
+
+bool qa_collision_trace_q3_box(const qa_trace_query *query, qa_bounds bounds, bool transformed,
+                               qa_trace_result *out, qa_error *error)
+{
+    if (query == NULL || out == NULL || query->policy.family != QA_COLLISION_Q3 || !valid_policy(&query->policy))
+        return geometry_fail(error, QA_ERROR_ARGUMENT, "Invalid source Q3 box trace query");
+    return qa_q3_trace_box_source(query, bounds, transformed, out, error);
+}
+
 bool qa_collision_leaf_at(const qa_collision_geometry *geometry, uint32_t index, qa_collision_leaf *out, qa_error *error)
 {
     if (geometry == NULL || out == NULL || (size_t)index >= geometry->leaf_count)

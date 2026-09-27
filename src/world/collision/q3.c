@@ -329,21 +329,51 @@ static void q3_trace_media(q3_work *work, uint32_t model) {
     work->result.in_open = q3_uncovered((q3_interval){0, work->result.fraction}, map->intervals, count);
 }
 
-static bool q3_trace(void *state, const qa_trace_query *query, qa_trace_result *out, qa_error *error) {
+static void q3_trace_model(q3_work *work, uint32_t model) {
+    const q3_model *members = &work->map->models[model];
+    for (size_t i = 0; i < members->brush_count && work->result.fraction != 0; ++i)
+        q3_trace_brush(work, members->brushes[i]);
+    if (work->curves) for (size_t i = 0; i < members->surface_count && work->result.fraction != 0; ++i)
+        q3_trace_patch(work, members->surfaces[i]);
+}
+
+bool qa_q3_trace_capsule_replacement(void *state, const qa_trace_query *query,
+                                     qa_vec3 start, qa_vec3 end, qa_q3_shape shape,
+                                     qa_bounds position_bounds, bool stationary,
+                                     bool point_trace, qa_trace_result *out, qa_error *error) {
     q3_map *map = state;
-    uint32_t model = query->target.inline_model ? query->target.model : 0;
+    if (map == NULL || map->model_count <= 255) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 255, "Q3 capsule replacement model is absent");
+        return false;
+    }
+    q3_work work = {.map = map, .query = query,
+        .result = qa_collision_empty_trace(query, QA_COLLISION_Q3),
+        .shape = shape, .start = start, .end = end, .position_bounds = position_bounds,
+        .mask = qa_collision_geometry_mask(&query->policy, QA_COLLISION_Q3),
+        .stationary = stationary, .point_trace = point_trace,
+        .curves = query->policy.curves, .player_curves = query->policy.player_curve_clip};
+    q3_next_generation(map);
+    q3_trace_model(&work, 255);
+    *out = work.result;
+    return true;
+}
+
+bool qa_q3_trace_model_source(void *state, const qa_trace_query *query, uint32_t model,
+                               bool transformed, qa_trace_result *out, qa_error *error) {
+    q3_map *map = state;
     if (model >= map->model_count) {
         qa_error_set(error, QA_ERROR_ARGUMENT, model, "Q3 collision model index is out of range"); return false;
     }
     q3_work work = {0};
     work.map = map; work.query = query;
     work.result = qa_collision_empty_trace(query, QA_COLLISION_Q3);
+    work.result.model = model;
     qa_vec3 center, basis[3];
     work.shape = q3_prepare_shape(query->shape, &center);
     work.start = qa_vec_add(query->start, center); work.end = qa_vec_add(query->end, center);
     work.stationary = q3_same_point(query->start, query->end);
-    bool rotated = query->target.inline_model && !q3_same_point(query->target.angles, qa_v3(0, 0, 0));
-    if (query->target.inline_model) {
+    bool rotated = transformed && !q3_same_point(query->target.angles, qa_v3(0, 0, 0));
+    if (transformed) {
         work.start = qa_vec_sub(work.start, query->target.origin);
         work.end = qa_vec_sub(work.end, query->target.origin);
         if (rotated) {
@@ -363,11 +393,7 @@ static bool q3_trace(void *state, const qa_trace_query *query, qa_trace_result *
     work.player_curves = query->policy.family != QA_COLLISION_Q3 || query->policy.player_curve_clip;
     q3_next_generation(map);
     if (model != 0) {
-        const q3_model *members = &map->models[model];
-        for (size_t i = 0; i < members->brush_count && work.result.fraction != 0; ++i)
-            q3_trace_brush(&work, members->brushes[i]);
-        if (work.curves) for (size_t i = 0; i < members->surface_count && work.result.fraction != 0; ++i)
-            q3_trace_patch(&work, members->surfaces[i]);
+        q3_trace_model(&work, model);
     } else if (work.stationary) {
         qa_bounds bounds = {qa_vec_sub(qa_vec_add(work.start, work.shape.mins), qa_v3(1, 1, 1)),
                             qa_vec_add(qa_vec_add(work.start, work.shape.extents), qa_v3(1, 1, 1))};
@@ -380,6 +406,12 @@ static bool q3_trace(void *state, const qa_trace_query *query, qa_trace_result *
     q3_finish_trace(query, &work.result);
     *out = work.result;
     return true;
+}
+
+static bool q3_trace(void *state, const qa_trace_query *query, qa_trace_result *out, qa_error *error) {
+    return qa_q3_trace_model_source(state, query,
+        query->target.inline_model ? query->target.model : 0,
+        query->target.inline_model, out, error);
 }
 
 static int32_t q3_brush_point(const q3_map *map, uint32_t index, qa_vec3 point) {

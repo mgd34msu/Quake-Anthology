@@ -75,6 +75,22 @@ bool qa_collision_model_bounds(const qa_collision_geometry *, uint32_t model, qa
  * names clear the previous value and report a format error. */
 bool qa_collision_set_surface_material(qa_collision_geometry *, uint32_t texinfo, qa_bytes, qa_error *);
 bool qa_collision_trace(qa_collision_geometry *, const qa_trace_query *, qa_trace_result *, qa_error *);
+/* Sweeps against one temporary body without requiring spatial publication.
+ * Hosts use this for source APIs that explicitly name an entity to clip. */
+bool qa_collision_trace_body(const qa_trace_query *, qa_collision_family actor_family,
+                             qa_shape_kind target_kind, qa_bounds target, qa_vec3 origin,
+                             int32_t contents, qa_trace_result *, qa_error *);
+/* Source Q3 capsule handle: target supplies the optional origin/angles. The
+ * box-through-capsule swap resolves real Q3 submodel 255 when present. Handle
+ * admission, no-node early returns and temporary-box state belong to the host. */
+bool qa_collision_trace_q3_capsule(qa_collision_geometry *, const qa_trace_query *,
+                                   qa_bounds capsule_bounds, bool transformed,
+                                   qa_trace_result *, qa_error *);
+/* Model selection is independent of source TransformedBoxTrace semantics. */
+bool qa_collision_trace_q3_model(qa_collision_geometry *, const qa_trace_query *,
+                                 uint32_t model, bool transformed, qa_trace_result *, qa_error *);
+bool qa_collision_trace_q3_box(const qa_trace_query *, qa_bounds, bool transformed,
+                               qa_trace_result *, qa_error *);
 bool qa_collision_point_contents(qa_collision_geometry *, const qa_point_query *, qa_point_contents *, qa_error *);
 bool qa_collision_point_leaf(const qa_collision_geometry *, qa_vec3, qa_collision_leaf *, qa_error *);
 bool qa_collision_leaf_at(const qa_collision_geometry *, uint32_t, qa_collision_leaf *, qa_error *);

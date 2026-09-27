@@ -193,6 +193,7 @@ typedef struct qa_native_host_q3_call {
     bool engine_service;
     const qa_native_value *arguments;
     size_t argument_count;
+    const qa_native_signature *fixed_signature;
     qa_native_host_guest_memory memory;
 } qa_native_host_q3_call;
 
@@ -231,6 +232,10 @@ bool qa_native_host_destroy(qa_native_host *, qa_error *);
 
 qa_native_instance *qa_native_host_instance(qa_native_host *);
 qa_native_profile qa_native_host_profile(const qa_native_host *);
+
+/* Dispatch after the shared registry invalidates the released ID. Clears only
+ * matching owned/borrowed bindings; repeated notifications are harmless. */
+bool qa_native_host_actor_released(qa_native_host *, qa_actor_record, qa_error *);
 
 bool qa_native_host_initialize(qa_native_host *, int32_t level_time, int32_t random_seed,
                                bool restart, qa_error *);

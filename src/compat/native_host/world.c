@@ -47,15 +47,50 @@ static bool release_binding(qa_native_host *host, qa_native_slot_binding binding
 {
     if (binding.kind == QA_NATIVE_SLOT_FREE || binding.kind == QA_NATIVE_SLOT_WORLD)
         return true;
+    qa_native_slot_binding cleared = {.kind = QA_NATIVE_SLOT_FREE, .slot = binding.slot};
+    if (!qa_native_bind_slot(host->instance, &cleared, error))
+        return false;
+    if (binding.slot < host->retained_capacity)
+        host->retained_clients[binding.slot] = false;
     if (binding.kind == QA_NATIVE_SLOT_OWNED && actor_live(host, binding.actor)) {
-        if (host->world.release_actor)
+        ++host->callback_depth;
+        if (host->world.release_actor) {
             host->world.release_actor(host->world.binding_context, host, binding.slot,
                                       binding.actor);
-        if (!qa_session_release(host->world.session, binding.actor, error))
-            return false;
+        }
+        bool ok = !actor_live(host, binding.actor) ||
+                  qa_session_release(host->world.session, binding.actor, error);
+        --host->callback_depth;
+        if (!ok) return false;
     }
-    qa_native_slot_binding cleared = {.kind = QA_NATIVE_SLOT_FREE, .slot = binding.slot};
-    return qa_native_bind_slot(host->instance, &cleared, error);
+    return true;
+}
+
+bool qa_native_host_actor_released(qa_native_host *host, qa_actor_record released,
+                                    qa_error *error)
+{
+    if (!host || !host->instance || !released.id.registry || actor_live(host, released.id))
+        return native_host_fail(error, QA_ERROR_ARGUMENT, released.id.slot,
+                                "native release notification requires an invalidated actor ID");
+    qa_native_entity_table table;
+    if (!qa_native_entity_table_get(host->instance, &table, error)) return false;
+    ++host->callback_depth;
+    bool ok = true;
+    for (uint32_t slot = 0; slot < table.capacity; ++slot) {
+        qa_native_slot_binding binding;
+        if (!qa_native_slot(host->instance, slot, &binding, error)) { ok = false; break; }
+        if ((binding.kind != QA_NATIVE_SLOT_OWNED && binding.kind != QA_NATIVE_SLOT_BORROWED) ||
+            !qa_actor_id_equal(binding.actor, released.id)) continue;
+        qa_native_slot_binding cleared = {.kind = QA_NATIVE_SLOT_FREE, .slot = slot};
+        if (!qa_native_bind_slot(host->instance, &cleared, error)) { ok = false; break; }
+        if (slot < host->retained_capacity) host->retained_clients[slot] = false;
+        if (binding.kind == QA_NATIVE_SLOT_OWNED && host->world.release_actor) {
+            host->world.release_actor(host->world.binding_context, host, slot, released.id);
+            if (!qa_native_entity_table_get(host->instance, &table, error)) { ok = false; break; }
+        }
+    }
+    --host->callback_depth;
+    return ok;
 }
 
 static bool bind_world(qa_native_host *host, uint32_t slot, qa_error *error)

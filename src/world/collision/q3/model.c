@@ -138,8 +138,9 @@ static void position_capsule(qa_trace_result *result, qa_vec3 center, const qa_q
     }
 }
 
-bool qa_q3_trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, qa_bounds target_bounds,
-                        qa_vec3 origin, int32_t contents, qa_trace_result *out, qa_error *error) {
+static bool trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, qa_bounds target_bounds,
+                         qa_vec3 origin, int32_t contents, bool transformed, void *replacement_map,
+                         qa_trace_result *out, qa_error *error) {
     if (query == NULL || out == NULL || !qa_vec_finite(query->start) || !qa_vec_finite(query->end)
         || !qa_vec_finite(origin) || !qa_vec_finite(query->target.angles)
         || !qa_vec_finite(target_bounds.mins) || !qa_vec_finite(target_bounds.maxs)
@@ -161,17 +162,28 @@ bool qa_q3_trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, q
         start = qa_collision_to_local(start, basis); end = qa_collision_to_local(end, basis);
         q3_rotate_capsule(&shape, basis);
     }
-    bool stationary = q3_same_point(start, end);
-    center = qa_vec_scale(qa_vec_add(shape.mins, shape.extents), 0.5f);
-    shape.mins = qa_vec_sub(shape.mins, center); shape.extents = qa_vec_sub(shape.extents, center);
-    start = qa_vec_add(start, center); end = qa_vec_add(end, center);
+    bool stationary = transformed ? q3_same_point(start, end) : q3_same_point(query->start, query->end);
+    if (transformed) {
+        center = qa_vec_scale(qa_vec_add(shape.mins, shape.extents), 0.5f);
+        shape.mins = qa_vec_sub(shape.mins, center); shape.extents = qa_vec_sub(shape.extents, center);
+        start = qa_vec_add(start, center); end = qa_vec_add(end, center);
+    }
     uint32_t mask = qa_collision_geometry_mask(&query->policy, QA_COLLISION_Q3);
     if (target_kind == QA_SHAPE_BOX) trace_box(&result, target_bounds, start, end, &shape, stationary, mask, contents);
     else {
         qa_vec3 target_center;
         qa_q3_shape target = q3_prepare_shape((qa_trace_shape){QA_SHAPE_CAPSULE, target_bounds}, &target_center);
         if (shape.kind != QA_SHAPE_CAPSULE) {
-            if (stationary) {
+            if (replacement_map != NULL) {
+                qa_bounds original = {qa_vec_add(start, shape.mins), qa_vec_add(start, shape.extents)};
+                bool point_trace = q3_same_point(shape.mins, qa_v3(0, 0, 0));
+                shape.kind = QA_SHAPE_CAPSULE;
+                shape.radius = target.radius;
+                shape.offset = target.offset;
+                if (!qa_q3_trace_capsule_replacement(replacement_map, query,
+                        qa_vec_sub(start, target_center), qa_vec_sub(end, target_center),
+                        shape, original, stationary, point_trace, &result, error)) return false;
+            } else if (stationary) {
                 /* The source swap retains original position bounds and tests
                  * them against the original moving box, then skips six sides. */
                 qa_bounds original = {qa_vec_add(start, shape.mins), qa_vec_add(start, shape.extents)};
@@ -204,4 +216,25 @@ bool qa_q3_trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, q
     q3_finish_trace(query, &result);
     *out = result;
     return true;
+}
+
+bool qa_q3_trace_shape(const qa_trace_query *query, qa_shape_kind target_kind, qa_bounds target_bounds,
+                        qa_vec3 origin, int32_t contents, qa_trace_result *out, qa_error *error) {
+    return trace_shape(query, target_kind, target_bounds, origin, contents, true, NULL, out, error);
+}
+
+bool qa_q3_trace_capsule_source(const qa_trace_query *query, qa_bounds bounds, bool transformed,
+                                void *replacement_map, qa_trace_result *out, qa_error *error) {
+    qa_trace_query local = *query;
+    if (!transformed) local.target = (qa_collision_target){0};
+    return trace_shape(&local, QA_SHAPE_CAPSULE, bounds, local.target.origin, 0x02000000,
+                       transformed, replacement_map, out, error);
+}
+
+bool qa_q3_trace_box_source(const qa_trace_query *query, qa_bounds bounds, bool transformed,
+                            qa_trace_result *out, qa_error *error) {
+    qa_trace_query local = *query;
+    if (!transformed) local.target = (qa_collision_target){0};
+    return trace_shape(&local, QA_SHAPE_BOX, bounds, local.target.origin, 0x02000000,
+                       transformed, NULL, out, error);
 }
