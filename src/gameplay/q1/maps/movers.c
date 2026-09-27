@@ -48,7 +48,7 @@ static q1_actor *door_master(qa_q1_game *g, q1_actor *entity) {
     const q1_door_group *group = entity->map->pending.mover.group;
     return group ? q1_entity(g, group->members[0]) : entity;
 }
-static bool door_down(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+bool q1_map_door_down(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!q1_sound(g, entity->id, door_sound(entity, true), 2, 1, error))
         return false;
     if (!q1_alive(g, entity->id))
@@ -89,7 +89,7 @@ static bool door_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_
             continue;
         door->message = QA_STRING_NONE;
         door->activator = activator;
-        if (!(down ? door_down(g, door, error) : door_up(g, door, error)))
+        if (!(down ? q1_map_door_down(g, door, error) : door_up(g, door, error)))
             return false;
     }
     return true;
@@ -497,8 +497,9 @@ bool q1_map_mover_blocked(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa
     if (kind == Q1_MAP_PLAT)
         return plat_move(g, entity, entity->map->pending.mover.position != Q1_MAP_UP, error);
     if (kind == Q1_MAP_DOOR && entity->wait >= 0)
-        return entity->map->pending.mover.position == Q1_MAP_DOWN ? door_up(g, entity, error)
-                                                                  : door_down(g, entity, error);
+        return entity->map->pending.mover.position == Q1_MAP_DOWN
+                   ? door_up(g, entity, error)
+                   : q1_map_door_down(g, entity, error);
     return true;
 }
 bool q1_map_mover_reaction(qa_q1_game *g, q1_actor *entity, const qa_damage_outcome *outcome,
@@ -538,7 +539,7 @@ bool q1_map_mover_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, q
     }
     switch (action) {
     case Q1_MAP_DOOR_DOWN:
-        return door_down(g, entity, error);
+        return q1_map_door_down(g, entity, error);
     case Q1_MAP_DOOR_BOTTOM:
         move->position = Q1_MAP_BOTTOM;
         return q1_sound(g, entity->id, door_sound(entity, false), 2, 1, error);

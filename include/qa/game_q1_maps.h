@@ -11,7 +11,7 @@ typedef struct qa_q1_map_fields {
     qa_vec3 mangle, movedir;
     bool has_movedir;
     float height, lip, width, length, pause_time;
-    float volume, duration, distance;
+    float volume, duration, distance, next_think_seconds;
     int32_t sounds, style, world_type, color_map;
 } qa_q1_map_fields;
 
@@ -20,6 +20,12 @@ typedef struct qa_q1_static_model {
     qa_vec3 origin, angles;
     int32_t frame, skin, color_map;
 } qa_q1_static_model;
+typedef struct qa_q1_map_finale_view {
+    uint32_t stage;
+    qa_string_id map, text;
+    qa_vec3 origin, angles;
+    double exit_after;
+} qa_q1_map_finale_view;
 typedef struct qa_q1_map_options {
     qa_targets *targets;
     qa_q1_level *level;
@@ -38,6 +44,9 @@ typedef struct qa_q1_map_options {
                          uint32_t found, qa_error *);
     /* An attached foreign character can follow authored Q1 monster paths. */
     bool (*path_touch)(void *, qa_actor_id corner, qa_actor_id follower, bool *handled, qa_error *);
+    bool (*finale)(void *, const qa_q1_map_finale_view *, qa_error *);
+    bool (*finale_finished)(void *);
+    bool (*finish_campaign)(void *, qa_error *);
 } qa_q1_map_options;
 
 /* Bind before authored spawning. All service owners outlive the native game;
@@ -47,6 +56,8 @@ bool qa_q1_game_maps_bind(qa_q1_game *, const qa_q1_map_options *, qa_error *);
 bool qa_q1_game_maps_finish(qa_q1_game *, qa_error *);
 /* Threewave spectator door/teleporter passage, after its velocity update. */
 bool qa_q1_game_map_observer_nearby(qa_q1_game *, qa_actor_id, qa_error *);
+bool qa_q1_game_map_finale(qa_q1_game *, qa_actor_id oldone, bool finish, qa_error *);
+void qa_q1_game_map_dismiss_finale(qa_q1_game *);
 qa_string_id qa_q1_game_map_name(const qa_q1_game *);
 uint32_t qa_q1_game_campaign_flags(const qa_q1_game *);
 qa_string_id qa_q1_game_map_text(const qa_q1_game *, qa_actor_id, qa_q1_campaign_text);

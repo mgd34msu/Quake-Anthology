@@ -30,7 +30,18 @@ typedef enum q1_map_kind {
     Q1_MAP_PLAT,
     Q1_MAP_TRAIN,
     Q1_MAP_DOOR_TRIGGER,
-    Q1_MAP_PLAT_TRIGGER
+    Q1_MAP_PLAT_TRIGGER,
+    Q1_MAP_GATE,
+    Q1_MAP_STATIC,
+    Q1_MAP_AMBIENT,
+    Q1_MAP_SIGIL,
+    Q1_MAP_SHOOTER,
+    Q1_MAP_FIREBALL_SOURCE,
+    Q1_MAP_FIREBALL,
+    Q1_MAP_BUBBLES,
+    Q1_MAP_NOISE,
+    Q1_MAP_VIEW,
+    Q1_MAP_LIGHTNING
 } q1_map_kind;
 typedef enum q1_map_action {
     Q1_MAP_IDLE,
@@ -60,7 +71,17 @@ typedef enum q1_map_action {
     Q1_MAP_PLAT_DOWN,
     Q1_MAP_TRAIN_FIND,
     Q1_MAP_TRAIN_NEXT,
-    Q1_MAP_TRAIN_WAIT
+    Q1_MAP_TRAIN_WAIT,
+    Q1_MAP_SIGIL_PLACE,
+    Q1_MAP_SHOOTER_FIRE,
+    Q1_MAP_FIREBALL_FLY,
+    Q1_MAP_BUBBLES_MAKE,
+    Q1_MAP_NOISE_REPEAT,
+    Q1_MAP_LIGHTNING_FIRE,
+    Q1_MAP_FINALE_TWO,
+    Q1_MAP_FINALE_THREE,
+    Q1_MAP_FINALE_WAIT,
+    Q1_MAP_FINALE_SIX
 } q1_map_action;
 typedef enum q1_map_position { Q1_MAP_BOTTOM, Q1_MAP_UP, Q1_MAP_TOP, Q1_MAP_DOWN } q1_map_position;
 typedef struct q1_door_group {
@@ -81,7 +102,7 @@ struct q1_map_state {
     q1_map_action action;
     qa_string_id original_model, map, noise[4], endtext, intermissiontext;
     qa_vec3 movedir, mangle;
-    float height, lip, width, length, pause_time, volume, duration, distance;
+    float height, lip, width, length, pause_time, volume, duration, distance, initial_think;
     int32_t sounds, style, color_map;
     uint32_t inline_model;
     double cooldown;
@@ -96,6 +117,10 @@ struct q1_map_runtime {
     qa_q1_map_options options;
     q1_map_state *allocated, *spare, *retired;
     q1_door_group *door_groups;
+    qa_actor_id world_actor, electrodes[2];
+    double lightning_end;
+    qa_q1_map_finale_view finale;
+    bool finale_started, finale_dismissed;
     uint32_t total_secrets, found_secrets;
 };
 
@@ -128,5 +153,14 @@ bool q1_map_mover_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
 bool q1_map_move(qa_q1_game *, q1_actor *, qa_vec3, q1_map_action, qa_error *);
 bool q1_map_train_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_train_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
+bool q1_map_special_spawn(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_map_special_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_map_special_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_map_special_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
+void q1_map_cancel(qa_q1_game *, q1_actor *);
+bool q1_map_timer(qa_q1_game *, const char *, q1_actor **, qa_error *);
+bool q1_map_door_down(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_map_lightning_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_map_boss_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
 
 #endif

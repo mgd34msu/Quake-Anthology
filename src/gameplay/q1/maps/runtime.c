@@ -19,6 +19,7 @@ bool qa_q1_game_maps_bind(qa_q1_game *g, const qa_q1_map_options *options, qa_er
         return false;
     }
     g->maps->options = *options;
+    g->maps->lightning_end = -1;
     return true;
 }
 static bool target_read(void *context, qa_actor_id actor, qa_authored_target *out) {
@@ -28,6 +29,51 @@ static bool target_use(void *context, qa_actor_id actor, qa_actor_id other, qa_a
                        qa_error *error) {
     return qa_q1_game_use_from(context, actor, other, activator, error);
 }
+static bool target_field(void *context, qa_actor_id actor, const char *key, qa_target_field *out) {
+    qa_q1_game *g = context;
+    q1_actor *entity = q1_entity(g, actor);
+    if (!entity)
+        return false;
+    static const struct {
+        const char *name;
+        size_t offset;
+    } strings[] = {{"classname", offsetof(q1_actor, classname)},
+                   {"targetname", offsetof(q1_actor, targetname)},
+                   {"target", offsetof(q1_actor, target)},
+                   {"killtarget", offsetof(q1_actor, killtarget)},
+                   {"message", offsetof(q1_actor, message)}},
+      numbers[] = {{"speed", offsetof(q1_actor, speed)},
+                   {"wait", offsetof(q1_actor, wait)},
+                   {"delay", offsetof(q1_actor, delay)}};
+    for (size_t i = 0; i < sizeof(strings) / sizeof(*strings); ++i)
+        if (!strcmp(key, strings[i].name)) {
+            const qa_string_id *value = (const void *)((const char *)entity + strings[i].offset);
+            *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = *value};
+            return true;
+        }
+    for (size_t i = 0; i < sizeof(numbers) / sizeof(*numbers); ++i)
+        if (!strcmp(key, numbers[i].name)) {
+            const float *value = (const void *)((const char *)entity + numbers[i].offset);
+            *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER, .value.number = *value};
+            return true;
+        }
+    if (!strcmp(key, "spawnflags")) {
+        *out =
+            (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER, .value.number = entity->spawnflags};
+        return true;
+    }
+    if (entity->map && !strcmp(key, "style")) {
+        *out =
+            (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER, .value.number = entity->map->style};
+        return true;
+    }
+    if (entity->map && !strcmp(key, "mangle")) {
+        *out =
+            (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR, .value.vector = entity->map->mangle};
+        return true;
+    }
+    return false;
+}
 bool q1_map_bind_target(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!g->maps || !entity->native)
         return true;
@@ -36,7 +82,8 @@ bool q1_map_bind_target(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                                  .source = g->options.quakeworld ? QA_CLOCK_QUAKEWORLD
                                                                  : QA_CLOCK_NETQUAKE,
                                  .read = target_read,
-                                 .use = target_use};
+                                 .use = target_use,
+                                 .field = target_field};
     return qa_targets_bind(g->maps->options.targets, &binding, error);
 }
 qa_string_id qa_q1_game_map_name(const qa_q1_game *g) {
@@ -137,7 +184,7 @@ bool q1_map_collision(const q1_actor *entity, qa_actor_collision *collision) {
 }
 bool q1_map_schedule(qa_q1_game *g, q1_actor *entity, double delay, q1_map_action action,
                      qa_error *error) {
-    if (!isfinite(delay) || (delay < 0 && entity->physics.motion != QA_PHYSICS_PUSH))
+    if (!isfinite(delay))
         return q1_map_fail(error, "invalid Q1 map think delay");
     if (entity->physics.motion == QA_PHYSICS_PUSH) {
         double deadline = (double)entity->physics.local_time_ns + delay * 1000000000.0;
@@ -150,6 +197,14 @@ bool q1_map_schedule(qa_q1_game *g, q1_actor *entity, double delay, q1_map_actio
         return false;
     entity->map->action = action;
     return true;
+}
+void q1_map_cancel(qa_q1_game *g, q1_actor *entity) {
+    qa_scheduler_cancel(qa_session_scheduler(g->services.session), entity->id);
+    entity->think = Q1_THINK_NONE;
+    entity->next_think = -1;
+    entity->physics.next_think_ns = -1;
+    if (entity->map)
+        entity->map->action = Q1_MAP_IDLE;
 }
 bool q1_map_damageable(qa_q1_game *g, q1_actor *entity, bool enabled, qa_error *error) {
     qa_combat_state traits;
@@ -185,7 +240,7 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
         return true;
     const float numbers[] = {source->height,   source->lip,        source->width,
                              source->length,   source->pause_time, source->volume,
-                             source->duration, source->distance};
+                             source->duration, source->distance,   source->next_think_seconds};
     for (size_t i = 0; i < sizeof(numbers) / sizeof(*numbers); ++i)
         if (!isfinite(numbers[i]))
             return q1_map_fail(error, "nonfinite Q1 authored field");
@@ -214,6 +269,7 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
     state->volume = source->volume;
     state->duration = source->duration;
     state->distance = source->distance;
+    state->initial_think = source->next_think_seconds;
     state->sounds = source->sounds;
     state->style = source->style;
     state->color_map = source->color_map;
@@ -247,6 +303,29 @@ static q1_map_kind classify(const char *name) {
                    {"func_plat", Q1_MAP_PLAT},
                    {"func_train", Q1_MAP_TRAIN},
                    {"misc_teleporttrain", Q1_MAP_TRAIN},
+                   {"func_episodegate", Q1_MAP_GATE},
+                   {"func_bossgate", Q1_MAP_GATE},
+                   {"func_illusionary", Q1_MAP_STATIC},
+                   {"item_sigil", Q1_MAP_SIGIL},
+                   {"trap_spikeshooter", Q1_MAP_SHOOTER},
+                   {"trap_shooter", Q1_MAP_SHOOTER},
+                   {"misc_fireball", Q1_MAP_FIREBALL_SOURCE},
+                   {"air_bubbles", Q1_MAP_BUBBLES},
+                   {"light_globe", Q1_MAP_STATIC},
+                   {"light_torch_small_walltorch", Q1_MAP_STATIC},
+                   {"light_flame_large_yellow", Q1_MAP_STATIC},
+                   {"light_flame_small_yellow", Q1_MAP_STATIC},
+                   {"light_flame_small_white", Q1_MAP_STATIC},
+                   {"ambient_suck_wind", Q1_MAP_AMBIENT},
+                   {"ambient_flouro_buzz", Q1_MAP_AMBIENT},
+                   {"ambient_drip", Q1_MAP_AMBIENT},
+                   {"ambient_thunder", Q1_MAP_AMBIENT},
+                   {"ambient_light_buzz", Q1_MAP_AMBIENT},
+                   {"ambient_swamp1", Q1_MAP_AMBIENT},
+                   {"ambient_swamp2", Q1_MAP_AMBIENT},
+                   {"viewthing", Q1_MAP_VIEW},
+                   {"misc_noisemaker", Q1_MAP_NOISE},
+                   {"event_lightning", Q1_MAP_LIGHTNING},
                    {"trigger_multiple", Q1_MAP_MULTI},
                    {"trigger_once", Q1_MAP_MULTI},
                    {"trigger_secret", Q1_MAP_MULTI},
@@ -293,11 +372,14 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     entity->kind = Q1_MAP;
     if (q1_map_is_mover(kind))
         return q1_map_mover_spawn(g, entity, error);
+    if (kind >= Q1_MAP_GATE)
+        return q1_map_special_spawn(g, entity, error);
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
     switch (kind) {
     case Q1_MAP_WORLD: {
+        g->maps->world_actor = entity->id;
         static const char *const styles[] = {"m",
                                              "mmnmmommommnonmmonqnmmo",
                                              "abcdefghijklmnopqrstuvwxyzyxwvutsrqponmlkjihgfedcba",
@@ -405,6 +487,8 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
         return true;
     if (q1_map_is_mover(entity->map->kind))
         return q1_map_mover_use(g, entity, activator, error);
+    if (entity->map->kind >= Q1_MAP_GATE)
+        return q1_map_special_use(g, entity, activator, error);
     if (entity->map->kind == Q1_MAP_WALL) {
         entity->frame = 1 - entity->frame;
         return true;
@@ -419,6 +503,8 @@ bool q1_map_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contact *conta
                   qa_error *error) {
     if (entity->map && entity->map->touch_enabled && q1_map_is_mover(entity->map->kind))
         return q1_map_mover_touch(g, entity, contact->other, error);
+    if (entity->map && entity->map->touch_enabled && entity->map->kind >= Q1_MAP_GATE)
+        return q1_map_special_touch(g, entity, contact->other, error);
     return !entity->map || !entity->map->touch_enabled ||
            q1_map_trigger_touch(g, entity, contact, error);
 }
@@ -446,8 +532,12 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_map_state *state = entity->map;
     q1_map_action action = state->action;
     state->action = Q1_MAP_IDLE;
-    if (action >= Q1_MAP_MOVE_DONE)
+    if (action >= Q1_MAP_MOVE_DONE && action <= Q1_MAP_TRAIN_WAIT)
         return q1_map_mover_think(g, entity, action, error);
+    if (action >= Q1_MAP_LIGHTNING_FIRE)
+        return q1_map_boss_think(g, entity, action, error);
+    if (action >= Q1_MAP_SIGIL_PLACE)
+        return q1_map_special_think(g, entity, action, error);
     switch (action) {
     case Q1_MAP_IDLE:
         return true;
@@ -503,7 +593,7 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return q1_map_fail(error, "unknown Q1 map continuation");
 }
 
-static bool timer(qa_q1_game *g, const char *name, q1_actor **out, qa_error *error) {
+bool q1_map_timer(qa_q1_game *g, const char *name, q1_actor **out, qa_error *error) {
     if (!g || !g->maps)
         return q1_map_fail(error, "Q1 map services are not bound");
     q1_actor *entity;
@@ -521,7 +611,7 @@ bool qa_q1_game_map_defer_targets(qa_q1_game *g, const qa_target_use *use, qa_er
     if (!use || !isfinite(use->fields.delay_seconds) || use->fields.delay_seconds < 0)
         return q1_map_fail(error, "invalid Q1 delayed target use");
     q1_actor *entity;
-    if (!timer(g, "DelayedUse", &entity, error))
+    if (!q1_map_timer(g, "DelayedUse", &entity, error))
         return false;
     entity->map->pending.delayed = *use;
     entity->map->pending.delayed.source = entity->id;
@@ -539,7 +629,7 @@ bool qa_q1_game_map_defer_targets(qa_q1_game *g, const qa_target_use *use, qa_er
 }
 bool qa_q1_game_map_defer_level(qa_q1_game *g, double delay, qa_error *error) {
     q1_actor *entity;
-    if (!timer(g, "nextlevel", &entity, error))
+    if (!q1_map_timer(g, "nextlevel", &entity, error))
         return false;
     if (q1_map_schedule(g, entity, delay, Q1_MAP_PENDING_LEVEL, error))
         return true;
@@ -552,7 +642,7 @@ bool qa_q1_game_map_defer_finale(qa_q1_game *g, qa_q1_campaign_timer kind, doubl
         kind > QA_Q1_CAMPAIGN_FINISH_FINALE)
         return q1_map_fail(error, "invalid Q1 campaign timer");
     q1_actor *entity;
-    if (!timer(g, "finale_timer", &entity, error))
+    if (!q1_map_timer(g, "finale_timer", &entity, error))
         return false;
     entity->map->pending.finale = kind;
     if (q1_map_schedule(g, entity, delay, Q1_MAP_FINALE_TIMER, error))
