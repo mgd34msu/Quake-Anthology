@@ -12,7 +12,7 @@ typedef struct qa_q1_map_fields {
     bool has_movedir;
     float height, lip, width, length, pause_time;
     float volume, duration, distance, next_think_seconds;
-    int32_t sounds, style, world_type, color_map;
+    int32_t sounds, style, world_type, color_map, impulse;
 } qa_q1_map_fields;
 
 typedef struct qa_q1_static_model {
@@ -47,6 +47,7 @@ typedef struct qa_q1_map_options {
     bool (*finale)(void *, const qa_q1_map_finale_view *, qa_error *);
     bool (*finale_finished)(void *);
     bool (*finish_campaign)(void *, qa_error *);
+    bool (*server_command)(void *, qa_string_id command, qa_error *);
 } qa_q1_map_options;
 
 /* Bind before authored spawning. All service owners outlive the native game;
@@ -56,6 +57,7 @@ bool qa_q1_game_maps_bind(qa_q1_game *, const qa_q1_map_options *, qa_error *);
 bool qa_q1_game_maps_finish(qa_q1_game *, qa_error *);
 /* Threewave spectator door/teleporter passage, after its velocity update. */
 bool qa_q1_game_map_observer_nearby(qa_q1_game *, qa_actor_id, qa_error *);
+bool qa_q1_game_map_after_physics(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_game_map_finale(qa_q1_game *, qa_actor_id oldone, bool finish, qa_error *);
 void qa_q1_game_map_dismiss_finale(qa_q1_game *);
 qa_string_id qa_q1_game_map_name(const qa_q1_game *);

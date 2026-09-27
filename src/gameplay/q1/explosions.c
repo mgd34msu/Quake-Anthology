@@ -3,6 +3,10 @@
 bool q1_multi_explosion_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!q1_schedule(g, entity, entity->wait, Q1_THINK_MULTI_EXPLOSION, error))
         return false;
+    if (!q1_map_multi_explosion_begin(g, entity, error))
+        return false;
+    if (!q1_alive(g, entity->id))
+        return true;
     if (g->time > entity->state.effect.expires)
         return q1_remove(g, entity, error);
     qa_body_state body;
@@ -31,6 +35,11 @@ bool q1_multi_explosion_think(qa_q1_game *g, q1_actor *entity, qa_error *error) 
         !qa_builtin_emit(&g->services, &sound, error) ||
         !q1_radius(g, explosion->id, entity->owner, entity->damage, entity->id, QA_Q1_WEAPON_COUNT,
                    error))
+        return false;
+    if (!q1_alive(g, explosion->id))
+        return true;
+    if ((entity->spawnflags & 1) &&
+        !q1_effect(g, QA_BUILTIN_EXPLOSION, explosion->id, body.origin, 1, 0, error))
         return false;
     if (!q1_alive(g, explosion->id))
         return true;

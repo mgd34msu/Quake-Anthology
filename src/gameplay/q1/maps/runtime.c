@@ -273,6 +273,7 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
     state->sounds = source->sounds;
     state->style = source->style;
     state->color_map = source->color_map;
+    state->impulse = source->impulse;
     if (source->model && source->model[0] == '*') {
         const char *number = source->model + 1;
         char *end;
@@ -326,6 +327,25 @@ static q1_map_kind classify(const char *name) {
                    {"viewthing", Q1_MAP_VIEW},
                    {"misc_noisemaker", Q1_MAP_NOISE},
                    {"event_lightning", Q1_MAP_LIGHTNING},
+                   {"play_sound", Q1_MAP_SOUND},
+                   {"play_sound_triggered", Q1_MAP_SOUND},
+                   {"random_thunder", Q1_MAP_SOUND},
+                   {"random_thunder_triggered", Q1_MAP_SOUND},
+                   {"ambient_humming", Q1_MAP_HIP_AMBIENT},
+                   {"ambient_rushing", Q1_MAP_HIP_AMBIENT},
+                   {"ambient_running_water", Q1_MAP_HIP_AMBIENT},
+                   {"ambient_fan_blowing", Q1_MAP_HIP_AMBIENT},
+                   {"ambient_waterfall", Q1_MAP_HIP_AMBIENT},
+                   {"ambient_riftpower", Q1_MAP_HIP_AMBIENT},
+                   {"info_command", Q1_MAP_COMMAND},
+                   {"effect_teleport", Q1_MAP_TELEPORT_EFFECT},
+                   {"func_exploder", Q1_MAP_EXPLODER},
+                   {"func_multi_exploder", Q1_MAP_EXPLODER},
+                   {"func_rubble", Q1_MAP_RUBBLE_SOURCE},
+                   {"func_rubble1", Q1_MAP_RUBBLE_SOURCE},
+                   {"func_rubble2", Q1_MAP_RUBBLE_SOURCE},
+                   {"func_rubble3", Q1_MAP_RUBBLE_SOURCE},
+                   {"func_earthquake", Q1_MAP_EARTHQUAKE},
                    {"trigger_multiple", Q1_MAP_MULTI},
                    {"trigger_once", Q1_MAP_MULTI},
                    {"trigger_secret", Q1_MAP_MULTI},
@@ -372,6 +392,8 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     entity->kind = Q1_MAP;
     if (q1_map_is_mover(kind))
         return q1_map_mover_spawn(g, entity, error);
+    if (kind >= Q1_MAP_SOUND)
+        return q1_map_hip_misc_spawn(g, entity, error);
     if (kind >= Q1_MAP_GATE)
         return q1_map_special_spawn(g, entity, error);
     qa_body_state body;
@@ -487,6 +509,8 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
         return true;
     if (q1_map_is_mover(entity->map->kind))
         return q1_map_mover_use(g, entity, activator, error);
+    if (entity->map->kind >= Q1_MAP_SOUND)
+        return q1_map_hip_misc_use(g, entity, activator, error);
     if (entity->map->kind >= Q1_MAP_GATE)
         return q1_map_special_use(g, entity, activator, error);
     if (entity->map->kind == Q1_MAP_WALL) {
@@ -503,6 +527,8 @@ bool q1_map_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contact *conta
                   qa_error *error) {
     if (entity->map && entity->map->touch_enabled && q1_map_is_mover(entity->map->kind))
         return q1_map_mover_touch(g, entity, contact->other, error);
+    if (entity->map && entity->map->touch_enabled && entity->map->kind >= Q1_MAP_SOUND)
+        return q1_map_hip_misc_touch(g, entity, contact->other, error);
     if (entity->map && entity->map->touch_enabled && entity->map->kind >= Q1_MAP_GATE)
         return q1_map_special_touch(g, entity, contact->other, error);
     return !entity->map || !entity->map->touch_enabled ||
@@ -534,6 +560,8 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     state->action = Q1_MAP_IDLE;
     if (action >= Q1_MAP_MOVE_DONE && action <= Q1_MAP_TRAIN_WAIT)
         return q1_map_mover_think(g, entity, action, error);
+    if (action >= Q1_MAP_SOUND_REPEAT)
+        return q1_map_hip_misc_think(g, entity, action, error);
     if (action >= Q1_MAP_LIGHTNING_FIRE)
         return q1_map_boss_think(g, entity, action, error);
     if (action >= Q1_MAP_SIGIL_PLACE)
@@ -608,7 +636,7 @@ bool q1_map_timer(qa_q1_game *g, const char *name, q1_actor **out, qa_error *err
     return true;
 }
 bool qa_q1_game_map_defer_targets(qa_q1_game *g, const qa_target_use *use, qa_error *error) {
-    if (!use || !isfinite(use->fields.delay_seconds) || use->fields.delay_seconds < 0)
+    if (!use || !isfinite(use->fields.delay_seconds))
         return q1_map_fail(error, "invalid Q1 delayed target use");
     q1_actor *entity;
     if (!q1_map_timer(g, "DelayedUse", &entity, error))

@@ -180,6 +180,7 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/character.c
     src/gameplay/q1/charm.c
     src/gameplay/q1/clone.c
+    src/gameplay/q1/demodog.c
     src/gameplay/q1/dragon.c
     src/gameplay/q1/drops.c
     src/gameplay/q1/electric.c
@@ -193,8 +194,10 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/gremlin_weapons.c
     src/gameplay/q1/hipnotic_weapons.c
     src/gameplay/q1/horde.c
+    src/gameplay/q1/infected.c
     src/gameplay/q1/lavaman.c
     src/gameplay/q1/maps/bosses.c
+    src/gameplay/q1/maps/hipnotic_misc.c
     src/gameplay/q1/maps/movers.c
     src/gameplay/q1/maps/observer.c
     src/gameplay/q1/maps/runtime.c
@@ -208,6 +211,7 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/monster_actions.c
     src/gameplay/q1/monster_lifecycle.c
     src/gameplay/q1/monsters.c
+    src/gameplay/q1/obituary.c
     src/gameplay/q1/morph.c
     src/gameplay/q1/overlord.c
     src/gameplay/q1/pickups.c

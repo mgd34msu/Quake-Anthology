@@ -41,7 +41,15 @@ typedef enum q1_map_kind {
     Q1_MAP_BUBBLES,
     Q1_MAP_NOISE,
     Q1_MAP_VIEW,
-    Q1_MAP_LIGHTNING
+    Q1_MAP_LIGHTNING,
+    Q1_MAP_SOUND,
+    Q1_MAP_HIP_AMBIENT,
+    Q1_MAP_COMMAND,
+    Q1_MAP_TELEPORT_EFFECT,
+    Q1_MAP_EXPLODER,
+    Q1_MAP_RUBBLE_SOURCE,
+    Q1_MAP_RUBBLE,
+    Q1_MAP_EARTHQUAKE
 } q1_map_kind;
 typedef enum q1_map_action {
     Q1_MAP_IDLE,
@@ -81,7 +89,9 @@ typedef enum q1_map_action {
     Q1_MAP_FINALE_TWO,
     Q1_MAP_FINALE_THREE,
     Q1_MAP_FINALE_WAIT,
-    Q1_MAP_FINALE_SIX
+    Q1_MAP_FINALE_SIX,
+    Q1_MAP_SOUND_REPEAT,
+    Q1_MAP_EXPLODER_FIRE
 } q1_map_action;
 typedef enum q1_map_position { Q1_MAP_BOTTOM, Q1_MAP_UP, Q1_MAP_TOP, Q1_MAP_DOWN } q1_map_position;
 typedef struct q1_door_group {
@@ -103,10 +113,10 @@ struct q1_map_state {
     qa_string_id original_model, map, noise[4], endtext, intermissiontext;
     qa_vec3 movedir, mangle;
     float height, lip, width, length, pause_time, volume, duration, distance, initial_think;
-    int32_t sounds, style, color_map;
+    int32_t sounds, style, color_map, impulse;
     uint32_t inline_model;
     double cooldown;
-    bool has_inline_model, has_movedir, touch_enabled, use_enabled, dormant;
+    bool has_inline_model, has_movedir, touch_enabled, use_enabled, dormant, effect_active;
     union {
         qa_target_use delayed;
         qa_q1_campaign_timer finale;
@@ -121,6 +131,8 @@ struct q1_map_runtime {
     double lightning_end;
     qa_q1_map_finale_view finale;
     bool finale_started, finale_dismissed;
+    double earthquake_end;
+    bool quake_active;
     uint32_t total_secrets, found_secrets;
 };
 
@@ -162,5 +174,9 @@ bool q1_map_timer(qa_q1_game *, const char *, q1_actor **, qa_error *);
 bool q1_map_door_down(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_lightning_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_boss_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
+bool q1_map_hip_misc_spawn(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_map_hip_misc_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_map_hip_misc_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_map_hip_misc_think(qa_q1_game *, q1_actor *, q1_map_action, qa_error *);
 
 #endif
