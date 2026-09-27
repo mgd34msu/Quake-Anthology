@@ -207,6 +207,8 @@ bool qa_navigation_nearest(qa_navigation *, qa_actor_id, qa_vec3, float radius, 
                            bool *found, qa_error *);
 bool qa_navigation_trace_areas(qa_navigation *, qa_nav_workspace *, qa_vec3, qa_vec3,
                                qa_aas_crossing *, size_t, size_t *, qa_error *);
+bool qa_navigation_trace_collect(qa_navigation *, qa_nav_workspace *, qa_vec3 start, qa_vec3 end,
+                                 size_t maximum, qa_nav_crossings *, qa_error *);
 bool qa_navigation_bbox_areas(qa_navigation *, qa_nav_workspace *, qa_bounds, uint32_t *, size_t,
                               size_t *, qa_error *);
 bool qa_navigation_edge_allowed(qa_navigation *, qa_actor_id, uint32_t, bool *, qa_error *);

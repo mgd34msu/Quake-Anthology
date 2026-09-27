@@ -100,13 +100,35 @@ bool qa_aas_point_area(const qa_aas_view *v, qa_vec3 point, uint32_t *out, qa_er
     *out = (uint32_t)area;
     return true;
 }
-bool qa_aas_trace_areas(const qa_aas_view *v, qa_aas_query *q, qa_vec3 start, qa_vec3 end,
-                        qa_aas_crossing *out, size_t capacity, size_t *count, qa_error *e) {
-    if (v == NULL || q == NULL || count == NULL || (capacity != 0 && out == NULL) ||
-        !qa_vec_finite(start) || !qa_vec_finite(end)) {
-        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid AAS line query");
+void qa_nav_crossings_free(qa_nav_crossings *out) {
+    if (out != NULL) {
+        free(out->data);
+        *out = (qa_nav_crossings){0};
+    }
+}
+static bool crossing_reserve(qa_nav_crossings *out, size_t count, qa_error *e) {
+    if (count <= out->capacity)
+        return true;
+    size_t limit = SIZE_MAX / sizeof(*out->data);
+    if (count > limit) {
+        qa_error_set(e, QA_ERROR_MEMORY, count, "AAS crossings exceed address range");
         return false;
     }
+    size_t capacity = out->capacity ? out->capacity : 16;
+    while (capacity < count)
+        capacity = capacity > limit / 2 ? limit : capacity * 2;
+    qa_aas_crossing *data = realloc(out->data, capacity * sizeof(*data));
+    if (data == NULL) {
+        qa_error_set(e, QA_ERROR_MEMORY, count, "Growing AAS crossing results");
+        return false;
+    }
+    out->data = data;
+    out->capacity = capacity;
+    return true;
+}
+static bool trace_areas(const qa_aas_view *v, qa_aas_query *q, qa_vec3 start, qa_vec3 end,
+                        qa_aas_crossing *out, size_t capacity, size_t *count,
+                        qa_nav_crossings *collected, qa_error *e) {
     if (!reserve(q, v, e))
         return false;
     size_t used = 1, written = 0;
@@ -119,8 +141,14 @@ bool qa_aas_trace_areas(const qa_aas_view *v, qa_aas_query *q, qa_vec3 start, qa
                 qa_error_set(e, QA_ERROR_FORMAT, area, "Invalid AAS trace leaf");
                 return false;
             }
-            if (area != 0)
+            if (area != 0) {
+                if (collected != NULL) {
+                    if (!crossing_reserve(collected, written + 1, e))
+                        return false;
+                    out = collected->data;
+                }
                 out[written++] = (qa_aas_crossing){(uint32_t)area, f.start};
+            }
             continue;
         }
         const qa_aas_plane *p = plane(v, f.node, f.depth, e);
@@ -145,6 +173,25 @@ bool qa_aas_trace_areas(const qa_aas_view *v, qa_aas_query *q, qa_vec3 start, qa
     }
     *count = written;
     return true;
+}
+bool qa_aas_trace_areas(const qa_aas_view *v, qa_aas_query *q, qa_vec3 start, qa_vec3 end,
+                        qa_aas_crossing *out, size_t capacity, size_t *count, qa_error *e) {
+    if (v == NULL || q == NULL || count == NULL || (capacity != 0 && out == NULL) ||
+        !qa_vec_finite(start) || !qa_vec_finite(end)) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid AAS line query");
+        return false;
+    }
+    return trace_areas(v, q, start, end, out, capacity, count, NULL, e);
+}
+bool qa_aas_trace_collect(const qa_aas_view *v, qa_aas_query *q, qa_vec3 start, qa_vec3 end,
+                          size_t maximum, qa_nav_crossings *out, qa_error *e) {
+    if (out != NULL)
+        out->count = 0;
+    if (v == NULL || q == NULL || out == NULL || !qa_vec_finite(start) || !qa_vec_finite(end)) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid retained AAS line query");
+        return false;
+    }
+    return trace_areas(v, q, start, end, NULL, maximum, &out->count, out, e);
 }
 bool qa_aas_bbox_areas(const qa_aas_view *v, qa_aas_query *q, qa_bounds bounds, uint32_t *out,
                        size_t capacity, size_t *count, qa_error *e) {

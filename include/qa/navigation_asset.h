@@ -125,11 +125,20 @@ typedef struct qa_aas_crossing {
     uint32_t area;
     qa_vec3 point;
 } qa_aas_crossing;
+/* Zero-initialize once, then reuse. Collection resets count on failure and
+ * retains storage. Results belong to the caller, independent of query scratch. */
+typedef struct qa_nav_crossings {
+    qa_aas_crossing *data;
+    size_t count, capacity;
+} qa_nav_crossings;
+void qa_nav_crossings_free(qa_nav_crossings *);
 bool qa_aas_query_create(qa_aas_query **, qa_error *);
 void qa_aas_query_destroy(qa_aas_query *);
 bool qa_aas_point_area(const qa_aas_view *, qa_vec3, uint32_t *, qa_error *);
 bool qa_aas_trace_areas(const qa_aas_view *, qa_aas_query *, qa_vec3 start, qa_vec3 end,
                         qa_aas_crossing *, size_t capacity, size_t *count, qa_error *);
+bool qa_aas_trace_collect(const qa_aas_view *, qa_aas_query *, qa_vec3 start, qa_vec3 end,
+                          size_t maximum, qa_nav_crossings *, qa_error *);
 bool qa_aas_bbox_areas(const qa_aas_view *, qa_aas_query *, qa_bounds, uint32_t *, size_t capacity,
                        size_t *count, qa_error *);
 

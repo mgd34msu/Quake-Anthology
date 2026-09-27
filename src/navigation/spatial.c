@@ -69,16 +69,9 @@ static int crossing_compare(const void *left, const void *right) {
         return a->fraction < b->fraction ? -1 : 1;
     return a->ordinal < b->ordinal ? -1 : a->ordinal > b->ordinal;
 }
-bool qa_navigation_trace_areas(qa_navigation *n, qa_nav_workspace *w, qa_vec3 start, qa_vec3 end,
-                               qa_aas_crossing *out, size_t capacity, size_t *count, qa_error *e) {
-    if (n == NULL || w == NULL || count == NULL || (capacity != 0 && out == NULL) ||
-        !qa_vec_finite(start) || !qa_vec_finite(end)) {
-        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid navigation trace-area query");
-        return false;
-    }
-    const qa_aas_view *aas = qa_nav_asset_aas(n->graph->view.asset);
-    if (aas != NULL)
-        return qa_aas_trace_areas(aas, w->aas, start, end, out, capacity, count, e);
+static bool trace_foreign(qa_navigation *n, qa_nav_workspace *w, qa_vec3 start, qa_vec3 end,
+                           qa_aas_crossing *out, size_t capacity, size_t *count,
+                           qa_nav_crossings *collected, qa_error *e) {
     size_t crossed = 0;
     const float from[3] = {start.x, start.y, start.z}, to[3] = {end.x, end.y, end.z};
     for (size_t i = 0; i < n->graph->view.node_count; ++i) {
@@ -110,8 +103,40 @@ bool qa_navigation_trace_areas(qa_navigation *n, qa_nav_workspace *w, qa_vec3 st
     }
     if (crossed > 1)
         qsort(w->crossings, crossed, sizeof(*w->crossings), crossing_compare);
-    *count = crossed < capacity ? crossed : capacity;
-    for (size_t i = 0; i < *count; ++i)
+    size_t written = crossed < capacity ? crossed : capacity;
+    if (collected != NULL) {
+        if (!nav_reserve((void **)&collected->data, &collected->capacity, written,
+                         sizeof(*collected->data), e))
+            return false;
+        out = collected->data;
+    }
+    for (size_t i = 0; i < written; ++i)
         out[i] = w->crossings[i].crossing;
+    *count = written;
     return true;
+}
+bool qa_navigation_trace_areas(qa_navigation *n, qa_nav_workspace *w, qa_vec3 start, qa_vec3 end,
+                               qa_aas_crossing *out, size_t capacity, size_t *count, qa_error *e) {
+    if (n == NULL || w == NULL || count == NULL || (capacity != 0 && out == NULL) ||
+        !qa_vec_finite(start) || !qa_vec_finite(end)) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid navigation trace-area query");
+        return false;
+    }
+    const qa_aas_view *aas = qa_nav_asset_aas(n->graph->view.asset);
+    if (aas != NULL)
+        return qa_aas_trace_areas(aas, w->aas, start, end, out, capacity, count, e);
+    return trace_foreign(n, w, start, end, out, capacity, count, NULL, e);
+}
+bool qa_navigation_trace_collect(qa_navigation *n, qa_nav_workspace *w, qa_vec3 start,
+                                 qa_vec3 end, size_t maximum, qa_nav_crossings *out, qa_error *e) {
+    if (out != NULL)
+        out->count = 0;
+    if (n == NULL || w == NULL || out == NULL || !qa_vec_finite(start) || !qa_vec_finite(end)) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid retained navigation trace-area query");
+        return false;
+    }
+    const qa_aas_view *aas = qa_nav_asset_aas(n->graph->view.asset);
+    if (aas != NULL)
+        return qa_aas_trace_collect(aas, w->aas, start, end, maximum, out, e);
+    return trace_foreign(n, w, start, end, NULL, maximum, &out->count, out, e);
 }

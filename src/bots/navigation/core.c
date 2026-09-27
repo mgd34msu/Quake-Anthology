@@ -136,6 +136,16 @@ bool qa_bot_navigation_trace_areas(qa_bot_navigation *n, qa_vec3 start, qa_vec3 
     for (size_t i = 0; i < *count; ++i) out[i].area = qa_bot_navigation_source_area(n, out[i].area);
     return true;
 }
+bool qa_bot_navigation_trace_collect(qa_bot_navigation *n, qa_vec3 start, qa_vec3 end,
+                                     size_t maximum, qa_nav_crossings *out, qa_error *e) {
+    if (out) out->count = 0;
+    if (!n) return bot_nav_fail(e, "missing bot navigation owner");
+    if (!qa_navigation_trace_collect(n->runtime, n->workspace, start, end, maximum, out, e))
+        return false;
+    for (size_t i = 0; i < out->count; ++i)
+        out->data[i].area = qa_bot_navigation_source_area(n, out->data[i].area);
+    return true;
+}
 bool qa_bot_navigation_bbox_areas(qa_bot_navigation *n, qa_bounds bounds, uint32_t *out,
                                  size_t capacity, size_t *count, qa_error *e) {
     if (!n) return bot_nav_fail(e, "missing bot navigation owner");
