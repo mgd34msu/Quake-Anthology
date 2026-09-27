@@ -1,4 +1,4 @@
-#include "internal.h"
+#include "boss_internal.h"
 
 bool q1_message(qa_q1_game *g, qa_actor_id actor, const char *text, qa_error *error) {
     return q1_message_args(g, actor, text, NULL, 0, error);
@@ -203,6 +203,8 @@ bool qa_q1_game_damage_effect(qa_q1_game *g, qa_damage_effect_stage stage,
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Q1 damage effect call");
         return false;
     }
+    if (!q1_major_boss_effect(g, stage, request, effect, error))
+        return false;
     q1_player *player = q1_player_get(g, request->target);
     if (!player || !effect->allowed)
         return true;

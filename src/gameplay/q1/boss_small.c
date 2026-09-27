@@ -1,4 +1,4 @@
-#include "internal.h"
+#include "boss_internal.h"
 
 static bool body(qa_q1_game *g, q1_actor *e, qa_body_state *out, qa_error *error) {
     return qa_world_body_read(g->services.world, e->id, out, error);
@@ -9,21 +9,19 @@ static qa_vec3 enemy_origin(qa_q1_game *g, q1_actor *e) {
                ? value.origin
                : qa_v3(0, 0, 0);
 }
-static qa_vec3 direction_angles(qa_vec3 v) {
+qa_vec3 q1_boss_angles(qa_vec3 v) {
     return qa_v3(qa_builtin_angle_mod(atan2f(v.z, hypotf(v.x, v.y)) * 57.29577951308232f),
                  qa_builtin_angle_mod(atan2f(v.y, v.x) * 57.29577951308232f), 0);
 }
-static bool first_player(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
+bool q1_boss_first_player(qa_q1_game *g, qa_actor_id *out, qa_error *error) {
     q1_actor_snapshot *snapshot;
-    if (!q1_snapshot_actors(g, &snapshot, error))
-        return false;
-    bool ok = qa_builtin_players(&g->services, &snapshot->shared, error);
-    if (ok)
-        *out = snapshot->shared.count ? snapshot->shared.ids[0] : (qa_actor_id){0};
+    if (!q1_snapshot_players(g, &snapshot, error)) return false;
+    *out = snapshot->count ? snapshot->actors[0] : (qa_actor_id){0};
     snapshot->borrowed = false;
-    return ok;
+    return true;
 }
-static bool damageable(qa_q1_game *g, q1_actor *e, bool enabled, qa_error *error) {
+
+bool q1_boss_damageable(qa_q1_game *g, q1_actor *e, bool enabled, qa_error *error) {
     qa_combat_state traits;
     if (!qa_combat_read_traits(g->services.combat, e->id, &traits, error))
         return false;
@@ -47,9 +45,10 @@ bool q1_boss_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_error *error) {
     }
     bool ghost = !strcmp(m->species->classname, "monster_ghost");
     if (!ghost && strcmp(m->species->classname, "monster_szombie"))
-        return true;
+        return q1_major_boss_spawn(g, e, handled, error);
     *handled = true;
     m->addon.boss = ghost ? Q1_BOSS_GHOST : Q1_BOSS_SHUB_ZOMBIE;
+    m->path_end = ghost;
     if (ghost) {
         static const char *const deaths[] = {"ghost_diea1", "ghost_dieb1", "ghost_diec1",
                                              "ghost_died1", "ghost_diee1"};
@@ -76,11 +75,11 @@ bool q1_boss_spawn(qa_q1_game *g, q1_actor *e, bool *handled, qa_error *error) {
         m->addon.combat_style = 2;
         m->in_pain = 2;
         ++g->total_monsters;
-        if (!first_player(g, &m->enemy, error))
+        if (!q1_boss_first_player(g, &m->enemy, error))
             return false;
     }
     if (!qa_combat_set_health(g->services.combat, e->id, e->max_health, error) ||
-        !damageable(g, e, true, error) || !q1_model(g, e, m->species->model, error) ||
+        !q1_boss_damageable(g, e, true, error) || !q1_model(g, e, m->species->model, error) ||
         !qa_world_body_write(g->services.world, e->id, &value, error) || !q1_link(g, e, error))
         return false;
     if (!ghost) {
@@ -121,7 +120,7 @@ bool q1_boss_pain_lightning(qa_q1_game *g, q1_actor *e, qa_vec3 offset, qa_error
                               .code = 3};
     return qa_builtin_emit(&g->services, &event, error);
 }
-static bool colored_explosion(qa_q1_game *g, q1_actor *e, qa_error *error) {
+bool q1_boss_colored_explosion(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_body_state value;
     if (!body(g, e, &value, error))
         return false;
@@ -138,6 +137,8 @@ static bool colored_explosion(qa_q1_game *g, q1_actor *e, qa_error *error) {
 }
 bool q1_boss_die(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, qa_error *error) {
     q1_monster *m = &e->state.monster;
+    if (m->addon.boss == Q1_BOSS_OLDNEW || m->addon.boss == Q1_BOSS_FINAL)
+        return q1_major_boss_die(g, e, attacker, error);
     if (m->addon.boss == Q1_BOSS_GHOST) {
         m->next_frame = m->source.boss.death_frame;
         return q1_monster_frame(g, e, error);
@@ -146,7 +147,7 @@ bool q1_boss_die(qa_q1_game *g, q1_actor *e, qa_actor_id attacker, qa_error *err
         return true;
     m->enemy = attacker;
     m->source.boss.touch = false;
-    if (!damageable(g, e, false, error) || !q1_monster_count_kill(g, e, attacker, error))
+    if (!q1_boss_damageable(g, e, false, error) || !q1_monster_count_kill(g, e, attacker, error))
         return false;
     if (!q1_alive(g, e->id))
         return true;
@@ -187,7 +188,7 @@ bool q1_boss_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *erro
     if (actor_physics(g, other, &p) &&
         (p.solid == QA_PHYSICS_TRIGGER || (p.solid == QA_PHYSICS_BOX && q1_health(g, other) == 0)))
         return true;
-    return colored_explosion(g, e, error) &&
+    return q1_boss_colored_explosion(g, e, error) &&
            q1_radius(g, e->id, e->id, 100, g->services.physics->world_actor, QA_Q1_WEAPON_COUNT,
                      error) &&
            (!q1_alive(g, e->id) || q1_remove(g, e, error));
@@ -224,7 +225,7 @@ static bool ghost_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_
         qa_vec3 direction = qa_vec_sub(m->source.boss.destination, value.origin);
         direction.z = 0;
         direction = qa_vec_normalize(direction);
-        value.angles = direction_angles(direction);
+        value.angles = q1_boss_angles(direction);
         value.velocity = qa_vec_scale(direction, 150);
         return qa_world_body_write(g->services.world, e->id, &value, error);
     }
@@ -322,7 +323,7 @@ static bool orb_blast(qa_q1_game *g, q1_actor *e, qa_error *error) {
     (void)qa_world_body_read(g->services.world, e->state.monster.enemy, &target, NULL);
     float speed = g->options.skill > 2 ? 500 : g->options.skill > 0 ? 450 : 400;
     unsigned count = 4 + (unsigned)floorf(q1_random(g) * 2 + .5f);
-    qa_builtin_angle_vectors(direction_angles(qa_vec_sub(target.origin, value.origin)), &g->forward,
+    qa_builtin_angle_vectors(q1_boss_angles(qa_vec_sub(target.origin, value.origin)), &g->forward,
                              &g->right, &g->up);
     qa_vec3 origin = qa_vec_add(value.origin, qa_vec_scale(g->forward, 15));
     float time = qa_vec_length(qa_vec_sub(target.origin, origin)) / speed;
@@ -622,6 +623,9 @@ bool q1_boss_action(qa_q1_game *g, q1_actor *e, q1_frame_action action, qa_error
         return orb_action(g, e, action, error);
     case Q1_BOSS_SHUB_ZOMBIE:
         return shub_action(g, e, action, error);
+    case Q1_BOSS_OLDNEW:
+    case Q1_BOSS_FINAL:
+        return q1_major_boss_action(g, e, action, error);
     case Q1_BOSS_NONE:
         break;
     }
@@ -725,7 +729,8 @@ bool q1_spawn_homing_flame(qa_q1_game *g, q1_actor *source, qa_actor_id *out, qa
     qa_actor_id enemy =
         source->kind == Q1_MONSTER ? source->state.monster.enemy : source->physics.enemy;
     qa_q1_target traits;
-    if ((!q1_target(g, enemy, &traits) || !traits.player) && !first_player(g, &enemy, error))
+    if ((!q1_target(g, enemy, &traits) || !traits.player) &&
+        !q1_boss_first_player(g, &enemy, error))
         return false;
     (void)qa_world_body_read(g->services.world, enemy, &target, NULL);
     qa_vec3 origin = qa_vec_add(value.origin, qa_v3(0, 0, 4));
@@ -755,7 +760,7 @@ bool q1_spawn_homing_flame(qa_q1_game *g, q1_actor *source, qa_actor_id *out, qa
 }
 bool q1_homing_flame_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (e->state.projectile.expires + 3 < g->time)
-        return colored_explosion(g, e, error) &&
+        return q1_boss_colored_explosion(g, e, error) &&
                q1_radius(g, e->id, e->id, 100, g->services.physics->world_actor, QA_Q1_WEAPON_COUNT,
                          error) &&
                (!q1_alive(g, e->id) || q1_remove(g, e, error));

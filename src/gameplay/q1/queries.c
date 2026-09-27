@@ -1,6 +1,6 @@
 #include "internal.h"
 
-static bool snapshot_acquire(qa_q1_game *g, bool players, q1_actor_snapshot **out, qa_error *error) {
+static q1_actor_snapshot *snapshot_slot(qa_q1_game *g, qa_error *error) {
     q1_actor_snapshot *snapshot = g->snapshots;
     while (snapshot && snapshot->borrowed)
         snapshot = snapshot->next;
@@ -8,11 +8,18 @@ static bool snapshot_acquire(qa_q1_game *g, bool players, q1_actor_snapshot **ou
         snapshot = calloc(1, sizeof(*snapshot));
         if (!snapshot) {
             qa_error_set(error, QA_ERROR_MEMORY, 0, "Q1 actor snapshot allocation failed");
-            return false;
+            return NULL;
         }
         snapshot->next = g->snapshots;
         g->snapshots = snapshot;
     }
+    return snapshot;
+}
+static bool snapshot_acquire(qa_q1_game *g, bool players, q1_actor_snapshot **out,
+                             qa_error *error) {
+    q1_actor_snapshot *snapshot = snapshot_slot(g, error);
+    if (!snapshot)
+        return false;
     if (!(players ? qa_builtin_players(&g->services, &snapshot->shared, error)
                   : qa_builtin_observations(&g->services, &snapshot->shared, error)))
         return false;
@@ -28,6 +35,24 @@ bool q1_snapshot_actors(qa_q1_game *g, q1_actor_snapshot **out, qa_error *error)
 }
 bool q1_snapshot_players(qa_q1_game *g, q1_actor_snapshot **out, qa_error *error) {
     return snapshot_acquire(g, true, out, error);
+}
+bool q1_snapshot_targets(qa_q1_game *g, qa_targets *targets, qa_string_id name,
+                         q1_actor_snapshot **out, qa_error *error) {
+    q1_actor_snapshot *snapshot = snapshot_slot(g, error);
+    if (!snapshot ||
+        !qa_builtin_snapshot_reserve(
+            &snapshot->shared, qa_actors_capacity(qa_session_actors(g->services.session)), error))
+        return false;
+    qa_target_cursor cursor = {0};
+    qa_actor_id actor;
+    size_t count = 0;
+    while (qa_targets_next(targets, name, &cursor, &actor))
+        snapshot->shared.ids[count++] = actor;
+    snapshot->shared.count = snapshot->count = count;
+    snapshot->actors = snapshot->shared.ids;
+    snapshot->borrowed = true;
+    *out = snapshot;
+    return true;
 }
 
 bool q1_radius_snapshot(qa_q1_game *g, qa_vec3 origin, float radius, q1_actor_snapshot **out,

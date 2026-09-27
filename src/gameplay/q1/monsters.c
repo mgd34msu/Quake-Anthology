@@ -4,21 +4,23 @@
 static bool body(qa_q1_game *g, q1_actor *entity, qa_body_state *out, qa_error *error) {
     return qa_world_body_read(g->services.world, entity->id, out, error);
 }
-qa_actor_id q1_monster_route(qa_q1_game *g, q1_actor *entity) {
-    if (!entity->target ||
-        !qa_strings_text(qa_session_strings(g->services.session), entity->target).size)
+qa_actor_id q1_find_target(const qa_q1_game *g, qa_string_id name) {
+    if (!name || !qa_strings_text(qa_session_strings(g->services.session), name).size)
         return (qa_actor_id){0};
     if (g->host.find_target) {
         qa_actor_id target = {0};
-        if (g->host.find_target(g->host.context, entity->target, &target))
+        if (g->host.find_target(g->host.context, name, &target))
             return target;
     }
     for (uint32_t i = 0; i < g->capacity; ++i) {
         q1_actor *candidate = g->actors[i];
-        if (candidate && candidate->active && candidate->targetname == entity->target)
+        if (candidate && candidate->active && candidate->targetname == name)
             return candidate->id;
     }
     return (qa_actor_id){0};
+}
+qa_actor_id q1_monster_route(const qa_q1_game *g, const q1_actor *entity) {
+    return q1_find_target(g, entity->state.monster.path);
 }
 static bool target_body(qa_q1_game *g, q1_actor *entity, qa_body_state *out) {
     return qa_world_body_read(g->services.world, entity->state.monster.enemy, out, NULL);
@@ -739,7 +741,8 @@ bool q1_monster_play(qa_q1_game *g, q1_actor *entity, const char *name, qa_error
 }
 bool q1_monster_frame(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_monster *m = &entity->state.monster;
-    if (q1_health(g, entity->id) > 0 && m->enemy.registry && !eligible(g, m->enemy) &&
+    if (m->addon.boss != Q1_BOSS_FINAL && q1_health(g, entity->id) > 0 && m->enemy.registry &&
+        !eligible(g, m->enemy) &&
         !(m->species->species == QA_Q1_GREMLIN && m->source.gremlin.gorging)) {
         m->enemy = eligible(g, m->old_enemy) ? m->old_enemy : (qa_actor_id){0};
         m->old_enemy = (qa_actor_id){0};
@@ -842,6 +845,7 @@ bool q1_monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec, q
         spec = q1_infected_form(QA_Q1_HELLKNIGHT, corpse);
     entity->kind = Q1_MONSTER;
     entity->state.monster = (q1_monster){.species = spec,
+                                         .path = entity->target,
                                          .current_frame = q1_frame_index(spec->stand),
                                          .next_frame = q1_frame_index(spec->stand)};
     bool addon = g->options.program >= QA_Q1_DOPA && spec->species <= QA_Q1_ZOMBIE;
@@ -929,6 +933,7 @@ bool q1_monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec, q
         }
         return q1_lavaman_awake(g, entity, (qa_actor_id){0}, error);
     }
+    monster->path_end = true;
     if (!qa_combat_set_health(g->services.combat, entity->id, spec->health, error) ||
         !qa_world_body_write(g->services.world, entity->id, &state, error) ||
         !q1_model(g, entity, spec->model, error))
@@ -1082,7 +1087,11 @@ bool q1_monster_start(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!qa_combat_set_traits(g->services.combat, entity->id, &combat, error) ||
         !q1_link(g, entity, error))
         return false;
-    qa_actor_id goal = q1_monster_route(g, entity);
+    qa_actor_id goal = addon ? q1_find_target(g, entity->target) : q1_monster_route(g, entity);
+    if (!addon && m->species->species >= QA_Q1_GREMLIN) {
+        m->move_target = goal;
+        entity->physics.goal = goal;
+    }
     if (addon) {
         qa_actor_id authored;
         if (!q1_addon_target(g, entity, &authored, error))
@@ -1091,7 +1100,8 @@ bool q1_monster_start(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             return q1_monster_found(g, entity, authored, error);
     }
     if (addon) {
-        m->addon.move_target = goal;
+        m->path = goal.registry ? entity->target : QA_STRING_NONE;
+        m->move_target = goal;
         entity->physics.goal = goal;
         if (goal.registry && qa_world_body_read(g->services.world, goal, &state, NULL)) {
             qa_body_state self;
@@ -1112,7 +1122,7 @@ bool q1_monster_start(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return false;
     if (m->species->species == QA_Q1_MUMMY && m->source.mummy.asleep)
         m->next_frame = q1_frame_index(
-            qa_strings_text(qa_session_strings(g->services.session), entity->target).size
+            qa_strings_text(qa_session_strings(g->services.session), m->path).size
                 ? "mummy_wake"
                 : "mummy_sleep");
     if (addon && (entity->spawnflags & 4)) {

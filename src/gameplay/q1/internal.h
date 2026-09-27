@@ -1,6 +1,7 @@
 #ifndef QA_Q1_INTERNAL_H
 #define QA_Q1_INTERNAL_H
 
+#include "boss_types.h"
 #include "frame_actions.h"
 #include "qa/game_q1.h"
 #include <stdlib.h>
@@ -16,7 +17,8 @@ typedef enum q1_entity_kind {
     Q1_TIMER,
     Q1_PICKUP,
     Q1_GIB,
-    Q1_MAP
+    Q1_MAP,
+    Q1_BOSS_CHILD
 } q1_entity_kind;
 typedef enum q1_think_kind {
     Q1_THINK_NONE,
@@ -68,7 +70,8 @@ typedef enum q1_think_kind {
     Q1_THINK_HORDE_HEAD_STEP,
     Q1_THINK_HEAVY_SOURCE_DIE,
     Q1_THINK_GHOST_BUBBLES,
-    Q1_THINK_HOMING_FLAME
+    Q1_THINK_HOMING_FLAME,
+    Q1_THINK_BOSS_CHILD
 } q1_think_kind;
 typedef enum q1_projectile_kind {
     Q1_SPIKE,
@@ -99,7 +102,10 @@ typedef enum q1_projectile_kind {
     Q1_HEAVY_SPIKE,
     Q1_MG3_LAVAMAN_BALL,
     Q1_ORB_ROCK,
-    Q1_SHUB_GRENADE
+    Q1_SHUB_GRENADE,
+    Q1_BOSS_SPHERE_SHOT,
+    Q1_BOSS_BLAST_SHOT,
+    Q1_FINAL_ROCK
 } q1_projectile_kind;
 typedef enum q1_heavy_kind {
     Q1_HEAVY_NONE,
@@ -110,7 +116,9 @@ typedef enum q1_boss_kind {
     Q1_BOSS_NONE,
     Q1_BOSS_GHOST,
     Q1_BOSS_ORB,
-    Q1_BOSS_SHUB_ZOMBIE
+    Q1_BOSS_SHUB_ZOMBIE,
+    Q1_BOSS_OLDNEW,
+    Q1_BOSS_FINAL
 } q1_boss_kind;
 typedef enum q1_ai {
     Q1_AI_STAND,
@@ -158,29 +166,31 @@ typedef struct q1_species {
 } q1_species;
 typedef struct q1_monster {
     const q1_species *species;
+    qa_string_id path;
     uint16_t current_frame, next_frame;
-    qa_actor_id enemy, old_enemy, charmer, charm_goal;
+    qa_actor_id enemy, old_enemy, charmer, charm_goal, move_target, previous_corner;
     double pause_until, attack_finished, pain_finished, search_until, idle_until, straight_after,
         dodge_after, hostile_until;
     uint32_t counter, lightning_count;
     uint8_t attack_state, in_pain, hunting_charmer;
-    bool refired, sliding, lefty, counted_death, jump_touch, horde;
+    bool refired, sliding, lefty, counted_death, jump_touch, horde, path_end;
     struct {
-        bool enabled, waiting, path_wait, started, rocket_ogre, allow_path;
+        bool enabled, waiting, path_wait, started, rocket_ogre, allow_path, normal_use;
         bool infected, transformed, risen, infection_count_pending, demodog;
         uint8_t infected_kind, corpse;
         q1_heavy_kind heavy;
         q1_boss_kind boss;
         uint8_t projectiles, projectile_max, combat_style;
         double damage_at;
-        qa_actor_id move_target;
     } addon;
     union {
         struct {
             qa_vec3 anchor, destination;
             uint16_t death_frame;
             int32_t shots, shocks;
-            bool touch;
+            bool touch, immune, awake, swipe_side, vortex_side;
+            uint32_t phase, cycles, stage;
+            qa_string_id waves[4];
         } boss;
         struct {
             qa_actor_id child;
@@ -206,7 +216,6 @@ typedef struct q1_monster {
         } morph;
         struct {
             qa_vec3 last_velocity;
-            qa_actor_id move_target;
             uint16_t missile;
             uint8_t pain_sequence, death_state;
             bool attacking;
@@ -288,6 +297,7 @@ typedef struct q1_actor {
         q1_projectile projectile;
         q1_pickup pickup;
         q1_timed_effect effect;
+        q1_boss_child boss_child;
     } state;
 } q1_actor;
 typedef struct q1_character {
@@ -569,6 +579,7 @@ bool q1_multi_explosion_think(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_radius_snapshot(qa_q1_game *, qa_vec3, float, q1_actor_snapshot **, qa_error *);
 bool q1_snapshot_actors(qa_q1_game *, q1_actor_snapshot **, qa_error *);
 bool q1_snapshot_players(qa_q1_game *, q1_actor_snapshot **, qa_error *);
+bool q1_snapshot_targets(qa_q1_game *, qa_targets *, qa_string_id, q1_actor_snapshot **, qa_error *);
 bool q1_gremlin_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_gremlin_action(qa_q1_game *, q1_actor *, q1_frame_action, qa_error *);
 bool q1_gremlin_pain(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
@@ -590,7 +601,8 @@ bool q1_monster_die(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_monster_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_monster_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_monster_face(qa_q1_game *, q1_actor *, qa_error *);
-qa_actor_id q1_monster_route(qa_q1_game *, q1_actor *);
+qa_actor_id q1_find_target(const qa_q1_game *, qa_string_id);
+qa_actor_id q1_monster_route(const qa_q1_game *, const q1_actor *);
 bool q1_monster_found(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_monster_find_target(qa_q1_game *, q1_actor *, bool *, qa_error *);
 bool q1_charmed_find_target(qa_q1_game *, q1_actor *, bool *, qa_error *);

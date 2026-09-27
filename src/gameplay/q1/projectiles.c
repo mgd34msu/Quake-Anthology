@@ -1,4 +1,4 @@
-#include "internal.h"
+#include "boss_internal.h"
 #include <stdio.h>
 
 bool q1_meat_spray(qa_q1_game *g, q1_actor *owner, qa_vec3 origin, qa_vec3 velocity,
@@ -145,6 +145,12 @@ bool q1_projectile_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
                          const qa_touch_contact *contact, qa_error *error) {
     if (entity->state.projectile.kind == Q1_DEMODOG_GRENADE)
         return q1_demodog_grenade_touch(g, entity, other, error);
+    if (entity->state.projectile.kind == Q1_BOSS_SPHERE_SHOT)
+        return q1_boss_sphere_touch(g, entity, other, error);
+    if (entity->state.projectile.kind == Q1_BOSS_BLAST_SHOT)
+        return q1_boss_blast_touch(g, entity, other, error);
+    if (entity->state.projectile.kind == Q1_FINAL_ROCK)
+        return q1_final_rock_touch(g, entity, other, contact, error);
     if (entity->state.projectile.kind == Q1_ORB_ROCK)
         return q1_orb_rock_touch(g, entity, other, error);
     if (entity->state.projectile.kind == Q1_SHUB_GRENADE)

@@ -9,6 +9,8 @@ typedef enum q1_map_kind {
     Q1_MAP_WORLD,
     Q1_MAP_POINT,
     Q1_MAP_PATH,
+    Q1_MAP_CANCEL_PAUSE,
+    Q1_MAP_SWITCH_PATH,
     Q1_MAP_WALL,
     Q1_MAP_MULTI,
     Q1_MAP_COUNTER,
@@ -116,7 +118,7 @@ struct q1_map_state {
     struct q1_map_state *allocated_next, *pool_next;
     q1_map_kind kind;
     q1_map_action action;
-    qa_string_id original_model, map, noise[4], endtext, intermissiontext;
+    qa_string_id original_model, map, noise[4], endtext, intermissiontext, netname;
     qa_vec3 movedir, mangle;
     float height, lip, width, length, pause_time, volume, duration, distance, initial_think;
     int32_t sounds, style, color_map, impulse;
@@ -165,6 +167,8 @@ bool q1_map_lightstyle(qa_q1_game *, q1_actor *, const char *, qa_error *);
 bool q1_map_trigger_init(qa_q1_game *, q1_actor *, bool zero_direction, qa_error *);
 qa_vec3 q1_map_direction(qa_vec3 angles);
 bool q1_map_trigger_spawn(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_map_path_use(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_map_path_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_trigger_touch(qa_q1_game *, q1_actor *, const qa_touch_contact *, qa_error *);
 bool q1_map_trigger_use(qa_q1_game *, q1_actor *, qa_actor_id other, qa_actor_id activator,
                         qa_error *);

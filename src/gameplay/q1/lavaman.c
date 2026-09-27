@@ -72,7 +72,7 @@ static bool hunt(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         }
     }
     if (g->options.program == QA_Q1_MG3 && monster->enemy.registry) {
-        monster->addon.move_target = monster->enemy;
+        monster->move_target = monster->enemy;
         entity->physics.goal = monster->enemy;
     }
     return !monster->enemy.registry || q1_monster_face(g, entity, error);
@@ -150,6 +150,8 @@ bool q1_lavaman_awake(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa
     if (entity->physics.yaw_speed == 0)
         entity->physics.yaw_speed = 20;
     entity->state.monster.addon.started = true;
+    entity->state.monster.path_end = mg3;
+    entity->state.monster.addon.normal_use = false;
     entity->aimed_damage = true;
     qa_body_state body;
     qa_combat_state combat;

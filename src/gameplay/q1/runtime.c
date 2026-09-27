@@ -1,4 +1,4 @@
-#include "internal.h"
+#include "boss_internal.h"
 
 static const char *const weapon_names[QA_Q1_WEAPON_COUNT] = {"q1:weapon/axe",
                                                              "q1:weapon/shotgun",
@@ -140,6 +140,7 @@ bool q1_target(qa_q1_game *g, qa_actor_id actor, qa_q1_target *target) {
                        : entity && entity->kind == Q1_MONSTER &&
                                entity->state.monster.species->species == QA_Q1_LAVA_MAN
                            ? 48
+                       : entity && entity->kind == Q1_MONSTER && entity->state.monster.addon.boss == Q1_BOSS_OLDNEW ? 24
                        : entity && (entity->physics.flags & QA_PHYSICS_SWIMMING) ? 10
                                                                                  : 25,
         .invisible = player && player->power_expires[QA_Q1_INVISIBILITY] > g->time,
@@ -527,6 +528,8 @@ bool q1_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                q1_monster_found(g, entity, entity->state.monster.enemy, error);
     case Q1_THINK_GHOST_BUBBLES:
         return q1_ghost_bubbles(g, entity, error);
+    case Q1_THINK_BOSS_CHILD:
+        return q1_boss_child_think(g, entity, error);
     case Q1_THINK_HOMING_FLAME:
         return q1_homing_flame_think(g, entity, error);
     case Q1_THINK_DEATH_BUBBLES:
@@ -791,6 +794,13 @@ bool qa_q1_game_spawn(qa_q1_game *g, const qa_q1_spawn *spawn, qa_actor_id *out,
         *out = q1_alive(g, actor) ? actor : (qa_actor_id){0};
         return true;
     }
+    bool boss_map_handled;
+    if (!q1_final_map_spawn(g, entity, &boss_map_handled, error))
+        goto fail;
+    if (boss_map_handled) {
+        *out = actor;
+        return true;
+    }
     if (!strcmp(spawn->classname, "info_szombie_spawn")) {
         entity->wait = -1;
     } else if (!strcmp(spawn->classname, "dragon_corner")) {
@@ -823,6 +833,9 @@ bool qa_q1_game_spawn(qa_q1_game *g, const qa_q1_spawn *spawn, qa_actor_id *out,
     } else if (species ? !q1_monster_spawn(g, entity, species, error)
                        : !q1_pickup_spawn(g, entity, error))
         goto fail;
+    if (species && spawn->boss_fields &&
+        !q1_major_boss_fields(g, entity, spawn->boss_fields, error))
+        goto fail;
     *out = q1_alive(g, actor) ? actor : (qa_actor_id){0};
     return true;
 fail:
@@ -839,6 +852,8 @@ bool qa_q1_game_touch(qa_q1_game *g, const qa_touch_contact *contact, qa_error *
         return q1_dragon_corner_touch(g, entity, contact->other, error);
     if (entity->kind == Q1_PROJECTILE)
         return q1_projectile_touch(g, entity, contact->other, contact, error);
+    if (entity->kind == Q1_BOSS_CHILD)
+        return q1_boss_child_touch(g, entity, contact->other, error);
     if (entity->kind == Q1_MONSTER)
         return q1_monster_touch(g, entity, contact->other, error);
     if (entity->kind == Q1_PICKUP)
@@ -858,10 +873,20 @@ bool qa_q1_game_use_from(qa_q1_game *g, qa_actor_id actor, qa_actor_id other, qa
     q1_actor *entity = q1_entity(g, actor);
     if (entity)
         entity->activator = activator;
+    if (entity && q1_classnamed(g, actor, "trigger_boss_teleport"))
+        return q1_final_teleport(g, (entity->spawnflags & 1) != 0, error);
     if (entity && entity->kind == Q1_MAP)
         return q1_map_use(g, entity, other, activator, error);
     if (entity && entity->kind == Q1_PICKUP)
         return q1_pickup_use(g, entity, error);
+    if (entity && entity->kind == Q1_MONSTER && entity->state.monster.addon.normal_use &&
+        (entity->state.monster.addon.boss == Q1_BOSS_FINAL ||
+         (entity->state.monster.species->species == QA_Q1_LAVA_MAN &&
+          g->options.program == QA_Q1_MG3)))
+        return q1_monster_use(g, entity, activator, error);
+    if (entity && entity->kind == Q1_MONSTER && entity->state.monster.addon.boss == Q1_BOSS_FINAL &&
+        !entity->state.monster.source.boss.awake)
+        return q1_final_awake(g, entity, activator, error);
     if (entity && entity->kind == Q1_MONSTER &&
         entity->state.monster.species->species == QA_Q1_DRAGON)
         return q1_dragon_use(g, entity, error);
@@ -891,6 +916,8 @@ bool qa_q1_game_pusher_think(qa_q1_game *g, qa_actor_id actor, const qa_source_f
 }
 bool qa_q1_game_reaction(qa_q1_game *g, const qa_damage_outcome *outcome, qa_error *error) {
     q1_actor *entity = q1_entity(g, outcome->request.target);
+    if (entity && entity->kind == Q1_BOSS_CHILD)
+        return q1_boss_child_reaction(g, entity, outcome, error);
     if (entity && entity->kind == Q1_MAP)
         return q1_map_reaction(g, entity, outcome, error);
     if (entity && entity->kind == Q1_PROJECTILE && entity->state.projectile.kind == Q1_PROXIMITY &&
@@ -945,6 +972,7 @@ bool qa_q1_game_actor_traits(const qa_q1_game *g, qa_actor_id actor, qa_builtin_
                        : entity && entity->kind == Q1_MONSTER &&
                                entity->state.monster.species->species == QA_Q1_LAVA_MAN
                            ? 48
+                       : entity && entity->kind == Q1_MONSTER && entity->state.monster.addon.boss == Q1_BOSS_OLDNEW ? 24
                        : entity && (entity->physics.flags & QA_PHYSICS_SWIMMING) ? 10
                                                                                  : 25,
         .invisible = player && player->power_expires[QA_Q1_INVISIBILITY] > g->time,

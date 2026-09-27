@@ -10,7 +10,7 @@ static bool stop_attack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_body_state body, goal = {0};
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
-    (void)qa_world_body_read(g->services.world, m->source.dragon.move_target, &goal, NULL);
+    (void)qa_world_body_read(g->services.world, m->move_target, &goal, NULL);
     qa_trace_result trace;
     if (!q1_trace(g, body.origin, goal.origin, g->services.physics->world_actor, false, &trace,
                   error))
@@ -73,7 +73,7 @@ static bool move(qa_q1_game *g, q1_actor *entity, float distance, qa_error *erro
     if (!qa_world_body_read(g->services.world, entity->id, &body, error))
         return false;
     qa_actor_id previous = m->enemy;
-    qa_actor_id goal = m->source.dragon.attacking ? m->enemy : m->source.dragon.move_target;
+    qa_actor_id goal = m->source.dragon.attacking ? m->enemy : m->move_target;
     (void)qa_world_body_read(g->services.world, goal, &target, NULL);
     if (!m->source.dragon.attacking)
         m->enemy = goal;
@@ -325,10 +325,10 @@ bool q1_dragon_corner_touch(qa_q1_game *g, q1_actor *corner, qa_actor_id other, 
     if (!entity || entity->kind != Q1_MONSTER ||
         entity->state.monster.species->species != QA_Q1_DRAGON ||
         !q1_classnamed(g, other, "monster_dragon") ||
-        !qa_actor_id_equal(entity->state.monster.source.dragon.move_target, corner->id))
+        !qa_actor_id_equal(entity->state.monster.move_target, corner->id))
         return true;
-    qa_actor_id goal = q1_monster_route(g, corner);
-    entity->state.monster.source.dragon.move_target = goal;
+    qa_actor_id goal = q1_find_target(g, corner->target);
+    entity->state.monster.move_target = goal;
     entity->physics.goal = goal;
     entity->target = corner->target;
     if (goal.registry)
@@ -411,8 +411,8 @@ bool q1_dragon_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, q
             !qa_physics_walk_move(g->services.physics, entity->id, 0, 0, (float)g->elapsed, true,
                                   true, &moved, error))
             return false;
-        m->source.dragon.move_target = q1_monster_route(g, entity);
-        entity->physics.goal = m->source.dragon.move_target;
+        m->move_target = q1_find_target(g, entity->target);
+        entity->physics.goal = m->move_target;
         return qa_strings_text(qa_session_strings(g->services.session), entity->targetname).size ||
                q1_dragon_use(g, entity, error);
     }

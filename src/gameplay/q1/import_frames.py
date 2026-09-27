@@ -100,7 +100,9 @@ def main():
                donor / "addons/monsters/heavy/tables/mg3_lavaman.ts",
                donor / "addons/monsters/bosses/frames/ghost.ts",
                donor / "addons/monsters/bosses/frames/orb.ts",
-               donor / "addons/monsters/bosses/frames/szombie.ts"]
+               donor / "addons/monsters/bosses/frames/szombie.ts",
+               donor / "addons/monsters/bosses/frames/oldnew.ts",
+               donor / "addons/monsters/bosses/frames/final.ts"]
     rows = []
     for source in sources:
         for line in source.read_text().splitlines():
@@ -113,7 +115,7 @@ def main():
                 rows.append(row)
     rows.extend(addon_rows())
     virtual_actions = ["sword_pause", "mummy_wake", "mummy_missile", "wrath_attack", "overlord_missile", "morph_wake", "dragon_activate", "dragon_boom2", "armagon_missile_attack", "Gremlin_MeleeAttack", "Gremlin_MissileAttack", "gremlin_gib"]
-    virtual_actions.extend(["supsham_melee", "supsham_missile", "rknight_magic", "rknight_run", "rknight_melee"])
+    virtual_actions.extend(["supsham_melee", "supsham_missile", "rknight_magic", "rknight_run", "rknight_melee", "boss_final_decide"])
     zombie_hang = next(frame["frame"] for name, frame in rows if name == "zombie_paine1")
     rows.append(["zombie_hang1", {"frame": zombie_hang, "next": "zombie_hang1", "operations": []}])
     names = {name for name, _ in rows}

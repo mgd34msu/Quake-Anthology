@@ -183,6 +183,9 @@ typedef struct qa_q1_host {
                          qa_error *);
     bool (*weapon_changed)(void *, qa_actor_id, qa_item_id acquired, qa_error *);
 } qa_q1_host;
+typedef struct qa_q1_boss_fields {
+    const char *wave1, *wave2, *wave3, *teleport_target;
+} qa_q1_boss_fields;
 typedef struct qa_q1_spawn {
     const char *classname, *target, *targetname, *killtarget, *message;
     qa_vec3 origin, angles;
@@ -190,6 +193,7 @@ typedef struct qa_q1_spawn {
     bool has_source;
     float health, speed, wait, delay, damage, count;
     const struct qa_q1_map_fields *map_fields;
+    const qa_q1_boss_fields *boss_fields;
 } qa_q1_spawn;
 typedef struct qa_q1_input {
     qa_vec3 view_angles;

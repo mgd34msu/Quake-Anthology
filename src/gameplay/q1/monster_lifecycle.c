@@ -1,4 +1,4 @@
-#include "internal.h"
+#include "boss_internal.h"
 
 static bool retaliate(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_error *error) {
     q1_monster *m = &entity->state.monster;
@@ -34,12 +34,16 @@ bool q1_monster_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, floa
     qa_q1_species species = m->species->species;
     if (m->addon.boss == Q1_BOSS_GHOST)
         return true;
+    if (m->addon.boss == Q1_BOSS_FINAL)
+        return q1_major_boss_pain(g, entity, attacker, damage, error);
     if (m->addon.infected && m->addon.corpse && !m->addon.risen)
         return true;
     if ((entity->physics.flags & QA_PHYSICS_MONSTER) && !retaliate(g, entity, attacker, error))
         return false;
     if (!q1_alive(g, entity->id))
         return true;
+    if (m->addon.boss == Q1_BOSS_OLDNEW)
+        return q1_major_boss_pain(g, entity, attacker, damage, error);
     if (m->addon.boss == Q1_BOSS_ORB) {
         if (m->pain_finished > g->time || q1_random(g) * 200 > damage)
             return true;
@@ -446,7 +450,11 @@ bool q1_monster_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_er
 
 bool q1_monster_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {
     q1_monster *m = &entity->state.monster;
-    if (m->species->species == QA_Q1_LAVA_MAN && g->options.program == QA_Q1_MG3)
+    if (!m->addon.normal_use &&
+        (m->addon.boss == Q1_BOSS_GHOST || m->addon.boss == Q1_BOSS_SHUB_ZOMBIE))
+        return true;
+    if (!m->addon.normal_use && m->species->species == QA_Q1_LAVA_MAN &&
+        g->options.program == QA_Q1_MG3)
         return q1_lavaman_use(g, entity, activator, error);
     if (m->addon.enabled) {
         if (m->addon.waiting)
@@ -461,12 +469,8 @@ bool q1_monster_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_e
         qa_q1_target traits;
         if (!q1_target(g, activator, &traits) || !traits.player) {
             q1_actor_snapshot *snapshot;
-            if (!q1_snapshot_actors(g, &snapshot, error))
+            if (!q1_snapshot_players(g, &snapshot, error))
                 return false;
-            if (!qa_builtin_players(&g->services, &snapshot->shared, error)) {
-                snapshot->borrowed = false;
-                return false;
-            }
             activator = (qa_actor_id){0};
             for (size_t i = 0; i < snapshot->shared.count; ++i)
                 if (q1_health(g, snapshot->shared.ids[i]) > 0) {
@@ -476,7 +480,8 @@ bool q1_monster_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_e
             snapshot->borrowed = false;
         }
     }
-    if (m->species->species == QA_Q1_BOSS) {
+    if (!m->addon.normal_use && m->species->species == QA_Q1_BOSS &&
+        m->addon.boss != Q1_BOSS_FINAL) {
         entity->physics.solid = QA_PHYSICS_BOX;
         qa_combat_state combat;
         qa_body_state body;

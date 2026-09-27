@@ -7,7 +7,7 @@
  * strings and retains typed fields beside the native actor continuation. */
 typedef struct qa_q1_map_fields {
     const char *model, *map, *noise, *noise1, *noise2, *noise3;
-    const char *endtext, *intermissiontext;
+    const char *endtext, *intermissiontext, *netname;
     qa_vec3 mangle, movedir;
     bool has_movedir;
     float height, lip, width, length, pause_time;
@@ -29,6 +29,23 @@ typedef struct qa_q1_map_finale_view {
     double exit_after;
 } qa_q1_map_finale_view;
 typedef enum qa_q1_map_ending { QA_Q1_MAP_END_DOPA, QA_Q1_MAP_END_MG3 } qa_q1_map_ending;
+typedef struct qa_q1_path_state {
+    qa_actor_id move_target, enemy, previous_corner, owner;
+    double pause_until;
+} qa_q1_path_state;
+typedef enum qa_q1_path_change_kind {
+    QA_Q1_PATH_OWNER,
+    QA_Q1_PATH_VISIT,
+    QA_Q1_PATH_DESTINATION,
+    QA_Q1_PATH_PAUSE_END,
+    QA_Q1_PATH_CANCEL_PAUSE
+} qa_q1_path_change_kind;
+typedef struct qa_q1_path_change {
+    qa_q1_path_change_kind kind;
+    qa_actor_id reference;
+    qa_string_id target;
+    double pause_until;
+} qa_q1_path_change;
 typedef struct qa_q1_map_options {
     qa_targets *targets;
     qa_q1_level *level;
@@ -47,6 +64,11 @@ typedef struct qa_q1_map_options {
                          uint32_t found, qa_error *);
     /* An attached foreign character can follow authored Q1 monster paths. */
     bool (*path_touch)(void *, qa_actor_id corner, qa_actor_id follower, bool *handled, qa_error *);
+    /* MG3 controls read and mutate the actual foreign continuation. Read is
+     * nonmutating. A pause change invokes an installed path-end callback;
+     * cancel restores normal monster use. Supply both callbacks together. */
+    bool (*path_read)(void *, qa_actor_id, qa_q1_path_state *);
+    bool (*path_change)(void *, qa_actor_id, const qa_q1_path_change *, qa_error *);
     bool (*finale)(void *, const qa_q1_map_finale_view *, qa_error *);
     bool (*finale_finished)(void *);
     bool (*finish_campaign)(void *, qa_error *);
@@ -58,6 +80,9 @@ typedef struct qa_q1_map_options {
 bool qa_q1_game_maps_bind(qa_q1_game *, const qa_q1_map_options *, qa_error *);
 /* Link authored door groups after all map entities have been admitted. */
 bool qa_q1_game_maps_finish(qa_q1_game *, qa_error *);
+/* These adapters handle native actors only, for application owner dispatch. */
+bool qa_q1_game_path_read(const qa_q1_game *, qa_actor_id, qa_q1_path_state *);
+bool qa_q1_game_path_change(qa_q1_game *, qa_actor_id, const qa_q1_path_change *, qa_error *);
 /* Threewave spectator door/teleporter passage, after its velocity update. */
 bool qa_q1_game_map_observer_nearby(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_game_map_after_physics(qa_q1_game *, qa_actor_id, qa_error *);

@@ -1,6 +1,6 @@
 # Q1, shared gameplay, movement, and campaign audit
 
-This is a source audit against B08, B09, B10, and B13 in dependency plan 6. It is not a build, test, gameplay, performance, or whole-project completion report. Production edits are frozen except corrections explicitly assigned by the coordinator. The review is still in progress; the coverage inventory below records its limits.
+This is a source audit against B08, B09, B10, and B13 in dependency plan 6. It is not a build, test, gameplay, performance, or whole-project completion report. The assigned native written-source coverage is now complete, including manual animation-row comparisons. The unrelated test-body exclusions and shared review evidence are listed below. Confirmed corrections and missing implementation remain active work; all four frozen Jev task verdicts remain incomplete.
 
 The review began against `c6f7db5c4715416393d63af7e5c994ba59194caf` on `main`, including the frozen dirty Q1 implementation. The acceptance-packet snapshot is `9b1dfaef2d781f1246e244e039b97c01bdc8be1d`. A commit alone does not identify the dirty source: the modified and untracked paths are listed below, and the frozen packets retain source selections and selected file hashes. The coordinator committed the independently reviewed spawn correction as `c9bf514`; `849a3b2` only removed an attribution header from `movement/q2/classic.c` and changed no movement logic.
 
@@ -11,8 +11,8 @@ Reviewer: `/root/input_integration`, session `s_fcef533b1c394442a91432115ae4dd5c
 | Task | Existing criterion | Source evidence and current limit |
 | --- | --- | --- |
 | B08 | Native C kernels support independent per-player movement with required source cadence, bounds, and numeric decisions. | `movement/common.c` dispatches tagged private movement states; Q1 NQ/QW, Q2 classic/rerelease, and Q3 kernels exist. Q2 classic retains eighth-unit wire state, rerelease accepts float commands, Q3 validates signed-byte integral commands and subdivides source time. Shared entity/pusher/monster/Q3 mover code exists. Original Quake64 remains explicitly rejected; concrete application selection, prediction ownership, and deferred touch integration are not complete. Keep open. |
-| B09 | Each mutation has one authority; ordered transforms, observers, replacements, and private state retain required behavior. | `gameplay/operation.c` implements ordered transforms/observers and one replacement continuation; `combat.c` enforces source mutation observation and reaction boundaries; `inventory.c` owns canonical or explicitly bound storage; `pickups.c` checks complete grant authority and exact pickup lifetime. These are substantial implementations. The earlier source-complete claim must not be treated as verified integration: native protection composition and application lifecycle consumers are missing. Review of all bodies and source comparisons is not complete yet. |
-| B10 | Full Q1 family roster and behavior are implemented through shared services, including mission-pack and rerelease distinctions. | Native Q1 weapons, projectiles, character state, monsters, pickups, mission controllers, and addon controllers exist. Q1-01 and Q1-02 are corrected in source. Missing authored behavior Q1-04, missing continuations Q1-05, remaining animation comparisons, and application integration prevent a complete-behavior claim. Several new boss files are frozen unfinished work. Keep open. |
+| B09 | Each mutation has one authority; ordered transforms, observers, replacements, and private state retain required behavior. | `gameplay/operation.c` implements ordered transforms/observers and one replacement continuation; `combat.c` enforces source mutation observation and reaction boundaries; `inventory.c` owns canonical or explicitly bound storage; `pickups.c` checks complete grant authority and exact pickup lifetime. These are substantial implementations. The earlier source-complete claim must not be treated as verified integration: native protection composition and application lifecycle consumers are missing. Written native bodies have now been reviewed, with no runtime qualification. |
+| B10 | Full Q1 family roster and behavior are implemented through shared services, including mission-pack and rerelease distinctions. | Native Q1 weapons, projectiles, character state, monsters, pickups, mission controllers, and addon controllers exist. Q1-01 and Q1-02 are corrected in source, and manual animation comparisons are complete. Missing authored behavior Q1-04, missing continuations Q1-05 and application integration prevent a complete-behavior claim. Several new boss files remain unintegrated work. Keep open. |
 | B13 | Campaign code preserves authored obligations when actors or equipment are replaced; transitions have one owner. | `campaign/targets.c` provides one generation-aware registry, typed field reads, source ordering, and deferred-use handoff; `campaign/unit.c` stages immutable departed worlds before publication; Q1 level/finale/source rules and spawn selection exist. Missing authored map classes, Q1 state capture, and replacement-obligation application wiring prevent completion. Keep open. |
 
 ## Confirmed defects and missing implementation
@@ -86,7 +86,7 @@ Medium severity, corrected in source and independently reviewed by the coordinat
 
 Coverage codes: **D** means function bodies/control flow read in detail; **P** means targeted bodies plus structural/source searches, with remaining branches not fully compared; **I** means inventoried only and still requiring substantive review. None means a runtime pass. A D file still needs the relevant later integration/runtime qualification.
 
-Every production file in the assigned directories is inventoried below. P entries received substantive targeted-body review, not only a name search. They still contain unreviewed branches; the inventory does not turn that bounded review into full behavioral qualification. Generated frame rows and remaining controller branches need subsequent comparison. No whole-lane approval is issued.
+Every production file in the assigned directories is inventoried below. The initial P entries received further review, documented in the coverage-completion record. All assigned native bodies and generated frame rows are now read and manually compared where specified. Reading native source is not full donor branch equivalence or runtime qualification. No whole-lane approval is issued.
 
 All paths below are relative to the repository root. The following movement files received D review for their native dispatch, cadence, state ownership, traces and callback paths; donor branch-for-branch parity remains unqualified:
 
@@ -135,7 +135,7 @@ D src/campaign/q1/sources.c
 D src/campaign/q1/spawn.c
 ```
 
-Q1 coverage follows concrete native entrypoints and synchronous callbacks. P controller files were read at their spawn/admission, selected attack/reaction or continuation boundaries; unlisted internal branches remain unreviewed. `frames.c`/`frame_actions.h` were checked structurally against the importer and dispatch model; individual animation rows have not all been compared with the donor. `import_frames.py` was read in full and was never run.
+Q1 coverage follows concrete native entrypoints and synchronous callbacks. The controller bodies and all `frames.c`/`frame_actions.h` rows have now been read, with the manual donor comparisons detailed below. `import_frames.py` was read in full and was never run.
 
 ```text
 D src/gameplay/q1/addon_monsters.c
@@ -263,9 +263,9 @@ The coordinator subsequently supplied `judge-task.mjs` to judge implementation e
 
 All four responses identify model `jev-1.13.0`, plan revision 6, and graph SHA256 `915c4c50da8fcb60ed206f09f2d325eb7755f4c6f3f48b1c3d97d83d2eb98bae`. The exact JSON also retains evidence hashes and timestamps. None is acceptance. The packets are bounded selections, and their omissions remain evidence limits; the source defects and missing consumers remain work to correct. Subsequent fixes must not rewrite these pre-correction packets or their results.
 
-## Remaining written-source review
+## Written-source coverage completion record
 
-The inventory is not completion of AUDIT. The following conservative comparison ranges remain open. Ranges refer to the acceptance-packet snapshot; all paths in this table are under `src/gameplay/q1/`. The action enum has now been read, but its full row-to-donor comparison remains open with the animation data. This is 8,535 lines, including 8,153 animation rows/index lines. Full source/donor behavioral comparison is additional work.
+The inventory alone was not completion of AUDIT. The following table records the historical remaining ranges at the acceptance-packet snapshot; the successive manual passes below close all of them. All paths in this table are under `src/gameplay/q1/`. At that point the open comparison comprised 8,535 lines, including 8,153 animation rows/index lines. Full runtime behavioral qualification remains additional work.
 
 | File | Remaining source ranges |
 | --- | --- |
@@ -285,3 +285,34 @@ The next manual pass extended that comparison through native frame index 2756 an
 The parent approved a focused correction in `runtime.c` after the frozen acceptance packets, independently reviewed it, and committed its exact hunks as `8320e03`, preserving unrelated boss work. It now supplies shared target/player classification, current projectile or linked inflictor momentum geometry with world exclusion, normalized request direction and amount-based knockback, and a retained generation-aware radius candidate snapshot. This does not close the remaining AUDIT ranges or change the recorded incomplete Jev outcomes.
 
 The subsequent Q1-10 correction was independently reviewed and committed as `490c6a8`, including the retained player-roster accessor in `queries.c`, its necessary header declarations, Overlord selection and its Morph caller. Source SHA256 values before independent review: `overlord.c` = `b84c0f51c8ff22036224716d9d0919d214cc7292a5445fcce7c6573ee8cd7ae9`; `morph.c` = `047694ceb94ff6fd977c6d26459fa48d0faa9215c58bd21b2702938839995f46`. No packet was regenerated and no build or executable was run.
+
+Manual comparison subsequently reached native frame index 3876 (the last Demodog row) and operation 2983. The additional literal tables are Super Shambler (2757–2862), Runic Knight (2863–3026), MG3 Lavaman (3027–3157), Ghost (3158–3221), Orb (3222–3238), Shub Zombie (3239–3431), Oldnew (3432–3558), and final boss (3559–3677). The actual donor `infected/frames.ts` and `demodog-frames.ts` sequence definitions were then compared manually against every native expanded row 3678–3876 and its operations. No mismatch was found. In particular, the corpse-2 rise skips rise1 deliberately in the donor, and infected attack/Demodog leap include the additional face operations found in C. The native importer was not used as proof of these details.
+
+The three remapping switches at `frames.c:7592–8422` were also compared against the corresponding reviewed native table ranges: army 1307–1388 maps to infected 3678–3759; Lavaman 1948–2078 maps to MG3 3027–3157; Zombie stand 932–946 maps to 3239–3253, hang 3877 to 3254, and rows 953–1129 to 3255–3431. No mismatched pair was found. Still open are the sorted name-order index (`frames.c:7328–7573`), the final virtual rows 3877–3895 with operation dispatch semantics, and final enum correspondence review. This remains source-only evidence; no comparison helper, parser, generator, project build or executable was run.
+
+The final manual pass read and compared the complete sorted name-order index, including uppercase Gremlin callback names, padded mission-pack frame numbers, and lexical numeric suffixes. It also compared `frame_actions.h` in full with the reviewed operation names and the explicitly range-dispatched Chthon/final-boss cases. The final rows 3877–3895 and operations 2984–3001 were traced: ordinary addon `zombie_hang1` uses the donor `zombie_paine1` pose (162), while the other eighteen rows dispatch action-only callbacks without setting a pose or inserting a frame delay, matching the donor mission/heavy `play` overrides and final-boss decision override. No data mismatch was found. All written-source ranges in the conservative table above are now closed by manual review at the recorded unchanged hashes. This is not a runtime or machine-checked table-equivalence claim. The frozen task verdicts remain incomplete, and Q1 authored behavior, shared composition and checkpoint/app gaps remain open.
+
+## Authored-path correction after the frozen packets
+
+A focused source implementation now addresses the MG3 row of Q1-04. `maps/paths.c` implements the occupied corner, previous-corner ownership condition, pause deadline, Ogre sound, destination change, pause cancellation and path switching from donor `addons/monsters/ai/targets.ts:12–78`. The unusual condition `previous.owner == previous.actor.id` is deliberate source behavior. `maps/runtime.c` admits the two control classes only for MG3, converts negative corner waits to 999999, retains the authored `netname`, and supplies both shared target mutation callbacks. Target selection snapshots use the existing retained query pool; nested callbacks cannot overwrite an active snapshot.
+
+The correction also fixes a separate source-state defect exposed by that implementation. Donor `base/monsters.ts:46` initializes private `state.path` from the authored target, and `foundation/spawns.ts:190` advances that private route. The previous C handler advanced `entity.target`, so traversing a path could overwrite the authored target later used by death/trigger callbacks. Native `q1_monster.path` now preserves this separation. Addon startup initializes it from the current authored target as required by `addons/monsters/startup.ts:56–57`. The existing Dragon and addon move-target fields are consolidated into one monster continuation field. Dragon corner transitions still change the authored target, exactly as donor `missionpacks/monsters/dragon.ts:152` does.
+
+Path-end callback presence is retained explicitly; source monsters which never install that callback do not receive an invented stand animation. Cancel-pause restores normal monster use, including replacing the MG3 lava man's forced-death callback and a dormant final boss's awake callback. Existing clone copying retains these fields; full save/restore remains Q1-05 work.
+
+This chunk owns `include/qa/game_q1_maps.h`, `src/gameplay/q1/maps/{internal.h,runtime.c,triggers.c,paths.c}`, `queries.c`, `internal.h`, `monsters.c`, `dragon.c`, `lavaman.c`, and focused hunks in `monster_lifecycle.c`, `runtime.c`, and `boss_small.c`. Existing unrelated boss work was preserved. The map header now exposes typed `qa_q1_game_path_read`/`qa_q1_game_path_change` and paired foreign-owner callbacks; B34 must route them to the actual character/continuation owner and populate authored `netname`. Root must register `maps/paths.c` in CMake. The wider authored catalog, Hipnotic path-follow behavior, Q1 checkpoints, and application integration remain open.
+
+Source snapshot HEAD is `93f8146e850fd38bf0e6e82cfd461436c48e4ca8`, plus this uncommitted chunk. Selected SHA256 values: `maps/paths.c` = `fa656114b714b5cbd0ee26ddd31cb288c76826c7b67f180d87f327091cad0b0b`; `maps/runtime.c` = `c6a6dee9954936c23bba242610bc8960a5409abed0dd21e03d42618a6dddaa94`; `maps/triggers.c` = `ff288cf1f4e130e48d626e12a886e2df842767b7acd9acda32debc98ac3de1e6`; `game_q1_maps.h` = `07f4d2ea198b706a58ee85e8a40e9bfbe4e2ed435506a9ee18c016b7e96bc3db`. Manual source/diff review and `git diff --check` found no whitespace errors. No configure, compiler, tests, generator, executable or runtime validation was run. The frozen Jev packets and incomplete verdicts are unchanged.
+
+### Integration re-review: path callback lifetime
+
+The coordinator found that destination body readers and foreign path readers
+could retire an actor before the path code wrote its cached continuation. The
+source owner added full actor-ID checks and reacquired monster/corner state
+following those callbacks. The coordinator also changed the path-use loop to
+retain its original trigger ID and reacquire that trigger each iteration, so
+recycled slot contents cannot redirect a pending trigger operation. The final
+`maps/paths.c` source SHA-256 is
+`348e92c2d188e63aac764da366bcd1bdb330cfbc56eb467f52b0afafebc86094`.
+These are source corrections; the original open map, movement, composition,
+checkpoint and application obligations remain open.

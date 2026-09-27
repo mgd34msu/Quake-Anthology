@@ -354,6 +354,8 @@ static bool changelevel(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_e
     return q1_map_schedule(g, entity, .1, Q1_MAP_BEGIN_LEVEL, error);
 }
 static bool path(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *error) {
+    if (g->options.program == QA_Q1_MG3)
+        return q1_map_path_touch(g, entity, other, error);
     if (g->maps->options.path_touch) {
         bool handled = false;
         if (!g->maps->options.path_touch(g->maps->options.context, entity->id, other, &handled,
@@ -363,16 +365,18 @@ static bool path(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *e
             return true;
     }
     q1_actor *follower = q1_entity(g, other);
-    if (!follower || follower->kind != Q1_MONSTER || follower->target != entity->targetname ||
+    if (!follower || follower->kind != Q1_MONSTER ||
+        follower->state.monster.path != entity->targetname ||
         follower->state.monster.enemy.registry)
         return true;
     qa_actor_id next = {0};
     (void)qa_targets_first(g->maps->options.targets, entity->target, &next);
-    follower->target = next.registry ? entity->target : QA_STRING_NONE;
+    follower->state.monster.path = next.registry ? entity->target : QA_STRING_NONE;
     follower->physics.goal = next;
     if (!next.registry) {
         follower->state.monster.pause_until = g->time + 999999;
-        return q1_monster_play(g, follower, follower->state.monster.species->stand, error);
+        return !follower->state.monster.path_end ||
+               q1_monster_play(g, follower, follower->state.monster.species->stand, error);
     }
     qa_body_state from, to;
     if (!qa_world_body_read(g->services.world, other, &from, error) ||

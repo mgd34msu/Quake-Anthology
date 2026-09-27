@@ -205,6 +205,10 @@ add_library(qa_builtin STATIC
 target_link_libraries(qa_builtin PUBLIC qa_session qa_gameplay qa_movement)
 
 add_library(qa_game_q1 STATIC
+    src/gameplay/q1/boss_children.c
+    src/gameplay/q1/boss_final.c
+    src/gameplay/q1/boss_oldnew.c
+    src/gameplay/q1/boss_projectiles.c
     src/gameplay/q1/boss_small.c
     src/gameplay/q1/addon_monsters.c
     src/gameplay/q1/armagon.c
@@ -234,6 +238,7 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/maps/hipnotic_particles.c
     src/gameplay/q1/maps/movers.c
     src/gameplay/q1/maps/observer.c
+    src/gameplay/q1/maps/paths.c
     src/gameplay/q1/maps/runtime.c
     src/gameplay/q1/maps/special.c
     src/gameplay/q1/maps/trains.c
@@ -258,6 +263,7 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/scourge.c
     src/gameplay/q1/selection.c
     src/gameplay/q1/species.c
+    src/gameplay/q1/sphere_points.c
     src/gameplay/q1/teleport.c
     src/gameplay/q1/weapons.c
     src/gameplay/q1/wrath.c)

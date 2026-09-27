@@ -11,7 +11,8 @@ bool qa_q1_game_maps_bind(qa_q1_game *g, const qa_q1_map_options *options, qa_er
         !options->server_flags || !options->static_model || !options->ambient ||
         !options->lightstyle || !options->set_skill || !options->secret_found ||
         !g->services.actor_traits || !g->services.physics || !g->services.physics->services.read ||
-        !g->services.physics->services.write || !g->services.motion_changed)
+        !g->services.physics->services.write || !g->services.motion_changed ||
+        (!!options->path_read != !!options->path_change))
         return q1_map_fail(error, "invalid Q1 map service binding");
     g->maps = calloc(1, sizeof(*g->maps));
     if (!g->maps) {
@@ -28,6 +29,22 @@ static bool target_read(void *context, qa_actor_id actor, qa_authored_target *ou
 static bool target_use(void *context, qa_actor_id actor, qa_actor_id other, qa_actor_id activator,
                        qa_error *error) {
     return qa_q1_game_use_from(context, actor, other, activator, error);
+}
+static bool target_set_target(void *context, qa_actor_id actor, qa_string_id value,
+                              qa_error *error) {
+    q1_actor *entity = q1_entity(context, actor);
+    if (!entity || !entity->native)
+        return q1_map_fail(error, "Q1 target field owner is unavailable");
+    entity->target = value;
+    return true;
+}
+static bool target_set_targetname(void *context, qa_actor_id actor, qa_string_id value,
+                                  qa_error *error) {
+    q1_actor *entity = q1_entity(context, actor);
+    if (!entity || !entity->native)
+        return q1_map_fail(error, "Q1 targetname field owner is unavailable");
+    entity->targetname = value;
+    return true;
 }
 static bool target_field(void *context, qa_actor_id actor, const char *key, qa_target_field *out) {
     qa_q1_game *g = context;
@@ -83,7 +100,9 @@ bool q1_map_bind_target(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                                                                  : QA_CLOCK_NETQUAKE,
                                  .read = target_read,
                                  .use = target_use,
-                                 .field = target_field};
+                                 .field = target_field,
+                                 .set_target = target_set_target,
+                                 .set_targetname = target_set_targetname};
     return qa_targets_bind(g->maps->options.targets, &binding, error);
 }
 qa_string_id qa_q1_game_map_name(const qa_q1_game *g) {
@@ -250,10 +269,12 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
     q1_map_state *state = entity->map;
     const char *input[] = {
         source->model,  source->map,    source->noise,   source->noise1,
-        source->noise2, source->noise3, source->endtext, source->intermissiontext};
+        source->noise2, source->noise3, source->endtext, source->intermissiontext,
+        source->netname};
     qa_string_id *output[] = {
         &state->original_model, &state->map,      &state->noise[0], &state->noise[1],
-        &state->noise[2],       &state->noise[3], &state->endtext,  &state->intermissiontext};
+        &state->noise[2],       &state->noise[3], &state->endtext,  &state->intermissiontext,
+        &state->netname};
     for (size_t i = 0; i < sizeof(input) / sizeof(*input); ++i)
         if (input[i] && input[i][0] &&
             !qa_builtin_resource(&g->services, input[i], output[i], error))
@@ -367,6 +388,8 @@ static q1_map_kind classify(const char *name) {
                    {"trigger_onlyregistered", Q1_MAP_REGISTERED},
                    {"trigger_monsterjump", Q1_MAP_MONSTERJUMP},
                    {"path_corner", Q1_MAP_PATH},
+                   {"target_cancelpause", Q1_MAP_CANCEL_PAUSE},
+                   {"target_switchpath", Q1_MAP_SWITCH_PATH},
                    {"info_player_start", Q1_MAP_POINT},
                    {"info_player_start2", Q1_MAP_POINT},
                    {"info_player_coop", Q1_MAP_POINT},
@@ -387,6 +410,9 @@ static q1_map_kind classify(const char *name) {
 bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, bool *handled,
                   qa_error *error) {
     q1_map_kind kind = classify(spawn->classname);
+    if (g->options.program != QA_Q1_MG3 &&
+        (kind == Q1_MAP_CANCEL_PAUSE || kind == Q1_MAP_SWITCH_PATH))
+        kind = Q1_MAP_FIELDS;
     *handled = kind != Q1_MAP_FIELDS;
     if (!*handled && !spawn->map_fields)
         return true;
@@ -456,9 +482,18 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     case Q1_MAP_PATH:
         if (!q1_map_text(g, entity->targetname))
             return q1_map_fail(error, "Q1 path corner has no targetname");
+        if (g->options.program == QA_Q1_MG3 && entity->wait < 0)
+            entity->wait = 999999;
         entity->physics.solid = QA_PHYSICS_TRIGGER;
         state->touch_enabled = true;
         body.bounds = (qa_bounds){{-8, -8, -8}, {8, 8, 8}};
+        break;
+    case Q1_MAP_CANCEL_PAUSE:
+    case Q1_MAP_SWITCH_PATH:
+        if (!q1_map_text(g, entity->target) || !q1_map_text(g, entity->targetname) ||
+            (kind == Q1_MAP_SWITCH_PATH && !q1_map_text(g, state->netname)))
+            return q1_map_fail(error, "Q1 path control has missing authored target fields");
+        state->use_enabled = true;
         break;
     case Q1_MAP_LIGHT:
         if (q1_classnamed(g, entity->id, "light") && !q1_map_text(g, entity->targetname))
@@ -518,6 +553,8 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
                 qa_error *error) {
     if (!entity->map || !entity->map->use_enabled)
         return true;
+    if (entity->map->kind == Q1_MAP_CANCEL_PAUSE || entity->map->kind == Q1_MAP_SWITCH_PATH)
+        return q1_map_path_use(g, entity, error);
     if (entity->map->kind == Q1_MAP_SACRIFICE) {
         entity->activator = activator;
         return q1_map_sacrifice_gib(g, entity, error);
