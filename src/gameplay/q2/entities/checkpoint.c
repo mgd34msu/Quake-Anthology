@@ -103,7 +103,7 @@ static bool valid_mover(const q2_mover *m) {
            qa_vec_finite(m->motion.destination) && qa_vec_finite(m->motion.reference);
 }
 static bool valid_state(qa_q2_game *g, const q2_entity_state *s, qa_error *e) {
-    if ((unsigned)s->kind > Q2E_CAMERA_DUMMY || (unsigned)s->think > Q2ET_CAMERA_DUMMY ||
+    if ((unsigned)s->kind > Q2E_CAMERA_DUMMY || (unsigned)s->think > Q2ET_PLAYER_START_DROP ||
         (unsigned)s->scenery > Q2S_MAL_LASER || s->dispatching || s->activator.registry ||
         s->owner.registry || s->enemy.registry || s->goal.registry || s->collision.owner.registry ||
         (unsigned)s->collision.role > QA_COLLISION_BOTH ||

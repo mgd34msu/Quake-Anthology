@@ -279,6 +279,7 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/player/equipment.c
     src/gameplay/q2/player/frame.c
     src/gameplay/q2/player/intermission.c
+    src/gameplay/q2/player/map_spawns.c
     src/gameplay/q2/player/obituary.c
     src/gameplay/q2/player/spawn.c
     src/gameplay/q2/player/spawn_select.c

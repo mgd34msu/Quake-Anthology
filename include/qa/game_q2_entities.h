@@ -231,7 +231,10 @@ typedef enum q2_entity_think {
     Q2ET_EYE,
     Q2ET_SPINNING,
     Q2ET_CAMERA,
-    Q2ET_CAMERA_DUMMY
+    Q2ET_CAMERA_DUMMY,
+    Q2ET_PLAYER_SECURITY,
+    Q2ET_PLAYER_COOP_FIX,
+    Q2ET_PLAYER_START_DROP
 } q2_entity_think;
 typedef enum q2_move_done {
     Q2MD_NONE,

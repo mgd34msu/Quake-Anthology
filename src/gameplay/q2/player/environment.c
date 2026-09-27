@@ -69,9 +69,12 @@ bool q2_player_environment(qa_q2_game *g, q2_actor *a, const qa_q2_player_moveme
         if (breather || suit) {
             s->air_ns = q2_deadline(now, 10 * Q2_NS);
             uint64_t unit = rr ? Q2_MS : 100 * Q2_MS;
-            uint64_t remainder = powers.breather_until_ns >= now
-                                     ? (powers.breather_until_ns - now) / unit
-                                     : (now - powers.breather_until_ns) / unit;
+            bool positive = powers.breather_until_ns >= now;
+            uint64_t delta =
+                positive ? powers.breather_until_ns - now : now - powers.breather_until_ns;
+            uint64_t remainder = delta / unit;
+            if (positive ? delta % unit >= unit / 2 : delta % unit > unit / 2)
+                remainder++;
             if (remainder % (rr ? 2500u : 25u) == 0) {
                 if (!q2_player_sound(
                         g, a->id,

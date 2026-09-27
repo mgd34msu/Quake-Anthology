@@ -443,14 +443,20 @@ bool q2_map_find(qa_q2_game *g, const char *classname, qa_string_id target, size
                  qa_actor_id *out) {
     qa_strings *strings = qa_session_strings(g->services.session);
     qa_targets *targets = g->entity_runtime->services.targets;
-    if (targets && target != UINT32_MAX && target != 0) {
+    if (!targets)
+        return false;
+    if (target != UINT32_MAX && target != 0) {
         qa_target_cursor cursor = {0};
         qa_actor_id id;
         while (qa_targets_next(targets, target, &cursor, &id)) {
             qa_authored_target fields;
-            if (classname && (!qa_targets_read(targets, id, &fields) ||
-                              strcmp(qa_strings_cstr(strings, fields.classname), classname)))
-                continue;
+            if (classname) {
+                if (!qa_targets_read(targets, id, &fields))
+                    continue;
+                const char *name = qa_strings_cstr(strings, fields.classname);
+                if (!name || strcmp(name, classname))
+                    continue;
+            }
             if (!ordinal--) {
                 *out = id;
                 return true;
@@ -458,15 +464,15 @@ bool q2_map_find(qa_q2_game *g, const char *classname, qa_string_id target, size
         }
         return false;
     }
-    for (q2_actor *a = g->first_actor; a; a = a->live_next) {
-        if (!a->entity || !q2_actor_live(g, a->id))
-            continue;
-        q2_entity_state *s = a->entity;
-        if ((classname && strcmp(qa_strings_cstr(strings, s->classname), classname)) ||
-            (target != UINT32_MAX && s->targetname != target))
+    qa_target_cursor cursor = {0};
+    qa_actor_id id;
+    while (qa_targets_next_authored(targets, classname, &cursor, &id)) {
+        qa_authored_target fields;
+        if (!qa_targets_read(targets, id, &fields) ||
+            (target != UINT32_MAX && fields.targetname != target))
             continue;
         if (!ordinal--) {
-            *out = a->id;
+            *out = id;
             return true;
         }
     }
@@ -487,8 +493,7 @@ bool q2_entity_pick(qa_q2_game *g, qa_string_id target, qa_actor_id *out) {
     return true;
 }
 uint32_t q2_map_flags(qa_q2_game *g, qa_actor_id id) {
-    q2_actor *a = q2_ent(g, id);
-    return a ? a->entity->spawnflags : 0;
+    return q2_actor_field_flags(g, id, "spawnflags");
 }
 bool qa_q2_entity_target(qa_q2_game *g, qa_actor_id id, qa_string_id *name, qa_string_id *target,
                          qa_string_id *kill, qa_error *e) {

@@ -4,6 +4,8 @@
 #include <errno.h>
 
 typedef qa_q2_entity_state q2_entity_state;
+bool q2_player_map_spawn(qa_q2_game *, q2_actor *, bool *, qa_error *);
+bool q2_player_map_think(qa_q2_game *, q2_actor *, q2_entity_think, qa_error *);
 typedef struct q2_entities {
     qa_q2_entity_services services;
     qa_actor_id poi, poi_dynamic;

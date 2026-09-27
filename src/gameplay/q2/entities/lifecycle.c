@@ -121,6 +121,10 @@ bool qa_q2_entity_spawn(qa_q2_game *g, qa_actor_id id, const qa_q2_map_fields *f
     }
     if (!q2_entity_bind(g, a, e))
         return false;
+    if (!q2_player_map_spawn(g, a, handled, e))
+        return false;
+    if (!q2_actor_live(g, id) || *handled)
+        return true;
     if (!q2_light_spawn(g, a, handled, e))
         return false;
     if (!q2_actor_live(g, id) || *handled)
@@ -202,6 +206,8 @@ bool q2_entity_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
         return q2_light_think(g, a, e);
     if (think >= Q2ET_TURRET_INIT && think <= Q2ET_TURRET_DRIVER)
         return q2_turret_think(g, a, think, e);
+    if (think >= Q2ET_PLAYER_SECURITY && think <= Q2ET_PLAYER_START_DROP)
+        return q2_player_map_think(g, a, think, e);
     if (think >= Q2ET_EYE_SETUP && think <= Q2ET_CAMERA_DUMMY)
         return q2_q64_think(g, a, think, e);
     if (think >= Q2ET_MOVE_BEGIN && think <= Q2ET_MOVE_ACCEL)

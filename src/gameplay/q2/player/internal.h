@@ -6,6 +6,8 @@
 #include <stdio.h>
 
 typedef qa_q2_player_state q2_client_state;
+bool q2_player_same_target(qa_q2_game *, qa_string_id, qa_string_id, bool *, qa_error *);
+bool q2_player_map_is(const char *, const char *);
 typedef struct q2_players {
     qa_q2_player_rules rules;
     qa_q2_player_services services;
