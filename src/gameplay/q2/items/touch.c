@@ -1,0 +1,242 @@
+#include "internal.h"
+
+typedef struct item_touch {
+    qa_q2_game *game;
+    q2_actor *actor;
+    qa_actor_id player;
+    bool original;
+} item_touch;
+static bool live(const item_touch *call) {
+    return q2_actor_live(call->game, call->actor->id) && q2_actor_live(call->game, call->player);
+}
+static bool instanced(const qa_q2_game *g) {
+    return g->options.cooperative && g->item_runtime->options.instanced_coop;
+}
+static bool slot(qa_q2_game *g, qa_actor_id player, uint32_t *out, qa_error *e) {
+    qa_q2_item_options *options = &g->item_runtime->options;
+    if (options->player_slot && options->player_slot(options->context, player, out))
+        return true;
+    if (q2_client_slot(g, player, out))
+        return true;
+    qa_error_set(e, QA_ERROR_ARGUMENT, player.slot,
+                 "Instanced Q2 pickup requires a stable player slot");
+    return false;
+}
+static bool was_picked(const q2_item_state *item, uint32_t player) {
+    for (size_t i = 0; i < item->picked_count; ++i)
+        if (item->picked_slots[i] == player)
+            return true;
+    return false;
+}
+static bool mark_picked(q2_item_state *item, uint32_t player, qa_error *e) {
+    if (was_picked(item, player))
+        return true;
+    if (item->picked_count == item->picked_capacity) {
+        size_t capacity = item->picked_capacity ? item->picked_capacity * 2 : 4;
+        if (capacity < item->picked_capacity || capacity > SIZE_MAX / sizeof(*item->picked_slots)) {
+            qa_error_set(e, QA_ERROR_MEMORY, 0, "Q2 instanced pickup capacity overflow");
+            return false;
+        }
+        uint32_t *slots = realloc(item->picked_slots, capacity * sizeof(*slots));
+        if (!slots) {
+            qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 pickup seat ownership");
+            return false;
+        }
+        item->picked_slots = slots;
+        item->picked_capacity = capacity;
+    }
+    item->picked_slots[item->picked_count++] = player;
+    return true;
+}
+static bool eligible(void *context, const qa_pickup_offer *offer, bool *allowed, qa_error *e) {
+    (void)offer;
+    item_touch *call = context;
+    qa_q2_game *g = call->game;
+    q2_item_state *item = call->actor->item;
+    *allowed = false;
+    if (!live(call) || !item->visible || !item->touchable ||
+        (item->temporary && qa_actor_id_equal(item->owner, call->player)))
+        return true;
+    qa_builtin_actor_traits traits;
+    if (!g->services.actor_traits ||
+        !g->services.actor_traits(g->services.context, call->player, &traits) || !traits.player ||
+        traits.spectator || !live(call))
+        return true;
+    qa_combat_state combat;
+    if (!qa_combat_read(g->services.combat, call->player, &combat, e))
+        return false;
+    if (combat.health < 1)
+        return true;
+    if (instanced(g)) {
+        uint32_t player;
+        if (!slot(g, call->player, &player, e))
+            return false;
+        if (!live(call) || was_picked(item, player))
+            return true;
+    }
+    *allowed = true;
+    return true;
+}
+static bool original(void *context, const qa_pickup_offer *offer, bool *accepted, qa_error *e) {
+    (void)offer;
+    item_touch *call = context;
+    call->original = true;
+    call->actor->item->retained = false;
+    return q2_item_grant(call->game, call->actor, call->player, accepted, e);
+}
+static bool complete(void *context, const qa_pickup_offer *offer, bool accepted, qa_error *e) {
+    (void)offer;
+    item_touch *call = context;
+    qa_q2_game *g = call->game;
+    q2_actor *a = call->actor;
+    q2_item_state *item = a->item;
+    const qa_q2_item_definition *d = item->definition;
+    if (!live(call))
+        return true;
+    if (accepted) {
+        if (!call->original)
+            item->retained = false;
+        if (!q2_item_finish(g, a, call->player, e))
+            return false;
+        if (!live(call))
+            return true;
+        qa_string_id icon, name;
+        if (!qa_builtin_resource(&g->services, d->icon, &icon, e) ||
+            !qa_builtin_resource(&g->services, d->name, &name, e))
+            return false;
+        if (!qa_builtin_emit(&g->services,
+                             &(qa_builtin_event){.kind = QA_BUILTIN_ITEM,
+                                                 .family = QA_GAME_Q2,
+                                                 .provider = g->options.owner,
+                                                 .actor = call->player,
+                                                 .other = a->id,
+                                                 .resource = icon,
+                                                 .text = name,
+                                                 .code = 0,
+                                                 .time_ns = g->now_ns},
+                             e))
+            return false;
+        if (!live(call))
+            return true;
+        if (!q2_item_sound(g, call->player, d->sound, e))
+            return false;
+        if (!live(call))
+            return true;
+        if (!q2_client_item_received(g, call->player, d, e))
+            return false;
+        if (!live(call))
+            return true;
+        if (instanced(g)) {
+            uint32_t player;
+            if (!slot(g, call->player, &player, e) || !mark_picked(item, player, e))
+                return false;
+            if (!live(call))
+                return true;
+            qa_q2_item_options *options = &g->item_runtime->options;
+            if (!options->visibility) {
+                qa_error_set(e, QA_ERROR_UNSUPPORTED, 0,
+                             "Instanced Q2 pickups require player visibility service");
+                return false;
+            }
+            if (!options->visibility(options->context, call->player, a->id, false, e))
+                return false;
+            if (!live(call))
+                return true;
+            if (item->spawn.message &&
+                !qa_builtin_emit(&g->services,
+                                 &(qa_builtin_event){.kind = QA_BUILTIN_CENTERPRINT,
+                                                     .family = QA_GAME_Q2,
+                                                     .provider = g->options.owner,
+                                                     .actor = call->player,
+                                                     .text = item->spawn.message,
+                                                     .time_ns = g->now_ns},
+                                 e))
+                return false;
+        }
+    }
+    if (!live(call))
+        return true;
+    if (!item->targets_used) {
+        /* Mark before entering the graph: recursively touching the same item
+         * cannot fire an unbounded second copy of this target chain. */
+        item->targets_used = true;
+        qa_string_id message = item->spawn.message;
+        if (instanced(g) || (g->options.edition == QA_Q2_RERELEASE && g->options.deathmatch))
+            item->spawn.message = 0;
+        bool okay = qa_q2_entity_use_targets(g, a->id, call->player, false, e);
+        if (q2_actor_live(g, a->id))
+            item->spawn.message = message;
+        if (!okay)
+            return false;
+    }
+    if (!accepted || !live(call))
+        return true;
+    bool dropped = (item->spawn.spawnflags & 0x30000) != 0;
+    bool stays = g->options.cooperative && d->coop_stay;
+    bool instance_retained = instanced(g) && !(item->spawn.spawnflags & 0x20000);
+    return ((!stays || dropped) && !item->retained && !instance_retained)
+               ? qa_session_release(g->services.session, a->id, e)
+               : true;
+}
+bool q2_item_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
+    q2_actor *a = contact->self.slot < g->capacity ? g->actors[contact->self.slot] : NULL;
+    if (!a || !qa_actor_id_equal(a->id, contact->self) || !a->item)
+        return true;
+    if (a->item->companion)
+        return q2_companion_touch(g, contact, e);
+    if (a->item->dispatching)
+        return true;
+    const qa_q2_item_definition *d = a->item->definition;
+    qa_pickup_resource resource = {0};
+    if (d->kind == QA_Q2_ITEM_ARMOR || d->kind == QA_Q2_ITEM_SHARD)
+        resource =
+            (qa_pickup_resource){.kind = QA_PICKUP_PROTECTION, .channel = QA_PROTECTION_REGULAR};
+    else if (d->kind == QA_Q2_ITEM_POWER_ARMOR)
+        resource =
+            (qa_pickup_resource){.kind = QA_PICKUP_PROTECTION, .channel = QA_PROTECTION_POWERED};
+    else if (d->kind == QA_Q2_ITEM_AMMO || d->kind == QA_Q2_ITEM_WEAPON ||
+             d->kind == QA_Q2_ITEM_KEY)
+        resource = (qa_pickup_resource){.kind = QA_PICKUP_INVENTORY, .item = d->item};
+    item_touch call = {.game = g, .actor = a, .player = contact->other};
+    qa_pickup_offer offer = {.recipient = contact->other,
+                             .pickup = a->id,
+                             .source = g->options.owner,
+                             .item = d->item,
+                             .default_resource = resource,
+                             .override_count = a->item->spawn.count != 0,
+                             .count = a->item->spawn.count,
+                             .dropped = (a->item->spawn.spawnflags & 0x30000) != 0,
+                             .time_ns = g->now_ns};
+    qa_pickup_continuation continuation = {
+        .context = &call, .eligible = eligible, .original = original, .complete = complete};
+    a->item->dispatching = true;
+    qa_pickup_outcome outcome;
+    bool ok = qa_pickups_touch(g->services.pickups, &offer, &continuation, &outcome, e);
+    a->item->dispatching = false;
+    return ok;
+}
+bool qa_q2_items_publish_visibility(qa_q2_game *g, qa_actor_id player, qa_error *e) {
+    if (!g || !q2_actor_live(g, player)) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 item visibility recipient");
+        return false;
+    }
+    if (!instanced(g))
+        return true;
+    uint32_t index;
+    if (!slot(g, player, &index, e))
+        return false;
+    qa_q2_item_options *options = &g->item_runtime->options;
+    if (!options->visibility) {
+        qa_error_set(e, QA_ERROR_UNSUPPORTED, 0,
+                     "Instanced Q2 pickups require player visibility service");
+        return false;
+    }
+    for (q2_actor *a = g->all_actors; a; a = a->all_next) {
+        if (q2_actor_live(g, a->id) && a->item && was_picked(a->item, index) &&
+            !options->visibility(options->context, player, a->id, false, e))
+            return false;
+        if (!q2_actor_live(g, player))
+            return true;
+    }
+    return true;
+}
