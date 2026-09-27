@@ -1,0 +1,856 @@
+#include "internal.h"
+
+#include <math.h>
+
+static void store_f32(uint8_t *out, float value)
+{
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    qa_store_u32le(out, bits);
+}
+
+static bool actor_live(qa_native_host *host, qa_actor_id actor)
+{
+    return host->world.session &&
+           qa_actors_get(qa_session_actor_registry(host->world.session), actor) != NULL;
+}
+
+static size_t inuse_offset(const qa_native_host *host)
+{
+    return host->edict->inuse;
+}
+
+static size_t minimum_edict_size(const qa_native_host *host)
+{
+    return host->edict->bytes;
+}
+
+static bool source_inuse(qa_native_host *host, qa_native_address address, bool *out,
+                         qa_error *error)
+{
+    if (host->profile == QA_NATIVE_Q2_GAME_API3) {
+        int32_t value;
+        if (!native_host_read_i32(host, address + inuse_offset(host), &value, error))
+            return false;
+        *out = value != 0;
+        return true;
+    }
+    uint8_t value;
+    if (!native_host_read_u8(host, address + inuse_offset(host), &value, error))
+        return false;
+    *out = value != 0;
+    return true;
+}
+
+static bool release_binding(qa_native_host *host, qa_native_slot_binding binding,
+                            qa_error *error)
+{
+    if (binding.kind == QA_NATIVE_SLOT_FREE || binding.kind == QA_NATIVE_SLOT_WORLD)
+        return true;
+    if (binding.kind == QA_NATIVE_SLOT_OWNED && actor_live(host, binding.actor)) {
+        if (host->world.release_actor)
+            host->world.release_actor(host->world.binding_context, host, binding.slot,
+                                      binding.actor);
+        if (!qa_session_release(host->world.session, binding.actor, error))
+            return false;
+    }
+    qa_native_slot_binding cleared = {.kind = QA_NATIVE_SLOT_FREE, .slot = binding.slot};
+    return qa_native_bind_slot(host->instance, &cleared, error);
+}
+
+static bool bind_world(qa_native_host *host, uint32_t slot, qa_error *error)
+{
+    if (!actor_live(host, host->world.world_actor))
+        return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
+                                "native host world actor is not live");
+    qa_native_slot_binding binding = {
+        .kind = QA_NATIVE_SLOT_WORLD,
+        .slot = slot,
+        .actor = host->world.world_actor,
+        .owner = host->world.owner,
+        .source_slot = slot};
+    return qa_native_bind_slot(host->instance, &binding, error);
+}
+
+bool native_host_actor_for_address(qa_native_host *host, qa_native_address address,
+                                   bool observe, qa_actor_id *out, uint32_t *out_slot,
+                                   qa_error *error)
+{
+    if (!host || !address || !out)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
+                                "native entity address and actor output are required");
+    uint32_t slot;
+    if (!qa_native_entity_slot(host->instance, address, &slot, error))
+        return false;
+    if (out_slot)
+        *out_slot = slot;
+    qa_native_slot_binding binding;
+    if (!qa_native_slot(host->instance, slot, &binding, error))
+        return false;
+    if (binding.kind != QA_NATIVE_SLOT_FREE && actor_live(host, binding.actor)) {
+        *out = binding.actor;
+        return true;
+    }
+    if (binding.kind != QA_NATIVE_SLOT_FREE && !release_binding(host, binding, error))
+        return false;
+    if (!observe) {
+        *out = (qa_actor_id){0};
+        return true;
+    }
+    if (slot == 0) {
+        if (!bind_world(host, slot, error))
+            return false;
+        *out = host->world.world_actor;
+        return true;
+    }
+    bool inuse;
+    if (!source_inuse(host, address, &inuse, error))
+        return false;
+    bool retained = slot < host->retained_capacity && host->retained_clients[slot];
+    if (!inuse && !retained) {
+        *out = (qa_actor_id){0};
+        return true;
+    }
+    if (host->world.project_actor) {
+        qa_actor_id projected = {0};
+        bool present = false;
+        if (!host->world.project_actor(host->world.binding_context, host, slot, address,
+                                       &projected, &present, error))
+            return false;
+        if (present) {
+            if (!actor_live(host, projected))
+                return native_host_fail(error, QA_ERROR_ARGUMENT, slot,
+                                        "native projection returned a stale actor");
+            qa_native_slot_binding projected_binding = {
+                .kind = QA_NATIVE_SLOT_BORROWED,
+                .slot = slot,
+                .actor = projected,
+                .owner = host->world.owner,
+                .source_slot = slot};
+            if (!qa_native_bind_slot(host->instance, &projected_binding, error))
+                return false;
+            *out = projected;
+            return true;
+        }
+    }
+    qa_actor_id actor;
+    if (!qa_session_allocate(host->world.session, host->world.owner, host->world.definition,
+                             true, slot, &actor, error))
+        return false;
+    if (host->world.bind_actor &&
+        !host->world.bind_actor(host->world.binding_context, host, slot, actor, error)) {
+        qa_error ignored = {0};
+        qa_session_release(host->world.session, actor, &ignored);
+        return false;
+    }
+    qa_native_slot_binding owned = {
+        .kind = QA_NATIVE_SLOT_OWNED,
+        .slot = slot,
+        .actor = actor,
+        .owner = host->world.owner,
+        .source_slot = slot};
+    if (!qa_native_bind_slot(host->instance, &owned, error)) {
+        qa_error ignored = {0};
+        qa_session_release(host->world.session, actor, &ignored);
+        return false;
+    }
+    *out = actor;
+    return true;
+}
+
+bool native_host_address_for_actor(qa_native_host *host, qa_actor_id actor,
+                                   qa_native_address *out, qa_error *error)
+{
+    if (!host || !out || !actor_live(host, actor))
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
+                                "live actor and native address output are required");
+    qa_native_entity_table table;
+    if (!qa_native_entity_table_get(host->instance, &table, error))
+        return false;
+    for (uint32_t slot = 0; slot < table.capacity; ++slot) {
+        qa_native_slot_binding binding;
+        if (!qa_native_slot(host->instance, slot, &binding, error))
+            return false;
+        if (binding.kind != QA_NATIVE_SLOT_FREE && qa_actor_id_equal(binding.actor, actor))
+            return qa_native_entity_address(host->instance, slot, out, error);
+    }
+    if (host->world.address_for_actor) {
+        bool present = false;
+        if (!host->world.address_for_actor(host->world.binding_context, host, actor, out,
+                                           &present, error))
+            return false;
+        if (present)
+            return true;
+    }
+    return native_host_fail(error, QA_ERROR_NOT_FOUND, actor.slot,
+                            "actor has no native source projection");
+}
+
+bool native_host_reconcile(qa_native_host *host, qa_error *error)
+{
+    if (!host || host->kind != NATIVE_HOST_Q2_GAME || !host->world.session)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
+                                "Q2 game host is required for source reconciliation");
+    qa_native_entity_table table;
+    if (!qa_native_entity_table_get(host->instance, &table, error))
+        return false;
+    if (table.stride < minimum_edict_size(host))
+        return native_host_fail(error, QA_ERROR_FORMAT, table.stride,
+                                "native Q2 entity stride is smaller than its public prefix");
+    for (uint32_t slot = 0; slot < table.capacity; ++slot) {
+        qa_native_slot_binding binding;
+        if (!qa_native_slot(host->instance, slot, &binding, error))
+            return false;
+        if (slot == 0) {
+            if (!bind_world(host, slot, error))
+                return false;
+            continue;
+        }
+        bool in_range = slot < table.count;
+        bool retained = slot < host->retained_capacity && host->retained_clients[slot];
+        bool inuse = false;
+        qa_native_address address;
+        if (in_range &&
+            (!qa_native_entity_address(host->instance, slot, &address, error) ||
+             !source_inuse(host, address, &inuse, error)))
+            return false;
+        if (!in_range || (!inuse && !retained)) {
+            if (!release_binding(host, binding, error))
+                return false;
+            continue;
+        }
+        qa_actor_id actor;
+        if (!native_host_actor_for_address(host, address, true, &actor, NULL, error))
+            return false;
+    }
+    return true;
+}
+
+static bool read_pointer(qa_native_host *host, qa_native_address address,
+                         qa_native_address *out, qa_error *error)
+{
+    uint8_t bytes[8] = {0};
+    if (!native_host_read(host, address, bytes, host->pointer_bytes, error))
+        return false;
+    *out = host->pointer_bytes == 4 ? qa_load_u32le(bytes) : qa_load_u64le(bytes);
+    return true;
+}
+
+static uint32_t pack_classic_solid(qa_bounds bounds)
+{
+    int32_t x = (int32_t)(bounds.maxs.x / 8.0f);
+    int32_t zd = (int32_t)(-bounds.mins.z / 8.0f);
+    int32_t zu = (int32_t)((bounds.maxs.z + 32.0f) / 8.0f);
+    if (x < 1)
+        x = 1;
+    if (x > 31)
+        x = 31;
+    if (zd < 1)
+        zd = 1;
+    if (zd > 31)
+        zd = 31;
+    if (zu < 1)
+        zu = 1;
+    if (zu > 63)
+        zu = 63;
+    return (uint32_t)(x | (zd << 5) | (zu << 10));
+}
+
+static qa_bounds source_absolute_bounds(qa_vec3 origin, qa_vec3 angles, qa_bounds bounds,
+                                        bool brush)
+{
+    qa_bounds absolute;
+    if (brush && (angles.x != 0.0f || angles.y != 0.0f || angles.z != 0.0f)) {
+        float radius = fabsf(bounds.mins.x);
+        float values[] = {fabsf(bounds.mins.y), fabsf(bounds.mins.z), fabsf(bounds.maxs.x),
+                          fabsf(bounds.maxs.y), fabsf(bounds.maxs.z)};
+        for (size_t index = 0; index < sizeof(values) / sizeof(values[0]); ++index)
+            if (values[index] > radius)
+                radius = values[index];
+        absolute.mins = qa_vec_sub(origin, (qa_vec3){radius, radius, radius});
+        absolute.maxs = qa_vec_add(origin, (qa_vec3){radius, radius, radius});
+    } else {
+        absolute.mins = qa_vec_add(origin, bounds.mins);
+        absolute.maxs = qa_vec_add(origin, bounds.maxs);
+    }
+    absolute.mins = qa_vec_sub(absolute.mins, (qa_vec3){1.0f, 1.0f, 1.0f});
+    absolute.maxs = qa_vec_add(absolute.maxs, (qa_vec3){1.0f, 1.0f, 1.0f});
+    return absolute;
+}
+
+static bool source_link_metadata(qa_native_host *host, qa_bounds bounds,
+                                 qa_native_host_link_metadata *metadata,
+                                 qa_error *error)
+{
+    uint32_t leaves[128];
+    qa_leaf_list list;
+    qa_collision_geometry *geometry = qa_world_geometry(host->world.world);
+    if (!qa_collision_box_leaves(geometry, bounds, leaves,
+                                 sizeof(leaves) / sizeof(leaves[0]), &list, error))
+        return false;
+    metadata->headnode = list.topnode;
+    metadata->cluster_count = list.overflow ? -1 : 0;
+    bool first_area = false, second_area = false;
+    for (size_t index = 0; index < list.count; ++index) {
+        qa_collision_leaf leaf;
+        if (!qa_collision_leaf_at(geometry, leaves[index], &leaf, error))
+            return false;
+        if (!first_area) {
+            metadata->area = (int32_t)leaf.area;
+            first_area = true;
+        } else if (leaf.area != metadata->area &&
+                   (!second_area || leaf.area != metadata->secondary_area)) {
+            if (!second_area) {
+                metadata->secondary_area = (int32_t)leaf.area;
+                second_area = true;
+            }
+        }
+        if (metadata->cluster_count < 0 || leaf.cluster < 0)
+            continue;
+        bool duplicate = false;
+        for (int32_t cluster = 0; cluster < metadata->cluster_count; ++cluster)
+            if (metadata->clusters[cluster] == (int32_t)leaf.cluster) {
+                duplicate = true;
+                break;
+            }
+        if (!duplicate) {
+            if (metadata->cluster_count == 16)
+                metadata->cluster_count = -1;
+            else
+                metadata->clusters[metadata->cluster_count++] = (int32_t)leaf.cluster;
+        }
+    }
+    return true;
+}
+
+bool native_host_link(qa_native_host *host, qa_native_address address, qa_error *error)
+{
+    if (host && host->filter_depth)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, host->filter_depth,
+                                "Q2 BoxEdicts filter cannot modify world links");
+    qa_actor_id actor;
+    uint32_t slot;
+    if (!native_host_actor_for_address(host, address, true, &actor, &slot, error))
+        return false;
+    if (!actor.registry || slot == 0)
+        return true;
+    qa_native_slot_binding binding;
+    if (!qa_native_slot(host->instance, slot, &binding, error))
+        return false;
+    if (binding.kind == QA_NATIVE_SLOT_BORROWED)
+        return true;
+    const native_host_edict_layout *layout = host->edict;
+    qa_vec3 origin, angles, minimum, maximum;
+    if (!native_host_read_vec3(host, address + 4, &origin, error) ||
+        !native_host_read_vec3(host, address + 16, &angles, error) ||
+        !native_host_read_vec3(host, address + layout->mins, &minimum, error) ||
+        !native_host_read_vec3(host, address + layout->maxs, &maximum, error))
+        return false;
+    uint32_t flags, clipmask;
+    int32_t link_count;
+    if (!native_host_read_u32(host, address + layout->flags, &flags, error) ||
+        !native_host_read_u32(host, address + layout->clipmask, &clipmask, error) ||
+        !native_host_read_i32(host, address + layout->linkcount, &link_count, error))
+        return false;
+    uint32_t solid;
+    if (host->profile == QA_NATIVE_Q2_GAME_API3) {
+        int32_t source_solid;
+        if (!native_host_read_i32(host, address + layout->solid, &source_solid, error))
+            return false;
+        if (source_solid < 0 || source_solid > 3)
+            return native_host_fail(error, QA_ERROR_FORMAT, slot,
+                                    "API 3 entity has an invalid solid value");
+        solid = (uint32_t)source_solid;
+    } else {
+        uint8_t source_solid;
+        if (!native_host_read_u8(host, address + layout->solid, &source_solid, error))
+            return false;
+        if (source_solid > 3)
+            return native_host_fail(error, QA_ERROR_FORMAT, slot,
+                                    "API 2023 entity has an invalid solid value");
+        solid = source_solid;
+    }
+    qa_body_state body = {.origin = origin, .angles = angles, .bounds = {minimum, maximum}};
+    qa_error body_error = {0};
+    qa_body_state existing;
+    if (qa_world_body_read(host->world.world, actor, &existing, &body_error)) {
+        body.velocity = existing.velocity;
+        body.ground = existing.ground;
+        if (!qa_world_body_write(host->world.world, actor, &body, error))
+            return false;
+    } else if (!qa_world_body_create(host->world.world, actor, &body, error)) {
+        return false;
+    }
+    qa_native_address owner_pointer = 0;
+    qa_actor_id owner_actor = {0};
+    if (!read_pointer(host, address + layout->owner, &owner_pointer, error))
+        return false;
+    if (owner_pointer &&
+        !native_host_actor_for_address(host, owner_pointer, false, &owner_actor, NULL, error))
+        return false;
+    int32_t model_index;
+    if (!native_host_read_i32(host, address + 40, &model_index, error))
+        return false;
+    uint32_t inline_model = 0;
+    if (solid == 3) {
+        for (native_host_model *model = host->models; model; model = model->next)
+            if (model->resource == model_index) {
+                inline_model = model->inline_model;
+                break;
+            }
+        if (!inline_model)
+            return native_host_fail(error, QA_ERROR_FORMAT, slot,
+                                    "native solid brush has no registered inline model");
+    }
+    qa_actor_collision collision = {
+        .family = QA_COLLISION_Q2,
+        .shape = QA_SHAPE_BOX,
+        .inline_model = solid == 3,
+        .model = inline_model,
+        .contents = solid == 3 ? 1 : solid == 1 ? 0
+                                                   : (flags & 2u) ? 0x04000000
+                                                                  : 0x02000000,
+        .owner = owner_actor,
+        .role = solid == 1 ? QA_COLLISION_TRIGGER : QA_COLLISION_SOLID,
+        .monster = (flags & 4u) != 0,
+        .dead_monster = (flags & 2u) != 0};
+    if (!qa_world_set_collision(host->world.world, actor, solid ? &collision : NULL, error))
+        return false;
+    if (solid && !qa_world_link(host->world.world, actor, NULL, error))
+        return false;
+    if (!solid && !qa_world_unlink(host->world.world, actor, error))
+        return false;
+    qa_linked_body linked;
+    if (solid && !qa_world_linked(host->world.world, actor, &linked))
+        return native_host_fail(error, QA_ERROR_NOT_FOUND, slot,
+                                "shared world did not retain a native link");
+    qa_bounds absolute = solid ? linked.absolute_bounds
+                               : source_absolute_bounds(origin, angles,
+                                                        (qa_bounds){minimum, maximum}, false);
+    qa_vec3 dimensions = {maximum.x - minimum.x, maximum.y - minimum.y,
+                          maximum.z - minimum.z};
+    qa_native_host_link_metadata metadata = {0};
+    if (!source_link_metadata(host, absolute, &metadata, error))
+        return false;
+    metadata.network_solid = solid == 3 ? 31u
+                                        : solid == 2 && !(flags & 2u)
+                                              ? pack_classic_solid(body.bounds)
+                                              : 0u;
+    if (host->engine.link_metadata &&
+        !host->engine.link_metadata(host->engine.context, actor, &metadata, error))
+        return false;
+    if (metadata.cluster_count < -1 || metadata.cluster_count > 16)
+        return native_host_fail(error, QA_ERROR_FORMAT, slot,
+                                "native link metadata has an invalid cluster count");
+    if (!native_host_write_vec3(host, address + layout->absmin, absolute.mins, error) ||
+        !native_host_write_vec3(host, address + layout->absmax, absolute.maxs, error) ||
+        !native_host_write_vec3(host, address + layout->size, dimensions, error) ||
+        !native_host_write_i32(host, address + layout->area, metadata.area, error) ||
+        !native_host_write_i32(host, address + layout->area2, metadata.secondary_area, error) ||
+        !native_host_write_i32(host, address + layout->linkcount, link_count + 1, error) ||
+        !native_host_write_u32(host, address +
+                                        (host->profile == QA_NATIVE_Q2_GAME_API3 ? 72u : 76u),
+                               metadata.network_solid, error))
+        return false;
+    if (host->profile == QA_NATIVE_Q2_GAME_API3) {
+        uint8_t clusters[64] = {0};
+        for (int32_t index = 0; index < metadata.cluster_count; ++index)
+            qa_store_u32le(clusters + (size_t)index * 4u,
+                           (uint32_t)metadata.clusters[index]);
+        if (!native_host_write_i32(host, address + layout->cluster_count, metadata.cluster_count, error) ||
+            !native_host_write(host, address + layout->clusters, clusters, sizeof(clusters), error) ||
+            !native_host_write_i32(host, address + layout->headnode, metadata.headnode, error))
+            return false;
+    }
+    if (host->profile == QA_NATIVE_Q2_GAME_API2023 &&
+        !native_host_write_u8(host, address + NATIVE_Q2_RR_LINKED, solid ? 1u : 0u, error))
+        return false;
+    if (link_count == 0) {
+        bool copy_origin = host->profile == QA_NATIVE_Q2_GAME_API3;
+        if (!copy_origin) {
+            uint32_t render_effects;
+            if (!native_host_read_u32(host, address + 72, &render_effects, error))
+                return false;
+            copy_origin = (render_effects & 128u) == 0;
+        }
+        if (copy_origin && !native_host_write_vec3(host, address + 28, origin, error))
+            return false;
+    }
+    return true;
+}
+
+bool native_host_unlink(qa_native_host *host, qa_native_address address, qa_error *error)
+{
+    if (host && host->filter_depth)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, host->filter_depth,
+                                "Q2 BoxEdicts filter cannot modify world links");
+    qa_actor_id actor;
+    uint32_t slot;
+    if (!native_host_actor_for_address(host, address, false, &actor, &slot, error))
+        return false;
+    qa_native_slot_binding binding;
+    if (!qa_native_slot(host->instance, slot, &binding, error))
+        return false;
+    if (binding.kind == QA_NATIVE_SLOT_BORROWED)
+        return true;
+    if (actor.registry && slot != 0 && !qa_world_unlink(host->world.world, actor, error))
+        return false;
+    if (host->profile == QA_NATIVE_Q2_GAME_API2023 && slot != 0)
+        return native_host_write_u8(host, address + NATIVE_Q2_RR_LINKED, 0, error);
+    return true;
+}
+
+static native_host_surface *surface_address(qa_native_host *host,
+                                            const qa_collision_surface *surface,
+                                            qa_error *error)
+{
+    for (native_host_surface *entry = host->surfaces; entry; entry = entry->next)
+        if (!memcmp(&entry->surface, surface, sizeof(*surface)))
+            return entry;
+    native_host_surface *entry = calloc(1, sizeof(*entry));
+    if (!entry) {
+        native_host_fail(error, QA_ERROR_MEMORY, 0, "allocating native surface record");
+        return NULL;
+    }
+    entry->surface = *surface;
+    size_t size = host->profile == QA_NATIVE_Q2_GAME_API3 ? 24u : 60u;
+    uint8_t bytes[60] = {0};
+    size_t name_bytes = host->profile == QA_NATIVE_Q2_GAME_API3 ? 16u : 32u;
+    size_t length = strlen(surface->name);
+    if (length > name_bytes - 1u)
+        length = name_bytes - 1u;
+    memcpy(bytes, surface->name, length);
+    qa_store_u32le(bytes + name_bytes, (uint32_t)surface->flags);
+    qa_store_u32le(bytes + name_bytes + 4u, (uint32_t)surface->value);
+    if (host->profile != QA_NATIVE_Q2_GAME_API3) {
+        size_t material = strlen(surface->material);
+        if (material > 15u)
+            material = 15u;
+        memcpy(bytes + 44, surface->material, material);
+    }
+    if (!qa_native_allocate(host->instance, size, INT32_MIN + 6, &entry->address, error) ||
+        !native_host_write(host, entry->address, bytes, size, error)) {
+        if (entry->address) {
+            qa_error ignored = {0};
+            qa_native_free(host->instance, entry->address, &ignored);
+        }
+        free(entry);
+        return NULL;
+    }
+    entry->next = host->surfaces;
+    host->surfaces = entry;
+    return entry;
+}
+
+static bool trace_entity_address(qa_native_host *host, const qa_trace_result *trace,
+                                 qa_native_address forced, qa_native_address *out,
+                                 qa_error *error)
+{
+    if (forced) {
+        *out = forced;
+        return true;
+    }
+    if (trace->hit == QA_TRACE_HIT_NONE) {
+        if (host->profile == QA_NATIVE_Q2_GAME_API3) {
+            *out = 0;
+            return true;
+        }
+        return qa_native_entity_address(host->instance, 0, out, error);
+    }
+    if (trace->hit == QA_TRACE_HIT_WORLD)
+        return qa_native_entity_address(host->instance, 0, out, error);
+    return native_host_address_for_actor(host, trace->actor, out, error);
+}
+
+static bool encode_trace(qa_native_host *host, const qa_trace_result *trace,
+                         qa_native_address forced_entity, qa_native_value *result,
+                         qa_error *error)
+{
+    size_t size = host->classic ? host->classic->trace.bytes : 96u;
+    if (!result || result->type != QA_NATIVE_BYTES || !result->as.bytes.data ||
+        result->as.bytes.size < size)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
+                                "native trace result storage is invalid");
+    uint8_t bytes[96] = {0};
+    qa_native_address entity = 0, surface = 0, secondary = 0;
+    if (!trace_entity_address(host, trace, forced_entity, &entity, error))
+        return false;
+    if (trace->has_surface) {
+        native_host_surface *record = surface_address(host, &trace->surface, error);
+        if (!record)
+            return false;
+        surface = record->address;
+    }
+    if (trace->has_secondary && trace->secondary_has_surface) {
+        native_host_surface *record = surface_address(host, &trace->secondary_surface, error);
+        if (!record)
+            return false;
+        secondary = record->address;
+    }
+    if (host->profile == QA_NATIVE_Q2_GAME_API3) {
+        qa_store_u32le(bytes, trace->all_solid ? 1u : 0u);
+        qa_store_u32le(bytes + 4, trace->start_solid ? 1u : 0u);
+        store_f32(bytes + 8, trace->fraction);
+        store_f32(bytes + 12, trace->end.x);
+        store_f32(bytes + 16, trace->end.y);
+        store_f32(bytes + 20, trace->end.z);
+        store_f32(bytes + 24, trace->plane.normal.x);
+        store_f32(bytes + 28, trace->plane.normal.y);
+        store_f32(bytes + 32, trace->plane.normal.z);
+        store_f32(bytes + 36, trace->plane.distance);
+        bytes[40] = (uint8_t)trace->plane.type;
+        bytes[41] = trace->plane.signbits;
+        if (!native_host_store_pointer(host, bytes + host->classic->trace.surface,
+                                       surface, error) ||
+            !native_host_store_pointer(host, bytes + host->classic->trace.entity,
+                                       entity, error))
+            return false;
+        qa_store_u32le(bytes + host->classic->trace.contents, (uint32_t)trace->contents);
+    } else {
+        bytes[0] = trace->all_solid ? 1u : 0u;
+        bytes[1] = trace->start_solid ? 1u : 0u;
+        store_f32(bytes + 4, trace->fraction);
+        store_f32(bytes + 8, trace->end.x);
+        store_f32(bytes + 12, trace->end.y);
+        store_f32(bytes + 16, trace->end.z);
+        store_f32(bytes + 20, trace->plane.normal.x);
+        store_f32(bytes + 24, trace->plane.normal.y);
+        store_f32(bytes + 28, trace->plane.normal.z);
+        store_f32(bytes + 32, trace->plane.distance);
+        bytes[36] = (uint8_t)trace->plane.type;
+        bytes[37] = trace->plane.signbits;
+        qa_store_u64le(bytes + 40, surface);
+        qa_store_u32le(bytes + 48, (uint32_t)trace->contents);
+        qa_store_u64le(bytes + 56, entity);
+        if (trace->has_secondary) {
+            store_f32(bytes + 64, trace->secondary_plane.normal.x);
+            store_f32(bytes + 68, trace->secondary_plane.normal.y);
+            store_f32(bytes + 72, trace->secondary_plane.normal.z);
+            store_f32(bytes + 76, trace->secondary_plane.distance);
+            bytes[80] = (uint8_t)trace->secondary_plane.type;
+            bytes[81] = trace->secondary_plane.signbits;
+            qa_store_u64le(bytes + 88, secondary);
+        }
+    }
+    memcpy(result->as.bytes.data, bytes, size);
+    result->as.bytes.size = size;
+    return true;
+}
+
+bool native_host_trace(qa_native_host *host, const qa_native_import_call *call,
+                       qa_native_value *result, bool clip, qa_error *error)
+{
+    qa_vec3 start, end, mins = {0}, maxs = {0};
+    size_t start_index = clip ? 1u : 0u;
+    size_t mins_index = clip ? 2u : 1u;
+    size_t maxs_index = clip ? 3u : 2u;
+    size_t end_index = clip ? 4u : 3u;
+    qa_native_address mins_address = native_argument_address(call, mins_index);
+    qa_native_address maxs_address = native_argument_address(call, maxs_index);
+    if (!native_host_read_vec3(host, native_argument_address(call, start_index), &start,
+                               error) ||
+        !native_host_read_vec3(host, native_argument_address(call, end_index), &end, error))
+        return false;
+    if ((mins_address == 0) != (maxs_address == 0))
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
+                                "native Q2 trace requires both bounds or neither");
+    if (mins_address &&
+        (!native_host_read_vec3(host, mins_address, &mins, error) ||
+         !native_host_read_vec3(host, maxs_address, &maxs, error)))
+        return false;
+    qa_actor_id pass = {0};
+    qa_native_address pass_address = clip ? 0 : native_argument_address(call, 4);
+    if (pass_address &&
+        !native_host_actor_for_address(host, pass_address, false, &pass, NULL, error))
+        return false;
+    uint32_t mask = host->profile == QA_NATIVE_Q2_GAME_API3
+                        ? (uint32_t)native_argument_i32(call, 5)
+                        : native_argument_u32(call, 5);
+    qa_trace_query query = {
+        .start = start,
+        .end = end,
+        .shape = {.kind = mins_address ? QA_SHAPE_BOX : QA_SHAPE_POINT,
+                  .bounds = {mins, maxs}},
+        .policy = qa_collision_default_policy(QA_COLLISION_Q2),
+        .pass_actor = pass};
+    query.policy.contents_mask = mask;
+    qa_trace_result trace;
+    qa_native_address forced_entity = 0;
+    if (!clip) {
+        if (!qa_world_trace(host->world.world, &query, &trace, error))
+            return false;
+    } else {
+        forced_entity = native_argument_address(call, 0);
+        qa_actor_id actor;
+        uint32_t slot;
+        if (!forced_entity ||
+            !native_host_actor_for_address(host, forced_entity, true, &actor, &slot, error))
+            return false;
+        if (slot == 0) {
+            if (!qa_collision_trace(qa_world_geometry(host->world.world), &query, &trace,
+                                    error))
+                return false;
+        } else {
+            qa_body_state body;
+            qa_actor_collision collision;
+            if (!qa_world_body_read(host->world.world, actor, &body, error) ||
+                !qa_world_get_collision(host->world.world, actor, &collision))
+                return native_host_fail(error, QA_ERROR_NOT_FOUND, slot,
+                                        "native clip target has no shared body collision");
+            if (collision.inline_model) {
+                query.target = (qa_collision_target){true, collision.model, body.origin,
+                                                      body.angles};
+                if (!qa_collision_trace(qa_world_geometry(host->world.world), &query,
+                                        &trace, error))
+                    return false;
+            } else if (!qa_collision_trace_body(&query, collision.family,
+                                                 collision.shape, body.bounds, body.origin,
+                                                 qa_world_actor_contents(&collision,
+                                                                         QA_COLLISION_Q2),
+                                                 &trace, error)) {
+                return false;
+            }
+        }
+    }
+    return encode_trace(host, &trace, forced_entity, result, error);
+}
+
+typedef struct box_visit_context {
+    qa_actor_id *actors;
+    size_t count, capacity;
+} box_visit_context;
+
+static qa_spatial_visit box_visit(void *context, const qa_spatial_actor *actor)
+{
+    box_visit_context *visit = context;
+    if (visit->count < visit->capacity)
+        visit->actors[visit->count] = actor->body.actor;
+    ++visit->count;
+    return QA_SPATIAL_CONTINUE;
+}
+
+bool native_host_box_edicts(qa_native_host *host, const qa_native_import_call *call,
+                            qa_native_value *result, qa_error *error)
+{
+    qa_vec3 minimum, maximum;
+    if (!native_host_read_vec3(host, native_argument_address(call, 0), &minimum, error) ||
+        !native_host_read_vec3(host, native_argument_address(call, 1), &maximum, error))
+        return false;
+    int32_t classic_requested = host->profile == QA_NATIVE_Q2_GAME_API3
+                                    ? native_argument_i32(call, 3)
+                                    : 0;
+    if (classic_requested < 0)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, (size_t)classic_requested,
+                                "native BoxEdicts capacity is negative");
+    uint64_t requested = host->profile == QA_NATIVE_Q2_GAME_API3
+                             ? (uint32_t)classic_requested
+                             : call->arguments[3].as.u64;
+    if (requested > 1048576u)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, (size_t)requested,
+                                "native BoxEdicts capacity is unreasonable");
+    qa_native_address output = native_argument_address(call, 2);
+    if (requested && !output)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
+                                "native BoxEdicts output is null with nonzero capacity");
+    size_t candidate_capacity = qa_actors_count(qa_world_actors(host->world.world));
+    qa_actor_id *actors = candidate_capacity
+                              ? calloc(candidate_capacity, sizeof(*actors))
+                              : NULL;
+    if (candidate_capacity && !actors)
+        return native_host_fail(error, QA_ERROR_MEMORY, 0,
+                                "allocating native BoxEdicts candidates");
+    int32_t area = native_argument_i32(call, 4);
+    if (area != 1 && area != 2) {
+        free(actors);
+        return native_host_fail(error, QA_ERROR_ARGUMENT, area,
+                                "native BoxEdicts area is invalid");
+    }
+    box_visit_context visit = {.actors = actors, .capacity = candidate_capacity};
+    bool ok = qa_world_visit(host->world.world, (qa_bounds){minimum, maximum},
+                             area == 1 ? QA_COLLISION_SOLID : QA_COLLISION_TRIGGER,
+                             box_visit, &visit, error);
+    size_t accepted = 0;
+    qa_native_address filter = host->profile == QA_NATIVE_Q2_GAME_API2023
+                                   ? native_argument_address(call, 5)
+                                   : 0;
+    qa_native_address filter_data = host->profile == QA_NATIVE_Q2_GAME_API2023
+                                        ? native_argument_address(call, 6)
+                                        : 0;
+    qa_native_module_info info = qa_native_module_describe(qa_native_get_module(host->instance));
+    qa_native_type parameters[] = {{.kind = QA_NATIVE_ADDRESS, .count = 1},
+                                   {.kind = QA_NATIVE_ADDRESS, .count = 1}};
+    qa_native_signature signature = {
+        .abi = info.image.target.abi,
+        .parameters = parameters,
+        .parameter_count = 2,
+        .result = {.kind = QA_NATIVE_I32, .count = 1}};
+    if (ok) {
+        size_t count = visit.count < candidate_capacity ? visit.count : candidate_capacity;
+        for (size_t index = 0;
+             index < count && !(host->profile == QA_NATIVE_Q2_GAME_API3 && !requested);
+             ++index) {
+            qa_native_address address;
+            if (!native_host_address_for_actor(host, actors[index], &address, error)) {
+                ok = false;
+                break;
+            }
+            int32_t decision = 0;
+            if (filter) {
+                qa_native_value arguments[] = {
+                    {.type = QA_NATIVE_ADDRESS, .as.address = address},
+                    {.type = QA_NATIVE_ADDRESS, .as.address = filter_data}};
+                qa_native_value filter_result = {.type = QA_NATIVE_I32};
+                ++host->filter_depth;
+                bool invoked = qa_native_invoke(host->instance, filter, &signature,
+                                                arguments, 2, &filter_result, error);
+                --host->filter_depth;
+                if (!invoked) {
+                    ok = false;
+                    break;
+                }
+                decision = filter_result.as.i32;
+                if (decision & ~65) {
+                    ok = native_host_fail(error, QA_ERROR_FORMAT, decision,
+                                          "native BoxEdicts filter returned invalid flags");
+                    break;
+                }
+            }
+            if (!(decision & 1)) {
+                uint8_t pointer[8] = {0};
+                size_t width = info.image.target.pointer_bytes;
+                if (width == 4) {
+                    if (address > UINT32_MAX) {
+                        ok = native_host_fail(error, QA_ERROR_FORMAT, 0,
+                                              "BoxEdicts pointer exceeds guest width");
+                        break;
+                    }
+                    qa_store_u32le(pointer, (uint32_t)address);
+                } else {
+                    qa_store_u64le(pointer, address);
+                }
+                if (!requested && host->profile == QA_NATIVE_Q2_GAME_API2023) {
+                    ++accepted;
+                } else if (accepted < requested) {
+                    if (!native_host_write(host, output + accepted * width, pointer, width,
+                                           error)) {
+                        ok = false;
+                        break;
+                    }
+                    ++accepted;
+                }
+            }
+            if (decision & 64)
+                break;
+            if (host->profile == QA_NATIVE_Q2_GAME_API3 && accepted == requested)
+                break;
+        }
+    }
+    free(actors);
+    if (!ok)
+        return false;
+    if (host->profile == QA_NATIVE_Q2_GAME_API3)
+        result->as.i32 = (int32_t)accepted;
+    else
+        result->as.u64 = accepted;
+    return true;
+}

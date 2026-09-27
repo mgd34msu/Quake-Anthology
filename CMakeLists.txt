@@ -556,6 +556,20 @@ add_library(qa_qvm STATIC
     src/compat/qvm/records.c)
 target_link_libraries(qa_qvm PUBLIC qa_content)
 
+add_library(qa_native_host STATIC
+    src/compat/native_host/artifact.c
+    src/compat/native_host/checkpoint.c
+    src/compat/native_host/host.c
+    src/compat/native_host/memory.c
+    src/compat/native_host/message.c
+    src/compat/native_host/movement.c
+    src/compat/native_host/q2.c
+    src/compat/native_host/q3.c
+    src/compat/native_host/world.c)
+target_link_libraries(qa_native_host PUBLIC
+    qa_native qa_qvm qa_console qa_gameplay qa_movement qa_campaign
+    PRIVATE qa_network)
+
 add_executable(quake-anthology src/main.c)
 target_link_libraries(quake-anthology PRIVATE qa_content)
 target_compile_definitions(quake-anthology PRIVATE QA_VERSION="${PROJECT_VERSION}")
