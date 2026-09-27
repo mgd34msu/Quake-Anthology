@@ -69,6 +69,18 @@ typedef struct qa_builtin_actor_traits {
     uint64_t hostile_until_ns;
 } qa_builtin_actor_traits;
 
+/* Borrowed connection/selected-character projection, never a second player
+ * store. Text remains valid until a mutating service callback. Scores belong
+ * to an explicitly selected mode and are queried through that mode's owner. */
+typedef struct qa_builtin_player_info {
+    const char *name, *skin;
+    uint32_t slot;
+    int32_t ping;
+    uint64_t entered_ns;
+    float view_height, killer_yaw;
+    bool connected, spectator, dead;
+} qa_builtin_player_info;
+
 typedef enum qa_builtin_motion_reason {
     QA_BUILTIN_MOTION_TELEPORT,
     QA_BUILTIN_MOTION_LAUNCH,
@@ -122,6 +134,8 @@ typedef struct qa_builtin_services {
     /* Read-only roster query in client order, including selected foreign
      * characters. The caller owns the output storage; never retain its pointer. */
     bool (*players)(void *, qa_actor_id *, size_t capacity, size_t *count, qa_error *);
+    /* Read-only; false means this actor has no connected player projection. */
+    bool (*player_info)(void *, qa_actor_id, qa_builtin_player_info *);
     /* Body storage is already committed. The selected movement owner updates
      * its continuation and command-angle delta before subsequent commands. */
     bool (*motion_changed)(void *, qa_actor_id, const qa_builtin_motion_change *, qa_error *);
@@ -165,6 +179,8 @@ void qa_builtin_snapshot_free(qa_builtin_actor_snapshot *);
 bool qa_builtin_nearby(const qa_builtin_services *, qa_vec3 origin, float radius,
                        qa_builtin_actor_snapshot *, qa_error *);
 bool qa_builtin_observations(const qa_builtin_services *, qa_builtin_actor_snapshot *, qa_error *);
+/* Sort retained observations using the configured source-order query. */
+void qa_builtin_sort_observations(const qa_builtin_services *, qa_builtin_actor_snapshot *);
 bool qa_builtin_players(const qa_builtin_services *, qa_builtin_actor_snapshot *, qa_error *);
 int qa_builtin_source_order(const qa_builtin_services *, qa_actor_id, qa_actor_id);
 /* Update authoritative body fields only; each source retains its own trace and

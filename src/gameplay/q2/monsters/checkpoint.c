@@ -1,0 +1,601 @@
+#include "internal.h"
+
+static bool save_reference(qa_q2_game *game, qa_actor_id id,
+                           qa_q2_saved_reference *out, qa_error *error) {
+  *out = (qa_q2_saved_reference){0};
+  if (id.registry == 0)
+    return true;
+  if (!qa_actors_save_reference(qa_session_actors(game->services.session), id,
+                                &out->actor, error))
+    return false;
+  out->present = true;
+  return true;
+}
+
+static bool callback_boundary(const qa_q2_game *game, qa_error *error) {
+  for (const q2_trace_frame *frame = game->trace_frames; frame != NULL;
+       frame = frame->next) {
+    if (!frame->active)
+      continue;
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0,
+                 "Q2 monster checkpoint requires a gameplay callback boundary");
+    return false;
+  }
+  return true;
+}
+
+static bool resolve_reference(qa_q2_game *game, qa_q2_saved_reference saved,
+                              qa_actor_id *out, qa_error *error) {
+  *out = (qa_actor_id){0};
+  if (!saved.present)
+    return true;
+  const qa_actor_record *record = qa_actors_resolve_saved(
+      qa_session_actors(game->services.session), saved.actor);
+  if (record == NULL)
+    return qa_actors_reference_saved(qa_session_actors(game->services.session),
+                                     saved.actor, true, out, error);
+  *out = record->id;
+  return true;
+}
+
+static bool copy_name(char *out, size_t capacity, const char *value,
+                      qa_error *error) {
+  size_t length = strlen(value);
+  if (length == 0 || length >= capacity) {
+    qa_error_set(error, QA_ERROR_FORMAT, length,
+                 "Q2 monster checkpoint name is too long");
+    return false;
+  }
+  memcpy(out, value, length + 1);
+  return true;
+}
+
+static bool valid_name(const char *value, size_t capacity, bool allow_empty) {
+  const char *end = memchr(value, '\0', capacity);
+  return end != NULL && (allow_empty || end != value);
+}
+
+static bool finite_checkpoint(const qa_q2_monster_checkpoint *state) {
+  const float *values[] = {
+      &state->entity_scale,     &state->animation_scale,
+      &state->base_health,      &state->health_scaling,
+      &state->gib_health,       &state->normal_height,
+      &state->view_height,      &state->ideal_yaw,
+      &state->yaw_speed,        &state->blind_fire_delay,
+      &state->fly_min_distance, &state->fly_max_distance,
+      &state->fly_acceleration, &state->fly_speed,
+      &state->pending_damage,   &state->pending_kick,
+      &state->controller_damage,
+  };
+  for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i)
+    if (!isfinite(*values[i]))
+      return false;
+  return qa_vec_finite(state->last_sighting) &&
+         qa_vec_finite(state->saved_goal) &&
+         qa_vec_finite(state->blind_fire_target) &&
+         qa_vec_finite(state->fly_ideal_position) &&
+         qa_vec_finite(state->fly_recovery_direction) &&
+         qa_vec_finite(state->last_damage_point) &&
+         qa_vec_finite(state->saved_attack_position) &&
+         qa_vec_finite(state->controller_direction) &&
+         qa_vec_finite(state->sound_target.origin);
+}
+
+bool qa_q2_monster_read(const qa_q2_game *game, qa_actor_id id,
+                        qa_q2_monster_view *out) {
+  if (game == NULL || out == NULL || id.slot >= game->capacity)
+    return false;
+  const q2_actor *actor = game->actors[id.slot];
+  if (actor == NULL || !qa_actor_id_equal(actor->id, id) ||
+      actor->monster == NULL || actor->projectile.kind != Q2_PROJECTILE_NONE ||
+      !q2_actor_live((qa_q2_game *)game, id))
+    return false;
+  const struct qa_q2_monster *monster = actor->monster;
+  if (monster->definition == NULL ||
+      monster->controller_kind != Q2M_CONTROLLER_NONE)
+    return false;
+  *out = (qa_q2_monster_view){
+      .classname = monster->classname,
+      .model = monster->model,
+      .enemy = monster->enemy,
+      .commander = monster->commander,
+      .effects = actor->extra_effects,
+      .frame = monster->frame,
+      .old_frame = monster->old_frame,
+      .render_flags = monster->render_flags,
+      .skin = monster->skin,
+      .scale = monster->entity_scale,
+      .view_height = monster->view_height,
+      .ideal_yaw = monster->ideal_yaw,
+      .can_take_damage = monster->can_take_damage,
+      .dead = monster->dead,
+      .corpse = monster->corpse,
+      .gibbed = monster->gibbed,
+      .triggered = monster->triggered,
+      .summoned = monster->summoned,
+      .visible = monster->visible,
+  };
+  return true;
+}
+
+bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
+                           qa_q2_monster_checkpoint *out, qa_error *error) {
+  if (game == NULL || out == NULL) {
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0,
+                 "Q2 monster capture requires game and output");
+    return false;
+  }
+  if (!callback_boundary(game, error))
+    return false;
+  q2_actor *actor = q2_actor_get(game, id, false, error);
+  if (actor == NULL || actor->monster == NULL ||
+      actor->projectile.kind != Q2_PROJECTILE_NONE) {
+    qa_error_set(error, QA_ERROR_FORMAT, id.slot,
+                 "Actor has no active Q2 monster state");
+    return false;
+  }
+  const struct qa_q2_monster *monster = actor->monster;
+  qa_q2_monster_checkpoint saved = {
+      .version = 2,
+      .start_phase = (uint32_t)monster->start_phase,
+      .combat_target = monster->combat_target,
+      .start_due_ns = monster->start_due_ns,
+      .death_notified = monster->death_notified,
+      .spawnflags = monster->spawnflags,
+      .attack_state = (uint32_t)monster->attack_state,
+      .spawned_by = (uint32_t)monster->spawned_by,
+      .controller_kind = (uint32_t)monster->controller_kind,
+      .frame = monster->frame,
+      .next_frame = monster->next_frame,
+      .old_frame = monster->old_frame,
+      .render_flags = monster->render_flags,
+      .skin = monster->skin,
+      .style = monster->style,
+      .count = monster->count,
+      .entity_scale = monster->entity_scale,
+      .animation_scale = monster->animation_scale,
+      .base_health = monster->base_health,
+      .health_scaling = monster->health_scaling,
+      .gib_health = monster->gib_health,
+      .normal_height = monster->normal_height,
+      .view_height = monster->view_height,
+      .ideal_yaw = monster->ideal_yaw,
+      .yaw_speed = monster->yaw_speed,
+      .blind_fire_delay = monster->blind_fire_delay,
+      .fly_min_distance = monster->fly_min_distance,
+      .fly_max_distance = monster->fly_max_distance,
+      .fly_acceleration = monster->fly_acceleration,
+      .fly_speed = monster->fly_speed,
+      .next_frame_ns = monster->next_frame_ns,
+      .pause_ns = monster->pause_ns,
+      .idle_ns = monster->idle_ns,
+      .pain_ns = monster->pain_ns,
+      .fire_ns = monster->fire_ns,
+      .duck_ns = monster->duck_ns,
+      .next_duck_ns = monster->next_duck_ns,
+      .dodge_ns = monster->dodge_ns,
+      .attack_ns = monster->attack_ns,
+      .check_attack_ns = monster->check_attack_ns,
+      .strafe_ns = monster->strafe_ns,
+      .melee_ns = monster->melee_ns,
+      .search_ns = monster->search_ns,
+      .trail_ns = monster->trail_ns,
+      .hostile_ns = monster->hostile_ns,
+      .air_ns = monster->air_ns,
+      .environment_ns = monster->environment_ns,
+      .jump_ns = monster->jump_ns,
+      .flies_ns = monster->flies_ns,
+      .fly_position_ns = monster->fly_position_ns,
+      .recovery_ns = monster->recovery_ns,
+      .death_ns = monster->death_ns,
+      .spawn_ns = monster->spawn_ns,
+      .timestamp_ns = monster->timestamp_ns,
+      .coop_check_ns = monster->coop_check_ns,
+      .react_ns = monster->react_ns,
+      .corpse_check_ns = monster->corpse_check_ns,
+      .sound_target = {.origin = monster->sound_target.origin,
+                       .time_ns = monster->sound_target.time_ns,
+                       .present = monster->sound_target.present},
+      .last_sighting = monster->last_sighting,
+      .saved_goal = monster->saved_goal,
+      .blind_fire_target = monster->blind_fire_target,
+      .fly_ideal_position = monster->fly_ideal_position,
+      .fly_recovery_direction = monster->fly_recovery_direction,
+      .last_damage_point = monster->last_damage_point,
+      .saved_attack_position = monster->saved_attack_position,
+      .controller_direction = monster->controller_direction,
+      .last_attack = monster->last_attack,
+      .pending_damage = monster->pending_damage,
+      .pending_kick = monster->pending_kick,
+      .controller_damage = monster->controller_damage,
+      .controller_ns = monster->controller_ns,
+      .monster_slots = monster->monster_slots,
+      .monster_used = monster->monster_used,
+      .water_level = monster->water_level,
+      .water_type = monster->water_type,
+      .last_link_count = monster->last_link_count,
+      .has_saved_goal = monster->has_saved_goal,
+      .good_guy = monster->good_guy,
+      .target_anger = monster->target_anger,
+      .ignore_shots = monster->ignore_shots,
+      .do_not_count = monster->do_not_count,
+      .brutal = monster->brutal,
+      .medic = monster->medic,
+      .resurrecting = monster->resurrecting,
+      .can_take_damage = monster->can_take_damage,
+      .dead = monster->dead,
+      .corpse = monster->corpse,
+      .gibbed = monster->gibbed,
+      .stand_ground = monster->stand_ground,
+      .temporary_stand_ground = monster->temporary_stand_ground,
+      .hold_frame = monster->hold_frame,
+      .ducked = monster->ducked,
+      .dodging = monster->dodging,
+      .charging = monster->charging,
+      .manual_steering = monster->manual_steering,
+      .combat_point = monster->combat_point,
+      .lefty = monster->lefty,
+      .had_visibility = monster->had_visibility,
+      .close_sight_tripped = monster->close_sight_tripped,
+      .lost_sight = monster->lost_sight,
+      .pursue_next = monster->pursue_next,
+      .pursue_temporary = monster->pursue_temporary,
+      .pursuit_last_seen = monster->pursuit_last_seen,
+      .cocked = monster->cocked,
+      .force_refire = monster->force_refire,
+      .triggered = monster->triggered,
+      .visible = monster->visible,
+      .pending_pain = monster->pending_pain,
+      .pending_death = monster->pending_death,
+      .alternate_fly = monster->alternate_fly,
+      .fly_buzzard = monster->fly_buzzard,
+      .fly_above = monster->fly_above,
+      .fly_pinned = monster->fly_pinned,
+      .fly_thrusters = monster->fly_thrusters,
+      .hint_path = monster->hint_path,
+      .summoned = monster->summoned,
+      .touch_active = monster->touch_active,
+      .turret_attached = monster->turret_attached,
+      .initialized = monster->initialized,
+      .controller_medic = monster->controller_medic,
+      .controller_fired = monster->controller_fired,
+  };
+  if (monster->controller_kind != Q2M_CONTROLLER_NONE) {
+    if (!save_reference(game, monster->controller_owner,
+                        &saved.controller_owner, error) ||
+        !save_reference(game, monster->controller_target,
+                        &saved.controller_target, error))
+      return false;
+    *out = saved;
+    return true;
+  }
+  if (!copy_name(saved.definition, sizeof(saved.definition),
+                 monster->definition->classname, error) ||
+      !copy_name(saved.move, sizeof(saved.move), monster->move->name, error))
+    return false;
+  if (monster->next_move != NULL &&
+      !copy_name(saved.next_move, sizeof(saved.next_move),
+                 monster->next_move->name, error))
+    return false;
+  if (!save_reference(game, monster->enemy, &saved.enemy, error) ||
+      !save_reference(game, monster->old_enemy, &saved.old_enemy, error) ||
+      !save_reference(game, monster->last_player_enemy,
+                      &saved.last_player_enemy, error) ||
+      !save_reference(game, monster->goal, &saved.goal, error) ||
+      !save_reference(game, monster->move_target, &saved.move_target, error) ||
+      !save_reference(game, monster->commander, &saved.commander, error) ||
+      !save_reference(game, monster->activator, &saved.activator, error) ||
+      !save_reference(game, monster->resurrect_target, &saved.resurrect_target,
+                      error) ||
+      !save_reference(game, monster->hazard, &saved.hazard, error) ||
+      !save_reference(game, monster->sound_target.actor,
+                      &saved.sound_target.actor, error) ||
+      !save_reference(game, monster->sound_target.owner,
+                      &saved.sound_target.owner, error) ||
+      !save_reference(game, monster->last_attack.attacker,
+                      &saved.attack_attacker, error) ||
+      !save_reference(game, monster->last_attack.inflictor,
+                      &saved.attack_inflictor, error) ||
+      !save_reference(game, monster->last_attack.projectile,
+                      &saved.attack_projectile, error))
+    return false;
+  saved.last_attack.attacker = (qa_actor_id){0};
+  saved.last_attack.inflictor = (qa_actor_id){0};
+  saved.last_attack.projectile = (qa_actor_id){0};
+  *out = saved;
+  return true;
+}
+
+static bool resolve_all(qa_q2_game *game, const qa_q2_monster_checkpoint *saved,
+                        struct qa_q2_monster *monster, qa_error *error) {
+  return resolve_reference(game, saved->enemy, &monster->enemy, error) &&
+         resolve_reference(game, saved->old_enemy, &monster->old_enemy,
+                           error) &&
+         resolve_reference(game, saved->last_player_enemy,
+                           &monster->last_player_enemy, error) &&
+         resolve_reference(game, saved->goal, &monster->goal, error) &&
+         resolve_reference(game, saved->move_target, &monster->move_target,
+                           error) &&
+         resolve_reference(game, saved->commander, &monster->commander,
+                           error) &&
+         resolve_reference(game, saved->activator, &monster->activator,
+                           error) &&
+         resolve_reference(game, saved->resurrect_target,
+                           &monster->resurrect_target, error) &&
+         resolve_reference(game, saved->hazard, &monster->hazard, error) &&
+         resolve_reference(game, saved->controller_owner,
+                           &monster->controller_owner, error) &&
+         resolve_reference(game, saved->controller_target,
+                           &monster->controller_target, error) &&
+         resolve_reference(game, saved->sound_target.actor,
+                           &monster->sound_target.actor, error) &&
+         resolve_reference(game, saved->sound_target.owner,
+                           &monster->sound_target.owner, error) &&
+         resolve_reference(game, saved->attack_attacker,
+                           &monster->last_attack.attacker, error) &&
+         resolve_reference(game, saved->attack_inflictor,
+                           &monster->last_attack.inflictor, error) &&
+         resolve_reference(game, saved->attack_projectile,
+                           &monster->last_attack.projectile, error);
+}
+
+bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
+                           const qa_q2_monster_checkpoint *saved,
+                           qa_error *error) {
+  if (game == NULL || saved == NULL) {
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0,
+                 "Q2 monster restore requires game and checkpoint");
+    return false;
+  }
+  if (!callback_boundary(game, error))
+    return false;
+  bool controller = saved->controller_kind != Q2M_CONTROLLER_NONE;
+  if (saved->version != 2 || saved->start_phase > Q2M_START_MANUAL ||
+      saved->controller_kind > Q2M_CONTROLLER_MAKRON_SPAWN ||
+      !valid_name(saved->definition, sizeof(saved->definition), controller) ||
+      !valid_name(saved->move, sizeof(saved->move), controller) ||
+      !valid_name(saved->next_move, sizeof(saved->next_move), true) ||
+      saved->attack_state > Q2M_BLIND || saved->spawned_by > Q2M_SPAWN_WIDOW ||
+      (!controller &&
+       (saved->entity_scale <= 0.0f || saved->animation_scale <= 0.0f ||
+        saved->health_scaling <= 0.0f || saved->normal_height < 0.0f ||
+        saved->fly_min_distance < 0.0f ||
+        saved->fly_max_distance < saved->fly_min_distance ||
+        saved->fly_acceleration < 0.0f || saved->fly_speed < 0.0f ||
+        saved->monster_slots < 0 || saved->monster_used < 0 ||
+        saved->water_level < 0 || saved->water_level > 3)) ||
+      !saved->initialized ||
+      saved->last_attack.attacker.registry != 0 ||
+      saved->last_attack.inflictor.registry != 0 ||
+      saved->last_attack.projectile.registry != 0 ||
+      !finite_checkpoint(saved)) {
+    qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid Q2 monster checkpoint");
+    return false;
+  }
+  if (controller &&
+      (saved->definition[0] != '\0' || saved->move[0] != '\0' ||
+       saved->next_move[0] != '\0')) {
+    qa_error_set(error, QA_ERROR_FORMAT, 0,
+                 "Invalid Q2 monster controller checkpoint");
+    return false;
+  }
+  if (controller) {
+    struct qa_q2_monster *monster = calloc(1, sizeof(*monster));
+    if (monster == NULL) {
+      qa_error_set(error, QA_ERROR_MEMORY, 0,
+                   "Q2 monster controller checkpoint allocation failed");
+      return false;
+    }
+    monster->controller_kind = (q2m_controller_kind)saved->controller_kind;
+    monster->count = saved->count;
+    monster->controller_direction = saved->controller_direction;
+    monster->controller_damage = saved->controller_damage;
+    monster->controller_ns = saved->controller_ns;
+    monster->controller_medic = saved->controller_medic;
+    monster->controller_fired = saved->controller_fired;
+    monster->initialized = true;
+    if (!resolve_reference(game, saved->controller_owner,
+                           &monster->controller_owner, error) ||
+        !resolve_reference(game, saved->controller_target,
+                           &monster->controller_target, error)) {
+      free(monster);
+      return false;
+    }
+    q2_actor *actor = q2_actor_get(game, id, true, error);
+    if (actor == NULL) {
+      free(monster);
+      return false;
+    }
+    if (actor->projectile.kind != Q2_PROJECTILE_NONE) {
+      free(monster);
+      qa_error_set(error, QA_ERROR_FORMAT, id.slot,
+                   "Projectile actor cannot restore monster controller state");
+      return false;
+    }
+    struct qa_q2_monster *previous = actor->monster;
+    actor->monster = monster;
+    actor->physics_bound = true;
+    actor->physics = qa_physics_properties_default(QA_COLLISION_Q2);
+    actor->physics.motion = QA_PHYSICS_STATIONARY;
+    actor->physics.solid = QA_PHYSICS_NOT_SOLID;
+    actor->physics.clip_mask = 0;
+    free(previous);
+    return true;
+  }
+  const q2m_definition *definition =
+      q2m_definition_for(game, saved->definition);
+  const q2m_move_set *move_set = q2m_move_set_for(game, definition);
+  if (definition == NULL || move_set == NULL) {
+    qa_error_set(error, QA_ERROR_FORMAT, 0,
+                 "Q2 monster checkpoint definition is unavailable");
+    return false;
+  }
+  struct qa_q2_monster *monster = calloc(1, sizeof(*monster));
+  if (monster == NULL) {
+    qa_error_set(error, QA_ERROR_MEMORY, 0,
+                 "Q2 monster checkpoint allocation failed");
+    return false;
+  }
+  monster->definition = definition;
+  monster->move_set = move_set;
+  monster->move = q2m_move_named(monster, saved->move);
+  monster->next_move = saved->next_move[0] == '\0'
+                           ? NULL
+                           : q2m_move_named(monster, saved->next_move);
+  const q2m_move *frame_move =
+      monster->next_move != NULL ? monster->next_move : monster->move;
+  if (monster->move == NULL ||
+      (saved->next_move[0] != '\0' && monster->next_move == NULL) ||
+      saved->frame < monster->move->first_frame ||
+      saved->frame > monster->move->last_frame ||
+      (saved->next_frame != 0 &&
+       (saved->next_frame < frame_move->first_frame ||
+        saved->next_frame > frame_move->last_frame))) {
+    free(monster);
+    qa_error_set(error, QA_ERROR_FORMAT, 0,
+                 "Q2 monster checkpoint move is invalid");
+    return false;
+  }
+#define Q2M_RESTORE(field) monster->field = saved->field
+  Q2M_RESTORE(spawnflags);
+  Q2M_RESTORE(frame);
+  Q2M_RESTORE(next_frame);
+  Q2M_RESTORE(skin);
+  Q2M_RESTORE(style);
+  Q2M_RESTORE(count);
+  Q2M_RESTORE(entity_scale);
+  Q2M_RESTORE(animation_scale);
+  Q2M_RESTORE(base_health);
+  Q2M_RESTORE(health_scaling);
+  Q2M_RESTORE(gib_health);
+  Q2M_RESTORE(normal_height);
+  Q2M_RESTORE(view_height);
+  Q2M_RESTORE(ideal_yaw);
+  Q2M_RESTORE(yaw_speed);
+  Q2M_RESTORE(blind_fire_delay);
+  Q2M_RESTORE(fly_min_distance);
+  Q2M_RESTORE(fly_max_distance);
+  Q2M_RESTORE(fly_acceleration);
+  Q2M_RESTORE(fly_speed);
+  Q2M_RESTORE(next_frame_ns);
+  Q2M_RESTORE(pause_ns);
+  Q2M_RESTORE(idle_ns);
+  Q2M_RESTORE(pain_ns);
+  Q2M_RESTORE(fire_ns);
+  Q2M_RESTORE(duck_ns);
+  Q2M_RESTORE(next_duck_ns);
+  Q2M_RESTORE(dodge_ns);
+  Q2M_RESTORE(attack_ns);
+  Q2M_RESTORE(check_attack_ns);
+  Q2M_RESTORE(strafe_ns);
+  Q2M_RESTORE(melee_ns);
+  Q2M_RESTORE(search_ns);
+  Q2M_RESTORE(trail_ns);
+  Q2M_RESTORE(hostile_ns);
+  Q2M_RESTORE(air_ns);
+  Q2M_RESTORE(environment_ns);
+  Q2M_RESTORE(jump_ns);
+  Q2M_RESTORE(flies_ns);
+  Q2M_RESTORE(fly_position_ns);
+  Q2M_RESTORE(recovery_ns);
+  Q2M_RESTORE(death_ns);
+  Q2M_RESTORE(spawn_ns);
+  Q2M_RESTORE(timestamp_ns);
+  Q2M_RESTORE(coop_check_ns);
+  Q2M_RESTORE(react_ns);
+  Q2M_RESTORE(corpse_check_ns);
+  Q2M_RESTORE(old_frame);
+  Q2M_RESTORE(render_flags);
+  monster->start_phase = (q2m_start_phase)saved->start_phase;
+  Q2M_RESTORE(combat_target);
+  Q2M_RESTORE(start_due_ns);
+  Q2M_RESTORE(death_notified);
+  Q2M_RESTORE(last_sighting);
+  Q2M_RESTORE(saved_goal);
+  Q2M_RESTORE(blind_fire_target);
+  Q2M_RESTORE(fly_ideal_position);
+  Q2M_RESTORE(fly_recovery_direction);
+  Q2M_RESTORE(last_damage_point);
+  Q2M_RESTORE(saved_attack_position);
+  Q2M_RESTORE(last_attack);
+  Q2M_RESTORE(pending_damage);
+  Q2M_RESTORE(pending_kick);
+  Q2M_RESTORE(monster_slots);
+  Q2M_RESTORE(monster_used);
+  Q2M_RESTORE(water_level);
+  Q2M_RESTORE(water_type);
+  Q2M_RESTORE(last_link_count);
+  Q2M_RESTORE(has_saved_goal);
+  Q2M_RESTORE(good_guy);
+  Q2M_RESTORE(target_anger);
+  Q2M_RESTORE(ignore_shots);
+  Q2M_RESTORE(do_not_count);
+  Q2M_RESTORE(brutal);
+  Q2M_RESTORE(medic);
+  Q2M_RESTORE(resurrecting);
+  Q2M_RESTORE(can_take_damage);
+  Q2M_RESTORE(dead);
+  Q2M_RESTORE(corpse);
+  Q2M_RESTORE(gibbed);
+  Q2M_RESTORE(stand_ground);
+  Q2M_RESTORE(temporary_stand_ground);
+  Q2M_RESTORE(hold_frame);
+  Q2M_RESTORE(ducked);
+  Q2M_RESTORE(dodging);
+  Q2M_RESTORE(charging);
+  Q2M_RESTORE(manual_steering);
+  Q2M_RESTORE(combat_point);
+  Q2M_RESTORE(lefty);
+  Q2M_RESTORE(had_visibility);
+  Q2M_RESTORE(close_sight_tripped);
+  Q2M_RESTORE(lost_sight);
+  Q2M_RESTORE(pursue_next);
+  Q2M_RESTORE(pursue_temporary);
+  Q2M_RESTORE(pursuit_last_seen);
+  Q2M_RESTORE(cocked);
+  Q2M_RESTORE(force_refire);
+  Q2M_RESTORE(triggered);
+  Q2M_RESTORE(visible);
+  Q2M_RESTORE(pending_pain);
+  Q2M_RESTORE(pending_death);
+  Q2M_RESTORE(alternate_fly);
+  Q2M_RESTORE(fly_buzzard);
+  Q2M_RESTORE(fly_above);
+  Q2M_RESTORE(fly_pinned);
+  Q2M_RESTORE(fly_thrusters);
+  Q2M_RESTORE(hint_path);
+  Q2M_RESTORE(summoned);
+  Q2M_RESTORE(touch_active);
+  Q2M_RESTORE(turret_attached);
+  Q2M_RESTORE(initialized);
+#undef Q2M_RESTORE
+  monster->attack_state = (q2m_attack_state)saved->attack_state;
+  monster->spawned_by = (q2m_spawned_by)saved->spawned_by;
+  monster->sound_target.origin = saved->sound_target.origin;
+  monster->sound_target.time_ns = saved->sound_target.time_ns;
+  monster->sound_target.present = saved->sound_target.present;
+  if (!resolve_all(game, saved, monster, error) ||
+      !qa_builtin_resource(&game->services, definition->classname,
+                           &monster->classname, error) ||
+      !qa_builtin_resource(&game->services, definition->model, &monster->model,
+                           error)) {
+    free(monster);
+    return false;
+  }
+  q2_actor *actor = q2_actor_get(game, id, true, error);
+  if (actor == NULL) {
+    free(monster);
+    return false;
+  }
+  if (actor->projectile.kind != Q2_PROJECTILE_NONE) {
+    free(monster);
+    qa_error_set(error, QA_ERROR_FORMAT, id.slot,
+                 "Projectile actor cannot restore active monster state");
+    return false;
+  }
+  struct qa_q2_monster *previous = actor->monster;
+  actor->monster = monster;
+  actor->physics_bound = true;
+  free(previous);
+  return true;
+}

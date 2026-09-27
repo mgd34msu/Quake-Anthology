@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/text.h"
+#include "qa/game_q2_monsters.h"
 
 static int integer(float n) {
     return n >= 2147483647.0f ? INT_MAX : n <= -2147483648.0f ? INT_MIN : (int)n;
@@ -157,13 +158,15 @@ bool qa_q2_entity_spawn(qa_q2_game *g, qa_actor_id id, const qa_q2_map_fields *f
 }
 bool qa_q2_entity_use(qa_q2_game *g, qa_actor_id id, qa_actor_id other, qa_actor_id activator,
                       qa_error *e) {
-    q2_actor *a = q2_ent(g, id);
+    q2_actor *a = g ? q2_actor_get(g, id, false, NULL) : NULL;
+    if (a && a->monster && a->projectile.kind == Q2_PROJECTILE_NONE)
+        return qa_q2_monster_action(g, id, QA_Q2_MONSTER_USE, activator, 0, e);
     if (a && a->projectile.kind == Q2_PROJECTILE_NONE && a->item &&
         (a->item->spawn.spawnflags & 1)) {
         a->item->spawn.spawnflags &= ~1u;
         return qa_q2_item_enable(g, id, e);
     }
-    if (!a || !a->entity->usable || a->projectile.kind != Q2_PROJECTILE_NONE)
+    if (!a || !a->entity || !a->entity->usable || a->projectile.kind != Q2_PROJECTILE_NONE)
         return true;
     if (a->entity->kind == Q2E_DYNAMIC_LIGHT)
         return q2_light_use(g, a, e);

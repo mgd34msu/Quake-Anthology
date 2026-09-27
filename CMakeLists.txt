@@ -310,6 +310,16 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/lmctf_plasma.c
     src/gameplay/q2/mines.c
     src/gameplay/q2/mission_bolts.c
+    src/gameplay/q2/monsters/actions.c
+    src/gameplay/q2/monsters/ai.c
+    src/gameplay/q2/monsters/beam.c
+    src/gameplay/q2/monsters/checkpoint.c
+    src/gameplay/q2/monsters/combat.c
+    src/gameplay/q2/monsters/core.c
+    src/gameplay/q2/monsters/lifecycle.c
+    src/gameplay/q2/monsters/moves.c
+    src/gameplay/q2/monsters/roster.c
+    src/gameplay/q2/monsters/spawn.c
     src/gameplay/q2/nuke.c
     src/gameplay/q2/player/admission.c
     src/gameplay/q2/player/checkpoint.c

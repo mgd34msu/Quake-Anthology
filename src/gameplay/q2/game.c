@@ -107,6 +107,8 @@ bool q2_noise_for_actor(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, bool seco
             g->hooks.noise(g->hooks.context, id, origin, secondary, e));
 }
 bool qa_q2_actor_released(qa_q2_game *g, qa_actor_record record, qa_error *e) {
+    if (g)
+        q2_monsters_release_actor(g, record.id);
     if (g != NULL && record.id.slot < g->capacity && g->actors[record.id.slot] != NULL &&
         qa_actor_id_equal(g->actors[record.id.slot]->id, record.id)) {
         q2_actor *a = g->actors[record.id.slot];
@@ -179,6 +181,12 @@ static bool actor_frame(void *context, qa_session *session, qa_actor_id id,
     (void)session;
     return qa_q2_actor_tick(context, id, frame->time_ns, frame->elapsed_ns, e);
 }
+static bool end_frame(void *context, qa_session *session, const qa_source_frame *frame,
+                       qa_error *e) {
+    (void)session;
+    (void)frame;
+    return qa_q2_monsters_end_frame(context, e);
+}
 static bool tick_actor(void *context, qa_actor_id id, qa_error *e) {
     qa_q2_game *g = context;
     q2_actor *a = g->actors[id.slot];
@@ -234,6 +242,7 @@ static void close_game(void *context) {
         g->all_actors = next;
     }
     q2_entities_close(g);
+    q2_monsters_close(g);
     q2_players_close(g);
     q2_items_close(g);
     free(g->actors);
@@ -272,6 +281,7 @@ bool qa_q2_create(const qa_builtin_services *services, const qa_q2_options *opti
                               .state = g,
                               .close = close_game,
                               .begin_frame = begin_frame,
+                              .end_frame = end_frame,
                               .actor_frame = actor_frame,
                               .actor_released = released};
     component.clock = qa_clock_defaults(options->edition == QA_Q2_CLASSIC ? QA_CLOCK_Q2_CLASSIC
@@ -280,7 +290,7 @@ bool qa_q2_create(const qa_builtin_services *services, const qa_q2_options *opti
         component.clock.interval_ns = options->frame_ns;
     g->frame_ns = component.clock.interval_ns;
     if (!q2_definitions(g, e) || !q2_items_init(g, e) || !q2_players_init(g, e) ||
-        !q2_entities_init(g, e)) {
+        !q2_entities_init(g, e) || !q2_monsters_init(g, e)) {
         close_game(g);
         return false;
     }
@@ -308,16 +318,17 @@ bool qa_q2_actor_traits(qa_q2_game *g, qa_actor_id id, qa_builtin_actor_traits *
         return false;
     q2_actor *a = g->actors[id.slot];
     *out = (qa_builtin_actor_traits){0};
-    if (a->monster != NULL && a->projectile.kind == Q2_PROJECTILE_NONE)
-        return q2_monster_traits(g, id, out);
-    if (a->client != NULL && a->projectile.kind == Q2_PROJECTILE_NONE)
-        return q2_client_traits(g, id, out);
-    if (a->item != NULL && a->projectile.kind == Q2_PROJECTILE_NONE)
-        return q2_item_traits(g, id, out);
-    if (a->entity != NULL && a->projectile.kind == Q2_PROJECTILE_NONE)
-        return q2_entity_traits(g, id, out);
-    if (a->projectile.kind == Q2_PROJECTILE_NONE)
-        return false;
+    if (a->projectile.kind == Q2_PROJECTILE_NONE) {
+        bool known = a->monster ? q2_monster_traits(g, id, out)
+                   : a->client ? q2_client_traits(g, id, out)
+                   : a->item ? q2_item_traits(g, id, out)
+                   : a->entity ? q2_entity_traits(g, id, out) : false;
+        if (a->physics_bound && (a->physics.flags & QA_PHYSICS_MONSTER)) {
+            out->monster = true;
+            known = true;
+        }
+        return known;
+    }
     const qa_actor_record *record = qa_actors_get(qa_session_actors(g->services.session), id);
     *out = (qa_builtin_actor_traits){
         .classname = a->projectile.classname != 0 ? a->projectile.classname : record->definition,
@@ -330,6 +341,7 @@ bool qa_q2_actor_traits(qa_q2_game *g, qa_actor_id id, qa_builtin_actor_traits *
     out->no_source_friendly_fire =
         g->options.edition == QA_Q2_RERELEASE &&
         (a->projectile.kind == Q2_TESLA || a->projectile.kind == Q2_TRAP);
+    out->monster = a->physics_bound && (a->physics.flags & QA_PHYSICS_MONSTER);
     return true;
 }
 bool qa_q2_projectile_read(qa_q2_game *g, qa_actor_id id, qa_q2_projectile_view *out) {

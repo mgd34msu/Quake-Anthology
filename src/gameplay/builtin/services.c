@@ -109,6 +109,9 @@ static void sort_snapshot(const qa_builtin_services *s, qa_builtin_actor_snapsho
         memcpy(ids, temporary, count * sizeof(*ids));
     }
 }
+void qa_builtin_sort_observations(const qa_builtin_services *s, qa_builtin_actor_snapshot *snapshot) {
+    sort_snapshot(s, snapshot);
+}
 bool qa_builtin_observations(const qa_builtin_services *s, qa_builtin_actor_snapshot *snapshot,
                              qa_error *error) {
     if (!s || !s->session || !snapshot) {

@@ -53,6 +53,7 @@ struct qa_targets;
 struct q2_items;
 struct q2_players;
 struct q2_entities;
+typedef struct q2_monsters_runtime q2_monsters_runtime;
 typedef struct q2_projectile {
     q2_projectile_kind kind;
     qa_attack attack;
@@ -104,6 +105,7 @@ typedef struct q2_mt_random {
     uint64_t draws;
 } q2_mt_random;
 struct qa_q2_game {
+    q2_monsters_runtime *monster_runtime;
     qa_builtin_services services;
     qa_q2_options options;
     qa_q2_hooks hooks;
@@ -223,6 +225,9 @@ bool q2_prepare_damage(void *, qa_damage_request *, bool *allowed, qa_error *);
 bool q2_prepare_radius_damage(void *, qa_damage_request *, bool *allowed, qa_error *);
 bool q2_radius_damage(qa_q2_game *, const qa_builtin_radius *, size_t *, qa_error *);
 bool q2_definitions(qa_q2_game *, qa_error *);
+bool q2_monsters_init(qa_q2_game *, qa_error *);
+void q2_monsters_close(qa_q2_game *);
+void q2_monsters_release_actor(qa_q2_game *, qa_actor_id);
 bool q2_monster_tick(qa_q2_game *, q2_actor *, qa_error *);
 void q2_monster_release_state(q2_actor *);
 bool q2_monster_reaction(qa_q2_game *, const qa_damage_outcome *, qa_error *);
