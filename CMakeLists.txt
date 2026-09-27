@@ -382,9 +382,10 @@ add_library(qa_game_q3 STATIC
 target_link_libraries(qa_game_q3 PUBLIC qa_builtin)
 
 add_library(qa_player_services STATIC
+    src/player_services/arena_progress.c
     src/player_services/progress.c
     src/player_services/progress_file.c)
-target_link_libraries(qa_player_services PUBLIC qa_core)
+target_link_libraries(qa_player_services PUBLIC qa_core qa_console qa_network)
 
 add_library(qa_campaign STATIC
     src/campaign/travel.c

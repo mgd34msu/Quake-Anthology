@@ -7,6 +7,9 @@
 #include <string.h>
 
 static bool fail(qa_error *e, qa_status code, const char *s) { qa_error_set(e, code, 0, "%s", s); return false; }
+static unsigned char info_fold(unsigned char byte) {
+    return byte >= 'A' && byte <= 'Z' ? (unsigned char)(byte + ('a' - 'A')) : byte;
+}
 static bool equal(const char *a, const char *b) {
     while (*a && *b) if (tolower((unsigned char)*a++) != tolower((unsigned char)*b++)) return false;
     return *a == *b;
@@ -70,7 +73,7 @@ bool qa_q3_info_value(const char *info, const char *key, char *out, size_t capac
         size_t length = (size_t)(p - value);
         bool match = strlen(key) == namesize;
         for (size_t i = 0; match && i < namesize; ++i)
-            match = tolower((unsigned char)name[i]) == tolower((unsigned char)key[i]);
+            match = info_fold((unsigned char)name[i]) == info_fold((unsigned char)key[i]);
         if (match) {
             if (length >= capacity) return fail(error, QA_ERROR_FORMAT, "Q3 info lookup output too small");
             memcpy(out, value, length); out[length] = 0; return true;
@@ -80,37 +83,56 @@ bool qa_q3_info_value(const char *info, const char *key, char *out, size_t capac
     return true;
 }
 bool qa_q3_info_set(char *info, size_t capacity, const char *key, const char *value, qa_error *error) {
-    if (!info || !key || !*key || !value || !capacity || capacity > 8192)
+    if (!info || !key || !value || !capacity || capacity > 8192)
         return fail(error, QA_ERROR_ARGUMENT, "Invalid Q3 info assignment");
     if (strpbrk(key, "\\;\"") || strpbrk(value, "\\;\"")) return fail(error, QA_ERROR_FORMAT, "Illegal Q3 info key/value");
-    if (strlen(info) >= capacity) return fail(error, QA_ERROR_FORMAT, "Q3 info exceeds capacity");
-    char buffer[8192] = {0}; size_t used = 0;
+    size_t length = strlen(info), key_length = strlen(key);
+    if (length >= capacity) return fail(error, QA_ERROR_FORMAT, "Q3 info exceeds capacity");
+    size_t remove_begin = 0, remove_end = 0;
     const char *p = info;
-    if (*p == '\\') ++p;
     while (*p) {
+        const char *begin = p;
+        if (*p == '\\') ++p;
         const char *name = p;
         while (*p && *p != '\\') ++p;
         size_t namesize = (size_t)(p - name);
         if (!*p) break;
-        const char *old = ++p;
+        ++p;
         while (*p && *p != '\\') ++p;
-        size_t length = (size_t)(p - old);
-        bool match = strlen(key) == namesize;
-        for (size_t i = 0; match && i < namesize; ++i) match = tolower((unsigned char)name[i]) == tolower((unsigned char)key[i]);
-        if (!match) {
-            if (namesize + length + 2 >= capacity - used) return fail(error, QA_ERROR_FORMAT, "Q3 info storage exhausted");
-            buffer[used++] = '\\'; memcpy(buffer + used, name, namesize); used += namesize;
-            buffer[used++] = '\\'; memcpy(buffer + used, old, length); used += length;
+        if (namesize == key_length && !memcmp(name, key, key_length)) {
+            remove_begin = (size_t)(begin - info);
+            remove_end = (size_t)(p - info);
+            break;
         }
-        if (*p) ++p;
     }
+    char buffer[8192];
+    size_t retained = length - (remove_end - remove_begin), pair_size = 0;
     if (*value) {
-        size_t a = strlen(key), b = strlen(value);
-        if (a + b + 2 >= capacity - used) return fail(error, QA_ERROR_FORMAT, "Q3 info storage exhausted");
-        buffer[used++] = '\\'; memcpy(buffer + used, key, a); used += a;
-        buffer[used++] = '\\'; memcpy(buffer + used, value, b); used += b;
+        size_t remaining = capacity - 1;
+        const char *parts[] = {"\\", key, "\\", value};
+        size_t sizes[] = {1, key_length, 1, strlen(value)};
+        for (size_t i = 0; i < 4; ++i) {
+            size_t amount = sizes[i] < remaining ? sizes[i] : remaining;
+            pair_size += amount;
+            remaining -= amount;
+        }
+        if (pair_size >= capacity - retained)
+            return fail(error, QA_ERROR_FORMAT, "Q3 info storage exhausted");
+        size_t offset = capacity == 8192 ? retained : 0;
+        remaining = pair_size;
+        for (size_t i = 0; i < 4; ++i) {
+            size_t amount = sizes[i] < remaining ? sizes[i] : remaining;
+            memcpy(buffer + offset, parts[i], amount);
+            offset += amount;
+            remaining -= amount;
+        }
     }
-    buffer[used] = 0; memcpy(info, buffer, used + 1); return true;
+    size_t offset = capacity == 8192 ? 0 : pair_size;
+    memcpy(buffer + offset, info, remove_begin);
+    memcpy(buffer + offset + remove_begin, info + remove_end, length - remove_end);
+    buffer[retained + pair_size] = 0;
+    memcpy(info, buffer, retained + pair_size + 1);
+    return true;
 }
 bool qa_q3_is_lan(const qa_net_address *a) {
     if (a->kind == QA_NET_LOOPBACK || a->kind == QA_NET_IPX) return true;

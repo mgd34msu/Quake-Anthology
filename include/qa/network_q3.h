@@ -212,6 +212,8 @@ typedef struct qa_q3_tokens { size_t count; bool truncated; uint16_t offsets[102
 bool qa_q3_tokenize(const char *, qa_q3_tokens *, qa_error *);
 const char *qa_q3_token(const qa_q3_tokens *, size_t);
 bool qa_q3_info_value(const char *, const char *, char *, size_t, qa_error *);
+/* Remove the first exact-case key. Small strings prepend the new pair; the
+ * 8192-byte source variant appends. Lookup remains ASCII-insensitive. */
 bool qa_q3_info_set(char *, size_t, const char *, const char *, qa_error *);
 bool qa_q3_is_lan(const qa_net_address *);
 typedef struct qa_q3_connectionless {
