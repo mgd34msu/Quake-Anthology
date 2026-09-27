@@ -1,0 +1,45 @@
+{
+  "task_id": "B28",
+  "plan_revision": 6,
+  "graph_sha256": "915c4c50da8fcb60ed206f09f2d325eb7755f4c6f3f48b1c3d97d83d2eb98bae",
+  "evidence_path": "docs/audit/B28-compatibility-evidence.md",
+  "evidence_sha256": "334b51fd5adab1ec6bd4a4f951a30a3d65629b60c0e32793d2e8e2af32b8c2b3",
+  "at": "2026-09-27T04:39:24.283Z",
+  "request_id": null,
+  "questions": {
+    "disposition": {
+      "type": "choice",
+      "instructions": "Does the supplied source evidence establish that the implementation fulfills this graph task goal AND all its acceptance criteria? Judge the WORK, not whether the author honestly admits incompleteness. An honest incomplete report is still incomplete implementation. Source-only phase: do not require forbidden compilation or runtime checks as a substitute for the stated source criteria.",
+      "criteria": {
+        "supported": "Concrete sufficient source evidence supports the goal and every criterion; no required source behavior is missing or contradicted.",
+        "incomplete": "Evidence identifies a defect, missing required behavior, disconnected required integration or unmet source criterion.",
+        "insufficient_evidence": "No definite missing behavior is established, but the supplied source evidence is insufficient to establish the full goal and all criteria."
+      }
+    },
+    "criterion_1": {
+      "type": "noul",
+      "instructions": "Does concrete source evidence establish this criterion in full, accounting for the task goal? Do not count a claim, inventory, future plan, unavailable judgment, or honest admission of incomplete work as fulfillment. Criterion: Native and Anthology session state is wired to gameplay with correct command ownership and replay behavior."
+    }
+  },
+  "model": "jev-1.13.0",
+  "answers": {
+    "disposition": {
+      "type": "choice",
+      "choice": "incomplete",
+      "confidence": 1,
+      "probabilities": {
+        "supported": 0,
+        "insufficient_evidence": 0,
+        "incomplete": 1
+      }
+    },
+    "criterion_1": {
+      "type": "noul",
+      "noul": 0.03
+    }
+  },
+  "usage": {
+    "input_tokens": 1137,
+    "output_tokens": 72
+  }
+}

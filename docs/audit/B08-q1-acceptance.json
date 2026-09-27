@@ -1,0 +1,45 @@
+{
+  "task_id": "B08",
+  "plan_revision": 6,
+  "graph_sha256": "915c4c50da8fcb60ed206f09f2d325eb7755f4c6f3f48b1c3d97d83d2eb98bae",
+  "evidence_path": "docs/audit/B08-q1-packet.md",
+  "evidence_sha256": "2ad3021bc425bf0870b6d0de9fa71ec9dee0d14672d27b084221017951f59f0d",
+  "at": "2026-09-27T04:17:57.498Z",
+  "request_id": null,
+  "questions": {
+    "disposition": {
+      "type": "choice",
+      "instructions": "Does the supplied source evidence establish that the implementation fulfills this graph task goal AND all its acceptance criteria? Judge the WORK, not whether the author honestly admits incompleteness. An honest incomplete report is still incomplete implementation. Source-only phase: do not require forbidden compilation or runtime checks as a substitute for the stated source criteria.",
+      "criteria": {
+        "supported": "Concrete sufficient source evidence supports the goal and every criterion; no required source behavior is missing or contradicted.",
+        "incomplete": "Evidence identifies a defect, missing required behavior, disconnected required integration or unmet source criterion.",
+        "insufficient_evidence": "No definite missing behavior is established, but the supplied source evidence is insufficient to establish the full goal and all criteria."
+      }
+    },
+    "criterion_1": {
+      "type": "noul",
+      "instructions": "Does concrete source evidence establish this criterion in full, accounting for the task goal? Do not count a claim, inventory, future plan, unavailable judgment, or honest admission of incomplete work as fulfillment. Criterion: Native C kernels support independent per-player movement with required source cadence, bounds, and numeric decisions."
+    }
+  },
+  "model": "jev-1.13.0",
+  "answers": {
+    "disposition": {
+      "type": "choice",
+      "choice": "incomplete",
+      "confidence": 0.78,
+      "probabilities": {
+        "supported": 0,
+        "incomplete": 0.86,
+        "insufficient_evidence": 0.14
+      }
+    },
+    "criterion_1": {
+      "type": "noul",
+      "noul": 0.18
+    }
+  },
+  "usage": {
+    "input_tokens": 17888,
+    "output_tokens": 72
+  }
+}

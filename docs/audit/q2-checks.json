@@ -1,0 +1,45 @@
+{
+  "phase": "source-only",
+  "report_checks": [
+    {
+      "task": "B11",
+      "exit_code": 2,
+      "input_report": "docs/audit/q2.md",
+      "input_sha256": "ad3be56699c43c15410096ceebf4ce0bd6e096af415a1e1464b44e41baa56b93",
+      "output": "docs/audit/B11-q2-report-check.txt",
+      "summary": {
+        "claims-done": 1,
+        "REVIEW": 25,
+        "EXCUSE": 23,
+        "stop-reason:": 1
+      },
+      "claims_summary": "claims-done overclaims=0.08"
+    },
+    {
+      "task": "B13",
+      "exit_code": 2,
+      "input_report": "docs/audit/q2.md",
+      "input_sha256": "ad3be56699c43c15410096ceebf4ce0bd6e096af415a1e1464b44e41baa56b93",
+      "output": "docs/audit/B13-q2-report-check.txt",
+      "summary": {
+        "claims-done": 1,
+        "REVIEW": 24,
+        "EXCUSE": 24,
+        "stop-reason:": 1
+      },
+      "claims_summary": "claims-done overclaims=0.09"
+    }
+  ],
+  "acceptance": [
+    {
+      "task": "B11",
+      "exit_code": 2,
+      "result": "docs/audit/B11-q2-acceptance.json"
+    },
+    {
+      "task": "B13",
+      "exit_code": 2,
+      "result": "docs/audit/B13-q2-acceptance.json"
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "task_id": "B27",
+  "plan_revision": 6,
+  "graph_sha256": "915c4c50da8fcb60ed206f09f2d325eb7755f4c6f3f48b1c3d97d83d2eb98bae",
+  "evidence_path": "docs/audit/B27-compatibility-evidence.md",
+  "evidence_sha256": "ca16185c21659a3eed89498a84c5ac2c2dd166bea0ac8360ec20ece8250514f4",
+  "at": "2026-09-27T04:39:24.253Z",
+  "request_id": null,
+  "questions": {
+    "disposition": {
+      "type": "choice",
+      "instructions": "Does the supplied source evidence establish that the implementation fulfills this graph task goal AND all its acceptance criteria? Judge the WORK, not whether the author honestly admits incompleteness. An honest incomplete report is still incomplete implementation. Source-only phase: do not require forbidden compilation or runtime checks as a substitute for the stated source criteria.",
+      "criteria": {
+        "supported": "Concrete sufficient source evidence supports the goal and every criterion; no required source behavior is missing or contradicted.",
+        "incomplete": "Evidence identifies a defect, missing required behavior, disconnected required integration or unmet source criterion.",
+        "insufficient_evidence": "No definite missing behavior is established, but the supplied source evidence is insufficient to establish the full goal and all criteria."
+      }
+    },
+    "criterion_1": {
+      "type": "noul",
+      "instructions": "Does concrete source evidence establish this criterion in full, accounting for the task goal? Do not count a claim, inventory, future plan, unavailable judgment, or honest admission of incomplete work as fulfillment. Criterion: Explicit codecs preserve required dialects; one connection authority serves native and mixed sessions."
+    }
+  },
+  "model": "jev-1.13.0",
+  "answers": {
+    "disposition": {
+      "type": "choice",
+      "choice": "incomplete",
+      "confidence": 1,
+      "probabilities": {
+        "supported": 0,
+        "incomplete": 1,
+        "insufficient_evidence": 0
+      }
+    },
+    "criterion_1": {
+      "type": "noul",
+      "noul": 0.08
+    }
+  },
+  "usage": {
+    "input_tokens": 1499,
+    "output_tokens": 72
+  }
+}
