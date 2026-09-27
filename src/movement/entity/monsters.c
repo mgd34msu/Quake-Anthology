@@ -274,8 +274,11 @@ bool qa_physics_monster_step(qa_physics *p, qa_actor_id actor, qa_vec3 move,
         *moved = true;
         return true;
     }
-    if (!q1 && p->services.accept_ground &&
-        !p->services.accept_ground(p->services.context, actor, trace.end)) return true;
+    if (!q1 && p->services.accept_ground) {
+        bool accepted;
+        if (!p->services.accept_ground(p->services.context, actor, trace.end, &accepted, error)) return false;
+        if (!accepted) return true;
+    }
     if (!ph_live(p, actor)) return true;
     if (q1 && commit) {
         body.origin = trace.end;

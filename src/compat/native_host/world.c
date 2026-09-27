@@ -728,10 +728,13 @@ bool native_host_trace(qa_native_host *host, const qa_native_import_call *call,
         } else {
             qa_body_state body;
             qa_actor_collision collision;
-            if (!qa_world_body_read(host->world.world, actor, &body, error) ||
-                !qa_world_get_collision(host->world.world, actor, &collision))
+            if (!qa_world_body_read(host->world.world, actor, &body, error)) return false;
+            qa_error local = {0};
+            if (!qa_world_get_collision(host->world.world, actor, &collision, &local)) {
+                if (local.code != QA_OK) { if (error) *error = local; return false; }
                 return native_host_fail(error, QA_ERROR_NOT_FOUND, slot,
                                         "native clip target has no shared body collision");
+            }
             if (collision.inline_model) {
                 query.target = (qa_collision_target){true, collision.model, body.origin,
                                                       body.angles};

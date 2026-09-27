@@ -68,7 +68,7 @@ typedef struct qa_physics_services {
     bool (*q1_water_transition)(void *, qa_actor_id, qa_error *);
     /* Q2 monster AI owns hazards, bad areas, alternate-fly steering and
      * special ground decisions. NULL accepts an otherwise valid ground move. */
-    bool (*accept_ground)(void *, qa_actor_id, qa_vec3 destination);
+    bool (*accept_ground)(void *, qa_actor_id, qa_vec3 destination, bool *accepted, qa_error *);
 } qa_physics_services;
 typedef struct qa_physics {
     qa_world *world;

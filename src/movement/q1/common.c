@@ -172,8 +172,13 @@ bool q1_fly(q1_move *m, float dt, q1_fly_result *out) {
         qa_vec3 normal = trace.plane.normal;
         if (normal.z > 0.7f) {
             out->blocked |= 1;
-            if (!m->qw && (trace.hit == QA_TRACE_HIT_WORLD ||
-                (c->services->is_bsp && c->services->is_bsp(c->services->context, &trace)))) {
+            bool bsp = trace.hit == QA_TRACE_HIT_WORLD;
+            if (!m->qw && !bsp && c->services->is_bsp &&
+                !c->services->is_bsp(c->services->context, &trace, &bsp, c->error)) {
+                c->failed = true;
+                return false;
+            }
+            if (!m->qw && bsp) {
                 c->state->data.nq.flags |= Q1_FLAG_ONGROUND;
                 c->state->data.nq.ground = qa_move_ground(&trace);
             }

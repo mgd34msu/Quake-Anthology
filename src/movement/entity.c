@@ -160,7 +160,14 @@ static bool trigger_active(void *context, qa_actor_id actor) {
     if (call->physics->services.read(call->physics->services.context, actor, &props))
         return ph_live(call->physics, actor) && props.solid == QA_PHYSICS_TRIGGER;
     qa_actor_collision collision;
-    return qa_world_get_collision(call->physics->world, actor, &collision) &&
+    qa_error local = {0};
+    bool found = qa_world_get_collision(call->physics->world, actor, &collision, &local);
+    if (local.code != QA_OK) {
+        if (call->error) *call->error = local;
+        call->ok = false;
+        return false;
+    }
+    return found &&
            (collision.role == QA_COLLISION_TRIGGER || collision.role == QA_COLLISION_BOTH);
 }
 
@@ -176,7 +183,11 @@ bool qa_physics_touch_triggers(qa_physics *p, qa_actor_id actor, qa_error *error
     if (!ph_live(p, actor)) return true;
     if (!p->services.read(p->services.context, actor, &props)) {
         qa_actor_collision collision;
-        if (!qa_world_get_collision(p->world, actor, &collision)) return true;
+        qa_error local = {0};
+        if (!qa_world_get_collision(p->world, actor, &collision, &local)) {
+            if (local.code != QA_OK) { if (error) *error = local; return false; }
+            return true;
+        }
         props = qa_physics_properties_default(collision.family);
     }
     if (props.family != QA_COLLISION_Q1 && (props.flags & QA_PHYSICS_DEAD) &&
@@ -218,7 +229,11 @@ bool qa_physics_impact(qa_physics *p, qa_actor_id actor,
     if (!ph_live(p, other)) return true;
     if (!supplied) {
         qa_actor_collision collision;
-        if (!qa_world_get_collision(p->world, other, &collision)) return true;
+        qa_error local = {0};
+        if (!qa_world_get_collision(p->world, other, &collision, &local)) {
+            if (local.code != QA_OK) { if (error) *error = local; return false; }
+            return true;
+        }
         other_props = qa_physics_properties_default(collision.family);
         other_props.solid = collision.role == QA_COLLISION_TRIGGER ? QA_PHYSICS_TRIGGER : QA_PHYSICS_BOX;
     }
@@ -410,8 +425,10 @@ bool qa_physics_fly_move(qa_physics *p, qa_actor_id actor, float seconds,
         qa_vec3 normal = ph_normal(&trace);
         qa_actor_id hit = ph_hit(p, &trace);
         qa_actor_collision other_collision;
+        qa_error local = {0};
         bool brush = trace.hit == QA_TRACE_HIT_WORLD ||
-            (qa_world_get_collision(p->world, hit, &other_collision) && other_collision.inline_model);
+            (qa_world_get_collision(p->world, hit, &other_collision, &local) && other_collision.inline_model);
+        if (local.code != QA_OK) { if (error) *error = local; return false; }
         if ((exact ? normal.z > 0.7f : qa_vec_dot(normal, props.gravity_direction) < -0.7f) && hit.registry && brush)
             if (!ph_ground(p, actor, hit, error)) return false;
         if (!qa_physics_impact(p, actor, &trace, error)) return false;

@@ -95,11 +95,13 @@ bool qa_q1_grapple_input(qa_q1_game *g, qa_actor_id actor, const qa_q1_input *in
     return true;
 }
 static bool anchor_info(qa_q1_game *g, qa_actor_id actor, bool *solid, bool *centered,
-                        bool *player) {
+                        bool *player, qa_error *error) {
     qa_q1_target target;
     *player = q1_target(g, actor, &target) && target.player;
     qa_actor_collision collision;
-    *solid = qa_world_get_collision(g->services.world, actor, &collision);
+    qa_error local = {0};
+    *solid = qa_world_get_collision(g->services.world, actor, &collision, &local);
+    if (local.code != QA_OK) { if (error) *error = local; return false; }
     *centered = *player;
     qa_physics_properties physics;
     if (g->services.physics && g->services.physics->services.read &&
@@ -281,8 +283,14 @@ bool q1_grapple_touch(qa_q1_game *g, q1_actor *hook, qa_actor_id actor,
     if (!accept)
         return ctf ? true : reset(g, hook, error);
     bool solid, centered, target_player;
-    if (!anchor_info(g, actor, &solid, &centered, &target_player))
-        return reset(g, hook, error);
+    qa_error local = {0};
+    qa_actor_id hook_id = hook->id, player_id = player->id;
+    bool anchor = anchor_info(g, actor, &solid, &centered, &target_player, &local);
+    if (local.code != QA_OK) { if (error) *error = local; return false; }
+    hook = q1_entity(g, hook_id);
+    player = q1_player_get(g, player_id);
+    if (!hook) return true;
+    if (!player || !anchor) return reset(g, hook, error);
     if (q1_damageable(g, actor)) {
         if ((!ctf || !target_player) &&
             !q1_sound(g, hook->id, target_player ? "player/axhit1.wav" : "player/axhit2.wav", 1, 1,
@@ -369,7 +377,14 @@ bool q1_grapple_think(qa_q1_game *g, q1_actor *hook, q1_think_kind kind, qa_erro
                    : q1_schedule(g, hook, 0.1, kind, error);
     qa_actor_id enemy = hook->state.projectile.enemy;
     bool ctf = threewave(hook), solid, centered, target_player;
-    if (!anchor_info(g, enemy, &solid, &centered, &target_player) ||
+    qa_error local = {0};
+    qa_actor_id hook_id = hook->id, player_id = player->id;
+    bool anchor = anchor_info(g, enemy, &solid, &centered, &target_player, &local);
+    if (local.code != QA_OK) { if (error) *error = local; return false; }
+    hook = q1_entity(g, hook_id);
+    player = q1_player_get(g, player_id);
+    if (!hook) return true;
+    if (!player || !anchor ||
         q1_health(g, player->id) <= 0 || (target_player && q1_health(g, enemy) <= 0))
         return reset(g, hook, error);
     if (ctf) {

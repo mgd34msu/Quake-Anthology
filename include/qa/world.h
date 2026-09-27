@@ -30,6 +30,10 @@ typedef struct qa_actor_collision {
     bool has_q3_owner;
     int32_t q3_entity_number, q3_owner_number;
 } qa_actor_collision;
+typedef struct qa_collision_binding {
+    void *context;
+    bool (*read)(void *, qa_actor_collision *, qa_error *);
+} qa_collision_binding;
 typedef struct qa_spatial_actor { qa_linked_body body; qa_actor_collision collision; } qa_spatial_actor;
 typedef struct qa_body_binding {
     void *context;
@@ -72,8 +76,13 @@ bool qa_world_body_bind(qa_world *, qa_actor_id, const qa_body_binding *, bool r
 uint64_t qa_world_body_storage_serial(const qa_world *, qa_actor_id);
 bool qa_world_body_read(qa_world *, qa_actor_id, qa_body_state *, qa_error *);
 bool qa_world_body_write(qa_world *, qa_actor_id, const qa_body_state *, qa_error *);
-bool qa_world_set_collision(qa_world *, qa_actor_id, const qa_actor_collision *, qa_error *); /* NULL disables collision. */
-bool qa_world_get_collision(const qa_world *, qa_actor_id, qa_actor_collision *);
+/* Stored policy is used when no binding is present; NULL disables that policy.
+ * Binding context is borrowed until explicit unbind (NULL) or actor release.
+ * Neither operation relinks. Reads use current metadata with retained bounds. */
+bool qa_world_set_collision(qa_world *, qa_actor_id, const qa_actor_collision *, qa_error *);
+bool qa_world_collision_bind(qa_world *, qa_actor_id, const qa_collision_binding *, qa_error *);
+/* False with no error means absent; reader/validation failures set an error. */
+bool qa_world_get_collision(qa_world *, qa_actor_id, qa_actor_collision *, qa_error *);
 bool qa_world_attach(qa_world *, qa_actor_id, const qa_body_attachment *, qa_error *);
 bool qa_world_detach(qa_world *, qa_actor_id, qa_error *);
 bool qa_world_attachment(const qa_world *, qa_actor_id, qa_body_attachment *);

@@ -54,6 +54,9 @@ typedef struct qa_point_query {
     qa_collision_target target;
     qa_trace_policy policy;
     qa_actor_id pass_actor;
+    /* Q3 server traps query temporary Q3 brushes as BODY (capsule handles
+     * rotate the point); ordinary shared queries use actor contents. */
+    bool q3_server_entities;
 } qa_point_query;
 typedef struct qa_point_contents {
     qa_collision_family family;

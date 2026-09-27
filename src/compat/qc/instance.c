@@ -1262,8 +1262,15 @@ static bool findradius(qa_qc_instance *instance, qa_error *error)
     for (size_t i = 0; i < written; ++i) {
         if (qa_actors_get(actors, snapshot[i]) == NULL) continue;
         qa_actor_collision collision;
+        qa_error collision_error = {0};
         if (!qa_world_get_collision(instance->options.host.world,
-                                    snapshot[i], &collision)) continue;
+                                    snapshot[i], &collision, &collision_error)) {
+            if (collision_error.code != QA_OK) {
+                if (error) *error = collision_error;
+                free(snapshot); free(references); return false;
+            }
+            continue;
+        }
         qa_body_state body;
         bool has_body;
         if (!read_body_optional(instance->options.host.world, snapshot[i],
@@ -1300,8 +1307,15 @@ static bool findradius(qa_qc_instance *instance, qa_error *error)
         if (solidity == 0.0f) continue;
         qa_actor_collision collision;
         qa_body_state body;
+        qa_error collision_error = {0};
         if (!qa_world_get_collision(instance->options.host.world,
-                                    actor, &collision)) continue;
+                                    actor, &collision, &collision_error)) {
+            if (collision_error.code != QA_OK) {
+                if (error) *error = collision_error;
+                free(references); return false;
+            }
+            continue;
+        }
         bool has_body;
         if (!read_body_optional(instance->options.host.world, actor,
                                 &body, &has_body, error)) {

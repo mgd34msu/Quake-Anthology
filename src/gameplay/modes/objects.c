@@ -248,7 +248,12 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
             goto rollback;
         captured_body = true;
         body_serial = qa_world_body_storage_serial(m->options.services.world, actor);
-        had_collision = qa_world_get_collision(m->options.services.world, actor, &previous_collision);
+        qa_error collision_error = {0};
+        had_collision = qa_world_get_collision(m->options.services.world, actor, &previous_collision, &collision_error);
+        if (collision_error.code != QA_OK) {
+            if (e) *e = collision_error;
+            goto rollback;
+        }
         if (needs_combat) {
             qa_error local = {0};
             combat_serial = qa_combat_storage_serial(m->options.services.combat, actor);

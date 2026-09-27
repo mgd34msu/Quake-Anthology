@@ -103,11 +103,13 @@ static bool bridge_firing(void *context, const qa_movement_call *call)
     return bridge->source.firing && bridge->source.firing(bridge->source.context, call);
 }
 
-static bool bridge_is_bsp(void *context, const qa_trace_result *trace)
+static bool bridge_is_bsp(void *context, const qa_trace_result *trace, bool *out, qa_error *error)
 {
     movement_bridge *bridge = context;
-    return bridge->source.is_bsp ? bridge->source.is_bsp(bridge->source.context, trace)
-                                 : trace->hit == QA_TRACE_HIT_WORLD;
+    if (bridge->source.is_bsp)
+        return bridge->source.is_bsp(bridge->source.context, trace, out, error);
+    *out = trace->hit == QA_TRACE_HIT_WORLD;
+    return true;
 }
 
 bool native_host_pmove(qa_native_host *host, qa_native_address address, qa_error *error)

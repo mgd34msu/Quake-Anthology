@@ -14,6 +14,8 @@ typedef struct qa_world_body {
     qa_body_state state;
     qa_body_binding binding;
     qa_actor_collision collision;
+    qa_collision_binding collision_binding;
+    uint64_t collision_serial;
     qa_body_attachment attachment;
     uint64_t attachment_order;
     qa_linked_body link;

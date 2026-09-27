@@ -128,9 +128,8 @@ bool qa_spatial_visit_raw(qa_world *world,qa_bounds bounds,qa_spatial_raw_fn vis
 
 bool qa_world_refresh(qa_world *world,const qa_spatial_actor *linked,qa_spatial_actor *out,qa_error *error)
 {
-    qa_world_body *body=qa_world_find_body(world,linked->body.actor);
-    if(body==NULL || !body->has_collision) return false;
-    qa_actor_collision collision=body->collision;
+    qa_actor_collision collision;
+    if(!qa_world_get_collision(world,linked->body.actor,&collision,error)) return false;
     qa_body_state state;
     if(!qa_world_body_read(world,linked->body.actor,&state,error)) {
         if(error!=NULL && error->code==QA_OK) qa_error_set(error,QA_ERROR_FORMAT,0,"Body state callback failed");
@@ -194,16 +193,24 @@ typedef struct trigger_context {
     qa_world_is_trigger_fn is_trigger;
     qa_world_touch_fn touch;
     void *context;
+    qa_error error;
+    bool failed;
 } trigger_context;
 
 static void touch_candidate(trigger_context *context,qa_actor_id candidate)
 {
-    if(qa_actor_id_equal(candidate,context->actor)) return;
+    if(context->failed || qa_actor_id_equal(candidate,context->actor)) return;
     qa_linked_body trigger,moving; qa_actor_collision collision;
     if(!qa_world_linked(context->world,context->actor,&moving)
+        || !qa_world_linked(context->world,candidate,&trigger)) return;
+    if(!qa_world_get_collision(context->world,candidate,&collision,&context->error)) {
+        context->failed=context->error.code!=QA_OK;
+        return;
+    }
+    if(collision.role!=QA_COLLISION_TRIGGER
+        || !qa_world_linked(context->world,context->actor,&moving)
         || !qa_world_linked(context->world,candidate,&trigger)
-        || !qa_world_get_collision(context->world,candidate,&collision)
-        || collision.role!=QA_COLLISION_TRIGGER || !qa_bounds_overlap(trigger.absolute_bounds,moving.absolute_bounds)) return;
+        || !qa_bounds_overlap(trigger.absolute_bounds,moving.absolute_bounds)) return;
     ++context->world->callback_depth;
     bool valid=context->is_trigger==NULL || context->is_trigger(context->context,candidate);
     if(valid && qa_actors_get(context->world->actors,candidate)!=NULL && qa_actors_get(context->world->actors,context->actor)!=NULL) {
@@ -217,8 +224,8 @@ static qa_spatial_visit touch_live(void *opaque,const qa_spatial_actor *candidat
 {
     trigger_context *context=opaque;
     if(qa_actors_get(context->world->actors,context->actor)==NULL) return QA_SPATIAL_STOP;
-    if(candidate->collision.role==QA_COLLISION_TRIGGER) touch_candidate(context,candidate->body.actor);
-    return qa_actors_get(context->world->actors,context->actor)!=NULL?QA_SPATIAL_CONTINUE:QA_SPATIAL_STOP;
+    touch_candidate(context,candidate->body.actor);
+    return !context->failed && qa_actors_get(context->world->actors,context->actor)!=NULL?QA_SPATIAL_CONTINUE:QA_SPATIAL_STOP;
 }
 
 bool qa_world_touch_triggers(qa_world *world,qa_actor_id actor,qa_collision_family family,
@@ -227,14 +234,19 @@ bool qa_world_touch_triggers(qa_world *world,qa_actor_id actor,qa_collision_fami
     if(world==NULL || touch==NULL || family<QA_COLLISION_Q1 || family>QA_COLLISION_Q3) return fail(error,QA_ERROR_ARGUMENT,"Invalid trigger dispatch");
     qa_linked_body moving;
     if(!qa_world_linked(world,actor,&moving)) return true;
-    trigger_context context={world,actor,is_trigger,touch,opaque};
-    if(family==QA_COLLISION_Q1) return qa_spatial_visit_raw(world,moving.absolute_bounds,touch_live,&context,error);
+    trigger_context context={.world=world,.actor=actor,.is_trigger=is_trigger,.touch=touch,.context=opaque};
+    if(family==QA_COLLISION_Q1) {
+        if(!qa_spatial_visit_raw(world,moving.absolute_bounds,touch_live,&context,error)) return false;
+        if(context.failed && error!=NULL) *error=context.error;
+        return !context.failed;
+    }
     size_t capacity=world->capacity;
     if(capacity>SIZE_MAX/sizeof(qa_actor_id)) return fail(error,QA_ERROR_MEMORY,"Trigger snapshot too large");
     qa_actor_id *candidates=malloc(capacity*sizeof(*candidates));
     if(candidates==NULL) return fail(error,QA_ERROR_MEMORY,"Cannot allocate trigger snapshot");
     size_t count=0; bool overflow=false;
     bool ok=qa_world_query(world,moving.absolute_bounds,QA_COLLISION_TRIGGER,candidates,capacity,&count,&overflow,error);
-    if(ok) for(size_t i=0;i<count && qa_actors_get(world->actors,actor)!=NULL;++i) touch_candidate(&context,candidates[i]);
+    if(ok) for(size_t i=0;i<count && !context.failed && qa_actors_get(world->actors,actor)!=NULL;++i) touch_candidate(&context,candidates[i]);
+    if(context.failed) { if(error!=NULL) *error=context.error; ok=false; }
     free(candidates); return ok;
 }

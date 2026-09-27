@@ -255,7 +255,7 @@ typedef struct qa_movement_services {
     qa_movement_control (*touch)(void *, const qa_trace_result *, qa_movement_call *, qa_error *);
     qa_movement_control (*effect)(void *, const qa_movement_effect *, qa_movement_call *, qa_error *);
     bool (*firing)(void *, const qa_movement_call *);
-    bool (*is_bsp)(void *, const qa_trace_result *);
+    bool (*is_bsp)(void *, const qa_trace_result *, bool *, qa_error *);
 } qa_movement_services;
 
 qa_movement_profile qa_movement_profile_default(qa_movement_kind);

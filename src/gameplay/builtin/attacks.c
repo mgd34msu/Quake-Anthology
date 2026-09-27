@@ -95,7 +95,9 @@ bool qa_builtin_can_damage(const qa_builtin_services *s, qa_vec3 origin, qa_acto
     if (!qa_world_body_read(s->world, target, &body, error))
         return false;
     qa_actor_collision collision = {0};
-    bool brush = qa_world_get_collision(s->world, target, &collision) && collision.inline_model;
+    qa_error local = {0};
+    bool brush = qa_world_get_collision(s->world, target, &collision, &local) && collision.inline_model;
+    if (local.code != QA_OK) { if (error) *error = local; return false; }
     qa_vec3 center =
         qa_vec_add(body.origin, qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), 0.5f));
     qa_vec3 destination = policy.family == QA_COLLISION_Q3 || brush ? center : body.origin;
