@@ -119,6 +119,8 @@ typedef struct qa_bot_chat_services {
 typedef struct qa_bot_chat_options {
     qa_bot_chat_asset *synonyms, *randoms, *matches, *replies;
     size_t console_capacity;
+    bool debug;
+    bool console_unavailable;
 } qa_bot_chat_options;
 /* One session thread owns states and shared cooldowns. RNG and test queries
  * only read their source owner. Command and diagnostic callbacks may retire a
@@ -133,8 +135,11 @@ bool qa_bot_chat_system_configure(qa_bot_chat_system *, const qa_bot_chat_option
 bool qa_bot_chat_create(qa_bot_chat_system *, int32_t client, qa_bot_chat **, qa_error *);
 void qa_bot_chat_destroy(qa_bot_chat *);
 bool qa_bot_chat_set_initial(qa_bot_chat *, qa_bot_chat_asset *, qa_error *);
+bool qa_bot_chat_load_initial(qa_bot_chat *, qa_bot_library *, const char *path, const char *name,
+                              bool developer, int32_t *source_result, qa_error *);
 bool qa_bot_chat_check_integrity(qa_bot_chat_system *, qa_bot_chat_asset *, qa_error *);
 void qa_bot_chat_set_name(qa_bot_chat *, const char *, int32_t client);
+void qa_bot_chat_set_identity(qa_bot_chat *, const char *, const int32_t *client);
 void qa_bot_chat_set_gender(qa_bot_chat *, uint32_t);
 size_t qa_bot_chat_initial_count(const qa_bot_chat *, const char *);
 bool qa_bot_chat_initial(qa_bot_chat *, const char *, uint32_t context,
@@ -149,9 +154,39 @@ bool qa_bot_chat_replace_synonyms(qa_bot_chat_system *, char *, size_t, uint32_t
                                   bool reply, qa_error *);
 void qa_bot_chat_unify_whitespace(char *);
 int32_t qa_bot_chat_contains(const char *, const char *, bool case_sensitive);
+/* External buffers borrow the same algorithms. The boundary owns address
+ * validation, byte widths and write observations. snapshot excludes the NUL
+ * and remains readable until the next callback; callers copy before writing.
+ * copy has memmove semantics and publishes one write. The external match and
+ * synonym entrypoints accept NULL system as the source's empty configuration. */
+typedef struct qa_bot_chat_text_io {
+    void *context;
+    bool (*admit)(void *, size_t offset, size_t size, qa_error *);
+    bool (*read)(void *, size_t offset, void *, size_t, qa_error *);
+    bool (*write)(void *, size_t offset, qa_bytes, qa_error *);
+    bool (*copy)(void *, size_t destination, size_t source, size_t size, qa_error *);
+    bool (*clear)(void *, size_t offset, size_t size, qa_error *);
+    bool (*snapshot)(void *, qa_bytes *, qa_error *);
+} qa_bot_chat_text_io;
+typedef struct qa_bot_chat_match_io {
+    qa_bot_chat_text_io text;
+    bool (*read_offset)(void *, uint32_t index, int32_t *, qa_error *);
+    bool (*write_offset)(void *, uint32_t index, int32_t, qa_error *);
+    bool (*write_length)(void *, uint32_t index, int32_t, qa_error *);
+    bool (*write_type)(void *, bool subtype, int32_t, qa_error *);
+} qa_bot_chat_match_io;
+bool qa_bot_chat_find_match_into(const qa_bot_chat_system *, const char *, uint32_t,
+                                 const qa_bot_chat_match_io *, bool *, qa_error *);
+bool qa_bot_chat_unify_whitespace_into(const qa_bot_chat_text_io *, qa_error *);
+bool qa_bot_chat_replace_synonyms_into(qa_bot_chat_system *, const qa_bot_chat_text_io *,
+                                       uint32_t context, qa_error *);
 const char *qa_bot_chat_message(const qa_bot_chat *);
 bool qa_bot_chat_take_message(qa_bot_chat *, char *, size_t, qa_error *);
+bool qa_bot_chat_write_message(qa_bot_chat *, void *context,
+                               bool (*write)(void *, const char *, qa_error *), qa_error *);
 bool qa_bot_chat_enter(qa_bot_chat *, int32_t recipient, qa_bot_chat_destination, qa_error *);
+bool qa_bot_chat_enter_from(qa_bot_chat *, const int32_t *source_client, int32_t recipient,
+                            qa_bot_chat_destination, qa_error *);
 typedef struct qa_bot_console_message {
     uint32_t handle;
     float time;

@@ -43,6 +43,7 @@ struct qa_bot_chat {
     uint32_t gender, last_handle, first_console, last_console;
     size_t console_count;
     size_t references;
+    uint64_t initial_revision;
     bool retired;
     char name[32], message[256];
 };
@@ -51,6 +52,8 @@ bool chat_asset_allocate(qa_bot_chat_asset_kind, const char *, const char *, qa_
                          qa_error *);
 void chat_asset_view(qa_bot_chat_asset *);
 bool chat_asset_finish(qa_bot_chat_asset *, qa_error *);
+bool chat_asset_load(qa_bot_library *, qa_bot_chat_asset_kind, const char *, const char *,
+                     qa_bot_chat_asset **, bool *cached, qa_error *);
 bool chat_match_pieces(const qa_bot_chat_asset *, qa_bot_chat_range, qa_bot_chat_match *);
 bool chat_construct(qa_bot_chat *, const char *, uint32_t, qa_bot_chat_match *, uint32_t, bool,
                     qa_error *);

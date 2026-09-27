@@ -90,6 +90,7 @@ bool qa_bot_chat_create(qa_bot_chat_system *system, int32_t client, qa_bot_chat 
     s->client = client;
     s->first_console = s->last_console = QA_BOT_NO_INDEX;
     s->references = 1;
+    s->initial_revision = 1;
     ++system->references;
     s->next = system->states;
     if (s->next != NULL)
@@ -122,19 +123,82 @@ void chat_release(qa_bot_chat *s) {
     chat_system_release(system);
 }
 bool qa_bot_chat_set_initial(qa_bot_chat *s, qa_bot_chat_asset *asset, qa_error *e) {
-    if (s == NULL || !kind(asset, QA_BOT_CHAT_INITIAL)) {
+    if (s == NULL || s->retired || s->initial_revision == UINT64_MAX ||
+        !kind(asset, QA_BOT_CHAT_INITIAL)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid initial bot chat asset/state");
         return false;
     }
     qa_bot_chat_asset_retain(asset);
     qa_bot_chat_asset_release(s->initial);
     s->initial = asset;
+    ++s->initial_revision;
     return true;
 }
+static bool load_report(qa_bot_chat *s, qa_script_severity severity, const char *prefix,
+                        const char *name, const char *path, qa_error *e) {
+    size_t a = strlen(prefix), b = strlen(name), c = strlen(path);
+    if (b > SIZE_MAX - a - 7 || c > SIZE_MAX - a - b - 7) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "Bot chat diagnostic size overflow");
+        return false;
+    }
+    size_t size = a + b + c + 7;
+    char *message = malloc(size);
+    if (message == NULL) {
+        qa_error_set(e, QA_ERROR_MEMORY, size, "Retaining bot chat load diagnostic");
+        return false;
+    }
+    memcpy(message, prefix, a);
+    memcpy(message + a, name, b);
+    memcpy(message + a + b, " from ", 6);
+    memcpy(message + a + b + 6, path, c + 1);
+    chat_report(s->system, severity, message);
+    free(message);
+    return true;
+}
+bool qa_bot_chat_load_initial(qa_bot_chat *s, qa_bot_library *library, const char *path,
+                              const char *name, bool developer, int32_t *result, qa_error *e) {
+    if (result == NULL || library == NULL || path == NULL || name == NULL) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid initial chat load request");
+        return false;
+    }
+    if (!qa_bot_chat_set_initial(s, NULL, e))
+        return false;
+    uint64_t revision = s->initial_revision;
+    chat_retain(s);
+    *result = 8;
+    qa_bot_chat_asset *asset = NULL;
+    qa_error local = {0};
+    bool cached = false;
+    bool ok = chat_asset_load(library, QA_BOT_CHAT_INITIAL, path, name, &asset, &cached, &local);
+    if (s->retired || s->initial_revision != revision)
+        ok = true;
+    else if (!ok && (local.code == QA_ERROR_FORMAT || local.code == QA_ERROR_NOT_FOUND))
+        ok = load_report(s, QA_SCRIPT_FATAL, "couldn't load chat ", name, path, &local);
+    else if (ok) {
+        if (!cached)
+            ok = load_report(s, QA_SCRIPT_INFO, "loaded ", name, path, &local);
+        if (ok && !cached && developer && !s->retired && s->initial_revision == revision)
+            ok = qa_bot_chat_check_integrity(s->system, asset, &local);
+        if (ok && !s->retired && s->initial_revision == revision) {
+            ok = qa_bot_chat_set_initial(s, asset, &local);
+            if (ok)
+                *result = 0;
+        }
+    }
+    qa_bot_chat_asset_release(asset);
+    chat_release(s);
+    if (!ok && e != NULL)
+        *e = local;
+    return ok;
+}
 void qa_bot_chat_set_name(qa_bot_chat *s, const char *name, int32_t client) {
-    if (s != NULL) {
+    qa_bot_chat_set_identity(s, name, &client);
+}
+void qa_bot_chat_set_identity(qa_bot_chat *s, const char *name, const int32_t *client) {
+    if (s != NULL && !s->retired) {
         chat_copy(s->name, sizeof(s->name), name);
-        s->client = client;
+        if (client != NULL)
+            s->client = *client;
     }
 }
 void qa_bot_chat_set_gender(qa_bot_chat *s, uint32_t gender) {
@@ -142,20 +206,44 @@ void qa_bot_chat_set_gender(qa_bot_chat *s, uint32_t gender) {
         s->gender = gender == 1 || gender == 2 ? gender : 0;
 }
 const char *qa_bot_chat_message(const qa_bot_chat *s) { return s == NULL ? "" : s->message; }
-bool qa_bot_chat_take_message(qa_bot_chat *s, char *out, size_t capacity, qa_error *e) {
-    if (s == NULL || out == NULL || capacity == 0) {
+bool qa_bot_chat_write_message(qa_bot_chat *s, void *context,
+                               bool (*write)(void *, const char *, qa_error *), qa_error *e) {
+    if (s == NULL || s->retired || write == NULL) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid bot chat output");
         return false;
     }
     chat_strip_tildes(s->message);
-    chat_copy(out, capacity, s->message);
-    s->message[0] = 0;
+    chat_retain(s);
+    bool ok = write(context, s->message, e);
+    if (ok && !s->retired)
+        s->message[0] = 0;
+    chat_release(s);
+    return ok;
+}
+typedef struct chat_output {
+    char *text;
+    size_t capacity;
+} chat_output;
+static bool write_text(void *context, const char *message, qa_error *e) {
+    chat_output *output = context;
+    if (output->text == NULL || output->capacity == 0) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid bot chat output");
+        return false;
+    }
+    chat_copy(output->text, output->capacity, message);
     return true;
+}
+bool qa_bot_chat_take_message(qa_bot_chat *s, char *out, size_t capacity, qa_error *e) {
+    chat_output output = {out, capacity};
+    return qa_bot_chat_write_message(s, &output, write_text, e);
 }
 bool qa_bot_chat_enter(qa_bot_chat *s, int32_t recipient, qa_bot_chat_destination destination,
                        qa_error *e) {
-    if (s == NULL || s->retired || destination < QA_BOT_CHAT_ALL ||
-        destination > QA_BOT_CHAT_TELL) {
+    return qa_bot_chat_enter_from(s, NULL, recipient, destination, e);
+}
+bool qa_bot_chat_enter_from(qa_bot_chat *s, const int32_t *source_client, int32_t recipient,
+                            qa_bot_chat_destination destination, qa_error *e) {
+    if (s == NULL || s->retired) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0,
                      "Missing bot chat command service or invalid destination");
         return false;
@@ -180,24 +268,33 @@ bool qa_bot_chat_enter(qa_bot_chat *s, int32_t recipient, qa_bot_chat_destinatio
     }
     memcpy(command + length, s->message, strlen(s->message) + 1);
     qa_bot_chat_services services = s->system->services;
+    chat_retain(s);
     bool test = services.test_initial != NULL && services.test_initial(services.context);
+    if (s->retired) {
+        chat_release(s);
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Bot chat retired during command preparation");
+        return false;
+    }
     if (!test && services.command == NULL) {
+        chat_release(s);
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing bot chat command service");
         return false;
     }
-    chat_retain(s);
     bool ok = true;
     if (test)
         chat_report(s->system, QA_SCRIPT_INFO, s->message);
     else
-        ok = services.command(services.context, s->client, command, e);
+        ok = services.command(services.context, source_client != NULL ? *source_client : s->client,
+                              command, e);
     if (ok && !s->retired)
         s->message[0] = 0;
     chat_release(s);
     return ok;
 }
 bool chat_reserve_console(qa_bot_chat_system *s, size_t count, qa_error *e) {
-    size_t limit = s->options.console_capacity == 0 ? UINT32_MAX - 1 : s->options.console_capacity;
+    size_t limit = s->options.console_unavailable     ? 0
+                   : s->options.console_capacity == 0 ? UINT32_MAX - 1
+                                                      : s->options.console_capacity;
     if (count > limit) {
         qa_error_set(e, QA_ERROR_MEMORY, count, "Bot console message pool is full");
         return false;
@@ -229,11 +326,19 @@ bool chat_reserve_console(qa_bot_chat_system *s, size_t count, qa_error *e) {
 }
 bool qa_bot_chat_console_queue(qa_bot_chat *s, int32_t type, const char *text, float time,
                                uint32_t *handle, qa_error *e) {
-    if (s == NULL || text == NULL || !isfinite(time)) {
+    if (s == NULL || s->retired || text == NULL || !isfinite(time)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid bot console message");
         return false;
     }
     qa_bot_chat_system *system = s->system;
+    if (system->options.console_unavailable ||
+        (system->options.console_capacity != 0 &&
+         system->console_count >= system->options.console_capacity)) {
+        if (handle != NULL)
+            *handle = 0;
+        chat_report(system, QA_SCRIPT_ERROR, "empty console message heap");
+        return true;
+    }
     if (!chat_reserve_console(system, system->console_count + 1, e))
         return false;
     uint32_t index = system->free_console;

@@ -159,16 +159,41 @@ size_t qa_bot_chat_initial_count(const qa_bot_chat *state, const char *name) {
     }
     return count;
 }
+static bool missing_initial(qa_bot_chat *state, const char *name, qa_error *e) {
+    if (state->initial == NULL || !state->system->options.debug)
+        return true;
+    if (name == NULL) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0,
+                     "BotInitialChat: DEBUG print reads a null source type string");
+        return false;
+    }
+    static const char prefix[] = "no chat messages of type ";
+    size_t length = strlen(name);
+    if (length > SIZE_MAX - sizeof(prefix)) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "Bot chat diagnostic size overflow");
+        return false;
+    }
+    char *message = malloc(length + sizeof(prefix));
+    if (message == NULL) {
+        qa_error_set(e, QA_ERROR_MEMORY, length, "Retaining bot chat diagnostic");
+        return false;
+    }
+    memcpy(message, prefix, sizeof(prefix) - 1);
+    memcpy(message + sizeof(prefix) - 1, name, length + 1);
+    chat_report(state->system, QA_SCRIPT_INFO, message);
+    free(message);
+    return true;
+}
 bool qa_bot_chat_initial(qa_bot_chat *state, const char *name, uint32_t context,
                          const char *const variables[8], float time, bool *found, qa_error *e) {
-    if (state == NULL || name == NULL || found == NULL || !isfinite(time)) {
+    if (state == NULL || state->retired || found == NULL || !isfinite(time)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid initial bot chat request");
         return false;
     }
     *found = false;
     const qa_bot_chat_list *type = initial_type(state, name);
     if (type == NULL)
-        return true;
+        return missing_initial(state, name, e);
     qa_bot_chat_asset *asset = state->initial;
     uint32_t eligible = 0, selected = QA_BOT_NO_INDEX;
     for (uint32_t i = 0; i < type->messages.count; ++i)
@@ -199,7 +224,7 @@ bool qa_bot_chat_initial(qa_bot_chat *state, const char *name, uint32_t context,
         }
     }
     if (selected == QA_BOT_NO_INDEX)
-        return true;
+        return missing_initial(state, name, e);
     qa_bot_chat_match match;
     chat_match_clear(&match, "");
     append_variables(&match, variables);

@@ -108,6 +108,11 @@ bool chat_asset_parse(qa_bot_library *library, qa_bot_chat_asset *a, qa_error *e
 }
 bool qa_bot_chat_asset_load(qa_bot_library *library, qa_bot_chat_asset_kind kind, const char *path,
                             const char *name, qa_bot_chat_asset **out, qa_error *e) {
+    bool cached;
+    return chat_asset_load(library, kind, path, name, out, &cached, e);
+}
+bool chat_asset_load(qa_bot_library *library, qa_bot_chat_asset_kind kind, const char *path,
+                     const char *name, qa_bot_chat_asset **out, bool *cached, qa_error *e) {
     if (library == NULL || path == NULL || out == NULL || kind < QA_BOT_CHAT_SYNONYMS ||
         kind > QA_BOT_CHAT_INITIAL || (kind == QA_BOT_CHAT_INITIAL && name == NULL)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid bot chat asset request");
@@ -115,12 +120,14 @@ bool qa_bot_chat_asset_load(qa_bot_library *library, qa_bot_chat_asset_kind kind
     }
     if (name == NULL)
         name = "";
+    *cached = false;
     if (!bot_reload_characters(library))
         for (qa_bot_chat_asset *a = library->chat_assets; a != NULL; a = a->next)
             if (a->view.kind == kind && strcmp(a->view.path, path) == 0 &&
                 strcmp(a->view.name, name) == 0) {
                 qa_bot_chat_asset_retain(a);
                 *out = a;
+                *cached = true;
                 return true;
             }
     qa_bot_chat_asset *a;
