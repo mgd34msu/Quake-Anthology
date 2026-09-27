@@ -8,6 +8,9 @@ bool q2_target_damageable(qa_q2_game *g, qa_actor_id id) {
            state.can_take_damage;
 }
 bool q2_target_creature(qa_q2_game *g, qa_actor_id id, bool *player) {
+    bool ignored_player;
+    if (player == NULL)
+        player = &ignored_player;
     *player = false;
     qa_builtin_actor_traits traits = {0};
     if (g->services.actor_traits != NULL &&

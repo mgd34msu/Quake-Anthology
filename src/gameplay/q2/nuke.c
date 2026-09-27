@@ -28,7 +28,7 @@ static bool blind(qa_q2_game *g, qa_actor_id id, uint64_t duration, bool inside,
             g->hooks.nuke_blind(g->hooks.context, id, until, inside, e));
 }
 static bool nuke_blast(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *snapshot,
-                       qa_error *e) {
+                       qa_builtin_actor_snapshot *players, qa_error *e) {
     qa_actor_id id = a->id;
     q2_projectile p = a->projectile;
     qa_body_state body;
@@ -84,10 +84,10 @@ static bool nuke_blast(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sn
     }
     if (!q2_actor_live(g, id))
         return true;
-    if (!qa_builtin_players(&g->services, snapshot, e))
+    if (!qa_builtin_players(&g->services, players, e))
         return false;
-    for (size_t i = 0; i < snapshot->count; ++i) {
-        qa_actor_id target = snapshot->ids[i];
+    for (size_t i = 0; i < players->count; ++i) {
+        qa_actor_id target = players->ids[i];
         if (!q2_actor_live(g, id))
             return true;
         if (!q2_actor_live(g, target))
@@ -150,7 +150,13 @@ static bool nuke_explode(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_trace_frame *scratch = q2_scratch_acquire(g, e);
     if (scratch == NULL)
         return false;
-    bool result = nuke_blast(g, a, &scratch->snapshot, e);
+    q2_trace_frame *players = q2_scratch_acquire(g, e);
+    if (players == NULL) {
+        scratch->active = false;
+        return false;
+    }
+    bool result = nuke_blast(g, a, &scratch->snapshot, &players->snapshot, e);
+    players->active = false;
     scratch->active = false;
     return result;
 }

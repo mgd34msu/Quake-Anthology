@@ -34,7 +34,12 @@ static bool classic(qa_q2_game *g, q2_actor *source, qa_actor_id credit, bool *c
             if (!q2_player_trace(g, source->id, body.origin, body.origin, &body.bounds, 0x2010003,
                                  &hit, e))
                 return false;
-            *clear = hit.hit != QA_TRACE_HIT_ACTOR || !qa_actor_id_equal(hit.actor, victim);
+            if (hit.hit == QA_TRACE_HIT_ACTOR) {
+                if (qa_actor_id_equal(hit.actor, victim))
+                    return true;
+                continue;
+            }
+            *clear = !hit.start_solid && !hit.all_solid;
             return true;
         }
     }
