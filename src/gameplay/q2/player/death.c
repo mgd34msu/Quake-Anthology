@@ -187,7 +187,10 @@ bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
         return false;
     if (rr) {
         s->visual.models[1] = s->visual.models[2] = 0;
-        s->loop_sound = 0;
+        if (!q2_player_loop(g, a, 0, e))
+            goto fail;
+        if (!q2_actor_live(g, a->id))
+            goto finish;
         if (means == 51) {
             combat.health = -100;
             damage = 400;
@@ -241,18 +244,14 @@ bool q2_player_death(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
     }
     if (!q2_actor_live(g, a->id))
         goto finish;
-    if (!qa_q2_powerups_clear(g, a->id, e) ||
-        !qa_combat_set_powered_armor(g->services.combat, a->id, &(qa_powered_armor){0}, e))
+    if (!q2_player_clear_powerups(g, a, e))
         goto fail;
     if (!q2_actor_live(g, a->id))
         goto finish;
-    for (size_t i = 0; i < g->capacity; i++) {
-        q2_actor *tracker = g->actors[i];
-        if (tracker && tracker->projectile.kind == Q2_TRACKER_DAEMON &&
-            qa_actor_id_equal(tracker->projectile.enemy, a->id) &&
-            !qa_session_release(g->services.session, tracker->id, e))
-            goto fail;
-    }
+    if (!qa_q2_clear_trackers(g, a->id, e))
+        goto fail;
+    if (!q2_actor_live(g, a->id))
+        goto finish;
     if (g->player_runtime->services.death &&
         !g->player_runtime->services.death(g->player_runtime->services.context, a->id,
                                            &outcome->request.attack, e))

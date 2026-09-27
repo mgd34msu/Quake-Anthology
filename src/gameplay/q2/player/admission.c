@@ -2,6 +2,7 @@
 
 static bool info_value(const char *info, const char *key, char *out, size_t capacity) {
     size_t wanted = strlen(key);
+    bool found = false;
     out[0] = 0;
     const char *p = info;
     if (*p == '\\')
@@ -23,12 +24,47 @@ static bool info_value(const char *info, const char *key, char *out, size_t capa
                 length = capacity - 1;
             memcpy(out, v, length);
             out[length] = 0;
-            return true;
+            found = true;
         }
         if (*p)
             p++;
     }
-    return false;
+    return found;
+}
+static bool info_remove(char *info, size_t capacity, const char *key, size_t *length) {
+    size_t wanted = strlen(key), used = 0;
+    if (*info && *info != '\\') {
+        size_t bytes = strlen(info) + 1;
+        if (bytes >= capacity)
+            return false;
+        memmove(info + 1, info, bytes);
+        info[0] = '\\';
+    }
+    const char *read = info;
+    if (*read == '\\')
+        read++;
+    while (*read) {
+        const char *name = read;
+        while (*read && *read != '\\')
+            read++;
+        size_t length = (size_t)(read - name);
+        if (!*read)
+            break;
+        read++;
+        while (*read && *read != '\\')
+            read++;
+        const char *next = *read ? read + 1 : read;
+        if (length != wanted || memcmp(name, key, length)) {
+            size_t bytes = (size_t)(read - name);
+            info[used++] = '\\';
+            memmove(info + used, name, bytes);
+            used += bytes;
+        }
+        read = next;
+    }
+    info[used] = 0;
+    *length = used;
+    return true;
 }
 static int info_integer(const char *info, const char *key) {
     char value[64];
@@ -41,6 +77,64 @@ static bool wants_spectator(qa_q2_game *g, const char *info) {
     char value[128];
     info_value(info, "spectator", value, sizeof(value));
     return g->options.deathmatch && *value && strcmp(value, "0");
+}
+static bool rerelease_inventory(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    if (!a->client->use_inventory)
+        return true;
+    if (!g->options.deathmatch) {
+        const qa_q2_item_definition *compass = qa_q2_item_lookup(g, "item_compass");
+        if (compass &&
+            !qa_inventory_configure(
+                g->services.inventory, a->id,
+                &(qa_inventory_entry){compass->item, 1, 1, QA_COUNT_SOURCE_INT32}, NULL, NULL, e))
+            return false;
+    }
+    if (!q2_actor_live(g, a->id) || !g->options.cooperative)
+        return true;
+    q2_trace_frame *players = q2_player_roster(g, e);
+    if (!players)
+        return false;
+    bool okay = true;
+    for (size_t i = 0; i < players->snapshot.count; i++) {
+        qa_actor_id id = players->snapshot.ids[i];
+        if (qa_actor_id_equal(a->id, id) || !q2_actor_live(g, id))
+            continue;
+        q2_actor *other = q2_actor_get(g, id, false, NULL);
+        if (other && other->client) {
+            if (!other->client->info.connected || other->client->info.spectator ||
+                other->client->info.noclip)
+                continue;
+        } else {
+            qa_builtin_actor_traits traits = {0};
+            if (g->services.actor_traits &&
+                g->services.actor_traits(g->services.context, id, &traits) && traits.spectator)
+                continue;
+            qa_q2_player_movement movement;
+            qa_q2_player_services *services = &g->player_runtime->services;
+            if (!services->movement(services->context, id, &movement, e)) {
+                okay = false;
+                break;
+            }
+            if (!q2_actor_live(g, a->id))
+                break;
+            if (!q2_actor_live(g, id) || movement.noclip)
+                continue;
+            other = q2_actor_get(g, id, false, NULL);
+        }
+        qa_inventory_entry *entries = NULL;
+        size_t count = 0;
+        uint32_t cubes = other && other->powers ? other->powers->power_cubes : 0;
+        okay = q2_player_inventory_copy(g, id, &entries, &count, e);
+        for (size_t entry = 0; okay && entry < count && q2_actor_live(g, a->id); entry++)
+            okay = qa_inventory_configure(g->services.inventory, a->id, &entries[entry], NULL, NULL,
+                                          e);
+        free(entries);
+        if (okay && q2_actor_live(g, a->id))
+            a->powers->power_cubes = cubes;
+        break;
+    }
+    players->active = false;
+    return okay;
 }
 bool qa_q2_player_connect(qa_q2_game *g, const char *info, bool bot, qa_q2_connection_result *out,
                           qa_error *e) {
@@ -77,7 +171,11 @@ bool qa_q2_player_connect(qa_q2_game *g, const char *info, bool bot, qa_q2_conne
     snprintf(r.userinfo, sizeof(r.userinfo), "%.*s", rr ? 2047 : 511, info);
     if (reason) {
         snprintf(r.reason, sizeof(r.reason), "%s", reason);
-        size_t n = strlen(r.userinfo);
+        size_t n;
+        if (!info_remove(r.userinfo, sizeof(r.userinfo), "rejmsg", &n)) {
+            qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 rejection userinfo exceeds its buffer");
+            return false;
+        }
         snprintf(r.userinfo + n, sizeof(r.userinfo) - n, "\\rejmsg\\%s", reason);
     }
     *out = r;
@@ -93,11 +191,11 @@ bool qa_q2_player_userinfo(qa_q2_game *g, qa_actor_id id, const char *source, qa
         source = "\\name\\badinfo\\skin\\male/grunt";
     snprintf(s->userinfo, sizeof(s->userinfo), "%.*s", rr ? 2047 : 511, source);
     char name[32], gender[32];
-    info_value(s->userinfo, "name", name, rr ? sizeof(name) : 16);
-    if (!*name)
+    bool named = info_value(s->userinfo, "name", name, rr ? sizeof(name) : 16);
+    if (!named && rr)
         snprintf(name, sizeof(name), "badinfo");
-    info_value(s->userinfo, "skin", s->info.skin, sizeof(s->info.skin));
-    if (rr && !*s->info.skin)
+    bool skinned = info_value(s->userinfo, "skin", s->info.skin, sizeof(s->info.skin));
+    if (rr && !skinned)
         snprintf(s->info.skin, sizeof(s->info.skin), "male/grunt");
     info_value(s->userinfo, "gender", gender, sizeof(gender));
     s->gender = tolower((unsigned char)gender[0]) == 'f'   ? 1
@@ -220,12 +318,24 @@ bool qa_q2_player_admit(qa_q2_game *g, qa_actor_id id, const qa_q2_player_admiss
         return false;
     if (!q2_actor_live(g, id))
         return true;
+    if (g->options.edition == QA_Q2_RERELEASE) {
+        s->spawned = true;
+        if (!qa_q2_entities_player_reset(g, id, e))
+            return false;
+        if (!q2_actor_live(g, id))
+            return true;
+        if (!rerelease_inventory(g, a, e))
+            return false;
+        if (!q2_actor_live(g, id))
+            return true;
+    }
     if (!q2_player_inventory_copy(g, id, &s->spawn_inventory, &s->spawn_count, e))
         return false;
     if (!qa_q2_player_carry_capture(g, id, &s->coop, e))
         return false;
     s->has_coop = true;
     s->info.spectator = s->requested_spectator;
+    s->spawned = true;
     return true;
 }
 bool q2_player_collision(qa_q2_game *g, q2_actor *a, bool solid, qa_error *e) {
@@ -247,14 +357,45 @@ bool qa_q2_player_disconnect(qa_q2_game *g, qa_actor_id id, qa_error *e) {
         return false;
     if (!q2_actor_live(g, id))
         return true;
+    if (!qa_q2_clear_trackers(g, id, e))
+        return false;
+    if (!q2_actor_live(g, id))
+        return true;
+    if (a->powers && q2_actor_live(g, a->powers->sphere) &&
+        !qa_session_release(g->services.session, a->powers->sphere, e))
+        return false;
+    if (!q2_actor_live(g, id))
+        return true;
     qa_q2_player_services *services = &g->player_runtime->services;
     if (services->disconnect && !services->disconnect(services->context, id, e))
         return false;
     if (!q2_actor_live(g, id))
         return true;
     s->info.connected = false;
+    s->spawned = false;
     s->visual.visible = false;
+    if (!q2_player_loop(g, a, 0, e))
+        return false;
+    if (!q2_actor_live(g, id))
+        return true;
     if (!q2_player_collision(g, a, false, e) || !q2_publish_visual(g, id, &s->visual, e))
+        return false;
+    if (!q2_actor_live(g, id))
+        return true;
+    qa_body_state body;
+    qa_string_id effect;
+    if (!qa_world_body_read(g->services.world, id, &body, e) ||
+        !qa_builtin_resource(&g->services, "q2:logout", &effect, e) ||
+        !qa_builtin_emit(&g->services,
+                         &(qa_builtin_event){.kind = QA_BUILTIN_EFFECT,
+                                             .family = QA_GAME_Q2,
+                                             .provider = g->options.owner,
+                                             .resource = effect,
+                                             .origin = body.origin,
+                                             .count = 1,
+                                             .code = 10,
+                                             .time_ns = g->now_ns},
+                         e))
         return false;
     if (!q2_actor_live(g, id))
         return true;

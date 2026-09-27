@@ -62,6 +62,8 @@ typedef struct qa_q2_map_event {
     uint32_t flags;
     uint32_t resolution;
     bool visible;
+    const qa_builtin_message_arg *arguments;
+    size_t argument_count;
 } qa_q2_map_event;
 typedef struct qa_q2_path_follower {
     qa_actor_id move_target, enemy, old_enemy, activator;
@@ -396,6 +398,7 @@ bool qa_q2_entity_field(qa_q2_game *, qa_actor_id, const char *key, qa_string_id
 bool qa_q2_entity_set_target(qa_q2_game *, qa_actor_id, qa_string_id, qa_error *);
 bool qa_q2_entity_set_targetname(qa_q2_game *, qa_actor_id, qa_string_id, qa_error *);
 bool qa_q2_entities_player_frame(qa_q2_game *, qa_actor_id, qa_error *);
+bool qa_q2_entities_player_begin(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_entities_player_reset(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_healthbar_transfer(qa_q2_game *, qa_actor_id old_actor, qa_actor_id new_actor,
                               qa_error *);

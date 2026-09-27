@@ -743,7 +743,7 @@ bool qa_q2_healthbar_transfer(qa_q2_game *g, qa_actor_id old, qa_actor_id replac
         }
     return true;
 }
-bool qa_q2_entities_player_frame(qa_q2_game *g, qa_actor_id id, qa_error *e) {
+bool qa_q2_entities_player_begin(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     if (!g || !q2_actor_live(g, id)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 map recipient");
         return false;
@@ -772,6 +772,15 @@ bool qa_q2_entities_player_frame(qa_q2_game *g, qa_actor_id id, qa_error *e) {
         if (!q2_actor_live(g, id))
             return true;
     }
+    return true;
+}
+bool qa_q2_entities_player_frame(qa_q2_game *g, qa_actor_id id, qa_error *e) {
+    if (!g || !q2_actor_live(g, id)) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 map recipient");
+        return false;
+    }
+    if (g->options.edition != QA_Q2_RERELEASE)
+        return true;
     q2_entities *r = g->entity_runtime;
     for (size_t slot = 0; slot < 2; slot++) {
         q2_healthbar *bar = &r->bars[slot];
@@ -849,5 +858,7 @@ bool qa_q2_entities_player_frame(qa_q2_game *g, qa_actor_id id, qa_error *e) {
         if (!q2_actor_live(g, id))
             return true;
     }
-    return true;
+    q2_actor *player = q2_actor_get(g, id, false, NULL);
+    return g->player_runtime->intermission || !player || !player->client ||
+           q2_rerelease_goal_frame(g, player, e);
 }

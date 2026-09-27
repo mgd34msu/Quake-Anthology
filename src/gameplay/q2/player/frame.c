@@ -145,6 +145,11 @@ bool qa_q2_player_end_frame(qa_q2_game *g, qa_actor_id id, qa_error *e) {
         return false;
     if (!q2_actor_live(g, id))
         return true;
+    bool rr = g->options.edition == QA_Q2_RERELEASE;
+    if (rr && !qa_q2_entities_player_begin(g, id, e))
+        return false;
+    if (!q2_actor_live(g, id))
+        return true;
     if (!g->player_runtime->intermission) {
         if (!q2_player_environment(g, a, &m, e))
             return false;
@@ -174,7 +179,62 @@ bool qa_q2_player_end_frame(qa_q2_game *g, qa_actor_id id, qa_error *e) {
         return true;
     if (!q2_player_build_view(g, a, &m, e))
         return false;
-    return !q2_actor_live(g, id) || q2_player_compass_update(g, a, false, e);
+    if (!q2_actor_live(g, id))
+        return true;
+    if (rr && !qa_q2_entities_player_frame(g, id, e))
+        return false;
+    if (!q2_actor_live(g, id))
+        return true;
+    if (!q2_player_compass_update(g, a, false, e))
+        return false;
+    if (!rr || !q2_actor_live(g, id))
+        return true;
+    q2_client_state *s = a->client;
+    qa_combat_state combat;
+    qa_q2_powerups powers;
+    if (!qa_combat_read(g->services.combat, id, &combat, e) ||
+        !qa_q2_powerups_read(g, id, &powers, e))
+        return false;
+    bool playing = !g->player_runtime->intermission;
+    s->visual.alpha =
+        playing && combat.health > 0 && powers.invisibility_until_ns > g->now_ns
+            ? q2_clamp(q2_seconds_left(s->invisibility_fade_ns, g->now_ns) / 2, .1f, 1)
+            : 1;
+    if (!q2_player_emit(g,
+                        &(qa_q2_player_event){
+                            .kind = QA_Q2_PLAYER_ALPHA, .actor = id, .alpha = s->visual.alpha},
+                        e))
+        return false;
+    if (!q2_actor_live(g, id))
+        return true;
+    if (!q2_player_emit(
+            g,
+            &(qa_q2_player_event){.kind = QA_Q2_PLAYER_FLASHLIGHT,
+                                  .actor = id,
+                                  .hand = s->hand,
+                                  .visible = playing && s->info.flashlight && combat.health > 0},
+            e))
+        return false;
+    if (!q2_actor_live(g, id))
+        return true;
+    if (playing && g->options.cooperative && g->player_runtime->rules.coop_player_collision &&
+        !s->player_collision && combat.can_take_damage) {
+        qa_body_state body;
+        qa_trace_result hit;
+        if (!qa_world_body_read(g->services.world, id, &body, e) ||
+            !q2_player_trace(g, id, body.origin, body.origin, &body.bounds, Q2_PLAYER_CONTENTS,
+                             &hit, e))
+            return false;
+        if (!hit.start_solid && !hit.all_solid) {
+            s->player_collision = true;
+            if (a->physics_bound)
+                a->physics.clip_mask |= Q2_PLAYER_CONTENTS;
+            qa_q2_player_services *services = &g->player_runtime->services;
+            return !services->player_collision ||
+                   services->player_collision(services->context, id, true, e);
+        }
+    }
+    return true;
 }
 bool q2_client_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
     (void)g;

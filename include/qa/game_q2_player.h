@@ -9,7 +9,7 @@ typedef struct qa_q2_player_movement {
     uint32_t buttons, water_type;
     int water_level;
     float impact_delta;
-    bool grounded, grounded_on_world, ducked, animate_q2, on_ladder, grapple_attached;
+    bool grounded, grounded_on_world, ducked, animate_q2, on_ladder, grapple_attached, noclip;
     uint64_t grapple_released_until_ns;
 } qa_q2_player_movement;
 typedef enum qa_q2_player_motion_kind {
@@ -66,7 +66,8 @@ typedef enum qa_q2_player_event_kind {
     QA_Q2_PLAYER_RESPAWN_STATUS,
     QA_Q2_PLAYER_RESTART,
     QA_Q2_PLAYER_DIRECTIONAL_DAMAGE,
-    QA_Q2_PLAYER_HELP_PATH
+    QA_Q2_PLAYER_HELP_PATH,
+    QA_Q2_PLAYER_ALPHA
 } qa_q2_player_event_kind;
 typedef struct qa_q2_player_event {
     qa_q2_player_event_kind kind;
@@ -81,7 +82,7 @@ typedef struct qa_q2_player_event {
     qa_item_id selected_item;
     uint32_t slot;
     int level, lives;
-    float damage;
+    float damage, alpha;
     qa_q2_respawn_status respawn_status;
     qa_q2_hand hand;
     bool visible, reliable, health, armor, shield, first;
@@ -178,7 +179,7 @@ typedef struct qa_q2_player_state {
     uint64_t entered_ns, respawn_ns, air_ns, drown_ns, pain_ns, damage_ns, power_armor_ns;
     uint64_t fall_ns, landmark_noise_ns, flood_until_ns, flood_times[10];
     uint64_t slime_ns, animation_ns, last_damage_ns, last_firing_ns, invisibility_fade_ns;
-    uint64_t tracker_ns, nuke_ns, flash_ns, respawn_timeout_ns, grapple_released_ns;
+    uint64_t tracker_ns, nuke_ns, flash_ns, respawn_timeout_ns, grapple_released_ns, quake_ns;
     uint64_t help_draw_ns, help_marker_ns, mission_time_ns;
     uint32_t mission_primary, mission_secondary;
     unsigned mission_changed;
@@ -196,7 +197,8 @@ typedef struct qa_q2_player_state {
     bool use_weapons, use_inventory, requested_spectator, bot, gibbed, weapon_thunk;
     bool animation_duck, animation_run, landmark_free_fall;
     bool show_scores, show_inventory, show_help, bob_skip, nuke_inside;
-    bool awaiting_respawn, has_coop, has_pending_landmark, squad_spawn, corpse;
+    bool awaiting_respawn, spawned, player_collision, has_coop, has_pending_landmark, squad_spawn,
+        corpse;
     qa_q2_landmark pending_landmark;
     qa_vec3 squad_origin, squad_angles;
 } qa_q2_player_state;

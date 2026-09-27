@@ -110,6 +110,18 @@ q2_actor *q2_client(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     }
     return a;
 }
+bool q2_player_clear_powerups(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    if (!qa_q2_powerups_clear(g, a->id, e) ||
+        !qa_combat_set_powered_armor(g->services.combat, a->id, &(qa_powered_armor){0}, e))
+        return false;
+    if (!q2_actor_live(g, a->id))
+        return true;
+    qa_combat_state traits;
+    if (!qa_combat_read_traits(g->services.combat, a->id, &traits, e))
+        return false;
+    traits.invulnerable = a->client->info.god;
+    return qa_combat_set_traits(g->services.combat, a->id, &traits, e);
+}
 bool q2_player_emit(qa_q2_game *g, const qa_q2_player_event *event, qa_error *e) {
     qa_q2_player_services *s = &g->player_runtime->services;
     if (!s->emit) {

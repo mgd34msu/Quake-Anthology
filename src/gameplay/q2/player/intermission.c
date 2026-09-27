@@ -19,7 +19,10 @@ static bool camera_actor(qa_q2_game *g, q2_actor *a, qa_vec3 origin, qa_vec3 ang
     s->show_help = false;
     s->show_scores = g->options.deathmatch || (!rr && g->options.cooperative);
     s->damage_alpha = s->bonus_alpha = 0;
-    s->loop_sound = 0;
+    if (!q2_player_loop(g, a, 0, e))
+        return false;
+    if (!q2_actor_live(g, a->id))
+        return true;
     s->info.view_height = 0;
     s->visual.visible = false;
     s->visual.effects = 0;
@@ -31,7 +34,11 @@ static bool camera_actor(qa_q2_game *g, q2_actor *a, qa_vec3 origin, qa_vec3 ang
             a->weapon.view_model = 0;
         }
     }
-    if (!qa_q2_powerups_clear(g, a->id, e) || !q2_player_collision(g, a, false, e))
+    if (!q2_player_clear_powerups(g, a, e))
+        return false;
+    if (!q2_actor_live(g, a->id))
+        return true;
+    if (!q2_player_collision(g, a, false, e))
         return false;
     if (!q2_actor_live(g, a->id))
         return true;

@@ -29,6 +29,8 @@ bool q2_player_animate_reference(qa_q2_game *, qa_actor_id, const qa_body_state 
 bool q2_player_emit(qa_q2_game *, const qa_q2_player_event *, qa_error *);
 bool q2_player_print(qa_q2_game *, qa_actor_id, int, const char *, qa_error *);
 bool q2_player_sound(qa_q2_game *, qa_actor_id, const char *, int, qa_error *);
+bool q2_player_loop(qa_q2_game *, q2_actor *, qa_string_id, qa_error *);
+bool q2_player_clear_powerups(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_player_observe(qa_q2_game *, q2_actor *, qa_q2_player_movement *, qa_error *);
 bool q2_player_move(qa_q2_game *, q2_actor *, const qa_q2_player_motion *, qa_error *);
 bool q2_player_collision(qa_q2_game *, q2_actor *, bool, qa_error *);

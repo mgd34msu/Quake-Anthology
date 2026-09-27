@@ -98,6 +98,10 @@ bool q2_killbox(qa_q2_game *g, qa_actor_id id, qa_actor_id credited, bool spawni
                 continue;
         }
         if (g->options.cooperative && source_traits.player && traits.player) {
+            if (a->client)
+                a->client->player_collision = false;
+            if (native && native->client)
+                native->client->player_collision = false;
             if (a->physics_bound)
                 a->physics.clip_mask &= ~Q2_PLAYER_CONTENTS;
             if (native && native->physics_bound)

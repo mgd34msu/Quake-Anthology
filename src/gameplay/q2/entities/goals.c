@@ -95,19 +95,27 @@ bool q2_rerelease_goal_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa
 }
 static bool objective(qa_q2_game *g, q2_actor *a, qa_string_id text, unsigned slot, bool talk,
                       qa_error *e) {
+    qa_builtin_message_arg argument = {.kind = QA_BUILTIN_MESSAGE_STRING, .value.text = text};
+    if (!talk && !qa_builtin_resource(&g->services,
+                                      slot == 1 ? "$g_primary_mission_objective"
+                                                : "$g_secondary_mission_objective",
+                                      &text, e))
+        return false;
     return q2_map_event(g,
                         &(qa_q2_map_event){.kind = QA_Q2_MAP_MISSION_OBJECTIVE,
                                            .recipient = a->id,
                                            .text = text,
                                            .slot = (int)slot,
                                            .flags = talk ? 1u : 0u,
+                                           .arguments = talk ? NULL : &argument,
+                                           .argument_count = talk ? 0 : 1,
                                            .visible = true},
                         e);
 }
 bool q2_rerelease_notify(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_entities *r = g->entity_runtime;
     q2_client_state *s = a->client;
-    if (g->options.deathmatch || !s || !s->info.connected ||
+    if (g->options.deathmatch || !s || !s->info.connected || !s->spawned ||
         g->now_ns < q2_deadline(s->entered_ns, 300 * Q2_MS))
         return true;
     if (r->has_goals) {
@@ -159,8 +167,12 @@ bool q2_rerelease_notify(qa_q2_game *g, q2_actor *a, qa_error *e) {
                 return true;
         }
     }
+    return true;
+}
+bool q2_rerelease_goal_frame(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    q2_client_state *s = a->client;
     if (s->mission_changed && s->mission_changed <= 3 && s->mission_time_ns < g->now_ns) {
-        if (s->mission_changed == 1 && !q2_player_sound(g, a->id, "misc/pc_up.wav", 0, e))
+        if (s->mission_changed == 1 && !q2_entity_sound(g, a, "misc/pc_up.wav", 0, 1, 3, 0, e))
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
@@ -214,5 +226,11 @@ bool qa_q2_entities_player_reset(qa_q2_game *g, qa_actor_id id, qa_error *e) {
         return true;
     a->client->wanted_fog = g->entity_runtime->world_fog;
     a->client->fog_transition = 0;
+    a->client->spawned = !a->client->awaiting_respawn;
+    qa_q2_fog fog = a->client->wanted_fog;
+    if (!q2_map_event(g, &(qa_q2_map_event){.kind = QA_Q2_MAP_FOG, .recipient = id, .fog = fog}, e))
+        return false;
+    if (q2_actor_live(g, id))
+        a->client->fog = fog;
     return true;
 }

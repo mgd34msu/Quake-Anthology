@@ -162,6 +162,39 @@ static bool flashing(uint64_t until, uint64_t now) {
     return until > now &&
            (until - now > 3 * Q2_NS || (((until - now + 50 * Q2_MS) / (100 * Q2_MS)) & 4) != 0);
 }
+bool q2_player_loop(qa_q2_game *g, q2_actor *a, qa_string_id loop, qa_error *e) {
+    q2_client_state *s = a->client;
+    if (loop == s->loop_sound)
+        return true;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, a->id, &body, e))
+        return false;
+    qa_builtin_event event = {.family = QA_GAME_Q2,
+                              .provider = g->options.owner,
+                              .actor = a->id,
+                              .origin = body.origin,
+                              .volume = 1,
+                              .attenuation = 1,
+                              .time_ns = g->now_ns,
+                              .channel = 0};
+    qa_string_id previous = s->loop_sound;
+    s->loop_sound = loop;
+    if (previous) {
+        event.kind = QA_BUILTIN_STOP_SOUND;
+        event.resource = previous;
+        if (!qa_builtin_emit(&g->services, &event, e))
+            return false;
+    }
+    if (!q2_actor_live(g, a->id) || s->loop_sound != loop)
+        return true;
+    if (loop) {
+        event.kind = QA_BUILTIN_SOUND;
+        event.resource = loop;
+        event.flags = 1;
+        return qa_builtin_emit(&g->services, &event, e);
+    }
+    return true;
+}
 static bool effects(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
                     const qa_q2_powerups *powers, const qa_combat_state *combat,
                     const qa_q2_character_weapon *weapon, qa_error *e) {
@@ -197,37 +230,7 @@ static bool effects(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m,
                                                               : NULL;
     if (path && !qa_builtin_resource(&g->services, path, &loop, e))
         return false;
-    if (loop != s->loop_sound) {
-        qa_body_state body;
-        if (!qa_world_body_read(g->services.world, a->id, &body, e))
-            return false;
-        qa_builtin_event event = {.family = QA_GAME_Q2,
-                                  .provider = g->options.owner,
-                                  .actor = a->id,
-                                  .origin = body.origin,
-                                  .volume = 1,
-                                  .attenuation = 1,
-                                  .time_ns = g->now_ns,
-                                  .channel = 0};
-        qa_string_id previous = s->loop_sound;
-        s->loop_sound = loop;
-        if (previous) {
-            event.kind = QA_BUILTIN_STOP_SOUND;
-            event.resource = previous;
-            if (!qa_builtin_emit(&g->services, &event, e))
-                return false;
-        }
-        if (!q2_actor_live(g, a->id))
-            return true;
-        if (loop) {
-            event.kind = QA_BUILTIN_SOUND;
-            event.resource = loop;
-            event.flags = 1;
-            if (!qa_builtin_emit(&g->services, &event, e))
-                return false;
-        }
-    }
-    return true;
+    return q2_player_loop(g, a, loop, e);
 }
 bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movement *m, qa_error *e) {
     q2_client_state *s = a->client;
@@ -291,6 +294,13 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
                   weapon.kick_angles.z + damage * s->damage_roll +
                       qa_vec_dot(body.velocity, right) * r->run_roll +
                       (rr ? fminf(roll, 1.2f) : roll) * sign);
+        if (rr && s->quake_ns > g->now_ns) {
+            float factor =
+                g->now_ns ? fminf(1, (float)((double)s->quake_ns / g->now_ns) * .25f) : 1;
+            view.kick_angles.x += q2_crandom(g) * factor;
+            view.kick_angles.y += q2_crandom(g) * factor;
+            view.kick_angles.z += q2_crandom(g) * factor;
+        }
     }
     if (!rr || !s->bob_skip)
         view.offset =
@@ -308,8 +318,8 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
         view.kick_angles =
             qa_v3(q2_clamp(view.kick_angles.x, -31, 31), q2_clamp(view.kick_angles.y, -31, 31),
                   q2_clamp(view.kick_angles.z, -31, 31));
-        if (weapon.q2_weapon == QA_Q2_HEATBEAM && a->weapon_bound &&
-            a->weapon.phase == QA_Q2_FIRING)
+        if ((weapon.q2_weapon == QA_Q2_HEATBEAM || weapon.q2_weapon == QA_Q2_GRAPPLE) &&
+            a->weapon_bound && a->weapon.phase == QA_Q2_FIRING)
             view.gun_angles = qa_v3(0, 0, 0);
         else {
             qa_vec3 delta = qa_vec_sub(s->old_view_angles, view.angles), slow = s->slow_view_angles;
@@ -449,10 +459,8 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
             return false;
         if (!q2_actor_live(g, a->id))
             return true;
-        s->visual.alpha =
-            rr && combat.health > 0 && powers.invisibility_until_ns > g->now_ns
-                ? q2_clamp(q2_seconds_left(s->invisibility_fade_ns, g->now_ns) / 2, .1f, 1)
-                : 1;
+        if (!rr)
+            s->visual.alpha = 1;
         if (!q2_publish_visual(g, a->id, &s->visual, e))
             return false;
     }
@@ -460,16 +468,6 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
         return true;
     s->old_velocity = body.velocity;
     s->old_view_angles = view.angles;
-    if (rr &&
-        !q2_player_emit(g,
-                        &(qa_q2_player_event){.kind = QA_Q2_PLAYER_FLASHLIGHT,
-                                              .actor = a->id,
-                                              .hand = s->hand,
-                                              .visible = s->info.flashlight && combat.health > 0},
-                        e))
-        return false;
-    if (rr && q2_actor_live(g, a->id) && !qa_q2_entities_player_frame(g, a->id, e))
-        return false;
     if (s->show_scores && q2_actor_live(g, a->id) &&
         (((g->now_ns + 50 * Q2_MS) / (100 * Q2_MS)) & 31) == 0)
         return q2_player_scoreboard(g, a, false, e);
