@@ -218,9 +218,12 @@ bool qa_q2_item_give(qa_q2_game *g, qa_actor_id player, const char *name, int co
             a->item->definition = d;
             a->item->spawn = (qa_q2_item_spawn){
                 .classname = d->classname, .count = count, .spawnflags = 0x10000};
+            a->item->dispatching = true;
             ok = q2_item_grant(g, a, player, accepted, e);
             if (ok && *accepted && q2_actor_live(g, id) && q2_actor_live(g, player))
                 ok = q2_item_finish(g, a, player, e);
+            if (q2_actor_live(g, id))
+                a->item->dispatching = false;
         }
     }
     if (q2_actor_live(g, id)) {

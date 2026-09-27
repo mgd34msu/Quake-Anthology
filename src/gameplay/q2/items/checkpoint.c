@@ -22,7 +22,7 @@ bool qa_q2_item_capture(qa_q2_game *g, qa_actor_id id, qa_q2_item_checkpoint *ou
     }
     if (a->item) {
         q2_item_state *v = a->item;
-        if (v->dispatching || v->temporary) {
+        if (v->dispatching || (v->temporary && v->think != Q2_ITEM_DROPPED)) {
             qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 item checkpoint requires a completed pickup");
             return false;
         }
@@ -91,13 +91,13 @@ fail:
     return false;
 }
 static bool valid_item(qa_q2_game *g, const qa_q2_item_checkpoint *s, qa_error *e) {
-    if (s->temporary || s->think > Q2_ITEM_MEGA || s->spawn.classname ||
-        s->spawn.team_master.registry || s->spawn.team_next.registry || !isfinite(s->spawn.delay) ||
-        !q2_saved_visual(g, &s->visual) || !q2_saved_resource(g, s->definition) ||
-        !q2_saved_resource(g, s->spawn.target) || !q2_saved_resource(g, s->spawn.killtarget) ||
-        !q2_saved_resource(g, s->spawn.message) || !q2_saved_resource(g, s->spawn.team) ||
-        s->companion.kind > Q2_DOPPLEGANGER_BODY || !qa_vec_finite(s->companion.goal) ||
-        !q2_saved_resource(g, s->companion.loop_sound) ||
+    if ((s->temporary && s->think != Q2_ITEM_DROPPED) || s->think > Q2_ITEM_MEGA ||
+        s->spawn.classname || s->spawn.team_master.registry || s->spawn.team_next.registry ||
+        !isfinite(s->spawn.delay) || !q2_saved_visual(g, &s->visual) ||
+        !q2_saved_resource(g, s->definition) || !q2_saved_resource(g, s->spawn.target) ||
+        !q2_saved_resource(g, s->spawn.killtarget) || !q2_saved_resource(g, s->spawn.message) ||
+        !q2_saved_resource(g, s->spawn.team) || s->companion.kind > Q2_DOPPLEGANGER_BODY ||
+        !qa_vec_finite(s->companion.goal) || !q2_saved_resource(g, s->companion.loop_sound) ||
         (!s->definition && s->companion.kind == Q2_COMPANION_NONE) ||
         (s->picked_count && !s->picked_slots) || s->picked_count > SIZE_MAX / sizeof(uint32_t))
         return false;
@@ -152,6 +152,7 @@ bool qa_q2_item_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_item_checkpoi
         v->retained = s->retained;
         v->visible = s->visible;
         v->touchable = s->touchable;
+        v->temporary = s->temporary;
         v->visual = s->visual;
         v->picked_count = v->picked_capacity = s->picked_count;
         void *copy;
