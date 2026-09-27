@@ -9,6 +9,10 @@ bool qa_utf8_lower(qa_bytes input, qa_buffer *out, qa_error *error);
 /* Text resources replace malformed UTF-8 subsequences with U+FFFD. The owned
  * output is NUL terminated; counted embedded NULs remain in the byte span. */
 bool qa_utf8_repair(qa_bytes input, qa_buffer *out, qa_error *error);
+/* Allocation-free scalar iteration, replacing malformed subsequences. */
+bool qa_utf8_next(qa_bytes, size_t *cursor, uint32_t *scalar);
+size_t qa_utf8_encode(uint32_t scalar, char out[4]);
+bool qa_unicode_whitespace(uint32_t scalar);
 /* Full-token conversion in the C numeric locale, independent of UI language.
  * Leading/trailing ASCII whitespace is accepted. The caller applies finite,
  * integral or domain bounds as needed. Output is unchanged on failure. */

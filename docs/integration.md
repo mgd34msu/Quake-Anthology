@@ -24,6 +24,7 @@ These are concrete handoff obligations for the remaining graph nodes. A subsyste
 - Detach input from its window before display destruction or restart. Destroy input before seats, console, and SDL. A renderer must be destroyed before its display.
 - Original client-module command adapters call `qa_input_client_dispatch` with their explicit producer instance. Ordinary user-console dispatch passes zero. A console command's owner is not a substitute for the producer instance.
 - B21 persists typed seat bindings and controller settings; B34 applies those profiles to actual devices and command builders.
+- Native console/menu fields share UTF-8 scalar iteration and retained editing storage. Source Q3 guest fields use the distinct 256-byte field API and shared overstrike value; after restoring raw source fields, keep cursor and text bounds valid before editing. B32/B34 route clipboard, key/text events, completion names and persisted command history to the appropriate field owner.
 
 ## Scene and media
 

@@ -97,7 +97,9 @@ target_link_libraries(qa_session PUBLIC qa_world)
 add_library(qa_console STATIC
     src/console/text.c
     src/console/cvars.c
-    src/console/commands.c)
+    src/console/commands.c
+    src/console/field.c
+    src/console/source_field.c)
 target_link_libraries(qa_console PUBLIC qa_core)
 
 add_library(qa_text STATIC
