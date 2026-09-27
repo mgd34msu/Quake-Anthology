@@ -93,4 +93,45 @@ bool qa_q1_level_capture(const qa_q1_level *, qa_q1_level_checkpoint *, qa_error
 void qa_q1_level_checkpoint_free(qa_q1_level_checkpoint *);
 /* Restore after B30 explicitly remaps actor/string IDs into the new session. */
 bool qa_q1_level_restore(qa_q1_level *, const qa_q1_level_checkpoint *, qa_error *);
+
+typedef enum qa_q1_spawn_kind {
+    QA_Q1_SPAWN_START,
+    QA_Q1_SPAWN_RETURN,
+    QA_Q1_SPAWN_COOP,
+    QA_Q1_SPAWN_DEATHMATCH,
+    QA_Q1_SPAWN_TEST
+} qa_q1_spawn_kind;
+typedef struct qa_q1_spawn_point {
+    qa_actor_id actor;
+    qa_q1_spawn_kind kind;
+} qa_q1_spawn_point;
+typedef enum qa_q1_spawn_decision {
+    QA_Q1_SPAWN_DELEGATE,
+    QA_Q1_SPAWN_DEFERRED,
+    QA_Q1_SPAWN_SELECTED
+} qa_q1_spawn_decision;
+typedef struct qa_q1_spawn_rule {
+    qa_string_id id;
+    void *context;
+    bool (*select)(void *, bool force, qa_q1_spawn_decision *, qa_actor_id *, qa_error *);
+} qa_q1_spawn_rule;
+typedef struct qa_q1_spawn_options {
+    qa_builtin_services services;
+    uint32_t *server_flags;
+    bool rerelease, coop, deathmatch;
+    void *context;
+    double (*random)(void *);
+    const qa_q1_spawn_rule *rules;
+    size_t rule_count;
+} qa_q1_spawn_options;
+typedef struct qa_q1_spawn_selector qa_q1_spawn_selector;
+qa_q1_spawn_selector *qa_q1_spawn_selector_create(const qa_q1_spawn_options *, qa_error *);
+void qa_q1_spawn_selector_destroy(qa_q1_spawn_selector *);
+/* Points retain authored source order. Read-only callbacks must not mutate the
+ * point array or recursively invoke this selector. A null result is a source
+ * deferral; the admission owner retries and forces after five seconds. */
+bool qa_q1_spawn_select(qa_q1_spawn_selector *, const qa_q1_spawn_point *, size_t count, bool force,
+                        qa_actor_id *out, qa_error *);
+qa_actor_id qa_q1_spawn_last(const qa_q1_spawn_selector *);
+bool qa_q1_spawn_restore_last(qa_q1_spawn_selector *, qa_actor_id, qa_error *);
 #endif

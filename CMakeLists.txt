@@ -185,7 +185,8 @@ add_library(qa_campaign STATIC
     src/campaign/unit.c
     src/campaign/targets.c
     src/campaign/q1/level.c
-    src/campaign/q1/finales.c)
+    src/campaign/q1/finales.c
+    src/campaign/q1/spawn.c)
 target_link_libraries(qa_campaign PUBLIC qa_session qa_builtin)
 
 add_library(qa_audio STATIC
