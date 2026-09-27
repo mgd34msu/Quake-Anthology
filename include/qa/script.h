@@ -105,7 +105,12 @@ typedef struct qa_script_punctuation {
     const char *text;
     uint32_t id;
 } qa_script_punctuation;
-typedef enum qa_script_severity { QA_SCRIPT_WARNING, QA_SCRIPT_ERROR } qa_script_severity;
+typedef enum qa_script_severity {
+    QA_SCRIPT_WARNING,
+    QA_SCRIPT_ERROR,
+    QA_SCRIPT_INFO,
+    QA_SCRIPT_FATAL
+} qa_script_severity;
 typedef struct qa_script_diagnostic {
     qa_script_severity severity;
     qa_script_location location;
