@@ -138,7 +138,7 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
   }
   const struct qa_q2_monster *monster = actor->monster;
   qa_q2_monster_checkpoint saved = {
-      .version = 6,
+      .version = 7,
       .start_phase = (uint32_t)monster->start_phase,
       .combat_target = monster->combat_target,
       .start_due_ns = monster->start_due_ns,
@@ -162,6 +162,9 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
       .max_power_armor = monster->max_power_armor,
       .initial_power_armor = (uint32_t)monster->initial_power_armor,
       .medic_tries = monster->medic_tries,
+      .corpse_phase = (uint32_t)monster->corpse_phase,
+      .corpse_due_ns = monster->corpse_due_ns,
+      .corpse_end_ns = monster->corpse_end_ns,
       .gib_health = monster->gib_health,
       .normal_height = monster->normal_height,
       .view_height = monster->view_height,
@@ -376,7 +379,9 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   if (!callback_boundary(game, error))
     return false;
   bool controller = saved->controller_kind != Q2M_CONTROLLER_NONE;
-  if (saved->version != 6 || saved->start_phase > Q2M_START_MANUAL ||
+  if (saved->version != 7 || saved->start_phase > Q2M_START_MANUAL ||
+      saved->corpse_phase > Q2M_CORPSE_HOVER ||
+      (saved->corpse_phase != Q2M_CORPSE_IDLE && !saved->corpse) ||
       saved->initial_power_armor > QA_POWER_SHIELD || saved->max_power_armor < 0 ||
       saved->medic_tries > 2 ||
       saved->controller_kind > Q2M_CONTROLLER_MAKRON_SPAWN ||
@@ -402,7 +407,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   if (controller &&
       (saved->definition[0] != '\0' || saved->move[0] != '\0' ||
        saved->next_move[0] != '\0' || saved->has_summons || saved->summon_count ||
-       saved->summon_strength)) {
+       saved->summon_strength || saved->corpse_phase != Q2M_CORPSE_IDLE)) {
     qa_error_set(error, QA_ERROR_FORMAT, 0,
                  "Invalid Q2 monster controller checkpoint");
     return false;
@@ -458,6 +463,11 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
                  "Q2 monster checkpoint definition is unavailable");
     return false;
   }
+  if (!q2m_corpse_phase_valid(game, definition->species,
+                              (q2m_corpse_phase)saved->corpse_phase)) {
+    qa_error_set(error, QA_ERROR_FORMAT, 0, "Q2 corpse continuation differs from its source species");
+    return false;
+  }
   struct qa_q2_monster *monster = calloc(1, sizeof(*monster));
   if (monster == NULL) {
     qa_error_set(error, QA_ERROR_MEMORY, 0,
@@ -499,6 +509,9 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   Q2M_RESTORE(max_power_armor);
   monster->initial_power_armor = (qa_power_kind)saved->initial_power_armor;
   Q2M_RESTORE(medic_tries);
+  monster->corpse_phase = (q2m_corpse_phase)saved->corpse_phase;
+  Q2M_RESTORE(corpse_due_ns);
+  Q2M_RESTORE(corpse_end_ns);
   Q2M_RESTORE(gib_health);
   Q2M_RESTORE(normal_height);
   Q2M_RESTORE(view_height);

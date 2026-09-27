@@ -2413,42 +2413,25 @@ bool q2m_die(q2m_context *context, qa_error *error) {
                       : q2m_set_move(context, move, true, error);
 }
 
-bool q2m_corpse(q2m_context *context, qa_error *error) {
-  if (!q2m_alive(context) || context->monster->corpse)
+bool q2m_hover_explode(q2m_context *context, qa_error *error) {
+  if (!q2m_alive(context))
     return true;
-  struct qa_q2_monster *monster = context->monster;
-  float scale = monster->entity_scale;
-  monster->corpse = true;
-  monster->hold_frame = true;
-  qa_bounds corpse = {.mins = {-16, -16, -24}, .maxs = {16, 16, -8}};
-  q2m_species species = monster->definition->species;
-  if (species == Q2M_SUPERTANK || species == Q2M_BOSS5 ||
-      species == Q2M_MAKRON) {
-    corpse = (qa_bounds){.mins = {-60, -60, 0}, .maxs = {60, 60, 72}};
-  } else if (species == Q2M_BOSS2 || species == Q2M_CARRIER ||
-             species == Q2M_WIDOW) {
-    corpse = (qa_bounds){.mins = {-56, -56, 0}, .maxs = {56, 56, 80}};
-  } else if (species == Q2M_TANK || species == Q2M_TANK_COMMANDER) {
-    corpse = (qa_bounds){.mins = {-16, -16, -16}, .maxs = {16, 16, 0}};
-  } else if (species == Q2M_STALKER) {
-    corpse = (qa_bounds){.mins = {-28, -28, -18}, .maxs = {28, 28, -4}};
+  if (!emit_explosion(context, "q2:explosion1", context->body.origin, 0, error))
+    return false;
+  if (!q2m_alive(context))
+    return true;
+  if (context->game->options.edition != QA_Q2_RERELEASE ||
+      context->monster->definition->species == Q2M_DAEDALUS)
+    return q2m_release(context, error);
+  if (!spawn_death_gibs(context, 150, error))
+    return false;
+  if (q2m_alive(context)) {
+    context->monster->dead = true;
+    context->monster->gibbed = true;
+    context->monster->corpse_phase = Q2M_CORPSE_IDLE;
+    context->monster->corpse_due_ns = 0;
   }
-  context->body.bounds.mins = qa_vec_scale(corpse.mins, scale);
-  context->body.bounds.maxs = qa_vec_scale(corpse.maxs, scale);
-  context->actor->physics.motion = QA_PHYSICS_TOSS;
-  context->actor->physics.solid = QA_PHYSICS_CORPSE;
-  context->actor->physics.flags |= QA_PHYSICS_DEAD;
-  qa_actor_collision collision = {
-      .family = QA_COLLISION_Q2,
-      .shape = QA_SHAPE_BOX,
-      .contents = (int32_t)UINT32_C(0x04000000),
-      .role = QA_COLLISION_SOLID,
-      .dead_monster = true,
-  };
-  return q2m_write_body(context, false, error) &&
-         qa_world_set_collision(context->game->services.world,
-                                context->actor->id, &collision, error) &&
-         q2m_link(context, error);
+  return true;
 }
 
 bool q2m_release(q2m_context *context, qa_error *error) {

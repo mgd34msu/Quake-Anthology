@@ -328,6 +328,7 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/monsters/checkpoint.c
     src/gameplay/q2/monsters/combat.c
     src/gameplay/q2/monsters/core.c
+    src/gameplay/q2/monsters/corpse.c
     src/gameplay/q2/monsters/lifecycle.c
     src/gameplay/q2/monsters/medic.c
     src/gameplay/q2/monsters/moves.c

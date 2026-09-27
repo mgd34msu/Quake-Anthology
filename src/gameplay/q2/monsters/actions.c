@@ -2173,7 +2173,7 @@ static bool end_transition(q2m_context *context, const char *callback,
       strcmp(callback, "monster_dead") == 0 ||
       strcmp(callback, "widow2_finaldeath") == 0) {
     *handled = true;
-    return q2m_corpse(context, error);
+    return q2m_corpse_callback(context, callback, error);
   }
   if (ends_with(callback, "_run") || ends_with(callback, "_run_loop") ||
       strcmp(callback, "mutant_walk_loop") == 0) {
@@ -3980,9 +3980,10 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
   if (strcmp(callback, "BossExplode") == 0 ||
       strcmp(callback, "BossExplode2") == 0)
     return q2m_start_boss_explosion(context, error);
+  if (strcmp(callback, "hover_dying") == 0)
+    return q2m_hover_dying(context, error);
   if (has(callback, "WidowExplosion") ||
       strcmp(callback, "WidowExplode") == 0 ||
-      strcmp(callback, "hover_dying") == 0 ||
       strcmp(callback, "jorg_death_hit") == 0) {
     ++monster->count;
     return q2m_emit(context, QA_BUILTIN_EXPLOSION, "q2:explosion1",

@@ -250,6 +250,14 @@ typedef struct q2m_sound_target {
   bool present;
 } q2m_sound_target;
 
+typedef enum q2m_corpse_phase {
+  Q2M_CORPSE_IDLE,
+  Q2M_CORPSE_FLIES_ON,
+  Q2M_CORPSE_FLIES_OFF,
+  Q2M_CORPSE_DEAD_THINK,
+  Q2M_CORPSE_HOVER
+} q2m_corpse_phase;
+
 struct qa_q2_monster {
   struct qa_q2_monster *retired_next;
   struct q2m_summon_state *summons;
@@ -276,6 +284,8 @@ struct qa_q2_monster {
   uint64_t air_ns, environment_ns, jump_ns, flies_ns, fly_position_ns;
   uint64_t recovery_ns, death_ns, spawn_ns, timestamp_ns, coop_check_ns;
   uint64_t react_ns;
+  q2m_corpse_phase corpse_phase;
+  uint64_t corpse_due_ns, corpse_end_ns;
   qa_actor_id enemy, old_enemy, goal, move_target, commander, activator;
   qa_actor_id last_player_enemy;
   qa_actor_id resurrect_target, hazard, proboscis;
@@ -403,6 +413,11 @@ bool q2m_dispatch(q2m_context *, const char *, qa_error *);
 bool q2m_pain(q2m_context *, qa_error *);
 bool q2m_die(q2m_context *, qa_error *);
 bool q2m_corpse(q2m_context *, qa_error *);
+bool q2m_corpse_phase_valid(const qa_q2_game *, q2m_species, q2m_corpse_phase);
+bool q2m_corpse_callback(q2m_context *, const char *, qa_error *);
+bool q2m_corpse_tick(q2m_context *, bool *handled, qa_error *);
+bool q2m_hover_dying(q2m_context *, qa_error *);
+bool q2m_hover_explode(q2m_context *, qa_error *);
 bool q2m_start_boss_explosion(q2m_context *, qa_error *);
 bool q2m_boss_explosion_tick(q2m_context *, qa_error *);
 bool q2m_finish_boss_death(q2m_context *, qa_error *);

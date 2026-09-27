@@ -235,10 +235,15 @@ bool q2m_medic_acquire(q2m_context *c, bool preserve_enemy, bool *acquired,
         struct qa_q2_monster *m = candidate.monster;
         if (m->good_guy || candidate.combat.health > 0 || !m->corpse || m->gibbed)
             continue;
+        if (m->corpse_phase != Q2M_CORPSE_IDLE &&
+            (!source_rogue ||
+             (rerelease(c) ? m->corpse_phase != Q2M_CORPSE_DEAD_THINK
+                           : m->corpse_phase != Q2M_CORPSE_FLIES_ON &&
+                             m->corpse_phase != Q2M_CORPSE_FLIES_OFF)))
+            continue;
         if (!source_rogue) {
             if ((candidate.actor->entity && candidate.actor->entity->owner.registry) ||
-                m->healer.registry ||
-                m->flies_ns != 0)
+                m->healer.registry)
                 continue;
         } else {
             if (qa_actor_id_equal(m->bad_medic[0], c->actor->id) ||

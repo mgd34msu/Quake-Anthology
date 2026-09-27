@@ -1888,6 +1888,10 @@ bool q2_monster_tick(qa_q2_game *game, q2_actor *actor, qa_error *error) {
   if (!q2m_alive(&context) || actor->projectile.kind != Q2_PROJECTILE_NONE ||
       context.monster->gibbed)
     return true;
+  if (!q2m_corpse_tick(&context, &handled, error))
+    return false;
+  if (!q2m_alive(&context) || handled)
+    return true;
   if (context.monster->turret_attached)
     return true;
   if (game->options.edition == QA_Q2_RERELEASE &&
