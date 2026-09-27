@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/q3_abi.h"
 #include "qa/network_q3.h"
 #include "qa/collision.h"
 
@@ -37,42 +38,63 @@ size_t qa_qvm_player_bytes(qa_qvm_abi abi) { return abi == QA_QVM_Q3_MODERN ? 46
 size_t qa_qvm_shared_entity_bytes(qa_qvm_abi abi) { return abi == QA_QVM_Q3_MODERN ? 516u : 504u; }
 size_t qa_qvm_snapshot_bytes(qa_qvm_abi abi) { return abi == QA_QVM_Q3_MODERN ? 53772u : 52724u; }
 
-static bool offset(qa_qvm *vm, int32_t pointer, size_t size, uint32_t *out, qa_error *error)
+static bool record_live(const qa_q3_abi_record *record, qa_error *error)
 {
-    qa_bytes bytes;
-    if (!qa_qvm_span(vm,pointer,0,size,&bytes,error)) return false;
-    *out = (uint32_t)(bytes.data - vm->data);
+    return (record && (unsigned)record->abi <= QA_QVM_Q3_116N &&
+            (record->bytes.data || !record->bytes.size)) ||
+           qa_qvm_error(error, QA_ERROR_ARGUMENT, 0, "invalid Q3 source record view");
+}
+
+static bool offset(qa_q3_abi_record *record, size_t pointer, size_t size,
+                    size_t *out, qa_error *error)
+{
+    if (!record_live(record, error)) return false;
+    if (pointer > record->bytes.size || size > record->bytes.size - pointer)
+        return qa_qvm_error(error, QA_ERROR_ARGUMENT, pointer,
+                            "Q3 source record exceeds admitted bytes");
+    *out = pointer;
     return true;
 }
-static bool store(qa_qvm *vm, uint32_t address, uint32_t value, qa_error *error)
+
+static bool record_write(qa_q3_abi_record *record, size_t address, qa_bytes bytes,
+                          qa_error *error)
+{
+    size_t checked;
+    if (!offset(record, address, bytes.size, &checked, error)) return false;
+    if (!record->write)
+        return qa_qvm_error(error, QA_ERROR_ARGUMENT, address,
+                            "Q3 source record has no writer");
+    return record->write(record->context, checked, bytes, error);
+}
+static bool store(qa_q3_abi_record *record, size_t address, uint32_t value, qa_error *error)
 {
     uint8_t bytes[4]; qa_store_u32le(bytes,value);
-    return qa_qvm_write(vm,address,(qa_bytes){bytes,4},error);
+    return record_write(record,address,(qa_bytes){bytes,4},error);
 }
-static bool store_float(qa_qvm *vm, uint32_t address, float value, qa_error *error)
+static bool store_float(qa_q3_abi_record *record, size_t address, float value, qa_error *error)
 {
     uint32_t word; memcpy(&word,&value,4);
-    return store(vm,address,word,error);
+    return store(record,address,word,error);
 }
-static qa_vec3 read_vector(const qa_qvm *vm, uint32_t address)
+static qa_vec3 read_vector(const qa_q3_abi_record *record, size_t address)
 {
-    return qa_v3(qa_load_f32le(vm->data + address),qa_load_f32le(vm->data + address + 4),qa_load_f32le(vm->data + address + 8));
+    return qa_v3(qa_load_f32le(record->bytes.data + address),qa_load_f32le(record->bytes.data + address + 4),qa_load_f32le(record->bytes.data + address + 8));
 }
-static bool store_vector(qa_qvm *vm, uint32_t address, qa_vec3 value, qa_error *error)
+static bool store_vector(qa_q3_abi_record *record, size_t address, qa_vec3 value, qa_error *error)
 {
-    return store_float(vm,address,value.x,error) && store_float(vm,address + 4,value.y,error) && store_float(vm,address + 8,value.z,error);
+    return store_float(record,address,value.x,error) && store_float(record,address + 4,value.y,error) && store_float(record,address + 8,value.z,error);
 }
-static void read_fields(const qa_qvm *vm, uint32_t address, const record_field *fields, size_t count, size_t extent, void *out)
+static void read_fields(const qa_q3_abi_record *record, size_t address, const record_field *fields, size_t count, size_t extent, void *out)
 {
     for (size_t n = 0; n < count; ++n) {
         if (fields[n].source >= extent) continue;
         for (size_t i = 0; i < fields[n].count; ++i) {
-            uint32_t word = qa_load_u32le(vm->data + address + fields[n].source + i * 4);
+            uint32_t word = qa_load_u32le(record->bytes.data + address + fields[n].source + i * 4);
             memcpy((uint8_t *)out + fields[n].native + i * 4,&word,4);
         }
     }
 }
-static bool write_fields(qa_qvm *vm, uint32_t address, const record_field *fields, size_t count,
+static bool write_fields(qa_q3_abi_record *record, size_t address, const record_field *fields, size_t count,
                          size_t extent, const void *source, qa_error *error)
 {
     for (size_t n = 0; n < count; ++n) {
@@ -80,7 +102,7 @@ static bool write_fields(qa_qvm *vm, uint32_t address, const record_field *field
         for (size_t i = 0; i < fields[n].count; ++i) {
             uint32_t word;
             memcpy(&word,(const uint8_t *)source + fields[n].native + i * 4,4);
-            if (!store(vm,address + fields[n].source + (uint32_t)i * 4,word,error)) return false;
+            if (!store(record,address + fields[n].source + (uint32_t)i * 4,word,error)) return false;
         }
     }
     return true;
@@ -140,49 +162,49 @@ static bool entity_translate(qa_qvm_abi abi, qa_q3_entity *entity, bool to_sourc
     return qa_qvm_entity_tag(abi,entity->eType,to_source,&entity->eType,error)
         && qa_qvm_event_tag(abi,entity->event,to_source,&entity->event,error);
 }
-static bool read_entity_at(qa_qvm *vm, uint32_t address, bool source_tags, qa_q3_entity *out, qa_error *error)
+static bool read_entity_at(qa_q3_abi_record *record, size_t address, bool source_tags, qa_q3_entity *out, qa_error *error)
 {
     qa_q3_entity value = {0};
-    read_fields(vm,address,entity_fields,COUNT(entity_fields),qa_qvm_entity_bytes(vm->options.abi),&value);
-    if (!source_tags && !entity_translate(vm->options.abi,&value,false,error)) return false;
+    read_fields(record,address,entity_fields,COUNT(entity_fields),qa_qvm_entity_bytes(record->abi),&value);
+    if (!source_tags && !entity_translate(record->abi,&value,false,error)) return false;
     *out = value;
     return true;
 }
-static bool write_entity_at(qa_qvm *vm, uint32_t address, bool source_tags, const qa_q3_entity *source, qa_error *error)
+static bool write_entity_at(qa_q3_abi_record *record, size_t address, bool source_tags, const qa_q3_entity *source, qa_error *error)
 {
     qa_q3_entity value = *source;
-    if (vm->options.abi != QA_QVM_Q3_MODERN && value.generic1 != 0)
+    if (record->abi != QA_QVM_Q3_MODERN && value.generic1 != 0)
         return qa_qvm_error(error,QA_ERROR_UNSUPPORTED,address,"legacy QVM entity has no generic1 field");
-    if (!source_tags && !entity_translate(vm->options.abi,&value,true,error)) return false;
-    return write_fields(vm,address,entity_fields,COUNT(entity_fields),qa_qvm_entity_bytes(vm->options.abi),&value,error);
+    if (!source_tags && !entity_translate(record->abi,&value,true,error)) return false;
+    return write_fields(record,address,entity_fields,COUNT(entity_fields),qa_qvm_entity_bytes(record->abi),&value,error);
 }
-bool qa_qvm_read_entity(qa_qvm *vm, int32_t pointer, bool source_tags, qa_q3_entity *out, qa_error *error)
+bool qa_q3_abi_read_entity(qa_q3_abi_record *record, size_t pointer, bool source_tags, qa_q3_entity *out, qa_error *error)
 {
-    uint32_t address;
-    if (out == NULL || !qa_qvm_live(vm,error)) return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"invalid QVM entity read");
-    return offset(vm,pointer,qa_qvm_entity_bytes(vm->options.abi),&address,error) && read_entity_at(vm,address,source_tags,out,error);
+    size_t address;
+    if (out == NULL || !record_live(record,error)) return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"invalid QVM entity read");
+    return offset(record,pointer,qa_qvm_entity_bytes(record->abi),&address,error) && read_entity_at(record,address,source_tags,out,error);
 }
-bool qa_qvm_write_entity(qa_qvm *vm, int32_t pointer, bool source_tags, const qa_q3_entity *source, qa_error *error)
+bool qa_q3_abi_write_entity(qa_q3_abi_record *record, size_t pointer, bool source_tags, const qa_q3_entity *source, qa_error *error)
 {
-    uint32_t address;
-    if (source == NULL || !qa_qvm_live(vm,error)) return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"invalid QVM entity write");
-    return offset(vm,pointer,qa_qvm_entity_bytes(vm->options.abi),&address,error) && write_entity_at(vm,address,source_tags,source,error);
+    size_t address;
+    if (source == NULL || !record_live(record,error)) return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"invalid QVM entity write");
+    return offset(record,pointer,qa_qvm_entity_bytes(record->abi),&address,error) && write_entity_at(record,address,source_tags,source,error);
 }
 
-bool qa_qvm_read_player(qa_qvm *vm, int32_t pointer, bool source_tags, qa_q3_player *out, qa_error *error)
+bool qa_q3_abi_read_player(qa_q3_abi_record *record, size_t pointer, bool source_tags, qa_q3_player *out, qa_error *error)
 {
-    uint32_t address;
-    if (out == NULL || !qa_qvm_live(vm,error)) return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"invalid QVM player read");
-    if (!offset(vm,pointer,qa_qvm_player_bytes(vm->options.abi),&address,error)) return false;
+    size_t address;
+    if (out == NULL || !record_live(record,error)) return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"invalid QVM player read");
+    if (!offset(record,pointer,qa_qvm_player_bytes(record->abi),&address,error)) return false;
     qa_q3_player value = {0};
-    read_fields(vm,address,player_fields,COUNT(player_fields),vm->options.abi == QA_QVM_Q3_MODERN ? 468 : 440,&value);
-    if (vm->options.abi != QA_QVM_Q3_MODERN) value.ping = qa_load_i32le(vm->data + address + 440);
+    read_fields(record,address,player_fields,COUNT(player_fields),record->abi == QA_QVM_Q3_MODERN ? 468 : 440,&value);
+    if (record->abi != QA_QVM_Q3_MODERN) value.ping = qa_load_i32le(record->bytes.data + address + 440);
     if (!source_tags) {
-        if (!powerups(vm->options.abi,value.powerups,error)
-            || !qa_qvm_event_tag(vm->options.abi,value.events[0],false,&value.events[0],error)
-            || !qa_qvm_event_tag(vm->options.abi,value.events[1],false,&value.events[1],error)
-            || !qa_qvm_event_tag(vm->options.abi,value.externalEvent,false,&value.externalEvent,error)) return false;
-        if (vm->options.abi != QA_QVM_Q3_MODERN) {
+        if (!powerups(record->abi,value.powerups,error)
+            || !qa_qvm_event_tag(record->abi,value.events[0],false,&value.events[0],error)
+            || !qa_qvm_event_tag(record->abi,value.events[1],false,&value.events[1],error)
+            || !qa_qvm_event_tag(record->abi,value.externalEvent,false,&value.externalEvent,error)) return false;
+        if (record->abi != QA_QVM_Q3_MODERN) {
             int32_t source[16]; memcpy(source,value.persistant,sizeof(source)); memset(value.persistant,0,sizeof(value.persistant));
             const size_t same[] = {0,1,2,3,4,8,9,10};
             for (size_t i = 0; i < COUNT(same); ++i) value.persistant[same[i]] = source[same[i]];
@@ -192,38 +214,38 @@ bool qa_qvm_read_player(qa_qvm *vm, int32_t pointer, bool source_tags, qa_q3_pla
     *out = value;
     return true;
 }
-static bool write_player_at(qa_qvm *vm, uint32_t address, bool source_tags, bool preserve_private, const qa_q3_player *source, qa_error *error)
+static bool write_player_at(qa_q3_abi_record *record, size_t address, bool source_tags, bool preserve_private, const qa_q3_player *source, qa_error *error)
 {
     qa_q3_player value = *source;
     if (!source_tags) {
-        if (!powerups(vm->options.abi,value.powerups,error)
-            || !qa_qvm_event_tag(vm->options.abi,value.events[0],true,&value.events[0],error)
-            || !qa_qvm_event_tag(vm->options.abi,value.events[1],true,&value.events[1],error)
-            || !qa_qvm_event_tag(vm->options.abi,value.externalEvent,true,&value.externalEvent,error)) return false;
-        if (vm->options.abi != QA_QVM_Q3_MODERN) {
-            for (size_t i = 0; i < 16; ++i) value.persistant[i] = preserve_private ? qa_load_i32le(vm->data + address + 248 + i * 4) : 0;
+        if (!powerups(record->abi,value.powerups,error)
+            || !qa_qvm_event_tag(record->abi,value.events[0],true,&value.events[0],error)
+            || !qa_qvm_event_tag(record->abi,value.events[1],true,&value.events[1],error)
+            || !qa_qvm_event_tag(record->abi,value.externalEvent,true,&value.externalEvent,error)) return false;
+        if (record->abi != QA_QVM_Q3_MODERN) {
+            for (size_t i = 0; i < 16; ++i) value.persistant[i] = preserve_private ? qa_load_i32le(record->bytes.data + address + 248 + i * 4) : 0;
             const size_t same[] = {0,1,2,3,4,8,9,10};
             for (size_t i = 0; i < COUNT(same); ++i) value.persistant[same[i]] = source->persistant[same[i]];
             value.persistant[7] = source->persistant[6]; value.persistant[11] = source->persistant[13];
         }
     }
-    if (!write_fields(vm,address,player_fields,COUNT(player_fields),vm->options.abi == QA_QVM_Q3_MODERN ? 468 : 440,&value,error)) return false;
-    return vm->options.abi == QA_QVM_Q3_MODERN || store(vm,address + 440,(uint32_t)value.ping,error);
+    if (!write_fields(record,address,player_fields,COUNT(player_fields),record->abi == QA_QVM_Q3_MODERN ? 468 : 440,&value,error)) return false;
+    return record->abi == QA_QVM_Q3_MODERN || store(record,address + 440,(uint32_t)value.ping,error);
 }
-bool qa_qvm_write_player(qa_qvm *vm, int32_t pointer, bool source_tags, bool preserve_private, const qa_q3_player *source, qa_error *error)
+bool qa_q3_abi_write_player(qa_q3_abi_record *record, size_t pointer, bool source_tags, bool preserve_private, const qa_q3_player *source, qa_error *error)
 {
-    uint32_t address;
-    if (source == NULL || !qa_qvm_live(vm,error)) return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"invalid QVM player write");
-    return offset(vm,pointer,qa_qvm_player_bytes(vm->options.abi),&address,error) && write_player_at(vm,address,source_tags,preserve_private,source,error);
+    size_t address;
+    if (source == NULL || !record_live(record,error)) return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"invalid QVM player write");
+    return offset(record,pointer,qa_qvm_player_bytes(record->abi),&address,error) && write_player_at(record,address,source_tags,preserve_private,source,error);
 }
 
-bool qa_qvm_read_usercmd(qa_qvm *vm, int32_t pointer, qa_q3_usercmd *out, qa_error *error)
+bool qa_q3_abi_read_usercmd(qa_q3_abi_record *record, size_t pointer, qa_q3_usercmd *out, qa_error *error)
 {
-    uint32_t address;
+    size_t address;
     if (out == NULL) return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"missing QVM user command output");
-    if (!offset(vm,pointer,24,&address,error)) return false;
-    bool modern = vm->options.abi == QA_QVM_Q3_MODERN;
-    const uint8_t *bytes = vm->data + address;
+    if (!offset(record,pointer,24,&address,error)) return false;
+    bool modern = record->abi == QA_QVM_Q3_MODERN;
+    const uint8_t *bytes = record->bytes.data + address;
     qa_q3_usercmd value = {0};
     value.serverTime = qa_load_i32le(bytes);
     for (size_t i = 0; i < 3; ++i) value.angles[i] = qa_load_i32le(bytes + (modern ? 4 : 8) + i * 4);
@@ -235,92 +257,92 @@ bool qa_qvm_read_usercmd(qa_qvm *vm, int32_t pointer, qa_q3_usercmd *out, qa_err
     *out = value;
     return true;
 }
-bool qa_qvm_write_usercmd(qa_qvm *vm, int32_t pointer, bool preserve_private, const qa_q3_usercmd *value, qa_error *error)
+bool qa_q3_abi_write_usercmd(qa_q3_abi_record *record, size_t pointer, bool preserve_private, const qa_q3_usercmd *value, qa_error *error)
 {
-    uint32_t address;
+    size_t address;
     if (value == NULL) return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"missing QVM user command");
-    if (!offset(vm,pointer,24,&address,error)) return false;
-    bool modern = vm->options.abi == QA_QVM_Q3_MODERN;
-    if (!store(vm,address,(uint32_t)value->serverTime,error)) return false;
-    if (modern) { if (!store(vm,address + 16,(uint32_t)value->buttons,error)) return false; }
+    if (!offset(record,pointer,24,&address,error)) return false;
+    bool modern = record->abi == QA_QVM_Q3_MODERN;
+    if (!store(record,address,(uint32_t)value->serverTime,error)) return false;
+    if (modern) { if (!store(record,address + 16,(uint32_t)value->buttons,error)) return false; }
     else {
-        uint8_t buttons = (uint8_t)((preserve_private ? vm->data[address + 4] & 96 : 0) | (value->buttons & 31) | ((value->buttons & 2048) != 0 ? 128 : 0));
-        if (!qa_qvm_write(vm,address + 4,(qa_bytes){&buttons,1},error)) return false;
+        uint8_t buttons = (uint8_t)((preserve_private ? record->bytes.data[address + 4] & 96 : 0) | (value->buttons & 31) | ((value->buttons & 2048) != 0 ? 128 : 0));
+        if (!record_write(record,address + 4,(qa_bytes){&buttons,1},error)) return false;
     }
-    for (uint32_t i = 0; i < 3; ++i) if (!store(vm,address + (modern ? 4u : 8u) + i * 4,(uint32_t)value->angles[i],error)) return false;
-    if (!qa_qvm_write(vm,address + (modern ? 20u : 5u),(qa_bytes){&value->weapon,1},error)) return false;
-    uint32_t movement = address + (modern ? 21u : 20u);
-    return qa_qvm_write(vm,movement,(qa_bytes){(const uint8_t *)&value->forwardmove,1},error)
-        && qa_qvm_write(vm,movement + 1,(qa_bytes){(const uint8_t *)&value->rightmove,1},error)
-        && qa_qvm_write(vm,movement + 2,(qa_bytes){(const uint8_t *)&value->upmove,1},error);
+    for (uint32_t i = 0; i < 3; ++i) if (!store(record,address + (modern ? 4u : 8u) + i * 4,(uint32_t)value->angles[i],error)) return false;
+    if (!record_write(record,address + (modern ? 20u : 5u),(qa_bytes){&value->weapon,1},error)) return false;
+    size_t movement = address + (modern ? 21u : 20u);
+    return record_write(record,movement,(qa_bytes){(const uint8_t *)&value->forwardmove,1},error)
+        && record_write(record,movement + 1,(qa_bytes){(const uint8_t *)&value->rightmove,1},error)
+        && record_write(record,movement + 2,(qa_bytes){(const uint8_t *)&value->upmove,1},error);
 }
 
-bool qa_qvm_write_gamestate(qa_qvm *vm, int32_t pointer, bool source_tags, const qa_q3_gamestate *state, qa_error *error)
+bool qa_q3_abi_write_gamestate(qa_q3_abi_record *record, size_t pointer, bool source_tags, const qa_q3_gamestate *state, qa_error *error)
 {
-    uint32_t address;
+    size_t address;
     if (state == NULL || state->string_bytes > QA_Q3_GAMESTATE_CHARS)
         return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"invalid QVM game state");
-    if (!offset(vm,pointer,20100,&address,error)) return false;
+    if (!offset(record,pointer,20100,&address,error)) return false;
     for (uint32_t i = 0; i < 1024; ++i) {
         int32_t source = (int32_t)i;
         uint32_t value = 0;
-        if (!source_tags && vm->options.abi != QA_QVM_Q3_MODERN && i >= 16 && i <= 26) source = -1;
-        else if (!source_tags && !qa_qvm_configstring_tag(vm->options.abi,(int32_t)i,&source,error)) return false;
+        if (!source_tags && record->abi != QA_QVM_Q3_MODERN && i >= 16 && i <= 26) source = -1;
+        else if (!source_tags && !qa_qvm_configstring_tag(record->abi,(int32_t)i,&source,error)) return false;
         if (source >= 0) value = state->config_offsets[(uint32_t)source];
-        if (!store(vm,address + i * 4,value,error)) return false;
+        if (!store(record,address + i * 4,value,error)) return false;
     }
-    return qa_qvm_write(vm,address + 4096,(qa_bytes){(const uint8_t *)state->strings,16000},error)
-        && store(vm,address + 20096,(uint32_t)state->string_bytes,error);
+    return record_write(record,address + 4096,(qa_bytes){(const uint8_t *)state->strings,16000},error)
+        && store(record,address + 20096,(uint32_t)state->string_bytes,error);
 }
 
-bool qa_qvm_write_snapshot(qa_qvm *vm, int32_t pointer, bool source_tags, const qa_q3_snapshot *snapshot, int32_t ping, qa_error *error)
+bool qa_q3_abi_write_snapshot(qa_q3_abi_record *record, size_t pointer, bool source_tags, const qa_q3_snapshot *snapshot, int32_t ping, qa_error *error)
 {
-    uint32_t address;
+    size_t address;
     if (snapshot == NULL || snapshot->entity_count > 256 || (snapshot->entity_count > 0 && snapshot->entities == NULL) || snapshot->area_bytes > 32)
         return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"invalid QVM snapshot");
-    if (!qa_qvm_live(vm,error) || !offset(vm,pointer,qa_qvm_snapshot_bytes(vm->options.abi),&address,error)) return false;
-    uint32_t ps_bytes = (uint32_t)qa_qvm_player_bytes(vm->options.abi), entity_bytes = (uint32_t)qa_qvm_entity_bytes(vm->options.abi);
-    if (!store(vm,address,snapshot->flags,error) || !store(vm,address + 4,(uint32_t)ping,error)
-        || !store(vm,address + 8,(uint32_t)snapshot->server_time,error)
-        || !qa_qvm_write(vm,address + 12,(qa_bytes){snapshot->area_mask,32},error)
-        || !write_player_at(vm,address + 44,source_tags,false,&snapshot->player,error)
-        || !store(vm,address + 44 + ps_bytes,(uint32_t)snapshot->entity_count,error)) return false;
+    if (!record_live(record,error) || !offset(record,pointer,qa_qvm_snapshot_bytes(record->abi),&address,error)) return false;
+    uint32_t ps_bytes = (uint32_t)qa_qvm_player_bytes(record->abi), entity_bytes = (uint32_t)qa_qvm_entity_bytes(record->abi);
+    if (!store(record,address,snapshot->flags,error) || !store(record,address + 4,(uint32_t)ping,error)
+        || !store(record,address + 8,(uint32_t)snapshot->server_time,error)
+        || !record_write(record,address + 12,(qa_bytes){snapshot->area_mask,32},error)
+        || !write_player_at(record,address + 44,source_tags,false,&snapshot->player,error)
+        || !store(record,address + 44 + ps_bytes,(uint32_t)snapshot->entity_count,error)) return false;
     for (size_t i = 0; i < snapshot->entity_count; ++i)
-        if (!write_entity_at(vm,address + 48 + ps_bytes + (uint32_t)i * entity_bytes,source_tags,&snapshot->entities[i],error)) return false;
-    return store(vm,address + (uint32_t)qa_qvm_snapshot_bytes(vm->options.abi) - 4,(uint32_t)snapshot->server_command_number,error);
+        if (!write_entity_at(record,address + 48 + ps_bytes + (uint32_t)i * entity_bytes,source_tags,&snapshot->entities[i],error)) return false;
+    return store(record,address + (uint32_t)qa_qvm_snapshot_bytes(record->abi) - 4,(uint32_t)snapshot->server_command_number,error);
 }
 
-bool qa_qvm_write_trace(qa_qvm *vm, int32_t pointer, const qa_trace_result *trace, int32_t entity_number, qa_error *error)
+bool qa_q3_abi_write_trace(qa_q3_abi_record *record, size_t pointer, const qa_trace_result *trace, int32_t entity_number, qa_error *error)
 {
-    uint32_t address;
+    size_t address;
     if (trace == NULL) return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"missing QVM trace");
-    if (!offset(vm,pointer,56,&address,error)) return false;
-    if (!store(vm,address,trace->all_solid ? 1u : 0u,error) || !store(vm,address + 4,trace->start_solid ? 1u : 0u,error)
-        || !store_float(vm,address + 8,trace->fraction,error) || !store_vector(vm,address + 12,trace->end,error)
-        || !store_vector(vm,address + 24,trace->plane.normal,error) || !store_float(vm,address + 36,trace->plane.distance,error)) return false;
+    if (!offset(record,pointer,56,&address,error)) return false;
+    if (!store(record,address,trace->all_solid ? 1u : 0u,error) || !store(record,address + 4,trace->start_solid ? 1u : 0u,error)
+        || !store_float(record,address + 8,trace->fraction,error) || !store_vector(record,address + 12,trace->end,error)
+        || !store_vector(record,address + 24,trace->plane.normal,error) || !store_float(record,address + 36,trace->plane.distance,error)) return false;
     uint8_t type = (uint8_t)trace->plane.type, zero[2] = {0,0};
-    return qa_qvm_write(vm,address + 40,(qa_bytes){&type,1},error)
-        && qa_qvm_write(vm,address + 41,(qa_bytes){&trace->plane.signbits,1},error)
-        && qa_qvm_write(vm,address + 42,(qa_bytes){zero,2},error)
-        && store(vm,address + 44,(uint32_t)trace->surface_flags,error)
-        && store(vm,address + 48,(uint32_t)trace->contents,error)
-        && store(vm,address + 52,(uint32_t)entity_number,error);
+    return record_write(record,address + 40,(qa_bytes){&type,1},error)
+        && record_write(record,address + 41,(qa_bytes){&trace->plane.signbits,1},error)
+        && record_write(record,address + 42,(qa_bytes){zero,2},error)
+        && store(record,address + 44,(uint32_t)trace->surface_flags,error)
+        && store(record,address + 48,(uint32_t)trace->contents,error)
+        && store(record,address + 52,(uint32_t)entity_number,error);
 }
 
-static uint32_t shared_offset(const qa_qvm *vm, uint32_t modern)
+static uint32_t shared_offset(const qa_q3_abi_record *record, uint32_t modern)
 {
-    return vm->options.abi == QA_QVM_Q3_MODERN ? modern : modern < 428 ? modern - 8 : modern - 12;
+    return record->abi == QA_QVM_Q3_MODERN ? modern : modern < 428 ? modern - 8 : modern - 12;
 }
-bool qa_qvm_read_shared_entity(qa_qvm *vm, int32_t pointer, qa_qvm_entity_shared *out, qa_error *error)
+bool qa_q3_abi_read_shared_entity(qa_q3_abi_record *record, size_t pointer, qa_qvm_entity_shared *out, qa_error *error)
 {
-    uint32_t address;
-    if (out == NULL || !qa_qvm_live(vm,error)) return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"invalid QVM shared entity read");
-    if (!offset(vm,pointer,qa_qvm_shared_entity_bytes(vm->options.abi),&address,error)) return false;
+    size_t address;
+    if (out == NULL || !record_live(record,error)) return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"invalid QVM shared entity read");
+    if (!offset(record,pointer,qa_qvm_shared_entity_bytes(record->abi),&address,error)) return false;
     qa_qvm_entity_shared value = {0};
-#define I(at) qa_load_i32le(vm->data + address + shared_offset(vm,at))
-#define V(at) read_vector(vm,address + shared_offset(vm,at))
+#define I(at) qa_load_i32le(record->bytes.data + address + shared_offset(record,at))
+#define V(at) read_vector(record,address + shared_offset(record,at))
     value.linked = I(416) != 0; value.linkcount = I(420); value.server_flags = I(424);
-    value.single_client = vm->options.abi == QA_QVM_Q3_MODERN ? I(428) : 0;
+    value.single_client = record->abi == QA_QVM_Q3_MODERN ? I(428) : 0;
     value.inline_model = I(432) != 0;
     value.local_bounds = (qa_bounds){V(436),V(448)}; value.contents = I(460);
     value.absolute_bounds = (qa_bounds){V(464),V(476)};
@@ -330,20 +352,134 @@ bool qa_qvm_read_shared_entity(qa_qvm *vm, int32_t pointer, qa_qvm_entity_shared
     *out = value;
     return true;
 }
-bool qa_qvm_write_shared_entity(qa_qvm *vm, int32_t pointer, const qa_qvm_entity_shared *source, qa_error *error)
+bool qa_q3_abi_write_shared_entity(qa_q3_abi_record *record, size_t pointer, const qa_qvm_entity_shared *source, qa_error *error)
 {
-    uint32_t address;
-    if (source == NULL || !qa_qvm_live(vm,error)) return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"invalid QVM shared entity write");
-    if (!offset(vm,pointer,qa_qvm_shared_entity_bytes(vm->options.abi),&address,error)) return false;
-    if (vm->options.abi != QA_QVM_Q3_MODERN && source->single_client != 0)
+    size_t address;
+    if (source == NULL || !record_live(record,error)) return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"invalid QVM shared entity write");
+    if (!offset(record,pointer,qa_qvm_shared_entity_bytes(record->abi),&address,error)) return false;
+    if (record->abi != QA_QVM_Q3_MODERN && source->single_client != 0)
         return qa_qvm_error(error,QA_ERROR_UNSUPPORTED,address,"legacy QVM entity has no singleClient field");
-#define I(at,value) store(vm,address + shared_offset(vm,at),(uint32_t)(value),error)
-#define V(at,value) store_vector(vm,address + shared_offset(vm,at),value,error)
+#define I(at,value) store(record,address + shared_offset(record,at),(uint32_t)(value),error)
+#define V(at,value) store_vector(record,address + shared_offset(record,at),value,error)
     return I(416,source->linked ? 1 : 0) && I(420,source->linkcount) && I(424,source->server_flags)
-        && (vm->options.abi != QA_QVM_Q3_MODERN || I(428,source->single_client)) && I(432,source->inline_model ? 1 : 0)
+        && (record->abi != QA_QVM_Q3_MODERN || I(428,source->single_client)) && I(432,source->inline_model ? 1 : 0)
         && V(436,source->local_bounds.mins) && V(448,source->local_bounds.maxs) && I(460,source->contents)
         && V(464,source->absolute_bounds.mins) && V(476,source->absolute_bounds.maxs)
         && V(488,source->origin) && V(500,source->angles) && I(512,source->owner_number);
 #undef I
 #undef V
+}
+
+static bool qvm_record_write(void *context, size_t address, qa_bytes bytes, qa_error *error)
+{
+    if (address > UINT32_MAX)
+        return qa_qvm_error(error, QA_ERROR_ARGUMENT, address,
+                            "QVM source record address exceeds its word width");
+    return qa_qvm_write(context, (uint32_t)address, bytes, error);
+}
+
+static bool qvm_record(qa_qvm *vm, int32_t pointer, size_t size,
+                       qa_q3_abi_record *record, size_t *address, qa_error *error)
+{
+    qa_bytes admitted;
+    if (!qa_qvm_span(vm, pointer, 0, size, &admitted, error)) return false;
+    *address = (size_t)(admitted.data - vm->data);
+    *record = (qa_q3_abi_record){.abi = vm->options.abi,
+                                .bytes = {vm->data, vm->data_size},
+                                .context = vm, .write = qvm_record_write};
+    return true;
+}
+
+bool qa_qvm_read_entity(qa_qvm *vm, int32_t pointer, bool source_tags,
+                         qa_q3_entity *out, qa_error *error)
+{
+    qa_q3_abi_record record; size_t address;
+    return qvm_record(vm, pointer, qa_qvm_entity_bytes(qa_qvm_get_abi(vm)),
+                       &record, &address, error) &&
+           qa_q3_abi_read_entity(&record, address, source_tags, out, error);
+}
+
+bool qa_qvm_write_entity(qa_qvm *vm, int32_t pointer, bool source_tags,
+                          const qa_q3_entity *value, qa_error *error)
+{
+    qa_q3_abi_record record; size_t address;
+    return qvm_record(vm, pointer, qa_qvm_entity_bytes(qa_qvm_get_abi(vm)),
+                       &record, &address, error) &&
+           qa_q3_abi_write_entity(&record, address, source_tags, value, error);
+}
+
+bool qa_qvm_read_player(qa_qvm *vm, int32_t pointer, bool source_tags,
+                         qa_q3_player *out, qa_error *error)
+{
+    qa_q3_abi_record record; size_t address;
+    return qvm_record(vm, pointer, qa_qvm_player_bytes(qa_qvm_get_abi(vm)),
+                       &record, &address, error) &&
+           qa_q3_abi_read_player(&record, address, source_tags, out, error);
+}
+
+bool qa_qvm_write_player(qa_qvm *vm, int32_t pointer, bool source_tags,
+                          bool preserve_private, const qa_q3_player *value, qa_error *error)
+{
+    qa_q3_abi_record record; size_t address;
+    return qvm_record(vm, pointer, qa_qvm_player_bytes(qa_qvm_get_abi(vm)),
+                       &record, &address, error) &&
+           qa_q3_abi_write_player(&record, address, source_tags, preserve_private, value, error);
+}
+
+bool qa_qvm_read_usercmd(qa_qvm *vm, int32_t pointer, qa_q3_usercmd *out, qa_error *error)
+{
+    qa_q3_abi_record record; size_t address;
+    return qvm_record(vm, pointer, 24, &record, &address, error) &&
+           qa_q3_abi_read_usercmd(&record, address, out, error);
+}
+
+bool qa_qvm_write_usercmd(qa_qvm *vm, int32_t pointer, bool preserve_private,
+                           const qa_q3_usercmd *value, qa_error *error)
+{
+    qa_q3_abi_record record; size_t address;
+    return qvm_record(vm, pointer, 24, &record, &address, error) &&
+           qa_q3_abi_write_usercmd(&record, address, preserve_private, value, error);
+}
+
+bool qa_qvm_write_gamestate(qa_qvm *vm, int32_t pointer, bool source_tags,
+                             const qa_q3_gamestate *value, qa_error *error)
+{
+    qa_q3_abi_record record; size_t address;
+    return qvm_record(vm, pointer, 20100, &record, &address, error) &&
+           qa_q3_abi_write_gamestate(&record, address, source_tags, value, error);
+}
+
+bool qa_qvm_write_snapshot(qa_qvm *vm, int32_t pointer, bool source_tags,
+                            const qa_q3_snapshot *value, int32_t ping, qa_error *error)
+{
+    qa_q3_abi_record record; size_t address;
+    return qvm_record(vm, pointer, qa_qvm_snapshot_bytes(qa_qvm_get_abi(vm)),
+                       &record, &address, error) &&
+           qa_q3_abi_write_snapshot(&record, address, source_tags, value, ping, error);
+}
+
+bool qa_qvm_write_trace(qa_qvm *vm, int32_t pointer, const qa_trace_result *value,
+                         int32_t entity_number, qa_error *error)
+{
+    qa_q3_abi_record record; size_t address;
+    return qvm_record(vm, pointer, 56, &record, &address, error) &&
+           qa_q3_abi_write_trace(&record, address, value, entity_number, error);
+}
+
+bool qa_qvm_read_shared_entity(qa_qvm *vm, int32_t pointer,
+                                qa_qvm_entity_shared *out, qa_error *error)
+{
+    qa_q3_abi_record record; size_t address;
+    return qvm_record(vm, pointer, qa_qvm_shared_entity_bytes(qa_qvm_get_abi(vm)),
+                       &record, &address, error) &&
+           qa_q3_abi_read_shared_entity(&record, address, out, error);
+}
+
+bool qa_qvm_write_shared_entity(qa_qvm *vm, int32_t pointer,
+                                 const qa_qvm_entity_shared *value, qa_error *error)
+{
+    qa_q3_abi_record record; size_t address;
+    return qvm_record(vm, pointer, qa_qvm_shared_entity_bytes(qa_qvm_get_abi(vm)),
+                       &record, &address, error) &&
+           qa_q3_abi_write_shared_entity(&record, address, value, error);
 }

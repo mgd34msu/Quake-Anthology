@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/math.h"
+#include "qa/q3_abi.h"
 
 #include <limits.h>
 #include <math.h>
@@ -17,59 +18,51 @@ static float word_float(int32_t value)
     memcpy(&word,&value,sizeof(word));
     return word;
 }
-static bool argument(const qa_qvm_call *call, size_t index, int32_t *out, qa_error *error)
-{
-    return qa_qvm_call_argument(call,index,out,error);
-}
-static bool span(qa_qvm *vm, int32_t pointer, size_t length, uint32_t *out, qa_error *error)
-{
-    qa_bytes bytes;
-    if (!qa_qvm_span(vm,pointer,0,length,&bytes,error)) return false;
-    *out = (uint32_t)(bytes.data - vm->data);
-    return true;
-}
-static bool write_float(qa_qvm *vm, uint32_t offset, float value, qa_error *error)
+static bool write_float(const qa_q3_abi_memory *memory, uint64_t offset, float value, qa_error *error)
 {
     uint8_t bytes[4];
     qa_store_u32le(bytes,(uint32_t)float_word(value));
-    return qa_qvm_write(vm,offset,(qa_bytes){bytes,4},error);
+    return memory->write(memory->context,offset,(qa_bytes){bytes,4},error);
 }
-static qa_vec3 vector(const qa_qvm *vm, uint32_t offset)
+static bool vector(const qa_q3_abi_memory *memory, uint64_t offset, qa_vec3 *out, qa_error *error)
 {
-    return qa_v3(qa_load_f32le(vm->data + offset),qa_load_f32le(vm->data + offset + 4),qa_load_f32le(vm->data + offset + 8));
+    uint8_t bytes[12];
+    if (!memory->read(memory->context,offset,bytes,sizeof(bytes),error)) return false;
+    *out = qa_v3(qa_load_f32le(bytes),qa_load_f32le(bytes + 4),qa_load_f32le(bytes + 8));
+    return true;
 }
-static bool write_vector(qa_qvm *vm, uint32_t offset, qa_vec3 value, qa_error *error)
+static bool write_vector(const qa_q3_abi_memory *memory, uint64_t offset, qa_vec3 value, qa_error *error)
 {
-    return write_float(vm,offset,value.x,error) && write_float(vm,offset + 4,value.y,error) && write_float(vm,offset + 8,value.z,error);
+    return write_float(memory,offset,value.x,error) && write_float(memory,offset + 4,value.y,error) && write_float(memory,offset + 8,value.z,error);
 }
-static bool no_overlap(uint32_t a, size_t na, uint32_t b, size_t nb, qa_error *error)
+static bool no_overlap(uint64_t a, size_t na, uint64_t b, size_t nb, qa_error *error)
 {
-    return na == 0 || nb == 0 || (uint64_t)a + na <= b || (uint64_t)b + nb <= a
-        || qa_qvm_error(error,QA_ERROR_ARGUMENT,a,"overlapping QVM memcpy/strncpy ranges");
+    return na == 0 || nb == 0 || (a <= b ? na <= b - a : nb <= a - b)
+        || qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"overlapping Q3 memcpy/strncpy ranges");
 }
 
-static bool memory_call(qa_qvm *vm, const qa_qvm_call *call, int32_t trap, int32_t *result, qa_error *error)
+static bool memory_call(const qa_q3_abi_memory *memory, const uint64_t *words,
+                          int32_t trap, uint64_t *result, qa_error *error)
 {
-    int32_t destination_word, source_word, count;
-    uint32_t destination, source;
-    if (!argument(call,0,&destination_word,error) || !argument(call,1,&source_word,error) || !argument(call,2,&count,error)) return false;
+    int32_t count; uint32_t bits = (uint32_t)words[2];
+    memcpy(&count,&bits,sizeof(count));
+    uint64_t destination, source;
     if (count < 0) return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"negative QVM memory operation length");
-    if (!span(vm,destination_word,(size_t)count,&destination,error)) return false;
+    if (!memory->span(memory->context,words[0],(size_t)count,&destination,error)) return false;
     *result = 0;
-    if (trap == 100) return qa_qvm_fill(vm,destination,(size_t)count,(uint8_t)source_word,error);
+    if (trap == 100) return memory->fill(memory->context,destination,(size_t)count,(uint8_t)words[1],error);
     if (trap == 101) {
-        if (!span(vm,source_word,(size_t)count,&source,error) || !no_overlap(destination,(size_t)count,source,(size_t)count,error)) return false;
-        return qa_qvm_copy(vm,destination,source,(size_t)count,error);
+        if (!memory->span(memory->context,words[1],(size_t)count,&source,error) || !no_overlap(destination,(size_t)count,source,(size_t)count,error)) return false;
+        return memory->copy(memory->context,destination,source,(size_t)count,error);
     }
-    if (!span(vm,source_word,0,&source,error)) return false;
-    size_t available = vm->data_size - source;
-    size_t inspected = available < (size_t)count ? available : (size_t)count;
-    const uint8_t *end = memchr(vm->data + source,0,inspected);
-    size_t copied = end == NULL ? (size_t)count : (size_t)(end - vm->data - source);
-    size_t consumed = copied + (end == NULL ? 0u : 1u);
-    if (!qa_qvm_raw_range(vm,source,consumed,error) || !no_overlap(destination,(size_t)count,source,consumed,error)) return false;
-    if (!qa_qvm_copy(vm,destination,source,copied,error) || !qa_qvm_fill(vm,destination + (uint32_t)copied,(size_t)count - copied,0,error)) return false;
-    *result = destination_word;
+    if (!memory->span(memory->context,words[1],0,&source,error)) return false;
+    size_t copied; bool terminated;
+    if (!memory->string_length(memory->context,source,(size_t)count,&copied,&terminated,error)) return false;
+    size_t consumed = copied + (terminated ? 1u : 0u);
+    if (!no_overlap(destination,(size_t)count,source,consumed,error)) return false;
+    if (!memory->copy(memory->context,destination,source,copied,error) ||
+        !memory->fill(memory->context,destination + copied,(size_t)count - copied,0,error)) return false;
+    *result = words[0];
     return true;
 }
 
@@ -83,36 +76,40 @@ static void angle_vectors(qa_vec3 angles, qa_vec3 *forward, qa_vec3 *right, qa_v
     *up = qa_v3((cr * sp) * cy + (-sr * -sy),(cr * sp) * sy + (-sr * cy),cr * cp);
 }
 
-static bool vector_call(qa_qvm *vm, const qa_qvm_call *call, int32_t trap, int32_t *result, qa_error *error)
+static bool vector_call(const qa_q3_abi_memory *memory, const uint64_t *words,
+                          int32_t trap, uint64_t *result, qa_error *error)
 {
-    int32_t words[4] = {0};
-    uint32_t offsets[4] = {0};
+    uint64_t offsets[4] = {0};
     size_t count = trap == 107 ? 3 : trap == 108 ? 4 : 2;
-    for (size_t i = 0; i < count; ++i) if (!argument(call,i,&words[i],error)) return false;
     for (size_t i = 0; i < count; ++i) {
         if (trap == 108 && i > 0 && words[i] == 0) continue;
-        if (!span(vm,words[i],trap == 107 ? 36u : 12u,&offsets[i],error)) return false;
+        if (!memory->span(memory->context,words[i],trap == 107 ? 36u : 12u,&offsets[i],error)) return false;
     }
     *result = 0;
     if (trap == 107) {
         for (uint32_t row = 0; row < 3; ++row) {
             for (uint32_t column = 0; column < 3; ++column) {
-                qa_vec3 a = vector(vm,offsets[0] + row * 12);
-                uint32_t at = offsets[1] + column * 4;
-                qa_vec3 b = qa_v3(qa_load_f32le(vm->data + at),qa_load_f32le(vm->data + at + 12),qa_load_f32le(vm->data + at + 24));
-                if (!write_float(vm,offsets[2] + row * 12 + column * 4,qa_vec_dot(a,b),error)) return false;
+                qa_vec3 a; uint8_t values[3][4];
+                uint64_t at = offsets[1] + column * 4;
+                if (!vector(memory,offsets[0] + row * 12,&a,error)) return false;
+                for (size_t k = 0; k < 3; ++k)
+                    if (!memory->read(memory->context,at + k * 12,values[k],4,error)) return false;
+                qa_vec3 b = qa_v3(qa_load_f32le(values[0]),qa_load_f32le(values[1]),qa_load_f32le(values[2]));
+                if (!write_float(memory,offsets[2] + row * 12 + column * 4,qa_vec_dot(a,b),error)) return false;
             }
         }
         return true;
     }
     if (trap == 108) {
-        qa_vec3 values[3];
-        angle_vectors(vector(vm,offsets[0]),&values[0],&values[1],&values[2]);
+        qa_vec3 values[3], angles;
+        if (!vector(memory,offsets[0],&angles,error)) return false;
+        angle_vectors(angles,&values[0],&values[1],&values[2]);
         for (size_t i = 1; i < 4; ++i)
-            if (words[i] != 0 && !write_vector(vm,offsets[i],values[i - 1],error)) return false;
+            if (words[i] != 0 && !write_vector(memory,offsets[i],values[i - 1],error)) return false;
         return true;
     }
-    qa_vec3 source = vector(vm,offsets[1]);
+    qa_vec3 source;
+    if (!vector(memory,offsets[1],&source,error)) return false;
     float denominator = qa_vec_dot(source,source);
     if (denominator == 0) return qa_qvm_error(error,QA_ERROR_ARGUMENT,offsets[1],"QVM perpendicular vector has a zero projection denominator");
     qa_vec3 axis = qa_v3(1,0,0);
@@ -124,7 +121,7 @@ static bool vector_call(qa_qvm *vm, const qa_qvm_call *call, int32_t trap, int32
     qa_vec3 projected = qa_vec_sub(axis,qa_vec_scale(qa_vec_scale(source,inverse),distance));
     float length = sqrtf(qa_vec_dot(projected,projected));
     if (length != 0) projected = qa_vec_scale(projected,1.0f / length);
-    return write_vector(vm,offsets[0],projected,error);
+    return write_vector(memory,offsets[0],projected,error);
 }
 
 static float snap(float value)
@@ -170,17 +167,50 @@ bool qa_qvm_classify_syscall(qa_qvm_role role, qa_qvm_abi abi, int32_t trap, int
     return true;
 }
 
-bool qa_qvm_dispatch(qa_qvm *vm, const qa_qvm_call *call, int32_t trap, int32_t *result, qa_error *error)
+bool qa_q3_abi_intrinsic_signature(qa_qvm_role role, qa_qvm_abi abi, int32_t trap,
+                                    size_t *count, uint32_t *pointers, bool *address_result)
 {
-    int32_t canonical;
-    bool engine;
-    if (!qa_qvm_classify_syscall(vm->options.role,vm->options.abi,trap,&canonical,&engine,error)) return false;
-    if (trap >= 100 && trap <= 102) return memory_call(vm,call,trap,result,error);
-    qa_qvm_role math_role = vm->options.abi == QA_QVM_Q3_116N && vm->options.role == QA_QVM_UI ? QA_QVM_GAME : vm->options.role;
+    if ((unsigned)role > QA_QVM_UI || (unsigned)abi > QA_QVM_Q3_116N ||
+        !count || !pointers || !address_result) return false;
+    *count = 0; *pointers = 0; *address_result = false;
+    if (trap >= 100 && trap <= 102) {
+        *count = 3; *pointers = trap == 100 ? 1u : 3u; *address_result = trap == 102;
+        return true;
+    }
+    qa_qvm_role math_role = abi == QA_QVM_Q3_116N && role == QA_QVM_UI ? QA_QVM_GAME : role;
     if ((trap >= 103 && trap <= 106) || ((trap == 107 || trap == 108) && math_role != QA_QVM_GAME)
         || (trap == 110 && math_role == QA_QVM_GAME) || (trap == 111 && math_role != QA_QVM_UI)) {
-        int32_t a, b = 0;
-        if (!argument(call,0,&a,error) || (trap == 105 && !argument(call,1,&b,error))) return false;
+        *count = trap == 105 ? 2u : 1u; return true;
+    }
+    if (role == QA_QVM_GAME && trap >= 107 && trap <= 109) {
+        *count = trap == 107 ? 3u : trap == 108 ? 4u : 2u;
+        *pointers = (1u << *count) - 1u; return true;
+    }
+    if ((role == QA_QVM_GAME && trap == 42) || (role == QA_QVM_CGAME && trap == 71)) {
+        *count = 1; *pointers = 1; return true;
+    }
+    return false;
+}
+
+bool qa_q3_abi_intrinsic(qa_qvm_role role, qa_qvm_abi abi, int32_t trap,
+                          const uint64_t *arguments, size_t argument_count,
+                          const qa_q3_abi_memory *memory, uint64_t *result, qa_error *error)
+{
+    size_t required; uint32_t pointers; bool address_result;
+    int32_t canonical; bool engine;
+    if (!qa_qvm_classify_syscall(role,abi,trap,&canonical,&engine,error)) return false;
+    if (!qa_q3_abi_intrinsic_signature(role,abi,trap,&required,&pointers,&address_result) ||
+        !arguments || argument_count != required || !result ||
+        (pointers && (!memory || !memory->span || !memory->read || !memory->write ||
+                      !memory->copy || !memory->fill || !memory->string_length)))
+        return qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"invalid Q3 intrinsic call");
+    (void)canonical; (void)engine; (void)address_result;
+    if (trap >= 100 && trap <= 102) return memory_call(memory,arguments,trap,result,error);
+    qa_qvm_role math_role = abi == QA_QVM_Q3_116N && role == QA_QVM_UI ? QA_QVM_GAME : role;
+    if (!pointers) {
+        uint32_t bits = (uint32_t)arguments[0]; int32_t a, b = 0;
+        memcpy(&a,&bits,sizeof(a));
+        if (required > 1) { bits = (uint32_t)arguments[1]; memcpy(&b,&bits,sizeof(b)); }
         float x = word_float(a), y = word_float(b), value = 0;
         switch (trap) {
         case 103: value = (float)sin(x); break;
@@ -195,19 +225,78 @@ bool qa_qvm_dispatch(qa_qvm *vm, const qa_qvm_call *call, int32_t trap, int32_t 
             break;
         default: break;
         }
-        *result = float_word(value);
+        *result = (uint32_t)float_word(value);
         return true;
     }
-    if (vm->options.role == QA_QVM_GAME && trap >= 107 && trap <= 109) return vector_call(vm,call,trap,result,error);
-    if ((vm->options.role == QA_QVM_GAME && trap == 42) || (vm->options.role == QA_QVM_CGAME && trap == 71)) {
-        int32_t pointer;
-        uint32_t offset;
-        if (!argument(call,0,&pointer,error) || !span(vm,pointer,12,&offset,error)) return false;
-        for (uint32_t i = 0; i < 12; i += 4)
-            if (!write_float(vm,offset + i,snap(qa_load_f32le(vm->data + offset + i)),error)) return false;
-        *result = 0;
-        return true;
+    if (role == QA_QVM_GAME && trap >= 107 && trap <= 109)
+        return vector_call(memory,arguments,trap,result,error);
+    uint64_t offset;
+    if (!memory->span(memory->context,arguments[0],12,&offset,error)) return false;
+    for (uint32_t i = 0; i < 12; i += 4) {
+        uint8_t bytes[4];
+        if (!memory->read(memory->context,offset + i,bytes,sizeof(bytes),error) ||
+            !write_float(memory,offset + i,snap(qa_load_f32le(bytes)),error)) return false;
     }
+    *result = 0;
+    return true;
+}
+
+static bool vm_span(void *context, uint64_t raw, size_t size, uint64_t *address, qa_error *error)
+{
+    qa_qvm *vm = context; qa_bytes bytes;
+    if (!qa_qvm_span(vm,(int32_t)(uint32_t)raw,0,size,&bytes,error)) return false;
+    *address = (uint64_t)(bytes.data - vm->data); return true;
+}
+static bool vm_read(void *context, uint64_t address, void *out, size_t size, qa_error *error)
+{
+    qa_qvm *vm = context;
+    if (address > UINT32_MAX || !qa_qvm_raw_range(vm,(uint32_t)address,size,error)) return false;
+    if (size) memcpy(out,vm->data + (size_t)address,size);
+    return true;
+}
+static bool vm_write(void *context, uint64_t address, qa_bytes bytes, qa_error *error)
+{
+    return address <= UINT32_MAX && qa_qvm_write(context,(uint32_t)address,bytes,error);
+}
+static bool vm_copy(void *context, uint64_t destination, uint64_t source, size_t size, qa_error *error)
+{
+    return destination <= UINT32_MAX && source <= UINT32_MAX &&
+           qa_qvm_copy(context,(uint32_t)destination,(uint32_t)source,size,error);
+}
+static bool vm_fill(void *context, uint64_t address, size_t size, uint8_t value, qa_error *error)
+{
+    return address <= UINT32_MAX && qa_qvm_fill(context,(uint32_t)address,size,value,error);
+}
+static bool vm_string_length(void *context, uint64_t address, size_t limit,
+                               size_t *length, bool *terminated, qa_error *error)
+{
+    qa_qvm *vm = context;
+    if (address > UINT32_MAX || !qa_qvm_raw_range(vm,(uint32_t)address,0,error)) return false;
+    size_t available = vm->data_size - (size_t)address;
+    size_t inspected = available < limit ? available : limit;
+    const uint8_t *start = vm->data + (size_t)address, *end = memchr(start,0,inspected);
+    *terminated = end != NULL;
+    *length = end ? (size_t)(end - start) : limit;
+    return qa_qvm_raw_range(vm,(uint32_t)address,*length + (*terminated ? 1u : 0u),error);
+}
+
+bool qa_qvm_dispatch(qa_qvm *vm, const qa_qvm_call *call, int32_t trap, int32_t *result, qa_error *error)
+{
+    size_t count; uint32_t pointers; bool address_result;
+    if (qa_q3_abi_intrinsic_signature(vm->options.role,vm->options.abi,trap,&count,&pointers,&address_result)) {
+        uint64_t arguments[4];
+        for (size_t i = 0; i < count; ++i) {
+            int32_t word;
+            if (!qa_qvm_call_argument(call,i,&word,error)) return false;
+            arguments[i] = (uint32_t)word;
+        }
+        qa_q3_abi_memory memory = {vm,vm_span,vm_read,vm_write,vm_copy,vm_fill,vm_string_length};
+        uint64_t value;
+        if (!qa_q3_abi_intrinsic(vm->options.role,vm->options.abi,trap,arguments,count,&memory,&value,error)) return false;
+        uint32_t word = (uint32_t)value; memcpy(result,&word,sizeof(word)); return true;
+    }
+    int32_t canonical; bool engine;
+    if (!qa_qvm_classify_syscall(vm->options.role,vm->options.abi,trap,&canonical,&engine,error)) return false;
     (void)canonical; (void)engine;
     if (vm->options.syscall != NULL) return vm->options.syscall(vm->options.context,call,trap,result,error);
     return qa_qvm_error(error,QA_ERROR_UNSUPPORTED,(size_t)(uint32_t)trap,"QVM engine syscall has no bound host");
