@@ -400,9 +400,15 @@ static bool publish_link(qa_world *world,qa_world_body *body,const qa_linked_bod
     return true;
 }
 
-bool qa_world_link(qa_world *world,qa_actor_id actor,const qa_vec3 *origin_override,qa_error *error)
+static bool link_body(qa_world *world,qa_actor_id actor,const qa_vec3 *origin_override,
+                       const qa_bounds *explicit_bounds,qa_error *error)
 {
     if(origin_override!=NULL && !qa_vec_finite(*origin_override)) return fail(error,QA_ERROR_ARGUMENT,"Invalid link origin");
+    qa_bounds bounds={0};
+    if(explicit_bounds!=NULL) {
+        bounds=*explicit_bounds;
+        if(!qa_collision_bounds_valid(bounds)) return fail(error,QA_ERROR_ARGUMENT,"Invalid explicit body bounds");
+    }
     qa_body_state state;
     if(!qa_world_body_read(world,actor,&state,error)) return false;
     if(origin_override!=NULL) state.origin=*origin_override;
@@ -410,8 +416,8 @@ bool qa_world_link(qa_world *world,qa_actor_id actor,const qa_vec3 *origin_overr
     if(body==NULL) return fail(error,QA_ERROR_NOT_FOUND,"Actor retired while linking");
     uint64_t serial=body->storage_serial;
     if(body->link_count==UINT64_MAX) return fail(error,QA_ERROR_ARGUMENT,"Body link count exhausted");
-    qa_bounds bounds=qa_bounds_translate(state.bounds,state.origin);
-    if(world->hooks.absolute_bounds!=NULL) {
+    if(explicit_bounds==NULL) bounds=qa_bounds_translate(state.bounds,state.origin);
+    if(explicit_bounds==NULL && world->hooks.absolute_bounds!=NULL) {
         ++world->callback_depth;
         bool ok=world->hooks.absolute_bounds(world->hooks.context,actor,&state,&bounds,error);
         --world->callback_depth;
@@ -424,6 +430,15 @@ bool qa_world_link(qa_world *world,qa_actor_id actor,const qa_vec3 *origin_overr
     if(body->link_count==UINT64_MAX) return fail(error,QA_ERROR_ARGUMENT,"Body link count exhausted");
     qa_linked_body linked={actor,state,bounds,body->link_count+1};
     return publish_link(world,body,&linked,error);
+}
+
+bool qa_world_link(qa_world *world,qa_actor_id actor,const qa_vec3 *origin_override,qa_error *error)
+{ return link_body(world,actor,origin_override,NULL,error); }
+
+bool qa_world_link_bounds(qa_world *world,qa_actor_id actor,const qa_bounds *bounds,qa_error *error)
+{
+    if(bounds==NULL) return fail(error,QA_ERROR_ARGUMENT,"Missing explicit body bounds");
+    return link_body(world,actor,NULL,bounds,error);
 }
 
 bool qa_world_unlink(qa_world *world,qa_actor_id actor,qa_error *error)

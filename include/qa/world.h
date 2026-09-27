@@ -93,6 +93,9 @@ bool qa_world_transport_attachments(qa_world *, qa_error *);
 /* An override affects this link snapshot only; movement precision remains in
  * the authoritative body. Link never dispatches trigger callbacks implicitly. */
 bool qa_world_link(qa_world *, qa_actor_id, const qa_vec3 *origin_override, qa_error *);
+/* Publish provider-computed broadphase bounds with current authoritative body,
+ * normal link count and notifications. Bypasses the global bounds hook only. */
+bool qa_world_link_bounds(qa_world *, qa_actor_id, const qa_bounds *, qa_error *);
 bool qa_world_unlink(qa_world *, qa_actor_id, qa_error *);
 /* Remove collision membership without changing the linked snapshot/count or
  * invoking unlink hooks. A subsequent normal link publishes collision again. */

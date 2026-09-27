@@ -477,6 +477,8 @@ bool qa_collision_box_leaves(const qa_collision_geometry *geometry, qa_bounds bo
                 if (leaf == 0 || scratch->leaf_stamps[leaf] == scratch->stamp) continue;
                 scratch->leaf_stamps[leaf] = scratch->stamp;
             }
+            if (geometry->family == QA_COLLISION_Q3 && geometry->leaves[leaf].cluster != -1)
+                result.last_leaf = (uint32_t)leaf;
             if (result.count < capacity) leaves[result.count++] = (uint32_t)leaf;
             else result.overflow = true;
             continue;

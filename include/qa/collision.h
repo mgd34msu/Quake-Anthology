@@ -63,7 +63,13 @@ typedef struct qa_point_contents {
     int32_t contents, stored, merged;
 } qa_point_contents;
 typedef struct qa_collision_leaf { uint32_t leaf; int64_t cluster, area; int32_t contents; } qa_collision_leaf;
-typedef struct qa_leaf_list { size_t count; int32_t topnode; bool overflow; } qa_leaf_list;
+typedef struct qa_leaf_list {
+    size_t count;
+    int32_t topnode;
+    bool overflow;
+    /* Q3 last visited leaf with cluster != -1, including overflow; else 0. */
+    uint32_t last_leaf;
+} qa_leaf_list;
 typedef struct qa_collision_geometry qa_collision_geometry;
 
 /* Retains the BSP view and derived collision data; source bytes must outlive it.
