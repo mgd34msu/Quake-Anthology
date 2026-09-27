@@ -998,14 +998,18 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
                 r, u;
         qa_builtin_angle_vectors(angles, NULL, &r, &u);
         float up, side;
-        if (c->rerelease && !hand && !monster) {
+        if (c->has_grenade_impulse) {
+            side = c->grenade_right;
+            up = c->grenade_up;
+        } else if (c->rerelease && !hand && !monster) {
             side = q2_crandom(g) * 10;
             up = 200 + q2_crandom(g) * 10;
         } else {
             up = 200 + q2_crandom(g) * 10;
             side = q2_crandom(g) * 10;
         }
-        up *= c->rerelease ? c->input.gravity / 800 : 1;
+        float gravity = c->has_grenade_impulse ? c->grenade_gravity : c->input.gravity;
+        up *= c->rerelease ? gravity / 800 : 1;
         spawn.body.velocity =
             qa_vec_add(qa_vec_add(spawn.body.velocity, qa_vec_scale(u, up)), qa_vec_scale(r, side));
         if (!qa_world_body_write(g->services.world, id, &spawn.body, e))

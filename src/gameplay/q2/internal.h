@@ -141,6 +141,8 @@ typedef struct q2_weapon_call {
     qa_actor_id attack_owner;
     uint64_t projectile_effects;
     qa_actor_id *spawned_projectile;
+    bool has_grenade_impulse;
+    float grenade_right, grenade_up, grenade_gravity;
 } q2_weapon_call;
 typedef struct q2_hand_spec {
     qa_vec3 start, direction;

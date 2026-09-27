@@ -9,12 +9,16 @@ typedef struct target_index {
     qa_string_id name;
     uint32_t order;
 } target_index;
+typedef struct authored_index {
+    uint32_t order, slot;
+} authored_index;
 struct qa_targets {
     qa_target_options options;
     qa_target_binding *bindings;
     target_index *index;
+    authored_index *authored;
     qa_arena scratch;
-    size_t count, capacity, depth;
+    size_t count, authored_count, capacity, depth;
     uint64_t actor_revision;
     bool dirty;
 };
@@ -70,7 +74,8 @@ qa_targets *qa_targets_create(const qa_target_options *options, qa_error *error)
     targets->capacity = qa_actors_capacity(qa_session_actors(options->session));
     targets->bindings = calloc(targets->capacity, sizeof(*targets->bindings));
     targets->index = calloc(targets->capacity, sizeof(*targets->index));
-    if (!targets->bindings || !targets->index) {
+    targets->authored = calloc(targets->capacity, sizeof(*targets->authored));
+    if (!targets->bindings || !targets->index || !targets->authored) {
         qa_targets_destroy(targets);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating target index");
         return NULL;
@@ -82,6 +87,7 @@ void qa_targets_destroy(qa_targets *targets) {
     if (!targets)
         return;
     qa_arena_destroy(&targets->scratch);
+    free(targets->authored);
     free(targets->index);
     free(targets->bindings);
     free(targets);
@@ -151,24 +157,36 @@ static int compare(const void *left, const void *right) {
         return a->order < b->order ? -1 : 1;
     return a->actor.slot < b->actor.slot ? -1 : a->actor.slot > b->actor.slot;
 }
+static int compare_authored(const void *left, const void *right) {
+    const authored_index *a = left, *b = right;
+    if (a->order != b->order)
+        return a->order < b->order ? -1 : 1;
+    return a->slot < b->slot ? -1 : a->slot > b->slot;
+}
 static void refresh(qa_targets *targets) {
     uint64_t revision = qa_actors_revision(qa_session_actors(targets->options.session));
     if (!targets->dirty && targets->actor_revision == revision)
         return;
     targets->count = 0;
+    targets->authored_count = 0;
     for (size_t i = 0; i < targets->capacity; ++i) {
         const qa_target_binding *entry = &targets->bindings[i];
         const qa_actor_record *actor =
             qa_actors_get(qa_session_actors(targets->options.session), entry->actor);
         qa_authored_target fields;
-        if (!actor || !qa_targets_read(targets, entry->actor, &fields) || !fields.targetname)
+        if (!actor || !qa_targets_read(targets, entry->actor, &fields))
             continue;
-        targets->index[targets->count++] =
-            (target_index){entry->actor, fields.targetname,
-                           actor->has_source ? actor->source_slot : actor->id.slot};
+        uint32_t order = actor->has_source ? actor->source_slot : actor->id.slot;
+        targets->authored[targets->authored_count++] = (authored_index){order, actor->id.slot};
+        if (fields.targetname)
+            targets->index[targets->count++] =
+                (target_index){entry->actor, fields.targetname, order};
     }
     if (targets->count > 1)
         qsort(targets->index, targets->count, sizeof(*targets->index), compare);
+    if (targets->authored_count > 1)
+        qsort(targets->authored, targets->authored_count, sizeof(*targets->authored),
+              compare_authored);
     targets->actor_revision = revision;
     targets->dirty = false;
 }
@@ -231,6 +249,42 @@ bool qa_targets_pick(qa_targets *targets, qa_string_id name, uint32_t random, si
         return false;
     *out = targets->index[at + random % count].actor;
     return true;
+}
+bool qa_targets_next_authored(qa_targets *targets, const char *classname, qa_target_cursor *cursor,
+                              qa_actor_id *out) {
+    refresh(targets);
+    size_t at = 0;
+    if (cursor->started) {
+        size_t high = targets->authored_count;
+        while (at < high) {
+            size_t mid = at + (high - at) / 2;
+            authored_index current = targets->authored[mid];
+            bool visited =
+                current.order < cursor->source_order ||
+                (current.order == cursor->source_order && current.slot <= cursor->host_slot);
+            if (visited)
+                at = mid + 1;
+            else
+                high = mid;
+        }
+    }
+    for (; at < targets->authored_count; ++at) {
+        authored_index current = targets->authored[at];
+        qa_actor_id actor = targets->bindings[current.slot].actor;
+        qa_authored_target fields;
+        if (!qa_targets_read(targets, actor, &fields))
+            continue;
+        if (classname) {
+            const char *name =
+                qa_strings_cstr(qa_session_strings(targets->options.session), fields.classname);
+            if (!name || strcmp(name, classname))
+                continue;
+        }
+        *cursor = (qa_target_cursor){current.order, current.slot, true};
+        *out = actor;
+        return true;
+    }
+    return false;
 }
 static bool snapshot(qa_targets *targets, qa_string_id name, qa_actor_id **out, size_t *count,
                      qa_error *error) {
