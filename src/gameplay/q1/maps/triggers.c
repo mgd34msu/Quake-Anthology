@@ -356,6 +356,8 @@ static bool changelevel(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_e
 static bool path(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *error) {
     if (g->options.program == QA_Q1_MG3)
         return q1_map_path_touch(g, entity, other, error);
+    if (g->options.program == QA_Q1_HIPNOTIC)
+        return q1_map_hip_path_touch(g, entity, other, error);
     if (g->maps->options.path_touch) {
         bool handled = false;
         if (!g->maps->options.path_touch(g->maps->options.context, entity->id, other, &handled,
@@ -409,6 +411,8 @@ bool q1_map_trigger_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contac
         return changelevel(g, entity, other, error);
     case Q1_MAP_PATH:
         return path(g, entity, other, error);
+    case Q1_MAP_FOLLOW:
+        return q1_map_follow_touch(g, entity, other, error);
     case Q1_MAP_HURT:
         if (entity->physics.solid != QA_PHYSICS_TRIGGER || !q1_damageable(g, other))
             return true;

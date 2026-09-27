@@ -10,8 +10,12 @@ bool qa_q1_game_path_read(const qa_q1_game *g, qa_actor_id actor, qa_q1_path_sta
         const q1_monster *m = &entity->state.monster;
         out->move_target = m->move_target;
         out->enemy = m->enemy;
+        out->old_enemy = m->old_enemy;
         out->previous_corner = m->previous_corner;
+        out->path = m->path;
         out->pause_until = m->pause_until;
+        out->follow_until = m->follow_until;
+        out->monster = true;
     }
     return true;
 }
@@ -20,7 +24,7 @@ bool qa_q1_game_path_change(qa_q1_game *g, qa_actor_id actor, const qa_q1_path_c
                             qa_error *error) {
     q1_actor *entity = g ? q1_entity(g, actor) : NULL;
     if (!entity || !entity->native || !change || change->kind < QA_Q1_PATH_OWNER ||
-        change->kind > QA_Q1_PATH_CANCEL_PAUSE)
+        change->kind > QA_Q1_PATH_FOUND)
         return q1_map_fail(error, "invalid Q1 path change");
     if (change->kind == QA_Q1_PATH_OWNER) {
         entity->owner = change->reference;
@@ -59,15 +63,35 @@ bool qa_q1_game_path_change(qa_q1_game *g, qa_actor_id actor, const qa_q1_path_c
         return true;
     }
     case QA_Q1_PATH_PAUSE_END:
+    case QA_Q1_PATH_STAND:
         if (!isfinite(change->pause_until) || fabs(change->pause_until) > FLT_MAX)
             return q1_map_fail(error, "invalid Q1 path pause deadline");
         m->pause_until = (float)change->pause_until;
-        return !m->path_end || q1_monster_play(g, entity, m->species->stand, error);
+        return (change->kind == QA_Q1_PATH_PAUSE_END && !m->path_end) ||
+               q1_monster_play(g, entity, m->species->stand, error);
     case QA_Q1_PATH_CANCEL_PAUSE:
         m->pause_until = 0;
         m->addon.waiting = m->addon.path_wait = false;
         m->addon.normal_use = true;
         return true;
+    case QA_Q1_PATH_FOLLOW_BEGIN: {
+        uint16_t frame = q1_frame_index(m->species->walk);
+        if (frame == UINT16_MAX)
+            return q1_map_fail(error, "Q1 follow target has no walk continuation");
+        m->old_enemy = change->reference;
+        m->enemy = entity->physics.enemy = (qa_actor_id){0};
+        m->next_frame = frame;
+        entity->think = Q1_THINK_MONSTER_FRAME;
+        return true;
+    }
+    case QA_Q1_PATH_FOLLOW_UNTIL:
+        if (!isfinite(change->follow_until) || fabs(change->follow_until) > FLT_MAX)
+            return q1_map_fail(error, "invalid Q1 follow cooldown deadline");
+        m->follow_until = (float)change->follow_until;
+        return true;
+    case QA_Q1_PATH_FOUND:
+        return !q1_alive(g, change->reference) ||
+               q1_monster_found(g, entity, change->reference, error);
     case QA_Q1_PATH_OWNER:
         break;
     }
@@ -192,4 +216,114 @@ bool q1_map_path_use(qa_q1_game *g, q1_actor *trigger, qa_error *error) {
     }
     targets->borrowed = false;
     return ok;
+}
+
+bool q1_map_hip_path_touch(qa_q1_game *g, q1_actor *corner, qa_actor_id actor, qa_error *error) {
+    qa_actor_id corner_id = corner->id;
+    qa_q1_path_state mover;
+    if (!read_path(g, actor, &mover) || !mover.monster || mover.enemy.registry)
+        return true;
+    corner = q1_entity(g, corner_id);
+    if (!corner || !corner->map || corner->map->kind != Q1_MAP_PATH || !q1_alive(g, actor) ||
+        mover.path != corner->targetname)
+        return true;
+    if (q1_classnamed(g, actor, "monster_ogre") &&
+        !q1_sound(g, actor, "ogre/ogdrag.wav", 2, 2, error))
+        return false;
+    corner = q1_entity(g, corner_id);
+    if (!corner || !corner->map || corner->map->kind != Q1_MAP_PATH || !q1_alive(g, actor))
+        return true;
+    if (q1_map_text(g, corner->target)) {
+        qa_actor_id next;
+        if (!destination(g, actor, corner->target, &next, error))
+            return false;
+        corner = q1_entity(g, corner_id);
+        if (!corner || !corner->map || corner->map->kind != Q1_MAP_PATH || !q1_alive(g, actor))
+            return true;
+        if (next.registry)
+            return corner->delay == 0 ||
+                   change_path(g, actor,
+                               (qa_q1_path_change){.kind = QA_Q1_PATH_STAND,
+                                                   .pause_until = g->time + corner->delay},
+                               error);
+    }
+    return change_path(
+        g, actor, (qa_q1_path_change){.kind = QA_Q1_PATH_STAND, .pause_until = g->time + 999999},
+        error);
+}
+
+static bool follow_eye(qa_q1_game *g, qa_actor_id actor, qa_vec3 *out) {
+    qa_body_state body;
+    if (!q1_alive(g, actor) || !qa_world_body_read(g->services.world, actor, &body, NULL))
+        return false;
+    qa_vec3 offset;
+    if (!qa_targets_vector(g->maps->options.targets, actor, "view_ofs", &offset)) {
+        qa_q1_target target;
+        offset = qa_v3(0, 0, q1_target(g, actor, &target) ? target.view_height : 25);
+    }
+    if (!q1_alive(g, actor))
+        return false;
+    *out = qa_vec_add(body.origin, offset);
+    return true;
+}
+bool q1_map_follow_touch(qa_q1_game *g, q1_actor *trigger, qa_actor_id actor, qa_error *error) {
+    qa_actor_id trigger_id = trigger->id;
+    qa_physics_properties physics;
+    qa_q1_path_state mover;
+    if (!g->services.physics->services.read(g->services.physics->services.context, actor,
+                                            &physics) ||
+        !(physics.flags & QA_PHYSICS_MONSTER) || q1_classnamed(g, actor, "monster_decoy") ||
+        !read_path(g, actor, &mover) || !mover.monster || mover.follow_until > g->time)
+        return true;
+    qa_vec3 start, end = {0};
+    qa_actor_id world =
+        g->maps->world_actor.registry ? g->maps->world_actor : g->services.physics->world_actor;
+    if (!follow_eye(g, actor, &start))
+        return true;
+    if (mover.enemy.registry) {
+        if (!follow_eye(g, mover.enemy, &end))
+            return true;
+    } else if (q1_alive(g, world)) {
+        qa_body_state world_body;
+        if (!qa_world_body_read(g->services.world, world, &world_body, error))
+            return false;
+        end = world_body.origin;
+    }
+    qa_trace_result trace;
+    if (!q1_trace(g, start, end, actor, true, &trace, error))
+        return false;
+    if (trace.fraction == 1 || !q1_alive(g, actor) || !q1_alive(g, trigger_id))
+        return true;
+    if (mover.enemy.registry &&
+        !change_path(g, actor,
+                     (qa_q1_path_change){.kind = QA_Q1_PATH_FOLLOW_BEGIN, .reference = mover.enemy},
+                     error))
+        return false;
+    trigger = q1_entity(g, trigger_id);
+    if (!trigger || !trigger->map || trigger->map->kind != Q1_MAP_FOLLOW || !q1_alive(g, actor))
+        return true;
+    qa_actor_id next;
+    if (!destination(g, actor, trigger->target, &next, error) ||
+        !change_path(
+            g, actor,
+            (qa_q1_path_change){.kind = QA_Q1_PATH_FOLLOW_UNTIL, .follow_until = g->time + 2},
+            error))
+        return false;
+    if (next.registry || !read_path(g, actor, &mover))
+        return true;
+    if (mover.old_enemy.registry)
+        return change_path(
+            g, actor, (qa_q1_path_change){.kind = QA_Q1_PATH_FOUND, .reference = mover.old_enemy},
+            error);
+    if (!g->host.check_client)
+        return q1_map_fail(error, "Q1 follow needs source check-client service");
+    qa_actor_id client = {0};
+    (void)g->host.check_client(g->host.context, actor, &client);
+    /* Source FoundTarget is entered for checkclient's world/null result. */
+    if (!client.registry && q1_alive(g, world))
+        return change_path(
+            g, actor, (qa_q1_path_change){.kind = QA_Q1_PATH_FOUND, .reference = world}, error);
+    return change_path(
+        g, actor, (qa_q1_path_change){.kind = QA_Q1_PATH_STAND, .pause_until = g->time + 999999},
+        error);
 }

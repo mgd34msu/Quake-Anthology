@@ -89,6 +89,16 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
             (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR, .value.vector = entity->map->mangle};
         return true;
     }
+    if (entity->map && entity->map->has_view_offset && !strcmp(key, "view_ofs")) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR,
+                                 .value.vector = entity->map->view_offset};
+        return true;
+    }
+    if (entity->kind == Q1_MONSTER && !strcmp(key, "wetsuit_time")) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+                                 .value.number = entity->state.monster.follow_until};
+        return true;
+    }
     return false;
 }
 bool q1_map_bind_target(qa_q1_game *g, q1_actor *entity, qa_error *error) {
@@ -264,7 +274,8 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
     for (size_t i = 0; i < sizeof(numbers) / sizeof(*numbers); ++i)
         if (!isfinite(numbers[i]))
             return q1_map_fail(error, "nonfinite Q1 authored field");
-    if (!qa_vec_finite(source->mangle) || !qa_vec_finite(source->movedir))
+    if (!qa_vec_finite(source->mangle) || !qa_vec_finite(source->movedir) ||
+        (source->has_view_offset && !qa_vec_finite(source->view_offset)))
         return q1_map_fail(error, "invalid Q1 authored direction");
     q1_map_state *state = entity->map;
     const char *input[] = {
@@ -281,6 +292,8 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
             return false;
     entity->model = state->original_model;
     state->mangle = source->mangle;
+    state->view_offset = source->view_offset;
+    state->has_view_offset = source->has_view_offset;
     state->height = source->height;
     state->lip = source->lip;
     state->has_movedir = source->has_movedir;
@@ -388,6 +401,8 @@ static q1_map_kind classify(const char *name) {
                    {"trigger_onlyregistered", Q1_MAP_REGISTERED},
                    {"trigger_monsterjump", Q1_MAP_MONSTERJUMP},
                    {"path_corner", Q1_MAP_PATH},
+                   {"path_follow", Q1_MAP_FOLLOW},
+                   {"path_follow2", Q1_MAP_FOLLOW},
                    {"target_cancelpause", Q1_MAP_CANCEL_PAUSE},
                    {"target_switchpath", Q1_MAP_SWITCH_PATH},
                    {"info_player_start", Q1_MAP_POINT},
@@ -412,6 +427,8 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     q1_map_kind kind = classify(spawn->classname);
     if (g->options.program != QA_Q1_MG3 &&
         (kind == Q1_MAP_CANCEL_PAUSE || kind == Q1_MAP_SWITCH_PATH))
+        kind = Q1_MAP_FIELDS;
+    if (g->options.program != QA_Q1_HIPNOTIC && kind == Q1_MAP_FOLLOW)
         kind = Q1_MAP_FIELDS;
     *handled = kind != Q1_MAP_FIELDS;
     if (!*handled && !spawn->map_fields)
@@ -487,6 +504,16 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
         entity->physics.solid = QA_PHYSICS_TRIGGER;
         state->touch_enabled = true;
         body.bounds = (qa_bounds){{-8, -8, -8}, {8, 8, 8}};
+        break;
+    case Q1_MAP_FOLLOW:
+        entity->physics.solid = QA_PHYSICS_TRIGGER;
+        state->touch_enabled = true;
+        if (!strcmp(spawn->classname, "path_follow2"))
+            body.bounds = (qa_bounds){{-8, -8, -8}, {8, 8, 8}};
+        else {
+            entity->physics.motion = QA_PHYSICS_STATIONARY;
+            entity->model = QA_STRING_NONE;
+        }
         break;
     case Q1_MAP_CANCEL_PAUSE:
     case Q1_MAP_SWITCH_PATH:

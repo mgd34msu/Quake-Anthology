@@ -8,8 +8,8 @@
 typedef struct qa_q1_map_fields {
     const char *model, *map, *noise, *noise1, *noise2, *noise3;
     const char *endtext, *intermissiontext, *netname;
-    qa_vec3 mangle, movedir;
-    bool has_movedir;
+    qa_vec3 mangle, movedir, view_offset;
+    bool has_movedir, has_view_offset;
     float height, lip, width, length, pause_time;
     float volume, duration, distance, next_think_seconds;
     int32_t sounds, style, world_type, color_map, impulse;
@@ -30,21 +30,27 @@ typedef struct qa_q1_map_finale_view {
 } qa_q1_map_finale_view;
 typedef enum qa_q1_map_ending { QA_Q1_MAP_END_DOPA, QA_Q1_MAP_END_MG3 } qa_q1_map_ending;
 typedef struct qa_q1_path_state {
-    qa_actor_id move_target, enemy, previous_corner, owner;
-    double pause_until;
+    qa_actor_id move_target, enemy, old_enemy, previous_corner, owner;
+    qa_string_id path;
+    double pause_until, follow_until;
+    bool monster;
 } qa_q1_path_state;
 typedef enum qa_q1_path_change_kind {
     QA_Q1_PATH_OWNER,
     QA_Q1_PATH_VISIT,
     QA_Q1_PATH_DESTINATION,
     QA_Q1_PATH_PAUSE_END,
-    QA_Q1_PATH_CANCEL_PAUSE
+    QA_Q1_PATH_CANCEL_PAUSE,
+    QA_Q1_PATH_STAND,
+    QA_Q1_PATH_FOLLOW_BEGIN,
+    QA_Q1_PATH_FOLLOW_UNTIL,
+    QA_Q1_PATH_FOUND
 } qa_q1_path_change_kind;
 typedef struct qa_q1_path_change {
     qa_q1_path_change_kind kind;
     qa_actor_id reference;
     qa_string_id target;
-    double pause_until;
+    double pause_until, follow_until;
 } qa_q1_path_change;
 typedef struct qa_q1_map_options {
     qa_targets *targets;
@@ -64,9 +70,12 @@ typedef struct qa_q1_map_options {
                          uint32_t found, qa_error *);
     /* An attached foreign character can follow authored Q1 monster paths. */
     bool (*path_touch)(void *, qa_actor_id corner, qa_actor_id follower, bool *handled, qa_error *);
-    /* MG3 controls read and mutate the actual foreign continuation. Read is
+    /* Path controls read and mutate the actual foreign continuation. Read is
      * nonmutating. A pause change invokes an installed path-end callback;
-     * cancel restores normal monster use. Supply both callbacks together. */
+     * cancel restores normal monster use. Hipnotic follow preserves the old
+     * enemy, pending walk frame and cooldown; STAND always enters the stand
+     * callback and FOUND invokes the actual owner's found-target callback.
+     * Supply both callbacks together. */
     bool (*path_read)(void *, qa_actor_id, qa_q1_path_state *);
     bool (*path_change)(void *, qa_actor_id, const qa_q1_path_change *, qa_error *);
     bool (*finale)(void *, const qa_q1_map_finale_view *, qa_error *);

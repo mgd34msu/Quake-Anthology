@@ -170,7 +170,7 @@ typedef struct q1_monster {
     uint16_t current_frame, next_frame;
     qa_actor_id enemy, old_enemy, charmer, charm_goal, move_target, previous_corner;
     double pause_until, attack_finished, pain_finished, search_until, idle_until, straight_after,
-        dodge_after, hostile_until;
+        dodge_after, hostile_until, follow_until;
     uint32_t counter, lightning_count;
     uint8_t attack_state, in_pain, hunting_charmer;
     bool refired, sliding, lefty, counted_death, jump_touch, horde, path_end;
@@ -579,7 +579,8 @@ bool q1_multi_explosion_think(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_radius_snapshot(qa_q1_game *, qa_vec3, float, q1_actor_snapshot **, qa_error *);
 bool q1_snapshot_actors(qa_q1_game *, q1_actor_snapshot **, qa_error *);
 bool q1_snapshot_players(qa_q1_game *, q1_actor_snapshot **, qa_error *);
-bool q1_snapshot_targets(qa_q1_game *, qa_targets *, qa_string_id, q1_actor_snapshot **, qa_error *);
+bool q1_snapshot_targets(qa_q1_game *, qa_targets *, qa_string_id, q1_actor_snapshot **,
+                         qa_error *);
 bool q1_gremlin_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_gremlin_action(qa_q1_game *, q1_actor *, q1_frame_action, qa_error *);
 bool q1_gremlin_pain(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
