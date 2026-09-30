@@ -40,6 +40,41 @@ bool application_guest_console_at(application_provider *provider, size_t index,
     return false;
 }
 
+bool application_guest_console_scope(application_provider *provider,
+    const qa_console *console, qa_application_console_scope *out)
+{
+    if (!provider || !provider->constructed || !console || !out)
+        return false;
+    qa_application_console_scope scope = {.provider = provider->owner};
+    if (provider->kind == APPLICATION_PROVIDER_QC) {
+        struct application_qc_state *engine = provider->state.qc.engine;
+        if (!engine || engine->console != console)
+            return false;
+        scope.kind = QA_APPLICATION_CONSOLE_QC;
+    } else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine) {
+        if (provider->state.native.q2_engine->console != console)
+            return false;
+        scope.kind = QA_APPLICATION_CONSOLE_NATIVE_Q2;
+    } else {
+        struct application_q3_guest *engine = q3g_engine(provider);
+        q3g_role *selected = NULL;
+        if (engine)
+            for (q3g_role *role = engine->roles; role; role = role->next)
+                if (qa_q3_host_console(role->host, NULL, NULL) == console &&
+                    (!selected || role->kind < selected->kind ||
+                     (role->kind == selected->kind && role->seat < selected->seat)))
+                    selected = role;
+        if (!selected)
+            return false;
+        scope.kind = selected->kind == QA_QVM_GAME ? QA_APPLICATION_CONSOLE_Q3_GAME
+            : selected->kind == QA_QVM_CGAME ? QA_APPLICATION_CONSOLE_Q3_CGAME
+            : QA_APPLICATION_CONSOLE_Q3_UI;
+        scope.seat = selected->kind == QA_QVM_GAME ? 0 : selected->seat;
+    }
+    *out = scope;
+    return true;
+}
+
 static q3g_role *find_role(application_provider *provider, qa_qvm_role kind,
                             uint32_t seat, qa_error *error)
 {

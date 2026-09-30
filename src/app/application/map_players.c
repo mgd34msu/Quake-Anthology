@@ -1,5 +1,6 @@
 #include "map_players_private.h"
 #include "guest_projection_private.h"
+#include "guest_native_q2_private.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -182,7 +183,9 @@ static application_provider *seat_provider(application_publication *publication,
 static bool player_adapter_available(const application_provider *provider)
 {
     return provider != NULL && (provider->kind != APPLICATION_PROVIDER_NATIVE ||
-                                provider->launch->selection.clock.kind == QA_CLOCK_Q3);
+                                provider->launch->selection.clock.kind == QA_CLOCK_Q3 ||
+                                provider->launch->selection.clock.kind == QA_CLOCK_Q2_CLASSIC ||
+                                provider->launch->selection.clock.kind == QA_CLOCK_Q2_RERELEASE);
 }
 
 static bool capture_player(qa_application *application, qa_actor_id actor,
@@ -798,6 +801,13 @@ static bool configure_q2_players(qa_application *application,
     return true;
 }
 
+bool application_players_restore_prepare(qa_application *application,
+                                           const qa_launch_choices *choices,
+                                           qa_error *error)
+{
+    return configure_q2_players(application, choices, error);
+}
+
 static bool restore_counts(qa_application *application, qa_actor_id actor,
                             const application_player_carry *carry,
                             bool q1, bool unit, qa_error *error)
@@ -1073,6 +1083,24 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                     return application_fail(error, QA_ERROR_ARGUMENT, "selected Q3 guest rejected a client");
                 if (defer_source_begin) record->source_begin_pending = true;
                 else if (!application_q3_guest_client_begin(provider, record->client_slot, error))
+                    return false;
+            } else if (provider->kind == APPLICATION_PROVIDER_NATIVE &&
+                       provider->state.native.q2_engine != NULL) {
+                char userinfo[2304];
+                snprintf(userinfo, sizeof(userinfo), "\\name\\%.2000s\\skin\\male/grunt\\spectator\\%d",
+                    strchr(seat->name, '\\') != NULL ? "badinfo" : seat->name,
+                    seat->spectator ? 1 : 0);
+                bool accepted = false;
+                if (!application_native_q2_client_admit(provider, record->client_slot + 1,
+                    actor, record->userinfo != NULL ? record->userinfo : userinfo,
+                    "", seat->bot, &accepted, error))
+                    return false;
+                if (!accepted)
+                    return application_fail(error, QA_ERROR_ARGUMENT,
+                                            "selected native Q2 guest rejected a client");
+                if (defer_source_begin) record->source_begin_pending = true;
+                else if (!application_native_q2_client_begin(provider,
+                                                             record->client_slot + 1, error))
                     return false;
             } else {
                 return application_fail(error, QA_ERROR_UNSUPPORTED,
@@ -1947,11 +1975,18 @@ bool qa_application_remote_player_begin(qa_application *application, qa_net_clie
     bool ok = true;
     for (size_t i = 0; ok && i < application->provider_count; ++i) {
         application_provider *provider = application->providers[i];
-        if (provider->kind <= APPLICATION_PROVIDER_Q3 || provider->component.clock.kind != QA_CLOCK_Q3) continue;
+        if (provider->kind <= APPLICATION_PROVIDER_Q3 ||
+            provider->kind == APPLICATION_PROVIDER_QC) continue;
         bool selected = false;
         for (size_t j = 0; j < sizeof(player_roles) / sizeof(player_roles[0]); ++j)
             selected |= application_provider_for(application, actor, player_roles[j], "") == provider;
-        if (selected) ok = application_q3_guest_client_begin(provider, record->client_slot, error);
+        if (selected) {
+            if (provider->kind == APPLICATION_PROVIDER_NATIVE &&
+                provider->state.native.q2_engine != NULL)
+                ok = application_native_q2_client_begin(provider, record->client_slot + 1, error);
+            else if (provider->component.clock.kind == QA_CLOCK_Q3)
+                ok = application_q3_guest_client_begin(provider, record->client_slot, error);
+        }
         if (ok && !qa_actors_get(qa_session_actors(application->session), actor))
             ok = application_fail(error, QA_ERROR_ARGUMENT, "remote player retired during source begin");
     }

@@ -3,6 +3,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 bool application_fail(qa_error *error, qa_status code, const char *message)
 {
@@ -248,6 +249,89 @@ qa_console *qa_application_console(qa_application *application)
     return application == NULL ? NULL : application->console;
 }
 
+const char *qa_application_provider_instance(const qa_application *application,
+                                              qa_actor_owner owner)
+{
+    if (application == NULL || owner == 0 || application->destroy_requested)
+        return NULL;
+    for (size_t i = 0; i < application->provider_count; ++i) {
+        const application_provider *provider = application->providers[i];
+        if (provider->attached && provider->constructed && provider->owner == owner)
+            return provider->launch->selection.instance;
+    }
+    return NULL;
+}
+
+bool qa_application_provider_owner(const qa_application *application,
+                                     const char *instance, qa_actor_owner *out)
+{
+    if (application == NULL || instance == NULL || out == NULL ||
+        application->destroy_requested)
+        return false;
+    for (size_t i = 0; i < application->provider_count; ++i) {
+        const application_provider *provider = application->providers[i];
+        if (provider->attached && provider->constructed &&
+            strcmp(provider->launch->selection.instance, instance) == 0) {
+            *out = provider->owner;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool qa_application_provider_gravity(const qa_application *application,
+                                       qa_actor_owner owner, float *out)
+{
+    if (application == NULL || owner == 0 || out == NULL ||
+        application->destroy_requested)
+        return false;
+    for (size_t i = 0; i < application->provider_count; ++i) {
+        application_provider *provider = application->providers[i];
+        if (!provider->attached || !provider->constructed || provider->owner != owner)
+            continue;
+        if (provider->kind == APPLICATION_PROVIDER_Q1)
+            return qa_q1_game_gravity(provider->state.q1, out);
+        if (provider->kind == APPLICATION_PROVIDER_QC) {
+            qa_console *console;
+            qa_cvars *cvars;
+            if (!application_guest_console_at(provider, 0, &console, &cvars, NULL))
+                return false;
+            const qa_cvar_view *gravity = qa_cvars_find(cvars, "sv_gravity");
+            if (gravity != NULL && isfinite(gravity->number)) {
+                *out = gravity->number;
+                return true;
+            }
+        }
+        return false;
+    }
+    return false;
+}
+
+bool qa_application_q1_fog_read(qa_application *application, qa_actor_id actor,
+                                 qa_q1_fog_state *out)
+{
+    if (application == NULL || out == NULL || application->destroy_requested)
+        return false;
+    application_provider *provider = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    return provider != NULL && provider->constructed && provider->kind == APPLICATION_PROVIDER_Q1 &&
+           qa_q1_game_map_fog_read(provider->state.q1, actor, out);
+}
+
+bool qa_application_q1_monster_counts(const qa_application *application,
+                                       uint32_t seat, uint32_t *total,
+                                       uint32_t *killed)
+{
+    if (application == NULL || total == NULL || killed == NULL)
+        return false;
+    qa_actor_id actor;
+    if (!qa_application_player_actor(application, seat, &actor))
+        return false;
+    application_provider *provider = application_world_provider((qa_application *)application,
+                                                               QA_ROLE_ENTITIES, "");
+    return provider != NULL && provider->constructed && provider->kind == APPLICATION_PROVIDER_Q1 &&
+           qa_q1_game_monster_counts(provider->state.q1, total, killed);
+}
+
 uint64_t qa_application_configuration_generation(const qa_application *application)
 {
     return application == NULL ? 0 : qa_configuration_generation(application->configuration);
@@ -427,6 +511,34 @@ bool qa_application_apply(qa_application *application,
     if (ok && application->state == QA_APPLICATION_READY)
         application->state = QA_APPLICATION_RUNNING;
     return ok;
+}
+
+bool qa_application_guest_context_rebind_ready(const qa_application *application,
+                                                qa_error *error)
+{
+    if (!application || application->operation != APPLICATION_IDLE ||
+        !application->session || !application->world || !application->console ||
+        !qa_session_safe(application->session) ||
+        !qa_session_destroy_ready(application->session) ||
+        !qa_world_idle(application->world) || !qa_combat_idle(application->combat) ||
+        !qa_console_idle(application->console) || !application_guests_idle(application) ||
+        !application_bots_can_destroy(application) ||
+        (application->modes && !qa_modes_idle(application->modes)) ||
+        (application->equipment && !qa_equipment_idle(application->equipment)) ||
+        application->publication_started || application->destroy_requested ||
+        application->finalizing || application->pending_close ||
+        application->routing_snapshot || application->routing_providers ||
+        application->routing_provider_count ||
+        (application->state != QA_APPLICATION_READY &&
+         application->state != QA_APPLICATION_RUNNING))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "frontend publication requires idle application callback owners");
+    return true;
+}
+
+void qa_application_guest_context_rebind(qa_application *application, void *context)
+{
+    application->guest_context = context;
 }
 
 bool qa_application_advance(qa_application *application, uint64_t elapsed_ns,

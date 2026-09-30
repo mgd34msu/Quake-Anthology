@@ -1,4 +1,5 @@
 #include "guest_projection_private.h"
+#include "guest_native_q2_private.h"
 
 static bool current(guest_projection_actor *context, qa_q3_host_game_data *data,
                     qa_error *error)
@@ -266,6 +267,7 @@ bool application_guest_projection_admit(q3g_role *role, qa_actor_id actor, qa_er
         qa_inventory_binding binding = {context, inventory_count, inventory_at, inventory_write, mutable_capacity};
         if (!qa_inventory_adopt_primary(app->inventory, actor, &binding, &context->inventory_lease, error)) return false;
         context->inventory_bound = true;
+        context->inventory_prepared = false;
     }
     return true;
 }
@@ -277,10 +279,78 @@ bool application_guest_projection_detach(q3g_role *role, qa_actor_id actor, qa_e
     qa_application *app = role->engine->provider->application;
     for (guest_projection_actor *context = p->actors; context; context = context->next) {
         if (!qa_actor_id_equal(context->actor, actor) || !context->inventory_bound) continue;
-        if (qa_actors_get(qa_session_actors(app->session), actor) &&
+        bool unpublished = context->inventory_prepared &&
+            !qa_inventory_primary_current(app->inventory, context->inventory_lease, context);
+        if (!unpublished && qa_actors_get(qa_session_actors(app->session), actor) &&
             !qa_inventory_detach_primary(app->inventory, context->inventory_lease, context, error)) return false;
         context->inventory_bound = false;
+        context->inventory_prepared = false;
     }
+    return true;
+}
+
+bool application_guest_projection_inventory_binding(q3g_role *role,
+    qa_actor_id actor, uint64_t serial, qa_inventory_binding *out, qa_error *error)
+{
+    application_guest_projection *projection = role ? role->projection : NULL;
+    if (!projection || !projection->has_inventory || !out || !serial)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Restored guest primary inventory requires its actual source declaration");
+    uint32_t slot;
+    if (!qa_q3_host_actor_slot(role->host, actor, &slot, error))
+        return false;
+    guest_projection_actor *context = projection->actors;
+    while (context && !qa_actor_id_equal(context->actor, actor))
+        context = context->next;
+    guest_projection_actor temporary = {.projection = projection, .actor = actor, .slot = slot};
+    qa_q3_host_game_data data;
+    if (!current(&temporary, &data, error))
+        return false;
+    if (context && (context->slot != slot ||
+        (context->inventory_bound && context->inventory_lease.serial != serial)))
+        return application_fail(error, QA_ERROR_FORMAT,
+                                "Restored guest inventory differs from its source lease");
+    if (!context) {
+        context = calloc(1, sizeof(*context));
+        if (!context)
+            return application_fail(error, QA_ERROR_MEMORY,
+                                    "Retaining restored guest inventory callback context");
+        *context = temporary;
+        context->next = projection->actors;
+        projection->actors = context;
+    }
+    context->inventory_lease = (qa_inventory_lease){actor, serial};
+    if (!context->inventory_bound)
+        context->inventory_prepared = true;
+    context->inventory_bound = true;
+    *out = (qa_inventory_binding){context, inventory_count, inventory_at,
+                                  inventory_write, mutable_capacity};
+    return true;
+}
+
+bool application_guest_inventory_restore_finish(application_provider *provider, qa_error *error)
+{
+    if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
+        return application_native_q2_inventory_finish(provider, error);
+    struct application_q3_guest *engine = q3g_engine(provider);
+    if (!engine)
+        return true;
+    if (engine->calls || !qa_session_safe(provider->application->session) ||
+        !qa_world_idle(engine->world))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Guest inventory finish requires idle source owners");
+    for (q3g_role *role = engine->roles; role; role = role->next)
+        if (role->projection)
+            for (guest_projection_actor *context = role->projection->actors; context; context = context->next)
+                if (context->inventory_prepared && (!context->inventory_bound ||
+                    !qa_inventory_primary_current(provider->application->inventory,
+                                                   context->inventory_lease, context)))
+                    return application_fail(error, QA_ERROR_FORMAT,
+                                            "Restored guest primary inventory was not published");
+    for (q3g_role *role = engine->roles; role; role = role->next)
+        if (role->projection)
+            for (guest_projection_actor *context = role->projection->actors; context; context = context->next)
+                context->inventory_prepared = false;
     return true;
 }
 

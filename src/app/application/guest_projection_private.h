@@ -44,7 +44,7 @@ typedef struct guest_projection_actor {
     qa_actor_id actor;
     uint32_t slot;
     qa_inventory_lease inventory_lease;
-    bool inventory_bound;
+    bool inventory_bound, inventory_prepared;
 } guest_projection_actor;
 typedef struct application_guest_projection {
     q3g_role *role;
@@ -59,6 +59,8 @@ typedef struct application_guest_projection {
 bool application_guest_projection_prepare(q3g_role *, qa_bytes, qa_error *);
 bool application_guest_projection_close(q3g_role *, qa_error *);
 bool application_guest_projection_admit(q3g_role *, qa_actor_id, qa_error *);
+bool application_guest_projection_inventory_binding(q3g_role *, qa_actor_id,
+    uint64_t saved_serial, qa_inventory_binding *, qa_error *);
 bool application_guest_projection_detach(q3g_role *, qa_actor_id, qa_error *);
 bool application_guest_projection_profile_read(q3g_role *, qa_bytes, application_guest_projection *, qa_error *);
 void application_guest_projection_profile_free(application_guest_projection *);

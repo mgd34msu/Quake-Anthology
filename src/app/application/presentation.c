@@ -1,4 +1,5 @@
 #include "guest_q3_private.h"
+#include "guest_native_q2_private.h"
 #include "qa/text.h"
 
 static application_provider *selected(qa_application *app, uint32_t seat, qa_launch_role role)
@@ -28,6 +29,22 @@ static q3g_role *client_role(application_provider *provider, qa_qvm_role kind, u
     return NULL;
 }
 
+static bool client_ready(q3g_role *role)
+{
+    if (role->kind != QA_QVM_CGAME || role->local_client || role->initialized)
+        return true;
+    const qa_q3_host_client_services *client = &role->client_services;
+    return client->gamestate != NULL &&
+           client->gamestate(client->context) != NULL;
+}
+
+static bool native_q2_hud(application_provider *provider)
+{
+    return provider != NULL && provider->kind == APPLICATION_PROVIDER_NATIVE &&
+           provider->state.native.q2_engine != NULL &&
+           provider->state.native.q2_engine->profile == QA_NATIVE_Q2_CGAME_API2023;
+}
+
 bool qa_application_presentation_read(qa_application *app, uint32_t seat,
                                         qa_application_presentation_view *out)
 {
@@ -36,8 +53,9 @@ bool qa_application_presentation_read(qa_application *app, uint32_t seat,
     application_provider *menu = selected(app, seat, QA_ROLE_MENU);
     *out = (qa_application_presentation_view){
         .hud = hud ? hud->owner : 0, .menu = menu ? menu->owner : 0,
-        .source_hud = client_role(hud, QA_QVM_CGAME, seat) != NULL,
-        .source_menu = client_role(menu, QA_QVM_UI, seat) != NULL
+        .source_hud = client_role(hud, QA_QVM_CGAME, seat) != NULL || native_q2_hud(hud),
+        .source_menu = client_role(menu, QA_QVM_UI, seat) != NULL,
+        .source_world = client_role(hud, QA_QVM_CGAME, seat) != NULL
     };
     return true;
 }
@@ -101,7 +119,7 @@ bool qa_application_guest_menu_set(qa_application *app, uint32_t seat,
 
 static int32_t source_time(q3g_role *role, uint32_t milliseconds)
 {
-    if (role->kind == QA_QVM_UI) return (int32_t)milliseconds;
+    if (role->kind == QA_QVM_UI || !role->local_client) return (int32_t)milliseconds;
     qa_clock_state clock;
     if (qa_session_clock(role->engine->provider->application->session,
                            role->engine->provider->owner, &clock))
@@ -110,20 +128,24 @@ static int32_t source_time(q3g_role *role, uint32_t milliseconds)
 }
 
 bool qa_application_present(qa_application *app, uint32_t seat,
-                              uint32_t milliseconds, qa_error *error)
+                              uint32_t real_milliseconds,
+                              uint32_t client_milliseconds, qa_error *error)
 {
     if (!ready(app, error)) return false;
-    q3g_role *hud = client_role(selected(app, seat, QA_ROLE_HUD), QA_QVM_CGAME, seat);
+    application_provider *hud_provider = selected(app, seat, QA_ROLE_HUD);
+    q3g_role *hud = client_role(hud_provider, QA_QVM_CGAME, seat);
     q3g_role *menu = client_role(selected(app, seat, QA_ROLE_MENU), QA_QVM_UI, seat);
     app->operation = APPLICATION_ADVANCING;
     bool ok = true;
     int32_t result;
-    if (hud) {
-        int32_t args[] = {source_time(hud, milliseconds), 0, 0};
+    if (hud && client_ready(hud)) {
+        int32_t args[] = {source_time(hud, client_milliseconds), 0, 0};
         ok = initialize(hud, error) && q3g_call(hud, 3, args, 3, &result, error);
     }
+    if (ok && native_q2_hud(hud_provider))
+        ok = application_native_q2_draw_hud(hud_provider, seat, client_milliseconds, error);
     if (ok && menu) {
-        int32_t time = source_time(menu, milliseconds);
+        int32_t time = source_time(menu, real_milliseconds);
         ok = initialize(menu, error) && q3g_call(menu, 5, &time, 1, &result, error);
     }
     app->operation = APPLICATION_IDLE;
@@ -220,7 +242,8 @@ bool qa_application_guest_input(qa_application *app, uint32_t seat,
         q3g_role *role = roles[i];
         qa_input_seat *source;
         uint64_t owner;
-        if (!role || !qa_q3_host_source_input(role->host, &source, &owner)) continue;
+        if (!role || !client_ready(role) ||
+            !qa_q3_host_source_input(role->host, &source, &owner)) continue;
         qa_input_focus focus = qa_input_seat_focus(source);
         uint32_t composed = qa_input_seat_catcher(source, 0);
         if (focus == QA_INPUT_CONSOLE || focus == QA_INPUT_CHAT || focus == QA_INPUT_UI ||

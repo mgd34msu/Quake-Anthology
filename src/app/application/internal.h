@@ -26,6 +26,7 @@ typedef enum application_operation {
     APPLICATION_IDLE,
     APPLICATION_DISCOVERING,
     APPLICATION_CONFIGURING,
+    APPLICATION_PERSISTING,
     APPLICATION_ADVANCING,
     APPLICATION_DESTROYING
 } application_operation;
@@ -170,6 +171,7 @@ typedef struct application_publication {
     application_provider *map_provider;
     struct application_player_travel *players;
     bool travel;
+    bool restoring;
     bool physics_initialized;
     bool entities_parsed;
     bool published;
@@ -261,6 +263,37 @@ struct qa_application {
 bool application_actor_released(void *, qa_session *, qa_actor_record,
                                 qa_error *);
 qa_combat_hooks application_combat_hooks(qa_application *);
+bool application_force_death(void *, const qa_damage_request *, qa_error *);
+bool application_native_cheats_enabled(void *);
+bool application_native_console_motion(void *, qa_actor_id, bool, qa_error *);
+bool application_native_grant_arsenal(void *, qa_actor_id, bool, bool *, qa_error *);
+bool application_native_give_item(void *, qa_actor_id, size_t, const char *const *,
+                                  bool *, qa_error *);
+bool application_native_suicide(void *, qa_actor_id, qa_error *);
+bool application_native_q3_award(void *, qa_actor_id, qa_q3_source_award, qa_error *);
+bool application_native_horde_spawn_monster(void *, qa_mode_id, qa_string_id,
+    qa_vec3, qa_vec3, qa_actor_id, qa_actor_id *, qa_error *);
+bool application_native_horde_spawn_loot(void *, qa_mode_id,
+    const qa_mode_loot_spawn *, qa_actor_id *, qa_error *);
+bool application_native_horde_grant_loot(void *, qa_actor_id, qa_actor_id,
+    bool *, qa_error *);
+bool application_native_horde_head(void *, qa_actor_id, bool, qa_error *);
+bool application_native_horde_alpha(void *, qa_actor_id, float, qa_error *);
+float application_native_horde_random(void *, qa_mode_id);
+bool application_native_horde_point(void *, qa_mode_id, qa_actor_id, qa_vec3 *,
+    qa_vec3 *, qa_string_id *, uint32_t *, qa_error *);
+bool application_native_horde_manager(void *, qa_mode_id, qa_actor_id,
+    qa_string_id *, qa_actor_id *, qa_error *);
+bool application_native_horde_restart(void *, qa_mode_id, uint32_t, qa_error *);
+bool application_native_mode_select_weapon(void *, qa_actor_id, qa_item_id, qa_error *);
+bool application_native_mode_use_item(void *, qa_actor_id, qa_item_id, qa_error *);
+bool application_native_mode_select_grapple(void *, qa_actor_id, qa_error *);
+bool application_native_mode_character_frame(void *, qa_actor_id, int32_t *);
+bool application_native_mode_body_armor(void *, qa_mode_id, qa_actor_id, qa_error *);
+bool application_native_mode_quad(void *, qa_mode_id, qa_actor_id, qa_game_family, uint64_t, qa_error *);
+bool application_native_mode_team_equipment(void *, qa_actor_id, qa_item_id *, uint64_t *, qa_error *);
+bool application_native_mode_drop_arsenal(void *, qa_actor_id, bool, qa_error *);
+bool application_native_mode_visible(void *, qa_actor_id, qa_actor_id, bool);
 qa_builtin_services application_builtin_services(qa_application *, qa_world *,
                                                  qa_physics *);
 qa_target_options application_target_options(qa_application *);
@@ -324,10 +357,13 @@ bool application_qc_console_command(application_provider *, qa_actor_id, const c
 qa_console *application_qc_console(application_provider *);
 bool application_q3_guest_actor_client(application_provider *, qa_actor_id, uint32_t *);
 bool application_guest_weapon_read(application_provider *, qa_actor_id, qa_item_id *, qa_error *);
+bool application_guest_inventory_restore_finish(application_provider *, qa_error *);
 bool application_guest_bots_admit(application_provider *, qa_error *);
 bool application_guest_clients_drain(application_provider *, qa_error *);
 bool application_guest_console_at(application_provider *, size_t, qa_console **,
                                     qa_cvars **, qa_command_context *);
+bool application_guest_console_scope(application_provider *, const qa_console *,
+                                       qa_application_console_scope *);
 qa_command_result application_command_fallback(void *, const qa_command_invocation *, qa_error *);
 bool application_command_capture(void *, const qa_command_context *, qa_command_context *, qa_error *);
 bool application_command_active(void *, const qa_command_context *);
@@ -421,6 +457,8 @@ bool application_control_physics_read(const qa_application *, qa_actor_id,
 bool application_control_physics_write(qa_application *, qa_actor_id,
                                        const qa_physics_properties *, qa_error *);
 bool application_control_velocity(qa_application *, qa_actor_id, qa_vec3, qa_error *);
+application_provider *application_world_provider(qa_application *, qa_launch_role,
+                                                  const char *);
 application_provider *application_provider_for(qa_application *, qa_actor_id,
                                                qa_launch_role, const char *selector);
 bool application_composition_create(qa_application *, qa_error *);

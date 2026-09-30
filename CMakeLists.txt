@@ -554,6 +554,7 @@ target_link_libraries(qa_catalog PUBLIC qa_content)
 
 add_library(qa_configuration STATIC
     src/session/configuration/draft.c
+    src/session/configuration/identity.c
     src/session/configuration/presets.c
     src/session/configuration/transaction.c
     src/session/configuration/validate.c)
@@ -914,6 +915,7 @@ add_library(qa_tools STATIC
     src/tools/llm_request.c
     src/tools/llm_settings.c
     src/tools/llm_stream.c
+    src/tools/native_debug.c
     src/tools/profiler.c)
 target_link_libraries(qa_tools PUBLIC qa_builtin qa_scene qa_content qa_console qa_text qa_media qa_q3_presentation qa_http)
 

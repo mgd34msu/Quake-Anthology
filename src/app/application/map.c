@@ -173,9 +173,9 @@ static application_provider *publication_provider(
     return NULL;
 }
 
-bool application_map_prepare(qa_application *application,
-                             application_publication *publication,
-                             qa_error *error)
+bool application_map_prepare_content(qa_application *application,
+                                       application_publication *publication,
+                                       qa_error *error)
 {
     if (application == NULL || publication == NULL ||
         !publication->map.lumps[QA_BSP_ENTITIES].present)
@@ -200,6 +200,17 @@ bool application_map_prepare(qa_application *application,
                            syntax, &publication->entities, error))
         return false;
     publication->entities_parsed = true;
+    return true;
+}
+
+bool application_map_prepare(qa_application *application,
+                             application_publication *publication,
+                             qa_error *error)
+{
+    if (!application_map_prepare_content(application, publication, error))
+        return false;
+    const qa_launch_choices *choices =
+        qa_launch_snapshot_choices(publication->candidate);
     bool carry, unit;
     const qa_q2_landmark *landmark;
     application_map_travel_options(application, &carry, &unit, &landmark);
@@ -301,6 +312,7 @@ static bool q1_ambient(void *opaque, qa_vec3 origin, qa_string_id sound,
                           (qa_builtin_event){.kind = QA_BUILTIN_SOUND,
                                              .family = QA_GAME_Q1,
                                              .resource = sound,
+                                             .flags = 1,
                                              .origin = origin,
                                              .volume = volume,
                                              .attenuation = attenuation},
@@ -582,10 +594,65 @@ static bool q1_campaign_achievement(void *opaque, const char *name,
     return q1_level_achievement(opaque, (qa_actor_id){0}, name, error);
 }
 
+typedef enum q1_horde_action { Q1_HORDE_CONTROL, Q1_HORDE_KEYS, Q1_HORDE_FINISH } q1_horde_action;
+
+static bool q1_horde_route(application_provider *provider, q1_horde_action action,
+    qa_actor_id actor, bool check_wave, bool gold, int change, qa_error *error)
+{
+    qa_application *app = provider->application;
+    bool found = false;
+    for (size_t i = 0; app->modes && i < app->mode_count; ++i) {
+        qa_mode_view view;
+        if (!qa_modes_read(app->modes, app->mode_ids[i], &view, error))
+            return false;
+        if (view.rules.source != QA_MODE_Q1_HORDE || !view.rules.enabled)
+            continue;
+        qa_actor_id manager;
+        if (!qa_modes_horde_manager_actor(app->modes, app->mode_ids[i], &manager, error))
+            return false;
+        const qa_actor_record *record = qa_actors_get(qa_session_actors(app->session), manager);
+        if (!record || record->owner != provider->owner)
+            continue;
+        found = true;
+        if (action == Q1_HORDE_KEYS) {
+            qa_horde_view horde;
+            if (!qa_modes_horde_read(app->modes, app->mode_ids[i], &horde, error))
+                return false;
+            if (change < 0 && (gold ? horde.gold_keys : horde.silver_keys) <= 0)
+                continue;
+            return qa_modes_horde_keys(app->modes, app->mode_ids[i], gold, change, error);
+        }
+        bool ok = action == Q1_HORDE_CONTROL
+            ? (check_wave ? qa_modes_horde_check(app->modes, app->mode_ids[i], error)
+                          : qa_modes_horde_toggle_point(app->modes, app->mode_ids[i], actor, error))
+            : qa_modes_horde_finish(app->modes, app->mode_ids[i], error);
+        if (!ok)
+            return false;
+    }
+    if (action == Q1_HORDE_KEYS)
+        return application_fail(error, QA_ERROR_NOT_FOUND,
+                                "authored Horde door has no available managed key");
+    return found || action == Q1_HORDE_FINISH ||
+           application_fail(error, QA_ERROR_NOT_FOUND,
+                            "authored Horde control has no configured mode owner");
+}
+
+static bool q1_horde_control(void *opaque, qa_actor_id actor, bool check_wave,
+                               qa_error *error)
+{
+    return q1_horde_route(opaque, Q1_HORDE_CONTROL, actor, check_wave, false, 0, error);
+}
+
+static bool q1_horde_keys(void *opaque, bool gold, int change, qa_error *error)
+{
+    return q1_horde_route(opaque, Q1_HORDE_KEYS, (qa_actor_id){0}, false, gold, change, error);
+}
+
 static bool q1_campaign_finish_horde(void *opaque, double seconds,
                                      qa_error *error)
 {
-    return emit_map_event(opaque,
+    return q1_horde_route(opaque, Q1_HORDE_FINISH, (qa_actor_id){0}, false, false, 0, error) &&
+           emit_map_event(opaque,
                           (qa_builtin_event){.kind = QA_BUILTIN_TARGET,
                                              .family = QA_GAME_Q1,
                                              .value = (float)seconds,
@@ -648,6 +715,19 @@ static bool q1_campaign_source_options(
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Q1 campaign has no native program profile");
     return true;
+}
+
+static bool q1_retire_actor(void *opaque, qa_actor_id actor, qa_error *error)
+{
+    application_provider *provider = opaque;
+    return qa_session_release(provider->application->session, actor, error);
+}
+
+static bool q1_schedule_remove(void *opaque, qa_actor_id actor, double delay,
+                               qa_error *error)
+{
+    application_provider *provider = opaque;
+    return qa_q1_game_map_defer_remove(provider->state.q1, actor, delay, error);
 }
 
 static bool q1_map_options(application_provider *provider,
@@ -721,6 +801,10 @@ static bool q1_map_options(application_provider *provider,
         .finale_finished = q1_finale_finished,
         .finish_campaign = q1_finish_campaign,
         .server_command = q1_server_command,
+        .horde_control = q1_horde_control,
+        .horde_keys = q1_horde_keys,
+        .retire_actor = q1_retire_actor,
+        .schedule_remove = q1_schedule_remove,
     };
     return true;
 
@@ -1623,6 +1707,36 @@ static bool q3_begin_map(application_provider *provider,
     return ok;
 }
 
+bool application_map_restore_bind(qa_application *application,
+                                    const qa_launch_snapshot *snapshot,
+                                    qa_error *error)
+{
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
+    application_publication names = {.candidate = snapshot};
+    if (!map_name(application, &names, &application->current_map, error))
+        return false;
+    for (size_t i = 0; i < application->provider_count; ++i) {
+        application_provider *provider = application->providers[i];
+        if (!provider->attached || !provider->constructed || provider->map_bound)
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                                    "restored map binding requires fresh attached providers");
+        if (provider->kind == APPLICATION_PROVIDER_Q1) {
+            if (!q1_begin_map(provider, provider->product, choices,
+                               application->current_map, error))
+                return false;
+        } else if (provider->kind == APPLICATION_PROVIDER_Q2) {
+            qa_q2_entity_services services = q2_entity_services(provider, choices);
+            services.spawn = q2_spawn;
+            if (!qa_q2_entities_configure(provider->state.q2, &services, error))
+                return false;
+        } else if (provider->kind == APPLICATION_PROVIDER_Q3) {
+            if (!q3_begin_map(provider, choices, error))
+                return false;
+        }
+    }
+    return application_players_restore_prepare(application, choices, error);
+}
+
 static bool q3_spawn_map(application_provider *provider,
                          const qa_entities *entities, qa_error *error)
 {
@@ -1665,6 +1779,49 @@ bool application_map_spawn_point(qa_application *application,
         (qa_bytes){(const uint8_t *)start, length}, out, error);
 }
 
+static bool configure_horde(qa_application *application,
+                             const qa_launch_choices *choices,
+                             application_provider *map_provider, qa_error *error)
+{
+    for (size_t i = 0; i < application->mode_count; ++i) {
+        qa_mode_view view;
+        if (!qa_modes_read(application->modes, application->mode_ids[i], &view, error))
+            return false;
+        if (view.rules.source != QA_MODE_Q1_HORDE || !view.rules.enabled)
+            continue;
+        application_provider *provider = active_provider_named(application,
+            choices->modes[i].instance);
+        if (provider == NULL || !provider->attached || !provider->constructed ||
+            provider->kind != APPLICATION_PROVIDER_Q1)
+            return application_fail(error, QA_ERROR_UNSUPPORTED,
+                                    "selected Horde mode requires its native Q1 map owner");
+        if (map_provider == NULL || map_provider->kind != APPLICATION_PROVIDER_Q1)
+            return application_fail(error, QA_ERROR_UNSUPPORTED,
+                                    "selected Horde mode requires a native authored Q1 layout");
+        size_t capacity = qa_actors_capacity(qa_session_actors(application->session));
+        if (capacity > SIZE_MAX / sizeof(qa_horde_point))
+            return application_fail(error, QA_ERROR_MEMORY, "Horde authored point roster is too large");
+        qa_horde_point *points = calloc(capacity == 0 ? 1 : capacity, sizeof(*points));
+        if (points == NULL)
+            return application_fail(error, QA_ERROR_MEMORY, "Cannot observe Horde authored points");
+        qa_horde_options options;
+        size_t count = 0;
+        bool found = false;
+        bool ok = qa_q1_game_map_horde_read(map_provider->state.q1, &options, points,
+                                            capacity, &count, &found, error);
+        if (ok && !found)
+            ok = application_fail(error, QA_ERROR_NOT_FOUND,
+                                  "selected Horde source has no authored manager");
+        if (ok)
+            ok = qa_modes_horde_configure(application->modes, application->mode_ids[i],
+                                            &options, points, count, error);
+        free(points);
+        if (!ok)
+            return false;
+    }
+    return true;
+}
+
 bool application_map_publish(qa_application *application,
                              application_publication *publication,
                              qa_error *error)
@@ -1696,12 +1853,12 @@ bool application_map_publish(qa_application *application,
     bool carry, unit;
     const qa_q2_landmark *landmark;
     application_map_travel_options(application, &carry, &unit, &landmark);
-    (void)unit; (void)landmark;
+    (void)carry; (void)landmark;
     for (size_t index = 0; index < application->provider_count; ++index) {
         application_provider *provider = application->providers[index];
         if (provider == NULL || !provider->attached || !provider->constructed)
             continue;
-        if (!carry) {
+        if (unit) {
             provider->q1_server_flags = 0;
             provider->q2_server_flags = 0;
         }
@@ -1752,6 +1909,8 @@ bool application_map_publish(qa_application *application,
         break;
     }
     if (!spawned)
+        return false;
+    if (!configure_horde(application, choices, publication->map_provider, error))
         return false;
     for (size_t i = 0; i < application->provider_count; ++i) {
         application_provider *provider = application->providers[i];

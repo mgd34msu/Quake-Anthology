@@ -50,6 +50,10 @@ static bool read_actor(qa_net_reader *reader, const qa_actor_registry *actors,
 }
 static bool engine_console_safe(struct application_qc_state *engine, qa_error *error)
 {
+    if (engine->provider->application->operation == APPLICATION_PERSISTING)
+        return qa_console_idle(engine->console) ||
+            application_fail(error, QA_ERROR_ARGUMENT,
+                             "Portable QuakeC continuation requires an idle console owner");
     if (qa_console_pending(engine->console) || qa_console_alias_at(engine->console, engine->provider->owner, 0) != NULL)
         return application_fail(error, QA_ERROR_UNSUPPORTED,
             "QuakeC checkpoints with queued console commands or aliases require a console continuation codec");

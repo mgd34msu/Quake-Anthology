@@ -1,4 +1,7 @@
 #include "internal.h"
+#include "guest_native_q2_private.h"
+#include "map_private.h"
+#include "save_private.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -360,7 +363,9 @@ static bool prepare_world(qa_application *application,
                                           &publication->geometry_admission,
                                           error))
         return false;
-    return application_map_prepare(application, publication, error);
+    return publication->restoring
+        ? application_map_prepare_content(application, publication, error)
+        : application_map_prepare(application, publication, error);
 }
 
 bool application_publication_prepare(qa_application *application,
@@ -577,6 +582,65 @@ static void publish_roster(qa_application *application,
     application->routing_provider_count = application->provider_count;
 }
 
+bool application_save_prepare_content(qa_application *candidate,
+                                        const qa_launch_snapshot *snapshot,
+                                        const qa_save_image *image,
+                                        qa_error *error)
+{
+    if (candidate == NULL || snapshot == NULL || image == NULL ||
+        candidate->operation != APPLICATION_PERSISTING ||
+        candidate->world != NULL || candidate->provider_count != 0 ||
+        candidate->providers != NULL || candidate->modes != NULL ||
+        candidate->equipment != NULL || !qa_session_safe(candidate->session))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "save content requires an isolated restored application");
+    application_publication *publication = calloc(1, sizeof(*publication));
+    if (publication == NULL)
+        return application_fail(error, QA_ERROR_MEMORY,
+                                "cannot allocate restored content preparation");
+    publication->candidate = snapshot;
+    publication->restoring = true;
+    bool ok = provider_roster(publication, error) &&
+              prepare_world(candidate, publication, error);
+    if (ok)
+        ok = qa_session_adopt_restored_world(candidate->session,
+                                             publication->initial_world,
+                                             close_world, error);
+    if (ok) {
+        candidate->world = publication->initial_world;
+        publication->initial_world = NULL;
+        candidate->physics_ready = true;
+        publication->physics_initialized = false;
+        candidate->geometry = publication->geometry;
+        publication->geometry = NULL;
+        candidate->map_resource = publication->map_resource;
+        publication->map_resource = NULL;
+        candidate->routing_snapshot = snapshot;
+        candidate->routing_providers = publication->next;
+        candidate->routing_provider_count = publication->next_count;
+        ok = construct_and_reserve(candidate, publication, error) &&
+             application_match_prepare(candidate, publication, error);
+    }
+    if (ok) {
+        ok = commit_admissions(publication, error);
+        publish_roster(candidate, publication);
+        publication->published = true;
+        candidate->modes = publication->modes;
+        publication->modes = NULL;
+        candidate->equipment = publication->equipment;
+        publication->equipment = NULL;
+        candidate->mode_ids = publication->mode_ids;
+        publication->mode_ids = NULL;
+        if (ok)
+            ok = application_map_restore_bind(candidate, snapshot, error);
+    }
+    candidate->routing_snapshot = NULL;
+    candidate->routing_providers = NULL;
+    candidate->routing_provider_count = 0;
+    application_publication_dispose(candidate, publication);
+    return ok;
+}
+
 static bool retire_map_services(qa_application *application, bool carry,
                                  qa_error *error)
 {
@@ -594,7 +658,11 @@ static bool retire_map_services(qa_application *application, bool carry,
         if (carry && provider->kind == APPLICATION_PROVIDER_QC &&
             provider->map_bound && !application_qc_change_parms(provider, error))
             return false;
-        if (!application_q3_guest_retire_map(provider, error))
+        bool retired = provider->kind == APPLICATION_PROVIDER_NATIVE &&
+                       provider->state.native.q2_engine != NULL
+            ? application_native_q2_retire_map(provider, error)
+            : application_q3_guest_retire_map(provider, error);
+        if (!retired)
             return false;
     }
     if (!application_bots_destroy(application, error))
@@ -763,6 +831,9 @@ void application_publication_publish(qa_application *application,
         application_publication_dispose(application, publication);
     }
     application->publication_started = false;
+    application->routing_snapshot = NULL;
+    application->routing_providers = NULL;
+    application->routing_provider_count = 0;
     if (!ok)
         application_fault(application, &error);
 }

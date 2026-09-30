@@ -71,6 +71,19 @@ bool qa_application_network_detach(qa_application *application, const qa_net_cli
     return true;
 }
 
+bool qa_application_network_command_owner_bound(const qa_application *application)
+{
+    static const char *const names[] = {"serverlist", "serverquery", "serverfavorite", "servermaster",
+        "addip", "removeip", "heartbeat", "maprotation", "nextmap", "download", "downloadstatus", "downloadcancel", "downloadsuspend"};
+    qa_console *console = qa_application_console((qa_application *)application);
+    if (!console) return false;
+    for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i) {
+        uint64_t owner = 0;
+        if (!qa_console_registration_owner(console, names[i], 0, &owner) || owner != QA_NETWORK_COMMAND_OWNER) return false;
+    }
+    return true;
+}
+
 static struct application_q3_guest *source(qa_application *application, qa_actor_id actor,
                                            uint32_t *slot, qa_error *error)
 {

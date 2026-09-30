@@ -1085,6 +1085,8 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
             ok = qa_q2_game_restore_finish(provider->state.q2, error);
         else if (provider->kind == APPLICATION_PROVIDER_Q1)
             ok = qa_q1_game_restore_finish(provider->state.q1, error);
+        if (ok)
+            ok = application_guest_inventory_restore_finish(provider, error);
     }
     if (ok) ok = qa_modes_reconnect(candidate->modes, error) &&
         qa_equipment_reconnect(candidate->equipment, error) &&

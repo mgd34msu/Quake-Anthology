@@ -407,6 +407,20 @@ bool qa_console_register_owned(qa_console *console, const char *name, const char
     return qac_fail(error, QA_ERROR_ARGUMENT, "registered command lost its dispatch entry");
 }
 
+bool qa_console_registration_owner(const qa_console *console, const char *name,
+                                   uint64_t dispatch_owner, uint64_t *out)
+{
+    if (!console || !name || !out)
+        return false;
+    for (const command_entry *entry = console->commands; entry; entry = entry->next)
+        if (entry->view.owner == dispatch_owner && !strcmp(entry->view.name, name) &&
+            entry->ordinary_registration && entry->handler) {
+            *out = entry->registration_owner;
+            return true;
+        }
+    return false;
+}
+
 static void clear_registration(command_entry *entry)
 {
     entry->ordinary_registration = false;

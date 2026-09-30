@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "guest_native_q2_private.h"
 #include "guest_input_private.h"
 
 #include <limits.h>
@@ -27,6 +28,7 @@ typedef struct application_move_call {
     bool q1_input;
     bool q1_prethink;
     bool q1_weapon;
+    bool q1_map_frame;
 } application_move_call;
 
 static void end_q1_operations(application_move_call *move)
@@ -536,6 +538,20 @@ static qa_movement_control move_phase(void *opaque, qa_movement_phase phase,
         }
         move->q1_prethink = true;
     }
+    if (phase == QA_MOVE_PRETHINK && !move->q1_map_frame) {
+        if (!live(move->application, actor))
+            return QA_MOVEMENT_REMOVED;
+        application_provider *map = application_world_provider(move->application,
+                                                                QA_ROLE_ENTITIES, "");
+        move->q1_map_frame = true;
+        if (map && map->constructed && map->kind == APPLICATION_PROVIDER_Q1 &&
+            map != move->arsenal) {
+            move->committed = true;
+            if (!qa_q1_game_map_addon_player_frame(map->state.q1, actor,
+                                                    move->control->view_offset, error))
+                return QA_MOVEMENT_ERROR;
+        }
+    }
     if (phase == QA_MOVE_WEAPON && !move->q1_weapon &&
         move->arsenal != NULL &&
         move->arsenal->kind == APPLICATION_PROVIDER_Q1) {
@@ -722,7 +738,8 @@ static bool movement_provider(qa_application *application, qa_actor_id actor,
         provider->kind != APPLICATION_PROVIDER_QC &&
         provider->kind != APPLICATION_PROVIDER_QVM &&
         !(provider->kind == APPLICATION_PROVIDER_NATIVE &&
-          provider->component.clock.kind == QA_CLOCK_Q3))
+          (provider->component.clock.kind == QA_CLOCK_Q3 ||
+           provider->state.native.q2_engine != NULL)))
         return application_fail(
             error, QA_ERROR_UNSUPPORTED,
             "external selected movement adapter is not installed");
@@ -1047,19 +1064,22 @@ bool application_control_move_applied(qa_application *application,
     }
     qa_movement_command effective_command = *command;
     command = &effective_command;
-    bool guest_handled;
-    application_operation guest_previous_operation = application->operation;
-    application->operation = APPLICATION_ADVANCING;
-    bool guest_ok = application_arsenal_guest_move(application, actor, command,
-                                                   &guest_handled, error);
-    application->operation = guest_previous_operation;
-    if (!guest_ok || guest_handled) {
-        if (!guest_ok) application_fault(application, error);
-        return guest_ok;
-    }
     application_provider *movement;
     if (!movement_provider(application, actor, &movement, error))
         return false;
+    bool guest_handled = false;
+    application_operation guest_previous_operation = application->operation;
+    application->operation = APPLICATION_ADVANCING;
+    bool guest_ok = movement->kind == APPLICATION_PROVIDER_NATIVE &&
+                   movement->state.native.q2_engine != NULL
+        ? application_native_q2_move(movement, actor, command, &guest_handled, error)
+        : application_arsenal_guest_move(application, actor, command, &guest_handled, error);
+    application->operation = guest_previous_operation;
+    if (!guest_ok || guest_handled) {
+        if (guest_ok && applied) *applied = *command;
+        if (!guest_ok) application_fault(application, error);
+        return guest_ok;
+    }
     qa_movement_profile profile = selected_profile(application, movement);
     if (profile.kind != record->state.kind)
         return application_fail(

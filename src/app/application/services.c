@@ -132,6 +132,17 @@ static bool actor_is_player(qa_application *application, qa_actor_id actor,
     return false;
 }
 
+application_provider *application_world_provider(qa_application *application,
+                                                  qa_launch_role role,
+                                                  const char *selector)
+{
+    if (application == NULL)
+        return NULL;
+    const qa_launch_binding *binding = exact_binding(active_choices(application),
+        (qa_launch_scope){.kind = QA_SCOPE_WORLD}, role, selector);
+    return binding == NULL ? NULL : provider_named(application, binding->instance);
+}
+
 application_provider *application_provider_for(qa_application *application,
                                                qa_actor_id actor,
                                                qa_launch_role role,
@@ -385,19 +396,37 @@ static bool selected_reaction(void *opaque, const qa_damage_outcome *outcome,
         application, outcome->request.target, QA_ROLE_CHARACTER, "");
     if (provider == NULL)
         return true;
-    switch (provider->kind) {
+    bool death = outcome->result.reaction == QA_REACTION_DEATH;
+    if (death && application->modes != NULL)
+        for (size_t i = 0; i < application->mode_count; ++i)
+            if (!qa_modes_horde_before_death(application->modes,
+                    application->mode_ids[i], outcome, error))
+                return false;
+    bool ok = true;
+    if (qa_actors_get(qa_session_actors(application->session),
+                      outcome->request.target) != NULL) {
+      switch (provider->kind) {
     case APPLICATION_PROVIDER_Q1:
-        return qa_q1_game_reaction(provider->state.q1, outcome, error);
+        ok = qa_q1_game_reaction(provider->state.q1, outcome, error);
+        break;
     case APPLICATION_PROVIDER_Q2:
-        return qa_q2_damage_reaction(provider->state.q2, outcome, error);
+        ok = qa_q2_damage_reaction(provider->state.q2, outcome, error);
+        break;
     case APPLICATION_PROVIDER_Q3:
-        return qa_q3_damage_reaction(provider->state.q3, outcome, error);
+        ok = qa_q3_damage_reaction(provider->state.q3, outcome, error);
+        break;
     case APPLICATION_PROVIDER_QC:
     case APPLICATION_PROVIDER_QVM:
     case APPLICATION_PROVIDER_NATIVE:
-        return true;
+        break;
+      }
     }
-    return true;
+    if (ok && death && application->modes != NULL)
+        for (size_t i = 0; i < application->mode_count; ++i)
+            if (!qa_modes_horde_after_death(application->modes,
+                    application->mode_ids[i], outcome->request.target, error))
+                return false;
+    return ok;
 }
 
 static bool confirmed_damage(void *opaque, const qa_damage_outcome *outcome,
@@ -439,6 +468,58 @@ static bool provider_invulnerable(application_provider *provider,
     return false;
 }
 
+bool application_force_death(void *opaque, const qa_damage_request *request,
+                              qa_error *error)
+{
+    qa_application *application = opaque;
+    if (application == NULL || application->combat == NULL ||
+        application->destroy_requested ||
+        !qa_damage_request_validate(request, error))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "direct death requires an active combat owner");
+    qa_actor_registry *actors = qa_session_actors(application->session);
+    if (qa_actors_get(actors, request->target) == NULL)
+        return true;
+    application_provider *character = application_provider_for(
+        application, request->target, QA_ROLE_CHARACTER, "");
+    if (character == NULL || !character->constructed ||
+        character->kind > APPLICATION_PROVIDER_Q3)
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+                                "selected character has no direct death adapter");
+    qa_combat_state traits;
+    if (!qa_combat_read_traits(application->combat, request->target,
+                               &traits, error))
+        return false;
+    if (traits.health <= 0)
+        return true;
+    application_operation previous = application->operation;
+    application->operation = APPLICATION_ADVANCING;
+    qa_damage_mutation mutation = {
+        .kind = QA_MUTATION_HEALTH,
+        .value.health = {.before = traits.health, .after = -999},
+    };
+    qa_damage_outcome outcome = {
+        .request = *request,
+        .result = {.applied_damage = request->amount,
+                   .reaction = QA_REACTION_DEATH},
+        .mutations = &mutation,
+        .mutation_count = 1,
+    };
+    traits.invulnerable = false;
+    bool ok = qa_combat_set_traits(application->combat, request->target,
+                                    &traits, error) &&
+              qa_combat_set_health(application->combat, request->target,
+                                    -999, error) &&
+              qa_combat_source_reaction(application->combat, request,
+                                         &outcome.result, error);
+    if (ok && qa_actors_get(actors, request->target) != NULL)
+        ok = selected_reaction(application, &outcome, error);
+    if (ok)
+        ok = confirmed_damage(application, &outcome, error);
+    application->operation = previous;
+    return ok;
+}
+
 static bool combat_invulnerable(void *opaque, qa_actor_id actor)
 {
     qa_application *application = opaque;
@@ -459,6 +540,27 @@ static bool combat_effect(void *opaque, qa_combat *combat,
     if (combat != application->combat)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "damage effect reached the wrong combat owner");
+    const qa_launch_binding *world_binding = exact_binding(active_choices(application),
+        (qa_launch_scope){.kind = QA_SCOPE_WORLD}, QA_ROLE_ENTITIES, "");
+    application_provider *selected[] = {
+        application_provider_for(application, request->target, QA_ROLE_EFFECTS, ""),
+        application_provider_for(application, request->target, QA_ROLE_CHARACTER, ""),
+        world_binding == NULL ? NULL : provider_named(application, world_binding->instance),
+    };
+    for (size_t i = 0; i < sizeof(selected) / sizeof(*selected); ++i) {
+        application_provider *provider = selected[i];
+        if (provider == NULL || !provider->constructed ||
+            provider->kind != APPLICATION_PROVIDER_Q1)
+            continue;
+        bool duplicate = false;
+        for (size_t j = 0; j < i; ++j)
+            duplicate |= selected[j] == provider;
+        if (!duplicate &&
+            !qa_q1_game_damage_effect(provider->state.q1, stage, request, effect, error))
+            return false;
+        if (qa_actors_get(qa_session_actors(application->session), request->target) == NULL)
+            return true;
+    }
     return application->modes == NULL || !application->primary_mode_ready ||
            qa_modes_damage_effect(application->modes,
                                   application->primary_mode, stage, request,
@@ -730,6 +832,14 @@ static bool physics_touch(void *opaque, const qa_touch_contact *contact,
 {
     qa_application *application = opaque;
     bool accepted = false;
+    if (application->modes != NULL) {
+        bool handled = false;
+        if (!qa_modes_horde_loot_touch(application->modes, contact->self,
+                contact->other, &handled, &accepted, error))
+            return false;
+        if (handled)
+            return true;
+    }
     if (application->modes != NULL &&
         !qa_modes_touch(application->modes, contact->self, contact->other,
                         &accepted, error))

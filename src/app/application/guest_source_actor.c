@@ -20,10 +20,13 @@ bool qa_application_guest_source_actor(qa_application *app, qa_actor_owner owner
             binding.kind != QA_QC_SLOT_FREE) *out = binding.actor;
     } else {
         struct application_q3_guest *engine = q3g_engine(provider);
-        qa_q3_host *host = engine && engine->game ? engine->game->host : NULL;
-        if (!host && engine)
+        qa_q3_host *host = NULL;
+        bool external_client = false;
+        if (engine)
             for (q3g_role *role = engine->roles; role; role = role->next)
-                if (role->kind == QA_QVM_CGAME && role->seat == seat && role->ready && !role->retired) {
+                if (role->kind == QA_QVM_CGAME && role->seat == seat &&
+                    role->ready && !role->retired && !role->local_client) {
+                    external_client = true;
                     bool present = false;
                     if (role->client_services.source_actor &&
                         !role->client_services.source_actor(role->client_services.context,
@@ -31,6 +34,8 @@ bool qa_application_guest_source_actor(qa_application *app, qa_actor_owner owner
                     if (!present) *out = (qa_actor_id){0};
                     break;
                 }
+        if (!external_client && engine && engine->game)
+            host = engine->game->host;
         if (host) {
             qa_q3_host_game_data data;
             if (qa_q3_host_game_data_read(host, &data) && (uint32_t)number < data.entity_count &&

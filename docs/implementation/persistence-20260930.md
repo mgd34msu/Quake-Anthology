@@ -187,3 +187,12 @@ currently declare scalar session/client zero; unqualified nonzero values fail
 restoration and cannot be invented from connection slots. The generic owner
 codec passed independent source review. Application scope and resolver helpers
 were inspected separately; complete runtime qualification remains deferred.
+
+The registration-owner accessor reads the actual ordinary command handler's
+lifetime owner using its exact registered name and dispatch owner. Network
+qualification uses this value instead of the public dispatch owner, which is
+zero for its shared engine commands. It executes no callback and leaves the
+output unchanged when the registration is absent. The final provider loop
+also qualifies prepared guest primary inventory leases after shared inventory
+import and native source finish, before application publication. The guest
+finish checks all prepared bindings before promoting their private ownership.

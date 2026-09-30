@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "guest_native_q2_private.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -429,7 +430,13 @@ static bool construct_q3(qa_application *application,
                        : QA_Q3_ARENA,
         .rules = rules,
         .hooks = {.context = provider,
-                  .combat_provider = q3_combat_provider},
+                  .combat_provider = q3_combat_provider,
+                  .cheats_enabled = application_native_cheats_enabled,
+                  .console_motion = application_native_console_motion,
+                  .grant_arsenal = application_native_grant_arsenal,
+                  .give_item = application_native_give_item,
+                  .suicide = application_native_suicide,
+                  .award = application_native_q3_award},
         .random_seed = (uint32_t)(provider->owner * UINT32_C(2246822519)),
     };
     if (!qa_q3_create(&options, &provider->state.q3, error))
@@ -481,13 +488,11 @@ bool application_provider_construct(qa_application *application,
                                              choices, error);
         break;
     case APPLICATION_PROVIDER_NATIVE:
-        if (product->family != QA_GAME_Q3) {
-            provider->constructed = false;
-            return application_fail(error, QA_ERROR_UNSUPPORTED,
-                                    "native Q2 application module owner is not installed");
-        }
-        ok = application_construct_q3_guest(application, provider, world, product,
-                                             choices, error);
+        ok = product->family == QA_GAME_Q2
+            ? application_construct_native_q2(application, provider, world,
+                                               product, choices, error)
+            : application_construct_q3_guest(application, provider, world,
+                                               product, choices, error);
         break;
     default:
         provider->constructed = false;
@@ -539,6 +544,10 @@ bool application_provider_deconstruct(application_provider *provider,
         ok = application_q3_guest_deconstruct(provider, error);
         break;
     case APPLICATION_PROVIDER_NATIVE:
+        if (provider->state.native.q2_engine != NULL) {
+            ok = application_native_q2_deconstruct(provider, error);
+            break;
+        }
         if (provider->state.native.engine != NULL) {
             ok = application_q3_guest_deconstruct(provider, error);
             break;
@@ -580,6 +589,9 @@ bool application_guest_spawn_map(application_provider *provider,
         return application_fail(error, QA_ERROR_ARGUMENT, "guest map owner is not constructed");
     if (provider->kind == APPLICATION_PROVIDER_QC)
         return application_qc_spawn_map(provider, map, entities, name, spawn_point, error);
+    if (provider->kind == APPLICATION_PROVIDER_NATIVE &&
+        provider->state.native.q2_engine != NULL)
+        return application_native_q2_spawn_map(provider, map, entities, name, spawn_point, error);
     if (provider->kind == APPLICATION_PROVIDER_QVM ||
         (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine != NULL))
         return application_q3_guest_spawn_map(provider, map, entities, name, spawn_point, error);

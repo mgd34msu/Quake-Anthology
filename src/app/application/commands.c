@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "guest_native_q2_private.h"
 #include "qa/application_players.h"
 
 #include <string.h>
@@ -178,6 +179,36 @@ qa_console *qa_application_console_at(qa_application *application, size_t index,
     return NULL;
 }
 
+bool qa_application_console_scope_read(const qa_application *application,
+    const qa_console *console, qa_application_console_scope *out)
+{
+    if (!application || !console || !out)
+        return false;
+    if (console == application->console) {
+        *out = (qa_application_console_scope){.kind = QA_APPLICATION_CONSOLE_ENGINE};
+        return true;
+    }
+    const char *instance = NULL;
+    qa_application_console_scope result = {0};
+    for (application_provider *provider = application->live_providers;
+         provider; provider = provider->next_live) {
+        qa_application_console_scope scope;
+        if (!provider->attached || !provider->constructed || provider->close_pending ||
+            !provider->launch ||
+            !application_guest_console_scope(provider, console, &scope))
+            continue;
+        const char *name = provider->launch->selection.instance;
+        if (!instance || strcmp(name, instance) < 0) {
+            instance = name;
+            result = scope;
+        }
+    }
+    if (!instance)
+        return false;
+    *out = result;
+    return true;
+}
+
 static qa_launch_role command_role(const char *name)
 {
     static const char *const arsenal[] = {
@@ -209,6 +240,10 @@ static bool provider_command(application_provider *provider, const qa_command_in
                                                  actor.registry != 0, handled, error);
     case APPLICATION_PROVIDER_QVM:
     case APPLICATION_PROVIDER_NATIVE: {
+        if (provider->kind == APPLICATION_PROVIDER_NATIVE &&
+            provider->state.native.q2_engine != NULL)
+            return application_native_q2_console_command(provider, actor,
+                                                           command->raw, handled, error);
         uint32_t slot;
         if (actor.registry != 0 && application_q3_guest_actor_client(provider, actor, &slot)) {
             bool ok = application_q3_guest_client_command(provider, slot, command->raw, error);

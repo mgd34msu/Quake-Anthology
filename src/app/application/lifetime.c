@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "guest_native_q2_private.h"
 
 #include <stdlib.h>
 
@@ -22,6 +23,10 @@ bool application_guests_idle(const qa_application *application)
                 (provider->state.qc.game != NULL &&
                  !qa_qc_game_idle(provider->state.qc.game)) ||
                 !application_qc_input_idle(provider))
+                return false;
+        } else if (provider->kind == APPLICATION_PROVIDER_NATIVE &&
+                   provider->state.native.q2_engine != NULL) {
+            if (!application_native_q2_idle(provider))
                 return false;
         } else if (!application_q3_guest_idle(provider)) {
             return false;
@@ -100,6 +105,7 @@ void application_provider_release(qa_application *application,
     if (application == NULL || provider == NULL)
         return;
     if (application->operation == APPLICATION_ADVANCING ||
+        application->operation == APPLICATION_PERSISTING ||
         application->session == NULL ||
         !qa_session_safe(application->session)) {
         queue_close(application, provider);

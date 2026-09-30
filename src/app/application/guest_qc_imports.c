@@ -221,13 +221,20 @@ bool application_qc_import(void *opaque, qa_qc_instance *vm, qa_qc_builtin built
         if (!qa_qc_arg_float(vm, 0, &style, error) || !qa_qc_arg_string(vm, 1, &pattern, error)) return false;
         if (!isfinite(style) || style < 0 || style >= 64)
             return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC lightstyle outside source table");
+        qa_builtin_event light = {.kind = QA_BUILTIN_LIGHT,
+            .family = QA_GAME_Q1, .provider = engine->provider->owner,
+            .code = (int32_t)style, .time_ns = engine->source_time_ns};
+        if (!qa_builtin_resource(&engine->services, pattern, &light.resource, error))
+            return false;
         size_t length = strlen(pattern);
         char *copy = malloc(length + 1); uint8_t *bytes = malloc(length + 3);
         if (copy == NULL || bytes == NULL) { free(copy); free(bytes); return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC lightstyle"); }
         memcpy(copy, pattern, length + 1); bytes[0] = 12; bytes[1] = (uint8_t)style; memcpy(bytes + 2, pattern, length + 1);
         qa_application_protocol_event event = {.payload = {bytes, length + 3}, .destination = engine->loading ? 3 : 2,
                                                .reliable = !engine->loading, .signon = engine->loading};
-        bool ok = application_emit_protocol(engine->provider, &event, error); free(bytes);
+        bool ok = application_emit_protocol(engine->provider, &event, error) &&
+            qa_builtin_emit(&engine->services, &light, error);
+        free(bytes);
         if (ok) { free(engine->lightstyles[(uint32_t)style]); engine->lightstyles[(uint32_t)style] = copy; } else free(copy);
         return ok;
     }

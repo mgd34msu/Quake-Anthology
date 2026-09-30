@@ -4,6 +4,9 @@
 #include "qa/application_players.h"
 #include "qa/network_runtime.h"
 
+#define QA_NETWORK_COMMAND_OWNER UINT64_C(0x71616e6574770001)
+bool qa_application_network_command_owner_bound(const qa_application *);
+
 /* These adapters borrow the application. Seat authority is always the
  * canonical roster, and travel resolves its freshly published actor IDs. */
 bool qa_application_network_controlled(qa_application *, qa_net_client_id,

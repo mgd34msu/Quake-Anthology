@@ -3,6 +3,7 @@
 
 #include "qa/builtin.h"
 #include "qa/campaign.h"
+#include "qa/game_q1_maps.h"
 #include "qa/game_q2_entities.h"
 #include "qa/game_q2_player.h"
 #include "qa/game_q3_map.h"
@@ -37,13 +38,13 @@ typedef struct qa_application_visual_view {
     const char *models[4], *skin_path;
     int32_t frame, old_frame, skin, legs_animation, torso_animation;
     uint64_t effects;
-    uint32_t render_flags, source_flags, powerups, inline_model;
+    uint32_t render_flags, source_flags, powerups, inline_model, q1_effects;
     float alpha, scale;
     bool visible, has_inline_model;
 } qa_application_visual_view;
 typedef struct qa_application_presentation_view {
     qa_actor_owner hud, menu;
-    bool source_hud, source_menu;
+    bool source_hud, source_menu, source_world;
 } qa_application_presentation_view;
 
 typedef enum qa_application_guest_menu {
@@ -232,7 +233,8 @@ bool qa_application_visual_read(qa_application *, qa_actor_id,
                                   qa_application_visual_view *, qa_error *);
 bool qa_application_weapon_read(qa_application *, qa_actor_id, qa_item_id *, qa_error *);
 bool qa_application_present(qa_application *, uint32_t seat,
-                             uint32_t milliseconds, qa_error *);
+                             uint32_t real_milliseconds,
+                             uint32_t client_milliseconds, qa_error *);
 bool qa_application_presentation_read(qa_application *, uint32_t seat,
                                        qa_application_presentation_view *);
 bool qa_application_guest_menu_set(qa_application *, uint32_t seat,
@@ -257,6 +259,33 @@ qa_player_progress *qa_application_player_progress(qa_application *);
 qa_rankings *qa_application_rankings(qa_application *);
 qa_cvars *qa_application_cvars(qa_application *);
 qa_console *qa_application_console(qa_application *);
+/* Qualify all callback owners before the caller's no-fail publication phase.
+ * Applying the new borrowed context invokes no service callback. */
+bool qa_application_guest_context_rebind_ready(const qa_application *, qa_error *);
+void qa_application_guest_context_rebind(qa_application *, void *);
+typedef enum qa_application_console_kind {
+    QA_APPLICATION_CONSOLE_ENGINE,
+    QA_APPLICATION_CONSOLE_QC,
+    QA_APPLICATION_CONSOLE_NATIVE_Q2,
+    QA_APPLICATION_CONSOLE_Q3_GAME,
+    QA_APPLICATION_CONSOLE_Q3_CGAME,
+    QA_APPLICATION_CONSOLE_Q3_UI
+} qa_application_console_kind;
+typedef struct qa_application_console_scope {
+    qa_actor_owner provider;
+    qa_application_console_kind kind;
+    uint32_t seat;
+} qa_application_console_scope;
+/* Shared console aliases use the smallest provider instance/role/seat key. */
+bool qa_application_console_scope_read(const qa_application *, const qa_console *,
+                                        qa_application_console_scope *);
+/* Instance text is borrowed until its attached provider retires. */
+const char *qa_application_provider_instance(const qa_application *, qa_actor_owner);
+bool qa_application_provider_owner(const qa_application *, const char *, qa_actor_owner *);
+bool qa_application_provider_gravity(const qa_application *, qa_actor_owner, float *);
+bool qa_application_q1_fog_read(qa_application *, qa_actor_id, qa_q1_fog_state *);
+bool qa_application_q1_monster_counts(const qa_application *, uint32_t seat,
+    uint32_t *total, uint32_t *killed);
 size_t qa_application_console_count(const qa_application *);
 qa_console *qa_application_console_at(qa_application *, size_t, qa_actor_owner *);
 const qa_launch_snapshot *qa_application_launch(const qa_application *);

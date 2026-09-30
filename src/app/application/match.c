@@ -114,6 +114,25 @@ static qa_modes_hooks mode_hooks(qa_application *application)
                             .event = mode_event,
                             .intent = mode_intent,
                             .combat_provider = mode_combat_provider,
+                            .force_death = application_force_death,
+                            .visible = application_native_mode_visible,
+                            .character_frame = application_native_mode_character_frame,
+                            .select_weapon = application_native_mode_select_weapon,
+                            .use_item = application_native_mode_use_item,
+                            .give_body_armor = application_native_mode_body_armor,
+                            .give_quad = application_native_mode_quad,
+                            .team_equipment = application_native_mode_team_equipment,
+                            .select_grapple = application_native_mode_select_grapple,
+                            .drop_arsenal = application_native_mode_drop_arsenal,
+                            .spawn_monster = application_native_horde_spawn_monster,
+                            .spawn_loot = application_native_horde_spawn_loot,
+                            .grant_loot = application_native_horde_grant_loot,
+                            .horde_head = application_native_horde_head,
+                            .loot_alpha = application_native_horde_alpha,
+                            .source_random = application_native_horde_random,
+                            .horde_point = application_native_horde_point,
+                            .horde_manager = application_native_horde_manager,
+                            .campaign_restart = application_native_horde_restart,
                             .grapple_pulling = mode_grapple_pulling,
                             .player_view = mode_player_view};
 }
@@ -275,7 +294,8 @@ bool application_match_prepare(qa_application *application,
     if (publication->mode_ids == NULL)
         return application_fail(error, QA_ERROR_MEMORY,
                                 "cannot retain selected mode identities");
-    for (size_t index = 0; index < choices->mode_count; ++index) {
+    for (size_t index = 0; !publication->restoring &&
+                           index < choices->mode_count; ++index) {
         qa_mode_rules rules = choices->modes[index].rules;
         for (size_t team = 0; team < 3; ++team)
             if (choices->modes[index].teams[team][0] != '\0' &&
@@ -299,6 +319,7 @@ bool application_match_prepare(qa_application *application,
     qa_equipment_options equipment = {
         .services = modes.services,
         .context = application,
+        .select_weapon = application_native_mode_select_weapon,
         .primary_holster = equipment_holster,
         .primary_holstered = equipment_holstered,
         .primary_resume = equipment_resume,

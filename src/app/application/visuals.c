@@ -98,6 +98,9 @@ bool qa_application_visual_read(qa_application *application, qa_actor_id actor,
         return false;
     }
     qa_actor_collision collision;
+    application_provider *map = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    if (map != NULL && map->constructed && map->kind == APPLICATION_PROVIDER_Q1)
+        (void)qa_q1_game_map_effects(map->state.q1, actor, &view.q1_effects);
     if (!qa_world_get_collision(application->world, actor, &collision, error))
         return false;
     view.inline_model = collision.model;
