@@ -325,8 +325,19 @@ bool q2m_medic_acquire(q2m_context *c, bool preserve_enemy, bool *acquired,
 
 static bool sound(q2m_context *c, const char *normal, const char *commander,
                    int channel, float attenuation, qa_error *error) {
-    return q2m_sound(c, rogue(c) && c->combat.mass != 400 ? commander : normal,
-                     channel, attenuation, error);
+    if (!q2m_alive(c))
+        return true;
+    const char *path = normal;
+    if (rogue(c)) {
+        qa_combat_state combat;
+        if (!qa_combat_read(c->game->services.combat, c->actor->id, &combat, error))
+            return !q2m_alive(c);
+        if (!q2m_alive(c))
+            return true;
+        if (combat.mass != 400)
+            path = commander;
+    }
+    return q2m_sound(c, path, channel, attenuation, error);
 }
 
 static void clear_targets(q2m_context *c, q2m_context *target) {
