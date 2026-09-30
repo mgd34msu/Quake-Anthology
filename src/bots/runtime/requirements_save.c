@@ -58,26 +58,27 @@ static bool requirements_fields(qa_source_save_io *io, qa_bots_save_requirements
 bool qa_bots_save_requirements_capture(const qa_bot_runtime *runtime, const qa_bots *population,
                                       qa_buffer *out, qa_error *error)
 {
-    if (!runtime || !runtime->library || !runtime->actions || !out ||
-        !qa_bot_runtime_can_destroy(runtime) ||
+    if (!runtime || (!runtime->library && !runtime->closed) || !runtime->actions || !out ||
+        !qa_bot_runtime_can_destroy(runtime) || runtime->restore_pending ||
         (population && (population->runtime != runtime || !qa_bots_can_destroy(population) ||
             population->restore_pending))) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Bot constructor owners are absent, restoring or borrowed");
         return false;
     }
-    if (runtime->library->options.preprocessor.globals) {
+    const qa_bot_library_options *library = runtime->library ? &runtime->library->options : &runtime->options.library;
+    if (library->preprocessor.globals) {
         qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Installed bot preprocessor globals require their own continuation codec");
         return false;
     }
     qa_bots_save_requirements requirements = {
         .runtime = runtime->options,
-        .library_reload_characters = runtime->library->options.reload_characters,
+        .library_reload_characters = runtime->library && runtime->library->options.reload_characters,
         .action_capacity = qa_bot_actions_capacity(runtime->actions),
         .population = population != NULL,
         .population_client_capacity = population ? population->client_capacity : 0,
         .population_actor_capacity = population ? population->actor_capacity : 0
     };
-    requirements.runtime.library = runtime->library->options;
+    requirements.runtime.library = *library;
     requirements.runtime.library.reload_characters = runtime->options.library.reload_characters;
     qa_source_save_io io = {0};
     bool ok = qa_source_save_writer(&io, NULL, error) && bot_save_signature(&io, magic) &&

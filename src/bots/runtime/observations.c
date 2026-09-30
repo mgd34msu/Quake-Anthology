@@ -91,7 +91,7 @@ bool bot_runtime_observations_resize(qa_bot_runtime *r, size_t count, qa_error *
 }
 bool qa_bot_runtime_update_entity(qa_bot_runtime *r, int32_t number,
                                    const qa_bot_entity_update *update, qa_error *e) {
-    if (!r || r->busy || r->observation_leases)
+    if (!r || r->busy || r->restore_pending || r->observation_leases)
         return bot_runtime_fail(e, "bot observations are absent or in use");
     bool module = r->options.observations == QA_BOT_OBSERVATION_MODULE;
     if (!module && (r->closed || !r->initialized || number < 0 || (size_t)number >= r->entity_capacity))

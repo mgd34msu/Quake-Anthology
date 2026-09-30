@@ -6,7 +6,7 @@ bool bot_runtime_fail(qa_error *e, const char *message) {
     return false;
 }
 bool bot_runtime_mutable(qa_bot_runtime *r, qa_error *e) {
-    return r && !r->closed && !r->busy && !r->observation_leases ? true :
+    return r && !r->closed && !r->busy && !r->restore_pending && !r->observation_leases ? true :
         bot_runtime_fail(e, "bot runtime is absent, closed or executing a callback");
 }
 bool qa_bot_runtime_can_destroy(const qa_bot_runtime *r) {
@@ -150,7 +150,7 @@ qa_bot_navigation *qa_bot_runtime_navigation(qa_bot_runtime *r, int32_t client) 
 bool qa_bot_runtime_predict_movement(qa_bot_runtime *r, int32_t client,
                                       const qa_bot_movement_prediction_query *query,
                                       qa_bot_movement_prediction *out, qa_error *e) {
-    if (!r || r->busy || r->observation_leases ||
+    if (!r || r->busy || r->restore_pending || r->observation_leases ||
         (r->closed && r->options.observations != QA_BOT_OBSERVATION_MODULE))
         return bot_runtime_fail(e, "bot runtime is absent or executing a callback");
     r->busy = true;
@@ -178,6 +178,7 @@ bool qa_bot_runtime_attach_map(qa_bot_runtime *r, const qa_bot_runtime_map *map,
 }
 bool qa_bot_runtime_load_map(qa_bot_runtime *r, const char *name, qa_error *e) {
     if (!bot_runtime_owners_idle(r, e)) return false;
+    if (r->restore_pending) return bot_runtime_fail(e, "bot runtime continuation is not completely imported");
     bool module = r->options.observations == QA_BOT_OBSERVATION_MODULE;
     if ((!module && (!r->initialized || r->closed)) ||
         !name || !r->map_name || strcmp(name, r->map_name) != 0)

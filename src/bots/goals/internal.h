@@ -78,4 +78,5 @@ bool bot_goal_source_status(qa_bot_goals *, int32_t, const qa_bot_goal *,
 bool bot_goal_entities(qa_bot_goals *, const qa_bot_goal_entity **, size_t *, void **, qa_error *);
 void bot_goal_entities_end(qa_bot_goals *, void *);
 bool bot_goal_equal_name(const char *, const char *);
+uint32_t bot_goal_source_bucket(qa_actor_id);
 #endif

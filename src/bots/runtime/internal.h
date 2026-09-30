@@ -36,7 +36,7 @@ struct qa_bot_runtime {
     qa_bot_runtime_map map;
     char *map_name;
     float time;
-    bool initialized, library_initialized, loaded, bsp_loaded, closed, busy;
+    bool initialized, library_initialized, loaded, bsp_loaded, closed, busy, restore_pending;
 };
 bool bot_runtime_fail(qa_error *, const char *);
 bool bot_runtime_mutable(qa_bot_runtime *, qa_error *);

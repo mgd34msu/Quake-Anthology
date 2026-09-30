@@ -492,6 +492,7 @@ add_library(qa_bots STATIC
     src/bots/ai/orders.c
     src/bots/ai/reset.c
     src/bots/ai/roster.c
+    src/bots/ai/save.c
     src/bots/ai/team.c
     src/bots/chat/asset.c
     src/bots/chat/asset_save.c
@@ -507,6 +508,7 @@ add_library(qa_bots STATIC
     src/bots/goals/core.c
     src/bots/goals/map.c
     src/bots/goals/report.c
+    src/bots/goals/save.c
     src/bots/knowledge.c
     src/bots/library/bsp.c
     src/bots/library/bsp_save.c
@@ -544,6 +546,8 @@ add_library(qa_bots STATIC
     src/bots/random.c
     src/bots/runtime/characteristics.c
     src/bots/runtime/core.c
+    src/bots/runtime/assets_save.c
+    src/bots/runtime/save.c
     src/bots/runtime/requirements_save.c
     src/bots/runtime/handles.c
     src/bots/runtime/observations.c

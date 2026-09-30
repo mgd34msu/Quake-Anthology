@@ -289,3 +289,51 @@ staged map publication and clears it with pool destruction. A reconfiguration
 changes the next-map option while preserving the current pool, so that option
 cannot certify the current allocation extent. This field follows the existing
 allocation directly and adds no gameplay admission or callback.
+
+The chat asset and system records now retain complete shared source tables,
+cooldowns, ordered chat states, physical console messages and occupied/free
+partition, revisions and actual asset identities. The runtime asset registry
+captures all five real ordered library caches and handle-only references.
+Distinct weight objects retain their learned values while sharing the original
+immutable topology. Its retained construction references stay alive until
+private owners import their exact registry references.
+
+The complete goal record preserves current allocated level pools separately
+from next-map policy, all physical handles/stacks/avoid entries, shared weight
+wrappers and index maps, ordered map goals and retained source actor/name
+bindings. Names keep their allocation capacities and exhausted goal-number
+continuation. Source actor buckets rebuild using the actual producer hash in
+the candidate namespace. Full decode and topology validation precede exchange
+at the stable goal owner address; no navigation or source callback runs.
+
+The `QABRUNT` version 1 record now retains complete runtime flags, clocks,
+module presence and physical source handles. It frames the actual variable,
+asset, action, BSP, goal, chat, movement and observation records, validates the
+complete enclosing stream and qualifies saved map identity before importing
+private state. Character handles retain unique source pointer identity; every
+weapon selector must use the runtime's actual global weapon configuration.
+Closed modules preserve absent libraries and child owners alongside retained
+map, BSP, observations and shutdown action capacity. Import preserves stable
+runtime and child service addresses and invokes no setup, map-load, command or
+source frame callback. A failed import remains isolated and pending for ordinary
+candidate teardown.
+
+The `QABPOPU` version 1 record retains every physical AI state, player and
+inventory field, activation slot, scheduler clock, command sequence and actual
+actor/client lookup. Snapshot allocation extents are qualified against the
+restored actor registry; combined ID/sort allocation ownership matches the
+original producer. Each goal handle is qualified against its bot's actual
+client. Historical actor/client lookup capacity may be smaller than the current
+actor registry, and restoration preserves that extent. Complete stream and
+owner topology validation precede candidate-only exchange. Failure cleanup
+releases scratch storage without destroying shared runtime handles.
+
+The runtime asset, goal, runtime continuation and population packets passed
+independent source review, frozen manifest checks and scoped whitespace checks.
+The application must construct these owners from retained `QABREQS` options,
+qualify the actual map, provider, navigation and mode services, then import the
+runtime before the population. The ordinary runtime constructor already creates
+the empty action owner; restoration does not require ordinary setup. Application
+aggregate registration and runtime qualification remain open, so these source
+packets do not close `QA_SAVE_BOTS` or the B30 acceptance gate. Builds and
+executable checks remain deferred by the baseline source-completion gate.

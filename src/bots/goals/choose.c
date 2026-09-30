@@ -43,7 +43,7 @@ static bool consider(goal_choice *c, const qa_bot_goal *goal, float weight, bool
     c->found = true;
     return true;
 }
-static uint32_t actor_hash(qa_actor_id actor) {
+uint32_t bot_goal_source_bucket(qa_actor_id actor) {
     uint64_t h = actor.registry ^ actor.generation ^ ((uint64_t)actor.slot * UINT64_C(0x9e3779b97f4a7c15));
     h ^= h >> 33;
     return (uint32_t)h & 255;
@@ -51,7 +51,7 @@ static uint32_t actor_hash(qa_actor_id actor) {
 static bool source_binding(qa_bot_goals *g, const qa_bot_pickup_goal *current,
                             qa_vec3 origin, uint32_t area, qa_bounds world,
                             qa_bot_goal *out, qa_error *e) {
-    uint32_t bucket = actor_hash(current->actor), index = g->source_buckets[bucket];
+    uint32_t bucket = bot_goal_source_bucket(current->actor), index = g->source_buckets[bucket];
     while (index && !qa_actor_id_equal(g->source[index - 1].actor, current->actor))
         index = g->source[index - 1].hash_next;
     if (!current->name) return bot_goal_fail(e, "source pickup lacks a name");
