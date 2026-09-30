@@ -424,13 +424,13 @@ static bool dodge_duck(q2m_context *context, float eta_seconds, bool rogue,
         move_is(monster, "guncmdr_move_jump2"))
       return true;
     if (strstr(monster->move->name, "_dodge") != NULL)
-      return set_duck_bounds(context, false, error);
+      return q2m_dispatch(context, "monster_duck_up", error);
     move = "guncmdr_move_duck_attack";
   }
   if (move == NULL || q2m_move_named(monster, move) == NULL)
     return true;
 
-  if (rogue) {
+  if (rogue && species != Q2M_GUN_COMMANDER) {
     double extra = context->game->options.skill == 0
                        ? 1.0
                        : 0.1 * (3 - context->game->options.skill);
@@ -443,6 +443,8 @@ static bool dodge_duck(q2m_context *context, float eta_seconds, bool rogue,
   if (!q2m_alive(context))
     return true;
   *accepted = true;
+  if (species == Q2M_GUN_COMMANDER)
+    return true;
   if (!rogue && (species_is_soldier(species) || species_is_soldierh(species))) {
     if (!q2m_soldier_sound_end(context, error)) return false;
     if (!q2m_alive(context)) return true;
@@ -531,14 +533,16 @@ static bool dodge_sidestep(q2m_context *context, bool rogue, bool *accepted,
       move = "guncmdr_move_attack_mortar_dodge";
     } else if (move_is(monster, "guncmdr_move_run")) {
       move = "guncmdr_move_run";
+      immediate = true;
     } else {
       return true;
     }
-    immediate = false;
+    if (strcmp(move, "guncmdr_move_run") != 0)
+      immediate = false;
   }
   if (move == NULL || q2m_move_named(monster, move) == NULL)
     return true;
-  if (!move_is(monster, move)) {
+  if (!move_is(monster, move) || species == Q2M_GUN_COMMANDER) {
     if (!q2m_set_move(context, move, immediate, error)) return false;
     if (!rogue && (species_is_soldier(species) || species_is_soldierh(species)) &&
         !q2m_soldier_sound_end(context, error)) return false;
@@ -610,6 +614,91 @@ static bool classic_dodge(q2m_context *context, qa_actor_id attacker,
       true, error);
 }
 
+static bool commander_dodge(q2m_context *context, qa_actor_id attacker,
+                            float eta, const qa_trace_result *trace,
+                            bool gravity, qa_error *error) {
+  qa_q2_game *g = context->game;
+  struct qa_q2_monster *m = context->monster;
+  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  float admission = rerelease ? q2_rerelease_float(g, 0, 1) : q2m_random(g);
+  if (context->combat.health < 1) return true;
+  bool duck = !rerelease || !gravity, sidestep = !m->stand_ground;
+  if (!duck && !sidestep) return true;
+  if (!m->enemy.registry && q2_actor_live(g, attacker)) {
+    m->enemy = attacker;
+    if (!q2m_found_target(context, attacker, error)) return false;
+    if (!q2m_alive(context)) return true;
+    if (!q2m_refresh(context, error)) return false;
+  }
+  if (eta < (rerelease ? context->elapsed : .1f) || eta > (rerelease ? 2.5f : 5.f) ||
+      admission > (rerelease ? .5f : .25f * (g->options.skill + 1))) return true;
+  if (!rerelease && !trace) {
+    qa_error_set(error, QA_ERROR_ARGUMENT, context->actor->id.slot,
+                 "Classic imported Commander dodge requires its source trace after admission");
+    return false;
+  }
+  float height = context->body.origin.z + context->body.bounds.maxs.z + 1;
+  if (duck && trace) height -= 33;
+  if (duck && trace && !sidestep && (trace->end.z <= height || m->ducked)) return true;
+  if (sidestep) {
+    if (m->dodging) return true;
+    if (!duck || !trace || trace->end.z <= height || m->ducked) {
+      if (rerelease && g->options.skill < 2 &&
+          q2_rerelease_float(g, 0, 1) >= (g->options.skill == 0 ? .25f : .5f)) {
+        m->dodge_ns = q2_deadline(g->now_ns,
+            (uint64_t)q2_rerelease_time_ms(g, 800, 1400) * UINT64_C(1000000));
+        return true;
+      }
+      if (trace) {
+        qa_vec3 right;
+        qa_builtin_angle_vectors(context->body.angles, NULL, &right, NULL);
+        m->lefty = qa_vec_dot(right, qa_vec_sub(trace->end, context->body.origin)) >= 0;
+      } else m->lefty = q2_random_bounded(g, 2) == 0;
+      if (!rerelease) {
+        if (duck && m->ducked && !q2m_dispatch(context, "monster_duck_up", error)) return false;
+        if (!q2m_alive(context)) return true;
+        m->dodging = true;
+        m->attack_state = Q2M_SLIDING;
+      }
+      bool accepted;
+      if (!dodge_sidestep(context, !rerelease, &accepted, error)) return false;
+      if (!q2m_alive(context)) return true;
+      if (accepted && rerelease) {
+        if (duck && m->ducked && !q2m_dispatch(context, "monster_duck_up", error)) return false;
+        if (!q2m_alive(context)) return true;
+        m->dodging = true;
+        m->attack_state = Q2M_SLIDING;
+        m->dodge_ns = q2_deadline(g->now_ns,
+            (uint64_t)q2_rerelease_time_ms(g, 400, 2000) * UINT64_C(1000000));
+      }
+      return true;
+    }
+  }
+  if (duck && trace && (!rerelease || eta < .5f)) {
+    if (m->next_duck_ns > g->now_ns) return true;
+    m->dodging = false;
+    if (rerelease && m->attack_state == Q2M_SLIDING) m->attack_state = Q2M_STRAIGHT;
+    if (!rerelease) m->ducked = true;
+    bool accepted;
+    if (!dodge_duck(context, eta, !rerelease, &accepted, error)) return false;
+    if (!q2m_alive(context)) return true;
+    if (rerelease) {
+      if (accepted) {
+        if (m->duck_ns < g->now_ns) m->duck_ns = q2m_after(g->now_ns, eta);
+        if (!q2m_dispatch(context, "monster_duck_down", error)) return false;
+        if (!q2m_alive(context)) return true;
+        if (g->options.skill < 2)
+          m->duck_ns = q2_deadline(m->duck_ns,
+              (uint64_t)q2_rerelease_time_ms(g, g->options.skill == 0 ? 500 : 100,
+                                              g->options.skill == 0 ? 1000 : 350) * UINT64_C(1000000));
+      }
+      m->dodge_ns = q2_deadline(g->now_ns,
+          (uint64_t)q2_rerelease_time_ms(g, 200, 700) * UINT64_C(1000000));
+    }
+  }
+  return true;
+}
+
 bool q2_monster_dodge(qa_q2_game *game, qa_actor_id target,
                       qa_actor_id attacker, float eta_seconds,
                       const qa_trace_result *trace, bool gravity,
@@ -627,6 +716,8 @@ bool q2_monster_dodge(qa_q2_game *game, qa_actor_id target,
   if (!q2m_refresh(&context, error))
     return false;
   struct qa_q2_monster *monster = context.monster;
+  if (monster->definition->species == Q2M_GUN_COMMANDER)
+    return commander_dodge(&context, attacker, eta_seconds, trace, gravity, error);
   if (monster->dead || context.combat.health < 1.0f ||
       game->now_ns < monster->dodge_ns)
     return true;

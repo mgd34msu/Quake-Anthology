@@ -234,7 +234,9 @@ static bool toss_makron(q2m_context *context, qa_error *error) {
 
 static bool set_duck(q2m_context *context, bool down, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
-  if (!down && !monster->ducked)
+  if (!down && !monster->ducked &&
+      !(context->game->options.edition == QA_Q2_CLASSIC &&
+        monster->definition->species == Q2M_GUN_COMMANDER))
     return true;
   monster->ducked = down;
   context->body.bounds.maxs.z = monster->normal_height - (down ? 32.0f : 0.0f);
@@ -244,14 +246,25 @@ static bool set_duck(q2m_context *context, bool down, qa_error *error) {
 
 static bool duck_action(q2m_context *context, const char *callback,
                         qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  bool commander = m->definition->species == Q2M_GUN_COMMANDER;
+  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
   if (has(callback, "duck_down")) {
-    context->monster->next_duck_ns = q2m_after(context->game->now_ns, 5.0);
+    if (!commander || rerelease)
+      m->next_duck_ns = q2m_after(context->game->now_ns, 5.0);
+    else if (m->duck_ns < context->game->now_ns)
+      m->duck_ns = q2m_after(context->game->now_ns, 1);
     return set_duck(context, true, error);
   }
   if (has(callback, "duck_hold")) {
     context->monster->hold_frame =
         context->game->now_ns < context->monster->duck_ns;
     return true;
+  }
+  if (commander && (!rerelease || m->ducked)) {
+    if (!rerelease) m->next_duck_ns = q2m_after(context->game->now_ns, 5);
+    else if (m->next_duck_ns > context->game->now_ns)
+      m->next_duck_ns = context->game->now_ns + (m->next_duck_ns - context->game->now_ns) / 2;
   }
   return set_duck(context, false, error);
 }
@@ -2525,6 +2538,12 @@ static bool end_transition(q2m_context *context, const char *callback,
   if (ends_with(callback, "_run") || ends_with(callback, "_run_loop") ||
       strcmp(callback, "mutant_walk_loop") == 0) {
     *handled = true;
+    if (!strcmp(callback, "guncmdr_run")) {
+      context->monster->dodging = false;
+      if (context->game->options.edition == QA_Q2_RERELEASE &&
+          context->monster->attack_state == Q2M_SLIDING)
+        context->monster->attack_state = Q2M_STRAIGHT;
+    }
     return set_definition_move(context,
                                context->monster->stand_ground
                                    ? context->monster->definition->stand_move
@@ -4025,7 +4044,9 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
     return q2m_face_enemy(context, error);
   if (strcmp(callback, "monster_done_dodge") == 0) {
     monster->dodging = false;
-    if (monster->attack_state == Q2M_SLIDING)
+    if (monster->attack_state == Q2M_SLIDING &&
+        (context->game->options.edition == QA_Q2_RERELEASE ||
+         monster->definition->species != Q2M_GUN_COMMANDER))
       monster->attack_state = Q2M_STRAIGHT;
     return true;
   }

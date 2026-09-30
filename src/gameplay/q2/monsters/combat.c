@@ -1023,10 +1023,14 @@ static bool last_attack_chainfist(const struct qa_q2_monster *monster) {
          monster->last_attack.cause.source.q2.means_of_death == 40;
 }
 
-static bool reacts_to_pain(const q2m_context *context) {
+static bool reacts_to_pain_cause(const q2m_context *context, bool chainfist) {
   const struct qa_q2_monster *monster = context->monster;
   return !monster->ducked && !monster->combat_point &&
-         (context->game->options.skill < 3 || last_attack_chainfist(monster));
+         (context->game->options.skill < 3 || chainfist);
+}
+
+static bool reacts_to_pain(const q2m_context *context) {
+  return reacts_to_pain_cause(context, last_attack_chainfist(context->monster));
 }
 
 static bool stop_loop_sound(q2m_context *context, const char *path, int channel,
@@ -1630,6 +1634,104 @@ static bool pain_fixbot(q2m_context *context, float damage, qa_error *error) {
   return q2m_set_move(context, move, true, error);
 }
 
+static bool pain_arachnid(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  qa_q2_game *g = context->game;
+  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool chainfist = last_attack_chainfist(m);
+  if (g->now_ns < m->pain_ns) return true;
+  m->pain_ns = q2m_after(g->now_ns, 3);
+  if (!q2m_sound(context, "arachnid/pain.wav", 2, 1, error)) return false;
+  if (!q2m_alive(context) || (rerelease ? !reacts_to_pain_cause(context, chainfist) :
+      m->ducked || m->combat_point || g->options.skill >= 3)) return true;
+  float choice = rerelease ? q2_rerelease_float(g, 0, 1) : q2m_random(g);
+  return q2m_set_move(context, choice < .5f ? "arachnid_move_pain1" :
+                                           "arachnid_move_pain2", true, error);
+}
+
+static bool pain_shambler(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  qa_q2_game *g = context->game;
+  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  float damage = m->pending_damage;
+  bool chainfist = last_attack_chainfist(m);
+  if (g->now_ns < m->timestamp_ns) return true;
+  m->timestamp_ns = q2_deadline(g->now_ns, rerelease ? UINT64_C(1000000) : g->frame_ns);
+  if (!q2m_sound(context, "shambler/shurt2.wav", 0, 1, error)) return false;
+  if (!q2m_alive(context)) return true;
+  if (!(rerelease && chainfist) && damage <= 30 &&
+      (rerelease ? q2_rerelease_float(g, 0, 1) : q2m_random(g)) > .2f) return true;
+  if (g->options.skill >= 2 && m->frame >= 35 && m->frame <= 64) return true;
+  if (rerelease ? !reacts_to_pain_cause(context, chainfist) :
+      m->ducked || m->combat_point || g->options.skill >= 3) return true;
+  if (g->now_ns < m->pain_ns) return true;
+  m->pain_ns = q2m_after(g->now_ns, 2);
+  return q2m_set_move(context, "shambler_move_pain", true, error);
+}
+
+static bool commander_pain_dodge(q2m_context *context, qa_actor_id attacker,
+                                 qa_error *error) {
+  qa_q2_game *g = context->game;
+  float choice = g->options.edition == QA_Q2_RERELEASE
+                     ? q2_rerelease_float(g, 0, 1) : q2m_random(g);
+  return choice >= .3f || q2_monster_dodge(g, context->actor->id,
+      attacker, g->options.edition == QA_Q2_RERELEASE ? context->elapsed : .1f,
+      NULL, false, error);
+}
+
+static bool pain_gun_commander(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  qa_q2_game *g = context->game;
+  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  float damage = m->pending_damage;
+  qa_actor_id attacker = m->last_attack.attacker;
+  bool chainfist = last_attack_chainfist(m);
+  if (rerelease)
+    m->skin = context->combat.health < m->max_health * .5f ? m->skin | 1 : m->skin & ~1;
+  m->dodging = false;
+  if (rerelease && m->attack_state == Q2M_SLIDING) m->attack_state = Q2M_STRAIGHT;
+  if (!strcmp(m->move->name, "guncmdr_move_jump") ||
+      !strcmp(m->move->name, "guncmdr_move_jump2") ||
+      !strcmp(m->move->name, "guncmdr_move_duck_attack")) return true;
+  if (g->now_ns < m->pain_ns) return commander_pain_dodge(context, attacker, error);
+  m->pain_ns = q2m_after(g->now_ns, 3);
+  bool first = rerelease ? q2_random_bounded(g, 2) == 0 : q2m_random(g) < .5f;
+  if (!q2m_sound(context, first ? "guncmdr/gcdrpain2.wav" :
+                               "guncmdr/gcdrpain1.wav", 2, 1, error)) return false;
+  if (!q2m_alive(context)) return true;
+  if (rerelease ? !reacts_to_pain_cause(context, chainfist) :
+      m->ducked || m->combat_point || g->options.skill >= 3)
+    return commander_pain_dodge(context, attacker, error);
+  if (!attacker.registry && g->services.physics) attacker = g->services.physics->world_actor;
+  if (!q2_actor_live(g, attacker)) return true;
+  qa_body_state other;
+  if (!qa_world_body_read(g->services.world, context->actor->id, &context->body, error)) return false;
+  if (!q2m_alive(context)) return true;
+  if (!qa_world_body_read(g->services.world, attacker, &other, error)) return false;
+  if (!q2m_alive(context) || !q2_actor_live(g, attacker)) return true;
+  qa_vec3 forward, difference = qa_vec_sub(other.origin, context->body.origin);
+  qa_builtin_angle_vectors(context->body.angles, &forward, NULL, NULL);
+  difference.z = 0;
+  const char *move;
+  if (damage < 35) {
+    unsigned choice = rerelease ? q2_random_bounded(g, 4) :
+                                 (unsigned)(q2m_random(g) * 4);
+    move = choice == 0 ? "guncmdr_move_pain3" : choice == 1 ? "guncmdr_move_pain2" :
+           choice == 2 ? "guncmdr_move_pain1" : "guncmdr_move_pain7";
+  } else {
+    if (qa_vec_dot(qa_vec_normalize(difference), forward) < -.4f)
+      move = "guncmdr_move_pain6";
+    else {
+      first = rerelease ? q2_random_bounded(g, 2) == 0 : q2m_random(g) < .5f;
+      move = first ? "guncmdr_move_pain4" : "guncmdr_move_pain5";
+    }
+    m->pain_ns = q2m_after(m->pain_ns, 1.5);
+  }
+  if (!q2m_set_move(context, move, false, error)) return false;
+  m->manual_steering = false;
+  return !m->ducked || q2m_dispatch(context, "monster_duck_up", error);
+}
+
 static bool pain_carrier(q2m_context *context, float damage, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   if (context->game->options.skill == 3 ||
@@ -1850,6 +1952,9 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
   if (species == Q2M_BERSERK) return pain_berserk(context, error);
   if (species == Q2M_CHICK || species == Q2M_CHICK_HEAT) return pain_chick(context, error);
   if (species == Q2M_GUNNER) return pain_gunner(context, error);
+  if (species == Q2M_GUN_COMMANDER) return pain_gun_commander(context, error);
+  if (species == Q2M_ARACHNID) return pain_arachnid(context, error);
+  if (species == Q2M_SHAMBLER) return pain_shambler(context, error);
   if (species == Q2M_HOVER || species == Q2M_DAEDALUS) return pain_hover(context, error);
   if (species == Q2M_TANK || species == Q2M_TANK_COMMANDER) return pain_tank(context, error);
   if (species == Q2M_INFANTRY || species == Q2M_TURRET_DRIVER)
