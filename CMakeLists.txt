@@ -483,6 +483,7 @@ target_link_libraries(qa_modes PUBLIC qa_game_q1 qa_game_q2 qa_game_q3)
 
 add_library(qa_bots STATIC
     src/bots/actions.c
+    src/bots/actions_save.c
     src/bots/ai/checkpoint.c
     src/bots/ai/combat.c
     src/bots/ai/console.c
@@ -514,6 +515,7 @@ add_library(qa_bots STATIC
     src/bots/library/equipment_save.c
     src/bots/library/structure.c
     src/bots/library/variables.c
+    src/bots/library/variables_save.c
     src/bots/library/weapons.c
     src/bots/library/weights.c
     src/bots/library/weights_mutate.c

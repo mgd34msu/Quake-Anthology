@@ -1,4 +1,4 @@
-#include "qa/bot_actions.h"
+#include "actions_private.h"
 #include "qa/builtin.h"
 #include "checkpoint_internal.h"
 
@@ -10,14 +10,6 @@
 /* This source bit deliberately aliases CROUCH in the public input record. */
 #define BOT_JUMPED_LAST_FRAME UINT32_C(0x80)
 #define BOT_COMMAND_CAPACITY 32000
-
-struct qa_bot_actions {
-    qa_bot_action_services services;
-    qa_bot_input *inputs;
-    uint32_t capacity;
-    bool initialized;
-    bool restoring;
-};
 
 static bool action_fail(qa_error *e, const char *message) {
     qa_error_set(e, QA_ERROR_ARGUMENT, 0, "%s", message);

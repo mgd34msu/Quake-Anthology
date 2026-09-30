@@ -240,3 +240,27 @@ Table byte extents precede allocations, and the real immutable asset restorers
 validate declared fields and rebuild selectors without source callbacks. Restored
 weapon counts and projectile indices must agree with the saved declarations.
 These resources support the later exact runtime handle/cache admission owner.
+# Bot library variables and action inputs
+
+The `QABVARS` version 1 record stores the real library variable table in source
+list order, including owned name/text, text allocation capacity, exact numeric
+value, flags and modified state. Decode constructs a detached table, rejects
+duplicates using the original bounded ASCII name comparison, and rebuilds both
+list and bucket order. Complete byte validation precedes replacement. No numeric
+parser, source callback, canonical string allocation or asset-cache replacement
+runs. Consumers of old variable pointers must be absent; the enclosing runtime
+restorer must rebind its derived variable lookup pointers after import.
+
+The `QABACTN` version 1 record stores the actual action capacity, initialized
+state and every allocated input slot, including source jump-history flags,
+think time, direction/speed, view angles and weapon. Shutdown preserves the
+original capacity even with no allocated inputs, and the record retains that
+state. Decode enforces the original source allocation limits and minimum byte
+extent, consumes the complete stream and exchanges input storage while retaining
+actual services. It invokes no command, setup, reset or frame callback.
+
+Both are real private-owner building blocks for the remaining full bot runtime
+and population record. They do not yet encode chat, goals, movement, BSP,
+observations, shared asset cache identity or runtime handle tables. Source-only
+checks cover field declarations, ownership on every failure path and scoped
+whitespace; builds and executable checks remain deferred at the baseline gate.

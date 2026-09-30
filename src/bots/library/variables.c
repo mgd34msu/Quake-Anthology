@@ -1,24 +1,15 @@
-#include "internal.h"
-
-typedef struct bot_variable {
-    struct bot_variable *next, *bucket_next;
-    qa_bot_variable view;
-    char *text;
-    size_t capacity;
-    uint32_t hash;
-    char name[];
-} bot_variable;
+#include "variables_private.h"
 
 static unsigned folded(unsigned byte) {
     return byte >= 'a' && byte <= 'z' ? byte - ('a' - 'A') : byte;
 }
-static uint32_t name_hash(const char *name) {
+uint32_t bot_variable_name_hash(const char *name) {
     uint32_t hash = UINT32_C(2166136261);
     for (size_t i = 0; i < 99999 && name[i]; ++i)
         hash = (hash ^ folded((unsigned char)name[i])) * UINT32_C(16777619);
     return hash;
 }
-static bool name_equal(const char *a, const char *b) {
+bool bot_variable_name_equal(const char *a, const char *b) {
     for (size_t i = 0; i < 99999; ++i) {
         if (folded((unsigned char)a[i]) != folded((unsigned char)b[i]))
             return false;
@@ -30,9 +21,9 @@ static bool name_equal(const char *a, const char *b) {
 static bot_variable *find_variable(const qa_bot_library *library, const char *name) {
     if (!library || !name)
         return NULL;
-    uint32_t hash = name_hash(name);
+    uint32_t hash = bot_variable_name_hash(name);
     for (bot_variable *v = library->variable_buckets[hash & 127]; v; v = v->bucket_next)
-        if (v->hash == hash && name_equal(v->name, name))
+        if (v->hash == hash && bot_variable_name_equal(v->name, name))
             return v;
     return NULL;
 }
@@ -119,7 +110,7 @@ static bool assign_variable(qa_bot_library *library, const char *name, const cha
             goto memory;
         memcpy(v->name, name, name_length + 1);
         v->view.name = v->name;
-        v->hash = name_hash(name);
+        v->hash = bot_variable_name_hash(name);
     }
     if (length + 1 > v->capacity) {
         char *replacement = malloc(length + 1);
