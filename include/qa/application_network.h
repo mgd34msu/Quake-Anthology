@@ -81,6 +81,10 @@ typedef struct qa_application_network_q1_status_player {
  * Names borrow actual QC strings until source mutation. */
 bool qa_application_network_q1_status(qa_application *, qa_actor_id source_player,
     qa_application_network_q1_status_player players[255], size_t *count, qa_error *);
+/* Actual connected source clients selected by the source teamplay/team values.
+ * The sender name borrows its QC string until source mutation. */
+bool qa_application_network_q1_chat_recipients(qa_application *, qa_actor_id sender,
+    bool team_only, const char **name, qa_actor_id recipients[255], size_t *count, qa_error *);
 bool qa_application_network_q1_name(qa_application *, qa_actor_id, const char *, qa_error *);
 bool qa_application_network_q1_colors(qa_application *, qa_actor_id,
     int32_t top, int32_t bottom, qa_error *);
