@@ -56,6 +56,7 @@ void qa_q3_client_peer_destroy(qa_q3_client_peer *p) {
     free(p);
 }
 const qa_q3_identity *qa_q3_client_peer_identity(const qa_q3_client_peer *p) { return &p->identity; }
+qa_q3_product qa_q3_client_peer_product(const qa_q3_client_peer *p) { return p->product; }
 const qa_q3_gamestate *qa_q3_client_peer_gamestate(const qa_q3_client_peer *p) { return &p->gamestate; }
 const qa_q3_snapshot *qa_q3_client_peer_snapshot(const qa_q3_client_peer *p) { return p->has_snapshot ? &p->history[(uint32_t)p->latest_snapshot & 31].value : NULL; }
 const qa_q3_snapshot *qa_q3_client_peer_snapshot_at(const qa_q3_client_peer *p, int32_t number) {

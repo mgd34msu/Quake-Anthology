@@ -238,6 +238,8 @@ bool qa_q3_client_admission_receive(qa_q3_client_admission *c, const qa_net_addr
     return true;
 }
 
+#include "qa/network_services_save.h"
+#include "../service_save_fields.h"
 struct qa_q3_server_admission { qa_q3_admission_hooks hooks; qa_q3_challenge challenges[1024]; };
 bool qa_q3_server_admission_create(const qa_q3_admission_hooks *hooks, qa_q3_server_admission **out, qa_error *error) {
     if (!hooks || !hooks->random || !hooks->send || !hooks->admit || !hooks->query || !out)
@@ -247,6 +249,44 @@ bool qa_q3_server_admission_create(const qa_q3_admission_hooks *hooks, qa_q3_ser
     s->hooks = *hooks; *out = s; return true;
 }
 void qa_q3_server_admission_destroy(qa_q3_server_admission *s) { free(s); }
+bool qa_q3_server_admission_checkpoint(const qa_q3_server_admission *s, qa_buffer *out, qa_error *error)
+{
+    if (!s || !out) return fail(error, QA_ERROR_ARGUMENT, "Missing Q3 admission continuation");
+    size_t capacity = 8 + 1024 * 180; uint8_t *data = malloc(capacity);
+    if (!data) return fail(error, QA_ERROR_MEMORY, "Encoding Q3 admission continuation");
+    qa_net_writer w; qa_net_writer_init(&w, data, capacity, error);
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x44415151)) && qa_net_write_u32(&w, 1);
+    for (size_t i = 0; ok && i < 1024; ++i) {
+        const qa_q3_challenge *c = &s->challenges[i]; ok = qa_net_write_u8(&w, c->present);
+        if (!ok || !c->present) continue;
+        ok = service_address_valid(&c->address) && q3_save_address(&w, &c->address) &&
+            qa_net_write_u8(&w, c->connected) && qa_net_write_i32(&w, c->challenge) &&
+            qa_net_write_u64(&w, (uint64_t)c->time) && qa_net_write_u64(&w, (uint64_t)c->first_time) &&
+            qa_net_write_u64(&w, (uint64_t)c->ping_time);
+    }
+    if (!ok || w.failed) { free(data); return false; }
+    *out = (qa_buffer){data, qa_net_writer_size(&w)}; return true;
+}
+bool qa_q3_server_admission_restore_checkpoint(qa_bytes bytes, const qa_q3_admission_hooks *hooks,
+    qa_q3_server_admission **out, qa_error *error)
+{
+    if (!out || *out || bytes.size > 8 + 1024 * 180 || (bytes.size && !bytes.data))
+        return fail(error, QA_ERROR_ARGUMENT, "Invalid Q3 admission continuation extent/output");
+    qa_net_reader r; qa_net_reader_init(&r, bytes, error);
+    if (qa_net_read_u32(&r) != UINT32_C(0x44415151) || qa_net_read_u32(&r) != 1)
+        return fail(error, QA_ERROR_FORMAT, "Q3 admission continuation schema differs");
+    qa_q3_server_admission *s = NULL; if (!qa_q3_server_admission_create(hooks, &s, error)) return false;
+    bool ok = true;
+    for (size_t i = 0; ok && !r.failed && i < 1024; ++i) {
+        qa_q3_challenge *c = &s->challenges[i]; c->present = q3_save_bool(&r); if (!c->present) continue;
+        ok = q3_restore_address(&r, &c->address) && service_address_valid(&c->address);
+        c->connected = q3_save_bool(&r); c->challenge = qa_net_read_i32(&r);
+        c->time = (int64_t)qa_net_read_u64(&r); c->first_time = (int64_t)qa_net_read_u64(&r);
+        c->ping_time = (int64_t)qa_net_read_u64(&r);
+    }
+    if (!ok || !qa_net_reader_finish(&r)) { qa_q3_server_admission_destroy(s); return fail(error, QA_ERROR_FORMAT, "Invalid Q3 admission continuation fields"); }
+    *out = s; return true;
+}
 static bool server_reply(qa_q3_server_admission *s, const qa_net_address *to, const char *text, qa_error *e) {
     return reply(s->hooks.send, s->hooks.context, to, text, e);
 }

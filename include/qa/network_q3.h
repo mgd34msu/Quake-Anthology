@@ -426,6 +426,7 @@ bool qa_q3_client_peer_create_demo(qa_q3_identity, qa_q3_product,
                                     const qa_q3_client_hooks *, qa_q3_client_peer **, qa_error *);
 void qa_q3_client_peer_destroy(qa_q3_client_peer *);
 const qa_q3_identity *qa_q3_client_peer_identity(const qa_q3_client_peer *);
+qa_q3_product qa_q3_client_peer_product(const qa_q3_client_peer *);
 /* Returned views remain borrowed until the next receive or history mutation. */
 const qa_q3_gamestate *qa_q3_client_peer_gamestate(const qa_q3_client_peer *);
 const qa_q3_snapshot *qa_q3_client_peer_snapshot(const qa_q3_client_peer *);

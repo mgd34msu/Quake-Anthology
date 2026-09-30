@@ -1,4 +1,6 @@
 #include "qa/server_admin.h"
+#include "qa/network_services_save.h"
+#include "../service_save_fields.h"
 #include "qa/network_q1_channel.h"
 #include "qa/network_q2.h"
 #include "qa/tokenizer.h"
@@ -305,4 +307,99 @@ bool qa_server_admin_restore_filters(qa_server_admin *admin, qa_bytes bytes, qa_
     if (ok) ok = qa_net_reader_finish(&reader);
     if (!ok) { free(candidate); return fail(error, "Invalid stored source filter"); }
     free(admin->filters); admin->filters = candidate; admin->filter_count = count; admin->options.deny_matches = deny != 0; return true;
+}
+
+static bool admin_checkpoint_valid(const qa_server_admin *a)
+{
+    if (!a || a->callback || a->filter_count > a->options.filters || a->prefix_count > 256 ||
+        a->rotation_count > 256 || a->master_count > 32 ||
+        (a->rotation_count ? a->rotation_index >= a->rotation_count : a->rotation_index != 0)) return false;
+    for (size_t i = 0; i < a->filter_count; ++i) {
+        for (size_t j = 0; j < 4; ++j) if ((a->filters[i].mask[j] != 0 && a->filters[i].mask[j] != 255) ||
+            (a->filters[i].compare[j] & a->filters[i].mask[j]) != a->filters[i].compare[j]) return false;
+        for (size_t j = 0; j < i; ++j) if (!memcmp(&a->filters[i], &a->filters[j], sizeof(ip_filter))) return false;
+    }
+    for (uint32_t i = 0; i < a->options.rate_entries; ++i) {
+        const rate_entry *v = &a->rates[i]; if (!v->active) continue;
+        if (!service_address_valid(&v->address) || !isfinite(v->tokens) || v->tokens < 0 || v->tokens > a->options.burst) return false;
+        for (uint32_t j = 0; j < i; ++j) if (a->rates[j].active && qa_net_address_equal(&v->address, &a->rates[j].address, false)) return false;
+    }
+    for (size_t i = 0; i < a->prefix_count; ++i)
+        if (!a->prefixes[i] || !*a->prefixes[i] || strlen(a->prefixes[i]) > 1023) return false;
+    for (size_t i = 0; i < a->rotation_count; ++i) if (!map_name(a->rotation[i])) return false;
+    for (size_t i = 0; i < a->master_count; ++i) if (!service_address_valid(&a->masters[i])) return false;
+    return true;
+}
+bool qa_server_admin_checkpoint(const qa_server_admin *a, qa_buffer *out, qa_error *error)
+{
+    if (!out || !admin_checkpoint_valid(a)) return fail(error, "Invalid administration continuation ownership");
+    size_t capacity = 512 + (size_t)a->options.filters * 8 + (size_t)a->options.rate_entries * 160 +
+        a->prefix_count * 1024 + a->rotation_count * 128 + a->master_count * 160;
+    uint8_t *data = malloc(capacity);
+    if (!data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Encoding administration continuation"); return false; }
+    qa_net_writer w; qa_net_writer_init(&w, data, capacity, error);
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x41534151)) && qa_net_write_u32(&w, 1) &&
+        qa_net_write_u32(&w, a->options.dialect) && qa_net_write_u32(&w, a->options.filters) &&
+        qa_net_write_u32(&w, a->options.rate_entries) && qa_net_write_u32(&w, a->options.burst) &&
+        qa_net_write_u64(&w, a->options.rate_interval_ns) && qa_net_write_u64(&w, a->options.heartbeat_interval_ns) &&
+        qa_net_write_u8(&w, a->options.deny_matches) && qa_net_write_u8(&w, a->options.public_server) &&
+        qa_net_write_u64(&w, a->heartbeat_time) && qa_net_write_u64(&w, a->rcon_time) &&
+        qa_net_write_u32(&w, a->heartbeat_sequence) && qa_net_write_u8(&w, a->heartbeat_sent) &&
+        qa_net_write_u8(&w, a->rcon_sent) && qa_net_write_u8(&w, a->shuffle) && qa_net_write_u32(&w, (uint32_t)a->filter_count);
+    for (size_t i = 0; ok && i < a->filter_count; ++i)
+        ok = qa_net_write_data(&w, a->filters[i].mask, 4) && qa_net_write_data(&w, a->filters[i].compare, 4);
+    for (uint32_t i = 0; ok && i < a->options.rate_entries; ++i) {
+        const rate_entry *v = &a->rates[i]; ok = qa_net_write_u8(&w, v->active); if (!ok || !v->active) continue;
+        ok = q3_save_address(&w, &v->address) && qa_net_write_f64(&w, v->tokens) && qa_net_write_u64(&w, v->time);
+    }
+    ok = ok && qa_net_write_u32(&w, (uint32_t)a->prefix_count);
+    for (size_t i = 0; ok && i < a->prefix_count; ++i) ok = qa_net_write_string(&w, a->prefixes[i]);
+    ok = ok && qa_net_write_u32(&w, (uint32_t)a->rotation_count) && qa_net_write_u32(&w, (uint32_t)a->rotation_index);
+    for (size_t i = 0; ok && i < a->rotation_count; ++i) ok = qa_net_write_string(&w, a->rotation[i]);
+    ok = ok && qa_net_write_u32(&w, (uint32_t)a->master_count);
+    for (size_t i = 0; ok && i < a->master_count; ++i) ok = q3_save_address(&w, &a->masters[i]);
+    if (!ok || w.failed) { free(data); return false; }
+    *out = (qa_buffer){data, qa_net_writer_size(&w)}; return true;
+}
+bool qa_server_admin_restore_checkpoint(qa_bytes bytes, const qa_admin_options *options,
+    qa_server_admin **out, qa_error *error)
+{
+    if (!out || *out || !options || bytes.size > 2 * 1048576 || (bytes.size && !bytes.data))
+        return fail(error, "Invalid administration continuation extent/output");
+    qa_net_reader r; qa_net_reader_init(&r, bytes, error);
+    if (qa_net_read_u32(&r) != UINT32_C(0x41534151) || qa_net_read_u32(&r) != 1 ||
+        qa_net_read_u32(&r) != (uint32_t)options->dialect || qa_net_read_u32(&r) != options->filters ||
+        qa_net_read_u32(&r) != options->rate_entries || qa_net_read_u32(&r) != options->burst ||
+        qa_net_read_u64(&r) != options->rate_interval_ns || qa_net_read_u64(&r) != options->heartbeat_interval_ns)
+        return fail(error, "Administration continuation policy differs");
+    qa_server_admin *a = NULL; if (!qa_server_admin_create(options, &a, error)) return false;
+    a->options.deny_matches = q3_save_bool(&r); a->options.public_server = q3_save_bool(&r);
+    a->heartbeat_time = qa_net_read_u64(&r); a->rcon_time = qa_net_read_u64(&r);
+    a->heartbeat_sequence = qa_net_read_u32(&r); a->heartbeat_sent = q3_save_bool(&r);
+    a->rcon_sent = q3_save_bool(&r); a->shuffle = q3_save_bool(&r); a->filter_count = qa_net_read_u32(&r);
+    bool ok = !r.failed && a->filter_count <= options->filters;
+    for (size_t i = 0; ok && i < a->filter_count; ++i)
+        ok = qa_net_read_data(&r, a->filters[i].mask, 4) && qa_net_read_data(&r, a->filters[i].compare, 4);
+    for (uint32_t i = 0; ok && !r.failed && i < options->rate_entries; ++i) {
+        rate_entry *v = &a->rates[i]; v->active = q3_save_bool(&r); if (!v->active) continue;
+        ok = q3_restore_address(&r, &v->address); v->tokens = qa_net_read_f64(&r); v->time = qa_net_read_u64(&r);
+    }
+    a->prefix_count = qa_net_read_u32(&r);
+    if (a->prefix_count > 256) { a->prefix_count = 0; ok = false; }
+    if (ok && a->prefix_count) { a->prefixes = calloc(a->prefix_count, sizeof(*a->prefixes)); if (!a->prefixes) ok = false; }
+    if (!a->prefixes) a->prefix_count = 0;
+    for (size_t i = 0; ok && i < a->prefix_count; ++i) ok = service_restore_text(&r, &a->prefixes[i], 1023);
+    a->rotation_count = qa_net_read_u32(&r); a->rotation_index = qa_net_read_u32(&r);
+    if (a->rotation_count > 256) { a->rotation_count = 0; ok = false; }
+    if (ok && a->rotation_count) { a->rotation = calloc(a->rotation_count, sizeof(*a->rotation)); if (!a->rotation) ok = false; }
+    if (!a->rotation) a->rotation_count = 0;
+    for (size_t i = 0; ok && i < a->rotation_count; ++i) ok = service_restore_text(&r, &a->rotation[i], 127);
+    a->master_count = qa_net_read_u32(&r);
+    if (a->master_count > 32) { a->master_count = 0; ok = false; }
+    if (ok && a->master_count) { a->masters = calloc(a->master_count, sizeof(*a->masters)); if (!a->masters) ok = false; }
+    for (size_t i = 0; ok && i < a->master_count; ++i) ok = q3_restore_address(&r, &a->masters[i]);
+    if (!ok || !qa_net_reader_finish(&r) || !admin_checkpoint_valid(a)) {
+        qa_server_admin_destroy(a); return fail(error, "Invalid administration continuation fields");
+    }
+    *out = a; return true;
 }

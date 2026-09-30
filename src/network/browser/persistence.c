@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "qa/network_services_save.h"
+#include "../service_save_fields.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -76,4 +78,91 @@ bool qa_server_browser_restore(qa_server_browser *browser, qa_bytes bytes, qa_er
     if (ok) ok = qa_net_reader_finish(&reader);
     if (!ok) { free(records); return false; }
     free(browser->records); browser->records = records; return true;
+}
+
+static bool browser_checkpoint_valid(const qa_server_browser *b)
+{
+    if (!b || b->callback || b->http_master || b->master_body.size || b->master_body.data ||
+        !b->capacity || b->capacity > 8192 || !b->records ||
+        !service_address_valid(&b->broadcast) || !service_address_valid(&b->master) ||
+        !qa_net_protocol_valid(b->broadcast_protocol, NULL) || !qa_net_protocol_valid(b->master_protocol, NULL) ||
+        (b->broadcasting && (!b->broadcast_timeout || !b->broadcast_query)) ||
+        (b->master_pending && !b->master_timeout)) return false;
+    for (uint32_t i = 0; i < b->capacity; ++i) {
+        const browser_record *r = &b->records[i]; const qa_server_entry *e = &r->entry;
+        if (!r->occupied) continue;
+        if (!e->sources || (e->sources & ~15u) || !service_address_valid(&e->address) ||
+            !qa_net_protocol_valid(e->protocol, NULL) || !memchr(e->name, 0, sizeof(e->name)) ||
+            !memchr(e->map, 0, sizeof(e->map)) || !memchr(e->rules, 0, sizeof(e->rules)) ||
+            (e->pending && (!r->query || !r->timeout_ns))) return false;
+        for (uint32_t j = 0; j < i; ++j) {
+            const qa_server_entry *other = &b->records[j].entry;
+            if (!b->records[j].occupied) continue;
+            if (qa_net_address_equal(&e->address, &other->address, true) &&
+                ((e->protocol.kind == other->protocol.kind && e->protocol.revision == other->protocol.revision &&
+                  e->protocol.flags == other->protocol.flags) || (e->pending && other->pending))) return false;
+        }
+    }
+    return true;
+}
+bool qa_server_browser_checkpoint(const qa_server_browser *b, qa_buffer *out, qa_error *error)
+{
+    if (!out || !browser_checkpoint_valid(b))
+        return qa_browser_fail(error, "Browser continuation requires drained HTTP and valid UDP service ownership");
+    size_t capacity = 512 + (size_t)b->capacity * 10000;
+    uint8_t *data = malloc(capacity);
+    if (!data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Encoding browser continuation"); return false; }
+    qa_net_writer w; qa_net_writer_init(&w, data, capacity, error);
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x42534151)) && qa_net_write_u32(&w, 1) &&
+        qa_net_write_u32(&w, b->capacity) && qa_net_write_u64(&w, b->next_query) &&
+        q3_save_address(&w, &b->broadcast) && q3_save_address(&w, &b->master) &&
+        service_save_protocol(&w, b->broadcast_protocol) && service_save_protocol(&w, b->master_protocol) &&
+        qa_net_write_u64(&w, b->broadcast_sent) && qa_net_write_u64(&w, b->broadcast_timeout) &&
+        qa_net_write_u64(&w, b->master_sent) && qa_net_write_u64(&w, b->master_timeout) &&
+        qa_net_write_u64(&w, b->broadcast_query) && qa_net_write_u8(&w, b->broadcasting) && qa_net_write_u8(&w, b->master_pending);
+    for (uint32_t i = 0; ok && i < b->capacity; ++i) {
+        const browser_record *r = &b->records[i]; const qa_server_entry *e = &r->entry;
+        ok = qa_net_write_u8(&w, r->occupied); if (!ok || !r->occupied) continue;
+        ok = q3_save_address(&w, &e->address) && service_save_protocol(&w, e->protocol) &&
+            qa_net_write_u32(&w, e->sources) && qa_net_write_u32(&w, e->players) && qa_net_write_u32(&w, e->maximum_players) &&
+            qa_net_write_u64(&w, e->updated_ns) && qa_net_write_u64(&w, e->ping_ns) &&
+            qa_net_write_u8(&w, e->available) && qa_net_write_u8(&w, e->pending) && qa_net_write_u8(&w, e->timed_out) &&
+            service_save_text(&w, e->name, sizeof(e->name)) && service_save_text(&w, e->map, sizeof(e->map)) &&
+            service_save_text(&w, e->rules, sizeof(e->rules)) && qa_net_write_u64(&w, r->query) &&
+            qa_net_write_u64(&w, r->sent_ns) && qa_net_write_u64(&w, r->timeout_ns);
+    }
+    if (!ok || w.failed) { free(data); return false; }
+    *out = (qa_buffer){data, qa_net_writer_size(&w)}; return true;
+}
+bool qa_server_browser_restore_checkpoint(qa_bytes bytes, qa_http *http, uint32_t capacity,
+    const qa_browser_hooks *hooks, qa_server_browser **out, qa_error *error)
+{
+    if (!out || *out || bytes.size > 512 + (size_t)8192 * 10000 || (bytes.size && !bytes.data))
+        return qa_browser_fail(error, "Invalid browser continuation output or extent");
+    qa_net_reader r; qa_net_reader_init(&r, bytes, error);
+    if (qa_net_read_u32(&r) != UINT32_C(0x42534151) || qa_net_read_u32(&r) != 1 || qa_net_read_u32(&r) != capacity)
+        return qa_browser_fail(error, "Browser continuation schema or capacity differs");
+    qa_server_browser *b = NULL;
+    if (!qa_server_browser_create(http, capacity, hooks, &b, error)) return false;
+    b->next_query = qa_net_read_u64(&r);
+    bool ok = q3_restore_address(&r, &b->broadcast) && q3_restore_address(&r, &b->master) &&
+        service_restore_protocol(&r, &b->broadcast_protocol) && service_restore_protocol(&r, &b->master_protocol);
+    b->broadcast_sent = qa_net_read_u64(&r); b->broadcast_timeout = qa_net_read_u64(&r);
+    b->master_sent = qa_net_read_u64(&r); b->master_timeout = qa_net_read_u64(&r); b->broadcast_query = qa_net_read_u64(&r);
+    b->broadcasting = q3_save_bool(&r); b->master_pending = q3_save_bool(&r);
+    for (uint32_t i = 0; ok && !r.failed && i < capacity; ++i) {
+        browser_record *record = &b->records[i]; qa_server_entry *e = &record->entry;
+        record->occupied = q3_save_bool(&r); if (!record->occupied) continue;
+        ok = q3_restore_address(&r, &e->address) && service_restore_protocol(&r, &e->protocol);
+        e->sources = qa_net_read_u32(&r); e->players = qa_net_read_u32(&r); e->maximum_players = qa_net_read_u32(&r);
+        e->updated_ns = qa_net_read_u64(&r); e->ping_ns = qa_net_read_u64(&r);
+        e->available = q3_save_bool(&r); e->pending = q3_save_bool(&r); e->timed_out = q3_save_bool(&r);
+        ok = ok && qa_net_read_string(&r, e->name, sizeof(e->name)) && qa_net_read_string(&r, e->map, sizeof(e->map)) &&
+            qa_net_read_string(&r, e->rules, sizeof(e->rules));
+        record->query = qa_net_read_u64(&r); record->sent_ns = qa_net_read_u64(&r); record->timeout_ns = qa_net_read_u64(&r);
+    }
+    if (!ok || !qa_net_reader_finish(&r) || !browser_checkpoint_valid(b)) {
+        qa_server_browser_destroy(b); return qa_browser_fail(error, "Invalid browser continuation fields");
+    }
+    *out = b; return true;
 }
