@@ -243,12 +243,15 @@ bool qa_q2_player_userinfo(qa_q2_game *g, qa_actor_id id, const char *source, qa
     }
     return true;
 }
-bool qa_q2_player_admit(qa_q2_game *g, qa_actor_id id, const qa_q2_player_admission *admission,
-                        qa_error *e) {
-    if (!g || !admission || !admission->userinfo) {
-        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 player admission");
-        return false;
-    }
+typedef struct player_admission_call {
+    qa_q2_game *game;
+    qa_q2_player_admission admission;
+} player_admission_call;
+
+static bool player_admit(void *context, qa_actor_id id, qa_error *e) {
+    player_admission_call *call = context;
+    qa_q2_game *g = call->game;
+    const qa_q2_player_admission *admission = &call->admission;
     q2_actor *a = q2_actor_get(g, id, true, e);
     if (!a)
         return false;
@@ -339,6 +342,15 @@ bool qa_q2_player_admit(qa_q2_game *g, qa_actor_id id, const qa_q2_player_admiss
     s->info.spectator = s->requested_spectator;
     s->spawned = true;
     return true;
+}
+bool qa_q2_player_admit(qa_q2_game *g, qa_actor_id id, const qa_q2_player_admission *admission,
+                        qa_error *e) {
+    if (!g || !admission || !admission->userinfo) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 player admission");
+        return false;
+    }
+    player_admission_call call = {.game = g, .admission = *admission};
+    return qa_q2_run_actor(g, id, player_admit, &call, e);
 }
 bool q2_player_collision(qa_q2_game *g, q2_actor *a, bool solid, qa_error *e) {
     qa_actor_collision collision = {.family = QA_COLLISION_Q2,

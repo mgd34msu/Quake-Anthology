@@ -117,8 +117,8 @@ bool q2m_emit(q2m_context *context, qa_builtin_event_kind kind,
   return qa_builtin_emit(&context->game->services, &event, error);
 }
 
-bool q2m_sound(q2m_context *context, const char *path, int channel,
-               float attenuation, qa_error *error) {
+bool q2m_sound_at(q2m_context *context, const char *path, int channel,
+                  float attenuation, qa_vec3 origin, qa_error *error) {
   if (!q2m_alive(context))
     return true;
   qa_builtin_event event = {
@@ -128,7 +128,7 @@ bool q2m_sound(q2m_context *context, const char *path, int channel,
       .actor = context->actor->id,
       .other = context->monster->enemy,
       .time_ns = context->game->now_ns,
-      .origin = context->body.origin,
+      .origin = origin,
       .volume = 1.0f,
       .attenuation = attenuation,
       .channel = channel,
@@ -138,6 +138,19 @@ bool q2m_sound(q2m_context *context, const char *path, int channel,
                            error))
     return false;
   return qa_builtin_emit(&context->game->services, &event, error);
+}
+
+bool q2m_sound(q2m_context *context, const char *path, int channel,
+               float attenuation, qa_error *error) {
+  if (!q2m_alive(context))
+    return true;
+  qa_body_state body;
+  if (!qa_world_body_read(context->game->services.world, context->actor->id,
+                          &body, error))
+    return !q2m_alive(context);
+  if (!q2m_alive(context))
+    return true;
+  return q2m_sound_at(context, path, channel, attenuation, body.origin, error);
 }
 
 const q2m_frame *q2m_frame_at(const struct qa_q2_monster *monster, const q2m_move *move,

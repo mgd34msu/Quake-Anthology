@@ -163,8 +163,19 @@ static uint64_t *timer(q2_power_state *p, qa_q2_powerup kind) {
         return NULL;
     }
 }
-bool q2_item_use_duration(qa_q2_game *g, qa_actor_id id, const qa_q2_item_definition *d,
-                          uint64_t duration, bool *used, qa_error *e) {
+typedef struct item_use_call {
+    qa_q2_game *game;
+    const qa_q2_item_definition *definition;
+    uint64_t duration;
+    bool *used;
+} item_use_call;
+
+static bool item_use_duration(void *context, qa_actor_id id, qa_error *e) {
+    item_use_call *call = context;
+    qa_q2_game *g = call->game;
+    const qa_q2_item_definition *d = call->definition;
+    uint64_t duration = call->duration;
+    bool *used = call->used;
     *used = false;
     int count;
     if (!q2_count(g, id, d->item, &count, e))
@@ -244,6 +255,15 @@ bool q2_item_use_duration(qa_q2_game *g, qa_actor_id id, const qa_q2_item_defini
                         : d->powerup == QA_Q2_POWER_INVISIBILITY ? "items/protect.wav"
                                                                  : NULL;
     return !sound || q2_item_sound(g, id, sound, e);
+}
+bool q2_item_use_duration(qa_q2_game *g, qa_actor_id id, const qa_q2_item_definition *d,
+                          uint64_t duration, bool *used, qa_error *e) {
+    if (!g || !d || !used) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 item activation");
+        return false;
+    }
+    item_use_call call = {.game = g, .definition = d, .duration = duration, .used = used};
+    return qa_q2_run_actor(g, id, item_use_duration, &call, e);
 }
 bool qa_q2_item_use(qa_q2_game *g, qa_actor_id id, qa_item_id item, bool *used, qa_error *e) {
     if (!g || !used || !q2_actor_live(g, id)) {

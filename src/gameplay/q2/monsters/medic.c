@@ -556,7 +556,7 @@ static bool cable(q2m_context *c, qa_error *error) {
             if (!q2m_alive(c) || !q2m_alive(&target))
                 return true;
         }
-        if (!q2m_sound(&target, path, 0, 1, error))
+        if (!q2m_sound_at(&target, path, 0, 1, target.body.origin, error))
             return false;
         if (!q2m_alive(c) || !q2m_alive(&target))
             return true;
@@ -594,7 +594,9 @@ static bool cable(q2m_context *c, qa_error *error) {
             return !q2m_alive(c);
         if (!q2m_alive(c) || !q2m_alive(&target))
             return true;
-        if (!sound(c, "medic/medatck4.wav", "medic_commander/medatck4a.wav", 1, 1, error))
+        const char *path = rogue(c) && c->combat.mass != 400
+                               ? "medic_commander/medatck4a.wav" : "medic/medatck4.wav";
+        if (!q2m_sound_at(c, path, 1, 1, c->body.origin, error))
             return false;
     }
     if (!q2m_alive(c))

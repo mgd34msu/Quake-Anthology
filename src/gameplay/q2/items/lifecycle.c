@@ -53,10 +53,15 @@ bool qa_q2_items_configure(qa_q2_game *g, const qa_q2_item_options *options, qa_
     return true;
 }
 bool q2_item_sound(qa_q2_game *g, qa_actor_id id, const char *path, qa_error *e) {
+    if (!q2_actor_live(g, id))
+        return true;
     qa_body_state body;
     qa_string_id sound;
-    if (!qa_world_body_read(g->services.world, id, &body, e) ||
-        !qa_builtin_resource(&g->services, path, &sound, e))
+    if (!qa_world_body_read(g->services.world, id, &body, e))
+        return !q2_actor_live(g, id);
+    if (!q2_actor_live(g, id))
+        return true;
+    if (!qa_builtin_resource(&g->services, path, &sound, e))
         return false;
     return qa_builtin_emit(&g->services,
                            &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,

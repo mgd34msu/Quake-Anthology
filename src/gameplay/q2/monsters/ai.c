@@ -540,7 +540,8 @@ bool q2m_perception_alert(q2m_context *context, qa_actor_id target,
   if (!q2m_alive(context) || context->game->monster_runtime == NULL)
     return true;
   qa_builtin_actor_traits traits = {0};
-  if (!runtime_targetable(context->game, target, &traits))
+  if (!runtime_targetable(context->game, target, &traits) ||
+      !q2m_alive(context) || !q2_actor_live(context->game, target))
     return true;
   q2_monsters_runtime *runtime = context->game->monster_runtime;
   runtime->sight_observer = context->actor->id;
@@ -827,28 +828,29 @@ bool q2m_hunt_target(q2m_context *context, bool animate_state, qa_error *error) 
 }
 
 bool q2m_found_target(q2m_context *context, qa_actor_id id, qa_error *error) {
-  if (!q2_actor_live(context->game, id))
+  if (!q2m_alive(context) || !q2_actor_live(context->game, id))
     return true;
   qa_body_state target;
   qa_error observed = {0};
   if (!qa_world_body_read(context->game->services.world, id, &target, &observed)) {
-    if (observed.code == QA_ERROR_NOT_FOUND || !q2_actor_live(context->game, id))
+    if (observed.code == QA_ERROR_NOT_FOUND || !q2m_alive(context) ||
+        !q2_actor_live(context->game, id))
       return true;
     if (error)
       *error = observed;
     return false;
   }
-  if (!q2m_alive(context))
+  if (!q2m_alive(context) || !q2_actor_live(context->game, id))
     return true;
   if (context->game->hooks.can_target != NULL) {
     bool allowed = context->game->hooks.can_target(context->game->hooks.context,
                                                    context->actor->id, id);
-    if (!q2m_alive(context) || !allowed)
+    if (!q2m_alive(context) || !q2_actor_live(context->game, id) || !allowed)
       return true;
   }
   if (!q2m_perception_alert(context, id, error))
     return false;
-  if (!q2m_alive(context))
+  if (!q2m_alive(context) || !q2_actor_live(context->game, id))
     return true;
   struct qa_q2_monster *monster = context->monster;
   monster->enemy = id;
