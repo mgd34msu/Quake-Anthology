@@ -266,7 +266,7 @@ bool q1_sound_resource(qa_q1_game *g, qa_actor_id actor, qa_string_id resource, 
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, actor, &body, error))
         return false;
-    if (g->destroy_pending)
+    if (!q1_alive(g, actor))
         return true;
     event.origin =
         qa_vec_add(body.origin, qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), .5f));

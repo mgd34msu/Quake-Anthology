@@ -344,8 +344,8 @@ bool q1_projectile_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return false;
 }
 
-static bool gib_motion(qa_q1_game *g, q1_actor *gib, qa_body_state *body, float health,
-                       const char *model, bool head, qa_error *error) {
+static bool gib_head_motion(qa_q1_game *g, q1_actor *gib, qa_body_state *body, float health,
+                            const char *model, qa_error *error) {
     float x = 100 * (q1_random(g) * 2 - 1), y = 100 * (q1_random(g) * 2 - 1),
           z = 200 + 100 * q1_random(g);
     body->velocity = qa_vec_scale(qa_v3(x, y, z), health > -50 ? 0.7f : health > -200 ? 2 : 10);
@@ -353,14 +353,7 @@ static bool gib_motion(qa_q1_game *g, q1_actor *gib, qa_body_state *body, float 
     gib->physics.motion = QA_PHYSICS_BOUNCE;
     gib->physics.solid = QA_PHYSICS_NOT_SOLID;
     gib->frame = 0;
-    if (head)
-        gib->physics.angular_velocity = qa_v3(0, (q1_random(g) * 2 - 1) * 600, 0);
-    else {
-        x = q1_random(g) * 600;
-        y = q1_random(g) * 600;
-        z = q1_random(g) * 600;
-        gib->physics.angular_velocity = qa_v3(x, y, z);
-    }
+    gib->physics.angular_velocity = qa_v3(0, (q1_random(g) * 2 - 1) * 600, 0);
     char path[128];
     int length = snprintf(path, sizeof(path), "progs/%s.mdl", model);
     if (length < 0 || (size_t)length >= sizeof(path)) {
@@ -368,20 +361,58 @@ static bool gib_motion(qa_q1_game *g, q1_actor *gib, qa_body_state *body, float 
         return false;
     }
     return q1_model(g, gib, path, error) &&
-           qa_world_body_write(g->services.world, gib->id, body, error) && q1_link(g, gib, error) &&
-           (head || q1_schedule(g, gib, 10 + q1_random(g) * 10, Q1_THINK_REMOVE, error));
+           qa_world_body_write(g->services.world, gib->id, body, error) && q1_link(g, gib, error);
 }
 bool q1_gib_at(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin, float health, const char *model,
                qa_error *error) {
     q1_actor *gib;
     if (!q1_create(g, "gib", Q1_GIB, owner, &gib, error))
         return false;
+    qa_actor_id child = gib->id;
+    bool ok = true;
+    gib = q1_entity(g, child);
+    if (!gib || (owner.registry && !q1_alive(g, owner))) goto cleanup;
+    char path[128];
+    int length = snprintf(path, sizeof(path), "progs/%s.mdl", model);
+    if (length < 0 || (size_t)length >= sizeof(path)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 gib model name too long");
+        ok = false;
+        goto cleanup;
+    }
+    ok = q1_model(g, gib, path, error);
+    if (!ok) goto cleanup;
+    gib->physics.motion = QA_PHYSICS_BOUNCE;
+    double scale = health > -50 ? .7 : health > -200 ? 2 : 10;
+    double x = 100 * ((double)q1_random(g) * 2 - 1);
+    double y = 100 * ((double)q1_random(g) * 2 - 1);
+    double z = 200 + 100 * (double)q1_random(g);
+    qa_vec3 velocity = qa_v3((float)(x * scale), (float)(y * scale), (float)(z * scale));
     qa_body_state body;
-    if (!qa_world_body_read(g->services.world, gib->id, &body, error))
-        return false;
+    ok = qa_world_body_read(g->services.world, child, &body, error);
+    if (!ok) goto cleanup;
+    gib = q1_entity(g, child);
+    if (!gib || (owner.registry && !q1_alive(g, owner))) goto cleanup;
     body.origin = origin;
+    body.velocity = velocity;
     body.bounds = (qa_bounds){0};
-    return gib_motion(g, gib, &body, health, model, false, error);
+    ok = qa_world_body_write(g->services.world, child, &body, error);
+    if (!ok) goto cleanup;
+    gib = q1_entity(g, child);
+    if (!gib || (owner.registry && !q1_alive(g, owner))) goto cleanup;
+    float angular_x = (float)((double)q1_random(g) * 600);
+    float angular_y = (float)((double)q1_random(g) * 600);
+    float angular_z = (float)((double)q1_random(g) * 600);
+    gib->physics.angular_velocity = qa_v3(angular_x, angular_y, angular_z);
+    ok = q1_schedule(g, gib, 10 + (double)q1_random(g) * 10, Q1_THINK_REMOVE, error);
+    if (!ok) goto cleanup;
+    gib = q1_entity(g, child);
+    if (!gib || (owner.registry && !q1_alive(g, owner))) goto cleanup;
+    ok = q1_link(g, gib, error);
+    if (ok && q1_entity(g, child) && (!owner.registry || q1_alive(g, owner))) return true;
+cleanup:
+    if (qa_actors_get(qa_session_actors(g->services.session), child))
+        (void)qa_session_release(g->services.session, child, NULL);
+    return ok;
 }
 bool q1_gib(qa_q1_game *g, q1_actor *source, const char *model, bool head, qa_error *error) {
     float health = q1_health(g, source->id);
@@ -409,5 +440,5 @@ bool q1_gib_head(qa_q1_game *g, q1_actor *source, const char *model, float healt
         return false;
     body.origin.z -= 24;
     body.bounds = (qa_bounds){{-16, -16, 0}, {16, 16, 56}};
-    return gib_motion(g, source, &body, health, model, true, error);
+    return gib_head_motion(g, source, &body, health, model, error);
 }
