@@ -1,6 +1,7 @@
 #include "save_private.h"
 #include "guest_projection_private.h"
 #include "guest_native_q2_private.h"
+#include "guest_native_q2_combat.h"
 #include "qa/equipment_save.h"
 #include "qa/application_network.h"
 #include "qa/frontend.h"
@@ -18,6 +19,19 @@ static application_provider *source_owner(qa_application *app, qa_actor_owner ow
             return provider;
     }
     return NULL;
+}
+
+static bool combat_binding(void *opaque, qa_actor_id actor, uint64_t serial,
+                            qa_combat_binding *out, qa_error *error)
+{
+    qa_application *app = opaque;
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(app->session), actor);
+    application_provider *provider = record ? source_owner(app, record->owner) : NULL;
+    if (provider && provider->kind == APPLICATION_PROVIDER_NATIVE &&
+        provider->state.native.q2_engine)
+        return application_native_q2_combat_binding(provider, actor, serial, out, error);
+    return application_fail(error, QA_ERROR_UNSUPPORTED,
+                            "Saved combat primary has no restored source callback owner");
 }
 
 static bool admission(void *opaque, qa_actor_id actor,
@@ -118,7 +132,7 @@ bool application_save_resolvers(qa_application *app,
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "Restored gameplay callbacks require retained application owners");
     *out = (qa_persistence_gameplay_resolvers){.context = app,
-        .admission = admission, .inventory_primary = primary,
+        .combat = combat_binding, .admission = admission, .inventory_primary = primary,
         .inventory_group = inventory_group, .pickup_observer = pickup_observer,
         .target = target};
     return true;
