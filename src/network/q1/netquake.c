@@ -505,6 +505,21 @@ static bool write_names(qa_net_writer *w, const char *const *names, size_t count
     }
     return qa_net_write_u8(w,0);
 }
+bool qa_nq_write_damage(qa_net_writer *w, uint8_t armor, uint8_t blood, const double origin[3])
+{
+    if (!origin) return qa_net_writer_fail(w, "Missing original NetQuake damage center");
+    uint16_t fixed[3];
+    for (unsigned axis = 0; axis < 3; ++axis) {
+        if (!isfinite(origin[axis]) || !isfinite(origin[axis] * 8))
+            return qa_net_writer_fail(w, "Nonfinite original NetQuake damage center");
+        double bits = fmod(trunc(origin[axis] * 8), 65536.0);
+        if (bits < 0) bits += 65536.0;
+        fixed[axis] = (uint16_t)bits;
+    }
+    return qa_net_write_u8(w, QA_NQ_DAMAGE) && qa_net_write_u8(w, armor) && qa_net_write_u8(w, blood) &&
+        qa_net_write_u16(w, fixed[0]) && qa_net_write_u16(w, fixed[1]) && qa_net_write_u16(w, fixed[2]);
+}
+
 bool qa_nq_write(qa_net_writer *w, qa_net_protocol_id p, qa_nq_options options,
                   const qa_nq_message *m, const qa_q1_entity *baseline, float time)
 {

@@ -63,6 +63,31 @@ bool qa_application_network_q1_world_read(qa_application *, qa_actor_id,
     qa_application_network_q1_world *, qa_error *);
 bool qa_application_network_q1_clientdata(qa_application *, qa_actor_id,
     qa_q1_clientdata *, qa_error *);
+typedef struct qa_application_network_q1_status_player {
+    qa_actor_id actor;
+    uint32_t source_slot;
+    const char *name;
+    int32_t frags;
+    uint8_t colors;
+    bool spawned;
+} qa_application_network_q1_status_player;
+/* Connected source clients, including local clients, in physical slot order.
+ * Names borrow actual QC strings until source mutation. */
+bool qa_application_network_q1_status(qa_application *, qa_actor_id source_player,
+    qa_application_network_q1_status_player players[255], size_t *count, qa_error *);
+bool qa_application_network_q1_name(qa_application *, qa_actor_id, const char *, qa_error *);
+bool qa_application_network_q1_colors(qa_application *, qa_actor_id,
+    int32_t top, int32_t bottom, qa_error *);
+typedef struct qa_application_network_q1_feedback {
+    bool damage, set_angle;
+    uint8_t armor, blood;
+    double origin[3];
+    float angles[3];
+} qa_application_network_q1_feedback;
+/* Consume the source damage and fixangle fields once, after complete native
+ * wire qualification. Requires a spawned classic NetQuake client. */
+bool qa_application_network_q1_consume_feedback(qa_application *, qa_actor_id,
+    qa_application_network_q1_feedback *, qa_error *);
 bool qa_application_network_q1_baseline(qa_application *, qa_actor_id,
     const qa_q1_entity *, qa_q1_entity *, qa_error *);
 /* The original QuakeC donor captures a baseline for every reserved client

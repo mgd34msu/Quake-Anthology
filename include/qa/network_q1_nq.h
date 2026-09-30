@@ -72,6 +72,9 @@ bool qa_nq_write(qa_net_writer *, qa_net_protocol_id, qa_nq_options,
 bool qa_nq_write_entity(qa_net_writer *, qa_net_protocol_id, const qa_q1_entity *,
                          const qa_q1_entity *baseline, float server_time);
 bool qa_nq_write_clientdata(qa_net_writer *, qa_net_protocol_id, const qa_q1_clientdata *, bool standard_quake);
+/* Original NQ15 damage centers remain binary64 until fixed-coordinate byte
+ * conversion, as in the source host's origin + half mins/maxs calculation. */
+bool qa_nq_write_damage(qa_net_writer *, uint8_t armor, uint8_t blood, const double origin[3]);
 /* One counter per local seat, reset on map change. The first two moves are
  * suppressed as in NetQuake. Demo playback leaves the counter unchanged. */
 bool qa_nq_move_send(uint32_t *sent_count, bool demo_playback, qa_net_writer *,

@@ -333,6 +333,110 @@ bool qa_application_network_q1_clientdata(qa_application *app, qa_actor_id playe
     if (!qa_nq_write_clientdata(&writer, (qa_net_protocol_id){.kind = QA_NET_NQ15}, &value, standard)) return false;
     *out = value; return true;
 }
+bool qa_application_network_q1_status(qa_application *app, qa_actor_id player,
+    qa_application_network_q1_status_player players[255], size_t *count, qa_error *error)
+{
+    if (!players || !count)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source client status output");
+    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    if (!engine) return false;
+    qa_application_network_q1_status_player values[255]; size_t extent = 0;
+    for (uint32_t i = 1; i <= engine->max_clients; ++i) {
+        const application_qc_client *client = engine->clients + i;
+        if (!client->connected) continue;
+        int32_t reference; float frags; uint32_t bits;
+        qa_application_network_q1_status_player value = {.actor = client->actor, .source_slot = i,
+            .colors = client->colors, .spawned = client->spawned};
+        if (!q1_entity_reference(engine, client->actor, &reference, error) ||
+            !q1_wire_string(engine, reference, "netname", &value.name, error) ||
+            !application_qc_float(engine, reference, "frags", &frags, error) ||
+            !q1_wire_bits(frags, &bits, error)) return false;
+        value.frags = bits <= INT32_MAX ? (int32_t)bits : (int32_t)((int64_t)bits - INT64_C(4294967296));
+        if ((value.colors >> 4) > 13 || (value.colors & 15u) > 13)
+            return application_fail(error, QA_ERROR_FORMAT, "Q1 source client colors exceed the original palette");
+        values[extent++] = value;
+    }
+    memcpy(players, values, extent * sizeof(*values)); *count = extent; return true;
+}
+
+bool qa_application_network_q1_name(qa_application *app, qa_actor_id player,
+    const char *name, qa_error *error)
+{
+    if (!name) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 client name");
+    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    if (!engine) return false;
+    if (!application_qc_input_idle(engine->provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 name requires an idle source input owner");
+    application_player_record *record = NULL;
+    for (size_t i = 0; app->players && i < app->players->count; ++i)
+        if (qa_actor_id_equal(app->players->records[i].actor, player)) { record = app->players->records + i; break; }
+    if (!record || record->retiring || record->source_slot != slot || record->character != engine->provider)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 name lacks its actual source roster admission");
+    size_t length = strlen(name); if (length > 15) length = 15;
+    char *copy = malloc(length + 1);
+    if (!copy) return application_fail(error, QA_ERROR_MEMORY, "Retaining Q1 client name");
+    memcpy(copy, name, length); copy[length] = 0;
+    int32_t reference, string; qa_qc_instance *vm = engine->provider->state.qc.instance;
+    const qa_qc_definition *field = application_qc_field(engine, "netname", QA_QC_STRING, error);
+    bool ok = field && q1_entity_reference(engine, player, &reference, error) &&
+        qa_qc_string_allocate(vm, copy, &string, error) &&
+        qa_qc_set_entity_int(vm, reference, field->offset, string, error);
+    if (!ok) { free(copy); return false; }
+    free(record->name); record->name = copy; return true;
+}
+
+bool qa_application_network_q1_colors(qa_application *app, qa_actor_id player,
+    int32_t top, int32_t bottom, qa_error *error)
+{
+    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    return engine && application_qc_client_colors(engine->provider, player, top, bottom, error);
+}
+
+bool qa_application_network_q1_consume_feedback(qa_application *app, qa_actor_id player,
+    qa_application_network_q1_feedback *out, qa_error *error)
+{
+    if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 client feedback output");
+    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    if (!engine) return false;
+    if (engine->profile != QA_QC_NETQUAKE || !engine->clients[slot].spawned ||
+        !application_qc_input_idle(engine->provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 feedback requires its idle spawned NetQuake source client");
+    qa_application_network_q1_feedback value = {0}; int32_t reference;
+    float armor, blood, fixangle;
+    if (!q1_entity_reference(engine, player, &reference, error) ||
+        !application_qc_float(engine, reference, "dmg_save", &armor, error) ||
+        !application_qc_float(engine, reference, "dmg_take", &blood, error) ||
+        !application_qc_float(engine, reference, "fixangle", &fixangle, error)) return false;
+    if (!isfinite(fixangle)) return application_fail(error, QA_ERROR_FORMAT, "Nonfinite Q1 source view reset");
+    value.damage = armor != 0 || blood != 0; value.set_angle = fixangle != 0;
+    if (value.damage) {
+        const qa_qc_definition *field = application_qc_field(engine, "dmg_inflictor", QA_QC_ENTITY, error);
+        int32_t inflictor; uint32_t saved, taken; float origin[3], minimum[3], maximum[3];
+        if (!field || !q1_wire_bits(armor, &saved, error) ||
+            !q1_wire_bits(blood, &taken, error) ||
+            !qa_qc_entity_int(engine->provider->state.qc.instance, reference, field->offset, &inflictor, error) ||
+            !q1_wire_vector(engine, inflictor, "origin", origin, error) ||
+            !q1_wire_vector(engine, inflictor, "mins", minimum, error) ||
+            !q1_wire_vector(engine, inflictor, "maxs", maximum, error)) return false;
+        value.armor = (uint8_t)saved; value.blood = (uint8_t)taken;
+        for (unsigned axis = 0; axis < 3; ++axis)
+            value.origin[axis] = (double)origin[axis] + ((double)minimum[axis] + maximum[axis]) * 0.5;
+    }
+    if (value.set_angle && !q1_wire_vector(engine, reference, "angles", value.angles, error)) return false;
+    uint8_t bytes[32]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
+    qa_nq_message message = {.op = QA_NQ_SETANGLE};
+    qa_net_protocol_id protocol = {.kind = QA_NET_NQ15}; qa_nq_options options = {.standard_quake = true};
+    if (value.damage && !qa_nq_write_damage(&writer, value.armor, value.blood, value.origin)) return false;
+    memcpy(message.data.angles, value.angles, sizeof(value.angles));
+    if (value.set_angle && !qa_nq_write(&writer, protocol, options, &message, NULL, 0)) return false;
+    /* Source fields are consumed only after both complete messages qualify.
+     * A source setter failure remains an actual failed application operation. */
+    if ((value.damage && (!application_qc_set_float(engine, reference, "dmg_save", 0, error) ||
+        !application_qc_set_float(engine, reference, "dmg_take", 0, error))) ||
+        (value.set_angle && !application_qc_set_float(engine, reference, "fixangle", 0, error))) return false;
+    *out = value; return true;
+}
+
 bool qa_application_network_q1_baseline(qa_application *app, qa_actor_id player,
     const qa_q1_entity *entity, qa_q1_entity *out, qa_error *error)
 {
