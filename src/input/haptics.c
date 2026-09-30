@@ -1,26 +1,9 @@
 #include "qa/binary.h"
-#include "qa/input.h"
-#include "qa/vfs.h"
+#include "haptics_private.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-struct qa_haptic_pattern {
-    size_t references, count;
-    uint16_t rate;
-    bool loop;
-    uint32_t start, end, interval;
-    uint8_t samples[];
-};
-struct haptic_entry {
-    qa_sha256_digest digest;
-    qa_haptic_pattern *pattern;
-    qa_resource *source;
-    struct haptic_entry *next;
-};
-struct qa_haptic_cache {
-    struct haptic_entry *entries;
-};
 bool qa_haptic_pattern_parse(qa_bytes bytes, qa_haptic_pattern **out, qa_error *error) {
     if (!out || (!bytes.data && bytes.size)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid tactile input");

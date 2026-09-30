@@ -691,6 +691,7 @@ add_library(qa_input STATIC
     src/input/command_save.c
     src/input/gamepad.c
     src/input/haptics.c
+    src/input/haptics_save.c
     src/input/keys.c
     src/input/mouse.c
     src/input/seat.c
