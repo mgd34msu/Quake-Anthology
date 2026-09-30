@@ -890,6 +890,8 @@ static bool q1_spawn_entity(application_provider *provider,
         !entity_optional_text(entities, index, "group", arena, &fields.group, error) ||
         !entity_optional_text(entities, index, "path", arena, &fields.path, error) ||
         !entity_optional_text(entities, index, "category", arena, &fields.category, error) ||
+        !entity_optional_text(entities, index, "fog_info_entity", arena,
+                              &fields.fog_info_entity, error) ||
         !entity_optional_text(entities, index, "wave1", arena,
                               &boss.wave1, error) ||
         !entity_optional_text(entities, index, "wave2", arena,
@@ -962,6 +964,11 @@ static bool q1_spawn_entity(application_provider *provider,
                        &fields.movedir, &fields.has_movedir, error) ||
         !entity_vector(entities, index, "view_ofs", qa_v3(0, 0, 0),
                        &fields.view_offset, &fields.has_view_offset, error) ||
+        !entity_vector(entities, index, "fog_color", qa_v3(0, 0, 0),
+                       &fields.fog_color, NULL, error) ||
+        !entity_float(entities, index, "fog_density", 0, &fields.fog_density, error) ||
+        !entity_float(entities, index, "weapon", 0, &fields.weapon, error) ||
+        !entity_float(entities, index, "frags", 0, &fields.frags, error) ||
         !entity_float(entities, index, "height", 0, &fields.height, error) ||
         !entity_float(entities, index, "lip", 0, &fields.lip, error) ||
         !entity_float(entities, index, "width", 0, &fields.width, error) ||
