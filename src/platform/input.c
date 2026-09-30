@@ -1,6 +1,5 @@
 #define _POSIX_C_SOURCE 200809L
-#include "qa/input_platform.h"
-#include "qa/vfs.h"
+#include "input_platform_private.h"
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -11,41 +10,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-struct device {
-    SDL_GameController *handle;
-    qa_controller_info info;
-};
-struct seat_route {
-    qa_input_platform *platform;
-    unsigned slot;
-    qa_input_seat *seat;
-    qa_controller_selection selection;
-    int32_t instance, haptic_instance, calibration_instance;
-    bool calibration_sensor;
-    qa_haptic_player haptic;
-};
-struct qa_input_platform {
-    qa_input_platform_options options;
-    struct device *devices;
-    size_t device_count, device_capacity;
-    struct seat_route seats[4];
-    int keyboard;
-    int32_t keys[SDL_NUM_SCANCODES];
-    uint32_t window;
-    bool old_relative, old_text, old_grab, capture;
-    int old_controller_events, old_joystick_events;
-    qa_haptic_cache *haptics;
-    SDL_Joystick *joystick;
-    int32_t joystick_instance;
-    qa_source_joystick source;
-    bool windows_joystick, mouse_available;
-    int source_slot, midi_slot, midi_fd, midi_channel;
-    qa_midi_decoder midi;
-    bool midi_held[256];
-    qa_midi_device *midi_devices;
-    size_t midi_count;
-    double now;
-};
 static void report(qa_input_platform *p, const char *message) {
     if (p->options.print)
         p->options.print(p->options.user, message);

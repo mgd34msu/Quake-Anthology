@@ -1,5 +1,7 @@
 #include "internal.h"
 #include "qa/llm.h"
+#include "qa/ui_assistance_save.h"
+#include "qa/source_save.h"
 #include <stdio.h>
 
 struct qa_ui_llm {
@@ -192,4 +194,73 @@ bool qa_ui_llm_destroy(qa_ui_llm *menu, double time, qa_error *error)
     if (!menu) return true;
     if (!qa_ui_unregister(menu->ui, menu->menu, time, error)) return false;
     memset(menu->key, 0, sizeof(menu->key)); free(menu->models); free(menu->efforts); free(menu); return true;
+}
+const qa_llm *qa_ui_llm_service(const qa_ui_llm *menu) { return menu ? menu->llm : NULL; }
+static void checkpoint_key_clear(qa_ui_llm *menu)
+{
+    volatile char *key = menu->key;
+    for (size_t i = 0; i < sizeof(menu->key); ++i) key[i] = 0;
+}
+static bool checkpoint_fields(qa_source_save_io *io, qa_ui_llm *saved,
+                               const qa_ui_llm *qualified, const qa_ui_assistance_checkpoint_refs *refs)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    uint8_t magic[4] = {'Q','L','U','I'};
+    uint32_t schema = 1, seat = qualified->ui->options.seat;
+    uint64_t menu = qualified->menu, service = 0;
+    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QLUI", sizeof(magic)) ||
+        !qa_source_save_u32(io, &schema) || schema != 1 ||
+        !qa_source_save_u32(io, &seat) || seat != qualified->ui->options.seat ||
+        !qa_source_save_u64(io, &menu) || menu != qualified->menu) return false;
+    if (!reading && !refs->service_encode(refs->context, saved->llm, &service, io->error)) return false;
+    if (!qa_source_save_u64(io, &service)) return false;
+    if (reading) {
+        qa_llm *actual = NULL;
+        if (!refs->service_decode(refs->context, service, &actual, io->error) ||
+            !actual || actual != qualified->llm) return false;
+    }
+    if (!qa_source_save_bool(io, &saved->rejected)) return false;
+    char *texts[] = {saved->key, saved->base, saved->model, saved->status};
+    const size_t sizes[] = {sizeof(saved->key), sizeof(saved->base), sizeof(saved->model), sizeof(saved->status)};
+    for (size_t i = 0; i < sizeof(sizes) / sizeof(*sizes); ++i)
+        if (!qa_source_save_bytes(io, texts[i], sizes[i]) || !memchr(texts[i], 0, sizes[i])) return false;
+    /* Model and effort arrays are factory scratch. Action callbacks query
+     * the actual service afresh and never consume these borrowed spans. */
+    return true;
+}
+bool qa_ui_llm_checkpoint(const qa_ui_llm *menu, const qa_ui_assistance_checkpoint_refs *refs,
+                           qa_buffer *out, qa_error *error)
+{
+    if (!menu || !menu->llm || !refs || !refs->service_encode || !out || out->data || out->size ||
+        menu->ui->handling || menu->ui->drawing)
+        return ui_fail(error, "assistance menu capture requires idle actual owners and empty output");
+    qa_ui_llm saved = *menu;
+    qa_source_save_io io = {0};
+    bool success = qa_source_save_writer(&io, NULL, error) && checkpoint_fields(&io, &saved, menu, refs) &&
+        qa_source_save_finish(&io, out);
+    qa_source_save_dispose(&io); checkpoint_key_clear(&saved);
+    if (!success && error && error->code == QA_OK)
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "invalid assistance menu continuation");
+    return success;
+}
+bool qa_ui_llm_restore(qa_ui_llm *menu, const qa_ui_assistance_checkpoint_refs *refs,
+                       qa_bytes bytes, qa_error *error)
+{
+    if (!menu || !menu->llm || !refs || !refs->service_decode || menu->ui->handling || menu->ui->drawing)
+        return ui_fail(error, "assistance menu restore requires idle actual owners");
+    qa_ui_llm saved = {.ui = menu->ui, .llm = menu->llm, .menu = menu->menu};
+    qa_source_save_io io = {0};
+    bool success = qa_source_save_reader(&io, NULL, bytes, error) && checkpoint_fields(&io, &saved, menu, refs) &&
+        qa_source_save_finish(&io, NULL);
+    qa_source_save_dispose(&io);
+    if (!success) {
+        checkpoint_key_clear(&saved);
+        if (error && error->code == QA_OK) qa_error_set(error, QA_ERROR_FORMAT, 0, "invalid assistance menu continuation");
+        return false;
+    }
+    qa_ui_llm displaced = *menu;
+    *menu = saved;
+    checkpoint_key_clear(&saved); checkpoint_key_clear(&displaced);
+    free(displaced.models); free(displaced.efforts);
+    return true;
 }
