@@ -74,7 +74,9 @@ restores only `self` and `other`. NONE, NOCLIP, STEP water and movement without
 contacts no longer reset it merely because physics resumes. Classic named
 callbacks explicitly enter with source-current time, so `PlayerPreThink` and
 `PlayerPostThink` retain their actual clock entry while the separate control
-order integration remains open.
+order integration remains open. Due think also preserves the current guest
+`frametime`: the oracle initializes it at frame entry and later `invoke` calls
+stage only `time`, `self` and `other`. A lawful earlier guest store is retained.
 
 Captured NOCLIP uses `qa_physics_step_source_motion` without overwriting the
 guest's current motion. Other moving arms read live shared physics. Unsupported
@@ -115,7 +117,9 @@ save integration and executable behavior require their own acceptance evidence.
 The initial bounded six-file SHA-256 manifest is
 `/tmp/qc-actor-dispatch-20260930.sha256`, accepted by independent Q1 source review
 and committed by root at `3e6c032`. The two-file callback-time follow-up is
-`/tmp/qc-actor-time-20260930.sha256`. It changes `guest_qc.c` and this report.
+`/tmp/qc-actor-time-20260930.sha256`, accepted by independent Q1 source review
+and committed by root at `7aec7ba`. The two-file frametime follow-up is
+`/tmp/qc-actor-frametime-20260930.sha256`. It changes `guest_qc.c` and this report.
 Independent source review must read the frozen files against the cited oracle
 paths and root API declarations. Whitespace and digest checks are allowed before
 BASELINE; runtime checks are not acceptance evidence for this packet because

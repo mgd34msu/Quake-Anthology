@@ -199,10 +199,6 @@ static bool source_think(void *opaque, qa_actor_id actor, const qa_source_frame 
     int32_t reference;
     if (!application_qc_reference(engine, actor, &reference, error) ||
         !application_qc_set_float(engine, reference, "nextthink", 0, error)) return false;
-    if (engine->provider->state.qc.qualified)
-        return source_callback(engine, actor, (qa_actor_id){0}, "think", (double)frame->time_ns / 1e9, error);
-    if (!qa_qc_game_set_time(engine->provider->state.qc.game, (double)frame->time_ns / 1e9,
-                              (double)frame->elapsed_ns / 1e9, error)) return false;
     return source_callback(engine, actor, (qa_actor_id){0}, "think", (double)frame->time_ns / 1e9, error);
 }
 bool application_qc_think_binding(application_provider *provider,qa_actor_id actor,uint32_t callback_id,
