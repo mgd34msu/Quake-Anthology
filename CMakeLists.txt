@@ -615,6 +615,7 @@ add_library(qa_scene STATIC
     src/render/scene/frame.c
     src/render/scene/math.c
     src/render/scene/resources.c
+    src/render/scene/geometry_save.c
     src/render/scene/resources_save.c
     src/render/scene/resources_state_save.c
     src/render/scene/sort.c
