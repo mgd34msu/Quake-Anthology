@@ -124,3 +124,5 @@ void qa_network_transport_exchange(qa_network_runtime *active, qa_network_runtim
     qa_net_transport *transport = active->transport;
     active->transport = candidate->transport; candidate->transport = transport;
 }
+const qa_net_address *qa_network_local_address(const qa_network_runtime *runtime)
+{ return runtime ? qa_net_transport_address(runtime->transport) : NULL; }

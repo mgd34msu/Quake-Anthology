@@ -38,4 +38,5 @@ bool qa_network_prediction_restore(qa_network_runtime *, const qa_network_checkp
 /* No-fail final exchange after both owners have passed their idle/identity
  * admission. Keeps the live local socket endpoint and its sole receive owner. */
 void qa_network_transport_exchange(qa_network_runtime *, qa_network_runtime *);
+const qa_net_address *qa_network_local_address(const qa_network_runtime *);
 #endif
