@@ -243,7 +243,7 @@ bool q3g_role_create_restored(struct application_q3_guest *engine, qa_qvm_role k
 
 bool q3g_role_activate(q3g_role *role, qa_error *error)
 {
-    if (!role || !role->ready || !role->host || role->retired)
+    if (!role || !role->ready || !role->host || role->retired || role->engine->restore_pending)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 activation requires an admitted role");
     if (role->activation_failed) {
         if (error) *error = role->activation_error;

@@ -11,7 +11,8 @@ struct application_q3_guest *q3g_engine(application_provider *provider)
 bool q3g_call(q3g_role *role, int32_t command, const int32_t *arguments, size_t count,
                int32_t *result, qa_error *error)
 {
-    if (!role || !role->host || role->retired || !result || count > 9 || (count && !arguments))
+    if (!role || !role->host || role->retired || role->engine->restore_pending ||
+        !result || count > 9 || (count && !arguments))
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 guest entry");
     if (!q3g_role_activate(role, error)) return false;
     ++role->engine->calls;
@@ -38,6 +39,8 @@ static bool begin_frame(void *state, qa_session *session, const qa_source_frame 
 {
     (void)session;
     struct application_q3_guest *engine = state;
+    if (engine->restore_pending)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Restored Q3 source owners have not finished qualification");
     engine->milliseconds = (int32_t)(uint32_t)(frame->time_ns / UINT64_C(1000000));
     if (!engine->map_ready || !engine->game || !engine->game->initialized) return true;
     int32_t result;
@@ -57,17 +60,19 @@ static void actor_released(void *state, qa_session *session, qa_actor_record act
         application_fault(engine->provider->application, &error);
 }
 
-bool application_construct_q3_guest(qa_application *application, application_provider *provider,
+bool application_guest_q3_create_empty(qa_application *application, application_provider *provider,
                                       qa_world *world, const qa_product *product,
-                                      const qa_launch_choices *choices, qa_error *error)
+                                      const qa_launch_choices *choices, bool restoring, qa_error *error)
 {
     if (!application || !provider || !world || !product || !choices ||
         product->family != QA_GAME_Q3 || !provider->launch->selection.artifact ||
-        (provider->kind != APPLICATION_PROVIDER_QVM && provider->kind != APPLICATION_PROVIDER_NATIVE))
+        (provider->kind != APPLICATION_PROVIDER_QVM && provider->kind != APPLICATION_PROVIDER_NATIVE) ||
+        q3g_engine(provider) || (restoring && application->operation != APPLICATION_PERSISTING))
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 guest construction");
     struct application_q3_guest *engine = calloc(1, sizeof(*engine));
     if (!engine) return application_fail(error, QA_ERROR_MEMORY, "allocating Q3 guest owner");
     engine->provider = provider; engine->world = world;
+    engine->restore_pending = restoring;
     engine->product = !strcmp(product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
     qa_q3_gamestate_init(&engine->gamestate);
     for (size_t i = 0; i < 64; ++i) {
@@ -80,6 +85,19 @@ bool application_construct_q3_guest(qa_application *application, application_pro
     for (size_t i = 0; i < choices->seat_count; ++i) engine->seats[i] = choices->seats[i].id;
     if (provider->kind == APPLICATION_PROVIDER_QVM) provider->state.qvm.engine = engine;
     else provider->state.native.engine = engine;
+    provider->component = (qa_component){.owner = provider->owner,
+        .clock = provider->launch->selection.clock, .state = engine,
+        .begin_frame = begin_frame, .actor_released = actor_released};
+    return true;
+}
+
+bool application_construct_q3_guest(qa_application *application, application_provider *provider,
+                                      qa_world *world, const qa_product *product,
+                                      const qa_launch_choices *choices, qa_error *error)
+{
+    if (!application_guest_q3_create_empty(application, provider, world, product, choices, false, error))
+        return false;
+    struct application_q3_guest *engine = q3g_engine(provider);
     const char *path = provider->launch->selection.artifact;
     qa_qvm_role kind = primary_role(path);
     uint32_t seat = choices->seat_count ? choices->seats[0].id : UINT32_MAX;
@@ -94,9 +112,6 @@ bool application_construct_q3_guest(qa_application *application, application_pro
             provider->state.native.q3_host = role->host; provider->state.native.host = role->native;
         }
     }
-    provider->component = (qa_component){.owner = provider->owner,
-        .clock = provider->launch->selection.clock, .state = engine,
-        .begin_frame = begin_frame, .actor_released = actor_released};
     return true;
 }
 

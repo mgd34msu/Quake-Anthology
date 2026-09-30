@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/qvm_save.h"
 
 #include <limits.h>
 #include <stdatomic.h>
@@ -316,6 +317,34 @@ void qa_qvm_execution_restore(qa_qvm *vm, const uint64_t values[3], bool candida
     if (candidate || values[0] > exec->next_binding) exec->next_binding = values[0];
     exec->breaks = values[1];
     exec->instructions = values[2];
+}
+bool qa_qvm_checkpoint_functions(const qa_qvm *vm, const qa_qvm_saved_function *expected,
+                                  size_t count, qa_error *error)
+{
+    if (!qa_qvm_live(vm,error)) return false;
+    if ((count && !expected) || vm->watches || vm->lifecycle_depth || vm->write_delivery_depth)
+        return error_at(error,0,"QVM callback inventory has an unqualified write or lifecycle owner");
+    uint64_t counters[3];
+    qa_qvm_execution_checkpoint(vm,counters);
+    if (!qa_qvm_execution_checkpoint_ready(vm,counters,false,error)) return false;
+    for (size_t i = 0; i < count; ++i) {
+        if (!expected[i].binding || !expected[i].hook)
+            return error_at(error,0,"QVM source callback descriptor is absent");
+        for (size_t j = 0; j < i; ++j)
+            if (expected[i].binding == expected[j].binding)
+                return error_at(error,0,"QVM source callback descriptor is duplicated");
+    }
+    size_t actual = 0;
+    for (const binding *value = state(vm)->bindings; value; value = value->next) {
+        size_t i = 0;
+        while (i < count && expected[i].binding != value->id) ++i;
+        if (!value->active || value->kind != BIND_FUNCTION || i == count ||
+            value->instruction != expected[i].instruction || value->fn.hook != expected[i].hook ||
+            value->context != expected[i].context || value->host_invocations != expected[i].host_invocations)
+            return error_at(error,0,"QVM installed callback differs from its exact source owner");
+        ++actual;
+    }
+    return actual == count || error_at(error,0,"QVM source callback inventory is incomplete");
 }
 void qa_qvm_execution_destroy(qa_qvm *vm)
 {

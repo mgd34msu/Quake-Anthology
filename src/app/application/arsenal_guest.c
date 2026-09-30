@@ -1,5 +1,8 @@
 #include "guest_input_private.h"
 #include "guest_projection_private.h"
+#include "qa/q3_abi.h"
+#include "qa/qvm_save.h"
+#include "qa/source_save.h"
 #include <math.h>
 
 typedef struct guest_client_scope {
@@ -475,6 +478,117 @@ bool application_guest_input_detach(q3g_role *role, qa_error *error)
     free(input->weapon_contexts); free(input->weapon_bindings);
     application_guest_input_profile_free(&input->profile); free(input); role->input = NULL;
     return true;
+}
+
+static bool input_checkpoint_idle(q3g_role *role, qa_error *error)
+{
+    application_guest_input *input = role ? role->input : NULL;
+    bool idle = (role && role->vm && !qa_qvm_active(role->vm) &&
+        (!input || (!input->scope && !input->in_command && !input->command &&
+                    !input->applying.registry && !input->command_actor.registry))) ||
+        application_fail(error, QA_ERROR_ARGUMENT, "Q3 input checkpoint requires completed source command scopes");
+    if (!idle) return false;
+    qa_qvm_saved_function descriptors[6] = {0};
+    size_t count = input && input->profile.input_present ? (input->profile.has_weapons ? 6u : 5u) : 0;
+    if (input && input->binding_count != count)
+        return application_fail(error, QA_ERROR_FORMAT, "Q3 input callback count differs from its source declaration");
+    if (input) {
+        const uint32_t entries[] = {input->profile.client_think, input->profile.run_client,
+            input->profile.client_spawn, input->profile.move, input->profile.slice, input->profile.weapon_dispatcher};
+        for (size_t i = 0; i < count; ++i)
+            descriptors[i] = (qa_qvm_saved_function){input->bindings[i], entries[i], true,
+                i < 3 ? envelope : i < 5 ? source_move : weapon_stage, input};
+        for (size_t i = count; i < 6; ++i)
+            if (input->bindings[i])
+                return application_fail(error, QA_ERROR_FORMAT, "Q3 input retains an undeclared callback identity");
+    }
+    return qa_qvm_checkpoint_functions(role->vm, descriptors, count, error);
+}
+
+static bool input_command_fields(qa_source_save_io *io, qa_movement_command *value)
+{
+    uint32_t kind = value->kind;
+    if (!qa_source_save_u32(io, &kind)) return false;
+    if (kind > QA_MOVEMENT_Q3)
+        return application_fail(io->error, QA_ERROR_FORMAT, "Q3 input command has an invalid movement dialect");
+    bool ok =
+        qa_source_save_u64(io, &value->sequence) && qa_source_save_u32(io, &value->milliseconds) &&
+        qa_source_save_i32(io, &value->server_time_ms) && qa_source_save_i32(io, &value->server_frame) &&
+        qa_source_save_f64(io, &value->acknowledged_server_seconds) && qa_source_save_vec3(io, &value->angles);
+    for (size_t i = 0; ok && i < 3; ++i) ok = qa_source_save_i32(io, &value->angle_words[i]);
+    ok = ok && qa_source_save_f32(io, &value->forward_move) && qa_source_save_f32(io, &value->side_move) &&
+        qa_source_save_f32(io, &value->up_move) && qa_source_save_u32(io, &value->buttons) &&
+        qa_source_save_u8(io, &value->impulse) && qa_source_save_u8(io, &value->light_level) &&
+        qa_source_save_u8(io, &value->weapon);
+    if (ok && io->direction == QA_SOURCE_SAVE_READ) value->kind = (qa_movement_kind)kind;
+    return ok;
+}
+
+static bool input_record_write(void *context, size_t offset, qa_bytes bytes, qa_error *error)
+{
+    (void)error;
+    memcpy((uint8_t *)context + offset, bytes.data, bytes.size);
+    return true;
+}
+
+static bool input_fields(qa_source_save_io *io, application_guest_input *input)
+{
+    uint8_t magic[8] = {'Q','A','G','3','I','N',0,0};
+    const uint8_t expected[8] = {'Q','A','G','3','I','N',0,0};
+    uint32_t version = 1;
+    bool present = input != NULL;
+    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || !qa_source_save_u32(io, &version) ||
+        memcmp(magic, expected, sizeof(magic)) || version != 1 ||
+        !qa_source_save_bool(io, &present) || present != (input != NULL))
+        return application_fail(io->error, QA_ERROR_FORMAT, "Q3 input checkpoint declaration differs");
+    if (!present) return true;
+    if (!qa_source_save_count(io, &input->binding_count, 6)) return false;
+    for (size_t i = 0; i < 6; ++i)
+        if (!qa_source_save_u64(io, &input->bindings[i])) return false;
+    uint8_t bytes[24] = {0};
+    qa_q3_abi_record record = {.abi = QA_QVM_Q3_MODERN,
+        .bytes = {bytes, sizeof(bytes)}, .context = bytes, .write = input_record_write};
+    return input_command_fields(io, &input->applied_command) &&
+        (io->direction != QA_SOURCE_SAVE_WRITE ||
+         qa_q3_abi_write_usercmd(&record, 0, false, &input->projected_command, io->error)) &&
+        qa_source_save_bytes(io, bytes, sizeof(bytes)) &&
+        (io->direction != QA_SOURCE_SAVE_READ ||
+         qa_q3_abi_read_usercmd(&record, 0, &input->projected_command, io->error)) &&
+        qa_source_save_bool(io, &input->command_projected) && qa_source_save_bool(io, &input->input_applied);
+}
+
+bool application_guest_input_checkpoint(q3g_role *role, qa_buffer *out, qa_error *error)
+{
+    if (!out || !input_checkpoint_idle(role, error)) return false;
+    qa_source_save_io io = {0};
+    bool ok = qa_source_save_writer(&io, NULL, error) &&
+        input_fields(&io, role->input) && qa_source_save_finish(&io, out);
+    qa_source_save_dispose(&io);
+    return ok;
+}
+
+bool application_guest_input_restore(q3g_role *role, qa_bytes bytes, qa_error *error)
+{
+    if (!input_checkpoint_idle(role, error)) return false;
+    if (!role->engine->restore_pending || role->initialized)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 input restore requires an isolated source candidate");
+    application_guest_input *input = role->input;
+    application_guest_input candidate = {0};
+    if (input) candidate = *input;
+    qa_source_save_io io = {0};
+    bool ok = qa_source_save_reader(&io, NULL, bytes, error) &&
+        input_fields(&io, input ? &candidate : NULL) && qa_source_save_finish(&io, NULL);
+    qa_source_save_dispose(&io);
+    if (ok && input && (candidate.binding_count != input->binding_count ||
+        memcmp(candidate.bindings, input->bindings, sizeof(input->bindings))))
+        ok = application_fail(error, QA_ERROR_FORMAT, "Q3 input callback identities differ from their source constructor");
+    if (ok && input) {
+        input->applied_command = candidate.applied_command;
+        input->projected_command = candidate.projected_command;
+        input->command_projected = candidate.command_projected;
+        input->input_applied = candidate.input_applied;
+    }
+    return ok;
 }
 
 bool application_guest_input_applying(const qa_application *app, qa_actor_id actor)

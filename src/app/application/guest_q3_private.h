@@ -88,7 +88,7 @@ struct application_q3_guest {
     int32_t milliseconds;
     unsigned calls;
     uint64_t role_sequence;
-    bool map_ready, draining_clients;
+    bool map_ready, draining_clients, restore_pending;
 };
 
 struct application_q3_guest *q3g_engine(application_provider *);
@@ -108,6 +108,8 @@ bool q3g_client_bind(q3g_role *, qa_q3_host_options *, qa_error *);
 bool q3g_arguments(void *, qa_native_host_command_view *, qa_error *);
 char *q3g_copy_text(const char *, qa_error *);
 void q3g_clients_clear(struct application_q3_guest *);
+bool application_guest_q3_create_empty(qa_application *, application_provider *, qa_world *,
+    const qa_product *, const qa_launch_choices *, bool restoring, qa_error *);
 bool q3g_client_effect(q3g_role *, qa_application_q3_client_effect,
                         const char *, qa_error *);
 
