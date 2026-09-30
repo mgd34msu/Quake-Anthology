@@ -1,4 +1,6 @@
 #include "qa/audio.h"
+#include "qa/binary.h"
+#include <float.h>
 
 #include <math.h>
 #include <stdio.h>
@@ -6,6 +8,9 @@
 #include <string.h>
 
 enum { MUSIC_CHUNK_FRAMES = 16384, MUSIC_REMAP_TRACKS = 100 };
+
+_Static_assert(sizeof(float) == 4 && FLT_RADIX == 2 && FLT_MANT_DIG == 24 && FLT_MAX_EXP == 128,
+               "Music checkpoints require binary32 floats");
 
 struct qa_audio_music {
     qa_audio_stream *stream, *loop;
@@ -19,6 +24,95 @@ struct qa_audio_music {
     bool source_volume, paused, enabled, reset_pcm;
     int16_t scratch[MUSIC_CHUNK_FRAMES * 2];
 };
+
+bool qa_audio_music_checkpoint(const qa_audio_music *music, qa_buffer *out, qa_error *error) {
+    if (!music || !out) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Music checkpoint requires its live owner"); return false;
+    }
+    qa_buffer parts[3] = {0};
+    bool same = music->stream && music->stream == music->loop;
+    bool ok = (!music->stream || qa_audio_stream_checkpoint(music->stream, &parts[0], error)) &&
+        (!music->loop || same || qa_audio_stream_checkpoint(music->loop, &parts[1], error)) &&
+        qa_audio_raw_checkpoint(music->pcm, &parts[2], error);
+    size_t size = 80 + MUSIC_REMAP_TRACKS;
+    for (size_t i = 0; ok && i < 3; ++i) {
+        if (parts[i].size > SIZE_MAX - size) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Music checkpoint extent overflows storage"); ok = false;
+        } else size += parts[i].size;
+    }
+    qa_buffer buffer = {0};
+    if (ok) {
+        buffer = (qa_buffer){.data = calloc(1, size), .size = size};
+        if (!buffer.data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining music checkpoint"); ok = false; }
+    }
+    if (ok) {
+        uint8_t *data = buffer.data;
+        memcpy(data, "QAMU", 4); qa_store_u32le(data + 4, 1);
+        qa_store_u32le(data + 8, music->output_rate); qa_store_u32le(data + 12, music->family);
+        uint32_t flags = music->source_volume | music->paused << 1 | music->enabled << 2 |
+            music->reset_pcm << 3 | (music->stream != NULL) << 4 | (music->loop != NULL) << 5 | same << 6;
+        qa_store_u32le(data + 16, flags);
+        uint32_t bits; memcpy(&bits, &music->target_volume, sizeof(bits)); qa_store_u32le(data + 24, bits);
+        memcpy(&bits, &music->smoothed_volume, sizeof(bits)); qa_store_u32le(data + 28, bits);
+        qa_store_u64le(data + 32, music->completions); qa_store_u64le(data + 40, music->request);
+        qa_store_u32le(data + 48, music->cd_track);
+        memcpy(data + 80, music->remap, MUSIC_REMAP_TRACKS);
+        size_t offset = 80 + MUSIC_REMAP_TRACKS;
+        for (size_t i = 0; i < 3; ++i) {
+            qa_store_u64le(data + 56 + i * 8, parts[i].size);
+            if (parts[i].size) memcpy(data + offset, parts[i].data, parts[i].size);
+            offset += parts[i].size;
+        }
+        *out = buffer;
+    }
+    for (size_t i = 0; i < 3; ++i) qa_buffer_free(&parts[i]);
+    return ok;
+}
+
+bool qa_audio_music_restore(qa_bytes bytes, qa_audio_music **out, qa_error *error) {
+    const size_t header = 80 + MUSIC_REMAP_TRACKS;
+    if (!out || !bytes.data || bytes.size < header || memcmp(bytes.data, "QAMU", 4) ||
+        qa_load_u32le(bytes.data + 4) != 1 || qa_load_u32le(bytes.data + 20) ||
+        qa_load_u32le(bytes.data + 52)) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid music checkpoint header"); return false;
+    }
+    const uint8_t *data = bytes.data;
+    uint32_t rate = qa_load_u32le(data + 8), family = qa_load_u32le(data + 12);
+    uint32_t flags = qa_load_u32le(data + 16), cd = qa_load_u32le(data + 48);
+    bool stream_present = (flags & 16) != 0, loop_present = (flags & 32) != 0, same = (flags & 64) != 0;
+    float target = qa_load_f32le(data + 24), smooth = qa_load_f32le(data + 28);
+    if (!rate || family > QA_AUDIO_Q3 || (flags & ~127u) || cd > 255 ||
+        !isfinite(target) || target < 0 || !isfinite(smooth) || smooth < 0 ||
+        (same && (!stream_present || !loop_present))) {
+        qa_error_set(error, QA_ERROR_FORMAT, 8, "Invalid music checkpoint state"); return false;
+    }
+    qa_bytes parts[3]; size_t offset = header;
+    for (size_t i = 0; i < 3; ++i) {
+        uint64_t size = qa_load_u64le(data + 56 + i * 8);
+        if (size > bytes.size - offset) {
+            qa_error_set(error, QA_ERROR_FORMAT, offset, "Truncated music checkpoint record"); return false;
+        }
+        parts[i] = (qa_bytes){data + offset, (size_t)size}; offset += (size_t)size;
+    }
+    if (offset != bytes.size || stream_present != (parts[0].size != 0) ||
+        (loop_present && !same) != (parts[1].size != 0) || !parts[2].size) {
+        qa_error_set(error, QA_ERROR_FORMAT, offset, "Music checkpoint record set differs"); return false;
+    }
+    qa_audio_music *music = NULL;
+    if (!qa_audio_music_create(rate, (qa_audio_family)family, (flags & 1) != 0, &music, error)) return false;
+    qa_audio_raw_stream *pcm = NULL;
+    bool ok = (!stream_present || qa_audio_stream_restore(parts[0], &music->stream, error)) &&
+        (!loop_present || same || qa_audio_stream_restore(parts[1], &music->loop, error)) &&
+        qa_audio_raw_restore(parts[2], rate, &pcm, error);
+    if (same) music->loop = music->stream;
+    if (!ok) { qa_audio_raw_destroy(pcm); qa_audio_music_destroy(music); return false; }
+    qa_audio_raw_destroy(music->pcm); music->pcm = pcm;
+    music->target_volume = target; music->smoothed_volume = smooth;
+    music->completions = qa_load_u64le(data + 32); music->request = qa_load_u64le(data + 40);
+    music->cd_track = cd; memcpy(music->remap, data + 80, MUSIC_REMAP_TRACKS);
+    music->paused = (flags & 2) != 0; music->enabled = (flags & 4) != 0; music->reset_pcm = (flags & 8) != 0;
+    *out = music; return true;
+}
 
 static void music_identity_remap(qa_audio_music *music) {
     for (unsigned track = 0; track < MUSIC_REMAP_TRACKS; ++track)

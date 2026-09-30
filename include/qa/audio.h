@@ -28,6 +28,8 @@ qa_audio_sample *qa_audio_sample_retain(qa_audio_sample *sample);
 void qa_audio_sample_release(qa_audio_sample *sample);
 bool qa_audio_sample_copy(const int16_t *samples, uint64_t frames, unsigned channels, uint32_t rate,
                           uint64_t loop_start, qa_audio_sample **out, qa_error *error);
+bool qa_audio_sample_checkpoint(const qa_audio_sample *, qa_buffer *, qa_error *);
+bool qa_audio_sample_restore(qa_bytes, qa_audio_sample **, qa_error *);
 bool qa_audio_decode_wav(qa_bytes bytes, qa_audio_wav_policy policy, qa_audio_sample **out,
                          qa_error *error);
 bool qa_audio_decode(qa_bytes bytes, qa_audio_wav_policy policy, qa_audio_sample **out,
@@ -71,6 +73,10 @@ bool qa_audio_stream_read(qa_audio_stream *stream, int16_t *out, size_t capacity
                           size_t *frames, qa_error *error);
 bool qa_audio_stream_seek(qa_audio_stream *stream, uint64_t frame, qa_error *error);
 void qa_audio_stream_close(qa_audio_stream *stream);
+/* Portable immutable source bytes and exact decoded frame cursor. Restored
+ * streams own their source bytes; source checkpointing never seeks the stream. */
+bool qa_audio_stream_checkpoint(const qa_audio_stream *, qa_buffer *, qa_error *);
+bool qa_audio_stream_restore(qa_bytes, qa_audio_stream **, qa_error *);
 
 typedef struct qa_audio_bank qa_audio_bank;
 typedef struct qa_audio_asset qa_audio_asset;
@@ -139,6 +145,8 @@ void qa_audio_music_update(qa_audio_music *music);
 bool qa_audio_music_mix(qa_audio_music *music, float *stereo, size_t frames, qa_error *error);
 bool qa_audio_music_playing(const qa_audio_music *music);
 uint32_t qa_audio_music_rate(const qa_audio_music *music);
+bool qa_audio_music_checkpoint(const qa_audio_music *, qa_buffer *, qa_error *);
+bool qa_audio_music_restore(qa_bytes, qa_audio_music **, qa_error *);
 uint64_t qa_audio_music_completions(const qa_audio_music *music);
 bool qa_audio_music_remap(qa_audio_music *music, const uint8_t *tracks, size_t count,
                           qa_error *error);
