@@ -18,15 +18,26 @@ bool qa_q3_player_request_weapon(qa_q3_game *game, qa_actor_id actor,
     return true;
 }
 
-bool qa_q3_player_quad(qa_q3_game *game, qa_actor_id actor,
-                         uint64_t duration_ns, qa_error *error) {
+static bool quad(qa_q3_game *game, qa_actor_id actor,
+                   uint64_t duration_ns, bool stack, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
     uint64_t milliseconds = duration_ns / UINT64_C(1000000);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER ||
         !(entry->state.player.selections & (QA_Q3_EFFECTS | QA_Q3_CHARACTER)) ||
         milliseconds > INT32_MAX)
         return q3_fail(error, "invalid Q3 timed quad grant");
-    entry->state.player.powerups[QA_Q3_P_QUAD] = duration_ns
-        ? q3_add_time(game->now_ms, (int32_t)milliseconds) : 0;
+    int32_t base = game->now_ms;
+    if (stack && entry->state.player.powerups[QA_Q3_P_QUAD] > base)
+        base = entry->state.player.powerups[QA_Q3_P_QUAD];
+    entry->state.player.powerups[QA_Q3_P_QUAD] = stack || duration_ns
+        ? q3_add_time(base, (int32_t)milliseconds) : 0;
     return true;
+}
+bool qa_q3_player_quad(qa_q3_game *game, qa_actor_id actor,
+                         uint64_t duration_ns, qa_error *error) {
+    return quad(game, actor, duration_ns, false, error);
+}
+bool qa_q3_player_quad_stack(qa_q3_game *game, qa_actor_id actor,
+                               uint64_t duration_ns, qa_error *error) {
+    return quad(game, actor, duration_ns, true, error);
 }

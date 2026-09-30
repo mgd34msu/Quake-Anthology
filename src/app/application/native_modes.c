@@ -105,11 +105,33 @@ bool application_native_mode_body_armor(void *opaque, qa_mode_id mode,
     return qa_q2_run_actor(p->state.q2, actor, q2_armor, p->state.q2, error);
 }
 
-bool application_native_mode_quad(void *opaque, qa_actor_id actor,
+static bool quad_sound(qa_application *app, application_provider *p,
+                         qa_actor_id actor, qa_error *error) {
+    qa_clock_state clock;
+    qa_body_state body;
+    qa_string_id resource;
+    if (!qa_session_clock(app->session, p->owner, &clock))
+        return application_fail(error, QA_ERROR_ARGUMENT, "quad activation has no native source clock");
+    if (!qa_world_body_read(app->world, actor, &body, error) ||
+        !qa_strings_intern_cstr(qa_session_strings(app->session), "items/damage.wav", &resource, error))
+        return false;
+    if (p->close_pending || !qa_actors_get(qa_session_actors(app->session), actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "quad actor retired during activation");
+    return application_emit(app, &(qa_builtin_event){.kind = QA_BUILTIN_SOUND,
+        .family = QA_GAME_Q2, .provider = p->owner, .actor = actor,
+        .time_ns = clock.frame.time_ns, .resource = resource, .origin = body.origin,
+        .channel = 3, .volume = 1, .attenuation = 1}, error);
+}
+bool application_native_mode_quad(void *opaque, qa_mode_id mode, qa_actor_id actor,
                                     qa_game_family family, uint64_t duration_ns, qa_error *error) {
     qa_application *app = opaque;
     application_provider *p = application_provider_for(app, actor, QA_ROLE_EFFECTS, "");
-    (void)family;
+    if (family != QA_GAME_Q1 && family != QA_GAME_Q2)
+        return application_fail(error, QA_ERROR_ARGUMENT, "quad grant has no source timer policy");
+    bool stack = family == QA_GAME_Q2;
+    application_provider *source = stack ? mode_source(app, mode) : NULL;
+    if (stack && (!source || source->kind != APPLICATION_PROVIDER_Q2))
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Tag quad has no native Q2 mode source");
     if (!p || !p->constructed || p->close_pending)
         return application_fail(error, QA_ERROR_NOT_FOUND, "quad grant has no selected effects owner");
     if (p->kind == APPLICATION_PROVIDER_Q1) {
@@ -118,15 +140,28 @@ bool application_native_mode_quad(void *opaque, qa_actor_id actor,
         if (!qa_session_clock(app->session, p->owner, &clock))
             return application_fail(error, QA_ERROR_ARGUMENT, "quad grant has no native source clock");
         if (!qa_q1_game_operation_begin(p->state.q1, &operation, error)) return false;
-        double expires = duration_ns
-            ? (double)clock.frame.time_ns / 1e9 + (double)duration_ns / 1e9 : 0;
-        return q1_finish(&operation,
-            qa_q1_player_power(p->state.q1, actor, QA_Q1_QUAD, expires, error), error);
+        double base = (double)clock.frame.time_ns / 1e9;
+        double old = qa_q1_game_power_expires(p->state.q1, actor, QA_Q1_QUAD);
+        if (stack && old > base) base = old;
+        double expires = stack || duration_ns ? base + (double)duration_ns / 1e9 : 0;
+        bool okay = qa_q1_player_power(p->state.q1, actor, QA_Q1_QUAD, expires, error);
+        if (okay && stack) {
+            if (!qa_q1_game_operation_live(&operation))
+                okay = application_fail(error, QA_ERROR_ARGUMENT, "quad source retired during activation");
+            else okay = quad_sound(app, source, actor, error);
+        }
+        return q1_finish(&operation, okay, error);
     }
-    if (p->kind == APPLICATION_PROVIDER_Q2)
-        return qa_q2_player_quad(p->state.q2, actor, duration_ns, error);
-    if (p->kind == APPLICATION_PROVIDER_Q3)
-        return qa_q3_player_quad(p->state.q3, actor, duration_ns, error);
+    if (p->kind == APPLICATION_PROVIDER_Q2) {
+        bool okay = stack ? qa_q2_player_quad_stack(p->state.q2, actor, duration_ns, error)
+                          : qa_q2_player_quad(p->state.q2, actor, duration_ns, error);
+        return okay && (!stack || quad_sound(app, source, actor, error));
+    }
+    if (p->kind == APPLICATION_PROVIDER_Q3) {
+        bool okay = stack ? qa_q3_player_quad_stack(p->state.q3, actor, duration_ns, error)
+                          : qa_q3_player_quad(p->state.q3, actor, duration_ns, error);
+        return okay && (!stack || quad_sound(app, source, actor, error));
+    }
     return application_fail(error, QA_ERROR_UNSUPPORTED, "selected effects owner has no timed quad adapter");
 }
 

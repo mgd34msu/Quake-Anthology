@@ -286,7 +286,10 @@ typedef struct qa_modes_hooks {
     bool (*select_weapon)(void *, qa_actor_id, qa_item_id, qa_error *);
     bool (*use_item)(void *, qa_actor_id, qa_item_id, qa_error *);
     bool (*give_body_armor)(void *, qa_mode_id, qa_actor_id, qa_error *);
-    bool (*give_quad)(void *, qa_actor_id, qa_game_family, uint64_t duration_ns, qa_error *);
+    /* Q1 intent replaces the deadline; Q2 intent stacks it and emits the mode
+     * source's activation cue. The selected effects owner retains the timer. */
+    bool (*give_quad)(void *, qa_mode_id, qa_actor_id, qa_game_family,
+                       uint64_t duration_ns, qa_error *);
     bool (*spawn_monster)(void *, qa_mode_id, qa_string_id classname, qa_vec3 origin,
                           qa_vec3 angles, qa_actor_id enemy, qa_actor_id *out, qa_error *);
     bool (*spawn_loot)(void *, qa_mode_id, const qa_mode_loot_spawn *, qa_actor_id *out,

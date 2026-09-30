@@ -159,7 +159,7 @@ static bool score(qa_modes *m, mode_instance *v, qa_actor_id victim, qa_actor_id
                 return mode_fail(e, "Rogue Tag needs selected timed-power provider");
             if (!announce(m, v, attacker, "$qc_got_quad", e))
                 return false;
-            return m->options.hooks.give_quad(m->options.hooks.context, attacker, QA_GAME_Q1,
+            return m->options.hooks.give_quad(m->options.hooks.context, v->id, attacker, QA_GAME_Q1,
                                               30 * MODE_SECOND, e);
         }
         if (v->tag_count == 10)

@@ -65,15 +65,10 @@ bool mode_tag_death(qa_modes *m, mode_instance *v, const qa_damage_outcome *outc
         change = 3;
         if (++v->tag_count == 5) {
             v->tag_count = 0;
-            qa_item_id quad;
-            double count;
-            if (!qa_builtin_resource(&m->options.services, "q2:item_quad", &quad, e) ||
-                !mode_count(m, attacker, quad, &count, e) ||
-                !mode_set_count(m, attacker, quad, count + 1, e))
-                return false;
-            if (!m->options.hooks.use_item)
-                return mode_fail(e, "Tag quad requires the selected source item action");
-            if (!m->options.hooks.use_item(m->options.hooks.context, attacker, quad, e))
+            if (!m->options.hooks.give_quad)
+                return mode_fail(e, "Tag quad requires the selected effects owner");
+            if (!m->options.hooks.give_quad(m->options.hooks.context, v->id, attacker,
+                                           QA_GAME_Q2, 30 * MODE_SECOND, e))
                 return false;
         }
     } else if (killer && !self && qa_actor_id_equal(victim, v->tag_owner)) {

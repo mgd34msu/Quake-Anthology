@@ -227,6 +227,8 @@ bool qa_q3_player_restore(qa_q3_game *, qa_actor_id, const qa_q3_player_state *,
 bool qa_q3_player_request_weapon(qa_q3_game *, qa_actor_id, qa_q3_weapon, qa_error *);
 /* Replace the native quad deadline using this source's current clock. */
 bool qa_q3_player_quad(qa_q3_game *, qa_actor_id, uint64_t duration_ns, qa_error *);
+/* Extend an active native quad deadline; otherwise start from this source's clock. */
+bool qa_q3_player_quad_stack(qa_q3_game *, qa_actor_id, uint64_t duration_ns, qa_error *);
 bool qa_q3_spawn_player(qa_q3_game *, qa_actor_id, const qa_body_state *, qa_team_id, qa_error *);
 typedef struct qa_q3_controls {
     bool attack, use_holdable, prediction;
