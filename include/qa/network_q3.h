@@ -368,7 +368,13 @@ bool qa_q3_server_peer_command(qa_q3_server_peer *, const char *, qa_error *);
 bool qa_q3_server_peer_receive(qa_q3_server_peer *, qa_bytes, qa_q3_receive_kind *, qa_error *);
 bool qa_q3_server_peer_gamestate(qa_q3_server_peer *, const qa_q3_gamestate *, const qa_q3_server_rate *, qa_error *);
 bool qa_q3_server_peer_snapshot(qa_q3_server_peer *, const qa_q3_snapshot *, const qa_q3_server_rate *,
-                                const qa_q3_download *, qa_error *);
+                               const qa_q3_download *, qa_error *);
+/* Deliver pending reliable disconnect through the actual retained physical
+ * snapshot row and drain the owned native FIFO/fragments. No source snapshot
+ * or drop callback runs. Caller still owns source/shared-client retirement.
+ * Failed partial delivery also retires this native peer. */
+bool qa_q3_server_peer_disconnect(qa_q3_server_peer *, const qa_q3_server_rate *,
+                                  uint8_t server_flags, const char *reason, qa_error *);
 bool qa_q3_server_peer_snapshot_downloads(qa_q3_server_peer *, const qa_q3_snapshot *,
                                           const qa_q3_server_rate *, const qa_q3_download *,
                                           size_t download_count, qa_error *);

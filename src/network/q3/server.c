@@ -188,6 +188,65 @@ static bool message_begin(qa_q3_server_peer *p, qa_q3_writer *w) {
         if (!qa_q3_server_command(w, (int32_t)n, qa_q3_reliable_lookup(&p->reliable, (int32_t)n))) return false;
     p->state.reliable_sent = p->reliable.sequence; return true;
 }
+static const qa_q3_snapshot *delta_snapshot(const qa_q3_server_peer *p, uint32_t sequence) {
+    int32_t requested = p->state.delta_message;
+    if (requested > 0 && p->state.phase == QA_Q3_ACTIVE && (int64_t)sequence - requested < 29 && sequence > (uint32_t)requested) {
+        const qa_q3_snapshot *candidate = &p->history[(uint32_t)requested & 31].value;
+        if (candidate->valid && candidate->message_number == requested) return candidate;
+    }
+    return NULL;
+}
+static bool drain(qa_q3_server_peer *p, qa_error *e) {
+    while (qa_q3_channel_pending(p->channel) || p->queue_first) {
+        bool sent;
+        if (!qa_q3_server_peer_fragment(p, &sent, e)) return false;
+        if (!sent) return fail(e, QA_ERROR_FORMAT, "Q3 retained fragment queue did not advance");
+    }
+    return true;
+}
+bool qa_q3_server_peer_disconnect(qa_q3_server_peer *p, const qa_q3_server_rate *rate,
+                                  uint8_t flags, const char *reason, qa_error *e) {
+    if (!p || !rate || !reason || p->state.phase == QA_Q3_FREE)
+        return fail(e, QA_ERROR_ARGUMENT, "Q3 disconnect requires its retained peer and delivery policy");
+    if (p->state.phase == QA_Q3_ZOMBIE) return true;
+    char command[QA_Q3_COMMAND_CHARS];
+    const char prefix[] = "disconnect \"";
+    memcpy(command, prefix, sizeof(prefix) - 1); size_t length = sizeof(prefix) - 1;
+    for (const char *text = reason; *text; ++text) {
+        if (*text == '"' || *text == '\n' || *text == '\r') continue;
+        if (length == sizeof(command) - 1) break;
+        command[length++] = *text;
+    }
+    if (length < sizeof(command) - 1) command[length++] = '"';
+    command[length] = 0;
+    bool ok = qa_q3_server_peer_command(p, command, e) && drain(p, e);
+    if (ok) {
+        uint32_t sequence = qa_q3_channel_outgoing(p->channel);
+        if (sequence > INT32_MAX) {
+            p->state.phase = QA_Q3_ZOMBIE;
+            return fail(e, QA_ERROR_FORMAT, "Q3 disconnect message sequence exhausted");
+        }
+        qa_q3_snapshot retained = p->history[sequence & 31].value;
+        qa_q3_server_world world = p->hooks.world(p->hooks.context);
+        const qa_q3_snapshot *old = delta_snapshot(p, sequence);
+        retained.message_number = (int32_t)sequence; retained.server_time = world.time;
+        retained.delta_number = old ? p->state.delta_message : -1;
+        retained.flags = (uint8_t)(flags | (p->state.rate_delayed ? 1U : 0U) |
+            (p->state.phase == QA_Q3_ACTIVE ? 0U : 2U));
+        retained.server_command_number = p->reliable.sequence;
+        uint8_t data[QA_Q3_MESSAGE_BYTES]; qa_q3_writer writer;
+        qa_q3_writer_init(&writer, data, sizeof(data), false, e);
+        ok = message_begin(p, &writer) && qa_q3_server_snapshot(&writer, old, &retained, &p->gamestate);
+        if (ok) {
+            qa_q3_snapshot_slot *slot = &p->history[sequence & 31];
+            slot->sent_time = world.time; slot->ack_time = -1;
+            slot->message_size = qa_q3_writer_size(&writer);
+            ok = transmit(p, &writer, data, rate, e) && drain(p, e);
+        }
+    }
+    p->state.phase = QA_Q3_ZOMBIE;
+    return ok;
+}
 bool qa_q3_server_peer_gamestate(qa_q3_server_peer *p, const qa_q3_gamestate *state, const qa_q3_server_rate *rate, qa_error *e) {
     if (!p || !state || !rate) return fail(e, QA_ERROR_ARGUMENT, "Invalid Q3 gamestate send");
     qa_q3_server_world world = p->hooks.world(p->hooks.context);
@@ -221,12 +280,8 @@ bool qa_q3_server_peer_snapshot_downloads(qa_q3_server_peer *p, const qa_q3_snap
     current_snapshot.parse_entities_number = p->entity_number;
     current_snapshot.flags = (uint8_t)(current_snapshot.flags | (p->state.rate_delayed ? 1U : 0U)
         | (p->state.phase == QA_Q3_ACTIVE ? 0U : 2U));
-    const qa_q3_snapshot *old = NULL;
+    const qa_q3_snapshot *old = delta_snapshot(p, sequence);
     int32_t requested = p->state.delta_message;
-    if (requested > 0 && p->state.phase == QA_Q3_ACTIVE && (int64_t)sequence - requested < 29 && sequence > (uint32_t)requested) {
-        const qa_q3_snapshot *candidate = &p->history[(uint32_t)requested & 31].value;
-        if (candidate->valid && candidate->message_number == requested) old = candidate;
-    }
     current_snapshot.delta_number = old ? requested : -1;
     uint8_t data[QA_Q3_MESSAGE_BYTES]; qa_q3_writer writer;
     qa_q3_writer_init(&writer, data, sizeof(data), false, e);
