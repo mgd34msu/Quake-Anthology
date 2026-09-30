@@ -590,6 +590,16 @@ const qa_scene_resources *frontend_native_q2_images_at(qa_frontend *frontend, si
         if (source->images && index-- == 0) return source->images;
     return NULL;
 }
+const qa_vfs *frontend_native_q2_files_at(const qa_frontend *frontend, size_t index)
+{
+    if (!frontend || !frontend->application || frontend->stepping) return NULL;
+    for (const frontend_native_q2 *source = frontend->native_q2; source; source = source->next) {
+        if (source->frontend != frontend || source->application != frontend->application ||
+            source->active_imports) return NULL;
+        if (index-- == 0) return source->mounts;
+    }
+    return NULL;
+}
 bool frontend_native_q2_callbacks_idle(const qa_frontend *frontend)
 {
     if (!frontend || frontend->stepping) return false;

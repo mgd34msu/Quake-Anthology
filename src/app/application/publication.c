@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "save_content.h"
 #include "guest_native_q2_private.h"
 #include "map_private.h"
 #include "save_private.h"
@@ -299,17 +300,29 @@ static bool construct_and_reserve(qa_application *application,
             &publication->admissions[publication->admission_count++];
         admission->provider = provider;
         if (!provider->constructed) {
+            qa_catalog *provider_catalog = qa_launch_instance_catalog(provider->launch);
+            if (!provider_catalog) provider_catalog = catalog;
             const qa_product *product = qa_catalog_product(
-                catalog, provider->launch->selection.product);
+                provider_catalog, provider->launch->selection.product);
+            if (image != NULL) {
+                application_saved_instance_content saved = {0};
+                if (!application_save_content_instance(application->content_graph,
+                    provider->launch->selection.instance, &saved, error)) {
+                    free(used);
+                    return false;
+                }
+                provider_catalog = saved.product_catalog;
+                product = saved.product;
+            }
             bool constructed = false;
             if (product != NULL && image != NULL && provider->kind == APPLICATION_PROVIDER_QVM) {
                 const qa_save_record *record = qa_save_image_find(image, QA_SAVE_PROVIDER,
                     provider->launch->selection.instance);
                 constructed = application_provider_construct_qvm_restored(application,
-                    provider, world, catalog, product, choices, record, error);
+                    provider, world, provider_catalog, product, choices, record, error);
             } else if (product != NULL) {
                 constructed = application_provider_construct(application, provider, world,
-                    catalog, product, choices, error);
+                    provider_catalog, product, choices, error);
             }
             if (!constructed) {
                 free(used);

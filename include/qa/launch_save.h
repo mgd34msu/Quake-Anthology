@@ -7,12 +7,33 @@ typedef struct qa_configuration_checkpoint {
     bool has_current;
 } qa_configuration_checkpoint;
 bool qa_configuration_checkpoint_capture(const qa_configuration *, qa_configuration_checkpoint *, qa_error *);
+typedef struct qa_launch_restored_instance {
+    qa_catalog *catalog;
+    qa_launch_provider selection;
+    qa_vfs *content;
+    const qa_resource *artifact, *declaration;
+    const qa_launch_resource *interfaces;
+    size_t interface_count;
+    const qa_catalog_weapon_behavior *const *behaviors;
+    size_t behavior_count;
+    qa_sha256_digest identity;
+} qa_launch_restored_instance;
+typedef struct qa_launch_restore_content {
+    void *context;
+    /* Transfer the actual owning view, also on partial failure. All other
+     * returned metadata is borrowed until preparation finishes. */
+    bool (*mounts)(void *, qa_vfs **empty, qa_error *);
+    bool (*instance)(void *, const qa_launch_provider *, qa_launch_restored_instance *, qa_error *);
+    size_t resource_count;
+    bool (*resource)(void *, size_t, qa_launch_resource *, qa_error *);
+} qa_launch_restore_content;
 /* Fresh isolated manager only. Preparation retains real content and constructs
  * actual provider states. Ordinary publication callbacks never run on this
  * path: the application must restore routing, world and source owners itself
  * before publishing the complete isolated application. */
 bool qa_configuration_prepare_restored(qa_configuration *, const qa_launch_draft *,
-    const qa_configuration_checkpoint *, qa_configuration_transaction **, qa_error *);
+    const qa_configuration_checkpoint *, const qa_launch_restore_content *,
+    qa_configuration_transaction **, qa_error *);
 bool qa_configuration_commit_restored(qa_configuration_transaction *, qa_error *);
 
 /* Private draft continuation, including incomplete/invalid composition and

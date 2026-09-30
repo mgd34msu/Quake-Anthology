@@ -480,6 +480,11 @@ failed:
     return NULL;
 }
 
+qa_vfs *qa_scene_resources_files(const qa_scene_resources *resources)
+{
+    return resources ? resources->vfs : NULL;
+}
+
 void qa_scene_resources_destroy(qa_scene_resources *resources)
 {
     if (resources == NULL) return;

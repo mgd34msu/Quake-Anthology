@@ -449,3 +449,36 @@ Native Q3 private data remains separate: its existing checkpoint is host-only,
 and requires an actual module data/pointer relocation schema before admission.
 No builds, execution checks, runtime qualification or whole B30/B34 completion
 are claimed by this source packet.
+
+## Preconstruction content graph
+
+`QACG` version 1 records the actual application and launch resource pools,
+retained catalog snapshots, private VFS views, and pointer aliases. The readonly
+visitor adds installed frontend catalogs, views and private pools. Provider
+rows retain their original source catalog and complete source selection,
+artifact/declaration resource IDs, ordered interface resources and selected
+behavior ordinals, implementation identity, and the actual construction product
+catalog. Physical launch resources retain their original order and IDs.
+
+The enclosing stream and ownership edges finish before native content
+admission. Real pools restore before views; catalogs adopt their one graph view
+and qualify physical paths, kinds, digests and archive members against those
+already admitted immutable archives. This path performs no catalog discovery,
+mount-plan reconstruction or resource acquisition. Catalog-owned views remain
+borrowed aliases. Each private pool or standalone view transfers once into its
+real consumer; catalog holders acquire actual retained references. Partial
+objects and metadata remain reachable through the isolated graph destructor.
+
+Final candidate capture requires the same pointer ordinals and aliases and
+complete consumer claims. Mapped native handles may have different filesystem
+identity fields, so each original view record has an admission baseline: a
+fresh complete VFS checkpoint must still equal that baseline before its saved
+portable record is emitted. Pools, catalogs and provider metadata are captured
+from their actual owners. Successful publication ends this normalization and
+destroys registry metadata and extra references after all real holders own
+their content. Later saves capture the current source state.
+
+The application preloader, direct saved configuration construction, frontend
+early ownership claims and final publication callers require independent source
+review. The native Q3 private-module relocation dependency remains open. No
+builds, tests or executable checks were run for this bounded graph packet.

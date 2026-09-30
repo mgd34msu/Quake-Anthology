@@ -19,6 +19,7 @@ char *qa_vfs_normalize_path(const char *path, qa_error *error);
  * thread or external synchronization. Destroy releases the caller's reference;
  * existing views and acquired resources retain their own lifetimes. */
 qa_resource_pool *qa_resource_pool_create(qa_error *error);
+void qa_resource_pool_retain(qa_resource_pool *pool);
 void qa_resource_pool_destroy(qa_resource_pool *pool);
 /* Drops cached resources/packages with no live readers or mounts. */
 void qa_resource_pool_trim(qa_resource_pool *pool);

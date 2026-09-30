@@ -20,6 +20,7 @@
 #include "save_native_q2_record.h"
 #include "portals.h"
 #include "guest_q3_save.h"
+#include "save_content.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -541,7 +542,11 @@ bool application_save_configuration_decode(qa_application *candidate, qa_bytes b
     if (!candidate || !candidate->session || !candidate->catalog ||
         !qa_session_safe(candidate->session))
         return application_fail(error, QA_ERROR_ARGUMENT, "configuration decode requires a restored actor namespace");
-    return qa_launch_identity_decode(candidate->catalog, qa_session_actors(candidate->session), bytes, out, error);
+    qa_catalog *catalog = qa_application_content_catalog(candidate->content_graph,
+        application_save_content_launch_catalog(candidate->content_graph));
+    if (!catalog)
+        return application_fail(error, QA_ERROR_FORMAT, "configuration requires its retained launch catalog");
+    return qa_launch_identity_decode(catalog, qa_session_actors(candidate->session), bytes, out, error);
 }
 
 bool application_save_configuration_validate(qa_application *candidate, qa_bytes bytes,
@@ -564,6 +569,8 @@ typedef struct application_persistence {
     size_t owner_count;
     qa_buffer foundation[4];
     qa_buffer configuration;
+    qa_buffer resources;
+    qa_application_content_graph *content_graph;
     uint64_t configuration_generation, publication_generation, actor_revision;
     uint64_t restored_command_generation;
     qa_save_purpose purpose;
@@ -614,6 +621,13 @@ static void persistence_end(void *opaque)
     application_persistence *operation = opaque;
     for (size_t i = 0; i < 4; ++i) qa_buffer_free(operation->foundation + i);
     qa_buffer_free(&operation->configuration);
+    qa_buffer_free(&operation->resources);
+    if (operation->content_graph) {
+        if (operation->active->capture_content_graph == operation->content_graph)
+            operation->active->capture_content_graph = NULL;
+        application_save_content_destroy(operation->content_graph);
+        operation->content_graph = NULL;
+    }
     free(operation->owners); operation->owners = NULL;
     if (operation->leased) {
         operation->active->operation = APPLICATION_IDLE;
@@ -625,6 +639,7 @@ static const char *shared_schema(qa_save_owner_kind kind)
 {
     switch (kind) {
     case QA_SAVE_STRINGS: return "qa.strings";
+    case QA_SAVE_RESOURCES: return "qa.content-graph";
     case QA_SAVE_ACTORS: return "qa.actors";
     case QA_SAVE_SESSION: return "qa.session";
     case QA_SAVE_WORLD: return "qa.world";
@@ -953,7 +968,13 @@ static bool persistence_begin(void *opaque, qa_save_purpose purpose, qa_save_met
     qa_application *app = operation->active;
     bool ok = persistence_inventory(operation, app, NULL, error) &&
         application_save_foundation_capture(app, operation->foundation, error) &&
-        configuration_capture(app, &operation->configuration, error);
+        configuration_capture(app, &operation->configuration, error) &&
+        application_save_content_collect(app, operation->ops->visit_content,
+            operation->ops->context, &operation->content_graph, error);
+    if (ok) {
+        app->capture_content_graph = operation->content_graph;
+        ok = application_save_content_encode(operation->content_graph, &operation->resources, error);
+    }
     qa_configuration_checkpoint checkpoint; qa_bytes identity;
     if (ok) ok = configuration_fields((qa_bytes){operation->configuration.data, operation->configuration.size},
         &checkpoint, &identity, error);
@@ -984,6 +1005,7 @@ static bool persistence_capture_owner(void *opaque, const qa_save_owner *owner,
     case QA_SAVE_ACTORS: index = 1; break;
     case QA_SAVE_SESSION: index = 2; break;
     case QA_SAVE_WORLD: index = 3; break;
+    case QA_SAVE_RESOURCES: return buffer_copy((qa_bytes){operation->resources.data, operation->resources.size}, out, error);
     case QA_SAVE_CONFIGURATION: return buffer_copy((qa_bytes){operation->configuration.data, operation->configuration.size}, out, error);
     case QA_SAVE_ROSTER: return application_players_checkpoint_capture(app, out, error);
     case QA_SAVE_CVARS: return qa_cvars_save_capture(app->cvars, out, error);
@@ -1014,12 +1036,28 @@ static bool persistence_capture_owner(void *opaque, const qa_save_owner *owner,
     return buffer_copy((qa_bytes){buffer->data, buffer->size}, out, error);
 }
 
+static bool content_matches(application_persistence *operation, qa_application *app,
+    const qa_save_image *image, qa_error *error)
+{
+    qa_application_content_graph *graph = NULL;
+    qa_buffer bytes = {0};
+    const qa_save_record *record = foundation_record(image, QA_SAVE_RESOURCES, "qa.content-graph", error);
+    bool ok = record && application_save_content_collect(app, operation->ops->visit_content,
+        operation->ops->context, &graph, error) && application_save_content_encode(graph, &bytes, error);
+    if (ok && (bytes.size != record->payload.size || memcmp(bytes.data, record->payload.data, bytes.size)))
+        ok = application_fail(error, QA_ERROR_FORMAT, "retained content graph differs from the captured continuation");
+    application_save_content_destroy(graph);
+    qa_buffer_free(&bytes);
+    return ok;
+}
+
 static bool persistence_capture_validate(void *opaque, const qa_save_image *image, qa_error *error)
 {
     application_persistence *operation = opaque;
     bool ok = persistence_unchanged(operation, error) &&
         operation->ops->validate(operation->ops->context, operation->active, image, error) &&
-        persistence_unchanged(operation, error) && persistence_shared_match(operation->active, image, error);
+        persistence_unchanged(operation, error) && persistence_shared_match(operation->active, image, error) &&
+        content_matches(operation, operation->active, image, error);
     qa_buffer strings = {0}, commands = {0};
     if (ok) ok = application_commands_capture(operation->active, &commands, error);
     if (ok) {
@@ -1050,6 +1088,24 @@ bool qa_application_persistence_capture(qa_application *app,
     return qa_save_capture(&operation, &capture, purpose, out, error);
 }
 
+static bool content_mounts(void *opaque, qa_vfs **out, qa_error *error)
+{
+    qa_application_content_graph *graph = opaque;
+    return qa_application_content_claim_view(graph, application_save_content_launch_view(graph), out, error);
+}
+static bool content_instance(void *opaque, const qa_launch_provider *selection,
+    qa_launch_restored_instance *out, qa_error *error)
+{
+    qa_application_content_graph *graph = opaque;
+    application_saved_instance_content saved = {0};
+    if (!application_save_content_instance(graph, selection->instance, &saved, error)) return false;
+    *out = saved.source;
+    out->content = NULL;
+    return qa_application_content_claim_view(graph, saved.view, &out->content, error);
+}
+static bool content_resource(void *opaque, size_t index, qa_launch_resource *out, qa_error *error)
+{ return application_save_content_launch_resource_at(opaque, index, out, error); }
+
 static bool persistence_create(void *opaque, const qa_save_image *image, void **out, qa_error *error)
 {
     application_persistence *operation = opaque;
@@ -1062,7 +1118,13 @@ static bool persistence_create(void *opaque, const qa_save_image *image, void **
         !qa_sha256_equal(&composition, &metadata->composition))
         return application_fail(error, QA_ERROR_FORMAT, "configuration continuation disagrees with save envelope");
     qa_application *candidate = NULL;
-    if (!application_create_restored(operation->options, image, &candidate, error)) return false;
+    qa_application_content_graph *graph = NULL;
+    const qa_save_record *resources = foundation_record(image, QA_SAVE_RESOURCES, "qa.content-graph", error);
+    bool created = resources && application_save_content_prepare(resources->payload,
+        operation->ops->content_files, &graph, error) &&
+        application_create_restored(operation->options, image, &graph, &candidate, error);
+    application_save_content_destroy(graph);
+    if (!created) return false;
     candidate->operation = APPLICATION_PERSISTING;
     *out = candidate;
     if (operation->ops->prepare_services &&
@@ -1070,8 +1132,11 @@ static bool persistence_create(void *opaque, const qa_save_image *image, void **
         return false;
     qa_launch_draft *draft = NULL;
     qa_configuration_transaction *transaction = NULL;
+    const qa_launch_restore_content content = {.context = candidate->content_graph,
+        .mounts = content_mounts, .instance = content_instance, .resource = content_resource,
+        .resource_count = application_save_content_launch_resource_count(candidate->content_graph)};
     bool ok = application_save_configuration_decode(candidate, identity, &draft, error) &&
-        qa_configuration_prepare_restored(candidate->configuration, draft, &checkpoint, &transaction, error);
+        qa_configuration_prepare_restored(candidate->configuration, draft, &checkpoint, &content, &transaction, error);
     qa_launch_draft_destroy(draft);
     if (ok) {
         const qa_launch_snapshot *snapshot = qa_configuration_candidate(transaction);
@@ -1103,7 +1168,7 @@ static bool persistence_restore_owner(void *opaque, void *value,
     /* Foundation is decoded during isolated construction and applied after
      * source bindings. Configuration was prepared without ordinary callbacks. */
     case QA_SAVE_STRINGS: case QA_SAVE_ACTORS: case QA_SAVE_SESSION:
-    case QA_SAVE_WORLD: case QA_SAVE_CONFIGURATION: return true;
+    case QA_SAVE_WORLD: case QA_SAVE_CONFIGURATION: case QA_SAVE_RESOURCES: return true;
     case QA_SAVE_ROSTER: return application_players_checkpoint_restore(candidate, record->payload, error);
     case QA_SAVE_APPLICATION: return application_restore(candidate, record->payload, error);
     case QA_SAVE_COMBAT: return qa_persistence_combat_restore(candidate->session, candidate->combat, candidate->inventory,
@@ -1272,7 +1337,8 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
         memcmp(commands_before.data, commands_after.data, commands_before.size)))
         ok = application_fail(error, QA_ERROR_FORMAT, "final validation changed restored console continuation");
     qa_buffer_free(&commands_before); qa_buffer_free(&commands_after);
-    if (ok) ok = persistence_providers_match(candidate, image, error);
+    if (ok) ok = persistence_providers_match(candidate, image, error) &&
+        content_matches(operation, candidate, image, error);
     /* Producer restoration may reconnect bindings, but cannot allocate new
      * actor identities or replace the saved ordered string table. */
     qa_buffer actors = {0}, strings = {0}; qa_actor_checkpoint actor_state = {0};
@@ -1296,8 +1362,13 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
 static bool persistence_publish(void *opaque, void *value, qa_error *error)
 {
     application_persistence *operation = opaque;
+    qa_application *candidate = value;
     if (*operation->slot != operation->active || !persistence_unchanged(operation, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "active application changed before restored publication");
+    if (!application_save_content_ready(candidate->content_graph, error)) return false;
+    application_save_content_publish(candidate->content_graph);
+    application_save_content_destroy(candidate->content_graph);
+    candidate->content_graph = NULL;
     operation->displaced = operation->active;
     *operation->slot = value;
     return true;

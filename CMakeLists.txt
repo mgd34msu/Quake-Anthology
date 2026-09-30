@@ -937,6 +937,7 @@ add_library(qa_application STATIC
     src/app/application/publication.c
     src/app/application/services.c
     src/app/application/save.c
+    src/app/application/save_content.c
     src/app/application/save_physics.c
     src/app/application/save_native_q2.c
     src/app/application/save_native_q2_record.c
@@ -1012,6 +1013,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/audio_identity.c
     src/app/frontend/bindings_ui.c
     src/app/frontend/commands.c
+    src/app/frontend/content_inventory.c
     src/app/frontend/frame.c
     src/app/frontend/travel.c
     src/app/frontend/launch.c

@@ -190,6 +190,8 @@ bool qa_launch_instance_retain_metadata(const qa_launch_instance *,
                                         qa_launch_instance_lease **, qa_error *);
 const qa_launch_instance *qa_launch_instance_lease_view(const qa_launch_instance_lease *);
 void qa_launch_instance_lease_release(qa_launch_instance_lease *);
+/* The implementation's retained catalog can precede the current snapshot. */
+qa_catalog *qa_launch_instance_catalog(const qa_launch_instance *);
 
 /* B25/B34 prepare native or qualified external state in detached ownership.
  * Preparation may warm the session's append-only string table, because an

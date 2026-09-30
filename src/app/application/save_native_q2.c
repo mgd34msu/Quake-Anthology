@@ -66,7 +66,8 @@ bool application_native_q2_scratch_prepare(application_provider *target,
     qa_application_options options = scratch->services.options;
     options.actor_capacity = qa_actors_capacity(qa_session_actors(candidate->session));
     bool ok = application_create_native_baseline(&options,
-        qa_session_strings(candidate->session), &scratch->application, error);
+        qa_session_strings(candidate->session), qa_launch_snapshot_catalog(snapshot),
+        &scratch->application, error);
     if (!ok) return false;
     qa_application *app = scratch->application;
     qa_resource_retain(candidate->map_resource);

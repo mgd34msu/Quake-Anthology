@@ -1,6 +1,8 @@
 #include "internal.h"
 #include "save_private.h"
 #include "save_native_q2.h"
+#include "save_content.h"
+#include "qa/catalog_save.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -73,6 +75,8 @@ static bool discover(qa_application *application, bool discover_mods,
 static bool create_application(const qa_application_options *options,
                                 const qa_save_image *restore,
                                 const qa_strings *baseline_strings,
+                                qa_application_content_graph **saved_content,
+                                qa_catalog *baseline_catalog,
                                 qa_application **out, qa_error *error)
 {
     if (options == NULL || out == NULL || options->content_root == NULL ||
@@ -86,6 +90,10 @@ static bool create_application(const qa_application_options *options,
     if (application == NULL)
         return application_fail(error, QA_ERROR_MEMORY,
                                 "cannot allocate application owner");
+    if (saved_content) {
+        application->content_graph = *saved_content;
+        *saved_content = NULL;
+    }
     application->state = QA_APPLICATION_READY;
     application->command_generation = 1;
     application->native_runner = options->native_runner;
@@ -106,9 +114,23 @@ static bool create_application(const qa_application_options *options,
         (options->user_root != NULL && application->user_root == NULL))
         goto fail;
 
-    application->resources = qa_resource_pool_create(error);
-    if (application->resources == NULL)
-        goto fail;
+    if (restore) {
+        if (!application->content_graph ||
+            !qa_application_content_claim_pool(application->content_graph,
+                application_save_content_application_pool(application->content_graph),
+                &application->resources, error) ||
+            !qa_application_content_retain_catalog(application->content_graph,
+                application_save_content_application_catalog(application->content_graph),
+                &application->catalog, error)) goto fail;
+    } else if (baseline_catalog) {
+        application->catalog = baseline_catalog;
+        qa_catalog_retain(baseline_catalog);
+        application->resources = qa_catalog_resources(baseline_catalog);
+        qa_resource_pool_retain(application->resources);
+    } else {
+        application->resources = qa_resource_pool_create(error);
+        if (application->resources == NULL) goto fail;
+    }
     if (!qa_rankings_create(options->ranking_provider, NULL, &application->rankings, error))
         goto fail;
     if (application->user_root != NULL &&
@@ -118,9 +140,10 @@ static bool create_application(const qa_application_options *options,
                                   "player-progress.json",
                                   &application->progress, error)))
         goto fail;
-    application->catalog_generation = options->catalog_generation;
+    application->catalog_generation = (restore || baseline_catalog)
+        ? qa_catalog_generation(application->catalog) : options->catalog_generation;
     application->discover_mods = options->discover_mods;
-    if (!discover(application, options->discover_mods,
+    if (!restore && !baseline_catalog && !discover(application, options->discover_mods,
                   application->catalog_generation, &application->catalog, error))
         goto fail;
 
@@ -199,6 +222,7 @@ fail:
     (void)qa_rankings_close(application->rankings, NULL);
     qa_fs_root_close(application->user_files);
     qa_resource_pool_destroy(application->resources);
+    application_save_content_destroy(application->content_graph);
     free(application->content_root);
     free(application->user_root);
     free(application);
@@ -208,25 +232,33 @@ fail:
 bool qa_application_create(const qa_application_options *options,
                              qa_application **out, qa_error *error)
 {
-    return create_application(options, NULL, NULL, out, error);
+    return create_application(options, NULL, NULL, NULL, NULL, out, error);
 }
 
 bool application_create_restored(const qa_application_options *options,
                                    const qa_save_image *image,
+                                   qa_application_content_graph **content,
                                    qa_application **out, qa_error *error)
 {
-    if (image == NULL)
+    if (image == NULL || !content || !*content)
         return application_fail(error, QA_ERROR_ARGUMENT, "restored application requires a save image");
-    return create_application(options, image, NULL, out, error);
+    return create_application(options, image, NULL, content, NULL, out, error);
 }
 
 bool application_create_native_baseline(const qa_application_options *options,
                                          const qa_strings *strings,
+                                         qa_catalog *catalog,
                                          qa_application **out, qa_error *error)
 {
-    if (strings == NULL)
+    if (strings == NULL || catalog == NULL || qa_catalog_resources(catalog) == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT, "native baseline requires the exact source string namespace");
-    return create_application(options, NULL, strings, out, error);
+    return create_application(options, NULL, strings, NULL, catalog, out, error);
+}
+
+qa_application_content_graph *qa_application_content_graph_read(const qa_application *application)
+{
+    return application ? (application->capture_content_graph ? application->capture_content_graph
+                                                            : application->content_graph) : NULL;
 }
 
 qa_application_state qa_application_get_state(const qa_application *application)

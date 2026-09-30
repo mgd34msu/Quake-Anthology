@@ -40,6 +40,7 @@ struct qa_configuration_transaction {
     bool validated;
     bool restoring;
     uint64_t restored_generation;
+    const qa_launch_restore_content *content;
 };
 
 static bool error_message(qa_error *error, const char *message)
@@ -91,6 +92,8 @@ bool qa_launch_instance_retain_metadata(const qa_launch_instance *instance,
 }
 const qa_launch_instance *qa_launch_instance_lease_view(const qa_launch_instance_lease *lease)
 { return lease ? &lease->view : NULL; }
+qa_catalog *qa_launch_instance_catalog(const qa_launch_instance *instance)
+{ return instance && instance->storage ? instance->storage->identity->catalog : NULL; }
 void qa_launch_instance_lease_release(qa_launch_instance_lease *lease)
 {
     if (!lease) return;
@@ -276,6 +279,81 @@ static void bind_instance(qa_launch_snapshot *snapshot,instance_owner *owner,uin
     binding->view.roles=roles;
 }
 
+static bool restored_selection_matches(const qa_launch_provider *requested,
+    const qa_catalog *current_catalog, const qa_launch_restored_instance *saved)
+{
+    const qa_launch_provider *actual = &saved->selection;
+    const qa_product *current = qa_catalog_product(current_catalog, requested->product);
+    const qa_product *prior = qa_catalog_product(saved->catalog, actual->product);
+    if (!current || !prior || strcmp(current->identity, prior->identity) ||
+        !actual->instance || !actual->implementation || !actual->artifact || !actual->component ||
+        strcmp(actual->instance, requested->instance) ||
+        strcmp(actual->implementation, requested->implementation) ||
+        strcmp(actual->artifact, requested->artifact) ||
+        strcmp(actual->component, requested->component) || actual->runtime != requested->runtime ||
+        actual->options.size != requested->options.size ||
+        (actual->options.size && (!actual->options.data ||
+            memcmp(actual->options.data, requested->options.data, actual->options.size)))) return false;
+    const qa_clock_config *a = &actual->clock, *b = &requested->clock;
+    return a->kind == b->kind && a->initial_time_ns == b->initial_time_ns &&
+        a->interval_ns == b->interval_ns && a->minimum_frame_ns == b->minimum_frame_ns &&
+        a->maximum_frame_ns == b->maximum_frame_ns && a->initial_lead_ns == b->initial_lead_ns &&
+        a->maximum_steps == b->maximum_steps;
+}
+
+static bool restored_instance_content(qa_configuration_transaction *transaction,
+    instance_owner *owner, const qa_launch_provider *selection, qa_error *error)
+{
+    qa_launch_restored_instance saved = {0};
+    bool ok = transaction->content->instance(transaction->content->context, selection, &saved, error);
+    owner->view.content = saved.content;
+    if (!ok) return false;
+    if (!saved.catalog || !saved.content ||
+        (saved.interface_count && !saved.interfaces) ||
+        (saved.behavior_count && !saved.behaviors) ||
+        saved.interface_count > SIZE_MAX / sizeof(qa_launch_resource) ||
+        saved.behavior_count > SIZE_MAX / sizeof(*saved.behaviors) ||
+        !restored_selection_matches(selection, transaction->candidate->draft->catalog, &saved))
+        return error_message(error, "saved provider content disagrees with its retained selection");
+    if (!launch_empty(saved.catalog, &owner->identity, error) ||
+        !qa_launch_set_provider(owner->identity, &saved.selection, error)) return false;
+    owner->view.selection = owner->identity->choices.providers[0];
+    owner->view.artifact = saved.artifact;
+    owner->view.declaration = saved.declaration;
+    qa_resource_retain((qa_resource *)saved.artifact);
+    qa_resource_retain((qa_resource *)saved.declaration);
+    qa_launch_resource *interfaces = calloc(saved.interface_count ? saved.interface_count : 1,
+                                             sizeof(*interfaces));
+    const qa_catalog_weapon_behavior **behaviors = calloc(saved.behavior_count ? saved.behavior_count : 1,
+                                                           sizeof(*behaviors));
+    if (!interfaces || !behaviors) {
+        free(interfaces); free(behaviors);
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain saved provider content identities");
+        return false;
+    }
+    owner->view.interfaces = interfaces;
+    owner->view.behaviors = behaviors;
+    for (size_t i = 0; i < saved.interface_count; ++i) {
+        const qa_launch_resource *value = saved.interfaces + i;
+        if (!value->path || !value->resource || value->product != saved.selection.product)
+            return error_message(error, "saved provider interface has an invalid retained source");
+        const char *path = launch_text(owner->identity, value->path, error);
+        if (!path) return false;
+        interfaces[owner->view.interface_count++] = (qa_launch_resource){value->product, path, value->resource};
+        qa_resource_retain((qa_resource *)value->resource);
+    }
+    for (size_t i = 0; i < saved.behavior_count; ++i) {
+        const qa_catalog_weapon_behavior *value = saved.behaviors[i];
+        if (!value || qa_catalog_weapon_behavior_find(saved.catalog,
+            saved.selection.product, value->id) != value)
+            return error_message(error, "saved provider trajectory has an invalid retained catalog");
+        behaviors[owner->view.behavior_count++] = value;
+    }
+    if (!instance_identity(owner, &transaction->candidate->draft->choices, error)) return false;
+    return qa_sha256_equal(&owner->view.identity, &saved.identity) ||
+        error_message(error, "saved provider implementation identity disagrees with retained content");
+}
+
 static bool prepare_instance(qa_configuration_transaction *transaction, const qa_launch_provider *selection,
                               uint64_t roles, qa_error *error)
 {
@@ -284,10 +362,14 @@ static bool prepare_instance(qa_configuration_transaction *transaction, const qa
     if (!owner) { qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate selected provider"); return false; }
     owner->references = 1; owner->hooks = transaction->manager->hooks;
     owner->view.storage = owner;
+    owner->view.roles = roles;
+    if (transaction->content) {
+        if (!restored_instance_content(transaction, owner, selection, error)) goto fail;
+        goto construct;
+    }
     if (!launch_empty(candidate->draft->catalog, &owner->identity, error) ||
         !qa_launch_set_provider(owner->identity, selection, error)) goto fail;
     owner->view.selection = owner->identity->choices.providers[0];
-    owner->view.roles = roles;
     if (!qa_catalog_open(candidate->draft->catalog, selection->product, &owner->view.content, error)) goto fail;
     if (selection->runtime != QA_PROGRAM_BUILTIN) {
         qa_resource *artifact;
@@ -317,6 +399,7 @@ static bool prepare_instance(qa_configuration_transaction *transaction, const qa
         ++previous->references; owner_release(owner); owner = previous;
         bind_instance(candidate,owner,roles); return true;
     }
+construct:
     if (!owner->hooks.prepare_instance(owner->hooks.context, &owner->view, &owner->view.state, error)) {
         owner->prepared = owner->view.state != NULL;
         goto fail;
@@ -344,9 +427,43 @@ static bool resource_add(qa_launch_snapshot *s, qa_product_id product, const cha
     return true;
 }
 
-static bool prepare_mounts(qa_launch_snapshot *candidate, qa_error *error)
+static bool prepare_mounts(qa_launch_snapshot *candidate,
+    const qa_launch_restore_content *content, qa_error *error)
 {
     const qa_launch_choices *v = &candidate->draft->choices;
+    if (content) {
+        if (!content->mounts(content->context, &candidate->mounts, error)) return false;
+        if (!candidate->mounts || content->resource_count > SIZE_MAX / sizeof(*candidate->resources))
+            return error_message(error, "saved launch content requires its real mounts and resource inventory");
+        candidate->resources = calloc(content->resource_count ? content->resource_count : 1,
+                                       sizeof(*candidate->resources));
+        if (!candidate->resources) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain saved launch resource identities");
+            return false;
+        }
+        candidate->resource_capacity = content->resource_count;
+        bool map = false, environment = v->world.environment != QA_ENVIRONMENT_SELECTED;
+        for (size_t i = 0; i < content->resource_count; ++i) {
+            qa_launch_resource value = {0};
+            if (!content->resource(content->context, i, &value, error)) return false;
+            if (!value.path || !value.resource || !qa_catalog_product(candidate->draft->catalog, value.product))
+                return error_message(error, "saved launch resource has an invalid retained product");
+            for (size_t j = 0; j < i; ++j)
+                if (candidate->resources[j].product == value.product &&
+                    !strcmp(candidate->resources[j].path, value.path))
+                    return error_message(error, "saved launch resource inventory repeats an entry");
+            const char *path = launch_text(candidate->draft, value.path, error);
+            if (!path) return false;
+            candidate->resources[candidate->resource_count++] =
+                (qa_launch_resource){value.product, path, value.resource};
+            qa_resource_retain((qa_resource *)value.resource);
+            if (value.product == v->world.geometry && !strcmp(value.path, v->world.map)) map = true;
+            if (v->world.environment == QA_ENVIRONMENT_SELECTED &&
+                value.product == v->world.environment_product &&
+                !strcmp(value.path, v->world.environment_path)) environment = true;
+        }
+        return (map && environment) || error_message(error, "saved launch resources omit retained world content");
+    }
     size_t maximum = v->provider_count + v->mod_count + 1;
     qa_product_id *products = calloc(maximum ? maximum : 1, sizeof(*products));
     if (!products) { qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot resolve launch content sources"); return false; }
@@ -407,8 +524,8 @@ static void discard_transaction(qa_configuration_transaction *t)
     --t->manager->transactions; free(t);
 }
 
-bool qa_configuration_prepare(qa_configuration *manager, const qa_launch_draft *draft,
-                               qa_configuration_transaction **out, qa_error *error)
+static bool configuration_prepare(qa_configuration *manager, const qa_launch_draft *draft,
+    const qa_launch_restore_content *content, qa_configuration_transaction **out, qa_error *error)
 {
     if (!manager || !draft || !out || manager->busy) return error_message(error, "invalid or reentrant configuration preparation");
     if (!qa_launch_validate(draft, error)) return false;
@@ -416,6 +533,7 @@ bool qa_configuration_prepare(qa_configuration *manager, const qa_launch_draft *
     qa_launch_snapshot *s = calloc(1, sizeof(*s));
     if (!t || !s) { free(t); free(s); qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate configuration transaction"); return false; }
     s->references = 1; t->manager = manager; t->candidate = s; t->generation = manager->generation;
+    t->content = content;
     t->previous = manager->current; qa_launch_snapshot_retain(t->previous); ++manager->transactions;
     manager->busy = true;
     if (!qa_launch_draft_copy(draft, &s->draft, error)) goto fail;
@@ -424,7 +542,7 @@ bool qa_configuration_prepare(qa_configuration *manager, const qa_launch_draft *
     for (size_t i = 0; i < v->mod_count; ++i) count += v->mods[i].enabled;
     s->instances = calloc(count ? count : 1, sizeof(*s->instances));
     if (!s->instances) { qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain provider instances"); goto fail; }
-    if (!prepare_mounts(s, error)) goto fail;
+    if (!prepare_mounts(s, content, error)) goto fail;
     for (size_t i = 0; i < v->provider_count; ++i)
         if (!prepare_instance(t, &v->providers[i], instance_roles(v, v->providers[i].instance), error)) goto fail;
     for (size_t i = 0; i < v->mod_count; ++i) {
@@ -440,10 +558,14 @@ bool qa_configuration_prepare(qa_configuration *manager, const qa_launch_draft *
             .component = mod->key, .clock = qa_clock_defaults(clock)};
         if (!prepare_instance(t, &provider, 0, error)) goto fail;
     }
+    t->content = NULL;
     manager->busy = false; *out = t; return true;
 fail:
     discard_transaction(t); manager->busy = false; return false;
 }
+bool qa_configuration_prepare(qa_configuration *manager, const qa_launch_draft *draft,
+    qa_configuration_transaction **out, qa_error *error)
+{ return configuration_prepare(manager, draft, NULL, out, error); }
 
 bool qa_configuration_validate(qa_configuration_transaction *t, qa_error *error)
 {
@@ -506,13 +628,15 @@ bool qa_configuration_checkpoint_capture(const qa_configuration *manager,
 }
 
 bool qa_configuration_prepare_restored(qa_configuration *manager, const qa_launch_draft *draft,
-    const qa_configuration_checkpoint *checkpoint, qa_configuration_transaction **out, qa_error *error)
+    const qa_configuration_checkpoint *checkpoint, const qa_launch_restore_content *content,
+    qa_configuration_transaction **out, qa_error *error)
 {
     if (!manager || !checkpoint || !out || manager->busy || manager->transactions ||
         manager->current || manager->generation || !checkpoint->has_current || !checkpoint->generation ||
+        !content || !content->mounts || !content->instance || !content->resource ||
         !manager->hooks.safe(manager->hooks.context))
         return error_message(error, "configuration restoration requires a fresh isolated manager and saved current snapshot");
-    if (!qa_configuration_prepare(manager, draft, out, error)) return false;
+    if (!configuration_prepare(manager, draft, content, out, error)) return false;
     (*out)->restoring = true;
     (*out)->restored_generation = checkpoint->generation;
     return true;

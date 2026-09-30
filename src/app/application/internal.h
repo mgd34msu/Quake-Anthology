@@ -21,6 +21,7 @@
 #include "qa/qc.h"
 #include "qa/qc_host.h"
 #include "qa/qvm.h"
+#include "qa/persistence_content.h"
 
 typedef enum application_operation {
     APPLICATION_IDLE,
@@ -204,6 +205,8 @@ struct qa_application {
     qa_player_progress *progress;
     qa_rankings *rankings;
     qa_catalog *catalog;
+    qa_application_content_graph *content_graph;
+    qa_application_content_graph *capture_content_graph;
     qa_session *session;
     qa_configuration *configuration;
     qa_world *world;

@@ -4,6 +4,7 @@
 #include "guest_native_q2_private.h"
 #include "native_q3_console.h"
 #include "portals.h"
+#include "save_content.h"
 
 #include <stdlib.h>
 
@@ -264,6 +265,7 @@ bool application_finalize(qa_application *application, qa_error *error)
     qa_player_progress_close(application->progress);
     qa_fs_root_close(application->user_files);
     qa_resource_pool_destroy(application->resources);
+    application_save_content_destroy(application->content_graph);
     free(application->content_root);
     free(application->user_root);
     free(application);

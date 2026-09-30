@@ -192,6 +192,11 @@ qa_resource_pool *qa_resource_pool_create(qa_error *error)
     return pool;
 }
 
+void qa_resource_pool_retain(qa_resource_pool *pool)
+{
+    if (pool != NULL) ++pool->references;
+}
+
 void qa_resource_pool_destroy(qa_resource_pool *pool)
 {
     if (pool == NULL || --pool->references != 0) return;

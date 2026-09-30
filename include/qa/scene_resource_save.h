@@ -7,6 +7,9 @@ typedef struct qa_scene_resource_checkpoint_refs {
     bool (*image_encode)(void *, const qa_scene_image *, uint64_t *, qa_error *);
     bool (*image_decode)(void *, uint64_t, const qa_scene_image **, qa_error *);
 } qa_scene_resource_checkpoint_refs;
+/* Actual borrowed content view, unchanged by observation. Its lifetime is
+ * supplied by the resource owner's existing constructor/caller. */
+qa_vfs *qa_scene_resources_files(const qa_scene_resources *);
 /* Immutable image versions must already be restored in the qualified owner.
  * Candidate VFS mount order is the enclosing content owner's saved order.
  * Restoring this layer replaces builtin image references and an empty cache;

@@ -3,6 +3,7 @@
 
 #include "qa/application.h"
 #include "qa/save.h"
+#include "qa/persistence_content.h"
 
 /* Services outside the application's concrete codecs supply their actual
  * producer here. Every shared owner and selected provider must be represented;
@@ -28,6 +29,10 @@ typedef struct qa_application_persistence_ops {
     void *context;
     const qa_application_persistence_owner *owners;
     size_t owner_count;
+    /* Read-only enumeration of additional retained content holders. The graph
+     * is restored before any candidate content/provider factory is admitted. */
+    qa_application_content_visit_fn visit_content;
+    const qa_vfs_checkpoint_refs *content_files;
     /* Optional detached services before content/provider construction. Install
      * actual routing, handlers and empty consumers without source callbacks or
      * active-service aliases. Resources referenced by a candidate must survive
