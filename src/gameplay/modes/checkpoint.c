@@ -37,6 +37,11 @@ static void capture_instance_fields(const mode_instance *v, qa_mode_checkpoint *
                                 .rogue_spawn_spot = v->rogue_spawn_spot,
                                 .relics_started = v->relics_started,
                                 .rune_forward = v->rune_forward,
+                                .q3_settings = v->q3_settings,
+                                .q3_settings_present = v->q3_settings_present,
+                                .q3_started_ms = v->q3_started_ms,
+                                .q3_warmup_ms = v->q3_warmup_ms,
+                                .q3_warmup_seen = v->q3_warmup_seen,
                                 .next_location = v->next_location};
     memcpy(out->bases, v->bases, sizeof(out->bases));
     memcpy(out->votes, v->votes, sizeof(out->votes));
@@ -70,7 +75,7 @@ static bool checkpoint_capture(qa_modes *m, qa_modes_checkpoint *out, qa_error *
     for (uint32_t i = 0; i < m->mode_capacity; ++i)
         if (m->instances[i].active && !mode_relic_source_current(m, &m->instances[i], e)) return false;
     qa_modes_checkpoint saved = {
-        .version = 7, .random = m->random, .attack_sequence = m->attack_sequence};
+        .version = 8, .random = m->random, .attack_sequence = m->attack_sequence};
     saved.players = calloc(m->actor_capacity, sizeof(*saved.players));
     saved.modes = calloc(m->mode_capacity, sizeof(*saved.modes));
     saved.objects = calloc(m->actor_capacity, sizeof(*saved.objects));
@@ -269,6 +274,16 @@ static bool validate_instance(qa_modes *m, const qa_mode_checkpoint *v, qa_error
     }
     if (!reference(m, v->ball) || !reference(m, v->tag) || !reference(m, v->tag_owner))
         return mode_fail(e, "invalid saved mode actor");
+    if (v->q3_settings_present) {
+        if (v->value.rules.source < QA_MODE_Q3 || v->value.rules.kind < QA_MODE_FFA ||
+            v->value.rules.kind > QA_MODE_HARVESTER || !m->options.hooks.q3_clock ||
+            !m->options.hooks.q3_warmup_restart)
+            return mode_fail(e, "saved Q3 settings have no actual source mode role");
+    } else if (v->q3_settings.do_warmup || v->q3_settings.warmup_seconds ||
+               v->q3_settings.time_limit_minutes || v->q3_settings.frag_limit ||
+               v->q3_settings.capture_limit || v->q3_settings.warmup_modification_count ||
+               v->q3_started_ms || v->q3_warmup_ms || v->q3_warmup_seen)
+        return mode_fail(e, "absent Q3 settings claim source continuation");
     for (int i = 0; i < 4; ++i) {
         if (v->votes[i].yes < 0 || v->votes[i].no < 0 ||
             v->votes[i].intent.kind < QA_MATCH_NEXT_MAP ||
@@ -302,6 +317,11 @@ static bool restore_instance(qa_modes *m, const qa_mode_checkpoint *saved, qa_er
                          .rogue_spawn_spot = saved->rogue_spawn_spot,
                          .relics_started = saved->relics_started,
                          .rune_forward = saved->rune_forward,
+                         .q3_settings = saved->q3_settings,
+                         .q3_settings_present = saved->q3_settings_present,
+                         .q3_started_ms = saved->q3_started_ms,
+                         .q3_warmup_ms = saved->q3_warmup_ms,
+                         .q3_warmup_seen = saved->q3_warmup_seen,
                          .next_location = saved->next_location};
     memcpy(v->bases, saved->bases, sizeof(v->bases));
     memcpy(v->votes, saved->votes, sizeof(v->votes));
@@ -349,7 +369,7 @@ static bool restore_instance(qa_modes *m, const qa_mode_checkpoint *saved, qa_er
 }
 static bool checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved,
                                 bool reconnect, qa_error *e) {
-    if (!m || m->callback_depth || !saved || saved->version != 7 ||
+    if (!m || m->callback_depth || !saved || saved->version != 8 ||
         saved->player_count > m->actor_capacity || saved->mode_count > m->mode_capacity ||
         saved->object_count > m->actor_capacity ||
         saved->external_objective_count > m->objective_capacity ||

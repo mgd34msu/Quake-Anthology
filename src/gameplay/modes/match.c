@@ -319,10 +319,10 @@ static bool exit_intermission(qa_modes *m, mode_instance *v, qa_error *e) {
     return mode_intent(m, v, QA_MATCH_NEXT_MAP, (qa_actor_id){0}, 0, 0, e);
 }
 static bool tied(qa_modes *m, mode_instance *v) {
-    if (v->value.rules.kind >= QA_MODE_TEAM_DEATHMATCH && v->value.rules.kind <= QA_MODE_HARVESTER)
-        return v->value.team_scores[0] == v->value.team_scores[1];
     if (v->value.playing < 2)
         return false;
+    if (v->value.rules.kind >= QA_MODE_TEAM_DEATHMATCH && v->value.rules.kind <= QA_MODE_HARVESTER)
+        return v->value.team_scores[0] == v->value.team_scores[1];
     int32_t a, b;
     return qa_modes_score(m, v->id, v->sorted[0], &a, NULL) && qa_modes_score(m, v->id, v->sorted[1], &b, NULL) &&
            a == b;
@@ -477,6 +477,11 @@ bool mode_match_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
     }
     if (r->kind == QA_MODE_DUEL && !duel_promote(m, v, e))
         return false;
+    if (v->q3_settings_present) {
+        if (!mode_q3_warmup_frame(m, v, e)) return false;
+        if (tied(m, v)) return true;
+        return mode_q3_limits(m, v, e);
+    }
     if (v->value.phase == QA_MODE_WAITING) {
         if (r->kind == QA_MODE_HORDE)
             return true;

@@ -184,6 +184,10 @@ typedef struct qa_mode_view {
     size_t playing, voting, sorted_count;
     bool ready_exit, ctf_pregame_over;
 } qa_mode_view;
+typedef struct qa_mode_q3_settings {
+    int32_t do_warmup, warmup_seconds, time_limit_minutes, frag_limit, capture_limit;
+    uint64_t warmup_modification_count;
+} qa_mode_q3_settings;
 typedef enum qa_objective_phase {
     QA_OBJECTIVE_HOME,
     QA_OBJECTIVE_CARRIED,
@@ -320,6 +324,8 @@ typedef struct qa_modes_hooks {
     /* Rogue's startup flag belongs to its actual native source world. */
     bool (*rogue_runes_claim)(void *, qa_mode_id, bool *newly_claimed, qa_error *);
     bool (*rogue_runes_read)(void *, qa_mode_id, qa_actor_id *world, bool *started);
+    bool (*q3_clock)(void *, qa_mode_id, int32_t *source_time_ms, qa_error *);
+    bool (*q3_warmup_restart)(void *, qa_mode_id, qa_error *);
     bool (*team_equipment)(void *, qa_actor_id, qa_item_id *weapon, uint64_t *powerups, qa_error *);
     bool (*select_grapple)(void *, qa_actor_id, qa_error *);
     bool (*drop_arsenal)(void *, qa_actor_id, bool weapon, qa_error *);
@@ -350,6 +356,11 @@ bool qa_modes_add(qa_modes *, const qa_mode_rules *, qa_mode_id *, qa_error *);
 bool qa_modes_remove(qa_modes *, qa_mode_id, qa_error *);
 bool qa_modes_configure(qa_modes *, qa_mode_id, const qa_mode_rules *, qa_error *);
 bool qa_modes_read(qa_modes *, qa_mode_id, qa_mode_view *, qa_error *);
+bool qa_modes_q3_settings_read(const qa_modes *, qa_mode_id, qa_mode_q3_settings *,
+                               bool *present, qa_error *);
+bool qa_modes_q3_settings_admit(qa_modes *, qa_mode_id, const qa_mode_q3_settings *,
+                                int32_t source_time_ms, int32_t restarted, qa_error *);
+bool qa_modes_q3_settings_update(qa_modes *, qa_mode_id, const qa_mode_q3_settings *, qa_error *);
 bool qa_modes_at(qa_modes *, size_t index, qa_mode_id *, qa_mode_view *, qa_error *);
 bool qa_modes_player(qa_modes *, const qa_match_player *, qa_error *);
 bool qa_modes_player_read(qa_modes *, qa_mode_id, qa_actor_id, qa_mode_player_view *, qa_error *);

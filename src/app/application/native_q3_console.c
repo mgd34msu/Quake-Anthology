@@ -8,7 +8,18 @@ struct application_native_q3_console {
     qa_console *console;
     qa_cvars *cvars;
     size_t calls;
+    bool settings_bound;
 };
+
+bool application_native_q3_console_settings_bound(const application_provider *provider)
+{
+    return provider && provider->native_q3_console && provider->native_q3_console->settings_bound;
+}
+
+void application_native_q3_console_settings_commit(application_provider *provider)
+{
+    provider->native_q3_console->settings_bound = true;
+}
 
 qa_cvars *application_native_q3_console_registry(const application_provider *provider)
 {

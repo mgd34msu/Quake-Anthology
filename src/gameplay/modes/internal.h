@@ -56,6 +56,10 @@ typedef struct mode_instance {
     uint64_t serial;
     int32_t tag_count, remaining_seconds;
     bool active, countdown_announced, restart_sent;
+    qa_mode_q3_settings q3_settings;
+    int32_t q3_started_ms, q3_warmup_ms;
+    uint64_t q3_warmup_seen;
+    bool q3_settings_present;
     void *horde;
 } mode_instance;
 typedef struct mode_object {
@@ -122,6 +126,8 @@ bool mode_reserve_objective(qa_modes *, const qa_objective_binding *, qa_objecti
 bool mode_commit_objective(qa_modes *, qa_objective_lease);
 bool mode_set_phase(qa_modes *, mode_instance *, qa_mode_phase, uint64_t, qa_error *);
 bool mode_match_frame(qa_modes *, mode_instance *, uint64_t, qa_error *);
+bool mode_q3_warmup_frame(qa_modes *, mode_instance *, qa_error *);
+bool mode_q3_limits(qa_modes *, mode_instance *, qa_error *);
 bool mode_vote_frame(qa_modes *, mode_instance *, qa_error *);
 bool mode_intent_command_valid(const qa_modes *, qa_mode_source,
                                const qa_match_intent *, bool required);

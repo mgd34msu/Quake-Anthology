@@ -203,6 +203,13 @@ static bool instance(qa_source_save_io *io, qa_modes *m, qa_mode_checkpoint *p) 
     FIELD(i32, p->next_location); FIELD(i32, p->tag_count); FIELD(i32, p->remaining_seconds);
     FIELD(bool, p->countdown_announced); FIELD(bool, p->restart_sent);
     FIELD(bool, p->relics_started); FIELD(bool, p->rune_forward);
+    FIELD(bool, p->q3_settings_present);
+    if (p->q3_settings_present) {
+        FIELD(i32, p->q3_settings.do_warmup); FIELD(i32, p->q3_settings.warmup_seconds);
+        FIELD(i32, p->q3_settings.time_limit_minutes); FIELD(i32, p->q3_settings.frag_limit);
+        FIELD(i32, p->q3_settings.capture_limit); FIELD(u64, p->q3_settings.warmup_modification_count);
+        FIELD(i32, p->q3_started_ms); FIELD(i32, p->q3_warmup_ms); FIELD(u64, p->q3_warmup_seen);
+    }
     return horde(io, m, &p->horde);
 }
 static bool object_spec(qa_source_save_io *io, qa_mode_object_spec *p) {
@@ -231,7 +238,7 @@ static bool object(qa_source_save_io *io, qa_mode_object_checkpoint *p) {
 }
 static bool checkpoint(qa_source_save_io *io, qa_modes *m, qa_modes_checkpoint *p) {
     FIELD(u32, p->version);
-    if (p->version != 7) return save_fail(io, "unsupported typed mode checkpoint version");
+    if (p->version != 8) return save_fail(io, "unsupported typed mode checkpoint version");
     FIELD(u64, p->random); FIELD(u64, p->attack_sequence);
     ARRAY(p->mode_generations, p->generation_count, m->mode_capacity);
     if (p->generation_count != m->mode_capacity) return save_fail(io, "mode save capacity changed");
@@ -258,11 +265,11 @@ static bool checkpoint(qa_source_save_io *io, qa_modes *m, qa_modes_checkpoint *
 static bool header(qa_source_save_io *io) {
     static const uint8_t expected[8] = {'Q', 'A', 'M', 'O', 'D', 'E', 'S', 0};
     uint8_t signature[8] = {'Q', 'A', 'M', 'O', 'D', 'E', 'S', 0};
-    uint32_t version = 5;
+    uint32_t version = 6;
     if (!qa_source_save_bytes(io, signature, sizeof(signature)) || memcmp(signature, expected, sizeof(signature)))
         return save_fail(io, "invalid mode save signature");
     FIELD(u32, version);
-    return version == 5 || save_fail(io, "unsupported mode save version");
+    return version == 6 || save_fail(io, "unsupported mode save version");
 }
 static bool boundary(qa_modes *m, qa_error *e) {
     if (!m || m->callback_depth || !qa_session_safe(m->options.services.session) ||

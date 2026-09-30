@@ -84,6 +84,10 @@ typedef struct qa_mode_checkpoint {
     int32_t next_location;
     int32_t tag_count, remaining_seconds;
     bool countdown_announced, restart_sent, relics_started, rune_forward;
+    qa_mode_q3_settings q3_settings;
+    int32_t q3_started_ms, q3_warmup_ms;
+    uint64_t q3_warmup_seen;
+    bool q3_settings_present;
     qa_horde_checkpoint *horde;
 } qa_mode_checkpoint;
 typedef struct qa_mode_object_checkpoint {
