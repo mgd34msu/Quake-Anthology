@@ -627,6 +627,9 @@ const q2m_move_set *q2m_move_set_for(const qa_q2_game *game,
     return NULL;
   if (game->options.edition == QA_Q2_RERELEASE && definition->species == Q2M_STALKER)
     return q2m_stalker_rerelease_moves();
+  if (game->options.edition == QA_Q2_RERELEASE &&
+      (definition->species == Q2M_MEDIC || definition->species == Q2M_MEDIC_COMMANDER))
+    return q2m_moves_named("rerelease/medic:medicMoves");
   const char *key = definition->move_set;
   if (key == NULL)
     key = base_move_set(game, definition->species);
