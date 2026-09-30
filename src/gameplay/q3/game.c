@@ -219,6 +219,7 @@ bool qa_q3_destroy(qa_q3_game *game, qa_error *error) {
             return false;
     }
     q3_map_destroy(game);
+    q3_configstrings_clear(game);
     for(uint32_t i=0;i<game->capacity;++i)
         if(game->item_observations[i].serial)
             qa_pickups_observation_close(game->options.services.pickups,game->item_observations[i],NULL);

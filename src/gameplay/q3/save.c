@@ -170,11 +170,34 @@ static void *allocate(qa_source_save_io *io, size_t count, size_t size)
     return out;
 }
 
+static bool configstring_text(qa_source_save_io *io, char **text)
+{
+    size_t length = io->direction == QA_SOURCE_SAVE_WRITE && *text ? strlen(*text) : 0;
+    if (!qa_source_save_count(io, &length, SIZE_MAX - 1)) return false;
+    if (!length) return save_fail(io, "empty Q3 stored configstring slot");
+    if (io->direction == QA_SOURCE_SAVE_WRITE)
+        return qa_source_save_bytes(io, *text, length);
+    if (io->offset > io->input.size || length > io->input.size - io->offset)
+        return save_fail(io, "Q3 configstring exceeds continuation input");
+    char *copy = malloc(length + 1);
+    if (!copy) {
+        qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "allocating Q3 stored configstring");
+        return false;
+    }
+    if (!qa_source_save_bytes(io, copy, length) || memchr(copy, 0, length)) {
+        free(copy);
+        return save_fail(io, "invalid Q3 stored configstring text");
+    }
+    copy[length] = 0;
+    *text = copy;
+    return true;
+}
+
 static bool checkpoint(qa_source_save_io *io, qa_q3_game *game, qa_q3_checkpoint *p)
 {
     FIELD(u32, p->version); FIELD(u32, p->random_state); FIELD(u32, p->death_animation);
     FIELD(u32, p->body_queue_index); ENUM(p->product, QA_Q3_TEAM_ARENA);
-    if (p->version != 4) return save_fail(io, "unsupported Q3 typed continuation");
+    if (p->version != 5) return save_fail(io, "unsupported Q3 typed continuation");
     if (!rules(io, &p->rules)) return false;
     FIELD(i32, p->previous_ms); FIELD(i32, p->now_ms); FIELD(u64, p->attack_sequence);
     FIELD(i32, p->ranking_hit.frame); FIELD(i32, p->ranking_hit.self);
@@ -195,6 +218,18 @@ static bool checkpoint(qa_source_save_io *io, qa_q3_game *game, qa_q3_checkpoint
         FIELD(actor, p->kamikaze_cooldowns[i].actor);
         FIELD(i32, p->kamikaze_cooldowns[i].damage_after);
         FIELD(i32, p->kamikaze_cooldowns[i].shock_after);
+    }
+    if (!qa_source_save_count(io, &p->configstring_count, QA_Q3_NATIVE_CONFIGSTRINGS)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ && p->configstring_count) {
+        p->configstrings = allocate(io, p->configstring_count, sizeof(*p->configstrings));
+        if (!p->configstrings) return false;
+    }
+    for (size_t i = 0; i < p->configstring_count; ++i) {
+        FIELD(u32, p->configstrings[i].index);
+        if (p->configstrings[i].index >= QA_Q3_NATIVE_CONFIGSTRINGS ||
+            (i && p->configstrings[i].index <= p->configstrings[i - 1].index))
+            return save_fail(io, "invalid Q3 stored configstring order");
+        if (!configstring_text(io, &p->configstrings[i].text)) return false;
     }
     return true;
 }
@@ -338,9 +373,9 @@ static bool continuation(qa_source_save_io *io, qa_q3_game *game,
     static const uint8_t expected[8] = {'Q', 'A', 'Q', '3', 'S', 'A', 'V', 'E'};
     if (!qa_source_save_bytes(io, signature, sizeof(signature)) ||
         memcmp(signature, expected, sizeof(signature))) return save_fail(io, "invalid Q3 save signature");
-    uint32_t version = 4;
+    uint32_t version = 5;
     FIELD(u32, version);
-    if (version != 4) return save_fail(io, "unsupported Q3 save version");
+    if (version != 5) return save_fail(io, "unsupported Q3 save version");
     if (!checkpoint(io, game, native)) return false;
     bool has_map = game->map != NULL;
     FIELD(bool, has_map);

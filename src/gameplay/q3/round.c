@@ -23,7 +23,7 @@ bool qa_q3_round_reset(qa_q3_game *game, int32_t source_time_ms, bool warmup,
     options.start_time_ms = source_time_ms;
     options.warmup = warmup;
     options.restarted = restarted;
-    if (!qa_q3_maps_reset(game, &options, error))
+    if (!q3_maps_round_reset(game, &options, error))
         return false;
     game->attack_sequence = 0;
     return true;

@@ -376,11 +376,9 @@ static bool emit_text(qa_q3_game *game, qa_q3_map_event_kind kind, int32_t index
     qa_string_id key = 0;
     if (name && !q3_map_intern_cstr(game, name, &key, error))
         return false;
-    return q3_map_emit(game, &(qa_q3_map_event){.kind = kind,
-                                                .name = key,
-                                                .text = text,
-                                                .index = index},
-                       error);
+    qa_q3_map_event event = {.kind = kind, .name = key, .text = text, .index = index};
+    return kind == QA_Q3_MAP_CONFIGSTRING ? q3_configstring_event(game, &event, error)
+                                          : q3_map_emit(game, &event, error);
 }
 
 static bool worldspawn(qa_q3_game *game, const qa_q3_map_fields *fields, qa_error *error) {

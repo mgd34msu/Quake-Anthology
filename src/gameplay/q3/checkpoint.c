@@ -95,13 +95,17 @@ void qa_q3_checkpoint_free(qa_q3_checkpoint *checkpoint) {
         return;
     free(checkpoint->actors);
     free(checkpoint->kamikaze_cooldowns);
+    if (checkpoint->configstrings)
+        for (size_t i = 0; i < checkpoint->configstring_count; ++i)
+            free(checkpoint->configstrings[i].text);
+    free(checkpoint->configstrings);
     *checkpoint = (qa_q3_checkpoint){0};
 }
 bool qa_q3_checkpoint_capture(const qa_q3_game *game, qa_q3_checkpoint *out, qa_error *error) {
     if (!game || !out || game->observation_depth || !qa_session_safe(game->options.services.session) ||
         !qa_combat_idle(game->options.services.combat))
         return q3_fail(error, "Q3 checkpoint requires a session safe point");
-    qa_q3_checkpoint saved = {.version = 4,
+    qa_q3_checkpoint saved = {.version = 5,
                               .random_state = game->rng,
                               .death_animation = game->death_animation,
                               .body_queue_index = game->body_queue_index,
@@ -143,6 +147,10 @@ bool qa_q3_checkpoint_capture(const qa_q3_game *game, qa_q3_checkpoint *out, qa_
                           game->kamikaze_cooldowns[i].actor))
             saved.kamikaze_cooldowns[cooldowns++] = game->kamikaze_cooldowns[i];
     }
+    if (!q3_configstrings_capture(game, &saved, error)) {
+        qa_q3_checkpoint_free(&saved);
+        return false;
+    }
     *out = saved;
     return true;
 }
@@ -150,7 +158,7 @@ static bool checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved,
                                 bool reconnect, qa_error *error) {
     if (!game || !saved || game->observation_depth || !qa_session_safe(game->options.services.session) ||
         !qa_world_idle(game->options.services.world) ||
-        !qa_combat_idle(game->options.services.combat) || saved->version != 4 ||
+        !qa_combat_idle(game->options.services.combat) || saved->version != 5 ||
         (saved->ranking_hit.valid &&
          (saved->ranking_hit.self < 0 || saved->ranking_hit.attacker < 0)) ||
         saved->product != game->options.product || saved->death_animation >= 3 ||
@@ -161,12 +169,16 @@ static bool checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved,
     for (uint32_t i = 0; i < game->capacity; ++i)
         if (game->player_binding_tokens[i])
             return q3_fail(error, "Q3 checkpoint restore conflicts with player admission");
+    char **configstrings = NULL;
+    if (!q3_configstrings_prepare(saved, &configstrings, error))
+        return false;
     q3_actor *actors = calloc(game->capacity, sizeof(*actors));
     qa_pickup_lease *observations=NULL;
     q3_kamikaze_cooldown *cooldowns = calloc(game->capacity, sizeof(*cooldowns));
     if (!actors || !cooldowns) {
         free(actors);
         free(cooldowns);
+        q3_configstrings_discard(configstrings);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q3 restore candidate");
         return false;
     }
@@ -216,11 +228,13 @@ static bool checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved,
                                            .attacker = saved->ranking_hit.attacker,
                                            .method = saved->ranking_hit.method,
                                            .valid = saved->ranking_hit.valid};
+    q3_configstrings_commit(game, configstrings);
     return true;
 invalid:
     q3_item_observations_abort(game,observations);
     free(actors);
     free(cooldowns);
+    q3_configstrings_discard(configstrings);
     return q3_fail(error, "invalid Q3 checkpoint state or references");
 }
 bool qa_q3_checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved, qa_error *error) {

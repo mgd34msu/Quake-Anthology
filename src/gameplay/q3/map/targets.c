@@ -570,7 +570,7 @@ static bool link_locations(qa_q3_game *game, qa_error *error) {
     game->map->locations_linked = true;
     qa_string_id unknown;
     if (!q3_map_intern_cstr(game, "unknown", &unknown, error) ||
-        !q3_map_emit(game, &(qa_q3_map_event){.kind = QA_Q3_MAP_CONFIGSTRING,
+        !q3_configstring_event(game, &(qa_q3_map_event){.kind = QA_Q3_MAP_CONFIGSTRING,
                                               .index = 608,
                                               .text = unknown},
                      error)) {
@@ -590,7 +590,7 @@ static bool link_locations(qa_q3_game *game, qa_error *error) {
                                  .actor = location->actor,
                                  .index = 609 + (int32_t)i,
                                  .text = location->message};
-        if (!q3_map_emit(game, &event, error)) {
+        if (!q3_configstring_event(game, &event, error)) {
             free(ordered);
             return false;
         }

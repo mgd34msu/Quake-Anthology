@@ -418,6 +418,7 @@ add_library(qa_game_q3 STATIC
     src/gameplay/q3/alpha.c
     src/gameplay/q3/checkpoint.c
     src/gameplay/q3/console.c
+    src/gameplay/q3/configstrings.c
     src/gameplay/q3/death.c
     src/gameplay/q3/feedback.c
     src/gameplay/q3/game.c

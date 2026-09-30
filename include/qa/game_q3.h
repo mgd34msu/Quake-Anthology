@@ -399,6 +399,10 @@ typedef struct qa_q3_ranking_hit {
     int32_t frame, self, attacker, method;
     bool valid;
 } qa_q3_ranking_hit;
+typedef struct qa_q3_saved_configstring {
+    uint32_t index;
+    char *text;
+} qa_q3_saved_configstring;
 typedef struct qa_q3_checkpoint {
     uint32_t version, random_state, death_animation, body_queue_index;
     qa_q3_product product;
@@ -411,6 +415,8 @@ typedef struct qa_q3_checkpoint {
     size_t actor_count;
     qa_q3_kamikaze_cooldown *kamikaze_cooldowns;
     size_t cooldown_count;
+    qa_q3_saved_configstring *configstrings;
+    size_t configstring_count;
 } qa_q3_checkpoint;
 /* Typed checkpoint memory is separate from file/network encoding. The save
  * owner encodes fields explicitly and remaps all actor and string IDs before

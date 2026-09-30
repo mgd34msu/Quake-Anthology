@@ -30,6 +30,8 @@ static inline int32_t q3_map_random_schedule(int32_t now, float wait, float rand
 }
 
 bool q3_map_fail(qa_error *, const char *);
+bool q3_maps_round_reset(qa_q3_game *, const qa_q3_map_options *, qa_error *);
+bool q3_configstring_event(qa_q3_game *, const qa_q3_map_event *, qa_error *);
 qa_q3_map_actor_state *q3_map_get(qa_q3_game *, qa_actor_id);
 const qa_q3_map_actor_state *q3_map_const(const qa_q3_game *, qa_actor_id);
 bool q3_map_text(const qa_q3_game *, qa_string_id);

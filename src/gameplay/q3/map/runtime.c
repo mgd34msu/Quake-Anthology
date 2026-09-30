@@ -105,12 +105,13 @@ bool qa_q3_maps_bind(qa_q3_game *game, const qa_q3_map_options *options, qa_erro
     if (!runtime_create(game, options, &map, error))
         return false;
     game->map = map;
+    q3_configstrings_clear(game);
     level_state_reset(game, options);
     return true;
 }
 
-bool qa_q3_maps_reset(qa_q3_game *game, const qa_q3_map_options *options,
-                      qa_error *error) {
+static bool maps_reset(qa_q3_game *game, const qa_q3_map_options *options,
+                       bool retain_configstrings, qa_error *error) {
     if (!game || game->source_restored || !game->map)
         return q3_map_fail(error, "invalid Q3 authored map reset");
     if (!level_state_idle(game, true, error))
@@ -120,8 +121,18 @@ bool qa_q3_maps_reset(qa_q3_game *game, const qa_q3_map_options *options,
         return false;
     q3_map_destroy(game);
     game->map = map;
+    if (!retain_configstrings)
+        q3_configstrings_clear(game);
     level_state_reset(game, options);
     return true;
+}
+bool qa_q3_maps_reset(qa_q3_game *game, const qa_q3_map_options *options,
+                      qa_error *error) {
+    return maps_reset(game, options, false, error);
+}
+bool q3_maps_round_reset(qa_q3_game *game, const qa_q3_map_options *options,
+                        qa_error *error) {
+    return maps_reset(game, options, true, error);
 }
 
 bool q3_map_register_item(qa_q3_game *game, uint32_t item, qa_error *error) {

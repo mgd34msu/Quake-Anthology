@@ -1,6 +1,7 @@
 #ifndef QA_Q3_INTERNAL_H
 #define QA_Q3_INTERNAL_H
 #include "qa/game_q3.h"
+#include "qa/game_q3_configstrings.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -106,12 +107,18 @@ struct qa_q3_game {
     uint32_t body_queue_index;
     q3_snapshot_frame *snapshot_frames;
     q3_map_runtime *map;
+    char *configstrings[QA_Q3_NATIVE_CONFIGSTRINGS];
     qa_physics physics;
 };
 q3_actor *q3_actor_get(qa_q3_game *, qa_actor_id);
 const q3_actor *q3_actor_const(const qa_q3_game *, qa_actor_id);
 float q3_initial_alpha(const qa_q3_game *, qa_actor_id);
 bool q3_fail(qa_error *, const char *);
+void q3_configstrings_clear(qa_q3_game *);
+bool q3_configstrings_capture(const qa_q3_game *, qa_q3_checkpoint *, qa_error *);
+bool q3_configstrings_prepare(const qa_q3_checkpoint *, char ***, qa_error *);
+void q3_configstrings_discard(char **);
+void q3_configstrings_commit(qa_q3_game *, char **);
 bool q3_rollback_spawn(qa_q3_game *, qa_actor_id, qa_error *);
 q3_snapshot_frame *q3_bounds_snapshot(qa_q3_game *, qa_bounds, qa_collision_role, qa_error *);
 bool q3_use_holdable(qa_q3_game *, qa_actor_id, qa_q3_holdable, qa_error *);
