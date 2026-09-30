@@ -1,21 +1,9 @@
-#include "qa/field.h"
+#include "field_internal.h"
 #include "qa/input.h"
 #include "qa/text.h"
 #include <stdlib.h>
 #include <string.h>
 
-struct qa_text_field {
-    uint32_t *characters;
-    char *text;
-    size_t maximum, length, cursor, scroll, width;
-    bool overstrike, dirty, selected;
-    char **matches, *tail;
-    size_t match_count, match_index;
-};
-struct qa_console_history {
-    char **entries, *draft;
-    size_t capacity, count, first, position;
-};
 static bool fail(qa_error *e, const char *message) {
     qa_error_set(e, QA_ERROR_MEMORY, 0, "%s", message);
     return false;

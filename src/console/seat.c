@@ -1,27 +1,10 @@
-#include "internal.h"
-#include "qa/console_seat.h"
+#include "seat_internal.h"
+#include "qa/console_seat_save.h"
 #include "qa/text.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct staged_line {
-    struct staged_line *next;
-    qa_console_dialect dialect;
-    double time;
-    char text[];
-} staged_line;
-struct qa_seat_console {
-    qa_seat_console_options options;
-    char *script;
-    qa_console_buffer *buffer;
-    qa_text_field *field, *chat;
-    qa_console_history *history;
-    staged_line *staged_first, *staged_last;
-    float fraction;
-    int32_t chat_target;
-    bool staged, opened, suppress_toggle_text, targeted, control, shift;
-};
 static void clear_staged(qa_seat_console *seat) {
     while (seat->staged_first) {
         staged_line *next = seat->staged_first->next;
@@ -82,7 +65,7 @@ qa_text_field *qa_seat_console_field(qa_seat_console *seat, bool chat) {
     return chat ? seat->chat : seat->field;
 }
 qa_console_history *qa_seat_console_history(qa_seat_console *seat) { return seat->history; }
-bool qa_seat_console_print(qa_seat_console *seat, const char *text, qa_error *error) {
+static bool print_inner(qa_seat_console *seat, const char *text, qa_error *error) {
     double time = seat->options.now_ms(seat->options.context);
     size_t length = strlen(text);
     staged_line *line = NULL;
@@ -116,7 +99,7 @@ void qa_seat_console_publish(qa_seat_console *seat, qa_input_focus focus) {
     seat->opened = focus == QA_INPUT_CONSOLE;
     seat->control = seat->shift = seat->suppress_toggle_text = false;
 }
-bool qa_seat_console_adopt(qa_seat_console *seat, qa_seat_console *candidate, qa_input_focus focus,
+static bool adopt_inner(qa_seat_console *seat, qa_seat_console *candidate, qa_input_focus focus,
                            qa_error *error) {
     if (seat == candidate || !candidate->staged ||
         seat->options.commands != candidate->options.commands ||
@@ -142,14 +125,14 @@ bool qa_seat_console_adopt(qa_seat_console *seat, qa_seat_console *candidate, qa
     qa_seat_console_publish(seat, focus);
     return true;
 }
-bool qa_seat_console_open(qa_seat_console *seat, bool open, qa_error *error) {
+static bool open_inner(qa_seat_console *seat, bool open, qa_error *error) {
     seat->opened = open;
     qa_text_field_clear(seat->field);
     qa_console_buffer_clear_notify(seat->buffer);
     return seat->options.focus(seat->options.context, open ? QA_INPUT_CONSOLE : QA_INPUT_GAME,
                                false, error);
 }
-bool qa_seat_console_toggle(qa_seat_console *seat, bool from_key, bool repeat, qa_error *error) {
+static bool toggle_inner(qa_seat_console *seat, bool from_key, bool repeat, qa_error *error) {
     if (from_key) {
         seat->suppress_toggle_text = true;
         if (repeat)
@@ -157,7 +140,7 @@ bool qa_seat_console_toggle(qa_seat_console *seat, bool from_key, bool repeat, q
     }
     return qa_seat_console_open(seat, !seat->opened, error);
 }
-bool qa_seat_console_message(qa_seat_console *seat, bool team, bool targeted, int32_t target,
+static bool message_inner(qa_seat_console *seat, bool team, bool targeted, int32_t target,
                              qa_error *error) {
     qa_text_field_clear(seat->chat);
     seat->targeted = targeted;
@@ -182,7 +165,7 @@ static const char *trim_start(const char *text) {
     }
     return text + start;
 }
-bool qa_seat_console_submit(qa_seat_console *seat, qa_error *error) {
+static bool submit_inner(qa_seat_console *seat, qa_error *error) {
     const char *text = qa_text_field_read(seat->field).text;
     if (!*text)
         return true;
@@ -244,12 +227,12 @@ static bool complete(qa_seat_console *seat, qa_error *error) {
     qa_console_discovery_free(&entries);
     return ok;
 }
-bool qa_seat_console_selected(qa_seat_console *seat, qa_console_discovery_entry *out) {
+static bool selected_inner(qa_seat_console *seat, qa_console_discovery_entry *out) {
     const char *name = qa_text_field_read(seat->field).completion;
     return name &&
            qa_console_discovery_find(seat->options.commands, &seat->options.command, name, out);
 }
-bool qa_seat_console_input(qa_seat_console *seat, const qa_input_event *event, qa_input_focus focus,
+static bool input_inner(qa_seat_console *seat, const qa_input_event *event, qa_input_focus focus,
                            bool team, bool *handled, qa_error *error) {
     *handled = true;
     if (event->kind == QA_INPUT_EVENT_FOCUS) {
@@ -338,4 +321,51 @@ bool qa_seat_console_input(qa_seat_console *seat, const qa_input_event *event, q
     qa_field_controls controls = {seat->control, seat->shift, seat->options.context,
                                   seat->options.clipboard};
     return qa_text_field_key(field, key, &controls, handled, error);
+}
+
+bool qa_seat_console_idle(const qa_seat_console *seat) {
+    return seat && !seat->active_depth && qa_console_idle(seat->options.commands);
+}
+static bool enter(qa_seat_console *seat, qa_error *error) {
+    if (!seat || seat->active_depth == SIZE_MAX)
+        return qac_fail(error, QA_ERROR_ARGUMENT, "seat console operation is unavailable");
+    ++seat->active_depth;
+    return true;
+}
+static bool leave(qa_seat_console *seat, bool result) {
+    --seat->active_depth;
+    return result;
+}
+bool qa_seat_console_print(qa_seat_console *seat, const char *text, qa_error *error) {
+    return enter(seat, error) && leave(seat, print_inner(seat, text, error));
+}
+bool qa_seat_console_adopt(qa_seat_console *seat, qa_seat_console *candidate,
+                           qa_input_focus focus, qa_error *error) {
+    if (seat == candidate || !qa_seat_console_idle(seat) || !qa_seat_console_idle(candidate))
+        return qac_fail(error, QA_ERROR_ARGUMENT, "seat console publication requires idle owners");
+    ++seat->active_depth;
+    ++candidate->active_depth;
+    bool okay = adopt_inner(seat, candidate, focus, error);
+    --candidate->active_depth;
+    return leave(seat, okay);
+}
+bool qa_seat_console_open(qa_seat_console *seat, bool open, qa_error *error) {
+    return enter(seat, error) && leave(seat, open_inner(seat, open, error));
+}
+bool qa_seat_console_toggle(qa_seat_console *seat, bool from_key, bool repeat, qa_error *error) {
+    return enter(seat, error) && leave(seat, toggle_inner(seat, from_key, repeat, error));
+}
+bool qa_seat_console_message(qa_seat_console *seat, bool team, bool targeted, int32_t target,
+                             qa_error *error) {
+    return enter(seat, error) && leave(seat, message_inner(seat, team, targeted, target, error));
+}
+bool qa_seat_console_submit(qa_seat_console *seat, qa_error *error) {
+    return enter(seat, error) && leave(seat, submit_inner(seat, error));
+}
+bool qa_seat_console_selected(qa_seat_console *seat, qa_console_discovery_entry *out) {
+    return enter(seat, NULL) && leave(seat, selected_inner(seat, out));
+}
+bool qa_seat_console_input(qa_seat_console *seat, const qa_input_event *event, qa_input_focus focus,
+                           bool team, bool *handled, qa_error *error) {
+    return enter(seat, error) && leave(seat, input_inner(seat, event, focus, team, handled, error));
 }

@@ -1,22 +1,9 @@
-#include "qa/console_buffer.h"
+#include "buffer_internal.h"
 #include "qa/text.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct row_state {
-    uint64_t sequence;
-    size_t count;
-    double time;
-    bool notify, wrapped;
-} row_state;
-struct qa_console_buffer {
-    qa_console_dialect dialect;
-    row_state *rows;
-    qa_console_cell *cells;
-    size_t character_capacity, capacity, width, first, count, write, x, backscroll;
-    uint64_t sequence;
-};
 static bool fail(qa_error *error, qa_status code, const char *message) {
     qa_error_set(error, code, 0, "%s", message);
     return false;

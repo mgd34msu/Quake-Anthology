@@ -135,6 +135,7 @@ add_library(qa_console STATIC
     src/console/documentation.c
     src/console/discovery.c
     src/console/seat.c
+    src/console/seat_save.c
     src/console/dedicated.c
     src/platform/console.c)
 target_link_libraries(qa_console PUBLIC qa_core)
