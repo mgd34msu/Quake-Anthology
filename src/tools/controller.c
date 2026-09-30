@@ -140,10 +140,7 @@ static const struct { const char *name, *usage, *summary; } commands[] = {
     ,{"modelist", "modelist", "List actual active video device display modes."}
     ,{"gfxinfo", "gfxinfo", "Report actual backend, drawable size and driver."}
 };
-bool qa_tools_create(const qa_tools_options *options, qa_tools **out, qa_error *error) {
-    if (!options || !out || !options->files || !options->output_mount || !options->owner || !options->milliseconds ||
-        !options->read_frame || !options->context_active || !options->map_name || !options->print)
-        return tools_fail(error, "invalid application tools services");
+static bool create_owner(const qa_tools_options *options, qa_tools **out, qa_error *error) {
     qa_tools *tools = calloc(1, sizeof *tools);
     if (!tools) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating application tools"); return false; }
     tools->options = *options; tools->capture_tail = &tools->captures;
@@ -151,8 +148,23 @@ bool qa_tools_create(const qa_tools_options *options, qa_tools **out, qa_error *
     if (!qa_debug_store_create(9216, &tools->debug, error)) { (void)qa_profiler_destroy(tools->profiler, NULL); free(tools); return false; }
     *out = tools; return true;
 }
+static bool output_ready(const qa_tools_options *options) {
+    return options->output_mount && options->read_frame && options->context_active && options->map_name && options->print;
+}
+bool qa_tools_create(const qa_tools_options *options, qa_tools **out, qa_error *error) {
+    if (!options || !out || !options->files || !options->owner || !options->milliseconds || !output_ready(options))
+        return tools_fail(error, "invalid application tools services");
+    return create_owner(options,out,error);
+}
+bool qa_tools_create_diagnostics(qa_vfs *files, uint64_t owner, double (*milliseconds)(void *),
+                                  void *context, qa_tools **out, qa_error *error) {
+    if (!files || !owner || !milliseconds || !out || *out)
+        return tools_fail(error,"detached diagnostics require qualified files, clock and empty output");
+    qa_tools_options options={.files=files,.owner=owner,.milliseconds=milliseconds,.context=context};
+    return create_owner(&options,out,error);
+}
 bool qa_tools_attach_console(qa_tools *tools, qa_console *console, qa_error *error) {
-    if (!tools || !console || tools->busy) return tools_fail(error, "invalid tools console admission");
+    if (!tools || !console || tools->busy || !output_ready(&tools->options)) return tools_fail(error, "invalid tools console admission");
     for (tools_console *it = tools->consoles; it; it = it->next) if (it->console == console) return true;
     tools_console *binding = malloc(sizeof *binding);
     if (!binding) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating tools console binding"); return false; }
@@ -224,7 +236,7 @@ bool qa_tools_apply_camera(qa_tools *tools, const qa_scene_view *base, bool port
     --tools->busy; return success;
 }
 bool qa_tools_capture_frame(qa_tools *tools, const qa_command_context *source, qa_error *error) {
-    if (!tools || tools->busy) return tools_fail(error, "capture admission requires callbacks to return");
+    if (!tools || tools->busy || !output_ready(&tools->options)) return tools_fail(error, "capture admission requires idle bound output services");
     ++tools->busy; bool success = capture_queue(tools, source, QA_CAPTURE_TGA, NULL, false, false, error); --tools->busy; return success;
 }
 bool qa_tools_pending_capture(const qa_tools *tools) { return tools && tools->captures; }

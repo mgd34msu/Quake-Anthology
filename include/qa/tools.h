@@ -106,6 +106,11 @@ typedef struct qa_tools_options {
 /* Borrowed services/console owners outlive tools or are explicitly detached.
  * Tools retain authored cameras and pending capture requests, not game state. */
 bool qa_tools_create(const qa_tools_options *, qa_tools **, qa_error *);
+/* Independent profiler/debug/camera owners for detached source construction.
+ * Files and clock context remain borrowed. No console dispatch or capture
+ * output service is installed; those admissions reject this owner. */
+bool qa_tools_create_diagnostics(qa_vfs *, uint64_t owner, double (*milliseconds)(void *),
+                                  void *context, qa_tools **, qa_error *);
 bool qa_tools_destroy(qa_tools *, qa_error *);
 bool qa_tools_callbacks_idle(const qa_tools *);
 bool qa_tools_attach_console(qa_tools *, qa_console *, qa_error *);
