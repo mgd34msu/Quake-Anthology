@@ -2226,8 +2226,10 @@ static bool select_species_attack(q2m_context *context, const char **move,
                                                : "stalker_move_swing_r";
     else {
       float luck = q2m_random(context->game);
-      if (context->game->options.skill == 0 ||
-          luck > 1.0f - 0.5f / (float)context->game->options.skill)
+      if (context->game->options.edition == QA_Q2_RERELEASE
+              ? luck > 0.5f
+              : context->game->options.skill == 0 ||
+                    luck > 1.0f - 0.5f / (float)context->game->options.skill)
         monster->attack_state = Q2M_STRAIGHT;
       else {
         if (q2m_random(context->game) <= 0.5f)
@@ -2323,7 +2325,7 @@ static bool select_species_attack(q2m_context *context, const char **move,
     break;
   }
   case Q2M_GUARDIAN:
-    *move = distance > 500.0f ? "guardian_move_atk2_in"
+    *move = distance > 440.0f ? "guardian_move_atk2_in"
             : monster->melee_ns < context->game->now_ns && distance < 120.0f
                 ? "guardian_move_kick"
                 : "guardian_move_atk1_in";
@@ -2902,6 +2904,17 @@ static bool chase_goal(q2m_context *context, qa_vec3 goal, float distance,
   const float directions[] = {x, y, old};
   for (size_t index = 0; index < sizeof(directions) / sizeof(directions[0]);
        ++index) {
+    if (index == 2 && monster->definition->species == Q2M_STALKER) {
+      if (!q2m_refresh(context, error))
+        return !q2m_alive(context);
+      bool accepted;
+      if (!q2m_stalker_blocked(context, distance, &accepted, error))
+        return false;
+      if (!q2m_alive(context) || accepted) {
+        *moved = true;
+        return true;
+      }
+    }
     if (directions[index] < 0.0f || directions[index] == turnaround)
       continue;
     if (!try_step(context, directions[index], distance, moved, error))

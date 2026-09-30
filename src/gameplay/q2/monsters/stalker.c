@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "reinforcements.h"
 
 static bool world_hit(const q2m_context *c, const qa_trace_result *trace) {
     return trace->hit != QA_TRACE_HIT_ACTOR ||
@@ -60,6 +61,55 @@ static bool transition(q2m_context *c, bool *allowed, qa_error *error) {
     }
     *allowed = true;
     return true;
+}
+static bool reactivate(q2m_context *c, qa_error *error) {
+    c->monster->stand_ground = false;
+    return q2m_set_move(c, "stalker_move_false_death_end", true, error);
+}
+bool q2m_stalker_pain(q2m_context *c, bool reacts, bool chainfist, qa_error *error) {
+    struct qa_q2_monster *m = c->monster;
+    bool rerelease = c->game->options.edition == QA_Q2_RERELEASE;
+    if (rerelease)
+        m->skin = c->combat.health < m->max_health * .5f ? 1 : 0;
+    else if (c->combat.health < truncf(m->max_health * .5f))
+        m->skin = 1;
+    if ((!rerelease && c->game->options.skill == 3) || !c->body.ground.registry)
+        return true;
+    if (!strcmp(m->move->name, "stalker_move_false_death_end") ||
+        !strcmp(m->move->name, "stalker_move_false_death_start"))
+        return true;
+    if (!strcmp(m->move->name, "stalker_move_false_death"))
+        return reactivate(c, error);
+    float threshold = rerelease ? m->max_health * .25f : truncf(m->max_health * .25f);
+    if (c->combat.health > 0 && c->combat.health < threshold &&
+        q2m_random(c->game) < (rerelease ? .3f : .2f * (float)c->game->options.skill)) {
+        bool allowed = true;
+        if (c->actor->physics.gravity_direction.z > 0 && !transition(c, &allowed, error))
+            return false;
+        if (!q2m_alive(c))
+            return true;
+        if (allowed) {
+            c->body.angles.z = 0;
+            c->actor->physics.gravity_direction = qa_v3(0, 0, -1);
+            m->stand_ground = true;
+            if (!q2m_set_move(c, "stalker_move_false_death_start", true, error))
+                return false;
+            return !q2m_alive(c) || q2m_write_body(c, true, error);
+        }
+    }
+    if (c->game->now_ns < m->pain_ns)
+        return true;
+    m->pain_ns = q2m_after(c->game->now_ns, 3);
+    if (rerelease && !q2m_sound(c, "stalker/pain.wav", 2, 1, error))
+        return false;
+    if (!q2m_alive(c) || (m->pending_damage <= 10 && (!rerelease || !chainfist)))
+        return true;
+    if (q2m_random(c->game) < .5f) {
+        if (!q2m_set_move(c, "stalker_move_jump_straightup", true, error))
+            return false;
+    } else if ((!rerelease || reacts) && !q2m_set_move(c, "stalker_move_pain", true, error))
+        return false;
+    return rerelease || !q2m_alive(c) || q2m_sound(c, "stalker/pain.wav", 1, 1, error);
 }
 static bool jump_straight(q2m_context *c, qa_error *error) {
     if (c->monster->dead)
@@ -123,13 +173,69 @@ static bool pounce(q2m_context *c, const qa_body_state *enemy, qa_error *error) 
     }
     qa_vec3 delta = qa_vec_sub(enemy->origin, c->body.origin);
     qa_vec3 angles = q2m_vector_angles(delta);
-    if (fabsf(truncf(angles.y - c->body.angles.y)) > 45)
+    if (!isfinite(angles.y) ||
+        (c->game->options.edition == QA_Q2_RERELEASE
+             ? fabsf(angles.y - c->body.angles.y)
+             : fabsf(truncf(angles.y - c->body.angles.y))) > 45)
         return true;
     c->monster->ideal_yaw = angles.y;
     if (!q2m_change_yaw(c, error))
         return false;
     if (!q2m_alive(c) || qa_vec_length(delta) > 450)
         return true;
+    if (c->game->options.edition == QA_Q2_RERELEASE) {
+        static const float pitches[] = {-80, -70, -60, -50, -40, -30, -20, -10, -5};
+        float gravity = c->game->services.physics ? c->game->services.physics->gravity : 800;
+        for (float speed = 400.1f; speed <= 800; speed += 200) {
+            float best = FLT_MAX, chosen = 0;
+            for (size_t i = 0; i < sizeof(pitches) / sizeof(pitches[0]); ++i) {
+                qa_vec3 direction;
+                qa_builtin_angle_vectors(qa_v3(pitches[i], angles.y, angles.z), &direction, NULL, NULL);
+                qa_vec3 velocity = qa_vec_scale(direction, speed), origin = c->body.origin;
+                for (unsigned step = 0; step < 30; ++step) {
+                    velocity.z -= gravity * .1f;
+                    qa_trace_query query = {.start = origin,
+                        .end = qa_vec_add(origin, qa_vec_scale(velocity, .1f)),
+                        .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+                    query.policy.contents_mask = UINT32_C(0x46000003);
+                    qa_trace_result result;
+                    if (!qa_world_trace(c->game->services.world, &query, &result, error))
+                        return false;
+                    if (!q2m_alive(c))
+                        return true;
+                    origin = result.end;
+                    if (result.fraction >= 1)
+                        continue;
+                    if (result.has_surface && (result.surface_flags & 4))
+                        break;
+                    qa_vec3 normal = result.contact ? result.contact_plane.normal : qa_v3(0, 0, 0);
+                    origin = qa_vec_add(origin, normal);
+                    qa_vec3 difference = qa_vec_sub(origin, enemy->origin);
+                    float distance = qa_vec_dot(difference, difference);
+                    bool target = result.hit == QA_TRACE_HIT_ACTOR &&
+                                  qa_actor_id_equal(result.actor, c->monster->enemy);
+                    if (!target && result.hit == QA_TRACE_HIT_ACTOR && c->game->services.actor_traits) {
+                        qa_builtin_actor_traits traits = {0};
+                        c->game->services.actor_traits(c->game->services.context, result.actor, &traits);
+                        if (!q2m_alive(c))
+                            return true;
+                        target = traits.player;
+                    }
+                    if (target || (normal.z >= .7f && distance < 128 * 128 && distance < best)) {
+                        best = distance;
+                        chosen = pitches[i];
+                    }
+                    break;
+                }
+            }
+            if (best != FLT_MAX) {
+                qa_builtin_angle_vectors(qa_v3(chosen, angles.y, angles.z), &c->body.velocity, NULL, NULL);
+                c->body.velocity = qa_vec_scale(c->body.velocity, speed);
+                return q2m_write_body(c, true, error);
+            }
+        }
+        return true;
+    }
     bool high = delta.z >= 32;
     qa_vec3 target = enemy->origin;
     target.z += high ? 32 : 0;
@@ -165,15 +271,240 @@ static bool pounce(q2m_context *c, const qa_body_state *enemy, qa_error *error) 
     c->body.velocity.z = speed * sinf(chosen) + .5f * gravity * .1f;
     return q2m_write_body(c, true, error);
 }
+static bool blocked_shot(q2m_context *c, bool *accepted, qa_error *error) {
+    *accepted = false;
+    qa_builtin_actor_traits traits = {0};
+    if (c->game->services.actor_traits)
+        c->game->services.actor_traits(c->game->services.context, c->monster->enemy, &traits);
+    if (!q2m_alive(c) || !traits.player ||
+        q2m_random(c->game) < .25f + .05f * (float)c->game->options.skill)
+        return true;
+    bool visible;
+    if (!q2m_visible(c, c->monster->enemy, &visible, error))
+        return false;
+    if (!q2m_alive(c) || !visible)
+        return true;
+    const char *classname = qa_strings_cstr(qa_session_strings(c->game->services.session),
+                                           traits.classname);
+    if (!classname || strcmp(classname, "tesla"))
+        return true;
+    c->monster->source_blocked = true;
+    if (!q2m_source_attack(c, false, error))
+        return false;
+    if (q2m_alive(c))
+        c->monster->source_blocked = false;
+    *accepted = true;
+    return true;
+}
+static bool blocked_platform(q2m_context *c, const qa_body_state *enemy, float distance,
+                             bool *accepted, qa_error *error) {
+    *accepted = false;
+    float self_min = c->body.origin.z + c->body.bounds.mins.z;
+    float self_max = c->body.origin.z + c->body.bounds.maxs.z;
+    int position = enemy->origin.z + enemy->bounds.mins.z >= self_max ? 1
+                 : enemy->origin.z + enemy->bounds.maxs.z <= self_min ? -1 : 0;
+    if (!position)
+        return true;
+    q2_actor *platform = q2_actor_get(c->game, c->body.ground, false, NULL);
+    if (!platform || !platform->entity || platform->entity->kind != Q2E_PLAT) {
+        qa_vec3 forward;
+        qa_builtin_angle_vectors(c->body.angles, &forward, NULL, NULL);
+        qa_vec3 start = qa_vec_add(c->body.origin, qa_vec_scale(forward, distance));
+        qa_vec3 end = start;
+        end.z -= 384;
+        qa_trace_result result;
+        if (!trace(c, start, end, NULL, Q2M_MONSTER_MASK, &result, error))
+            return false;
+        if (!q2m_alive(c))
+            return true;
+        if (result.fraction == 1 || result.all_solid || result.start_solid ||
+            result.hit != QA_TRACE_HIT_ACTOR)
+            return true;
+        platform = q2_actor_get(c->game, result.actor, false, NULL);
+    }
+    if (!platform || !platform->entity || platform->entity->kind != Q2E_PLAT ||
+        !platform->entity->usable || !platform->entity->mover)
+        return true;
+    bool aboard = qa_actor_id_equal(c->body.ground, platform->id);
+    int phase = platform->entity->mover->phase;
+    if ((position > 0 && (aboard ? phase == 0 : phase == 2)) ||
+        (position < 0 && (aboard ? phase == 2 : phase == 0))) {
+        *accepted = true;
+        return qa_q2_entity_use(c->game, platform->id, c->actor->id, c->actor->id, error);
+    }
+    return true;
+}
+static bool blocked_jump(q2m_context *c, const qa_body_state *enemy, bool *accepted,
+                         qa_error *error) {
+    *accepted = false;
+    bool rerelease = c->game->options.edition == QA_Q2_RERELEASE;
+    if (rerelease && ((c->monster->spawnflags & 16) || c->monster->jump_ns > c->game->now_ns))
+        return true;
+    float self_min = c->body.origin.z + c->body.bounds.mins.z;
+    float enemy_min = enemy->origin.z + enemy->bounds.mins.z;
+    float step_height = rerelease ? 18 : 16;
+    int position = enemy_min > self_min + step_height ? 1
+                 : enemy_min < self_min - step_height ? -1 : 0;
+    if (!position)
+        return true;
+    qa_vec3 forward;
+    qa_builtin_angle_vectors(c->body.angles, &forward, NULL, NULL);
+    qa_vec3 ahead = qa_vec_add(c->body.origin, qa_vec_scale(forward, 48));
+    qa_vec3 start = ahead, end = ahead;
+    qa_trace_result result;
+    if (position < 0) {
+        if (!trace(c, c->body.origin, ahead, &c->body.bounds, Q2M_MONSTER_MASK, &result, error))
+            return false;
+        if (!q2m_alive(c) || result.fraction < 1)
+            return true;
+        end.z = (rerelease ? self_min : c->body.bounds.mins.z) - 257;
+    } else {
+        start.z = c->body.origin.z + c->body.bounds.maxs.z + 68;
+    }
+    if (!trace(c, start, end, NULL, Q2M_MONSTER_MASK | Q2M_WATER_MASK, &result, error))
+        return false;
+    if (!q2m_alive(c) || result.fraction == 1 || result.all_solid || result.start_solid)
+        return true;
+    if (rerelease && position < 0 && (result.contents & 32)) {
+        qa_trace_result deep;
+        if (!trace(c, result.end, end, NULL, Q2M_MONSTER_MASK, &deep, error))
+            return false;
+        if (!q2m_alive(c))
+            return true;
+        qa_vec3 water = deep.end;
+        water.z += c->body.bounds.mins.z + 1;
+        uint32_t value;
+        if (!contents(c, water, &value, error))
+            return false;
+        if (!q2m_alive(c))
+            return true;
+        if (value & Q2M_WATER_MASK) {
+            float sample = (c->monster->view_height - c->body.bounds.mins.z) * .5f;
+            water.z += sample;
+            if (!contents(c, water, &value, error))
+                return false;
+            if (!q2m_alive(c))
+                return true;
+            if (value & Q2M_WATER_MASK) {
+                water.z += sample;
+                if (!contents(c, water, &value, error))
+                    return false;
+                if (!q2m_alive(c) || (value & Q2M_WATER_MASK))
+                    return true;
+            }
+        }
+    }
+    if (!(result.contents & (rerelease ? 35u : 3u)))
+        return true;
+    if (position < 0) {
+        if (self_min - result.end.z < 24 || enemy_min - result.end.z > 32 ||
+            !result.contact || result.contact_plane.normal.z < .9f)
+            return true;
+    } else {
+        if (result.end.z - self_min > 68)
+            return true;
+        qa_trace_result wall;
+        if (!trace(c, c->body.origin, qa_vec_add(c->body.origin, qa_vec_scale(forward, 64)),
+                   NULL, Q2M_MONSTER_MASK, &wall, error))
+            return false;
+        if (!q2m_alive(c))
+            return true;
+        if (wall.fraction < 1 && !wall.all_solid && !wall.start_solid && wall.contact) {
+            c->monster->ideal_yaw = q2m_vector_angles(wall.contact_plane.normal).y + 180;
+            if (c->monster->ideal_yaw > 360)
+                c->monster->ideal_yaw -= 360;
+            if (!q2m_change_yaw(c, error))
+                return false;
+            if (!q2m_alive(c))
+                return true;
+        }
+    }
+    if (rerelease) {
+        c->monster->jump_ns = q2m_after(c->game->now_ns, 3);
+        c->monster->dodging = false;
+        if (c->monster->attack_state == Q2M_SLIDING)
+            c->monster->attack_state = Q2M_STRAIGHT;
+    }
+    *accepted = true;
+    bool up = rerelease ? position > 0 : enemy->origin.z >= c->body.origin.z;
+    return q2m_set_move(c, up ? "stalker_move_jump_up" : "stalker_move_jump_down", true, error);
+}
+bool q2m_stalker_blocked(q2m_context *c, float distance, bool *accepted, qa_error *error) {
+    *accepted = false;
+    qa_actor_id target = c->monster->enemy;
+    if (!q2_actor_live(c->game, target))
+        return true;
+    qa_body_state enemy;
+    qa_combat_state combat;
+    if (!qa_world_body_read(c->game->services.world, target, &enemy, error))
+        return !q2m_alive(c) || !q2_actor_live(c->game, target);
+    if (!q2m_alive(c) || !q2_actor_live(c->game, target))
+        return true;
+    if (!qa_combat_read(c->game->services.combat, target, &combat, error))
+        return !q2m_alive(c) || !q2_actor_live(c->game, target);
+    if (!q2m_alive(c) || !q2_actor_live(c->game, target) || combat.health <= 0)
+        return true;
+    bool rerelease = c->game->options.edition == QA_Q2_RERELEASE;
+    if (!rerelease) {
+        if (!blocked_shot(c, accepted, error))
+            return false;
+        if (!q2m_alive(c) || *accepted)
+            return true;
+    }
+    if (c->actor->physics.gravity_direction.z > 0) {
+        bool allowed;
+        if (!transition(c, &allowed, error))
+            return false;
+        if (!q2m_alive(c) || !allowed)
+            return true;
+        c->actor->physics.gravity_direction.z = -1;
+        c->body.angles.z += 180;
+        if (c->body.angles.z > 360)
+            c->body.angles.z -= 360;
+        c->body.ground = (qa_actor_id){0};
+        *accepted = true;
+        return q2m_write_body(c, true, error);
+    }
+    if (!rerelease) {
+        bool visible;
+        if (!q2m_visible(c, target, &visible, error))
+            return false;
+        if (!q2m_alive(c))
+            return true;
+        if (visible) {
+            *accepted = true;
+            return pounce(c, &enemy, error);
+        }
+    }
+    if (!blocked_jump(c, &enemy, accepted, error))
+        return false;
+    if (!q2m_alive(c) || *accepted)
+        return true;
+    if (!blocked_platform(c, &enemy, distance, accepted, error))
+        return false;
+    if (!q2m_alive(c) || *accepted || !rerelease)
+        return true;
+    bool visible;
+    if (!q2m_visible(c, target, &visible, error))
+        return false;
+    if (q2m_alive(c) && visible && q2m_random(c->game) < .1f) {
+        *accepted = true;
+        return pounce(c, &enemy, error);
+    }
+    return true;
+}
 static bool shoot(q2m_context *c, qa_error *error) {
     qa_actor_id target = c->monster->enemy;
     if (!q2_actor_live(c->game, target))
         return true;
     qa_combat_state combat;
     qa_body_state enemy;
-    if (!qa_combat_read(c->game->services.combat, target, &combat, error) ||
-        !qa_world_body_read(c->game->services.world, target, &enemy, error))
-        return false;
+    if (!qa_combat_read(c->game->services.combat, target, &combat, error))
+        return !q2m_alive(c) || !q2_actor_live(c->game, target);
+    if (!q2m_alive(c) || !q2_actor_live(c->game, target))
+        return true;
+    if (!qa_world_body_read(c->game->services.world, target, &enemy, error))
+        return !q2m_alive(c) || !q2_actor_live(c->game, target);
     if (!q2m_alive(c) || combat.health <= 0)
         return true;
     if (c->body.ground.registry && q2m_random(c->game) < .33f) {
@@ -187,17 +518,28 @@ static bool shoot(q2m_context *c, qa_error *error) {
     }
     qa_vec3 start = q2m_project_offset(c, qa_v3(24, 0, 6));
     qa_vec3 direction = qa_vec_sub(enemy.origin, start), end = enemy.origin;
-    if (q2m_random(c->game) < .2f + .1f * (float)c->game->options.skill) {
-        end = qa_vec_add(enemy.origin, qa_vec_scale(enemy.velocity, qa_vec_length(direction) / 1000));
-        direction = qa_vec_sub(end, start);
+    bool rerelease = c->game->options.edition == QA_Q2_RERELEASE;
+    float chance = rerelease ? .3f : .2f + .1f * (float)c->game->options.skill;
+    if (q2m_random(c->game) < chance) {
+        if (rerelease) {
+            bool available;
+            if (!q2m_predict_from(c, start, 1000, true, 0, &end, &direction, &available, error))
+                return false;
+            if (!q2m_alive(c) || !available)
+                return true;
+        } else {
+            end = qa_vec_add(enemy.origin, qa_vec_scale(enemy.velocity, qa_vec_length(direction) / 1000));
+            direction = qa_vec_sub(end, start);
+        }
     }
     qa_trace_result result;
-    if (!trace(c, start, end, NULL, UINT32_C(0x0200001b), &result, error))
+    if (!trace(c, start, end, NULL, rerelease ? Q2_PROJECTILE_MASK : Q2_SHOT_MASK, &result, error))
         return false;
     if (!q2m_alive(c) || (!world_hit(c, &result) &&
         (result.hit != QA_TRACE_HIT_ACTOR || !qa_actor_id_equal(result.actor, target))))
         return true;
-    q2m_fire_spec spec = q2m_fire_default(c, Q2M_ATTACK_GREEN_BOLT, 15, 144, start, direction);
+    q2m_fire_spec spec = q2m_fire_default(c, Q2M_ATTACK_GREEN_BOLT, rerelease ? 5 : 15,
+                                         144, start, direction);
     spec.speed = 800;
     spec.has_projectile_effects = true;
     spec.projectile_effects = 8;
@@ -207,23 +549,44 @@ bool q2m_stalker_callback(q2m_context *c, const char *name, bool *handled, qa_er
     *handled = c->monster->definition->species == Q2M_STALKER;
     if (!*handled)
         return true;
+    if (!strcmp(name, "stalker_heal")) {
+        int skill = c->game->options.skill;
+        float health = c->combat.health + (skill == 2 ? 2 : skill == 3 ? 3 : 1);
+        bool rerelease = c->game->options.edition == QA_Q2_RERELEASE;
+        if (rerelease)
+            c->monster->skin = health < c->monster->max_health * .5f ? 1 : 0;
+        else if (health > truncf(c->monster->max_health * .5f))
+            c->monster->skin = 0;
+        bool full = health >= c->monster->max_health;
+        if (!qa_combat_set_health(c->game->services.combat, c->actor->id,
+                                   full ? c->monster->max_health : health, error))
+            return false;
+        return !q2m_alive(c) || !full || reactivate(c, error);
+    }
     if (!strcmp(name, "stalker_shoot_attack"))
         return shoot(c, error);
-    if (!strcmp(name, "stalker_shoot_attack2"))
-        return q2m_random(c->game) >= .4f + .1f * (float)c->game->options.skill || shoot(c, error);
+    if (!strcmp(name, "stalker_shoot_attack2")) {
+        float chance = c->game->options.edition == QA_Q2_RERELEASE
+                           ? .5f : .4f + .1f * (float)c->game->options.skill;
+        return q2m_random(c->game) >= chance || shoot(c, error);
+    }
     if (!strcmp(name, "stalker_jump_straightup"))
         return jump_straight(c, error);
     if (!strcmp(name, "stalker_jump_up") || !strcmp(name, "stalker_jump_down")) {
         bool up = !strcmp(name, "stalker_jump_up");
         qa_vec3 forward, vertical;
         qa_builtin_angle_vectors(c->body.angles, &forward, NULL, &vertical);
-        c->monster->timestamp_ns = c->game->now_ns;
+        if (c->game->options.edition == QA_Q2_CLASSIC) {
+            c->monster->timestamp_ns = c->game->now_ns;
+        }
         c->body.velocity = qa_vec_add(c->body.velocity,
             qa_vec_add(qa_vec_scale(forward, up ? 200 : 100), qa_vec_scale(vertical, up ? 450 : 300)));
         return q2m_write_body(c, true, error);
     }
     if (!strcmp(name, "stalker_jump_wait_land")) {
-        if (q2m_random(c->game) < .3f + .1f * (float)c->game->options.skill &&
+        float chance = c->game->options.edition == QA_Q2_RERELEASE
+                           ? .4f : .3f + .1f * (float)c->game->options.skill;
+        if (q2m_random(c->game) < chance &&
             c->game->now_ns >= c->monster->attack_ns) {
             c->monster->attack_ns = q2m_after(c->game->now_ns, .3);
             if (!shoot(c, error))

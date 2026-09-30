@@ -626,8 +626,7 @@ bool q2_monster_dodge(qa_q2_game *game, qa_actor_id target,
         species_is_soldierh(monster->definition->species))))
     return classic_dodge(&context, attacker, eta_seconds, error);
 
-  if (game->options.product == QA_Q2_ROGUE &&
-      monster->definition->species == Q2M_STALKER) {
+  if (monster->definition->species == Q2M_STALKER) {
     if (context.body.ground.registry == 0)
       return true;
     if (monster->enemy.registry == 0) {
@@ -636,6 +635,11 @@ bool q2_monster_dodge(qa_q2_game *game, qa_actor_id target,
     }
     if (eta_seconds < 0.1f || eta_seconds > 5.0f)
       return true;
+    if (game->options.edition == QA_Q2_RERELEASE) {
+      if (monster->timestamp_ns > game->now_ns)
+        return true;
+      monster->timestamp_ns = q2m_after(game->now_ns, 1.0 + q2m_random(game) * 4.0);
+    }
     return q2m_set_move(&context, "stalker_move_jump_straightup", true, error);
   }
 
@@ -768,6 +772,8 @@ static bool monster_action(qa_q2_game *game, qa_actor_id id,
     return q2m_melee(&context, 80.0f, monster->definition->secondary_damage,
                      100.0f, error);
   case QA_Q2_MONSTER_BLOCKED:
+    if (monster->definition->species == Q2M_STALKER)
+      return q2m_stalker_blocked(&context, value, &(bool){false}, error);
     if (monster->definition->flags & Q2M_JUMPS) {
       monster->jump_ns = q2m_after(game->now_ns, 3.0);
       const char *move =

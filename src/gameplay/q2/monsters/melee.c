@@ -29,7 +29,7 @@ static const melee_action actions[] = {
     {"gekk_hit_left", MELEE_LEFT, 8, 15, 5, 100, NULL, "gek/gk_atck2.wav", "gek/gk_atck1.wav", 1},
     {"gekk_hit_right", MELEE_RIGHT, 8, 15, 5, 100, NULL, "gek/gk_atck3.wav", "gek/gk_atck1.wav", 1},
     {"gekk_bite", MELEE_CENTER, 0, 5, 0, 0},
-    {"stalker_swing_attack", MELEE_CENTER, 0, 5, 5, 50},
+    {"stalker_swing_attack", MELEE_CENTER, 0, 5, 5, 50, NULL, NULL, NULL, 1, .8f},
     {"arachnid_melee_hit", MELEE_CENTER, 0, 15, 0, 50, NULL, NULL, NULL, 0, 1},
     {"guardian_kick", MELEE_CENTER, -80, 85, 0, 700, NULL, NULL, NULL, 0, 1},
 };
@@ -110,7 +110,9 @@ bool q2m_species_melee(q2m_context *context, const char *callback, bool *handled
         float side = action->side == MELEE_LEFT ? context->body.bounds.mins.x
                    : action->side == MELEE_RIGHT ? context->body.bounds.maxs.x : 0;
         bool hit;
-        if (!q2m_hit(context, qa_v3(80, side, action->height), damage, kick, &hit, error))
+        float reach = rerelease && (!strcmp(callback, "stalker_swing_attack") ||
+                                    !strcmp(callback, "guardian_kick")) ? 50 : 80;
+        if (!q2m_hit(context, qa_v3(reach, side, action->height), damage, kick, &hit, error))
             return false;
         if (!q2m_alive(context))
             return true;

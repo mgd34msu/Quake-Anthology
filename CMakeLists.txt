@@ -303,6 +303,7 @@ add_library(qa_game_q1 STATIC
 target_link_libraries(qa_game_q1 PUBLIC qa_builtin qa_campaign)
 
 add_library(qa_game_q2 STATIC
+    src/gameplay/q2/console.c
     src/gameplay/q2/ballistics.c
     src/gameplay/q2/checkpoint.c
     src/gameplay/q2/definitions.c
@@ -362,6 +363,7 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/monsters/roster.c
     src/gameplay/q2/monsters/spawn.c
     src/gameplay/q2/monsters/spawn_growth.c
+    src/gameplay/q2/monsters/stalker.c
     src/gameplay/q2/monsters/widow_death.c
     src/gameplay/q2/monsters/widow_power.c
     src/gameplay/q2/nuke.c

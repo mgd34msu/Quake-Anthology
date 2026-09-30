@@ -3970,11 +3970,6 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
                                context->actor->id, &context->combat.armor,
                                error);
   }
-  if (strcmp(callback, "stalker_heal") == 0) {
-    float health = fminf(monster->base_health, context->combat.health + 1.0f);
-    return qa_combat_set_health(context->game->services.combat,
-                                context->actor->id, health, error);
-  }
   if (strcmp(callback, "change_to_roam") == 0 ||
       strcmp(callback, "roam_goal") == 0) {
     monster->enemy = (qa_actor_id){0};

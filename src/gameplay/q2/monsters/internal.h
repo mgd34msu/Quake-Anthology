@@ -411,6 +411,8 @@ bool q2m_melee(q2m_context *, float range, float damage, float kick,
 bool q2m_hit(q2m_context *, qa_vec3 aim, float damage, float kick, bool *, qa_error *);
 bool q2m_species_melee(q2m_context *, const char *, bool *, qa_error *);
 bool q2m_stalker_callback(q2m_context *, const char *, bool *, qa_error *);
+bool q2m_stalker_pain(q2m_context *, bool reacts, bool chainfist, qa_error *);
+bool q2m_stalker_blocked(q2m_context *, float distance, bool *accepted, qa_error *);
 bool q2m_damage_enemy(q2m_context *, float range, int canonical_mod,
                       uint32_t flags, float damage, float kick, bool *hit,
                       qa_error *);

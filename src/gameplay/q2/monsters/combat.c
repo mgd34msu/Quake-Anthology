@@ -1352,6 +1352,9 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
     return pain_widow(context, damage, true, error);
   case Q2M_GUARDIAN:
     return pain_guardian(context, damage, error);
+  case Q2M_STALKER:
+    return q2m_stalker_pain(context, reacts_to_pain(context),
+                            last_attack_chainfist(monster), error);
   case Q2M_MAKRON:
     if (context->game->options.edition == QA_Q2_RERELEASE)
       return pain_rerelease_makron(context, damage, error);
