@@ -931,6 +931,7 @@ add_library(qa_persistence STATIC
     src/persistence/image.c
     src/persistence/inventory.c
     src/persistence/movement_fields.c
+    src/persistence/navigation.c
     src/persistence/pickups.c
     src/persistence/recovery.c
     src/persistence/session.c
@@ -939,7 +940,7 @@ add_library(qa_persistence STATIC
     src/persistence/strings.c
     src/persistence/targets.c
     src/persistence/world.c)
-target_link_libraries(qa_persistence PUBLIC qa_session qa_content qa_gameplay qa_movement qa_network qa_campaign qa_console)
+target_link_libraries(qa_persistence PUBLIC qa_session qa_content qa_gameplay qa_movement qa_network qa_campaign qa_console qa_navigation)
 
 add_library(qa_frontend STATIC
     src/app/frontend/audio_identity.c
