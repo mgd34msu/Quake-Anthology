@@ -112,7 +112,7 @@ struct qa_frontend {
     qa_audio_engine *audio;
     qa_audio_device *device;
     qa_audio_bank *sounds;
-    frontend_seat seats[QA_INPUT_LOCAL_SEATS];
+    frontend_seat *seats;
     uint64_t time_ns, frame_number, configuration, map_revision;
     uint64_t silent_audio_remainder;
     char *map_name;
@@ -135,6 +135,7 @@ bool frontend_visuals_remap(qa_frontend *, const char *, const char *, float, qa
 bool frontend_resources(qa_frontend *, qa_error *);
 bool frontend_seats_create(qa_frontend *, qa_error *);
 bool frontend_seats_destroy(qa_frontend *, qa_error *);
+void frontend_seats_rebind(qa_frontend *, qa_frontend *);
 bool frontend_commands(qa_frontend *, qa_error *);
 bool frontend_events(qa_frontend *, qa_error *);
 bool frontend_map_events(qa_frontend *, qa_error *);

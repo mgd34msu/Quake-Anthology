@@ -240,10 +240,16 @@ bool frontend_seats_destroy(qa_frontend *frontend, qa_error *error)
         frontend_seat *seat = &frontend->seats[i];
         if (!qa_hud_wheel_destroy(seat->wheel, error)) return false;
         seat->wheel = NULL;
-        if (!qa_hud_destroy(seat->hud, error) || !qa_ui_mods_destroy(seat->mods, 0, error) ||
-            !qa_ui_library_destroy(seat->library, 0, error) || !qa_ui_rankings_destroy(seat->rankings, 0, error) ||
-            !qa_ui_destroy(seat->ui, 0, error)) return false;
-        seat->hud = NULL; seat->mods = NULL; seat->library = NULL; seat->rankings = NULL; seat->ui = NULL;
+        if (!qa_hud_destroy(seat->hud, error)) return false;
+        seat->hud = NULL;
+        if (!qa_ui_mods_destroy(seat->mods, 0, error)) return false;
+        seat->mods = NULL;
+        if (!qa_ui_library_destroy(seat->library, 0, error)) return false;
+        seat->library = NULL;
+        if (!qa_ui_rankings_destroy(seat->rankings, 0, error)) return false;
+        seat->rankings = NULL;
+        if (!qa_ui_destroy(seat->ui, 0, error)) return false;
+        seat->ui = NULL;
         qa_seat_console_destroy(seat->console); seat->console = NULL;
         qa_input_seat_destroy(seat->input); seat->input = NULL;
         frontend_player_retire(seat);
@@ -251,6 +257,11 @@ bool frontend_seats_destroy(qa_frontend *frontend, qa_error *error)
         free(seat->settings_rows); seat->settings_rows = NULL;
         SDL_free(seat->clipboard); seat->clipboard = NULL;
         free(seat->wheel_items); free(seat->wheel_definitions); free(seat->wheel_labels);
+        seat->wheel_items = NULL; seat->wheel_definitions = NULL; seat->wheel_labels = NULL;
     }
     return true;
+}
+void frontend_seats_rebind(qa_frontend *owned, qa_frontend *destination)
+{
+    for (unsigned i = 0; i < owned->options.seats; ++i) owned->seats[i].frontend = destination;
 }

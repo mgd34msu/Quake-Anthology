@@ -39,6 +39,10 @@ bool qa_frontend_create(const qa_frontend_options *options, qa_frontend **out, q
     qa_frontend *frontend = calloc(1, sizeof(*frontend));
     if (!frontend) return frontend_fail(error, QA_ERROR_MEMORY, "allocating frontend owner");
     frontend->options = *options;
+    frontend->seats = calloc(options->seats, sizeof(*frontend->seats));
+    if (!frontend->seats) {
+        free(frontend); return frontend_fail(error, QA_ERROR_MEMORY, "allocating stable local seat contexts");
+    }
     qa_scene_frame_init(&frontend->frame, QA_FRONTEND_COMMAND_OWNER);
     qa_application_options application = options->application;
     application.guest_context = frontend;
@@ -160,7 +164,7 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     qa_material_order_destroy(frontend->order);
     qa_cpu_destroy(frontend->cpu); qa_gl_destroy(frontend->gl); qa_display_destroy(frontend->display);
     if (frontend->sdl_subsystems) SDL_QuitSubSystem(frontend->sdl_subsystems);
-    free(frontend->map_name); free(frontend->audio_ids); free(frontend);
+    free(frontend->map_name); free(frontend->audio_ids); free(frontend->seats); free(frontend);
     return true;
 }
 bool qa_frontend_run(qa_frontend *frontend, qa_error *error)
