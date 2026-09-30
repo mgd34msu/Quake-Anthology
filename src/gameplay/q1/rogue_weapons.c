@@ -13,6 +13,8 @@ static bool is_monster(qa_q1_game *g, qa_actor_id actor) {
            g->services.actor_traits(g->services.context, actor, &traits) && traits.monster;
 }
 static bool finish(qa_q1_game *g, q1_player *player, float delay, bool repeating, qa_error *error) {
+    if (!q1_weapon_attack_delay(g, player, &delay, error))
+        return false;
     player->attack_finished = g->time + delay;
     player->next_weapon_frame = g->time + (repeating ? 0.1 : delay);
     player->continuous = repeating;

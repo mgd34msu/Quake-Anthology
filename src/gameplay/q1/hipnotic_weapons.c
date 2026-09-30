@@ -16,6 +16,8 @@ static bool finish(qa_q1_game *g, q1_player *player, float delay, int32_t frame,
     if (!q1_weapon_parameters(g, player->id, player->weapon, &parameters, error))
         return false;
     delay = parameters.interval;
+    if (!q1_weapon_attack_delay(g, player, &delay, error))
+        return false;
     player->attack_finished = g->time + delay;
     player->next_weapon_frame = player->attack_finished;
     player->weapon_frame = frame;
@@ -333,7 +335,10 @@ static bool hammer_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
                   &trace, error))
         return false;
     float cells = (float)q1_ammo_count(g, player->id, QA_Q1_CELLS);
-    player->attack_finished = g->time + 0.4;
+    float delay = .4f;
+    if (!q1_weapon_attack_delay(g, player, &delay, error))
+        return false;
+    player->attack_finished = g->time + delay;
     if (trace.fraction == 1 && cells >= 15) {
         qa_vec3 start = qa_vec_add(source, qa_vec_scale(forward, 32));
         if (!q1_trace(g, start, qa_vec_sub(start, qa_vec_scale(up, 50)), player->id, true, &trace,
@@ -349,7 +354,10 @@ static bool hammer_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
                        !q1_hipnotic_hammer_base(g, player, trace.end,
                                                 strike->state.projectile.weapon, error))
                 return false;
-            player->attack_finished = g->time + 1.5;
+            delay = 1.5f;
+            if (!q1_weapon_attack_delay(g, player, &delay, error))
+                return false;
+            player->attack_finished = g->time + delay;
             return q1_remove(g, strike, error);
         }
     }

@@ -4,6 +4,8 @@ static bool attack_delay(qa_q1_game *g, q1_player *player, float delay, qa_error
     qa_q1_weapon_parameters parameters = {.interval = delay, .nail_speed = 1000};
     if (!q1_weapon_parameters(g, player->id, QA_Q1_MG3_MJOLNIR, &parameters, error))
         return false;
+    if (!q1_weapon_attack_delay(g, player, &parameters.interval, error))
+        return false;
     player->attack_finished = g->time + parameters.interval;
     return true;
 }

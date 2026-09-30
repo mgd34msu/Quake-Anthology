@@ -689,6 +689,36 @@ bool q1_weapon_parameters(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon,
     return true;
 }
 
+bool q1_weapon_attack_delay(qa_q1_game *g, q1_player *player, float *delay, qa_error *error) {
+    qa_actor_id actor = player->id;
+    if (g->host.attack_delay &&
+        !g->host.attack_delay(g->host.context, actor, player->weapon, delay, error))
+        return false;
+    if (q1_player_get(g, actor) != player) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+                     "Q1 attack delay policy retired the source player");
+        return false;
+    }
+    if (!isfinite(*delay) || *delay <= 0) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "invalid selected Q1 attack delay");
+        return false;
+    }
+    return true;
+}
+
+static bool before_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
+    qa_actor_id actor = player->id;
+    if (g->host.before_fire &&
+        !g->host.before_fire(g->host.context, actor, player->weapon, error))
+        return false;
+    if (q1_player_get(g, actor) != player) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+                     "Q1 firing policy retired the source player");
+        return false;
+    }
+    return true;
+}
+
 static bool weapon_observe(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon,
                             qa_q1_weapon_view *out, bool *found, qa_error *error) {
     q1_player *player = q1_player_get(g, actor);
@@ -820,7 +850,7 @@ bool qa_q1_player_weapon_read(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon wea
     return result;
 }
 
-bool q1_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
+static bool fire_weapon(qa_q1_game *g, q1_player *player, qa_error *error) {
     if (player->input.holstered || q1_health(g, player->id) <= 0 ||
         g->time < (player->continuous ? player->next_weapon_frame : player->attack_finished))
         return true;
@@ -829,9 +859,11 @@ bool q1_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
     if (ammo >= 0 && q1_ammo_count(g, player->id, (qa_q1_ammo)ammo) < 1)
         return qa_q1_player_select(g, player->id, q1_best_weapon(g, player), error);
     if (weapon > QA_Q1_LIGHTNING)
-        return q1_expansion_fire(g, player, error);
+        return before_fire(g, player, error) && q1_expansion_fire(g, player, error);
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, player->id, &body, error))
+        return false;
+    if (!before_fire(g, player, error))
         return false;
     bool repeating = player->continuous;
     qa_builtin_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up);
@@ -940,7 +972,8 @@ bool q1_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
     default:
         return false;
     }
-    if (!q1_horde_axe_delay(g, player, &parameters.interval, error))
+    if (!q1_horde_axe_delay(g, player, &parameters.interval, error) ||
+        !q1_weapon_attack_delay(g, player, &parameters.interval, error))
         return false;
     player->attack_finished = g->time + parameters.interval;
     player->weapon_frame = player->continuous
@@ -950,6 +983,18 @@ bool q1_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
         player->punch.x = punch;
     return q1_weapon_event(g, player, punch, attack, error) &&
            q1_effect(g, QA_BUILTIN_MUZZLE, player->id, body.origin, 0, 0, error);
+}
+bool q1_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    bool ok = fire_weapon(g, player, error);
+    if (ok && !qa_q1_game_operation_live(&operation)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 source retired during weapon firing");
+        ok = false;
+    }
+    qa_q1_game_operation_end(&operation);
+    return ok;
 }
 bool q1_axe_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
     q1_player *player = q1_player_get(g, strike->owner);

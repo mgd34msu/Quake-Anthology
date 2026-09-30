@@ -178,6 +178,8 @@ typedef struct qa_q1_host {
     bool (*force_retouch)(void *, uint32_t source_frames, qa_error *);
     bool (*weapon_parameters)(void *, qa_actor_id, qa_q1_weapon, qa_q1_weapon_parameters *,
                               qa_error *);
+    bool (*before_fire)(void *, qa_actor_id, qa_q1_weapon, qa_error *);
+    bool (*attack_delay)(void *, qa_actor_id, qa_q1_weapon, float *delay, qa_error *);
     bool (*cheat_arsenal)(void *, qa_actor_id, qa_q1_cheat_grant, bool *handled, qa_error *);
     bool (*horde)(void *);
     bool (*monster_path)(void *, qa_actor_id, qa_vec3 goal, float distance, qa_q1_path_result *,

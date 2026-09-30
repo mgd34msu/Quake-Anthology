@@ -515,6 +515,7 @@ bool q1_consume(qa_q1_game *, qa_actor_id, qa_q1_ammo, float, qa_error *);
 bool q1_fire(qa_q1_game *, q1_player *, qa_error *);
 bool q1_weapon_parameters(qa_q1_game *, qa_actor_id, qa_q1_weapon, qa_q1_weapon_parameters *,
                           qa_error *);
+bool q1_weapon_attack_delay(qa_q1_game *, q1_player *, float *, qa_error *);
 bool q1_aim(qa_q1_game *, qa_actor_id, qa_vec3, qa_vec3 *, qa_error *);
 bool q1_weapon_event(qa_q1_game *, q1_player *, float, int32_t, qa_error *);
 bool q1_expansion_fire(qa_q1_game *, q1_player *, qa_error *);
