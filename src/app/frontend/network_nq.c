@@ -284,6 +284,8 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
     if (!present) return true;
     if (!strcmp(command, "say") || !strcmp(command, "say_team"))
         return source_chat(peer, actor, !strcmp(command, "say_team"), cursor, error);
+    if (!strcmp(command, "kill"))
+        return qa_application_network_q1_kill(peer->host->frontend->application, actor, error);
     if (!strcmp(command, "name")) {
         if (!qa_q1_token(&cursor, false, first, sizeof(first), &present, error)) return false;
         return qa_application_network_q1_name(peer->host->frontend->application, actor, present ? first : "unconnected", error);
@@ -296,7 +298,7 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
         return qa_application_network_q1_colors(peer->host->frontend->application, actor, top, bottom, error);
     }
     static const char *const allowed[] = {"status", "god", "notarget", "fly", "noclip",
-        "kill", "pause", "kick", "ping", "give", "ban"};
+        "pause", "kick", "ping", "give", "ban"};
     for (size_t i = 0; i < sizeof(allowed) / sizeof(*allowed); ++i)
         if (!strcmp(command, allowed[i])) return qa_application_actor_command(peer->host->frontend->application, actor, text, error);
     uint8_t bytes[96]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);

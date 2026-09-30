@@ -402,6 +402,30 @@ bool qa_application_network_q1_chat_recipients(qa_application *app, qa_actor_id 
     return true;
 }
 
+bool qa_application_network_q1_kill(qa_application *app, qa_actor_id player, qa_error *error)
+{
+    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    if (!engine) return false;
+    if (app->operation != APPLICATION_IDLE || app->state != QA_APPLICATION_RUNNING ||
+        !application_qc_input_idle(engine->provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 ClientKill requires its idle running source owner");
+    const application_qc_client *client = engine->clients + slot;
+    if (!client->spawned || client->spectator) return true;
+    int32_t reference; float health;
+    if (!q1_entity_reference(engine, player, &reference, error) ||
+        !application_qc_float(engine, reference, "health", &health, error)) return false;
+    if (health <= 0) return true;
+    qa_qc_game_global globals[] = {
+        {"self", {QA_QC_GAME_ACTOR, {.actor = player}}},
+        {"other", {QA_QC_GAME_ACTOR, {.actor = {0}}}},
+        {"time", {QA_QC_GAME_FLOAT, {.number = (float)((double)engine->source_time_ns / 1e9)}}}
+    };
+    bool ok = qa_qc_game_call(engine->provider->state.qc.game, "ClientKill", NULL, 0,
+        globals, sizeof(globals) / sizeof(*globals), NULL, error);
+    if (!ok) application_fault(app, error);
+    return ok;
+}
+
 bool qa_application_network_q1_name(qa_application *app, qa_actor_id player,
     const char *name, qa_error *error)
 {
