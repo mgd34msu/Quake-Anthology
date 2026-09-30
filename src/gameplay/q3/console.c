@@ -207,6 +207,30 @@ static bool dispatch(qa_q3_game *game, qa_actor_id actor, const qa_command_invoc
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
     const char *name = command->argv[0];
+    if (named(name, "where")) {
+        *handled = true;
+        qa_body_state body;
+        if (!qa_world_body_read(game->options.services.world, actor, &body, error)) return false;
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+        char text[64];
+        int length = snprintf(text, sizeof(text), "(%i %i %i)",
+            q3_source_float_to_int(body.origin.x), q3_source_float_to_int(body.origin.y),
+            q3_source_float_to_int(body.origin.z));
+        if (length >= 32) {
+            char warning[80];
+            snprintf(warning, sizeof(warning), "Com_sprintf: overflow of %i in 32\n", length);
+            if (!game->options.hooks.console_print)
+                return q3_fail(error, "Q3 vector overflow requires the source console print sink");
+            if (!game->options.hooks.console_print(game->options.hooks.context, warning, error))
+                return false;
+            entry = q3_actor_get(game, actor);
+            if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+            length = 31;
+        }
+        text[length] = '\n'; text[length + 1] = 0;
+        return print(game, actor, text, error);
+    }
     if (named(name, "setviewpos")) {
         *handled = true;
         if (!game->options.hooks.cheats_enabled ||

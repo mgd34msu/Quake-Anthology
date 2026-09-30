@@ -15,6 +15,21 @@ bool application_native_cheats_enabled(void *opaque)
     return cheats != NULL && cheats->integer != 0;
 }
 
+bool application_native_q3_console_print(void *opaque, const char *text,
+                                          qa_error *error)
+{
+    application_provider *source = opaque;
+    if (!source || source->kind != APPLICATION_PROVIDER_Q3 || !text ||
+        !source->constructed || !source->attached || source->close_pending)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 print source has retired");
+    qa_command_context context = {.owner = source->owner, .dialect = QA_CONSOLE_Q3,
+                                  .origin = QA_COMMAND_SERVER};
+    if (!qa_application_capture_command_context(source->application, &context, &context, error))
+        return false;
+    application_console_print(source->application, &context, text);
+    return true;
+}
+
 bool application_native_console_motion(void *opaque, qa_actor_id actor,
                                        bool noclip, qa_error *error)
 {

@@ -165,6 +165,7 @@ typedef struct qa_q3_hooks {
     bool (*ranking_report)(void *, const qa_ranking_source_report *, qa_error *);
     bool (*ranking_warmup)(void *);
     bool (*cheats_enabled)(void *);
+    bool (*console_print)(void *, const char *, qa_error *);
     bool (*console_motion)(void *, qa_actor_id, bool noclip, qa_error *);
     bool (*grant_arsenal)(void *, qa_actor_id, bool ammo, bool *handled, qa_error *);
     bool (*give_item)(void *, qa_actor_id, size_t, const char *const *, bool *handled, qa_error *);
