@@ -3,6 +3,7 @@
 
 #include "qa/source_save.h"
 #include "qa/bot_library.h"
+#include "qa/bot_chat.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -59,5 +60,6 @@ bool bot_save_weights_fields(qa_source_save_io *, const qa_bot_weights *, qa_bot
 bool bot_save_character_fields(qa_source_save_io *, const qa_bot_character *, qa_bot_character **);
 bool bot_save_weapons_fields(qa_source_save_io *, const qa_bot_weapons *, qa_bot_weapons **);
 bool bot_save_items_fields(qa_source_save_io *, const qa_bot_items *, qa_bot_items **);
+bool bot_save_chat_asset_fields(qa_source_save_io *, const qa_bot_chat_asset *, qa_bot_chat_asset **);
 
 #endif

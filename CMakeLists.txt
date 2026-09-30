@@ -494,6 +494,7 @@ add_library(qa_bots STATIC
     src/bots/ai/roster.c
     src/bots/ai/team.c
     src/bots/chat/asset.c
+    src/bots/chat/asset_save.c
     src/bots/chat/checkpoint.c
     src/bots/chat/construct.c
     src/bots/chat/integrity.c
@@ -507,6 +508,7 @@ add_library(qa_bots STATIC
     src/bots/goals/report.c
     src/bots/knowledge.c
     src/bots/library/bsp.c
+    src/bots/library/bsp_save.c
     src/bots/library/character.c
     src/bots/library/core.c
     src/bots/library/genetic.c
@@ -541,6 +543,7 @@ add_library(qa_bots STATIC
     src/bots/random.c
     src/bots/runtime/characteristics.c
     src/bots/runtime/core.c
+    src/bots/runtime/requirements_save.c
     src/bots/runtime/handles.c
     src/bots/runtime/observations.c
     src/bots/runtime/observations_save.c

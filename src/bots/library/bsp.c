@@ -1,13 +1,9 @@
-#include "qa/bot_bsp.h"
+#include "bsp_private.h"
 #include "qa/text.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
-struct qa_bot_bsp {
-    qa_entities entities;
-    size_t record_capacity, property_capacity;
-};
 static bool fail(qa_error *e, const char *message) {
     qa_error_set(e, QA_ERROR_ARGUMENT, 0, "%s", message);
     return false;
