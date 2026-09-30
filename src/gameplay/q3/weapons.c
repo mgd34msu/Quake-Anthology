@@ -12,6 +12,9 @@ static bool attack_geometry(qa_q3_game *game, qa_actor_id actor, q3_attack_geome
     qa_body_state body;
     if (!qa_world_body_read(game->options.services.world, actor, &body, error))
         return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return q3_fail(error, "Q3 weapon player changed during its body read");
     qa_q3_player_state *player = &entry->state.player;
     q3_source_angle_vectors(player->view_angles, &out->forward, &out->right, &out->up);
     out->muzzle = qa_vec_add(body.origin, qa_v3(0, 0, player->view_height));
@@ -377,9 +380,9 @@ static bool rail(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry attac
     }
     return true;
 }
-bool qa_q3_fire_weapon(qa_q3_game *game, qa_actor_id shooter, qa_q3_weapon weapon,
-                       qa_error *error) {
-    if (!game || weapon < QA_Q3_W_NONE || weapon >= QA_Q3_WEAPON_COUNT ||
+static bool fire_weapon(qa_q3_game *game, qa_actor_id shooter, qa_q3_weapon weapon,
+                        qa_error *error) {
+    if (weapon < QA_Q3_W_NONE || weapon >= QA_Q3_WEAPON_COUNT ||
         (game->options.product == QA_Q3_ARENA && weapon > QA_Q3_W_GRAPPLE))
         return q3_fail(error, "weapon outside selected Q3 product");
     q3_attack_geometry attack;
@@ -388,6 +391,8 @@ bool qa_q3_fire_weapon(qa_q3_game *game, qa_actor_id shooter, qa_q3_weapon weapo
     if (!q3_ranking_fire(game, shooter, weapon, error))
         return false;
     q3_actor *entry = q3_actor_get(game, shooter);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
     if (weapon != QA_Q3_W_GAUNTLET && weapon != QA_Q3_W_GRAPPLE)
         entry->state.player.accuracy_shots =
             q3_add_time(entry->state.player.accuracy_shots, weapon == QA_Q3_W_NAIL ? 15 : 1);
@@ -429,4 +434,14 @@ bool qa_q3_fire_weapon(qa_q3_game *game, qa_actor_id shooter, qa_q3_weapon weapo
             return false;
     }
     return true;
+}
+
+bool qa_q3_fire_weapon(qa_q3_game *game, qa_actor_id shooter, qa_q3_weapon weapon,
+                       qa_error *error) {
+    if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid Q3 weapon action boundary");
+    ++game->observation_depth;
+    bool okay = fire_weapon(game, shooter, weapon, error);
+    --game->observation_depth;
+    return okay;
 }

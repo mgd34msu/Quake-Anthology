@@ -136,26 +136,8 @@ bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3
     }
     if (weapon != QA_Q3_W_NAIL)
         direction = qa_vec_normalize(direction);
-    qa_vec3 velocity = qa_vec_scale(direction, speed);
-    if (weapon == QA_Q3_W_NAIL) {
-        float angle = q3_source_float_multiply(
-            q3_source_float_multiply(q3_random(game), Q3_PI), 2.0f);
-        float vertical = q3_source_float_multiply(
-            q3_source_float_multiply(
-                q3_source_float_multiply((float)sin((double)angle), q3_crandom(game)), 500.0f),
-            16.0f);
-        float horizontal = q3_source_float_multiply(
-            q3_source_float_multiply(
-                q3_source_float_multiply((float)cos((double)angle), q3_crandom(game)), 500.0f),
-            16.0f);
-        qa_vec3 end = qa_vec_add(
-            qa_vec_add(qa_vec_add(start, qa_vec_scale(direction, 131072.0f)),
-                       qa_vec_scale(right, horizontal)),
-            qa_vec_scale(up, vertical));
-        float nail_speed = q3_source_float_add(555.0f,
-            q3_source_float_multiply(q3_random(game), 1800.0f));
-        velocity = qa_vec_scale(nail_direction(qa_vec_sub(end, start)), nail_speed);
-    }
+    qa_vec3 velocity = weapon == QA_Q3_W_NAIL ? qa_v3(0, 0, 0)
+                                             : qa_vec_scale(direction, speed);
     velocity = qa_physics_q3_snap(velocity);
     qa_actor_collision collision = {.family = QA_COLLISION_Q3,
                                     .shape = QA_SHAPE_BOX,
@@ -185,10 +167,34 @@ bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3
             .phase = Q3_MISSILE_FLIGHT,
             .flags = weapon == QA_Q3_W_GRENADE ? 0x20u : 0,
             .trajectory = {.type = gravity ? QA_TRAJECTORY_GRAVITY : QA_TRAJECTORY_LINEAR,
-                           .time_ms = weapon == QA_Q3_W_NAIL ? game->now_ms
-                                                             : q3_add_time(game->now_ms, -50),
+                           .time_ms = q3_add_time(game->now_ms, -50),
                            .base = start,
                            .delta = velocity}}};
+    if (weapon == QA_Q3_W_NAIL) {
+        float angle = q3_source_float_multiply(
+            q3_source_float_multiply(q3_random(game), Q3_PI), 2.0f);
+        float vertical = q3_source_float_multiply(
+            q3_source_float_multiply(
+                q3_source_float_multiply((float)sin((double)angle), q3_crandom(game)), 500.0f),
+            16.0f);
+        float horizontal = q3_source_float_multiply(
+            q3_source_float_multiply(
+                q3_source_float_multiply((float)cos((double)angle), q3_crandom(game)), 500.0f),
+            16.0f);
+        qa_vec3 end = qa_vec_add(
+            qa_vec_add(qa_vec_add(start, qa_vec_scale(direction, 131072.0f)),
+                       qa_vec_scale(right, horizontal)),
+            qa_vec_scale(up, vertical));
+        float nail_speed = q3_source_float_add(555.0f,
+            q3_source_float_multiply(q3_random(game), 1800.0f));
+        velocity = qa_physics_q3_snap(
+            qa_vec_scale(nail_direction(qa_vec_sub(end, start)), nail_speed));
+        entry->state.missile.trajectory.time_ms = game->now_ms;
+        entry->state.missile.trajectory.delta = velocity;
+        spawn.body.velocity = velocity;
+        if (!qa_world_body_write(game->options.services.world, actor, &spawn.body, error))
+            return q3_rollback_spawn(game, actor, error);
+    }
     qa_combat_state owner_state;
     qa_error ignored = {0};
     bool described = qa_combat_read(game->options.services.combat, owner, &owner_state, &ignored);
