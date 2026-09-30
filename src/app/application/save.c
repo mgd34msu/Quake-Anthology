@@ -1,4 +1,5 @@
 #include "save_private.h"
+#include "control_frame.h"
 #include "guest_qc_internal.h"
 #include "guest_native_q2_private.h"
 #include "qa/game_q1_checkpoint.h"
@@ -191,9 +192,9 @@ static bool controls_signature(qa_source_save_io *io)
 {
     unsigned char actual[8] = {'Q','A','C','T','R','L','S',0};
     static const unsigned char expected[8] = {'Q','A','C','T','R','L','S',0};
-    uint32_t version = 1;
+    uint32_t version = 2;
     return qa_source_save_bytes(io, actual, sizeof(actual)) && !memcmp(actual, expected, sizeof(actual)) &&
-        qa_source_save_u32(io, &version) && version == 1;
+        qa_source_save_u32(io, &version) && version == 2;
 }
 
 static bool application_controls_capture(qa_application *app, qa_buffer *out, qa_error *error)
@@ -214,6 +215,7 @@ static bool application_controls_capture(qa_application *app, qa_buffer *out, qa
     for (uint32_t i = 0; ok && i < app->motion_capacity; ++i) if (app->motion[i].active) {
         application_motion_record copy = app->motion[i]; ok = motion_fields(&io, app, &copy);
     }
+    if (ok) ok = application_control_frames_fields(&io, app, app->controls, NULL, error);
     if (ok) ok = qa_source_save_finish(&io, out);
     if (!ok && (!error || error->code == QA_OK)) application_fail(error, QA_ERROR_FORMAT, "invalid control continuation");
     qa_source_save_dispose(&io); return ok;
@@ -221,6 +223,7 @@ static bool application_controls_capture(qa_application *app, qa_buffer *out, qa
 
 static bool application_controls_restore(qa_application *app, qa_bytes bytes, qa_error *error)
 {
+    struct application_control_frames *frames = NULL;
     application_control_record *controls = calloc(app->control_capacity, sizeof(*controls));
     application_motion_record *motion = calloc(app->motion_capacity, sizeof(*motion));
     if (!controls || !motion) { free(controls); free(motion); return application_fail(error, QA_ERROR_MEMORY, "allocating saved control continuations"); }
@@ -241,13 +244,17 @@ static bool application_controls_restore(qa_application *app, qa_bytes bytes, qa
         ok = motion_fields(&io, app, &record) && record.actor.slot < app->motion_capacity && (!i || record.actor.slot > previous);
         if (ok) { previous = record.actor.slot; motion[record.actor.slot] = record; }
     }
+    if (ok) ok = application_control_frames_fields(&io, app, controls, &frames, error);
     if (ok) ok = qa_source_save_finish(&io, NULL);
     if (ok) {
         application_control_record *old_controls = app->controls; application_motion_record *old_motion = app->motion;
         app->controls = controls; app->motion = motion; controls = old_controls; motion = old_motion;
+        struct application_control_frames *old_frames = app->control_frames;
+        app->control_frames = frames; frames = old_frames;
     }
     if (!ok && (!error || error->code == QA_OK)) application_fail(error, QA_ERROR_FORMAT, "invalid saved control continuation");
     for (uint32_t i = 0; i < app->control_capacity; ++i) qa_movement_result_free(&controls[i].result);
+    application_control_frames_free(frames);
     free(controls); free(motion); qa_source_save_dispose(&io); return ok;
 }
 
@@ -933,7 +940,8 @@ static bool persistence_inventory(application_persistence *operation, qa_applica
         }
         if (schema) {
             owner->schema = schema;
-            owner->schema_version = owner->kind == QA_SAVE_APPLICATION ? 3 : 1;
+            owner->schema_version = owner->kind == QA_SAVE_APPLICATION ? 3 :
+                                    owner->kind == QA_SAVE_CONTROLS ? 2 : 1;
             if (!owner->backend) owner->backend = "";
         } else {
             const qa_application_persistence_owner *binding = NULL;

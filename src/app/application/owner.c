@@ -2,6 +2,7 @@
 #include "save_private.h"
 #include "save_native_q2.h"
 #include "save_content.h"
+#include "control_frame.h"
 #include "qa/rankings_save.h"
 #include "qa/player_progress_save.h"
 #include "qa/catalog_save.h"
@@ -162,6 +163,10 @@ static bool create_application(const qa_application_options *options,
         .mixed_order = options->mixed_source_order,
         .actor_released = application_actor_released,
         .source_actor = application_arsenal_source_actor,
+        .prepare_commands = application_control_frames_prepare,
+        .run_commands = application_control_frames_commands,
+        .end_commands = application_control_frames_end,
+        .controlled_actor = application_control_frames_actor,
         .release_context = application,
     };
     bool session_created;
@@ -195,6 +200,8 @@ static bool create_application(const qa_application_options *options,
         goto fail;
     if (!application_composition_create(application, error))
         goto fail;
+    if (!application_control_frames_create(application, error))
+        goto fail;
 
     *out = application;
     return true;
@@ -212,6 +219,8 @@ fail:
     application->targets = NULL;
     free(application->physics);
     free(application->motion);
+    application_control_frames_free(application->control_frames);
+    application->control_frames = NULL;
     free(application->controls);
     free(application->q2_visuals);
     qa_arena_destroy(&application->event_arena);
@@ -680,10 +689,12 @@ bool qa_application_advance(qa_application *application, uint64_t elapsed_ns,
     if (application->q1_paused) return true;
     application->operation = APPLICATION_ADVANCING;
     bool ok = qa_session_advance(application->session, elapsed_ns, error);
+    if (!ok) {
+        qa_error cleanup = {0};
+        (void)application_control_frames_abort(application, &cleanup);
+    }
     if (ok)
         ok = application_players_advance(application, error);
-    if (ok)
-        ok = application_bots_frame(application, error);
     if (ok && application->modes != NULL) {
         uint64_t now = qa_session_elapsed(application->session);
         for (size_t index = 0; index < application->mode_count; ++index)
