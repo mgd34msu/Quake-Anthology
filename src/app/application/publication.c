@@ -2,6 +2,7 @@
 #include "guest_native_q2_private.h"
 #include "map_private.h"
 #include "save_private.h"
+#include "bots_save_private.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -618,19 +619,37 @@ bool application_save_prepare_content(qa_application *candidate,
         candidate->routing_snapshot = snapshot;
         candidate->routing_providers = publication->next;
         candidate->routing_provider_count = publication->next_count;
-        ok = construct_and_reserve(candidate, publication, error) &&
-             application_match_prepare(candidate, publication, error);
+        ok = application_map_restore_identity(candidate, snapshot, error) &&
+             application_match_prepare_modes(candidate, publication, error);
+        if (ok) {
+            /* Bot and guest services borrow the actual candidate modes. Install
+             * this owner before creating either runtime; teardown owns it even
+             * if later source construction fails. */
+            candidate->modes = publication->modes;
+            publication->modes = NULL;
+            candidate->mode_ids = publication->mode_ids;
+            publication->mode_ids = NULL;
+            const qa_save_record *bots =
+                qa_save_image_find(image, QA_SAVE_BOTS, "");
+            const qa_save_record *navigation =
+                qa_save_image_find(image, QA_SAVE_NAVIGATION, "");
+            if (bots == NULL || navigation == NULL)
+                ok = application_fail(error, QA_ERROR_FORMAT,
+                                      "saved application has no bot or navigation owner");
+            else
+                ok = application_bots_save_prepare(candidate, bots->payload,
+                                                    navigation->payload, error);
+        }
+        if (ok)
+            ok = construct_and_reserve(candidate, publication, error) &&
+                 application_match_prepare_equipment(candidate, publication, error);
     }
     if (ok) {
         ok = commit_admissions(publication, error);
         publish_roster(candidate, publication);
         publication->published = true;
-        candidate->modes = publication->modes;
-        publication->modes = NULL;
         candidate->equipment = publication->equipment;
         publication->equipment = NULL;
-        candidate->mode_ids = publication->mode_ids;
-        publication->mode_ids = NULL;
         if (ok)
             ok = application_map_restore_bind(candidate, snapshot, error);
     }

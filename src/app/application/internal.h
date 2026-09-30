@@ -476,6 +476,8 @@ bool application_apply(qa_application *, const qa_launch_draft *, qa_error *);
 bool application_map_prepare(qa_application *, application_publication *, qa_error *);
 bool application_map_publish(qa_application *, application_publication *, qa_error *);
 bool application_match_prepare(qa_application *, application_publication *, qa_error *);
+bool application_match_prepare_modes(qa_application *, application_publication *, qa_error *);
+bool application_match_prepare_equipment(qa_application *, application_publication *, qa_error *);
 void application_publication_dispose(qa_application *, application_publication *);
 bool application_publication_prepare(qa_application *,
                                      const qa_launch_snapshot *,

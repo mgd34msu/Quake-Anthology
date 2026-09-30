@@ -6,6 +6,7 @@
 typedef struct application_player_travel application_player_travel;
 bool application_map_prepare_content(qa_application *, application_publication *, qa_error *);
 bool application_map_restore_bind(qa_application *, const qa_launch_snapshot *, qa_error *);
+bool application_map_restore_identity(qa_application *, const qa_launch_snapshot *, qa_error *);
 bool application_players_restore_prepare(qa_application *, const qa_launch_choices *, qa_error *);
 
 bool application_players_prepare(qa_application *, application_publication *,

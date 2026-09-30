@@ -258,7 +258,7 @@ static bool equipment_resume(void *opaque, qa_actor_id actor, qa_error *error)
                             "selected arsenal has no equipment resume adapter");
 }
 
-bool application_match_prepare(qa_application *application,
+bool application_match_prepare_modes(qa_application *application,
                                application_publication *publication,
                                qa_error *error)
 {
@@ -332,8 +332,21 @@ bool application_match_prepare(qa_application *application,
             publication->primary_mode = id;
     }
 
+    return true;
+}
+
+bool application_match_prepare_equipment(qa_application *application,
+                                         application_publication *publication,
+                                         qa_error *error)
+{
+    const qa_launch_choices *choices =
+        qa_launch_snapshot_choices(publication->candidate);
     qa_equipment_options equipment = {
-        .services = modes.services,
+        .services = application_builtin_services(
+            application,
+            publication->initial_world != NULL ? publication->initial_world
+                                               : application->world,
+            application->physics),
         .context = application,
         .select_weapon = application_native_mode_select_weapon,
         .primary_holster = equipment_holster,
@@ -372,4 +385,12 @@ bool application_match_prepare(qa_application *application,
                 : QA_Q3_ARENA;
     }
     return qa_equipment_create(&equipment, &publication->equipment, error);
+}
+
+bool application_match_prepare(qa_application *application,
+                               application_publication *publication,
+                               qa_error *error)
+{
+    return application_match_prepare_modes(application, publication, error) &&
+           application_match_prepare_equipment(application, publication, error);
 }

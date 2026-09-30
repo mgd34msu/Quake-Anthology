@@ -13,6 +13,7 @@
 #include "qa/binary.h"
 #include "guest_checkpoint.h"
 #include "map_players_private.h"
+#include "bots_save_private.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -632,6 +633,8 @@ static const char *shared_schema(qa_save_owner_kind kind)
     case QA_SAVE_MODES: return "qa.modes";
     case QA_SAVE_EQUIPMENT: return "qa.equipment";
     case QA_SAVE_COMMANDS: return "qa.commands";
+    case QA_SAVE_NAVIGATION: return "qa.navigation.application";
+    case QA_SAVE_BOTS: return "qa.bots.application";
     default: return NULL;
     }
 }
@@ -913,6 +916,8 @@ static bool persistence_capture_owner(void *opaque, const qa_save_owner *owner,
     case QA_SAVE_MODES: return qa_modes_capture(app->modes, out, error);
     case QA_SAVE_EQUIPMENT: return qa_equipment_capture(app->equipment, out, error);
     case QA_SAVE_COMMANDS: return application_commands_capture(app, out, error);
+    case QA_SAVE_NAVIGATION: return application_navigation_save_capture(app, out, error);
+    case QA_SAVE_BOTS: return application_bots_save_capture(app, out, error);
     case QA_SAVE_PROVIDER: {
         application_provider *provider = saved_provider(app, owner->instance);
         if (provider && provider_schema(provider))
@@ -1032,6 +1037,8 @@ static bool persistence_restore_owner(void *opaque, void *value,
     case QA_SAVE_EQUIPMENT: return qa_equipment_restore_bytes(candidate->equipment, record->payload, error);
     case QA_SAVE_COMMANDS: return application_commands_restore(candidate, record->payload,
         &operation->restored_command_generation, error);
+    case QA_SAVE_NAVIGATION: return application_navigation_save_restore(candidate, record->payload, error);
+    case QA_SAVE_BOTS: return application_bots_save_restore(candidate, record->payload, error);
     case QA_SAVE_CVARS: {
         qa_cvars_restore *ticket = NULL;
         bool ok = qa_cvars_save_prepare(candidate->cvars, record->payload, &ticket, error) &&
@@ -1057,7 +1064,8 @@ static bool persistence_restore_owner(void *opaque, void *value,
 static bool persistence_shared_match(qa_application *app, const qa_save_image *image, qa_error *error)
 {
     static const qa_save_owner_kind owners[] = {QA_SAVE_COMBAT, QA_SAVE_INVENTORY, QA_SAVE_PICKUPS,
-        QA_SAVE_TARGETS, QA_SAVE_CONTROLS, QA_SAVE_MODES, QA_SAVE_EQUIPMENT};
+        QA_SAVE_TARGETS, QA_SAVE_CONTROLS, QA_SAVE_MODES, QA_SAVE_EQUIPMENT,
+        QA_SAVE_NAVIGATION, QA_SAVE_BOTS};
     for (size_t i = 0; i < sizeof(owners) / sizeof(*owners); ++i) {
         qa_buffer encoded = {0}; bool ok;
         switch (owners[i]) {
@@ -1068,6 +1076,8 @@ static bool persistence_shared_match(qa_application *app, const qa_save_image *i
         case QA_SAVE_CONTROLS: ok = application_controls_capture(app, &encoded, error); break;
         case QA_SAVE_MODES: ok = qa_modes_capture(app->modes, &encoded, error); break;
         case QA_SAVE_EQUIPMENT: ok = qa_equipment_capture(app->equipment, &encoded, error); break;
+        case QA_SAVE_NAVIGATION: ok = application_navigation_save_capture(app, &encoded, error); break;
+        case QA_SAVE_BOTS: ok = application_bots_save_capture(app, &encoded, error); break;
         default: ok = false; break;
         }
         const qa_save_record *saved = qa_save_image_find(image, owners[i], "");
@@ -1103,6 +1113,7 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
     if (ok) ok = application_save_foundation_decode(image, &foundation, error) &&
         application_save_foundation_finish(candidate, &foundation, error);
     application_save_foundation_free(&foundation);
+    if (ok) ok = application_bots_save_finish(candidate, error);
     if (ok && candidate->command_generation != operation->restored_command_generation)
         ok = application_fail(error, QA_ERROR_FORMAT, "Console publication generation differs from saved application metadata");
     if (ok) ok = persistence_shared_match(candidate, image, error);

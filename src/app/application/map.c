@@ -1792,13 +1792,20 @@ static bool q3_begin_map(application_provider *provider,
     return ok;
 }
 
+bool application_map_restore_identity(qa_application *application,
+                                       const qa_launch_snapshot *snapshot,
+                                       qa_error *error)
+{
+    application_publication names = {.candidate = snapshot};
+    return map_name(application, &names, &application->current_map, error);
+}
+
 bool application_map_restore_bind(qa_application *application,
                                     const qa_launch_snapshot *snapshot,
                                     qa_error *error)
 {
     const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
-    application_publication names = {.candidate = snapshot};
-    if (!map_name(application, &names, &application->current_map, error))
+    if (!application_map_restore_identity(application, snapshot, error))
         return false;
     for (size_t i = 0; i < application->provider_count; ++i) {
         application_provider *provider = application->providers[i];
