@@ -1,5 +1,8 @@
 #include "internal.h"
 #include "content_inventory.h"
+#include "tools_restore.h"
+#include "save_private.h"
+#include "qa/http_save.h"
 #include "qa/vfs_view_save.h"
 #include "qa/json_writer.h"
 #include "qa/text.h"
@@ -20,6 +23,8 @@ struct qa_frontend_tools {
     char *output_root;
     uint64_t configuration, map_revision;
     float debug_width;
+    double profiler_offset, profiler_anchor;
+    bool profiler_reanchor;
 };
 bool frontend_tools_content_visit(const qa_frontend *frontend,
     const qa_application_content_visitor *visitor, qa_error *error) {
@@ -43,8 +48,17 @@ bool frontend_tools_content_visit(const qa_frontend *frontend,
 }
 static double milliseconds(void *context) { qa_frontend *f = context; return (double)f->time_ns / 1000000.0; }
 static double profiler_milliseconds(void *context) {
-    (void)context; uint64_t frequency = SDL_GetPerformanceFrequency();
-    return frequency ? (double)SDL_GetPerformanceCounter() * 1000 / (double)frequency : NAN;
+    qa_frontend *f = context;
+    uint64_t frequency = SDL_GetPerformanceFrequency();
+    double native = frequency ? (double)SDL_GetPerformanceCounter() * 1000 / (double)frequency : NAN;
+    if (!isfinite(native) || !f || !f->tools) return NAN;
+    qa_frontend_tools *tools = f->tools;
+    if (tools->profiler_reanchor) {
+        tools->profiler_offset = tools->profiler_anchor - native;
+        tools->profiler_reanchor = false;
+        return tools->profiler_anchor;
+    }
+    return native + tools->profiler_offset;
 }
 static double wall_milliseconds(void *context) {
     (void)context; struct timespec now;
@@ -281,6 +295,19 @@ static bool consoles_sync(qa_frontend *f, qa_error *error) {
     }
     return true;
 }
+bool frontend_tools_service_options(const qa_frontend *frontend, qa_tools_options *tools, qa_llm_options *language)
+{
+    qa_frontend *f = (qa_frontend *)frontend;
+    qa_frontend_tools *services = f ? f->tools : NULL;
+    if (!services || services->frontend != f || !tools || !language) return false;
+    qa_tools_options options = {.files = services->files, .output_mount = services->output_mount,
+        .owner = QA_FRONTEND_COMMAND_OWNER, .context = f, .milliseconds = milliseconds, .profiler_milliseconds = profiler_milliseconds, .read_frame = read_frame,
+        .context_active = render_context_active, .map_name = map_name, .print = source_print, .forward = forward, .diagnostic = diagnostic, .files_for_context = files_for_context, .capture_context = capture_context};
+    qa_llm_options llm = {.http = services->http, .settings = services->settings, .private_mount = services->private_mount,
+        .owner = QA_FRONTEND_COMMAND_OWNER, .context = f, .wall_milliseconds = wall_milliseconds,
+        .open_browser = open_browser, .context_active = context_active, .print = source_print, .capture_context = capture_context};
+    *tools = options; *language = llm; return true;
+}
 bool frontend_tools_create(qa_frontend *f, qa_error *error) {
     if (!f || f->tools) return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid frontend tools admission");
     qa_frontend_tools *services = calloc(1, sizeof *services);
@@ -304,14 +331,10 @@ bool frontend_tools_create(qa_frontend *f, qa_error *error) {
     }
     if (!services->output_root) return frontend_fail(error, QA_ERROR_MEMORY, "retaining tool output directory");
     if (!files_sync(f, error)) return false;
-    qa_tools_options options = {.files = services->files, .output_mount = services->output_mount,
-        .owner = QA_FRONTEND_COMMAND_OWNER, .context = f, .milliseconds = milliseconds, .profiler_milliseconds = profiler_milliseconds, .read_frame = read_frame,
-        .context_active = render_context_active, .map_name = map_name, .print = source_print, .forward = forward, .diagnostic = diagnostic, .files_for_context = files_for_context, .capture_context = capture_context};
-    if (!qa_tools_create(&options, &services->owner, error)) return false;
-    qa_llm_options llm = {.http = services->http, .settings = services->settings, .private_mount = services->private_mount,
-        .owner = QA_FRONTEND_COMMAND_OWNER, .context = f, .wall_milliseconds = wall_milliseconds,
-        .open_browser = open_browser, .context_active = context_active, .print = source_print, .capture_context = capture_context};
-    if (!qa_llm_create(&llm, &services->llm, error)) return false;
+    qa_tools_options options; qa_llm_options llm;
+    if (!frontend_tools_service_options(f, &options, &llm) ||
+        !qa_tools_create(&options, &services->owner, error) ||
+        !qa_llm_create(&llm, &services->llm, error)) return false;
     return consoles_sync(f, error);
 }
 bool frontend_tools_create_diagnostics(qa_frontend *f, qa_vfs *files, qa_error *error) {
@@ -415,4 +438,160 @@ bool frontend_tools_capture_clock(qa_frontend *f, uint64_t elapsed_ns, uint64_t 
         if (!qa_tools_capture_frame(f->tools->owner, &source, error)) return false;
     }
     *out = (uint64_t)duration; return true;
+}
+
+typedef struct frontend_tools_saved {
+    uint64_t pool, settings, files, private_mount, output_mount, configuration, map_revision;
+    char *output_root;
+    float debug_width;
+    double profiler_anchor;
+    qa_bytes http, tools, llm;
+} frontend_tools_saved;
+static bool saved_blob(qa_source_save_io *io, qa_bytes *value)
+{
+    size_t size = value->size;
+    if (!qa_source_save_count(io, &size, io->direction == QA_SOURCE_SAVE_READ ? io->input.size : SIZE_MAX)) return false;
+    if (io->direction == QA_SOURCE_SAVE_WRITE) return qa_source_save_bytes(io, (void *)value->data, size);
+    if (io->offset > io->input.size || size > io->input.size - io->offset)
+        return frontend_fail(io->error, QA_ERROR_FORMAT, "truncated frontend tools continuation");
+    *value = (qa_bytes){io->input.data + io->offset, size}; io->offset += size; return true;
+}
+static bool tools_saved_fields(qa_source_save_io *io, frontend_tools_saved *saved)
+{
+    uint8_t magic[4] = {'Q','F','T','L'}; uint32_t version = 1;
+    return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QFTL", 4) &&
+        qa_source_save_u32(io, &version) && version == 1 &&
+        qa_source_save_u64(io, &saved->pool) && saved->pool &&
+        qa_source_save_u64(io, &saved->settings) && saved->settings &&
+        qa_source_save_u64(io, &saved->files) && saved->files && saved->settings != saved->files &&
+        qa_source_save_u64(io, &saved->private_mount) && saved->private_mount &&
+        qa_source_save_u64(io, &saved->output_mount) && saved->output_mount &&
+        frontend_save_text(io, &saved->output_root) && saved->output_root &&
+        qa_source_save_u64(io, &saved->configuration) && qa_source_save_u64(io, &saved->map_revision) &&
+        qa_source_save_f32(io, &saved->debug_width) && isfinite(saved->debug_width) && saved->debug_width > 0 &&
+        qa_source_save_f64(io, &saved->profiler_anchor) && isfinite(saved->profiler_anchor) &&
+        saved_blob(io, &saved->http) && saved->http.size &&
+        saved_blob(io, &saved->tools) && saved->tools.size && saved_blob(io, &saved->llm) && saved->llm.size;
+}
+static bool tools_saved_read(qa_frontend *f, qa_bytes bytes, frontend_tools_saved *saved, qa_error *error)
+{
+    qa_source_save_io io = {0};
+    bool ok = qa_source_save_reader(&io, qa_application_session(f->application), bytes, error) &&
+        tools_saved_fields(&io, saved) && qa_source_save_finish(&io, NULL);
+    qa_source_save_dispose(&io);
+    if (!ok && error && error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "invalid frontend tools owner");
+    return ok;
+}
+bool frontend_tools_checkpoint(qa_frontend *f, const qa_tools_checkpoint_refs *tools_refs,
+    const qa_llm_checkpoint_refs *llm_refs, qa_buffer *out, qa_error *error)
+{
+    qa_frontend_tools *tools = f ? f->tools : NULL;
+    if (!f || !f->application || f->stepping || !tools || tools->frontend != f ||
+        !tools->owner || !tools->llm || !tools->http || !out || out->data || out->size)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "frontend tools capture requires installed idle owners and empty output");
+    qa_application_content_graph *graph = qa_application_content_graph_read(f->application);
+    if (!graph) return frontend_fail(error, QA_ERROR_ARGUMENT, "tools capture requires the actual content graph lease");
+    if (!qa_tools_checkpoint_ready(tools->owner, error) || !qa_llm_checkpoint_ready(tools->llm, error) ||
+        !qa_http_checkpoint_ready(tools->http, error)) return false;
+    frontend_tools_saved saved = {.pool = qa_application_content_pool_id(graph, tools->private_resources),
+        .settings = qa_application_content_view_id(graph, tools->settings),
+        .files = qa_application_content_view_id(graph, tools->files),
+        .private_mount = tools->private_mount, .output_mount = tools->output_mount,
+        .output_root = tools->output_root, .configuration = tools->configuration, .map_revision = tools->map_revision,
+        .debug_width = tools->debug_width,
+        .profiler_anchor = tools->profiler_reanchor ? tools->profiler_anchor : profiler_milliseconds(f)};
+    qa_buffer http = {0}, state = {0}, llm = {0};
+    bool ok = qa_http_checkpoint(tools->http, &http, error) &&
+        qa_tools_checkpoint(tools->owner, qa_application_session(f->application), tools_refs, &state, error) &&
+        qa_llm_checkpoint(tools->llm, qa_application_session(f->application), llm_refs, &llm, error);
+    saved.http = (qa_bytes){http.data, http.size}; saved.tools = (qa_bytes){state.data, state.size}; saved.llm = (qa_bytes){llm.data, llm.size};
+    qa_source_save_io io = {0};
+    ok = ok && qa_source_save_writer(&io, qa_application_session(f->application), error) && tools_saved_fields(&io, &saved) && qa_source_save_finish(&io, out);
+    qa_source_save_dispose(&io); qa_buffer_free(&http); qa_buffer_free(&state); qa_buffer_free(&llm);
+    if (!ok && error && error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "frontend tools continuation is not qualified");
+    return ok;
+}
+static bool writable_directory(const qa_vfs *view, qa_mount_id id)
+{
+    for (size_t i = 0; i < qa_vfs_mount_count(view); ++i) {
+        qa_vfs_mount_info info;
+        if (!qa_vfs_mount_at(view, i, &info)) return false;
+        if (info.id == id) return info.writable && !info.is_archive;
+    }
+    return false;
+}
+bool frontend_tools_prepare_restored(qa_frontend *f, qa_bytes bytes, qa_error *error)
+{
+    if (!f || !f->application || f->tools || f->stepping)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "frontend tools admission requires an empty isolated owner");
+    frontend_tools_saved saved = {0}; bool ok = tools_saved_read(f, bytes, &saved, error);
+    qa_application_content_graph *graph = qa_application_content_graph_read(f->application);
+    qa_resource_pool *pool = graph ? qa_application_content_pool(graph, saved.pool) : NULL;
+    qa_vfs *settings = graph ? qa_application_content_view(graph, saved.settings) : NULL;
+    qa_vfs *files = graph ? qa_application_content_view(graph, saved.files) : NULL;
+    const char *output_path = files ? qa_vfs_mount_path(files, saved.output_mount) : NULL;
+    ok = ok && pool && settings && files && qa_vfs_resources(settings) == pool &&
+        pool != qa_application_resources(f->application) && qa_vfs_resources(files) != pool &&
+        writable_directory(settings, saved.private_mount) && writable_directory(files, saved.output_mount) &&
+        output_path && !strcmp(output_path, saved.output_root);
+    if (ok) {
+        qa_frontend_tools *tools = calloc(1, sizeof(*tools));
+        if (!tools) ok = frontend_fail(error, QA_ERROR_MEMORY, "allocating restored frontend tools");
+        else {
+            f->tools = tools; tools->frontend = f; tools->private_mount = saved.private_mount; tools->output_mount = saved.output_mount;
+            tools->configuration = saved.configuration; tools->map_revision = saved.map_revision; tools->debug_width = saved.debug_width;
+            tools->profiler_anchor = saved.profiler_anchor; tools->profiler_reanchor = true;
+            tools->output_root = saved.output_root; saved.output_root = NULL;
+            ok = qa_application_content_claim_pool(graph, saved.pool, &tools->private_resources, error) &&
+                qa_application_content_claim_view(graph, saved.settings, &tools->settings, error) &&
+                qa_application_content_claim_view(graph, saved.files, &tools->files, error) && qa_http_create_empty(&tools->http, error);
+            qa_tools_options options; qa_llm_options language;
+            ok = ok && frontend_tools_service_options(f, &options, &language) &&
+                qa_tools_create_empty(&options, &tools->owner, error) && qa_llm_create_empty(&language, &tools->llm, error);
+        }
+    }
+    free(saved.output_root);
+    if (!ok && error && error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "saved tools graph or writable mounts are not admitted");
+    return ok;
+}
+bool frontend_tools_attach_restored(qa_frontend *f, qa_error *error)
+{
+    if (!f || !f->tools || f->tools->frontend != f || f->stepping || !f->application || !f->tools->owner || !f->tools->llm)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "restored tools console bindings are not admitted");
+    return consoles_sync(f, error);
+}
+bool frontend_tools_restore(qa_frontend *f, const qa_tools_checkpoint_refs *tools_refs,
+    const qa_llm_checkpoint_refs *llm_refs, qa_bytes bytes, qa_error *error)
+{
+    if (!f || !f->application || !f->tools || f->tools->frontend != f || f->stepping)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "tools private import requires an isolated installed service graph");
+    frontend_tools_saved saved = {0}; bool ok = tools_saved_read(f, bytes, &saved, error);
+    qa_application_content_graph *graph = qa_application_content_graph_read(f->application);
+    qa_frontend_tools *tools = f->tools;
+    ok = ok && graph && qa_application_content_pool(graph, saved.pool) == tools->private_resources &&
+        qa_application_content_view(graph, saved.settings) == tools->settings && qa_application_content_view(graph, saved.files) == tools->files &&
+        saved.private_mount == tools->private_mount && saved.output_mount == tools->output_mount &&
+        !strcmp(saved.output_root, tools->output_root) && saved.configuration == tools->configuration && saved.map_revision == tools->map_revision &&
+        !memcmp(&saved.debug_width, &tools->debug_width, sizeof(float)) && !memcmp(&saved.profiler_anchor, &tools->profiler_anchor, sizeof(double)) && tools->profiler_reanchor;
+    ok = ok && qa_http_restore(tools->http, saved.http, error) &&
+        qa_tools_restore(tools->owner, qa_application_session(f->application), tools_refs, saved.tools, error) &&
+        qa_llm_restore(tools->llm, qa_application_session(f->application), llm_refs, saved.llm, error);
+    free(saved.output_root);
+    if (!ok && error && error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "frontend tools private owner differs from admitted topology");
+    return ok;
+}
+bool frontend_tools_rebind_ready(const qa_frontend *owned, const qa_frontend *destination, qa_error *error)
+{
+    const qa_frontend_tools *tools = owned ? owned->tools : NULL;
+    if (!owned || !destination || owned->stepping || destination->stepping || !tools || tools->frontend != owned ||
+        !tools->http || !tools->owner || !tools->llm)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "tools publication requires actual idle frontend services");
+    return qa_http_checkpoint_ready(tools->http, error) && qa_tools_rebind_ready(tools->owner, owned, destination, error) &&
+        qa_llm_rebind_ready(tools->llm, owned, destination, error);
+}
+void frontend_tools_rebind(qa_frontend *owned, qa_frontend *destination)
+{
+    qa_frontend_tools *tools = owned->tools;
+    qa_tools_rebind_context(tools->owner, destination); qa_llm_rebind_context(tools->llm, destination);
+    tools->frontend = destination;
 }
