@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/scene_effects.h"
+#include "save_private.h"
 
 enum { FRONTEND_PARTICLE_CAPACITY = 4096, FRONTEND_STEAM_CAPACITY = 32 };
 typedef struct frontend_particle_owner {
@@ -58,6 +59,104 @@ void frontend_particle_retire(qa_frontend *frontend)
         qa_scene_image_release(owner->particle_image); free(owner->q1); free(owner->q2); free(owner);
     }
     free(frontend->particles); frontend->particles = NULL;
+}
+static bool particle_signature(qa_source_save_io *io)
+{
+    uint8_t magic[4] = {'Q', 'A', 'P', 'T'}; uint32_t version = 1;
+    return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QAPT", 4) &&
+        qa_source_save_u32(io, &version) && version == 1;
+}
+static bool particle_fields(qa_source_save_io *io, frontend_particle_owner *owner)
+{
+    if (!frontend_save_random(io, &owner->random) || !qa_source_save_f32(io, &owner->gravity) ||
+        !isfinite(owner->gravity) || !qa_source_save_count(io, &owner->count, FRONTEND_PARTICLE_CAPACITY)) return false;
+    for (size_t i = 0; i < owner->count; ++i) {
+        if (owner->q1) {
+            qa_scene_q1_particle_state p = owner->q1[i]; uint32_t kind = p.kind;
+            if (!qa_source_save_vec3(io, &p.origin) || !qa_source_save_vec3(io, &p.velocity) ||
+                !qa_source_save_f32(io, &p.ramp) || !qa_source_save_f64(io, &p.die) ||
+                !qa_source_save_u32(io, &p.color) || !qa_source_save_u32(io, &kind) || kind > QA_Q1_PARTICLE_SLOW_GRAVITY ||
+                !qa_vec_finite(p.origin) || !qa_vec_finite(p.velocity) || !isfinite(p.ramp) || !isfinite(p.die)) return false;
+            if (io->direction == QA_SOURCE_SAVE_READ) { p.kind = (qa_scene_q1_particle_kind)kind; owner->q1[i] = p; }
+        } else {
+            qa_scene_q2_particle_state p = owner->q2[i];
+            if (!qa_source_save_i64(io, &p.spawn_milliseconds) || !qa_source_save_vec3(io, &p.origin) ||
+                !qa_source_save_vec3(io, &p.velocity) || !qa_source_save_vec3(io, &p.acceleration) ||
+                !qa_source_save_u32(io, &p.color) || !qa_source_save_f32(io, &p.alpha) || !qa_source_save_f32(io, &p.alpha_velocity) ||
+                !qa_vec_finite(p.origin) || !qa_vec_finite(p.velocity) || !qa_vec_finite(p.acceleration) ||
+                !isfinite(p.alpha) || !isfinite(p.alpha_velocity)) return false;
+            if (io->direction == QA_SOURCE_SAVE_READ) owner->q2[i] = p;
+        }
+    }
+    return true;
+}
+bool frontend_particle_checkpoint(qa_frontend *frontend, qa_buffer *out, qa_error *error)
+{
+    qa_source_save_io io = {0};
+    if (!out || !qa_source_save_writer(&io, qa_application_session(frontend->application), error)) return false;
+    bool present = frontend->particles != NULL;
+    bool ok = particle_signature(&io) && qa_source_save_bool(&io, &present);
+    if (present && ok) {
+        frontend_particle_state *state = frontend->particles;
+        uint64_t sample = state->sample_ns; size_t count = 0;
+        for (frontend_particle_owner *owner = state->owners; owner; owner = owner->next) ++count;
+        ok = qa_source_save_u64(&io, &sample) && qa_source_save_count(&io, &count, SIZE_MAX);
+        for (frontend_particle_owner *owner = state->owners; ok && owner; owner = owner->next) {
+            frontend_particle_owner copy = *owner; uint32_t family = owner->family;
+            ok = frontend_save_provider(&io, frontend->application, &copy.provider) &&
+                qa_source_save_u32(&io, &family) && particle_fields(&io, &copy);
+        }
+        count = state->steam_count; ok = ok && qa_source_save_count(&io, &count, FRONTEND_STEAM_CAPACITY);
+        for (size_t i = 0; ok && i < count; ++i) {
+            frontend_steam copy = state->steam[i]; qa_actor_owner owner = copy.owner->provider;
+            ok = frontend_save_provider(&io, frontend->application, &owner) &&
+                frontend_save_q2_event(&io, &copy.event) && qa_source_save_u64(&io, &copy.end_ns) && qa_source_save_u64(&io, &copy.next_ns);
+        }
+    }
+    if (ok) ok = qa_source_save_finish(&io, out);
+    if (!ok && (!error || error->code == QA_OK)) frontend_fail(error, QA_ERROR_FORMAT, "invalid retained particle continuation");
+    qa_source_save_dispose(&io); return ok;
+}
+bool frontend_particle_restore(qa_frontend *frontend, qa_bytes bytes, qa_error *error)
+{
+    if (frontend->particles) return frontend_fail(error, QA_ERROR_ARGUMENT, "particle restore requires an empty detached candidate");
+    qa_source_save_io io = {0}; bool present = false; size_t count = 0;
+    bool ok = qa_source_save_reader(&io, qa_application_session(frontend->application), bytes, error) &&
+        particle_signature(&io) && qa_source_save_bool(&io, &present);
+    if (ok && present) {
+        frontend->particles = calloc(1, sizeof(*frontend->particles));
+        if (!frontend->particles) ok = frontend_fail(error, QA_ERROR_MEMORY, "restoring particle owner");
+        else ok = qa_source_save_u64(&io, &frontend->particles->sample_ns) && qa_source_save_count(&io, &count, bytes.size / 8);
+        for (size_t i = 0; ok && i < count; ++i) {
+            qa_actor_owner provider = 0; uint32_t family = 0;
+            ok = frontend_save_provider(&io, frontend->application, &provider) && provider && qa_source_save_u32(&io, &family) &&
+                (family == QA_GAME_Q1 || family == QA_GAME_Q2);
+            for (frontend_particle_owner *p = frontend->particles->owners; ok && p; p = p->next)
+                if (p->provider == provider && p->family == family) ok = false;
+            frontend_particle_owner *owner = NULL;
+            if (ok) ok = particle_owner(frontend, provider, (qa_game_family)family, &owner, error) && particle_fields(&io, owner);
+        }
+        if (ok) {
+            frontend_particle_owner *ordered = NULL, *owner = frontend->particles->owners;
+            while (owner) { frontend_particle_owner *next = owner->next; owner->next = ordered; ordered = owner; owner = next; }
+            frontend->particles->owners = ordered;
+            ok = qa_source_save_count(&io, &frontend->particles->steam_count, FRONTEND_STEAM_CAPACITY);
+        }
+        for (size_t i = 0; ok && i < frontend->particles->steam_count; ++i) {
+            frontend_steam *steam = &frontend->particles->steam[i]; qa_actor_owner provider = 0;
+            ok = frontend_save_provider(&io, frontend->application, &provider);
+            for (frontend_particle_owner *owner = frontend->particles->owners; owner; owner = owner->next)
+                if (owner->provider == provider && owner->family == QA_GAME_Q2) steam->owner = owner;
+            ok = ok && steam->owner && frontend_save_q2_event(&io, &steam->event) && steam->event.kind == QA_Q2_MAP_STEAM &&
+                qa_source_save_u64(&io, &steam->end_ns) && qa_source_save_u64(&io, &steam->next_ns);
+        }
+    }
+    if (ok) ok = qa_source_save_finish(&io, NULL);
+    if (!ok) {
+        frontend_particle_retire(frontend);
+        if (!error || error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "invalid saved particle continuation");
+    }
+    qa_source_save_dispose(&io); return ok;
 }
 static uint32_t particle_random(frontend_particle_owner *owner)
 { return qa_builtin_random_integer(&owner->random); }

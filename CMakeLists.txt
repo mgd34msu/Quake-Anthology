@@ -947,6 +947,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/network.c
     src/app/frontend/options.c
     src/app/frontend/particle_events.c
+    src/app/frontend/save_fields.c
     src/app/frontend/player_events.c
     src/app/frontend/presentation.c
     src/app/frontend/resources.c

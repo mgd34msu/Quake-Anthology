@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/hud.h"
+#include "qa/ui_save.h"
 #include <stdio.h>
 
 typedef struct hud_message { char *text; uint64_t starts, until, character_ns; bool chat, instant; } hud_message;
@@ -13,6 +14,92 @@ struct qa_hud {
     float hit_damage;
     bool drawing;
 };
+static bool hud_signature(qa_source_save_io *io) {
+    uint8_t magic[4] = {'Q', 'A', 'H', 'D'}; uint32_t version = 1;
+    return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QAHD", 4) &&
+        qa_source_save_u32(io, &version) && version == 1;
+}
+static bool hud_text(qa_source_save_io *io, char **owned) {
+    const char *text = io->direction == QA_SOURCE_SAVE_WRITE ? *owned : NULL;
+    if (!qa_source_save_text(io, &text)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ && text) {
+        size_t size = strlen(text) + 1;
+        char *copy = malloc(size);
+        if (!copy) { qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Restoring HUD text"); return false; }
+        memcpy(copy, text, size); *owned = copy;
+    }
+    return true;
+}
+static bool hud_message_fields(qa_source_save_io *io, hud_message *message) {
+    return hud_text(io, &message->text) && message->text && qa_source_save_u64(io, &message->starts) &&
+        qa_source_save_u64(io, &message->until) && qa_source_save_u64(io, &message->character_ns) &&
+        qa_source_save_bool(io, &message->chat) && qa_source_save_bool(io, &message->instant) && message->until >= message->starts;
+}
+static bool hud_image_fields(qa_source_save_io *io, const qa_ui_checkpoint_refs *refs, const qa_scene_image **image) {
+    bool present = *image != NULL;
+    if (!qa_source_save_bool(io, &present) || !present) return !io->failed;
+    qa_buffer encoded = {0}; size_t size = 0;
+    if (io->direction == QA_SOURCE_SAVE_WRITE) {
+        if (!refs || !refs->image_encode || !refs->image_encode(refs->context, *image, &encoded, io->error)) {
+            if (!refs || !refs->image_encode) qa_error_set(io->error, QA_ERROR_ARGUMENT, 0, "HUD image identity encoder is absent");
+            qa_buffer_free(&encoded); return false;
+        }
+        size = encoded.size;
+    }
+    bool ok = qa_source_save_count(io, &size, io->direction == QA_SOURCE_SAVE_WRITE ? SIZE_MAX : io->input.size);
+    if (ok && io->direction == QA_SOURCE_SAVE_READ) {
+        encoded.data = size ? malloc(size) : NULL; encoded.size = size;
+        if (size && !encoded.data) { qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Restoring HUD image identity"); ok = false; }
+    }
+    if (ok) ok = qa_source_save_bytes(io, encoded.data, size);
+    if (ok && io->direction == QA_SOURCE_SAVE_READ) {
+        ok = refs && refs->image_decode && refs->image_decode(refs->context, (qa_bytes){encoded.data, size}, image, io->error) && *image;
+        if (!refs || !refs->image_decode) qa_error_set(io->error, QA_ERROR_ARGUMENT, 0, "HUD candidate image resolver is absent");
+    }
+    qa_buffer_free(&encoded); return ok;
+}
+bool qa_hud_checkpoint(qa_hud *hud, const qa_ui_checkpoint_refs *refs, qa_buffer *out, qa_error *error) {
+    if (!hud || !out || hud->drawing) return ui_fail(error, "HUD checkpoint requires completed draw callbacks");
+    qa_source_save_io io = {0};
+    if (!qa_source_save_writer(&io, qa_application_session(hud->options.application), error)) return false;
+    uint32_t seat = hud->options.seat; size_t count = hud->notice_count;
+    bool ok = hud_signature(&io) && qa_source_save_u32(&io, &seat) && qa_source_save_count(&io, &count, SIZE_MAX);
+    for (size_t i = 0; ok && i < count; ++i) { hud_message copy = hud->notices[i]; ok = hud_message_fields(&io, &copy); }
+    count = hud->center_count; ok = ok && qa_source_save_count(&io, &count, SIZE_MAX);
+    for (size_t i = 0; ok && i < count; ++i) { hud_message copy = hud->centers[i]; ok = hud_message_fields(&io, &copy); }
+    char *pickup = hud->pickup; const qa_scene_image *icon = hud->pickup_icon;
+    uint64_t pickup_until = hud->pickup_until, hit_until = hud->hit_until; float damage = hud->hit_damage;
+    ok = ok && hud_text(&io, &pickup) && hud_image_fields(&io, refs, &icon) &&
+        qa_source_save_u64(&io, &pickup_until) && qa_source_save_u64(&io, &hit_until) && qa_source_save_f32(&io, &damage) && isfinite(damage);
+    if (ok) ok = qa_source_save_finish(&io, out);
+    if (!ok && (!error || error->code == QA_OK)) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid retained HUD state");
+    qa_source_save_dispose(&io); return ok;
+}
+bool qa_hud_restore(qa_bytes bytes, const qa_hud_options *options, const qa_ui_checkpoint_refs *refs, qa_hud **out, qa_error *error) {
+    if (!options || !out) return ui_fail(error, "HUD restore requires candidate options");
+    qa_source_save_io io = {0}; uint32_t seat = 0; qa_hud *hud = NULL;
+    bool ok = qa_source_save_reader(&io, qa_application_session(options->application), bytes, error) && hud_signature(&io) &&
+        qa_source_save_u32(&io, &seat) && seat == options->seat && qa_hud_create(options, &hud, error);
+    size_t count = 0;
+    if (ok) ok = qa_source_save_count(&io, &count, bytes.size / 8) &&
+        ui_reserve((void **)&hud->notices, &hud->notice_capacity, count, sizeof(*hud->notices), error);
+    for (size_t i = 0; ok && i < count; ++i) {
+        hud_message *message = &hud->notices[hud->notice_count++]; *message = (hud_message){0}; ok = hud_message_fields(&io, message);
+    }
+    if (ok) ok = qa_source_save_count(&io, &count, bytes.size / 8) &&
+        ui_reserve((void **)&hud->centers, &hud->center_capacity, count, sizeof(*hud->centers), error);
+    for (size_t i = 0; ok && i < count; ++i) {
+        hud_message *message = &hud->centers[hud->center_count++]; *message = (hud_message){0}; ok = hud_message_fields(&io, message);
+    }
+    if (ok) ok = hud_text(&io, &hud->pickup) && hud_image_fields(&io, refs, &hud->pickup_icon) &&
+        qa_source_save_u64(&io, &hud->pickup_until) && qa_source_save_u64(&io, &hud->hit_until) &&
+        qa_source_save_f32(&io, &hud->hit_damage) && isfinite(hud->hit_damage) && qa_source_save_finish(&io, NULL);
+    if (!ok) {
+        qa_hud_destroy(hud, NULL);
+        if (!error || error->code == QA_OK) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid saved HUD state");
+    } else *out = hud;
+    qa_source_save_dispose(&io); return ok;
+}
 static uint64_t after(uint64_t now, uint64_t duration) {
     return UINT64_MAX - now < duration ? UINT64_MAX : now + duration;
 }
