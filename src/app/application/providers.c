@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "guest_native_q2_private.h"
+#include "q1_weapon_rules.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -332,7 +333,11 @@ static bool construct_q1(qa_application *application,
     qa_q1_host host = {.context = provider,
                        .find_target = q1_find_target,
                        .find_targets = q1_find_targets,
-                       .combat_provider = q1_combat_provider};
+                       .combat_provider = q1_combat_provider,
+                       .weapon_parameters = application_q1_weapon_parameters,
+                       .before_fire = application_q1_before_fire,
+                       .attack_delay = application_q1_attack_delay,
+                       .nail_fire = application_q1_nail_fire};
     qa_builtin_services services = application_builtin_services(
         application, world, application->physics);
     if (!qa_q1_game_create(&services, &options, &host,
