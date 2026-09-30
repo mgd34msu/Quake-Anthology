@@ -209,6 +209,27 @@ bool qa_audio_engine_restore(qa_bytes bytes, const qa_audio_engine_options *opti
     if (r.failed) { qa_audio_engine_discard(engine); return false; }
     *out = engine; return true;
 }
+bool qa_audio_engine_restore_into(qa_audio_engine *engine, qa_bytes bytes,
+    const qa_audio_checkpoint_refs *refs, qa_error *error)
+{
+    if (!engine || engine->operation_depth || engine->callback_depth || engine->destroy_pending ||
+        engine->destroying || engine->seat_count || engine->position_count || engine->bus_count ||
+        engine->clock || engine->next_voice) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Audio import requires an empty idle candidate engine");
+        return false;
+    }
+    qa_audio_engine *decoded = NULL;
+    if (!qa_audio_engine_restore(bytes, &engine->options, refs, &decoded, error)) return false;
+    qa_audio_engine previous = *engine;
+    *engine = *decoded; *decoded = previous;
+    for (size_t i = 0; i < engine->seat_count; ++i) {
+        qa_audio_mixer *mixer = engine->seats[i]->mixer;
+        mixer->options.voice_id_user = engine;
+        if (engine->options.observer) mixer->options.observer_user = engine;
+    }
+    qa_audio_engine_discard(decoded);
+    return true;
+}
 qa_audio_music *qa_audio_engine_bus_music(qa_audio_engine *engine, uint64_t bus) {
     if (engine && !engine->destroy_pending && !engine->destroying)
         for (size_t i = 0; i < engine->bus_count; ++i)

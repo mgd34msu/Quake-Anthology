@@ -39,6 +39,11 @@ bool qa_audio_engine_checkpoint(const qa_audio_engine *, const qa_audio_checkpoi
                                  qa_buffer *, qa_error *);
 bool qa_audio_engine_restore(qa_bytes, const qa_audio_engine_options *,
                              const qa_audio_checkpoint_refs *, qa_audio_engine **, qa_error *);
+/* Import into the actual empty candidate heap used by source presentation
+ * factories. Keeps its address and options bindings; nested engine allocator
+ * and observer contexts follow that heap. No callback or source action runs. */
+bool qa_audio_engine_restore_into(qa_audio_engine *, qa_bytes,
+    const qa_audio_checkpoint_refs *, qa_error *);
 /* Borrowed bus owners allow candidate source leases to reconnect without
  * replacing the restored queues or decoder phase. */
 qa_audio_music *qa_audio_engine_bus_music(qa_audio_engine *, uint64_t bus);
