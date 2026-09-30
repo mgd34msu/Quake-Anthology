@@ -1019,9 +1019,11 @@ target_link_libraries(qa_persistence PUBLIC qa_session qa_content qa_gameplay qa
 
 add_library(qa_frontend STATIC
     src/app/frontend/audio_identity.c
+    src/app/frontend/audio_restore.c
     src/app/frontend/bindings_ui.c
     src/app/frontend/commands.c
     src/app/frontend/content_inventory.c
+    src/app/frontend/content_refs.c
     src/app/frontend/frame.c
     src/app/frontend/image_inventory.c
     src/app/frontend/travel.c
