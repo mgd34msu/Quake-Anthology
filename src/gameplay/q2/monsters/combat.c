@@ -1247,6 +1247,34 @@ static bool pain_hover(q2m_context *context, qa_error *error) {
   return q2m_set_move(context, move, rerelease, error);
 }
 
+static bool pain_tank(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  qa_q2_game *g = context->game;
+  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool chainfist = rerelease && last_attack_chainfist(m);
+  float damage = m->pending_damage;
+  if (context->combat.health < m->max_health * .5f) m->skin |= 1;
+  else if (rerelease) m->skin &= ~1;
+  if (!chainfist && damage <= 10) return true;
+  if (g->now_ns < m->pain_ns) return true;
+  if (!chainfist) {
+    if (damage <= 30 &&
+        (rerelease ? q2_rerelease_float(g, 0, 1) : q2m_random(g)) > .2f) return true;
+    if ((rerelease || g->options.skill >= 2) &&
+        ((m->frame >= 115 && m->frame <= 144) ||
+         (m->frame >= 55 && m->frame <= 70))) return true;
+  }
+  m->pain_ns = q2m_after(g->now_ns, 3.0);
+  const char *sound = rerelease && m->count ? "tank/pain.wav" : "tank/tnkpain2.wav";
+  if (!q2m_sound(context, sound, 2, 1, error)) return false;
+  if (!q2m_alive(context) || (rerelease ? !reacts_to_pain(context) : g->options.skill == 3))
+    return true;
+  if (rerelease || g->options.product == QA_Q2_ROGUE) m->manual_steering = false;
+  const char *move = damage <= 30 ? "tank_move_pain1" :
+                     damage <= 60 ? "tank_move_pain2" : "tank_move_pain3";
+  return q2m_set_move(context, move, rerelease, error);
+}
+
 static bool pain_floater(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   if (context->game->now_ns < monster->pain_ns)
@@ -1541,6 +1569,7 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
   if (species == Q2M_CHICK || species == Q2M_CHICK_HEAT) return pain_chick(context, error);
   if (species == Q2M_GUNNER) return pain_gunner(context, error);
   if (species == Q2M_HOVER || species == Q2M_DAEDALUS) return pain_hover(context, error);
+  if (species == Q2M_TANK || species == Q2M_TANK_COMMANDER) return pain_tank(context, error);
   float damage = monster->pending_damage;
   if (context->combat.health < monster->base_health * 0.5f)
     monster->skin |= 1;
@@ -1581,10 +1610,6 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
   if (species == Q2M_CARRIER && context->game->options.skill == 3)
     return true;
 
-  if ((species == Q2M_TANK || species == Q2M_TANK_COMMANDER) &&
-      (damage <= 10.0f ||
-       (damage <= 30.0f && q2m_random(context->game) > 0.2f)))
-    return true;
   if ((species == Q2M_SUPERTANK || species == Q2M_BOSS5 ||
        species == Q2M_MAKRON) &&
       damage <= 25.0f && q2m_random(context->game) < 0.2f)
@@ -1654,12 +1679,6 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
     sound = damage <= 10.0f   ? "bosstank/btkpain1.wav"
             : damage <= 25.0f ? "bosstank/btkpain3.wav"
                               : "bosstank/btkpain2.wav";
-    break;
-  case Q2M_TANK:
-  case Q2M_TANK_COMMANDER:
-    move = damage <= 30.0f   ? "tank_move_pain1"
-           : damage <= 60.0f ? "tank_move_pain2"
-                             : "tank_move_pain3";
     break;
   case Q2M_BOSS2:
     move = damage < 30.0f ? "boss2_move_pain_light" : "boss2_move_pain_heavy";
