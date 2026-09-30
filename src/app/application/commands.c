@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "guest_native_q2_private.h"
+#include "match_intents.h"
 #include "qa/application_players.h"
 
 #include <string.h>
@@ -13,6 +14,56 @@ static application_provider *command_owner(const qa_application *application, ui
         if (provider->owner == owner && provider->constructed && provider->attached)
             return provider;
     return NULL;
+}
+
+static bool q3_command_named(const char *text, const char *name)
+{
+    while (*text && *name) {
+        unsigned char left = (unsigned char)*text++;
+        unsigned char right = (unsigned char)*name++;
+        if (left >= 'A' && left <= 'Z') left += 'a' - 'A';
+        if (right >= 'A' && right <= 'Z') right += 'a' - 'A';
+        if (left != right) return false;
+    }
+    return *text == *name;
+}
+
+static qa_command_result q3_round_command(qa_application *application,
+    const qa_command_invocation *invocation, qa_error *error)
+{
+    if (invocation->context.dialect != QA_CONSOLE_Q3 ||
+        !q3_command_named(invocation->argv[0], "map_restart"))
+        return QA_COMMAND_UNHANDLED;
+    qa_mode_id mode = application->primary_mode;
+    application_provider *provider = application->primary_mode_ready
+        ? application_mode_provider(application, mode) : NULL;
+    if (invocation->context.owner) {
+        provider = NULL;
+        for (size_t i = 0; i < application->mode_count; ++i) {
+            application_provider *candidate = application_mode_provider(application,
+                application->mode_ids[i]);
+            if (candidate && candidate->owner == invocation->context.owner) {
+                provider = candidate;
+                mode = application->mode_ids[i];
+                break;
+            }
+        }
+    }
+    qa_mode_view view;
+    if (!provider || !qa_modes_read(application->modes, mode, &view, NULL) ||
+        view.rules.source < QA_MODE_Q3)
+        return QA_COMMAND_UNHANDLED;
+    qa_command_invocation command = *invocation;
+    command.context.owner = provider->owner;
+    if (!qa_application_capture_command_context(application, &command.context,
+                                                  &command.context, error))
+        return QA_COMMAND_FAILED;
+    if (!application->match_intents)
+        application->match_intents = application_match_intents_create(error);
+    return application->match_intents &&
+        application_match_intents_request_restart(application->match_intents,
+            application, mode, &command, error)
+        ? QA_COMMAND_HANDLED : QA_COMMAND_FAILED;
 }
 
 bool qa_application_command_context_active(const qa_application *application,
@@ -267,6 +318,9 @@ qa_command_result application_command_fallback(void *opaque,
     if (!qa_application_capture_command_context(application, &invocation->context,
                                                   &command.context, error))
         return QA_COMMAND_FAILED;
+    qa_command_result round = q3_round_command(application, &command, error);
+    if (round != QA_COMMAND_UNHANDLED)
+        return round;
     bool handled = false;
     qa_actor_id actor = command.context.actor;
     if (actor.registry != 0 && application->primary_mode_ready &&

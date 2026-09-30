@@ -45,6 +45,7 @@ static bool mode_intent(void *opaque, const qa_match_intent *intent,
 {
     qa_application *application = opaque;
     if (intent->kind == QA_MATCH_NEXT_MAP || intent->kind == QA_MATCH_SELECTED_MAP ||
+        intent->kind == QA_MATCH_RESTART_MAP ||
         intent->kind == QA_MATCH_WARMUP || intent->kind == QA_MATCH_TIME_LIMIT ||
         intent->kind == QA_MATCH_FRAG_LIMIT || intent->kind == QA_MATCH_GAME_TYPE) {
         if (application->match_intents == NULL)
