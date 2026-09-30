@@ -700,26 +700,21 @@ static bool publish_travel(qa_application *application,
     return ok;
 }
 
-static void teardown(qa_application *application)
+bool application_publication_retire(qa_application *application,
+                                    qa_error *error)
 {
-    bool ok = true;
-    qa_error first = {0};
-    qa_error current = {0};
-    remember_failure(retire_map_services(application, false, &current),
-                     &current, "map service retirement failed", &ok, &first);
+    if (!retire_map_services(application, false, error))
+        return false;
     application->map_view_ready = false;
-    current = (qa_error){0};
-    if (application->world != NULL)
-        remember_failure(qa_session_retire_world(application->session,
-                                                 &current),
-                         &current, "world retirement failed", &ok, &first);
+    if (application->world != NULL &&
+        !qa_session_retire_world(application->session, error))
+        return false;
     application_publication publication = {
         .removed = application->providers,
         .removed_count = application->provider_count,
     };
-    current = (qa_error){0};
-    remember_failure(detach_removed(application, &publication, &current),
-                     &current, "provider retirement failed", &ok, &first);
+    if (!detach_removed(application, &publication, error))
+        return false;
     free(application->providers);
     application->providers = NULL;
     application->provider_count = 0;
@@ -734,8 +729,7 @@ static void teardown(qa_application *application)
     application->mode_ids = NULL;
     application->mode_count = 0;
     application->primary_mode_ready = false;
-    if (!ok)
-        application_fault(application, &first);
+    return true;
 }
 
 void application_publication_publish(qa_application *application,
@@ -748,7 +742,6 @@ void application_publication_publish(qa_application *application,
     if (application->command_generation != UINT64_MAX)
         ++application->command_generation;
     if (candidate == NULL) {
-        teardown(application);
         application->publication_started = false;
         return;
     }

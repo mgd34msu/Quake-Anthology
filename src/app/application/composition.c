@@ -51,6 +51,13 @@ static void publish(void *opaque, const qa_launch_snapshot *previous,
     application_publication_publish(opaque, previous, candidate, ticket);
 }
 
+static bool retire(void *opaque, const qa_launch_snapshot *previous,
+                    qa_error *error)
+{
+    (void)previous;
+    return application_publication_retire(opaque, error);
+}
+
 bool application_composition_create(qa_application *application,
                                     qa_error *error)
 {
@@ -91,6 +98,7 @@ bool application_composition_create(qa_application *application,
         .prepare_publication = prepare_publication,
         .rollback_publication = rollback_publication,
         .publish = publish,
+        .retire = retire,
     };
     return qa_configuration_create(&hooks, &application->configuration, error);
 }

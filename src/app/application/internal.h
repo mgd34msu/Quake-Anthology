@@ -435,6 +435,7 @@ bool application_publication_prepare(qa_application *,
                                      const qa_launch_snapshot *, void **,
                                      qa_error *);
 void application_publication_rollback(qa_application *, void *);
+bool application_publication_retire(qa_application *, qa_error *);
 void application_publication_publish(qa_application *,
                                      const qa_launch_snapshot *,
                                      const qa_launch_snapshot *, void *);
