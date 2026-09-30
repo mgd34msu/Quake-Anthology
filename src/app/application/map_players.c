@@ -1226,6 +1226,13 @@ bool application_players_publish(qa_application *application,
                             travel->has_landmark ? &travel->landmark : NULL,
                             application->players->records[i].source_begin_pending, error))
             return false;
+    for (size_t i = 0; i < application->mode_count; ++i) {
+        qa_mode_view view;
+        if (!qa_modes_read(application->modes, application->mode_ids[i], &view, error) ||
+            (view.rules.enabled &&
+             !qa_modes_start_relics(application->modes, application->mode_ids[i], error)))
+            return false;
+    }
     return true;
 }
 

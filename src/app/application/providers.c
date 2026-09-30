@@ -121,7 +121,7 @@ typedef struct application_native_profile {
     qa_game_family family;
     qa_mode_kind mode_kind;
     int32_t skill, teamplay;
-    uint32_t maximum_clients;
+    uint32_t maximum_clients, gamecfg;
     bool cooperative, deathmatch, friendly_fire;
 } application_native_profile;
 
@@ -182,6 +182,13 @@ static bool native_profile(const qa_launch_instance *launch,
                                   : choices->world.skill;
         profile.teamplay = has_mode ? mode.teamplay : 0;
         profile.maximum_clients = (uint32_t)choices->seat_count;
+        for (size_t index = 0; index < choices->mode_count; ++index)
+            if (choices->modes[index].rules.enabled &&
+                choices->modes[index].rules.source == QA_MODE_ROGUE &&
+                choices->modes[index].rules.relics &&
+                strcmp(choices->modes[index].instance,
+                       launch->selection.instance) == 0)
+                profile.gamecfg |= 1;
     } else if (family == QA_GAME_Q2) {
         profile.skill = choices->world.skill;
     }
@@ -212,7 +219,7 @@ bool application_instance_configuration(void *opaque,
         return false;
     qa_sha256_context hash;
     qa_sha256_init(&hash);
-    static const uint8_t domain[] = "application-native-profile-v1";
+    static const uint8_t domain[] = "application-native-profile-v2";
     qa_sha256_update(&hash, (qa_bytes){domain, sizeof(domain) - 1});
     profile_word(&hash, profile.family);
     switch (profile.family) {
@@ -222,6 +229,7 @@ bool application_instance_configuration(void *opaque,
         profile_word(&hash, profile.maximum_clients);
         profile_word(&hash, profile.cooperative);
         profile_word(&hash, profile.deathmatch);
+        profile_word(&hash, profile.gamecfg);
         break;
     case QA_GAME_Q2:
         profile_word(&hash, (uint32_t)profile.skill);
@@ -315,6 +323,7 @@ static bool construct_q1(qa_application *application,
         .skill = (uint8_t)profile.skill,
         .deathmatch = profile.deathmatch ? 1 : 0,
         .teamplay = profile.teamplay,
+        .gamecfg = profile.gamecfg,
         .gravity = 800.0f,
         .aim_threshold = 0.93f,
         .max_clients = profile.maximum_clients,

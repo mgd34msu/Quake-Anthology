@@ -298,6 +298,18 @@ bool application_match_prepare(qa_application *application,
     for (size_t index = 0; !publication->restoring &&
                            index < choices->mode_count; ++index) {
         qa_mode_rules rules = choices->modes[index].rules;
+        if (rules.source == QA_MODE_ROGUE) {
+            application_provider *source = named(publication, choices->modes[index].instance);
+            int32_t deathmatch;
+            uint32_t gamecfg;
+            if (source == NULL || source->kind != APPLICATION_PROVIDER_Q1 ||
+                !source->constructed ||
+                !qa_q1_game_rules_read(source->state.q1, &deathmatch, &gamecfg))
+                return application_fail(error, QA_ERROR_UNSUPPORTED,
+                                        "Rogue runes require actual native Q1 source rules");
+            rules.rogue_deathmatch = deathmatch != 0;
+            rules.relics = rules.relics && rules.rogue_deathmatch && (gamecfg & 1) != 0;
+        }
         for (size_t team = 0; team < 3; ++team)
             if (choices->modes[index].teams[team][0] != '\0' &&
                 !qa_strings_intern_cstr(qa_session_strings(application->session),
