@@ -840,6 +840,7 @@ add_library(qa_application STATIC
     src/app/application/guest_checkpoint.c
     src/app/application/guest_input_profile.c
     src/app/application/guest_native_q2.c
+    src/app/application/guest_native_q2_attack.c
     src/app/application/guest_native_q2_calls.c
     src/app/application/guest_native_q2_clients.c
     src/app/application/guest_native_q2_hud.c

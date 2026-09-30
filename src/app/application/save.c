@@ -992,6 +992,12 @@ static bool persistence_create(void *opaque, const qa_save_image *image, void **
         const qa_launch_snapshot *snapshot = qa_configuration_candidate(transaction);
         ok = qa_launch_identity_match(snapshot, qa_session_actors(candidate->session), identity, error) &&
             application_save_prepare_content(candidate, snapshot, image, error);
+        for (size_t i = 0; ok && i < candidate->provider_count; ++i) {
+            application_provider *provider = candidate->providers[i];
+            if (provider && provider->constructed && provider->attached &&
+                provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
+                ok = application_native_q2_prepare_restore(provider, error);
+        }
         if (ok && operation->ops->prepare_content)
             ok = operation->ops->prepare_content(operation->ops->context, candidate, snapshot, image, error);
     }

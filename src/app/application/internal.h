@@ -286,6 +286,8 @@ bool application_native_horde_manager(void *, qa_mode_id, qa_actor_id,
     qa_string_id *, qa_actor_id *, qa_error *);
 bool application_native_horde_restart(void *, qa_mode_id, uint32_t, qa_error *);
 bool application_native_mode_select_weapon(void *, qa_actor_id, qa_item_id, qa_error *);
+application_provider *application_mode_provider(qa_application *, qa_mode_id);
+bool application_native_mode_emit(void *, qa_mode_id, const qa_builtin_event *, qa_error *);
 bool application_native_mode_use_item(void *, qa_actor_id, qa_item_id, qa_error *);
 bool application_native_mode_select_grapple(void *, qa_actor_id, qa_error *);
 bool application_native_mode_character_frame(void *, qa_actor_id, int32_t *);
@@ -358,6 +360,8 @@ qa_console *application_qc_console(application_provider *);
 bool application_q3_guest_actor_client(application_provider *, qa_actor_id, uint32_t *);
 bool application_guest_weapon_read(application_provider *, qa_actor_id, qa_item_id *, qa_error *);
 bool application_guest_inventory_restore_finish(application_provider *, qa_error *);
+bool application_native_q2_prepare_restore(application_provider *, qa_error *);
+bool application_native_q2_restore_finish(application_provider *, qa_error *);
 bool application_guest_bots_admit(application_provider *, qa_error *);
 bool application_guest_clients_drain(application_provider *, qa_error *);
 bool application_guest_console_at(application_provider *, size_t, qa_console **,

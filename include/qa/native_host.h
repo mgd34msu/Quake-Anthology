@@ -264,6 +264,12 @@ bool qa_native_host_actor_released(qa_native_host *, qa_actor_record, qa_error *
 bool qa_native_host_detach_actor(qa_native_host *, uint32_t source_slot,
                                   qa_actor_id, qa_error *);
 bool qa_native_host_world_actor_bind(qa_native_host *, qa_actor_id, qa_error *);
+/* Original Q2 entity address admission and retirement reconciliation. These
+ * use actual source inuse/slot state and preserve full canonical generations;
+ * callers must hold their source owner through synchronous callbacks. */
+bool qa_native_host_source_actor(qa_native_host *, qa_native_address, bool observe,
+                                  qa_actor_id *, qa_error *);
+bool qa_native_host_source_reconcile(qa_native_host *, qa_error *);
 
 bool qa_native_host_initialize(qa_native_host *, int32_t level_time, int32_t random_seed,
                                bool restart, qa_error *);

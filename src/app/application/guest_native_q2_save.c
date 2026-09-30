@@ -1,4 +1,5 @@
 #include "guest_native_q2_private.h"
+#include "guest_native_q2_attack.h"
 #include "qa/network.h"
 #include <limits.h>
 
@@ -48,6 +49,25 @@ static bool read_text(qa_net_reader *reader, char **out, qa_error *error)
     return true;
 }
 
+bool application_native_q2_prepare_restore(application_provider *provider, qa_error *error)
+{
+    struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
+    if (!engine || !application_native_q2_idle(provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 private restore requires an idle detached candidate owner");
+    for (uint32_t i = 1; i < 257; ++i)
+        if (!application_native_q2_inventory_detach(engine, i, error)) return false;
+    return application_native_q2_attack_suspend(engine, error);
+}
+
+bool application_native_q2_restore_finish(application_provider *provider, qa_error *error)
+{
+    struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
+    if (!engine || !application_native_q2_idle(provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 private restore finish requires an idle source owner");
+    if (!application_native_q2_attack_activate(engine, error)) return false;
+    return application_native_q2_inventory_finish(provider, error);
+}
+
 bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error *error)
 {
     struct application_native_q2 *engine = opaque;
@@ -70,11 +90,18 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
             return application_fail(error, QA_ERROR_MEMORY, "Native Q2 configstring continuation exceeds its storage budget");
         size += bytes;
     }
+    qa_buffer attack = {0};
+    if (!application_native_q2_attack_capture(engine, &attack, error)) return false;
+    if (size > 64u * 1024u * 1024u - 4u || attack.size > 64u * 1024u * 1024u - size - 4u) {
+        qa_buffer_free(&attack);
+        return application_fail(error, QA_ERROR_MEMORY, "Native source attack continuation exceeds the engine budget");
+    }
+    size += 4u + attack.size;
     qa_buffer buffer = {.data = malloc(size), .size = size};
-    if (!buffer.data) return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 engine continuation");
+    if (!buffer.data) { qa_buffer_free(&attack); return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 engine continuation"); }
     qa_net_writer writer; qa_net_writer_init(&writer, buffer.data, buffer.size, error);
     const qa_actor_registry *actors = qa_session_actors(app->session);
-    bool ok = qa_net_write_u32(&writer, UINT32_C(0x4532514e)) && qa_net_write_u32(&writer, 1) &&
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x4532514e)) && qa_net_write_u32(&writer, 2) &&
         qa_net_write_u32(&writer, (uint32_t)engine->profile) && qa_net_write_u32(&writer, engine->configstring_count) &&
         qa_net_write_u8(&writer, engine->initialized) && qa_net_write_u8(&writer, engine->map_ready) &&
         write_actor(&writer, actors, engine->world_actor, error) &&
@@ -94,6 +121,8 @@ bool application_native_q2_capture_engine(void *opaque, qa_buffer *out, qa_error
         for (size_t item = 0; ok && item < 256; ++item)
             ok = qa_net_write_u16(&writer, (uint16_t)client->inventory[item]);
     }
+    if (ok) ok = qa_net_write_u32(&writer, (uint32_t)attack.size) && qa_net_write_data(&writer, attack.data, attack.size);
+    qa_buffer_free(&attack);
     if (!ok) { qa_buffer_free(&buffer); return false; }
     buffer.size = qa_net_writer_size(&writer); *out = buffer;
     return true;
@@ -109,7 +138,7 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
         if (engine->clients[i].inventory_bound)
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 restore requires primary inventory retirement before source replacement");
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    if (qa_net_read_u32(&reader) != UINT32_C(0x4532514e) || qa_net_read_u32(&reader) != 1 ||
+    if (qa_net_read_u32(&reader) != UINT32_C(0x4532514e) || qa_net_read_u32(&reader) != 2 ||
         qa_net_read_u32(&reader) != (uint32_t)engine->profile ||
         qa_net_read_u32(&reader) != engine->configstring_count)
         return application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation profile differs from its admitted owner");
@@ -161,11 +190,18 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
             if (qa_actor_id_equal(clients[prior].actor, client->actor)) ok = false;
         if (!ok && !reader.failed) application_fail(error, QA_ERROR_FORMAT, "Native Q2 continuation client record is invalid");
     }
+    struct application_native_q2_attack_restore *attack = NULL;
+    if (ok) {
+        uint32_t extent = qa_net_read_u32(&reader); qa_bytes state;
+        ok = !reader.failed && qa_net_read_bytes(&reader, extent, &state) &&
+            application_native_q2_attack_restore_prepare(engine, state, &attack, error);
+    }
     qa_string_id map_id = 0, spawn_id = 0;
     if (ok) ok = qa_net_reader_finish(&reader) &&
         qa_strings_intern_cstr(qa_session_strings(engine->provider->application->session), map, &map_id, error) &&
         qa_strings_intern_cstr(qa_session_strings(engine->provider->application->session), spawn, &spawn_id, error);
     if (ok) {
+        application_native_q2_attack_restore_commit(engine, attack); attack = NULL;
         for (uint32_t i = 0; i < engine->configstring_count; ++i) free(engine->configstrings[i]);
         free(engine->configstrings); engine->configstrings = config; config = NULL;
         memcpy(engine->clients, clients, sizeof(engine->clients));
@@ -178,5 +214,6 @@ bool application_native_q2_restore_engine(void *opaque, qa_bytes bytes, qa_error
     }
     if (config) { for (uint32_t i = 0; i < engine->configstring_count; ++i) free(config[i]); free(config); }
     free(clients); free(map); free(spawn); free(entities);
+    application_native_q2_attack_restore_abort(attack);
     return ok;
 }

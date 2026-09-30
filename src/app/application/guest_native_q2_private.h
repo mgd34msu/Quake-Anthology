@@ -24,6 +24,7 @@ struct application_native_q2 {
     qa_native_profile profile;
     qa_native_declaration *declaration;
     struct application_native_q2_inventory *primary_inventory;
+    struct application_native_q2_attack *source_attack;
     qa_native_host_engine_services platform;
     qa_native_host_q2_application_fn application;
     void *application_context;
@@ -85,5 +86,7 @@ bool application_native_q2_inventory_detach(struct application_native_q2 *, uint
 bool application_native_q2_inventory_binding(application_provider *, qa_actor_id, uint64_t,
     qa_inventory_binding *, qa_error *);
 bool application_native_q2_inventory_finish(application_provider *, qa_error *);
+bool application_native_q2_prepare_restore(application_provider *, qa_error *);
+bool application_native_q2_restore_finish(application_provider *, qa_error *);
 bool application_native_q2_inventory_close(struct application_native_q2 *, qa_error *);
 #endif

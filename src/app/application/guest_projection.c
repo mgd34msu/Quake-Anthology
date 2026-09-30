@@ -331,7 +331,7 @@ bool application_guest_projection_inventory_binding(q3g_role *role,
 bool application_guest_inventory_restore_finish(application_provider *provider, qa_error *error)
 {
     if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
-        return application_native_q2_inventory_finish(provider, error);
+        return application_native_q2_restore_finish(provider, error);
     struct application_q3_guest *engine = q3g_engine(provider);
     if (!engine)
         return true;

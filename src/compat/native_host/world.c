@@ -300,6 +300,27 @@ static bool read_pointer(qa_native_host *host, qa_native_address address,
     return true;
 }
 
+bool qa_native_host_source_actor(qa_native_host *host, qa_native_address address,
+                                  bool observe, qa_actor_id *out, qa_error *error)
+{
+    if (!host || host->kind != NATIVE_HOST_Q2_GAME)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Native source actor requires an original Q2 game host");
+    ++host->callback_depth;
+    bool ok = native_host_actor_for_address(host, address, observe, out, NULL, error);
+    --host->callback_depth;
+    return ok;
+}
+
+bool qa_native_host_source_reconcile(qa_native_host *host, qa_error *error)
+{
+    if (!host || host->kind != NATIVE_HOST_Q2_GAME)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Native source reconciliation requires an original Q2 game host");
+    ++host->callback_depth;
+    bool ok = native_host_reconcile(host, error);
+    --host->callback_depth;
+    return ok;
+}
+
 static uint32_t pack_classic_solid(qa_bounds bounds)
 {
     int32_t x = (int32_t)(bounds.maxs.x / 8.0f);

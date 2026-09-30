@@ -1,0 +1,20 @@
+#ifndef QA_APPLICATION_NATIVE_Q2_ATTACK_H
+#define QA_APPLICATION_NATIVE_Q2_ATTACK_H
+#include "qa/native_host.h"
+struct application_native_q2;
+struct application_native_q2_attack;
+struct application_native_q2_attack_restore;
+bool application_native_q2_attack_prepare(struct application_native_q2 *, qa_error *);
+bool application_native_q2_attack_activate(struct application_native_q2 *, qa_error *);
+bool application_native_q2_attack_suspend(struct application_native_q2 *, qa_error *);
+bool application_native_q2_attack_close(struct application_native_q2 *, qa_error *);
+void application_native_q2_attack_released(struct application_native_q2 *, qa_actor_id);
+bool application_native_q2_attack_read(struct application_native_q2 *, qa_actor_id attacker,
+    qa_actor_id inflictor, qa_actor_id target, bool weapon_damage, qa_attack *, qa_error *);
+bool application_native_q2_attack_capture(struct application_native_q2 *, qa_buffer *, qa_error *);
+bool application_native_q2_attack_restore_prepare(struct application_native_q2 *, qa_bytes,
+    struct application_native_q2_attack_restore **, qa_error *);
+void application_native_q2_attack_restore_commit(struct application_native_q2 *,
+    struct application_native_q2_attack_restore *);
+void application_native_q2_attack_restore_abort(struct application_native_q2_attack_restore *);
+#endif
