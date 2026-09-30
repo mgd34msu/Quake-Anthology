@@ -20,14 +20,26 @@ static bool hud_signature(qa_source_save_io *io) {
         qa_source_save_u32(io, &version) && version == 1;
 }
 static bool hud_text(qa_source_save_io *io, char **owned) {
-    const char *text = io->direction == QA_SOURCE_SAVE_WRITE ? *owned : NULL;
-    if (!qa_source_save_text(io, &text)) return false;
-    if (io->direction == QA_SOURCE_SAVE_READ && text) {
-        size_t size = strlen(text) + 1;
-        char *copy = malloc(size);
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    bool present = !reading && *owned;
+    size_t length = present ? strlen(*owned) : 0;
+    if (!qa_source_save_bool(io, &present) ||
+        (present && !qa_source_save_count(io, &length, SIZE_MAX - 1))) return false;
+    if (!reading) return !present || qa_source_save_bytes(io, *owned, length);
+    char *copy = NULL;
+    if (present) {
+        if (io->offset > io->input.size || length > io->input.size - io->offset) {
+            qa_error_set(io->error, QA_ERROR_FORMAT, 0, "Truncated HUD text"); return false;
+        }
+        copy = malloc(length + 1);
         if (!copy) { qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Restoring HUD text"); return false; }
-        memcpy(copy, text, size); *owned = copy;
+        if (!qa_source_save_bytes(io, copy, length)) { free(copy); return false; }
+        if (memchr(copy, 0, length)) {
+            free(copy); qa_error_set(io->error, QA_ERROR_FORMAT, 0, "HUD text contains a NUL byte"); return false;
+        }
+        copy[length] = 0;
     }
+    free(*owned); *owned = copy;
     return true;
 }
 static bool hud_message_fields(qa_source_save_io *io, hud_message *message) {
@@ -59,7 +71,7 @@ static bool hud_image_fields(qa_source_save_io *io, const qa_ui_checkpoint_refs 
     qa_buffer_free(&encoded); return ok;
 }
 bool qa_hud_checkpoint(qa_hud *hud, const qa_ui_checkpoint_refs *refs, qa_buffer *out, qa_error *error) {
-    if (!hud || !out || hud->drawing) return ui_fail(error, "HUD checkpoint requires completed draw callbacks");
+    if (!hud || !out || out->data || out->size || hud->drawing) return ui_fail(error, "HUD checkpoint requires completed draw callbacks and empty output");
     qa_source_save_io io = {0};
     if (!qa_source_save_writer(&io, qa_application_session(hud->options.application), error)) return false;
     uint32_t seat = hud->options.seat; size_t count = hud->notice_count;
@@ -76,7 +88,7 @@ bool qa_hud_checkpoint(qa_hud *hud, const qa_ui_checkpoint_refs *refs, qa_buffer
     qa_source_save_dispose(&io); return ok;
 }
 bool qa_hud_restore(qa_bytes bytes, const qa_hud_options *options, const qa_ui_checkpoint_refs *refs, qa_hud **out, qa_error *error) {
-    if (!options || !out) return ui_fail(error, "HUD restore requires candidate options");
+    if (!options || !out || *out) return ui_fail(error, "HUD restore requires candidate options and empty output");
     qa_source_save_io io = {0}; uint32_t seat = 0; qa_hud *hud = NULL;
     bool ok = qa_source_save_reader(&io, qa_application_session(options->application), bytes, error) && hud_signature(&io) &&
         qa_source_save_u32(&io, &seat) && seat == options->seat && qa_hud_create(options, &hud, error);
