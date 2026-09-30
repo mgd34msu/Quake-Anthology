@@ -30,9 +30,20 @@ bool application_qc_reference(struct application_qc_state *engine, qa_actor_id a
 {
     return qa_qc_actor_reference(engine->provider->state.qc.instance, actor, true, out, error);
 }
+static bool source_time(struct application_qc_state *engine, double seconds, qa_error *error)
+{
+    const qa_qc_definition *time = qa_qc_program_find_global(engine->provider->state.qc.program, "time");
+    float value = (float)seconds;
+    uint32_t word; memcpy(&word, &value, sizeof(word));
+    if (!time || time->type != QA_QC_FLOAT)
+        return application_fail(error, QA_ERROR_FORMAT, "QuakeC callback source time is missing");
+    return qa_qc_stage_globals(engine->provider->state.qc.instance, time->offset, &word, 1, error);
+}
 bool application_qc_named(struct application_qc_state *engine, const char *name,
                            qa_actor_id actor, qa_error *error)
 {
+    if (!engine->provider->state.qc.qualified &&
+        !source_time(engine, (double)engine->source_time_ns / 1e9, error)) return false;
     qa_qc_game_global globals[2] = {
         {"self", {QA_QC_GAME_ACTOR, {.actor = actor}}},
         {"other", {QA_QC_GAME_ACTOR, {.actor = {0}}}}
@@ -173,13 +184,7 @@ static bool source_callback(struct application_qc_state *engine, qa_actor_id act
     if (function < 0) return application_fail(error, QA_ERROR_FORMAT, "QuakeC callback function is invalid");
     float seconds = (float)time_seconds;
     bool scoped_time = engine->provider->state.qc.qualified != NULL;
-    if (!scoped_time) {
-        const qa_qc_definition *time = qa_qc_program_find_global(engine->provider->state.qc.program, "time");
-        uint32_t word; memcpy(&word, &seconds, sizeof(word));
-        if (!time || time->type != QA_QC_FLOAT)
-            return application_fail(error, QA_ERROR_FORMAT, "QuakeC callback source time is missing");
-        if (!qa_qc_stage_globals(engine->provider->state.qc.instance, time->offset, &word, 1, error)) return false;
-    }
+    if (!scoped_time && !source_time(engine, time_seconds, error)) return false;
     qa_qc_game_global globals[3] = {
         {"self", {QA_QC_GAME_ACTOR, {.actor = actor}}},
         {"other", {QA_QC_GAME_ACTOR, {.actor = other}}},
@@ -332,8 +337,6 @@ static bool actor_frame(void *opaque, qa_session *session, qa_actor_id actor,
         qa_scheduler_run(qa_session_scheduler(session), actor, frame, QA_THINK_DURING_PHYSICS, &thought, error) :
         qa_scheduler_run_once(qa_session_scheduler(session), actor, frame, QA_THINK_DURING_PHYSICS, &thought, error))) return false;
     if (!thought.alive) return true;
-    if (!qa_qc_game_set_time(engine->provider->state.qc.game, (double)frame->time_ns / 1e9,
-                              (double)frame->elapsed_ns / 1e9, error)) return false;
     if (!player) {
         if (motion == 4) return application_qc_water_transition(engine->provider, actor, error);
         if (motion == 0) return true;

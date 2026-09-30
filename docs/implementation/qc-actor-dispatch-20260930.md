@@ -69,6 +69,13 @@ The scope restores after indexed-call success or failure. Contact entry leaves
 the current `frametime` unchanged and does not treat mutable `g.time` as its
 clock authority. Capture, restore and teardown reject an active client scope.
 
+Classic think leaves its callback time in `g.time`, as the oracle's `invoke`
+restores only `self` and `other`. NONE, NOCLIP, STEP water and movement without
+contacts no longer reset it merely because physics resumes. Classic named
+callbacks explicitly enter with source-current time, so `PlayerPreThink` and
+`PlayerPostThink` retain their actual clock entry while the separate control
+order integration remains open.
+
 Captured NOCLIP uses `qa_physics_step_source_motion` without overwriting the
 guest's current motion. Other moving arms read live shared physics. Unsupported
 nonclient outer movetypes fail at the same dispatch decision as the oracle.
@@ -105,8 +112,11 @@ save integration and executable behavior require their own acceptance evidence.
 
 ## Review freeze
 
-The exact bounded six-file SHA-256 manifest is
-`/tmp/qc-actor-dispatch-20260930.sha256`. Independent source review must read the
-frozen files against the cited oracle paths and root API declarations. Whitespace
-and digest checks are allowed before BASELINE; runtime checks are not acceptance
-evidence for this packet because none have been run.
+The initial bounded six-file SHA-256 manifest is
+`/tmp/qc-actor-dispatch-20260930.sha256`, accepted by independent Q1 source review
+and committed by root at `3e6c032`. The two-file callback-time follow-up is
+`/tmp/qc-actor-time-20260930.sha256`. It changes `guest_qc.c` and this report.
+Independent source review must read the frozen files against the cited oracle
+paths and root API declarations. Whitespace and digest checks are allowed before
+BASELINE; runtime checks are not acceptance evidence for this packet because
+none have been run.
