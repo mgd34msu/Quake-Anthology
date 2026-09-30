@@ -1,59 +1,7 @@
-#include "inventory_internal.h"
+#include "pickups_internal.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
-
-typedef struct pickup_rule {
-    qa_pickup_rule rule;
-    uint64_t *storage;
-} pickup_rule;
-
-typedef struct pickup_registration {
-    struct pickup_registration *next;
-    qa_actor_id actor;
-    qa_actor_owner owner;
-    uint64_t serial;
-    bool active;
-    pickup_rule *rules;
-    size_t count;
-} pickup_registration;
-
-typedef enum pickup_consumption { PICKUP_LIVE, PICKUP_REMOVING, PICKUP_CONSUMED } pickup_consumption;
-typedef struct pickup_observation_owner {
-    struct pickup_observation_owner *retired_next;
-    qa_actor_id actor;
-    qa_actor_owner owner;
-    uint64_t serial;
-    qa_pickup_observer observer;
-    bool active;
-} pickup_observation_owner;
-struct qa_pickup_execution {
-    struct qa_pickup_execution *previous;
-    qa_pickups *service;
-    qa_pickup_offer offer;
-    pickup_registration *registration;
-    pickup_rule *rule;
-    qa_pickup_selection selection;
-    qa_combat_pickup_scope combat_scope;
-    pickup_consumption consumption;
-    bool open, accepted, grant_used, observer_open, source_scope, failed;
-    qa_error failure;
-};
-
-struct qa_pickups {
-    qa_actor_registry *actors;
-    qa_combat *combat;
-    qa_inventory *inventory;
-    pickup_registration *registrations;
-    qa_pickup_execution *scopes;
-    uint64_t serial;
-    size_t calls;
-    pickup_observation_owner **observations, *retired_observations;
-    uint32_t observation_capacity;
-    size_t observation_calls;
-    void *eligibility_context;
-    bool (*eligible)(void *, const qa_pickup_offer *, bool *, qa_error *);
-};
 
 static bool fail(qa_error *e, qa_status status, const char *message)
 { qa_error_set(e, status, 0, "%s", message); return false; }
@@ -145,6 +93,10 @@ static bool registration_current(qa_pickups *service, pickup_registration *regis
             if (!write_current(service, registration, &registration->rules[i].rule.writes[j], registration->rules[i].storage[j])) return false;
     return registration->active && qa_actors_get(service->actors, registration->actor) != NULL;
 }
+
+bool qa_pickups_checkpoint_write_current(qa_pickups *service, pickup_registration *registration,
+                                         const qa_pickup_write *write, uint64_t serial)
+{ return write_current(service, registration, write, serial); }
 
 static bool write_bound(qa_pickups *service, pickup_registration *registration,
                          const qa_pickup_write *write, uint64_t serial)

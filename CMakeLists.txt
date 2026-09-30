@@ -821,9 +821,11 @@ add_library(qa_application STATIC
     src/app/application/bots_submit.c
     src/app/application/composition.c
     src/app/application/control.c
+    src/app/application/commands.c
     src/app/application/events.c
     src/app/application/guest_admission.c
     src/app/application/guest_bots.c
+    src/app/application/guest_checkpoint.c
     src/app/application/guest_input_profile.c
     src/app/application/guest_native_q2.c
     src/app/application/guest_native_q2_clients.c
@@ -849,6 +851,8 @@ add_library(qa_application STATIC
     src/app/application/guest_qc_projection.c
     src/app/application/guest_qc_qualification.c
     src/app/application/guest_services.c
+    src/app/application/guest_source_actor.c
+    src/app/application/guest_weapon.c
     src/app/application/lifetime.c
     src/app/application/map.c
     src/app/application/map_players.c
@@ -857,8 +861,11 @@ add_library(qa_application STATIC
     src/app/application/network.c
     src/app/application/owner.c
     src/app/application/providers.c
+    src/app/application/presentation.c
     src/app/application/publication.c
     src/app/application/services.c
+    src/app/application/save.c
+    src/app/application/save_resolvers.c
     src/app/application/visuals.c)
 target_link_libraries(qa_application PUBLIC qa_persistence qa_configuration qa_game_q1 qa_game_q2 qa_game_q3 qa_campaign qa_modes qa_player_services qa_qc_host qa_q3_host)
 
@@ -902,15 +909,20 @@ target_link_libraries(qa_tools PUBLIC qa_builtin qa_scene qa_content qa_console 
 
 add_library(qa_persistence STATIC
     src/persistence/actors.c
+    src/persistence/combat.c
     src/persistence/coordinator.c
     src/persistence/demo.c
     src/persistence/image.c
+    src/persistence/inventory.c
+    src/persistence/movement_fields.c
+    src/persistence/pickups.c
     src/persistence/recovery.c
     src/persistence/session.c
     src/persistence/source_io.c
     src/persistence/strings.c
+    src/persistence/targets.c
     src/persistence/world.c)
-target_link_libraries(qa_persistence PUBLIC qa_session qa_content qa_gameplay qa_movement qa_network)
+target_link_libraries(qa_persistence PUBLIC qa_session qa_content qa_gameplay qa_movement qa_network qa_campaign)
 
 add_library(qa_frontend STATIC
     src/app/frontend/audio_identity.c

@@ -1,10 +1,143 @@
 #include "save_private.h"
 #include "guest_qc_internal.h"
 #include "qa/game_q1_checkpoint.h"
+#include "qa/game_q2_checkpoint.h"
+#include "qa/game_q3_save.h"
+#include "qa/modes_save.h"
+#include "qa/equipment_save.h"
 #include "qa/launch_identity.h"
+#include "qa/launch_save.h"
+#include "qa/cvars_save.h"
+#include "qa/persistence_fields.h"
+#include "qa/persistence_gameplay.h"
+#include "qa/binary.h"
+#include "guest_checkpoint.h"
+#include "map_players_private.h"
 
 #include <string.h>
 #include <stdlib.h>
+
+static bool persistence_shared_match(qa_application *, const qa_save_image *, qa_error *);
+
+static bool controls_fields(qa_source_save_io *io, qa_application *app,
+                             application_control_record *record)
+{
+    uint32_t mode = record->player_mode;
+    qa_actor_owner cutscene = record->cutscene_character ? record->cutscene_character->owner : 0;
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    if (!qa_source_save_actor(io, &record->actor) || !qa_actors_get(qa_session_actors(app->session), record->actor) ||
+        !qa_source_save_string(io, &cutscene) || !qa_persistence_movement(io, &record->state) ||
+        !qa_persistence_movement_profile(io, &record->profile) || record->state.kind != record->profile.kind ||
+        !qa_persistence_movement_result(io, &record->result) ||
+        !qa_persistence_bounds(io, &record->standing_bounds) || !qa_persistence_bounds(io, &record->bounds) ||
+        !qa_persistence_ground(io, &record->ground) ||
+        !qa_source_save_vec3(io, &record->view_angles) || !qa_source_save_vec3(io, &record->command_angles) ||
+        !qa_source_save_vec3(io, &record->view_offset) || !qa_source_save_vec3(io, &record->saved_view_offset) ||
+        !qa_source_save_vec3(io, &record->q2r_pml_origin) ||
+        !qa_source_save_u64(io, &record->command_sequence) || !qa_source_save_u32(io, &record->buttons) ||
+        !qa_source_save_u32(io, &record->previous_buttons) || !qa_source_save_i32(io, &record->water_level) ||
+        !qa_source_save_i32(io, &record->water_type) || !qa_source_save_f32(io, &record->view_height) ||
+        !qa_source_save_f32(io, &record->gravity_multiplier) || !qa_source_save_u32(io, &mode) || mode > QA_MOVEMENT_MODE_FREEZE ||
+        !qa_source_save_i32(io, &record->saved_mode) || !qa_source_save_bool(io, &record->flight) ||
+        !qa_source_save_bool(io, &record->cutscene) || !qa_source_save_bool(io, &record->saved_damageable) ||
+        !qa_source_save_bool(io, &record->saved_mode_valid) || !qa_source_save_bool(io, &record->command_seen) ||
+        !qa_source_save_bool(io, &record->guest_mode_valid) || !qa_source_save_bool(io, &record->player_mode_set) ||
+        !qa_source_save_i32(io, &record->guest_mode)) return false;
+    if (!qa_vec_finite(record->view_angles) || !qa_vec_finite(record->command_angles) ||
+        !qa_vec_finite(record->view_offset) || !qa_vec_finite(record->saved_view_offset) ||
+        !qa_vec_finite(record->q2r_pml_origin) || !isfinite(record->view_height) ||
+        !isfinite(record->gravity_multiplier) || record->gravity_multiplier < 0 ||
+        (record->result.actor.registry && !qa_actor_id_equal(record->result.actor, record->actor)))
+        return application_fail(io->error, QA_ERROR_FORMAT, "saved control continuation contains invalid actor or view state");
+    if (reading) {
+        record->application = app; record->player_mode = (qa_movement_mode)mode; record->active = true;
+        if (cutscene) {
+            for (size_t i = 0; i < app->provider_count; ++i)
+                if (app->providers[i]->owner == cutscene) record->cutscene_character = app->providers[i];
+            if (!record->cutscene_character)
+                return application_fail(io->error, QA_ERROR_FORMAT, "saved cinematic character provider is unavailable");
+        }
+    }
+    return true;
+}
+
+static bool motion_fields(qa_source_save_io *io, qa_application *app, application_motion_record *record)
+{
+    uint32_t reason = record->reason;
+    if (!qa_source_save_actor(io, &record->actor) || !qa_actors_get(qa_session_actors(app->session), record->actor) ||
+        !qa_persistence_body(io, &record->body) || !qa_source_save_vec3(io, &record->view_angles) ||
+        !qa_source_save_vec3(io, &record->angular_kick) || !qa_source_save_u64(io, &record->hold_until_ns) ||
+        !qa_source_save_u64(io, &record->revision) || !record->revision ||
+        !qa_source_save_u32(io, &reason) || reason > QA_BUILTIN_MOTION_RESET ||
+        !qa_source_save_bool(io, &record->force_view_angles) || !qa_source_save_bool(io, &record->apply_angular_kick)) return false;
+    if (!qa_vec_finite(record->view_angles) || !qa_vec_finite(record->angular_kick))
+        return application_fail(io->error, QA_ERROR_FORMAT, "saved motion continuation has a nonfinite view");
+    record->reason = (qa_builtin_motion_reason)reason; record->active = true; return true;
+}
+
+static bool controls_signature(qa_source_save_io *io)
+{
+    unsigned char actual[8] = {'Q','A','C','T','R','L','S',0};
+    static const unsigned char expected[8] = {'Q','A','C','T','R','L','S',0};
+    uint32_t version = 1;
+    return qa_source_save_bytes(io, actual, sizeof(actual)) && !memcmp(actual, expected, sizeof(actual)) &&
+        qa_source_save_u32(io, &version) && version == 1;
+}
+
+static bool application_controls_capture(qa_application *app, qa_buffer *out, qa_error *error)
+{
+    qa_source_save_io io = {0};
+    if (!qa_source_save_writer(&io, app->session, error)) return false;
+    size_t count = 0;
+    for (uint32_t i = 0; i < app->control_capacity; ++i) if (app->controls[i].active) ++count;
+    bool ok = controls_signature(&io) && qa_source_save_count(&io, &count, app->control_capacity);
+    for (uint32_t i = 0; ok && i < app->control_capacity; ++i) {
+        application_control_record copy = app->controls[i];
+        if (copy.moving || copy.retired) ok = application_fail(error, QA_ERROR_ARGUMENT, "control capture cannot interrupt movement retirement");
+        else if (copy.active) ok = controls_fields(&io, app, &copy);
+    }
+    count = 0;
+    for (uint32_t i = 0; i < app->motion_capacity; ++i) if (app->motion[i].active) ++count;
+    if (ok) ok = qa_source_save_count(&io, &count, app->motion_capacity);
+    for (uint32_t i = 0; ok && i < app->motion_capacity; ++i) if (app->motion[i].active) {
+        application_motion_record copy = app->motion[i]; ok = motion_fields(&io, app, &copy);
+    }
+    if (ok) ok = qa_source_save_finish(&io, out);
+    if (!ok && (!error || error->code == QA_OK)) application_fail(error, QA_ERROR_FORMAT, "invalid control continuation");
+    qa_source_save_dispose(&io); return ok;
+}
+
+static bool application_controls_restore(qa_application *app, qa_bytes bytes, qa_error *error)
+{
+    application_control_record *controls = calloc(app->control_capacity, sizeof(*controls));
+    application_motion_record *motion = calloc(app->motion_capacity, sizeof(*motion));
+    if (!controls || !motion) { free(controls); free(motion); return application_fail(error, QA_ERROR_MEMORY, "allocating saved control continuations"); }
+    qa_source_save_io io = {0}; size_t count = 0;
+    bool ok = qa_source_save_reader(&io, app->session, bytes, error) && controls_signature(&io) &&
+        qa_source_save_count(&io, &count, app->control_capacity);
+    uint32_t previous = 0;
+    for (size_t i = 0; ok && i < count; ++i) {
+        application_control_record record = {0};
+        ok = controls_fields(&io, app, &record) && record.actor.slot < app->control_capacity && (!i || record.actor.slot > previous);
+        if (ok) { previous = record.actor.slot; controls[record.actor.slot] = record; }
+        else qa_movement_result_free(&record.result);
+    }
+    if (ok) ok = qa_source_save_count(&io, &count, app->motion_capacity);
+    previous = 0;
+    for (size_t i = 0; ok && i < count; ++i) {
+        application_motion_record record = {0};
+        ok = motion_fields(&io, app, &record) && record.actor.slot < app->motion_capacity && (!i || record.actor.slot > previous);
+        if (ok) { previous = record.actor.slot; motion[record.actor.slot] = record; }
+    }
+    if (ok) ok = qa_source_save_finish(&io, NULL);
+    if (ok) {
+        application_control_record *old_controls = app->controls; application_motion_record *old_motion = app->motion;
+        app->controls = controls; app->motion = motion; controls = old_controls; motion = old_motion;
+    }
+    if (!ok && (!error || error->code == QA_OK)) application_fail(error, QA_ERROR_FORMAT, "invalid saved control continuation");
+    for (uint32_t i = 0; i < app->control_capacity; ++i) qa_movement_result_free(&controls[i].result);
+    free(controls); free(motion); qa_source_save_dispose(&io); return ok;
+}
 
 void application_save_foundation_free(application_save_foundation *value)
 {
@@ -94,8 +227,14 @@ bool application_save_session_create(const qa_session_options *callbacks,
     options.actor_capacity = value.session.actor_capacity;
     options.component_capacity = value.session.component_capacity;
     options.mixed_order = value.session.mixed_order;
-    bool ok = qa_session_create_restored(&options, &value.actors, value.strings, out, error);
-    if (ok) value.strings = NULL;
+    qa_session *session = NULL;
+    bool ok = qa_session_create_restored(&options, &value.actors, value.strings, &session, error);
+    if (ok) {
+        value.strings = NULL;
+        ok = qa_session_restore_elapsed(session, value.session.elapsed_ns, error);
+        if (ok) *out = session;
+        else (void)qa_session_destroy(session, NULL);
+    }
     application_save_foundation_free(&value);
     return ok;
 }
@@ -301,4 +440,610 @@ bool application_save_configuration_validate(qa_application *candidate, qa_bytes
     if (!candidate || !candidate->session || !qa_session_safe(candidate->session))
         return application_fail(error, QA_ERROR_ARGUMENT, "configuration validation requires an isolated prepared candidate");
     return qa_launch_identity_match(qa_application_launch(candidate), qa_session_actors(candidate->session), bytes, error);
+}
+
+typedef struct application_persistence {
+    qa_application *active;
+    qa_application **slot;
+    qa_application *displaced;
+    qa_application *retained;
+    const qa_application_options *options;
+    const qa_application_persistence_ops *ops;
+    qa_persistence_gameplay_resolvers resolvers;
+    qa_save_owner *owners;
+    size_t owner_count;
+    qa_buffer foundation[4];
+    qa_buffer configuration;
+    uint64_t configuration_generation, publication_generation, actor_revision;
+    bool leased;
+} application_persistence;
+
+static bool persistence_safe(qa_application *app)
+{
+    return app && app->operation == APPLICATION_IDLE && app->session && app->world &&
+        app->configuration && qa_application_launch(app) && qa_session_safe(app->session) &&
+        qa_world_idle(app->world) && qa_combat_idle(app->combat) &&
+        application_guests_idle(app) && application_bots_can_destroy(app) &&
+        !app->publication_started && !app->destroy_requested && !app->finalizing &&
+        !app->pending_close && !app->routing_snapshot && !app->routing_providers &&
+        !app->routing_provider_count &&
+        (app->state == QA_APPLICATION_READY || app->state == QA_APPLICATION_RUNNING);
+}
+
+static bool persistence_lease(application_persistence *operation, qa_error *error)
+{
+    if (!persistence_safe(operation->active))
+        return application_fail(error, QA_ERROR_ARGUMENT, "application persistence requires a committed idle session");
+    operation->configuration_generation = qa_configuration_generation(operation->active->configuration);
+    operation->publication_generation = operation->active->publication_generation;
+    operation->actor_revision = qa_actors_revision(qa_session_actors(operation->active->session));
+    operation->active->operation = APPLICATION_PERSISTING;
+    operation->leased = true;
+    return true;
+}
+
+static bool persistence_unchanged(application_persistence *operation, qa_error *error)
+{
+    qa_application *app = operation->active;
+    if (!operation->leased || app->operation != APPLICATION_PERSISTING ||
+        app->destroy_requested || app->publication_started ||
+        app->state == QA_APPLICATION_FAULTED || app->state == QA_APPLICATION_STOPPING ||
+        qa_configuration_generation(app->configuration) != operation->configuration_generation ||
+        app->publication_generation != operation->publication_generation ||
+        qa_actors_revision(qa_session_actors(app->session)) != operation->actor_revision ||
+        !qa_session_safe(app->session) || !qa_world_idle(app->world) ||
+        !qa_combat_idle(app->combat) || !application_guests_idle(app))
+        return application_fail(error, QA_ERROR_ARGUMENT, "application changed during persistence operation");
+    return true;
+}
+
+static void persistence_end(void *opaque)
+{
+    application_persistence *operation = opaque;
+    for (size_t i = 0; i < 4; ++i) qa_buffer_free(operation->foundation + i);
+    qa_buffer_free(&operation->configuration);
+    free(operation->owners); operation->owners = NULL;
+    if (operation->leased) {
+        operation->active->operation = APPLICATION_IDLE;
+        operation->leased = false;
+    }
+}
+
+static const char *shared_schema(qa_save_owner_kind kind)
+{
+    switch (kind) {
+    case QA_SAVE_STRINGS: return "qa.strings";
+    case QA_SAVE_ACTORS: return "qa.actors";
+    case QA_SAVE_SESSION: return "qa.session";
+    case QA_SAVE_WORLD: return "qa.world";
+    case QA_SAVE_CONFIGURATION: return "qa.configuration";
+    case QA_SAVE_ROSTER: return "qa.roster";
+    case QA_SAVE_CVARS: return "qa.cvars";
+    case QA_SAVE_APPLICATION: return "qa.application";
+    case QA_SAVE_COMBAT: return "qa.combat";
+    case QA_SAVE_INVENTORY: return "qa.inventory";
+    case QA_SAVE_PICKUPS: return "qa.pickups";
+    case QA_SAVE_TARGETS: return "qa.targets";
+    case QA_SAVE_CONTROLS: return "qa.controls";
+    case QA_SAVE_MODES: return "qa.modes";
+    case QA_SAVE_EQUIPMENT: return "qa.equipment";
+    default: return NULL;
+    }
+}
+
+static const char *provider_schema(const application_provider *provider)
+{
+    if (provider->kind == APPLICATION_PROVIDER_Q1) return "qa.q1.native";
+    if (provider->kind == APPLICATION_PROVIDER_Q2) return "qa.native-q2-continuation";
+    if (provider->kind == APPLICATION_PROVIDER_Q3) return "qa.q3.native";
+    if (provider->kind == APPLICATION_PROVIDER_QC) return "qa.qc.guest";
+    return NULL;
+}
+
+static application_provider *saved_provider(qa_application *app, const char *instance)
+{
+    for (size_t i = 0; i < app->provider_count; ++i)
+        if (app->providers[i] && app->providers[i]->launch &&
+            !strcmp(app->providers[i]->launch->selection.instance, instance)) return app->providers[i];
+    return NULL;
+}
+
+static bool same_owner(const qa_save_owner *a, const qa_save_owner *b)
+{
+    return a->kind == b->kind && a->schema_version == b->schema_version &&
+        a->instance && b->instance && !strcmp(a->instance, b->instance) &&
+        a->schema && b->schema && !strcmp(a->schema, b->schema) &&
+        a->backend && b->backend && !strcmp(a->backend, b->backend) &&
+        qa_sha256_equal(&a->content, &b->content);
+}
+
+static const qa_application_persistence_owner *external_owner(
+    const qa_application_persistence_ops *ops, const qa_save_owner *owner)
+{
+    for (size_t i = 0; i < ops->owner_count; ++i)
+        if (same_owner(&ops->owners[i].identity, owner)) return ops->owners + i;
+    return NULL;
+}
+
+static bool configuration_fields(qa_bytes bytes, qa_configuration_checkpoint *state,
+    qa_bytes *identity, qa_error *error)
+{
+    if (!bytes.data || bytes.size < 24 || memcmp(bytes.data, "QACF", 4) ||
+        qa_load_u32le(bytes.data + 4) != 1 || !qa_load_u64le(bytes.data + 8) ||
+        qa_load_u64le(bytes.data + 16) != bytes.size - 24)
+        return application_fail(error, QA_ERROR_FORMAT, "invalid application configuration continuation");
+    *state = (qa_configuration_checkpoint){.generation = qa_load_u64le(bytes.data + 8), .has_current = true};
+    *identity = (qa_bytes){bytes.data + 24, bytes.size - 24};
+    return true;
+}
+
+static bool configuration_capture(qa_application *app, qa_buffer *out, qa_error *error)
+{
+    qa_configuration_checkpoint checkpoint;
+    qa_buffer identity = {0};
+    if (!qa_configuration_checkpoint_capture(app->configuration, &checkpoint, error) ||
+        !checkpoint.has_current || !checkpoint.generation)
+        return application_fail(error, QA_ERROR_ARGUMENT, "application save requires a committed configuration");
+    if (!application_save_configuration_capture(app, &identity, error)) return false;
+    if (identity.size > SIZE_MAX - 24) {
+        qa_buffer_free(&identity);
+        return application_fail(error, QA_ERROR_MEMORY, "configuration continuation extent overflow");
+    }
+    qa_buffer bytes = {.data = malloc(identity.size + 24), .size = identity.size + 24};
+    if (!bytes.data) {
+        qa_buffer_free(&identity);
+        return application_fail(error, QA_ERROR_MEMORY, "allocating configuration continuation");
+    }
+    memcpy(bytes.data, "QACF", 4); qa_store_u32le(bytes.data + 4, 1);
+    qa_store_u64le(bytes.data + 8, checkpoint.generation);
+    qa_store_u64le(bytes.data + 16, identity.size);
+    memcpy(bytes.data + 24, identity.data, identity.size); qa_buffer_free(&identity);
+    *out = bytes;
+    return true;
+}
+
+static bool application_capture(qa_application *app, qa_buffer *out, qa_error *error)
+{
+    qa_buffer metadata = {0}, map = {0};
+    bool ok = application_save_metadata_capture(app, &metadata, error) &&
+        application_map_checkpoint_capture(app, &map, error);
+    if (ok && (metadata.size > SIZE_MAX - 24 || map.size > SIZE_MAX - 24 - metadata.size))
+        ok = application_fail(error, QA_ERROR_MEMORY, "application continuation extent overflow");
+    qa_buffer bytes = {0};
+    if (ok) {
+        bytes.size = 24 + metadata.size + map.size; bytes.data = malloc(bytes.size);
+        if (!bytes.data) ok = application_fail(error, QA_ERROR_MEMORY, "allocating application continuation");
+    }
+    if (ok) {
+        memcpy(bytes.data, "QAAO", 4); qa_store_u32le(bytes.data + 4, 1);
+        qa_store_u64le(bytes.data + 8, metadata.size); qa_store_u64le(bytes.data + 16, map.size);
+        memcpy(bytes.data + 24, metadata.data, metadata.size);
+        memcpy(bytes.data + 24 + metadata.size, map.data, map.size);
+        *out = bytes;
+    }
+    qa_buffer_free(&metadata); qa_buffer_free(&map);
+    return ok;
+}
+
+static bool application_restore(qa_application *app, qa_bytes bytes, qa_error *error)
+{
+    if (!bytes.data || bytes.size < 24 || memcmp(bytes.data, "QAAO", 4) ||
+        qa_load_u32le(bytes.data + 4) != 1)
+        return application_fail(error, QA_ERROR_FORMAT, "invalid application continuation header");
+    uint64_t metadata = qa_load_u64le(bytes.data + 8), map = qa_load_u64le(bytes.data + 16);
+    if (!metadata || !map || metadata > bytes.size - 24 || map != bytes.size - 24 - metadata)
+        return application_fail(error, QA_ERROR_FORMAT, "invalid application continuation extents");
+    return application_save_metadata_restore(app, (qa_bytes){bytes.data + 24, (size_t)metadata}, error) &&
+        application_map_checkpoint_restore(app, (qa_bytes){bytes.data + 24 + (size_t)metadata, (size_t)map}, error);
+}
+
+static bool provider_capture(application_provider *provider, qa_buffer *out, qa_error *error)
+{
+    qa_buffer state = {0};
+    bool ok;
+    if (provider->kind == APPLICATION_PROVIDER_Q1)
+        ok = qa_q1_game_capture(provider->state.q1, &state, error);
+    else if (provider->kind == APPLICATION_PROVIDER_Q2)
+        ok = qa_q2_game_capture(provider->state.q2, &state, error);
+    else if (provider->kind == APPLICATION_PROVIDER_Q3)
+        ok = qa_q3_game_capture(provider->state.q3, &state, error);
+    else ok = application_guest_checkpoint_capture(provider, &state, error);
+    if (!ok) return false;
+    if (state.size > SIZE_MAX - 32) {
+        qa_buffer_free(&state);
+        return application_fail(error, QA_ERROR_MEMORY, "provider continuation extent overflow");
+    }
+    qa_buffer bytes = {.size = state.size + 32}; bytes.data = calloc(1, bytes.size);
+    if (!bytes.data) {
+        qa_buffer_free(&state);
+        return application_fail(error, QA_ERROR_MEMORY, "allocating provider continuation");
+    }
+    memcpy(bytes.data, "QAPV", 4); qa_store_u32le(bytes.data + 4, 1);
+    qa_store_u32le(bytes.data + 8, provider->kind);
+    qa_store_u32le(bytes.data + 12, provider->map_bound ? 1u : 0u);
+    qa_store_u32le(bytes.data + 16, provider->q1_server_flags);
+    qa_store_u32le(bytes.data + 20, provider->q2_server_flags);
+    qa_store_u64le(bytes.data + 24, state.size);
+    memcpy(bytes.data + 32, state.data, state.size); qa_buffer_free(&state);
+    *out = bytes;
+    return true;
+}
+
+static bool provider_restore(application_provider *provider, qa_bytes bytes, qa_error *error)
+{
+    if (!bytes.data || bytes.size < 32 || memcmp(bytes.data, "QAPV", 4) ||
+        qa_load_u32le(bytes.data + 4) != 1 || qa_load_u32le(bytes.data + 8) != (uint32_t)provider->kind ||
+        qa_load_u32le(bytes.data + 12) > 1 || qa_load_u64le(bytes.data + 24) != bytes.size - 32)
+        return application_fail(error, QA_ERROR_FORMAT, "invalid provider continuation header or extent");
+    qa_bytes state = {bytes.data + 32, bytes.size - 32};
+    bool ok;
+    if (provider->kind == APPLICATION_PROVIDER_Q1) {
+        qa_q1_restore *ticket = NULL;
+        ok = qa_q1_game_restore_prepare_source(provider->state.q1, state, &ticket, error) &&
+            qa_q1_game_restore_commit(ticket, error);
+        if (!ok) qa_q1_game_restore_abort(ticket);
+    } else if (provider->kind == APPLICATION_PROVIDER_Q2)
+        ok = qa_q2_game_restore(provider->state.q2, state, error);
+    else if (provider->kind == APPLICATION_PROVIDER_Q3)
+        ok = qa_q3_game_restore(provider->state.q3, state, error);
+    else ok = application_guest_checkpoint_restore(provider, state, error);
+    if (!ok) return false;
+    provider->map_bound = qa_load_u32le(bytes.data + 12) != 0;
+    provider->q1_server_flags = qa_load_u32le(bytes.data + 16);
+    provider->q2_server_flags = qa_load_u32le(bytes.data + 20);
+    return true;
+}
+
+static bool persistence_inventory(application_persistence *operation, qa_application *app,
+    const qa_save_image *image, qa_error *error)
+{
+    const qa_launch_snapshot *launch = qa_application_launch(app);
+    size_t provider_count = qa_launch_snapshot_instance_count(launch);
+    if (!launch || provider_count != app->provider_count ||
+        provider_count > QA_SAVE_OWNER_LIMIT - (QA_SAVE_PROVIDER - 1u))
+        return application_fail(error, QA_ERROR_FORMAT, "application provider inventory differs from configuration");
+    size_t count = QA_SAVE_PROVIDER - 1u + provider_count;
+    qa_save_owner *owners = calloc(count, sizeof(*owners));
+    if (!owners) return application_fail(error, QA_ERROR_MEMORY, "allocating application save owner inventory");
+    bool ok = true;
+    size_t used_external = 0;
+    for (size_t i = 0; ok && i < count; ++i) {
+        qa_save_owner *owner = owners + i;
+        const char *schema = NULL;
+        if (i < QA_SAVE_PROVIDER - 1u) {
+            owner->kind = (qa_save_owner_kind)(i + 1); owner->instance = "";
+            schema = shared_schema(owner->kind);
+        } else {
+            const qa_launch_instance *instance = qa_launch_snapshot_instance(launch, i - (QA_SAVE_PROVIDER - 1u));
+            application_provider *provider = saved_provider(app, instance->selection.instance);
+            if (!provider || provider != instance->state || !provider->constructed || !provider->attached) {
+                ok = application_fail(error, QA_ERROR_FORMAT, "selected provider is not an attached restored owner"); break;
+            }
+            owner->kind = QA_SAVE_PROVIDER; owner->instance = instance->selection.instance;
+            owner->content = instance->identity; schema = provider_schema(provider);
+            owner->backend = provider->kind == APPLICATION_PROVIDER_QC ? "quakec" : "";
+        }
+        if (schema) {
+            owner->schema = schema; owner->schema_version = 1;
+            if (!owner->backend) owner->backend = "";
+        } else {
+            const qa_application_persistence_owner *binding = NULL;
+            for (size_t j = 0; j < operation->ops->owner_count; ++j) {
+                const qa_application_persistence_owner *entry = operation->ops->owners + j;
+                if (entry->identity.kind == owner->kind && entry->identity.instance &&
+                    !strcmp(entry->identity.instance, owner->instance)) {
+                    if (binding) { ok = application_fail(error, QA_ERROR_FORMAT, "duplicate application owner producer"); break; }
+                    binding = entry;
+                }
+            }
+            if (!ok) break;
+            if (!binding || !binding->capture || !binding->restore ||
+                (owner->kind == QA_SAVE_PROVIDER && !qa_sha256_equal(&owner->content, &binding->identity.content))) {
+                ok = application_fail(error, QA_ERROR_UNSUPPORTED, "required application persistence producer is unavailable"); break;
+            }
+            *owner = binding->identity; ++used_external;
+        }
+        if (image) {
+            const qa_save_record *record = qa_save_image_find(image, owner->kind, owner->instance);
+            if (!record || !same_owner(owner, &record->owner))
+                ok = application_fail(error, QA_ERROR_FORMAT, "save owner content/schema/backend differs from candidate");
+        }
+    }
+    if (ok && (used_external != operation->ops->owner_count ||
+        (image && qa_save_image_record_count(image) != count)))
+        ok = application_fail(error, QA_ERROR_FORMAT, "application persistence owner inventory contains unselected owners");
+    if (!ok) { free(owners); return false; }
+    free(operation->owners); operation->owners = owners; operation->owner_count = count;
+    return true;
+}
+
+static bool persistence_begin(void *opaque, qa_save_purpose purpose, qa_save_metadata *metadata,
+    const qa_save_owner **owners, size_t *count, qa_error *error)
+{
+    application_persistence *operation = opaque;
+    if (!persistence_lease(operation, error)) return false;
+    qa_application *app = operation->active;
+    bool ok = persistence_inventory(operation, app, NULL, error) &&
+        application_save_foundation_capture(app, operation->foundation, error) &&
+        configuration_capture(app, &operation->configuration, error);
+    qa_configuration_checkpoint checkpoint; qa_bytes identity;
+    if (ok) ok = configuration_fields((qa_bytes){operation->configuration.data, operation->configuration.size},
+        &checkpoint, &identity, error);
+    if (!ok) { persistence_end(operation); return false; }
+    *metadata = (qa_save_metadata){.purpose = purpose, .elapsed_ns = qa_session_elapsed(app->session),
+        .configuration_generation = checkpoint.generation, .world_generation = app->map_revision};
+    qa_sha256(identity, &metadata->composition);
+    *owners = operation->owners; *count = operation->owner_count;
+    return true;
+}
+
+static bool buffer_copy(qa_bytes bytes, qa_buffer *out, qa_error *error)
+{
+    qa_buffer copy = {.data = malloc(bytes.size), .size = bytes.size};
+    if (!copy.data) return application_fail(error, QA_ERROR_MEMORY, "copying captured owner continuation");
+    memcpy(copy.data, bytes.data, bytes.size); *out = copy;
+    return true;
+}
+
+static bool persistence_capture_owner(void *opaque, const qa_save_owner *owner,
+    qa_buffer *out, qa_error *error)
+{
+    application_persistence *operation = opaque;
+    qa_application *app = operation->active;
+    size_t index;
+    switch (owner->kind) {
+    case QA_SAVE_STRINGS: index = 0; break;
+    case QA_SAVE_ACTORS: index = 1; break;
+    case QA_SAVE_SESSION: index = 2; break;
+    case QA_SAVE_WORLD: index = 3; break;
+    case QA_SAVE_CONFIGURATION: return buffer_copy((qa_bytes){operation->configuration.data, operation->configuration.size}, out, error);
+    case QA_SAVE_ROSTER: return application_players_checkpoint_capture(app, out, error);
+    case QA_SAVE_CVARS: return qa_cvars_save_capture(app->cvars, out, error);
+    case QA_SAVE_APPLICATION: return application_capture(app, out, error);
+    case QA_SAVE_COMBAT: return qa_persistence_combat_capture(app->session, app->combat, app->inventory, out, error);
+    case QA_SAVE_INVENTORY: return qa_persistence_inventory_capture(app->session, app->inventory, out, error);
+    case QA_SAVE_PICKUPS: return qa_persistence_pickups_capture(app->session, app->pickups, out, error);
+    case QA_SAVE_TARGETS: return qa_persistence_targets_capture(app->targets, out, error);
+    case QA_SAVE_CONTROLS: return application_controls_capture(app, out, error);
+    case QA_SAVE_MODES: return qa_modes_capture(app->modes, out, error);
+    case QA_SAVE_EQUIPMENT: return qa_equipment_capture(app->equipment, out, error);
+    case QA_SAVE_PROVIDER: {
+        application_provider *provider = saved_provider(app, owner->instance);
+        if (provider && provider_schema(provider))
+            return provider_capture(provider, out, error);
+        const qa_application_persistence_owner *binding = external_owner(operation->ops, owner);
+        return binding && binding->capture(binding->context, app, out, error);
+    }
+    default: {
+        const qa_application_persistence_owner *binding = external_owner(operation->ops, owner);
+        return binding && binding->capture(binding->context, app, out, error);
+    }
+    }
+    qa_buffer *buffer = operation->foundation + index;
+    return buffer_copy((qa_bytes){buffer->data, buffer->size}, out, error);
+}
+
+static bool persistence_capture_validate(void *opaque, const qa_save_image *image, qa_error *error)
+{
+    application_persistence *operation = opaque;
+    bool ok = persistence_unchanged(operation, error) &&
+        persistence_shared_match(operation->active, image, error) &&
+        operation->ops->validate(operation->ops->context, operation->active, image, error) &&
+        persistence_unchanged(operation, error);
+    qa_buffer strings = {0};
+    if (ok) ok = qa_save_strings_encode(qa_session_strings(operation->active->session), &strings, error);
+    if (ok) {
+        const qa_save_record *saved = qa_save_image_find(image, QA_SAVE_STRINGS, "");
+        if (strings.size != saved->payload.size || memcmp(strings.data, saved->payload.data, strings.size))
+            ok = application_fail(error, QA_ERROR_ARGUMENT, "producer changed the ordered string table during capture");
+    }
+    qa_buffer_free(&strings);
+    return ok;
+}
+
+bool qa_application_persistence_capture(qa_application *app,
+    const qa_application_persistence_ops *ops, qa_save_purpose purpose,
+    qa_save_image **out, qa_error *error)
+{
+    if (!ops || !ops->validate || (ops->owner_count && !ops->owners) ||
+        ops->owner_count > QA_SAVE_OWNER_LIMIT || !out)
+        return application_fail(error, QA_ERROR_ARGUMENT, "application capture requires actual owner producers");
+    application_persistence operation = {.active = app, .ops = ops};
+    const qa_save_capture_ops capture = {.begin = persistence_begin,
+        .capture = persistence_capture_owner, .validate = persistence_capture_validate, .end = persistence_end};
+    return qa_save_capture(&operation, &capture, purpose, out, error);
+}
+
+static bool persistence_create(void *opaque, const qa_save_image *image, void **out, qa_error *error)
+{
+    application_persistence *operation = opaque;
+    const qa_save_record *configuration = foundation_record(image, QA_SAVE_CONFIGURATION, "qa.configuration", error);
+    qa_configuration_checkpoint checkpoint; qa_bytes identity;
+    if (!configuration || !configuration_fields(configuration->payload, &checkpoint, &identity, error)) return false;
+    qa_sha256_digest composition; qa_sha256(identity, &composition);
+    const qa_save_metadata *metadata = qa_save_image_metadata(image);
+    if (checkpoint.generation != metadata->configuration_generation ||
+        !qa_sha256_equal(&composition, &metadata->composition))
+        return application_fail(error, QA_ERROR_FORMAT, "configuration continuation disagrees with save envelope");
+    qa_application *candidate = NULL;
+    if (!application_create_restored(operation->options, image, &candidate, error)) return false;
+    candidate->operation = APPLICATION_PERSISTING;
+    *out = candidate;
+    qa_launch_draft *draft = NULL;
+    qa_configuration_transaction *transaction = NULL;
+    bool ok = application_save_configuration_decode(candidate, identity, &draft, error) &&
+        qa_configuration_prepare_restored(candidate->configuration, draft, &checkpoint, &transaction, error);
+    qa_launch_draft_destroy(draft);
+    if (ok) {
+        const qa_launch_snapshot *snapshot = qa_configuration_candidate(transaction);
+        ok = qa_launch_identity_match(snapshot, qa_session_actors(candidate->session), identity, error) &&
+            application_save_prepare_content(candidate, snapshot, image, error);
+        if (ok && operation->ops->prepare_content)
+            ok = operation->ops->prepare_content(operation->ops->context, candidate, snapshot, image, error);
+    }
+    if (ok) ok = qa_configuration_commit_restored(transaction, error);
+    if (!ok && transaction) (void)qa_configuration_abort(transaction, NULL);
+    if (ok) ok = persistence_inventory(operation, candidate, image, error);
+    if (ok) ok = application_save_resolvers(candidate, &operation->resolvers, error);
+    return ok;
+}
+
+static bool persistence_restore_owner(void *opaque, void *value,
+    const qa_save_record *record, qa_error *error)
+{
+    application_persistence *operation = opaque;
+    qa_application *candidate = value;
+    switch (record->owner.kind) {
+    /* Foundation is decoded during isolated construction and applied after
+     * source bindings. Configuration was prepared without ordinary callbacks. */
+    case QA_SAVE_STRINGS: case QA_SAVE_ACTORS: case QA_SAVE_SESSION:
+    case QA_SAVE_WORLD: case QA_SAVE_CONFIGURATION: return true;
+    case QA_SAVE_ROSTER: return application_players_checkpoint_restore(candidate, record->payload, error);
+    case QA_SAVE_APPLICATION: return application_restore(candidate, record->payload, error);
+    case QA_SAVE_COMBAT: return qa_persistence_combat_restore(candidate->session, candidate->combat, candidate->inventory,
+        &operation->resolvers, record->payload, error);
+    case QA_SAVE_INVENTORY: return qa_persistence_inventory_restore(candidate->session, candidate->inventory,
+        &operation->resolvers, record->payload, error);
+    case QA_SAVE_PICKUPS: return qa_persistence_pickups_restore(candidate->session, candidate->pickups,
+        &operation->resolvers, record->payload, error);
+    case QA_SAVE_TARGETS: return qa_persistence_targets_restore(candidate->targets, &operation->resolvers, record->payload, error);
+    case QA_SAVE_CONTROLS: return application_controls_restore(candidate, record->payload, error);
+    case QA_SAVE_MODES: return qa_modes_restore_bytes(candidate->modes, record->payload, error);
+    case QA_SAVE_EQUIPMENT: return qa_equipment_restore_bytes(candidate->equipment, record->payload, error);
+    case QA_SAVE_CVARS: {
+        qa_cvars_restore *ticket = NULL;
+        bool ok = qa_cvars_save_prepare(candidate->cvars, record->payload, &ticket, error) &&
+            qa_cvars_save_commit(ticket, error);
+        if (!ok) qa_cvars_save_abort(ticket);
+        return ok;
+    }
+    case QA_SAVE_PROVIDER: {
+        application_provider *provider = saved_provider(candidate, record->owner.instance);
+        if (!provider) return application_fail(error, QA_ERROR_FORMAT, "restore selected provider is absent");
+        if (provider_schema(provider))
+            return provider_restore(provider, record->payload, error);
+        const qa_application_persistence_owner *binding = external_owner(operation->ops, &record->owner);
+        return binding && binding->restore(binding->context, candidate, record->payload, error);
+    }
+    default: {
+        const qa_application_persistence_owner *binding = external_owner(operation->ops, &record->owner);
+        return binding && binding->restore(binding->context, candidate, record->payload, error);
+    }
+    }
+}
+
+static bool persistence_shared_match(qa_application *app, const qa_save_image *image, qa_error *error)
+{
+    static const qa_save_owner_kind owners[] = {QA_SAVE_COMBAT, QA_SAVE_INVENTORY, QA_SAVE_PICKUPS,
+        QA_SAVE_TARGETS, QA_SAVE_CONTROLS, QA_SAVE_MODES, QA_SAVE_EQUIPMENT};
+    for (size_t i = 0; i < sizeof(owners) / sizeof(*owners); ++i) {
+        qa_buffer encoded = {0}; bool ok;
+        switch (owners[i]) {
+        case QA_SAVE_COMBAT: ok = qa_persistence_combat_capture(app->session, app->combat, app->inventory, &encoded, error); break;
+        case QA_SAVE_INVENTORY: ok = qa_persistence_inventory_capture(app->session, app->inventory, &encoded, error); break;
+        case QA_SAVE_PICKUPS: ok = qa_persistence_pickups_capture(app->session, app->pickups, &encoded, error); break;
+        case QA_SAVE_TARGETS: ok = qa_persistence_targets_capture(app->targets, &encoded, error); break;
+        case QA_SAVE_CONTROLS: ok = application_controls_capture(app, &encoded, error); break;
+        case QA_SAVE_MODES: ok = qa_modes_capture(app->modes, &encoded, error); break;
+        case QA_SAVE_EQUIPMENT: ok = qa_equipment_capture(app->equipment, &encoded, error); break;
+        default: ok = false; break;
+        }
+        const qa_save_record *saved = qa_save_image_find(image, owners[i], "");
+        if (ok && (!saved || encoded.size != saved->payload.size || memcmp(encoded.data, saved->payload.data, encoded.size)))
+            ok = application_fail(error, QA_ERROR_FORMAT, "source reconnection changed a saved shared continuation");
+        qa_buffer_free(&encoded);
+        if (!ok) return false;
+    }
+    return true;
+}
+
+static bool persistence_finish(void *opaque, void *value, const qa_save_image *image, qa_error *error)
+{
+    application_persistence *operation = opaque;
+    qa_application *candidate = value;
+    application_save_foundation foundation = {0};
+    bool ok = !operation->ops->reconnect ||
+        operation->ops->reconnect(operation->ops->context, candidate, image, error);
+    for (size_t i = 0; ok && i < candidate->provider_count; ++i) {
+        application_provider *provider = candidate->providers[i];
+        if (provider->kind == APPLICATION_PROVIDER_Q3)
+            ok = qa_q3_game_reconnect(provider->state.q3, error);
+        else if (provider->kind == APPLICATION_PROVIDER_Q2)
+            ok = qa_q2_game_restore_finish(provider->state.q2, error);
+        else if (provider->kind == APPLICATION_PROVIDER_Q1)
+            ok = qa_q1_game_restore_finish(provider->state.q1, error);
+    }
+    if (ok) ok = qa_modes_reconnect(candidate->modes, error) &&
+        qa_equipment_reconnect(candidate->equipment, error) &&
+        qa_persistence_combat_validate(candidate->combat, candidate->inventory, error);
+    if (ok) ok = application_save_foundation_decode(image, &foundation, error) &&
+        application_save_foundation_finish(candidate, &foundation, error);
+    application_save_foundation_free(&foundation);
+    if (ok) ok = persistence_shared_match(candidate, image, error);
+    const qa_save_record *configuration = qa_save_image_find(image, QA_SAVE_CONFIGURATION, "");
+    qa_configuration_checkpoint checkpoint; qa_bytes identity;
+    if (ok) ok = configuration_fields(configuration->payload, &checkpoint, &identity, error) &&
+        application_save_configuration_validate(candidate, identity, error);
+    if (ok) candidate->operation = APPLICATION_IDLE;
+    if (ok && (candidate->map_revision != qa_save_image_metadata(image)->world_generation ||
+        !persistence_safe(candidate)))
+        ok = application_fail(error, QA_ERROR_FORMAT, "candidate application is not a complete idle saved world");
+    if (ok) ok = operation->ops->validate(operation->ops->context, candidate, image, error);
+    /* Producer restoration may reconnect bindings, but cannot allocate new
+     * actor identities or replace the saved ordered string table. */
+    qa_buffer actors = {0}, strings = {0}; qa_actor_checkpoint actor_state = {0};
+    if (ok) ok = qa_actors_checkpoint(qa_session_actors(candidate->session), &actor_state, error) &&
+        qa_save_actors_encode(&actor_state, &actors, error) &&
+        qa_save_strings_encode(qa_session_strings(candidate->session), &strings, error);
+    if (ok) {
+        const qa_save_record *saved_actors = qa_save_image_find(image, QA_SAVE_ACTORS, "");
+        const qa_save_record *saved_strings = qa_save_image_find(image, QA_SAVE_STRINGS, "");
+        if (actors.size != saved_actors->payload.size || strings.size != saved_strings->payload.size ||
+            memcmp(actors.data, saved_actors->payload.data, actors.size) ||
+            memcmp(strings.data, saved_strings->payload.data, strings.size))
+            ok = application_fail(error, QA_ERROR_FORMAT, "restored owners changed saved actor or string identities");
+    }
+    qa_actor_checkpoint_free(&actor_state); qa_buffer_free(&actors); qa_buffer_free(&strings);
+    if (ok && !persistence_safe(candidate))
+        ok = application_fail(error, QA_ERROR_FORMAT, "restored candidate changed during final validation");
+    return ok && persistence_unchanged(operation, error);
+}
+
+static bool persistence_publish(void *opaque, void *value, qa_error *error)
+{
+    application_persistence *operation = opaque;
+    if (*operation->slot != operation->active || !persistence_unchanged(operation, error))
+        return application_fail(error, QA_ERROR_ARGUMENT, "active application changed before restored publication");
+    operation->displaced = operation->active;
+    *operation->slot = value;
+    return true;
+}
+
+static void persistence_discard(void *opaque, void *value)
+{
+    application_persistence *operation = opaque;
+    ((qa_application *)value)->operation = APPLICATION_IDLE;
+    if (!qa_application_destroy(value, NULL)) operation->retained = value;
+}
+
+bool qa_application_persistence_restore(qa_application **active,
+    const qa_application_options *options, const qa_application_persistence_ops *ops,
+    const qa_save_image *image, qa_application **displaced,
+    qa_application **retained_on_failure, qa_error *error)
+{
+    if (!active || !options || !ops || !ops->validate ||
+        (ops->owner_count && !ops->owners) || ops->owner_count > QA_SAVE_OWNER_LIMIT ||
+        !image || !displaced || !retained_on_failure || *retained_on_failure ||
+        active == displaced || active == retained_on_failure || displaced == retained_on_failure)
+        return application_fail(error, QA_ERROR_ARGUMENT, "application restore requires isolated content and owner producers");
+    application_persistence operation = {.active = *active, .slot = active,
+        .options = options, .ops = ops};
+    if (!persistence_lease(&operation, error)) return false;
+    const qa_save_restore_ops restore = {.create = persistence_create, .restore = persistence_restore_owner,
+        .finish = persistence_finish, .publish = persistence_publish, .discard = persistence_discard};
+    bool ok = qa_save_restore(&operation, &restore, image, error);
+    persistence_end(&operation);
+    if (ok) *displaced = operation.displaced;
+    else if (operation.retained) *retained_on_failure = operation.retained;
+    return ok;
 }
