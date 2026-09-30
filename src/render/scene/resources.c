@@ -746,7 +746,8 @@ static bool same_options(const image_cache *entry, const qa_scene_image_options 
 }
 
 static bool cache_add(qa_scene_resources *resources, qa_string_id name, qa_resource *source,
-                      qa_resource *logical_source, const qa_scene_image_options *options,
+                      qa_mount_id source_mount, qa_resource *logical_source, qa_mount_id logical_mount,
+                      const qa_scene_image_options *options,
                       qa_scene_image *image, qa_error *error)
 {
     if (resources->cache_count == resources->cache_capacity) {
@@ -761,6 +762,7 @@ static bool cache_add(qa_scene_resources *resources, qa_string_id name, qa_resou
     image_cache *entry = &resources->cache[resources->cache_count++];
     *entry = (image_cache){.source = qa_resource_id(source), .logical_source = qa_resource_id(logical_source),
         .source_record = source, .logical_record = logical_source, .name = name, .options = *options, .image = image};
+    entry->source_mount = source_mount; entry->logical_mount = logical_source ? logical_mount : 0;
     /* Stored span pointers are deliberately not used: cache array relocation
      * cannot invalidate option identity. Compare the embedded bytes above. */
     entry->options.palette_rgb.data = NULL; entry->options.translation.data = NULL;
@@ -812,9 +814,10 @@ static bool ordinary_mount(qa_mount_id id, void *context)
 }
 
 static bool original_image(qa_scene_resources *resources, const char *path, qa_resource *winner,
-                            qa_mount_id mount, bool fallback, qa_resource **out, qa_error *error)
+                            qa_mount_id mount, bool fallback, qa_resource **out,
+                            qa_mount_id *out_mount, qa_error *error)
 {
-    *out = NULL;
+    *out = NULL; *out_mount = 0;
     bool acquired = winner == NULL;
     qa_error local = {0};
     if (acquired && !qa_vfs_acquire(resources->vfs, path, &winner, &mount, &local)) {
@@ -824,11 +827,11 @@ static bool original_image(qa_scene_resources *resources, const char *path, qa_r
     }
     bool ok = true;
     if (!ordinary_mount(mount, resources->vfs)) {
-        ok = qa_vfs_acquire_filtered(resources->vfs, path, ordinary_mount, resources->vfs, out, NULL, &local);
+        ok = qa_vfs_acquire_filtered(resources->vfs, path, ordinary_mount, resources->vfs, out, out_mount, &local);
         if (!ok && local.code == QA_ERROR_NOT_FOUND) ok = true;
         if (!ok && error != NULL) *error = local;
     }
-    if (ok && *out == NULL && fallback) { qa_resource_retain(winner); *out = winner; }
+    if (ok && *out == NULL && fallback) { qa_resource_retain(winner); *out = winner; *out_mount = mount; }
     if (acquired) qa_resource_release(winner);
     return ok;
 }
@@ -919,6 +922,7 @@ bool qa_scene_image_load(qa_scene_resources *resources, const char *name,
             failed = true; break;
         }
         qa_resource *original = NULL;
+        qa_mount_id original_mount = 0;
         const char *logical_path = original_path;
         bool native_size = false;
         if (options->family == QA_SCENE_Q2 && !suffix_equal(path, ".wal") &&
@@ -929,10 +933,10 @@ bool qa_scene_image_load(qa_scene_resources *resources, const char *name,
                    (options->family == QA_SCENE_Q1 && requested != NULL && suffix_equal(requested, ".lmp") && !suffix_equal(path, ".lmp"))) {
             memcpy(original_path, name, length+1); native_size = true;
         }
-        bool size_ok = !native_size || original_image(resources, original_path, NULL, 0, true, &original, error);
+        bool size_ok = !native_size || original_image(resources, original_path, NULL, 0, true, &original, &original_mount, error);
         if (size_ok && original == NULL) {
             logical_path = path;
-            size_ok = original_image(resources, path, resource, mount, false, &original, error);
+            size_ok = original_image(resources, path, resource, mount, false, &original, &original_mount, error);
         }
         if (!size_ok) {
             qa_resource_release(original); qa_resource_release(resource); failed = true; break;
@@ -956,7 +960,7 @@ bool qa_scene_image_load(qa_scene_resources *resources, const char *name,
             qa_scene_image *frame = (qa_scene_image *)image->animation[i];
             frame->logical_width = image->logical_width; frame->logical_height = image->logical_height;
         }
-        if (!cache_add(resources, name_id, resource, original, options, image, error)) {
+        if (!cache_add(resources, name_id, resource, mount, original, original_mount, options, image, error)) {
             failed = true; qa_resource_release(original); qa_resource_release(resource); qa_scene_image_release(image); break;
         }
         qa_resource_release(original); qa_resource_release(resource);

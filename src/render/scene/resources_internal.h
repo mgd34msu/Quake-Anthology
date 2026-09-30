@@ -17,6 +17,7 @@ struct owned_image {
 typedef struct image_cache {
     uint64_t source, logical_source;
     qa_resource *source_record, *logical_record;
+    qa_mount_id source_mount, logical_mount;
     qa_string_id name;
     qa_scene_image_options options;
     uint8_t palette[768], translation[256];
