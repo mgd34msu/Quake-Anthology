@@ -724,6 +724,7 @@ add_library(qa_network STATIC
     src/network/q3/pak_references.c
     src/network/q3/pure.c
     src/network/q3/server.c
+    src/network/q3/server_save.c
     src/network/q3/visibility.c
     src/network/reliability.c
     src/network/runtime/commands.c

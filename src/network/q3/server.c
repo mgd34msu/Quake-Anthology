@@ -1,30 +1,8 @@
 /* Donor: network/q3/server.ts, snapshot-store.ts and configstrings.ts. */
-#include "peer_internal.h"
+#include "server_private.h"
 #include <limits.h>
 #include <stdio.h>
 
-typedef struct queued_message {
-    struct queued_message *next;
-    size_t size;
-    char key_command[QA_Q3_COMMAND_CHARS];
-    uint8_t data[QA_Q3_MESSAGE_BYTES];
-} queued_message;
-struct qa_q3_server_peer {
-    qa_q3_identity identity;
-    qa_q3_product product;
-    qa_net_address remote;
-    int32_t challenge;
-    qa_q3_channel *channel;
-    qa_q3_server_hooks hooks;
-    qa_q3_server_state state;
-    qa_q3_reliable reliable;
-    char last_command[QA_Q3_COMMAND_CHARS];
-    qa_q3_gamestate gamestate;
-    qa_q3_snapshot_slot history[QA_Q3_PACKET_BACKUP];
-    uint64_t entity_number;
-    queued_message *queue_first, *queue_last;
-    unsigned queue_count;
-};
 static bool fail(qa_error *e, qa_status code, const char *s) { qa_error_set(e, code, 0, "%s", s); return false; }
 static const char *lookup(void *p, int32_t sequence) { return qa_q3_reliable_lookup(&((qa_q3_server_peer *)p)->reliable, sequence); }
 static bool current(qa_q3_server_peer *p, qa_q3_server_world previous, qa_error *e) {
@@ -252,6 +230,8 @@ bool qa_q3_server_peer_snapshot_downloads(qa_q3_server_peer *p, const qa_q3_snap
     for (size_t i = 0; i < download_count; ++i)
         if (!qa_q3_server_download(&writer, &downloads[i])) return false;
     qa_q3_snapshot_slot *slot = &p->history[sequence & 31];
+    if (current_snapshot.entity_count > UINT64_MAX - p->entity_number)
+        return fail(e, QA_ERROR_FORMAT, "Q3 snapshot entity sequence exhausted");
     if (!qa_q3_slot_store(slot, &current_snapshot, e)) return false;
     p->entity_number += current_snapshot.entity_count;
     slot->sent_time = world.time; slot->ack_time = -1; slot->message_size = qa_q3_writer_size(&writer);

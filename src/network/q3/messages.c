@@ -194,6 +194,8 @@ static bool read_snapshot(qa_q3_reader *r, qa_q3_server_decode *context, qa_q3_s
     }
     while (old && index < old->entity_count)
         if (!append_entity(r, s, storage, &old->entities[index++])) return false;
+    if (s->entity_count > UINT64_MAX - context->parse_entities_number)
+        return read_fail(r, "Q3 parse entity sequence exhausted");
     context->parse_entities_number += s->entity_count;
     return !r->raw.failed;
 }

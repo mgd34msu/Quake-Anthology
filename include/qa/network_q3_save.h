@@ -18,4 +18,9 @@ qa_q3_role qa_q3_channel_role(const qa_q3_channel *);
 bool qa_q3_client_peer_checkpoint(const qa_q3_client_peer *, qa_buffer *, qa_error *);
 bool qa_q3_client_peer_restore(qa_bytes, qa_q3_identity,
     const qa_q3_client_hooks *, qa_q3_client_peer **, qa_error *);
+/* Server continuation retains delayed plaintext messages and their original
+ * XOR command keys as well as source scheduling, pure and snapshot state. */
+bool qa_q3_server_peer_checkpoint(const qa_q3_server_peer *, qa_buffer *, qa_error *);
+bool qa_q3_server_peer_restore(qa_bytes, qa_q3_identity,
+    const qa_q3_server_hooks *, qa_q3_server_peer **, qa_error *);
 #endif
