@@ -30,6 +30,50 @@ static void nested(qa_ac_writer *w, bool success, qa_buffer *bytes) {
     else qa_ac_blob(w, (qa_bytes){bytes->data, bytes->size});
     qa_buffer_free(bytes);
 }
+bool qa_audio_engine_assets_read(const qa_audio_engine *engine, qa_audio_asset ***out,
+    size_t *out_count, qa_error *error)
+{
+    if (!engine || !out || *out || !out_count || engine->operation_depth || engine->callback_depth ||
+        engine->destroy_pending || engine->destroying || (engine->seat_count && !engine->seats)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Audio asset inventory requires an idle engine and empty output");
+        return false;
+    }
+    size_t count = 0;
+    for (size_t i = 0; i < engine->seat_count; ++i) {
+        const qa_audio_mixer *mixer = engine->seats[i] ? engine->seats[i]->mixer : NULL;
+        if (!mixer || mixer->callback_active || mixer->dispatching || mixer->destroy_requested || mixer->destroying ||
+            mixer->prepared_count > mixer->prepared_capacity || (mixer->prepared_capacity && !mixer->prepared)) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Audio asset inventory requires actual idle seat mixers");
+            return false;
+        }
+        for (size_t j = 0; j < mixer->prepared_count; ++j) {
+            const qa_mixer_prepared *prepared = mixer->prepared[j];
+            if (!prepared) continue;
+            if (prepared->slot != j || !prepared->references || !prepared->sample ||
+                (prepared->asset && qa_audio_asset_sample(prepared->asset) != prepared->sample)) {
+                qa_error_set(error, QA_ERROR_FORMAT, 0, "Audio prepared owner is not source-qualified");
+                return false;
+            }
+            if (prepared->asset) {
+                if (count == SIZE_MAX / sizeof(qa_audio_asset *)) {
+                    qa_error_set(error, QA_ERROR_MEMORY, 0, "Audio asset inventory overflows"); return false;
+                }
+                ++count;
+            }
+        }
+    }
+    qa_audio_asset **assets = count ? malloc(count * sizeof(*assets)) : NULL;
+    if (count && !assets) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating borrowed engine asset inventory"); return false;
+    }
+    size_t used = 0;
+    for (size_t i = 0; i < engine->seat_count; ++i) {
+        const qa_audio_mixer *mixer = engine->seats[i]->mixer;
+        for (size_t j = 0; j < mixer->prepared_count; ++j)
+            if (mixer->prepared[j] && mixer->prepared[j]->asset) assets[used++] = mixer->prepared[j]->asset;
+    }
+    *out = assets; *out_count = count; return true;
+}
 bool qa_audio_engine_checkpoint(const qa_audio_engine *engine, const qa_audio_checkpoint_refs *refs,
                                  qa_buffer *out, qa_error *error) {
     if (!engine || !out || engine->operation_depth || engine->callback_depth ||

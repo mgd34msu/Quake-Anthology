@@ -46,7 +46,7 @@ static size_t get_index(qa_ac_reader *r, size_t count) {
     if (value >= count) { qa_ac_bad(r, "Saved audio index leaves its owner table"); return SIZE_MAX; }
     return (size_t)value;
 }
-static bool put_prepared(qa_ac_writer *w, const qa_mixer_prepared *p) {
+static bool put_prepared(qa_ac_writer *w, const qa_audio_checkpoint_refs *refs, const qa_mixer_prepared *p) {
     if (!qa_ac_u32(w, p != NULL) || !p) return !w->failed;
     qa_buffer sample = {0};
     if (!qa_audio_sample_checkpoint(p->sample, &sample, w->error)) { w->failed = true; return false; }
@@ -61,6 +61,15 @@ static bool put_prepared(qa_ac_writer *w, const qa_mixer_prepared *p) {
         }
         ok = qa_ac_u32(w, qa_audio_asset_family(p->asset)) &&
             qa_ac_blob(w, (qa_bytes){(const uint8_t *)name, strlen(name)}) && qa_ac_write(w, digest->bytes, sizeof(digest->bytes));
+        qa_buffer descriptor = {0};
+        if (ok && (!refs || !refs->asset_encode || !refs->asset_encode(refs->context, p->asset, &descriptor, w->error))) {
+            if (!refs || !refs->asset_encode) qa_error_set(w->error, QA_ERROR_ARGUMENT, 0, "Audio asset identity encoder is absent");
+            w->failed = true; ok = false;
+        }
+        if (ok && descriptor.size && !descriptor.data) {
+            qa_error_set(w->error, QA_ERROR_ARGUMENT, 0, "Audio asset descriptor storage is absent"); w->failed = true; ok = false;
+        }
+        ok = ok && qa_ac_blob(w, (qa_bytes){descriptor.data, descriptor.size}); qa_buffer_free(&descriptor);
     }
     return ok;
 }
@@ -93,15 +102,17 @@ static void get_prepared(qa_ac_reader *r, const qa_audio_checkpoint_refs *refs, 
         uint32_t family = qa_ac_get32(r); qa_bytes name, digest;
         if (!qa_ac_getblob(r, &name) || !qa_ac_read(r, 32, &digest)) return;
         if (family > QA_AUDIO_Q3 || name.size == SIZE_MAX || memchr(name.data, 0, name.size)) { qa_ac_bad(r, "Invalid saved sound asset identity"); return; }
-        char *path = malloc(name.size + 1);
-        if (!path) { qa_error_set(r->error, QA_ERROR_MEMORY, r->offset, "Retaining sound asset path"); r->failed = true; return; }
-        memcpy(path, name.data, name.size); path[name.size] = 0;
+        qa_bytes descriptor;
+        if (!qa_ac_getblob(r, &descriptor)) return;
         qa_sha256_digest identity; memcpy(identity.bytes, digest.data, 32);
-        bool resolved = refs && refs->asset && refs->asset(refs->context, (qa_audio_family)family, path, &identity, &p->asset, r->error);
-        free(path);
+        bool resolved = refs && refs->asset_decode && refs->asset_decode(refs->context, descriptor, &p->asset, r->error);
         if (!resolved || !p->asset) {
-            if (!refs || !refs->asset) qa_error_set(r->error, QA_ERROR_ARGUMENT, r->offset, "Audio candidate asset resolver is absent");
+            if (!refs || !refs->asset_decode) qa_error_set(r->error, QA_ERROR_ARGUMENT, r->offset, "Audio candidate asset resolver is absent");
             r->failed = true; return;
+        }
+        const char *actual_name = qa_audio_asset_name(p->asset);
+        if (!actual_name || strlen(actual_name) != name.size || memcmp(actual_name, name.data, name.size)) {
+            qa_ac_bad(r, "Saved audio asset name differs from its exact candidate"); return;
         }
         qa_audio_sample *actual = qa_audio_asset_sample(p->asset);
         const qa_sha256_digest *actual_digest = qa_resource_digest(qa_audio_asset_resource(p->asset));
@@ -144,7 +155,7 @@ bool qa_audio_mixer_checkpoint(const qa_audio_mixer *m, const qa_audio_checkpoin
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Mixer checkpoint requires drained callbacks and notifications"); return false;
     }
     qa_ac_writer w = {.error = error};
-    qa_ac_write(&w, "QAMX", 4); qa_ac_u32(&w, 1); qa_ac_u32(&w, m->options.sample_rate);
+    qa_ac_write(&w, "QAMX", 4); qa_ac_u32(&w, 2); qa_ac_u32(&w, m->options.sample_rate);
     qa_ac_u32(&w, m->options.output_channels); qa_ac_u32(&w, m->options.observer != NULL);
     qa_ac_u32(&w, m->transmission != NULL);
     put_listener(&w, refs, &m->listener);
@@ -155,7 +166,7 @@ bool qa_audio_mixer_checkpoint(const qa_audio_mixer *m, const qa_audio_checkpoin
     qa_ac_u64(&w, m->prepared_count); qa_ac_u64(&w, m->voice_count); qa_ac_u64(&w, m->loop_count);
     qa_ac_u64(&w, m->loop_mix_count); qa_ac_u64(&w, m->position_count); qa_ac_u64(&w, m->transmission_count);
     qa_ac_u64(&w, m->event_count); put_index(&w, m->free_head); put_index(&w, m->event_free); qa_ac_u64(&w, m->event_free_count);
-    for (size_t i = 0; !w.failed && i < m->prepared_count; ++i) put_prepared(&w, m->prepared[i]);
+    for (size_t i = 0; !w.failed && i < m->prepared_count; ++i) put_prepared(&w, refs, m->prepared[i]);
     for (size_t i = 0; !w.failed && i < m->voice_count; ++i) {
         const qa_mixer_voice *v = &m->voices[i]; qa_ac_u32(&w, v->state); put_index(&w, v->next_free);
         if (v->state == QA_MIXER_FREE) continue;
@@ -265,7 +276,7 @@ bool qa_audio_mixer_restore(qa_bytes bytes, const qa_audio_mixer_options *option
         qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid mixer checkpoint arguments or header"); return false;
     }
     qa_ac_reader r = {.bytes = bytes, .offset = 4, .error = error};
-    if (qa_ac_get32(&r) != 1 || qa_ac_get32(&r) != options->sample_rate ||
+    if (qa_ac_get32(&r) != 2 || qa_ac_get32(&r) != options->sample_rate ||
         qa_ac_get32(&r) != options->output_channels || qa_ac_bool(&r) != (options->observer != NULL) ||
         qa_ac_bool(&r) != (refs && refs->geometry != NULL))
         return qa_ac_bad(&r, "Saved mixer format or observer admission differs");

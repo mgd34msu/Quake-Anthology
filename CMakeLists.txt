@@ -587,6 +587,7 @@ target_link_libraries(qa_configuration PUBLIC qa_catalog qa_modes qa_session qa_
 
 add_library(qa_audio STATIC
     src/audio/bank.c
+    src/audio/bank_graph_save.c
     src/audio/bank_save.c
     src/audio/codecs.c
     src/audio/device.c
