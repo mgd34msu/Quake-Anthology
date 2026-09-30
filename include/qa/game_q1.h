@@ -427,6 +427,9 @@ bool qa_q1_game_presentation(const qa_q1_game *, qa_actor_id, qa_q1_presentation
 bool qa_q1_game_physics_read(const qa_q1_game *, qa_actor_id, qa_physics_properties *);
 bool qa_q1_game_gravity(const qa_q1_game *, float *out);
 bool qa_q1_game_rules_read(const qa_q1_game *, int32_t *deathmatch, uint32_t *gamecfg);
+/* Rogue startup is owned by the actual source world, shared by its modes. */
+bool qa_q1_game_rogue_runes_claim(qa_q1_game *, bool *newly_claimed, qa_error *);
+bool qa_q1_game_rogue_runes_read(const qa_q1_game *, qa_actor_id *world, bool *started);
 bool qa_q1_game_monster_counts(const qa_q1_game *, uint32_t *total, uint32_t *killed);
 /* Source alpha retains finite authored fade overshoot before retirement. */
 bool qa_q1_game_alpha(qa_q1_game *, qa_actor_id, float alpha, qa_error *);

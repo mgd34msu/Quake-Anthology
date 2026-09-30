@@ -99,6 +99,13 @@ bool qa_q1_game_rules_read(const qa_q1_game *g, int32_t *deathmatch, uint32_t *g
     *gamecfg = g->options.gamecfg;
     return true;
 }
+bool qa_q1_game_rogue_runes_read(const qa_q1_game *g, qa_actor_id *world, bool *started) {
+    if (!g || g->destroy_pending || !world || !started)
+        return false;
+    *world = g->rogue_runes_world;
+    *started = g->rogue_runes_started;
+    return true;
+}
 bool qa_q1_game_monster_counts(const qa_q1_game *g, uint32_t *total, uint32_t *killed) {
     if (!g || g->destroy_pending || !total || !killed)
         return false;

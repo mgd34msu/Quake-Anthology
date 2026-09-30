@@ -376,7 +376,7 @@ struct qa_q1_game {
     uint32_t capacity, total_monsters, killed_monsters, hellknight_melee;
     uint32_t authored_gremlins, spawned_gremlins;
     qa_builtin_random random;
-    qa_actor_id sight_actor, horn_charmer;
+    qa_actor_id sight_actor, horn_charmer, rogue_runes_world;
     double time, elapsed, sight_time;
     uint64_t time_ns, attack_sequence;
     qa_vec3 forward, right, up;
@@ -392,6 +392,7 @@ struct qa_q1_game {
     bool destroy_pending;
     bool continuation_pending;
     bool run_straight;
+    bool rogue_runes_started;
     bool component_admitted;
     uint8_t rune_knight_melee, enemy_range;
     bool enemy_visible;

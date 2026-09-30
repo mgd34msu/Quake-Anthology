@@ -40,6 +40,32 @@ static void door_groups_free(q1_door_group *group) {
         group = next;
     }
 }
+bool qa_q1_game_rogue_runes_claim(qa_q1_game *g, bool *newly_claimed, qa_error *error) {
+    if (!newly_claimed) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Rogue rune claim requires an output");
+        return false;
+    }
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    *newly_claimed = false;
+    qa_actor_id world = g->maps && g->maps->world_actor.registry
+        ? g->maps->world_actor
+        : g->services.physics ? g->services.physics->world_actor : (qa_actor_id){0};
+    if (g->options.program == QA_Q1_ROGUE && g->options.deathmatch != 0 &&
+        (g->options.gamecfg & 1u) && q1_alive(g, world)) {
+        if (!qa_actor_id_equal(g->rogue_runes_world, world)) {
+            g->rogue_runes_world = world;
+            g->rogue_runes_started = false;
+        }
+        if (!g->rogue_runes_started) {
+            g->rogue_runes_started = true;
+            *newly_claimed = true;
+        }
+    }
+    qa_q1_game_operation_end(&operation);
+    return true;
+}
 bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_error *error) {
     if (!map_options_valid(g, options, error))
         return false;
@@ -92,6 +118,8 @@ bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_er
     g->total_monsters = g->killed_monsters = g->hellknight_melee = 0;
     g->authored_gremlins = g->spawned_gremlins = 0;
     g->sight_actor = g->horn_charmer = (qa_actor_id){0};
+    g->rogue_runes_world = (qa_actor_id){0};
+    g->rogue_runes_started = false;
     g->time = g->elapsed = g->sight_time = 0;
     g->time_ns = 0;
     g->forward = g->right = g->up = qa_v3(0, 0, 0);

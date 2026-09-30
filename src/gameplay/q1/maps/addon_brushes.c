@@ -1,4 +1,5 @@
 #include "internal.h"
+#include <float.h>
 #include <limits.h>
 
 static q1_actor *brush(qa_q1_game *g, qa_actor_id id) {
@@ -36,8 +37,14 @@ static bool bob(qa_q1_game *g, q1_actor *e, bool frame, qa_error *error) {
     e = brush(g,id);
     if (!e)
         return true;
-    double phase = e->count + e->physics.angular_velocity.x*(frame ? g->elapsed : .05);
-    e->count = (float)fmod(phase,360);
+    double delta = e->physics.angular_velocity.x*(frame ? g->elapsed : .05);
+    if (!isfinite(delta) || fabs(delta) > FLT_MAX)
+        return q1_map_fail(error,"Addon bob frame step exceeds native range");
+    float step = (float)delta;
+    if (fabs((double)e->count + step) > FLT_MAX)
+        return q1_map_fail(error,"Addon bob phase exceeds native range");
+    float phase = e->count + step;
+    e->count = fmodf(phase,360);
     qa_vec3 position = qa_vec_add(qa_vec_scale(e->map->dest,sinf(e->count)),
                                   qa_vec_scale(e->map->dest2,cosf(e->count)));
     if (frame)
@@ -65,8 +72,23 @@ bool q1_map_addon_brush_frame(qa_q1_game *g, q1_actor *e, qa_error *error) {
     uint8_t phase = e->map->pending.brush.phase;
     float scale = 1;
     if (phase == 1 || phase == 3) {
-        double value = e->speed + e->map->distance*g->elapsed;
-        e->speed = (float)fmax(0,fmin(1,value));
+        double delta = e->map->distance*g->elapsed;
+        if (delta > FLT_MAX)
+            e->speed = 1;
+        else if (delta < -FLT_MAX)
+            e->speed = 0;
+        else {
+            float step = (float)delta;
+            double sum = (double)e->speed + step;
+            if (sum > FLT_MAX)
+                e->speed = 1;
+            else if (sum < -FLT_MAX)
+                e->speed = 0;
+            else {
+                float value = e->speed + step;
+                e->speed = fmaxf(0,fminf(1,value));
+            }
+        }
         if (e->speed == 0) {
             e->map->pending.brush.phase = 0;
             q1_map_frame_tick_remove(g,id);
@@ -342,9 +364,24 @@ bool q1_map_addon_brush_think(qa_q1_game *g, q1_actor *e, q1_map_action action,
             return false;
         e = brush(g,id);
         return !e || q1_map_schedule(g,e,e->delay,Q1_MAP_ADDON_DEBRIS_FADE,error);
-    case Q1_MAP_ADDON_DEBRIS_FADE:
-        e->alpha -= (float)(g->elapsed/e->wait);
-        if (e->alpha < 0) {
+    case Q1_MAP_ADDON_DEBRIS_FADE: {
+        if (e->wait == 0)
+            return q1_map_fail(error,"Addon debris fade requires a nonzero period");
+        double reciprocal = 1.0/(double)e->wait;
+        if (!isfinite(reciprocal) || fabs(reciprocal) > FLT_MAX)
+            return q1_map_fail(error,"Addon debris fade rate exceeds native range");
+        float rate = (float)reciprocal;
+        double delta = rate*g->elapsed;
+        if (!isfinite(delta) || fabs(delta) > FLT_MAX)
+            return q1_map_fail(error,"Addon debris fade step exceeds native range");
+        float step = (float)delta;
+        double remaining = (double)e->alpha - step;
+        if (remaining > FLT_MAX)
+            return q1_map_fail(error,"Addon debris alpha exceeds native range");
+        bool reset = remaining < -FLT_MAX;
+        if (!reset)
+            e->alpha -= step;
+        if (reset || e->alpha < 0) {
             e->alpha = 1;
             body.origin = e->map->pending.brush.origin;
             e->physics.motion = QA_PHYSICS_TOSS;
@@ -357,6 +394,7 @@ bool q1_map_addon_brush_think(qa_q1_game *g, q1_actor *e, q1_map_action action,
             return !e || q1_map_schedule(g,e,e->delay,action,error);
         }
         return q1_map_schedule(g,e,.01,action,error);
+    }
     case Q1_MAP_ADDON_EXPLODE_FIRE: {
         qa_vec3 position = qa_vec_scale(qa_vec_add(body.bounds.mins,body.bounds.maxs),.5f);
         qa_actor_id activator = e->activator;
