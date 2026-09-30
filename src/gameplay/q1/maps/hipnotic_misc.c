@@ -1,12 +1,17 @@
 #include "internal.h"
 #include <stdio.h>
 
+bool qa_q1_game_map_coordinates_enabled(const qa_q1_game *g) {
+    return g && !g->destroy_pending && g->options.program == QA_Q1_HIPNOTIC && g->maps &&
+           g->maps->dump_coordinates && q1_alive((qa_q1_game *)g, g->maps->world_actor);
+}
+
 bool qa_q1_game_map_coordinate_dump(qa_q1_game *g, qa_actor_id actor,
                                      double attack_finished, qa_error *error) {
     if (!g || !isfinite(attack_finished))
         return q1_map_fail(error, "invalid Hipnotic coordinate dump continuation");
-    if (g->options.program != QA_Q1_HIPNOTIC || !g->maps || !g->maps->dump_coordinates ||
-        !q1_alive(g, g->maps->world_actor) || !q1_alive(g, actor) || g->time < attack_finished)
+    if (!qa_q1_game_map_coordinates_enabled(g) || !q1_alive(g, actor) ||
+        g->time < attack_finished)
         return true;
     if (!g->host.check_client)
         return q1_map_fail(error, "Hipnotic coordinate dump requires client observation owner");

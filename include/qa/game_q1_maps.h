@@ -107,6 +107,10 @@ typedef struct qa_q1_map_options {
     bool (*path_change)(void *, qa_actor_id, const qa_q1_path_change *, qa_error *);
     bool (*target_damage)(void *, qa_actor_id, float damage, qa_error *);
     bool (*relay_mover)(void *, qa_actor_id, bool close, qa_actor_id activator, qa_error *);
+    /* Selected foreign door/teleporter owner handles ThreeWave passage. A
+     * handled candidate ends nearby traversal even when passage is blocked. */
+    bool (*observer_passage)(void *, qa_actor_id observer, qa_actor_id candidate,
+                              bool *handled, qa_error *);
     bool (*egg_mover)(void *, qa_actor_id, qa_error *);
     bool (*grant_quad)(void *, qa_actor_id, double source_expiry, qa_error *);
     bool (*horde_control)(void *, qa_actor_id, bool check_wave, qa_error *);
@@ -166,11 +170,18 @@ bool qa_q1_game_rogue_path_touch(qa_q1_game *, qa_actor_id corner, qa_actor_id f
                                  bool *handled, qa_error *);
 /* Threewave spectator door/teleporter passage, after its velocity update. */
 bool qa_q1_game_map_observer_nearby(qa_q1_game *, qa_actor_id, qa_error *);
+/* Direct native capability for a foreign map's nearby traversal. */
+bool qa_q1_game_map_observer_passage(qa_q1_game *, qa_actor_id observer, qa_actor_id candidate,
+                                     bool *handled, qa_error *);
 bool qa_q1_game_map_after_physics(qa_q1_game *, qa_actor_id, qa_error *);
 /* Player frame extension; attack_finished is expressed on this source clock.
  * Native same-provider Q1 prethink calls this. The application supplies the
  * selected arsenal cooldown for other provider/family selections. */
 bool qa_q1_game_map_coordinate_dump(qa_q1_game *, qa_actor_id, double attack_finished, qa_error *);
+bool qa_q1_game_map_coordinates_enabled(const qa_q1_game *);
+/* Dispatches authored world controls without entering the selected arsenal.
+ * A consumed or source-gated command sets handled; unrelated impulses do not. */
+bool qa_q1_game_map_impulse(qa_q1_game *, qa_actor_id, uint8_t impulse, bool *handled, qa_error *);
 /* Rogue player order is earthquake, selected team/rune frame, then after_physics. */
 bool qa_q1_game_rogue_earthquake(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_game_time_machine_crash(qa_q1_game *, qa_error *);

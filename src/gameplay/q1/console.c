@@ -41,6 +41,17 @@ static bool developer_message(qa_q1_game *g, const char *text, qa_error *error) 
            qa_builtin_resource(&g->services, text, &event.text, error) &&
            qa_builtin_emit(&g->services, &event, error);
 }
+static bool world_impulse(const qa_q1_game *g, uint8_t impulse) {
+    bool addon = g->options.program == QA_Q1_DOPA || g->options.program == QA_Q1_MG1 ||
+                 g->options.program == QA_Q1_MG3;
+    return impulse == 11 || impulse == 255 ||
+           (g->options.program == QA_Q1_HIPNOTIC && impulse >= 200 && impulse <= 206) ||
+           (addon && impulse == 219) ||
+           (g->options.program == QA_Q1_MG3 &&
+            ((impulse >= 101 && impulse <= 105) || impulse == 116 || impulse == 117 ||
+             impulse == 119 || impulse == 121 || impulse == 220 ||
+             (impulse >= 222 && impulse <= 224)));
+}
 bool qa_q1_game_console_operation(const qa_q1_game *g, const qa_command_invocation *command,
                                    qa_q1_console_operation *out) {
     if (!g || !command || !out || !command->argc || !command->argv || !command->argv[0])
@@ -60,16 +71,7 @@ bool qa_q1_game_console_operation(const qa_q1_game *g, const qa_command_invocati
         *out = QA_Q1_CONSOLE_ARSENAL;
     else if (!strcmp(name, "impulse")) {
         uint8_t impulse = command->argc > 1 ? (uint8_t)source_integer(command->argv[1]) : 0;
-        bool addon = g->options.program == QA_Q1_DOPA || g->options.program == QA_Q1_MG1 ||
-                     g->options.program == QA_Q1_MG3;
-        bool world = impulse == 11 || impulse == 255 ||
-                     (g->options.program == QA_Q1_HIPNOTIC && impulse >= 200 && impulse <= 206) ||
-                     (addon && impulse == 219) ||
-                     (g->options.program == QA_Q1_MG3 &&
-                       ((impulse >= 101 && impulse <= 105) || impulse == 116 || impulse == 117 ||
-                        impulse == 119 || impulse == 121 || impulse == 220 ||
-                        (impulse >= 222 && impulse <= 224)));
-        *out = world ? QA_Q1_CONSOLE_WORLD : QA_Q1_CONSOLE_ARSENAL;
+        *out = world_impulse(g, impulse) ? QA_Q1_CONSOLE_WORLD : QA_Q1_CONSOLE_ARSENAL;
     }
     return true;
 }
@@ -578,8 +580,8 @@ static bool cheats_cvar(qa_q1_game *g, bool *enabled, qa_error *error) {
     *enabled = value != 0;
     return true;
 }
-bool q1_source_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impulse, bool *handled,
-                        qa_error *error) {
+static bool source_world_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impulse, bool *handled,
+                                 qa_error *error) {
     *handled = false;
     bool hip = g->options.program == QA_Q1_HIPNOTIC, rogue = g->options.program == QA_Q1_ROGUE;
     bool multiplayer = g->options.deathmatch != 0 || g->options.coop;
@@ -615,52 +617,6 @@ bool q1_source_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impulse, bool *
             return q1_map_fail(error, "Q1 rune cheat exceeds native campaign flag range");
         *flags = (uint32_t)next;
         return true;
-    }
-    if (impulse == 9 || (addon && impulse == 99)) {
-        *handled = true;
-        bool enabled = false;
-        if (multiplayer && !cheats_cvar(g, &enabled, error))
-            return false;
-        if (multiplayer && (!enabled || (!addon && g->options.edition == QA_Q1_CLASSIC)))
-            return true;
-        bool weapons, ammo;
-        if (!selected_grant(g, actor, QA_Q1_CHEAT_WEAPONS, &weapons, error))
-            return false;
-        if (!q1_alive(g, actor))
-            return true;
-        if (!selected_grant(g, actor, QA_Q1_CHEAT_AMMO, &ammo, error))
-            return false;
-        if (!q1_alive(g, actor))
-            return true;
-        if (!weapons)
-            for (unsigned i = 0; i < QA_Q1_WEAPON_COUNT && q1_alive(g, actor); ++i)
-                if (supported(g, (qa_q1_weapon)i) &&
-                    !legacy_count(g, actor, g->weapons[i], 1, 1, error))
-                    return false;
-        if (!ammo) {
-            static const double count[] = {100, 200, 100, 200, 200, 100, 100};
-            static const double capacity[] = {100, 200, 100, 100, 200, 100, 100};
-            for (unsigned i = 0; i < (rogue ? QA_Q1_AMMO_COUNT : 4) && q1_alive(g, actor); ++i)
-                if (!legacy_count(g, actor, g->ammo[i], count[i], capacity[i], error))
-                    return false;
-        }
-        if (impulse != 99) {
-            const char *keys[] = {"q1:key/silver", "q1:key/gold"};
-            for (unsigned i = 0; i < 2 && q1_alive(g, actor); ++i) {
-                qa_string_id item;
-                if (!qa_builtin_resource(&g->services, keys[i], &item, error) ||
-                    !legacy_count(g, actor, item, 1, 1, error))
-                    return false;
-            }
-        }
-        if (g->options.edition == QA_Q1_RERELEASE &&
-            (g->options.program == QA_Q1_ID1 || g->options.program == QA_Q1_CTF) && q1_alive(g, actor)) {
-            const char *argv[] = {"give", "armor"};
-            qa_command_invocation armor = {.argc = 2, .argv = argv};
-            if (!give(g, actor, &armor, error))
-                return false;
-        }
-        return weapons || !q1_alive(g, actor) || qa_q1_player_select(g, actor, QA_Q1_ROCKET, error);
     }
     if (impulse == 255 || (hip && (impulse == 200 || impulse == 201))) {
         *handled = true;
@@ -798,4 +754,81 @@ bool q1_source_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impulse, bool *
         return true;
     }
     return true;
+}
+bool qa_q1_game_map_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impulse, bool *handled,
+                             qa_error *error) {
+    if (!g || !handled)
+        return q1_map_fail(error, "invalid Q1 world impulse dispatch");
+    *handled = false;
+    if (!world_impulse(g, impulse))
+        return true;
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    bool ok = true;
+    if (g->maps && q1_alive(g, g->maps->world_actor) && q1_alive(g, actor))
+        ok = source_world_impulse(g, actor, impulse, handled, error);
+    if (ok && !qa_q1_game_operation_live(&operation)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+                     "Q1 source retired during world impulse");
+        ok = false;
+    }
+    qa_q1_game_operation_end(&operation);
+    return ok;
+}
+bool q1_source_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impulse, bool *handled,
+                        qa_error *error) {
+    if (world_impulse(g, impulse))
+        return source_world_impulse(g, actor, impulse, handled, error);
+    *handled = false;
+    bool addon = g->options.program == QA_Q1_DOPA || g->options.program == QA_Q1_MG1 ||
+                 g->options.program == QA_Q1_MG3;
+    bool multiplayer = g->options.deathmatch != 0 || g->options.coop;
+    bool rogue = g->options.program == QA_Q1_ROGUE;
+    if (impulse != 9 && !(addon && impulse == 99))
+        return true;
+    *handled = true;
+    bool enabled = false;
+    if (multiplayer && !cheats_cvar(g, &enabled, error))
+        return false;
+    if (multiplayer && (!enabled || (!addon && g->options.edition == QA_Q1_CLASSIC)))
+        return true;
+    bool weapons, ammo;
+    if (!selected_grant(g, actor, QA_Q1_CHEAT_WEAPONS, &weapons, error))
+        return false;
+    if (!q1_alive(g, actor))
+        return true;
+    if (!selected_grant(g, actor, QA_Q1_CHEAT_AMMO, &ammo, error))
+        return false;
+    if (!q1_alive(g, actor))
+        return true;
+    if (!weapons)
+        for (unsigned i = 0; i < QA_Q1_WEAPON_COUNT && q1_alive(g, actor); ++i)
+            if (supported(g, (qa_q1_weapon)i) &&
+                !legacy_count(g, actor, g->weapons[i], 1, 1, error))
+                return false;
+    if (!ammo) {
+        static const double count[] = {100, 200, 100, 200, 200, 100, 100};
+        static const double capacity[] = {100, 200, 100, 100, 200, 100, 100};
+        for (unsigned i = 0; i < (rogue ? QA_Q1_AMMO_COUNT : 4) && q1_alive(g, actor); ++i)
+            if (!legacy_count(g, actor, g->ammo[i], count[i], capacity[i], error))
+                return false;
+    }
+    if (impulse != 99) {
+        const char *keys[] = {"q1:key/silver", "q1:key/gold"};
+        for (unsigned i = 0; i < 2 && q1_alive(g, actor); ++i) {
+            qa_string_id item;
+            if (!qa_builtin_resource(&g->services, keys[i], &item, error) ||
+                !legacy_count(g, actor, item, 1, 1, error))
+                return false;
+        }
+    }
+    if (g->options.edition == QA_Q1_RERELEASE &&
+        (g->options.program == QA_Q1_ID1 || g->options.program == QA_Q1_CTF) && q1_alive(g, actor)) {
+        const char *argv[] = {"give", "armor"};
+        qa_command_invocation armor = {.argc = 2, .argv = argv};
+        if (!give(g, actor, &armor, error))
+            return false;
+    }
+    return weapons || !q1_alive(g, actor) || qa_q1_player_select(g, actor, QA_Q1_ROCKET, error);
 }
