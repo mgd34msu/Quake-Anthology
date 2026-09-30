@@ -22,6 +22,7 @@ typedef struct qa_qw_download {
     bool (*read)(void *, uint64_t offset, uint8_t *, size_t count, qa_error *);
     void (*close)(void *);
 } qa_qw_download;
+bool qa_qw_download_path_valid(const char *);
 typedef struct qa_qw_signon_host {
     void *user;
     bool (*server_data)(void *, qa_qw_serverdata *, qa_error *);

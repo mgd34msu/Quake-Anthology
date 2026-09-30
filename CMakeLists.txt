@@ -714,6 +714,7 @@ add_library(qa_network STATIC
     src/network/q1/quakeworld.c
     src/network/q1/scalar.c
     src/network/q1/session.c
+    src/network/q1/download_save.c
     src/network/q1/token.c
     src/network/q2/channel.c
     src/network/q2/checksum.c

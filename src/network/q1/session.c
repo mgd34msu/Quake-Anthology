@@ -92,9 +92,9 @@ static bool fresh(qa_qw_signon *s, qa_q1_emit_fn emit, void *user, qa_error *e)
     if (!serverdata_write(&w,&data) || !emit_writer(&w,emit,user,e)) return false;
     s->spawned=false; return true;
 }
-static bool path_valid(const char *s)
+bool qa_qw_download_path_valid(const char *s)
 {
-    if (!*s || strchr(s,'\\') || strchr(s,':')) return false;
+    if (!s || !*s || strchr(s,'\\') || strchr(s,':')) return false;
     for (;;) {
         const char *end=strchr(s,'/'); size_t n=end ? (size_t)(end-s) : strlen(s);
         if (!n || (n==1 && s[0]=='.') || (n==2 && s[0]=='.' && s[1]=='.')) return false;
@@ -150,7 +150,7 @@ bool qa_qw_signon_command(qa_qw_signon *s, const char *text, qa_q1_emit_fn emit,
     if (!strcmp(op,"new")) { *handled=true; return s->spawned ? true : fresh(s,emit,user,e); }
     if (!strcmp(op,"download")) {
         *handled=true; qa_qw_signon_close_download(s);
-        if (argc>1 && path_valid(args[1])) {
+        if (argc>1 && qa_qw_download_path_valid(args[1])) {
             bool found=false; qa_qw_download download={0};
             if (!s->host.open_download(s->host.user,args[1],&found,&download,e)) return false;
             if (found) {
@@ -363,29 +363,48 @@ bool qa_nq_signon_restore_checkpoint(qa_bytes bytes, const qa_nq_signon *identit
 bool qa_qw_signon_checkpoint(const qa_qw_signon *state, qa_buffer *out, qa_error *error)
 {
     if (!state || !out) return save_fail(error, QA_ERROR_ARGUMENT, "Missing QuakeWorld signon owner/output");
-    if (state->downloading || state->offset || state->download.state || state->download.size ||
-        state->download.read || state->download.close)
-        return save_fail(error, QA_ERROR_UNSUPPORTED, "Installed QuakeWorld source download requires its actual content continuation owner");
-    uint8_t *data = malloc(10);
-    if (!data) return save_fail(error, QA_ERROR_MEMORY, "Encoding QuakeWorld signon continuation");
-    qa_net_writer writer; qa_net_writer_init(&writer, data, 10, error);
-    bool ok = qa_net_write_u32(&writer, UINT32_C(0x53574151)) && qa_net_write_u32(&writer, 1) &&
-        qa_net_write_u8(&writer, state->donor_wide) && qa_net_write_u8(&writer, state->spawned);
+    qa_buffer download = {0};
+    if (state->downloading) {
+        if (state->offset > state->download.size || (state->download.size && state->offset == state->download.size) || state->offset % QA_QW_DOWNLOAD_BLOCK ||
+            !qa_qw_file_download_checkpoint(&state->download, &download, error)) return false;
+    } else if (state->offset || state->download.state || state->download.size || state->download.read || state->download.close)
+        return save_fail(error, QA_ERROR_FORMAT, "Inactive QW transfer retains a foreign download owner");
+    if (download.size > SIZE_MAX - 27) { qa_buffer_free(&download); return save_fail(error, QA_ERROR_MEMORY, "QW download continuation extent overflows"); }
+    size_t capacity = 27 + download.size;
+    uint8_t *data = malloc(capacity);
+    if (!data) { qa_buffer_free(&download); return save_fail(error, QA_ERROR_MEMORY, "Encoding QuakeWorld signon continuation"); }
+    qa_net_writer writer; qa_net_writer_init(&writer, data, capacity, error);
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x53574151)) && qa_net_write_u32(&writer, 2) &&
+        qa_net_write_u8(&writer, state->donor_wide) && qa_net_write_u8(&writer, state->spawned) &&
+        qa_net_write_u8(&writer, state->downloading) && qa_net_write_u64(&writer, state->offset) &&
+        qa_net_write_u64(&writer, download.size) && qa_net_write_data(&writer, download.data, download.size);
+    qa_buffer_free(&download);
     if (!ok || writer.failed) { free(data); return false; }
     *out = (qa_buffer){data, qa_net_writer_size(&writer)}; return true;
 }
 bool qa_qw_signon_restore_checkpoint(qa_bytes bytes, const qa_qw_signon_host *host, bool wide,
-    qa_qw_signon **out, qa_error *error)
+    const qa_qw_download_admission *admission, qa_qw_signon **out, qa_error *error)
 {
     if (!out || *out || (bytes.size && !bytes.data)) return save_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld signon restore requires empty output");
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
-    if (qa_net_read_u32(&reader) != UINT32_C(0x53574151) || qa_net_read_u32(&reader) != 1)
+    if (qa_net_read_u32(&reader) != UINT32_C(0x53574151) || qa_net_read_u32(&reader) != 2)
         return save_fail(error, QA_ERROR_FORMAT, "Invalid QuakeWorld signon continuation schema");
-    uint8_t saved_wide = qa_net_read_u8(&reader), spawned = qa_net_read_u8(&reader);
-    if (reader.failed || saved_wide > 1 || spawned > 1 || (saved_wide != 0) != wide || !qa_net_reader_finish(&reader))
+    uint8_t saved_wide = qa_net_read_u8(&reader), spawned = qa_net_read_u8(&reader), downloading = qa_net_read_u8(&reader);
+    uint64_t offset = qa_net_read_u64(&reader), size = qa_net_read_u64(&reader); qa_bytes download;
+    if (reader.failed || saved_wide > 1 || spawned > 1 || downloading > 1 || (saved_wide != 0) != wide || size > SIZE_MAX ||
+        (!downloading && (offset || size)) || (downloading && (!size || !admission || offset % QA_QW_DOWNLOAD_BLOCK)) ||
+        !qa_net_read_bytes(&reader, (size_t)size, &download) || !qa_net_reader_finish(&reader))
         return save_fail(error, QA_ERROR_FORMAT, "QuakeWorld signon continuation capability differs");
     qa_qw_signon *state = NULL;
     if (!qa_qw_signon_create(host, wide, &state, error)) return false;
+    if (downloading) {
+        if (!qa_qw_file_download_restore_checkpoint(download, admission, &state->download, error)) { qa_qw_signon_destroy(state); return false; }
+        state->downloading = true;
+        if (offset > state->download.size || (state->download.size && offset == state->download.size)) {
+            qa_qw_signon_destroy(state); return save_fail(error, QA_ERROR_FORMAT, "QW transfer offset exceeds actual pending source extent");
+        }
+        state->offset = offset;
+    }
     state->spawned = spawned != 0; *out = state; return true;
 }
 
