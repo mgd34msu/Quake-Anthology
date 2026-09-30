@@ -54,7 +54,7 @@ bool qa_q3_activate_holdable(qa_q3_game *game, qa_actor_id actor, qa_q3_holdable
 
 bool qa_q3_bind_player_begin(qa_q3_game *game, qa_actor_id actor, uint32_t selections,
                              int32_t handicap, qa_q3_player_binding *binding, qa_error *error) {
-    if (!game || actor.slot >= game->capacity ||
+    if (!game || game->source_restored || actor.slot >= game->capacity ||
         !qa_actors_get(qa_session_actors(game->options.services.session), actor) || !selections ||
         (selections & ~(uint32_t)QA_Q3_ALL_SELECTIONS) || !binding || binding->token ||
         game->player_binding_tokens[actor.slot])
@@ -64,8 +64,9 @@ bool qa_q3_bind_player_begin(qa_q3_game *game, qa_actor_id actor, uint32_t selec
         return q3_fail(error, "actor already has another Q3 behavior");
     if (handicap < 1 || handicap > 100)
         handicap = 100;
-    if (++game->player_binding_serial == 0)
-        ++game->player_binding_serial;
+    if (game->player_binding_serial == UINT64_MAX)
+        return q3_fail(error, "Q3 player binding identity exhausted");
+    ++game->player_binding_serial;
     game->player_binding_tokens[actor.slot] = game->player_binding_serial;
     *binding = (qa_q3_player_binding){.actor = actor,
                                       .token = game->player_binding_serial,

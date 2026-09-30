@@ -193,8 +193,16 @@ fail:
     return false;
 }
 bool qa_q3_destroy_ready(const qa_q3_game *game) {
-    return !game || (!game->observation_depth && qa_session_safe(game->options.services.session) &&
-        qa_world_idle(game->options.services.world) && qa_combat_idle(game->options.services.combat));
+    if (!game)
+        return true;
+    if (game->observation_depth || !qa_session_safe(game->options.services.session) ||
+        !qa_world_idle(game->options.services.world) ||
+        !qa_combat_idle(game->options.services.combat))
+        return false;
+    for (uint32_t i = 0; i < game->capacity; ++i)
+        if (game->player_binding_tokens[i])
+            return false;
+    return true;
 }
 bool qa_q3_destroy(qa_q3_game *game, qa_error *error) {
     if (!game)
@@ -524,7 +532,6 @@ void qa_q3_actor_released(qa_q3_game *game, qa_actor_record record) {
     q3_map_actor_released(game, record);
     if (qa_actor_id_equal(game->kamikaze_cooldowns[record.id.slot].actor, record.id))
         game->kamikaze_cooldowns[record.id.slot] = (q3_kamikaze_cooldown){0};
-    game->player_binding_tokens[record.id.slot] = 0;
     q3_inventory_owner *inventory = &game->inventory_owners[record.id.slot];
     if (qa_actor_id_equal(inventory->actor, record.id)) {
         if (qa_inventory_lease_current(game->options.services.inventory, inventory->weapons))
