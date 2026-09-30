@@ -193,8 +193,8 @@ static bool choose_squad(q2m_context *context, q2m_summon_state *state, qa_error
     }
     if (!configure(context, state, error))
         return false;
-    float roll = q2m_random(game) * 32;
-    int count = roll >= 2 ? (int)log2f(roll) : 1;
+    float roll = q2_rerelease_float(game, 0, 32);
+    int count = roll >= 2 ? (int)log2((double)roll) : 1;
     if (count > 5)
         count = 5;
     int64_t remaining = context->monster->monster_slots;
