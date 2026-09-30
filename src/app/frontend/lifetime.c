@@ -39,7 +39,7 @@ bool qa_frontend_create(const qa_frontend_options *options, qa_frontend **out, q
     qa_frontend *frontend = calloc(1, sizeof(*frontend));
     if (!frontend) return frontend_fail(error, QA_ERROR_MEMORY, "allocating frontend owner");
     frontend->options = *options;
-    qa_scene_frame_init(&frontend->frame, FRONTEND_OWNER);
+    qa_scene_frame_init(&frontend->frame, QA_FRONTEND_COMMAND_OWNER);
     qa_application_options application = options->application;
     application.guest_context = frontend;
     application.console_print = frontend_console_print;
@@ -70,13 +70,13 @@ bool qa_frontend_create(const qa_frontend_options *options, qa_frontend **out, q
             qa_cpu_options renderer;
             qa_cpu_options_default(&renderer);
             renderer.width = frontend->width; renderer.height = frontend->height;
-            renderer.owner = FRONTEND_OWNER;
+            renderer.owner = QA_FRONTEND_COMMAND_OWNER;
             renderer.present = qa_display_present_cpu; renderer.present_context = frontend->display;
             frontend->cpu = qa_cpu_create(&renderer, error);
             if (!frontend->cpu || !qa_cpu_set_gamma(frontend->cpu, options->gamma, error)) goto fail;
         } else {
             qa_gl_options renderer;
-            qa_gl_options_default(&renderer); renderer.display = frontend->display; renderer.owner = FRONTEND_OWNER;
+            qa_gl_options_default(&renderer); renderer.display = frontend->display; renderer.owner = QA_FRONTEND_COMMAND_OWNER;
             frontend->gl = qa_gl_create(&renderer, error);
             if (!frontend->gl || !qa_gl_set_gamma(frontend->gl, options->gamma, error)) goto fail;
         }

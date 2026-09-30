@@ -6,6 +6,8 @@
 #include "qa/network.h"
 #include <stdio.h>
 
+#define QA_FRONTEND_COMMAND_OWNER UINT64_C(0x716166726f6e7401)
+
 typedef struct qa_frontend qa_frontend;
 typedef struct qa_frontend_options {
     qa_application_options application;

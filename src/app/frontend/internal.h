@@ -18,7 +18,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define FRONTEND_OWNER UINT64_C(0x716166726f6e7401)
 enum { FRONTEND_HOME = 1, FRONTEND_LIBRARY, FRONTEND_MODS, FRONTEND_SETTINGS, FRONTEND_RANKINGS, FRONTEND_ASSISTANCE, FRONTEND_BINDINGS };
 typedef struct qa_frontend_tools qa_frontend_tools;
 typedef struct qa_frontend_network qa_frontend_network;
@@ -26,6 +25,8 @@ typedef struct frontend_source frontend_source;
 typedef struct frontend_remap frontend_remap;
 typedef struct frontend_visual_owner frontend_visual_owner;
 typedef struct frontend_native_q2 frontend_native_q2;
+bool frontend_native_q2_rebind_ready(const qa_frontend *, const qa_frontend *, qa_error *);
+void frontend_native_q2_rebind(qa_frontend *, qa_frontend *);
 typedef struct frontend_event_state frontend_event_state;
 typedef struct frontend_particle_state frontend_particle_state;
 typedef struct frontend_audio_identity { qa_actor_id actor; uint64_t id; } frontend_audio_identity;
@@ -140,6 +141,9 @@ bool frontend_map_events(qa_frontend *, qa_error *);
 bool frontend_event_world(qa_frontend *, unsigned, qa_scene_world_input *, qa_error *);
 bool frontend_event_sound(qa_frontend *, const qa_builtin_event *, qa_error *);
 bool frontend_event_audio(qa_frontend *, qa_error *);
+bool frontend_event_reconnect_audio(qa_frontend *, qa_error *);
+bool frontend_event_static_index(const qa_frontend *, uint64_t, uint64_t *);
+bool frontend_event_static_key(const qa_frontend *, uint64_t, uint64_t *);
 bool frontend_event_debug(qa_frontend *, const qa_scene_view *, qa_error *);
 void frontend_event_retire(qa_frontend *);
 bool frontend_event_images(qa_frontend *, qa_actor_owner, qa_game_family, qa_scene_resources **, qa_error *);

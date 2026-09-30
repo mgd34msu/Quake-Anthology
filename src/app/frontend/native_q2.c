@@ -530,13 +530,13 @@ bool frontend_native_q2_services(void *context, qa_application *application, qa_
         return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid native Q2 platform service binding");
     if (profile == QA_NATIVE_Q2_CGAME_API2023 && (frontend->options.dedicated || !frontend->options.seats))
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "native Q2 cgame requires a local presentation seat");
-    if (frontend->next_source_id == UINT64_MAX - FRONTEND_OWNER - 1)
+    if (frontend->next_source_id == UINT64_MAX - QA_FRONTEND_COMMAND_OWNER - 1)
         return frontend_fail(error, QA_ERROR_MEMORY, "native Q2 frontend identity exhausted");
     frontend_native_q2 *source = calloc(1, sizeof(*source));
     if (!source) return frontend_fail(error, QA_ERROR_MEMORY, "allocating native Q2 frontend lease");
     source->frontend = frontend; source->application = application; source->owner = owner; source->profile = profile;
     source->owner_context = engine->owner_context; source->owner_idle = engine->owner_idle;
-    source->identity = FRONTEND_OWNER + ++frontend->next_source_id;
+    source->identity = QA_FRONTEND_COMMAND_OWNER + ++frontend->next_source_id;
     source->frame_time_ns = frontend->time_ns;
     source->cvars = engine->cvars; source->mounts = qa_vfs_clone(engine->content_files, error);
     source->catalogs = qa_localization_pool_create(error); source->world_text = qa_font_world_store_create(error);

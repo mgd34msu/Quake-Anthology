@@ -241,12 +241,12 @@ static void release_source(void *context)
 static bool create_source(qa_frontend *frontend, qa_application *application, qa_actor_owner owner,
     uint32_t seat, const qa_q3_host_options *host, frontend_source **out, qa_error *error)
 {
-    if (frontend->next_source_id == UINT64_MAX - FRONTEND_OWNER - 1)
+    if (frontend->next_source_id == UINT64_MAX - QA_FRONTEND_COMMAND_OWNER - 1)
         return frontend_fail(error, QA_ERROR_MEMORY, "source frontend identity exhausted");
     frontend_source *source = calloc(1, sizeof(*source));
     if (!source) return frontend_fail(error, QA_ERROR_MEMORY, "allocating source presentation owner");
     source->frontend = frontend; source->application = application; source->owner = owner; source->seat = seat;
-    source->identity = FRONTEND_OWNER + ++frontend->next_source_id;
+    source->identity = QA_FRONTEND_COMMAND_OWNER + ++frontend->next_source_id;
     source->source_files = host->mounts;
     source->mounts = qa_vfs_clone(host->mounts, error);
     source->images = source->mounts ? qa_scene_resources_create(source->mounts, error) : NULL;

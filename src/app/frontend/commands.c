@@ -46,14 +46,14 @@ bool frontend_commands(qa_frontend *frontend, qa_error *error)
         "menu_anthology", "library", "mods", "settings", "rankings", "assistance", "controls"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (!qa_console_register_owned(console, names[i], "Native frontend command", 0,
-            FRONTEND_OWNER, true, command, frontend, error)) return false;
+            QA_FRONTEND_COMMAND_OWNER, true, command, frontend, error)) return false;
     qa_cvars *cvars = qa_application_cvars(frontend->application);
-    if (!qa_cvars_register(cvars, "r_gamma", "1", QA_CVAR_ARCHIVE, FRONTEND_OWNER,
+    if (!qa_cvars_register(cvars, "r_gamma", "1", QA_CVAR_ARCHIVE, QA_FRONTEND_COMMAND_OWNER,
         "Output brightness, 0.5 through 3", error) ||
         !qa_cvars_set_number(cvars, "r_gamma", frontend->options.gamma, error) ||
-        !qa_cvars_register(cvars, "s_volume", "0.7", QA_CVAR_ARCHIVE, FRONTEND_OWNER, "Master audio gain", error)) return false;
+        !qa_cvars_register(cvars, "s_volume", "0.7", QA_CVAR_ARCHIVE, QA_FRONTEND_COMMAND_OWNER, "Master audio gain", error)) return false;
     if (frontend->options.dedicated) return true;
-    qa_input_console_options input = {.console = console, .owner = FRONTEND_OWNER,
+    qa_input_console_options input = {.console = console, .owner = QA_FRONTEND_COMMAND_OWNER,
         .user = frontend, .seat = input_seat, .print = frontend_print, .scores = scores, .center = center, .wheel = frontend_wheel_command};
     frontend->input_commands = qa_input_console_create(&input, error);
     return frontend->input_commands != NULL;

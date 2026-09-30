@@ -266,7 +266,7 @@ bool frontend_tools_create(qa_frontend *f, qa_error *error) {
     services->frontend = f; f->tools = services;
     services->debug_width = 2;
     if (!qa_cvars_register(qa_application_cvars(f->application), "gl_debug_linewidth", "2", 0,
-                           FRONTEND_OWNER, "Width in pixels for shared debug shapes.", error)) return false;
+                           QA_FRONTEND_COMMAND_OWNER, "Width in pixels for shared debug shapes.", error)) return false;
     char *base = SDL_GetBasePath();
     if (!base) return frontend_fail(error, QA_ERROR_IO, "could not locate executable private settings directory");
     services->private_resources = qa_resource_pool_create(error);
@@ -283,11 +283,11 @@ bool frontend_tools_create(qa_frontend *f, qa_error *error) {
     if (!services->output_root) return frontend_fail(error, QA_ERROR_MEMORY, "retaining tool output directory");
     if (!files_sync(f, error)) return false;
     qa_tools_options options = {.files = services->files, .output_mount = services->output_mount,
-        .owner = FRONTEND_OWNER, .context = f, .milliseconds = milliseconds, .profiler_milliseconds = profiler_milliseconds, .read_frame = read_frame,
+        .owner = QA_FRONTEND_COMMAND_OWNER, .context = f, .milliseconds = milliseconds, .profiler_milliseconds = profiler_milliseconds, .read_frame = read_frame,
         .context_active = render_context_active, .map_name = map_name, .print = source_print, .forward = forward, .diagnostic = diagnostic, .files_for_context = files_for_context, .capture_context = capture_context};
     if (!qa_tools_create(&options, &services->owner, error)) return false;
     qa_llm_options llm = {.http = services->http, .settings = services->settings, .private_mount = services->private_mount,
-        .owner = FRONTEND_OWNER, .context = f, .wall_milliseconds = wall_milliseconds,
+        .owner = QA_FRONTEND_COMMAND_OWNER, .context = f, .wall_milliseconds = wall_milliseconds,
         .open_browser = open_browser, .context_active = context_active, .print = source_print, .capture_context = capture_context};
     if (!qa_llm_create(&llm, &services->llm, error)) return false;
     return consoles_sync(f, error);
