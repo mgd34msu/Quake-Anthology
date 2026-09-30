@@ -213,10 +213,11 @@ bool qa_q2_game_restore_finish(qa_q2_game *g, qa_error *e) {
             }
             a->item->observations = g->services.pickups;
         }
+        qa_target_binding actual, expected;
+        qa_targets *targets = g->entity_runtime->services.targets;
+        bool target_bound = qa_persistence_targets_binding(targets, a->id, &actual);
         if (a->restore_targets) {
-            qa_target_binding actual, expected;
-            qa_targets *targets = g->entity_runtime->services.targets;
-            if (!qa_persistence_targets_binding(targets, a->id, &actual) ||
+            if (!target_bound ||
                 !qa_q2_game_target_binding(g, a->id, &expected, e) ||
                 actual.context != expected.context || actual.source != expected.source ||
                 actual.read != expected.read || actual.use != expected.use ||
@@ -227,6 +228,9 @@ bool qa_q2_game_restore_finish(qa_q2_game *g, qa_error *e) {
             }
             a->entity_game = g;
             a->entity_targets = targets;
+        } else if (target_bound && actual.context == g) {
+            qa_error_set(e, QA_ERROR_FORMAT, a->id.slot, "Q2 imported an unsaved target declaration");
+            return false;
         }
     }
     for (q2_actor *a = g->first_actor; a; a = a->live_next) {

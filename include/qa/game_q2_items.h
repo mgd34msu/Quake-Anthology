@@ -115,6 +115,8 @@ bool qa_q2_item_drop_monster(qa_q2_game *, qa_actor_id, const char *, qa_actor_i
 bool qa_q2_items_start(qa_q2_game *, qa_actor_id, const char *expression, qa_error *);
 bool qa_q2_powerups_read(qa_q2_game *, qa_actor_id, qa_q2_powerups *, qa_error *);
 bool qa_q2_powerups_clear(qa_q2_game *, qa_actor_id, qa_error *);
+/* Replace quad expiration using the current Q2 source clock. */
+bool qa_q2_player_quad(qa_q2_game *, qa_actor_id, uint64_t duration_ns, qa_error *);
 bool qa_q2_items_publish_visibility(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_pickups_rebind(qa_q2_game *, qa_error *);
 typedef struct qa_q2_companion_checkpoint {

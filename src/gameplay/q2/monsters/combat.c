@@ -1050,6 +1050,74 @@ static bool stop_loop_sound(q2m_context *context, const char *path, int channel,
   return qa_builtin_emit(&context->game->services, &event, error);
 }
 
+static bool pain_brain_mutant(q2m_context *context, bool brain, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  qa_q2_game *g = context->game;
+  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  if (context->combat.health < m->max_health * .5f) m->skin = 1;
+  else if (rerelease) m->skin = 0;
+  if (g->now_ns < m->pain_ns)
+    return true;
+  m->pain_ns = q2m_after(g->now_ns, 3.0);
+  if (!rerelease && g->options.skill == 3)
+    return true;
+  float choice = rerelease ? q2_rerelease_float(g, 0, 1) : q2m_random(g);
+  unsigned index = choice < .33f ? 0u : choice < .66f ? 1u : 2u;
+  static const char *const brain_moves[] = {
+      "brain_move_pain1", "brain_move_pain2", "brain_move_pain3"};
+  static const char *const mutant_moves[] = {
+      "mutant_move_pain1", "mutant_move_pain2", "mutant_move_pain3"};
+  const char *sound = brain ? (index == 1 ? "brain/brnpain2.wav" : "brain/brnpain1.wav")
+                            : (index == 1 ? "mutant/mutpain2.wav" : "mutant/mutpain1.wav");
+  if (!q2m_sound(context, sound, 2, 1, error))
+    return false;
+  if (!q2m_alive(context) || (rerelease && !reacts_to_pain(context)))
+    return true;
+  if (!q2m_set_move(context, brain ? brain_moves[index] : mutant_moves[index],
+                     rerelease && !brain, error))
+    return false;
+  return !q2m_alive(context) || !rerelease || !brain || !m->ducked ||
+         q2m_dispatch(context, "monster_duck_up", error);
+}
+
+static bool pain_flipper_flyer(q2m_context *context, bool flyer, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  qa_q2_game *g = context->game;
+  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  if (context->combat.health < m->max_health * .5f) m->skin = 1;
+  else if (rerelease) m->skin = 0;
+  if (g->now_ns < m->pain_ns)
+    return true;
+  m->pain_ns = q2m_after(g->now_ns, 3.0);
+  if (!rerelease && g->options.skill == 3)
+    return true;
+  unsigned index;
+  if (rerelease)
+    index = flyer ? q2_random_bounded(g, 3) : (q2_random_bounded(g, 2) == 0 ? 1u : 0u);
+  else {
+    uint32_t sample = qa_builtin_random_integer(&g->random);
+    index = flyer ? sample % 3u : (sample + 1u) % 2u;
+  }
+  static const char *const flyer_moves[] = {
+      "flyer_move_pain1", "flyer_move_pain2", "flyer_move_pain3"};
+  const char *sound = flyer ? (index == 1 ? "flyer/flypain2.wav" : "flyer/flypain1.wav")
+                            : (index == 1 ? "flipper/flppain2.wav" : "flipper/flppain1.wav");
+  if (!q2m_sound(context, sound, 2, 1, error))
+    return false;
+  if (!q2m_alive(context) || (rerelease && !reacts_to_pain(context)))
+    return true;
+  if (rerelease && flyer) {
+    m->fly_thrusters = false;
+    m->fly_acceleration = 15;
+    m->fly_speed = 165;
+    m->fly_min_distance = 45;
+    m->fly_max_distance = 200;
+  }
+  return q2m_set_move(context, flyer ? flyer_moves[index]
+                             : index ? "flipper_move_pain2" : "flipper_move_pain1",
+                        rerelease, error);
+}
+
 static bool pain_floater(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   if (context->game->now_ns < monster->pain_ns)
@@ -1329,8 +1397,17 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
     return true;
   struct qa_q2_monster *monster = context->monster;
   q2m_species species = monster->definition->species;
+  if (species == Q2M_KAMIKAZE ||
+      (species == Q2M_FLYER && context->combat.mass != 50 &&
+       (context->game->options.edition == QA_Q2_RERELEASE ||
+        context->game->options.product == QA_Q2_ROGUE)))
+    return true;
   if (species == Q2M_MEDIC || species == Q2M_MEDIC_COMMANDER)
     return pain_medic(context, error);
+  if (species == Q2M_BRAIN || species == Q2M_MUTANT)
+    return pain_brain_mutant(context, species == Q2M_BRAIN, error);
+  if (species == Q2M_FLIPPER || species == Q2M_FLYER)
+    return pain_flipper_flyer(context, species == Q2M_FLYER, error);
   float damage = monster->pending_damage;
   if (context->combat.health < monster->base_health * 0.5f)
     monster->skin |= 1;
@@ -1400,13 +1477,6 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
     move = damage < 20.0f || random < 0.5f ? "berserk_move_pain1"
                                            : "berserk_move_pain2";
     break;
-  case Q2M_BRAIN:
-    move = random < 0.33f   ? "brain_move_pain1"
-           : random < 0.66f ? "brain_move_pain2"
-                            : "brain_move_pain3";
-    sound = random < 0.33f || random >= 0.66f ? "brain/brnpain1.wav"
-                                              : "brain/brnpain2.wav";
-    break;
   case Q2M_CHICK:
   case Q2M_CHICK_HEAT:
     move = damage <= 10.0f   ? "chick_move_pain1"
@@ -1416,22 +1486,10 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
             : random < 0.66f ? "chick/chkpain2.wav"
                              : "chick/chkpain3.wav";
     break;
-  case Q2M_FLIPPER:
-    move = random < 0.5f ? "flipper_move_pain1" : "flipper_move_pain2";
-    sound = random < 0.5f ? "flipper/flppain1.wav" : "flipper/flppain2.wav";
-    break;
   case Q2M_FLOATER:
     move = random < (1.0f / 3.0f) ? "floater_move_pain1" : "floater_move_pain2";
     sound = random < (1.0f / 3.0f) ? "floater/fltpain1.wav"
                                    : "floater/fltpain2.wav";
-    break;
-  case Q2M_FLYER:
-    move = random < (1.0f / 3.0f)   ? "flyer_move_pain1"
-           : random < (2.0f / 3.0f) ? "flyer_move_pain2"
-                                    : "flyer_move_pain3";
-    sound = random >= (1.0f / 3.0f) && random < (2.0f / 3.0f)
-                ? "flyer/flypain2.wav"
-                : "flyer/flypain1.wav";
     break;
   case Q2M_GLADIATOR:
   case Q2M_GLADB:
@@ -1485,13 +1543,6 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
       move = "makron_move_pain6";
       sound = "makron/pain1.wav";
     }
-    break;
-  case Q2M_MUTANT:
-    move = random < 0.33f   ? "mutant_move_pain1"
-           : random < 0.66f ? "mutant_move_pain2"
-                            : "mutant_move_pain3";
-    sound = random < 0.33f || random >= 0.66f ? "mutant/mutpain1.wav"
-                                              : "mutant/mutpain2.wav";
     break;
   case Q2M_PARASITE:
     move = "parasite_move_pain1";

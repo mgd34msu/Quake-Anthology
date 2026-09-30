@@ -347,6 +347,7 @@ const q2m_move_set *q2m_moves_named(const char *);
 const q2m_definition *q2m_definition_for(const qa_q2_game *, const char *);
 const q2m_move_set *q2m_move_set_for(const qa_q2_game *,
                                      const q2m_definition *);
+const q2m_move_set *q2m_stalker_rerelease_moves(void);
 const q2m_move *q2m_move_named(const struct qa_q2_monster *, const char *);
 bool q2m_set_move(q2m_context *, const char *, bool immediate, qa_error *);
 bool q2m_refresh(q2m_context *, qa_error *);

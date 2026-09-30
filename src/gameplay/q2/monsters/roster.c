@@ -596,6 +596,8 @@ const q2m_move_set *q2m_move_set_for(const qa_q2_game *game,
                                      const q2m_definition *definition) {
   if (game == NULL || definition == NULL)
     return NULL;
+  if (game->options.edition == QA_Q2_RERELEASE && definition->species == Q2M_STALKER)
+    return q2m_stalker_rerelease_moves();
   const char *key = definition->move_set;
   if (key == NULL)
     key = base_move_set(game, definition->species);

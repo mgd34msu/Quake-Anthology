@@ -145,6 +145,8 @@ typedef struct qa_q2_monster_checkpoint {
 } qa_q2_monster_checkpoint;
 
 bool qa_q2_monster_read(const qa_q2_game *, qa_actor_id, qa_q2_monster_view *);
+/* Rerelease SV_Physics_Step boundary after world effects, before source think. */
+bool qa_q2_monster_physics_changed(qa_q2_game *, qa_actor_id, bool was_grounded, qa_error *);
 bool qa_q2_monster_holds_healthbar(const qa_q2_game *, qa_actor_id);
 bool qa_q2_monster_turret_admit(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_monster_turret_aim(qa_q2_game *, qa_actor_id, qa_actor_id *enemy,

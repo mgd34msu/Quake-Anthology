@@ -192,7 +192,8 @@ static bool set_delay(void *context, qa_actor_id id, double value, qa_error *e) 
 }
 bool qa_q2_game_target_binding(qa_q2_game *g, qa_actor_id id, qa_target_binding *out, qa_error *e) {
     q2_actor *a = g ? q2_actor_get(g, id, false, NULL) : NULL;
-    if (!out || !a || (!a->entity && !a->item)) {
+    if (!out || !a || (!a->entity && !a->item) ||
+        (g->continuation_pending && !a->restore_targets)) {
         qa_error_set(e, QA_ERROR_FORMAT, id.slot, "Q2 target actor has no authored state");
         return false;
     }

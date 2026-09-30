@@ -354,6 +354,7 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/items/lifecycle.c
     src/gameplay/q2/items/observation.c
     src/gameplay/q2/items/powers.c
+    src/gameplay/q2/items/quad.c
     src/gameplay/q2/items/random.c
     src/gameplay/q2/items/touch.c
     src/gameplay/q2/lmctf_plasma.c
@@ -377,6 +378,7 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/monsters/spawn.c
     src/gameplay/q2/monsters/spawn_growth.c
     src/gameplay/q2/monsters/stalker.c
+    src/gameplay/q2/monsters/stalker_moves.c
     src/gameplay/q2/monsters/widow_death.c
     src/gameplay/q2/monsters/widow_power.c
     src/gameplay/q2/nuke.c

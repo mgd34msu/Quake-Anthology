@@ -1,6 +1,32 @@
 #include "internal.h"
 #include "reinforcements.h"
 
+static bool physics_changed(void *context, qa_actor_id id, qa_error *error) {
+    qa_q2_game *g = context;
+    q2_actor *a = q2_actor_get(g, id, false, NULL);
+    if (!a || !a->monster || !a->monster->definition ||
+        a->monster->definition->species != Q2M_STALKER)
+        return true;
+    q2m_context c = {.game = g, .actor = a, .monster = a->monster};
+    if (!q2m_refresh(&c, error)) return false;
+    if (!q2m_alive(&c) || c.body.ground.registry || a->physics.gravity_direction.z <= 0)
+        return true;
+    a->physics.gravity_direction.z = -1;
+    c.body.angles.z += 180;
+    if (c.body.angles.z > 360) c.body.angles.z -= 360;
+    return q2m_write_body(&c, true, error);
+}
+bool qa_q2_monster_physics_changed(qa_q2_game *g, qa_actor_id id, bool was_grounded,
+                                   qa_error *error) {
+    if (!g) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing Q2 physics change owner");
+        return false;
+    }
+    if (!was_grounded || g->options.edition != QA_Q2_RERELEASE || !q2_actor_live(g, id))
+        return true;
+    return qa_q2_run_actor(g, id, physics_changed, g, error);
+}
+
 static bool world_hit(const q2m_context *c, const qa_trace_result *trace) {
     return trace->hit != QA_TRACE_HIT_ACTOR ||
            (c->game->services.physics &&
@@ -549,6 +575,10 @@ bool q2m_stalker_callback(q2m_context *c, const char *name, bool *handled, qa_er
     *handled = c->monster->definition->species == Q2M_STALKER;
     if (!*handled)
         return true;
+    if (!strcmp(name, "stalker_footstep"))
+        return !c->body.ground.registry ||
+               q2m_emit(c, QA_BUILTIN_EFFECT, "q2:entity-event", 8, c->body.origin,
+                          qa_v3(0, 0, 0), 0, error);
     if (!strcmp(name, "stalker_heal")) {
         int skill = c->game->options.skill;
         float health = c->combat.health + (skill == 2 ? 2 : skill == 3 ? 3 : 1);
