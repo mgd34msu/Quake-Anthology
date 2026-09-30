@@ -112,11 +112,20 @@ bool q1_gremlin_steal(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *erro
     *out = true;
     return true;
 }
-static bool aim(qa_q1_game *g, q1_actor *entity, float spread, qa_vec3 *out, qa_error *error) {
+static bool aim(qa_q1_game *g, q1_actor **source, float spread, qa_vec3 *out, qa_error *error) {
+    q1_actor *entity = *source;
+    qa_actor_id id = entity->id, enemy = entity->state.monster.enemy;
     qa_body_state body, target = {0};
-    if (!qa_world_body_read(g->services.world, entity->id, &body, error))
+    if (enemy.registry && !qa_world_body_read(g->services.world, enemy, &target, NULL))
+        target = (qa_body_state){0};
+    *source = entity = q1_entity(g, id);
+    if (!entity)
+        return true;
+    if (!qa_world_body_read(g->services.world, id, &body, error))
         return false;
-    (void)qa_world_body_read(g->services.world, entity->state.monster.enemy, &target, NULL);
+    *source = entity = q1_entity(g, id);
+    if (!entity)
+        return true;
     qa_vec3 direction = qa_vec_normalize(qa_vec_sub(target.origin, body.origin));
     qa_vec3 angles =
         qa_v3(qa_builtin_angle_mod(atan2f(direction.z, hypotf(direction.x, direction.y)) *
@@ -134,14 +143,24 @@ bool q1_gremlin_fire_nail(qa_q1_game *g, q1_actor *entity, bool laser, qa_error 
         return false;
     if (!entity)
         return true;
+    qa_actor_id source = entity->id;
     entity->effects |= 2;
-    if (!q1_sound(g, entity->id, "weapons/rocket1i.wav", 1, 1, error))
+    if (!q1_sound(g, source, "weapons/rocket1i.wav", 1, 1, error))
         return false;
+    entity = q1_entity(g, source);
+    if (!entity)
+        return true;
     qa_vec3 direction;
     qa_body_state body;
-    if (!aim(g, entity, 0.1f, &direction, error) ||
-        !qa_world_body_read(g->services.world, entity->id, &body, error))
+    if (!aim(g, &entity, 0.1f, &direction, error))
         return false;
+    if (!entity)
+        return true;
+    if (!qa_world_body_read(g->services.world, source, &body, error))
+        return false;
+    entity = q1_entity(g, source);
+    if (!entity)
+        return true;
     qa_vec3 origin = qa_vec_add(body.origin, qa_v3(0, 0, 16));
     q1_actor *shot;
     return laser ? q1_hipnotic_launch_laser(g, entity->id, QA_Q1_LASER, origin, direction, false,
@@ -154,13 +173,19 @@ static bool shotgun(qa_q1_game *g, q1_actor *entity, bool double_shot, qa_error 
         return false;
     if (!entity)
         return true;
+    qa_actor_id source = entity->id;
     entity->effects |= 2;
     if (!q1_sound(g, entity->id, double_shot ? "weapons/shotgn2.wav" : "weapons/guncock.wav", 1, 1,
                   error))
         return false;
+    entity = q1_entity(g, source);
+    if (!entity)
+        return true;
     qa_vec3 direction;
-    if (!aim(g, entity, double_shot ? 0.3f : 0.1f, &direction, error))
+    if (!aim(g, &entity, double_shot ? 0.3f : 0.1f, &direction, error))
         return false;
+    if (!entity)
+        return true;
     qa_vec3 angles =
         qa_v3(qa_builtin_angle_mod(atan2f(direction.z, hypotf(direction.x, direction.y)) *
                                    57.29577951308232f),
@@ -175,15 +200,25 @@ static bool missile(qa_q1_game *g, q1_actor *entity, bool proximity, qa_error *e
         return false;
     if (!entity)
         return true;
+    qa_actor_id source = entity->id;
     entity->effects |= 2;
     if (!q1_sound(g, entity->id, proximity ? "weapons/grenade.wav" : "weapons/sgun1.wav", 1, 1,
                   error))
         return false;
+    entity = q1_entity(g, source);
+    if (!entity)
+        return true;
     qa_vec3 direction;
     qa_body_state body;
-    if (!aim(g, entity, 0.1f, &direction, error) ||
-        !qa_world_body_read(g->services.world, entity->id, &body, error))
+    if (!aim(g, &entity, 0.1f, &direction, error))
         return false;
+    if (!entity)
+        return true;
+    if (!qa_world_body_read(g->services.world, source, &body, error))
+        return false;
+    entity = q1_entity(g, source);
+    if (!entity)
+        return true;
     if (proximity) {
         qa_vec3 velocity = qa_vec_scale(direction, 600);
         velocity.z = 200;
@@ -219,24 +254,39 @@ bool q1_gremlin_lightning(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return true;
     qa_body_state body;
     qa_vec3 direction;
-    if (!qa_world_body_read(g->services.world, entity->id, &body, error) ||
-        !aim(g, entity, 0.1f, &direction, error))
+    if (!qa_world_body_read(g->services.world, source, &body, error))
         return false;
+    entity = q1_entity(g, source);
+    if (!entity)
+        return true;
     qa_vec3 start = qa_vec_add(body.origin, qa_v3(0, 0, 16));
+    if (!aim(g, &entity, 0.1f, &direction, error))
+        return false;
+    if (!entity)
+        return true;
+    if (!qa_world_body_read(g->services.world, source, &body, error))
+        return false;
+    entity = q1_entity(g, source);
+    if (!entity)
+        return true;
     qa_trace_result wall;
-    if (!q1_trace(g, start, qa_vec_add(body.origin, qa_vec_scale(direction, 600)), entity->id,
+    if (!q1_trace(g, start, qa_vec_add(body.origin, qa_vec_scale(direction, 600)), source,
                   false, &wall, error))
         return false;
+    if (!q1_entity(g, source))
+        return true;
     qa_builtin_event beam = {.kind = QA_BUILTIN_BEAM,
                              .family = QA_GAME_Q1,
                              .provider = g->options.provider,
-                             .actor = entity->id,
+                             .actor = source,
                              .time_ns = g->time_ns,
                              .origin = start,
                              .end = wall.end,
                              .code = 2};
-    return qa_builtin_emit(&g->services, &beam, error) &&
-           q1_lightning_rays(g, entity->id, entity->id, start,
+    if (!qa_builtin_emit(&g->services, &beam, error))
+        return false;
+    return !q1_entity(g, source) ||
+           q1_lightning_rays(g, source, source, start,
                              qa_vec_add(wall.end, qa_vec_scale(direction, 4)), 30, 120, 1,
                              qa_v3(0, 0, 0), Q1_LIGHTNING_REMEMBER_ALL, QA_Q1_LIGHTNING, "electric",
                              error);
