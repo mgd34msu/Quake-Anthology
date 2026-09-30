@@ -1,4 +1,5 @@
 #include "internal.h"
+#include <float.h>
 #include <limits.h>
 
 static q1_actor *effect(qa_q1_game *g, qa_actor_id id) {
@@ -238,7 +239,19 @@ static bool fade_step(qa_q1_game *g, q1_actor *e, qa_error *error) {
         if (!ok || !effect(g, id) || !q1_alive(g, target))
             continue;
         if (value > 0) {
-            ok = alpha(g, target, value - (float)(g->elapsed / delay), error);
+            if (delay == 0) {
+                ok = q1_map_fail(error,"Q1 target fade requires a nonzero period");
+                continue;
+            }
+            double faded = (double)value - g->elapsed / delay;
+            if (!isfinite(faded) || fabs(faded) >= 0x1.ffffffp127) {
+                ok = q1_map_fail(error,"Q1 target alpha exceeds native range");
+                continue;
+            }
+            float next_alpha = fabs(faded) > FLT_MAX
+                                   ? (faded < 0 ? -FLT_MAX : FLT_MAX)
+                                   : (float)faded;
+            ok = alpha(g, target, next_alpha, error);
             ++remaining;
         } else if (g->maps->options.retire_actor)
             ok = g->maps->options.retire_actor(g->maps->options.context, target, error);

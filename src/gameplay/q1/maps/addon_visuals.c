@@ -1,4 +1,5 @@
 #include "internal.h"
+#include <float.h>
 #include <limits.h>
 
 static q1_actor *visual(qa_q1_game *g, qa_actor_id id) {
@@ -39,7 +40,11 @@ static bool ramp_tick(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_actor_id id = e->id, owner = e->owner;
     uint8_t phase = e->map->pending.addon.phase;
     double delta = g->elapsed * e->delay;
+    if (fabs(delta) <= FLT_MAX)
+        delta = (float)delta;
     double fraction = e->map->counter_value + (phase == 3 ? -delta : phase == 1 ? delta : 0);
+    if (fraction > 0 && fraction < 1)
+        fraction = (float)fraction;
     unsigned maximum = e->spawnflags & 1 ? 25 : 12;
     if (!q1_alive(g, owner))
         return q1_map_fail(error, "Q1 light ramp lost its light");
@@ -67,6 +72,60 @@ static bool ramp_tick(qa_q1_game *g, q1_actor *e, qa_error *error) {
         q1_map_frame_tick_remove(g, id);
     } else
         e->map->counter_value = (float)fraction;
+    return true;
+}
+static bool rope_segment(qa_q1_game *g, qa_actor_id parent_id, bool *published,
+                         qa_error *error) {
+    *published = false;
+    q1_actor *child;
+    if (!q1_create(g, "misc_rope_segment", Q1_MAP, (qa_actor_id){0}, &child, error))
+        return false;
+    qa_actor_id child_id = child->id;
+    if (!q1_map_allocate(g, child, error))
+        goto failure;
+    child->map->kind = Q1_MAP_ROPE_SEGMENT;
+    child->frame = 3;
+    child->physics.solid = QA_PHYSICS_NOT_SOLID;
+    child->physics.motion = QA_PHYSICS_STATIONARY;
+    if (!q1_model(g, child, "progs/ropex.mdl", error))
+        goto failure;
+    q1_actor *parent = visual(g, parent_id);
+    child = visual(g, child_id);
+    if (!parent || !child)
+        goto retired;
+    child->skin = parent->skin;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, parent_id, &body, error))
+        goto failure;
+    parent = visual(g, parent_id);
+    child = visual(g, child_id);
+    if (!parent || !child)
+        goto retired;
+    body.bounds = (qa_bounds){{-4, -4, 0}, {4, 4, 128}};
+    if (!qa_world_body_write(g->services.world, parent_id, &body, error))
+        goto failure;
+    parent = visual(g, parent_id);
+    child = visual(g, child_id);
+    if (!parent || !child)
+        goto retired;
+    if (!q1_link(g, parent, error))
+        goto failure;
+    parent = visual(g, parent_id);
+    child = visual(g, child_id);
+    if (!parent || !child)
+        goto retired;
+    child->map->pending.addon.chain = parent->map->pending.addon.chain;
+    parent->map->pending.addon.chain = child_id;
+    ++parent->count;
+    *published = true;
+    return true;
+failure:
+    if (qa_actors_get(qa_session_actors(g->services.session), child_id))
+        qa_session_release(g->services.session, child_id, NULL);
+    return false;
+retired:
+    if (qa_actors_get(qa_session_actors(g->services.session), child_id))
+        return qa_session_release(g->services.session, child_id, error);
     return true;
 }
 static bool rope_tick(qa_q1_game *g, q1_actor *e, qa_error *error) {
@@ -105,35 +164,12 @@ static bool rope_tick(qa_q1_game *g, q1_actor *e, qa_error *error) {
         --e->count;
     }
     while (e->count < models) {
-        qa_actor_id previous = e->map->pending.addon.chain;
-        int32_t skin = e->skin;
-        q1_actor *child;
-        if (!q1_create(g, "misc_rope_segment", Q1_MAP, (qa_actor_id){0}, &child, error))
+        bool published;
+        if (!rope_segment(g, id, &published, error))
             return false;
-        qa_actor_id child_id = child->id;
-        if (!q1_map_allocate(g, child, error)) {
-            qa_session_release(g->services.session, child_id, NULL);
-            return false;
-        }
-        child->map->kind = Q1_MAP_ROPE_SEGMENT;
-        child->map->pending.addon.chain = previous;
-        child->frame = 3;
-        child->skin = skin;
-        child->physics.solid = QA_PHYSICS_NOT_SOLID;
-        child->physics.motion = QA_PHYSICS_STATIONARY;
-        if (!q1_model(g, child, "progs/ropex.mdl", error)) {
-            qa_session_release(g->services.session, child_id, NULL);
-            return false;
-        }
         e = visual(g, id);
-        child = visual(g, child_id);
-        if (!e || !child) {
-            if (child)
-                qa_session_release(g->services.session, child_id, NULL);
+        if (!e || !published)
             return true;
-        }
-        e->map->pending.addon.chain = child_id;
-        ++e->count;
     }
     qa_vec3 position = bottom.end;
     qa_actor_id child_id = e->map->pending.addon.chain;
