@@ -1974,7 +1974,8 @@ static bool pain_actor(q2m_context *context, qa_error *error) {
 static bool pain_medic(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
-  bool rogue = rerelease || context->game->options.product != QA_Q2_XATRIX;
+  bool rogue = rerelease || context->game->options.product != QA_Q2_XATRIX ||
+               m->definition->species == Q2M_MEDIC_COMMANDER;
   bool commander = context->combat.mass > 400;
   const float damage = m->pending_damage;
   const bool chainfist = last_attack_chainfist(m);

@@ -17,7 +17,8 @@ static bool rerelease(const q2m_context *c) {
 }
 
 static bool rogue(const q2m_context *c) {
-    return rerelease(c) || c->game->options.product == QA_Q2_ROGUE;
+    return rerelease(c) || c->game->options.product == QA_Q2_ROGUE ||
+           c->monster->definition->species == Q2M_MEDIC_COMMANDER;
 }
 
 static bool medic_species(const struct qa_q2_monster *m) {
@@ -763,7 +764,7 @@ bool q2m_medic_callback(q2m_context *c, const char *name, bool *handled,
   }
     bool run = !strcmp(name, "medic_run"), search = !strcmp(name, "medic_search");
     if (run || search || !strcmp(name, "medic_idle")) {
-        if (run && (rerelease(c) || c->game->options.product != QA_Q2_XATRIX))
+        if (run && (rogue(c) || c->game->options.product != QA_Q2_XATRIX))
             finish_dodge(c);
         if (!run && !sound(c, search ? "medic/medsrch1.wav" : "medic/idle.wav",
                            search ? "medic_commander/medsrch.wav" : "medic_commander/medidle.wav",
