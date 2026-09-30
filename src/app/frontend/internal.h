@@ -210,6 +210,8 @@ bool frontend_source_frame(qa_frontend *, uint32_t, qa_scene_rect, qa_error *);
 bool frontend_source_retire_world(qa_frontend *, qa_error *);
 bool frontend_source_publish_world(qa_frontend *, qa_error *);
 bool frontend_source_listener(qa_frontend *, uint32_t, qa_audio_listener *);
+bool frontend_source_rebind_ready(const qa_frontend *, const qa_frontend *, qa_error *);
+void frontend_source_rebind(qa_frontend *, qa_frontend *);
 bool frontend_before_world_change(void *, qa_application *, qa_error *);
 bool frontend_world_change_ready(void *, qa_application *, qa_error *);
 bool frontend_world_retired(void *, qa_application *, qa_error *);

@@ -349,6 +349,31 @@ const qa_scene_resources *frontend_source_images_at(qa_frontend *frontend, size_
     while (source && index) { source = source->next; --index; }
     return source ? source->images : NULL;
 }
+bool frontend_source_rebind_ready(const qa_frontend *owned, const qa_frontend *destination, qa_error *error)
+{
+    if (!owned || !destination || owned->stepping || destination->stepping || !owned->application)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "source lease publication requires idle frontend owners");
+    if (!qa_application_guest_context_rebind_ready(owned->application, &owned->frame, error)) return false;
+    for (const frontend_source *source = owned->sources; source; source = source->next) {
+        if (source->frontend != owned || source->application != owned->application || !source->leases ||
+            !source->identity || source->seat >= owned->options.seats || !source->source_files ||
+            !qa_application_provider_instance(owned->application, source->owner))
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "source lease belongs to another frontend publication");
+        if (!qa_q3_presentation_frontend_rebind_ready(source->presentation, &owned->frame,
+                owned->audio, source->identity, error)) return false;
+    }
+    return true;
+}
+void frontend_source_rebind(qa_frontend *owned, qa_frontend *destination)
+{
+    for (frontend_source *source = owned->sources; source; source = source->next) {
+        qa_q3_presentation_frontend_rebind(source->presentation, &owned->frame, &destination->frame,
+            owned->audio, source->identity);
+        if (source->music_attached)
+            source->music = qa_audio_engine_bus_music(owned->audio, source->identity);
+        source->frontend = destination;
+    }
+}
 bool frontend_source_retire_world(qa_frontend *frontend, qa_error *error)
 {
     for (frontend_source *source = frontend->sources; source; source = source->next) {
