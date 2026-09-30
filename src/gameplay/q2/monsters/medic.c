@@ -460,8 +460,6 @@ static bool revive(q2m_context *c, q2m_context *target, qa_error *error) {
 }
 
 static bool cable(q2m_context *c, qa_error *error) {
-    q2m_context target;
-    bool present;
     qa_actor_id target_id = c->monster->enemy;
     if (rerelease(c)) {
         q2_actor *actor = q2_actor_live(c->game, target_id) &&
@@ -475,14 +473,19 @@ static bool cable(q2m_context *c, qa_error *error) {
     }
     if (!q2m_alive(c))
         return true;
-    if (!patient_context(c, target_id, &target, &present, error))
-        return false;
-    if (!q2m_alive(c))
-        return true;
-    if (!present)
+    q2_actor *actor = native_actor(c->game, target_id);
+    if (!actor)
         return !rogue(c) || q2m_medic_abort(c, !rerelease(c), false, false, error);
+    q2m_context target = {.game = c->game, .actor = actor, .monster = actor->monster};
     if (rogue(c)) {
-        if ((target.actor->extra_effects & 2u) || target.combat.health > 0)
+        if (target.actor->extra_effects & 2u)
+            return q2m_medic_abort(c, !rerelease(c), false, false, error);
+        float target_health;
+        if (!health(c, target_id, &target_health, error))
+            return false;
+        if (!q2m_alive(c) || !q2m_alive(&target))
+            return true;
+        if (target_health > 0)
             return q2m_medic_abort(c, !rerelease(c), false, false, error);
     }
     int frame = c->monster->frame;
@@ -492,7 +495,23 @@ static bool cable(q2m_context *c, qa_error *error) {
                       "Medic cable callback outside its authored frames");
         return false;
     }
-    qa_vec3 start = q2m_project_offset(c, cable_offsets[offset]);
+    qa_body_state geometry;
+    if (!qa_world_body_read(c->game->services.world, c->actor->id, &geometry, error))
+        return !q2m_alive(c);
+    if (!q2m_alive(c) || !q2m_alive(&target))
+        return true;
+    qa_vec3 angles = geometry.angles;
+    if (!qa_world_body_read(c->game->services.world, c->actor->id, &c->body, error))
+        return !q2m_alive(c);
+    if (!q2m_alive(c) || !q2m_alive(&target))
+        return true;
+    q2m_context projection = *c;
+    projection.body.angles = angles;
+    qa_vec3 start = q2m_project_offset(&projection, cable_offsets[offset]);
+    if (!qa_world_body_read(c->game->services.world, target_id, &target.body, error))
+        return !q2m_alive(c) || !q2m_alive(&target);
+    if (!q2m_alive(c) || !q2m_alive(&target))
+        return true;
     qa_vec3 direction = qa_vec_sub(start, target.body.origin);
     float distance = qa_vec_length(direction);
     if (!rogue(c)) {
@@ -525,9 +544,22 @@ static bool cable(q2m_context *c, qa_error *error) {
         }
         return q2m_medic_abort(c, true, false, false, error);
     }
+    frame = c->monster->frame;
     if (frame == MEDIC_CONTACT) {
+        if (rogue(c)) {
+            if (!qa_combat_read(c->game->services.combat, c->actor->id, &c->combat, error))
+                return !q2m_alive(c);
+            if (!q2m_alive(c) || !q2m_alive(&target))
+                return true;
+        }
         const char *path = rogue(c) && c->combat.mass != 400
                                ? "medic_commander/medatck3a.wav" : "medic/medatck3.wav";
+        if (rogue(c)) {
+            if (!qa_world_body_read(c->game->services.world, target_id, &target.body, error))
+                return !q2m_alive(c) || !q2m_alive(&target);
+            if (!q2m_alive(c) || !q2m_alive(&target))
+                return true;
+        }
         if (!q2m_sound(&target, path, 0, 1, error))
             return false;
         if (!q2m_alive(c) || !q2m_alive(&target))
@@ -546,9 +578,19 @@ static bool cable(q2m_context *c, qa_error *error) {
             return false;
         if (!q2m_alive(c) || rerelease(c))
             return true;
-    } else if (frame == MEDIC_HEAL_SOUND &&
-               !sound(c, "medic/medatck4.wav", "medic_commander/medatck4a.wav", 1, 1, error)) {
-        return false;
+    } else if (frame == MEDIC_HEAL_SOUND) {
+        if (rogue(c)) {
+            if (!qa_combat_read(c->game->services.combat, c->actor->id, &c->combat, error))
+                return !q2m_alive(c);
+            if (!q2m_alive(c) || !q2m_alive(&target))
+                return true;
+        }
+        if (!qa_world_body_read(c->game->services.world, c->actor->id, &c->body, error))
+            return !q2m_alive(c);
+        if (!q2m_alive(c) || !q2m_alive(&target))
+            return true;
+        if (!sound(c, "medic/medatck4.wav", "medic_commander/medatck4a.wav", 1, 1, error))
+            return false;
     }
     if (!q2m_alive(c))
         return true;
@@ -558,11 +600,13 @@ static bool cable(q2m_context *c, qa_error *error) {
         return true;
     qa_body_state body;
     if (!qa_world_body_read(c->game->services.world, target_id, &body, error))
-        return false;
+        return !q2m_alive(c) || !q2_actor_live(c->game, target_id);
     if (!q2m_alive(c) || !q2_actor_live(c->game, target_id))
         return true;
-    if (!q2m_refresh(c, error))
+    if (!qa_world_body_read(c->game->services.world, c->actor->id, &c->body, error))
         return !q2m_alive(c);
+    if (!q2m_alive(c) || !q2_actor_live(c->game, target_id))
+        return true;
     qa_vec3 forward;
     qa_builtin_angle_vectors(c->body.angles, &forward, NULL, NULL);
     qa_vec3 end = body.origin;
