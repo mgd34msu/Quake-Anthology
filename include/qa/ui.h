@@ -131,7 +131,7 @@ bool qa_ui_rankings_destroy(qa_ui_rankings *, double time_ms, qa_error *);
 
 /* Native product/map/start selection uses catalog ownership and application
  * admission directly, preserving authored start-command syntax. */
-bool qa_ui_library_create(qa_ui *, qa_application *, qa_ui_id, const qa_launch_seat *local_player,
+bool qa_ui_library_create(qa_ui *, qa_application *, qa_ui_id, const qa_launch_seat *local_players, size_t local_player_count,
                           qa_ui_library **, qa_error *);
 bool qa_ui_library_destroy(qa_ui_library *, double time_ms, qa_error *);
 bool qa_ui_library_refresh(qa_ui_library *, qa_error *);

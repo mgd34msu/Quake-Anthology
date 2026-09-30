@@ -193,6 +193,12 @@ bool frontend_seats_create(qa_frontend *frontend, qa_error *error)
 {
     qa_cvars *cvars = qa_application_cvars(frontend->application);
     if (!qa_input_settings_register(cvars, QA_MOVEMENT_NETQUAKE, error) || !qa_input_device_settings_register(cvars, error)) return false;
+    qa_launch_seat players[QA_INPUT_LOCAL_SEATS] = {0};
+    char player_names[QA_INPUT_LOCAL_SEATS][32];
+    for (unsigned i = 0; i < frontend->options.seats; ++i) {
+        snprintf(player_names[i], sizeof(player_names[i]), "Player %u", i + 1);
+        players[i] = (qa_launch_seat){.id = i, .name = player_names[i], .local = true, .input_device = i};
+    }
     for (unsigned i = 0; i < frontend->options.seats; ++i) {
         frontend_seat *seat = &frontend->seats[i]; seat->frontend = frontend; seat->id = i;
         qa_command_context command = {.seat = i, .origin = QA_COMMAND_SEAT, .dialect = QA_CONSOLE_Q1, .direct = true};
@@ -213,9 +219,8 @@ bool frontend_seats_create(qa_frontend *frontend, qa_error *error)
             !qa_ui_register(seat->ui, &(qa_ui_menu_registration){.id = FRONTEND_SETTINGS,
                 .context = seat, .factory = settings, .open = settings_open}, error)) return false;
         if (!frontend_bindings_create(seat, error)) return false;
-        char name[32]; snprintf(name, sizeof(name), "Player %u", i + 1);
-        qa_launch_seat player = {.id = i, .name = name, .local = true, .input_device = i};
-        if (!qa_ui_library_create(seat->ui, frontend->application, FRONTEND_LIBRARY, &player, &seat->library, error) ||
+        if (!qa_ui_library_create(seat->ui, frontend->application, FRONTEND_LIBRARY,
+                players, frontend->options.seats, &seat->library, error) ||
             !qa_ui_rankings_create(seat->ui, frontend->application, FRONTEND_RANKINGS, -1, &seat->rankings, error) ||
             !qa_hud_create(&(qa_hud_options){.ui = seat->ui, .application = frontend->application, .seat = i,
                 .context = seat, .read = hud_data}, &seat->hud, error) || !frontend_wheel_create(seat, error)) return false;

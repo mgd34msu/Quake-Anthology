@@ -1,6 +1,10 @@
 #include "internal.h"
 #include <stdio.h>
 
+typedef struct library_profile {
+    qa_launch_seat seat;
+    char *name, *team;
+} library_profile;
 struct qa_ui_library {
     qa_ui *ui;
     qa_application *application;
@@ -18,8 +22,8 @@ struct qa_ui_library {
     char query[321], status[256];
     qa_buffer query_lower;
     qa_ui_control controls[8];
-    qa_launch_seat local_player;
-    char *player_name, *player_team;
+    library_profile *local_players;
+    size_t local_player_count;
 };
 enum { LIB_SEARCH = 1, LIB_PRODUCTS, LIB_MAPS, LIB_STARTS, LIB_SKILL, LIB_LAUNCH, LIB_REFRESH, LIB_STATUS };
 static void select_product(qa_ui_library *menu, qa_product_id product) {
@@ -111,7 +115,10 @@ static bool launch(qa_ui_library *menu, qa_error *error) {
     if (active && active->seat_count) {
         for (size_t i = 0; i < active->seat_count && ok; ++i)
             ok = qa_launch_set_seat(draft, &active->seats[i], error);
-    } else if (ok) ok = qa_launch_set_seat(draft, &menu->local_player, error);
+    } else {
+        for (size_t i = 0; i < menu->local_player_count && ok; ++i)
+            ok = qa_launch_set_seat(draft, &menu->local_players[i].seat, error);
+    }
     if (ok) ok = qa_application_apply(menu->application, draft, error);
     qa_launch_draft_destroy(draft);
     if (!ok) {
@@ -192,24 +199,52 @@ static bool factory(void *context, uint32_t seat, qa_ui_menu *out, qa_error *err
                         .count = 8, .fullscreen = true};
     return true;
 }
+static void release_profiles(qa_ui_library *menu) {
+    for (size_t i = 0; i < menu->local_player_count; ++i) {
+        free(menu->local_players[i].name); free(menu->local_players[i].team);
+    }
+    free(menu->local_players);
+}
 bool qa_ui_library_create(qa_ui *ui, qa_application *application, qa_ui_id id,
-                          const qa_launch_seat *local_player, qa_ui_library **out, qa_error *error) {
-    if (!ui || !application || !id || !out || !local_player || local_player->id != ui->options.seat ||
-        !local_player->local || local_player->bot || local_player->actor.registry || !local_player->name)
-        return ui_fail(error, "game library requires an actual local seat/profile");
+                          const qa_launch_seat *local_players, size_t local_player_count,
+                          qa_ui_library **out, qa_error *error) {
+    if (!ui || !application || !id || !out || !local_players || !local_player_count ||
+        local_player_count > SIZE_MAX / sizeof(library_profile))
+        return ui_fail(error, "game library requires an actual local roster");
+    bool own_seat = false;
+    for (size_t i = 0; i < local_player_count; ++i) {
+        const qa_launch_seat *player = &local_players[i];
+        if (!player->local || player->bot || player->actor.registry || !player->name)
+            return ui_fail(error, "game library local profile is invalid");
+        for (size_t j = 0; j < i; ++j)
+            if (player->id == local_players[j].id)
+                return ui_fail(error, "game library local roster repeats a seat");
+        own_seat |= player->id == ui->options.seat;
+    }
+    if (!own_seat) return ui_fail(error, "game library roster does not include its menu seat");
     qa_ui_library *menu = calloc(1, sizeof(*menu));
     if (!menu) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating game library"); return false; }
     menu->ui = ui; menu->application = application; menu->menu = id; menu->starts = true;
-    size_t name_length = strlen(local_player->name), team_length = strlen(local_player->team ? local_player->team : "");
-    menu->player_name = malloc(name_length + 1); menu->player_team = malloc(team_length + 1);
-    if (!menu->player_name || !menu->player_team) {
-        free(menu->player_name); free(menu->player_team); free(menu);
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "retaining local seat profile"); return false;
+    menu->local_players = calloc(local_player_count, sizeof(*menu->local_players));
+    if (!menu->local_players) {
+        free(menu); qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating local roster profiles"); return false;
     }
-    memcpy(menu->player_name, local_player->name, name_length + 1);
-    memcpy(menu->player_team, local_player->team ? local_player->team : "", team_length + 1);
-    menu->local_player = *local_player;
-    menu->local_player.name = menu->player_name; menu->local_player.team = menu->player_team;
+    menu->local_player_count = local_player_count;
+    for (size_t i = 0; i < local_player_count; ++i) {
+        const qa_launch_seat *player = &local_players[i];
+        const char *team = player->team ? player->team : "";
+        size_t name_length = strlen(player->name), team_length = strlen(team);
+        library_profile *profile = &menu->local_players[i];
+        profile->name = malloc(name_length + 1); profile->team = malloc(team_length + 1);
+        if (!profile->name || !profile->team) {
+            release_profiles(menu); free(menu);
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "retaining local roster profiles"); return false;
+        }
+        memcpy(profile->name, player->name, name_length + 1);
+        memcpy(profile->team, team, team_length + 1);
+        profile->seat = *player;
+        profile->seat.name = profile->name; profile->seat.team = profile->team;
+    }
     menu->catalog = qa_application_catalog(application); qa_catalog_retain(menu->catalog);
     menu->dirty = true; menu->skill = 1;
     const qa_launch_snapshot *snapshot = qa_application_launch(application);
@@ -220,7 +255,7 @@ bool qa_ui_library_create(qa_ui *ui, qa_application *application, qa_ui_id id,
         if (product) select_product(menu, product->id);
     }
     if (!qa_ui_register(ui, &(qa_ui_menu_registration){.id = id, .context = menu, .factory = factory}, error)) {
-        qa_catalog_release(menu->catalog); free(menu->player_name); free(menu->player_team); free(menu); return false;
+        qa_catalog_release(menu->catalog); release_profiles(menu); free(menu); return false;
     }
     *out = menu;
     return true;
@@ -230,7 +265,7 @@ bool qa_ui_library_destroy(qa_ui_library *menu, double time, qa_error *error) {
     if (menu->ui->handling) return ui_fail(error, "game library callback is active");
     if (!qa_ui_unregister(menu->ui, menu->menu, time, error)) return false;
     qa_catalog_release(menu->catalog); qa_buffer_free(&menu->query_lower);
-    free(menu->player_name); free(menu->player_team);
+    release_profiles(menu);
     free(menu->products); free(menu->product_ids); free(menu->maps); free(menu->map_indices); free(menu);
     return true;
 }
