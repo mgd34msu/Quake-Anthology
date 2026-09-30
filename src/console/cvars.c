@@ -172,6 +172,16 @@ static bool apply_value(qa_cvars *registry, cvar *entry, const char *value,
     return true;
 }
 
+bool qa_cvars_cheats_policy(const qa_cvars *registry, bool *callback_backed,
+                             bool *fallback_allowed)
+{
+    if (!registry || !callback_backed || !fallback_allowed)
+        return false;
+    *callback_backed = registry->options.cheats_allowed != NULL;
+    *fallback_allowed = registry->cheats;
+    return true;
+}
+
 static bool cheats_allowed(const qa_cvars *registry)
 {
     if (registry->options.cheats_allowed != NULL)

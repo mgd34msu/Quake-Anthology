@@ -153,6 +153,8 @@ bool qa_cvars_apply_latched(qa_cvars *registry, const char *name, qa_error *erro
 bool qa_cvars_reset(qa_cvars *registry, const char *name, bool force, qa_error *error);
 bool qa_cvars_restart(qa_cvars *registry, qa_error *error);
 bool qa_cvars_set_cheats(qa_cvars *registry, bool allowed, qa_error *error);
+/* Reads policy configuration without evaluating a callback or sv_cheats. */
+bool qa_cvars_cheats_policy(const qa_cvars *, bool *callback_backed, bool *fallback_allowed);
 void qa_cvars_set_server_active(qa_cvars *registry, bool active);
 void qa_cvars_set_high_characters(qa_cvars *registry, bool enabled);
 void qa_cvars_remove_owner(qa_cvars *registry, uint64_t owner);
