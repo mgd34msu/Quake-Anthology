@@ -15,6 +15,7 @@ struct qa_haptic_pattern {
 struct haptic_entry {
     qa_sha256_digest digest;
     qa_haptic_pattern *pattern;
+    qa_resource *source;
     struct haptic_entry *next;
 };
 struct qa_haptic_cache {
@@ -84,6 +85,7 @@ void qa_haptic_cache_destroy(qa_haptic_cache *c) {
     while (entry) {
         struct haptic_entry *next = entry->next;
         qa_haptic_pattern_release(entry->pattern);
+        qa_resource_release(entry->source);
         free(entry);
         entry = next;
     }
@@ -146,7 +148,9 @@ bool qa_haptic_cache_sound(qa_haptic_cache *cache, qa_vfs *vfs, const char *soun
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Caching tactile pattern");
         return false;
     }
-    *entry = (struct haptic_entry){.digest = *digest, .pattern = pattern, .next = cache->entries};
+    qa_resource_retain(resource);
+    *entry = (struct haptic_entry){.digest = *digest, .pattern = pattern,
+                                   .source = resource, .next = cache->entries};
     cache->entries = entry;
     qa_resource_release(resource);
     qa_haptic_pattern_retain(pattern);
