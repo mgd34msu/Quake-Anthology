@@ -288,6 +288,34 @@ bool qa_combat_bind(qa_combat *combat, qa_actor_id actor, const qa_combat_bindin
         .binding = *binding, .power_inventory = power_inventory, .power_item = power_item};
     return true;
 }
+bool qa_combat_primary_current(const qa_combat *combat, qa_actor_id actor,
+                               uint64_t serial, const void *context) {
+    if (!combat || !serial || !qa_actors_get(combat->actors, actor)) return false;
+    const qa_combat_record *entry = &combat->records[actor.slot];
+    return entry->active && entry->external && qa_actor_id_equal(entry->actor, actor) &&
+        entry->serial == serial && entry->binding.context == context;
+}
+bool qa_combat_detach_primary(qa_combat *combat, qa_actor_id actor,
+                              uint64_t serial, const void *context, qa_error *error) {
+    if (!qa_combat_idle(combat)) return qa_combat_argument(error, "primary combat detach requires drained callbacks");
+    if (!qa_combat_primary_current(combat, actor, serial, context))
+        return qa_combat_argument(error, "primary combat detach binding changed");
+    qa_combat_record *entry = &combat->records[actor.slot];
+    if (entry->active_admissions || entry->power_admitting || cursor_for(combat, actor))
+        return qa_combat_argument(error, "primary combat detach has an active actor admission");
+    qa_combat_state state; bool local;
+    if (!qa_combat_primary_read(combat, actor, &state, &local, error)) return false;
+    if (local || !qa_combat_primary_current(combat, actor, serial, context))
+        return qa_combat_argument(error, "primary combat changed while preparing detach");
+    if (state.armor.regular.kind == QA_ARMOR_SOURCE)
+        return qa_combat_argument(error, "source-only armor cannot detach into canonical local storage");
+    if (!qa_combat_idle(combat) || entry->active_admissions || entry->power_admitting || cursor_for(combat, actor))
+        return qa_combat_argument(error, "primary combat callbacks changed while preparing detach");
+    uint64_t next; if (!next_serial(combat, &next, error)) return false;
+    entry->state = state; entry->binding = (qa_combat_binding){0};
+    entry->external = false; entry->serial = next;
+    return true;
+}
 bool qa_combat_bind_power_inventory(qa_combat *combat, qa_actor_id actor, qa_inventory *inventory,
                                     qa_item_id item, qa_error *error) {
     qa_combat_record *entry;

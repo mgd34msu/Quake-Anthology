@@ -244,6 +244,11 @@ bool qa_combat_create_actor(qa_combat *, qa_actor_id, const qa_combat_state *, q
 bool qa_combat_set_admission(qa_combat *, qa_actor_id, const qa_combat_admission *, qa_error *);
 uint64_t qa_combat_storage_serial(const qa_combat *, qa_actor_id);
 bool qa_combat_bind(qa_combat *, qa_actor_id, const qa_combat_binding *, bool replace, qa_error *);
+/* Pure published-primary identity query. Detach requires idle combat and
+ * snapshots original primary traits/armor and its authoritative fuel before
+ * releasing callbacks. Component protection leases and fuel identity remain. */
+bool qa_combat_primary_current(const qa_combat *, qa_actor_id, uint64_t serial, const void *context);
+bool qa_combat_detach_primary(qa_combat *, qa_actor_id, uint64_t serial, const void *context, qa_error *);
 /* The fuel owner is usually inventory. Effective armor reads it directly;
  * binding it does not create another spendable reservoir. */
 /* One canonical reservoir per actor. Repeating the same inventory/item pair
