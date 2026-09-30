@@ -73,7 +73,7 @@ typedef struct qa_cinematic_checkpoint {
     double elapsed_ms;
     qa_media_status status, decoder_status;
     uint64_t revision, audio_loop;
-    bool loop, hold, silent, paused, dirty, completed, focus_paused;
+    bool loop, hold, silent, paused, dirty, completed, focus_paused, audio_attached;
     qa_buffer audio;
     union {
         qa_cin_playback_checkpoint cin;

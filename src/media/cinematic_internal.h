@@ -23,7 +23,7 @@ struct qa_cinematic {
     qa_scene_image *image;
     const qa_scene_frame *image_frame;
     uint64_t image_sequence;
-    qa_audio_raw_stream *raw;
+    bool raw_attached;
     uint64_t audio_loop;
     int16_t *pcm;
     size_t pcm_capacity;

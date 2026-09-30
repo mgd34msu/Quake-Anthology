@@ -115,9 +115,9 @@ static bool target(qa_source_save_io *io, const qa_media_checkpoint_refs *refs, 
 }
 static bool fields(qa_source_save_io *io, const qa_media_checkpoint_refs *refs, qa_cinematic_checkpoint *value)
 {
-    uint8_t signature[4] = {'Q','A','M','C'}; uint32_t version = 1, format = value->format, audience = value->audio_audience.kind;
+    uint8_t signature[4] = {'Q','A','M','C'}; uint32_t version = 2, format = value->format, audience = value->audio_audience.kind;
     bool ok = qa_source_save_bytes(io, signature, sizeof(signature)) && !memcmp(signature, "QAMC", 4) &&
-        qa_source_save_u32(io, &version) && version == 1 && qa_source_save_u32(io, &format) && format <= QA_CINEMATIC_IMAGE;
+        qa_source_save_u32(io, &version) && version == 2 && qa_source_save_u32(io, &format) && format <= QA_CINEMATIC_IMAGE;
     if (!ok) return false;
     value->format = (qa_cinematic_format)format;
     ok = source_text(io, &value->source) && target(io, refs, &value->target) &&
@@ -129,7 +129,8 @@ static bool fields(qa_source_save_io *io, const qa_media_checkpoint_refs *refs, 
         qa_source_save_u64(io, &value->audio_loop) && qa_source_save_bool(io, &value->loop) &&
         qa_source_save_bool(io, &value->hold) && qa_source_save_bool(io, &value->silent) &&
         qa_source_save_bool(io, &value->paused) && qa_source_save_bool(io, &value->dirty) &&
-        qa_source_save_bool(io, &value->completed) && qa_source_save_bool(io, &value->focus_paused) && blob(io, &value->audio);
+        qa_source_save_bool(io, &value->completed) && qa_source_save_bool(io, &value->focus_paused) &&
+        qa_source_save_bool(io, &value->audio_attached) && blob(io, &value->audio);
     if (!ok) return false;
     value->audio_audience.kind = (qa_cinematic_audio_kind)audience;
     switch (value->format) {

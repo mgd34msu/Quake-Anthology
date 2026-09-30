@@ -44,11 +44,15 @@ static bool pause_clock(qa_cinematic *movie, bool paused, qa_error *error) {
     movie->paused = paused;
     return true;
 }
+static qa_audio_raw_stream *current_raw(const qa_cinematic *movie) {
+    return movie->raw_attached && movie->options.audio ?
+        qa_audio_engine_bus_stream(movie->options.audio, movie->options.audio_bus) : NULL;
+}
 static void reset_audio(qa_cinematic *movie) {
-    if (!movie->raw)
+    if (!movie->raw_attached)
         return;
     qa_audio_engine_remove_stream(movie->options.audio, movie->options.audio_bus);
-    movie->raw = NULL;
+    movie->raw_attached = false;
 }
 static bool before_audio_reset(void *context, qa_error *error) {
     (void)error;
@@ -95,27 +99,28 @@ static bool queue_audio(void *context, const qa_media_audio *sound, qa_error *er
                                 : qa_load_i16le(sound->pcm.data + i * 2);
         pcm = movie->pcm;
     }
-    qa_audio_raw_stream *raw = movie->raw;
+    qa_audio_raw_stream *raw = current_raw(movie);
+    bool installed = raw != NULL;
     uint32_t rate = qa_audio_engine_rate(movie->options.audio);
     if (!raw && !qa_audio_raw_create(rate, &raw, error))
         return false;
     if (!qa_audio_raw_set_rate(raw, rate, error) ||
         !qa_audio_raw_queue(
             raw, pcm, samples / sound->channels, sound->channels, sound->rate, sound->source_sample,
-            sound->reset || !movie->raw || movie->audio_loop != sound->loop, error)) {
-        if (!movie->raw)
+            sound->reset || !installed || movie->audio_loop != sound->loop, error)) {
+        if (!installed)
             qa_audio_raw_destroy(raw);
         return false;
     }
-    if (!movie->raw) {
+    if (!installed) {
         uint32_t audience = audio_audience(&movie->options);
         if (!qa_audio_engine_stream(movie->options.audio, movie->options.audio_bus, audience,
                                     movie->options.gain, raw, error)) {
             qa_audio_raw_destroy(raw);
             return false;
         }
-        movie->raw = raw;
     }
+    movie->raw_attached = true;
     movie->audio_loop = sound->loop;
     return true;
 }
@@ -236,6 +241,10 @@ static bool restore(qa_cinematic *movie, const qa_cinematic_checkpoint *saved, q
     movie->completed = saved->completed;
     movie->focus_paused = saved->focus_paused;
     picture(movie);
+    if ((saved->audio.size && !saved->audio_attached) ||
+        (saved->audio_attached && (saved->format == QA_CINEMATIC_IMAGE || saved->completed ||
+                                  saved->silent || !movie->options.audio)))
+        return cinematic_fail(error, "Saved cinematic has an invalid shared audio attachment");
     if (saved->audio.size) {
         if (!movie->options.audio || saved->completed || saved->silent || !saved->audio.data)
             return cinematic_fail(error, "Saved cinematic audio has no active owner");
@@ -249,8 +258,8 @@ static bool restore(qa_cinematic *movie, const qa_cinematic_checkpoint *saved, q
             qa_audio_raw_destroy(raw);
             return false;
         }
-        movie->raw = raw;
     }
+    movie->raw_attached = saved->audio_attached;
     return true;
 }
 bool qa_cinematic_create(const qa_cinematic_source *source, const qa_cinematic_options *options,
@@ -444,7 +453,7 @@ bool qa_cinematic_pause(qa_cinematic *movie, bool paused, qa_error *error) {
     bool ok = pause_clock(movie, paused, error);
     if (ok) {
         movie->status = paused ? QA_MEDIA_PAUSED : QA_MEDIA_PLAYING;
-        qa_audio_raw_pause(movie->raw, paused);
+        qa_audio_raw_pause(current_raw(movie), paused);
     }
     movie->busy = false;
     return ok;
@@ -481,6 +490,9 @@ bool qa_cinematic_time(qa_cinematic *movie, double *elapsed, double *source, uin
     return ok;
 }
 static bool capture(qa_cinematic *movie, qa_cinematic_checkpoint *out, qa_error *error) {
+    if (movie->raw_attached && (movie->format == QA_CINEMATIC_IMAGE || movie->completed ||
+                               movie->options.silent || !movie->options.audio))
+        return cinematic_fail(error, "Cinematic has an invalid shared audio attachment");
     qa_cinematic_checkpoint saved = {.format = movie->format,
                                      .target = movie->options.target,
                                      .audio_audience = movie->options.audio_audience,
@@ -494,7 +506,8 @@ static bool capture(qa_cinematic *movie, qa_cinematic_checkpoint *out, qa_error 
                                      .paused = movie->paused,
                                      .dirty = movie->dirty,
                                      .completed = movie->completed,
-                                     .focus_paused = movie->focus_paused};
+                                     .focus_paused = movie->focus_paused,
+                                     .audio_attached = movie->raw_attached};
     if (!cinematic_elapsed(movie, &saved.elapsed_ms, error))
         return false;
     size_t length = strlen(movie->name);
@@ -520,8 +533,9 @@ static bool capture(qa_cinematic *movie, qa_cinematic_checkpoint *out, qa_error 
         ok = true;
         break;
     }
-    if (ok && movie->raw)
-        ok = qa_audio_raw_checkpoint(movie->raw, &saved.audio, error);
+    qa_audio_raw_stream *raw = current_raw(movie);
+    if (ok && raw)
+        ok = qa_audio_raw_checkpoint(raw, &saved.audio, error);
     if (!ok) {
         qa_cinematic_checkpoint_free(&saved);
         return false;
@@ -564,12 +578,14 @@ bool qa_cinematic_audio_rebind_ready(qa_cinematic *movie, qa_audio_engine *engin
     if (!movie || movie->busy || movie->faulted ||
         (!engine && (!movie->options.silent && movie->format != QA_CINEMATIC_IMAGE)))
         return cinematic_fail(error, "Cinematic audio exchange requires idle qualified owners");
+    if (!movie->raw_attached) return true;
     qa_audio_raw_stream *next = engine ? qa_audio_engine_bus_stream(engine, bus) : NULL;
-    if ((movie->raw != NULL) != (next != NULL))
+    qa_audio_raw_stream *raw = current_raw(movie);
+    if ((raw != NULL) != (next != NULL))
         return cinematic_fail(error, "Cinematic raw queue presence differs from restored engine");
-    if (!next || movie->raw == next) return true;
+    if (!next || raw == next) return true;
     qa_buffer original = {0}, candidate = {0};
-    bool ok = qa_audio_raw_checkpoint(movie->raw, &original, error) &&
+    bool ok = qa_audio_raw_checkpoint(raw, &original, error) &&
         qa_audio_raw_checkpoint(next, &candidate, error);
     if (ok && (original.size != candidate.size || memcmp(original.data, candidate.data, original.size)))
         ok = cinematic_fail(error, "Cinematic raw queue differs from restored engine");
@@ -579,7 +595,6 @@ bool qa_cinematic_audio_rebind_ready(qa_cinematic *movie, qa_audio_engine *engin
 void qa_cinematic_audio_rebind(qa_cinematic *movie, qa_audio_engine *engine, uint64_t bus)
 {
     movie->options.audio = engine; movie->options.audio_bus = bus;
-    movie->raw = engine ? qa_audio_engine_bus_stream(engine, bus) : NULL;
 }
 
 bool qa_cinematic_frame_rebind_ready(const qa_cinematic *movie, const qa_scene_frame *current,

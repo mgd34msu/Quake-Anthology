@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/binary.h"
 #include "qa/q3_key.h"
+#include "qa/audio_save.h"
 #include <limits.h>
 #include <stdio.h>
 
@@ -81,6 +82,10 @@ static bool music(void *context, const char *intro_name, const char *loop_name, 
 {
     frontend_source *source = context;
     if (!source->frontend->audio) return frontend_fail(error, QA_ERROR_UNSUPPORTED, "source music output is disabled");
+    if (source->music_attached) {
+        source->music = qa_audio_engine_bus_music(source->frontend->audio, source->identity);
+        source->music_attached = source->music != NULL;
+    }
     if (!source->music && !qa_audio_music_create(48000, QA_AUDIO_Q3, false, &source->music, error)) return false;
     if (!intro_name || !*intro_name) { qa_audio_music_stop(source->music); return true; }
     qa_audio_stream *intro = NULL, *loop = NULL;
