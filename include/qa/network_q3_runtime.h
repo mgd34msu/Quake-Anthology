@@ -37,6 +37,11 @@ bool qa_network_q3_pure(qa_network_runtime *, qa_net_client_id,
 /* Copies the actual original peer state. No borrowed peer pointer escapes. */
 bool qa_network_q3_state(qa_network_runtime *, qa_net_client_id, qa_q3_server_state *, qa_error *);
 const qa_q3_server_peer *qa_network_q3_server_view(qa_network_runtime *, qa_net_client_id);
+/* After the owning source has reconnected and begun this exact retained
+ * client for a same-map source round. Requires an idle runtime. Unlike travel,
+ * retains channel/reliable/pure/last-usercmd and shared command epoch/history.
+ * Makes the next source snapshot full and immediately due. */
+bool qa_network_q3_round_activate(qa_network_runtime *, qa_net_client_id, qa_error *);
 /* Only after source admission authenticates reconnect and shared endpoint
  * rebinding succeeds. Recreates wire sequence/XOR state, retaining the shared
  * client and seat. Caller must restart/signon before admitting commands. */

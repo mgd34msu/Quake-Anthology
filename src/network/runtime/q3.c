@@ -236,6 +236,27 @@ bool qa_network_q3_state(qa_network_runtime *runtime, qa_net_client_id id, qa_q3
 }
 const qa_q3_server_peer *qa_network_q3_server_view(qa_network_runtime *runtime, qa_net_client_id id)
 { q3_runtime_peer *p = get(runtime, id, NULL); return p ? p->source : NULL; }
+bool qa_network_q3_round_activate(qa_network_runtime *runtime, qa_net_client_id id, qa_error *error)
+{
+    if (!runtime || !qa_network_callbacks_idle(runtime))
+        return qa_network_fail(error, "Q3 source round activation requires its idle runtime");
+    q3_runtime_peer *p = get(runtime, id, error);
+    const qa_net_client *client = p ? qa_net_connections_get(runtime->connections, id) : NULL;
+    qa_q3_server_state *state = p ? qa_q3_server_peer_state(p->source) : NULL;
+    if (!p || !client || p->defer_signon || state->phase < QA_Q3_CONNECTED || state->phase > QA_Q3_ACTIVE)
+        return qa_network_fail(error, "Q3 source round activation lacks a retained connected peer");
+    runtime->callback = true;
+    qa_q3_server_world current = p->hooks.world(p->hooks.context);
+    runtime->callback = false;
+    if (!current.generation || current.server_id <= 0 || current.restarted_server_id <= 0 ||
+        current.restarted_server_id > current.server_id)
+        return qa_network_fail(error, "Q3 source round activation lacks its current source world");
+    if (client->phase == QA_NET_CONNECTED && !qa_network_phase(runtime, id, QA_NET_PRIMED, error)) return false;
+    if (client->phase == QA_NET_PRIMED && !qa_network_phase(runtime, id, QA_NET_ACTIVE, error)) return false;
+    state->phase = QA_Q3_ACTIVE; state->delta_message = -1;
+    state->next_snapshot_time = current.time;
+    return true;
+}
 bool qa_network_q3_reconnect_channel(qa_network_runtime *runtime, qa_net_client_id id,
     int32_t challenge, uint16_t qport, qa_error *error)
 {
