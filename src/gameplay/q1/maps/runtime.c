@@ -645,6 +645,8 @@ static q1_map_kind classify(const char *name) {
         const char *name;
         q1_map_kind kind;
     } classes[] = {{"worldspawn", Q1_MAP_WORLD},
+                   {"rubble_generator", Q1_MAP_ROGUE_RUBBLE_SOURCE},
+                   {"light_lantern", Q1_MAP_ROGUE_LAMP},
                    {"pendulum", Q1_MAP_PENDULUM},
                    {"func_new_plat", Q1_MAP_ROGUE_PLAT},
                    {"func_elvtr_button", Q1_MAP_ELEVATOR_BUTTON},
@@ -852,6 +854,10 @@ static q1_map_kind classify(const char *name) {
 bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, bool *handled,
                   qa_error *error) {
     q1_map_kind kind = classify(spawn->classname);
+    if (g->options.program == QA_Q1_ROGUE && !strcmp(spawn->classname, "trigger_explosion"))
+        kind = Q1_MAP_ROGUE_EXPLOSION_TRIGGER;
+    if (g->options.program == QA_Q1_ROGUE && !strcmp(spawn->classname, "light_candle"))
+        kind = Q1_MAP_ROGUE_LAMP;
     bool addon = g->options.program == QA_Q1_DOPA || g->options.program == QA_Q1_MG1 ||
                  g->options.program == QA_Q1_MG3;
     if (!addon && (q1_map_is_addon_effect(kind) || q1_map_is_fog(kind)))
@@ -890,7 +896,7 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
         kind = Q1_MAP_FIELDS;
     if (g->options.program != QA_Q1_ROGUE &&
         (kind == Q1_MAP_PENDULUM || q1_map_is_rogue_plat(kind) || q1_map_is_time_actor(kind) ||
-         q1_map_is_rogue_hazard(kind)))
+         q1_map_is_rogue_hazard(kind) || q1_map_is_rogue_misc(kind)))
         kind = Q1_MAP_FIELDS;
     if (g->options.program != QA_Q1_MG3 &&
         (kind == Q1_MAP_CANCEL_PAUSE || kind == Q1_MAP_SWITCH_PATH))
@@ -913,6 +919,8 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     if (!*handled)
         return true;
     entity->kind = Q1_MAP;
+    if (q1_map_is_rogue_misc(kind))
+        return q1_map_rogue_misc_spawn(g, entity, error);
     if (q1_map_is_fog(kind))
         return q1_map_addon_fog_spawn(g, entity, error);
     if (q1_map_is_addon_effect(kind))
@@ -1100,6 +1108,8 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
                 qa_error *error) {
     if (!entity->map || !entity->map->use_enabled)
         return true;
+    if (q1_map_is_rogue_misc(entity->map->kind))
+        return q1_map_rogue_misc_use(g, entity, error);
     if (q1_map_is_fog(entity->map->kind))
         return q1_map_addon_fog_activate(g, entity, other, error);
     if (q1_map_is_addon_effect(entity->map->kind))
@@ -1158,6 +1168,9 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
 }
 bool q1_map_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contact *contact,
                   qa_error *error) {
+    if (entity->map && q1_map_is_rogue_misc(entity->map->kind))
+        return !entity->map->touch_enabled ||
+               q1_map_rogue_misc_touch(g, entity, contact->other, error);
     if (entity->map && q1_map_is_fog(entity->map->kind))
         return !entity->map->touch_enabled ||
                q1_map_addon_fog_activate(g, entity, contact->other, error);
@@ -1222,6 +1235,8 @@ bool q1_map_blocked(qa_q1_game *g, q1_actor *entity, qa_actor_id obstacle, qa_er
 }
 bool q1_map_reaction(qa_q1_game *g, q1_actor *entity, const qa_damage_outcome *outcome,
                      qa_error *error) {
+    if (q1_map_is_rogue_misc(entity->map->kind))
+        return q1_map_rogue_misc_reaction(g, entity, outcome, error);
     if (q1_map_is_addon_effect(entity->map->kind))
         return true;
     if (q1_map_is_horde(entity->map->kind))
@@ -1266,6 +1281,21 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_map_state *state = entity->map;
     q1_map_action action = state->action;
     state->action = Q1_MAP_IDLE;
+    if (action == Q1_MAP_FOREIGN_REMOVE) {
+        if (state->kind != Q1_MAP_DELAY || !g->maps->options.retire_actor)
+            return q1_map_fail(error, "invalid Q1 foreign removal continuation owner");
+        qa_actor_id helper = entity->id, target = entity->owner;
+        if (q1_alive(g, target) &&
+            !g->maps->options.retire_actor(g->maps->options.context, target, error))
+            return false;
+        entity = q1_entity(g, helper);
+        return !entity || q1_remove(g, entity, error);
+    }
+    if (action == Q1_MAP_ROGUE_RUBBLE_THROW) {
+        if (state->kind != Q1_MAP_ROGUE_RUBBLE_SOURCE)
+            return q1_map_fail(error, "invalid Rogue rubble continuation owner");
+        return q1_map_rogue_rubble_throw(g, entity, error);
+    }
     if (action >= Q1_MAP_ADDON_SHAKE_TICK && action <= Q1_MAP_ADDON_PARTICLE_TICK) {
         if (!q1_map_addon_effect_action_matches(state->kind, action))
             return q1_map_fail(error, "invalid Q1 addon effect continuation owner");
@@ -1419,6 +1449,31 @@ bool qa_q1_game_map_defer_level(qa_q1_game *g, double delay, qa_error *error) {
         return true;
     (void)q1_remove(g, entity, NULL);
     return false;
+}
+bool qa_q1_game_map_defer_remove(qa_q1_game *g, qa_actor_id target, double delay,
+                                qa_error *error) {
+    if (!g || g->destroy_pending || !g->maps || !g->maps->options.retire_actor ||
+        !isfinite(delay) || delay < 0)
+        return q1_map_fail(error, "invalid Q1 delayed actor removal");
+    if (!q1_alive(g, target))
+        return true;
+    qa_q1_game_operation operation;
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    q1_actor *entity = NULL;
+    bool ok = q1_map_timer(g, "DelayedRemove", &entity, error);
+    if (ok) {
+        entity->owner = target;
+        ok = q1_map_schedule(g, entity, delay, Q1_MAP_FOREIGN_REMOVE, error);
+        if (!ok && q1_alive(g, entity->id))
+            (void)q1_remove(g, entity, NULL);
+    }
+    if (ok && !qa_q1_game_operation_live(&operation)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 source retired during delayed removal");
+        ok = false;
+    }
+    qa_q1_game_operation_end(&operation);
+    return ok;
 }
 bool qa_q1_game_map_defer_finale(qa_q1_game *g, qa_q1_campaign_timer kind, double delay,
                                  qa_error *error) {

@@ -211,6 +211,7 @@ add_library(qa_builtin STATIC
 target_link_libraries(qa_builtin PUBLIC qa_session qa_gameplay qa_movement)
 
 add_library(qa_game_q1 STATIC
+    src/gameplay/q1/addon_commands.c
     src/gameplay/q1/addon_monsters.c
     src/gameplay/q1/armagon.c
     src/gameplay/q1/boss_children.c
@@ -229,6 +230,7 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/checkpoint/runtime.c
     src/gameplay/q1/checkpoint/shared.c
     src/gameplay/q1/clone.c
+    src/gameplay/q1/console.c
     src/gameplay/q1/demodog.c
     src/gameplay/q1/dragon.c
     src/gameplay/q1/drops.c
@@ -236,6 +238,7 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/expansion_weapons.c
     src/gameplay/q1/explosions.c
     src/gameplay/q1/frames.c
+    src/gameplay/q1/freeze.c
     src/gameplay/q1/grapple.c
     src/gameplay/q1/grapple_weapon.c
     src/gameplay/q1/gremlin.c
@@ -248,6 +251,7 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/lavaman.c
     src/gameplay/q1/maps/addon_brushes.c
     src/gameplay/q1/maps/addon_campaign.c
+    src/gameplay/q1/maps/addon_fog.c
     src/gameplay/q1/maps/addon_controls.c
     src/gameplay/q1/maps/addon_effects.c
     src/gameplay/q1/maps/addon_fields.c
@@ -264,11 +268,13 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/maps/hipnotic_spawn.c
     src/gameplay/q1/maps/hipnotic_triggers.c
     src/gameplay/q1/maps/movers.c
+    src/gameplay/q1/maps/mg3_commands.c
     src/gameplay/q1/maps/navigation.c
     src/gameplay/q1/maps/observer.c
     src/gameplay/q1/maps/paths.c
     src/gameplay/q1/maps/rogue_ending.c
     src/gameplay/q1/maps/rogue_hazards.c
+    src/gameplay/q1/maps/rogue_misc.c
     src/gameplay/q1/maps/rogue_pendulum.c
     src/gameplay/q1/maps/rogue_plats.c
     src/gameplay/q1/maps/rogue_time.c

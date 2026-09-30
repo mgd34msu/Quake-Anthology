@@ -131,8 +131,11 @@ bool q1_map_special_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                                     ? "progs/flame.mdl"
                                     : "progs/flame2.mdl";
             entity->frame = q1_classnamed(g, entity->id, "light_flame_large_yellow") ? 1 : 0;
+            bool silent = g->options.program == QA_Q1_ROGUE &&
+                          q1_classnamed(g, entity->id, "light_torch_small_walltorch") &&
+                          (entity->spawnflags & 1);
             if (!q1_model(g, entity, model, error) ||
-                !q1_map_ambient(g, body.origin, "ambience/fire1.wav", .5f, error))
+                (!silent && !q1_map_ambient(g, body.origin, "ambience/fire1.wav", .5f, error)))
                 return false;
             if (!q1_alive(g, entity->id))
                 return true;

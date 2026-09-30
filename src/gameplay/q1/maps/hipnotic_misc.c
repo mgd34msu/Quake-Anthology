@@ -1,4 +1,39 @@
 #include "internal.h"
+#include <stdio.h>
+
+bool qa_q1_game_map_coordinate_dump(qa_q1_game *g, qa_actor_id actor,
+                                     double attack_finished, qa_error *error) {
+    if (!g || !isfinite(attack_finished))
+        return q1_map_fail(error, "invalid Hipnotic coordinate dump continuation");
+    if (g->options.program != QA_Q1_HIPNOTIC || !g->maps || !g->maps->dump_coordinates ||
+        !q1_alive(g, g->maps->world_actor) || !q1_alive(g, actor) || g->time < attack_finished)
+        return true;
+    if (!g->host.check_client)
+        return q1_map_fail(error, "Hipnotic coordinate dump requires client observation owner");
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    qa_actor_id client = {0};
+    bool ok = true;
+    if (g->host.check_client(g->host.context, actor, &client) &&
+        q1_alive(g, actor) && q1_alive(g, client)) {
+        qa_body_state body;
+        ok = qa_world_body_read(g->services.world, client, &body, error);
+        if (ok && q1_alive(g, actor) && q1_alive(g, client)) {
+            char text[160];
+            snprintf(text, sizeof(text), "Player: '%g %g %g'\n", body.origin.x, body.origin.y,
+                     body.origin.z);
+            ok = q1_message(g, (qa_actor_id){0}, text, error);
+        }
+    }
+    if (ok && !qa_q1_game_operation_live(&operation)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+                     "Q1 source retired during coordinate dump");
+        ok = false;
+    }
+    qa_q1_game_operation_end(&operation);
+    return ok;
+}
 
 static bool sound(qa_q1_game *g, q1_actor *entity, qa_string_id resource, int32_t channel,
                   qa_error *error) {

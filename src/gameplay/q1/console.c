@@ -84,6 +84,14 @@ static bool supported(const qa_q1_game *g, qa_q1_weapon weapon) {
         return g->options.program == QA_Q1_MG3;
     return weapon == QA_Q1_CTF_GRAPPLE && g->options.program == QA_Q1_CTF;
 }
+static bool grant_finish(qa_q1_game_operation *operation, bool ok, qa_error *error) {
+    if (ok && !qa_q1_game_operation_live(operation)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 source retired during item grant");
+        ok = false;
+    }
+    qa_q1_game_operation_end(operation);
+    return ok;
+}
 static bool joined(const qa_command_invocation *command, size_t first, size_t last,
                      char *out, size_t capacity, qa_error *error) {
     size_t length = 0;
@@ -109,9 +117,16 @@ static qa_q1_weapon named_weapon(const qa_q1_game *g, const char *name, bool num
         if (name[0] >= '2' && name[0] <= '8' && !name[1])
             return (qa_q1_weapon)(name[0] - '1');
     }
+    static const char *const labels[QA_Q1_WEAPON_COUNT] = {
+        "Axe", "Shotgun", "Super Shotgun", "Nailgun", "Super Nailgun", "Grenade Launcher",
+        "Rocket Launcher", "Lightning Gun", "Laser Cannon", "Mjolnir", "Proximity Gun",
+        "Lava Nailgun", "Lava Super Nailgun", "Multi Grenade", "Multi Rocket", "Plasma Gun",
+        "Grapple", "Laser Cannon", "Mjolnir", "Grapple"};
     for (unsigned i = 0; i < QA_Q1_WEAPON_COUNT; ++i) {
         if (!supported(g, (qa_q1_weapon)i))
             continue;
+        if (normalized(name, labels[i]))
+            return (qa_q1_weapon)i;
         const char *item = qa_strings_cstr(qa_session_strings(g->services.session), g->weapons[i]);
         const char *short_name = item ? strchr(item, '/') : NULL;
         char alias[96];
@@ -143,6 +158,27 @@ static bool selected_grant(qa_q1_game *g, qa_actor_id actor, qa_q1_cheat_grant g
     *handled = false;
     return !g->host.cheat_arsenal ||
            g->host.cheat_arsenal(g->host.context, actor, grant, handled, error);
+}
+static bool native_grant(qa_q1_game *g, qa_actor_id actor, bool ammo, qa_error *error) {
+    bool used[QA_Q1_AMMO_COUNT] = {0};
+    for (unsigned i = 0; i < QA_Q1_WEAPON_COUNT && q1_alive(g, actor); ++i) {
+        if (!supported(g, (qa_q1_weapon)i))
+            continue;
+        if (!ammo) {
+            if (!configure(g, actor, g->weapons[i], 1, 1, error))
+                return false;
+            continue;
+        }
+        int kind = q1_weapon_ammo((qa_q1_weapon)i);
+        if (kind < 0 || used[kind])
+            continue;
+        used[kind] = true;
+        const char *item = qa_strings_cstr(qa_session_strings(g->services.session), g->ammo[kind]);
+        double count = item && strstr(item, "nails") ? 200 : 100;
+        if (!configure(g, actor, g->ammo[kind], count, count, error))
+            return false;
+    }
+    return true;
 }
 static bool ammo_set(qa_q1_game *g, qa_actor_id actor, qa_item_id item, double amount,
                        qa_error *error) {
@@ -177,8 +213,10 @@ static bool allowed(qa_q1_game *g, qa_actor_id actor, bool *out, qa_error *error
     return *out || !q1_alive(g, actor) ||
            q1_message(g, actor, "Cheats are disabled on this server.\n", error);
 }
-static bool give(qa_q1_game *g, qa_actor_id actor, const qa_command_invocation *command,
-                    qa_error *error) {
+static bool give_inner(qa_q1_game *g, qa_actor_id actor, const qa_command_invocation *command,
+                        bool delegate, bool *recognized, qa_error *error) {
+    if (recognized)
+        *recognized = true;
     if (command->argc < 2)
         return q1_map_fail(error, "Usage: give <all|weapons|ammo|health|armor|keys|item> [amount]");
     const char *input = command->argv[1];
@@ -220,32 +258,20 @@ static bool give(qa_q1_game *g, qa_actor_id actor, const qa_command_invocation *
             return true;
     }
     if (all || normalized(input, "weapons")) {
-        bool selected;
-        if (!selected_grant(g, actor, QA_Q1_CHEAT_WEAPONS, &selected, error))
+        bool selected = false;
+        if (delegate && !selected_grant(g, actor, QA_Q1_CHEAT_WEAPONS, &selected, error))
             return false;
-        if (!selected)
-            for (unsigned i = 0; i < QA_Q1_WEAPON_COUNT && q1_alive(g, actor); ++i)
-                if (supported(g, (qa_q1_weapon)i) && !configure(g, actor, g->weapons[i], 1, 1, error))
-                    return false;
+        if (!selected && !native_grant(g, actor, false, error))
+            return false;
         if (!all || !q1_alive(g, actor))
             return true;
     }
     if (all || normalized(input, "ammo")) {
-        bool selected;
-        if (!selected_grant(g, actor, QA_Q1_CHEAT_AMMO, &selected, error))
+        bool selected = false;
+        if (delegate && !selected_grant(g, actor, QA_Q1_CHEAT_AMMO, &selected, error))
             return false;
-        bool used[QA_Q1_AMMO_COUNT] = {0};
-        if (!selected)
-            for (unsigned i = 0; i < QA_Q1_WEAPON_COUNT && q1_alive(g, actor); ++i) {
-                int ammo = q1_weapon_ammo((qa_q1_weapon)i);
-                if (!supported(g, (qa_q1_weapon)i) || ammo < 0 || used[ammo])
-                    continue;
-                used[ammo] = true;
-                const char *item = qa_strings_cstr(qa_session_strings(g->services.session), g->ammo[ammo]);
-                double count = item && strstr(item, "nails") ? 200 : 100;
-                if (!configure(g, actor, g->ammo[ammo], count, count, error))
-                    return false;
-            }
+        if (!selected && !native_grant(g, actor, true, error))
+            return false;
         if (!all || !q1_alive(g, actor))
             return true;
     }
@@ -266,7 +292,7 @@ static bool give(qa_q1_game *g, qa_actor_id actor, const qa_command_invocation *
             qa_command_invocation nested = *command;
             nested.argc = 2;
             nested.argv = argv;
-            if (!give(g, actor, &nested, error))
+            if (!give_inner(g, actor, &nested, delegate, recognized, error))
                 return false;
         }
         return true;
@@ -281,7 +307,7 @@ static bool give(qa_q1_game *g, qa_actor_id actor, const qa_command_invocation *
                              : q1_map_fail(error, "Ammo is unavailable in this Q1 arsenal");
         }
     bool delegated = false;
-    if (g->host.console_give_item &&
+    if (delegate && g->host.console_give_item &&
         !g->host.console_give_item(g->host.context, actor, command, &delegated, error))
         return false;
     if (delegated || !q1_alive(g, actor))
@@ -327,8 +353,13 @@ static bool give(qa_q1_game *g, qa_actor_id actor, const qa_command_invocation *
                           : normalized(input, "pent") ? "item_artifact_invulnerability"
                           : normalized(input, "ring") ? "item_artifact_invisibility"
                           : normalized(input, "suit") ? "item_artifact_envirosuit" : input;
-    if (strncmp(classname, "item_", 5) && strncmp(classname, "weapon_", 7))
+    if (strncmp(classname, "item_", 5) && strncmp(classname, "weapon_", 7)) {
+        if (recognized) {
+            *recognized = false;
+            return true;
+        }
         return q1_map_fail(error, "Unknown Q1 source item");
+    }
     qa_actor_id item;
     qa_body_state body = {0};
     qa_q1_spawn spawn = {.classname = classname};
@@ -343,6 +374,58 @@ static bool give(qa_q1_game *g, qa_actor_id actor, const qa_command_invocation *
         ok = ok && released;
     }
     return ok;
+}
+static bool give(qa_q1_game *g, qa_actor_id actor, const qa_command_invocation *command,
+                   qa_error *error) {
+    return give_inner(g, actor, command, true, NULL, error);
+}
+bool qa_q1_game_grant_arsenal(qa_q1_game *g, qa_actor_id actor, bool ammo,
+                               bool *handled, qa_error *error) {
+    if (!g || !handled)
+        return q1_map_fail(error, "Invalid Q1 arsenal grant");
+    *handled = false;
+    q1_player *player = q1_player_get(g, actor);
+    if (!player || !player->arsenal)
+        return true;
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    *handled = true;
+    bool ok = native_grant(g, actor, ammo, error);
+    ok = grant_finish(&operation, ok, error);
+    return ok;
+}
+bool qa_q1_game_give_item(qa_q1_game *g, qa_actor_id actor, size_t argc,
+                           const char *const *argv, bool *handled, qa_error *error) {
+    if (!g || !handled || (argc && !argv))
+        return q1_map_fail(error, "Invalid Q1 item grant");
+    *handled = false;
+    for (size_t i = 0; i < argc; ++i)
+        if (!argv[i])
+            return q1_map_fail(error, "Invalid Q1 item argument");
+    q1_player *player = q1_player_get(g, actor);
+    if (!argc || !player || !player->arsenal)
+        return true;
+    qa_command_invocation input = {.argc = argc, .argv = argv};
+    size_t last = argc;
+    if (last > 1) {
+        const char *numeric = argv[last - 1];
+        if (*numeric == '-') ++numeric;
+        bool digits = *numeric != 0;
+        for (const char *p = numeric; *p; ++p)
+            digits &= *p >= '0' && *p <= '9';
+        if (digits) --last;
+    }
+    char name[256];
+    if (!joined(&input, 0, last, name, sizeof(name), error))
+        return false;
+    const char *arguments[] = {"give", name, last < argc ? argv[argc - 1] : NULL};
+    qa_command_invocation command = {.argc = last < argc ? 3 : 2, .argv = arguments};
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    bool ok = give_inner(g, actor, &command, false, handled, error);
+    return grant_finish(&operation, ok, error);
 }
 static bool dispatch(qa_q1_game *g, qa_actor_id actor, const qa_command_invocation *command,
                         bool *handled, qa_error *error) {
@@ -502,6 +585,14 @@ bool q1_source_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impulse, bool *
     bool multiplayer = g->options.deathmatch != 0 || g->options.coop;
     bool addon = g->options.program == QA_Q1_DOPA || g->options.program == QA_Q1_MG1 ||
                  g->options.program == QA_Q1_MG3;
+    if (addon && impulse == 219) {
+        *handled = true;
+        return q1_addon_omnicide(g, actor, error);
+    }
+    if (!q1_map_mg3_impulse(g, actor, impulse, handled, error))
+        return false;
+    if (*handled)
+        return true;
     if (impulse == 11 || (g->options.program == QA_Q1_MG3 && impulse >= 101 && impulse <= 105)) {
         *handled = true;
         if (!g->maps || !g->maps->options.server_flags)
@@ -618,6 +709,14 @@ bool q1_source_impulse(qa_q1_game *g, qa_actor_id actor, uint8_t impulse, bool *
         }
         entities->borrowed = false;
         return ok;
+    }
+    if (hip && impulse == 206) {
+        *handled = true;
+        if (!g->maps || !q1_alive(g, g->maps->world_actor))
+            return true;
+        g->maps->dump_coordinates = !g->maps->dump_coordinates;
+        return !g->maps->dump_coordinates ||
+               q1_message(g, (qa_actor_id){0}, "$qc_dump_player_loc", error);
     }
     if (hip && (impulse == 202 || impulse == 203)) {
         *handled = true;

@@ -5,7 +5,7 @@
 #include "qa/binary.h"
 #include "qa/game_q1_checkpoint.h"
 
-enum { Q1_SAVE_VERSION = 2 };
+enum { Q1_SAVE_VERSION = 3 };
 typedef struct q1_save_io {
     qa_q1_game *game;
     qa_strings *dictionary;

@@ -433,10 +433,12 @@ bool q1_final_rock_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other,
         return false;
     return !q1_alive(g, e->id) || q1_remove(g, e, error);
 }
-static bool end(qa_q1_game *g, qa_error *error) {
+bool q1_final_end(qa_q1_game *g, qa_error *error) {
     qa_actor_id first;
     if (!q1_boss_first_player(g, &first, error))
         return false;
+    if (g->destroy_pending)
+        return true;
     if (!g->options.coop && q1_health(g, first) <= 0)
         return true;
     q1_actor_snapshot *snapshot;
@@ -446,12 +448,12 @@ static bool end(qa_q1_game *g, qa_error *error) {
     bool reset =
         (flags & QA_Q1_BLOODY_NIGHTMARE_ACTIVE) && !(flags & QA_Q1_BLOODY_NIGHTMARE_NEWGAME);
     bool ok = true;
-    for (size_t i = 0; i < snapshot->shared.count; ++i) {
+    for (size_t i = 0; !g->destroy_pending && i < snapshot->shared.count; ++i) {
         qa_actor_id actor = snapshot->shared.ids[i];
         q1_player *player = q1_player_get(g, actor);
         if (!player)
             continue;
-        for (unsigned ammo = 0; ammo < 4; ++ammo) {
+        for (unsigned ammo = 0; q1_alive(g, actor) && ammo < 4; ++ammo) {
             qa_inventory_entry entry;
             qa_error local = {0};
             if (!qa_inventory_entry_read(g->services.inventory, actor, g->ammo[ammo], &entry,
@@ -471,11 +473,16 @@ static bool end(qa_q1_game *g, qa_error *error) {
         }
         if (!ok)
             break;
+        if (!q1_alive(g, actor))
+            continue;
         qa_armor armor = {.regular.kind = QA_ARMOR_NONE, .powered.kind = QA_POWER_NONE};
         if (!qa_combat_set_armor(g->services.combat, actor, &armor, error)) {
             ok = false;
             break;
         }
+        player = q1_player_get(g, actor);
+        if (!player)
+            continue;
         player->weapon = QA_Q1_SHOTGUN;
         if (reset) {
             uint32_t bloody = player->mg3_progress.bloody;
@@ -483,11 +490,11 @@ static bool end(qa_q1_game *g, qa_error *error) {
         }
     }
     snapshot->borrowed = false;
-    return ok && qa_q1_game_map_finish_addon(g, QA_Q1_MAP_END_MG3, error);
+    return ok && (g->destroy_pending || qa_q1_game_map_finish_addon(g, QA_Q1_MAP_END_MG3, error));
 }
 bool q1_final_child_think(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (e->state.boss_child.kind == Q1_CHILD_FINAL_END)
-        return end(g, error);
+        return q1_final_end(g, error);
     qa_body_state body;
     if (!read(g, e, &body, error))
         return false;

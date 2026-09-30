@@ -402,6 +402,7 @@ bool q1_map_touch(qa_q1_game *, q1_actor *, const qa_touch_contact *, qa_error *
 bool q1_map_blocked(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_think(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_reaction(qa_q1_game *, q1_actor *, const qa_damage_outcome *, qa_error *);
+bool q1_map_radius_only(const qa_q1_game *, qa_actor_id);
 bool q1_map_clone(qa_q1_game *, const q1_actor *, q1_actor *, qa_error *);
 void q1_map_actor_released(qa_q1_game *, q1_actor *);
 void q1_map_rotation_released(qa_q1_game *, qa_actor_id);
@@ -626,6 +627,7 @@ bool q1_gremlin_lightning(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_gremlin_backpack(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_weapon_impulse(qa_q1_game *, q1_player *, uint8_t, qa_error *);
 bool q1_source_impulse(qa_q1_game *, qa_actor_id, uint8_t, bool *handled, qa_error *);
+bool q1_addon_omnicide(qa_q1_game *, qa_actor_id, qa_error *);
 bool q1_monster_pain(qa_q1_game *, q1_actor *, qa_actor_id, float, qa_error *);
 bool q1_monster_die(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_monster_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);

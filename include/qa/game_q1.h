@@ -333,6 +333,11 @@ bool qa_q1_player_read(const qa_q1_game *, qa_actor_id, qa_q1_player_view *);
 float qa_q1_game_random(qa_q1_game *);
 bool qa_q1_game_console_command(qa_q1_game *, qa_actor_id, const qa_command_invocation *,
                                  bool *handled, qa_error *);
+/* Selected-owner grants never forward into the console/cheat owner callbacks.
+ * Item arguments exclude the command name. Cheat admission belongs to caller. */
+bool qa_q1_game_grant_arsenal(qa_q1_game *, qa_actor_id, bool ammo, bool *handled, qa_error *);
+bool qa_q1_game_give_item(qa_q1_game *, qa_actor_id, size_t argc, const char *const *argv,
+                          bool *handled, qa_error *);
 typedef enum qa_q1_console_operation {
     QA_Q1_CONSOLE_UNKNOWN, QA_Q1_CONSOLE_WORLD, QA_Q1_CONSOLE_CHARACTER,
     QA_Q1_CONSOLE_MOVEMENT, QA_Q1_CONSOLE_ARSENAL, QA_Q1_CONSOLE_EQUIPMENT,
@@ -414,6 +419,8 @@ bool qa_q1_game_use(qa_q1_game *, qa_actor_id, qa_actor_id activator, qa_error *
 bool qa_q1_game_reaction(qa_q1_game *, const qa_damage_outcome *, qa_error *);
 bool qa_q1_game_presentation(const qa_q1_game *, qa_actor_id, qa_q1_presentation *);
 bool qa_q1_game_physics_read(const qa_q1_game *, qa_actor_id, qa_physics_properties *);
+bool qa_q1_game_gravity(const qa_q1_game *, float *out);
+bool qa_q1_game_alpha(qa_q1_game *, qa_actor_id, float alpha, qa_error *);
 bool qa_q1_game_physics_write(qa_q1_game *, qa_actor_id, const qa_physics_properties *, qa_error *);
 /* Native STEP after think, and surviving TOSS collisions. Character movement
  * runs its own selected movement callback and must not dispatch this twice. */

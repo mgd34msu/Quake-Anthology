@@ -173,7 +173,11 @@ typedef enum q1_map_kind {
     Q1_MAP_EGG_OPENER,
     Q1_MAP_FOG_INFO,
     Q1_MAP_FOG_TRIGGER,
-    Q1_MAP_FOG_TRANSITION
+    Q1_MAP_FOG_TRANSITION,
+    Q1_MAP_ROGUE_RUBBLE_SOURCE,
+    Q1_MAP_ROGUE_RUBBLE,
+    Q1_MAP_ROGUE_EXPLOSION_TRIGGER,
+    Q1_MAP_ROGUE_LAMP
 } q1_map_kind;
 typedef enum q1_map_action {
     Q1_MAP_IDLE,
@@ -284,7 +288,9 @@ typedef enum q1_map_action {
     Q1_MAP_ADDON_EXPLOSION_REPEAT,
     Q1_MAP_ADDON_SHAKE_TICK,
     Q1_MAP_ADDON_FADE_TICK,
-    Q1_MAP_ADDON_PARTICLE_TICK
+    Q1_MAP_ADDON_PARTICLE_TICK,
+    Q1_MAP_ROGUE_RUBBLE_THROW,
+    Q1_MAP_FOREIGN_REMOVE
 } q1_map_action;
 typedef enum q1_map_position { Q1_MAP_BOTTOM, Q1_MAP_UP, Q1_MAP_TOP, Q1_MAP_DOWN } q1_map_position;
 typedef enum q1_time_reaction { Q1_TIME_NO_REACTION, Q1_TIME_PAIN, Q1_TIME_CRASH } q1_time_reaction;
@@ -327,11 +333,14 @@ typedef struct q1_map_rotation {
 typedef struct q1_addon_contact {
     qa_actor_id actor;
     qa_actor_id fog_active;
+    qa_actor_id secret_marker, exit_marker;
     qa_vec3 fog_color;
     float fog_density;
     double fly_sound, lore_active;
     float hunger_time, super_time;
     bool sheltered, has_hunger;
+    bool secret_hunter, exit_hunter, monster_hunter, buddha;
+    uint32_t effects;
 } q1_addon_contact;
 struct q1_map_state {
     struct q1_map_state *allocated_next, *pool_next;
@@ -423,6 +432,7 @@ struct q1_map_runtime {
     bool finale_started, finale_dismissed;
     double earthquake_end;
     bool quake_active;
+    bool dump_coordinates;
     bool final_new_game_travel;
     bool rogue_cutscene, rogue_ending_started;
     bool rogue_quake_active;
@@ -447,6 +457,14 @@ bool q1_map_lightstyle(qa_q1_game *, q1_actor *, const char *, qa_error *);
 bool q1_map_trigger_init(qa_q1_game *, q1_actor *, bool zero_direction, qa_error *);
 qa_vec3 q1_map_direction(qa_vec3 angles);
 bool q1_map_trigger_spawn(qa_q1_game *, q1_actor *, qa_error *);
+static inline bool q1_map_is_rogue_misc(q1_map_kind kind) {
+    return kind >= Q1_MAP_ROGUE_RUBBLE_SOURCE && kind <= Q1_MAP_ROGUE_LAMP;
+}
+bool q1_map_rogue_misc_spawn(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_map_rogue_misc_use(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_map_rogue_misc_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_map_rogue_misc_reaction(qa_q1_game *, q1_actor *, const qa_damage_outcome *, qa_error *);
+bool q1_map_rogue_rubble_throw(qa_q1_game *, q1_actor *, qa_error *);
 static inline bool q1_map_is_addon_field(const qa_q1_game *g, q1_map_kind kind) {
     return (g->options.program == QA_Q1_DOPA || g->options.program == QA_Q1_MG1 ||
             g->options.program == QA_Q1_MG3) &&
@@ -457,6 +475,8 @@ bool q1_map_addon_field_use(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_addon_field_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_map_addon_hunger(qa_q1_game *, qa_actor_id, float, qa_error *);
 q1_addon_contact *q1_map_addon_contact(qa_q1_game *, qa_actor_id, bool create, qa_error *);
+bool q1_map_mg3_impulse(qa_q1_game *, qa_actor_id, uint8_t, bool *handled, qa_error *);
+bool q1_map_mg3_buddha(const qa_q1_game *, qa_actor_id);
 static inline bool q1_map_is_fog(q1_map_kind kind) {
     return kind >= Q1_MAP_FOG_INFO && kind <= Q1_MAP_FOG_TRANSITION;
 }

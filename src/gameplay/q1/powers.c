@@ -1,4 +1,5 @@
 #include "boss_internal.h"
+#include "maps/internal.h"
 
 bool q1_message(qa_q1_game *g, qa_actor_id actor, const char *text, qa_error *error) {
     return q1_message_args(g, actor, text, NULL, 0, error);
@@ -216,6 +217,17 @@ bool qa_q1_game_damage_effect(qa_q1_game *g, qa_damage_effect_stage stage,
     if (!g || !request || !effect) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Q1 damage effect call");
         return false;
+    }
+    if (stage == QA_DAMAGE_BEFORE_QUAD && !request->radius &&
+        q1_map_radius_only(g, request->target)) {
+        effect->allowed = false;
+        return true;
+    }
+    if (stage == QA_DAMAGE_LETHAL_HEALTH && effect->allowed && effect->amount <= 0 &&
+        q1_map_mg3_buddha(g, request->target)) {
+        effect->amount = 1;
+        effect->reaction = QA_REACTION_NONE;
+        return true;
     }
     if (!q1_major_boss_effect(g, stage, request, effect, error))
         return false;

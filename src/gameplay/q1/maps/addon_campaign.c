@@ -240,10 +240,19 @@ bool q1_map_addon_electrode_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other,
         if (!qa_targets_number(g->maps->options.targets, actor, "cnt", &target_count) ||
             target_count != count)
             continue;
+        if (!campaign_actor(g, id))
+            return true;
+        if (!q1_alive(g, actor))
+            continue;
         q1_actor *target = campaign_actor(g, actor);
-        if (target && target->native && target->map->kind == Q1_MAP_ELECTRODE_TARGET &&
-            !q1_map_schedule(g, target, .1, Q1_MAP_REMOVE, error))
-            return false;
+        if (target && target->native && target->map->kind == Q1_MAP_ELECTRODE_TARGET) {
+            if (!q1_map_schedule(g, target, .1, Q1_MAP_REMOVE, error))
+                return false;
+        } else if (g->maps->options.schedule_remove) {
+            if (!g->maps->options.schedule_remove(g->maps->options.context, actor, .1, error))
+                return false;
+        } else
+            return q1_map_fail(error, "Q1 electrode requires the selected removal owner");
     }
     return true;
 }

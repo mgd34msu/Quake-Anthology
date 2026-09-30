@@ -167,6 +167,10 @@ bool qa_q1_game_rogue_path_touch(qa_q1_game *, qa_actor_id corner, qa_actor_id f
 /* Threewave spectator door/teleporter passage, after its velocity update. */
 bool qa_q1_game_map_observer_nearby(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_game_map_after_physics(qa_q1_game *, qa_actor_id, qa_error *);
+/* Player frame extension; attack_finished is expressed on this source clock.
+ * Native same-provider Q1 prethink calls this. The application supplies the
+ * selected arsenal cooldown for other provider/family selections. */
+bool qa_q1_game_map_coordinate_dump(qa_q1_game *, qa_actor_id, double attack_finished, qa_error *);
 /* Rogue player order is earthquake, selected team/rune frame, then after_physics. */
 bool qa_q1_game_rogue_earthquake(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_game_time_machine_crash(qa_q1_game *, qa_error *);
@@ -183,8 +187,15 @@ bool qa_q1_game_map_set_text(qa_q1_game *, qa_actor_id, qa_q1_campaign_text, qa_
                              qa_error *);
 bool qa_q1_game_map_defer_targets(qa_q1_game *, const qa_target_use *, qa_error *);
 bool qa_q1_game_map_defer_level(qa_q1_game *, double delay_seconds, qa_error *);
+/* An authored Q1 helper owns the source-clock deadline; the target keeps its
+ * selected actor owner's existing scheduler and is retired through retire_actor. */
+bool qa_q1_game_map_defer_remove(qa_q1_game *, qa_actor_id, double delay_seconds, qa_error *);
 bool qa_q1_game_map_defer_finale(qa_q1_game *, qa_q1_campaign_timer, double delay_seconds,
                                  qa_error *);
 void qa_q1_game_map_secrets(const qa_q1_game *, uint32_t *total, uint32_t *found);
+/* Actual selected player view offset; invoke once for the map source per frame. */
+bool qa_q1_game_map_addon_player_frame(qa_q1_game *, qa_actor_id, qa_vec3 view_offset, qa_error *);
+/* Authored additive source effects, independent of selected character. */
+bool qa_q1_game_map_effects(const qa_q1_game *, qa_actor_id, uint32_t *out);
 
 #endif

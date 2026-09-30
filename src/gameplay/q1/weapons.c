@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_q1_maps.h"
 #include <float.h>
 
 const qa_q1_weapon_view *q1_weapon_shape(qa_q1_weapon weapon) {
@@ -383,6 +384,33 @@ static bool player_prethink(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     q1_player *player = q1_player_get(g, actor);
     if (!player)
         return true;
+    if (!qa_q1_game_map_coordinate_dump(g, actor, player->attack_finished, error))
+        return false;
+    player = q1_player_get(g, actor);
+    if (!player)
+        return true;
+    if (g->options.program == QA_Q1_MG3 && g->maps) {
+        qa_q1_character_view view;
+        qa_builtin_actor_traits traits = {0};
+        qa_vec3 offset;
+        if (qa_q1_character_read(g, actor, &view))
+            offset = view.view_offset;
+        else if (g->services.actor_traits &&
+                 g->services.actor_traits(g->services.context, actor, &traits))
+            offset = qa_v3(0, 0, traits.view_height);
+        else {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0,
+                         "MG3 player frame requires selected view owner");
+            return false;
+        }
+        if (!q1_alive(g, actor))
+            return true;
+        if (!qa_q1_game_map_addon_player_frame(g, actor, offset, error))
+            return false;
+        player = q1_player_get(g, actor);
+        if (!player)
+            return true;
+    }
     if (g->options.program == QA_Q1_MG3 && !q1_mg3_weapon_frame(g, player, error))
         return false;
     if (!q1_alive(g, actor))

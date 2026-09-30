@@ -86,6 +86,29 @@ q1_actor *q1_entity(qa_q1_game *g, qa_actor_id actor) {
     q1_actor *entity = g->actors[actor.slot];
     return entity && entity->active && qa_actor_id_equal(entity->id, actor) ? entity : NULL;
 }
+bool qa_q1_game_gravity(const qa_q1_game *g, float *out) {
+    if (!g || g->destroy_pending || !out)
+        return false;
+    *out = g->services.physics ? g->services.physics->gravity : g->options.gravity;
+    return true;
+}
+bool qa_q1_game_alpha(qa_q1_game *g, qa_actor_id actor, float alpha, qa_error *error) {
+    if (!isfinite(alpha) || alpha < 0 || alpha > 1) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Q1 actor alpha");
+        return false;
+    }
+    qa_q1_game_operation operation;
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    q1_actor *entity = q1_entity(g, actor);
+    bool ok = entity && entity->native;
+    if (ok)
+        entity->alpha = alpha;
+    else
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 alpha requires a live native actor");
+    qa_q1_game_operation_end(&operation);
+    return ok;
+}
 const q1_actor *q1_entity_const(const qa_q1_game *g, qa_actor_id actor) {
     if (!g || g->destroy_pending || actor.slot >= g->capacity ||
         !qa_actors_get(qa_session_actors(g->services.session), actor))
