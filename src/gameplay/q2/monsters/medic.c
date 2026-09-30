@@ -119,7 +119,7 @@ static bool restore_enemy(q2m_context *c, bool *restored, qa_error *error) {
     if (!q2m_alive(c))
         return true;
     if (previous_health > 0) {
-        enemy(c, previous);
+        enemy(c, c->monster->old_enemy);
         *restored = true;
         return q2m_hunt_target(c, !rerelease(c), error);
     }
@@ -422,6 +422,7 @@ static bool revive(q2m_context *c, q2m_context *target, qa_error *error) {
         if (!q2m_alive(c) || !q2m_alive(target))
             return true;
         if (is_player) {
+            old_enemy = c->monster->old_enemy;
             enemy(target, old_enemy);
             return q2m_found_target(target, old_enemy, error);
         }
@@ -438,6 +439,7 @@ static bool revive(q2m_context *c, q2m_context *target, qa_error *error) {
     if (!q2m_alive(c) || !q2m_alive(target))
         return true;
     if (previous_health > 0) {
+        previous = c->monster->old_enemy;
         enemy(target, previous);
         if (!q2m_found_target(target, previous, error))
             return false;
