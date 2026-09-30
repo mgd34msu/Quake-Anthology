@@ -360,9 +360,9 @@ static bool due_time(qa_clock_kind kind, uint64_t due, const qa_source_frame *fr
     return true;
 }
 
-bool qa_scheduler_run(qa_scheduler *scheduler, qa_actor_id actor,
+static bool scheduler_run(qa_scheduler *scheduler, qa_actor_id actor,
                       const qa_source_frame *frame, qa_think_boundary boundary,
-                      qa_think_result *out, qa_error *error)
+                      bool once, qa_think_result *out, qa_error *error)
 {
     if (scheduler == NULL || frame == NULL || out == NULL
         || boundary < QA_THINK_BEFORE_PHYSICS || boundary > QA_THINK_AFTER_PHYSICS
@@ -390,11 +390,21 @@ bool qa_scheduler_run(qa_scheduler *scheduler, qa_actor_id actor,
         if (!ok) return false;
         ++result.invocations;
         result.alive = qa_actors_get(scheduler->actors, actor) != NULL;
-        if (!result.alive || kind != QA_CLOCK_QUAKEWORLD) break;
+        if (!result.alive || once || kind != QA_CLOCK_QUAKEWORLD) break;
     }
     *out = result;
     return true;
 }
+
+bool qa_scheduler_run(qa_scheduler *scheduler, qa_actor_id actor,
+    const qa_source_frame *frame, qa_think_boundary boundary,
+    qa_think_result *out, qa_error *error)
+{ return scheduler_run(scheduler, actor, frame, boundary, false, out, error); }
+
+bool qa_scheduler_run_once(qa_scheduler *scheduler, qa_actor_id actor,
+    const qa_source_frame *frame, qa_think_boundary boundary,
+    qa_think_result *out, qa_error *error)
+{ return scheduler_run(scheduler, actor, frame, boundary, true, out, error); }
 
 bool qa_scheduler_advance(qa_scheduler *scheduler, const qa_source_frame *frames,
                           size_t count, qa_think_boundary boundary, qa_error *error)

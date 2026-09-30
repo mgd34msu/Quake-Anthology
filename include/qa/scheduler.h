@@ -78,6 +78,10 @@ const qa_think *qa_scheduler_pending(qa_scheduler *scheduler, qa_actor_id actor)
 bool qa_scheduler_run(qa_scheduler *scheduler, qa_actor_id actor,
                       const qa_source_frame *frame, qa_think_boundary boundary,
                       qa_think_result *out, qa_error *error);
+/* Source callbacks that run once per actor turn keep the real execution clock
+ * and due-time clamp, but defer a same-actor reschedule to its next turn. */
+bool qa_scheduler_run_once(qa_scheduler *, qa_actor_id, const qa_source_frame *,
+    qa_think_boundary, qa_think_result *, qa_error *);
 /* Later source-slot additions are visible; additions at/before the cursor wait
  * for the next traversal. Only providers represented by frames are eligible;
  * pending work for other providers remains scheduled. */
