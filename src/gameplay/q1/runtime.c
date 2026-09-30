@@ -379,8 +379,21 @@ static bool actor_frame_inner(void *context, qa_session *session, qa_actor_id ac
     (void)session;
     qa_q1_game *g = context;
     q1_actor *entity = q1_entity(g, actor);
-    if (!entity || !entity->native || !g->services.physics)
+    if (!entity || !entity->native)
         return true;
+    qa_think_result thought;
+    if (!g->services.physics)
+        return qa_scheduler_run(qa_session_scheduler(g->services.session), actor, frame,
+                                 QA_THINK_DURING_PHYSICS, &thought, error);
+    qa_physics_motion motion = entity->physics.motion;
+    if (motion != QA_PHYSICS_PUSH && motion != QA_PHYSICS_STEP) {
+        if (!qa_scheduler_run(qa_session_scheduler(g->services.session), actor, frame,
+                                QA_THINK_DURING_PHYSICS, &thought, error))
+            return false;
+        entity = q1_entity(g, actor);
+        if (!entity)
+            return true;
+    }
     if (entity->kind == Q1_PROJECTILE) {
         bool changed;
         if (!qa_builtin_step_projectile(&g->services, actor, frame->time_ns, &changed, error))
@@ -403,9 +416,16 @@ static bool actor_frame_inner(void *context, qa_session *session, qa_actor_id ac
         }
     }
     qa_physics_result result;
-    if (entity->physics.motion == QA_PHYSICS_PUSH)
+    if (motion == QA_PHYSICS_PUSH)
         return qa_physics_step_q1_pusher(g->services.physics, actor, frame, false, &result, error);
-    return qa_physics_step(g->services.physics, actor, frame, &result, error);
+    if (!qa_physics_step(g->services.physics, actor, frame, &result, error))
+        return false;
+    if (motion != QA_PHYSICS_STEP || !q1_entity(g, actor))
+        return true;
+    if (!qa_scheduler_run(qa_session_scheduler(g->services.session), actor, frame,
+                            QA_THINK_DURING_PHYSICS, &thought, error))
+        return false;
+    return !q1_entity(g, actor) || qa_q1_game_water_transition(g, actor, error);
 }
 static bool actor_frame(void *context, qa_session *session, qa_actor_id actor,
                          const qa_source_frame *frame, qa_error *error) {
@@ -720,7 +740,7 @@ bool q1_schedule(qa_q1_game *g, q1_actor *entity, double delay, q1_think_kind ki
                       .execution_provider = g->options.provider,
                       .callback_id = (uint32_t)kind,
                       .due_ns = due > 0 ? (uint64_t)(due * 1000000000.0) : 0,
-                      .boundary = QA_THINK_BEFORE_PHYSICS,
+                      .boundary = QA_THINK_DURING_PHYSICS,
                       .callback = think_callback,
                       .context = g};
     if (!qa_session_schedule(g->services.session, &think, error))

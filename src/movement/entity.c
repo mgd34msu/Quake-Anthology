@@ -572,8 +572,8 @@ static bool ph_new_toss(qa_physics *p, qa_actor_id actor, float seconds,
     return true;
 }
 
-bool qa_physics_step(qa_physics *p, qa_actor_id actor, const qa_source_frame *frame,
-                     qa_physics_result *result, qa_error *error) {
+static bool physics_step(qa_physics *p, qa_actor_id actor, const qa_source_frame *frame,
+    const qa_physics_motion *selected, qa_physics_result *result, qa_error *error) {
     if (!p || !p->world || !frame || !result || !isfinite(p->gravity) ||
         !isfinite(p->max_velocity) || p->max_velocity < 0 || !isfinite(p->stop_speed)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid entity physics step");
@@ -585,36 +585,37 @@ bool qa_physics_step(qa_physics *p, qa_actor_id actor, const qa_source_frame *fr
     int read = ph_read(p, actor, &body, &props, error);
     if (read < 0) return false;
     if (!read) { result->status = ph_live(p, actor) ? QA_PHYSICS_UNMANAGED : QA_PHYSICS_REMOVED; return true; }
-    if (!frame->elapsed_ns || props.motion == QA_PHYSICS_STATIONARY) return true;
+    qa_physics_motion motion = selected ? *selected : props.motion;
+    if (!frame->elapsed_ns || motion == QA_PHYSICS_STATIONARY) return true;
     float seconds = (float)((double)frame->elapsed_ns*0.000000001);
     result->status = QA_PHYSICS_MOVED;
     qa_body_attachment attachment;
     if (qa_world_attachment(p->world, actor, &attachment)) {
         qa_vec3 previous = body.origin;
-        if ((props.motion == QA_PHYSICS_FLY || props.motion == QA_PHYSICS_FLY_MISSILE) &&
+        if ((motion == QA_PHYSICS_FLY || motion == QA_PHYSICS_FLY_MISSILE) &&
             !ph_angular_step(p, actor, seconds, 0, error)) return false;
         qa_trace_result trace;
         return qa_physics_push_entity(p, actor, qa_v3(0, 0, 0), NULL, 0, &trace, error) &&
                qa_physics_water_transition(p, actor, previous, error);
     }
-    if (props.motion == QA_PHYSICS_PUSH || props.motion == QA_PHYSICS_STOP) {
+    if (motion == QA_PHYSICS_PUSH || motion == QA_PHYSICS_STOP) {
         qa_physics_push push = {.actor = actor, .displacement = qa_vec_scale(body.velocity, seconds),
             .angular_displacement = qa_vec_scale(props.angular_velocity, seconds)};
         return qa_physics_push_pusher(p, &push, result, error);
     }
-    if (props.motion == QA_PHYSICS_NOCLIP) {
+    if (motion == QA_PHYSICS_NOCLIP) {
         body.origin = qa_vec_add(body.origin, qa_vec_scale(body.velocity, seconds));
         body.angles = qa_vec_add(body.angles, qa_vec_scale(props.angular_velocity, seconds));
         return ph_write(p, actor, &body, error) && ph_link(p, actor, false, error);
     }
-    if (props.motion == QA_PHYSICS_NEW_TOSS) return ph_new_toss(p, actor, seconds, result, error);
+    if (motion == QA_PHYSICS_NEW_TOSS) return ph_new_toss(p, actor, seconds, result, error);
     if (body.ground.registry && (!ph_live(p, body.ground) ||
         (props.family != QA_COLLISION_Q1 && qa_vec_dot(body.velocity, props.gravity_direction) < 0))) {
         if (!ph_ground(p, actor, ph_none(), error)) return false;
         body.ground = ph_none();
     }
     qa_vec3 velocity = ph_limit(body.velocity, p->max_velocity);
-    if (props.motion == QA_PHYSICS_STEP) {
+    if (motion == QA_PHYSICS_STEP) {
         if (props.family == QA_COLLISION_Q1) {
             if (body.ground.registry || (props.flags & (QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING))) return true;
             bool sound = body.velocity.z < -p->gravity*0.1f;
@@ -707,4 +708,18 @@ bool qa_physics_step(qa_physics *p, qa_actor_id actor, const qa_source_frame *fr
         return qa_physics_water_transition(p, actor, old_origin, error);
     }
     return true;
+}
+
+bool qa_physics_step(qa_physics *p, qa_actor_id actor, const qa_source_frame *frame,
+    qa_physics_result *result, qa_error *error)
+{ return physics_step(p, actor, frame, NULL, result, error); }
+
+bool qa_physics_step_source_motion(qa_physics *p, qa_actor_id actor, const qa_source_frame *frame,
+    qa_physics_motion motion, qa_physics_result *result, qa_error *error)
+{
+    if ((unsigned)motion > QA_PHYSICS_STEP) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid captured source physics procedure");
+        return false;
+    }
+    return physics_step(p, actor, frame, &motion, result, error);
 }

@@ -107,6 +107,11 @@ bool qa_physics_init(qa_physics *, qa_world *, qa_actor_id world_actor,
  * on error. Every resumed access rechecks the full actor generation. */
 bool qa_physics_step(qa_physics *, qa_actor_id, const qa_source_frame *,
                      qa_physics_result *, qa_error *);
+/* Source traversal selects a procedure before its think callback. Physics
+ * reads current properties while retaining that selected procedure, even if
+ * the callback changes motion. No property is rewritten to enforce it. */
+bool qa_physics_step_source_motion(qa_physics *, qa_actor_id, const qa_source_frame *,
+    qa_physics_motion, qa_physics_result *, qa_error *);
 bool qa_physics_fly_move(qa_physics *, qa_actor_id, float elapsed_seconds,
                          bool exact_clip_mask, qa_physics_result *, qa_error *);
 bool qa_physics_push_entity(qa_physics *, qa_actor_id, qa_vec3 displacement,
