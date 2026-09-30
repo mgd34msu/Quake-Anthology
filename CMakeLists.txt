@@ -711,6 +711,7 @@ add_library(qa_network STATIC
     src/network/q3/admission.c
     src/network/q3/channel.c
     src/network/q3/client.c
+    src/network/q3/client_save.c
     src/network/q3/clock.c
     src/network/q3/codec.c
     src/network/q3/delta.c

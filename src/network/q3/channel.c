@@ -1,4 +1,5 @@
 #include "qa/network_q3.h"
+#include "qa/network_q3_save.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -32,6 +33,47 @@ bool qa_q3_channel_create_source_zero(qa_q3_role role, uint16_t qport, qa_q3_cha
 size_t qa_q3_channel_remaining(const qa_q3_channel *c) { return c && c->pending ? c->send_size - c->send_offset : 0; }
 uint32_t qa_q3_channel_outgoing(const qa_q3_channel *c) { return c->outgoing; }
 uint32_t qa_q3_channel_incoming(const qa_q3_channel *c) { return c->incoming; }
+qa_q3_role qa_q3_channel_role(const qa_q3_channel *c) { return c->role; }
+bool qa_q3_channel_checkpoint(const qa_q3_channel *c, qa_net_writer *writer)
+{
+    if (!c || !writer) return writer && qa_net_writer_fail(writer, "Missing Q3 channel checkpoint owner");
+    return qa_net_write_u32(writer, 1) && qa_net_write_u32(writer, c->role) &&
+        qa_net_write_u16(writer, c->qport) && qa_net_write_u32(writer, c->incoming) &&
+        qa_net_write_u32(writer, c->outgoing) && qa_net_write_u32(writer, c->fragment_sequence) &&
+        qa_net_write_u8(writer, c->pending) && qa_net_write_u8(writer, c->fragmented) &&
+        qa_net_write_u32(writer, (uint32_t)c->send_size) && qa_net_write_u32(writer, (uint32_t)c->send_offset) &&
+        qa_net_write_u32(writer, (uint32_t)c->receive_size) &&
+        qa_net_write_data(writer, c->send, c->send_size) && qa_net_write_data(writer, c->receive, c->receive_size);
+}
+bool qa_q3_channel_restore(qa_net_reader *reader, qa_q3_channel **out)
+{
+    if (!reader || !out) return reader && qa_net_reader_fail(reader, "Missing Q3 channel restore owner");
+    uint32_t version = qa_net_read_u32(reader), role = qa_net_read_u32(reader);
+    uint16_t qport = qa_net_read_u16(reader);
+    uint32_t incoming = qa_net_read_u32(reader), outgoing = qa_net_read_u32(reader);
+    uint32_t fragment = qa_net_read_u32(reader);
+    uint8_t pending = qa_net_read_u8(reader), fragmented = qa_net_read_u8(reader);
+    uint32_t send_size = qa_net_read_u32(reader), send_offset = qa_net_read_u32(reader);
+    uint32_t receive_size = qa_net_read_u32(reader);
+    if (reader->failed) return false;
+    if (version != 1 || role > QA_Q3_SERVER || incoming > UINT32_C(0x7fffffff) ||
+        outgoing > UINT32_C(0x80000000) || fragment > UINT32_C(0x7fffffff) || pending > 1 || fragmented > 1 ||
+        send_size > QA_Q3_MESSAGE_BYTES || receive_size > QA_Q3_MESSAGE_BYTES || send_offset > send_size ||
+        (pending && outgoing > UINT32_C(0x7fffffff)) ||
+        (pending && fragmented != (send_size >= QA_Q3_FRAGMENT_BYTES)) ||
+        (pending && (!fragmented ? send_offset != 0 : send_offset % QA_Q3_FRAGMENT_BYTES != 0)) ||
+        (!pending && send_offset != send_size) || receive_size % QA_Q3_FRAGMENT_BYTES != 0)
+        return qa_net_reader_fail(reader, "Invalid Q3 channel continuation fields");
+    qa_q3_channel *channel = NULL;
+    if (!qa_q3_channel_create((qa_q3_role)role, qport, &channel, reader->error)) { reader->failed = true; return false; }
+    channel->incoming = incoming; channel->outgoing = outgoing; channel->fragment_sequence = fragment;
+    channel->pending = pending != 0; channel->fragmented = fragmented != 0;
+    channel->send_size = send_size; channel->send_offset = send_offset; channel->receive_size = receive_size;
+    if (!qa_net_read_data(reader, channel->send, send_size) || !qa_net_read_data(reader, channel->receive, receive_size)) {
+        qa_q3_channel_destroy(channel); return false;
+    }
+    *out = channel; return true;
+}
 bool qa_q3_channel_pending(const qa_q3_channel *c) { return c && c->pending; }
 bool qa_q3_channel_begin(qa_q3_channel *c, qa_bytes data, qa_error *error) {
     if (!c || data.size > QA_Q3_MESSAGE_BYTES || (data.size && !data.data)) return fail(error, QA_ERROR_ARGUMENT, "Invalid Q3 message payload");
