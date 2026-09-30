@@ -74,6 +74,7 @@ struct qa_native_host {
     qa_native_host_q2_application_fn q2_application;
     void *q2_application_context;
     uint32_t q2_seat;
+    qa_native_address q2_hud_records;
     bool q2_seat_bound;
     qa_native_host_q3_bridge q3;
     qa_qvm_role q3_role;

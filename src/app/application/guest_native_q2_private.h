@@ -10,6 +10,12 @@ typedef struct application_native_q2_client {
     qa_actor_id actor;
     uint32_t seat;
     bool reserved, connected, begun, bot, disconnect_started;
+    char layout[1024];
+    int16_t inventory[256];
+    struct application_native_q2 *inventory_engine;
+    uint32_t inventory_slot;
+    qa_inventory_lease inventory_lease;
+    bool inventory_bound;
 } application_native_q2_client;
 
 struct application_native_q2 {
@@ -17,6 +23,7 @@ struct application_native_q2 {
     qa_world *world;
     qa_native_profile profile;
     qa_native_declaration *declaration;
+    struct application_native_q2_inventory *primary_inventory;
     qa_native_host_engine_services platform;
     qa_native_host_q2_application_fn application;
     void *application_context;
@@ -34,6 +41,9 @@ struct application_native_q2 {
     char *entity_text;
     unsigned calls;
     uint32_t current_client;
+    uint64_t current_command_sequence;
+    uint64_t config_revision, hud_config_revision;
+    qa_actor_owner hud_source_owner;
     bool initialized, map_ready, shutting_down;
 };
 
@@ -54,6 +64,14 @@ bool application_native_q2_client_think(application_provider *, uint32_t, qa_byt
 bool application_native_q2_console_command(application_provider *, qa_actor_id, const char *,
                                             bool *, qa_error *);
 qa_native_host_engine_services application_native_q2_services(struct application_native_q2 *);
+qa_native_host_movement_services application_native_q2_movement_services(struct application_native_q2 *);
+bool application_native_q2_move(application_provider *, qa_actor_id,
+    const qa_movement_command *, bool *, qa_error *);
+bool application_native_q2_draw_hud(application_provider *, uint32_t, uint32_t, qa_error *);
+struct application_native_q2 *application_native_q2_hud_source(struct application_native_q2 *,
+    uint32_t *, qa_error *);
+bool application_native_q2_import(void *, const qa_native_host_q2_application_call *,
+    qa_native_value *, qa_error *);
 bool application_native_q2_project(void *, qa_native_host *, uint32_t, qa_native_address,
                                     qa_actor_id *, bool *, qa_error *);
 bool application_native_q2_address(void *, qa_native_host *, qa_actor_id,
@@ -61,4 +79,8 @@ bool application_native_q2_address(void *, qa_native_host *, qa_actor_id,
 bool application_native_q2_bind(void *, qa_native_host *, uint32_t, qa_actor_id, qa_error *);
 bool application_native_q2_capture_engine(void *, qa_buffer *, qa_error *);
 bool application_native_q2_restore_engine(void *, qa_bytes, qa_error *);
+bool application_native_q2_inventory_prepare(struct application_native_q2 *, qa_error *);
+bool application_native_q2_inventory_admit(struct application_native_q2 *, uint32_t, qa_error *);
+bool application_native_q2_inventory_detach(struct application_native_q2 *, uint32_t, qa_error *);
+bool application_native_q2_inventory_close(struct application_native_q2 *, qa_error *);
 #endif

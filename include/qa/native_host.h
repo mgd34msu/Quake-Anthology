@@ -270,6 +270,13 @@ bool qa_native_host_run_frame(qa_native_host *, bool main_loop, qa_error *);
 bool qa_native_host_prep_frame(qa_native_host *, qa_error *);
 bool qa_native_host_q2_player_state(qa_native_host *, uint32_t source_slot,
                                      qa_buffer *, qa_error *);
+/* Source data is the original 1024-byte layout plus 256 signed short counts;
+ * player_state is the public 296-byte KEX state. Copies live only during DrawHUD. */
+bool qa_native_host_q2_draw_hud(qa_native_host *, uint32_t seat,
+    const qa_native_host_q2_hud_view *, int32_t player_number,
+    qa_bytes server_data, qa_bytes player_state, qa_error *);
+/* Immutable source return storage remains valid through this host's lifetime. */
+bool qa_native_host_q2_retain_string(qa_native_host *, const char *, qa_native_address *, qa_error *);
 bool qa_native_host_server_command(qa_native_host *, qa_error *);
 
 typedef struct qa_native_host_client_request {

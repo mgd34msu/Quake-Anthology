@@ -44,6 +44,7 @@ static void actor_released(void *state, qa_session *session, qa_actor_record act
         if (qa_actor_id_equal(engine->clients[i].actor, actor.id)) {
             engine->clients[i].actor = (qa_actor_id){0};
             engine->clients[i].connected = engine->clients[i].begun = false;
+            engine->clients[i].inventory_bound = false;
         }
     if (qa_actor_id_equal(engine->world_actor, actor.id)) engine->world_actor = (qa_actor_id){0};
 }
@@ -114,6 +115,7 @@ bool application_construct_native_q2(qa_application *app, application_provider *
     if (provider->launch->declaration && !qa_native_declaration_load(
             qa_resource_bytes(provider->launch->declaration), provider->launch->selection.artifact,
             provider->state.native.module, &engine->declaration, error)) return false;
+    if (!application_native_q2_inventory_prepare(engine, error)) return false;
     qa_console_dialect dialect = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_CONSOLE_Q2 : QA_CONSOLE_Q2_RERELEASE;
     engine->command_context = (qa_command_context){.owner = provider->owner,
         .origin = QA_COMMAND_SERVER, .dialect = dialect};
@@ -154,7 +156,9 @@ bool application_construct_native_q2(qa_application *app, application_provider *
     engine->resource_base[2] = engine->resource_base[1] + engine->resource_limit[1];
     engine->configstring_count = rerelease ? 12448 : 2080;
     engine->configstrings = calloc(engine->configstring_count, sizeof(*engine->configstrings));
-    if (!engine->configstrings || !qa_strings_intern_cstr(qa_session_strings(app->session),
+    if (!engine->configstrings)
+        return application_fail(error, QA_ERROR_MEMORY, "Allocating native Q2 source configstring table");
+    if (!qa_strings_intern_cstr(qa_session_strings(app->session),
             "native-q2:entity", &engine->definition, error)) return false;
     engine->platform.content_files = provider->launch->content;
     engine->platform.cvars = engine->cvars;
@@ -177,6 +181,11 @@ bool application_native_q2_activate(struct application_native_q2 *engine, qa_err
     if (!provider->constructed || !provider->attached || engine->calls)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 loading requires its committed owner");
     uint64_t interval = provider->component.clock.interval_ns;
+    if (engine->profile == QA_NATIVE_Q2_CGAME_API2023 && !engine->application &&
+        provider->application->native_q2_services &&
+        !provider->application->native_q2_services(provider->application->guest_context,
+            provider->application, provider->owner, engine->profile, &engine->platform,
+            &engine->application, &engine->application_context, error)) return false;
     qa_native_host_instance_options instance = {.declaration = engine->declaration,
         .declaration_digest = qa_native_declaration_digest(engine->declaration),
         .runner = provider->application->native_runner,
@@ -187,8 +196,8 @@ bool application_native_q2_activate(struct application_native_q2 *engine, qa_err
     ++engine->calls;
     if (engine->profile == QA_NATIVE_Q2_CGAME_API2023) {
         qa_native_host_q2_cgame_options options = {.instance = instance,
-            .engine = application_native_q2_services(engine), .application = engine->application,
-            .application_context = engine->application_context, .cvars = engine->cvars,
+            .engine = application_native_q2_services(engine), .application = application_native_q2_import,
+            .application_context = engine, .cvars = engine->cvars,
             .console = engine->console, .command_context = engine->command_context};
         uint32_t seat = UINT32_MAX;
         for (size_t i = 1; i < 257; ++i) if (engine->clients[i].reserved) {
@@ -208,6 +217,7 @@ bool application_native_q2_activate(struct application_native_q2 *engine, qa_err
                 .binding_context = engine, .project_actor = application_native_q2_project,
                 .address_for_actor = application_native_q2_address, .bind_actor = application_native_q2_bind},
             .services = {.engine = application_native_q2_services(engine),
+                .movement = application_native_q2_movement_services(engine),
                 .application = engine->application, .application_context = engine->application_context},
             .cvars = engine->cvars, .console = engine->console, .command_context = engine->command_context};
         ok = qa_native_host_create_q2_game(provider->state.native.module, &options,
@@ -260,8 +270,33 @@ bool application_native_q2_retire_map(application_provider *provider, qa_error *
     if (!engine) return true;
     if (!application_native_q2_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 map retirement requires drained source callbacks");
+    if (engine->profile == QA_NATIVE_Q2_CGAME_API2023 && provider->state.native.host) {
+        if (engine->initialized) {
+            ++engine->calls;
+            bool ok = qa_native_host_shutdown(provider->state.native.host, false, error);
+            --engine->calls;
+            if (!ok) return false;
+            engine->initialized = false;
+        }
+        if (!qa_native_host_destroy_ready(provider->state.native.host))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 cgame map shutdown has not drained");
+        bool ok = qa_native_host_destroy(provider->state.native.host, error);
+        provider->state.native.host = NULL;
+        if (!ok) return false;
+    }
+    if (engine->profile == QA_NATIVE_Q2_CGAME_API2023) {
+        if (engine->platform.release_frontend)
+            engine->platform.release_frontend(engine->platform.frontend_lifetime);
+        engine->platform = (qa_native_host_engine_services){.content_files = provider->launch->content,
+            .cvars = engine->cvars};
+        engine->application = NULL; engine->application_context = NULL;
+        engine->hud_source_owner = 0;
+        for (uint32_t i = 0; i < engine->configstring_count; ++i) {
+            free(engine->configstrings[i]); engine->configstrings[i] = NULL;
+        }
+    }
     for (uint32_t i = 1; i < 257; ++i)
-        if (engine->clients[i].connected && !application_native_q2_client_disconnect(provider, i, error)) return false;
+        if (engine->clients[i].actor.registry && !application_native_q2_client_disconnect(provider, i, error)) return false;
     engine->map_ready = provider->map_bound = false;
     qa_cvars_set_server_active(engine->cvars, false);
     return true;
@@ -273,26 +308,36 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
     if (!engine) return true;
     if (!application_native_q2_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 teardown requires drained callbacks");
+    if (!application_native_q2_inventory_close(engine, error)) return false;
     qa_error first = {0}; bool ok = true;
     if (provider->state.native.host) {
         if (engine->initialized && !engine->shutting_down) {
             engine->shutting_down = true;
             ++engine->calls;
             ok = qa_native_host_shutdown(provider->state.native.host, false, &first);
-            --engine->calls; engine->initialized = false;
+            --engine->calls;
+            if (!ok) {
+                engine->shutting_down = false;
+                if (error) *error = first;
+                return false;
+            }
+            engine->initialized = false;
         }
         qa_error cleanup = {0};
+        if (!qa_native_host_destroy_ready(provider->state.native.host))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 host teardown has not drained");
         ++engine->calls;
         bool closed = qa_native_host_destroy(provider->state.native.host, &cleanup);
         --engine->calls; provider->state.native.host = NULL;
-        if (!closed && ok) { ok = false; first = cleanup; }
+        if (!closed) { if (error) *error = cleanup; return false; }
     }
     if (engine->platform.release_frontend)
         engine->platform.release_frontend(engine->platform.frontend_lifetime);
     qa_console_destroy(engine->console); qa_cvars_destroy(engine->cvars);
     qa_native_declaration_destroy(engine->declaration);
     qa_command_tokens_free(&engine->arguments);
-    for (uint32_t i = 0; i < engine->configstring_count; ++i) free(engine->configstrings[i]);
+    if (engine->configstrings)
+        for (uint32_t i = 0; i < engine->configstring_count; ++i) free(engine->configstrings[i]);
     free(engine->configstrings); free(engine->entity_text); free(engine);
     provider->state.native.q2_engine = NULL;
     if (!ok && error) *error = first;

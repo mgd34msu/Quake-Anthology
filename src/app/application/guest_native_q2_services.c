@@ -1,5 +1,6 @@
 #include "guest_native_q2_private.h"
 #include "qa/network_q2_messages.h"
+#include <math.h>
 
 static bool protocol(struct application_native_q2 *engine, const qa_q2_server_event *source,
                        qa_actor_id recipient, bool reliable, qa_error *error)
@@ -40,6 +41,12 @@ static void print(void *opaque, const qa_native_host_print *source)
 static bool config_get(void *opaque, int32_t index, const char **out, qa_error *error)
 {
     struct application_native_q2 *engine = opaque;
+    if (engine->profile == QA_NATIVE_Q2_CGAME_API2023) {
+        uint32_t slot;
+        struct application_native_q2 *source = application_native_q2_hud_source(engine, &slot, error);
+        if (!source) return false;
+        engine = source;
+    }
     if (!out || index < 0 || (uint32_t)index >= engine->configstring_count)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 configstring exceeds its original API table");
     *out = engine->configstrings[index] ? engine->configstrings[index] : "";
@@ -57,6 +64,7 @@ static bool config_set(void *opaque, int32_t index, const char *value, qa_error 
     if (!copy) return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q2 configstring");
     memcpy(copy, value, size + 1);
     free(engine->configstrings[index]); engine->configstrings[index] = copy;
+    ++engine->config_revision;
     if (!engine->map_ready) return true;
     qa_q2_server_event event = {.kind = QA_Q2_SVC_CONFIGSTRING,
         .data.config = {.index = (uint16_t)index, .value = copy}};
@@ -99,6 +107,28 @@ static bool message(void *opaque, const qa_native_host_message *source, qa_error
         .payload = source->payload, .destination = source->destination,
         .reliable = source->reliable, .multicast = source->target == QA_NATIVE_HOST_MULTICAST};
     if (!application_emit_protocol(engine->provider, &event, error)) return false;
+    if (source->payload.size && (source->payload.data[0] == 4 || source->payload.data[0] == 5)) {
+        qa_bytes data = source->payload;
+        size_t layout_size = 0;
+        if (data.data[0] == 4) {
+            const uint8_t *end = memchr(data.data + 1, 0, data.size - 1);
+            if (!end || (layout_size = (size_t)(end - data.data - 1)) >= 1024)
+                return application_fail(error, QA_ERROR_FORMAT, "Native Q2 HUD layout exceeds the source client record");
+        } else if (data.size != 513)
+            return application_fail(error, QA_ERROR_FORMAT, "Native Q2 inventory message has an invalid source extent");
+        for (uint32_t i = 1; i < 257; ++i) {
+            application_native_q2_client *client = &engine->clients[i];
+            if (!client->connected || (source->target == QA_NATIVE_HOST_UNICAST &&
+                !qa_actor_id_equal(client->actor, source->client))) continue;
+            if (source->target == QA_NATIVE_HOST_MULTICAST && source->destination != 0 &&
+                source->destination != 3) continue;
+            if (data.data[0] == 4) {
+                memcpy(client->layout, data.data + 1, layout_size);
+                client->layout[layout_size] = 0;
+            } else for (size_t item = 0; item < 256; ++item)
+                client->inventory[item] = (int16_t)qa_load_u16le(data.data + 1 + item * 2);
+        }
+    }
     return !engine->platform.message || engine->platform.message(engine->platform.context, source, error);
 }
 
@@ -140,13 +170,89 @@ static uint32_t server_frame(void *opaque)
     return (uint32_t)((struct application_native_q2 *)opaque)->frame.number;
 }
 
+static bool hud_view(void *opaque, uint32_t seat, qa_native_host_q2_hud_view *out, qa_error *error)
+{
+    struct application_native_q2 *engine = opaque;
+    return engine->platform.hud_view
+        ? engine->platform.hud_view(engine->platform.context, seat, out, error)
+        : application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q2 HUD viewport owner is absent");
+}
+
 qa_native_host_engine_services application_native_q2_services(struct application_native_q2 *engine)
 {
     return (qa_native_host_engine_services){.context = engine, .print = print,
         .configstring_get = config_get, .configstring_set = config_set, .resource_index = resource,
         .command = command, .message = message, .sound = sound, .server_frame = server_frame,
         .checkpoint = application_native_q2_capture_engine, .restore = application_native_q2_restore_engine,
-        .content_files = engine->provider->launch->content, .cvars = engine->cvars};
+        .content_files = engine->provider->launch->content, .cvars = engine->cvars,
+        .hud_view = hud_view};
+}
+
+static bool movement_prepare(void *opaque, qa_native_host *host, qa_native_address record,
+    qa_movement_input *input, qa_error *error)
+{
+    (void)record;
+    struct application_native_q2 *engine = opaque;
+    qa_application *app = engine->provider->application;
+    uint32_t slot = engine->current_client;
+    if (!slot || slot >= 257 || !engine->clients[slot].connected ||
+        !engine->clients[slot].begun || host != engine->provider->state.native.host)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 Pmove requires the active admitted client call");
+    qa_actor_id actor = engine->clients[slot].actor;
+    if (!qa_actors_get(qa_session_actors(app->session), actor) ||
+        application_provider_for(app, actor, QA_ROLE_MOVEMENT, NULL) != engine->provider)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q2 Pmove cannot replace another selected movement owner");
+    qa_body_state body; qa_combat_state combat;
+    if (!qa_world_body_read(engine->world, actor, &body, error) ||
+        !qa_combat_read_traits(app->combat, actor, &combat, error)) return false;
+    input->actor = actor;
+    input->command.sequence = engine->current_command_sequence;
+    input->time_ns = qa_session_elapsed(app->session);
+    input->elapsed_ns = (uint64_t)input->command.milliseconds * UINT64_C(1000000);
+    input->environment.health = combat.health;
+    const qa_cvar_view *air = qa_cvars_find(engine->cvars, "sv_airaccelerate");
+    if (air && isfinite(air->number)) input->profile.data.q2.air_accelerate = (float)air->number;
+    application_provider *character = application_provider_for(app, actor, QA_ROLE_CHARACTER, NULL);
+    if (character != engine->provider) {
+        input->environment.has_body_bounds = true; input->environment.body_bounds = body.bounds;
+        qa_application_control_view control;
+        if (qa_application_control_read(app, actor, &control)) {
+            input->standing.bounds = app->controls[actor.slot].standing_bounds;
+            input->standing.view_height = control.view_height;
+            input->environment.flight = control.flight;
+            input->environment.gravity_multiplier = control.gravity_multiplier;
+        }
+    }
+    return true;
+}
+
+static bool movement_commit(void *opaque, qa_native_host *host, qa_native_address record,
+    const qa_movement_result *result, qa_error *error)
+{
+    (void)record;
+    struct application_native_q2 *engine = opaque;
+    qa_application *app = engine->provider->application;
+    uint32_t slot = engine->current_client;
+    if (host != engine->provider->state.native.host || !slot || slot >= 257 ||
+        !qa_actor_id_equal(result->actor, engine->clients[slot].actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 Pmove completion differs from its active source client");
+    if (result->status == QA_MOVEMENT_ACTOR_REMOVED ||
+        !qa_actors_get(qa_session_actors(app->session), result->actor)) return true;
+    if (result->actor.slot >= app->control_capacity)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 Pmove has no shared control projection");
+    application_control_record *control = &app->controls[result->actor.slot];
+    if (!control->active || !qa_actor_id_equal(control->actor, result->actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 Pmove control generation differs");
+    control->state = result->state; control->bounds = result->bounds;
+    control->ground = result->ground; control->water_level = result->water_level;
+    control->water_type = result->water_type; control->view_height = result->view_height;
+    return true;
+}
+
+qa_native_host_movement_services application_native_q2_movement_services(struct application_native_q2 *engine)
+{
+    return (qa_native_host_movement_services){.context = engine, .prepare = movement_prepare,
+        .commit = movement_commit};
 }
 
 bool application_native_q2_project(void *opaque, qa_native_host *host, uint32_t slot,

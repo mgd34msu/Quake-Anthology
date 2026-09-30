@@ -1,5 +1,48 @@
 #include "internal.h"
 
+bool qa_native_host_q2_retain_string(qa_native_host *host, const char *text,
+    qa_native_address *out, qa_error *error)
+{
+    if (!host || host->kind != NATIVE_HOST_Q2_CGAME || !host->instance || host->destroying || !text || !out)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Native Q2 string requires its live cgame host");
+    return native_host_string_address(host, text, out, error);
+}
+
+bool qa_native_host_q2_draw_hud(qa_native_host *host, uint32_t seat,
+    const qa_native_host_q2_hud_view *view, int32_t player_number,
+    qa_bytes data, qa_bytes player, qa_error *error)
+{
+    if (!host || host->kind != NATIVE_HOST_Q2_CGAME || !host->instance || host->destroying ||
+        !host->q2_seat_bound || host->q2_seat != seat || seat > INT32_MAX ||
+        !view || view->width <= 0 || view->height <= 0 || view->scale <= 0 ||
+        player_number < 0 || player_number >= 256 || !data.data || data.size != 1536 ||
+        !memchr(data.data, 0, 1024) || !player.data || player.size != 296)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, seat, "Native Q2 DrawHUD requires its admitted KEX seat and source records");
+    uint8_t viewport[16], safe[16];
+    qa_store_u32le(viewport, (uint32_t)view->x); qa_store_u32le(viewport + 4, (uint32_t)view->y);
+    qa_store_u32le(viewport + 8, (uint32_t)view->width); qa_store_u32le(viewport + 12, (uint32_t)view->height);
+    qa_store_u32le(safe, (uint32_t)view->safe_x); qa_store_u32le(safe + 4, (uint32_t)view->safe_y);
+    qa_store_u32le(safe + 8, (uint32_t)view->safe_width); qa_store_u32le(safe + 12, (uint32_t)view->safe_height);
+    if (!host->q2_hud_records &&
+        !qa_native_allocate(host->instance, 1536 + 296, INT32_MIN + 9, &host->q2_hud_records, error)) return false;
+    qa_native_address records = host->q2_hud_records;
+    bool ok =
+        native_host_write(host, records, data.data, data.size, error) &&
+        native_host_write(host, records + 1536, player.data, player.size, error);
+    if (ok) {
+        qa_native_value args[] = {
+            {.type = QA_NATIVE_I32, .as.i32 = (int32_t)seat},
+            {.type = QA_NATIVE_ADDRESS, .as.address = records},
+            {.type = QA_NATIVE_BYTES, .as.bytes = {viewport, sizeof(viewport)}},
+            {.type = QA_NATIVE_BYTES, .as.bytes = {safe, sizeof(safe)}},
+            {.type = QA_NATIVE_I32, .as.i32 = view->scale},
+            {.type = QA_NATIVE_I32, .as.i32 = player_number},
+            {.type = QA_NATIVE_ADDRESS, .as.address = records + 1536}};
+        ok = qa_native_call(host->instance, "DrawHUD", args, 7, NULL, error);
+    }
+    return ok;
+}
+
 bool qa_native_host_q2_player_state(qa_native_host *host, uint32_t slot,
                                      qa_buffer *out, qa_error *error)
 {

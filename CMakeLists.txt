@@ -742,6 +742,7 @@ add_library(qa_native_host STATIC
     src/compat/native_host/memory.c
     src/compat/native_host/message.c
     src/compat/native_host/movement.c
+    src/compat/native_host/player.c
     src/compat/native_host/q2.c
     src/compat/native_host/q3.c
     src/compat/native_host/world.c)
@@ -813,6 +814,12 @@ add_library(qa_application STATIC
     src/app/application/guest_admission.c
     src/app/application/guest_bots.c
     src/app/application/guest_input_profile.c
+    src/app/application/guest_native_q2.c
+    src/app/application/guest_native_q2_clients.c
+    src/app/application/guest_native_q2_hud.c
+    src/app/application/guest_native_q2_inventory.c
+    src/app/application/guest_native_q2_save.c
+    src/app/application/guest_native_q2_services.c
     src/app/application/guest_projection.c
     src/app/application/guest_projection_profile.c
     src/app/application/guest_q3.c
@@ -900,6 +907,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/frame.c
     src/app/frontend/launch.c
     src/app/frontend/lifetime.c
+    src/app/frontend/native_q2.c
     src/app/frontend/network.c
     src/app/frontend/options.c
     src/app/frontend/presentation.c

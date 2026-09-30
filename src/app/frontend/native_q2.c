@@ -33,6 +33,8 @@ struct frontend_native_q2 {
     native_q2_picture *pictures;
     native_q2_string strings[8];
     size_t next_string;
+    uint64_t frame_time_ns, previous_frame_time_ns;
+    float frame_seconds;
     uint32_t seat;
     qa_scene_rect viewport;
     bool seat_bound, alternate;
@@ -257,6 +259,15 @@ static bool application_import(void *context, const qa_native_host_q2_applicatio
         if (source->seat_bound && source->seat >= source->frontend->options.seats)
             return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 entry seat is unavailable");
         if (source->seat_bound) source->viewport = frontend_viewport(source->frontend, source->seat);
+        if (!strcmp(import->name, "CL_ClientRealTime")) {
+            result->as.u64 = source->frontend->time_ns / UINT64_C(1000000); return true;
+        }
+        if (!strcmp(import->name, "CL_FrameTime")) { result->as.f32 = source->frame_seconds; return true; }
+        if (!strcmp(import->name, "CL_InAutoDemoLoop")) {
+            /* This lease presents the local authoritative session; demo peers
+             * require a separate admitted client presentation producer. */
+            result->as.u8 = 0; return true;
+        }
     }
     if (source->profile == QA_NATIVE_Q2_GAME_API2023) {
         if (import->slot >= 54 && import->slot <= 63 && import->slot != 59 && import->slot != 60) {
@@ -489,6 +500,7 @@ bool frontend_native_q2_services(void *context, qa_application *application, qa_
     if (!source) return frontend_fail(error, QA_ERROR_MEMORY, "allocating native Q2 frontend lease");
     source->frontend = frontend; source->application = application; source->owner = owner; source->profile = profile;
     source->identity = FRONTEND_OWNER + ++frontend->next_source_id;
+    source->frame_time_ns = frontend->time_ns;
     source->cvars = engine->cvars; source->mounts = qa_vfs_clone(engine->content_files, error);
     source->catalogs = qa_localization_pool_create(error); source->world_text = qa_font_world_store_create(error);
     if (!source->mounts || !source->catalogs || !source->world_text) { release_source(source); return false; }
@@ -504,6 +516,11 @@ bool frontend_native_q2_frame(qa_frontend *frontend, uint32_t seat, qa_scene_rec
     for (frontend_native_q2 *source = frontend->native_q2; source; source = source->next) {
         if (source->profile == QA_NATIVE_Q2_CGAME_API2023 && source->seat_bound && source->seat == seat)
             source->viewport = rect;
+        if (source->profile == QA_NATIVE_Q2_CGAME_API2023 && source->frame_time_ns != frontend->time_ns) {
+            source->previous_frame_time_ns = source->frame_time_ns;
+            source->frame_time_ns = frontend->time_ns;
+            source->frame_seconds = (float)((double)(source->frame_time_ns - source->previous_frame_time_ns) / 1000000000.0);
+        }
     }
     return true;
 }
