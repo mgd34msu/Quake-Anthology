@@ -136,7 +136,45 @@ bool q1_gremlin_walk(qa_q1_game *g, q1_actor *entity, float distance, qa_error *
     return !goal.registry || qa_physics_q1_move_to_goal(g->services.physics, entity->id, goal,
                                                         distance, false, error);
 }
+static bool flee_goal(qa_q1_game *g, qa_actor_id source, q1_actor **out, qa_error *error) {
+    *out = NULL;
+    if (!q1_entity(g, source))
+        return true;
+    q1_actor *goal;
+    if (!q1_create(g, "gremlin_goal", Q1_ENTITY, (qa_actor_id){0}, &goal, error))
+        return false;
+    qa_actor_id child = goal->id;
+    if (!q1_entity(g, source) || !q1_entity(g, child))
+        goto cancelled;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, child, &body, error))
+        goto failed;
+    if (!q1_entity(g, source) || !q1_entity(g, child))
+        goto cancelled;
+    body.bounds = (qa_bounds){{-1, -1, -1}, {1, 1, 1}};
+    if (!qa_world_body_write(g->services.world, child, &body, error))
+        goto failed;
+    goal = q1_entity(g, child);
+    if (!goal || !q1_entity(g, source))
+        goto cancelled;
+    if (!q1_link(g, goal, error))
+        goto failed;
+    goal = q1_entity(g, child);
+    if (!goal || !q1_entity(g, source))
+        goto cancelled;
+    *out = goal;
+    return true;
+cancelled:
+    if (qa_actors_get(qa_session_actors(g->services.session), child))
+        (void)qa_session_release(g->services.session, child, NULL);
+    return true;
+failed:
+    if (qa_actors_get(qa_session_actors(g->services.session), child))
+        (void)qa_session_release(g->services.session, child, NULL);
+    return false;
+}
 bool q1_gremlin_run(qa_q1_game *g, q1_actor *entity, float distance, qa_error *error) {
+    qa_actor_id source = entity->id;
     q1_monster *m = &entity->state.monster;
     if (entity->physics.water_type == -5 &&
         !q1_damage(g, entity->id, g->services.physics->world_actor,
@@ -204,11 +242,14 @@ bool q1_gremlin_run(qa_q1_game *g, q1_actor *entity, float distance, qa_error *e
             return true;
         }
         if (!goal && range < 150) {
-            if (!q1_create(g, "gremlin_goal", Q1_ENTITY, (qa_actor_id){0}, &goal, error))
+            if (!flee_goal(g, source, &goal, error))
                 return false;
-            qa_body_state destination = {.bounds = {{-1, -1, -1}, {1, 1, 1}}};
-            if (!qa_world_body_write(g->services.world, goal->id, &destination, error))
-                return false;
+            if (!goal)
+                return true;
+            entity = q1_entity(g, source);
+            if (!entity)
+                return true;
+            m = &entity->state.monster;
             m->source.gremlin.flee_goal = goal->id;
         }
         if (goal) {
