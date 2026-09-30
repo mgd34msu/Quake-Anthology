@@ -55,6 +55,10 @@ bool qa_vfs_prefix_at(const qa_vfs *, size_t index, const char **prefix,
 size_t qa_vfs_resource_count(const qa_vfs *);
 const qa_resource *qa_vfs_resource_at(const qa_vfs *, size_t index, size_t *readers);
 void qa_vfs_clear_references(qa_vfs *vfs);
+/* Candidate-only accounting restoration. Caller first qualifies the complete
+ * mount inventory/order; flags follow qa_vfs_mount_at search order. No file is
+ * opened or marked through a synthetic acquisition. */
+bool qa_vfs_restore_references(qa_vfs *,const bool *,size_t count,qa_error *);
 
 /* New mounts append at lowest priority. Paths are native filesystem paths.
  * Repeated archive mounts share storage when file identity and format agree.

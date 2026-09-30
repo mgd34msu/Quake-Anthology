@@ -853,6 +853,7 @@ add_library(qa_application STATIC
     src/app/application/bots.c
     src/app/application/bots_arsenal.c
     src/app/application/bots_navigation.c
+    src/app/application/bots_save.c
     src/app/application/bots_projection.c
     src/app/application/bots_submit.c
     src/app/application/composition.c

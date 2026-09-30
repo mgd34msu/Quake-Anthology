@@ -177,10 +177,13 @@ static bool close_bots(application_bots *bots,qa_error *error) {
     while(bots->targets) {application_bot_target *target=bots->targets;bots->targets=target->next;
         qa_bot_navigation_destroy(target->navigation);free(target);}
     while(bots->graphs) {application_bot_graph *graph=bots->graphs;bots->graphs=graph->next;
-        qa_navigation_destroy(graph->navigation);qa_nav_graph_release(graph->graph);free(graph);}
+        qa_navigation_destroy(graph->navigation);qa_nav_graph_release(graph->graph);
+        qa_resource_release(graph->asset_resource);free(graph);}
     while(bots->guests) {application_bot_guest *guest=bots->guests;bots->guests=guest->next;free(guest);}
     qa_builtin_snapshot_free(&bots->pickup_snapshot);qa_entities_free(&bots->entities);
     qa_resource_release(bots->map_resource);qa_vfs_destroy(bots->files);
+    qa_bots_save_requirements_free(&bots->saved_requirements);
+    free(bots->saved_file_references);
     free(bots->train_stops);free(bots->seats);free(bots);return true;
 }
 bool application_bots_can_destroy(const qa_application *application) {
@@ -201,7 +204,7 @@ bool application_bots_actor_released(qa_application *application,qa_actor_record
 }
 bool application_bots_frame(qa_application *application,qa_error *error) {
     application_bots *bots=application->bots;if(!bots) return true;
-    if(bots->calls) return application_fail(error,QA_ERROR_ARGUMENT,"application bot frame reentered");
+    if(bots->calls || bots->restoring) return application_fail(error,QA_ERROR_ARGUMENT,"application bot frame reentered or restoring");
     application_bot_target **link=&bots->targets;
     while(*link) {
         application_bot_target *target=*link;
@@ -251,6 +254,7 @@ bool application_bots_prepare(qa_application *application,const qa_launch_choice
     bots->seats=capacity?calloc(capacity,sizeof(*bots->seats)):NULL;
     if(capacity && !bots->seats) {application_fail(error,QA_ERROR_MEMORY,"allocating bot roster navigation bindings");goto fail;}
     const qa_launch_snapshot *snapshot=application->routing_snapshot?application->routing_snapshot:qa_application_launch(application);
+    bots->files_launch=true;
     bots->files=qa_vfs_clone(qa_launch_snapshot_mounts(snapshot),error);
     if(!bots->files) goto fail;
     qa_resource *probe=NULL;qa_error local={0};
@@ -265,7 +269,12 @@ bool application_bots_prepare(qa_application *application,const qa_launch_choice
             qa_vfs *files=NULL;if(!qa_catalog_open(application->catalog,product->id,&files,error)) goto fail;
             probe=NULL;local=(qa_error){0};have_assets=qa_vfs_acquire(files,"botfiles/bots/default_c.c",&probe,NULL,&local);
             qa_resource_release(probe);
-            if(have_assets) {qa_vfs_destroy(bots->files);bots->files=files;opened=true;break;}
+            if(have_assets) {
+                if(!qa_strings_intern_cstr(qa_session_strings(application->session),product->id,&bots->files_product,error)) {
+                    qa_vfs_destroy(files);goto fail;
+                }
+                qa_vfs_destroy(bots->files);bots->files=files;bots->files_launch=false;opened=true;break;
+            }
             qa_vfs_destroy(files);if(local.code!=QA_ERROR_NOT_FOUND) {if(error)*error=local;goto fail;}
         }
         if(!opened && count) {application_fail(error,QA_ERROR_NOT_FOUND,"native bots require installed bot personality resources");goto fail;}
@@ -295,6 +304,28 @@ bool application_bots_prepare(qa_application *application,const qa_launch_choice
 fail:
     {qa_error cleanup={0};if(!close_bots(bots,&cleanup)) {if(error && !error->code)*error=cleanup;}}
     return false;
+}
+bool application_bots_construct_restored(application_bots *bots,qa_error *error) {
+    qa_application *application=bots->application;
+    qa_bot_runtime_options options=bots->saved_requirements.runtime;
+    options.library.scripts.context=bots;
+    options.library.scripts.read=read_file; options.library.scripts.release=release_file;
+    qa_bot_random_source random={bots,random_word};
+    qa_bot_runtime_services services={.context=bots,.random=random,.navigation=application_bot_navigation,.command=bot_command,
+        .goals={.context=bots,.navigation=application_bot_navigation,.pickups=pickup_list,.pickups_end=pickup_end,
+            .pickup=pickup,.owns_item=owns_item},
+        .movement={.context=bots,.navigation=application_bot_navigation,.actor=application_bot_actor,
+            .entity_number=entity_number,.model=application_bot_travel_model,
+            .travel_weapon=application_bot_travel_weapon,.grapple_state=application_bot_grapple_state,.random=random}};
+    if(!register_controls(bots,error) || !qa_bot_runtime_create(&options,&services,&bots->runtime,error)) return false;
+    if(!bots->saved_requirements.population) return true;
+    qa_bot_services ai={.context=bots,.shared=application_builtin_services(application,application->world,application->physics),
+        .modes=application->modes,.player=application_bot_player,.entity=application_bot_entity,
+        .arsenal=application_bot_arsenal,.arsenal_end=application_bot_arsenal_end,.submit=application_bot_submit,
+        .controls=controls,.set_think_time=think_time,.activation=application_bot_activation,
+        .predict_motion=application_bot_predict_motion};
+    return qa_bots_create_restored(bots->runtime,&ai,bots->saved_requirements.population_client_capacity,
+                                   &bots->population,error);
 }
 qa_bot_runtime *application_bots_runtime(qa_application *application) {
     return application && application->bots?application->bots->runtime:NULL;

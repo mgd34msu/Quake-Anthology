@@ -177,7 +177,8 @@ static bool entity(void *opaque,const qa_nav_binding *binding,qa_nav_entity_stat
     return true;
 }
 static bool asset_graph(application_bots *bots,const qa_nav_map *map,const qa_nav_profile *profile,
-                         const qa_navigation_services *services,qa_nav_graph **out,bool *found,qa_error *error) {
+                         const qa_navigation_services *services,qa_nav_graph **out,
+                         qa_resource **saved_resource,size_t *saved_mount,bool *found,qa_error *error) {
     const qa_launch_snapshot *snapshot=bots->application->routing_snapshot?
         bots->application->routing_snapshot:qa_application_launch(bots->application);
     qa_vfs *files=snapshot?qa_launch_snapshot_mounts(snapshot):NULL;
@@ -192,7 +193,8 @@ static bool asset_graph(application_bots *bots,const qa_nav_map *map,const qa_na
         if(!path) return application_fail(error,QA_ERROR_MEMORY,"allocating bot navigation resource path");
         snprintf(path,length,"maps/%s.%s",name,extensions[i]);
         qa_resource *resource=NULL;qa_error local={0};
-        bool acquired=qa_vfs_acquire(files,path,&resource,NULL,&local);free(path);
+        qa_mount_id mount=0;
+        bool acquired=qa_vfs_acquire(files,path,&resource,&mount,&local);free(path);
         if(!acquired) {
             if(local.code==QA_ERROR_NOT_FOUND) continue;
             if(error) *error=local;return false;
@@ -200,10 +202,17 @@ static bool asset_graph(application_bots *bots,const qa_nav_map *map,const qa_na
         qa_nav_asset *asset=NULL;
         uint32_t checksum=qa_block_checksum(bots->geometry.source);
         bool ok=qa_nav_asset_read(qa_resource_bytes(resource),i==0?&checksum:NULL,&asset,error);
-        qa_resource_release(resource);
         if(ok) ok=qa_nav_graph_from_asset(map,asset,profile,services,out,error);
         qa_nav_asset_release(asset);
-        if(!ok) return false;
+        if(!ok) {qa_resource_release(resource);return false;}
+        size_t ordinal=0;qa_vfs_mount_info info;
+        while(ordinal<qa_vfs_mount_count(files) &&
+            (!qa_vfs_mount_at(files,ordinal,&info) || info.id!=mount)) ++ordinal;
+        if(ordinal==qa_vfs_mount_count(files)) {
+            qa_nav_graph_release(*out);*out=NULL;qa_resource_release(resource);
+            return application_fail(error,QA_ERROR_FORMAT,"navigation asset mount is absent");
+        }
+        *saved_resource=resource;*saved_mount=ordinal;
         *found=true;return true;
     }
     return true;
@@ -235,17 +244,27 @@ static bool navigation_graph(application_bots *bots,application_provider *moveme
         qa_navigation_services services={.context=bots,.world=application->world,.revision=revision,
             .entity=entity,.movement_input=application_bot_movement_input};
         bool found;
-        bool ok=asset_graph(bots,&map,&profile,&services,&shared->graph,&found,error);
+        bool ok=asset_graph(bots,&map,&profile,&services,&shared->graph,
+                            &shared->asset_resource,&shared->asset_mount_ordinal,&found,error);
         if(ok && !found) {
             qa_nav_construction construction={.geometry=&bots->geometry,.map=map,.profile=profile};
             ok=qa_nav_graph_construct(&construction,&services,&shared->graph,error);
         }
         if(ok) ok=qa_navigation_create(shared->graph,&services,&shared->navigation,error);
-        if(!ok) {qa_nav_graph_release(shared->graph);free(shared);return false;}
+        if(!ok) {qa_nav_graph_release(shared->graph);qa_resource_release(shared->asset_resource);free(shared);return false;}
         shared->movement=movement;shared->bounds=bounds;shared->profile=*movement_profile;
         shared->next=bots->graphs;bots->graphs=shared;
     }
     *out=shared;return true;
+}
+qa_navigation_services application_bot_navigation_services(application_bots *bots) {
+    return (qa_navigation_services){.context=bots,.world=bots->application->world,.revision=revision,
+        .entity=entity,.movement_input=application_bot_movement_input};
+}
+bool application_bot_navigation_restore_binding(application_bots *bots,qa_navigation *runtime,qa_actor_id actor,
+                                                qa_bot_navigation **out,qa_error *error) {
+    qa_bot_navigation_observations observations={.context=bots,.actor=source_actor,.model=source_model};
+    return qa_bot_navigation_create_restored(runtime,bots->application->world,actor,&observations,out,error);
 }
 bool application_bot_navigation_prepare(application_bots *bots,qa_error *error) {
     /* Engine map queries use the original Q3 standing/crouching hull before

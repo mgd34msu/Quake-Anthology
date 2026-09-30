@@ -3,6 +3,7 @@
 
 #include "internal.h"
 #include "qa/bots.h"
+#include "qa/bots_save.h"
 #include <math.h>
 
 static inline int32_t application_bot_angle_word(float angle) {
@@ -16,6 +17,8 @@ typedef struct application_bot_graph {
     qa_bounds bounds;
     qa_nav_graph *graph;
     qa_navigation *navigation;
+    qa_resource *asset_resource;
+    size_t asset_mount_ordinal;
     struct application_bot_graph *next;
 } application_bot_graph;
 typedef struct application_bot_seat {
@@ -44,6 +47,8 @@ typedef struct application_bots {
     qa_bot_runtime *runtime;
     qa_bots *population;
     qa_vfs *files;
+    bool files_launch;
+    qa_string_id files_product;
     qa_resource *map_resource;
     qa_bsp_view geometry;
     qa_entities entities;
@@ -61,6 +66,11 @@ typedef struct application_bots {
     bool pickup_borrowed,mover_borrowed;
     qa_nav_train_stop *train_stops;
     size_t train_capacity;
+    qa_bots_save_requirements saved_requirements;
+    bool restoring, navigation_restored, runtime_restored;
+    qa_bytes saved_bot_record, saved_navigation_record, saved_runtime, saved_population;
+    bool *saved_file_references;
+    size_t saved_file_reference_count;
 } application_bots;
 
 bool application_bot_player(void *,qa_actor_id,qa_bot_player *,qa_error *);
@@ -70,6 +80,10 @@ void application_bot_arsenal_end(void *,void *);
 bool application_bot_submit(void *,qa_actor_id,const qa_bot_input *,const qa_movement_command *,qa_error *);
 bool application_bot_navigation_bind(application_bots *,application_bot_seat *,qa_error *);
 bool application_bot_navigation_prepare(application_bots *,qa_error *);
+qa_navigation_services application_bot_navigation_services(application_bots *);
+bool application_bot_navigation_restore_binding(application_bots *,qa_navigation *,qa_actor_id,
+                                                 qa_bot_navigation **,qa_error *);
+bool application_bots_construct_restored(application_bots *,qa_error *);
 bool application_bots_prepare(qa_application *,const qa_launch_choices *,const qa_bsp_view *,const qa_entities *,qa_error *);
 qa_bot_runtime *application_bots_runtime(qa_application *);
 bool application_bots_guest_admit(qa_application *,qa_actor_id,qa_error *);

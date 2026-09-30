@@ -361,6 +361,15 @@ void qa_vfs_clear_references(qa_vfs *vfs)
     if (vfs == NULL) return;
     for (size_t i = 0; i < vfs->count; i++) vfs->mounts[i]->referenced = false;
 }
+bool qa_vfs_restore_references(qa_vfs *vfs,const bool *flags,size_t count,qa_error *error)
+{
+    if(vfs==NULL || count!=vfs->count || (count && flags==NULL)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"VFS reference continuation requires the complete qualified mount inventory");
+        return false;
+    }
+    for(size_t i=0;i<count;++i) vfs->mounts[i]->referenced=flags[i];
+    return true;
+}
 
 qa_vfs *qa_vfs_clone(const qa_vfs *vfs, qa_error *error)
 {

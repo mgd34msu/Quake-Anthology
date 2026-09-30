@@ -15,6 +15,11 @@ typedef struct qa_bot_navigation_observations {
 bool qa_bot_navigation_create(qa_navigation *, qa_world *, qa_actor_id,
                               const qa_bot_navigation_observations *,
                               qa_bot_navigation **, qa_error *);
+/* Candidate-only construction also retains a retired saved actor binding.
+ * Query scratch is fresh; actual graph and actor provenance are required. */
+bool qa_bot_navigation_create_restored(qa_navigation *, qa_world *, qa_actor_id,
+                                      const qa_bot_navigation_observations *,
+                                      qa_bot_navigation **, qa_error *);
 void qa_bot_navigation_destroy(qa_bot_navigation *);
 bool qa_bot_navigation_bind(qa_bot_navigation *, qa_navigation *, qa_actor_id, qa_error *);
 qa_navigation *qa_bot_navigation_runtime(const qa_bot_navigation *);

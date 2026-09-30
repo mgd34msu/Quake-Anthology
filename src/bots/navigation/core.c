@@ -64,6 +64,15 @@ void qa_bot_navigation_destroy(qa_bot_navigation *n) {
     free(n->adjacency);
     free(n);
 }
+bool qa_bot_navigation_create_restored(qa_navigation *runtime, qa_world *world, qa_actor_id actor,
+    const qa_bot_navigation_observations *observations, qa_bot_navigation **out, qa_error *e) {
+    qa_saved_actor_id saved;
+    if (!world || !out || *out || (actor.registry &&
+        !qa_actors_save_reference(qa_world_actors(world),actor,&saved,e))) return false;
+    qa_bot_navigation *n=NULL;
+    if (!qa_bot_navigation_create(runtime,world,(qa_actor_id){0},observations,&n,e)) return false;
+    n->actor=actor; *out=n; return true;
+}
 bool qa_bot_navigation_bind(qa_bot_navigation *n, qa_navigation *runtime, qa_actor_id actor,
                             qa_error *e) {
     const qa_nav_graph_view *graph = qa_navigation_graph(runtime);

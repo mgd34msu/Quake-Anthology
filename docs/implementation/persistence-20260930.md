@@ -337,3 +337,39 @@ the empty action owner; restoration does not require ordinary setup. Application
 aggregate registration and runtime qualification remain open, so these source
 packets do not close `QA_SAVE_BOTS` or the B30 acceptance gate. Builds and
 executable checks remain deferred by the baseline source-completion gate.
+
+The application bot and navigation owners now have explicit `QABAPP` and
+`QANAPP` version 1 records. They retain actual constructor requirements,
+complete runtime/population bodies, original guest provider namespaces,
+physical bot seats, metadata weapon handle, cached control values and retained
+pickup snapshot extents/references. The bot script view records its actual
+launch-view or installed catalog-product origin, ordered mount/archive/prefix
+qualification and mutable reference flags. Restoration does not probe for a
+default personality or replay script reads to reconstruct those flags. The
+decoded requirement strings remain owned until after runtime destruction.
+
+Every actual navigation graph retains its original selected asset resource and
+mount ordinal. The immutable graph codec records the complete source-conditioned
+topology and profile, while the application record retains shared graph order
+and map/seat/historical target bindings. Actual asset edge declarations use one
+pure producer helper in both ordinary graph construction and restore
+qualification; source mode, flags, hints, entity bindings and timing cannot be
+substituted under the same asset identity. Full decode precedes adjacency and
+estimate-topology reconstruction. Query scratch is fresh, with saved retired
+actor provenance retained in the facade binding. No geometry trace, source
+entity callback or ordinary navigation construction runs during restore.
+
+Candidate preparation requires the pinned map, actual shared world/physics,
+empty modes owner and selected provider routing table before guest host bot
+binding. It owns partial bot/navigation allocations immediately, so failed
+source construction remains reachable through ordinary retryable application
+teardown. After shared actors, roster, controls and modes restore, navigation
+state imports before full runtime and population state. Final qualification
+checks actual provider namespaces, metadata handle, unique seat actor/active
+seat identities, roster/population agreement and shared graph bindings, then
+recaptures complete bot/navigation bytes. Successful completion clears all
+borrowed save-image spans. The immutable graph packet and application owner
+packet passed independent source review, frozen hash checks and scoped whitespace
+checks; the root application factory and coordinator integration also passed
+independent source review. These checks remain separate from runtime acceptance.
+B30 and B34 remain open until their complete acceptance gates are met.
