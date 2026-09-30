@@ -52,6 +52,7 @@ struct qa_session {
     uint32_t notification_depth;
     bool stepping;
     bool transitioning;
+    bool restored_world_pending;
     bool faulted;
     qa_error error;
     const qa_invocation *invocation;
@@ -307,6 +308,7 @@ bool qa_session_create_restored(const qa_session_options *options, const qa_acto
     session->actors = restored;
     session->scheduler = scheduler;
     session->strings = owned_strings;
+    session->restored_world_pending = true;
     qa_actors_set_release_observer(restored, actor_released, session);
     *out = session;
     return true;
@@ -887,6 +889,7 @@ bool qa_session_advance(qa_session *session, uint64_t elapsed_ns, qa_error *erro
 
 static bool retire_world(qa_session *session, qa_error *error)
 {
+    session->restored_world_pending = false;
     session->faulted = false;
     session->error = (qa_error){0};
     qa_error current = {0};
@@ -925,6 +928,21 @@ bool qa_session_replace_world(qa_session *session, void *candidate, qa_cleanup_f
     session->close_world = close;
     if (old_close != NULL) old_close(old);
     session->transitioning = false;
+    return true;
+}
+
+bool qa_session_adopt_restored_world(qa_session *session, void *candidate,
+                                      qa_cleanup_fn close, qa_error *error)
+{
+    if (!qa_session_safe(session) || session->faulted ||
+        !session->restored_world_pending || session->world != NULL ||
+        session->admissions != 0 || qa_scheduler_has_admissions(session->scheduler) ||
+        candidate == NULL || close == NULL)
+        return fail(error, QA_ERROR_ARGUMENT,
+                    "Restored world attachment requires an isolated fresh session");
+    session->world = candidate;
+    session->close_world = close;
+    session->restored_world_pending = false;
     return true;
 }
 

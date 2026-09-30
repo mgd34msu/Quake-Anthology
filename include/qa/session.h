@@ -163,6 +163,10 @@ const qa_invocation *qa_session_current(const qa_session *session);
 bool qa_session_invoke(qa_session *session, qa_actor_id actor, qa_invocation_kind kind,
                         qa_invocation_fn callback, void *context, qa_error *error);
 void *qa_session_world(const qa_session *session);
+/* A restored session accepts its initial world without retiring the restored
+ * actor namespace or clocks. Success transfers ownership exactly once;
+ * failure retains caller ownership. Ordinary sessions cannot use this path. */
+bool qa_session_adopt_restored_world(qa_session *, void *, qa_cleanup_fn, qa_error *);
 /* Candidate is fully prepared by the caller. Failure retains caller ownership.
  * At a safe point, retire old actors, publish candidate, then close old world.
  * A cleanup error before publication faults the old session; retired actors are
