@@ -2,15 +2,25 @@
 #include <stdio.h>
 
 static bool gib(qa_q1_game *g, q1_actor *entity, float damage, qa_error *error) {
-    if (!q1_sound(g, entity->id, "player/udeath.wav", 2, 1, error) ||
-        !q1_gib_head(g, entity, "h_grem", damage, error))
+    qa_actor_id id = entity->id;
+    if (!q1_sound(g, id, "player/udeath.wav", 2, 1, error))
         return false;
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, entity->id, &body, error))
+    entity = q1_entity(g, id);
+    if (!entity)
+        return true;
+    if (!q1_gib_head(g, entity, "h_grem", damage, error))
         return false;
-    for (unsigned i = 0; i < 3; ++i)
-        if (!q1_gib_at(g, entity->id, body.origin, damage, "gib1", error))
+    for (unsigned i = 0; i < 3; ++i) {
+        if (!q1_entity(g, id))
+            return true;
+        qa_body_state body;
+        if (!qa_world_body_read(g->services.world, id, &body, error))
             return false;
+        if (!q1_entity(g, id))
+            return true;
+        if (!q1_gib_at(g, id, body.origin, damage, "gib1", error))
+            return false;
+    }
     return true;
 }
 static bool resume(qa_q1_game *g, q1_actor *entity, qa_error *error) {
