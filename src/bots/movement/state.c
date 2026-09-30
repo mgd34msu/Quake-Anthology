@@ -53,17 +53,20 @@ void qa_bot_moves_destroy(qa_bot_moves *m) {
     free(m->slots);
     free(m);
 }
-bool qa_bot_moves_setup(qa_bot_moves *m, qa_error *e) {
-    if (!bot_move_mutable(m, e))
-        return false;
+const char *bot_move_variable_name(bot_move_variable variable) {
     static const char *const names[BOT_MOVE_VARIABLE_COUNT] = {
         "sv_step",          "sv_maxbarrier",     "sv_gravity",        "weapindex_rocketlauncher",
         "weapindex_bfg10k", "weapindex_grapple", "entitytypemissile", "offhandgrapple",
         "cmd_grappleon",    "cmd_grappleoff"};
+    return (unsigned)variable < BOT_MOVE_VARIABLE_COUNT ? names[variable] : NULL;
+}
+bool qa_bot_moves_setup(qa_bot_moves *m, qa_error *e) {
+    if (!bot_move_mutable(m, e))
+        return false;
     static const char *const defaults[BOT_MOVE_VARIABLE_COUNT] = {
         "18", "32", "800", "5", "9", "10", "3", "0", "grappleon", "grappleoff"};
     for (size_t i = 0; i < BOT_MOVE_VARIABLE_COUNT; ++i)
-        if (!qa_bot_library_variable_default(m->library, names[i], defaults[i], &m->variables[i],
+        if (!qa_bot_library_variable_default(m->library, bot_move_variable_name((bot_move_variable)i), defaults[i], &m->variables[i],
                                              e))
             return false;
     return true;

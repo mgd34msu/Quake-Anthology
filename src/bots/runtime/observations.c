@@ -1,6 +1,6 @@
 #include "internal.h"
 
-static size_t bucket(int32_t number, size_t capacity) {
+size_t bot_runtime_observation_bucket(int32_t number, size_t capacity) {
     uint32_t value = (uint32_t)number;
     value ^= value >> 16;
     value *= UINT32_C(0x7feb352d);
@@ -9,7 +9,7 @@ static size_t bucket(int32_t number, size_t capacity) {
 }
 static size_t module_slot(const qa_bot_runtime *r, int32_t number) {
     if (!r->entity_capacity) return 0;
-    for (size_t id = r->observation_buckets[bucket(number, r->entity_capacity)]; id;
+    for (size_t id = r->observation_buckets[bot_runtime_observation_bucket(number, r->entity_capacity)]; id;
          id = r->observation_links[id - 1].hash_next)
         if (r->entities[id - 1].number == number) return id;
     return 0;
@@ -71,7 +71,7 @@ bool bot_runtime_observations_resize(qa_bot_runtime *r, size_t count, qa_error *
     if (module) {
         if (copy) memcpy(links, r->observation_links, copy * sizeof(*links));
         for (size_t id = r->observation_head; id; id = links[id - 1].next) {
-            size_t index = bucket(entities[id - 1].number, count);
+            size_t index = bot_runtime_observation_bucket(entities[id - 1].number, count);
             links[id - 1].hash_next = buckets[index];
             buckets[index] = id;
         }
@@ -100,7 +100,7 @@ bool qa_bot_runtime_update_entity(qa_bot_runtime *r, int32_t number,
     if (!update) {
         if (module && slot) {
             bot_observation_link *link = &r->observation_links[slot - 1];
-            size_t *hash = &r->observation_buckets[bucket(number, r->entity_capacity)];
+            size_t *hash = &r->observation_buckets[bot_runtime_observation_bucket(number, r->entity_capacity)];
             while (*hash != slot) hash = &r->observation_links[*hash - 1].hash_next;
             *hash = link->hash_next;
             if (link->previous) r->observation_links[link->previous - 1].next = link->next;
@@ -122,7 +122,7 @@ bool qa_bot_runtime_update_entity(qa_bot_runtime *r, int32_t number,
         slot = r->observation_free;
         bot_observation_link *link = &r->observation_links[slot - 1];
         r->observation_free = link->next;
-        size_t hash = bucket(number, r->entity_capacity);
+        size_t hash = bot_runtime_observation_bucket(number, r->entity_capacity);
         *link = (bot_observation_link){.previous = r->observation_tail,
             .hash_next = r->observation_buckets[hash]};
         r->observation_buckets[hash] = slot;

@@ -49,5 +49,6 @@ bool bot_runtime_owners_create(qa_bot_runtime *, qa_error *);
 void bot_runtime_observations_clear(qa_bot_runtime *);
 void bot_runtime_observations_close(qa_bot_runtime *);
 const qa_bot_entity_info *bot_runtime_observation(const qa_bot_runtime *, int32_t);
+size_t bot_runtime_observation_bucket(int32_t, size_t);
 qa_bot_goal_services bot_runtime_goal_services(qa_bot_runtime *);
 #endif

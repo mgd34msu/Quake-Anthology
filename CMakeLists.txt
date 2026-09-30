@@ -529,6 +529,7 @@ add_library(qa_bots STATIC
     src/bots/movement/source.c
     src/bots/movement/special.c
     src/bots/movement/state.c
+    src/bots/movement/save.c
     src/bots/movement/view.c
     src/bots/navigation/core.c
     src/bots/navigation/info.c
@@ -542,6 +543,7 @@ add_library(qa_bots STATIC
     src/bots/runtime/core.c
     src/bots/runtime/handles.c
     src/bots/runtime/observations.c
+    src/bots/runtime/observations_save.c
     src/bots/runtime/setup.c
     src/bots/runtime/variables.c
     src/bots/source.c)
