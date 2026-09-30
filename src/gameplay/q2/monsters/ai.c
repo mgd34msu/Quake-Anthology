@@ -2943,13 +2943,20 @@ static bool chase_goal(q2m_context *context, qa_vec3 goal, float distance,
     y = swap;
   }
   const float directions[] = {x, y, old};
+  bool medic_blocked = monster->definition->species == Q2M_MEDIC_COMMANDER ||
+      (monster->definition->species == Q2M_MEDIC &&
+       (context->game->options.edition == QA_Q2_RERELEASE ||
+        context->game->options.product == QA_Q2_ROGUE));
   for (size_t index = 0; index < sizeof(directions) / sizeof(directions[0]);
        ++index) {
-    if (index == 2 && monster->definition->species == Q2M_STALKER) {
+    if (index == 2 &&
+        (monster->definition->species == Q2M_STALKER || medic_blocked)) {
       if (!q2m_refresh(context, error))
         return !q2m_alive(context);
       bool accepted;
-      if (!q2m_stalker_blocked(context, distance, &accepted, error))
+      if (!(medic_blocked
+                ? q2m_medic_blocked(context, distance, &accepted, error)
+                : q2m_stalker_blocked(context, distance, &accepted, error)))
         return false;
       if (!q2m_alive(context) || accepted) {
         *moved = true;

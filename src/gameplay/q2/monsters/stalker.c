@@ -297,18 +297,22 @@ static bool pounce(q2m_context *c, const qa_body_state *enemy, qa_error *error) 
     c->body.velocity.z = speed * sinf(chosen) + .5f * gravity * .1f;
     return q2m_write_body(c, true, error);
 }
-static bool blocked_shot(q2m_context *c, bool *accepted, qa_error *error) {
+bool q2m_blocked_tesla(q2m_context *c, bool *accepted, qa_error *error) {
     *accepted = false;
+    qa_actor_id target = c->monster->enemy;
+    if (!q2_actor_live(c->game, target) || !c->game->services.actor_traits)
+        return true;
     qa_builtin_actor_traits traits = {0};
-    if (c->game->services.actor_traits)
-        c->game->services.actor_traits(c->game->services.context, c->monster->enemy, &traits);
-    if (!q2m_alive(c) || !traits.player ||
+    bool described = c->game->services.actor_traits(c->game->services.context, target, &traits);
+    if (!q2m_alive(c) || !q2_actor_live(c->game, target) ||
+        !qa_actor_id_equal(c->monster->enemy, target) || !described || !traits.player ||
         q2m_random(c->game) < .25f + .05f * (float)c->game->options.skill)
         return true;
     bool visible;
-    if (!q2m_visible(c, c->monster->enemy, &visible, error))
+    if (!q2m_visible(c, target, &visible, error))
         return false;
-    if (!q2m_alive(c) || !visible)
+    if (!q2m_alive(c) || !q2_actor_live(c->game, target) ||
+        !qa_actor_id_equal(c->monster->enemy, target) || !visible)
         return true;
     const char *classname = qa_strings_cstr(qa_session_strings(c->game->services.session),
                                            traits.classname);
@@ -322,8 +326,8 @@ static bool blocked_shot(q2m_context *c, bool *accepted, qa_error *error) {
     *accepted = true;
     return true;
 }
-static bool blocked_platform(q2m_context *c, const qa_body_state *enemy, float distance,
-                             bool *accepted, qa_error *error) {
+bool q2m_blocked_platform(q2m_context *c, const qa_body_state *enemy, float distance,
+                          bool *accepted, qa_error *error) {
     *accepted = false;
     float self_min = c->body.origin.z + c->body.bounds.mins.z;
     float self_max = c->body.origin.z + c->body.bounds.maxs.z;
@@ -472,7 +476,7 @@ bool q2m_stalker_blocked(q2m_context *c, float distance, bool *accepted, qa_erro
         return true;
     bool rerelease = c->game->options.edition == QA_Q2_RERELEASE;
     if (!rerelease) {
-        if (!blocked_shot(c, accepted, error))
+        if (!q2m_blocked_tesla(c, accepted, error))
             return false;
         if (!q2m_alive(c) || *accepted)
             return true;
@@ -506,7 +510,7 @@ bool q2m_stalker_blocked(q2m_context *c, float distance, bool *accepted, qa_erro
         return false;
     if (!q2m_alive(c) || *accepted)
         return true;
-    if (!blocked_platform(c, &enemy, distance, accepted, error))
+    if (!q2m_blocked_platform(c, &enemy, distance, accepted, error))
         return false;
     if (!q2m_alive(c) || *accepted || !rerelease)
         return true;

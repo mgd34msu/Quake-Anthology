@@ -375,6 +375,7 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/monsters/corpse.c
     src/gameplay/q2/monsters/lifecycle.c
     src/gameplay/q2/monsters/medic.c
+    src/gameplay/q2/monsters/medic_blocked.c
     src/gameplay/q2/monsters/melee.c
     src/gameplay/q2/monsters/moves.c
     src/gameplay/q2/monsters/proboscis.c
