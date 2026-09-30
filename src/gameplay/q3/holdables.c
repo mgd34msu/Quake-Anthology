@@ -154,6 +154,9 @@ static bool portal_drop(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     qa_body_state body;
     if (!qa_world_body_read(game->options.services.world, actor, &body, error))
         return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
     qa_actor_collision collision = {.family = QA_COLLISION_Q3,
                                     .shape = QA_SHAPE_BOX,
                                     .contents =
@@ -161,6 +164,8 @@ static bool portal_drop(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
                                     .role = source ? QA_COLLISION_BOTH : QA_COLLISION_SOLID};
     qa_combat_state combat = {.health = 200, .mass = 200, .can_take_damage = true};
     body.origin = qa_physics_q3_snap(body.origin);
+    if (source)
+        body.angles = qa_v3(0, 0, 0);
     body.velocity = qa_v3(0, 0, 0);
     body.ground = (qa_actor_id){0};
     qa_builtin_spawn spawn = {.owner = game->options.owner,
@@ -184,12 +189,19 @@ static bool portal_drop(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     if (!qa_world_link(game->options.services.world, portal, NULL, error))
         return q3_rollback_spawn(game, portal, error);
     p = q3_actor_get(game, portal);
-    if (!p)
-        return q3_fail(error, "Q3 portal retired during admission");
+    if (!p || p->kind != Q3_ACTOR_PORTAL) {
+        q3_fail(error, "Q3 portal retired during admission");
+        return q3_rollback_spawn(game, portal, error);
+    }
     if (source && q3_actor_get(game, destination)) {
         qa_body_state dest;
         if (!qa_world_body_read(game->options.services.world, destination, &dest, error))
             return q3_rollback_spawn(game, portal, error);
+        p = q3_actor_get(game, portal);
+        if (!p || p->kind != Q3_ACTOR_PORTAL) {
+            q3_fail(error, "Q3 portal retired during admission");
+            return q3_rollback_spawn(game, portal, error);
+        }
         p->state.portal.fallback = dest.origin;
     }
     entry = q3_actor_get(game, actor);
@@ -240,6 +252,9 @@ bool q3_use_holdable(qa_q3_game *game, qa_actor_id actor, qa_q3_holdable holdabl
         return q3_fail(error, "holdable requires Team Arena");
     if (!q3_ranking_holdable(game, actor, holdable, error))
         return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
     switch (holdable) {
     case QA_Q3_H_NONE:
         return true;
@@ -252,10 +267,13 @@ bool q3_use_holdable(qa_q3_game *game, qa_actor_id actor, qa_q3_holdable holdabl
         if (game->options.hooks.objective_drop &&
             !game->options.hooks.objective_drop(game->options.hooks.context, actor, error))
             return false;
+        if (!q3_actor_get(game, actor))
+            return true;
         qa_vec3 origin, angles;
-        return game->options.hooks.teleport_destination(game->options.hooks.context, actor, &origin,
-                                                        &angles, error) &&
-               qa_q3_teleport(game, actor, origin, angles, error);
+        if (!game->options.hooks.teleport_destination(game->options.hooks.context, actor, &origin,
+                                                      &angles, error))
+            return false;
+        return !q3_actor_get(game, actor) || qa_q3_teleport(game, actor, origin, angles, error);
     }
     case QA_Q3_H_INVULNERABILITY:
         entry->state.player.invulnerability_until = q3_add_time(game->now_ms, 10000);

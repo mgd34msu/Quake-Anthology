@@ -172,8 +172,8 @@ bool qa_q3_item_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_item_state
     *out = entry->state.item;
     return true;
 }
-bool qa_q3_item_availability(qa_q3_game *game, qa_actor_id actor, bool available, int32_t respawn,
-                             int32_t expire, qa_error *error) {
+static bool item_availability(qa_q3_game *game, qa_actor_id actor, bool available, int32_t respawn,
+                               int32_t expire, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_ITEM)
         return q3_fail(error, "missing Q3 item lifecycle");
@@ -192,6 +192,15 @@ bool qa_q3_item_availability(qa_q3_game *game, qa_actor_id actor, bool available
         return true;
     return available ? qa_world_link(game->options.services.world, actor, NULL, error)
                      : qa_world_unlink(game->options.services.world, actor, error);
+}
+bool qa_q3_item_availability(qa_q3_game *game, qa_actor_id actor, bool available, int32_t respawn,
+                             int32_t expire, qa_error *error) {
+    if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid Q3 item lifecycle boundary");
+    ++game->observation_depth;
+    bool okay = item_availability(game, actor, available, respawn, expire, error);
+    --game->observation_depth;
+    return okay;
 }
 static qa_actor_id item_ground_actor(const qa_q3_game *game, const qa_trace_result *trace) {
     if (trace->hit == QA_TRACE_HIT_ACTOR)
@@ -391,10 +400,8 @@ bool q3_item_bind_existing(qa_q3_game *game, qa_actor_id actor,
         *placed = true;
     return true;
 }
-bool qa_q3_spawn_item(qa_q3_game *game, const qa_q3_item_spawn *input, qa_actor_id *out,
-                      qa_error *error) {
-    if (!game || !out || !item_spawn_valid(game, input))
-        return q3_fail(error, "invalid Q3 item spawn");
+static bool spawn_item(qa_q3_game *game, const qa_q3_item_spawn *input, qa_actor_id *out,
+                        qa_error *error) {
     qa_builtin_spawn spawn = {.owner = game->options.owner,
                               .body = {.origin = input->origin,
                                        .velocity = input->velocity,
@@ -406,6 +413,17 @@ bool qa_q3_spawn_item(qa_q3_game *game, const qa_q3_item_spawn *input, qa_actor_
         return q3_rollback_spawn(game, actor, error);
     *out = actor;
     return true;
+}
+bool qa_q3_spawn_item(qa_q3_game *game, const qa_q3_item_spawn *input, qa_actor_id *out,
+                      qa_error *error) {
+    if (!game || !out || game->source_restored || game->observation_depth == SIZE_MAX ||
+        !item_spawn_valid(game, input))
+        return q3_fail(error, "invalid Q3 item spawn boundary");
+    qa_q3_item_spawn captured = *input;
+    ++game->observation_depth;
+    bool okay = spawn_item(game, &captured, out, error);
+    --game->observation_depth;
+    return okay;
 }
 static bool item_observation(void *opaque,qa_actor_id pickup,qa_actor_id recipient,
                               qa_pickup_offer *offer,float *utility,bool *available,qa_error *error) {

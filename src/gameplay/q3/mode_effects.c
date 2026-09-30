@@ -2,6 +2,8 @@
 
 bool qa_q3_player_request_weapon(qa_q3_game *game, qa_actor_id actor,
                                   qa_q3_weapon weapon, qa_error *error) {
+    if (!game || game->source_restored)
+        return q3_fail(error, "Q3 player source restoration is pending or unavailable");
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER ||
         !(entry->state.player.selections & QA_Q3_ARSENAL) ||
@@ -20,6 +22,8 @@ bool qa_q3_player_request_weapon(qa_q3_game *game, qa_actor_id actor,
 
 static bool quad(qa_q3_game *game, qa_actor_id actor,
                    uint64_t duration_ns, bool stack, qa_error *error) {
+    if (!game || game->source_restored)
+        return q3_fail(error, "Q3 player source restoration is pending or unavailable");
     q3_actor *entry = q3_actor_get(game, actor);
     uint64_t milliseconds = duration_ns / UINT64_C(1000000);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER ||

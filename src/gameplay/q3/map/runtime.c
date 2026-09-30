@@ -60,8 +60,7 @@ static bool runtime_create(qa_q3_game *game, const qa_q3_map_options *options,
 }
 
 static bool level_state_idle(qa_q3_game *game, bool require_empty, qa_error *error) {
-    if (!qa_session_safe(game->options.services.session) ||
-        !qa_combat_idle(game->options.services.combat) ||
+    if (!qa_q3_destroy_ready(game) ||
         (require_empty &&
          qa_actors_count(qa_session_actors(game->options.services.session)) != 0))
         return q3_map_fail(error, "Q3 map transition requires a retired safe world");
@@ -98,7 +97,7 @@ static void level_state_reset(qa_q3_game *game, const qa_q3_map_options *options
 }
 
 bool qa_q3_maps_bind(qa_q3_game *game, const qa_q3_map_options *options, qa_error *error) {
-    if (!game || game->map || !provider_state_empty(game))
+    if (!game || game->source_restored || game->map || !provider_state_empty(game))
         return q3_map_fail(error, "invalid Q3 authored map binding");
     if (!level_state_idle(game, false, error))
         return false;
@@ -112,7 +111,7 @@ bool qa_q3_maps_bind(qa_q3_game *game, const qa_q3_map_options *options, qa_erro
 
 bool qa_q3_maps_reset(qa_q3_game *game, const qa_q3_map_options *options,
                       qa_error *error) {
-    if (!game || !game->map)
+    if (!game || game->source_restored || !game->map)
         return q3_map_fail(error, "invalid Q3 authored map reset");
     if (!level_state_idle(game, true, error))
         return false;
@@ -450,8 +449,8 @@ bool q3_map_allocate_generated(qa_q3_game *game, qa_q3_map_actor_state *source,
     return allocate_actor(game, source, collision, link, false, error);
 }
 
-bool qa_q3_map_use(qa_q3_game *game, qa_actor_id actor, qa_actor_id other,
-                   qa_actor_id activator, qa_error *error) {
+static bool map_use(qa_q3_game *game, qa_actor_id actor, qa_actor_id other,
+                      qa_actor_id activator, qa_error *error) {
     qa_q3_map_actor_state *state = q3_map_get(game, actor);
     if (!state)
         return true;
@@ -466,6 +465,15 @@ bool qa_q3_map_use(qa_q3_game *game, qa_actor_id actor, qa_actor_id other,
         state->kind <= QA_Q3_MAP_MOVER_PENDULUM)
         return state->usable ? qa_q3_use_mover(game, state->actor, activator, error) : true;
     return q3_map_misc_use(game, state, other, activator, error);
+}
+bool qa_q3_map_use(qa_q3_game *game, qa_actor_id actor, qa_actor_id other,
+                   qa_actor_id activator, qa_error *error) {
+    if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_map_fail(error, "invalid Q3 authored use boundary");
+    ++game->observation_depth;
+    bool okay = map_use(game, actor, other, activator, error);
+    --game->observation_depth;
+    return okay;
 }
 
 bool q3_map_frame_begin(qa_q3_game *game, qa_error *error) {
