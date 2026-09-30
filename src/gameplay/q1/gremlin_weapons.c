@@ -1,12 +1,22 @@
 #include "internal.h"
 #include <float.h>
 
-static bool ammo(qa_q1_game *g, q1_actor *entity, qa_q1_ammo item, float used, qa_error *error) {
+static bool ammo(qa_q1_game *g, q1_actor **source, qa_q1_ammo item, float used, qa_error *error) {
+    qa_actor_id id = (*source)->id;
     double count;
-    if (!qa_inventory_adjust(g->services.inventory, entity->id, g->ammo[item], -used, &count,
+    if (!qa_inventory_adjust(g->services.inventory, id, g->ammo[item], -used, &count,
                              error))
         return false;
-    entity->state.monster.source.gremlin.current_ammo = (float)count;
+    *source = q1_entity(g, id);
+    if (!*source)
+        return true;
+    if (!isfinite(count) || fabs(count) >= 0x1.ffffffp127) {
+        qa_error_set(error, QA_ERROR_FORMAT, id.slot,
+                     "Gremlin current ammo exceeds finite native storage");
+        return false;
+    }
+    (*source)->state.monster.source.gremlin.current_ammo = fabs(count) > FLT_MAX
+        ? (signbit(count) ? -FLT_MAX : FLT_MAX) : (float)count;
     return true;
 }
 bool q1_gremlin_has_ammo(q1_actor *entity) {
@@ -120,8 +130,10 @@ static bool aim(qa_q1_game *g, q1_actor *entity, float spread, qa_vec3 *out, qa_
     return true;
 }
 bool q1_gremlin_fire_nail(qa_q1_game *g, q1_actor *entity, bool laser, qa_error *error) {
-    if (!ammo(g, entity, laser ? QA_Q1_CELLS : QA_Q1_NAILS, 1, error))
+    if (!ammo(g, &entity, laser ? QA_Q1_CELLS : QA_Q1_NAILS, 1, error))
         return false;
+    if (!entity)
+        return true;
     entity->effects |= 2;
     if (!q1_sound(g, entity->id, "weapons/rocket1i.wav", 1, 1, error))
         return false;
@@ -138,8 +150,10 @@ bool q1_gremlin_fire_nail(qa_q1_game *g, q1_actor *entity, bool laser, qa_error 
                                        qa_vec_scale(direction, 1000), &shot, error);
 }
 static bool shotgun(qa_q1_game *g, q1_actor *entity, bool double_shot, qa_error *error) {
-    if (!ammo(g, entity, QA_Q1_SHELLS, double_shot ? 2 : 1, error))
+    if (!ammo(g, &entity, QA_Q1_SHELLS, double_shot ? 2 : 1, error))
         return false;
+    if (!entity)
+        return true;
     entity->effects |= 2;
     if (!q1_sound(g, entity->id, double_shot ? "weapons/shotgn2.wav" : "weapons/guncock.wav", 1, 1,
                   error))
@@ -157,8 +171,10 @@ static bool shotgun(qa_q1_game *g, q1_actor *entity, bool double_shot, qa_error 
                       double_shot ? QA_Q1_SUPER_SHOTGUN : QA_Q1_SHOTGUN, error);
 }
 static bool missile(qa_q1_game *g, q1_actor *entity, bool proximity, qa_error *error) {
-    if (!ammo(g, entity, QA_Q1_ROCKETS, 1, error))
+    if (!ammo(g, &entity, QA_Q1_ROCKETS, 1, error))
         return false;
+    if (!entity)
+        return true;
     entity->effects |= 2;
     if (!q1_sound(g, entity->id, proximity ? "weapons/grenade.wav" : "weapons/sgun1.wav", 1, 1,
                   error))
@@ -180,6 +196,7 @@ static bool missile(qa_q1_game *g, q1_actor *entity, bool proximity, qa_error *e
                                qa_vec_scale(direction, 1000), &shot, error);
 }
 bool q1_gremlin_lightning(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    qa_actor_id source = entity->id;
     if (entity->physics.water_type <= -3) {
         double cells = q1_ammo_count(g, entity->id, QA_Q1_CELLS);
         qa_inventory_entry entry = {
@@ -191,8 +208,15 @@ bool q1_gremlin_lightning(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                                error);
     }
     entity->effects |= 2;
-    if (!q1_monster_face(g, entity, error) || !ammo(g, entity, QA_Q1_CELLS, 2, error))
+    if (!q1_monster_face(g, entity, error))
         return false;
+    entity = q1_entity(g, source);
+    if (!entity)
+        return true;
+    if (!ammo(g, &entity, QA_Q1_CELLS, 2, error))
+        return false;
+    if (!entity)
+        return true;
     qa_body_state body;
     qa_vec3 direction;
     if (!qa_world_body_read(g->services.world, entity->id, &body, error) ||
@@ -218,6 +242,7 @@ bool q1_gremlin_lightning(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                              error);
 }
 bool q1_gremlin_weapon_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *error) {
+    qa_actor_id source = entity->id;
     *out = q1_gremlin_has_ammo(entity);
     if (!*out)
         return true;
@@ -235,6 +260,9 @@ bool q1_gremlin_weapon_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_err
         return true;
     if (!q1_monster_play(g, entity, frame, error))
         return false;
+    entity = q1_entity(g, source);
+    if (!entity)
+        return true;
     switch (weapon) {
     case QA_Q1_SHOTGUN:
     case QA_Q1_SUPER_SHOTGUN:
@@ -242,8 +270,12 @@ bool q1_gremlin_weapon_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_err
             return false;
         break;
     case QA_Q1_GRENADE:
-        if (!q1_monster_action(g, entity, Q1_ACTION_OGRE_NAIL4, error) ||
-            !ammo(g, entity, QA_Q1_ROCKETS, 1, error))
+        if (!q1_monster_action(g, entity, Q1_ACTION_OGRE_NAIL4, error))
+            return false;
+        entity = q1_entity(g, source);
+        if (!entity)
+            return true;
+        if (!ammo(g, &entity, QA_Q1_ROCKETS, 1, error))
             return false;
         break;
     case QA_Q1_ROCKET:
@@ -254,6 +286,9 @@ bool q1_gremlin_weapon_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_err
     default:
         break;
     }
+    entity = q1_entity(g, source);
+    if (!entity)
+        return true;
     if (g->options.edition == QA_Q1_RERELEASE || g->options.skill != 3)
         entity->state.monster.attack_finished = g->time + 1;
     entity->state.monster.refired = false;
