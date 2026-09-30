@@ -237,8 +237,8 @@ bool qa_q3_projectile_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_proj
     *out = entry->state.missile;
     return true;
 }
-bool qa_q3_projectile_steer(qa_q3_game *game, qa_actor_id actor, qa_vec3 velocity,
-                            qa_error *error) {
+static bool projectile_steer(qa_q3_game *game, qa_actor_id actor, qa_vec3 velocity,
+                             qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_MISSILE ||
         entry->state.missile.phase != Q3_MISSILE_FLIGHT || !qa_vec_finite(velocity))
@@ -246,9 +246,22 @@ bool qa_q3_projectile_steer(qa_q3_game *game, qa_actor_id actor, qa_vec3 velocit
     qa_body_state body;
     if (!qa_world_body_read(game->options.services.world, actor, &body, error))
         return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_MISSILE ||
+        entry->state.missile.phase != Q3_MISSILE_FLIGHT)
+        return true;
     entry->state.missile.trajectory.base = body.origin;
     entry->state.missile.trajectory.time_ms = game->now_ms;
     entry->state.missile.trajectory.delta = velocity;
     body.velocity = velocity;
     return qa_world_body_write(game->options.services.world, actor, &body, error);
+}
+bool qa_q3_projectile_steer(qa_q3_game *game, qa_actor_id actor, qa_vec3 velocity,
+                            qa_error *error) {
+    if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid Q3 projectile steering boundary");
+    ++game->observation_depth;
+    bool okay = projectile_steer(game, actor, velocity, error);
+    --game->observation_depth;
+    return okay;
 }

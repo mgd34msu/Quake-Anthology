@@ -835,7 +835,12 @@ bool q3_item_touch(qa_q3_game *game, qa_actor_id item_actor, qa_actor_id recipie
 }
 bool qa_q3_touch_item(qa_q3_game *game, qa_actor_id item_actor, qa_actor_id recipient,
                       bool *accepted, qa_error *error) {
-    return q3_item_touch(game, item_actor, recipient, false, accepted, error);
+    if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid Q3 item touch boundary");
+    ++game->observation_depth;
+    bool okay = q3_item_touch(game, item_actor, recipient, false, accepted, error);
+    --game->observation_depth;
+    return okay;
 }
 bool q3_item_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
@@ -931,10 +936,8 @@ bool q3_item_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     }
     return qa_world_body_write(game->options.services.world, actor, &body, error);
 }
-bool qa_q3_touch(qa_q3_game *game, const qa_touch_contact *contact, qa_error *error) {
+static bool touch_actor(qa_q3_game *game, const qa_touch_contact *contact, qa_error *error) {
     bool handled = false;
-    if (!game || !contact)
-        return q3_fail(error, "invalid Q3 touch");
     if (!q3_map_touch(game, contact, &handled, error))
         return false;
     if (handled)
@@ -950,10 +953,16 @@ bool qa_q3_touch(qa_q3_game *game, const qa_touch_contact *contact, qa_error *er
         game->now_ms >= entry->state.portal.activate_at) {
         if (!q3_is_player(game, contact->other))
             return true;
+        if (!q3_actor_get(game, contact->self) ||
+            !qa_actors_get(qa_session_actors(game->options.services.session), contact->other))
+            return true;
         qa_combat_state combat;
         if (!qa_combat_read(game->options.services.combat, contact->other, &combat, error))
             return false;
         if (combat.health <= 0)
+            return true;
+        if (!q3_actor_get(game, contact->self) ||
+            !qa_actors_get(qa_session_actors(game->options.services.session), contact->other))
             return true;
         if (game->options.hooks.objective_drop &&
             !game->options.hooks.objective_drop(game->options.hooks.context, contact->other, error))
@@ -965,17 +974,35 @@ bool qa_q3_touch(qa_q3_game *game, const qa_touch_contact *contact, qa_error *er
         q3_actor *destination = q3_actor_get(game, entry->state.portal.destination);
         if (!destination || destination->kind != Q3_ACTOR_PORTAL) {
             qa_vec3 fallback = entry->state.portal.fallback;
-            if (qa_vec_length(fallback) > 0 &&
+            if ((fallback.x != 0 || fallback.y != 0 || fallback.z != 0) &&
                 !qa_q3_teleport(game, contact->other, fallback, entry->state.portal.angles, error))
                 return false;
+            if (!q3_actor_get(game, contact->self) ||
+                !qa_actors_get(qa_session_actors(game->options.services.session), contact->other))
+                return true;
             return q3_damage(game, contact->other, contact->other, contact->other, QA_Q3_W_NONE, 18,
-                             8, 100000, qa_v3(0, 0, 0), qa_v3(0, 0, 0), false, NULL, error);
+                             12, 100000, qa_v3(0, 0, 0), qa_v3(0, 0, 0), false, NULL, error);
         }
+        qa_actor_id destination_actor = destination->actor;
         qa_body_state body;
-        if (!qa_world_body_read(game->options.services.world, destination->actor, &body, error))
+        if (!qa_world_body_read(game->options.services.world, destination_actor, &body, error))
             return false;
+        destination = q3_actor_get(game, destination_actor);
+        if (!destination || destination->kind != Q3_ACTOR_PORTAL ||
+            !q3_actor_get(game, contact->self) ||
+            !qa_actors_get(qa_session_actors(game->options.services.session), contact->other))
+            return true;
         return qa_q3_teleport(game, contact->other, body.origin, destination->state.portal.angles,
                               error);
     }
     return true;
+}
+bool qa_q3_touch(qa_q3_game *game, const qa_touch_contact *contact, qa_error *error) {
+    if (!game || !contact || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid Q3 touch boundary");
+    qa_touch_contact captured = *contact;
+    ++game->observation_depth;
+    bool okay = touch_actor(game, &captured, error);
+    --game->observation_depth;
+    return okay;
 }

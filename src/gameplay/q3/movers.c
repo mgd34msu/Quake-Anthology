@@ -2,7 +2,7 @@
 
 bool qa_q3_bind_mover(qa_q3_game *game, qa_actor_id actor, const qa_q3_mover_definition *definition,
                       qa_error *error) {
-    if (!game || !definition || actor.slot >= game->capacity ||
+    if (!game || game->source_restored || !definition || actor.slot >= game->capacity ||
         !qa_actors_get(qa_session_actors(game->options.services.session), actor) ||
         !qa_vec_finite(definition->first) || !qa_vec_finite(definition->second) ||
         definition->state_index < 0 || definition->state_index > 3)
@@ -32,6 +32,9 @@ static bool mover_read(void *context, qa_actor_id actor, qa_q3_mover_state *out)
     qa_body_state body;
     qa_error ignored = {0};
     if (!qa_world_body_read(game->options.services.world, actor, &body, &ignored))
+        return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry)
         return false;
     *out = (qa_q3_mover_state){.kind = QA_Q3_MOVER_NATIVE_FIXED,
                                .position = {.type = QA_TRAJECTORY_STATIONARY, .base = body.origin},
@@ -157,7 +160,8 @@ bool q3_mover_match_team(qa_q3_game *game, qa_actor_id leader, int32_t state, in
     }
     return true;
 }
-bool qa_q3_use_mover(qa_q3_game *game, qa_actor_id actor, qa_actor_id activator, qa_error *error) {
+static bool use_mover(qa_q3_game *game, qa_actor_id actor, qa_actor_id activator,
+                       qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_MOVER)
         return q3_fail(error, "missing Q3 mover");
@@ -191,6 +195,14 @@ bool qa_q3_use_mover(qa_q3_game *game, qa_actor_id actor, qa_actor_id activator,
                              q3_sub_time(game->now_ms, q3_sub_time(total, partial)), error))
         return false;
     return q3_map_mover_used(game, actor, before, after, error);
+}
+bool qa_q3_use_mover(qa_q3_game *game, qa_actor_id actor, qa_actor_id activator, qa_error *error) {
+    if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid Q3 mover action boundary");
+    ++game->observation_depth;
+    bool okay = use_mover(game, actor, activator, error);
+    --game->observation_depth;
+    return okay;
 }
 static bool mover_action(void *context, qa_q3_mover_action action, qa_actor_id actor,
                          qa_actor_id other, int32_t now, qa_error *error) {
