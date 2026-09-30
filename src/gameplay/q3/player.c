@@ -525,16 +525,21 @@ static bool drop_weapon(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     torso(&entry->state.player, 9);
     return true;
 }
-static void raise_weapon(qa_q3_game *game, qa_actor_id actor, qa_q3_player_state *player) {
-    player->weapon = q3_owns_weapon(game, actor, player->requested_weapon)
-                         ? player->requested_weapon
-                         : QA_Q3_W_NONE;
+static bool raise_weapon(qa_q3_game *game, qa_actor_id actor, qa_q3_player_state *player) {
+    qa_q3_weapon requested = player->requested_weapon;
+    bool owned = q3_owns_weapon(game, actor, requested);
+    q3_actor *entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return false;
+    player = &entry->state.player;
+    player->weapon = owned ? requested : QA_Q3_W_NONE;
     player->weapon_phase = QA_Q3_RAISING;
     player->weapon_time_ms = q3_add_time(player->weapon_time_ms, 250);
     torso(player, 10);
+    return true;
 }
-bool qa_q3_arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_controls *command,
-                        float elapsed_ms, qa_error *error) {
+static bool arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_controls *command,
+                         float elapsed_ms, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER || !command || !isfinite(elapsed_ms) ||
         elapsed_ms < 0 || elapsed_ms > INT_MAX - 1024.0f)
@@ -546,6 +551,10 @@ bool qa_q3_arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_control
     qa_combat_state combat;
     if (!qa_combat_read(game->options.services.combat, actor, &combat, error))
         return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
+    player = &entry->state.player;
     if (combat.health > 0 && !attack && !use)
         player->respawned = false;
     if (!attack && !command->grapple_independent) {
@@ -598,13 +607,18 @@ bool qa_q3_arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_control
     }
     if (player->external_slot == QA_Q3_SLOT_RESUME_REQUESTED) {
         if (player->weapon_time_ms <= 0) {
-            raise_weapon(game, actor, player);
+            if (!raise_weapon(game, actor, player))
+                return true;
             player->external_slot = QA_Q3_SLOT_ACTIVE;
         }
         return true;
     }
     bool switch_weapon = player->requested_weapon != player->weapon &&
                          q3_owns_weapon(game, actor, player->requested_weapon);
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
+    player = &entry->state.player;
     if (player->external_slot == QA_Q3_SLOT_HOLSTER_REQUESTED && player->weapon_time_ms <= 0 &&
         (player->weapon_phase == QA_Q3_READY || player->weapon_phase == QA_Q3_FIRING) &&
         !switch_weapon) {
@@ -626,7 +640,7 @@ bool qa_q3_arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_control
     if (player->weapon_time_ms > 0)
         return true;
     if (player->weapon_phase == QA_Q3_DROPPING) {
-        raise_weapon(game, actor, player);
+        (void)raise_weapon(game, actor, player);
         return true;
     }
     if (player->weapon_phase == QA_Q3_RAISING) {
@@ -657,6 +671,10 @@ bool qa_q3_arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_control
     int32_t ammo;
     if (!q3_ammo_read(game, actor, player->weapon, &ammo, error))
         return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
+    player = &entry->state.player;
     if (!ammo) {
         player->weapon_time_ms = q3_add_time(player->weapon_time_ms, 500);
         return q3_player_event(game, actor, 21, 0, error);
@@ -668,6 +686,9 @@ bool qa_q3_arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_control
                                  -1, &stored, error))
             return false;
     }
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
     if (!q3_player_event(game, actor, 23, 0, error))
         return false;
     entry = q3_actor_get(game, actor);
@@ -688,6 +709,15 @@ bool qa_q3_arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_control
         add = (int32_t)((float)add / 1.3f);
     player->weapon_time_ms = q3_add_time(player->weapon_time_ms, add);
     return true;
+}
+bool qa_q3_arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_controls *command,
+                        float elapsed_ms, qa_error *error) {
+    if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid Q3 arsenal action boundary");
+    ++game->observation_depth;
+    bool okay = arsenal_step(game, actor, command, elapsed_ms, error);
+    --game->observation_depth;
+    return okay;
 }
 bool qa_q3_player_command(qa_q3_game *game, qa_actor_id actor, const qa_movement_command *command,
                           float elapsed_ms, qa_error *error) {
@@ -1049,8 +1079,8 @@ bool qa_q3_movement_environment(qa_q3_game *game, qa_actor_id actor, qa_movement
     }
     return true;
 }
-bool qa_q3_prepare_movement(qa_q3_game *game, qa_actor_id actor, qa_movement_input *input,
-                            qa_error *error) {
+static bool prepare_movement(qa_q3_game *game, qa_actor_id actor, qa_movement_input *input,
+                             qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER || !input ||
         !qa_actor_id_equal(input->actor, actor))
@@ -1089,6 +1119,15 @@ bool qa_q3_prepare_movement(qa_q3_game *game, qa_actor_id actor, qa_movement_inp
         input->view_offset = player->cutscene.view_offset;
     }
     return true;
+}
+bool qa_q3_prepare_movement(qa_q3_game *game, qa_actor_id actor, qa_movement_input *input,
+                            qa_error *error) {
+    if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid Q3 movement preparation boundary");
+    ++game->observation_depth;
+    bool okay = prepare_movement(game, actor, input, error);
+    --game->observation_depth;
+    return okay;
 }
 static bool expand_invulnerability(qa_q3_game *game, qa_actor_id actor,
                                    qa_error *error) {

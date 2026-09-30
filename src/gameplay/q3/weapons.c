@@ -144,15 +144,27 @@ bool q3_gauntlet(qa_q3_game *game, qa_actor_id shooter, bool *hit, qa_error *err
     if ((trace.surface_flags & Q3_SURF_NOIMPACT) || trace.hit != QA_TRACE_HIT_ACTOR ||
         !target_state(game, trace.actor, &state))
         return true;
+    q3_actor *entry = q3_actor_get(game, shooter);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
     *hit = true;
-    if (player_target(game, trace.actor) &&
+    bool flesh = player_target(game, trace.actor);
+    entry = q3_actor_get(game, shooter);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER ||
+        !qa_actors_get(qa_session_actors(game->options.services.session), trace.actor))
+        return true;
+    if (flesh &&
         !impact_event(game, shooter, QA_Q3_W_GAUNTLET, &trace, trace.end, false, error))
         return false;
-    q3_actor *entry = q3_actor_get(game, shooter);
+    entry = q3_actor_get(game, shooter);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
     if (entry->state.player.powerups[QA_Q3_P_QUAD] && !q3_player_event(game, shooter, 61, 0, error))
         return false;
+    entry = q3_actor_get(game, shooter);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER ||
+        !qa_actors_get(qa_session_actors(game->options.services.session), trace.actor))
+        return true;
     return q3_damage(game, trace.actor, shooter, shooter, QA_Q3_W_GAUNTLET, 2, 0,
                      truncf(50 * attack.factor), attack.forward, trace.end, false, NULL, error);
 }
@@ -203,16 +215,25 @@ static bool lightning(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry 
     }
     return true;
 }
+static qa_vec3 source_normalize(qa_vec3 value) {
+    float length = (float)sqrt((double)qa_vec_dot(value, value));
+    return length == 0 ? value : qa_vec_scale(value, q3_source_float_divide(1, length));
+}
 static qa_vec3 perpendicular(qa_vec3 direction) {
     qa_vec3 axis = qa_v3(1, 0, 0);
-    float smallest = fabsf(direction.x);
-    if (fabsf(direction.y) < smallest) {
+    float minimum = 1;
+    if (fabsf(direction.x) < minimum)
+        minimum = fabsf(direction.x);
+    if (fabsf(direction.y) < minimum) {
         axis = qa_v3(0, 1, 0);
-        smallest = fabsf(direction.y);
+        minimum = fabsf(direction.y);
     }
-    if (fabsf(direction.z) < smallest)
+    if (fabsf(direction.z) < minimum)
         axis = qa_v3(0, 0, 1);
-    return qa_vec_normalize(qa_vec_sub(axis, qa_vec_scale(direction, qa_vec_dot(axis, direction))));
+    float inverse = q3_source_float_divide(1, qa_vec_dot(direction, direction));
+    float distance = q3_source_float_multiply(qa_vec_dot(axis, direction), inverse);
+    qa_vec3 normal = qa_vec_scale(direction, inverse);
+    return source_normalize(qa_vec_sub(axis, qa_vec_scale(normal, distance)));
 }
 static float seeded_crandom(uint32_t *seed) {
     *seed = *seed * UINT32_C(69069) + 1;
@@ -225,7 +246,7 @@ static bool shotgun(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry at
     if (!q3_event(game, shooter, (qa_actor_id){0}, QA_BUILTIN_SHOT, 54, (int32_t)seed,
                   attack.muzzle, direction, qa_v3(0, 0, 0), error))
         return false;
-    qa_vec3 forward = qa_vec_normalize(direction), right = perpendicular(forward),
+    qa_vec3 forward = source_normalize(direction), right = perpendicular(forward),
             up = qa_vec_cross(forward, right);
     bool credited = false;
     for (unsigned pellet = 0; pellet < 11; ++pellet) {
