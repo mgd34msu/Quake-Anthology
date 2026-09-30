@@ -234,6 +234,8 @@ bool qa_network_q3_state(qa_network_runtime *runtime, qa_net_client_id id, qa_q3
     if (!p || !out) return qa_network_fail(error, "Missing Q3 state snapshot output");
     *out = *qa_q3_server_peer_state(p->source); return true;
 }
+const qa_q3_server_peer *qa_network_q3_server_view(qa_network_runtime *runtime, qa_net_client_id id)
+{ q3_runtime_peer *p = get(runtime, id, NULL); return p ? p->source : NULL; }
 bool qa_network_q3_reconnect_channel(qa_network_runtime *runtime, qa_net_client_id id,
     int32_t challenge, uint16_t qport, qa_error *error)
 {

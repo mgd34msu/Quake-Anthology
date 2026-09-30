@@ -34,6 +34,7 @@ size_t qa_q3_channel_remaining(const qa_q3_channel *c) { return c && c->pending 
 uint32_t qa_q3_channel_outgoing(const qa_q3_channel *c) { return c->outgoing; }
 uint32_t qa_q3_channel_incoming(const qa_q3_channel *c) { return c->incoming; }
 qa_q3_role qa_q3_channel_role(const qa_q3_channel *c) { return c->role; }
+uint16_t qa_q3_channel_qport(const qa_q3_channel *c) { return c->qport; }
 bool qa_q3_channel_checkpoint(const qa_q3_channel *c, qa_net_writer *writer)
 {
     if (!c || !writer) return writer && qa_net_writer_fail(writer, "Missing Q3 channel checkpoint owner");

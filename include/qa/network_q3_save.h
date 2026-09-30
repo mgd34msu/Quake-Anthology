@@ -8,6 +8,7 @@
 bool qa_q3_channel_checkpoint(const qa_q3_channel *, qa_net_writer *);
 bool qa_q3_channel_restore(qa_net_reader *, qa_q3_channel **);
 qa_q3_role qa_q3_channel_role(const qa_q3_channel *);
+uint16_t qa_q3_channel_qport(const qa_q3_channel *);
 
 /* Capture at a drained runtime boundary. The complete source command/player/
  * entity history and reliable/fragment state survive; parser output scratch

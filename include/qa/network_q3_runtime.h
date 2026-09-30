@@ -36,6 +36,7 @@ bool qa_network_q3_pure(qa_network_runtime *, qa_net_client_id,
     const qa_q3_pure_server *, const qa_q3_tokens *, qa_q3_pure_result *, qa_error *);
 /* Copies the actual original peer state. No borrowed peer pointer escapes. */
 bool qa_network_q3_state(qa_network_runtime *, qa_net_client_id, qa_q3_server_state *, qa_error *);
+const qa_q3_server_peer *qa_network_q3_server_view(qa_network_runtime *, qa_net_client_id);
 /* Only after source admission authenticates reconnect and shared endpoint
  * rebinding succeeds. Recreates wire sequence/XOR state, retaining the shared
  * client and seat. Caller must restart/signon before admitting commands. */

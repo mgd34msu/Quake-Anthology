@@ -1,5 +1,6 @@
 /* Donor: network/q3/server.ts, snapshot-store.ts and configstrings.ts. */
 #include "server_private.h"
+#include "qa/network_q3_save.h"
 #include <limits.h>
 #include <stdio.h>
 
@@ -40,6 +41,9 @@ void qa_q3_server_peer_destroy(qa_q3_server_peer *p) {
 }
 qa_q3_server_state *qa_q3_server_peer_state(qa_q3_server_peer *p) { return &p->state; }
 const qa_q3_identity *qa_q3_server_peer_identity(const qa_q3_server_peer *p) { return &p->identity; }
+qa_q3_product qa_q3_server_peer_product(const qa_q3_server_peer *p) { return p->product; }
+uint16_t qa_q3_server_peer_qport(const qa_q3_server_peer *p) { return qa_q3_channel_qport(p->channel); }
+const qa_q3_gamestate *qa_q3_server_peer_gamestate_view(const qa_q3_server_peer *p) { return &p->gamestate; }
 bool qa_q3_server_peer_rebind(qa_q3_server_peer *p, const qa_net_address *remote, qa_error *e) {
     if (!p || !remote || !qa_net_address_equal(&p->remote, remote, false)) return fail(e, QA_ERROR_ARGUMENT, "Q3 NAT rebind changes host");
     p->remote = *remote; return true;

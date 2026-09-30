@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "guest_q3_private.h"
+#include "map_players_private.h"
 #include "qa/application_network.h"
 #include "qa/physics.h"
 #include <limits.h>
@@ -11,6 +12,24 @@ static qa_bytes selected_arsenal(qa_application *application, qa_actor_id actor)
     application_provider *provider = application_provider_for(application, actor, QA_ROLE_ARSENAL, "");
     const char *instance = provider && provider->launch ? provider->launch->selection.instance : NULL;
     return instance ? (qa_bytes){(const uint8_t *)instance, strlen(instance)} : (qa_bytes){0};
+}
+
+bool qa_application_network_player_next(const qa_application *application, size_t *cursor,
+    qa_application_network_player *out)
+{
+    if (!application || !application->players || !cursor || !out) return false;
+    const struct application_player_roster *roster = application->players;
+    while (*cursor < roster->count) {
+        const application_player_record *record = &roster->records[(*cursor)++];
+        if (!record->remote) continue;
+        *out = (qa_application_network_player){.client = record->remote_client,
+            .seat = record->remote_seat, .actor = record->actor,
+            .application_seat = record->seat, .client_slot = record->client_slot,
+            .source_slot = record->source_slot, .retiring = record->retiring,
+            .deferred = record->deferred, .source_begin_pending = record->source_begin_pending};
+        return true;
+    }
+    return false;
 }
 
 bool qa_application_network_controlled(qa_application *application, qa_net_client_id client,

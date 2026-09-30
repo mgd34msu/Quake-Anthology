@@ -17,6 +17,18 @@ bool qa_application_network_resolve(qa_application *, const qa_net_client *,
     qa_unified_controlled_actor *, qa_error *);
 bool qa_application_network_detach(qa_application *, const qa_net_client *, qa_error *);
 
+typedef struct qa_application_network_player {
+    qa_net_client_id client;
+    qa_net_seat_id seat;
+    qa_actor_id actor;
+    uint32_t application_seat, client_slot, source_slot;
+    bool retiring, deferred, source_begin_pending;
+} qa_application_network_player;
+/* Reads the actual remote roster, including a retained retirement. It neither
+ * admits a player nor calls its source owner. The cursor is a physical row. */
+bool qa_application_network_player_next(const qa_application *, size_t *cursor,
+    qa_application_network_player *);
+
 /* A caller owns this observation storage; snapshot.entities points into it.
  * The producer reads complete original records from a qualified Q3 game host.
  * Builtin/native mixed projections require their own complete wire producer
