@@ -87,6 +87,9 @@ struct qa_modes {
     uint64_t next_serial, random;
     uint64_t attack_sequence;
     unsigned callback_depth;
+    qa_mode_objective_checkpoint *restored_objectives;
+    size_t restored_objective_count;
+    bool source_restored;
     qa_builtin_actor_snapshot players_order, observations;
 };
 
@@ -159,5 +162,7 @@ bool mode_relic_spawn_all(qa_modes *, mode_instance *, qa_error *);
 bool mode_team_info_frame(qa_modes *, mode_instance *, qa_error *);
 bool mode_update_ghosts(qa_modes *, mode_instance *, qa_error *);
 void mode_stat_add(mode_instance *, int32_t *, int32_t);
+bool mode_checkpoint_restore_source(qa_modes *, const qa_modes_checkpoint *, qa_error *);
+bool mode_items_reconnect(qa_modes *, qa_actor_id, qa_error *);
 
 #endif

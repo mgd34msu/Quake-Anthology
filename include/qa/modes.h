@@ -285,7 +285,7 @@ typedef struct qa_modes_hooks {
     bool (*player_view)(void *, qa_actor_id, qa_vec3 *);
     bool (*select_weapon)(void *, qa_actor_id, qa_item_id, qa_error *);
     bool (*use_item)(void *, qa_actor_id, qa_item_id, qa_error *);
-    bool (*give_body_armor)(void *, qa_actor_id, qa_error *);
+    bool (*give_body_armor)(void *, qa_mode_id, qa_actor_id, qa_error *);
     bool (*give_quad)(void *, qa_actor_id, qa_game_family, uint64_t duration_ns, qa_error *);
     bool (*spawn_monster)(void *, qa_mode_id, qa_string_id classname, qa_vec3 origin,
                           qa_vec3 angles, qa_actor_id enemy, qa_actor_id *out, qa_error *);
@@ -404,6 +404,8 @@ bool qa_modes_player_death_component(qa_modes *, qa_mode_id, const qa_damage_out
                                      bool apply_ordinary_score, const qa_mode_frag *ordinary, qa_error *);
 bool qa_modes_player_hurt(qa_modes *, qa_mode_id, const qa_damage_request *, qa_error *);
 bool qa_modes_player_respawn(qa_modes *, qa_mode_id, qa_actor_id, qa_error *);
+/* Actual authored manager retained by one configured Horde instance. */
+bool qa_modes_horde_manager_actor(qa_modes *, qa_mode_id, qa_actor_id *, qa_error *);
 bool qa_modes_rogue_tag_score(qa_modes *, qa_mode_id, qa_actor_id victim, qa_actor_id attacker,
                               int32_t *points, qa_error *);
 typedef enum qa_mode_admin_action {

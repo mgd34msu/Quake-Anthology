@@ -3,7 +3,7 @@
 void qa_modes_checkpoint_free(qa_modes_checkpoint *saved) {
     if (!saved)
         return;
-    for (size_t i = 0; i < saved->mode_count; ++i) {
+    for (size_t i = 0; saved->modes && i < saved->mode_count; ++i) {
         qa_mode_checkpoint *v = &saved->modes[i];
         free(v->members);
         free(v->ghosts);
@@ -319,7 +319,8 @@ static bool restore_instance(qa_modes *m, const qa_mode_checkpoint *saved, qa_er
         memcpy(v->items, saved->items, v->item_count * sizeof(*v->items));
     return mode_horde_restore(m, v, saved->horde, e);
 }
-bool qa_modes_checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved, qa_error *e) {
+static bool checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved,
+                                bool reconnect, qa_error *e) {
     if (!m || m->callback_depth || !saved || saved->version != 3 ||
         saved->player_count > m->actor_capacity || saved->mode_count > m->mode_capacity ||
         saved->object_count > m->actor_capacity ||
@@ -383,7 +384,7 @@ bool qa_modes_checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved, 
             if (qa_actor_id_equal(saved->players[j].value.actor, player->value.actor))
                 return mode_fail(e, "duplicate saved match player");
     }
-    for (size_t i = 0; i < saved->external_objective_count; ++i) {
+    for (size_t i = 0; reconnect && i < saved->external_objective_count; ++i) {
         const qa_mode_objective_checkpoint *expected = &saved->external_objectives[i];
         bool found = false;
         for (uint32_t j = 0; j < m->objective_capacity; ++j) {
@@ -446,6 +447,21 @@ bool qa_modes_checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved, 
             if (qa_actor_id_equal(saved->objects[j].actor, o->actor))
                 return mode_fail(e, "duplicate saved objective actor");
     }
+    if (!reconnect) {
+        if (m->source_restored || m->restored_objectives)
+            return mode_fail(e, "mode source continuation is already restored");
+        qa_mode_objective_checkpoint *expected = saved->external_objective_count
+            ? malloc(saved->external_objective_count * sizeof(*expected)) : NULL;
+        if (saved->external_objective_count && !expected) {
+            qa_error_set(e, QA_ERROR_MEMORY, 0, "retaining restored mode objective bindings");
+            return false;
+        }
+        if (saved->external_objective_count)
+            memcpy(expected, saved->external_objectives, saved->external_objective_count * sizeof(*expected));
+        m->restored_objectives = expected;
+        m->restored_objective_count = saved->external_objective_count;
+        m->source_restored = true;
+    }
     m->random = saved->random;
     m->attack_sequence = saved->attack_sequence;
     for (size_t i = 0; i < saved->generation_count; ++i)
@@ -486,9 +502,10 @@ bool qa_modes_checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved, 
                            .global_animation = s->global_animation,
                            .tag_stage = s->tag_stage,
                            .active = true};
-        if (!mode_object_bind_objective(m, o, e))
+        if (reconnect && !mode_object_bind_objective(m, o, e))
             return false;
     }
+    if (!reconnect) return true;
     if (!qa_builtin_players(&m->options.services, &m->players_order, e) ||
         !qa_builtin_observations(&m->options.services, &m->observations, e))
         return false;
@@ -498,5 +515,44 @@ bool qa_modes_checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved, 
     for (size_t i = 0; i < saved->player_count; ++i)
         if (!qa_modes_publish_items(m, saved->players[i].value.actor, e))
             return false;
+    return true;
+}
+bool qa_modes_checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved, qa_error *e) {
+    return checkpoint_restore(m, saved, true, e);
+}
+bool mode_checkpoint_restore_source(qa_modes *m, const qa_modes_checkpoint *saved, qa_error *e) {
+    return checkpoint_restore(m, saved, false, e);
+}
+bool qa_modes_reconnect(qa_modes *m, qa_error *e) {
+    if (!m || m->callback_depth || !qa_session_safe(m->options.services.session) ||
+        !qa_world_idle(m->options.services.world) || !qa_combat_idle(m->options.services.combat))
+        return mode_fail(e, "mode reconnect requires idle shared owners");
+    if (!m->source_restored) return true;
+    for (size_t i = 0; i < m->restored_objective_count; ++i) {
+        const qa_mode_objective_checkpoint *expected = &m->restored_objectives[i];
+        bool found = false;
+        for (uint32_t j = 0; j < m->objective_capacity; ++j) {
+            const mode_objective *o = &m->objectives[j];
+            if (o->active && o->binding.id == expected->id && o->binding.owner == expected->owner &&
+                o->binding.mode.slot == expected->mode.slot &&
+                o->binding.mode.generation == expected->mode.generation &&
+                o->binding.campaign_gate == expected->campaign_gate && o->binding.bot_goal == expected->bot_goal)
+                found = true;
+        }
+        if (!found) return mode_fail(e, "source objective must bind before mode reconnect");
+    }
+    for (uint32_t i = 0; i < m->actor_capacity; ++i) {
+        mode_object *object = &m->objects[i];
+        if (object->active && !object->objective.serial && !mode_object_bind_objective(m, object, e))
+            return false;
+        mode_player *player = &m->players[i];
+        if (player->active && !mode_items_reconnect(m, player->value.actor, e)) return false;
+    }
+    if (!qa_builtin_players(&m->options.services, &m->players_order, e) ||
+        !qa_builtin_observations(&m->options.services, &m->observations, e)) return false;
+    for (uint32_t i = 0; i < m->mode_capacity; ++i)
+        if (m->instances[i].active && !qa_modes_rank(m, m->instances[i].id, e)) return false;
+    free(m->restored_objectives); m->restored_objectives = NULL;
+    m->restored_objective_count = 0; m->source_restored = false;
     return true;
 }

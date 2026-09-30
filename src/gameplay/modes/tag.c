@@ -13,7 +13,7 @@ static bool tag_bonus(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_error
         return false;
     if (!m->options.hooks.give_body_armor)
         return mode_fail(e, "Tag requires the admitted Q2 body-armor pickup provider");
-    if (!m->options.hooks.give_body_armor(m->options.hooks.context, actor, e))
+    if (!m->options.hooks.give_body_armor(m->options.hooks.context, v->id, actor, e))
         return false;
     return mode_event(m, v, QA_MODE_TAG_CHANGED, actor, (qa_actor_id){0}, v->tag, 0, 1, 0, e);
 }

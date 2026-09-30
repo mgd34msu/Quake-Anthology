@@ -263,6 +263,7 @@ void qa_modes_destroy(qa_modes *m) {
     free(m->objects);
     free(m->instances);
     free(m->objectives);
+    free(m->restored_objectives);
     free(m);
 }
 bool qa_modes_add(qa_modes *m, const qa_mode_rules *rules, qa_mode_id *out, qa_error *e) {
@@ -639,7 +640,7 @@ bool qa_modes_source_award(qa_modes *m, qa_mode_id id, qa_actor_id actor,
                             int32_t source_award, qa_error *e) {
     mode_instance *v = mode_get(m, id);
     mode_member *p = mode_member_get(m, v, actor);
-    if (!v || !p || v->value.rules.source < QA_MODE_Q3 ||
+    if (!v || !p ||
         (source_award != 11 && source_award != 12))
         return mode_fail(e, "invalid source mode award");
     mode_stat_add(v, source_award == 11 ? &p->stats.defenses : &p->stats.assists, 1);

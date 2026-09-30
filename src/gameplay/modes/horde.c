@@ -166,6 +166,14 @@ bool qa_modes_horde_read(qa_modes *m, qa_mode_id id, qa_horde_view *out, qa_erro
     *out = h->value;
     return true;
 }
+bool qa_modes_horde_manager_actor(qa_modes *m, qa_mode_id id, qa_actor_id *out, qa_error *e) {
+    mode_instance *v = mode_get(m, id);
+    horde_state *h = v ? v->horde : NULL;
+    if (!h || !out || !mode_live(m, h->options.manager))
+        return mode_fail(e, "Horde manager is absent or retired");
+    *out = h->options.manager;
+    return true;
+}
 bool qa_modes_horde_toggle_point(qa_modes *m, qa_mode_id id, qa_actor_id point, qa_error *e) {
     mode_instance *v = mode_get(m, id);
     horde_state *h = v ? v->horde : NULL;

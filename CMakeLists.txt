@@ -457,6 +457,7 @@ add_library(qa_modes STATIC
     src/gameplay/modes/damage.c
     src/gameplay/modes/deathball.c
     src/gameplay/modes/equipment.c
+    src/gameplay/modes/save.c
     src/gameplay/modes/flags.c
     src/gameplay/modes/give.c
     src/gameplay/modes/horde.c

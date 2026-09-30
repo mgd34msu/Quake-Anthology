@@ -128,5 +128,15 @@ typedef struct qa_modes_checkpoint {
 bool qa_modes_checkpoint_capture(qa_modes *, qa_modes_checkpoint *, qa_error *);
 bool qa_modes_checkpoint_restore(qa_modes *, const qa_modes_checkpoint *, qa_error *);
 void qa_modes_checkpoint_free(qa_modes_checkpoint *);
+bool qa_modes_capture(qa_modes *, qa_buffer *, qa_error *);
+/* Restore private continuation after shared actors and native source owners,
+ * before shared stores. Source score/team bindings resolve through the hook.
+ * External objective owners and catalogs reconnect after shared restoration. */
+bool qa_modes_restore_bytes(qa_modes *, qa_bytes, qa_error *);
+/* After exact shared stores and external objective owners restore. Catalog
+ * resolvers adopt private saved leases before this validates reconnection. */
+bool qa_modes_reconnect(qa_modes *, qa_error *);
+bool qa_modes_inventory_group(qa_modes *, qa_actor_id, uint64_t saved_serial,
+    const qa_inventory_source_group *, qa_inventory_items *, qa_error *);
 
 #endif
