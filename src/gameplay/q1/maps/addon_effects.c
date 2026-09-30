@@ -20,6 +20,12 @@ static bool particles(qa_q1_game *g, qa_actor_id actor, qa_vec3 origin, qa_vec3 
     return emit(g, &event, NULL, error);
 }
 static float signed_random(qa_q1_game *g) { return q1_random(g) * 2 - 1; }
+static bool effect_float(double value, float *out, qa_error *error) {
+    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127)
+        return q1_map_fail(error, "Q1 authored effect exceeds finite float range");
+    *out = fabs(value) > FLT_MAX ? (value < 0 ? -FLT_MAX : FLT_MAX) : (float)value;
+    return true;
+}
 static bool particle_step(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_actor_id id = e->id;
     q1_map_kind kind = e->map->kind;
@@ -38,8 +44,9 @@ static bool particle_step(qa_q1_game *g, q1_actor *e, qa_error *error) {
         direction = qa_v3(x * body.velocity.x, y * body.velocity.y, up * body.velocity.z);
         x = signed_random(g);
         y = signed_random(g);
-        origin.x += size.x * x;
-        origin.y += size.y * y;
+        if (!effect_float((double)origin.x + (double)size.x * x, &origin.x, error) ||
+            !effect_float((double)origin.y + (double)size.y * y, &origin.y, error))
+            return false;
         color = 234;
         count = 2;
     } else if (kind == Q1_MAP_ADDON_PARTICLE_TELE) {
@@ -59,7 +66,7 @@ static bool particle_step(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (!particles(g, id, origin, direction, color, count, error))
         return false;
     e = effect(g, id);
-    return !e || q1_map_schedule(g, e, wait + delay * q1_random(g),
+    return !e || q1_map_schedule(g, e, (double)wait + (double)delay * q1_random(g),
                                   Q1_MAP_ADDON_PARTICLE_TICK, error);
 }
 static bool shake_step(qa_q1_game *g, q1_actor *e, qa_error *error) {
@@ -76,7 +83,13 @@ static bool shake_step(qa_q1_game *g, q1_actor *e, qa_error *error) {
     q1_actor_snapshot *players;
     if (!q1_snapshot_players(g, &players, error))
         return false;
-    float intensity = damage * (g->time < ramp_end ? (float)((g->time - start) / (wait / 3)) : 1);
+    float intensity = damage;
+    if (!finished && g->time < ramp_end &&
+        (wait == 0 || !effect_float((double)damage * ((g->time - start) / ((double)wait / 3)),
+                                    &intensity, error))) {
+        players->borrowed = false;
+        return wait == 0 ? q1_map_fail(error, "Q1 screenshake has zero ramp duration") : false;
+    }
     bool ok = true;
     for (size_t i = 0; ok && i < players->count && effect(g, id); ++i) {
         qa_actor_id player = players->actors[i];
@@ -326,19 +339,22 @@ bool q1_map_addon_effect_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
                 return true;
         }
     }
-    return e->map->use_enabled || q1_map_schedule(g, e, e->wait + e->delay * q1_random(g),
+    return e->map->use_enabled || q1_map_schedule(g, e, (double)e->wait + (double)e->delay * q1_random(g),
                                                   Q1_MAP_ADDON_PARTICLE_TICK, error);
 }
 bool q1_map_addon_effect_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_error *error) {
     qa_actor_id id = e->id;
     switch (e->map->kind) {
-    case Q1_MAP_ADDON_SHAKE:
-        e->map->active_until = g->time + e->wait;
-        e->delay = (float)(g->time + e->wait / 3);
+    case Q1_MAP_ADDON_SHAKE: {
+        float until;
+        if (!effect_float(g->time + e->wait, &until, error)) return false;
+        e->map->active_until = until;
+        if (!effect_float(g->time + (double)e->wait / 3, &e->delay, error)) return false;
         if (!(e->spawnflags & 1) && !q1_sound_resource(g, id, e->map->noise[0], 0, 1, 1, error))
             return false;
         e = effect(g, id);
         return !e || q1_map_schedule(g, e, .05, Q1_MAP_ADDON_SHAKE_TICK, error);
+    }
     case Q1_MAP_ADDON_SOUND:
         return !q1_map_text(g, e->map->noise[0]) ||
                q1_sound_resource(g, id, e->map->noise[0], 0, 1, 1, error);
