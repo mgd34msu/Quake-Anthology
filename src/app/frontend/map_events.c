@@ -1,6 +1,9 @@
 #include "internal.h"
 #include "save_private.h"
 #include "audio_inventory.h"
+#include "event_restore.h"
+#include "qa/persistence_content.h"
+#include "qa/scene_resource_save.h"
 #include <stdio.h>
 
 enum { FRONTEND_STYLES = 256 };
@@ -82,6 +85,111 @@ struct frontend_event_state {
     qa_actor_owner last_step_owner;
     frontend_event_view views[QA_INPUT_LOCAL_SEATS];
 };
+typedef struct event_owner_plan {
+    qa_actor_owner owner;
+    qa_audio_family family;
+    uint64_t view;
+    bool sounds;
+} event_owner_plan;
+static bool event_topology_fields(qa_source_save_io *io, qa_application *application,
+    bool *present, event_owner_plan **plans, size_t *count)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    uint8_t magic[4] = {'Q','F','E','T'}; uint32_t version = 1;
+    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFET", 4) ||
+        !qa_source_save_u32(io, &version) || version != 1 || !qa_source_save_bool(io, present) ||
+        !qa_source_save_count(io, count, reading ? io->input.size / 22 : SIZE_MAX / sizeof(**plans)) ||
+        (!*present && *count)) return false;
+    if (reading && *count) {
+        *plans = calloc(*count, sizeof(**plans));
+        if (!*plans) return frontend_fail(io->error, QA_ERROR_MEMORY, "Retaining actual event owner topology");
+    }
+    qa_strings *strings = qa_session_strings(qa_application_session(application));
+    for (size_t i = 0; i < *count; ++i) {
+        event_owner_plan *plan = &(*plans)[i]; uint32_t family = plan->family;
+        char *key = !reading && plan->owner <= UINT32_MAX ? (char *)qa_strings_cstr(strings, (qa_string_id)plan->owner) : NULL;
+        if (!reading && (!key || !plan->owner)) return false;
+        bool ok = frontend_save_text(io, &key);
+        if (reading) {
+            plan->owner = key ? qa_strings_find(strings, (qa_bytes){(const uint8_t *)key, strlen(key)}) : 0;
+            free(key);
+        }
+        if (!ok || !plan->owner || !qa_source_save_u32(io, &family) || family > QA_AUDIO_Q3 ||
+            !qa_source_save_u64(io, &plan->view) || !plan->view || !qa_source_save_bool(io, &plan->sounds)) return false;
+        plan->family = (qa_audio_family)family;
+        for (size_t j = 0; j < i; ++j)
+            if (plan->view == (*plans)[j].view ||
+                (plan->owner == (*plans)[j].owner && plan->family == (*plans)[j].family)) return false;
+    }
+    return true;
+}
+bool frontend_event_topology_checkpoint(const qa_frontend *frontend, qa_buffer *out, qa_error *error)
+{
+    if (!frontend || !frontend->application || frontend->stepping || !out || out->data || out->size)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Event topology capture requires actual idle owners and empty output");
+    qa_application_content_graph *graph = qa_application_content_graph_read(frontend->application);
+    if (!graph) return frontend_fail(error, QA_ERROR_ARGUMENT, "Event topology requires the actual content graph lease");
+    size_t count = frontend_event_audio_owner_count(frontend);
+    event_owner_plan *plans = count ? calloc(count, sizeof(*plans)) : NULL;
+    if (count && !plans) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating actual event owner metadata");
+    const frontend_event_resources *entry = frontend->events ? frontend->events->resources : NULL; bool ok = true;
+    for (size_t i = 0; ok && i < count; ++i, entry = entry->next) {
+        uint64_t view = qa_application_content_view_id(graph, entry->files);
+        ok = view && entry->images && qa_scene_resources_files(entry->images) == entry->files &&
+            (entry->sounds != NULL) == (frontend->audio != NULL) &&
+            (!entry->sounds || qa_audio_bank_files(entry->sounds) == entry->files) &&
+            qa_application_provider_instance(frontend->application, entry->owner);
+        plans[i] = (event_owner_plan){entry->owner, entry->family, view, entry->sounds != NULL};
+    }
+    qa_source_save_io io = {0}; bool present = frontend->events != NULL;
+    ok = ok && qa_source_save_writer(&io, qa_application_session(frontend->application), error) &&
+        event_topology_fields(&io, frontend->application, &present, &plans, &count) && qa_source_save_finish(&io, out);
+    qa_source_save_dispose(&io); free(plans);
+    if (!ok && error && error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "Event resource topology is not source-qualified");
+    return ok;
+}
+bool frontend_event_prepare_restored(qa_frontend *frontend, qa_bytes bytes, qa_error *error)
+{
+    if (!frontend || !frontend->application || frontend->stepping || frontend->events)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Event topology prepare requires an empty detached owner");
+    qa_source_save_io io = {0}; bool present = false; event_owner_plan *plans = NULL; size_t count = 0;
+    bool ok = qa_source_save_reader(&io, qa_application_session(frontend->application), bytes, error) &&
+        event_topology_fields(&io, frontend->application, &present, &plans, &count) && qa_source_save_finish(&io, NULL);
+    qa_application_content_graph *graph = qa_application_content_graph_read(frontend->application);
+    if (ok && !graph) ok = frontend_fail(error, QA_ERROR_ARGUMENT, "Event restoration requires the actual saved content graph");
+    for (size_t i = 0; ok && i < count; ++i)
+        ok = qa_application_content_view(graph, plans[i].view) && plans[i].sounds == (frontend->audio != NULL);
+    if (ok && present) {
+        frontend->events = calloc(1, sizeof(*frontend->events));
+        if (!frontend->events) ok = frontend_fail(error, QA_ERROR_MEMORY, "Creating detached event continuation owner");
+    }
+    frontend_event_resources **link = ok && frontend->events ? &frontend->events->resources : NULL;
+    for (size_t i = 0; ok && i < count; ++i) {
+        *link = calloc(1, sizeof(**link));
+        if (!*link) { ok = frontend_fail(error, QA_ERROR_MEMORY, "Creating actual event resource owner"); break; }
+        frontend_event_resources *entry = *link;
+        entry->owner = plans[i].owner; entry->family = plans[i].family;
+        ok = qa_application_content_claim_view(graph, plans[i].view, &entry->files, error);
+        if (ok) { entry->images = qa_scene_resources_create(entry->files, error); ok = entry->images != NULL; }
+        if (ok && plans[i].sounds) ok = qa_audio_bank_create(entry->files, &entry->sounds, error);
+        link = &entry->next;
+    }
+    qa_source_save_dispose(&io); free(plans);
+    if (!ok && error && error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "Saved event topology is not admitted by the candidate");
+    return ok;
+}
+bool frontend_event_topology_ready(const qa_frontend *frontend, qa_error *error)
+{
+    if (!frontend || !frontend->application || frontend->stepping)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Event topology qualification requires idle actual providers");
+    for (const frontend_event_resources *entry = frontend->events ? frontend->events->resources : NULL; entry; entry = entry->next)
+        if (!entry->files || !entry->images || qa_scene_resources_files(entry->images) != entry->files ||
+            (entry->sounds != NULL) != (frontend->audio != NULL) ||
+            (entry->sounds && qa_audio_bank_files(entry->sounds) != entry->files) ||
+            !qa_application_provider_instance(frontend->application, entry->owner))
+            return frontend_fail(error, QA_ERROR_FORMAT, "Actual event resource/provider owners are not completely bound");
+    return true;
+}
 size_t frontend_event_audio_owner_count(const qa_frontend *frontend)
 {
     size_t count = 0;
