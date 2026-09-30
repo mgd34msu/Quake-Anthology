@@ -1,12 +1,12 @@
 # TypeScript engine review
 
-Reviewed September 26, 2026. Source: `../quake-typescript` at `5d6c6e311db6749c0b8f8ffca53ebe2bae69b24e`, including its existing working-tree changes. The review made no edits to that checkout. The C destination had no commits or engine implementation.
+Reviewed September 26, 2026. Source: [Quake Anthology TS](https://github.com/mgd34msu/Quake-Anthology-TS/tree/5d6c6e311db6749c0b8f8ffca53ebe2bae69b24e), including its existing working-tree changes. The review made no edits to that checkout. The C destination had no commits or engine implementation.
 
 This is a cross-subsystem review with bounded execution checks. It does not establish exhaustive gameplay, campaign, device, or original-engine parity. The [implementation plan](plan.md) incorporates the findings.
 
 ## Product intent
 
-The source documentation establishes a unified engine with the complete useful feature union of all the games. The central instructions are in [project-plan.md](../../quake-typescript/docs/project-plan.md), especially lines 39–82 and 104–160, and the [common/extension boundary](../../quake-typescript/docs/functional-targets/README.md), lines 11–22.
+The source documentation establishes a unified engine with the complete useful feature union of all the games. The central instructions are in [project-plan.md](https://github.com/mgd34msu/Quake-Anthology-TS/blob/5d6c6e311db6749c0b8f8ffca53ebe2bae69b24e/docs/project-plan.md), especially lines 39–82 and 104–160, and the [common/extension boundary](https://github.com/mgd34msu/Quake-Anthology-TS/blob/5d6c6e311db6749c0b8f8ffca53ebe2bae69b24e/docs/functional-targets/README.md), lines 11–22.
 
 One session owns world identity, bodies, spatial queries, clocks, callbacks, combat, inventory, and transitions. Shared services serve every game. Formats and protocols have adapters. Intentional gameplay differences remain selectable behaviors. This architecture permits individual players and actors to combine sources without giving several engines authority over the same world.
 
@@ -16,7 +16,7 @@ Interoperability extends beyond gameplay. CPU and GL rendering, bots/navigation,
 
 Classic selections retain classic behavior. Rerelease features remain available through their selected behavior, rather than silently changing an all-classic preset. Shared infrastructure must preserve these differences while offering the combined capabilities.
 
-The user's current C request supersedes historical TypeScript-only execution and tooling restrictions. Ordinary C `float` is welcome where it preserves required behavior. Existing implementation bugs and incidental TypeScript arithmetic are not compatibility requirements. Original source and retail observations help adjudicate fidelity, while Anthology's declared behavior defines intentional extensions. This is consistent with [verification-plan.md](../../quake-typescript/docs/verification-plan.md), lines 7–13.
+The user's current C request supersedes historical TypeScript-only execution and tooling restrictions. Ordinary C `float` is welcome where it preserves required behavior. Existing implementation bugs and incidental TypeScript arithmetic are not compatibility requirements. Original source and retail observations help adjudicate fidelity, while Anthology's declared behavior defines intentional extensions. This is consistent with [verification-plan.md](https://github.com/mgd34msu/Quake-Anthology-TS/blob/5d6c6e311db6749c0b8f8ffca53ebe2bae69b24e/docs/verification-plan.md), lines 7–13.
 
 ## Architecture and strengths
 
@@ -40,7 +40,7 @@ These are the accumulated interoperability knowledge worth retaining. Their curr
 
 The Q2 paths called native execute original x86 or x64 machine code through TypeScript CPU emulation. The rerelease path maps a Windows x64 PE into a private guest address space and initializes its CPU, ABI, and Windows runtime. See `src/app/bootstrap/simulation/rerelease-guest-source.ts:26` and `:49`.
 
-Historical evidence in [tick-execution.md](../../quake-typescript/docs/tick-execution.md), lines 66–80, attributes 84.69% of a sampled workload to interpreter execution, guest memory, and ABI conversion. That profile belongs to an earlier revision. It explains the likely cause but is not a fresh measurement or a promised C speedup.
+Historical evidence in [tick-execution.md](https://github.com/mgd34msu/Quake-Anthology-TS/blob/5d6c6e311db6749c0b8f8ffca53ebe2bae69b24e/docs/tick-execution.md), lines 66–80, attributes 84.69% of a sampled workload to interpreter execution, guest memory, and ABI conversion. That profile belongs to an earlier revision. It explains the likely cause but is not a fresh measurement or a promised C speedup.
 
 A fresh probe ran the current checkout through the actual dedicated `Application`, loading complete retail `base1`, selecting Q2 movement/character and Q3 weapons, and admitting one idle client. It executed 100 active ticks, with the last 50 used for the following statistics. All 495 entity records remained present.
 
@@ -100,7 +100,7 @@ The C contract should reject a legacy export that cannot represent the session a
 
 Current target status records 22 of 23 accepted functional targets, with native execution performance open. It explicitly limits claims about full campaigns, every combination, physical devices, native peers, and pixel parity. Some older plans and guides still describe obsolete checkpoints. Their product requirements remain useful; their completion counts are not current evidence.
 
-The formal registry in `verification/suites.json` contains eight unbound gameplay obligations with null commands and schedules. [The verifier README](../../quake-typescript/tools/verify/README.md) says no engine runs through that registry. Focused tests and local integration receipts supply much of the actual evidence. Reuse useful checks, then connect the relevant ones to each C implementation increment. Do not spend the opening phase building another exhaustive framework before playable code.
+The formal registry in `verification/suites.json` contains eight unbound gameplay obligations with null commands and schedules. [The verifier README](https://github.com/mgd34msu/Quake-Anthology-TS/blob/5d6c6e311db6749c0b8f8ffca53ebe2bae69b24e/tools/verify/README.md) says no engine runs through that registry. Focused tests and local integration receipts supply much of the actual evidence. Reuse useful checks, then connect the relevant ones to each C implementation increment. Do not spend the opening phase building another exhaustive framework before playable code.
 
 The review ran these bounded checks:
 

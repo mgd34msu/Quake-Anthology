@@ -1,8 +1,8 @@
 # C implementation plan
 
-This plan ports `../quake-typescript` into a native C engine. It carries forward the unified Anthology product and the full interoperability intent established in its documentation and reaffirmed by the project owner. Original sources in `../qsrc` are fidelity references. Assets in `../qfiles` remain external inputs.
+This plan ports [Quake Anthology TS](https://github.com/mgd34msu/Quake-Anthology-TS) into a native C engine. It carries forward the unified Anthology product and the full interoperability intent established in its documentation and reaffirmed by the project owner. Original game sources provide fidelity references. Game assets remain external inputs.
 
-Baseline implementation is underway. The [dependency graph](dependency-graph.md) and [machine-readable plan](dependencies.json) carry the 41 tasks published to vibecheck-jev. The immediate [recovery audit](audit/README.md) checks all prior work against the original task criteria after discovery that ledger judgments were not running. Local progress commits are authorized. The owner will add a remote later.
+Baseline implementation is underway. The [dependency graph](dependency-graph.md) and [machine-readable plan](dependencies.json) carry the 41 tasks published to vibecheck-jev. The immediate [recovery audit](audit/README.md) checks all prior work against the original task criteria after discovery that ledger judgments were not running. Progress commits are published to [Quake Anthology](https://github.com/mgd34msu/Quake-Anthology).
 
 For this session, use GPT-6.1 Sol for all agents and subagents, with medium, high, or xhigh effort. Keep a soft cap of eight agents across the full tree, including the coordinator. Temporary excess is allowed when a concrete task needs it. The bounded review and its confirmed repairs are recorded in `docs/audit/review-20260929.md`; baseline implementation resumed on September 29 under the original feature criteria. Continue source review during implementation.
 
