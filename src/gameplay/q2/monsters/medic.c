@@ -523,7 +523,8 @@ static bool cable(q2m_context *c, qa_error *error) {
     }
     if (!q2m_alive(c))
         return true;
-    target_id = rogue(c) ? c->monster->enemy : target_id;
+    if (rerelease(c))
+        target_id = c->monster->enemy;
     if (!q2_actor_live(c->game, target_id))
         return true;
     qa_body_state body;
@@ -701,9 +702,7 @@ bool q2m_medic_callback(q2m_context *c, const char *name, bool *handled,
     if (!strcmp(name, "medic_hook_launch"))
         return sound(c, "medic/medatck2.wav", "medic_commander/medatck2c.wav", 1, 1, error);
     if (!strcmp(name, "medic_hook_retract")) {
-        bool ok = rerelease(c) ? q2m_sound(c, "medic/medatck5.wav", 1, 1, error)
-                               : sound(c, "medic/medatck5.wav", "medic_commander/medatck5a.wav",
-                                         1, 1, error);
+        bool ok = q2m_sound(c, "medic/medatck5.wav", 1, 1, error);
         if (!ok || !q2m_alive(c))
             return ok;
         if (!rogue(c)) {
