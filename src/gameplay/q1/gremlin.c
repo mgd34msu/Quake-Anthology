@@ -287,14 +287,18 @@ bool q1_gremlin_pain(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_e
                            m->source.gremlin.stolen ? "gremlin_gunpain1" : "gremlin_pain1", error);
 }
 bool q1_gremlin_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_error *error) {
+    qa_actor_id id = entity->id;
     bool has_weapon = false;
     for (unsigned i = 0; i < QA_Q1_WEAPON_COUNT; ++i) {
         if (i == QA_Q1_AXE || i == QA_Q1_SHOTGUN || i == QA_Q1_MJOLNIR)
             continue;
         qa_inventory_entry entry;
-        if (qa_inventory_entry_read(g->services.inventory, entity->id, g->weapons[i], &entry,
-                                    NULL) &&
-            entry.count > 0) {
+        bool present = qa_inventory_entry_read(g->services.inventory, id, g->weapons[i],
+                                                &entry, NULL);
+        entity = q1_entity(g, id);
+        if (!entity)
+            return true;
+        if (present && entry.count > 0) {
             has_weapon = true;
             break;
         }
@@ -302,15 +306,31 @@ bool q1_gremlin_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_er
     if (has_weapon) {
         if (!q1_gremlin_backpack(g, entity, error))
             return false;
+        entity = q1_entity(g, id);
+        if (!entity)
+            return true;
         entity->state.monster.source.gremlin.stolen = false;
     }
     qa_body_state body, target = {0};
-    if (!qa_world_body_read(g->services.world, entity->id, &body, error))
+    if (!qa_world_body_read(g->services.world, id, &body, error))
         return false;
-    (void)qa_world_body_read(g->services.world, attacker, &target, NULL);
+    if (!q1_entity(g, id))
+        return true;
     qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
-    float facing = qa_vec_dot(qa_vec_normalize(qa_vec_sub(target.origin, body.origin)), g->forward),
-          health = q1_health(g, entity->id);
+    qa_vec3 forward = g->forward;
+    if (attacker.registry)
+        (void)qa_world_body_read(g->services.world, attacker, &target, NULL);
+    if (!q1_entity(g, id))
+        return true;
+    if (!qa_world_body_read(g->services.world, id, &body, error))
+        return false;
+    if (!q1_entity(g, id))
+        return true;
+    float facing = qa_vec_dot(qa_vec_normalize(qa_vec_sub(target.origin, body.origin)), forward),
+          health = q1_health(g, id);
+    entity = q1_entity(g, id);
+    if (!entity)
+        return true;
     if (health < -35)
         return gib(g, entity, health, error);
     if (facing > 0.7f && q1_random(g) < 0.5f && (entity->physics.flags & QA_PHYSICS_ONGROUND))
