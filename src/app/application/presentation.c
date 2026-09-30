@@ -1,5 +1,6 @@
 #include "guest_q3_private.h"
 #include "guest_native_q2_private.h"
+#include "native_q3_wire.h"
 #include "qa/text.h"
 
 static application_provider *selected(qa_application *app, uint32_t seat, qa_launch_role role)
@@ -36,6 +37,68 @@ static bool client_ready(q3g_role *role)
     const qa_q3_host_client_services *client = &role->client_services;
     return client->gamestate != NULL &&
            client->gamestate(client->context) != NULL;
+}
+
+bool application_q3_publish_local_snapshots(qa_application *app, qa_error *error)
+{
+    if (!app || app->destroy_requested || app->state != QA_APPLICATION_RUNNING ||
+        (app->operation != APPLICATION_IDLE && app->operation != APPLICATION_ADVANCING &&
+         app->operation != APPLICATION_CONFIGURING) ||
+        !qa_session_safe(app->session) || qa_session_faulted(app->session) ||
+        !qa_world_idle(app->world))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Local Q3 snapshots require the completed source frame");
+    qa_application_network_q3_frame *frame = NULL;
+    bool ok = true;
+    for (application_provider *provider = app->live_providers;
+         provider && ok; provider = provider->next_live) {
+        struct application_q3_guest *engine = q3g_engine(provider);
+        if (!provider->attached || !provider->constructed || !engine ||
+            !engine->map_ready || !engine->game || !engine->game->initialized) continue;
+        bool local[64] = {0};
+        for (q3g_role *role = engine->roles; role; role = role->next)
+            if (role->kind == QA_QVM_CGAME && role->ready && !role->retired &&
+                role->local_client && role->client < 64) local[role->client] = true;
+        for (uint32_t slot = 0; ok && slot < 64; ++slot) {
+            q3g_client *client = &engine->clients[slot];
+            if (!local[slot] || !client->connected || !client->begun ||
+                client->pending_retirement) continue;
+            if (client->snapshot_sequence == INT32_MAX) {
+                ok = application_fail(error, QA_ERROR_FORMAT,
+                                      "Local Q3 snapshot message sequence is exhausted");
+                break;
+            }
+            uint32_t parse_cursor = 0;
+            if (client->has_snapshot) {
+                const qa_q3_snapshot *latest = &client->snapshots[
+                    (uint32_t)client->snapshot_sequence & (QA_Q3_PACKET_BACKUP - 1)].value;
+                if (!latest->valid || latest->message_number != client->snapshot_sequence) {
+                    ok = application_fail(error, QA_ERROR_FORMAT,
+                                          "Local Q3 latest snapshot owner is invalid");
+                    break;
+                }
+                parse_cursor = (uint32_t)latest->parse_entities_number +
+                               (uint32_t)latest->entity_count;
+            }
+            if (!frame) {
+                frame = malloc(sizeof(*frame));
+                if (!frame) {
+                    ok = application_fail(error, QA_ERROR_MEMORY,
+                                          "Allocating local Q3 snapshot observation");
+                    break;
+                }
+            }
+            ok = application_q3_wire_host_snapshot(provider, slot,
+                client->snapshot_sequence + 1, client->reliable.sequence, 0, frame, error);
+            if (ok) {
+                frame->snapshot.parse_entities_number = parse_cursor;
+                ok = application_q3_guest_publish_snapshot(provider, slot,
+                    &frame->snapshot, 0, error);
+            }
+        }
+    }
+    free(frame);
+    return ok;
 }
 
 static bool native_q2_hud(application_provider *provider)
