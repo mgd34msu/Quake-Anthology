@@ -262,6 +262,10 @@ bool qa_native_checkpoint_restore(qa_native_instance *instance,
     if (instance->entry_observers || instance->write_observers)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native restore requires detached source entry and write observers");
+    for (size_t i = 0; i < instance->region_count; ++i)
+        if (instance->regions[i].first)
+            return native_fail(error, QA_ERROR_ARGUMENT, i,
+                               "native restore requires detached source region observers");
     if (instance->backend == QA_NATIVE_BACKEND_RUNNER) {
         instance->checkpointing = true;
         bool ok = native_runner_checkpoint_restore(instance, checkpoint, part, error);

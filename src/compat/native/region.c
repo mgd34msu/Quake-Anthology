@@ -92,13 +92,14 @@ bool qa_native_bind_region(qa_native_instance *instance, uint32_t region_id,
     return true;
 }
 
-void qa_native_unbind_region(qa_native_region_binding *binding) {
+bool qa_native_remove_region(qa_native_region_binding *binding, qa_error *error) {
     if (!binding || !binding->region)
-        return;
+        return true;
     qa_native_instance *instance = binding->instance;
     if (instance && (instance->active_depth || instance->callback_depth ||
                      instance->checkpointing || instance->destroying))
-        return;
+        return native_fail(error, QA_ERROR_ARGUMENT, 0,
+                           "active native region removal retains its callback lifetime");
     native_region_slot *region = binding->region;
     if (binding->previous)
         binding->previous->next = binding->next;
@@ -110,6 +111,10 @@ void qa_native_unbind_region(qa_native_region_binding *binding) {
         region->last = binding->previous;
     memset(binding, 0, sizeof(*binding));
     free(binding);
+    return true;
+}
+void qa_native_unbind_region(qa_native_region_binding *binding) {
+    qa_native_remove_region(binding, NULL);
 }
 
 bool native_runner_region_event(qa_native_instance *instance, const qa_native_region_event *event,

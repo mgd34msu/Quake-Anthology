@@ -514,6 +514,9 @@ bool qa_native_bind_region(qa_native_instance *instance, uint32_t region_id,
                            qa_native_region_fn callback, void *context,
                            qa_native_region_binding **out, qa_error *error);
 void qa_native_unbind_region(qa_native_region_binding *binding);
+/* Successful removal consumes the binding. An active/failed removal retains
+ * it and its callback context so its actual owner can retry at a safe point. */
+bool qa_native_remove_region(qa_native_region_binding *binding, qa_error *error);
 
 /* Entry point for the target-built helper executable. Its stdin/stdout are the
  * framed binary transport and must not be used for logging. */
