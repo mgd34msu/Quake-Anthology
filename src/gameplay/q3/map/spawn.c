@@ -498,7 +498,7 @@ static bool mover_class(const char *name) {
     return false;
 }
 
-bool qa_q3_map_spawn(qa_q3_game *game, const qa_q3_map_fields *fields,
+static bool map_spawn(qa_q3_game *game, const qa_q3_map_fields *fields,
                      qa_q3_map_spawn_result *out, qa_error *error) {
     if (out)
         *out = (qa_q3_map_spawn_result){0};
@@ -585,6 +585,17 @@ bool qa_q3_map_spawn(qa_q3_game *game, const qa_q3_map_fields *fields,
     return true;
 }
 
+bool qa_q3_map_spawn(qa_q3_game *game, const qa_q3_map_fields *fields,
+                     qa_q3_map_spawn_result *out, qa_error *error) {
+    if (!game || !fields || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_map_fail(error, "invalid Q3 authored spawn boundary");
+    qa_q3_map_fields captured = *fields;
+    ++game->observation_depth;
+    bool result = map_spawn(game, &captured, out, error);
+    --game->observation_depth;
+    return result;
+}
+
 static int compare_ordinal(const void *left, const void *right) {
     const qa_q3_map_actor_state *const *a = left, *const *b = right;
     if ((*a)->ordinal != (*b)->ordinal)
@@ -592,7 +603,7 @@ static int compare_ordinal(const void *left, const void *right) {
     return (*a)->actor.slot < (*b)->actor.slot ? -1 : (*a)->actor.slot > (*b)->actor.slot;
 }
 
-bool qa_q3_maps_post_spawn(qa_q3_game *game, qa_error *error) {
+static bool maps_post_spawn(qa_q3_game *game, qa_error *error) {
     if (!game || !game->map || !game->map->world_spawned || game->map->post_spawned)
         return q3_map_fail(error, "invalid Q3 map post-spawn phase");
     size_t count = 0;
@@ -662,4 +673,13 @@ bool qa_q3_maps_post_spawn(qa_q3_game *game, qa_error *error) {
             return false;
     }
     return true;
+}
+
+bool qa_q3_maps_post_spawn(qa_q3_game *game, qa_error *error) {
+    if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_map_fail(error, "invalid Q3 authored post-spawn boundary");
+    ++game->observation_depth;
+    bool result = maps_post_spawn(game, error);
+    --game->observation_depth;
+    return result;
 }

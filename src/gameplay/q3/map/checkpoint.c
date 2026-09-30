@@ -210,8 +210,13 @@ bool qa_q3_map_checkpoint_capture(const qa_q3_game *game,
         !qa_session_safe(game->options.services.session) ||
         !qa_combat_idle(game->options.services.combat))
         return q3_map_fail(error, "Q3 authored checkpoint requires a session safe point");
-    qa_q3_map_checkpoint saved = {.version = 2,
+    qa_q3_map_checkpoint saved = {.version = 3,
                                   .registered_items = game->map->registered_items,
+                                  .motd = game->map->options.motd,
+                                  .random_seed = game->map->options.random_seed,
+                                  .start_time_ms = game->map->options.start_time_ms,
+                                  .restarted = game->map->options.restarted,
+                                  .warmup = game->map->options.warmup,
                                   .gravity = game->physics.gravity,
                                   .world_spawned = game->map->world_spawned,
                                   .post_spawned = game->map->post_spawned,
@@ -241,7 +246,8 @@ bool qa_q3_map_checkpoint_capture(const qa_q3_game *game,
 static bool checkpoint_restore(qa_q3_game *game,
                                 const qa_q3_map_checkpoint *saved,
                                 bool reconnect, qa_error *error) {
-    if (!game || !game->map || !saved || saved->version != 2 ||
+    if (!game || !game->map || !saved || saved->version != 3 ||
+        (saved->motd && !qa_strings_cstr(qa_session_strings(game->options.services.session), saved->motd)) ||
         !item_registry_valid(game, saved->registered_items) ||
         !isfinite(saved->gravity) ||
         saved->actor_count > game->map->capacity ||
@@ -278,6 +284,11 @@ static bool checkpoint_restore(qa_q3_game *game,
         free(game->map->actors);
         game->map->actors = candidate;
         game->map->registered_items = saved->registered_items;
+        game->map->options.motd = saved->motd;
+        game->map->options.random_seed = saved->random_seed;
+        game->map->options.start_time_ms = saved->start_time_ms;
+        game->map->options.restarted = saved->restarted;
+        game->map->options.warmup = saved->warmup;
         game->physics.gravity = saved->gravity;
         game->map->world_spawned = saved->world_spawned;
         game->map->post_spawned = saved->post_spawned;
@@ -347,6 +358,11 @@ static bool checkpoint_restore(qa_q3_game *game,
     }
     free(prior);
     game->map->registered_items = saved->registered_items;
+    game->map->options.motd = saved->motd;
+    game->map->options.random_seed = saved->random_seed;
+    game->map->options.start_time_ms = saved->start_time_ms;
+    game->map->options.restarted = saved->restarted;
+    game->map->options.warmup = saved->warmup;
     game->physics.gravity = saved->gravity;
     game->map->world_spawned = saved->world_spawned;
     game->map->post_spawned = saved->post_spawned;

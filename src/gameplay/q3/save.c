@@ -237,8 +237,10 @@ static bool map_actor(qa_source_save_io *io, qa_q3_map_actor_checkpoint *p)
 static bool map_checkpoint(qa_source_save_io *io, qa_q3_game *game, qa_q3_map_checkpoint *p)
 {
     FIELD(u32, p->version);
-    if (p->version != 2) return save_fail(io, "unsupported Q3 authored continuation");
+    if (p->version != 3) return save_fail(io, "unsupported Q3 authored continuation");
     FIELD(u64, p->registered_items); FIELD(f32, p->gravity);
+    FIELD(string, p->motd); FIELD(u32, p->random_seed); FIELD(i32, p->start_time_ms);
+    FIELD(i32, p->restarted); FIELD(bool, p->warmup);
     FIELD(bool, p->world_spawned); FIELD(bool, p->post_spawned); FIELD(bool, p->locations_linked);
     if (!qa_source_save_count(io, &p->actor_count, game->capacity)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ && p->actor_count) {
@@ -336,9 +338,9 @@ static bool continuation(qa_source_save_io *io, qa_q3_game *game,
     static const uint8_t expected[8] = {'Q', 'A', 'Q', '3', 'S', 'A', 'V', 'E'};
     if (!qa_source_save_bytes(io, signature, sizeof(signature)) ||
         memcmp(signature, expected, sizeof(signature))) return save_fail(io, "invalid Q3 save signature");
-    uint32_t version = 3;
+    uint32_t version = 4;
     FIELD(u32, version);
-    if (version != 3) return save_fail(io, "unsupported Q3 save version");
+    if (version != 4) return save_fail(io, "unsupported Q3 save version");
     if (!checkpoint(io, game, native)) return false;
     bool has_map = game->map != NULL;
     FIELD(bool, has_map);

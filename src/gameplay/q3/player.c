@@ -327,7 +327,7 @@ bool q3_add_ammo(qa_q3_game *game, qa_actor_id actor, qa_q3_weapon weapon, int32
     return qa_inventory_adjust(game->options.services.inventory, actor, game->ammo_items[weapon],
                                (double)next - old, &stored, error);
 }
-bool qa_q3_spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_state *spawn,
+static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_state *spawn,
                         qa_team_id team, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER || !spawn)
@@ -486,6 +486,16 @@ bool qa_q3_spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_state
         return true;
     player = &entry->state.player;
     return player->spawn_count <= 1 || q3_player_event(game, actor, 42, 0, error);
+}
+bool qa_q3_spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_state *spawn,
+                        qa_team_id team, qa_error *error) {
+    if (!game || !spawn || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid Q3 player spawn boundary");
+    qa_body_state captured = *spawn;
+    ++game->observation_depth;
+    bool result = spawn_player(game, actor, &captured, team, error);
+    --game->observation_depth;
+    return result;
 }
 static void torso(qa_q3_player_state *player, int32_t animation) {
     if (!player->dead)
