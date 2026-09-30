@@ -16,8 +16,12 @@ python3 tools/native-q2/dwarf_inventory.py \
 ```
 
 The tool retains compiler DIE offsets, tags, exact attribute forms, child trees,
-type references, member-location expressions and compilation-unit roots. Name
-selection retains every matching actual type definition; repeated definitions
+type references, member-location expressions and compilation-unit roots.
+Selection uses each actual DIE's declaration flag; specification/abstract-origin
+fallback never inherits `DW_AT_declaration` or `DW_AT_sibling`. A completed
+definition can refer to its named forward declaration without becoming an
+incomplete declaration itself. Name selection retains every matching actual
+type definition; repeated definitions
 across compilation units are not silently merged or asserted equivalent. A
 selected global must have one actual ELF object identity and an embedded
 `DW_OP_addr` definition at that exact RVA. Its referenced compiler byte extent

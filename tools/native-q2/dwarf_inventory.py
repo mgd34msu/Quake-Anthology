@@ -272,6 +272,9 @@ class DWARF:
         fields = row["attributes"]
         if attribute in fields:
             return fields[attribute]
+        # These facts belong to this DIE, never its declaration/abstract origin.
+        if attribute in {0x01, 0x3C}:
+            return None
         for owner in (0x47, 0x31):
             reference = fields.get(owner)
             if reference:
