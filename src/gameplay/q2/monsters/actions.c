@@ -232,16 +232,21 @@ static bool toss_makron(q2m_context *context, qa_error *error) {
          qa_q2_healthbar_transfer(context->game, jorg, child, error);
 }
 
+static bool publish_duck(q2m_context *context, bool down, qa_error *error) {
+  context->monster->ducked = down;
+  context->body.bounds.maxs.z = context->monster->normal_height - (down ? 32.0f : 0.0f);
+  if (!q2m_damageable(context, true, error))
+    return false;
+  return !q2m_alive(context) || q2m_write_body(context, true, error);
+}
+
 static bool set_duck(q2m_context *context, bool down, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   if (!down && !monster->ducked &&
       !(context->game->options.edition == QA_Q2_CLASSIC &&
         monster->definition->species == Q2M_GUN_COMMANDER))
     return true;
-  monster->ducked = down;
-  context->body.bounds.maxs.z = monster->normal_height - (down ? 32.0f : 0.0f);
-  return q2m_damageable(context, true, error) &&
-         q2m_write_body(context, true, error);
+  return publish_duck(context, down, error);
 }
 
 static bool duck_action(q2m_context *context, const char *callback,
@@ -261,11 +266,14 @@ static bool duck_action(q2m_context *context, const char *callback,
         context->game->now_ns < context->monster->duck_ns;
     return true;
   }
-  if (commander && (!rerelease || m->ducked)) {
+  bool source_up = !strcmp(callback, "monster_duck_up");
+  if ((commander || source_up) && (!rerelease || m->ducked)) {
     if (!rerelease) m->next_duck_ns = q2m_after(context->game->now_ns, 5);
     else if (m->next_duck_ns > context->game->now_ns)
       m->next_duck_ns = context->game->now_ns + (m->next_duck_ns - context->game->now_ns) / 2;
   }
+  if (source_up && !rerelease)
+    return publish_duck(context, false, error);
   return set_duck(context, false, error);
 }
 
@@ -2474,6 +2482,15 @@ static bool reattack(q2m_context *context, const char *callback,
 
 static bool end_transition(q2m_context *context, const char *callback,
                            bool *handled, qa_error *error) {
+  if (context->game->options.edition == QA_Q2_RERELEASE &&
+      (context->monster->definition->species == Q2M_MEDIC ||
+       context->monster->definition->species == Q2M_MEDIC_COMMANDER) &&
+      (!strcmp(callback, "medic_stand") || !strcmp(callback, "medic_walk"))) {
+    *handled = true;
+    return q2m_set_move(context, !strcmp(callback, "medic_stand")
+                                   ? "medic_move_stand" : "medic_move_walk",
+                        true, error);
+  }
   if (context->monster->definition->species == Q2M_ACTOR &&
       (!strcmp(callback, "actor_run") || !strcmp(callback, "actor_stand") ||
        !strcmp(callback, "actor_walk"))) {
@@ -4071,8 +4088,7 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
   if (strcmp(callback, "monster_done_dodge") == 0) {
     monster->dodging = false;
     if (monster->attack_state == Q2M_SLIDING &&
-        (context->game->options.edition == QA_Q2_RERELEASE ||
-         monster->definition->species != Q2M_GUN_COMMANDER))
+        context->game->options.edition == QA_Q2_RERELEASE)
       monster->attack_state = Q2M_STRAIGHT;
     return true;
   }

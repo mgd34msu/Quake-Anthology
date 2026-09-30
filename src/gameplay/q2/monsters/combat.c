@@ -1974,11 +1974,13 @@ static bool pain_actor(q2m_context *context, qa_error *error) {
 static bool pain_medic(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
-  bool rogue = rerelease || context->game->options.product == QA_Q2_ROGUE;
+  bool rogue = rerelease || context->game->options.product != QA_Q2_XATRIX;
   bool commander = context->combat.mass > 400;
+  const float damage = m->pending_damage;
+  const bool chainfist = last_attack_chainfist(m);
   if (rogue) {
     m->dodging = false;
-    if (m->attack_state == Q2M_SLIDING)
+    if (rerelease && m->attack_state == Q2M_SLIDING)
       m->attack_state = Q2M_STRAIGHT;
   }
   if (rerelease)
@@ -1993,12 +1995,12 @@ static bool pain_medic(q2m_context *context, qa_error *error) {
   float roll = 0;
   bool pain2;
   if (rerelease)
-    roll = q2m_random(context->game);
+    roll = q2_rerelease_float(context->game, 0, 1);
   if (rogue && commander) {
-    if (m->pending_damage < 35) {
+    if (damage < 35) {
       if (!q2m_sound(context, "medic_commander/medpain1.wav", 2, 1, error))
         return false;
-      if (!q2m_alive(context) || !rerelease || !last_attack_chainfist(m))
+      if (!q2m_alive(context) || !rerelease || !chainfist)
         return true;
     }
     if (!rerelease)
@@ -2009,7 +2011,7 @@ static bool pain_medic(q2m_context *context, qa_error *error) {
       return true;
     if (!rerelease)
       roll = q2m_random(context->game);
-    pain2 = roll < fminf(m->pending_damage * .005f, .5f);
+    pain2 = roll < fmin((double)damage * .005, .5);
   } else {
     if (!rerelease)
       roll = q2m_random(context->game);
@@ -2025,13 +2027,13 @@ static bool pain_medic(q2m_context *context, qa_error *error) {
       return true;
   }
   if (rerelease) {
-    if (!reacts_to_pain(context) || (!last_attack_chainfist(m) && m->medic))
+    if (!reacts_to_pain_cause(context, chainfist) || (!chainfist && m->medic))
       return true;
     if (commander)
       m->manual_steering = m->hold_frame = false;
   }
   if ((rerelease || (rogue && commander)) &&
-      !q2m_set_move(context, pain2 ? "medic_move_pain2" : "medic_move_pain1", false, error))
+      !q2m_set_move(context, pain2 ? "medic_move_pain2" : "medic_move_pain1", true, error))
     return false;
   if (!q2m_alive(context))
     return true;

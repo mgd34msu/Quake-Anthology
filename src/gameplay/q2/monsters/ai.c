@@ -771,41 +771,55 @@ bool q2m_face_enemy(q2m_context *context, qa_error *error) {
   return q2m_change_yaw(context, error);
 }
 
-bool q2m_hunt_target(q2m_context *context, qa_error *error) {
+bool q2m_hunt_target(q2m_context *context, bool animate_state, qa_error *error) {
   qa_actor_id id = context->monster->enemy;
-  qa_body_state target;
-  qa_error observed = {0};
   if (!q2_actor_live(context->game, id))
     return true;
+  context->monster->goal = context->actor->physics.goal = id;
+  if (animate_state) {
+    bool actor_callback = context->monster->definition->species == Q2M_ACTOR;
+    if (actor_callback && !q2m_dispatch(context,
+        context->monster->stand_ground ? "actor_stand" : "actor_run", error))
+      return false;
+    bool medic_callback = context->game->options.edition == QA_Q2_RERELEASE &&
+        (context->monster->definition->species == Q2M_MEDIC ||
+         context->monster->definition->species == Q2M_MEDIC_COMMANDER);
+    if (medic_callback && !q2m_dispatch(context,
+        context->monster->stand_ground ? "medic_stand" : "medic_run", error))
+      return false;
+    bool handled = false;
+    if (!actor_callback && !medic_callback && !context->monster->stand_ground &&
+        !q2m_medic_callback(context, "medic_run", &handled, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    if (!actor_callback && !medic_callback && !handled && !q2m_set_move(context,
+        context->monster->stand_ground ? context->monster->definition->stand_move
+                                      : context->monster->definition->run_move,
+        context->monster->definition->species == Q2M_FIXBOT, error))
+      return false;
+  }
+  if (!q2m_alive(context))
+    return true;
+  if (!q2m_refresh(context, error))
+    return !q2m_alive(context);
+  if (!q2m_alive(context))
+    return true;
+  id = context->monster->enemy;
+  if (!q2_actor_live(context->game, id))
+    return true;
+  qa_body_state target;
+  qa_error observed = {0};
   if (!qa_world_body_read(context->game->services.world, id, &target, &observed)) {
-    if (observed.code == QA_ERROR_NOT_FOUND || !q2_actor_live(context->game, id))
+    if (!q2m_alive(context) || !q2_actor_live(context->game, id))
       return true;
     if (error)
       *error = observed;
     return false;
   }
-  if (!q2m_alive(context))
+  if (!q2m_alive(context) || !q2_actor_live(context->game, id) ||
+      !qa_actor_id_equal(context->monster->enemy, id))
     return true;
-  context->monster->goal = context->actor->physics.goal = id;
-  bool actor_callback = context->monster->definition->species == Q2M_ACTOR;
-  if (actor_callback && !q2m_dispatch(context,
-      context->monster->stand_ground ? "actor_stand" : "actor_run", error))
-    return false;
-  bool handled = false;
-  if (!actor_callback && !context->monster->stand_ground &&
-      !q2m_medic_callback(context, "medic_run", &handled, error))
-    return false;
-  if (!q2m_alive(context))
-    return true;
-  if (!actor_callback && !handled && !q2m_set_move(context,
-      context->monster->stand_ground ? context->monster->definition->stand_move
-                                    : context->monster->definition->run_move,
-      context->monster->definition->species == Q2M_FIXBOT, error))
-    return false;
-  if (!q2m_alive(context))
-    return true;
-  if (!q2m_refresh(context, error))
-    return !q2m_alive(context);
   context->monster->ideal_yaw = vector_yaw(qa_vec_sub(target.origin, context->body.origin));
   if (context->game->options.edition == QA_Q2_CLASSIC && !context->monster->stand_ground)
     context->monster->attack_ns = q2m_after(context->game->now_ns, 1);
@@ -864,7 +878,7 @@ bool q2m_found_target(q2m_context *context, qa_actor_id id, qa_error *error) {
     return false;
   if (!q2m_alive(context) || routed)
     return true;
-  return q2m_hunt_target(context, error);
+  return q2m_hunt_target(context, true, error);
 }
 
 static q2_actor *native_monster_actor(qa_q2_game *game, qa_actor_id id) {
@@ -1910,7 +1924,7 @@ bool q2m_check_attack(q2m_context *context, bool *selected, bool *started, qa_er
     if (health > 0) {
       attack_enemy(context, restored);
       monster->old_enemy = (qa_actor_id){0};
-      if (!q2m_hunt_target(context, error))
+      if (!q2m_hunt_target(context, true, error))
         return false;
       if (!q2m_alive(context))
         return true;

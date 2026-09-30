@@ -129,7 +129,7 @@ static bool restore_enemy(q2m_context *c, bool *restored, qa_error *error) {
     if (previous_health > 0) {
         enemy(c, previous);
         *restored = true;
-        return q2m_hunt_target(c, error);
+        return q2m_hunt_target(c, !rerelease(c), error);
     }
     enemy(c, (qa_actor_id){0});
     c->monster->goal = c->monster->old_enemy = (qa_actor_id){0};
@@ -140,7 +140,7 @@ static bool restore_enemy(q2m_context *c, bool *restored, qa_error *error) {
         return true;
     c->monster->pause_ns = UINT64_C(100000000) * Q2M_SECOND;
     return q2m_set_move(c, c->monster->definition->stand_move,
-                        c->monster->definition->species == Q2M_FIXBOT, error);
+                        rerelease(c) || c->monster->definition->species == Q2M_FIXBOT, error);
 }
 
 static bool cleanup(q2m_context *c, bool change_frame, qa_error *error) {
@@ -543,7 +543,7 @@ static bool cable(q2m_context *c, qa_error *error) {
 
 static void finish_dodge(q2m_context *c) {
     c->monster->dodging = false;
-    if (c->monster->attack_state == Q2M_SLIDING)
+    if (rerelease(c) && c->monster->attack_state == Q2M_SLIDING)
         c->monster->attack_state = Q2M_STRAIGHT;
 }
 
@@ -740,7 +740,7 @@ bool q2m_medic_callback(q2m_context *c, const char *name, bool *handled,
     }
     bool run = !strcmp(name, "medic_run"), search = !strcmp(name, "medic_search");
     if (run || search || !strcmp(name, "medic_idle")) {
-        if (run && rogue(c))
+        if (run && (rerelease(c) || c->game->options.product != QA_Q2_XATRIX))
             finish_dodge(c);
         if (!run && !sound(c, search ? "medic/medsrch1.wav" : "medic/idle.wav",
                            search ? "medic_commander/medsrch.wav" : "medic_commander/medidle.wav",
@@ -755,7 +755,7 @@ bool q2m_medic_callback(q2m_context *c, const char *name, bool *handled,
             return false;
         return !q2m_alive(c) || !run || acquired ||
                q2m_set_move(c, c->monster->stand_ground ? "medic_move_stand" : "medic_move_run",
-                             false, error);
+                             rerelease(c), error);
     }
     *handled = false;
     return true;
