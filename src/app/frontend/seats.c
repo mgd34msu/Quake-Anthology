@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/ui_menu_save.h"
 #include <stdio.h>
 
 static double now_ms(void *context) { frontend_seat *seat = context; return (double)seat->frontend->time_ns / 1000000.0; }
@@ -196,10 +197,50 @@ static bool settings(void *context, uint32_t id, qa_ui_menu *out, qa_error *erro
     *out = (qa_ui_menu){.id = FRONTEND_SETTINGS, .title = "Engine settings", .controls = seat->controls, .count = 4, .fullscreen = true};
     return true;
 }
-bool frontend_seats_create(qa_frontend *frontend, qa_error *error)
+static bool seat_services_create(frontend_seat *seat, bool restoring, qa_error *error)
 {
+    qa_frontend *frontend = seat->frontend;
+    unsigned i = seat->id;
     qa_cvars *cvars = qa_application_cvars(frontend->application);
-    if (!qa_input_settings_register(cvars, QA_MOVEMENT_NETQUAKE, error) || !qa_input_device_settings_register(cvars, error)) return false;
+    qa_command_context command = {.seat = i, .origin = QA_COMMAND_SEAT, .dialect = QA_CONSOLE_Q1, .direct = true};
+    qa_input_seat_options input = {.context = command, .console = qa_application_console(frontend->application),
+        .cvars = cvars, .gamepad = qa_gamepad_defaults(), .ui = input_handler, .ui_user = seat,
+        .before_ui = source_input, .before_ui_user = seat};
+    seat->input = qa_input_seat_create(&input, error);
+    if (!seat->input || (!restoring && !qa_input_default_bindings(seat->input, (int32_t)i, error))) return false;
+    qa_seat_console_options console = {.command = command, .commands = input.console,
+        .context = seat, .now_ms = now_ms, .connected = connected, .clipboard = clipboard, .focus = focus, .chat = chat};
+    seat->console = qa_seat_console_create(&console, error);
+    return seat->console != NULL;
+}
+bool frontend_seats_prepare_restored(qa_frontend *frontend, qa_error *error)
+{
+    if (!frontend || !frontend->application || !frontend->seats || frontend->options.dedicated ||
+        !frontend->options.seats || frontend->options.seats > QA_INPUT_LOCAL_SEATS || frontend->stepping)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "restored seat services require an isolated application");
+    for (unsigned i = 0; i < frontend->options.seats; ++i)
+        if (frontend->seats[i].input || frontend->seats[i].console || frontend->seats[i].ui)
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "restored seat service destination is occupied");
+    for (unsigned i = 0; i < frontend->options.seats; ++i) {
+        frontend_seat *seat = &frontend->seats[i]; seat->frontend = frontend; seat->id = i;
+        if (!seat_services_create(seat, true, error)) return false;
+    }
+    return true;
+}
+static bool seats_create(qa_frontend *frontend, const bool *mods, bool restoring, qa_error *error)
+{
+    if (!frontend || !frontend->application || !frontend->seats || !frontend->classic ||
+        !frontend->primary || !frontend->ui_images || frontend->stepping ||
+        (restoring && !mods))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "seat construction requires actual restored resource owners");
+    for (unsigned i = 0; i < frontend->options.seats; ++i)
+        if (frontend->seats[i].ui || (restoring ?
+            (!frontend->seats[i].input || !frontend->seats[i].console || frontend->seats[i].frontend != frontend || frontend->seats[i].id != i) :
+            (frontend->seats[i].input != NULL || frontend->seats[i].console != NULL)))
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "local seat service destination is not qualified");
+    qa_cvars *cvars = qa_application_cvars(frontend->application);
+    if (!restoring && (!qa_input_settings_register(cvars, QA_MOVEMENT_NETQUAKE, error) ||
+        !qa_input_device_settings_register(cvars, error))) return false;
     qa_launch_seat players[QA_INPUT_LOCAL_SEATS] = {0};
     char player_names[QA_INPUT_LOCAL_SEATS][32];
     for (unsigned i = 0; i < frontend->options.seats; ++i) {
@@ -208,15 +249,7 @@ bool frontend_seats_create(qa_frontend *frontend, qa_error *error)
     }
     for (unsigned i = 0; i < frontend->options.seats; ++i) {
         frontend_seat *seat = &frontend->seats[i]; seat->frontend = frontend; seat->id = i;
-        qa_command_context command = {.seat = i, .origin = QA_COMMAND_SEAT, .dialect = QA_CONSOLE_Q1, .direct = true};
-        qa_input_seat_options input = {.context = command, .console = qa_application_console(frontend->application),
-            .cvars = cvars, .gamepad = qa_gamepad_defaults(), .ui = input_handler, .ui_user = seat,
-            .before_ui = source_input, .before_ui_user = seat};
-        seat->input = qa_input_seat_create(&input, error);
-        if (!seat->input || !qa_input_default_bindings(seat->input, (int32_t)i, error)) return false;
-        qa_seat_console_options console = {.command = command, .commands = input.console,
-            .context = seat, .now_ms = now_ms, .connected = connected, .clipboard = clipboard, .focus = focus, .chat = chat};
-        seat->console = qa_seat_console_create(&console, error);
+        if (!restoring && !seat_services_create(seat, false, error)) return false;
         if (!seat->console || !qa_font_selection_init(&seat->fonts, i, frontend->classic, frontend->primary, NULL, 0, error)) return false;
         qa_ui_options ui = {.seat = i, .input = seat->input, .fonts = seat->fonts,
             .white = qa_scene_white(frontend->ui_images), .context = seat, .clipboard = ui_clipboard,
@@ -226,14 +259,23 @@ bool frontend_seats_create(qa_frontend *frontend, qa_error *error)
             !qa_ui_register(seat->ui, &(qa_ui_menu_registration){.id = FRONTEND_SETTINGS,
                 .context = seat, .factory = settings, .open = settings_open}, error)) return false;
         if (!frontend_bindings_create(seat, error)) return false;
-        if (!qa_ui_library_create(seat->ui, frontend->application, FRONTEND_LIBRARY,
-                players, frontend->options.seats, &seat->library, error) ||
+        bool library = restoring ? qa_ui_library_create_restored(seat->ui, frontend->application,
+            FRONTEND_LIBRARY, &seat->library, error) :
+            qa_ui_library_create(seat->ui, frontend->application, FRONTEND_LIBRARY,
+                players, frontend->options.seats, &seat->library, error);
+        if (!library ||
             !qa_ui_rankings_create(seat->ui, frontend->application, FRONTEND_RANKINGS, -1, &seat->rankings, error) ||
             !qa_hud_create(&(qa_hud_options){.ui = seat->ui, .application = frontend->application, .seat = i,
                 .context = seat, .read = hud_data}, &seat->hud, error) || !frontend_wheel_create(seat, error)) return false;
+        if (restoring && mods[i] && !qa_ui_mods_create_restored(seat->ui, frontend->application,
+            FRONTEND_MODS, &seat->mods, error)) return false;
     }
     return true;
 }
+bool frontend_seats_create(qa_frontend *frontend, qa_error *error)
+{ return seats_create(frontend, NULL, false, error); }
+bool frontend_seats_create_restored(qa_frontend *frontend, const bool *mods, qa_error *error)
+{ return seats_create(frontend, mods, true, error); }
 bool frontend_seats_destroy(qa_frontend *frontend, qa_error *error)
 {
     for (unsigned i = 0; i < frontend->options.seats; ++i) {
