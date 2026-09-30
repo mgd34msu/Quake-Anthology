@@ -42,6 +42,12 @@ bool qa_application_network_q1_entity(qa_application *, qa_actor_id source_playe
  * present distinguishes the completed inventory from failed source admission. */
 bool qa_application_network_q1_entity_next(qa_application *, qa_actor_id source_player,
     uint32_t *cursor, bool *present, qa_actor_id *, qa_q1_entity *, qa_error *);
+bool qa_application_network_q1_eye(qa_application *, qa_actor_id source_player,
+    qa_vec3 *, qa_error *);
+/* Bounds are the real source absmin/absmax after canonical borrowed-body
+ * refresh. has_model requires both its model index and retained model name. */
+bool qa_application_network_q1_bounds(qa_application *, qa_actor_id source_player,
+    qa_actor_id entity, qa_bounds *, bool *has_model, qa_error *);
 /* Names borrow the source until mutation; output arrays are caller-owned. */
 bool qa_application_network_q1_precache(qa_application *, qa_actor_id,
     bool models, const char *names[255], size_t *count, qa_error *);
@@ -59,6 +65,10 @@ bool qa_application_network_q1_clientdata(qa_application *, qa_actor_id,
     qa_q1_clientdata *, qa_error *);
 bool qa_application_network_q1_baseline(qa_application *, qa_actor_id,
     const qa_q1_entity *, qa_q1_entity *, qa_error *);
+/* The original QuakeC donor captures a baseline for every reserved client
+ * source slot, including a physical row without a live canonical actor. */
+bool qa_application_network_q1_client_baseline(qa_application *, qa_actor_id source_player,
+    uint32_t source_slot, qa_q1_entity *, qa_error *);
 bool qa_application_network_q1_signon_count(qa_application *, qa_actor_id,
     size_t *, qa_error *);
 bool qa_application_network_q1_signon_at(qa_application *, qa_actor_id, size_t,

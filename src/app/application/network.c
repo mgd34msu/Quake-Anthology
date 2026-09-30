@@ -99,12 +99,10 @@ static bool q1_wire_vector(struct application_qc_state *engine, int32_t referenc
     if (!qa_vec_finite(value)) return application_fail(error, QA_ERROR_FORMAT, "Nonfinite Q1 source network vector");
     out[0] = value.x; out[1] = value.y; out[2] = value.z; return true;
 }
-bool qa_application_network_q1_entity(qa_application *app, qa_actor_id player, qa_actor_id entity,
-    qa_q1_entity *out, qa_error *error)
+static bool q1_entity_reference(struct application_qc_state *engine, qa_actor_id entity,
+    int32_t *out, qa_error *error)
 {
-    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
-    if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 entity observation output");
-    if (!engine) return false;
+    qa_application *app = engine->provider->application;
     const qa_actor_record *actor = qa_actors_get(qa_session_actors(app->session), entity); qa_qc_slot_binding binding;
     if (!actor || actor->owner != engine->provider->owner || !actor->has_source || !actor->source_slot ||
         actor->source_slot > UINT16_MAX || !qa_qc_slot(engine->provider->state.qc.instance, actor->source_slot, &binding) ||
@@ -113,10 +111,20 @@ bool qa_application_network_q1_entity(qa_application *app, qa_actor_id player, q
          actor->source_slot > engine->max_clients || !engine->clients[actor->source_slot].connected ||
          !qa_actor_id_equal(engine->clients[actor->source_slot].actor, entity))))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 entity lacks the admitted source edict identity");
-    int32_t reference; qa_q1_entity value; qa_q1_entity_init(&value); value.number = actor->source_slot;
+    return qa_qc_actor_reference(engine->provider->state.qc.instance, entity, false, out, error);
+}
+bool qa_application_network_q1_entity(qa_application *app, qa_actor_id player, qa_actor_id entity,
+    qa_q1_entity *out, qa_error *error)
+{
+    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 entity observation output");
+    if (!engine) return false;
+    int32_t reference;
+    if (!q1_entity_reference(engine, entity, &reference, error)) return false;
+    const qa_actor_record *actor = qa_actors_get(qa_session_actors(app->session), entity);
+    qa_q1_entity value; qa_q1_entity_init(&value); value.number = actor->source_slot;
     float movetype;
-    if (!qa_qc_actor_reference(engine->provider->state.qc.instance, entity, false, &reference, error) ||
-        !q1_wire_scalar(engine, reference, "modelindex", 255, &value.model, error) ||
+    if (!q1_wire_scalar(engine, reference, "modelindex", 255, &value.model, error) ||
         !q1_wire_scalar(engine, reference, "frame", 255, &value.frame, error) ||
         !q1_wire_scalar(engine, reference, "colormap", 255, &value.colormap, error) ||
         !q1_wire_scalar(engine, reference, "skin", 255, &value.skin, error) ||
@@ -169,6 +177,22 @@ bool qa_application_network_q1_precache(qa_application *app, qa_actor_id player,
     memcpy(names, retained, sizeof(retained)); *count = extent; return true;
 }
 
+bool qa_application_network_q1_eye(qa_application *app, qa_actor_id player,
+    qa_vec3 *out, qa_error *error)
+{
+    if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source eye observation output");
+    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    if (!engine) return false;
+    int32_t reference; float origin[3], offset[3];
+    if (!q1_entity_reference(engine, player, &reference, error) ||
+        !q1_wire_vector(engine, reference, "origin", origin, error) ||
+        !q1_wire_vector(engine, reference, "view_ofs", offset, error)) return false;
+    qa_vec3 eye = qa_v3(origin[0] + offset[0], origin[1] + offset[1], origin[2] + offset[2]);
+    if (!qa_vec_finite(eye))
+        return application_fail(error, QA_ERROR_FORMAT, "Q1 source eye exceeds its finite spatial range");
+    *out = eye; return true;
+}
+
 static bool q1_wire_string(struct application_qc_state *engine, int32_t reference,
     const char *name, const char **out, qa_error *error)
 {
@@ -176,6 +200,25 @@ static bool q1_wire_string(struct application_qc_state *engine, int32_t referenc
     int32_t id;
     return field && qa_qc_entity_int(engine->provider->state.qc.instance, reference, field->offset, &id, error) &&
         qa_qc_string(engine->provider->state.qc.instance, id, out, error);
+}
+bool qa_application_network_q1_bounds(qa_application *app, qa_actor_id player,
+    qa_actor_id entity, qa_bounds *out, bool *has_model, qa_error *error)
+{
+    if (!out || !has_model) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source visibility observation output");
+    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    if (!engine) return false;
+    int32_t reference; float minimum[3], maximum[3]; uint32_t index; const char *name;
+    if (!q1_entity_reference(engine, entity, &reference, error) ||
+        !q1_wire_vector(engine, reference, "absmin", minimum, error) ||
+        !q1_wire_vector(engine, reference, "absmax", maximum, error) ||
+        !q1_wire_scalar(engine, reference, "modelindex", 255, &index, error) ||
+        !q1_wire_string(engine, reference, "model", &name, error)) return false;
+    for (unsigned axis = 0; axis < 3; ++axis)
+        if (minimum[axis] > maximum[axis])
+            return application_fail(error, QA_ERROR_FORMAT, "Q1 source absolute bounds are inverted");
+    *out = (qa_bounds){qa_v3(minimum[0], minimum[1], minimum[2]),
+        qa_v3(maximum[0], maximum[1], maximum[2])};
+    *has_model = index && *name; return true;
 }
 static bool q1_wire_global(struct application_qc_state *engine, const char *name, float *out, qa_error *error)
 {
@@ -312,6 +355,29 @@ bool qa_application_network_q1_baseline(qa_application *app, qa_actor_id player,
     qa_nq_message message = {.op = QA_NQ_BASELINE, .data.entity = value};
     if (!qa_nq_write(&writer, (qa_net_protocol_id){.kind = QA_NET_NQ15}, (qa_nq_options){.standard_quake = true}, &message, NULL, 0)) return false;
     *out = value; return true;
+}
+bool qa_application_network_q1_client_baseline(qa_application *app, qa_actor_id player,
+    uint32_t source_slot, qa_q1_entity *out, qa_error *error)
+{
+    if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing reserved Q1 client baseline output");
+    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    if (!engine) return false;
+    qa_qc_instance *vm = engine->provider->state.qc.instance; qa_qc_slot_binding binding;
+    if (!source_slot || source_slot > engine->max_clients || !qa_qc_slot(vm, source_slot, &binding) ||
+        (binding.kind != QA_QC_SLOT_FREE && binding.kind != QA_QC_SLOT_BORROWED))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 baseline is not a reserved physical client row");
+    qa_q1_entity value; qa_q1_entity_init(&value); value.number = source_slot;
+    int32_t reference;
+    if (binding.kind == QA_QC_SLOT_BORROWED) {
+        uint32_t model; const char *name;
+        if (!q1_entity_reference(engine, binding.actor, &reference, error) ||
+            !q1_wire_scalar(engine, reference, "modelindex", 255, &model, error) ||
+            !q1_wire_string(engine, reference, "model", &name, error)) return false;
+        if (model && *name && !qa_application_network_q1_entity(app, player, binding.actor, &value, error)) return false;
+    } else if (!qa_qc_slot_reference(vm, source_slot, &reference, error)) return false;
+    if (!q1_wire_vector(engine, reference, "origin", value.origin, error) ||
+        !q1_wire_vector(engine, reference, "angles", value.angles, error)) return false;
+    return qa_application_network_q1_baseline(app, player, &value, out, error);
 }
 bool qa_application_network_q1_signon_count(qa_application *app, qa_actor_id player,
     size_t *out, qa_error *error)
