@@ -213,6 +213,17 @@ bool qa_network_q3_gamestate(qa_network_runtime *runtime, qa_net_client_id id,
     const qa_net_client *client = qa_net_connections_get(qa_network_connections(runtime), id);
     return client && (client->phase != QA_NET_CONNECTED || qa_network_phase(runtime, id, QA_NET_PRIMED, error));
 }
+bool qa_network_q3_seed_baselines(qa_network_runtime *runtime, qa_net_client_id id,
+    const qa_q3_gamestate *state, qa_error *error)
+{
+    if (!runtime || !qa_network_callbacks_idle(runtime))
+        return qa_network_fail(error, "Q3 initial source baselines require an idle runtime");
+    q3_runtime_peer *p = get(runtime, id, error);
+    const qa_net_client *client = p ? qa_net_connections_get(runtime->connections, id) : NULL;
+    if (!client || client->phase != QA_NET_CONNECTED)
+        return qa_network_fail(error, "Q3 initial source baselines lack their connected shared client");
+    return qa_q3_server_peer_seed_baselines(p->source, state, error);
+}
 bool qa_network_q3_snapshot(qa_network_runtime *runtime, qa_net_client_id id,
     const qa_q3_snapshot *snapshot, const qa_q3_server_rate *rate, const qa_q3_download *downloads,
     size_t count, qa_error *error)

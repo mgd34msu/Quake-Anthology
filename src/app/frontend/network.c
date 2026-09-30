@@ -10,6 +10,7 @@
 #include "qa/network_downloads_save.h"
 #include "save_private.h"
 #include "network_nq_private.h"
+#include "network_q3_restart.h"
 #include "../../network/service_save_fields.h"
 #include "qa/archive.h"
 #include "qa/bsp.h"
@@ -59,7 +60,7 @@ struct qa_frontend_network {
     frontend_q3_pending q3_pending[32];
     size_t q3_pending_count;
     uint64_t q3_generation;
-    int32_t q3_server_id, q3_checksum_feed;
+    int32_t q3_server_id, q3_restarted_server_id, q3_checksum_feed;
     uint8_t q3_server_bit;
     qa_sha256_digest composition;
     const qa_q3_accepted_connect *q3_reconnect;
@@ -79,7 +80,24 @@ struct qa_frontend_network {
     unsigned busy;
     bool registered;
     bool detached_transport;
+    qa_network_q3_round *round;
 };
+struct qa_network_q3_round {
+    qa_frontend_network *network;
+    qa_frontend *frontend;
+    qa_actor_owner source_owner;
+    uint64_t generation;
+    int32_t server_id, restarted_server_id, checksum_feed;
+    uint8_t snapshot_bit;
+    size_t count;
+    qa_network_q3_round_client clients[64];
+    char *userinfo[64];
+    qa_buffer native[64];
+    uint64_t sequence[64], epoch[64];
+    bool queued[64], resolved[64];
+    bool begun, bound, finished;
+};
+static bool round_publish(qa_network_q3_round *, qa_error *);
 static const char *const names[] = {"serverlist", "serverquery", "serverfavorite", "servermaster",
     "addip", "removeip", "heartbeat", "maprotation", "nextmap", "download", "downloadstatus", "downloadcancel", "downloadsuspend"};
 static bool send_address(void *context, const qa_net_address *to, qa_bytes bytes, qa_error *error)
@@ -247,8 +265,11 @@ static bool q3_signon(void *context, qa_error *error)
     qa_q3_gamestate *state = malloc(sizeof(*state));
     if (!state) return frontend_fail(error, QA_ERROR_MEMORY, "allocating original Q3 signon observation");
     bool ok = q3_actor(peer, &actor, error) && qa_application_network_q3_signon(n->frontend->application, actor,
-        n->q3_server_id, n->q3_checksum_feed, state, &peer->world, error) &&
-        qa_network_q3_gamestate(n->runtime, peer->client, state, &peer->rate, error);
+        n->q3_server_id, n->q3_checksum_feed, state, &peer->world, error);
+    if (ok) {
+        peer->world.restarted_server_id = n->q3_restarted_server_id;
+        ok = qa_network_q3_gamestate(n->runtime, peer->client, state, &peer->rate, error);
+    }
     free(state); return ok;
 }
 static bool q3_snapshot(frontend_q3_peer *peer, qa_error *error)
@@ -366,7 +387,7 @@ static bool q3_admit(void *context, const qa_q3_accepted_connect *request, char 
         .name = name, .team = team, .skin = skin, .defer_source_begin = true};
     if (ok) ok = qa_application_remote_player_attach(n->frontend->application, &player, &actor, error);
     if (ok) ok = qa_application_network_q3_world(n->frontend->application, actor, n->q3_server_id,
-        n->q3_server_id, n->q3_checksum_feed, &peer->world, error);
+        n->q3_restarted_server_id, n->q3_checksum_feed, &peer->world, error);
     if (ok && peer->world.pure) ok = frontend_fail(error, QA_ERROR_UNSUPPORTED, "Q3 pure package-reference producer is unavailable");
     if (ok && retained) ok = qa_network_restart(n->runtime, peer->client, &n->composition, error);
     if (!ok) {
@@ -480,11 +501,13 @@ static bool q3_drain(qa_frontend_network *n, qa_error *error)
 static bool q3_prepare(qa_frontend_network *n, qa_error *error)
 {
     if (!n->q3_admission) return true;
+    if (n->round) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 source round owns the current network world");
     uint64_t generation = qa_application_configuration_generation(n->frontend->application);
     bool changed = generation != n->q3_generation;
     if (changed) {
         if (n->q3_server_id == INT32_MAX) return frontend_fail(error, QA_ERROR_FORMAT, "Q3 server identity exhausted");
         ++n->q3_server_id; n->q3_server_bit ^= 4u;
+        n->q3_restarted_server_id = n->q3_server_id;
     }
     qa_buffer identity = {0};
     if (!qa_launch_identity_encode(qa_application_launch(n->frontend->application),
@@ -494,7 +517,7 @@ static bool q3_prepare(qa_frontend_network *n, qa_error *error)
     for (size_t i = 0; i < 64; ++i) if (n->q3_peers[i].occupied && !n->q3_peers[i].retiring) {
         frontend_q3_peer *peer = &n->q3_peers[i]; qa_actor_id actor;
         if (!q3_actor(peer, &actor, error) || !qa_application_network_q3_world(n->frontend->application, actor,
-            n->q3_server_id, n->q3_server_id, n->q3_checksum_feed, &peer->world, error)) return false;
+            n->q3_server_id, n->q3_restarted_server_id, n->q3_checksum_feed, &peer->world, error)) return false;
         if (changed) {
             peer->sequence = 0;
             if (!qa_network_restart(n->runtime, peer->client, &n->composition, error)) return false;
@@ -987,7 +1010,7 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
             qa_q3_admission_hooks hooks = {.context = n, .random = random_rotation, .send = send_address,
                 .admit = q3_admit, .query = q3_query};
             if (!qa_q3_server_admission_create(&hooks, &n->q3_admission, error)) goto failed;
-            n->q3_server_id = 1; n->q3_checksum_feed = (int32_t)random_rotation(n);
+            n->q3_server_id = n->q3_restarted_server_id = 1; n->q3_checksum_feed = (int32_t)random_rotation(n);
             if (!q3_prepare(n, error)) goto failed;
             qa_actor_id actor; qa_q3_server_world world;
             qa_q3_gamestate *signon = malloc(sizeof(*signon));
@@ -1076,9 +1099,9 @@ static bool detached_transport(const qa_net_address *address, qa_net_transport *
 }
 static bool network_header(qa_source_save_io *io, bool *installed)
 {
-    uint32_t magic = UINT32_C(0x464e4151), version = 4;
+    uint32_t magic = UINT32_C(0x464e4151), version = 5;
     return qa_source_save_u32(io, &magic) && magic == UINT32_C(0x464e4151) &&
-        qa_source_save_u32(io, &version) && version == 4 && qa_source_save_bool(io, installed);
+        qa_source_save_u32(io, &version) && version == 5 && qa_source_save_bool(io, installed);
 }
 bool frontend_network_prepare_restored(qa_frontend *f, qa_bytes bytes, qa_error *error)
 {
@@ -1169,6 +1192,7 @@ static bool network_host_fields(qa_source_save_io *io, qa_frontend_network *n, b
     if (!qa_source_save_bool(io, installed)) return false;
     if (!*installed) return true;
     if (!qa_source_save_u64(io, &n->q3_generation) || !qa_source_save_i32(io, &n->q3_server_id) ||
+        !qa_source_save_i32(io, &n->q3_restarted_server_id) ||
         !qa_source_save_i32(io, &n->q3_checksum_feed) || !qa_source_save_u8(io, &n->q3_server_bit) ||
         !qa_source_save_count(io, &n->q3_pending_count, 32)) return false;
     for (size_t i = 0; i < 64; ++i) {
@@ -1227,11 +1251,11 @@ static bool network_host_player(qa_frontend_network *n, const frontend_q3_peer *
     }
     return true;
 }
-static bool network_metadata_valid(qa_frontend_network *n, bool hosting, qa_error *error)
+static bool network_metadata_check(qa_frontend_network *n, bool hosting, bool finishing_round, qa_error *error)
 {
     qa_application *app = n->frontend->application;
     bool nq = n->nq_host != NULL;
-    if (n->q3_reconnect || (n->downloads && !n->content) || (hosting && nq) ||
+    if ((n->round && !finishing_round) || n->q3_reconnect || (n->downloads && !n->content) || (hosting && nq) ||
         (hosting || nq) != (n->frontend->options.network_host != NULL) ||
         n->q3_client_requested != frontend_network_remote(n->frontend) || !n->registered || n->q3_projection_epoch > 4 ||
         (n->q3_projection_epoch != 0 && n->q3_projection_epoch != 4))
@@ -1241,11 +1265,11 @@ static bool network_metadata_valid(qa_frontend_network *n, bool hosting, qa_erro
         return frontend_fail(error, QA_ERROR_FORMAT, "NetQuake hosting continuation has another installed dialect consumer");
     if (hosting) {
         if (n->q3_client_requested || n->frontend->options.network_protocol.kind != QA_NET_Q3_68 ||
-            !n->q3_generation || n->q3_server_id <= 0 || (n->q3_server_bit != 0 && n->q3_server_bit != 4))
+            !n->q3_generation || n->q3_server_id <= 0 || n->q3_restarted_server_id <= 0 ||
+            n->q3_restarted_server_id > n->q3_server_id || (n->q3_server_bit != 0 && n->q3_server_bit != 4))
             return frontend_fail(error, QA_ERROR_FORMAT, "Q3 hosting continuation has a foreign source generation/dialect");
-        qa_actor_id template; uint32_t source_slot; qa_q3_product source_product;
-        if (!qa_application_player_actor(app, 0, &template) ||
-            !qa_application_network_q3_source(app, template, &source_slot, &source_product, error)) return false;
+        qa_actor_owner source_owner; qa_q3_product source_product;
+        if (!qa_application_network_q3_owner(app, &source_owner, &source_product, error)) return false;
         for (size_t i = 0; i < 64; ++i) {
             frontend_q3_peer *p = &n->q3_peers[i]; if (!p->occupied) continue;
             qa_application_network_player row;
@@ -1256,12 +1280,12 @@ static bool network_metadata_valid(qa_frontend_network *n, bool hosting, qa_erro
                 p->world.checksum_feed != n->q3_checksum_feed || p->rate.maximum_rate || p->rate.local || p->rate.force_lan ||
                 p->rate.bytes_per_second < 1000 || p->rate.bytes_per_second > 90000 || p->rate.snapshot_ms != 50 ||
                 (!p->retiring && (p->world.generation != n->q3_generation || p->world.server_id != n->q3_server_id ||
-                    p->world.restarted_server_id != n->q3_server_id)) || !network_host_player(n, p, &row, error))
+                    p->world.restarted_server_id != n->q3_restarted_server_id)) || !network_host_player(n, p, &row, error))
                 return frontend_fail(error, QA_ERROR_FORMAT, "Q3 hosting peer lacks its retained source identity/rate/roster");
             for (size_t j = 0; j < i; ++j) if (n->q3_peers[j].occupied && qa_net_client_id_equal(n->q3_peers[j].client, p->client))
                 return frontend_fail(error, QA_ERROR_FORMAT, "Q3 source slots alias one runtime connection");
         }
-    } else if (n->q3_pending_count || n->q3_generation || n->q3_server_id || n->q3_checksum_feed || n->q3_server_bit)
+    } else if (n->q3_pending_count || n->q3_generation || n->q3_server_id || n->q3_restarted_server_id || n->q3_checksum_feed || n->q3_server_bit)
         return frontend_fail(error, QA_ERROR_FORMAT, "absent hosting owner retains source state");
     if (n->q3_client_requested) {
         qa_actor_id actor; qa_actor_owner owner; qa_q3_product product;
@@ -1294,6 +1318,8 @@ static bool network_metadata_valid(qa_frontend_network *n, bool hosting, qa_erro
     }
     return true;
 }
+static bool network_metadata_valid(qa_frontend_network *n, bool hosting, qa_error *error)
+{ return network_metadata_check(n, hosting, false, error); }
 static bool network_save_actor(void *context, qa_actor_id actor, qa_saved_actor_id *out, qa_error *error)
 {
     qa_frontend_network *n = context;
@@ -1368,9 +1394,9 @@ static bool network_blob(qa_source_save_io *io, qa_bytes *bytes)
         return frontend_fail(io->error, QA_ERROR_FORMAT, "truncated frontend network continuation");
     *bytes = (qa_bytes){io->input.data + io->offset, size}; io->offset += size; return true;
 }
-static bool network_runtime_valid(qa_frontend_network *n, bool complete_world, qa_error *error)
+static bool network_runtime_check(qa_frontend_network *n, bool complete_world, bool finishing_round, qa_error *error)
 {
-    if (!network_metadata_valid(n, n->q3_admission != NULL, error)) return false;
+    if (!network_metadata_check(n, n->q3_admission != NULL, finishing_round, error)) return false;
     if (n->nq_host) return frontend_nq_qualified(n->nq_host, complete_world, error) &&
         (!complete_world || network_nq_commands_valid(n, error));
     uint32_t cursor = 0; const qa_net_client *client = NULL; size_t count = 0;
@@ -1393,7 +1419,7 @@ static bool network_runtime_valid(qa_frontend_network *n, bool complete_world, q
                 (!p->retiring && ((state.phase == QA_Q3_ACTIVE && row.source_begin_pending) ||
                     state.phase == QA_Q3_ZOMBIE || state.phase == QA_Q3_FREE)))
                 return frontend_fail(error, QA_ERROR_FORMAT, "hosted frontend/runtime/native/source roster inventories differ");
-            if (state.phase >= QA_Q3_PRIMED && !p->retiring) {
+            if (state.phase >= QA_Q3_PRIMED && state.gamestate_message_number >= 0 && !p->retiring) {
                 const qa_q3_gamestate *gamestate = qa_q3_server_peer_gamestate_view(native);
                 char map[1024], pure[1024]; qa_application_map_view local;
                 if (gamestate->client_number != (int32_t)p->slot || gamestate->checksum_feed != n->q3_checksum_feed ||
@@ -1439,6 +1465,8 @@ static bool network_runtime_valid(qa_frontend_network *n, bool complete_world, q
     return count == expected ||
         frontend_fail(error, QA_ERROR_FORMAT, "frontend and runtime installed connection inventories differ");
 }
+static bool network_runtime_valid(qa_frontend_network *n, bool complete_world, qa_error *error)
+{ return network_runtime_check(n, complete_world, false, error); }
 bool frontend_network_checkpoint(qa_frontend *f, qa_buffer *connections, qa_buffer *prediction, qa_error *error)
 {
     if (!f || !f->application || !connections || !prediction || connections == prediction ||
@@ -1679,7 +1707,7 @@ void frontend_network_transport_exchange(qa_frontend *active, qa_frontend *candi
 bool frontend_network_world_change_ready(qa_frontend *f, qa_error *error)
 {
     qa_frontend_network *n = f->network;
-    return !n || (!n->busy && frontend_nq_idle(n->nq_host) && qa_network_callbacks_idle(n->runtime)) ||
+    return !n || (!n->round && !n->busy && frontend_nq_idle(n->nq_host) && qa_network_callbacks_idle(n->runtime)) ||
         frontend_fail(error, QA_ERROR_ARGUMENT, "network callbacks must return before world publication");
 }
 bool frontend_network_destroy(qa_frontend *f, qa_error *error)
@@ -1748,6 +1776,7 @@ bool frontend_network_publish(qa_frontend *f, qa_error *error)
     if (n->nq_host) return frontend_nq_publish(n->nq_host, error);
     if (n->q3_client_requested) return client_drain(n, error);
     if (n->q3_admission) {
+        if (n->round) return round_publish(n->round, error);
         if (!q3_prepare(n, error)) return false;
         ++n->busy; bool ok = true;
         for (size_t i = 0; ok && i < 64; ++i) {
@@ -1764,6 +1793,269 @@ bool frontend_network_publish(qa_frontend *f, qa_error *error)
     uint32_t cursor = 0; const qa_net_client *client;
     if (qa_net_connections_next(qa_network_connections(f->network->runtime), &cursor, &client))
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "connected source snapshot/event publisher is unavailable");
+    return true;
+}
+
+static bool round_idle(qa_network_q3_round *cut, qa_error *error)
+{
+    qa_frontend_network *n = cut ? cut->network : NULL;
+    if (!n || n->round != cut || n->frontend != cut->frontend || cut->frontend->network != n ||
+        cut->frontend->stepping || n->busy || !qa_network_callbacks_idle(n->runtime) || n->q3_reconnect ||
+        qa_application_get_state(cut->frontend->application) != QA_APPLICATION_RUNNING ||
+        !qa_session_safe(qa_application_session(cut->frontend->application)) ||
+        cut->generation != qa_application_configuration_generation(cut->frontend->application) ||
+        n->q3_generation != cut->generation || n->q3_checksum_feed != cut->checksum_feed ||
+        n->q3_restarted_server_id != cut->restarted_server_id ||
+        n->q3_server_id != cut->server_id + (cut->begun ? 1 : 0) ||
+        n->q3_server_bit != (uint8_t)(cut->snapshot_bit ^ (cut->begun ? 4u : 0u)))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 source round no longer owns its exact idle network cut");
+    qa_q3_server_world observed;
+    return qa_application_network_q3_round_world(cut->frontend->application, cut->source_owner,
+        n->q3_server_id, n->q3_restarted_server_id, n->q3_checksum_feed, &observed, error);
+}
+static bool round_peer(qa_network_q3_round *cut, size_t i, frontend_q3_peer **out, qa_error *error)
+{
+    const qa_network_q3_round_client *row = cut->clients + i;
+    frontend_q3_peer *peer = cut->network->q3_peers + row->source_slot;
+    if (!peer->occupied || !qa_net_client_id_equal(peer->client, row->client) ||
+        peer->seat.owner != row->seat.owner || peer->seat.index != row->seat.index ||
+        peer->sequence != cut->sequence[i] || qa_network_epoch(cut->network->runtime, row->client) != cut->epoch[i])
+        return frontend_fail(error, QA_ERROR_FORMAT, "Q3 source round client changed its retained transport/command identity");
+    bool present; uint64_t accepted;
+    if (!qa_network_accepted_sequence(cut->network->runtime, row->client, row->seat, &present, &accepted, error)) return false;
+    if ((present && accepted != cut->sequence[i]) || (!present && (accepted || cut->sequence[i])))
+        return frontend_fail(error, QA_ERROR_FORMAT, "Q3 round client differs from its real accepted source command counter");
+    *out = peer; return true;
+}
+size_t frontend_network_q3_round_clients(const qa_network_q3_round *cut,
+    const qa_network_q3_round_client **out)
+{
+    if (out) *out = cut ? cut->clients : NULL;
+    return cut ? cut->count : 0;
+}
+qa_actor_owner frontend_network_q3_round_source_owner(const qa_network_q3_round *cut)
+{ return cut ? cut->source_owner : 0; }
+uint8_t frontend_network_q3_round_snapshot_bit(const qa_network_q3_round *cut)
+{ return cut ? (uint8_t)(cut->snapshot_bit ^ (cut->begun ? 4u : 0u)) : 0; }
+void frontend_network_q3_round_dispose(qa_network_q3_round *cut)
+{
+    if (!cut) return;
+    if (cut->network && cut->network->round == cut) cut->network->round = NULL;
+    for (size_t i = 0; i < 64; ++i) { free(cut->userinfo[i]); qa_buffer_free(&cut->native[i]); }
+    free(cut);
+}
+bool frontend_network_q3_round_prepare(qa_frontend *f, qa_network_q3_round **out, qa_error *error)
+{
+    if (!f || !out || *out || f->stepping || !frontend_network_world_change_ready(f, error))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 source round requires its drained frontend and empty cut output");
+    qa_frontend_network *n = f->network;
+    if (!n) return !f->options.network_host && !f->options.network_connect ||
+        frontend_fail(error, QA_ERROR_UNSUPPORTED, "Configured networking lacks its actual restart owner");
+    if (n->q3_client_requested || n->nq_host || (f->options.network_host && !n->q3_admission))
+        return frontend_fail(error, QA_ERROR_UNSUPPORTED, "Q3 source round cannot substitute another installed network dialect");
+    if (!n->q3_admission) return true;
+    if (n->q3_pending_count || n->q3_server_id == INT32_MAX)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 source round has pending admission or exhausted server identity");
+    if (!network_runtime_valid(n, true, error)) return false;
+    qa_network_q3_round *cut = calloc(1, sizeof(*cut));
+    if (!cut) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining Q3 source round network cut");
+    cut->network = n; cut->frontend = f; cut->generation = n->q3_generation;
+    cut->server_id = n->q3_server_id; cut->restarted_server_id = n->q3_restarted_server_id;
+    cut->checksum_feed = n->q3_checksum_feed; cut->snapshot_bit = n->q3_server_bit;
+    qa_q3_product product;
+    bool ok = qa_application_network_q3_owner(f->application, &cut->source_owner, &product, error);
+    qa_q3_server_world world;
+    if (ok) ok = qa_application_network_q3_round_world(f->application, cut->source_owner,
+        cut->server_id, cut->restarted_server_id, cut->checksum_feed, &world, error);
+    for (size_t i = 0; ok && i < 64; ++i) {
+        frontend_q3_peer *peer = n->q3_peers + i; if (!peer->occupied) continue;
+        if (peer->retiring) { ok = frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 source round has a retiring native client"); break; }
+        size_t at = cut->count++; qa_network_q3_round_client *row = cut->clients + at;
+        qa_q3_server_state state; const char *userinfo;
+        row->client = peer->client; row->seat = peer->seat; row->source_slot = (uint32_t)i;
+        ok = q3_actor(peer, &row->previous_actor, error) &&
+            qa_application_network_q3_userinfo_read(f->application, row->previous_actor, &userinfo, error) &&
+            qa_network_q3_state(n->runtime, peer->client, &state, error);
+        if (!ok) break;
+        const qa_actor_record *client_record = qa_actors_get(qa_session_actors(qa_application_session(f->application)), row->previous_actor);
+        if (!client_record || client_record->owner != cut->source_owner) {
+            ok = frontend_fail(error, QA_ERROR_FORMAT, "Q3 round client belongs to another source owner"); break;
+        }
+        size_t length = strlen(userinfo);
+        if (length == SIZE_MAX || !(cut->userinfo[at] = malloc(length + 1))) {
+            ok = frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual Q3 source client userinfo"); break;
+        }
+        memcpy(cut->userinfo[at], userinfo, length + 1); row->userinfo = cut->userinfo[at];
+        row->last_command = state.last_usercmd; cut->sequence[at] = peer->sequence;
+        cut->epoch[at] = qa_network_epoch(n->runtime, peer->client);
+        frontend_q3_peer *qualified;
+        if (!round_peer(cut, at, &qualified, error)) { ok = false; break; }
+        const qa_q3_server_peer *native = qa_network_q3_server_view(n->runtime, peer->client);
+        ok = native && qa_q3_server_peer_checkpoint(native, &cut->native[at], error);
+    }
+    uint32_t cursor = 0; const qa_net_client *client;
+    while (ok && qa_net_connections_next(qa_network_connections(n->runtime), &cursor, &client)) {
+        bool found = false;
+        for (size_t i = 0; i < cut->count; ++i) if (qa_net_client_id_equal(client->id, cut->clients[i].client)) found = true;
+        if (!found) ok = frontend_fail(error, QA_ERROR_UNSUPPORTED, "Q3 round has an unrepresented installed transport client");
+    }
+    if (!ok) {
+        frontend_network_q3_round_dispose(cut);
+        if (error && error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "Q3 source cut lacks its genuine GAME/transport admission");
+        return false;
+    }
+    n->round = cut; *out = cut; return true;
+}
+static bool round_bind_world(qa_network_q3_round *cut, bool prepare, qa_error *error)
+{
+    qa_frontend_network *n = cut->network; qa_q3_server_world world;
+    bool ok = prepare ? qa_application_network_q3_round_prepare(cut->frontend->application, cut->source_owner,
+        n->q3_server_id, n->q3_restarted_server_id, n->q3_checksum_feed, &world, error) :
+        qa_application_network_q3_round_world(cut->frontend->application, cut->source_owner,
+        n->q3_server_id, n->q3_restarted_server_id, n->q3_checksum_feed, &world, error);
+    if (!ok) return false;
+    for (size_t i = 0; i < cut->count; ++i) {
+        frontend_q3_peer *peer;
+        if (!round_peer(cut, i, &peer, error)) return false;
+        peer->world = world;
+    }
+    return true;
+}
+static bool round_publish(qa_network_q3_round *cut, qa_error *error)
+{
+    if (!round_idle(cut, error) || !round_bind_world(cut, false, error)) return false;
+    for (size_t i = 0; i < cut->count; ++i) {
+        frontend_q3_peer *peer; qa_q3_server_state state;
+        if (!round_peer(cut, i, &peer, error)) return false;
+        if (peer->retiring || (cut->begun && !cut->resolved[i])) continue;
+        if (!qa_network_q3_state(cut->network->runtime, peer->client, &state, error)) return false;
+        if (state.phase != QA_Q3_CONNECTED && peer->world.time >= state.next_snapshot_time && !q3_snapshot(peer, error)) return false;
+    }
+    return true;
+}
+static bool round_command_equal(const qa_q3_usercmd *a, const qa_q3_usercmd *b)
+{
+    return a->serverTime == b->serverTime && !memcmp(a->angles, b->angles, sizeof(a->angles)) &&
+        a->forwardmove == b->forwardmove && a->rightmove == b->rightmove && a->upmove == b->upmove &&
+        a->buttons == b->buttons && a->weapon == b->weapon;
+}
+bool frontend_network_q3_round_refresh(qa_network_q3_round *cut, qa_error *error)
+{
+    if (!cut) return true;
+    if (!round_idle(cut, error)) return false;
+    if (cut->begun) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 round cannot replace an already mutated cut");
+    qa_buffer refreshed[64] = {{0}}; bool ok = true;
+    for (size_t i = 0; ok && i < cut->count; ++i) {
+        frontend_q3_peer *peer; qa_actor_id actor; qa_q3_server_state state; const char *userinfo;
+        ok = round_peer(cut, i, &peer, error) && !peer->retiring && q3_actor(peer, &actor, error) &&
+            qa_actor_id_equal(actor, cut->clients[i].previous_actor) &&
+            qa_application_network_q3_userinfo_read(cut->frontend->application, actor, &userinfo, error) &&
+            !strcmp(userinfo, cut->clients[i].userinfo) && qa_network_q3_state(cut->network->runtime, peer->client, &state, error) &&
+            round_command_equal(&state.last_usercmd, &cut->clients[i].last_command);
+        const qa_q3_server_peer *native = ok ? qa_network_q3_server_view(cut->network->runtime, peer->client) : NULL;
+        if (ok) ok = native && qa_q3_server_peer_checkpoint(native, refreshed + i, error);
+    }
+    if (ok) for (size_t i = 0; i < cut->count; ++i) {
+        qa_buffer_free(cut->native + i); cut->native[i] = refreshed[i]; refreshed[i] = (qa_buffer){0};
+    }
+    for (size_t i = 0; i < 64; ++i) qa_buffer_free(refreshed + i);
+    if (!ok && (!error || error->code == QA_OK))
+        frontend_fail(error, QA_ERROR_FORMAT, "Q3 source admissions advanced during old frame delivery");
+    return ok;
+}
+bool frontend_network_q3_round_begin(qa_network_q3_round *cut, void (*mark)(void *), void *mark_context, qa_error *error)
+{
+    if (!cut) return true;
+    if (!round_idle(cut, error)) return false;
+    if (!mark || cut->begun) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 source round requires its first mutation marker");
+    for (size_t i = 0; i < cut->count; ++i) {
+        frontend_q3_peer *peer; qa_buffer current = {0}; qa_actor_id actor; const char *userinfo;
+        if (!round_peer(cut, i, &peer, error)) return false;
+        if (peer->retiring || !q3_actor(peer, &actor, error) ||
+            !qa_actor_id_equal(actor, cut->clients[i].previous_actor) ||
+            !qa_application_network_q3_userinfo_read(cut->frontend->application, actor, &userinfo, error)) return false;
+        if (strcmp(userinfo, cut->clients[i].userinfo))
+            return frontend_fail(error, QA_ERROR_FORMAT, "Q3 live userinfo advanced beyond its prepared source cut");
+        const qa_q3_server_peer *native = qa_network_q3_server_view(cut->network->runtime, peer->client);
+        bool ok = native && qa_q3_server_peer_checkpoint(native, &current, error);
+        if (ok && (current.size != cut->native[i].size || memcmp(current.data, cut->native[i].data, current.size)))
+            ok = frontend_fail(error, QA_ERROR_FORMAT, "Q3 live protocol advanced beyond its prepared round cut");
+        qa_buffer_free(&current); if (!ok) return false;
+    }
+    mark(mark_context);
+    ++cut->network->q3_server_id; cut->network->q3_server_bit ^= 4u;
+    cut->begun = true;
+    return round_bind_world(cut, true, error);
+}
+bool frontend_network_q3_round_bind(qa_network_q3_round *cut, qa_error *error)
+{
+    if (!cut) return true;
+    if (!round_idle(cut, error) || !cut->begun || cut->bound)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 source round bind is outside its reset scope");
+    if (!round_bind_world(cut, true, error)) return false;
+    cut->bound = true; return true;
+}
+static bool round_client(qa_network_q3_round *cut, qa_net_client_id client, size_t *at,
+    frontend_q3_peer **peer, qa_error *error)
+{
+    if (!round_idle(cut, error) || !cut->bound || cut->finished)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 round client is outside the actual bound source scope");
+    for (size_t i = 0; i < cut->count; ++i) if (qa_net_client_id_equal(cut->clients[i].client, client)) {
+        if (cut->resolved[i]) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 round client already completed admission");
+        *at = i; return round_peer(cut, i, peer, error);
+    }
+    return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 round client has no retained transport admission");
+}
+bool frontend_network_q3_round_queue_client(qa_network_q3_round *cut, qa_net_client_id client, qa_error *error)
+{
+    size_t i; frontend_q3_peer *peer;
+    if (!cut || !round_client(cut, client, &i, &peer, error)) return false;
+    if (cut->queued[i] || peer->retiring) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 round client cannot reconnect twice or after retirement");
+    if (!qa_network_q3_command(cut->network->runtime, client, "map_restart\n", error)) return false;
+    cut->queued[i] = true; return true;
+}
+bool frontend_network_q3_round_activate_client(qa_network_q3_round *cut, qa_net_client_id client, qa_error *error)
+{
+    size_t i; frontend_q3_peer *peer; qa_application_network_player row;
+    if (!cut || !round_client(cut, client, &i, &peer, error)) return false;
+    if (!cut->queued[i] || peer->retiring || !network_host_player(cut->network, peer, &row, error) || row.source_begin_pending)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 source round has not completed actual canonical ClientBegin");
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(qa_application_session(cut->frontend->application)), row.actor);
+    if (!record || record->owner != cut->source_owner || qa_actor_id_equal(row.actor, cut->clients[i].previous_actor))
+        return frontend_fail(error, QA_ERROR_FORMAT, "Q3 round has not replaced its actual retired source player generation");
+    if (!round_bind_world(cut, false, error) || !qa_network_q3_round_activate(cut->network->runtime, client, error)) return false;
+    cut->resolved[i] = true; return true;
+}
+bool frontend_network_q3_round_reject_client(qa_network_q3_round *cut, qa_net_client_id client,
+    const char *reason, qa_error *error)
+{
+    size_t i; frontend_q3_peer *peer;
+    if (!cut || !reason || !round_client(cut, client, &i, &peer, error)) return false;
+    if (!qa_network_q3_disconnect(cut->network->runtime, client, &peer->rate, cut->network->q3_server_bit, reason, error)) return false;
+    if (!q3_drop(peer, reason, error)) return false;
+    cut->resolved[i] = true; return true;
+}
+bool frontend_network_q3_round_finish(qa_network_q3_round *cut, qa_error *error)
+{
+    if (!cut) return true;
+    if (!round_idle(cut, error) || !cut->bound || cut->finished)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 source round has no complete bound network scope");
+    for (size_t i = 0; i < cut->count; ++i)
+        if (!cut->resolved[i]) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 round did not resolve every retained client");
+    if (cut->network->q3_pending_count)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 round acquired a new pending transport admission");
+    for (size_t i = 0; i < cut->count; ++i) {
+        frontend_q3_peer *peer; qa_q3_server_state state;
+        if (!round_peer(cut, i, &peer, error)) return false;
+        if (peer->retiring) continue;
+        if (!qa_network_q3_state(cut->network->runtime, peer->client, &state, error)) return false;
+        if (!cut->queued[i] || state.phase != QA_Q3_ACTIVE ||
+            !round_command_equal(&state.last_usercmd, &cut->clients[i].last_command))
+            return frontend_fail(error, QA_ERROR_FORMAT, "Q3 round lost its native active client or retained last command");
+    }
+    if (!q3_drain(cut->network, error)) return false;
+    if (!network_runtime_check(cut->network, true, true, error)) return false;
+    cut->finished = true; cut->network->round = NULL;
     return true;
 }
 
@@ -1793,6 +2085,20 @@ FORWARD(player_velocity, (void *context, qa_actor_id actor, qa_vec3 velocity, qa
 #undef FORWARD
 static qa_actor_id server_world_actor(void *context)
 { server_lease *lease = context; return lease->original.world_actor(lease->original.context); }
+static bool server_round_peer(server_lease *lease, frontend_q3_peer *peer, bool *owned, qa_error *error)
+{
+    qa_frontend_network *n = lease->frontend->network;
+    qa_network_q3_round *cut = n ? n->round : NULL;
+    *owned = false;
+    if (!cut || !cut->begun || cut->source_owner != lease->owner) return true;
+    for (size_t i = 0; i < cut->count; ++i) if (cut->clients[i].source_slot == peer->slot) {
+        frontend_q3_peer *actual;
+        if (!round_peer(cut, i, &actual, error)) return false;
+        if (actual != peer) return frontend_fail(error, QA_ERROR_FORMAT, "Q3 source command changed its retained cut recipient");
+        *owned = true; return true;
+    }
+    return frontend_fail(error, QA_ERROR_FORMAT, "Q3 source command names an unrepresented round recipient");
+}
 static bool server_send_command(void *context, int32_t slot, const char *text, qa_error *error)
 {
     server_lease *lease = context;
@@ -1800,6 +2106,12 @@ static bool server_send_command(void *context, int32_t slot, const char *text, q
     for (size_t i = 0; n && i < 64; ++i) {
         frontend_q3_peer *peer = &n->q3_peers[i]; qa_actor_id actor;
         if (!peer->occupied || peer->retiring || (slot >= 0 && peer->slot != (uint32_t)slot)) continue;
+        bool owned;
+        if (!server_round_peer(lease, peer, &owned, error)) return false;
+        if (owned) {
+            if (!qa_network_q3_command(n->runtime, peer->client, text, error)) return false;
+            continue;
+        }
         if (!q3_actor(peer, &actor, error)) return false;
         const qa_actor_record *record = qa_actors_get(qa_session_actors(qa_application_session(lease->frontend->application)), actor);
         if (record && record->owner == lease->owner && !qa_network_q3_command(n->runtime, peer->client, text, error)) return false;
@@ -1812,9 +2124,14 @@ static bool server_drop_client(void *context, uint32_t slot, const char *reason,
     qa_frontend_network *n = lease->frontend->network;
     if (n && slot < 64 && n->q3_peers[slot].occupied) {
         qa_actor_id actor;
-        if (!q3_actor(&n->q3_peers[slot], &actor, error)) return false;
-        const qa_actor_record *record = qa_actors_get(qa_session_actors(qa_application_session(lease->frontend->application)), actor);
-        if (record && record->owner == lease->owner && !q3_drop(&n->q3_peers[slot], reason, error)) return false;
+        bool owned;
+        if (!server_round_peer(lease, &n->q3_peers[slot], &owned, error)) return false;
+        if (!owned) {
+            if (!q3_actor(&n->q3_peers[slot], &actor, error)) return false;
+            const qa_actor_record *record = qa_actors_get(qa_session_actors(qa_application_session(lease->frontend->application)), actor);
+            owned = record && record->owner == lease->owner;
+        }
+        if (owned && !q3_drop(&n->q3_peers[slot], reason, error)) return false;
     }
     return !lease->original.drop_client || lease->original.drop_client(lease->original.context, slot, reason, error);
 }

@@ -128,6 +128,9 @@ typedef struct qa_application_network_q3_frame {
 const qa_q3_gamestate *qa_application_network_q3_gamestate(qa_application *, qa_actor_id);
 bool qa_application_network_q3_source(qa_application *, qa_actor_id,
     uint32_t *source_slot, qa_q3_product *, qa_error *);
+/* Read the actual primary GAME owner without requiring a local player.
+ * Candidate source admission may be pending; no source callback runs. */
+bool qa_application_network_q3_owner(qa_application *, qa_actor_owner *, qa_q3_product *, qa_error *);
 bool qa_application_network_q3_slots(qa_application *, qa_actor_id,
     bool occupied[64], qa_error *);
 qa_cvars *qa_application_network_q3_cvars(qa_application *, qa_actor_id);
@@ -148,6 +151,21 @@ bool qa_application_network_q3_world(qa_application *, qa_actor_id,
     int32_t server_id, int32_t restarted_server_id, int32_t checksum_feed,
     qa_q3_server_world *, qa_error *);
 bool qa_application_network_q3_userinfo(qa_application *, qa_actor_id, const char *, qa_error *);
+/* Borrow genuine retained source userinfo before retiring the old admission. */
+bool qa_application_network_q3_userinfo_read(qa_application *, qa_actor_id, const char **, qa_error *);
+/* Observe the exact retained primary GAME provider's wire world.
+ * The source round may have retired every player actor; none is reconstructed
+ * or used as a fallback. Requires its completed idle source round boundary. */
+bool qa_application_network_q3_round_world(qa_application *, qa_actor_owner source_owner,
+    int32_t server_id, int32_t restarted_server_id, int32_t checksum_feed,
+    qa_q3_server_world *, qa_error *);
+/* Publish actual server/system configstrings through that source's ordinary
+ * reliable owners before and after source reset; does not send a gamestate.
+ * Failure after a source write is irreversible; the round owner must fault
+ * and retire the failed transaction rather than retry it as an idle cut. */
+bool qa_application_network_q3_round_prepare(qa_application *, qa_actor_owner source_owner,
+    int32_t server_id, int32_t restarted_server_id, int32_t checksum_feed,
+    qa_q3_server_world *, qa_error *);
 bool qa_application_network_q3_snapshot(qa_application *, qa_actor_id,
     int32_t message_number, int32_t server_command_number, uint8_t flags,
     qa_application_network_q3_frame *, qa_error *);

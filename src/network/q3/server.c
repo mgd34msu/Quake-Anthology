@@ -247,6 +247,18 @@ bool qa_q3_server_peer_disconnect(qa_q3_server_peer *p, const qa_q3_server_rate 
     p->state.phase = QA_Q3_ZOMBIE;
     return ok;
 }
+bool qa_q3_server_peer_seed_baselines(qa_q3_server_peer *p, const qa_q3_gamestate *state, qa_error *e) {
+    if (!p || !state || p->state.phase != QA_Q3_CONNECTED || p->state.gamestate_message_number != -1)
+        return fail(e, QA_ERROR_ARGUMENT, "Q3 initial baselines require their actual connected source admission");
+    for (int32_t i = 0; i < QA_Q3_ENTITIES; ++i)
+        if (state->baseline_present[i] && (i >= QA_Q3_ENTITY_NONE || state->baselines[i].number != i))
+            return fail(e, QA_ERROR_FORMAT, "Q3 initial baseline differs from its physical source number");
+    if (state != &p->gamestate) {
+        memcpy(p->gamestate.baselines, state->baselines, sizeof(p->gamestate.baselines));
+        memcpy(p->gamestate.baseline_present, state->baseline_present, sizeof(p->gamestate.baseline_present));
+    }
+    return true;
+}
 bool qa_q3_server_peer_gamestate(qa_q3_server_peer *p, const qa_q3_gamestate *state, const qa_q3_server_rate *rate, qa_error *e) {
     if (!p || !state || !rate) return fail(e, QA_ERROR_ARGUMENT, "Invalid Q3 gamestate send");
     qa_q3_server_world world = p->hooks.world(p->hooks.context);

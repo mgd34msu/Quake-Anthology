@@ -26,6 +26,10 @@ bool qa_network_attach_q3_server(qa_network_runtime *, const qa_net_connect *,
     uint64_t now_ns, qa_net_client_id *, qa_error *);
 bool qa_network_q3_gamestate(qa_network_runtime *, qa_net_client_id,
     const qa_q3_gamestate *, const qa_q3_server_rate *, qa_error *);
+/* Seed genuine source baselines at accepted connect without sending or
+ * promoting either native/shared phase. Caller supplies actual GAME state. */
+bool qa_network_q3_seed_baselines(qa_network_runtime *, qa_net_client_id,
+    const qa_q3_gamestate *, qa_error *);
 bool qa_network_q3_snapshot(qa_network_runtime *, qa_net_client_id,
     const qa_q3_snapshot *, const qa_q3_server_rate *, const qa_q3_download *,
     size_t download_count, qa_error *);

@@ -366,6 +366,10 @@ const qa_q3_gamestate *qa_q3_server_peer_gamestate_view(const qa_q3_server_peer 
 bool qa_q3_server_peer_rebind(qa_q3_server_peer *, const qa_net_address *, qa_error *);
 bool qa_q3_server_peer_command(qa_q3_server_peer *, const char *, qa_error *);
 bool qa_q3_server_peer_receive(qa_q3_server_peer *, qa_bytes, qa_q3_receive_kind *, qa_error *);
+/* Capture the actual accepted-connect source baseline table before any
+ * gamestate send. Copies only baseline cache fields, preserving channel,
+ * reliable state, configstrings, client number and CONNECTED phase. */
+bool qa_q3_server_peer_seed_baselines(qa_q3_server_peer *, const qa_q3_gamestate *, qa_error *);
 bool qa_q3_server_peer_gamestate(qa_q3_server_peer *, const qa_q3_gamestate *, const qa_q3_server_rate *, qa_error *);
 bool qa_q3_server_peer_snapshot(qa_q3_server_peer *, const qa_q3_snapshot *, const qa_q3_server_rate *,
                                const qa_q3_download *, qa_error *);
