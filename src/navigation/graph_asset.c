@@ -7,6 +7,49 @@ static qa_nav_origin origin_kind(qa_nav_origin_kind kind, uint32_t node, uint32_
                            .surface = QA_NAV_NO_INDEX,
                            .leaf = QA_NAV_NO_INDEX};
 }
+qa_nav_edge nav_asset_aas_edge(const qa_aas_view *asset,uint32_t from,uint32_t index) {
+    const qa_aas_reach *reach=asset->reachability+index;
+    qa_nav_travel mode=qa_nav_aas_travel((uint32_t)reach->travel_type);
+    qa_nav_edge edge={.id=index,.from=from,.to=(uint32_t)reach->area,.mode=mode,
+        .start=reach->start,.end=reach->end,.travel_seconds=fmaxf(1,reach->travel_time)/100,
+        .source_travel_type=(uint32_t)reach->travel_type,
+        .source=origin_kind(QA_NAV_ORIGIN_AAS,from,index),
+        .has_entity=mode==QA_NAV_MOVER || mode==QA_NAV_TELEPORT || mode==QA_NAV_JUMP_PAD};
+    if(edge.has_entity) edge.entity=(qa_nav_binding){.has_model=mode==QA_NAV_MOVER,
+        .model=reach->face & 65535,.bounds=asset->areas[from].bounds,
+        .raw={reach->face,reach->edge},.raw_count=2};
+    return edge;
+}
+qa_nav_edge nav_asset_kex_edge(const qa_nav_graph *g,const qa_nav_source_view *asset,uint32_t from,
+                              uint32_t index,const qa_nav_source_entity *binding) {
+    const qa_nav_source_link *link=asset->links+index;
+    qa_nav_travel mode=qa_nav_kex_travel(link->type);
+    qa_nav_origin_kind kind=asset->kind==QA_NAV_NAV2?QA_NAV_ORIGIN_NAV2:QA_NAV_ORIGIN_NAV3;
+    qa_vec3 rise=qa_v3(0,0,-g->view.profile.shape.bounds.mins.z);
+    qa_nav_edge edge={.id=index,.from=from,.to=link->target,.mode=mode,
+        .start=g->nodes[from].origin,.end=g->nodes[link->target].origin,
+        .source_travel_type=link->type,.source_flags=link->flags,
+        .source=origin_kind(kind,from,index),.has_hint=link->traversal!=UINT16_MAX};
+    if(edge.has_hint) {
+        edge.hint=asset->traversals[link->traversal];
+        edge.hint.funnel=qa_vec_add(edge.hint.funnel,rise);
+        edge.hint.start=qa_vec_add(edge.hint.start,rise);
+        edge.hint.end=qa_vec_add(edge.hint.end,rise);
+        edge.start=edge.hint.start;edge.end=edge.hint.end;
+    }
+    edge.travel_seconds=mode==QA_NAV_TELEPORT?0.01f:
+        fmaxf(0.01f,nav_distance(edge.start,edge.end)*asset->heuristic/320);
+    edge.has_entity=binding!=NULL || mode==QA_NAV_TELEPORT || mode==QA_NAV_JUMP_PAD || mode==QA_NAV_MOVER;
+    if(binding) {
+        edge.entity=(qa_nav_binding){.has_model=binding->has_model,.model=binding->model,.bounds=binding->bounds,
+            .raw={binding->tail[0],binding->tail[1]},.raw_count=binding->tail_count};
+        if(asset->kind==QA_NAV_NAV3) {
+            if(binding->model<=1 || binding->model==255) edge.entity.has_model=false;
+            else edge.entity.model-=binding->model>255?2:1;
+        }
+    } else if(edge.has_entity) edge.entity.bounds=g->nodes[from].bounds;
+    return edge;
+}
 static bool from_aas(qa_nav_graph *g, const qa_aas_view *asset, const qa_navigation_services *s,
                      qa_error *e) {
     const qa_nav_profile *p = &g->view.profile;
@@ -53,24 +96,7 @@ static bool from_aas(qa_nav_graph *g, const qa_aas_view *asset, const qa_navigat
             const qa_aas_reach *reach = asset->reachability + index;
             if (reach->area == 0)
                 continue;
-            qa_nav_travel mode = qa_nav_aas_travel((uint32_t)reach->travel_type);
-            qa_nav_edge edge = {.id = index,
-                                .from = (uint32_t)i,
-                                .to = (uint32_t)reach->area,
-                                .mode = mode,
-                                .start = reach->start,
-                                .end = reach->end,
-                                .travel_seconds = fmaxf(1, reach->travel_time) / 100,
-                                .source_travel_type = (uint32_t)reach->travel_type,
-                                .source = origin_kind(QA_NAV_ORIGIN_AAS, (uint32_t)i, index),
-                                .has_entity = mode == QA_NAV_MOVER || mode == QA_NAV_TELEPORT ||
-                                              mode == QA_NAV_JUMP_PAD};
-            if (edge.has_entity)
-                edge.entity = (qa_nav_binding){.has_model = mode == QA_NAV_MOVER,
-                                               .model = reach->face & 65535,
-                                               .bounds = area->bounds,
-                                               .raw = {reach->face, reach->edge},
-                                               .raw_count = 2};
+            qa_nav_edge edge=nav_asset_aas_edge(asset,(uint32_t)i,index);
             if (!nav_graph_edge(g, &edge, e))
                 return false;
         }
@@ -108,47 +134,8 @@ static bool from_kex(qa_nav_graph *g, const qa_nav_source_view *asset,
         const qa_nav_source_node *source = asset->nodes + i;
         for (uint32_t j = 0; ok && j < source->link_count; ++j) {
             uint32_t index = source->first_link + j;
-            const qa_nav_source_link *link = asset->links + index;
             const qa_nav_source_entity *binding = bindings[index];
-            qa_nav_travel mode = qa_nav_kex_travel(link->type);
-            qa_nav_edge edge = {.id = index,
-                                .from = (uint32_t)i,
-                                .to = link->target,
-                                .mode = mode,
-                                .start = g->nodes[i].origin,
-                                .end = g->nodes[link->target].origin,
-                                .source_travel_type = link->type,
-                                .source_flags = link->flags,
-                                .source = origin_kind(kind, (uint32_t)i, index),
-                                .has_hint = link->traversal != UINT16_MAX};
-            if (edge.has_hint) {
-                edge.hint = asset->traversals[link->traversal];
-                edge.hint.funnel = qa_vec_add(edge.hint.funnel, rise);
-                edge.hint.start = qa_vec_add(edge.hint.start, rise);
-                edge.hint.end = qa_vec_add(edge.hint.end, rise);
-                edge.start = edge.hint.start;
-                edge.end = edge.hint.end;
-            }
-            edge.travel_seconds =
-                mode == QA_NAV_TELEPORT
-                    ? 0.01f
-                    : fmaxf(0.01f, nav_distance(edge.start, edge.end) * asset->heuristic / 320);
-            edge.has_entity = binding != NULL || mode == QA_NAV_TELEPORT ||
-                              mode == QA_NAV_JUMP_PAD || mode == QA_NAV_MOVER;
-            if (binding != NULL) {
-                edge.entity = (qa_nav_binding){.has_model = binding->has_model,
-                                               .model = binding->model,
-                                               .bounds = binding->bounds,
-                                               .raw = {binding->tail[0], binding->tail[1]},
-                                               .raw_count = binding->tail_count};
-                if (asset->kind == QA_NAV_NAV3) {
-                    if (binding->model <= 1 || binding->model == 255)
-                        edge.entity.has_model = false;
-                    else
-                        edge.entity.model -= binding->model > 255 ? 2 : 1;
-                }
-            } else if (edge.has_entity)
-                edge.entity.bounds = g->nodes[i].bounds;
+            qa_nav_edge edge=nav_asset_kex_edge(g,asset,(uint32_t)i,index,binding);
             ok = nav_graph_edge(g, &edge, e);
         }
     }

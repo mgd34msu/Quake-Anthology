@@ -962,6 +962,7 @@ add_library(qa_persistence STATIC
     src/persistence/inventory.c
     src/persistence/movement_fields.c
     src/persistence/navigation.c
+    src/navigation/graph_save.c
     src/persistence/pickups.c
     src/persistence/recovery.c
     src/persistence/session.c

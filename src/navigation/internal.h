@@ -91,6 +91,9 @@ bool nav_graph_new(const qa_nav_map *, const qa_nav_profile *, qa_nav_graph **, 
 bool nav_graph_node(qa_nav_graph *, const qa_nav_node *, qa_error *);
 bool nav_graph_edge(qa_nav_graph *, const qa_nav_edge *, qa_error *);
 bool nav_graph_finish(qa_nav_graph *, qa_error *);
+qa_nav_edge nav_asset_aas_edge(const qa_aas_view *,uint32_t from,uint32_t link);
+qa_nav_edge nav_asset_kex_edge(const qa_nav_graph *,const qa_nav_source_view *,uint32_t from,
+                              uint32_t link,const qa_nav_source_entity *);
 static inline float nav_distance(qa_vec3 a, qa_vec3 b) { return qa_vec_length(qa_vec_sub(a, b)); }
 static inline qa_vec3 nav_midpoint(qa_vec3 a, qa_vec3 b) {
     return qa_vec_scale(qa_vec_add(a, b), 0.5f);
