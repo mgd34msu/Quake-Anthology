@@ -1021,6 +1021,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/launch.c
     src/app/frontend/lifetime.c
     src/app/frontend/map_events.c
+    src/app/frontend/menu_save.c
     src/app/frontend/native_q2.c
     src/app/frontend/native_q2_baseline.c
     src/app/frontend/network.c
