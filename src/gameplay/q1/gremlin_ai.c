@@ -173,6 +173,13 @@ failed:
         (void)qa_session_release(g->services.session, child, NULL);
     return false;
 }
+static q1_actor *run_source(qa_q1_game *g, qa_actor_id source) {
+    q1_actor *entity = q1_entity(g, source);
+    return entity && entity->kind == Q1_MONSTER &&
+                   entity->state.monster.species->species == QA_Q1_GREMLIN
+               ? entity
+               : NULL;
+}
 bool q1_gremlin_run(qa_q1_game *g, q1_actor *entity, float distance, qa_error *error) {
     qa_actor_id source = entity->id;
     q1_monster *m = &entity->state.monster;
@@ -203,17 +210,32 @@ bool q1_gremlin_run(qa_q1_game *g, q1_actor *entity, float distance, qa_error *e
         if (range < 130) {
             if (!q1_monster_face(g, entity, error))
                 return false;
+            entity = run_source(g, source);
+            if (!entity)
+                return true;
+            m = &entity->state.monster;
             if (range < 45) {
                 if (!q1_gremlin_melee(g, entity, error))
                     return false;
+                entity = run_source(g, source);
+                if (!entity)
+                    return true;
+                m = &entity->state.monster;
                 m->attack_state = 0;
                 return true;
             }
             bool moved;
-            if (!qa_world_body_read(g->services.world, entity->id, &body, error) ||
-                !qa_physics_walk_move(g->services.physics, entity->id, body.angles.y, distance,
+            if (!qa_world_body_read(g->services.world, source, &body, error))
+                return !run_source(g, source);
+            if (!run_source(g, source))
+                return true;
+            if (!qa_physics_walk_move(g->services.physics, source, body.angles.y, distance,
                                       (float)g->elapsed, true, true, &moved, error))
                 return false;
+            entity = run_source(g, source);
+            if (!entity)
+                return true;
+            m = &entity->state.monster;
             if (!moved)
                 m->source.gremlin.gorging = false;
             return true;

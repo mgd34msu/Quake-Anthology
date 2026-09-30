@@ -511,6 +511,15 @@ bool qa_q1_game_operation_begin(qa_q1_game *g, qa_q1_game_operation *operation, 
     ++g->observation_depth;
     return true;
 }
+bool qa_q1_game_command_begin(qa_q1_game *g, uint64_t time_ns, uint64_t source_elapsed_ns,
+                              qa_q1_game_operation *operation, qa_error *error) {
+    if (!qa_q1_game_operation_begin(g, operation, error))
+        return false;
+    g->time_ns = time_ns;
+    g->time = (double)time_ns / 1000000000.0;
+    g->elapsed = (double)source_elapsed_ns / 1000000000.0;
+    return true;
+}
 bool qa_q1_game_operation_live(const qa_q1_game_operation *operation) {
     return operation && operation->game && !operation->game->destroy_pending;
 }

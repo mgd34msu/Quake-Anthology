@@ -112,7 +112,49 @@ bool q1_gremlin_steal(qa_q1_game *g, q1_actor *entity, bool *out, qa_error *erro
     *out = true;
     return true;
 }
-static bool aim(qa_q1_game *g, q1_actor **source, float spread, qa_vec3 *out, qa_error *error) {
+static float aim_float(double value) {
+    if (isnan(value))
+        return NAN;
+    if (fabs(value) >= 0x1.ffffffp127)
+        return value < 0 ? -INFINITY : INFINITY;
+    return fabs(value) > FLT_MAX ? (value < 0 ? -FLT_MAX : FLT_MAX) : (float)value;
+}
+static qa_vec3 aim_scale(qa_vec3 value, double scale) {
+    return qa_v3(aim_float((double)value.x * scale), aim_float((double)value.y * scale),
+                 aim_float((double)value.z * scale));
+}
+static qa_vec3 aim_normalize(qa_vec3 value) {
+    float x = aim_float((double)value.x * value.x);
+    float y = aim_float((double)value.y * value.y);
+    float z = aim_float((double)value.z * value.z);
+    float xy = aim_float((double)x + y);
+    float squared = aim_float((double)xy + z);
+    float magnitude = aim_float(sqrt((double)squared));
+    return magnitude == 0 ? qa_v3(0, 0, 0) : aim_scale(value, 1.0 / (double)magnitude);
+}
+static qa_vec3 aim_angles(qa_vec3 direction) {
+    const double pi = 3.14159265358979323846264338327950288;
+    bool vertical = direction.x == 0 && direction.y == 0;
+    double yaw = vertical ? 0 : atan2((double)direction.y, direction.x) * 180 / pi;
+    double pitch = vertical ? (direction.z > 0 ? 90 : 270)
+        : atan2((double)direction.z, hypot((double)direction.x, direction.y)) * 180 / pi;
+    return qa_v3(aim_float(pitch < 0 ? pitch + 360 : pitch),
+                 aim_float(yaw < 0 ? yaw + 360 : yaw), 0);
+}
+static void aim_vectors(qa_q1_game *g, qa_vec3 angles) {
+    const double pi = 3.14159265358979323846264338327950288;
+    double yaw = (double)angles.y * pi / 180;
+    double pitch = (double)angles.x * pi / 180;
+    double roll = (double)angles.z * pi / 180;
+    double sy = sin(yaw), cy = cos(yaw), sp = sin(pitch), cp = cos(pitch);
+    double sr = sin(roll), cr = cos(roll);
+    g->forward = qa_v3(aim_float(cp * cy), aim_float(cp * sy), aim_float(-sp));
+    g->right = qa_v3(aim_float(-sr * sp * cy + cr * sy),
+                      aim_float(-sr * sp * sy - cr * cy), aim_float(-sr * cp));
+    g->up = qa_v3(aim_float(cr * sp * cy + sr * sy),
+                   aim_float(cr * sp * sy - sr * cy), aim_float(cr * cp));
+}
+static bool aim(qa_q1_game *g, q1_actor **source, double spread, qa_vec3 *out, qa_error *error) {
     q1_actor *entity = *source;
     qa_actor_id id = entity->id, enemy = entity->state.monster.enemy;
     qa_body_state body, target = {0};
@@ -126,16 +168,14 @@ static bool aim(qa_q1_game *g, q1_actor **source, float spread, qa_vec3 *out, qa
     *source = entity = q1_entity(g, id);
     if (!entity)
         return true;
-    qa_vec3 direction = qa_vec_normalize(qa_vec_sub(target.origin, body.origin));
-    qa_vec3 angles =
-        qa_v3(qa_builtin_angle_mod(atan2f(direction.z, hypotf(direction.x, direction.y)) *
-                                   57.29577951308232f),
-              qa_builtin_angle_mod(atan2f(direction.y, direction.x) * 57.29577951308232f), 0);
+    qa_vec3 direction = aim_normalize(qa_vec_sub(target.origin, body.origin));
+    qa_vec3 angles = aim_angles(direction);
     entity->state.monster.source.gremlin.view_angles = angles;
-    qa_builtin_angle_vectors(angles, &g->forward, &g->right, &g->up);
-    float right = (q1_random(g) * 2 - 1) * spread, up = (q1_random(g) * 2 - 1) * spread;
-    *out = qa_vec_normalize(
-        qa_vec_add(direction, qa_vec_add(qa_vec_scale(g->right, right), qa_vec_scale(g->up, up))));
+    aim_vectors(g, angles);
+    double right = ((double)q1_random(g) * 2 - 1) * spread;
+    qa_vec3 offset = qa_vec_add(direction, aim_scale(g->right, right));
+    double up = ((double)q1_random(g) * 2 - 1) * spread;
+    *out = aim_normalize(qa_vec_add(offset, aim_scale(g->up, up)));
     return true;
 }
 bool q1_gremlin_fire_nail(qa_q1_game *g, q1_actor *entity, bool laser, qa_error *error) {
@@ -152,7 +192,7 @@ bool q1_gremlin_fire_nail(qa_q1_game *g, q1_actor *entity, bool laser, qa_error 
         return true;
     qa_vec3 direction;
     qa_body_state body;
-    if (!aim(g, &entity, 0.1f, &direction, error))
+    if (!aim(g, &entity, 0.1, &direction, error))
         return false;
     if (!entity)
         return true;
@@ -182,14 +222,11 @@ static bool shotgun(qa_q1_game *g, q1_actor *entity, bool double_shot, qa_error 
     if (!entity)
         return true;
     qa_vec3 direction;
-    if (!aim(g, &entity, double_shot ? 0.3f : 0.1f, &direction, error))
+    if (!aim(g, &entity, double_shot ? 0.3 : 0.1, &direction, error))
         return false;
     if (!entity)
         return true;
-    qa_vec3 angles =
-        qa_v3(qa_builtin_angle_mod(atan2f(direction.z, hypotf(direction.x, direction.y)) *
-                                   57.29577951308232f),
-              qa_builtin_angle_mod(atan2f(direction.y, direction.x) * 57.29577951308232f), 0);
+    qa_vec3 angles = aim_angles(direction);
     entity->state.monster.source.gremlin.view_angles = angles;
     return q1_bullets(g, entity->id, direction, angles, double_shot ? 14 : 6,
                       double_shot ? 0.14f : 0.04f, double_shot ? 0.08f : 0.04f,
@@ -210,7 +247,7 @@ static bool missile(qa_q1_game *g, q1_actor *entity, bool proximity, qa_error *e
         return true;
     qa_vec3 direction;
     qa_body_state body;
-    if (!aim(g, &entity, 0.1f, &direction, error))
+    if (!aim(g, &entity, 0.1, &direction, error))
         return false;
     if (!entity)
         return true;
@@ -260,7 +297,7 @@ bool q1_gremlin_lightning(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!entity)
         return true;
     qa_vec3 start = qa_vec_add(body.origin, qa_v3(0, 0, 16));
-    if (!aim(g, &entity, 0.1f, &direction, error))
+    if (!aim(g, &entity, 0.1, &direction, error))
         return false;
     if (!entity)
         return true;

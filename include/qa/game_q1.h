@@ -303,6 +303,11 @@ typedef struct qa_q1_game_operation {
  * copy an active lease. Teardown requests reject subsequent work; the last
  * operation end may reclaim the game and clears the lease before doing so. */
 bool qa_q1_game_operation_begin(qa_q1_game *, qa_q1_game_operation *, qa_error *);
+/* Retain a command operation and admit the active world interval projected
+ * into this Q1 source clock. Gameplay time persists after operation end;
+ * callers must supply source frame elapsed time separately from command time. */
+bool qa_q1_game_command_begin(qa_q1_game *, uint64_t time_ns, uint64_t source_elapsed_ns,
+                              qa_q1_game_operation *, qa_error *);
 /* Retain callback-owner storage without marking an operation active. Retire
  * all borrowed world/session/target contexts before ending this owner lease. */
 bool qa_q1_game_retain(qa_q1_game *, qa_q1_game_operation *, qa_error *);

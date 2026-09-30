@@ -39,31 +39,64 @@ static bool resume(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             : "gremlin_stand1",
         error);
 }
+static q1_actor *melee_source(qa_q1_game *g, qa_actor_id source) {
+    q1_actor *entity = q1_entity(g, source);
+    return entity && entity->kind == Q1_MONSTER &&
+                   entity->state.monster.species->species == QA_Q1_GREMLIN
+               ? entity
+               : NULL;
+}
 static bool melee(qa_q1_game *g, q1_actor *entity, float side, qa_error *error) {
+    qa_actor_id source = entity->id;
     if (!q1_monster_face(g, entity, error))
         return false;
+    entity = melee_source(g, source);
+    if (!entity)
+        return true;
     qa_body_state body, target;
     qa_actor_id enemy = entity->state.monster.enemy;
+    if (!enemy.registry)
+        return true;
     if (!qa_world_body_read(g->services.world, enemy, &target, NULL))
         return true;
-    if (!qa_world_body_read(g->services.world, entity->id, &body, error))
-        return false;
+    if (!melee_source(g, source))
+        return true;
+    if (!qa_world_body_read(g->services.world, source, &body, error))
+        return !melee_source(g, source);
+    entity = melee_source(g, source);
+    if (!entity)
+        return true;
     if (qa_vec_length(qa_vec_sub(target.origin, body.origin)) > 100)
         return true;
     bool visible;
-    if (!q1_can_damage(g, enemy, entity->id, &visible, error))
+    if (!q1_can_damage(g, entity->state.monster.enemy, source, &visible, error))
         return false;
-    if (!visible)
+    entity = melee_source(g, source);
+    if (!entity || !visible)
         return true;
-    if (!q1_sound(g, entity->id, "grem/attack.wav", 1, 1, error) ||
-        !q1_damage(g, enemy, entity->id, entity->id, 10 + 5 * q1_random(g), QA_Q1_WEAPON_COUNT,
-                   error))
+    if (!q1_sound(g, source, "grem/attack.wav", 1, 1, error))
         return false;
-    if (!q1_alive(g, entity->id))
+    entity = melee_source(g, source);
+    if (!entity)
+        return true;
+    if (!q1_damage(g, entity->state.monster.enemy, source, source, 10 + 5 * q1_random(g),
+                   QA_Q1_WEAPON_COUNT, error))
+        return false;
+    if (!melee_source(g, source))
+        return true;
+    if (!qa_world_body_read(g->services.world, source, &body, error))
+        return !melee_source(g, source);
+    if (!melee_source(g, source))
         return true;
     qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
-    return q1_meat_spray(g, entity, qa_vec_add(body.origin, qa_vec_scale(g->forward, 16)),
-                         qa_vec_scale(g->right, side), error);
+    qa_vec3 forward = g->forward, right = g->right;
+    if (!qa_world_body_read(g->services.world, source, &body, error))
+        return !melee_source(g, source);
+    entity = melee_source(g, source);
+    if (!entity)
+        return true;
+    return q1_meat_spray(g, entity, qa_vec_add(body.origin, qa_vec_scale(forward, 16)),
+                         qa_vec_scale(right, side), error);
 }
 static bool split(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (g->spawned_gremlins >= g->authored_gremlins * 2u)

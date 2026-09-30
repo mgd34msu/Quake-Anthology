@@ -43,14 +43,23 @@ static bool eligible(qa_q1_game *g, qa_actor_id actor) {
            !target.notarget;
 }
 bool q1_monster_face(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    qa_actor_id source = entity->id;
     qa_body_state self, target;
     if (!target_body(g, entity, &target))
         return true;
+    entity = q1_entity(g, source);
+    if (!entity)
+        return true;
     if (!body(g, entity, &self, error))
-        return false;
+        return !q1_entity(g, source);
+    entity = q1_entity(g, source);
+    if (!entity)
+        return true;
     qa_vec3 delta = qa_vec_sub(target.origin, self.origin);
-    entity->physics.ideal_yaw = qa_builtin_angle_mod(atan2f(delta.y, delta.x) * 57.29577951308232f);
-    return qa_physics_change_yaw(g->services.physics, entity->id, (float)g->elapsed, error);
+    double yaw = atan2((double)delta.y, delta.x) * 180 /
+                 3.14159265358979323846264338327950288;
+    entity->physics.ideal_yaw = (float)(yaw < 0 ? yaw + 360 : yaw);
+    return qa_physics_change_yaw(g->services.physics, source, (float)g->elapsed, error);
 }
 bool q1_monster_visible(qa_q1_game *g, q1_actor *entity, qa_actor_id target, bool *out,
                         qa_error *error) {
