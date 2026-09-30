@@ -150,3 +150,27 @@ review; subsequent repairs require a refreshed manifest. The second packet
 also requires root registration of its five codec translation units and the
 application-owned source descriptor constructor. Independent source review
 does not substitute for the later permitted build/runtime qualification.
+
+The next console packet adds `console_save.h` and `commands_save.c` for actual
+`qa_console` continuation. It retains ordered command registrations, lifetime
+contributions and documentation, aliases with source dialect, queued/deferred
+chunks with original byte extents and offsets, script completion sentinels and
+caller contexts, wait state, alias recursion count, retired owner/client IDs,
+startup text and declared limits. Command bytes remain byte arrays, including
+embedded NUL from content scripts. Copied text and documentation reuse the
+existing cvar codec's owned field helpers without canonical string interning.
+The actual console contains no independent time field; wait preserves its
+source frame count.
+
+The decoder constructs a scratch console while retaining candidate routing
+callbacks. Existing installed command handlers must match the restored command
+name, dispatch owner, registration lifetime and engine flag. Saved placeholders
+with no handler remain source fallback declarations. Lifetime and context
+resolvers must qualify actual owners and clients and map the captured actor
+registry/publication correctly. They cannot turn stale contexts into a fresh
+publication or execute commands. Canonical actor references remap through the
+candidate session. Complete decode, owned lifetime checks and unchanged
+candidate byte checks precede the dynamic state exchange; partial records are
+reachable by the ordinary console destructor. Application/provider console
+scope identity and coherent network client mapping remain root integration
+dependencies before this becomes the application commands owner.

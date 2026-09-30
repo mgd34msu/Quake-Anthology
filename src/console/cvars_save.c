@@ -1,6 +1,7 @@
 #include "cvars_private.h"
 #include "qa/cvars_save.h"
 #include "qa/source_save.h"
+#include "save_fields.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -13,7 +14,7 @@ struct qa_cvars_restore {
     bool userinfo_modified, server_active, high_characters, cheats;
 };
 
-static bool field_text(qa_source_save_io *io, const char **text)
+bool qac_save_text(qa_source_save_io *io, const char **text)
 {
     bool present = io->direction == QA_SOURCE_SAVE_WRITE && *text != NULL;
     if (!qa_source_save_bool(io, &present)) return false;
@@ -46,14 +47,14 @@ static bool field_list(qa_source_save_io *io, const char *const **list, size_t *
         return qac_fail(io->error, QA_ERROR_ARGUMENT, "missing cvar documentation list");
     for (size_t i = 0; i < *count; ++i) {
         const char *text = io->direction == QA_SOURCE_SAVE_WRITE ? (*list)[i] : NULL;
-        bool ok = field_text(io, &text);
+        bool ok = qac_save_text(io, &text);
         if (io->direction == QA_SOURCE_SAVE_READ) ((const char **)*list)[i] = text;
         if (!ok || !text) return false;
     }
     return true;
 }
 
-static bool field_doc(qa_source_save_io *io, const qa_console_documentation **out)
+bool qac_save_documentation(qa_source_save_io *io, const qa_console_documentation **out)
 {
     bool present = io->direction == QA_SOURCE_SAVE_WRITE && *out != NULL;
     if (!qa_source_save_bool(io, &present)) return false;
@@ -66,7 +67,7 @@ static bool field_doc(qa_source_save_io *io, const qa_console_documentation **ou
         if (!doc) return qac_fail(io->error, QA_ERROR_MEMORY, "allocating saved cvar documentation");
         *out = doc;
     }
-    return field_text(io, &doc->usage) && field_list(io, &doc->examples, &doc->example_count) &&
+    return qac_save_text(io, &doc->usage) && field_list(io, &doc->examples, &doc->example_count) &&
         field_list(io, &doc->allowed_values, &doc->allowed_count) &&
         qa_source_save_bool(io, &doc->has_allowed_values);
 }
@@ -74,9 +75,9 @@ static bool field_doc(qa_source_save_io *io, const qa_console_documentation **ou
 static bool field_entry(qa_source_save_io *io, cvar *entry)
 {
     uint64_t binding_owner = io->direction == QA_SOURCE_SAVE_WRITE ? entry->binding.owner : 0;
-    bool ok = field_text(io, &entry->view.name) && field_text(io, &entry->view.value) &&
-        field_text(io, &entry->view.reset_value) && field_text(io, &entry->view.latched_value) &&
-        field_text(io, &entry->view.description) && field_doc(io, &entry->view.documentation) &&
+    bool ok = qac_save_text(io, &entry->view.name) && qac_save_text(io, &entry->view.value) &&
+        qac_save_text(io, &entry->view.reset_value) && qac_save_text(io, &entry->view.latched_value) &&
+        qac_save_text(io, &entry->view.description) && qac_save_documentation(io, &entry->view.documentation) &&
         qa_source_save_u32(io, &entry->view.flags) && qa_source_save_u64(io, &entry->view.modification_count) &&
         qa_source_save_u64(io, &entry->view.owner) && qa_source_save_f32(io, &entry->view.number) &&
         qa_source_save_i32(io, &entry->view.integer) && qa_source_save_bool(io, &entry->view.modified) &&
