@@ -197,7 +197,9 @@ static bool checkpoint(qa_source_save_io *io, qa_q3_game *game, qa_q3_checkpoint
 {
     FIELD(u32, p->version); FIELD(u32, p->random_state); FIELD(u32, p->death_animation);
     FIELD(u32, p->body_queue_index); ENUM(p->product, QA_Q3_TEAM_ARENA);
-    if (p->version != 5) return save_fail(io, "unsupported Q3 typed continuation");
+    if (p->version != 6) return save_fail(io, "unsupported Q3 typed continuation");
+    FIELD(u32, p->max_clients);
+    if (!p->max_clients || p->max_clients > 64) return save_fail(io, "invalid Q3 source client capacity");
     if (!rules(io, &p->rules)) return false;
     FIELD(i32, p->previous_ms); FIELD(i32, p->now_ms); FIELD(u64, p->attack_sequence);
     FIELD(i32, p->ranking_hit.frame); FIELD(i32, p->ranking_hit.self);
@@ -272,11 +274,15 @@ static bool map_actor(qa_source_save_io *io, qa_q3_map_actor_checkpoint *p)
 static bool map_checkpoint(qa_source_save_io *io, qa_q3_game *game, qa_q3_map_checkpoint *p)
 {
     FIELD(u32, p->version);
-    if (p->version != 3) return save_fail(io, "unsupported Q3 authored continuation");
+    if (p->version != 4) return save_fail(io, "unsupported Q3 authored continuation");
+    FIELD(i32, p->loaded_game_type);
+    if (p->loaded_game_type < -1) return save_fail(io, "invalid Q3 loaded game type");
     FIELD(u64, p->registered_items); FIELD(f32, p->gravity);
     FIELD(string, p->motd); FIELD(u32, p->random_seed); FIELD(i32, p->start_time_ms);
     FIELD(i32, p->restarted); FIELD(bool, p->warmup);
     FIELD(bool, p->world_spawned); FIELD(bool, p->post_spawned); FIELD(bool, p->locations_linked);
+    if (p->loaded_game_type >= 0 && (!p->world_spawned || !p->post_spawned))
+        return save_fail(io, "Q3 loaded game type lacks completed authored admission");
     if (!qa_source_save_count(io, &p->actor_count, game->capacity)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ && p->actor_count) {
         p->actors = allocate(io, p->actor_count, sizeof(*p->actors));
@@ -373,9 +379,9 @@ static bool continuation(qa_source_save_io *io, qa_q3_game *game,
     static const uint8_t expected[8] = {'Q', 'A', 'Q', '3', 'S', 'A', 'V', 'E'};
     if (!qa_source_save_bytes(io, signature, sizeof(signature)) ||
         memcmp(signature, expected, sizeof(signature))) return save_fail(io, "invalid Q3 save signature");
-    uint32_t version = 5;
+    uint32_t version = 6;
     FIELD(u32, version);
-    if (version != 5) return save_fail(io, "unsupported Q3 save version");
+    if (version != 6) return save_fail(io, "unsupported Q3 save version");
     if (!checkpoint(io, game, native)) return false;
     bool has_map = game->map != NULL;
     FIELD(bool, has_map);

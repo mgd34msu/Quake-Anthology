@@ -6,7 +6,7 @@
 typedef struct qa_q3_round_source {
     qa_q3_product product;
     int32_t game_type, start_time_ms, current_time_ms;
-    uint32_t random_seed;
+    uint32_t random_seed, max_clients;
 } qa_q3_round_source;
 
 /* The installed, fully spawned native map's actual source values. This does

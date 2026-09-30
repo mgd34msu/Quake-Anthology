@@ -28,6 +28,7 @@ static bool runtime_create(qa_q3_game *game, const qa_q3_map_options *options,
         return false;
     }
     map->options = *options;
+    map->loaded_game_type = -1;
     map->capacity = game->capacity;
     size_t item_count;
     (void)qa_q3_items(game->options.product, &item_count);

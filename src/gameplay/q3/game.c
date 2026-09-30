@@ -138,6 +138,7 @@ const char *qa_q3_weapon_identity_name(qa_q3_weapon weapon) {
 bool qa_q3_create(const qa_q3_options *options, qa_q3_game **out, qa_error *error) {
     if (!options || !out || !options->owner || options->product < QA_Q3_ARENA ||
         options->product > QA_Q3_TEAM_ARENA || !options->services.pickups ||
+        !options->max_clients || options->max_clients > 64 ||
         !valid_rules(&options->rules) || !qa_builtin_services_validate(&options->services, error))
         return q3_fail(error, "invalid Q3 game options");
     qa_q3_game *game = calloc(1, sizeof(*game));
@@ -241,6 +242,12 @@ bool qa_q3_rules_read(const qa_q3_game *game, qa_q3_rules *out, qa_error *error)
     if (!game || !out)
         return q3_fail(error, "Q3 rules query requires actual game and output");
     *out = game->options.rules;
+    return true;
+}
+bool qa_q3_source_clock(const qa_q3_game *game, int32_t *out, qa_error *error) {
+    if (!game || !out)
+        return q3_fail(error, "Q3 source clock query requires its actual game and output");
+    *out = game->now_ms;
     return true;
 }
 bool qa_q3_set_rules(qa_q3_game *game, const qa_q3_rules *rules, qa_error *error) {

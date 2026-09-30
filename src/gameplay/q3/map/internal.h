@@ -11,6 +11,7 @@ struct q3_map_runtime {
     qa_q3_map_options options;
     qa_q3_map_actor_state *actors;
     uint32_t capacity;
+    int32_t loaded_game_type;
     uint64_t registered_items;
     bool world_spawned, post_spawned, locations_linked;
 };

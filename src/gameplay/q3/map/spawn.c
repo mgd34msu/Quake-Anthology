@@ -678,6 +678,8 @@ bool qa_q3_maps_post_spawn(qa_q3_game *game, qa_error *error) {
         return q3_map_fail(error, "invalid Q3 authored post-spawn boundary");
     ++game->observation_depth;
     bool result = maps_post_spawn(game, error);
+    if (result)
+        game->map->loaded_game_type = game->options.rules.game_type;
     --game->observation_depth;
     return result;
 }

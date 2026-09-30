@@ -210,7 +210,8 @@ bool qa_q3_map_checkpoint_capture(const qa_q3_game *game,
         !qa_session_safe(game->options.services.session) ||
         !qa_combat_idle(game->options.services.combat))
         return q3_map_fail(error, "Q3 authored checkpoint requires a session safe point");
-    qa_q3_map_checkpoint saved = {.version = 3,
+    qa_q3_map_checkpoint saved = {.version = 4,
+                                  .loaded_game_type = game->map->loaded_game_type,
                                   .registered_items = game->map->registered_items,
                                   .motd = game->map->options.motd,
                                   .random_seed = game->map->options.random_seed,
@@ -246,7 +247,8 @@ bool qa_q3_map_checkpoint_capture(const qa_q3_game *game,
 static bool checkpoint_restore(qa_q3_game *game,
                                 const qa_q3_map_checkpoint *saved,
                                 bool reconnect, qa_error *error) {
-    if (!game || !game->map || !saved || saved->version != 3 ||
+    if (!game || !game->map || !saved || saved->version != 4 || saved->loaded_game_type < -1 ||
+        (saved->loaded_game_type >= 0 && (!saved->world_spawned || !saved->post_spawned)) ||
         (saved->motd && !qa_strings_cstr(qa_session_strings(game->options.services.session), saved->motd)) ||
         !item_registry_valid(game, saved->registered_items) ||
         !isfinite(saved->gravity) ||
@@ -285,6 +287,7 @@ static bool checkpoint_restore(qa_q3_game *game,
         game->map->actors = candidate;
         game->map->registered_items = saved->registered_items;
         game->map->options.motd = saved->motd;
+        game->map->loaded_game_type = saved->loaded_game_type;
         game->map->options.random_seed = saved->random_seed;
         game->map->options.start_time_ms = saved->start_time_ms;
         game->map->options.restarted = saved->restarted;
@@ -359,6 +362,7 @@ static bool checkpoint_restore(qa_q3_game *game,
     free(prior);
     game->map->registered_items = saved->registered_items;
     game->map->options.motd = saved->motd;
+    game->map->loaded_game_type = saved->loaded_game_type;
     game->map->options.random_seed = saved->random_seed;
     game->map->options.start_time_ms = saved->start_time_ms;
     game->map->options.restarted = saved->restarted;

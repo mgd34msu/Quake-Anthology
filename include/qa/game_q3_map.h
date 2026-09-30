@@ -161,7 +161,7 @@ typedef struct qa_q3_map_checkpoint {
     uint64_t registered_items;
     qa_string_id motd;
     uint32_t random_seed;
-    int32_t start_time_ms, restarted;
+    int32_t start_time_ms, restarted, loaded_game_type;
     float gravity;
     bool warmup, world_spawned, post_spawned, locations_linked;
     qa_q3_map_actor_checkpoint *actors;

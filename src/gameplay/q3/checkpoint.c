@@ -105,7 +105,8 @@ bool qa_q3_checkpoint_capture(const qa_q3_game *game, qa_q3_checkpoint *out, qa_
     if (!game || !out || game->observation_depth || !qa_session_safe(game->options.services.session) ||
         !qa_combat_idle(game->options.services.combat))
         return q3_fail(error, "Q3 checkpoint requires a session safe point");
-    qa_q3_checkpoint saved = {.version = 5,
+    qa_q3_checkpoint saved = {.version = 6,
+                              .max_clients = game->options.max_clients,
                               .random_state = game->rng,
                               .death_animation = game->death_animation,
                               .body_queue_index = game->body_queue_index,
@@ -158,7 +159,8 @@ static bool checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved,
                                 bool reconnect, qa_error *error) {
     if (!game || !saved || game->observation_depth || !qa_session_safe(game->options.services.session) ||
         !qa_world_idle(game->options.services.world) ||
-        !qa_combat_idle(game->options.services.combat) || saved->version != 5 ||
+        !qa_combat_idle(game->options.services.combat) || saved->version != 6 ||
+        !saved->max_clients || saved->max_clients > 64 ||
         (saved->ranking_hit.valid &&
          (saved->ranking_hit.self < 0 || saved->ranking_hit.attacker < 0)) ||
         saved->product != game->options.product || saved->death_animation >= 3 ||
@@ -217,6 +219,7 @@ static bool checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved,
     game->actors = actors;
     game->kamikaze_cooldowns = cooldowns;
     game->rng = saved->random_state;
+    game->options.max_clients = saved->max_clients;
     game->death_animation = saved->death_animation;
     game->body_queue_index = saved->body_queue_index;
     memcpy(game->body_queue, saved->body_queue, sizeof(game->body_queue));

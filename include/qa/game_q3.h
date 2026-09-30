@@ -178,7 +178,7 @@ typedef struct qa_q3_options {
     qa_q3_product product;
     qa_q3_rules rules;
     qa_q3_hooks hooks;
-    uint32_t random_seed;
+    uint32_t random_seed, max_clients;
 } qa_q3_options;
 qa_q3_rules qa_q3_default_rules(void);
 bool qa_q3_create(const qa_q3_options *, qa_q3_game **, qa_error *);
@@ -192,6 +192,7 @@ bool qa_q3_pickups_rebind(qa_q3_game *, qa_error *);
 bool qa_q3_inventory_admit(qa_q3_game *, qa_actor_id, qa_error *);
 bool qa_q3_inventory_rebind(qa_q3_game *, qa_error *);
 bool qa_q3_rules_read(const qa_q3_game *, qa_q3_rules *, qa_error *);
+bool qa_q3_source_clock(const qa_q3_game *, int32_t *source_time_ms, qa_error *);
 bool qa_q3_set_rules(qa_q3_game *, const qa_q3_rules *, qa_error *);
 bool qa_q3_game_console_command(qa_q3_game *, qa_actor_id, const qa_command_invocation *,
                                 bool *handled, qa_error *);
@@ -405,6 +406,7 @@ typedef struct qa_q3_saved_configstring {
 } qa_q3_saved_configstring;
 typedef struct qa_q3_checkpoint {
     uint32_t version, random_state, death_animation, body_queue_index;
+    uint32_t max_clients;
     qa_q3_product product;
     qa_q3_rules rules;
     int32_t previous_ms, now_ms;
