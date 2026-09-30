@@ -326,13 +326,42 @@ bool qa_q2_destroy(qa_q2_game *g, qa_error *e) {
     close_game(g);
     return true;
 }
-bool qa_q2_damage_reaction(qa_q2_game *g, const qa_damage_outcome *outcome, qa_error *e) {
+typedef struct damage_reaction_call {
+    qa_q2_game *game;
+    qa_damage_outcome outcome;
+    bool item_only;
+} damage_reaction_call;
+
+static bool damage_reaction(void *context, qa_actor_id id, qa_error *e) {
+    (void)id;
+    damage_reaction_call *call = context;
+    qa_q2_game *g = call->game;
+    const qa_damage_outcome *outcome = &call->outcome;
+    if (call->item_only)
+        return q2_item_reaction(g, outcome, e);
     return q2_item_reaction(g, outcome, e) && qa_q2_projectile_reaction(g, outcome, e) &&
            q2_monster_reaction(g, outcome, e) && q2_client_reaction(g, outcome, e) &&
            q2_entity_reaction(g, outcome, e);
 }
+bool qa_q2_damage_reaction(qa_q2_game *g, const qa_damage_outcome *outcome, qa_error *e) {
+    if (!g || !outcome) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 damage reaction");
+        return false;
+    }
+    if (!q2_actor_live(g, outcome->request.target))
+        return true;
+    damage_reaction_call call = {.game = g, .outcome = *outcome};
+    return qa_q2_run_actor(g, call.outcome.request.target, damage_reaction, &call, e);
+}
 bool qa_q2_item_reaction(qa_q2_game *g, const qa_damage_outcome *outcome, qa_error *e) {
-    return q2_item_reaction(g, outcome, e);
+    if (!g || !outcome) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 item reaction");
+        return false;
+    }
+    if (!q2_actor_live(g, outcome->request.target))
+        return true;
+    damage_reaction_call call = {.game = g, .outcome = *outcome, .item_only = true};
+    return qa_q2_run_actor(g, call.outcome.request.target, damage_reaction, &call, e);
 }
 bool qa_q2_actor_traits(qa_q2_game *g, qa_actor_id id, qa_builtin_actor_traits *out) {
     if (g == NULL || out == NULL || !q2_actor_live(g, id) || id.slot >= g->capacity ||

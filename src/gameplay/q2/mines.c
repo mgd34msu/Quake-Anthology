@@ -900,10 +900,17 @@ bool q2_mine_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 start, qa
         return false;
     return kind != Q2_TRAP || q2_projectile_loop(g, a, "weapons/traploop.wav", false, e);
 }
-bool qa_q2_projectile_reaction(qa_q2_game *g, const qa_damage_outcome *outcome, qa_error *e) {
+typedef struct projectile_reaction_call {
+    qa_q2_game *game;
+    qa_damage_outcome outcome;
+} projectile_reaction_call;
+
+static bool projectile_reaction(void *context, qa_actor_id id, qa_error *e) {
+    projectile_reaction_call *call = context;
+    qa_q2_game *g = call->game;
+    const qa_damage_outcome *outcome = &call->outcome;
     if (g == NULL || outcome == NULL || outcome->result.reaction != QA_REACTION_DEATH)
         return true;
-    qa_actor_id id = outcome->request.target;
     if (!q2_actor_live(g, id) || id.slot >= g->capacity || g->actors[id.slot] == NULL ||
         !qa_actor_id_equal(g->actors[id.slot]->id, id))
         return true;
@@ -936,6 +943,13 @@ bool qa_q2_projectile_reaction(qa_q2_game *g, const qa_damage_outcome *outcome, 
     if (a->projectile.kind == Q2_TRAP_GIB)
         return qa_session_release(g->services.session, id, e);
     return true;
+}
+bool qa_q2_projectile_reaction(qa_q2_game *g, const qa_damage_outcome *outcome, qa_error *e) {
+    if (!g || !outcome || outcome->result.reaction != QA_REACTION_DEATH ||
+        !q2_actor_live(g, outcome->request.target))
+        return true;
+    projectile_reaction_call call = {.game = g, .outcome = *outcome};
+    return qa_q2_run_actor(g, call.outcome.request.target, projectile_reaction, &call, e);
 }
 bool qa_q2_bad_area(qa_q2_game *g, qa_actor_id actor, qa_vec3 origin, qa_actor_id *hazard,
                     qa_error *e) {

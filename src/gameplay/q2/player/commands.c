@@ -797,8 +797,19 @@ bool q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_
     *recognized = false;
     return true;
 }
-bool qa_q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_t count,
-                          const char *const *args, qa_error *e) {
+typedef struct player_command_call {
+    qa_q2_game *game;
+    const char *command;
+    size_t count;
+    const char *const *args;
+} player_command_call;
+
+static bool player_command(void *context, qa_actor_id id, qa_error *e) {
+    const player_command_call *call = context;
+    qa_q2_game *g = call->game;
+    const char *command = call->command;
+    size_t count = call->count;
+    const char *const *args = call->args;
     bool handled;
     if (!q2_player_command(g, id, command, count, args, &handled, e))
         return false;
@@ -809,4 +820,9 @@ bool qa_q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, si
     snprintf(unknown, sizeof(unknown), "%s%s%.1800s", command, count ? " " : "", text);
     q2_actor *a = q2_client(g, id, e);
     return a && say(g, a, unknown, false, e);
+}
+bool qa_q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_t count,
+                          const char *const *args, qa_error *e) {
+    player_command_call call = {g, command, count, args};
+    return qa_q2_run_actor(g, id, player_command, &call, e);
 }
