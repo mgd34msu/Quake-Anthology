@@ -678,7 +678,30 @@ bool qa_modes_horde_check(qa_modes *m, qa_mode_id id, qa_error *e) {
     h->wave_check_active = false;
     return ok;
 }
-bool qa_modes_horde_keys(qa_modes *m, qa_mode_id id, bool gold, int change, qa_error *e) {
+static bool key_owner(mode_instance *v, qa_actor_id manager) {
+    horde_state *h = v->horde;
+    return v->active && v->value.rules.enabled && v->value.rules.source == QA_MODE_Q1_HORDE &&
+        h && qa_actor_id_equal(h->options.manager, manager);
+}
+static bool key_present(qa_modes *m, qa_actor_id manager, bool gold) {
+    for (uint32_t i = 0; i < m->mode_capacity; ++i) {
+        mode_instance *v = &m->instances[i];
+        if (!key_owner(v, manager)) continue;
+        horde_state *h = v->horde;
+        if ((gold ? h->value.gold_keys : h->value.silver_keys) > 0) return true;
+    }
+    return false;
+}
+static bool key_player(qa_modes *m, qa_actor_id manager, qa_actor_id actor) {
+    for (uint32_t i = 0; i < m->mode_capacity; ++i) {
+        mode_instance *v = &m->instances[i];
+        if (!key_owner(v, manager)) continue;
+        mode_member *p = mode_member_get(m, v, actor);
+        if (p) return true;
+    }
+    return false;
+}
+static bool change_keys(qa_modes *m, qa_mode_id id, bool gold, int change, qa_error *e) {
     mode_instance *v = mode_get(m, id);
     horde_state *h = v ? v->horde : NULL;
     if (!h || (change != 1 && change != -1))
@@ -686,21 +709,28 @@ bool qa_modes_horde_keys(qa_modes *m, qa_mode_id id, bool gold, int change, qa_e
     int32_t *count = gold ? &h->value.gold_keys : &h->value.silver_keys;
     if ((change < 0 && *count <= 0) || (change > 0 && *count == INT32_MAX))
         return mode_fail(e, "Horde key count out of range");
+    qa_actor_id manager = h->options.manager;
+    bool before = key_present(m, manager, gold);
     *count += change;
     if ((change == 1 && *count != 1) || (change == -1 && *count != 0))
         return true;
+    bool present = key_present(m, manager, gold);
+    if (before == present) return true;
     qa_item_id item;
     if (!qa_builtin_resource(&m->options.services, gold ? "q1:key/gold" : "q1:key/silver", &item,
                              e))
         return false;
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
-        uint32_t i = m->players_order.ids[ordinal].slot;
-        mode_member *p = &v->members[i];
-        if (p->joined && mode_player_get(m, p->actor) &&
-            !mode_set_count(m, p->actor, item, *count ? 1 : 0, e))
+        qa_actor_id actor = m->players_order.ids[ordinal];
+        if (mode_player_get(m, actor) && key_player(m, manager, actor) &&
+            !mode_set_count(m, actor, item, present ? 1 : 0, e))
             return false;
     }
     return true;
+}
+bool qa_modes_horde_keys(qa_modes *m, qa_mode_id id, bool gold, int change, qa_error *e) {
+    if (!m) return mode_fail(e, "invalid Horde key service");
+    return MODE_CALLBACK(m, change_keys(m, id, gold, change, e));
 }
 bool mode_horde_respawn(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_error *e) {
     horde_state *h = v->horde;
@@ -711,8 +741,7 @@ bool mode_horde_respawn(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_err
         if (!qa_builtin_resource(&m->options.services, i ? "q1:key/gold" : "q1:key/silver", &item,
                                  e))
             return false;
-        if (!mode_set_count(m, actor, item,
-                            (i ? h->value.gold_keys : h->value.silver_keys) > 0 ? 1 : 0, e))
+        if (!mode_set_count(m, actor, item, key_present(m, h->options.manager, i != 0) ? 1 : 0, e))
             return false;
     }
     return true;

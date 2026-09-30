@@ -224,6 +224,9 @@ bool qa_q3_character_cutscene(qa_q3_game *, qa_actor_id, qa_vec3 origin, qa_vec3
 bool qa_q3_character_cutscene_clear(qa_q3_game *, qa_actor_id, qa_error *);
 bool qa_q3_actor_traits(const qa_q3_game *, qa_actor_id, qa_builtin_actor_traits *);
 bool qa_q3_player_restore(qa_q3_game *, qa_actor_id, const qa_q3_player_state *, qa_error *);
+bool qa_q3_player_request_weapon(qa_q3_game *, qa_actor_id, qa_q3_weapon, qa_error *);
+/* Replace the native quad deadline using this source's current clock. */
+bool qa_q3_player_quad(qa_q3_game *, qa_actor_id, uint64_t duration_ns, qa_error *);
 bool qa_q3_spawn_player(qa_q3_game *, qa_actor_id, const qa_body_state *, qa_team_id, qa_error *);
 typedef struct qa_q3_controls {
     bool attack, use_holdable, prediction;

@@ -410,6 +410,7 @@ add_library(qa_game_q3 STATIC
     src/gameplay/q3/death.c
     src/gameplay/q3/feedback.c
     src/gameplay/q3/game.c
+    src/gameplay/q3/mode_effects.c
     src/gameplay/q3/holdables.c
     src/gameplay/q3/items.c
     src/gameplay/q3/inventory.c
@@ -858,6 +859,8 @@ add_library(qa_application STATIC
     src/app/application/map_players.c
     src/app/application/map_travel.c
     src/app/application/match.c
+    src/app/application/native_commands.c
+    src/app/application/native_modes.c
     src/app/application/network.c
     src/app/application/owner.c
     src/app/application/providers.c
