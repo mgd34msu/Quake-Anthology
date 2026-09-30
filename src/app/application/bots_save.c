@@ -16,6 +16,13 @@ typedef struct bot_app_record {
 static const uint8_t bots_magic[8]={'Q','A','B','A','P','P',0,0};
 static const uint8_t nav_magic[8]={'Q','A','N','A','P','P',0,0};
 
+static bool app_signature(qa_source_save_io *io) {
+    uint8_t magic[8];memcpy(magic,bots_magic,sizeof(magic));uint32_t version=2;
+    return qa_source_save_bytes(io,magic,sizeof(magic)) && qa_source_save_u32(io,&version) &&
+        (!memcmp(magic,bots_magic,sizeof(magic)) && version==2?true:
+            bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported application bot continuation schema"));
+}
+
 static bool section(qa_source_save_io *io,qa_bytes *value) {
     size_t size=value->size;
     if(!qa_source_save_count(io,&size,SIZE_MAX)) return false;
@@ -162,14 +169,14 @@ static bool fields(qa_source_save_io *io,application_bots *bots,bot_app_record *
         bots->capacity>INT32_MAX || bots->capacity>SIZE_MAX/sizeof(*bots->seats) ||
         !qa_source_save_u32(io,&bots->metadata_weapon) || !controls_field(io,&bots->controls)) return false;
     if(io->direction==QA_SOURCE_SAVE_READ && bots->capacity) {
-        if(bots->capacity>(io->input.size-io->offset)/18) return bot_save_fail(io,QA_ERROR_FORMAT,"Truncated application bot seats");
+        if(bots->capacity>(io->input.size-io->offset)/14) return bot_save_fail(io,QA_ERROR_FORMAT,"Truncated application bot seats");
         bots->seats=calloc(bots->capacity,sizeof(*bots->seats));
         if(!bots->seats) return bot_save_fail(io,QA_ERROR_MEMORY,"Restoring application bot seats");
     }
     for(uint32_t i=0;i<bots->capacity;++i) {
         application_bot_seat *s=bots->seats+i;
         if(!qa_source_save_actor(io,&s->actor) || !qa_source_save_u32(io,&s->seat) ||
-            !qa_source_save_u64(io,&s->last_command_ns) || !qa_source_save_bool(io,&s->retired)) return false;
+            !qa_source_save_u32(io,&s->library_client) || !qa_source_save_bool(io,&s->retired)) return false;
     }
     size_t count=0;
     if(io->direction==QA_SOURCE_SAVE_WRITE) for(application_bot_guest *g=bots->guests;g;g=g->next) ++count;
@@ -196,7 +203,9 @@ static bool fields(qa_source_save_io *io,application_bots *bots,bot_app_record *
         section(io,&record->runtime) && record->runtime.size && section(io,&record->population);
 }
 bool application_bots_save_capture(qa_application *app,qa_buffer *out,qa_error *error) {
-    if(!app || !out || !application_bots_can_destroy(app) || (app->bots && app->bots->restoring))
+    if(!app || !out || !application_bots_can_destroy(app) || (app->bots &&
+       (app->bots->restoring || app->bots->round_phase!=APPLICATION_BOT_ROUND_ACTIVE ||
+        app->bots->round || app->bots->producing)))
         return application_fail(error,QA_ERROR_ARGUMENT,"Application bots are borrowed or restoring");
     qa_buffer requirements={0},runtime={0},population={0};application_bots *bots=app->bots;
     bool present=bots!=NULL,ok=true;
@@ -205,7 +214,7 @@ bool application_bots_save_capture(qa_application *app,qa_buffer *out,qa_error *
         (!bots->population || qa_bots_population_capture(bots->population,&population,error));
     bot_app_record record={{requirements.data,requirements.size},{runtime.data,runtime.size},{population.data,population.size}};
     qa_source_save_io io={0};
-    ok=ok && qa_source_save_writer(&io,app->session,error) && bot_save_signature(&io,bots_magic) &&
+    ok=ok && qa_source_save_writer(&io,app->session,error) && app_signature(&io) &&
         qa_source_save_bool(&io,&present) && (!present || fields(&io,bots,&record)) && qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io);qa_buffer_free(&requirements);qa_buffer_free(&runtime);qa_buffer_free(&population);return ok;
 }
@@ -348,7 +357,9 @@ static bool navigation_fields(qa_source_save_io *io,application_bots *bots,bool 
     return true;
 }
 bool application_navigation_save_capture(qa_application *app,qa_buffer *out,qa_error *error) {
-    if(!app || !out || !application_bots_can_destroy(app) || (app->bots && app->bots->restoring))
+    if(!app || !out || !application_bots_can_destroy(app) || (app->bots &&
+       (app->bots->restoring || app->bots->round_phase!=APPLICATION_BOT_ROUND_ACTIVE ||
+        app->bots->round || app->bots->producing)))
         return application_fail(error,QA_ERROR_ARGUMENT,"Application navigation is borrowed or restoring");
     bool present=app->bots!=NULL;qa_source_save_io io={0};
     bool ok=qa_source_save_writer(&io,app->session,error) && bot_save_signature(&io,nav_magic) &&
@@ -360,7 +371,7 @@ bool application_bots_save_prepare(qa_application *app,qa_bytes bytes,qa_bytes n
     if(!app || app->bots || !app->world || !app->physics || !app->modes || !app->map_resource || !launch(app))
         return application_fail(error,QA_ERROR_ARGUMENT,"Bot candidate requires pinned map and stable shared services");
     qa_source_save_io io={0};bool present=false;
-    bool ok=qa_source_save_reader(&io,app->session,bytes,error) && bot_save_signature(&io,bots_magic) &&
+    bool ok=qa_source_save_reader(&io,app->session,bytes,error) && app_signature(&io) &&
         qa_source_save_bool(&io,&present);
     application_bots *bots=NULL;bot_app_record record={0};
     if(ok && present) {
@@ -403,7 +414,7 @@ bool application_bots_save_restore(qa_application *app,qa_bytes bytes,qa_error *
     application_bots *bots=app->bots;
     if(!bots) {
         qa_source_save_io io={0};bool present=true;
-        bool ok=qa_source_save_reader(&io,app->session,bytes,error) && bot_save_signature(&io,bots_magic) &&
+        bool ok=qa_source_save_reader(&io,app->session,bytes,error) && app_signature(&io) &&
             qa_source_save_bool(&io,&present) && !present && qa_source_save_finish(&io,NULL);
         qa_source_save_dispose(&io);return ok;
     }
@@ -477,7 +488,8 @@ static bool agreement(application_bots *bots,qa_error *error) {
             const application_bot_seat *previous=bots->seats+j;
             if(previous->actor.registry &&
                 (qa_actor_id_equal(previous->actor,s->actor) ||
-                 (!previous->retired && !s->retired && previous->seat==s->seat)))
+                 (!previous->retired && !s->retired &&
+                  (previous->seat==s->seat || previous->library_client==s->library_client))))
                 return application_fail(error,QA_ERROR_FORMAT,"Application bot seats alias a saved actor or active roster seat");
         }
         if(s->retired) continue;
@@ -489,7 +501,7 @@ static bool agreement(application_bots *bots,qa_error *error) {
             return application_fail(error,QA_ERROR_FORMAT,"Application live bot seat differs from restored roster");
         if(bots->population && !qa_bot_runtime_closed(bots->runtime)) {
             qa_bot_view view;
-            if(!qa_bots_read(bots->population,s->actor,&view,error) || view.client!=(int32_t)s->actor.slot)
+            if(!qa_bots_read(bots->population,s->actor,&view,error) || view.client!=s->library_client)
                 return application_fail(error,QA_ERROR_FORMAT,"Application bot seat differs from restored population");
         }
     }

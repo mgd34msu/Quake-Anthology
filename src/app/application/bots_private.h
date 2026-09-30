@@ -23,11 +23,14 @@ typedef struct application_bot_graph {
 } application_bot_graph;
 typedef struct application_bot_seat {
     qa_actor_id actor;
-    uint32_t seat;
+    uint32_t seat, library_client;
     qa_bot_navigation *navigation;
-    uint64_t last_command_ns;
     bool retired;
 } application_bot_seat;
+typedef enum application_bot_round_phase {
+    APPLICATION_BOT_ROUND_ACTIVE, APPLICATION_BOT_ROUND_DETACHED,
+    APPLICATION_BOT_ROUND_BOUND, APPLICATION_BOT_ROUND_FAILED
+} application_bot_round_phase;
 typedef struct application_bot_target {
     qa_actor_id actor;
     application_provider *movement;
@@ -71,6 +74,11 @@ typedef struct application_bots {
     qa_bytes saved_bot_record, saved_navigation_record, saved_runtime, saved_population;
     bool *saved_file_references;
     size_t saved_file_reference_count;
+    application_bot_round_phase round_phase;
+    struct application_bots_round *round;
+    qa_source_frame producer_frame;
+    uint64_t producer_host_ns;
+    bool producing;
 } application_bots;
 
 bool application_bot_player(void *,qa_actor_id,qa_bot_player *,qa_error *);
@@ -78,12 +86,15 @@ bool application_bot_entity(void *,qa_actor_id,qa_bot_entity *,qa_error *);
 bool application_bot_arsenal(void *,qa_actor_id,const qa_bot_weapon_knowledge **,size_t *,void **,qa_error *);
 void application_bot_arsenal_end(void *,void *);
 bool application_bot_submit(void *,qa_actor_id,const qa_bot_input *,const qa_movement_command *,qa_error *);
+bool application_bot_weapon_apply(qa_application *,qa_actor_id,qa_actor_owner,qa_item_id,qa_error *);
 bool application_bot_navigation_bind(application_bots *,application_bot_seat *,qa_error *);
 bool application_bot_navigation_prepare(application_bots *,qa_error *);
 qa_navigation_services application_bot_navigation_services(application_bots *);
 bool application_bot_navigation_restore_binding(application_bots *,qa_navigation *,qa_actor_id,
                                                  qa_bot_navigation **,qa_error *);
 bool application_bots_construct_restored(application_bots *,qa_error *);
+qa_bot_services application_bots_services(application_bots *);
+bool application_bots_frame_at(qa_application *,const qa_source_frame *,size_t,uint64_t,qa_error *);
 bool application_bots_prepare(qa_application *,const qa_launch_choices *,const qa_bsp_view *,const qa_entities *,qa_error *);
 qa_bot_runtime *application_bots_runtime(qa_application *);
 bool application_bots_guest_admit(qa_application *,qa_actor_id,qa_error *);

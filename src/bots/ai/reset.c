@@ -6,7 +6,8 @@ bool bot_ai_reset(qa_bots *b, bot_ai_state *s, qa_error *e) {
         .enter_time = s->view.enter_time}, .player = s->player,
         .character = s->character, .goals = s->goals, .weapons = s->weapons,
         .chat = s->chat, .movement = s->movement, .team_arena = s->team_arena,
-        .command_sequence = s->command_sequence, .walker=s->walker};
+        .command_sequence = s->command_sequence, .walker=s->walker, .admitted_skill=s->admitted_skill,
+        .admitted_character=s->admitted_character,.admitted_name=s->admitted_name};
     memcpy(fresh.name, s->name, sizeof(fresh.name));
     *s = fresh;
     return qa_bot_moves_reset(qa_bot_runtime_moves(b->runtime), s->movement, e) &&

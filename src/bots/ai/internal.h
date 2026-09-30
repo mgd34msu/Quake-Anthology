@@ -28,6 +28,9 @@ typedef struct bot_ai_state {
     uint32_t character, goals, weapons, chat, movement, area, travel_flags, setup_count;
     int32_t residual_ms, last_health;
     float local_time, walker, long_term_until, nearby_until, stand_until, stand_enemy_time;
+    float admitted_skill;
+    char *admitted_character;
+    char *admitted_name;
     float respawn_time, respawn_chat_time, chase_time, enemy_visible_time, enemy_sight_time;
     float check_time, attack_crouch_time, attack_jump_time, attack_strafe_time, fire_wait_time;
     float fire_until, weapon_change_time, enemy_death_time, state_time, chase_until;

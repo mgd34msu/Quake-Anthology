@@ -4,6 +4,13 @@
 #include "qa/bots_population_save.h"
 
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'P', 'O', 'P', 'U', 0};
+static bool signature(qa_source_save_io *io)
+{
+    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=2;
+    return qa_source_save_bytes(io,actual,sizeof(actual)) && qa_source_save_u32(io,&version) &&
+        (!memcmp(actual,magic,sizeof(actual)) && version==2?true:
+            bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported native bot population continuation schema"));
+}
 #define FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
 #define A(value) FIELD(actor, value)
 #define V(value) FIELD(vec3, value)
@@ -59,7 +66,13 @@ static bool state_fields(qa_source_save_io *io, bot_ai_state *state)
     if (!command_fields(io, &state->last_command)) return false;
     U(state->character); U(state->goals); U(state->weapons); U(state->chat); U(state->movement);
     U(state->area); U(state->travel_flags); U(state->setup_count); I(state->residual_ms); I(state->last_health);
-    F(state->local_time); F(state->walker); F(state->long_term_until); F(state->nearby_until);
+    F(state->local_time); F(state->walker); F(state->admitted_skill); F(state->long_term_until); F(state->nearby_until);
+    const char *character=state->admitted_character,*name=state->admitted_name;
+    if (!bot_save_text(io,&character)) return false;
+    if (io->direction==QA_SOURCE_SAVE_READ) state->admitted_character=(char *)character;
+    if (!bot_save_text(io,&name)) return false;
+    if (io->direction==QA_SOURCE_SAVE_READ) state->admitted_name=(char *)name;
+    if (!character || !name) return false;
     F(state->stand_until); F(state->stand_enemy_time); F(state->respawn_time); F(state->respawn_chat_time);
     F(state->chase_time); F(state->enemy_visible_time); F(state->enemy_sight_time); F(state->check_time);
     F(state->attack_crouch_time); F(state->attack_jump_time); F(state->attack_strafe_time); F(state->fire_wait_time);
@@ -122,7 +135,8 @@ static bool topology(const qa_bots *bots, qa_error *error)
         const bot_ai_state *state = bots->clients[i]; if (!state) continue;
         if (!state->view.actor.registry || state->view.client != i || state->view.actor.slot >= bots->actor_capacity ||
             bots->actor_clients[state->view.actor.slot] != i + 1 || state->activation_count > 8 ||
-            state->view.entity < 0 || state->setup_count > 4 ||
+            state->view.entity < 0 || state->setup_count > 4 || !isfinite(state->admitted_skill) ||
+            !state->admitted_character || !state->admitted_name ||
             state->view.decision > QA_BOT_BATTLE_NEARBY || state->view.order.kind > QA_BOT_ORDER_FOLLOW ||
             state->view.order.status > QA_BOT_ORDER_ACTIVE || state->team_task > BOT_TEAM_CAMP ||
             !memchr(state->name, 0, sizeof(state->name)) || (!state->retired && !bot_ai_live(bots, state->view.actor))) goto invalid;
@@ -157,7 +171,12 @@ invalid:
 }
 static void clear(qa_bots *bots)
 {
-    if (bots->clients) for (uint32_t i = 0; i < bots->client_capacity; ++i) free(bots->clients[i]);
+    if (bots->clients) for (uint32_t i = 0; i < bots->client_capacity; ++i) {
+        if (bots->clients[i]) {
+            free(bots->clients[i]->admitted_character);free(bots->clients[i]->admitted_name);
+        }
+        free(bots->clients[i]);
+    }
     free(bots->clients); free(bots->actor_clients);
     qa_builtin_snapshot_free(&bots->entities); qa_builtin_snapshot_free(&bots->players);
 }
@@ -197,7 +216,7 @@ bool qa_bots_population_capture(const qa_bots *bots, qa_buffer *out, qa_error *e
     if (!bots || !out || bots->restore_pending || !qa_bots_can_destroy(bots) ||
         !qa_bot_runtime_can_destroy(bots->runtime) || bots->runtime->restore_pending || !topology(bots, error)) return false;
     qa_source_save_io io = {0}; qa_bots view = *bots;
-    bool ok = qa_source_save_writer(&io, bots->services.shared.session, error) && bot_save_signature(&io, magic) &&
+    bool ok = qa_source_save_writer(&io, bots->services.shared.session, error) && signature(&io) &&
         fields(&io, &view) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); return ok;
 }
@@ -211,7 +230,7 @@ bool qa_bots_population_restore(qa_bots *bots, qa_bytes bytes, qa_error *error)
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Prepared bot population already owns continuation records"); return false;
     }
     qa_bots scratch = {.runtime = bots->runtime, .services = bots->services}; qa_source_save_io io = {0};
-    bool ok = qa_source_save_reader(&io, bots->services.shared.session, bytes, error) && bot_save_signature(&io, magic) &&
+    bool ok = qa_source_save_reader(&io, bots->services.shared.session, bytes, error) && signature(&io) &&
         fields(&io, &scratch) && scratch.client_capacity == bots->client_capacity &&
         qa_source_save_finish(&io, NULL) && topology(&scratch, error);
     if (ok) { qa_bots old = *bots; *bots = scratch; clear(&old); }

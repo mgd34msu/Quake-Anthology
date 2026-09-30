@@ -1,4 +1,6 @@
 #include "bots_private.h"
+#include "bots_round.h"
+#include "map_players_private.h"
 #include "guest_q3_private.h"
 #include <limits.h>
 #include <stdio.h>
@@ -7,6 +9,13 @@
 
 static uint32_t random_word(void *opaque) {
     application_bots *bots=opaque;return qa_builtin_random_integer(&bots->application->random);
+}
+static int32_t source_milliseconds(const qa_source_frame *frame) {
+    uint32_t word;
+    if(frame->kind==QA_CLOCK_NETQUAKE || frame->kind==QA_CLOCK_QUAKEWORLD)
+        word=(uint32_t)fmod(trunc(((double)frame->time_ns/1e9)*1000.0),4294967296.0);
+    else word=(uint32_t)(frame->time_ns/1000000);
+    int32_t value;memcpy(&value,&word,sizeof(value));return value;
 }
 static bool read_file(void *opaque,const qa_script_include *request,qa_script_resource *out,bool *found,qa_error *error) {
     application_bots *bots=opaque;*found=false;
@@ -141,6 +150,11 @@ qa_actor_id application_bot_client_actor(application_bots *bots,int32_t client) 
         qa_actor_id actor=engine?engine->clients[(uint32_t)client-guest->client_base].actor:(qa_actor_id){0};
         return qa_actors_get(qa_session_actors(bots->application->session),actor)?actor:(qa_actor_id){0};
     }
+    for(uint32_t i=0;i<bots->capacity;++i)
+        if(!bots->seats[i].retired && bots->seats[i].actor.registry &&
+           bots->seats[i].library_client==(uint32_t)client)
+            return qa_actors_get(qa_session_actors(bots->application->session),bots->seats[i].actor)?
+                bots->seats[i].actor:(qa_actor_id){0};
     return application_bot_actor(bots,client);
 }
 static bool bot_command(void *opaque,int32_t client,const char *text,qa_error *error) {
@@ -183,6 +197,7 @@ static bool close_bots(application_bots *bots,qa_error *error) {
     qa_builtin_snapshot_free(&bots->pickup_snapshot);qa_entities_free(&bots->entities);
     qa_resource_release(bots->map_resource);qa_vfs_destroy(bots->files);
     qa_bots_save_requirements_free(&bots->saved_requirements);
+    application_bots_round_detach(bots->round);
     free(bots->saved_file_references);
     free(bots->train_stops);free(bots->seats);free(bots);return true;
 }
@@ -202,18 +217,48 @@ bool application_bots_actor_released(qa_application *application,qa_actor_record
         if(qa_actor_id_equal(bots->seats[i].actor,actor.id)) bots->seats[i].retired=true;
     return !bots->population || qa_bots_actor_released(bots->population,&actor,error);
 }
-bool application_bots_frame(qa_application *application,qa_error *error) {
+bool application_bots_frame_at(qa_application *application,const qa_source_frame *frames,
+                                size_t count,uint64_t host_ns,qa_error *error) {
     application_bots *bots=application->bots;if(!bots) return true;
-    if(bots->calls || bots->restoring) return application_fail(error,QA_ERROR_ARGUMENT,"application bot frame reentered or restoring");
+    if(bots->round_phase==APPLICATION_BOT_ROUND_FAILED)
+        return application_fail(error,QA_ERROR_ARGUMENT,"application bot round failed before completing its source lifetime");
+    if(bots->round_phase!=APPLICATION_BOT_ROUND_ACTIVE) return true;
+    if(bots->calls || bots->restoring || bots->producing)
+        return application_fail(error,QA_ERROR_ARGUMENT,"application bot frame reentered or restoring");
+    application_provider *source=application->players?application->players->map_provider:NULL;
+    if(!source || (!frames && count))
+        return application_fail(error,QA_ERROR_ARGUMENT,"application bot producer has no admitted map source");
+    const qa_source_frame *frame=NULL;
+    for(size_t i=0;i<count;++i)
+        if(frames[i].provider==source->owner) {frame=frames+i;break;}
+    if(!frame) return true;
+    qa_source_frame admitted;uint64_t actual_host;
+    if(!qa_session_active_frame(application->session,frame->provider,&admitted) ||
+       !qa_session_frame_host_time(application->session,&actual_host) || actual_host!=host_ns ||
+       admitted.kind!=frame->kind || admitted.number!=frame->number ||
+       admitted.start_ns!=frame->start_ns || admitted.elapsed_ns!=frame->elapsed_ns ||
+       admitted.time_ns!=frame->time_ns)
+        return application_fail(error,QA_ERROR_ARGUMENT,"bot input requires its genuine current source admission");
     application_bot_target **link=&bots->targets;
     while(*link) {
         application_bot_target *target=*link;
         if(qa_actors_get(qa_session_actors(application->session),target->actor)) {link=&target->next;continue;}
         *link=target->next;qa_bot_navigation_destroy(target->navigation);free(target);
     }
+    bots->producer_frame=admitted;bots->producer_host_ns=host_ns;bots->producing=true;
     ++bots->calls;
-    bool ok=!bots->population || qa_bots_frame(bots->population,(int32_t)(uint32_t)(qa_session_elapsed(application->session)/1000000),error);
-    --bots->calls;return ok;
+    bool ok=!bots->population || qa_bots_frame(bots->population,source_milliseconds(&admitted),error);
+    --bots->calls;bots->producing=false;bots->producer_frame=(qa_source_frame){0};bots->producer_host_ns=0;
+    return ok;
+}
+qa_bot_services application_bots_services(application_bots *bots) {
+    qa_application *application=bots->application;
+    return (qa_bot_services){.context=bots,
+        .shared=application_builtin_services(application,application->world,application->physics),
+        .modes=application->modes,.player=application_bot_player,.entity=application_bot_entity,
+        .arsenal=application_bot_arsenal,.arsenal_end=application_bot_arsenal_end,.submit=application_bot_submit,
+        .controls=controls,.set_think_time=think_time,.activation=application_bot_activation,
+        .predict_motion=application_bot_predict_motion};
 }
 bool application_bots_prepare(qa_application *application,const qa_launch_choices *choices,
                                const qa_bsp_view *geometry,const qa_entities *entities,qa_error *error) {
@@ -319,11 +364,7 @@ bool application_bots_construct_restored(application_bots *bots,qa_error *error)
             .travel_weapon=application_bot_travel_weapon,.grapple_state=application_bot_grapple_state,.random=random}};
     if(!register_controls(bots,error) || !qa_bot_runtime_create(&options,&services,&bots->runtime,error)) return false;
     if(!bots->saved_requirements.population) return true;
-    qa_bot_services ai={.context=bots,.shared=application_builtin_services(application,application->world,application->physics),
-        .modes=application->modes,.player=application_bot_player,.entity=application_bot_entity,
-        .arsenal=application_bot_arsenal,.arsenal_end=application_bot_arsenal_end,.submit=application_bot_submit,
-        .controls=controls,.set_think_time=think_time,.activation=application_bot_activation,
-        .predict_motion=application_bot_predict_motion};
+    qa_bot_services ai=application_bots_services(bots);
     return qa_bots_create_restored(bots->runtime,&ai,bots->saved_requirements.population_client_capacity,
                                    &bots->population,error);
 }
@@ -349,14 +390,10 @@ bool application_bots_publish(qa_application *application,const qa_launch_choice
         if(!choices->seats[i].bot) continue;
         if(!qa_application_player_actor(application,choices->seats[i].id,&bots->seats[i].actor) ||
            !application_bot_navigation_bind(bots,&bots->seats[i],error)) return false;
-        bots->seats[i].last_command_ns=qa_session_elapsed(application->session);
+        bots->seats[i].library_client=bots->seats[i].actor.slot;
     }
     if(!qa_bot_runtime_weapon_allocate(bots->runtime,&bots->metadata_weapon,error) || !bots->metadata_weapon) return false;
-    qa_bot_services ai={.context=bots,.shared=application_builtin_services(application,application->world,application->physics),
-        .modes=application->modes,.player=application_bot_player,.entity=application_bot_entity,
-        .arsenal=application_bot_arsenal,.arsenal_end=application_bot_arsenal_end,.submit=application_bot_submit,
-        .controls=controls,.set_think_time=think_time,.activation=application_bot_activation,
-        .predict_motion=application_bot_predict_motion};
+    qa_bot_services ai=application_bots_services(bots);
     if(!qa_bots_create(bots->runtime,&ai,&bots->population,error)) return false;
     for(uint32_t i=0;i<bots->capacity;++i) {
         if(!choices->seats[i].bot) continue;

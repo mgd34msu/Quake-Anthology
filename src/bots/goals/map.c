@@ -25,6 +25,19 @@ void bot_goal_map_clear(qa_bot_goals *g) {
     memset(g->source_buckets, 0, sizeof(g->source_buckets));
     g->entities = NULL;
 }
+bool qa_bot_goals_rebind_world(qa_bot_goals *g, const qa_entities *entities, qa_error *e) {
+    if (!bot_goal_mutable(g, e)) return false;
+    if (g->entities != entities)
+        return bot_goal_fail(e, "bot round must retain the actual map goal metadata");
+    for (uint32_t i = 0; i < g->options.maximum_states; ++i)
+        if (g->states[i].used) return bot_goal_fail(e, "retire every bot goal state before rebinding its world");
+    for (size_t i = 0; i < g->source_count; ++i) free(g->source[i].name);
+    free(g->source);
+    g->source = NULL;
+    g->source_count = g->source_capacity = 0;
+    memset(g->source_buckets, 0, sizeof(g->source_buckets));
+    return true;
+}
 bot_level_item *bot_goal_find(const qa_bot_goals *g, int32_t number) {
     for (uint32_t i = g->level_head; i; i = g->level[i].next)
         if (g->level[i].number == number) return &g->level[i];

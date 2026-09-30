@@ -50,6 +50,29 @@ bool qa_bots_create(qa_bot_runtime *runtime, const qa_bot_services *services,
         return bot_ai_fail(e, "native bot population requires live shared gameplay and botlib services");
     return create(runtime, services, qa_bot_actions_capacity(qa_bot_runtime_actions(runtime)), out, e);
 }
+bool qa_bots_create_round(qa_bot_runtime *runtime, const qa_bot_services *services,
+                         qa_bots **out, qa_error *e) {
+    if (!runtime || !qa_bot_runtime_initialized(runtime) || !qa_bot_runtime_loaded(runtime) ||
+        !out || *out || !qa_bot_runtime_can_destroy(runtime))
+        return bot_ai_fail(e, "new round AI requires an idle retained initialized bot library");
+    if (!create(runtime, services, qa_bot_actions_capacity(qa_bot_runtime_actions(runtime)), out, e)) return false;
+    (*out)->time = 0;
+    (*out)->scheduled_think_ms = 0;
+    return true;
+}
+bool qa_bots_admission_read(const qa_bots *b, qa_actor_id actor,
+                            qa_bot_admission *out, qa_error *e) {
+    bot_ai_state *state = bot_ai_actor(b, actor);
+    const qa_bot_character_view *character = state ?
+        qa_bot_character_read(qa_bot_runtime_character(b->runtime, state->character)) : NULL;
+    if (!out || !state || state->retired || !bot_ai_live(b, actor) || !character ||
+        !state->admitted_character || !state->admitted_name || !isfinite(state->admitted_skill) || b->busy || b->restore_pending)
+        return bot_ai_fail(e, "bot admission settings require the actual idle live character owner");
+    *out = (qa_bot_admission){.actor = actor, .client = state->view.client,
+        .entity = state->view.entity, .character_file = state->admitted_character, .name = state->admitted_name,
+        .skill = state->admitted_skill, .mode = state->view.mode, .team_arena = state->team_arena};
+    return true;
+}
 bool qa_bots_create_restored(qa_bot_runtime *runtime, const qa_bot_services *services,
                             uint32_t client_capacity, qa_bots **out, qa_error *e) {
     if (!runtime || !out || *out || !qa_bot_runtime_can_destroy(runtime))
@@ -60,7 +83,10 @@ bool qa_bots_create_restored(qa_bot_runtime *runtime, const qa_bot_services *ser
     return true;
 }
 bool bot_ai_cleanup(qa_bots *b, bot_ai_state *s, qa_error *e) {
-    if (qa_bot_runtime_closed(b->runtime)) return true;
+    if (qa_bot_runtime_closed(b->runtime)) {
+        free(s->admitted_character);s->admitted_character=NULL;
+        free(s->admitted_name);s->admitted_name=NULL;return true;
+    }
     if (s->movement && !qa_bot_moves_free(qa_bot_runtime_moves(b->runtime), s->movement, e)) return false;
     s->movement = 0;
     if (s->goals && !qa_bot_goals_free(qa_bot_runtime_goals(b->runtime), s->goals, e)) return false;
@@ -71,6 +97,8 @@ bool bot_ai_cleanup(qa_bots *b, bot_ai_state *s, qa_error *e) {
     s->weapons = 0;
     if (s->character && !qa_bot_runtime_character_free(b->runtime, s->character, e)) return false;
     s->character = 0;
+    free(s->admitted_character);s->admitted_character=NULL;
+    free(s->admitted_name);s->admitted_name=NULL;
     return true;
 }
 bool qa_bots_can_destroy(const qa_bots *b) {
@@ -179,11 +207,25 @@ bool qa_bots_admit(qa_bots *b, const qa_bot_admission *a, qa_error *e) {
     s->view = (qa_bot_view){.actor = a->actor, .client = a->client, .entity = a->entity,
         .mode = a->mode, .decision = QA_BOT_SEEK_LONG_TERM, .enter_time = b->time};
     s->team_arena = a->team_arena;
+    s->admitted_skill = a->skill;
+    size_t character_size = strlen(a->character_file) + 1;
+    s->admitted_character = malloc(character_size);
+    if (!s->admitted_character) {
+        free(s);qa_error_set(e, QA_ERROR_MEMORY, character_size, "retaining original bot character request");return false;
+    }
+    memcpy(s->admitted_character, a->character_file, character_size);
+    size_t admitted_name_size = strlen(a->name) + 1;
+    s->admitted_name = malloc(admitted_name_size);
+    if (!s->admitted_name) {
+        free(s->admitted_character);free(s);
+        qa_error_set(e, QA_ERROR_MEMORY, admitted_name_size, "retaining original bot admission name");return false;
+    }
+    memcpy(s->admitted_name, a->name, admitted_name_size);
     s->setup_count = 4;
     size_t name_size = strlen(a->name);
     if (name_size >= sizeof(s->name)) name_size = sizeof(s->name) - 1;
     memcpy(s->name, a->name, name_size);
-    if (!qa_bot_runtime_lease_begin(b->runtime,e)) {free(s);return false;}
+    if (!qa_bot_runtime_lease_begin(b->runtime,e)) {free(s->admitted_name);free(s->admitted_character);free(s);return false;}
     b->busy = true;
     bool ok = admit_resources(b, s, a, e);
     if (ok && !bot_ai_live(b, a->actor)) ok = bot_ai_fail(e, "bot actor retired during resource admission");
@@ -195,6 +237,8 @@ bool qa_bots_admit(qa_bots *b, const qa_bot_admission *a, qa_error *e) {
     } else {
         qa_error ignored = {0};
         bot_ai_cleanup(b, s, &ignored);
+        free(s->admitted_character);
+        free(s->admitted_name);
         free(s);
     }
     b->busy = false;

@@ -880,6 +880,7 @@ add_library(qa_application STATIC
     src/app/application/bots_arsenal.c
     src/app/application/bots_navigation.c
     src/app/application/bots_save.c
+    src/app/application/bots_round.c
     src/app/application/bots_projection.c
     src/app/application/bots_submit.c
     src/app/application/composition.c
@@ -943,6 +944,7 @@ add_library(qa_application STATIC
     src/app/application/providers.c
     src/app/application/q1_weapon_rules.c
     src/app/application/presentation.c
+    src/app/application/native_q3_wire.c
     src/app/application/publication.c
     src/app/application/services.c
     src/app/application/save.c

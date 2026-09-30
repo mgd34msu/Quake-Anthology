@@ -1,9 +1,47 @@
 #include "bots_private.h"
+#include "control_frame.h"
 #include <math.h>
+
+bool application_bot_weapon_apply(qa_application *application,qa_actor_id actor,
+    qa_actor_owner owner,qa_item_id item,qa_error *error) {
+    if(!item) return true;
+    if(!application_control_frame_current(application,actor))
+        return application_fail(error,QA_ERROR_ARGUMENT,"bot weapon selection requires its actual command source phase");
+    application_provider *arsenal=application_provider_for(application,actor,QA_ROLE_ARSENAL,NULL);
+    if(!arsenal || arsenal->owner!=owner)
+        return application_fail(error,QA_ERROR_NOT_FOUND,"queued bot weapon no longer belongs to the selected arsenal");
+    if(!qa_actors_get(qa_session_actors(application->session),actor)) return true;
+    if(arsenal->kind==APPLICATION_PROVIDER_Q1) {
+        qa_q1_player_view current;
+        if(!qa_q1_player_read(arsenal->state.q1,actor,&current))
+            return application_fail(error,QA_ERROR_NOT_FOUND,"bot selected Q1 weapon state is absent");
+        for(int i=0;i<QA_Q1_WEAPON_COUNT;++i) if(qa_q1_weapon_item(arsenal->state.q1,(qa_q1_weapon)i)==item)
+            return current.weapon==(qa_q1_weapon)i ||
+                qa_q1_player_select(arsenal->state.q1,actor,(qa_q1_weapon)i,error);
+    } else if(arsenal->kind==APPLICATION_PROVIDER_Q2) {
+        qa_q2_weapon_state current;qa_q2_selection result;
+        if(!qa_q2_weapon_read(arsenal->state.q2,actor,&current,error)) return false;
+        for(int i=1;i<QA_Q2_WEAPON_COUNT;++i) {
+            const qa_q2_weapon_definition *definition=qa_q2_weapon_definition_at(arsenal->state.q2,(qa_q2_weapon)i);
+            const qa_q2_item_definition *candidate=definition?qa_q2_item_lookup(arsenal->state.q2,definition->item):NULL;
+            if(candidate && candidate->item==item)
+                return current.weapon==(qa_q2_weapon)i || current.pending==(qa_q2_weapon)i ||
+                    qa_q2_weapon_select(arsenal->state.q2,actor,(qa_q2_weapon)i,false,&result,error);
+        }
+    }
+    return application_fail(error,QA_ERROR_NOT_FOUND,"queued bot weapon item is absent from its actual selected arsenal");
+}
 
 bool application_bot_submit(void *opaque,qa_actor_id actor,const qa_bot_input *input,
                             const qa_movement_command *source,qa_error *error) {
     application_bots *bots=opaque;qa_application *application=bots->application;
+    if(!bots->producing || bots->round_phase!=APPLICATION_BOT_ROUND_ACTIVE)
+        return application_fail(error,QA_ERROR_ARGUMENT,"bot movement requires its active source-stage producer");
+    qa_source_frame admitted;uint64_t host_ns;
+    if(!qa_session_active_frame(application->session,bots->producer_frame.provider,&admitted) ||
+       !qa_session_frame_host_time(application->session,&host_ns) || host_ns!=bots->producer_host_ns ||
+       admitted.number!=bots->producer_frame.number || admitted.time_ns!=bots->producer_frame.time_ns)
+        return application_fail(error,QA_ERROR_ARGUMENT,"bot movement escaped its admitted source interval");
     application_bot_seat *seat=NULL;
     for(uint32_t i=0;i<bots->capacity;++i)
         if(!bots->seats[i].retired && qa_actor_id_equal(bots->seats[i].actor,actor)) {seat=&bots->seats[i];break;}
@@ -13,60 +51,46 @@ bool application_bot_submit(void *opaque,qa_actor_id actor,const qa_bot_input *i
     if(!qa_vec_finite(input->direction) || !qa_vec_finite(input->view_angles) || !isfinite(input->speed))
         return application_fail(error,QA_ERROR_ARGUMENT,"bot action contains nonfinite movement");
     application_provider *arsenal=application_provider_for(application,actor,QA_ROLE_ARSENAL,NULL);
+    qa_item_id requested_item=0;qa_actor_owner requested_owner=0;
     if(arsenal && arsenal->kind==APPLICATION_PROVIDER_Q1 && input->weapon>0 && input->weapon<=QA_Q1_WEAPON_COUNT) {
-        qa_q1_player_view current;
-        if(!qa_q1_player_read(arsenal->state.q1,actor,&current))
-            return application_fail(error,QA_ERROR_NOT_FOUND,"bot selected Q1 weapon state is absent");
-        if(current.weapon!=(qa_q1_weapon)(input->weapon-1) &&
-           !qa_q1_player_select(arsenal->state.q1,actor,(qa_q1_weapon)(input->weapon-1),error)) return false;
+        requested_item=qa_q1_weapon_item(arsenal->state.q1,(qa_q1_weapon)(input->weapon-1));
     } else if(arsenal && arsenal->kind==APPLICATION_PROVIDER_Q2 && input->weapon>0 && input->weapon<QA_Q2_WEAPON_COUNT) {
-        qa_q2_weapon_state current;qa_q2_selection result;
-        if(!qa_q2_weapon_read(arsenal->state.q2,actor,&current,error)) return false;
-        if(current.weapon!=(qa_q2_weapon)input->weapon && current.pending!=(qa_q2_weapon)input->weapon &&
-           !qa_q2_weapon_select(arsenal->state.q2,actor,(qa_q2_weapon)input->weapon,false,&result,error)) return false;
+        const qa_q2_weapon_definition *definition=qa_q2_weapon_definition_at(arsenal->state.q2,(qa_q2_weapon)input->weapon);
+        const qa_q2_item_definition *item=definition?qa_q2_item_lookup(arsenal->state.q2,definition->item):NULL;
+        if(item) requested_item=item->item;
     }
+    if(requested_item) requested_owner=arsenal->owner;
     if(seat->retired || !qa_actors_get(qa_session_actors(application->session),actor)) return true;
     if(!qa_application_control_read(application,actor,&view)) return true;
-    uint64_t now=qa_session_elapsed(application->session);
-    if(now<seat->last_command_ns) {seat->last_command_ns=now;return true;}
-    uint64_t elapsed=now-seat->last_command_ns;
-    if(elapsed<1000000) return true;
-    if(view.command_sequence==UINT64_MAX) return application_fail(error,QA_ERROR_ARGUMENT,"bot command sequence exhausted");
+    bool seen=false;uint64_t sequence=0;
+    if(!application_control_frames_sequence(application,actor,&seen,&sequence))
+        return application_fail(error,QA_ERROR_ARGUMENT,"bot movement has no actual command admission owner");
+    if(seen && sequence==UINT64_MAX) return application_fail(error,QA_ERROR_ARGUMENT,"bot command sequence exhausted");
     qa_movement_command command=*source;
-    command.kind=view.state.kind;command.sequence=view.command_sequence+1;
-    command.milliseconds=(uint32_t)(elapsed/1000000>UINT32_MAX?UINT32_MAX:elapsed/1000000);
-    command.server_time_ms=(int32_t)(uint32_t)(now/1000000);
+    command.kind=view.state.kind;command.sequence=seen?sequence+1:0;
+    uint64_t milliseconds=admitted.elapsed_ns/1000000;
+    command.milliseconds=(uint32_t)(milliseconds>UINT32_MAX?UINT32_MAX:milliseconds);
+    command.server_time_ms=source->server_time_ms;
     command.weapon=input->weapon>0 && input->weapon<=UINT8_MAX?(uint8_t)input->weapon:0;
     if(view.state.kind!=QA_MOVEMENT_Q3) {
-        qa_vec3 forward,right;
-        qa_builtin_angle_vectors(qa_v3(input->direction.z!=0?input->view_angles.x:0,
-                                     input->view_angles.y,0),&forward,&right,NULL);
-        float speed=fmaxf(0,fminf(400,input->speed));
-        command.forward_move=qa_vec_dot(input->direction,forward)*speed;
-        command.side_move=qa_vec_dot(input->direction,right)*speed;
-        command.up_move=input->direction.z*speed;
-        command.angles=input->view_angles;command.buttons=0;
-        if(input->action_flags&(QA_BOT_ATTACK|QA_BOT_RESPAWN)) command.buttons|=1;
-        if(input->action_flags&QA_BOT_USE) command.buttons|=4;
-        if(input->action_flags&QA_BOT_MOVE_FORWARD) command.forward_move=400;
-        if(input->action_flags&QA_BOT_MOVE_BACK) command.forward_move=-400;
-        if(input->action_flags&QA_BOT_MOVE_RIGHT) command.side_move=400;
-        if(input->action_flags&QA_BOT_MOVE_LEFT) command.side_move=-400;
-        if(input->action_flags&(QA_BOT_MOVE_UP|QA_BOT_JUMP|QA_BOT_DELAYED_JUMP)) command.up_move=400;
-        if(input->action_flags&(QA_BOT_MOVE_DOWN|QA_BOT_CROUCH)) command.up_move=-400;
+        float scale=view.state.kind==QA_MOVEMENT_NETQUAKE || view.state.kind==QA_MOVEMENT_QUAKEWORLD?320.0f:200.0f;
+        command.forward_move=(float)((double)source->forward_move*(double)scale/127.0);
+        command.side_move=(float)((double)source->side_move*(double)scale/127.0);
+        command.up_move=(float)((double)source->up_move*(double)scale/127.0);
+        command.angles=qa_v3((float)((double)source->angle_words[0]*360.0/65536.0),
+                            (float)((double)source->angle_words[1]*360.0/65536.0),
+                            (float)((double)source->angle_words[2]*360.0/65536.0));
+        command.buttons=source->buttons&1;command.impulse=0;command.light_level=0;
         if(view.state.kind==QA_MOVEMENT_Q2_CLASSIC) {
-            command.angle_words[0]=(uint16_t)(application_bot_angle_word(input->view_angles.x)-view.state.data.q2.delta_angle_shorts[0]);
-            command.angle_words[1]=(uint16_t)(application_bot_angle_word(input->view_angles.y)-view.state.data.q2.delta_angle_shorts[1]);
-            command.angle_words[2]=(uint16_t)(application_bot_angle_word(input->view_angles.z)-view.state.data.q2.delta_angle_shorts[2]);
+            for(size_t i=0;i<3;++i) command.angle_words[i]=source->angle_words[i];
         } else if(view.state.kind==QA_MOVEMENT_Q2_RERELEASE) {
-            command.angles=qa_vec_sub(input->view_angles,view.state.data.q2r.delta_angles);
-            if(input->action_flags&(QA_BOT_JUMP|QA_BOT_DELAYED_JUMP)) command.buttons|=8;
-            if(input->action_flags&QA_BOT_CROUCH) command.buttons|=16;
-            command.up_move=0;
-        } else if(input->action_flags&(QA_BOT_JUMP|QA_BOT_DELAYED_JUMP)) command.buttons|=2;
-        if(input->action_flags&QA_BOT_WALK) {command.forward_move*=.5f;command.side_move*=.5f;}
+            command.buttons|=source->up_move>0?8:source->up_move<0?16:0;
+            command.up_move=0;command.server_frame=0;
+        } else if(view.state.kind==QA_MOVEMENT_NETQUAKE) {
+            command.acknowledged_server_seconds=(double)source->server_time_ms/1000.0;
+            if(source->up_move>0) command.buttons|=2;
+        }
     }
-    if(!qa_application_control_move(application,actor,&command,error)) return false;
-    seat->last_command_ns+=UINT64_C(1000000)*command.milliseconds;
+    if(!application_control_frames_receive_bot(application,actor,&command,requested_owner,requested_item,error)) return false;
     return true;
 }

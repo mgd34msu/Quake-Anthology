@@ -176,6 +176,19 @@ bool qa_bot_runtime_attach_map(qa_bot_runtime *r, const qa_bot_runtime_map *map,
     r->loaded = false;
     return true;
 }
+bool qa_bot_runtime_rebind_round(qa_bot_runtime *r, const qa_bot_runtime_map *map, qa_error *e) {
+    if (!bot_runtime_mutable(r, e) || !bot_runtime_owners_idle(r, e)) return false;
+    if (!map || !map->name || !map->navigation ||
+        !r->map_name || strcmp(map->name, r->map_name) || map->entities != r->map.entities ||
+        map->source_entities.data != r->map.source_entities.data ||
+        map->source_entities.size != r->map.source_entities.size)
+        return bot_runtime_fail(e, "bot round must retain its actual map and source metadata");
+    const qa_entities *entities = r->bsp ? qa_bot_bsp_entities(r->bsp) : r->map.entities;
+    if (!qa_bot_goals_rebind_world(r->goals, r->loaded ? entities : NULL, e)) return false;
+    r->map.navigation = map->navigation;
+    bot_runtime_observations_clear(r);
+    return true;
+}
 bool qa_bot_runtime_load_map(qa_bot_runtime *r, const char *name, qa_error *e) {
     if (!bot_runtime_owners_idle(r, e)) return false;
     if (r->restore_pending) return bot_runtime_fail(e, "bot runtime continuation is not completely imported");

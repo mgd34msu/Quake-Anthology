@@ -102,6 +102,11 @@ typedef struct qa_bot_services {
 /* The runtime is borrowed and shared with botlib hosts. Actor allocation and
  * connection membership are supplied by the existing session/mode owners. */
 bool qa_bots_create(qa_bot_runtime *, const qa_bot_services *, qa_bots **, qa_error *);
+/* Fresh round AI over the retained initialized library. No map reload or
+ * actor admission occurs here; the caller reconnects actual preserved clients. */
+bool qa_bots_create_round(qa_bot_runtime *, const qa_bot_services *, qa_bots **, qa_error *);
+/* Borrow the actual admitted settings until the population is mutated. */
+bool qa_bots_admission_read(const qa_bots *, qa_actor_id, qa_bot_admission *, qa_error *);
 /* Construct an empty isolated population with the actual saved client capacity.
  * The runtime address remains stable; source setup/admission/frame callbacks do
  * not run. Its private continuation must restore before ordinary bot use. */

@@ -27,6 +27,8 @@ void qa_bots_checkpoint_destroy(qa_bots_checkpoint *checkpoint) {
         qa_bot_chat_state_free(&record->chat);
         qa_bot_weights_release(record->goal_weights);qa_bot_weights_release(record->weapon_weights);
         qa_bot_character_release(record->character);
+        free(record->state.admitted_character);
+        free(record->state.admitted_name);
     }
     free(checkpoint->records);free(checkpoint);
 }
@@ -48,6 +50,21 @@ static bool capture(qa_bots *b,qa_bots_checkpoint **out,qa_error *e) {
         }
         bot_checkpoint_record *record=&checkpoint->records[checkpoint->count++];
         record->state=*s;
+        record->state.admitted_character=NULL;
+        record->state.admitted_name=NULL;
+        if(!s->admitted_character || !s->admitted_name) {bot_ai_fail(e,"bot original admission settings are absent");goto failed;}
+        size_t path_size=strlen(s->admitted_character)+1;
+        record->state.admitted_character=malloc(path_size);
+        if(!record->state.admitted_character) {
+            qa_error_set(e,QA_ERROR_MEMORY,path_size,"retaining bot checkpoint character request");goto failed;
+        }
+        memcpy(record->state.admitted_character,s->admitted_character,path_size);
+        size_t name_size=strlen(s->admitted_name)+1;
+        record->state.admitted_name=malloc(name_size);
+        if(!record->state.admitted_name) {
+            qa_error_set(e,QA_ERROR_MEMORY,name_size,"retaining bot checkpoint admission name");goto failed;
+        }
+        memcpy(record->state.admitted_name,s->admitted_name,name_size);
         record->character=(qa_bot_character *)qa_bot_runtime_character(b->runtime,s->character);
         if(!record->character) {bot_ai_fail(e,"bot checkpoint character is absent");goto failed;}
         qa_bot_character_retain(record->character);
@@ -83,6 +100,10 @@ static bool validate(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
            live->view.client!=saved->view.client || live->view.entity!=saved->view.entity ||
            live->character!=saved->character || live->goals!=saved->goals ||
            live->weapons!=saved->weapons || live->chat!=saved->chat || live->movement!=saved->movement ||
+           !live->admitted_character || !saved->admitted_character ||
+           !live->admitted_name || !saved->admitted_name || strcmp(live->admitted_name,saved->admitted_name) ||
+           strcmp(live->admitted_character,saved->admitted_character) ||
+           memcmp(&live->admitted_skill,&saved->admitted_skill,sizeof(live->admitted_skill)) ||
            record->character!=qa_bot_runtime_character(b->runtime,live->character) ||
            !qa_bot_goals_has_handle(qa_bot_runtime_goals(b->runtime),live->goals) ||
            !qa_bot_moves_has_handle(qa_bot_runtime_moves(b->runtime),live->movement) ||
@@ -98,12 +119,26 @@ typedef struct bot_prepared_record {
     bot_goal_restore *goals;
     bot_weapon_restore *weapons;
     qa_bot_input *actions;
+    char *character_request;
+    char *admission_name;
 } bot_prepared_record;
 static bool prepare(qa_bots *b,const qa_bots_checkpoint *checkpoint,bot_prepared_record *prepared,
                     qa_error *e) {
     for(uint32_t i=0;i<checkpoint->count;++i) {
         const bot_checkpoint_record *record=&checkpoint->records[i];
         bot_ai_state *s=bot_ai_actor(b,record->state.view.actor);
+        size_t path_size=strlen(record->state.admitted_character)+1;
+        prepared[i].character_request=malloc(path_size);
+        if(!prepared[i].character_request) {
+            qa_error_set(e,QA_ERROR_MEMORY,path_size,"preparing restored bot character request");return false;
+        }
+        memcpy(prepared[i].character_request,record->state.admitted_character,path_size);
+        size_t name_size=strlen(record->state.admitted_name)+1;
+        prepared[i].admission_name=malloc(name_size);
+        if(!prepared[i].admission_name) {
+            qa_error_set(e,QA_ERROR_MEMORY,name_size,"preparing restored bot admission name");return false;
+        }
+        memcpy(prepared[i].admission_name,record->state.admitted_name,name_size);
         qa_bot_weights *goal_weights=NULL,*weapon_weights=NULL;
         if((record->goal_weights && !qa_bot_weights_clone(record->goal_weights,&goal_weights,e)) ||
            (record->weapon_weights && !qa_bot_weights_clone(record->weapon_weights,&weapon_weights,e))) {
@@ -156,8 +191,13 @@ bool qa_bots_restore(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
             const bot_checkpoint_record *record=&checkpoint->records[i];
             bot_move_restore_commit(qa_bot_runtime_moves(b->runtime),record->state.movement,&record->movement);
             *prepared[i].actions=record->actions;
-            *bot_ai_actor(b,record->state.view.actor)=record->state;
+            bot_ai_state *state=bot_ai_actor(b,record->state.view.actor);
+            free(state->admitted_character);free(state->admitted_name);*state=record->state;
+            state->admitted_character=prepared[i].character_request;prepared[i].character_request=NULL;
+            state->admitted_name=prepared[i].admission_name;prepared[i].admission_name=NULL;
         }
+        free(prepared[i].character_request);
+        free(prepared[i].admission_name);
     }
     bot_chat_restore_finish(chat,ok);
     if(ok) {
