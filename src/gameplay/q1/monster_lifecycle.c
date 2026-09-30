@@ -287,16 +287,23 @@ bool q1_monster_count_kill(qa_q1_game *g, q1_actor *entity, qa_actor_id killer, 
 }
 
 static bool gib_monster(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    qa_actor_id source = entity->id;
     const q1_species *spec = entity->state.monster.species;
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, entity->id, &body, error))
-        return false;
-    float health = q1_health(g, entity->id);
-    if (!q1_sound(g, entity->id,
+    bool foundation = !entity->state.monster.addon.enabled &&
+                      (spec->species == QA_Q1_ARMY || spec->species == QA_Q1_DOG);
+    float health = foundation ? q1_health(g, source) : 0;
+    entity = q1_entity(g, source);
+    if (!entity)
+        return true;
+    if (!q1_sound(g, source,
                   spec->species == QA_Q1_ZOMBIE ? "zombie/z_gib.wav" : "player/udeath.wav", 2, 1,
                   error))
         return false;
-    if (spec->species == QA_Q1_ARMY && !q1_gib(g, entity, spec->head, true, error))
+    entity = q1_entity(g, source);
+    if (!entity)
+        return true;
+    if (foundation && spec->species == QA_Q1_ARMY &&
+        !q1_gib_head(g, entity, spec->head, health, error))
         return false;
     for (unsigned i = 0; i < 3; ++i) {
         const char *model = spec->species == QA_Q1_DOG || spec->species == QA_Q1_OGRE ? "gib3"
@@ -305,12 +312,26 @@ static bool gib_monster(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                             : i == 0                                                  ? "gib1"
                             : i == 1                                                  ? "gib2"
                                                                                       : "gib3";
-        if (!q1_alive(g, entity->id))
+        if (!q1_entity(g, source))
             return true;
-        if (!q1_gib_at(g, entity->id, body.origin, health, model, error))
+        qa_body_state body;
+        if (!qa_world_body_read(g->services.world, source, &body, error))
+            return !q1_entity(g, source);
+        if (!q1_entity(g, source))
+            return true;
+        if (!foundation) {
+            health = q1_health(g, source);
+            if (!q1_entity(g, source))
+                return true;
+        }
+        if (!q1_gib_at(g, source, body.origin, health, model, error))
             return false;
     }
-    return spec->species == QA_Q1_ARMY || q1_gib(g, entity, spec->head, true, error);
+    entity = q1_entity(g, source);
+    if (!entity || (foundation && spec->species == QA_Q1_ARMY))
+        return true;
+    return foundation ? q1_gib_head(g, entity, spec->head, health, error)
+                      : q1_gib(g, entity, spec->head, true, error);
 }
 
 bool q1_monster_die(qa_q1_game *g, q1_actor *entity, qa_actor_id attacker, qa_error *error) {

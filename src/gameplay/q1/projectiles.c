@@ -397,13 +397,17 @@ cleanup:
     return ok;
 }
 bool q1_gib(qa_q1_game *g, q1_actor *source, const char *model, bool head, qa_error *error) {
-    float health = q1_health(g, source->id);
+    qa_actor_id id = source->id;
+    float health = q1_health(g, id);
+    source = q1_entity(g, id);
+    if (!source)
+        return true;
     if (head)
         return q1_gib_head(g, source, model, health, error);
     qa_body_state body;
-    if (!qa_world_body_read(g->services.world, source->id, &body, error))
-        return false;
-    return q1_gib_at(g, source->id, body.origin, health, model, error);
+    if (!qa_world_body_read(g->services.world, id, &body, error))
+        return !q1_entity(g, id);
+    return !q1_entity(g, id) || q1_gib_at(g, id, body.origin, health, model, error);
 }
 bool q1_gib_head(qa_q1_game *g, q1_actor *source, const char *model, float health,
                  qa_error *error) {
