@@ -20,6 +20,21 @@ static void close_world(void *world)
     (void)qa_world_destroy(world, NULL);
 }
 
+bool application_native_q2_baseline_services_prepare(qa_application *candidate,
+    const qa_application_options *options, qa_application_native_baseline_services **out, qa_error *error)
+{
+    if (!candidate || candidate->operation != APPLICATION_PERSISTING || !options || !out)
+        return application_fail(error, QA_ERROR_ARGUMENT, "native platform preparation requires its isolated candidate");
+    struct application_native_q2_scratch *owner = calloc(1, sizeof(*owner));
+    if (!owner) return application_fail(error, QA_ERROR_MEMORY, "retaining native platform preparation");
+    owner->candidate = candidate;
+    owner->services.options = *options;
+    owner->next = candidate->native_baselines;
+    candidate->native_baselines = owner;
+    *out = &owner->services;
+    return true;
+}
+
 bool application_native_q2_scratch_prepare(application_provider *target,
     const qa_launch_snapshot *snapshot, qa_application_native_baseline_services *services,
     struct application_native_q2_scratch **out, qa_error *error)

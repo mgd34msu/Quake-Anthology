@@ -929,6 +929,7 @@ add_library(qa_application STATIC
     src/app/application/save.c
     src/app/application/save_physics.c
     src/app/application/save_native_q2.c
+    src/app/application/save_native_q2_record.c
     src/app/application/save_resolvers.c
     src/app/application/visuals.c)
 target_link_libraries(qa_application PUBLIC qa_persistence qa_configuration qa_game_q1 qa_game_q2 qa_game_q3 qa_campaign qa_modes qa_player_services qa_qc_host qa_q3_host)

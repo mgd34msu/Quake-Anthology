@@ -1,5 +1,6 @@
 #include "save_private.h"
 #include "guest_qc_internal.h"
+#include "guest_native_q2_private.h"
 #include "qa/game_q1_checkpoint.h"
 #include "qa/game_q2_checkpoint.h"
 #include "qa/game_q3_save.h"
@@ -16,6 +17,7 @@
 #include "bots_save_private.h"
 #include "match_intents.h"
 #include "network_q1_signon.h"
+#include "save_native_q2_record.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -562,6 +564,7 @@ typedef struct application_persistence {
     qa_buffer configuration;
     uint64_t configuration_generation, publication_generation, actor_revision;
     uint64_t restored_command_generation;
+    qa_save_purpose purpose;
     bool leased;
 } application_persistence;
 
@@ -647,6 +650,9 @@ static const char *provider_schema(const application_provider *provider)
     if (provider->kind == APPLICATION_PROVIDER_Q2) return "qa.native-q2-continuation";
     if (provider->kind == APPLICATION_PROVIDER_Q3) return "qa.q3.native";
     if (provider->kind == APPLICATION_PROVIDER_QC) return "qa.qc.guest";
+    if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine &&
+        provider->state.native.q2_engine->profile != QA_NATIVE_Q2_CGAME_API2023)
+        return "qa.q2.external-native";
     return NULL;
 }
 
@@ -780,7 +786,8 @@ static bool application_restore(qa_application *app, qa_bytes bytes, qa_error *e
         application_q1_signon_restore(app, parts[4], error);
 }
 
-static bool provider_capture(application_provider *provider, qa_buffer *out, qa_error *error)
+static bool provider_capture(application_provider *provider, qa_save_purpose purpose,
+                              qa_buffer *out, qa_error *error)
 {
     qa_buffer state = {0};
     bool ok;
@@ -790,6 +797,8 @@ static bool provider_capture(application_provider *provider, qa_buffer *out, qa_
         ok = qa_q2_game_capture(provider->state.q2, &state, error);
     else if (provider->kind == APPLICATION_PROVIDER_Q3)
         ok = qa_q3_game_capture(provider->state.q3, &state, error);
+    else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
+        ok = application_native_q2_save_capture(provider, purpose, &state, error);
     else ok = application_guest_checkpoint_capture(provider, &state, error);
     if (!ok) return false;
     if (state.size > SIZE_MAX - 32) {
@@ -812,12 +821,16 @@ static bool provider_capture(application_provider *provider, qa_buffer *out, qa_
     return true;
 }
 
-static bool provider_restore(application_provider *provider, qa_bytes bytes, qa_error *error)
+static bool provider_restore(application_persistence *operation,
+                              application_provider *provider, qa_bytes bytes, qa_error *error)
 {
     if (!bytes.data || bytes.size < 32 || memcmp(bytes.data, "QAPV", 4) ||
         qa_load_u32le(bytes.data + 4) != 1 || qa_load_u32le(bytes.data + 8) != (uint32_t)provider->kind ||
         qa_load_u32le(bytes.data + 12) > 1 || qa_load_u64le(bytes.data + 24) != bytes.size - 32)
         return application_fail(error, QA_ERROR_FORMAT, "invalid provider continuation header or extent");
+    if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine &&
+        qa_load_u32le(bytes.data + 12) != 1)
+        return application_fail(error, QA_ERROR_FORMAT, "native Q2 provider wrapper requires its actual ready map owner");
     qa_bytes state = {bytes.data + 32, bytes.size - 32};
     bool ok;
     if (provider->kind == APPLICATION_PROVIDER_Q1) {
@@ -829,6 +842,8 @@ static bool provider_restore(application_provider *provider, qa_bytes bytes, qa_
         ok = qa_q2_game_restore(provider->state.q2, state, error);
     else if (provider->kind == APPLICATION_PROVIDER_Q3)
         ok = qa_q3_game_restore(provider->state.q3, state, error);
+    else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
+        ok = application_native_q2_save_restore(provider, state, operation->options, operation->ops, error);
     else ok = application_guest_checkpoint_restore(provider, state, error);
     if (!ok) return false;
     provider->map_bound = qa_load_u32le(bytes.data + 12) != 0;
@@ -906,6 +921,7 @@ static bool persistence_begin(void *opaque, qa_save_purpose purpose, qa_save_met
 {
     application_persistence *operation = opaque;
     if (!persistence_lease(operation, error)) return false;
+    operation->purpose = purpose;
     qa_application *app = operation->active;
     bool ok = persistence_inventory(operation, app, NULL, error) &&
         application_save_foundation_capture(app, operation->foundation, error) &&
@@ -957,7 +973,7 @@ static bool persistence_capture_owner(void *opaque, const qa_save_owner *owner,
     case QA_SAVE_PROVIDER: {
         application_provider *provider = saved_provider(app, owner->instance);
         if (provider && provider_schema(provider))
-            return provider_capture(provider, out, error);
+            return provider_capture(provider, operation->purpose, out, error);
         const qa_application_persistence_owner *binding = external_owner(operation->ops, owner);
         return binding && binding->capture(binding->context, app, out, error);
     }
@@ -1086,7 +1102,7 @@ static bool persistence_restore_owner(void *opaque, void *value,
         application_provider *provider = saved_provider(candidate, record->owner.instance);
         if (!provider) return application_fail(error, QA_ERROR_FORMAT, "restore selected provider is absent");
         if (provider_schema(provider))
-            return provider_restore(provider, record->payload, error);
+            return provider_restore(operation, provider, record->payload, error);
         const qa_application_persistence_owner *binding = external_owner(operation->ops, &record->owner);
         return binding && binding->restore(binding->context, candidate, record->payload, error);
     }
