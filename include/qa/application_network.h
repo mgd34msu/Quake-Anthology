@@ -38,6 +38,10 @@ bool qa_application_network_q1_source(qa_application *, qa_actor_id,
     qa_actor_owner *, uint32_t *source_slot, qa_net_protocol_id *, qa_error *);
 bool qa_application_network_q1_entity(qa_application *, qa_actor_id source_player,
     qa_actor_id entity, qa_q1_entity *, qa_error *);
+/* Iterate actual source edicts in source-slot order. Cursor starts at zero;
+ * present distinguishes the completed inventory from failed source admission. */
+bool qa_application_network_q1_entity_next(qa_application *, qa_actor_id source_player,
+    uint32_t *cursor, bool *present, qa_actor_id *, qa_q1_entity *, qa_error *);
 /* Names borrow the source until mutation; output arrays are caller-owned. */
 bool qa_application_network_q1_precache(qa_application *, qa_actor_id,
     bool models, const char *names[255], size_t *count, qa_error *);

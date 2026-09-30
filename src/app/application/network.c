@@ -129,6 +129,26 @@ bool qa_application_network_q1_entity(qa_application *app, qa_actor_id player, q
         return application_fail(error, QA_ERROR_NOT_FOUND, "Q1 source entity retired during observation");
     *out = value; return true;
 }
+bool qa_application_network_q1_entity_next(qa_application *app, qa_actor_id player,
+    uint32_t *cursor, bool *present, qa_actor_id *actor, qa_q1_entity *out, qa_error *error)
+{
+    if (!cursor || !present || !actor || !out)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source edict inventory output");
+    *present = false;
+    uint32_t client; struct application_qc_state *engine = q1_source(app, player, &client, error);
+    if (!engine) return false;
+    uint32_t count = qa_qc_entity_count(engine->provider->state.qc.instance);
+    if (!*cursor) *cursor = 1;
+    while (*cursor < count) {
+        uint32_t slot = (*cursor)++; qa_qc_slot_binding binding;
+        if (!qa_qc_slot(engine->provider->state.qc.instance, slot, &binding))
+            return application_fail(error, QA_ERROR_FORMAT, "Q1 source edict inventory exceeds its real allocation");
+        if (binding.kind == QA_QC_SLOT_FREE || binding.kind == QA_QC_SLOT_WORLD) continue;
+        if (!qa_application_network_q1_entity(app, player, binding.actor, out, error)) return false;
+        *actor = binding.actor; *present = true; return true;
+    }
+    return true;
+}
 bool qa_application_network_q1_precache(qa_application *app, qa_actor_id player,
     bool models, const char *names[255], size_t *count, qa_error *error)
 {
