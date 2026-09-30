@@ -290,6 +290,30 @@ static bool resolve(struct application_native_q2 *engine, qa_error *error)
     if (ok) p->resolved = true;
     return ok;
 }
+
+bool application_native_q2_inventory_index(struct application_native_q2 *engine,
+    qa_item_id item, uint32_t *out, qa_error *error)
+{
+    if (!engine || !engine->primary_inventory || !item || !out)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native source item lookup is missing its qualified inventory");
+    if (!resolve(engine, error)) return false;
+    struct application_native_q2_inventory *p = engine->primary_inventory;
+    for (size_t i = 0; i < p->count; ++i)
+        if (p->rows[i].item == item) { *out = p->rows[i].index; return true; }
+    return application_fail(error, QA_ERROR_NOT_FOUND, "Native source item is absent from its declared inventory");
+}
+
+bool application_native_q2_inventory_item(struct application_native_q2 *engine,
+    uint32_t index, qa_item_id *out, qa_error *error)
+{
+    if (!engine || !engine->primary_inventory || !out)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native source index lookup is missing its qualified inventory");
+    if (!resolve(engine, error)) return false;
+    struct application_native_q2_inventory *p = engine->primary_inventory;
+    for (size_t i = 0; i < p->count; ++i)
+        if (p->rows[i].index == index) { *out = p->rows[i].item; return true; }
+    return application_fail(error, QA_ERROR_NOT_FOUND, "Native source index is absent from its declared inventory");
+}
 static bool client_address(application_native_q2_client *client, qa_native_address *out, qa_error *error)
 {
     struct application_native_q2 *engine = client->inventory_engine;
