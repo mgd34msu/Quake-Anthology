@@ -116,6 +116,7 @@ static bool submit_view(void *context, const qa_q3_scene_options *options, qa_sc
     if (options->world.no_world) return true;
     return frontend_visuals_submit(source->frontend, source->seat, source->owner, &options->world, frame, error) &&
         frontend_particle_draw(source->frontend, &options->world.view, error) &&
+        frontend_event_debug(source->frontend, &options->world.view, error) &&
         frontend_tools_debug(source->frontend, &options->world.view, error);
 }
 static void float_word(uint8_t *out, float value)

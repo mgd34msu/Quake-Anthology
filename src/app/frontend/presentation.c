@@ -138,7 +138,8 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
             world.fog.sky_drawn = qa_scene_world_sky_drawn(frontend->scene_world);
             if (!qa_scene_frame_finish(&frontend->frame, &view, &world.fog, error)) return false;
         }
-        if (!source.source_world && !frontend_tools_debug(frontend, &view, error)) return false;
+        if (!source.source_world && (!frontend_event_debug(frontend, &view, error) ||
+            !frontend_tools_debug(frontend, &view, error))) return false;
         uint32_t real_milliseconds = (uint32_t)((frontend->time_ns / 1000000) & UINT32_MAX);
         if (!qa_application_present(frontend->application, i, real_milliseconds,
                 frontend_network_remote(frontend) ? frontend_network_client_time(frontend) :

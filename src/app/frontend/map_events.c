@@ -2,6 +2,12 @@
 #include <stdio.h>
 
 enum { FRONTEND_STYLES = 256 };
+typedef struct frontend_footsteps {
+    struct frontend_footsteps *next;
+    char material[16];
+    qa_audio_asset *assets[16];
+    uint32_t count;
+} frontend_footsteps;
 typedef struct frontend_event_resources {
     struct frontend_event_resources *next;
     qa_actor_owner owner;
@@ -9,6 +15,7 @@ typedef struct frontend_event_resources {
     qa_vfs *files;
     qa_audio_bank *sounds;
     qa_scene_resources *images;
+    frontend_footsteps *footsteps;
 } frontend_event_resources;
 typedef struct frontend_retained_sound {
     struct frontend_retained_sound *next;
@@ -23,6 +30,20 @@ typedef struct frontend_retained_light {
     qa_q2_map_event event;
     uint64_t identity, revision;
 } frontend_retained_light;
+typedef struct frontend_retained_bounds {
+    struct frontend_retained_bounds *next;
+    qa_actor_owner owner;
+    qa_actor_id actor, recipient;
+    qa_bounds bounds;
+    uint64_t frame, deadline;
+    unsigned color;
+    bool depth;
+} frontend_retained_bounds;
+typedef struct frontend_q1_light {
+    qa_actor_id actor;
+    qa_scene_light light;
+    double die;
+} frontend_q1_light;
 typedef struct frontend_event_view {
     char *q1_patterns[FRONTEND_STYLES], *q2_patterns[FRONTEND_STYLES];
     float q1_styles[FRONTEND_STYLES];
@@ -40,6 +61,11 @@ struct frontend_event_state {
     frontend_event_resources *resources;
     frontend_retained_sound *sounds;
     frontend_retained_light *lights;
+    frontend_retained_bounds *bounds;
+    frontend_q1_light q1_lights[32];
+    qa_builtin_random light_random;
+    uint32_t step_random[624], step_cursor;
+    qa_audio_asset *last_step;
     frontend_event_view views[QA_INPUT_LOCAL_SEATS];
 };
 static qa_audio_family audio_family(qa_game_family family)
@@ -51,6 +77,13 @@ static bool state_read(qa_frontend *frontend, frontend_event_state **out, qa_err
     if (!frontend->events) {
         frontend->events = calloc(1, sizeof(*frontend->events));
         if (!frontend->events) return frontend_fail(error, QA_ERROR_MEMORY, "allocating frontend presentation state");
+        qa_builtin_random_seed(&frontend->events->light_random, 1);
+        frontend->events->step_random[0] = 1;
+        for (uint32_t i = 1; i < 624; ++i) {
+            uint32_t prior = frontend->events->step_random[i - 1];
+            frontend->events->step_random[i] = 1812433253u * (prior ^ (prior >> 30)) + i;
+        }
+        frontend->events->step_cursor = 624;
     }
     *out = frontend->events; return true;
 }
@@ -91,6 +124,9 @@ void frontend_event_retire(qa_frontend *frontend)
     while (state->lights) {
         frontend_retained_light *entry = state->lights; state->lights = entry->next; free(entry);
     }
+    while (state->bounds) {
+        frontend_retained_bounds *entry = state->bounds; state->bounds = entry->next; free(entry);
+    }
     for (unsigned i = 0; i < QA_INPUT_LOCAL_SEATS; ++i) {
         for (unsigned face = 0; face < 6; ++face) qa_scene_image_release(state->views[i].sky[face]);
         for (unsigned j = 0; j < FRONTEND_STYLES; ++j) {
@@ -99,10 +135,15 @@ void frontend_event_retire(qa_frontend *frontend)
     }
     while (state->resources) {
         frontend_event_resources *entry = state->resources; state->resources = entry->next;
+        while (entry->footsteps) {
+            frontend_footsteps *steps = entry->footsteps; entry->footsteps = steps->next;
+            for (uint32_t i = 0; i < steps->count; ++i) qa_audio_asset_release(steps->assets[i]);
+            free(steps);
+        }
         qa_audio_bank_destroy(entry->sounds); qa_scene_resources_destroy(entry->images);
         qa_vfs_destroy(entry->files); free(entry);
     }
-    free(state); frontend->events = NULL;
+    qa_audio_asset_release(state->last_step); free(state); frontend->events = NULL;
 }
 static bool seat_receives(qa_frontend *frontend, unsigned seat, qa_actor_id recipient)
 {
@@ -117,6 +158,47 @@ static bool pattern_set(char **out, const char *pattern, qa_error *error)
     char *copy = malloc(strlen(pattern) + 1);
     if (!copy) return frontend_fail(error, QA_ERROR_MEMORY, "retaining source lightstyle");
     strcpy(copy, pattern); free(*out); *out = copy; return true;
+}
+static bool q1_effects(qa_frontend *frontend, frontend_event_state *state, qa_error *error)
+{
+    double seconds = (double)qa_session_elapsed(qa_application_session(frontend->application)) / 1e9;
+    const qa_actor_record *record; uint32_t cursor = 0;
+    qa_actor_registry *actors = qa_world_actors(qa_application_world(frontend->application));
+    while (qa_actors_next(actors, &cursor, &record)) {
+        qa_application_visual_view view; qa_error observed = {0};
+        if (!qa_application_visual_read(frontend->application, record->id, &view, &observed)) {
+            if (observed.code == QA_ERROR_NOT_FOUND) continue;
+            if (error) *error = observed; return false;
+        }
+        uint32_t effects = view.q1_effects | (view.family == QA_GAME_Q1 ? (uint32_t)view.effects : 0);
+        if (!(effects & 14)) continue;
+        frontend_q1_light *entry = NULL;
+        for (unsigned i = 0; i < 32; ++i)
+            if (qa_actor_id_equal(state->q1_lights[i].actor, record->id)) { entry = &state->q1_lights[i]; break; }
+        if (!entry) for (unsigned i = 0; i < 32; ++i)
+            if (!state->q1_lights[i].actor.registry || state->q1_lights[i].die < seconds) { entry = &state->q1_lights[i]; break; }
+        if (!entry) entry = &state->q1_lights[0];
+        entry->actor = record->id;
+        qa_vec3 origin = view.body.origin; float radius = 0, minimum = 0;
+        if (effects & 2) {
+            qa_vec3 axes[3]; frontend_camera_axes(view.body.angles, axes);
+            origin.z += 16; origin = qa_vec_add(origin, qa_vec_scale(axes[0], 18));
+            radius = 200 + (float)(qa_builtin_random_integer(&state->light_random) & 31); minimum = 32;
+            entry->die = seconds + .1;
+        }
+        if (effects & 4) {
+            origin = view.body.origin; origin.z += 16;
+            radius = 400 + (float)(qa_builtin_random_integer(&state->light_random) & 31);
+            minimum = 0; entry->die = seconds + .001;
+        }
+        if (effects & 8) {
+            origin = view.body.origin; radius = 200 + (float)(qa_builtin_random_integer(&state->light_random) & 31);
+            minimum = 0; entry->die = seconds + .001;
+        }
+        entry->light = (qa_scene_light){.origin = origin, .color = {1, 1, 1}, .radius = radius,
+            .minimum = minimum, .scale = 1, .identity = qa_scene_identity(), .revision = 1, .family = QA_SCENE_Q1};
+    }
+    return true;
 }
 static float fog_fraction(float value)
 {
@@ -145,9 +227,33 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
     frontend_event_state *state;
     if (!state_read(frontend, &state, error)) return false;
     qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
+    uint64_t now = qa_session_elapsed(qa_application_session(frontend->application));
+    frontend_retained_bounds **link = &state->bounds;
+    while (*link) {
+        frontend_retained_bounds *entry = *link;
+        if ((!entry->deadline && entry->frame != frontend->frame_number) || (entry->deadline && now >= entry->deadline) ||
+            (entry->actor.registry && !qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), entry->actor))) {
+            *link = entry->next; free(entry);
+        } else link = &entry->next;
+    }
     for (size_t i = 0; i < qa_application_event_count(frontend->application); ++i) {
         qa_builtin_event event;
         if (!qa_application_event_at(frontend->application, i, &event)) return frontend_fail(error, QA_ERROR_ARGUMENT, "builtin queue changed during map presentation");
+        if (event.family == QA_GAME_Q1 && event.kind == QA_BUILTIN_EFFECT) {
+            const char *resource = qa_strings_cstr(strings, event.resource);
+            if (resource && !strcmp(resource, "debug-bounds")) {
+                if (!qa_vec_finite(event.origin) || !qa_vec_finite(event.end) || event.code < 0 || event.code > 255 ||
+                    !isfinite(event.value) || event.value < 0 || event.value > (double)(UINT64_MAX - event.time_ns) / 1e9)
+                    return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid builtin debug bounds");
+                frontend_retained_bounds *entry = calloc(1, sizeof(*entry));
+                if (!entry) return frontend_fail(error, QA_ERROR_MEMORY, "retaining builtin debug bounds");
+                *entry = (frontend_retained_bounds){.next = state->bounds, .owner = event.provider, .actor = event.actor,
+                    .recipient = event.other, .bounds = {event.origin, event.end}, .color = (unsigned)event.code,
+                    .frame = frontend->frame_number, .deadline = event.value > 0 ? event.time_ns + (uint64_t)(event.value * 1e9) : 0,
+                    .depth = (event.flags & 1) != 0};
+                state->bounds = entry;
+            }
+        }
         if (event.kind != QA_BUILTIN_LIGHT || event.family != QA_GAME_Q1 || event.code < 0 || event.code >= FRONTEND_STYLES) continue;
         for (unsigned seat = 0; seat < frontend->options.seats; ++seat)
             if (!pattern_set(&state->views[seat].q1_patterns[event.code], qa_strings_cstr(strings, event.resource), error)) return false;
@@ -228,7 +334,7 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
         }
         for (unsigned face = 0; face < 6; ++face) qa_scene_image_release(sky[face]);
     }
-    return true;
+    return q1_effects(frontend, state, error);
 }
 bool frontend_event_world(qa_frontend *frontend, unsigned seat, qa_scene_world_input *world, qa_error *error)
 {
@@ -275,6 +381,10 @@ bool frontend_event_world(qa_frontend *frontend, unsigned seat, qa_scene_world_i
 #undef COLOR
     }
     size_t count = 0;
+    double seconds = (double)now / 1e9;
+    for (unsigned i = 0; i < 32; ++i)
+        if (state->q1_lights[i].actor.registry && state->q1_lights[i].die >= seconds &&
+            qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), state->q1_lights[i].actor)) ++count;
     for (frontend_retained_light *light = state->lights; light; light = light->next)
         if (light->event.visible && seat_receives(frontend, seat, light->event.recipient) &&
             qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), light->event.actor)) ++count;
@@ -285,6 +395,10 @@ bool frontend_event_world(qa_frontend *frontend, unsigned seat, qa_scene_world_i
     if (!lights) return false;
     if (world->light_count) memcpy(lights, world->lights, world->light_count * sizeof(*lights));
     size_t used = world->light_count;
+    for (unsigned i = 0; i < 32; ++i)
+        if (state->q1_lights[i].actor.registry && state->q1_lights[i].die >= seconds &&
+            qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), state->q1_lights[i].actor))
+            lights[used++] = state->q1_lights[i].light;
     for (frontend_retained_light *light = state->lights; light; light = light->next) {
         const qa_q2_map_event *event = &light->event;
         if (!event->visible || !seat_receives(frontend, seat, event->recipient) ||
@@ -302,9 +416,141 @@ bool frontend_event_world(qa_frontend *frontend, unsigned seat, qa_scene_world_i
     }
     world->lights = lights; world->light_count = used; return true;
 }
+bool frontend_event_debug(qa_frontend *frontend, const qa_scene_view *view, qa_error *error)
+{
+    if (!frontend->events) return true;
+    uint64_t now = qa_session_elapsed(qa_application_session(frontend->application));
+    for (frontend_retained_bounds *entry = frontend->events->bounds; entry; entry = entry->next) {
+        if (!seat_receives(frontend, view->seat, entry->recipient) ||
+            (entry->deadline ? now >= entry->deadline : entry->frame != frontend->frame_number)) continue;
+        frontend_event_resources *resources; qa_bytes palette;
+        if (!resources_read(frontend, entry->owner, QA_AUDIO_Q1, &resources, error) ||
+            !qa_scene_resources_palette(resources->images, QA_SCENE_Q1, &palette, error)) return false;
+        unsigned color = entry->color * 3;
+        qa_scene_vec4 rgba = {palette.data[color] / 255.0f, palette.data[color + 1] / 255.0f, palette.data[color + 2] / 255.0f, 1};
+        qa_debug_shape shape = {.kind = QA_DEBUG_BOUNDS, .data.bounds = entry->bounds};
+        const qa_debug_line *lines; size_t count;
+        if (!qa_debug_shape_lines(&shape, rgba, entry->depth, &frontend->frame.storage, &lines, &count, error) ||
+            !qa_debug_draw(&frontend->frame, view, qa_scene_white(resources->images), lines, count, 1, error)) return false;
+    }
+    return true;
+}
+static uint32_t step_random(frontend_event_state *state)
+{
+    if (state->step_cursor == 624) {
+        for (unsigned i = 0; i < 624; ++i) {
+            uint32_t value = (state->step_random[i] & UINT32_C(0x80000000)) |
+                (state->step_random[(i + 1) % 624] & UINT32_C(0x7fffffff));
+            state->step_random[i] = state->step_random[(i + 397) % 624] ^ (value >> 1) ^
+                ((value & 1) ? UINT32_C(0x9908b0df) : 0);
+        }
+        state->step_cursor = 0;
+    }
+    uint32_t value = state->step_random[state->step_cursor++];
+    value ^= value >> 11; value ^= (value << 7) & UINT32_C(0x9d2c5680);
+    value ^= (value << 15) & UINT32_C(0xefc60000); return value ^ (value >> 18);
+}
+static uint32_t step_uniform(frontend_event_state *state, uint32_t count)
+{
+    if (count < 2) return 0;
+    uint32_t reject = (0u - count) % count, value;
+    do value = step_random(state); while (value < reject);
+    return value % count;
+}
+static bool material_equal(const char *a, const char *b)
+{
+    while (*a && *b) {
+        unsigned x = (unsigned char)*a++, y = (unsigned char)*b++;
+        if (x >= 'A' && x <= 'Z') x += 'a' - 'A';
+        if (y >= 'A' && y <= 'Z') y += 'a' - 'A';
+        if (x != y) return false;
+    }
+    return *a == *b;
+}
+static bool footsteps_read(frontend_event_resources *resources, const char *material,
+    frontend_footsteps **out, qa_error *error)
+{
+    if (material_equal(material, "default")) material = "";
+    if (material_equal(material, "ladder")) material = "ladder";
+    for (frontend_footsteps *entry = resources->footsteps; entry; entry = entry->next)
+        if (material_equal(entry->material, material)) { *out = entry; return true; }
+    frontend_footsteps *entry = calloc(1, sizeof(*entry));
+    if (!entry) return frontend_fail(error, QA_ERROR_MEMORY, "retaining source footstep table");
+    snprintf(entry->material, sizeof(entry->material), "%s", material);
+    for (unsigned i = 0; i < 16; ++i) {
+        char path[64];
+        if (*material) snprintf(path, sizeof(path), "#sound/player/steps/%s%u.wav", material, i + 1);
+        else snprintf(path, sizeof(path), "#sound/player/step%u.wav", i + 1);
+        qa_audio_asset *asset = NULL;
+        if (!qa_audio_bank_register(resources->sounds, path, QA_AUDIO_Q2, &asset, error)) {
+            for (unsigned j = 0; j < entry->count; ++j) qa_audio_asset_release(entry->assets[j]);
+            free(entry); return false;
+        }
+        if (!asset) break;
+        entry->assets[entry->count++] = asset;
+    }
+    entry->next = resources->footsteps; resources->footsteps = entry; *out = entry; return true;
+}
+static bool entity_footstep(qa_frontend *frontend, frontend_event_state *state,
+    const qa_builtin_event *event, qa_error *error)
+{
+    const qa_cvar_view *enabled = qa_cvars_find(qa_application_cvars(frontend->application), "cl_footsteps");
+    if (enabled && enabled->number == 0) return true;
+    qa_world *world = qa_application_world(frontend->application);
+    if (!qa_actors_get(qa_world_actors(world), event->actor)) return true;
+    qa_body_state body; qa_actor_collision collision;
+    if (!qa_world_body_read(world, event->actor, &body, error) ||
+        !qa_world_get_collision(world, event->actor, &collision, error)) return false;
+    char material[16] = "";
+    if (event->code == 9) strcpy(material, "ladder");
+    else if (!enabled || enabled->number < 2) {
+        qa_vec3 start = body.origin; start.z += 1;
+        qa_vec3 end = start; end.z -= 9;
+        bool box = !collision.inline_model && collision.role != QA_COLLISION_TRIGGER && collision.contents;
+        end.z += box ? body.bounds.mins.z : -66;
+        qa_trace_query query = {.start = start, .end = end,
+            .shape = {.kind = QA_SHAPE_BOX, .bounds = {qa_v3(box ? body.bounds.mins.x : 0, box ? body.bounds.mins.y : 0, 0),
+                qa_v3(box ? body.bounds.maxs.x : 0, box ? body.bounds.maxs.y : 0, 0)}},
+            .policy = qa_collision_default_policy(QA_COLLISION_Q2), .pass_actor = event->actor};
+        query.policy.contents_mask = 1;
+        qa_trace_result hit;
+        if (!qa_world_trace(world, &query, &hit, error)) return false;
+        if (hit.fraction < 1 && hit.has_surface) {
+            memcpy(material, hit.surface.material, sizeof(material)); material[15] = 0;
+            query.end = hit.end; query.end.z += 1; query.policy.contents_mask = 1 | 8 | 16 | 32;
+            if (!qa_world_trace(world, &query, &hit, error)) return false;
+            if (hit.has_surface) { memcpy(material, hit.surface.material, sizeof(material)); material[15] = 0; }
+        }
+    }
+    frontend_event_resources *resources; frontend_footsteps *steps;
+    if (!resources_read(frontend, event->provider, QA_AUDIO_Q2, &resources, error) ||
+        !footsteps_read(resources, material, &steps, error)) return false;
+    if (!steps->count && !footsteps_read(resources, "", &steps, error)) return false;
+    if (!steps->count) return true;
+    uint32_t index = step_uniform(state, steps->count);
+    if (steps->assets[index] == state->last_step) index = (index + 1) % steps->count;
+    qa_audio_asset *asset = steps->assets[index];
+    uint64_t actor = frontend_audio_actor(frontend, event->actor, error);
+    if (actor == QA_AUDIO_NO_ACTOR || !qa_audio_engine_position(frontend->audio, actor, body.origin, error)) return false;
+    qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset,
+        .family = QA_AUDIO_Q2, .actor = actor, .owner = event->provider, .audience = QA_AUDIO_WORLD,
+        .origin_kind = QA_AUDIO_ACTOR, .origin_actor = actor, .origin = body.origin, .channel = 6,
+        .volume = event->code == 2 ? 1 : .5f, .attenuation = event->code == 2 ? 1 : 2};
+    if (!qa_audio_engine_play(frontend->audio, &sound, (int32_t)((frontend->time_ns / 1000000) & INT32_MAX), error)) return false;
+    qa_audio_asset_release(state->last_step); state->last_step = qa_audio_asset_retain(asset); return true;
+}
 bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, qa_error *error)
 {
-    if (!frontend->audio || (event->kind != QA_BUILTIN_SOUND && event->kind != QA_BUILTIN_STOP_SOUND)) return true;
+    if (!frontend->audio) return true;
+    if (event->kind == QA_BUILTIN_EFFECT && event->family == QA_GAME_Q2 &&
+        (event->code == 2 || event->code == 8 || event->code == 9)) {
+        const char *resource = qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), event->resource);
+        if (resource && !strcmp(resource, "q2:entity-event")) {
+            frontend_event_state *state;
+            return state_read(frontend, &state, error) && entity_footstep(frontend, state, event, error);
+        }
+    }
+    if (event->kind != QA_BUILTIN_SOUND && event->kind != QA_BUILTIN_STOP_SOUND) return true;
     frontend_event_state *state;
     if (!state_read(frontend, &state, error)) return false;
     uint64_t actor = frontend_audio_actor(frontend, event->actor, error);

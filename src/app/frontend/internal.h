@@ -65,6 +65,8 @@ typedef struct frontend_seat {
     qa_actor_id q2_actor;
     qa_q2_player_view q2_view;
     qa_hud_value q2_vitals[3];
+    qa_hud_value q1_monsters;
+    char q1_monster_label[80];
     qa_hud_timer q2_timer;
     qa_item_id q2_timer_item;
     char *q2_timer_label, *q2_help_text[2];
@@ -138,6 +140,7 @@ bool frontend_map_events(qa_frontend *, qa_error *);
 bool frontend_event_world(qa_frontend *, unsigned, qa_scene_world_input *, qa_error *);
 bool frontend_event_sound(qa_frontend *, const qa_builtin_event *, qa_error *);
 bool frontend_event_audio(qa_frontend *, qa_error *);
+bool frontend_event_debug(qa_frontend *, const qa_scene_view *, qa_error *);
 void frontend_event_retire(qa_frontend *);
 bool frontend_event_images(qa_frontend *, qa_actor_owner, qa_game_family, qa_scene_resources **, qa_error *);
 bool frontend_particle_events(qa_frontend *, qa_error *);

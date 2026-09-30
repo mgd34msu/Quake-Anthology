@@ -71,6 +71,13 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
     (void)qa_application_presentation_read(seat->frontend->application, seat->id, &source);
     out->source_vitals = source.source_hud;
     out->crosshair_visible = !source.source_hud;
+    uint32_t total, killed;
+    if (!source.source_hud && frame->show_scores &&
+        qa_application_q1_monster_counts(seat->frontend->application, seat->id, &total, &killed)) {
+        snprintf(seat->q1_monster_label, sizeof(seat->q1_monster_label), "Monsters: %u / %u", killed, total);
+        seat->q1_monsters = (qa_hud_value){.label = seat->q1_monster_label, .value = killed, .maximum = total};
+        out->bars = &seat->q1_monsters; out->bar_count = 1;
+    }
     if (!source.source_hud && seat->q2_view_ready && qa_actor_id_equal(frame->actor, seat->q2_actor)) {
         out->source_vitals = true;
         out->vitals = seat->q2_vitals; out->vital_count = 3;
