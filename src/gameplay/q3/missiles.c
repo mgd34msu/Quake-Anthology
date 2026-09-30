@@ -623,12 +623,15 @@ bool q3_missile_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
                                         &changed, error))
             return false;
         entry = q3_actor_get(game, actor);
-        if (!entry)
+        if (!entry || entry->kind != Q3_ACTOR_MISSILE)
             return true;
         if (changed) {
             qa_body_state body;
             if (!qa_world_body_read(game->options.services.world, actor, &body, error))
                 return false;
+            entry = q3_actor_get(game, actor);
+            if (!entry || entry->kind != Q3_ACTOR_MISSILE)
+                return true;
             entry->state.missile.trajectory.base = body.origin;
             entry->state.missile.trajectory.delta = body.velocity;
             entry->state.missile.trajectory.time_ms = game->previous_ms;
@@ -648,12 +651,20 @@ bool q3_missile_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
         qa_body_state body;
         if (!qa_world_body_read(game->options.services.world, actor, &body, error))
             return false;
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_MISSILE)
+            return true;
         if (missile.attached.registry) {
             qa_body_state target;
             if (!qa_actors_get(qa_session_actors(game->options.services.session), missile.attached))
                 return qa_session_release(game->options.services.session, actor, error);
             if (!qa_world_body_read(game->options.services.world, missile.attached, &target, error))
                 return false;
+            entry = q3_actor_get(game, actor);
+            if (!entry || entry->kind != Q3_ACTOR_MISSILE)
+                return true;
+            if (!qa_actors_get(qa_session_actors(game->options.services.session), missile.attached))
+                return qa_session_release(game->options.services.session, actor, error);
             qa_vec3 center =
                 qa_vec_add(target.origin,
                            qa_vec_scale(qa_vec_add(target.bounds.mins, target.bounds.maxs), 0.5f));
@@ -663,7 +674,7 @@ bool q3_missile_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
         }
         owner = q3_actor_get(game, missile.owner);
         entry = q3_actor_get(game, actor);
-        if (!entry)
+        if (!entry || entry->kind != Q3_ACTOR_MISSILE)
             return true;
         if (!owner || owner->kind != Q3_ACTOR_PLAYER)
             return qa_session_release(game->options.services.session, actor, error);
@@ -685,15 +696,26 @@ bool q3_missile_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
             qa_body_state body;
             if (!qa_world_body_read(game->options.services.world, missile.attached, &body, error))
                 return false;
+            entry = q3_actor_get(game, actor);
+            if (!entry || entry->kind != Q3_ACTOR_MISSILE)
+                return true;
+            if (!qa_actors_get(qa_session_actors(game->options.services.session), missile.attached))
+                return qa_session_release(game->options.services.session, actor, error);
+            player = q3_actor_get(game, missile.attached);
             if (player && player->kind == Q3_ACTOR_PLAYER &&
                 player->state.player.invulnerability_until > game->now_ms) {
                 if (!q3_damage(game, missile.attached, missile.owner, missile.owner, QA_Q3_W_PROX,
                                27, 4, 1000, qa_v3(0, 0, 0), missile.damage_point, false, NULL,
                                error))
                     return false;
+                entry = q3_actor_get(game, actor);
+                if (!entry || entry->kind != Q3_ACTOR_MISSILE)
+                    return true;
                 player = q3_actor_get(game, missile.attached);
                 if (player && player->kind == Q3_ACTOR_PLAYER)
                     player->state.player.invulnerability_until = 0;
+                if (!qa_actors_get(qa_session_actors(game->options.services.session), missile.attached))
+                    return qa_session_release(game->options.services.session, actor, error);
                 if (!q3_event(game, missile.attached, actor, QA_BUILTIN_EXPLOSION, 72, 0,
                               body.origin, qa_v3(0, 0, 0), qa_v3(0, 0, 0), error))
                     return false;
@@ -709,6 +731,9 @@ bool q3_missile_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     if (!qa_physics_q3_missile_move(&game->physics, actor, &entry->state.missile.trajectory,
                                     game->now_ms, missile.pass, &trace, error))
         return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_MISSILE)
+        return true;
     if (trace.fraction < 1) {
         if (trace.surface_flags & Q3_SURF_NOIMPACT)
             return qa_session_release(game->options.services.session, actor, error);
@@ -716,16 +741,22 @@ bool q3_missile_step(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
             return false;
     }
     entry = q3_actor_get(game, actor);
-    if (!entry || entry->state.missile.phase != Q3_MISSILE_FLIGHT)
+    if (!entry || entry->kind != Q3_ACTOR_MISSILE || entry->state.missile.phase != Q3_MISSILE_FLIGHT)
         return true;
     if (missile.weapon == QA_Q3_W_PROX && !entry->state.missile.left_owner) {
         qa_body_state body;
         if (!qa_world_body_read(game->options.services.world, actor, &body, error))
             return false;
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_MISSILE)
+            return true;
         qa_trace_result overlap;
         if (!q3_trace(game, body.origin, body.origin, (qa_actor_id){0}, Q3_MASK_SHOT, &overlap,
                       error))
             return false;
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_MISSILE)
+            return true;
         if (!overlap.start_solid || !qa_actor_id_equal(overlap.actor, missile.owner)) {
             entry->state.missile.left_owner = true;
             entry->state.missile.pass = (qa_actor_id){0};

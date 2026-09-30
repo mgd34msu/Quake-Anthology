@@ -119,7 +119,7 @@ static bool holdable_write(void *opaque, const qa_inventory_entry *entry, qa_err
     }
     return q3_fail(error, "unknown Q3 holdable inventory item");
 }
-bool qa_q3_inventory_admit(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+static bool inventory_admit(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER || game->source_restored)
         return q3_fail(error, "Q3 inventory admission needs an actual player owner");
@@ -127,6 +127,8 @@ bool qa_q3_inventory_admit(qa_q3_game *game, qa_actor_id actor, qa_error *error)
     if (!qa_inventory_has(inventory, actor) &&
         !qa_inventory_create_actor(inventory, actor, NULL, 0, error))
         return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
     q3_inventory_owner *owner = &game->inventory_owners[actor.slot];
     if (!owner->actor.registry)
         *owner = (q3_inventory_owner){.game = game, .actor = actor};
@@ -143,9 +145,16 @@ bool qa_q3_inventory_admit(qa_q3_game *game, qa_actor_id actor, qa_error *error)
                 definitions[used++] = (qa_item_definition){.item = game->item_ids[i],
                     .ammo = game->ammo_items[items[i].tag], .owner = game->options.owner,
                     .label = items[i].name, .weapon = true, .actions = QA_ITEM_USE};
+        qa_inventory_lease lease = {0};
         if (!qa_inventory_bind_definitions(inventory, actor, game->options.owner,
-                                            definitions, used, invoke, owner, &owner->weapons, error))
+                                            definitions, used, invoke, owner, &lease, error))
             return false;
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+        owner = &game->inventory_owners[actor.slot];
+        if (!qa_actor_id_equal(owner->actor, actor))
+            return q3_fail(error, "Q3 weapon admission owner changed during publication");
+        owner->weapons = lease;
     }
     if ((selections & QA_Q3_EQUIPMENT) && !qa_inventory_lease_current(inventory, owner->holdables)) {
         qa_item_admission definitions[5];
@@ -160,6 +169,11 @@ bool qa_q3_inventory_admit(qa_q3_game *game, qa_actor_id actor, qa_error *error)
                     if (error) *error = observed;
                     return false;
                 }
+                entry = q3_actor_get(game, actor);
+                if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+                owner = &game->inventory_owners[actor.slot];
+                if (!qa_actor_id_equal(owner->actor, actor))
+                    return q3_fail(error, "Q3 holdable admission owner changed during observation");
                 definitions[used++] = (qa_item_admission){.replace_primary = found, .definition = {
                     .item = game->item_ids[i], .owner = game->options.owner,
                     .label = items[i].name, .actions = QA_ITEM_USE}};
@@ -168,11 +182,26 @@ bool qa_q3_inventory_admit(qa_q3_game *game, qa_actor_id actor, qa_error *error)
             .count = used, .state = {.context = owner, .count = holdable_count,
                                     .at = holdable_read, .write = holdable_write},
             .action_context = owner, .invoke = invoke};
-        if (!qa_inventory_bind_items(inventory, actor, &group, &owner->holdables, error))
+        qa_inventory_lease lease = {0};
+        if (!qa_inventory_bind_items(inventory, actor, &group, &lease, error))
             return false;
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+        owner = &game->inventory_owners[actor.slot];
+        if (!qa_actor_id_equal(owner->actor, actor))
+            return q3_fail(error, "Q3 holdable admission owner changed during publication");
+        owner->holdables = lease;
     }
     owner->selections = selections;
     return true;
+}
+bool qa_q3_inventory_admit(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+    if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid Q3 inventory admission boundary");
+    ++game->observation_depth;
+    bool result = inventory_admit(game, actor, error);
+    --game->observation_depth;
+    return result;
 }
 bool qa_q3_inventory_rebind(qa_q3_game *game, qa_error *error) {
     if (!game || game->source_restored || game->observation_depth || !qa_session_safe(game->options.services.session))

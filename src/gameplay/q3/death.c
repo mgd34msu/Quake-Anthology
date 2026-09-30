@@ -259,20 +259,33 @@ bool q3_copy_corpse(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     qa_q3_player_state player = entry->state.player;
     qa_body_state body;
     qa_combat_state combat;
-    if (!qa_world_body_read(game->options.services.world, actor, &body, error) ||
-        !qa_combat_read_traits(game->options.services.combat, actor, &combat, error))
+    if (!qa_world_body_read(game->options.services.world, actor, &body, error))
         return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
+    if (!qa_combat_read_traits(game->options.services.combat, actor, &combat, error))
+        return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
     qa_point_query point = {.point = body.origin,
                             .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
     qa_point_contents contents;
     if (!qa_world_point_contents(game->options.services.world, &point, &contents, error))
         return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
     if (contents.contents & INT32_MIN)
         return true;
     uint32_t queue = game->body_queue_index;
     qa_actor_id old = game->body_queue[queue];
     if (q3_actor_get(game, old) && !qa_session_release(game->options.services.session, old, error))
         return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
     qa_actor_collision collision = {.family = QA_COLLISION_Q3,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = INT32_C(0x04000000),
@@ -288,6 +301,11 @@ bool q3_copy_corpse(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     qa_actor_id corpse;
     if (!qa_builtin_spawn_actor(&game->options.services, &spawn, &corpse, error))
         return false;
+    if (!qa_actors_get(qa_session_actors(game->options.services.session), corpse))
+        return true;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return qa_session_release(game->options.services.session, corpse, error);
     int32_t animation = player.legs_animation & ~128;
     animation = animation < 2 ? 1 : animation < 4 ? 3 : 5;
     game->actors[corpse.slot] = (q3_actor){

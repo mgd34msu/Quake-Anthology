@@ -337,7 +337,7 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
         !q3_copy_corpse(game, actor, error))
         return false;
     entry = q3_actor_get(game, actor);
-    if (!entry)
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
     player = &entry->state.player;
     if (player->selections & QA_Q3_CHARACTER) {
@@ -349,27 +349,46 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
             .armor.regular = {.kind = QA_ARMOR_Q3, .protection.q3_protection = 0.66f}};
         qa_combat_state previous;
         qa_error ignored = {0};
-        if (qa_combat_read(game->options.services.combat, actor, &previous, &ignored)) {
-            if (!qa_combat_set_health(game->options.services.combat, actor, combat.health, error) ||
-                !qa_combat_set_armor(game->options.services.combat, actor, &combat.armor, error) ||
-                !qa_combat_set_traits(game->options.services.combat, actor, &combat, error))
+        bool has_combat = qa_combat_read(game->options.services.combat, actor, &previous, &ignored);
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+        if (has_combat) {
+            if (!qa_combat_set_health(game->options.services.combat, actor, combat.health, error))
+                return false;
+            entry = q3_actor_get(game, actor);
+            if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+            if (!qa_combat_set_armor(game->options.services.combat, actor, &combat.armor, error))
+                return false;
+            entry = q3_actor_get(game, actor);
+            if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+            if (!qa_combat_set_traits(game->options.services.combat, actor, &combat, error))
                 return false;
         } else if (!qa_combat_create_actor(game->options.services.combat, actor, &combat, error))
             return false;
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
         qa_body_state body = *spawn;
         body.bounds = (qa_bounds){qa_v3(-15, -15, -24), qa_v3(15, 15, 32)};
         qa_body_state previous_body;
-        if (qa_world_body_read(game->options.services.world, actor, &previous_body, &ignored)) {
+        bool has_body = qa_world_body_read(game->options.services.world, actor, &previous_body, &ignored);
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+        if (has_body) {
             if (!qa_world_body_write(game->options.services.world, actor, &body, error))
                 return false;
         } else if (!qa_world_body_create(game->options.services.world, actor, &body, error))
             return false;
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
         qa_actor_collision collision = {.family = QA_COLLISION_Q3,
                                         .shape = QA_SHAPE_BOX,
                                         .contents = Q3_CONTENTS_BODY,
                                         .role = QA_COLLISION_SOLID};
         if (!qa_world_set_collision(game->options.services.world, actor, &collision, error))
             return false;
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+        player = &entry->state.player;
     }
     if (player->selections & QA_Q3_ARSENAL) {
         qa_inventory_entry inventory[26];
@@ -394,11 +413,18 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
             if (!qa_inventory_create_actor(game->options.services.inventory, actor, inventory,
                                            count, error))
                 return false;
-        } else
-            for (size_t i = 0; i < count; ++i)
+        } else {
+            for (size_t i = 0; i < count; ++i) {
                 if (!qa_inventory_configure(game->options.services.inventory, actor, &inventory[i],
                                             NULL, NULL, error))
                     return false;
+                entry = q3_actor_get(game, actor);
+                if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+            }
+        }
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+        player = &entry->state.player;
         player->weapon = player->requested_weapon = QA_Q3_W_MACHINEGUN;
         memcpy(player->ammo_regeneration_items, game->ammo_items,
                sizeof(player->ammo_regeneration_items));
@@ -417,7 +443,11 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
     player->cutscene = (qa_q3_cutscene_state){0};
     if (!(player->selections & QA_Q3_CHARACTER) && game->options.services.actor_traits) {
         qa_builtin_actor_traits traits = {0};
-        if (game->options.services.actor_traits(game->options.services.context, actor, &traits)) {
+        bool has_traits = game->options.services.actor_traits(game->options.services.context, actor, &traits);
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+        player = &entry->state.player;
+        if (has_traits) {
             if (isfinite(traits.max_health) && traits.max_health >= 1 &&
                 traits.max_health < 2147483648.0f)
                 player->max_health = (int32_t)traits.max_health;
@@ -460,7 +490,7 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
     if (!player->spectator && !q3_killbox(game, actor, error))
         return false;
     entry = q3_actor_get(game, actor);
-    if (!entry)
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
     player = &entry->state.player;
     if (player->spectator) {
@@ -468,10 +498,14 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
             return false;
     } else if (!qa_world_link(game->options.services.world, actor, NULL, error))
         return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
     if (game->options.services.motion_changed) {
         qa_body_state body;
         if (!qa_world_body_read(game->options.services.world, actor, &body, error))
             return false;
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
         qa_builtin_motion_change change = {.reason = QA_BUILTIN_MOTION_RESET,
                                            .body = body,
                                            .view_angles = spawn->angles,
@@ -482,7 +516,7 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
             return false;
     }
     entry = q3_actor_get(game, actor);
-    if (!entry)
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
     player = &entry->state.player;
     return player->spawn_count <= 1 || q3_player_event(game, actor, 42, 0, error);
