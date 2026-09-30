@@ -933,6 +933,7 @@ add_library(qa_persistence STATIC
     src/persistence/pickups.c
     src/persistence/recovery.c
     src/persistence/session.c
+    src/persistence/slots.c
     src/persistence/source_io.c
     src/persistence/strings.c
     src/persistence/targets.c

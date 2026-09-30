@@ -980,6 +980,9 @@ static bool persistence_create(void *opaque, const qa_save_image *image, void **
     if (!application_create_restored(operation->options, image, &candidate, error)) return false;
     candidate->operation = APPLICATION_PERSISTING;
     *out = candidate;
+    if (operation->ops->prepare_services &&
+        !operation->ops->prepare_services(operation->ops->context, candidate, image, error))
+        return false;
     qa_launch_draft *draft = NULL;
     qa_configuration_transaction *transaction = NULL;
     bool ok = application_save_configuration_decode(candidate, identity, &draft, error) &&

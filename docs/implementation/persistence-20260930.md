@@ -196,3 +196,22 @@ output unchanged when the registration is absent. The final provider loop
 also qualifies prepared guest primary inventory leases after shared inventory
 import and native source finish, before application publication. The guest
 finish checks all prepared bindings before promoting their private ownership.
+
+Detached consumers may install their actual empty service routing and command
+handlers through `prepare_services` immediately after restored application
+creation and before content/provider construction. The candidate already owns
+its foundation and holds the persisting operation lease. Failure follows the
+same fallible disposal path, so callback resources stay alive until source
+teardown succeeds, including a candidate returned through `retained_on_failure`.
+The later `prepare_content` hook still prepares consumers that depend on the
+selected map and providers.
+
+`persistence_slots.h` exposes concrete save-file inspection and discovery using
+the retained filesystem root. Each immediate regular `.sav` file is read through
+the existing stable snapshot path and decoded with full digest and owner-set
+validation. The resulting metadata describes the envelope and does not claim
+installed-content compatibility. Discovery retains unreadable and malformed
+rows with their actual error; memory or enumeration failure preserves the
+caller's output. A missing directory yields an empty listing. The caller supplies
+the real user save directory. Reserved transition names, child links and invalid
+slot paths are excluded, and results sort by exact contained path.

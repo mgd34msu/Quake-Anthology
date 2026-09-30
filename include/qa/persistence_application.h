@@ -19,6 +19,11 @@ typedef struct qa_application_persistence_ops {
     void *context;
     const qa_application_persistence_owner *owners;
     size_t owner_count;
+    /* Optional detached services before content/provider construction. Install
+     * actual routing, handlers and empty consumers without source callbacks or
+     * active-service aliases. Resources referenced by a candidate must survive
+     * failed teardown until a retained candidate is successfully destroyed. */
+    bool (*prepare_services)(void *, qa_application *, const qa_save_image *, qa_error *);
     /* Optional detached external consumer preparation after the application's
      * own restored world/providers are constructed. Source initialization/spawn
      * callbacks must not run. Snapshot is borrowed until this callback returns. */
