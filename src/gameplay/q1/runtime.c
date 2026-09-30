@@ -1,5 +1,6 @@
 #include "boss_internal.h"
 #include "qa/game_q1_checkpoint.h"
+#include <float.h>
 
 static const char *const weapon_names[QA_Q1_WEAPON_COUNT] = {"q1:weapon/axe",
                                                              "q1:weapon/shotgun",
@@ -696,17 +697,29 @@ bool qa_q1_game_think_binding(qa_q1_game *g, qa_actor_id actor, uint32_t callbac
     *context = g;
     return true;
 }
+bool q1_think_deadline(double time, double delay, double *out, qa_error *error) {
+    double value = time + delay;
+    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 think deadline exceeds finite float range");
+        return false;
+    }
+    float rounded = fabs(value) > FLT_MAX ? (value < 0 ? -FLT_MAX : FLT_MAX) : (float)value;
+    *out = rounded;
+    return true;
+}
 bool q1_schedule(qa_q1_game *g, q1_actor *entity, double delay, q1_think_kind kind,
                  qa_error *error) {
-    double due = fmax(0, g->time + delay);
-    if (!isfinite(due) || due >= (double)UINT64_MAX / 1000000000.0) {
+    double due;
+    if (!q1_think_deadline(g->time, delay, &due, error))
+        return false;
+    if (due >= (double)UINT64_MAX / 1000000000.0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 think deadline out of range");
         return false;
     }
     qa_think think = {.actor = entity->id,
                       .execution_provider = g->options.provider,
                       .callback_id = (uint32_t)kind,
-                      .due_ns = (uint64_t)(due * 1000000000.0),
+                      .due_ns = due > 0 ? (uint64_t)(due * 1000000000.0) : 0,
                       .boundary = QA_THINK_BEFORE_PHYSICS,
                       .callback = think_callback,
                       .context = g};

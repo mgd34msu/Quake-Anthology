@@ -522,12 +522,16 @@ bool q1_map_schedule(qa_q1_game *g, q1_actor *entity, double delay, q1_map_actio
     if (!isfinite(delay))
         return q1_map_fail(error, "invalid Q1 map think delay");
     if (entity->physics.motion == QA_PHYSICS_PUSH) {
-        double deadline = (double)entity->physics.local_time_ns + delay * 1000000000.0;
-        if (!isfinite(deadline) || deadline >= (double)INT64_MAX || deadline <= (double)INT64_MIN)
+        double due;
+        if (!q1_think_deadline((double)entity->physics.local_time_ns / 1000000000.0,
+                               delay, &due, error))
+            return false;
+        double deadline = due * 1000000000.0;
+        if (deadline >= (double)INT64_MAX || deadline <= (double)INT64_MIN)
             return q1_map_fail(error, "Q1 local map deadline overflow");
         entity->physics.next_think_ns = (int64_t)deadline;
         entity->think = Q1_THINK_MAP;
-        entity->next_think = (double)entity->physics.next_think_ns / 1000000000.0;
+        entity->next_think = due;
     } else if (!q1_schedule(g, entity, delay, Q1_THINK_MAP, error))
         return false;
     entity->map->action = action;

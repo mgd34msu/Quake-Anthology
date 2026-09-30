@@ -497,6 +497,7 @@ bool q1_create(qa_q1_game *, const char *, q1_entity_kind, qa_actor_id owner, q1
                qa_error *);
 bool q1_remove(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_schedule(qa_q1_game *, q1_actor *, double, q1_think_kind, qa_error *);
+bool q1_think_deadline(double, double, double *, qa_error *);
 bool q1_think(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_link(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_trace(qa_q1_game *, qa_vec3, qa_vec3, qa_actor_id, bool monsters, qa_trace_result *,
