@@ -601,6 +601,7 @@ add_library(qa_scene STATIC
     src/render/scene/frame.c
     src/render/scene/math.c
     src/render/scene/resources.c
+    src/render/scene/resources_save.c
     src/render/scene/sort.c
     src/render/scene/models.c
     src/render/scene/models/draw.c
@@ -630,7 +631,7 @@ add_library(qa_scene STATIC
     src/render/material/order.c
     src/render/material/parser.c
     src/render/material/submit.c)
-target_link_libraries(qa_scene PUBLIC qa_world)
+target_link_libraries(qa_scene PUBLIC qa_world qa_persistence)
 
 add_library(qa_render_cpu STATIC
     src/render/cpu/renderer.c
