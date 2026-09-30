@@ -416,11 +416,16 @@ bool q1_gremlin_action(qa_q1_game *g, q1_actor *entity, q1_frame_action action, 
         return q1_schedule(g, entity, 0.2, Q1_THINK_MONSTER_FRAME, error);
     case Q1_ACTION_HIPGREM_GREMLIN_LOOK9:
         return resume(g, entity, error);
-    case Q1_ACTION_HIPGREM_GREMLIN_GLOOK20:
+    case Q1_ACTION_HIPGREM_GREMLIN_GLOOK20: {
+        qa_actor_id source = entity->id;
         if (!q1_gremlin_backpack(g, entity, error))
             return false;
-        m->source.gremlin.stolen = false;
+        entity = q1_entity(g, source);
+        if (!entity)
+            return true;
+        entity->state.monster.source.gremlin.stolen = false;
         return resume(g, entity, error);
+    }
     case Q1_ACTION_HIPGREM_GREMLIN_SPAWN1:
         m->source.gremlin.pain_disabled = true;
         return q1_schedule(g, entity, 0.3, Q1_THINK_MONSTER_FRAME, error);

@@ -1031,6 +1031,19 @@ bool q1_drop_backpack(qa_q1_game *g, q1_actor *source, qa_q1_weapon weapon,
         return false;
     return q1_spawn_backpack(g, from.origin, weapon, ammo, NULL, error);
 }
+bool q1_backpack_definition(qa_q1_game *g, q1_actor *pack, qa_error *error) {
+    q1_pickup *item = &pack->state.pickup;
+    item->kind = Q1_ITEM_BACKPACK;
+    item->duration = 30;
+    item->respawn = -1;
+    item->avoid_underwater_lightning = g->options.edition == QA_Q1_RERELEASE;
+    if (!qa_builtin_resource(&g->services, "q1:item_backpack", &item->item, error) ||
+        !q1_model(g, pack, "progs/backpack.mdl", error) ||
+        !qa_builtin_resource(&g->services, "weapons/lock4.wav", &item->sound, error))
+        return false;
+    item->original_model = pack->model;
+    return true;
+}
 bool q1_spawn_backpack(qa_q1_game *g, qa_vec3 origin, qa_q1_weapon weapon,
                        const float ammo[QA_Q1_AMMO_COUNT], q1_actor **out, qa_error *error) {
     q1_actor *pack;

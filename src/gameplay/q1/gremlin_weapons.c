@@ -1,4 +1,5 @@
 #include "internal.h"
+#include <float.h>
 
 static bool ammo(qa_q1_game *g, q1_actor *entity, qa_q1_ammo item, float used, qa_error *error) {
     double count;
@@ -259,6 +260,14 @@ bool q1_gremlin_weapon_attack(qa_q1_game *g, q1_actor *entity, bool *out, qa_err
     return weapon != QA_Q1_LIGHTNING || q1_sound(g, entity->id, "weapons/lstart.wav", 0, 1, error);
 }
 bool q1_gremlin_backpack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    qa_actor_id source = entity->id;
+    q1_actor *pack;
+    if (!q1_create(g, "item_backpack", Q1_PICKUP, (qa_actor_id){0}, &pack, error))
+        return false;
+    qa_actor_id child = pack->id;
+    pack->touch_disabled = true;
+    if (!q1_entity(g, source))
+        goto cancelled;
     qa_q1_weapon selected = QA_Q1_WEAPON_COUNT;
     const qa_q1_weapon order[] = {QA_Q1_AXE,       QA_Q1_SHOTGUN,       QA_Q1_SUPER_SHOTGUN,
                                   QA_Q1_NAILGUN,   QA_Q1_SUPER_NAILGUN, QA_Q1_GRENADE,
@@ -266,19 +275,66 @@ bool q1_gremlin_backpack(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                                   QA_Q1_PROXIMITY, QA_Q1_MJOLNIR};
     for (size_t i = 0; i < sizeof(order) / sizeof(*order); ++i) {
         qa_inventory_entry entry;
-        if (qa_inventory_entry_read(g->services.inventory, entity->id, g->weapons[order[i]], &entry,
-                                    NULL) &&
-            entry.count > 0) {
+        bool present = qa_inventory_entry_read(g->services.inventory, source,
+                                                g->weapons[order[i]], &entry, NULL);
+        if (!q1_entity(g, source) || !q1_entity(g, child))
+            goto cancelled;
+        if (present && entry.count > 0) {
             selected = order[i];
             break;
         }
     }
-    float values[QA_Q1_AMMO_COUNT] = {0};
-    for (unsigned i = 0; i < 4; ++i)
-        values[i] = fmaxf(0, (float)q1_ammo_count(g, entity->id, (qa_q1_ammo)i));
+    pack = q1_entity(g, child);
+    pack->state.pickup.weapon = selected;
+    for (unsigned i = 0; i < 4; ++i) {
+        double count = q1_ammo_count(g, source, (qa_q1_ammo)i);
+        pack = q1_entity(g, child);
+        if (!pack || !q1_entity(g, source))
+            goto cancelled;
+        if (!isfinite(count) || count > FLT_MAX) {
+            qa_error_set(error, QA_ERROR_FORMAT, source.slot,
+                         "Gremlin backpack cargo exceeds finite native storage");
+            goto failed;
+        }
+        pack->state.pickup.ammo[i] = count > 0 ? (float)count : 0;
+    }
+    if (!q1_backpack_definition(g, pack, error))
+        goto failed;
+    pack->physics.solid = QA_PHYSICS_TRIGGER;
+    pack->physics.motion = QA_PHYSICS_TOSS;
+    pack->physics.flags = QA_PHYSICS_KILL_VELOCITY;
     qa_body_state body;
-    if (!qa_world_body_read(g->services.world, entity->id, &body, error))
-        return false;
-    return q1_spawn_backpack(g, qa_vec_sub(body.origin, qa_v3(0, 0, 24)), selected, values, NULL,
-                             error);
+    if (!qa_world_body_read(g->services.world, source, &body, error))
+        goto failed;
+    if (!q1_entity(g, source) || !q1_entity(g, child))
+        goto cancelled;
+    qa_vec3 origin = qa_vec_add(body.origin, qa_v3(0, 0, -24));
+    float x = (float)(-100.0 + (double)q1_random(g) * 200.0);
+    float y = (float)(-100.0 + (double)q1_random(g) * 200.0);
+    if (!qa_world_body_read(g->services.world, child, &body, error))
+        goto failed;
+    if (!q1_entity(g, source) || !q1_entity(g, child))
+        goto cancelled;
+    body.origin = origin;
+    body.velocity = qa_v3(x, y, 300);
+    body.bounds = (qa_bounds){{-16, -16, 0}, {16, 16, 56}};
+    if (!qa_world_body_write(g->services.world, child, &body, error))
+        goto failed;
+    pack = q1_entity(g, child);
+    if (!pack || !q1_entity(g, source))
+        goto cancelled;
+    pack->touch_disabled = false;
+    if (!q1_schedule(g, pack, 120, Q1_THINK_REMOVE, error) || !q1_link(g, pack, error))
+        goto failed;
+    if (!q1_entity(g, source) || !q1_entity(g, child))
+        goto cancelled;
+    return true;
+cancelled:
+    if (qa_actors_get(qa_session_actors(g->services.session), child))
+        (void)qa_session_release(g->services.session, child, NULL);
+    return true;
+failed:
+    if (qa_actors_get(qa_session_actors(g->services.session), child))
+        (void)qa_session_release(g->services.session, child, NULL);
+    return false;
 }
