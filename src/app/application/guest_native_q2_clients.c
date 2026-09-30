@@ -1,4 +1,5 @@
 #include "guest_native_q2_private.h"
+#include "guest_native_q2_combat.h"
 #include <math.h>
 
 static void store_float(uint8_t *data, float value)
@@ -151,12 +152,16 @@ bool application_native_q2_client_begin(application_provider *provider, uint32_t
 {
     struct application_native_q2 *engine = client_owner(provider, slot, true, error);
     if (!engine) return false;
-    if (engine->clients[slot].begun) return application_native_q2_inventory_admit(engine, slot, error);
+    if (engine->clients[slot].begun) return application_native_q2_inventory_admit(engine, slot, error) &&
+        (engine->profile != QA_NATIVE_Q2_GAME_API3 || application_native_q2_combat_admit(
+            engine, slot, engine->clients[slot].actor, false, error));
     ++engine->calls;
     bool ok = qa_native_host_client_begin(provider->state.native.host, slot, error);
     --engine->calls;
     if (ok) engine->clients[slot].begun = true;
-    return ok && application_native_q2_inventory_admit(engine, slot, error);
+    return ok && application_native_q2_inventory_admit(engine, slot, error) &&
+        (engine->profile != QA_NATIVE_Q2_GAME_API3 || application_native_q2_combat_admit(
+            engine, slot, engine->clients[slot].actor, false, error));
 }
 
 bool application_native_q2_client_userinfo(application_provider *provider, uint32_t slot,
@@ -176,6 +181,7 @@ bool application_native_q2_client_disconnect(application_provider *provider, uin
     if (!engine) return false;
     application_native_q2_client *client = &engine->clients[slot];
     if (!client->actor.registry) return true;
+    if (!application_native_q2_combat_detach(engine, client->actor, error)) return false;
     if (!application_native_q2_inventory_detach(engine, slot, error)) return false;
     qa_actor_id actor = client->actor;
     bool ok = true; qa_error first = {0};

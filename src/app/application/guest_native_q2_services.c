@@ -1,4 +1,5 @@
 #include "guest_native_q2_private.h"
+#include "guest_native_q2_combat.h"
 #include "qa/network_q2_messages.h"
 #include <math.h>
 
@@ -287,8 +288,10 @@ bool application_native_q2_address(void *opaque, qa_native_host *host, qa_actor_
 bool application_native_q2_bind(void *opaque, qa_native_host *host, uint32_t slot,
     qa_actor_id actor, qa_error *error)
 {
-    (void)host; (void)slot;
+    (void)host;
     struct application_native_q2 *engine = opaque;
     return qa_session_bind_execution(engine->provider->application->session, actor,
-        engine->provider->owner, error);
+        engine->provider->owner, error) &&
+        (engine->profile != QA_NATIVE_Q2_GAME_API3 ||
+            application_native_q2_combat_admit(engine, slot, actor, true, error));
 }

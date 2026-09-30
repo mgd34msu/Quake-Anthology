@@ -25,6 +25,7 @@ struct application_native_q2 {
     qa_native_declaration *declaration;
     struct application_native_q2_inventory *primary_inventory;
     struct application_native_q2_attack *source_attack;
+    struct application_native_q2_combat *source_combat;
     qa_native_host_engine_services platform;
     qa_native_host_q2_application_fn application;
     void *application_context;

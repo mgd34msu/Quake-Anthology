@@ -538,13 +538,15 @@ bool application_q2_combat_cause_read(const application_q2_combat_profile *p,
     *out = (qa_damage_cause){.kind = QA_CAUSE_Q2}; out->source.q2.flags = flags;
     uint32_t id;
     if (p->kex) {
-        if (value->type != QA_NATIVE_BYTES || value->as.bytes.size != 3 || !value->as.bytes.data ||
-            value->as.bytes.data[0] > 58 || value->as.bytes.data[1] > 1 || value->as.bytes.data[2] > 1)
+        if (value->type != QA_NATIVE_BYTES || value->as.bytes.size != 3 || !value->as.bytes.data)
             return application_fail(error, QA_ERROR_FORMAT, "Native KEX damage lacks its exact source mod_t");
-        id = value->as.bytes.data[0];
+        const uint8_t *mod = value->as.bytes.data;
+        if (mod[0] > 58 || mod[1] > 1 || mod[2] > 1)
+            return application_fail(error, QA_ERROR_FORMAT, "Native KEX damage lacks its exact source mod_t");
+        id = mod[0];
         out->source.q2.native = QA_Q2_CAUSE_RERELEASE; out->source.q2.native_value = (int32_t)id;
-        out->source.q2.friendly_fire = value->as.bytes.data[1] != 0;
-        out->source.q2.no_point_loss = value->as.bytes.data[2] != 0;
+        out->source.q2.friendly_fire = mod[1] != 0;
+        out->source.q2.no_point_loss = mod[2] != 0;
         out->source.q2.means_of_death = (int32_t)((id < 22 ? id : id == 22 ? 57 : id <= 56 ? id - 1 : id == 57 ? 56 : 58) |
             (out->source.q2.friendly_fire ? UINT32_C(0x08000000) : 0));
     } else {

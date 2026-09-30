@@ -1,5 +1,6 @@
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_attack.h"
+#include "guest_native_q2_combat.h"
 
 bool application_native_q2_idle(const application_provider *provider)
 {
@@ -44,6 +45,7 @@ static void actor_released(void *state, qa_session *session, qa_actor_record act
     (void)session;
     struct application_native_q2 *engine = state;
     application_native_q2_attack_released(engine, actor.id);
+    application_native_q2_combat_released(engine, actor.id);
     qa_error error = {0};
     if (engine->provider->state.native.host &&
         !qa_native_host_actor_released(engine->provider->state.native.host, actor, &error))
@@ -125,6 +127,8 @@ bool application_construct_native_q2(qa_application *app, application_provider *
             provider->state.native.module, &engine->declaration, error)) return false;
     if (!application_native_q2_inventory_prepare(engine, error) ||
         !application_native_q2_attack_prepare(engine, error)) return false;
+    if (engine->profile == QA_NATIVE_Q2_GAME_API3 &&
+        !application_native_q2_combat_prepare(engine, error)) return false;
     qa_console_dialect dialect = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_CONSOLE_Q2 : QA_CONSOLE_Q2_RERELEASE;
     engine->command_context = (qa_command_context){.owner = provider->owner,
         .origin = QA_COMMAND_SERVER, .dialect = dialect};
@@ -269,6 +273,8 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
         if (ok) engine->initialized = true;
     }
     if (ok) ok = application_native_q2_attack_activate(engine, error);
+    if (ok && engine->profile == QA_NATIVE_Q2_GAME_API3)
+        ok = application_native_q2_combat_activate(engine, error);
     if (ok) ok = qa_native_host_spawn_entities(provider->state.native.host,
         qa_strings_cstr(qa_session_strings(provider->application->session), name), copy,
         spawn ? qa_strings_cstr(qa_session_strings(provider->application->session), spawn) : "", error);
@@ -321,6 +327,7 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
     if (!engine) return true;
     if (!application_native_q2_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 teardown requires drained callbacks");
+    if (!application_native_q2_combat_suspend(engine, error)) return false;
     if (!application_native_q2_inventory_close(engine, error)) return false;
     qa_error first = {0}; bool ok = true;
     if (provider->state.native.host) {
@@ -337,6 +344,7 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
             engine->initialized = false;
         }
         if (!application_native_q2_attack_close(engine, error)) return false;
+        if (!application_native_q2_combat_close(engine, error)) return false;
         qa_error cleanup = {0};
         if (!qa_native_host_destroy_ready(provider->state.native.host))
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 host teardown has not drained");
@@ -346,6 +354,7 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
         if (!closed) { if (error) *error = cleanup; return false; }
     }
     if (!application_native_q2_attack_close(engine, error)) return false;
+    if (!application_native_q2_combat_close(engine, error)) return false;
     if (engine->platform.release_frontend)
         engine->platform.release_frontend(engine->platform.frontend_lifetime);
     qa_console_destroy(engine->console); qa_cvars_destroy(engine->cvars);
