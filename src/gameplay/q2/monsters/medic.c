@@ -215,6 +215,10 @@ bool q2m_medic_acquire(q2m_context *c, bool preserve_enemy, bool *acquired,
         (rerelease(c) && c->monster->react_ns > c->game->now_ns))
         return true;
     bool source_rogue = rogue(c);
+    if (!qa_world_body_read(c->game->services.world, c->actor->id, &c->body, error))
+        return !q2m_alive(c);
+    if (!q2m_alive(c))
+        return true;
     float radius = source_rogue && c->monster->stand_ground ? 400 : 1024;
     q2_trace_frame *nearby = q2_nearby(c->game, c->body.origin, radius, error);
     if (!nearby)
@@ -226,22 +230,13 @@ bool q2m_medic_acquire(q2m_context *c, bool preserve_enemy, bool *acquired,
         qa_actor_id id = nearby->snapshot.ids[i];
         if (qa_actor_id_equal(id, c->actor->id))
             continue;
-        q2m_context candidate;
-        bool present;
-        if (!patient_context(c, id, &candidate, &present, error)) {
-            result = false;
-            break;
-        }
-        if (!present)
+        q2_actor *actor = native_actor(c->game, id);
+        if (!actor)
             continue;
+        q2m_context candidate = {.game = c->game, .actor = actor,
+                                 .monster = actor->monster};
         struct qa_q2_monster *m = candidate.monster;
-        if (m->good_guy || candidate.combat.health > 0 || !m->corpse || m->gibbed)
-            continue;
-        if (m->corpse_phase != Q2M_CORPSE_IDLE &&
-            (!source_rogue ||
-             (rerelease(c) ? m->corpse_phase != Q2M_CORPSE_DEAD_THINK
-                           : m->corpse_phase != Q2M_CORPSE_FLIES_ON &&
-                             m->corpse_phase != Q2M_CORPSE_FLIES_OFF)))
+        if (m->good_guy || !m->corpse || m->gibbed)
             continue;
         if (!source_rogue) {
             if ((candidate.actor->entity && candidate.actor->entity->owner.registry) ||
@@ -252,7 +247,7 @@ bool q2m_medic_acquire(q2m_context *c, bool preserve_enemy, bool *acquired,
                 qa_actor_id_equal(m->bad_medic[1], c->actor->id))
                 continue;
             q2_actor *healer = native_actor(c->game, m->healer);
-            if (healer && healer->monster->medic) {
+            if (healer) {
                 float healer_health;
                 if (!health(c, healer->id, &healer_health, error)) {
                     result = false;
@@ -260,12 +255,24 @@ bool q2m_medic_acquire(q2m_context *c, bool preserve_enemy, bool *acquired,
                 }
                 if (!q2m_alive(c) || !q2m_alive(&candidate))
                     continue;
-                if (healer_health > 0)
+                if (healer_health > 0 && q2_actor_live(c->game, healer->id) &&
+                    native_actor(c->game, healer->id) == healer && healer->monster->medic)
                     continue;
             }
-            if (qa_vec_length(qa_vec_sub(candidate.body.origin, c->body.origin)) <= 32)
-                continue;
         }
+        float candidate_health;
+        if (!health(c, id, &candidate_health, error)) {
+            result = false;
+            break;
+        }
+        if (!q2m_alive(c) || !q2m_alive(&candidate) || candidate_health > 0)
+            continue;
+        if (m->corpse_phase != Q2M_CORPSE_IDLE &&
+            (!source_rogue ||
+             (rerelease(c) ? m->corpse_phase != Q2M_CORPSE_DEAD_THINK
+                           : m->corpse_phase != Q2M_CORPSE_FLIES_ON &&
+                             m->corpse_phase != Q2M_CORPSE_FLIES_OFF)))
+            continue;
         bool visible;
         if (!q2m_visible(c, id, &visible, error)) {
             result = false;
@@ -273,6 +280,27 @@ bool q2m_medic_acquire(q2m_context *c, bool preserve_enemy, bool *acquired,
         }
         if (!q2m_alive(c) || !q2m_alive(&candidate) || !visible)
             continue;
+        if (source_rogue) {
+            if (!qa_world_body_read(c->game->services.world, c->actor->id,
+                                    &c->body, error)) {
+                result = !q2m_alive(c);
+                break;
+            }
+            if (!q2m_alive(c) || !q2m_alive(&candidate))
+                continue;
+            if (!qa_world_body_read(c->game->services.world, id,
+                                    &candidate.body, error)) {
+                if (!q2m_alive(c))
+                    break;
+                if (!q2m_alive(&candidate))
+                    continue;
+                result = false;
+                break;
+            }
+            if (!q2m_alive(c) || !q2m_alive(&candidate) ||
+                qa_vec_length(qa_vec_sub(c->body.origin, candidate.body.origin)) <= 32)
+                continue;
+        }
         if (candidate.monster->max_health > best_health) {
             best = id;
             best_health = candidate.monster->max_health;
