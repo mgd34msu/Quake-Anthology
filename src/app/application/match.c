@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "native_maps.h"
+#include "match_intents.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -43,6 +44,13 @@ static bool mode_intent(void *opaque, const qa_match_intent *intent,
                         qa_error *error)
 {
     qa_application *application = opaque;
+    if (intent->kind == QA_MATCH_NEXT_MAP || intent->kind == QA_MATCH_SELECTED_MAP) {
+        if (application->match_intents == NULL)
+            application->match_intents = application_match_intents_create(error);
+        return application->match_intents != NULL &&
+               application_match_intents_enqueue(application->match_intents,
+                                                   application, intent, error);
+    }
     return application_emit(
         application,
         &(qa_builtin_event){.kind = QA_BUILTIN_TARGET,
@@ -116,6 +124,9 @@ static qa_modes_hooks mode_hooks(qa_application *application)
                             .emit = application_native_mode_emit,
                             .map_allowed = application_native_mode_map_allowed,
                             .next_map_allowed = application_native_mode_next_map_allowed,
+                            .selected_map_command = application_native_mode_selected_map_command,
+                            .rogue_runes_claim = application_native_mode_rogue_runes_claim,
+                            .rogue_runes_read = application_native_mode_rogue_runes_read,
                             .intent = mode_intent,
                             .combat_provider = mode_combat_provider,
                             .force_death = application_force_death,
@@ -393,4 +404,56 @@ bool application_match_prepare(qa_application *application,
 {
     return application_match_prepare_modes(application, publication, error) &&
            application_match_prepare_equipment(application, publication, error);
+}
+
+bool qa_application_prepare_match_travel(qa_application *application,
+                                         qa_error *error)
+{
+    if (application == NULL || application->operation != APPLICATION_IDLE ||
+        application->destroy_requested || application->finalizing ||
+        application->state == QA_APPLICATION_FAULTED ||
+        application->state == QA_APPLICATION_STOPPING ||
+        !qa_session_destroy_ready(application->session) ||
+        !qa_world_idle(application->world) || !qa_combat_idle(application->combat))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "match travel requires idle shared owners");
+    if (application->match_intents == NULL)
+        return true;
+    if (!application_match_intents_reconnect(application->match_intents,
+                                              application, error) ||
+        !application_match_intents_prepare(application->match_intents,
+                                            application, error))
+        return false;
+    const application_next_map_plan *plan = NULL;
+    qa_application_travel_request request;
+    if (!application_match_intents_travel_read(application->match_intents,
+                                                &plan, &request))
+        return true;
+    qa_application_travel_view travel;
+    return qa_application_queue_map_travel(application, &request, error) &&
+           qa_application_travel_read(application, &travel) &&
+           application_match_intents_queued(application->match_intents,
+                                              application, travel.revision, error);
+}
+
+bool qa_application_finish_match_travel(qa_application *application,
+                                        uint64_t revision, qa_error *error)
+{
+    if (application == NULL || application->operation != APPLICATION_IDLE ||
+        application->destroy_requested || application->finalizing ||
+        application->state == QA_APPLICATION_FAULTED ||
+        application->state == QA_APPLICATION_STOPPING)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "match completion requires a live idle application");
+    if (application->match_intents == NULL)
+        return true;
+    uint64_t pending_revision = 0;
+    if (!application_match_intents_waiting(application->match_intents,
+                                           &pending_revision))
+        return true;
+    if (pending_revision != revision)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "match completion differs from its queued travel");
+    return application_match_intents_completed(application->match_intents,
+                                                application, revision, error);
 }

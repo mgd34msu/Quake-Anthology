@@ -3,6 +3,7 @@
 #include "qa/application.h"
 #include "qa/application_players.h"
 #include "qa/network_runtime.h"
+#include "qa/network_q1_nq.h"
 
 #define QA_NETWORK_COMMAND_OWNER UINT64_C(0x71616e6574770001)
 bool qa_application_network_command_owner_bound(const qa_application *);
@@ -28,6 +29,36 @@ typedef struct qa_application_network_player {
  * admits a player nor calls its source owner. The cursor is a physical row. */
 bool qa_application_network_player_next(const qa_application *, size_t *cursor,
     qa_application_network_player *);
+
+/* Original Q1 source observations use an admitted classic QuakeC gameplay
+ * owner and its real borrowed client/owned edict/precache namespace. These
+ * normal source reads may refresh canonical client projections. Builtin and mixed gameplay
+ * sources need a complete native wire producer and fail this admission. */
+bool qa_application_network_q1_source(qa_application *, qa_actor_id,
+    qa_actor_owner *, uint32_t *source_slot, qa_net_protocol_id *, qa_error *);
+bool qa_application_network_q1_entity(qa_application *, qa_actor_id source_player,
+    qa_actor_id entity, qa_q1_entity *, qa_error *);
+/* Names borrow the source until mutation; output arrays are caller-owned. */
+bool qa_application_network_q1_precache(qa_application *, qa_actor_id,
+    bool models, const char *names[255], size_t *count, qa_error *);
+typedef struct qa_application_network_q1_world {
+    qa_net_protocol_id protocol;
+    uint32_t max_clients;
+    bool standard_quake, deathmatch;
+    float seconds;
+    const char *map, *level, *lightstyles[64];
+    int32_t total_secrets, total_monsters, found_secrets, killed_monsters;
+} qa_application_network_q1_world;
+bool qa_application_network_q1_world_read(qa_application *, qa_actor_id,
+    qa_application_network_q1_world *, qa_error *);
+bool qa_application_network_q1_clientdata(qa_application *, qa_actor_id,
+    qa_q1_clientdata *, qa_error *);
+bool qa_application_network_q1_baseline(qa_application *, qa_actor_id,
+    const qa_q1_entity *, qa_q1_entity *, qa_error *);
+bool qa_application_network_q1_signon_count(qa_application *, qa_actor_id,
+    size_t *, qa_error *);
+bool qa_application_network_q1_signon_at(qa_application *, qa_actor_id, size_t,
+    qa_application_protocol_event *, qa_error *);
 
 /* A caller owns this observation storage; snapshot.entities points into it.
  * The producer reads complete original records from a qualified Q3 game host.

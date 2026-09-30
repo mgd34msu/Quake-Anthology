@@ -192,6 +192,8 @@ struct qa_application {
     struct application_map_state *map_state;
     struct application_player_roster *players;
     struct application_bots *bots;
+    struct application_match_intents *match_intents;
+    struct application_q1_signon *q1_signon;
     bool map_force_reload;
     char *content_root;
     char *user_root;
@@ -290,6 +292,8 @@ bool application_native_mode_select_weapon(void *, qa_actor_id, qa_item_id, qa_e
 application_provider *application_mode_provider(qa_application *, qa_mode_id);
 bool application_native_mode_emit(void *, qa_mode_id, const qa_builtin_event *, qa_error *);
 bool application_native_mode_map_allowed(void *, qa_mode_id, qa_string_id);
+bool application_native_mode_rogue_runes_claim(void *, qa_mode_id, bool *, qa_error *);
+bool application_native_mode_rogue_runes_read(void *, qa_mode_id, qa_actor_id *, bool *);
 bool application_native_mode_use_item(void *, qa_actor_id, qa_item_id, qa_error *);
 bool application_native_mode_select_grapple(void *, qa_actor_id, qa_error *);
 bool application_native_mode_character_frame(void *, qa_actor_id, int32_t *);

@@ -394,9 +394,9 @@ bool qa_nq_write_clientdata(qa_net_writer *w, qa_net_protocol_id p, const qa_q1_
     if (standard) {
         if (weapon>255) return qa_net_writer_fail(w,"Weapon exceeds NetQuake byte");
     } else {
-        if (!weapon || (weapon & (weapon-1))) return qa_net_writer_fail(w,"Mission-pack weapon must contain one active bit");
+        if (weapon && (weapon & (weapon-1))) return qa_net_writer_fail(w,"Mission-pack weapon must contain one active bit");
         weapon=0;
-        while (!(c->weapon & (UINT32_C(1)<<weapon))) ++weapon;
+        if (c->weapon) while (!(c->weapon & (UINT32_C(1)<<weapon))) ++weapon;
     }
     uint32_t bits=SU_ITEMS|SU_WEAPON;
     if (c->viewheight!=22) bits|=SU_VIEW;

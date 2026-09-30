@@ -360,6 +360,10 @@ bool qa_application_queue_travel(qa_application *, const qa_application_travel_r
 /* Queue one literal map path in request.expression. Q2 route separators and
  * unit/spawn markers are ordinary path bytes in this typed map operation. */
 bool qa_application_queue_map_travel(qa_application *, const qa_application_travel_request *, qa_error *);
+/* Consume retained match map intentions only after the frontend has drained
+ * source events. Finish applies ordered post-map assignments after publication. */
+bool qa_application_prepare_match_travel(qa_application *, qa_error *);
+bool qa_application_finish_match_travel(qa_application *, uint64_t revision, qa_error *);
 bool qa_application_travel_read(const qa_application *, qa_application_travel_view *);
 bool qa_application_commit_travel(qa_application *, uint64_t revision, qa_error *);
 bool qa_application_complete_travel(qa_application *, uint64_t revision, qa_error *);

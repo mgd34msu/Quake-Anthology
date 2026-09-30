@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "network_q1_signon.h"
 
 #include <inttypes.h>
 #include <math.h>
@@ -477,6 +478,9 @@ bool application_emit_protocol(application_provider *provider,
     copied.time_ns = qa_session_elapsed(application->session);
     copied.payload = (qa_bytes){payload, event->payload.size};
     copied.references = references;
+    if (copied.signon &&
+        !application_q1_signon_retain(provider, &copied, error))
+        return false;
     storage[application->protocol_event_count++] = copied;
     return true;
 }

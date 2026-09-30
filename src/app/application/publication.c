@@ -3,6 +3,7 @@
 #include "map_private.h"
 #include "save_private.h"
 #include "bots_save_private.h"
+#include "network_q1_signon.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -702,6 +703,7 @@ static bool publish_travel(qa_application *application,
     qa_error current = {0};
     if (!retire_map_services(application, true, error))
         return false;
+    application_q1_signon_reset(application);
     application->map_view_ready = false;
     publication->published = true;
     if (application->world == NULL) {

@@ -14,6 +14,8 @@
 #include "guest_checkpoint.h"
 #include "map_players_private.h"
 #include "bots_save_private.h"
+#include "match_intents.h"
+#include "network_q1_signon.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -712,37 +714,70 @@ static bool configuration_capture(qa_application *app, qa_buffer *out, qa_error 
 
 static bool application_capture(qa_application *app, qa_buffer *out, qa_error *error)
 {
-    qa_buffer metadata = {0}, map = {0};
-    bool ok = application_save_metadata_capture(app, &metadata, error) &&
-        application_map_checkpoint_capture(app, &map, error);
-    if (ok && (metadata.size > SIZE_MAX - 24 || map.size > SIZE_MAX - 24 - metadata.size))
-        ok = application_fail(error, QA_ERROR_MEMORY, "application continuation extent overflow");
+    enum { PART_COUNT = 5, HEADER_SIZE = 48 };
+    qa_buffer parts[PART_COUNT] = {0};
+    application_match_intents *empty = NULL;
+    application_match_intents *intents = app->match_intents;
+    if (intents == NULL)
+        intents = empty = application_match_intents_create(error);
+    bool ok = intents != NULL &&
+        application_save_metadata_capture(app, parts, error) &&
+        application_map_checkpoint_capture(app, parts + 1, error) &&
+        application_physics_capture(app, parts + 2, error) &&
+        application_match_intents_capture(intents, app, parts + 3, error) &&
+        application_q1_signon_capture(app, parts + 4, error);
+    size_t size = HEADER_SIZE;
+    for (size_t i = 0; ok && i < PART_COUNT; ++i) {
+        if (!parts[i].size || parts[i].size > SIZE_MAX - size)
+            ok = application_fail(error, QA_ERROR_MEMORY, "application continuation extent overflow");
+        else
+            size += parts[i].size;
+    }
     qa_buffer bytes = {0};
     if (ok) {
-        bytes.size = 24 + metadata.size + map.size; bytes.data = malloc(bytes.size);
+        bytes.size = size; bytes.data = malloc(bytes.size);
         if (!bytes.data) ok = application_fail(error, QA_ERROR_MEMORY, "allocating application continuation");
     }
     if (ok) {
-        memcpy(bytes.data, "QAAO", 4); qa_store_u32le(bytes.data + 4, 1);
-        qa_store_u64le(bytes.data + 8, metadata.size); qa_store_u64le(bytes.data + 16, map.size);
-        memcpy(bytes.data + 24, metadata.data, metadata.size);
-        memcpy(bytes.data + 24 + metadata.size, map.data, map.size);
+        memcpy(bytes.data, "QAAO", 4); qa_store_u32le(bytes.data + 4, 2);
+        size_t offset = HEADER_SIZE;
+        for (size_t i = 0; i < PART_COUNT; ++i) {
+            qa_store_u64le(bytes.data + 8 + i * 8, parts[i].size);
+            memcpy(bytes.data + offset, parts[i].data, parts[i].size);
+            offset += parts[i].size;
+        }
         *out = bytes;
     }
-    qa_buffer_free(&metadata); qa_buffer_free(&map);
+    for (size_t i = 0; i < PART_COUNT; ++i)
+        qa_buffer_free(parts + i);
+    application_match_intents_destroy(empty);
     return ok;
 }
 
 static bool application_restore(qa_application *app, qa_bytes bytes, qa_error *error)
 {
-    if (!bytes.data || bytes.size < 24 || memcmp(bytes.data, "QAAO", 4) ||
-        qa_load_u32le(bytes.data + 4) != 1)
+    enum { PART_COUNT = 5, HEADER_SIZE = 48 };
+    if (!bytes.data || bytes.size < HEADER_SIZE || memcmp(bytes.data, "QAAO", 4) ||
+        qa_load_u32le(bytes.data + 4) != 2 || app->match_intents != NULL)
         return application_fail(error, QA_ERROR_FORMAT, "invalid application continuation header");
-    uint64_t metadata = qa_load_u64le(bytes.data + 8), map = qa_load_u64le(bytes.data + 16);
-    if (!metadata || !map || metadata > bytes.size - 24 || map != bytes.size - 24 - metadata)
+    qa_bytes parts[PART_COUNT];
+    size_t offset = HEADER_SIZE;
+    for (size_t i = 0; i < PART_COUNT; ++i) {
+        uint64_t length = qa_load_u64le(bytes.data + 8 + i * 8);
+        if (!length || length > bytes.size - offset)
+            return application_fail(error, QA_ERROR_FORMAT, "invalid application continuation extents");
+        parts[i] = (qa_bytes){bytes.data + offset, (size_t)length};
+        offset += (size_t)length;
+    }
+    if (offset != bytes.size)
         return application_fail(error, QA_ERROR_FORMAT, "invalid application continuation extents");
-    return application_save_metadata_restore(app, (qa_bytes){bytes.data + 24, (size_t)metadata}, error) &&
-        application_map_checkpoint_restore(app, (qa_bytes){bytes.data + 24 + (size_t)metadata, (size_t)map}, error);
+    app->match_intents = application_match_intents_create(error);
+    return app->match_intents != NULL &&
+        application_save_metadata_restore(app, parts[0], error) &&
+        application_map_checkpoint_restore(app, parts[1], error) &&
+        application_physics_restore(app, parts[2], error) &&
+        application_match_intents_restore(app->match_intents, app, parts[3], error) &&
+        application_q1_signon_restore(app, parts[4], error);
 }
 
 static bool provider_capture(application_provider *provider, qa_buffer *out, qa_error *error)
@@ -832,7 +867,8 @@ static bool persistence_inventory(application_persistence *operation, qa_applica
             owner->backend = provider->kind == APPLICATION_PROVIDER_QC ? "quakec" : "";
         }
         if (schema) {
-            owner->schema = schema; owner->schema_version = 1;
+            owner->schema = schema;
+            owner->schema_version = owner->kind == QA_SAVE_APPLICATION ? 2 : 1;
             if (!owner->backend) owner->backend = "";
         } else {
             const qa_application_persistence_owner *binding = NULL;
@@ -1065,7 +1101,7 @@ static bool persistence_shared_match(qa_application *app, const qa_save_image *i
 {
     static const qa_save_owner_kind owners[] = {QA_SAVE_COMBAT, QA_SAVE_INVENTORY, QA_SAVE_PICKUPS,
         QA_SAVE_TARGETS, QA_SAVE_CONTROLS, QA_SAVE_MODES, QA_SAVE_EQUIPMENT,
-        QA_SAVE_NAVIGATION, QA_SAVE_BOTS};
+        QA_SAVE_NAVIGATION, QA_SAVE_BOTS, QA_SAVE_APPLICATION};
     for (size_t i = 0; i < sizeof(owners) / sizeof(*owners); ++i) {
         qa_buffer encoded = {0}; bool ok;
         switch (owners[i]) {
@@ -1078,6 +1114,7 @@ static bool persistence_shared_match(qa_application *app, const qa_save_image *i
         case QA_SAVE_EQUIPMENT: ok = qa_equipment_capture(app->equipment, &encoded, error); break;
         case QA_SAVE_NAVIGATION: ok = application_navigation_save_capture(app, &encoded, error); break;
         case QA_SAVE_BOTS: ok = application_bots_save_capture(app, &encoded, error); break;
+        case QA_SAVE_APPLICATION: ok = application_capture(app, &encoded, error); break;
         default: ok = false; break;
         }
         const qa_save_record *saved = qa_save_image_find(image, owners[i], "");
@@ -1114,6 +1151,8 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
         application_save_foundation_finish(candidate, &foundation, error);
     application_save_foundation_free(&foundation);
     if (ok) ok = application_bots_save_finish(candidate, error);
+    if (ok && candidate->match_intents)
+        ok = application_match_intents_reconnect(candidate->match_intents, candidate, error);
     if (ok && candidate->command_generation != operation->restored_command_generation)
         ok = application_fail(error, QA_ERROR_FORMAT, "Console publication generation differs from saved application metadata");
     if (ok) ok = persistence_shared_match(candidate, image, error);

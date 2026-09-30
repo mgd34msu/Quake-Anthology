@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "network_q1_signon.h"
 #include "guest_native_q2_private.h"
 #include "q1_weapon_rules.h"
 
@@ -588,6 +589,7 @@ bool application_provider_deconstruct(application_provider *provider,
         break;
     }
     if (ok) {
+        application_q1_signon_drop(provider->application, provider->owner);
         provider->constructed = false;
         provider->map_bound = false;
         provider->component = (qa_component){0};

@@ -1,6 +1,8 @@
 #include "internal.h"
 #include "guest_q3_private.h"
 #include "map_players_private.h"
+#include "guest_qc_internal.h"
+#include "network_q1_signon.h"
 #include "qa/application_network.h"
 #include "qa/physics.h"
 #include <limits.h>
@@ -30,6 +32,280 @@ bool qa_application_network_player_next(const qa_application *application, size_
         return true;
     }
     return false;
+}
+
+static struct application_qc_state *q1_source(qa_application *app, qa_actor_id player,
+    uint32_t *source_slot, qa_error *error)
+{
+    application_provider *provider = app ? application_provider_for(app, player, QA_ROLE_CHARACTER, "") : NULL;
+    struct application_qc_state *engine = provider && provider->kind == APPLICATION_PROVIDER_QC ? provider->state.qc.engine : NULL;
+    const qa_actor_record *actor = app ? qa_actors_get(qa_session_actors(app->session), player) : NULL;
+    qa_qc_slot_binding binding;
+    if (!engine || !engine->initialized || engine->loading || engine->projecting ||
+        provider->state.qc.qualified || !qa_qc_idle(provider->state.qc.instance) || !actor ||
+        actor->owner != provider->owner || !actor->has_source || !actor->source_slot ||
+        !qa_qc_slot(provider->state.qc.instance, actor->source_slot, &binding) ||
+        binding.kind != QA_QC_SLOT_BORROWED || !qa_actor_id_equal(binding.actor, player) ||
+        !engine->max_clients || engine->max_clients > 255 ||
+        (engine->profile == QA_QC_QUAKEWORLD && engine->max_clients > 32) ||
+        actor->source_slot > engine->max_clients || !engine->clients ||
+        !engine->clients[actor->source_slot].connected ||
+        !qa_actor_id_equal(engine->clients[actor->source_slot].actor, player) ||
+        (engine->profile != QA_QC_NETQUAKE && engine->profile != QA_QC_QUAKEWORLD) ||
+        engine->protocol.flags || engine->protocol.revision ||
+        engine->protocol.kind != (engine->profile == QA_QC_QUAKEWORLD ? QA_NET_QW28 : QA_NET_NQ15)) {
+        application_fail(error, QA_ERROR_UNSUPPORTED, "Original Q1 wire requires its selected classic QuakeC source player"); return NULL;
+    }
+    for (unsigned role = 0; role < QA_ROLE_COUNT; ++role) {
+        if (role == QA_ROLE_HUD || role == QA_ROLE_MENU || role == QA_ROLE_AUDIO || role == QA_ROLE_MUSIC) continue;
+        application_provider *selected = application_provider_for(app, player, (qa_launch_role)role, "");
+        if (selected && selected != provider) {
+            application_fail(error, QA_ERROR_UNSUPPORTED, "Original Q1 wire cannot represent mixed selected gameplay owners"); return NULL;
+        }
+    }
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(qa_application_launch(app));
+    for (size_t i = 0; choices && i < choices->binding_count; ++i) {
+        const qa_launch_binding *b = &choices->bindings[i];
+        if (b->role == QA_ROLE_HUD || b->role == QA_ROLE_MENU || b->role == QA_ROLE_AUDIO || b->role == QA_ROLE_MUSIC) continue;
+        if (strcmp(b->instance, provider->launch->selection.instance)) {
+            application_fail(error, QA_ERROR_UNSUPPORTED, "Original Q1 wire cannot represent additional scoped gameplay providers"); return NULL;
+        }
+    }
+    *source_slot = actor->source_slot; return engine;
+}
+bool qa_application_network_q1_source(qa_application *app, qa_actor_id player,
+    qa_actor_owner *owner, uint32_t *slot, qa_net_protocol_id *protocol, qa_error *error)
+{
+    if (!owner || !slot || !protocol) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source observation output");
+    struct application_qc_state *engine = q1_source(app, player, slot, error);
+    if (!engine) return false;
+    *owner = engine->provider->owner; *protocol = engine->protocol; return true;
+}
+static bool q1_wire_scalar(struct application_qc_state *engine, int32_t reference,
+    const char *name, uint32_t maximum, uint32_t *out, qa_error *error)
+{
+    float value;
+    if (!application_qc_float(engine, reference, name, &value, error)) return false;
+    double integer = trunc((double)value);
+    if (!isfinite(value) || integer < 0 || integer > maximum)
+        return application_fail(error, QA_ERROR_FORMAT, "Q1 source field exceeds its admitted original wire range");
+    *out = (uint32_t)value; return true;
+}
+static bool q1_wire_vector(struct application_qc_state *engine, int32_t reference,
+    const char *name, float out[3], qa_error *error)
+{
+    const qa_qc_definition *field = application_qc_field(engine, name, QA_QC_VECTOR, error); qa_vec3 value;
+    if (!field || !qa_qc_entity_vector(engine->provider->state.qc.instance, reference, field->offset, &value, error)) return false;
+    if (!qa_vec_finite(value)) return application_fail(error, QA_ERROR_FORMAT, "Nonfinite Q1 source network vector");
+    out[0] = value.x; out[1] = value.y; out[2] = value.z; return true;
+}
+bool qa_application_network_q1_entity(qa_application *app, qa_actor_id player, qa_actor_id entity,
+    qa_q1_entity *out, qa_error *error)
+{
+    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 entity observation output");
+    if (!engine) return false;
+    const qa_actor_record *actor = qa_actors_get(qa_session_actors(app->session), entity); qa_qc_slot_binding binding;
+    if (!actor || actor->owner != engine->provider->owner || !actor->has_source || !actor->source_slot ||
+        actor->source_slot > UINT16_MAX || !qa_qc_slot(engine->provider->state.qc.instance, actor->source_slot, &binding) ||
+        !qa_actor_id_equal(binding.actor, entity) ||
+        (binding.kind != QA_QC_SLOT_OWNED && (binding.kind != QA_QC_SLOT_BORROWED ||
+         actor->source_slot > engine->max_clients || !engine->clients[actor->source_slot].connected ||
+         !qa_actor_id_equal(engine->clients[actor->source_slot].actor, entity))))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 entity lacks the admitted source edict identity");
+    int32_t reference; qa_q1_entity value; qa_q1_entity_init(&value); value.number = actor->source_slot;
+    float movetype;
+    if (!qa_qc_actor_reference(engine->provider->state.qc.instance, entity, false, &reference, error) ||
+        !q1_wire_scalar(engine, reference, "modelindex", 255, &value.model, error) ||
+        !q1_wire_scalar(engine, reference, "frame", 255, &value.frame, error) ||
+        !q1_wire_scalar(engine, reference, "colormap", 255, &value.colormap, error) ||
+        !q1_wire_scalar(engine, reference, "skin", 255, &value.skin, error) ||
+        !q1_wire_scalar(engine, reference, "effects", 255, &value.effects, error) ||
+        !q1_wire_vector(engine, reference, "origin", value.origin, error) ||
+        !q1_wire_vector(engine, reference, "angles", value.angles, error) ||
+        !application_qc_float(engine, reference, "movetype", &movetype, error) || !isfinite(movetype)) return false;
+    value.step = movetype == 4;
+    if (!qa_actors_get(qa_session_actors(app->session), entity))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Q1 source entity retired during observation");
+    *out = value; return true;
+}
+bool qa_application_network_q1_precache(qa_application *app, qa_actor_id player,
+    bool models, const char *names[255], size_t *count, qa_error *error)
+{
+    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    if (!names || !count) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 precache observation output");
+    if (!engine) return false;
+    const char *retained[255] = {0}; size_t extent = 0;
+    qa_qc_resource_kind kind = models ? QA_QC_RESOURCE_MODEL : QA_QC_RESOURCE_SOUND;
+    for (size_t i = 0; i < engine->resource_count; ++i) {
+        const application_qc_resource *resource = &engine->resources[i]; if (resource->kind != kind) continue;
+        uint32_t index = resource->value.index;
+        if (!index || index > 255 || !resource->name || !*resource->name || retained[index - 1])
+            return application_fail(error, QA_ERROR_FORMAT, "Q1 source precache ordering differs from admitted wire indices");
+        retained[index - 1] = resource->name; if (index > extent) extent = index;
+    }
+    for (size_t i = 0; i < extent; ++i) if (!retained[i])
+        return application_fail(error, QA_ERROR_FORMAT, "Q1 source precache has an unrepresented index");
+    memcpy(names, retained, sizeof(retained)); *count = extent; return true;
+}
+
+static bool q1_wire_string(struct application_qc_state *engine, int32_t reference,
+    const char *name, const char **out, qa_error *error)
+{
+    const qa_qc_definition *field = application_qc_field(engine, name, QA_QC_STRING, error);
+    int32_t id;
+    return field && qa_qc_entity_int(engine->provider->state.qc.instance, reference, field->offset, &id, error) &&
+        qa_qc_string(engine->provider->state.qc.instance, id, out, error);
+}
+static bool q1_wire_global(struct application_qc_state *engine, const char *name, float *out, qa_error *error)
+{
+    const qa_qc_definition *field = qa_qc_program_find_global(engine->provider->state.qc.program, name);
+    if (!field || field->type != QA_QC_FLOAT)
+        return application_fail(error, QA_ERROR_FORMAT, "Q1 source global is missing or has a different type");
+    if (!qa_qc_global_float(engine->provider->state.qc.instance, field->offset, out, error)) return false;
+    return isfinite(*out) || application_fail(error, QA_ERROR_FORMAT, "Nonfinite Q1 source global");
+}
+static bool q1_wire_integer(float value, int32_t minimum, int32_t maximum, int32_t *out, qa_error *error)
+{
+    double integer = trunc((double)value);
+    if (!isfinite(value) || integer < minimum || integer > maximum)
+        return application_fail(error, QA_ERROR_FORMAT, "Q1 source integer exceeds its original wire range");
+    *out = (int32_t)value; return true;
+}
+/* Original QC floats carry bit masks through the same modulo-32-bit integer
+ * conversion as the source protocol. Avoid undefined out-of-range C casts. */
+static bool q1_wire_bits(float value, uint32_t *out, qa_error *error)
+{
+    if (!isfinite(value)) return application_fail(error, QA_ERROR_FORMAT, "Nonfinite Q1 source bit mask");
+    double word = fmod(trunc((double)value), 4294967296.0);
+    if (word < 0) word += 4294967296.0;
+    *out = (uint32_t)word; return true;
+}
+static bool q1_standard_quake(qa_application *app, struct application_qc_state *engine, bool *out, qa_error *error)
+{
+    (void)app;
+    const qa_product *product = engine->provider->product;
+    if (!product || !product->campaign)
+        return application_fail(error, QA_ERROR_FORMAT, "Q1 source product has no original weapon dialect");
+    *out = strcmp(product->campaign, "hipnotic") && strcmp(product->campaign, "rogue"); return true;
+}
+bool qa_application_network_q1_world_read(qa_application *app, qa_actor_id player,
+    qa_application_network_q1_world *out, qa_error *error)
+{
+    if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 world observation output");
+    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    if (!engine) return false;
+    qa_application_network_q1_world value = {.protocol = engine->protocol, .max_clients = engine->max_clients};
+    const qa_cvar_view *deathmatch = qa_cvars_find(engine->cvars, "deathmatch");
+    const qa_qc_definition *mapname = qa_qc_program_find_global(engine->provider->state.qc.program, "mapname");
+    int32_t id; float number;
+    if (!deathmatch || !isfinite(deathmatch->number) || !mapname || mapname->type != QA_QC_STRING)
+        return application_fail(error, QA_ERROR_FORMAT, "Q1 source world declaration is incomplete");
+    if (!q1_standard_quake(app, engine, &value.standard_quake, error) ||
+        !qa_qc_global_int(engine->provider->state.qc.instance, mapname->offset, &id, error) ||
+        !qa_qc_string(engine->provider->state.qc.instance, id, &value.map, error) ||
+        !q1_wire_string(engine, 0, "message", &value.level, error)) return false;
+    value.seconds = (float)((double)engine->source_time_ns / 1e9);
+    if (!*value.map) return application_fail(error, QA_ERROR_FORMAT, "Invalid Q1 source world identity");
+    if (!*value.level) value.level = value.map;
+    value.deathmatch = deathmatch->number != 0;
+    const char *names[] = {"total_secrets", "total_monsters", "found_secrets", "killed_monsters"};
+    int32_t *stats[] = {&value.total_secrets, &value.total_monsters, &value.found_secrets, &value.killed_monsters};
+    for (size_t i = 0; i < 4; ++i)
+        if (!q1_wire_global(engine, names[i], &number, error) ||
+            !q1_wire_integer(number, INT32_MIN, INT32_MAX, stats[i], error)) return false;
+    for (size_t i = 0; i < 64; ++i) value.lightstyles[i] = engine->lightstyles[i] ? engine->lightstyles[i] : "";
+    *out = value; return true;
+}
+bool qa_application_network_q1_clientdata(qa_application *app, qa_actor_id player,
+    qa_q1_clientdata *out, qa_error *error)
+{
+    if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 clientdata observation output");
+    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    if (!engine) return false;
+    int32_t reference; qa_q1_clientdata value = {0}; float vec[3], scalar; uint32_t flags, extra;
+    if (!qa_qc_actor_reference(engine->provider->state.qc.instance, player, false, &reference, error) ||
+        !q1_wire_vector(engine, reference, "view_ofs", vec, error)) return false;
+    value.viewheight = vec[2];
+    if (!application_qc_float(engine, reference, "idealpitch", &value.idealpitch, error) ||
+        !q1_wire_vector(engine, reference, "punchangle", value.punch, error) ||
+        !q1_wire_vector(engine, reference, "velocity", value.velocity, error) ||
+        !application_qc_float(engine, reference, "items", &scalar, error) || !q1_wire_bits(scalar, &value.items, error)) return false;
+    const qa_qc_definition *items2 = qa_qc_program_find_field(engine->provider->state.qc.program, "items2");
+    if (items2) {
+        if (items2->type != QA_QC_FLOAT ||
+            !qa_qc_entity_float(engine->provider->state.qc.instance, reference, items2->offset, &scalar, error))
+            return application_fail(error, QA_ERROR_FORMAT, "Invalid Q1 source items2 field");
+    } else if (!q1_wire_global(engine, "serverflags", &scalar, error)) return false;
+    if (!q1_wire_bits(scalar, &extra, error)) return false;
+    value.items |= extra << (items2 ? 23 : 28);
+    if (!application_qc_float(engine, reference, "flags", &scalar, error) || !q1_wire_bits(scalar, &flags, error)) return false;
+    value.onground = (flags & 512) != 0;
+    if (!application_qc_float(engine, reference, "waterlevel", &scalar, error) || !isfinite(scalar))
+        return application_fail(error, QA_ERROR_FORMAT, "Invalid Q1 source water level");
+    value.inwater = scalar >= 2;
+    const char *names[] = {"weaponframe", "armorvalue", "currentammo", "ammo_shells", "ammo_nails", "ammo_rockets", "ammo_cells"};
+    uint32_t *fields[] = {&value.weapon_frame, &value.armor, &value.ammo, &value.shells, &value.nails, &value.rockets, &value.cells};
+    for (size_t i = 0; i < 7; ++i) if (!q1_wire_scalar(engine, reference, names[i], 255, fields[i], error)) return false;
+    if (!application_qc_float(engine, reference, "health", &scalar, error) ||
+        !q1_wire_integer(scalar, INT16_MIN, INT16_MAX, &value.health, error) ||
+        !application_qc_float(engine, reference, "weapon", &scalar, error) || !q1_wire_bits(scalar, &value.weapon, error)) return false;
+    bool standard;
+    if (!q1_standard_quake(app, engine, &standard, error)) return false;
+    if ((standard && value.weapon > 255) || (!standard && value.weapon && (value.weapon & (value.weapon - 1))))
+        return application_fail(error, QA_ERROR_FORMAT, "Q1 source active weapon differs from its product dialect");
+    const char *weapon_model;
+    if (!q1_wire_string(engine, reference, "weaponmodel", &weapon_model, error)) return false;
+    if (*weapon_model) {
+        for (size_t i = 0; i < engine->resource_count; ++i) {
+            const application_qc_resource *r = &engine->resources[i];
+            if (r->kind == QA_QC_RESOURCE_MODEL && !strcmp(r->name, weapon_model)) { value.weapon_model = r->value.index; break; }
+        }
+        if (!value.weapon_model || value.weapon_model > 255)
+            return application_fail(error, QA_ERROR_FORMAT, "Q1 source weapon model is not in its ordered precache");
+    }
+    /* Apply the native writer's actual numeric/dialect guards before publishing
+     * a source observation to any caller. The bytes are bounded scratch only. */
+    uint8_t bytes[64]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
+    if (!qa_nq_write_clientdata(&writer, (qa_net_protocol_id){.kind = QA_NET_NQ15}, &value, standard)) return false;
+    *out = value; return true;
+}
+bool qa_application_network_q1_baseline(qa_application *app, qa_actor_id player,
+    const qa_q1_entity *entity, qa_q1_entity *out, qa_error *error)
+{
+    if (!entity || !out || !entity->number || entity->number > UINT16_MAX)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Invalid Q1 source baseline observation");
+    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    if (!engine) return false;
+    qa_q1_entity value = *entity; value.effects = 0; value.step = false;
+    value.colormap = 0;
+    if (entity->number <= engine->max_clients) {
+        value.colormap = entity->number; value.model = 0;
+        for (size_t i = 0; i < engine->resource_count; ++i) {
+            const application_qc_resource *r = &engine->resources[i];
+            if (r->kind == QA_QC_RESOURCE_MODEL && !strcmp(r->name, "progs/player.mdl")) { value.model = r->value.index; break; }
+        }
+        if (!value.model || value.model > 255)
+            return application_fail(error, QA_ERROR_FORMAT, "Q1 source player baseline lacks its original precached model");
+    }
+    uint8_t bytes[64]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
+    qa_nq_message message = {.op = QA_NQ_BASELINE, .data.entity = value};
+    if (!qa_nq_write(&writer, (qa_net_protocol_id){.kind = QA_NET_NQ15}, (qa_nq_options){.standard_quake = true}, &message, NULL, 0)) return false;
+    *out = value; return true;
+}
+bool qa_application_network_q1_signon_count(qa_application *app, qa_actor_id player,
+    size_t *out, qa_error *error)
+{
+    if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source signon count");
+    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    if (!engine) return false;
+    *out = application_q1_signon_count(app, engine->provider->owner); return true;
+}
+bool qa_application_network_q1_signon_at(qa_application *app, qa_actor_id player, size_t index,
+    qa_application_protocol_event *out, qa_error *error)
+{
+    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    return engine && application_q1_signon_at(app, engine->provider->owner, index, out, error);
 }
 
 bool qa_application_network_controlled(qa_application *application, qa_net_client_id client,

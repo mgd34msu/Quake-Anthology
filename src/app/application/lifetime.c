@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "match_intents.h"
+#include "network_q1_signon.h"
 #include "guest_native_q2_private.h"
 
 #include <stdlib.h>
@@ -165,6 +167,9 @@ bool application_finalize(qa_application *application, qa_error *error)
                                 "application session still has active calls or admissions");
     if (!application_bots_destroy(application, error))
         return false;
+    if (!application_match_intents_idle(application->match_intents))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "match map continuation is borrowed");
     application->finalizing = true;
 
     qa_error first = {0};
@@ -180,6 +185,9 @@ bool application_finalize(qa_application *application, qa_error *error)
     application->equipment = NULL;
     qa_modes_destroy(application->modes);
     application->modes = NULL;
+    application_match_intents_destroy(application->match_intents);
+    application->match_intents = NULL;
+    application_q1_signon_destroy(application);
     qa_targets_destroy(application->targets);
     application->targets = NULL;
 

@@ -684,10 +684,11 @@ add_library(qa_input STATIC
     src/input/keys.c
     src/input/mouse.c
     src/input/seat.c
+    src/input/save.c
     src/input/settings.c
     src/input/source_devices.c
     src/platform/input.c)
-target_link_libraries(qa_input PUBLIC qa_movement qa_console qa_content qa_display SDL2::SDL2)
+target_link_libraries(qa_input PUBLIC qa_movement qa_console qa_content qa_display qa_persistence SDL2::SDL2)
 
 add_library(qa_settings STATIC
     src/settings/codec.c
@@ -913,6 +914,7 @@ add_library(qa_application STATIC
     src/app/application/native_modes.c
     src/app/application/native_maps.c
     src/app/application/network.c
+    src/app/application/network_q1_signon.c
     src/app/application/owner.c
     src/app/application/providers.c
     src/app/application/q1_weapon_rules.c
@@ -920,6 +922,7 @@ add_library(qa_application STATIC
     src/app/application/publication.c
     src/app/application/services.c
     src/app/application/save.c
+    src/app/application/save_physics.c
     src/app/application/save_resolvers.c
     src/app/application/visuals.c)
 target_link_libraries(qa_application PUBLIC qa_persistence qa_configuration qa_game_q1 qa_game_q2 qa_game_q3 qa_campaign qa_modes qa_player_services qa_qc_host qa_q3_host)

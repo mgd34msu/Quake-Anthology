@@ -62,7 +62,7 @@ bool qa_input_physical_valid(qa_physical_input input) {
         return input.device >= 0 && input.code <= 255;
     return input.kind == QA_PHYSICAL_AXIS && input.device >= 0 && input.code < QA_AXIS_COUNT;
 }
-static void binding_release(qa_binding_record *binding) {
+void qa_input_binding_record_release(qa_binding_record *binding) {
     if (binding && --binding->references == 0)
         free(binding);
 }
@@ -105,9 +105,9 @@ void qa_input_seat_destroy(qa_input_seat *s) {
     /* The owner releases input while its console is still alive. Destruction
      * then has no callbacks and remains safe during failed construction. */
     for (size_t i = 0; i < s->binding_count; ++i)
-        binding_release(s->bindings[i]);
+        qa_input_binding_record_release(s->bindings[i]);
     for (size_t i = 0; i < s->held_count; ++i)
-        binding_release(s->held[i].binding);
+        qa_input_binding_record_release(s->held[i].binding);
     for (size_t i = 0; i < QA_INPUT_ACTION_COUNT; ++i)
         qa_input_button_destroy(&s->buttons[i]);
     qa_strings_destroy(s->command_sources);
@@ -215,7 +215,7 @@ bool qa_input_seat_bind(qa_input_seat *s, const qa_input_binding *binding, qa_er
     qa_binding_record *old = binding_find(s, binding->input, &index);
     if (old) {
         s->bindings[index] = record;
-        binding_release(old);
+        qa_input_binding_record_release(old);
         return true;
     }
     if (!qa_input_reserve((void **)&s->bindings, &s->binding_capacity, s->binding_count + 1,
@@ -234,12 +234,12 @@ bool qa_input_seat_unbind(qa_input_seat *s, qa_physical_input input) {
     memmove(s->bindings + index, s->bindings + index + 1,
             (s->binding_count - index - 1) * sizeof(*s->bindings));
     --s->binding_count;
-    binding_release(old);
+    qa_input_binding_record_release(old);
     return true;
 }
 void qa_input_seat_unbind_all(qa_input_seat *s) {
     for (size_t i = 0; i < s->binding_count; ++i)
-        binding_release(s->bindings[i]);
+        qa_input_binding_record_release(s->bindings[i]);
     s->binding_count = 0;
 }
 size_t qa_input_seat_binding_count(const qa_input_seat *s) { return s->binding_count; }
@@ -373,7 +373,7 @@ static bool digital(qa_input_seat *s, qa_physical_input input, bool down, double
         if (binding)
             ++binding->references;
         if (!run_binding(s, &held, true, time, error)) {
-            binding_release(binding);
+            qa_input_binding_record_release(binding);
             return false;
         }
         s->held[s->held_count++] = held;
@@ -383,7 +383,7 @@ static bool digital(qa_input_seat *s, qa_physical_input input, bool down, double
         return true;
     if (!run_binding(s, &s->held[index], false, time, error))
         return false;
-    binding_release(s->held[index].binding);
+    qa_input_binding_record_release(s->held[index].binding);
     memmove(s->held + index, s->held + index + 1, (s->held_count - index - 1) * sizeof(*s->held));
     --s->held_count;
     return true;
@@ -398,7 +398,7 @@ bool qa_input_seat_release_device(qa_input_seat *s, int32_t device, double time,
         }
         if (!run_binding(s, held, false, time, error))
             success = false;
-        binding_release(held->binding);
+        qa_input_binding_record_release(held->binding);
         memmove(held, held + 1, (s->held_count - i - 1) * sizeof(*held));
         --s->held_count;
     }
@@ -415,7 +415,7 @@ bool qa_input_seat_release(qa_input_seat *s, double time, qa_error *error) {
     for (size_t i = 0; i < s->held_count; ++i) {
         if (!run_binding(s, &s->held[i], false, time, error))
             success = false;
-        binding_release(s->held[i].binding);
+        qa_input_binding_record_release(s->held[i].binding);
     }
     s->held_count = 0;
     for (size_t i = 0; i < QA_INPUT_ACTION_COUNT; ++i)

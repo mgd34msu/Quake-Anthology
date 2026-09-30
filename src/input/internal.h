@@ -47,5 +47,6 @@ bool qa_input_text_append(qa_input_seat *, const char *, size_t, qa_error *);
 bool qa_input_physical_equal(qa_physical_input, qa_physical_input);
 uint64_t qa_input_physical_source(qa_physical_input);
 bool qa_input_command_source(qa_input_seat *, const char *, uint64_t *, qa_error *);
+void qa_input_binding_record_release(qa_binding_record *);
 bool qa_input_ascii_equal(const char *, const char *);
 #endif
