@@ -482,3 +482,18 @@ The application preloader, direct saved configuration construction, frontend
 early ownership claims and final publication callers require independent source
 review. The native Q3 private-module relocation dependency remains open. No
 builds, tests or executable checks were run for this bounded graph packet.
+
+## Retained Q3 READ descriptors
+
+Q3 host restoration now adopts the already saved immutable READ file bytes,
+path, digest, cursor, ZIP admission and lifetime serial into the host's actual
+owned descriptor. It uses the existing retained-version representation without
+opening a path or acquiring a VFS resource. A mapped loose-file identity can no
+longer allocate a replacement cache ID or mark new mount references during
+private import. Read and seek consume the same saved bytes and cursor; close
+and failed staged import free the owned path/buffer. Re-capture emits the same
+wire fields. Future ordinary file opens retain their existing native filesystem
+path. The coupled guest preflight still rejects saved writable descriptors.
+
+This packet changes no host or executor schema. Source-only ownership, cursor,
+digest and re-capture paths were reviewed; no executable checks were run.

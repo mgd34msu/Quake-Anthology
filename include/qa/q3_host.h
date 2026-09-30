@@ -222,8 +222,9 @@ bool qa_q3_host_checkpoint(qa_q3_host *, qa_buffer *, qa_error *);
 /* Restore requires an attached executor, restored actor registry and qualified
  * immutable world geometry. It reconstructs source body/collision callbacks;
  * the WORLD owner must then restore and validate body fields, links and portal
- * counts before finish. Failed binding installation retains its contexts until
- * candidate actors retire. */
+ * counts before finish. READ descriptors own the exact saved immutable
+ * path/digest/bytes and cursor without filesystem acquisition or cache mutation.
+ * Failed binding installation retains its contexts until candidate actors retire. */
 bool qa_q3_host_restore(qa_q3_host *, qa_bytes, qa_error *);
 /* After aggregate portal-claim and whole-candidate validation, publish this
  * host's restored continuation. No allocation or external callbacks occur. */

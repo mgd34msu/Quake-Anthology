@@ -317,16 +317,6 @@ static bool restore_file(qa_q3_host *host, checkpoint_reader *reader, q3_file st
     qa_sha256_digest actual; qa_sha256(bytes, &actual);
     if (!qa_sha256_equal(&actual, &file->restored_digest))
         return q3_fail(error, QA_ERROR_FORMAT, slot, "Q3 retained file digest mismatch");
-    if (host->options.mounts) {
-        qa_error local = {0};
-        if (qa_vfs_acquire(host->options.mounts, (const char *)path.data, &file->resource, NULL, &local)) {
-            if (qa_sha256_equal(qa_resource_digest(file->resource), &actual)) return true;
-            qa_resource_release(file->resource); file->resource = NULL;
-        } else if (local.code != QA_ERROR_NOT_FOUND) {
-            if (error) *error = local;
-            return false;
-        }
-    }
     file->restored_path = malloc(path.size);
     file->restored_bytes.data = bytes.size ? malloc(bytes.size) : NULL;
     if (!file->restored_path || (bytes.size && !file->restored_bytes.data))
