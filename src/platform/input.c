@@ -1,5 +1,6 @@
 #define _POSIX_C_SOURCE 200809L
 #include "input_platform_private.h"
+#include "qa/input_platform_save.h"
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -285,7 +286,7 @@ static bool capture(qa_input_platform *p, qa_error *error) {
         SDL_StopTextInput();
     return true;
 }
-qa_input_platform *qa_input_platform_create(const qa_input_platform_options *o, qa_error *error) {
+static qa_input_platform *allocate_owner(const qa_input_platform_options *o, qa_error *error) {
     if (!o || !o->cvars) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing input platform settings");
         return NULL;
@@ -310,6 +311,20 @@ qa_input_platform *qa_input_platform_create(const qa_input_platform_options *o, 
                                           .selection = {.kind = QA_CONTROLLER_NONE}};
         qa_haptic_player_init(&p->seats[i].haptic, haptic_sink, &p->seats[i]);
     }
+    return p;
+}
+qa_input_platform *qa_input_platform_create_detached(const qa_input_platform_options *o, qa_error *error) {
+    qa_input_platform *p = allocate_owner(o, error);
+    if (p && !(p->haptics = qa_haptic_cache_create(error))) {
+        qa_input_platform_destroy(p);
+        return NULL;
+    }
+    return p;
+}
+qa_input_platform *qa_input_platform_create(const qa_input_platform_options *o, qa_error *error) {
+    qa_input_platform *p = allocate_owner(o, error);
+    if (!p) return NULL;
+    p->native_owned = true;
     p->old_controller_events = SDL_GameControllerEventState(SDL_QUERY);
     p->old_joystick_events = SDL_JoystickEventState(SDL_QUERY);
     SDL_GameControllerEventState(SDL_ENABLE);
@@ -341,20 +356,25 @@ void qa_input_platform_destroy(qa_input_platform *p) {
     if (!p)
         return;
     qa_error ignored = {0};
-    (void)qa_input_platform_window(p, NULL, p->now, &ignored);
-    (void)release_all(p, p->now, &ignored);
-    if (p->midi_fd >= 0)
-        close(p->midi_fd);
-    if (p->joystick)
-        SDL_JoystickClose(p->joystick);
-    for (size_t i = 0; i < p->device_count; ++i) {
-        (void)stop_device(p, p->devices[i].info.instance, &ignored);
-        SDL_GameControllerClose(p->devices[i].handle);
+    if (p->native_owned) {
+        (void)qa_input_platform_window(p, NULL, p->now, &ignored);
+        (void)release_all(p, p->now, &ignored);
+        if (p->midi_fd >= 0)
+            close(p->midi_fd);
+        if (p->joystick)
+            SDL_JoystickClose(p->joystick);
+        for (size_t i = 0; i < p->device_count; ++i) {
+            (void)stop_device(p, p->devices[i].info.instance, &ignored);
+            SDL_GameControllerClose(p->devices[i].handle);
+        }
+        SDL_GameControllerEventState(p->old_controller_events);
+        SDL_JoystickEventState(p->old_joystick_events);
+    } else {
+        for (unsigned i = 0; i < 4; ++i)
+            qa_haptic_pattern_release(p->seats[i].haptic.pattern);
     }
     for (unsigned i = 0; i < 4; ++i)
         free((void *)p->seats[i].selection.serial);
-    SDL_GameControllerEventState(p->old_controller_events);
-    SDL_JoystickEventState(p->old_joystick_events);
     qa_haptic_cache_destroy(p->haptics);
     free(p->midi_devices);
     free(p->devices);

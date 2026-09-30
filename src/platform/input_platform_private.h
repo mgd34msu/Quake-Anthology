@@ -37,5 +37,6 @@ struct qa_input_platform {
     qa_midi_device *midi_devices;
     size_t midi_count;
     double now;
+    bool native_owned;
 };
 #endif
