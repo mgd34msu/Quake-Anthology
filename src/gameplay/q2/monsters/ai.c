@@ -2373,6 +2373,17 @@ static bool select_species_attack(q2m_context *context, const char **move,
 bool q2m_source_attack(q2m_context *context, bool melee, qa_error *error) {
   if (!q2m_alive(context))
     return true;
+  q2m_species species = context->monster->definition->species;
+  if (!melee && context->monster->medic &&
+      (species == Q2M_MEDIC || species == Q2M_MEDIC_COMMANDER)) {
+    if (!q2_actor_live(context->game, context->monster->enemy))
+      return true;
+    const char *move = NULL;
+    if (!q2m_medic_attack_move(context, INFINITY, &move, error))
+      return false;
+    return !q2m_alive(context) || !move || q2m_set_move(context, move,
+        context->game->options.edition == QA_Q2_RERELEASE, error);
+  }
   qa_builtin_actor_traits traits;
   qa_body_state enemy;
   bool living;
@@ -2385,7 +2396,8 @@ bool q2m_source_attack(q2m_context *context, bool melee, qa_error *error) {
   if (!select_species_attack(context, &move, error))
     return false;
   bool immediate = context->game->options.edition == QA_Q2_RERELEASE &&
-                   context->monster->definition->species == Q2M_JORG;
+                   (species == Q2M_JORG || species == Q2M_MEDIC ||
+                    species == Q2M_MEDIC_COMMANDER);
   return !q2m_alive(context) || move == NULL || q2m_set_move(context, move, immediate, error);
 }
 
@@ -2415,7 +2427,9 @@ static bool attack_selected(q2m_context *context, qa_error *error) {
   if (move == NULL)
     return true;
   bool immediate = context->game->options.edition == QA_Q2_RERELEASE &&
-                   monster->definition->species == Q2M_JORG;
+                   (monster->definition->species == Q2M_JORG ||
+                    monster->definition->species == Q2M_MEDIC ||
+                    monster->definition->species == Q2M_MEDIC_COMMANDER);
   if (!q2m_set_move(context, move, immediate, error))
     return false;
   if (!q2m_alive(context))

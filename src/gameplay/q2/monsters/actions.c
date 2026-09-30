@@ -255,10 +255,12 @@ static bool duck_action(q2m_context *context, const char *callback,
   bool commander = m->definition->species == Q2M_GUN_COMMANDER;
   bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
   if (has(callback, "duck_down")) {
-    if (!commander || rerelease)
+    if (!rerelease && (commander || !strcmp(callback, "monster_duck_down"))) {
+      if (m->duck_ns < context->game->now_ns)
+        m->duck_ns = q2m_after(context->game->now_ns, 1);
+    } else {
       m->next_duck_ns = q2m_after(context->game->now_ns, 5.0);
-    else if (m->duck_ns < context->game->now_ns)
-      m->duck_ns = q2m_after(context->game->now_ns, 1);
+    }
     return set_duck(context, true, error);
   }
   if (has(callback, "duck_hold")) {

@@ -360,12 +360,44 @@ static void dodge_capabilities(const q2m_context *context, bool *duck,
   }
 }
 
+static bool medic_dodge_attacking(const struct qa_q2_monster *monster) {
+  return move_is(monster, "medic_move_attackBlaster") ||
+         move_is(monster, "medic_move_attackHyperBlaster") ||
+         move_is(monster, "medic_move_attackCable") ||
+         move_is(monster, "medic_move_callReinforcements");
+}
+
 static bool dodge_duck(q2m_context *context, float eta_seconds, bool rogue,
                        bool *accepted, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   const q2m_species species = monster->definition->species;
   const char *move = NULL;
   *accepted = false;
+
+  if (species == Q2M_MEDIC || species == Q2M_MEDIC_COMMANDER) {
+    if (monster->medic)
+      return true;
+    if (medic_dodge_attacking(monster)) {
+      if (!rogue)
+        return q2m_dispatch(context, "monster_duck_up", error);
+      monster->ducked = false;
+      return true;
+    }
+    if (rogue) {
+      double extra = context->game->options.skill == 0
+                         ? 1.0 : 0.1 * (3 - context->game->options.skill);
+      monster->duck_ns = q2m_after(context->game->now_ns, (double)eta_seconds + extra);
+      if (!q2m_dispatch(context, "monster_duck_down", error))
+        return false;
+      if (!q2m_alive(context))
+        return true;
+      monster->next_frame = q2m_move_named(monster, "medic_move_duck")->first_frame;
+    }
+    if (!q2m_set_move(context, "medic_move_duck", true, error))
+      return false;
+    *accepted = q2m_alive(context);
+    return true;
+  }
 
   if (context->body.ground.registry == 0 &&
       (species == Q2M_INFANTRY || species == Q2M_GUNNER))
@@ -412,13 +444,6 @@ static bool dodge_duck(q2m_context *context, float eta_seconds, bool rogue,
     if (!q2m_alive(context))
       return true;
     move = "gunner_move_duck";
-  } else if (species == Q2M_MEDIC || species == Q2M_MEDIC_COMMANDER) {
-    if (monster->medic || move_is(monster, "medic_move_attackBlaster") ||
-        move_is(monster, "medic_move_attackHyperBlaster") ||
-        move_is(monster, "medic_move_attackCable") ||
-        move_is(monster, "medic_move_callReinforcements"))
-      return set_duck_bounds(context, false, error);
-    move = "medic_move_duck";
   } else if (species == Q2M_GUN_COMMANDER) {
     if (move_is(monster, "guncmdr_move_jump") ||
         move_is(monster, "guncmdr_move_jump2"))
@@ -459,6 +484,20 @@ static bool dodge_sidestep(q2m_context *context, bool rogue, bool *accepted,
   const char *move = NULL;
   bool immediate = true;
   *accepted = false;
+
+  if (species == Q2M_MEDIC || species == Q2M_MEDIC_COMMANDER) {
+    if (medic_dodge_attacking(monster) &&
+        (!rogue || context->game->options.skill != 0)) {
+      if (rogue)
+        monster->dodging = false;
+      return true;
+    }
+    if (!move_is(monster, "medic_move_run") &&
+        !q2m_set_move(context, "medic_move_run", true, error))
+      return false;
+    *accepted = q2m_alive(context);
+    return true;
+  }
 
   if ((species == Q2M_INFANTRY || species == Q2M_GUNNER ||
        species == Q2M_BERSERK) &&
@@ -512,13 +551,6 @@ static bool dodge_sidestep(q2m_context *context, bool rogue, bool *accepted,
         move_is(monster, "chick_move_pain3"))
       return true;
     move = "chick_move_run";
-  } else if (species == Q2M_MEDIC || species == Q2M_MEDIC_COMMANDER) {
-    if (monster->medic || move_is(monster, "medic_move_attackBlaster") ||
-        move_is(monster, "medic_move_attackHyperBlaster") ||
-        move_is(monster, "medic_move_attackCable") ||
-        move_is(monster, "medic_move_callReinforcements"))
-      return true;
-    move = "medic_move_run";
   } else if (species == Q2M_GUN_COMMANDER) {
     if (move_is(monster, "guncmdr_move_fire_chain") ||
         move_is(monster, "guncmdr_move_fire_chain_run"))
@@ -614,9 +646,9 @@ static bool classic_dodge(q2m_context *context, qa_actor_id attacker,
       true, error);
 }
 
-static bool commander_dodge(q2m_context *context, qa_actor_id attacker,
-                            float eta, const qa_trace_result *trace,
-                            bool gravity, qa_error *error) {
+static bool source_dodge(q2m_context *context, qa_actor_id attacker,
+                         float eta, const qa_trace_result *trace,
+                         bool gravity, qa_error *error) {
   qa_q2_game *g = context->game;
   struct qa_q2_monster *m = context->monster;
   bool rerelease = g->options.edition == QA_Q2_RERELEASE;
@@ -634,7 +666,7 @@ static bool commander_dodge(q2m_context *context, qa_actor_id attacker,
       admission > (rerelease ? .5f : .25f * (g->options.skill + 1))) return true;
   if (!rerelease && !trace) {
     qa_error_set(error, QA_ERROR_ARGUMENT, context->actor->id.slot,
-                 "Classic imported Commander dodge requires its source trace after admission");
+                 "Classic imported monster dodge requires its source trace after admission");
     return false;
   }
   float height = context->body.origin.z + context->body.bounds.maxs.z + 1;
@@ -716,8 +748,12 @@ bool q2_monster_dodge(qa_q2_game *game, qa_actor_id target,
   if (!q2m_refresh(&context, error))
     return false;
   struct qa_q2_monster *monster = context.monster;
-  if (monster->definition->species == Q2M_GUN_COMMANDER)
-    return commander_dodge(&context, attacker, eta_seconds, trace, gravity, error);
+  q2m_species species = monster->definition->species;
+  if (species == Q2M_GUN_COMMANDER ||
+      ((species == Q2M_MEDIC || species == Q2M_MEDIC_COMMANDER) &&
+       (game->options.edition == QA_Q2_RERELEASE ||
+        game->options.product == QA_Q2_ROGUE || species == Q2M_MEDIC_COMMANDER)))
+    return source_dodge(&context, attacker, eta_seconds, trace, gravity, error);
   if (monster->dead || context.combat.health < 1.0f ||
       game->now_ns < monster->dodge_ns)
     return true;

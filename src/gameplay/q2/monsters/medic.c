@@ -567,7 +567,7 @@ static bool target_distance(q2m_context *c, float *out, qa_error *error) {
         return !q2m_alive(c);
     if (!q2_actor_live(c->game, id))
         return true;
-    *out = q2m_body_distance(c->game->options.edition, &c->body, &body);
+    *out = qa_vec_length(qa_vec_sub(body.origin, c->body.origin));
     return true;
 }
 
@@ -580,20 +580,22 @@ bool q2m_medic_attack_move(q2m_context *c, float distance, const char **move,
     }
     finish_dodge(c);
     if (m->source_blocked) {
-        if (!q2m_set_move(c, "medic_move_callReinforcements", false, error))
+        if (!q2m_set_move(c, "medic_move_callReinforcements", rerelease(c), error))
             return false;
         if (!q2m_alive(c))
             return true;
         m->source_blocked = false;
     }
-    float roll = q2m_random(c->game);
+    float roll = rerelease(c) ? q2_rerelease_float(c->game, 0, 1) : q2m_random(c->game);
     bool commander = c->combat.mass > 400;
     bool slots = rerelease(c) ? m->monster_slots > m->monster_used : m->monster_slots > 2;
     if (m->medic)
-        *move = commander && roll > .8f && slots ? "medic_move_callReinforcements"
+        *move = commander && roll > .8 && slots ? "medic_move_callReinforcements"
                                                  : "medic_move_attackCable";
     else
-        *move = m->attack_state == Q2M_BLIND || (commander && roll > .2f && distance >= 80 && slots)
+        *move = m->attack_state == Q2M_BLIND ||
+                    (commander && roll > .2 &&
+                     (rerelease(c) ? distance > 20 : distance >= 80) && slots)
                     ? "medic_move_callReinforcements" : "medic_move_attackBlaster";
     return true;
 }
@@ -635,7 +637,7 @@ bool q2m_medic_check_attack(q2m_context *c, bool *handled, bool *selected, bool 
             return true;
         *selected = true;
         *started = true;
-        return q2m_set_move(c, move, false, error);
+        return q2m_set_move(c, move, rerelease(c), error);
     }
     if (!rogue(c))
         return true;
@@ -656,7 +658,8 @@ bool q2m_medic_check_attack(q2m_context *c, bool *handled, bool *selected, bool 
             return true;
         }
     }
-    if ((!rerelease(c) || m->monster_slots != 0) && q2m_random(c->game) < .8f) {
+    if ((!rerelease(c) || m->monster_slots != 0) &&
+        (rerelease(c) ? q2_rerelease_float(c->game, 0, 1) : q2m_random(c->game)) < .8) {
         bool slots;
         if (rerelease(c)) {
             int64_t remaining = m->monster_slots;
@@ -726,11 +729,12 @@ bool q2m_medic_callback(q2m_context *c, const char *name, bool *handled,
         bool visible;
         if (!q2m_visible(c, c->monster->enemy, &visible, error))
             return false;
-        return !q2m_alive(c) || !visible || q2m_random(c->game) > .95f ||
+        return !q2m_alive(c) || !visible ||
+               (rerelease(c) ? q2_rerelease_float(c->game, 0, 1) : q2m_random(c->game)) > .95 ||
                q2m_set_move(c, "medic_move_attackHyperBlaster", false, error);
     }
     if (!strcmp(name, "medic_quick_attack") && rerelease(c)) {
-        if (q2m_random(c->game) >= .5f)
+        if (q2_rerelease_float(c->game, 0, 1) >= .5f)
             return true;
         if (!q2m_set_move(c, "medic_move_attackHyperBlaster", false, error))
             return false;
