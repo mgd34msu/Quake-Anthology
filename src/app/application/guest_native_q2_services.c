@@ -292,6 +292,5 @@ bool application_native_q2_bind(void *opaque, qa_native_host *host, uint32_t slo
     struct application_native_q2 *engine = opaque;
     return qa_session_bind_execution(engine->provider->application->session, actor,
         engine->provider->owner, error) &&
-        (engine->profile != QA_NATIVE_Q2_GAME_API3 ||
-            application_native_q2_combat_admit(engine, slot, actor, true, error));
+        application_native_q2_combat_admit(engine, slot, actor, true, error);
 }

@@ -385,8 +385,10 @@ static bool before_reaction(void *opaque, const qa_damage_outcome *outcome,
            qa_q3_before_reaction(character->state.q3, outcome, error);
 }
 
-static bool selected_reaction(void *opaque, const qa_damage_outcome *outcome,
-                              qa_error *error)
+static bool selected_source_reaction(void *opaque, const qa_damage_outcome *outcome,
+                                     qa_actor_owner source_owner,
+                                     qa_source_reaction_body original,
+                                     void *original_context, qa_error *error)
 {
     qa_application *application = opaque;
     if (application->modes != NULL &&
@@ -394,7 +396,7 @@ static bool selected_reaction(void *opaque, const qa_damage_outcome *outcome,
         return false;
     application_provider *provider = application_provider_for(
         application, outcome->request.target, QA_ROLE_CHARACTER, "");
-    if (provider == NULL)
+    if (provider == NULL && original == NULL)
         return true;
     bool death = outcome->result.reaction == QA_REACTION_DEATH;
     if (death && application->modes != NULL)
@@ -405,7 +407,9 @@ static bool selected_reaction(void *opaque, const qa_damage_outcome *outcome,
     bool ok = true;
     if (qa_actors_get(qa_session_actors(application->session),
                       outcome->request.target) != NULL) {
-      switch (provider->kind) {
+      if (original != NULL && (provider == NULL || provider->owner == source_owner)) {
+        ok = original(original_context, error);
+      } else switch (provider->kind) {
     case APPLICATION_PROVIDER_Q1:
         ok = qa_q1_game_reaction(provider->state.q1, outcome, error);
         break;
@@ -418,6 +422,8 @@ static bool selected_reaction(void *opaque, const qa_damage_outcome *outcome,
     case APPLICATION_PROVIDER_QC:
     case APPLICATION_PROVIDER_QVM:
     case APPLICATION_PROVIDER_NATIVE:
+        ok = application_fail(error, QA_ERROR_UNSUPPORTED,
+                              "selected foreign character has no source reaction adapter");
         break;
       }
     }
@@ -429,10 +435,15 @@ static bool selected_reaction(void *opaque, const qa_damage_outcome *outcome,
     return ok;
 }
 
-static bool confirmed_damage(void *opaque, const qa_damage_outcome *outcome,
-                             qa_error *error)
+static bool selected_reaction(void *opaque, const qa_damage_outcome *outcome,
+                              qa_error *error)
 {
-    qa_application *application = opaque;
+    return selected_source_reaction(opaque, outcome, 0, NULL, NULL, error);
+}
+
+static bool death_cleanup(qa_application *application,
+                          const qa_damage_outcome *outcome, qa_error *error)
+{
     if (outcome->stale)
         return true;
     if (outcome->result.reaction == QA_REACTION_DEATH)
@@ -444,14 +455,41 @@ static bool confirmed_damage(void *opaque, const qa_damage_outcome *outcome,
                                             outcome->request.target, error))
                 return false;
         }
+    return true;
+}
+
+static bool confirmed_death(void *opaque, const qa_damage_outcome *outcome,
+                            qa_error *error)
+{
+    qa_application *application = opaque;
+    if (outcome->stale)
+        return true;
+    if (!death_cleanup(application, outcome, error))
+        return false;
     if (application->modes == NULL || !application->primary_mode_ready)
         return true;
-    if (!qa_modes_after_damage(application->modes, application->primary_mode,
-                               outcome, error))
-        return false;
     return outcome->result.reaction != QA_REACTION_DEATH ||
            qa_modes_player_death(application->modes,
                                  application->primary_mode, outcome, error);
+}
+
+static bool confirmed_damage(void *opaque, const qa_damage_outcome *outcome,
+                             qa_error *error)
+{
+    qa_application *application = opaque;
+    if (outcome->stale)
+        return true;
+    /* Preserve ordinary cleanup before after-damage, then score a death. The
+     * deferred original source path confirms only the later death boundary. */
+    if (!death_cleanup(application, outcome, error))
+        return false;
+    if (application->modes == NULL || !application->primary_mode_ready)
+        return true;
+    return qa_modes_after_damage(application->modes, application->primary_mode,
+                                  outcome, error) &&
+           (outcome->result.reaction != QA_REACTION_DEATH ||
+            qa_modes_player_death(application->modes,
+                                  application->primary_mode, outcome, error));
 }
 
 static bool provider_invulnerable(application_provider *provider,
@@ -575,6 +613,8 @@ qa_combat_hooks application_combat_hooks(qa_application *application)
                              .impulse = combat_impulse,
                              .before_reaction = before_reaction,
                              .reaction = selected_reaction,
+                             .source_reaction = selected_source_reaction,
+                             .source_reaction_confirmed = confirmed_death,
                              .confirmed = confirmed_damage,
                              .invulnerable = combat_invulnerable,
                              .effect = combat_effect};

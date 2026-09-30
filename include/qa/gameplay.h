@@ -151,6 +151,9 @@ typedef enum qa_damage_effect_stage {
  * changing its amount does not repeat absorption. AFTER_POWER/AFTER_ARMOR
  * transform the remaining amount. Each family retains its source ordering. */
 typedef struct qa_damage_effect { float amount; bool allowed; qa_reaction reaction; } qa_damage_effect;
+typedef bool (*qa_source_reaction_body)(void *, qa_error *);
+typedef struct qa_source_reaction_observer qa_source_reaction_observer;
+typedef bool (*qa_source_reaction_executor)(void *, qa_source_reaction_observer *, qa_error *);
 typedef struct qa_combat_hooks {
     void *context;
     qa_team_id (*team)(void *, qa_actor_id, qa_team_id);
@@ -159,6 +162,13 @@ typedef struct qa_combat_hooks {
     bool (*before_reaction)(void *, const qa_damage_outcome *, qa_error *);
     bool (*reaction)(void *, const qa_damage_outcome *, qa_error *);
     bool (*confirmed)(void *, const qa_damage_outcome *, qa_error *);
+    /* Dispatch the selected character at the actual source callback boundary.
+     * The original body is borrowed only for this synchronous call. */
+    bool (*source_reaction)(void *, const qa_damage_outcome *, qa_actor_owner,
+                            qa_source_reaction_body, void *, qa_error *);
+    /* Deferred completion reports reaction/scoring only. Health damage effects
+     * were already confirmed by the original source damage requests. */
+    bool (*source_reaction_confirmed)(void *, const qa_damage_outcome *, qa_error *);
     /* OR ordinary timed invulnerability with primary godmode. Team Arena's
      * bubble uses request-aware damage_allowed instead (juiced bypass).
      * Read-only; each provider keeps its own expiry and checkpoint state. */
@@ -283,6 +293,15 @@ bool qa_combat_protection_owner(qa_combat *, qa_actor_id, qa_protection_channel,
 bool qa_combat_absorb(qa_combat *, const qa_damage_request *, qa_protection_channel, const qa_damage_geometry *, float, qa_damage_flags, const qa_armor_context *, float *, qa_error *);
 bool qa_combat_apply(qa_combat *, const qa_damage_request *, qa_damage_outcome *, qa_error *);
 bool qa_combat_run_source(qa_combat *, const qa_damage_request *, qa_source_damage_fn, void *, qa_damage_outcome *, qa_error *);
+bool qa_damage_dispatch_source_reaction(qa_damage_observer *, const qa_damage_result *,
+    float callback_knockback, qa_vec3 callback_point, qa_actor_owner, qa_source_reaction_body, void *, qa_error *);
+/* For captured pending hits whose feedback/confirmation already completed.
+ * The observer lives on the stack through one original helper, is consumed at
+ * most once by its actual pain/death entry, and never enters persistence. */
+bool qa_combat_run_source_reaction(qa_combat *, const qa_damage_request *, const qa_damage_result *,
+    qa_source_reaction_executor, void *, qa_error *);
+bool qa_source_reaction_dispatch(qa_source_reaction_observer *, const qa_damage_result *,
+    float callback_knockback, qa_vec3 callback_point, qa_actor_owner, qa_source_reaction_body, void *, qa_error *);
 bool qa_combat_source_reaction(qa_combat *, const qa_damage_request *, const qa_damage_result *, qa_error *);
 qa_operation *qa_combat_damage_operation(qa_combat *);
 

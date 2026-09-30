@@ -915,6 +915,85 @@ bool qa_combat_source_reaction(qa_combat *combat, const qa_damage_request *reque
     return ok;
 }
 
+static bool dispatch_source_reaction(qa_combat *combat, const qa_damage_outcome *outcome,
+    qa_actor_owner source, qa_source_reaction_body original, void *context, qa_error *error) {
+    if (!source || !original || !qa_combat_live(combat, outcome->request.target))
+        return qa_combat_argument(error, "source reaction lost its original callback or live target");
+    ++combat->active_calls;
+    bool ok = combat->hooks.source_reaction
+        ? combat->hooks.source_reaction(combat->hooks.context, outcome, source, original, context, error)
+        : original(context, error);
+    --combat->active_calls;
+    return ok;
+}
+bool qa_damage_dispatch_source_reaction(qa_damage_observer *observer, const qa_damage_result *result,
+    float knockback, qa_vec3 point, qa_actor_owner source, qa_source_reaction_body original, void *context, qa_error *error) {
+    if (!isfinite(knockback) || !qa_vec_finite(point))
+        return qa_combat_argument(error, "source callback geometry is not finite");
+    if (!qa_damage_before_reaction(observer, result, error)) return false;
+    qa_damage_outcome outcome = *observer->cursor->outcome;
+    outcome.request.knockback = knockback; outcome.request.point = point;
+    bool ok = dispatch_source_reaction(observer->combat, &outcome, source, original, context, error);
+    return remember_failure(ok, &observer->failed, &observer->failure, error);
+}
+struct qa_source_reaction_observer {
+    qa_combat *combat;
+    qa_damage_outcome outcome;
+    uint64_t serial;
+    bool open, dispatched, failed;
+    qa_error failure;
+};
+bool qa_source_reaction_dispatch(qa_source_reaction_observer *observer, const qa_damage_result *result,
+    float knockback, qa_vec3 point, qa_actor_owner source, qa_source_reaction_body original, void *context, qa_error *error) {
+    if (!observer) return qa_combat_argument(error, "source reaction observer is absent");
+    if (observer->failed) { if (error) *error = observer->failure; return false; }
+    bool ok = observer->open && !observer->dispatched;
+    if (!ok) qa_combat_argument(error, "source reaction observer is closed or consumed");
+    if (ok && (!isfinite(knockback) || !qa_vec_finite(point)))
+        ok = qa_combat_argument(error, "source callback geometry is not finite");
+    if (ok) ok = result_valid(result, error);
+    if (ok && result->reaction != QA_REACTION_PAIN && result->reaction != QA_REACTION_DEATH)
+        ok = qa_combat_argument(error, "source callback requires pain or death");
+    qa_combat_record *entry = ok ? record(observer->combat, observer->outcome.request.target) : NULL;
+    if (ok && (!entry || entry->serial != observer->serial))
+        ok = qa_combat_argument(error, "source reaction changed its retained primary owner");
+    if (ok) {
+        observer->dispatched = true; observer->outcome.result = *result;
+        observer->outcome.request.knockback = knockback; observer->outcome.request.point = point;
+        ok = dispatch_source_reaction(observer->combat, &observer->outcome, source, original, context, error);
+    }
+    return remember_failure(ok, &observer->failed, &observer->failure, error);
+}
+bool qa_combat_run_source_reaction(qa_combat *combat, const qa_damage_request *request,
+    const qa_damage_result *result, qa_source_reaction_executor executor, void *context, qa_error *error) {
+    if (!combat || !executor) return qa_combat_argument(error, "deferred source helper is absent");
+    if (!qa_damage_request_validate(request, error) || !result_valid(result, error)) return false;
+    if (result->reaction != QA_REACTION_PAIN && result->reaction != QA_REACTION_DEATH)
+        return qa_combat_argument(error, "deferred source helper requires pain or death");
+    qa_combat_record *entry;
+    if (!require_record(combat, request->target, &entry, error)) return false;
+    qa_source_reaction_observer observer = {.combat = combat, .outcome = {.request = *request, .result = *result},
+        .serial = entry->serial, .open = true};
+    ++combat->active_calls;
+    /* Committed hits already consumed before_reaction and confirmed, with
+     * their armor/health journals. This helper consumes only their captured
+     * pending callback boundary; repeating hit feedback would count it twice. */
+    bool ok = executor(context, &observer, error);
+    observer.open = false;
+    if (observer.failed) { if (error) *error = observer.failure; ok = false; }
+    if (ok && observer.dispatched) {
+        if (qa_combat_live(combat, request->target)) {
+            qa_combat_state state;
+            ok = qa_combat_read(combat, request->target, &state, error);
+            if (ok) observer.outcome.survived = state.health > 0;
+        }
+        if (ok && combat->hooks.source_reaction_confirmed)
+            ok = combat->hooks.source_reaction_confirmed(combat->hooks.context, &observer.outcome, error);
+    }
+    --combat->active_calls;
+    return ok;
+}
+
 bool qa_combat_pickup_begin(qa_combat *combat, qa_actor_id actor, qa_combat_pickup_scope *out, qa_error *error) {
     if (!out || !combat) return qa_combat_argument(error, "invalid pickup combat scope");
     for (qa_combat_pickup_scope *scope = combat->pickups; scope; scope = scope->previous)

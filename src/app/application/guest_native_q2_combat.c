@@ -2,6 +2,7 @@
 #include "guest_native_q2_combat.h"
 #include "guest_native_q2_combat_state.h"
 #include "guest_native_q2_attack.h"
+#include "guest_native_q2_combat_kex.h"
 #include "qa/native_observe.h"
 #include <math.h>
 
@@ -46,6 +47,17 @@ typedef struct combat_armor_hook {
     qa_protection_channel channel;
     qa_native_entry_observer *binding;
 } combat_armor_hook;
+typedef struct combat_deferred {
+    struct combat_deferred *previous;
+    struct application_native_q2_combat *owner;
+    combat_record *record;
+    combat_frame *parent_current;
+    qa_source_reaction_observer *observer;
+    qa_source_reaction_body execute;
+    void *context;
+    const qa_damage_request *request;
+    bool dispatching;
+} combat_deferred;
 struct application_native_q2_combat {
     struct application_native_q2 *engine;
     application_q2_combat_profile profile;
@@ -55,6 +67,8 @@ struct application_native_q2_combat {
     combat_armor_hook armor[2];
     combat_frame *current, *retained;
     combat_incoming *incoming;
+    combat_deferred *deferred;
+    struct application_q2_kex_damage *kex;
     bool active;
 };
 static qa_native_instance *native(struct application_native_q2_combat *p)
@@ -238,25 +252,58 @@ static bool remove_watches(combat_frame *frame, qa_error *error)
     if (!ok && error) *error = first;
     return ok;
 }
+typedef struct original_reaction {
+    qa_native_entry_observer *binding;
+    const qa_native_value *arguments;
+    size_t count;
+    qa_native_value *result;
+} original_reaction;
+static bool reaction_original(void *opaque, qa_error *error)
+{
+    original_reaction *call = opaque;
+    return qa_native_invoke_original(call->binding, call->arguments, call->count, call->result, error);
+}
 static bool reaction_entry(void *opaque, qa_native_instance *instance, qa_native_entry_observer *binding,
     const qa_native_value *arguments, size_t count, qa_native_value *result, qa_error *error)
 {
     (void)instance; combat_reaction *hook = opaque; struct application_native_q2_combat *p = hook->owner;
     combat_frame *frame = p->current;
-    if (!p->active || !frame || !frame->active || frame->reacting)
+    combat_deferred *deferred = p->deferred;
+    if (!p->active || ((!frame || !frame->active) && (!deferred || deferred->dispatching)))
         return qa_native_invoke_original(binding, arguments, count, result, error);
     qa_native_value fields[APPLICATION_Q2_FIELD_COUNT];
     if (!application_q2_call_project(&p->profile.calls[hook->operation], arguments, count, fields, error)) return false;
-    if (fields[APPLICATION_Q2_TARGET].as.address != frame->record->source.address)
+    qa_native_address target = fields[APPLICATION_Q2_TARGET].as.address;
+    bool deferred_call = deferred && target == deferred->record->source.address && frame == deferred->parent_current;
+    if (deferred_call && deferred->dispatching)
         return qa_native_invoke_original(binding, arguments, count, result, error);
-    if (!application_q2_combat_actor_valid(&frame->record->source, error)) return false;
+    if (!deferred_call && frame && frame->active && frame->reacting && target == frame->record->source.address)
+        return qa_native_invoke_original(binding, arguments, count, result, error);
+    bool synchronous = !deferred_call && frame && frame->active && !frame->reacting && target == frame->record->source.address;
+    combat_record *record = synchronous ? frame->record :
+        deferred && !deferred->dispatching && target == deferred->record->source.address ? deferred->record : NULL;
+    if (!record) return qa_native_invoke_original(binding, arguments, count, result, error);
+    if (!application_q2_combat_actor_valid(&record->source, error)) return false;
     if ((double)(float)fields[APPLICATION_Q2_AMOUNT].as.i32 != fields[APPLICATION_Q2_AMOUNT].as.i32)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Native reaction damage exceeds exact shared result representation");
-    frame->reacting = true;
-    frame->result.reaction = hook->operation == APPLICATION_Q2_DEATH ? QA_REACTION_DEATH : QA_REACTION_PAIN;
-    frame->result.applied_damage = (float)fields[APPLICATION_Q2_AMOUNT].as.i32;
-    if (!remove_watches(frame, error) || !qa_damage_before_reaction(frame->observer, &frame->result, error)) return false;
-    return qa_native_invoke_original(binding, arguments, count, result, error);
+    qa_damage_result reaction = {.reaction = hook->operation == APPLICATION_Q2_DEATH ? QA_REACTION_DEATH : QA_REACTION_PAIN,
+        .applied_damage = (float)fields[APPLICATION_Q2_AMOUNT].as.i32};
+    const qa_damage_request *request = synchronous ? frame->request : deferred->request;
+    float kick = request->knockback; qa_vec3 point = request->point;
+    if (hook->operation == APPLICATION_Q2_PAIN) kick = fields[APPLICATION_Q2_KNOCKBACK].as.f32;
+    else if (!vector_read(p, fields[APPLICATION_Q2_POINT].as.address, &point, error)) return false;
+    original_reaction original = {binding, arguments, count, result};
+    *result = (qa_native_value){.type = QA_NATIVE_VOID};
+    if (synchronous) {
+        frame->reacting = true; frame->result = reaction;
+        if (!remove_watches(frame, error)) return false;
+        return qa_damage_dispatch_source_reaction(frame->observer, &frame->result,
+            kick, point, p->engine->provider->owner, reaction_original, &original, error);
+    }
+    deferred->dispatching = true;
+    bool ok = qa_source_reaction_dispatch(deferred->observer, &reaction, kick, point, p->engine->provider->owner,
+        reaction_original, &original, error);
+    deferred->dispatching = false; return ok;
 }
 static bool ensure_reaction(struct application_native_q2_combat *p, qa_native_address address,
     application_q2_call_operation operation, qa_error *error)
@@ -277,7 +324,7 @@ static bool execute_damage(combat_record *record, combat_incoming *incoming,
     qa_damage_result *result, qa_error *error)
 {
     struct application_native_q2_combat *p = record->owner;
-    if (!p->active || p->retained || p->profile.kex ||
+    if (!p->active || p->retained ||
         !qa_combat_primary_current(shared(p), record->source.actor, record->serial, record) ||
         !qa_actor_id_equal(record->source.actor, request->target))
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Native damage requires its active qualified synchronous source owner");
@@ -307,6 +354,7 @@ static bool execute_damage(combat_record *record, combat_incoming *incoming,
             committed_callback, frame, &frame->die_watch, error);
     if (ok && client) ok = qa_native_observe_writes(native(p), client + p->profile.inventory,
         (size_t)p->profile.inventory_count * 4, committed_armor, frame, &frame->armor_watch, error);
+    if (ok) ok = application_q2_kex_damage_track(p->kex, &record->source, error);
     application_q2_call *call = &p->profile.calls[APPLICATION_Q2_DAMAGE];
     qa_native_value fields[APPLICATION_Q2_FIELD_COUNT] = {0}, *arguments = NULL; uint8_t mod[3];
     if (incoming && !qa_actor_id_equal(incoming->target, request->target))
@@ -472,6 +520,61 @@ static bool damage_entry(void *opaque, qa_native_instance *instance, qa_native_e
     if (ok) *result = (qa_native_value){.type = QA_NATIVE_VOID};
     --p->engine->calls; return ok;
 }
+static bool absorb_stage(struct application_native_q2_combat *p, combat_frame *frame,
+    qa_protection_channel channel, int32_t amount, uint32_t source_flags,
+    qa_native_address point, qa_native_address normal, int32_t *out, qa_error *error)
+{
+    if (!application_q2_combat_actor_valid(&frame->record->source, error)) return false;
+    qa_damage_geometry geometry = {.direction = frame->request->direction};
+    qa_body_state body; qa_combat_state state;
+    if (!vector_read(p, point, &geometry.point, error) ||
+        !vector_read(p, normal, &geometry.normal, error) ||
+        !qa_world_body_read(p->engine->world, frame->request->target, &body, error) ||
+        !state_read(frame->record, &state, error)) return false;
+    float pitch = body.angles.x * (3.14159265358979323846f / 180.f),
+        yaw = body.angles.y * (3.14159265358979323846f / 180.f);
+    qa_vec3 forward = qa_v3(cosf(pitch) * cosf(yaw), cosf(pitch) * sinf(yaw), -sinf(pitch));
+    qa_armor_context context = {.q2_profile = true, .rerelease = p->profile.kex,
+        .ctf = qa_json_string_equal(p->profile.document, qa_json_get(p->profile.document, p->profile.world, "game"), "ctf"),
+        .alive = state.health > 0, .screen_facing_dot = qa_vec_dot(
+            qa_vec_normalize(qa_vec_sub(geometry.point, body.origin)), forward)};
+    qa_damage_flags flags = {.no_armor = (source_flags & 2) != 0,
+        .no_power_armor = (source_flags & 0x100) != 0, .no_regular_armor = (source_flags & 0x80) != 0,
+        .energy = (source_flags & 4) != 0, .regular_scale = 1};
+    float saved;
+    if (!qa_combat_absorb(shared(p), frame->request, channel, &geometry,
+        (float)amount, flags, &context, &saved, error) ||
+        !application_q2_combat_actor_valid(&frame->record->source, error) ||
+        !isfinite(saved) || (double)saved < INT32_MIN || (double)saved > INT32_MAX)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native armor replacement did not retain its live original target or int32 result");
+    /* Replacement stores use shared authoritative callbacks rather than an
+     * application instruction. Their observer has already advanced the journal. */
+    if (!refresh_comparison_state(p, error)) return false;
+    *out = (int32_t)saved; return true;
+}
+const qa_damage_request *application_native_q2_combat_request(struct application_native_q2 *engine,
+    qa_actor_id actor)
+{
+    struct application_native_q2_combat *p = engine ? engine->source_combat : NULL;
+    for (combat_frame *frame = p ? p->current : NULL; frame; frame = frame->previous)
+        if (frame->active && !frame->reacting && qa_actor_id_equal(frame->record->source.actor, actor))
+            return frame->request;
+    return NULL;
+}
+bool application_native_q2_combat_inline_armor(struct application_native_q2 *engine,
+    qa_native_address target, int32_t amount, uint32_t flags, qa_native_address point,
+    qa_native_address normal, bool *handled, int32_t *saved, qa_error *error)
+{
+    *handled = false;
+    struct application_native_q2_combat *p = engine ? engine->source_combat : NULL;
+    combat_frame *frame = p ? p->current : NULL;
+    if (!p || !p->active || !frame || !frame->active || frame->reacting ||
+        frame->record->source.address != target ||
+        !qa_combat_protection_owner(shared(p), frame->request->target, QA_PROTECTION_REGULAR, NULL, NULL))
+        return true;
+    if (!absorb_stage(p, frame, QA_PROTECTION_REGULAR, amount, flags, point, normal, saved, error)) return false;
+    *handled = true; return true;
+}
 static bool armor_entry(void *opaque, qa_native_instance *instance, qa_native_entry_observer *binding,
     const qa_native_value *arguments, size_t count, qa_native_value *result, qa_error *error)
 {
@@ -483,38 +586,14 @@ static bool armor_entry(void *opaque, qa_native_instance *instance, qa_native_en
         ? APPLICATION_Q2_REGULAR_ARMOR : APPLICATION_Q2_POWER_ARMOR;
     qa_native_value fields[APPLICATION_Q2_FIELD_COUNT];
     if (!application_q2_call_project(&p->profile.calls[operation], arguments, count, fields, error)) return false;
-    if (fields[APPLICATION_Q2_TARGET].as.address != frame->record->source.address)
+    if (fields[APPLICATION_Q2_TARGET].as.address != frame->record->source.address ||
+        !qa_combat_protection_owner(shared(p), frame->request->target, hook->channel, NULL, NULL))
         return qa_native_invoke_original(binding, arguments, count, result, error);
-    if (!qa_combat_protection_owner(shared(p), frame->request->target, hook->channel, NULL, NULL))
-        return qa_native_invoke_original(binding, arguments, count, result, error);
-    if (!application_q2_combat_actor_valid(&frame->record->source, error)) return false;
-    qa_damage_geometry geometry = {.direction = frame->request->direction};
-    qa_body_state body; qa_combat_state state;
-    if (!vector_read(p, fields[APPLICATION_Q2_POINT].as.address, &geometry.point, error) ||
-        !vector_read(p, fields[APPLICATION_Q2_NORMAL].as.address, &geometry.normal, error) ||
-        !qa_world_body_read(p->engine->world, frame->request->target, &body, error) ||
-        !state_read(frame->record, &state, error)) return false;
-    float pitch = body.angles.x * (3.14159265358979323846f / 180.f),
-        yaw = body.angles.y * (3.14159265358979323846f / 180.f);
-    qa_vec3 forward = qa_v3(cosf(pitch) * cosf(yaw), cosf(pitch) * sinf(yaw), -sinf(pitch));
-    qa_armor_context context = {.q2_profile = true, .rerelease = p->profile.kex,
-        .ctf = qa_json_string_equal(p->profile.document, qa_json_get(p->profile.document, p->profile.world, "game"), "ctf"),
-        .alive = state.health > 0, .screen_facing_dot = qa_vec_dot(
-            qa_vec_normalize(qa_vec_sub(geometry.point, body.origin)), forward)};
-    uint32_t source_flags = (uint32_t)fields[APPLICATION_Q2_FLAGS].as.i32;
-    qa_damage_flags flags = {.no_armor = (source_flags & 2) != 0,
-        .no_power_armor = (source_flags & 0x100) != 0, .no_regular_armor = (source_flags & 0x80) != 0,
-        .energy = (source_flags & 4) != 0, .regular_scale = 1};
-    float saved;
-    if (!qa_combat_absorb(shared(p), frame->request, hook->channel, &geometry,
-        (float)fields[APPLICATION_Q2_AMOUNT].as.i32, flags, &context, &saved, error) ||
-        !application_q2_combat_actor_valid(&frame->record->source, error) ||
-        !isfinite(saved) || (double)saved < INT32_MIN || (double)saved > INT32_MAX)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Native armor replacement did not retain its live original target or int32 result");
-    /* Replacement stores use shared authoritative callbacks rather than an
-     * application instruction. Their observer has already advanced the journal. */
-    if (!refresh_comparison_state(p, error)) return false;
-    *result = (qa_native_value){.type = QA_NATIVE_I32, .as.i32 = (int32_t)saved}; return true;
+    int32_t saved;
+    if (!absorb_stage(p, frame, hook->channel, fields[APPLICATION_Q2_AMOUNT].as.i32,
+        (uint32_t)fields[APPLICATION_Q2_FLAGS].as.i32, fields[APPLICATION_Q2_POINT].as.address,
+        fields[APPLICATION_Q2_NORMAL].as.address, &saved, error)) return false;
+    *result = (qa_native_value){.type = QA_NATIVE_I32, .as.i32 = saved}; return true;
 }
 bool application_native_q2_combat_prepare(struct application_native_q2 *engine, qa_error *error)
 {
@@ -522,14 +601,18 @@ bool application_native_q2_combat_prepare(struct application_native_q2 *engine, 
     struct application_native_q2_combat *p = calloc(1, sizeof(*p));
     if (!p) return application_fail(error, QA_ERROR_MEMORY, "Preparing original native combat producer");
     p->engine = engine; engine->source_combat = p;
-    return application_q2_combat_profile_read(engine, &p->profile, error);
+    return application_q2_combat_profile_read(engine, &p->profile, error) &&
+        (!p->profile.kex || application_q2_kex_damage_prepare(&p->profile, &p->kex, error));
+}
+bool application_native_q2_combat_load(struct application_native_q2 *engine, qa_error *error)
+{
+    struct application_native_q2_combat *p = engine->source_combat;
+    return !p || application_q2_kex_damage_bind(p->kex, error);
 }
 bool application_native_q2_combat_activate(struct application_native_q2 *engine, qa_error *error)
 {
     struct application_native_q2_combat *p = engine->source_combat;
     if (!p || p->active) return true;
-    if (p->profile.kex) return application_fail(error, QA_ERROR_UNSUPPORTED,
-        "Native KEX combat requires its original inline armor and deferred accumulator observers");
     if (!application_q2_combat_profile_resolve(&p->profile, error)) return false;
     qa_native_address entry;
     if (!p->damage && (!qa_native_rva(native(p), p->profile.damage_entry, 1, &entry, error) ||
@@ -537,12 +620,13 @@ bool application_native_q2_combat_activate(struct application_native_q2 *engine,
             damage_entry, p, &p->damage, error))) return false;
     for (unsigned i = 0; i < 2; ++i) {
         combat_armor_hook *hook = &p->armor[i]; hook->owner = p; hook->channel = (qa_protection_channel)i;
-        if (hook->binding) continue;
+        if (hook->binding || (p->profile.kex && i == QA_PROTECTION_REGULAR)) continue;
         application_q2_call_operation operation = i == QA_PROTECTION_REGULAR ? APPLICATION_Q2_REGULAR_ARMOR : APPLICATION_Q2_POWER_ARMOR;
         if (!qa_native_rva(native(p), i == QA_PROTECTION_REGULAR ? p->profile.regular_entry : p->profile.power_entry, 1, &entry, error) ||
             !qa_native_observe_entry(native(p), entry, &p->profile.calls[operation].signature,
                 armor_entry, hook, &hook->binding, error)) return false;
     }
+    if (!application_q2_kex_damage_activate(p->kex, error)) return false;
     p->active = true; return true;
 }
 bool application_native_q2_combat_admit(struct application_native_q2 *engine, uint32_t slot,
@@ -607,15 +691,17 @@ void application_native_q2_combat_released(struct application_native_q2 *engine,
     struct application_native_q2_combat *p = engine->source_combat;
     combat_record *record = p ? record_for(p, actor) : NULL;
     if (record) record->bound = record->fuel_bound = record->prepared = false;
+    if (p) application_q2_kex_damage_released(p->kex, actor);
 }
 bool application_native_q2_combat_suspend(struct application_native_q2 *engine, qa_error *error)
 {
     struct application_native_q2_combat *p = engine->source_combat;
     if (!p) return true;
-    if (p->current || p->incoming) return application_fail(error, QA_ERROR_ARGUMENT, "Native combat suspension requires drained source damage");
+    if (p->current || p->incoming || p->deferred) return application_fail(error, QA_ERROR_ARGUMENT, "Native combat suspension requires drained source damage and reaction helpers");
     for (combat_record *record = p->records; record; record = record->next)
         if (!application_native_q2_combat_detach(engine, record->source.actor, error)) return false;
     p->active = false;
+    if (!application_q2_kex_damage_suspend(p->kex, error)) return false;
     combat_frame **frame_cursor = &p->retained;
     while (*frame_cursor) {
         combat_frame *frame = *frame_cursor;
@@ -640,6 +726,8 @@ bool application_native_q2_combat_close(struct application_native_q2 *engine, qa
     struct application_native_q2_combat *p = engine->source_combat;
     if (!p) return true;
     if (!application_native_q2_combat_suspend(engine, error)) return false;
+    if (!application_q2_kex_damage_close(p->kex, error)) return false;
+    p->kex = NULL;
     while (p->records) { combat_record *record = p->records; p->records = record->next; free(record); }
     application_q2_combat_profile_free(&p->profile); free(p); engine->source_combat = NULL; return true;
 }
@@ -649,7 +737,7 @@ bool application_native_q2_combat_binding(application_provider *provider, qa_act
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     struct application_native_q2_combat *p = engine ? engine->source_combat : NULL;
     if (!p || !out || !saved_serial || !provider->state.native.host ||
-        !application_native_q2_idle(provider) || p->active || p->current || p->incoming ||
+        !application_native_q2_idle(provider) || p->active || p->current || p->incoming || p->deferred ||
         application_provider_for(provider->application, actor, QA_ROLE_COMBAT, NULL) != provider)
         return application_fail(error, QA_ERROR_ARGUMENT, "Restored native combat descriptor requires its idle original module and suspended observers");
     qa_native_entity_table table; uint32_t source_slot = UINT32_MAX;
@@ -681,7 +769,7 @@ bool application_native_q2_combat_finish(application_provider *provider, qa_erro
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     struct application_native_q2_combat *p = engine ? engine->source_combat : NULL;
     if (!p) return true;
-    if (!application_native_q2_idle(provider) || !p->active || p->current || p->incoming)
+    if (!application_native_q2_idle(provider) || !p->active || p->current || p->incoming || p->deferred)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native combat finish requires its idle restored observer owner");
     for (combat_record *record = p->records; record; record = record->next) {
         if (!record->prepared) continue;
@@ -702,3 +790,56 @@ bool application_native_q2_combat_finish(application_provider *provider, qa_erro
         if (record->prepared) { record->prepared = false; record->fuel_bound = true; }
     return true;
 }
+
+static bool execute_deferred(void *opaque, qa_source_reaction_observer *observer, qa_error *error)
+{
+    combat_deferred *frame = opaque;
+    if (!application_q2_combat_actor_valid(&frame->record->source, error)) return false;
+    frame->observer = observer;
+    bool ok = frame->execute(frame->context, error);
+    frame->observer = NULL; return ok;
+}
+bool application_native_q2_combat_deferred(struct application_native_q2 *engine,
+    const qa_damage_request *request, const qa_damage_result *result,
+    qa_source_reaction_body execute, void *context, qa_error *error)
+{
+    struct application_native_q2_combat *p = engine ? engine->source_combat : NULL;
+    combat_record *record = p && request ? record_for(p, request->target) : NULL;
+    if (!p || !p->active || p->retained || !record || !execute ||
+        !qa_combat_primary_current(shared(p), record->source.actor, record->serial, record) ||
+        !application_q2_combat_actor_valid(&record->source, error))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native deferred reaction requires its actual active source primary");
+    qa_native_address pain, die;
+    if (!pointer_read(p, record->source.address + p->profile.pain, &pain, error) ||
+        !pointer_read(p, record->source.address + p->profile.die, &die, error) ||
+        !ensure_reaction(p, pain, APPLICATION_Q2_PAIN, error) ||
+        !ensure_reaction(p, die, APPLICATION_Q2_DEATH, error)) return false;
+    combat_deferred frame = {.previous = p->deferred, .owner = p, .record = record,
+        .parent_current = p->current, .execute = execute, .context = context, .request = request};
+    p->deferred = &frame; ++engine->calls;
+    bool ok = qa_combat_run_source_reaction(shared(p), request, result, execute_deferred, &frame, error);
+    --engine->calls; p->deferred = frame.previous; return ok;
+}
+bool application_native_q2_combat_capture(struct application_native_q2 *engine, qa_buffer *out, qa_error *error)
+{
+    struct application_native_q2_combat *p = engine->source_combat;
+    if (p && (p->current || p->incoming || p->retained || p->deferred))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native deferred capture requires drained damage frames");
+    return application_q2_kex_damage_capture(p ? p->kex : NULL, out, error);
+}
+bool application_native_q2_combat_restore_prepare(struct application_native_q2 *engine, qa_bytes bytes,
+    struct application_q2_kex_restore **out, qa_error *error)
+{
+    struct application_native_q2_combat *p = engine->source_combat;
+    if (p && (p->active || p->current || p->incoming || p->retained || p->damage || p->deferred))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native deferred restore requires suspended damage observers");
+    return application_q2_kex_damage_restore_prepare(p ? p->kex : NULL, bytes, out, error);
+}
+void application_native_q2_combat_restore_commit(struct application_native_q2 *engine,
+    struct application_q2_kex_restore *token)
+{
+    struct application_native_q2_combat *p = engine->source_combat;
+    application_q2_kex_damage_restore_commit(p ? p->kex : NULL, token);
+}
+void application_native_q2_combat_restore_abort(struct application_q2_kex_restore *token)
+{ application_q2_kex_damage_restore_abort(token); }

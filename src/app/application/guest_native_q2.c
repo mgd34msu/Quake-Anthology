@@ -127,8 +127,7 @@ bool application_construct_native_q2(qa_application *app, application_provider *
             provider->state.native.module, &engine->declaration, error)) return false;
     if (!application_native_q2_inventory_prepare(engine, error) ||
         !application_native_q2_attack_prepare(engine, error)) return false;
-    if (engine->profile == QA_NATIVE_Q2_GAME_API3 &&
-        !application_native_q2_combat_prepare(engine, error)) return false;
+    if (!application_native_q2_combat_prepare(engine, error)) return false;
     qa_console_dialect dialect = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_CONSOLE_Q2 : QA_CONSOLE_Q2_RERELEASE;
     engine->command_context = (qa_command_context){.owner = provider->owner,
         .origin = QA_COMMAND_SERVER, .dialect = dialect};
@@ -202,7 +201,7 @@ bool application_native_q2_activate(struct application_native_q2 *engine, qa_err
             provider->application, provider->owner, engine->profile, &engine->platform,
             &engine->application, &engine->application_context, error)) return false;
     qa_native_host_instance_options instance = {.declaration = engine->declaration,
-        .observe = engine->source_attack != NULL,
+        .observe = engine->source_attack != NULL || engine->source_combat != NULL,
         .declaration_digest = qa_native_declaration_digest(engine->declaration),
         .runner = provider->application->native_runner,
         .tick_rate = interval ? (uint32_t)(UINT64_C(1000000000) / interval) : 0,
@@ -266,6 +265,7 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
         free(engine->configstrings[i]); engine->configstrings[i] = NULL;
     }
     provider->application->physics->world_actor = engine->world_actor;
+    if (!application_native_q2_combat_load(engine, error)) return false;
     ++engine->calls;
     bool ok = true;
     if (!engine->initialized) {
@@ -273,8 +273,7 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
         if (ok) engine->initialized = true;
     }
     if (ok) ok = application_native_q2_attack_activate(engine, error);
-    if (ok && engine->profile == QA_NATIVE_Q2_GAME_API3)
-        ok = application_native_q2_combat_activate(engine, error);
+    if (ok) ok = application_native_q2_combat_activate(engine, error);
     if (ok) ok = qa_native_host_spawn_entities(provider->state.native.host,
         qa_strings_cstr(qa_session_strings(provider->application->session), name), copy,
         spawn ? qa_strings_cstr(qa_session_strings(provider->application->session), spawn) : "", error);
