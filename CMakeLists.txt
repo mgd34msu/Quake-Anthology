@@ -881,6 +881,7 @@ add_library(qa_application STATIC
     src/app/application/guest_projection.c
     src/app/application/guest_projection_profile.c
     src/app/application/guest_q3.c
+    src/app/application/guest_q3_save.c
     src/app/application/guest_q3_clients.c
     src/app/application/guest_q3_effects.c
     src/app/application/guest_q3_exports.c
