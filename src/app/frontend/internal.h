@@ -202,6 +202,7 @@ bool frontend_network_client_input(qa_frontend *, qa_input_command_builder *, qa
 bool frontend_network_create(qa_frontend *, qa_error *);
 bool frontend_network_destroy(qa_frontend *, qa_error *);
 bool frontend_network_pump(qa_frontend *, qa_error *);
+bool frontend_network_tick(qa_frontend *, uint64_t elapsed_ns, bool retiring_map, qa_error *);
 bool frontend_network_command(qa_frontend *, uint32_t, qa_actor_id, const qa_movement_command *, qa_error *);
 bool frontend_network_publish(qa_frontend *, qa_error *);
 bool frontend_network_world_change_ready(qa_frontend *, qa_error *);

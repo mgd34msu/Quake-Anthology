@@ -172,7 +172,8 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
             if (ok) ok = phase_end(profiler, controls(frontend, elapsed_ns, error), error);
         }
         if (ok && !retiring_map && qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING && !frontend_network_remote(frontend)) {
-            ok = qa_profiler_push(profiler, "application", error);
+            ok = frontend_network_tick(frontend, elapsed_ns, retiring_map, error) &&
+                qa_profiler_push(profiler, "application", error);
             if (ok) ok = phase_end(profiler, qa_application_advance(frontend->application, elapsed_ns, error), error);
         }
         if (ok) ok = frontend_network_publish(frontend, error);

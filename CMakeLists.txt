@@ -1018,6 +1018,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/native_q2.c
     src/app/frontend/native_q2_baseline.c
     src/app/frontend/network.c
+    src/app/frontend/network_nq.c
     src/app/frontend/options.c
     src/app/frontend/particle_events.c
     src/app/frontend/save_fields.c

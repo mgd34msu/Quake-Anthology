@@ -9,6 +9,7 @@
 #include "qa/network_services_save.h"
 #include "qa/network_downloads_save.h"
 #include "save_private.h"
+#include "network_nq.h"
 #include "../../network/service_save_fields.h"
 #include "qa/archive.h"
 #include "qa/bsp.h"
@@ -53,6 +54,7 @@ struct qa_frontend_network {
     uint64_t nonce;
     uint32_t rotation_random;
     qa_q3_server_admission *q3_admission;
+    frontend_nq_host *nq_host;
     frontend_q3_peer q3_peers[64];
     frontend_q3_pending q3_pending[32];
     size_t q3_pending_count;
@@ -109,6 +111,13 @@ static bool admit(void *context, const qa_net_connect *request, qa_error *error)
             return frontend_fail(error, QA_ERROR_UNSUPPORTED, "Q3 source admission needs a configured canonical player template");
         return qa_application_network_q3_source(n->frontend->application, actor, &slot, &product, error);
     }
+    if (n->nq_host && request->protocol.kind == QA_NET_NQ15) {
+        qa_actor_id actor; qa_actor_owner owner; uint32_t slot; qa_net_protocol_id protocol;
+        return qa_application_player_actor(n->frontend->application, 0, &actor) &&
+            qa_application_network_q1_source(n->frontend->application, actor, &owner, &slot, &protocol, error) &&
+            ((protocol.kind == QA_NET_NQ15 && !protocol.flags && !protocol.revision) ||
+             frontend_fail(error, QA_ERROR_UNSUPPORTED, "NetQuake admission changes its actual classic source dialect"));
+    }
     return frontend_fail(error, QA_ERROR_UNSUPPORTED, "remote signon/full-state producer is not bound to this frontend");
 }
 static bool controlled(void *context, qa_net_client_id client, qa_net_seat_id seat,
@@ -142,6 +151,7 @@ static void disconnected(void *context, qa_net_client_id id, const char *reason)
     qa_error error = {0};
     if (client && !qa_application_network_detach(n->frontend->application, client, &error))
         frontend_print(n->frontend, error.message);
+    frontend_nq_disconnected(n->nq_host, id);
     for (size_t i = 0; i < 64; ++i) if (n->q3_peers[i].occupied && qa_net_client_id_equal(n->q3_peers[i].client, id)) {
         if (n->q3_admission && client) qa_q3_server_admission_disconnect(n->q3_admission, &client->endpoint);
         n->q3_peers[i] = (frontend_q3_peer){0};
@@ -151,6 +161,11 @@ static bool connectionless(void *context, qa_network_runtime *runtime,
     const qa_net_datagram *packet, qa_error *error)
 {
     qa_frontend_network *n = context; (void)runtime;
+    if (n->nq_host && !qa_server_admin_rejects(n->admin, &packet->from)) {
+        bool recognized;
+        if (!frontend_nq_receive(n->nq_host, packet, &recognized, error)) return false;
+        if (recognized) return true;
+    }
     if (n->q3_client_requested) {
         qa_q3_connectionless source; qa_q3_admission_result result;
         if (!qa_q3_client_admission_receive(&n->q3_client_admission, &packet->from, packet->payload,
@@ -935,7 +950,8 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
 {
     if (f->network) return true;
     if ((f->options.network_connect && f->options.network_protocol.kind != QA_NET_Q3_68) ||
-        (f->options.network_host && f->options.network_protocol.kind != QA_NET_Q3_68))
+        (f->options.network_host && f->options.network_protocol.kind != QA_NET_Q3_68 &&
+         (f->options.network_protocol.kind != QA_NET_NQ15 || f->options.network_protocol.flags || f->options.network_protocol.revision)))
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "selected connection requires its complete original/unified signon and prediction producer");
     qa_frontend_network *n = calloc(1, sizeof(*n));
     if (!n) return frontend_fail(error, QA_ERROR_MEMORY, "allocating network frontend owner");
@@ -967,26 +983,37 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
         if (udp.bind.kind != QA_NET_IPV4 && udp.bind.kind != QA_NET_IPV6)
             { frontend_fail(error, QA_ERROR_UNSUPPORTED, "hosting transport requires the admitted UDP address family"); goto failed; }
         udp.ipv6_only = udp.bind.kind == QA_NET_IPV6; udp.broadcast = udp.bind.kind == QA_NET_IPV4;
-        qa_q3_admission_hooks hooks = {.context = n, .random = random_rotation, .send = send_address,
-            .admit = q3_admit, .query = q3_query};
-        if (!qa_q3_server_admission_create(&hooks, &n->q3_admission, error)) goto failed;
-        n->q3_server_id = 1; n->q3_checksum_feed = (int32_t)random_rotation(n);
-        if (!q3_prepare(n, error)) goto failed;
-        qa_actor_id actor; qa_q3_server_world world;
-        qa_q3_gamestate *signon = malloc(sizeof(*signon));
-        if (!signon) { frontend_fail(error, QA_ERROR_MEMORY, "preparing Q3 host signon"); goto failed; }
-        bool ok = qa_application_player_actor(f->application, 0, &actor) &&
-            qa_application_network_q3_signon(f->application, actor, n->q3_server_id,
-                n->q3_checksum_feed, signon, &world, error);
-        free(signon); if (!ok) goto failed;
+        if (f->options.network_protocol.kind == QA_NET_Q3_68) {
+            qa_q3_admission_hooks hooks = {.context = n, .random = random_rotation, .send = send_address,
+                .admit = q3_admit, .query = q3_query};
+            if (!qa_q3_server_admission_create(&hooks, &n->q3_admission, error)) goto failed;
+            n->q3_server_id = 1; n->q3_checksum_feed = (int32_t)random_rotation(n);
+            if (!q3_prepare(n, error)) goto failed;
+            qa_actor_id actor; qa_q3_server_world world;
+            qa_q3_gamestate *signon = malloc(sizeof(*signon));
+            if (!signon) { frontend_fail(error, QA_ERROR_MEMORY, "preparing Q3 host signon"); goto failed; }
+            bool ok = qa_application_player_actor(f->application, 0, &actor) &&
+                qa_application_network_q3_signon(f->application, actor, n->q3_server_id,
+                    n->q3_checksum_feed, signon, &world, error);
+            free(signon); if (!ok) goto failed;
+        } else {
+            qa_buffer identity = {0};
+            if (!qa_launch_identity_encode(qa_application_launch(f->application),
+                qa_session_actors(qa_application_session(f->application)), &identity, error)) goto failed;
+            qa_sha256((qa_bytes){identity.data, identity.size}, &n->composition); qa_buffer_free(&identity);
+        }
     }
     qa_net_transport *transport = NULL;
     qa_network_options options = {.owner = NETWORK_OWNER, .clients = 64, .packets_per_pump = 256,
-        .timeout_ns = UINT64_C(30000000000), .hooks = {.context = n, .admit = admit, .controlled = controlled,
+        .timeout_ns = f->options.network_host && f->options.network_protocol.kind == QA_NET_NQ15 ?
+            UINT64_C(65000000000) : UINT64_C(30000000000),
+        .hooks = {.context = n, .admit = admit, .controlled = controlled,
         .command = remote_command, .disconnected = disconnected, .connectionless = connectionless}};
     options.hooks.reconnect = reconnect;
     if (!qa_net_udp_open(&udp, &transport, error)) goto failed;
     if (!qa_network_create(transport, &options, &n->runtime, error)) { qa_net_transport_close(transport); goto failed; }
+    if (f->options.network_host && f->options.network_protocol.kind == QA_NET_NQ15 &&
+        !frontend_nq_create(f, n->runtime, &n->composition, &n->nq_host, error)) goto failed;
     qa_browser_hooks browser = {.context = n, .send = send_address, .local = local_address};
     qa_admin_options admin = {.dialect = qa_cvars_dialect(qa_application_cvars(f->application)),
         .filters = 1024, .rate_entries = 1024, .burst = 10, .rate_interval_ns = UINT64_C(1000000000),
@@ -1386,6 +1413,8 @@ bool frontend_network_checkpoint(qa_frontend *f, qa_buffer *connections, qa_buff
     if (!f || !f->application || !connections || !prediction || connections == prediction ||
         !frontend_network_world_change_ready(f, error)) return false;
     qa_frontend_network *n = f->network; bool installed = n != NULL;
+    if (n && n->nq_host)
+        return frontend_fail(error, QA_ERROR_UNSUPPORTED, "NetQuake frontend continuation requires its actual retained source host owner");
     if (n && !network_runtime_valid(n, true, error)) return false;
     qa_source_save_io io = {0}, history = {0}; qa_buffer runtime = {0}, browser = {0}, admin = {0}, commands = {0}, jobs = {0}, admission = {0};
     bool ok = qa_source_save_writer(&io, qa_application_session(f->application), error) && network_header(&io, &installed) &&
@@ -1590,7 +1619,7 @@ void frontend_network_transport_exchange(qa_frontend *active, qa_frontend *candi
 bool frontend_network_world_change_ready(qa_frontend *f, qa_error *error)
 {
     qa_frontend_network *n = f->network;
-    return !n || (!n->busy && qa_network_callbacks_idle(n->runtime)) ||
+    return !n || (!n->busy && frontend_nq_idle(n->nq_host) && qa_network_callbacks_idle(n->runtime)) ||
         frontend_fail(error, QA_ERROR_ARGUMENT, "network callbacks must return before world publication");
 }
 bool frontend_network_destroy(qa_frontend *f, qa_error *error)
@@ -1608,6 +1637,7 @@ bool frontend_network_destroy(qa_frontend *f, qa_error *error)
     qa_cvars_remove_owner(qa_application_cvars(f->application), NETWORK_OWNER);
     qa_downloads_destroy(n->downloads); qa_server_browser_destroy(n->browser); qa_server_admin_destroy(n->admin);
     qa_network_destroy(n->runtime); qa_q3_server_admission_destroy(n->q3_admission);
+    frontend_nq_destroy(n->nq_host);
     qa_fs_root_close(n->preferences); qa_fs_root_close(n->content);
     free(n); f->network = NULL; return true;
 }
@@ -1615,12 +1645,16 @@ bool frontend_network_pump(qa_frontend *f, qa_error *error)
 {
     qa_frontend_network *n = f->network; if (!n) return true;
     if (n->downloads && (!qa_downloads_pump(n->downloads, error) || !frontend_tools_sync(f, error))) return false;
-    if (!q3_prepare(n, error)) return false;
+    if (!q3_prepare(n, error) || !frontend_nq_prepare(n->nq_host, error)) return false;
     ++n->busy;
     qa_server_browser_expire(n->browser, f->time_ns);
     bool ok = qa_network_pump(n->runtime, f->time_ns, error) && qa_server_admin_tick(n->admin, f->time_ns, false, error);
     --n->busy;
-    return ok && (!n->q3_admission || q3_drain(n, error)) && client_drain(n, error);
+    return ok && (!n->q3_admission || q3_drain(n, error)) && client_drain(n, error) && frontend_nq_pump(n->nq_host, error);
+}
+bool frontend_network_tick(qa_frontend *f, uint64_t elapsed_ns, bool retiring_map, qa_error *error)
+{
+    return !f || !f->network || frontend_nq_tick(f->network->nq_host, elapsed_ns, retiring_map, error);
 }
 bool frontend_network_command(qa_frontend *f, uint32_t seat, qa_actor_id actor,
     const qa_movement_command *movement, qa_error *error)
@@ -1651,6 +1685,7 @@ bool frontend_network_publish(qa_frontend *f, qa_error *error)
 {
     if (!f->network) return true;
     qa_frontend_network *n = f->network;
+    if (n->nq_host) return frontend_nq_publish(n->nq_host, error);
     if (n->q3_client_requested) return client_drain(n, error);
     if (n->q3_admission) {
         if (!q3_prepare(n, error)) return false;

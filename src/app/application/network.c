@@ -91,6 +91,11 @@ static bool q1_wire_scalar(struct application_qc_state *engine, int32_t referenc
         return application_fail(error, QA_ERROR_FORMAT, "Q1 source field exceeds its admitted original wire range");
     *out = (uint32_t)value; return true;
 }
+qa_cvars *qa_application_network_q1_cvars(qa_application *app, qa_actor_id player, qa_error *error)
+{
+    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    return engine ? engine->cvars : NULL;
+}
 static bool q1_wire_vector(struct application_qc_state *engine, int32_t reference,
     const char *name, float out[3], qa_error *error)
 {
@@ -352,6 +357,7 @@ bool qa_application_network_q1_status(qa_application *app, qa_actor_id player,
             !application_qc_float(engine, reference, "frags", &frags, error) ||
             !q1_wire_bits(frags, &bits, error)) return false;
         value.frags = bits <= INT32_MAX ? (int32_t)bits : (int32_t)((int64_t)bits - INT64_C(4294967296));
+        value.source_frags = frags;
         if ((value.colors >> 4) > 13 || (value.colors & 15u) > 13)
             return application_fail(error, QA_ERROR_FORMAT, "Q1 source client colors exceed the original palette");
         values[extent++] = value;
