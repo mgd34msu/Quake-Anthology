@@ -195,9 +195,13 @@ static bool explode(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return !entity || q1_schedule(g, entity, .1, Q1_THINK_SPRITE, error);
 }
 static bool rubble(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    qa_actor_id parent = entity->id;
     qa_body_state source;
-    if (!qa_world_body_read(g->services.world, entity->id, &source, error))
+    if (!qa_world_body_read(g->services.world, parent, &source, error))
         return false;
+    entity = q1_entity(g, parent);
+    if (!entity)
+        return true;
     double count = fmax(1, entity->count);
     int32_t variant = entity->map->style;
     for (size_t i = 0; (double)i < count; ++i) {
@@ -205,10 +209,12 @@ static bool rubble(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         q1_actor *piece;
         if (!q1_create(g, "hip_rubble", Q1_MAP, (qa_actor_id){0}, &piece, error))
             return false;
-        if (!q1_map_allocate(g, piece, error)) {
-            (void)q1_remove(g, piece, NULL);
-            return false;
-        }
+        qa_actor_id child = piece->id;
+        entity = q1_entity(g, parent);
+        if (!entity)
+            goto retired;
+        if (!q1_map_allocate(g, piece, error))
+            goto failed;
         piece->map->kind = Q1_MAP_RUBBLE;
         piece->map->touch_enabled = true;
         piece->physics.motion = QA_PHYSICS_BOUNCE;
@@ -227,12 +233,25 @@ static bool rubble(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                       : model == 2 ? "progs/rubble3.mdl"
                                    : "progs/rubble2.mdl",
                       error) ||
-            !qa_world_body_write(g->services.world, piece->id, &body, error) ||
-            !q1_map_schedule(g, piece, 13 + q1_random(g) * 10, Q1_MAP_REMOVE, error) ||
+            !qa_world_body_write(g->services.world, child, &body, error))
+            goto failed;
+        piece = q1_entity(g, child);
+        if (!piece || !q1_entity(g, parent))
+            goto retired;
+        if (!q1_map_schedule(g, piece, 13 + q1_random(g) * 10, Q1_MAP_REMOVE, error) ||
             !q1_link(g, piece, error))
-            return false;
-        if (!q1_alive(g, entity->id))
-            return true;
+            goto failed;
+        if (!q1_entity(g, child) || !q1_entity(g, parent))
+            goto retired;
+        continue;
+failed:
+        if (qa_actors_get(qa_session_actors(g->services.session), child))
+            (void)qa_session_release(g->services.session, child, NULL);
+        return false;
+retired:
+        if (qa_actors_get(qa_session_actors(g->services.session), child))
+            (void)qa_session_release(g->services.session, child, NULL);
+        return true;
     }
     return true;
 }
