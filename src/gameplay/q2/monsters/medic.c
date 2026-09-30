@@ -732,15 +732,35 @@ bool q2m_medic_callback(q2m_context *c, const char *name, bool *handled,
                (rerelease(c) ? q2_rerelease_float(c->game, 0, 1) : q2m_random(c->game)) > .95 ||
                q2m_set_move(c, "medic_move_attackHyperBlaster", false, error);
     }
-    if (!strcmp(name, "medic_quick_attack") && rerelease(c)) {
+  if (!strcmp(name, "medic_quick_attack") && rerelease(c)) {
         if (q2_rerelease_float(c->game, 0, 1) >= .5f)
             return true;
         if (!q2m_set_move(c, "medic_move_attackHyperBlaster", false, error))
             return false;
         if (q2m_alive(c))
             c->monster->next_frame = 192;
-        return true;
-    }
+    return true;
+  }
+  if (!strcmp(name, "medic_shrink") && rerelease(c)) {
+    if (!qa_world_body_read(c->game->services.world, c->actor->id, &c->body, error))
+      return false;
+    if (!q2m_alive(c))
+      return true;
+    c->body.bounds.maxs.z = -2;
+    c->actor->physics.solid = QA_PHYSICS_CORPSE;
+    if (!q2m_write_body(c, false, error))
+      return false;
+    if (!q2m_alive(c))
+      return true;
+    qa_actor_collision collision = {.family = QA_COLLISION_Q2,
+                                     .shape = QA_SHAPE_BOX,
+                                     .contents = (int32_t)UINT32_C(0x04000000),
+                                     .role = QA_COLLISION_SOLID,
+                                     .dead_monster = true};
+    if (!qa_world_set_collision(c->game->services.world, c->actor->id, &collision, error))
+      return false;
+    return !q2m_alive(c) || q2m_link(c, error);
+  }
     bool run = !strcmp(name, "medic_run"), search = !strcmp(name, "medic_search");
     if (run || search || !strcmp(name, "medic_idle")) {
         if (run && (rerelease(c) || c->game->options.product != QA_Q2_XATRIX))

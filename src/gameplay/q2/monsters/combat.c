@@ -2994,6 +2994,30 @@ bool q2m_die(q2m_context *context, qa_error *error) {
   if (monster->dead)
     return true;
 
+  if (species == Q2M_MEDIC || species == Q2M_MEDIC_COMMANDER) {
+    bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+    bool commander = (rerelease || context->game->options.product == QA_Q2_ROGUE ||
+                      species == Q2M_MEDIC_COMMANDER) &&
+                     context->combat.mass != 400;
+    if (!q2m_sound(context, commander ? "medic_commander/meddeth.wav"
+                                     : "medic/meddeth1.wav", 2, 1, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    monster->dead = true;
+    monster->touch_active = false;
+    context->actor->physics.flags |= QA_PHYSICS_DEAD;
+    if (!q2m_damageable(context, true, error))
+      return false;
+    if (!q2m_alive(context))
+      return true;
+    if (!q2m_emit(context, QA_BUILTIN_DEATH, NULL, 0, context->body.origin,
+                  context->body.origin, monster->pending_damage, error))
+      return false;
+    return !q2m_alive(context) ||
+           q2m_set_move(context, "medic_move_death", true, error);
+  }
+
   bool damageable_corpse = species != Q2M_SUPERTANK && species != Q2M_BOSS5 &&
                            species != Q2M_BOSS2 && species != Q2M_CARRIER &&
                            species != Q2M_JORG && species != Q2M_WIDOW &&
