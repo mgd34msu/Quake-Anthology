@@ -14,9 +14,10 @@ uint64_t q2m_after(uint64_t now, double seconds) {
   if (!(seconds > 0.0))
     return now;
   long double interval = seconds * (long double)Q2M_SECOND;
-  if (interval >= (long double)(UINT64_MAX - now))
+  long double rounded = floorl(interval + 0.5L);
+  if (rounded >= (long double)(UINT64_MAX - now))
     return UINT64_MAX;
-  return now + (uint64_t)llroundl(interval);
+  return now + (uint64_t)rounded;
 }
 
 bool q2m_alive(const q2m_context *context) {
@@ -737,7 +738,7 @@ bool q2_monster_dodge(qa_q2_game *game, qa_actor_id target,
   return true;
 }
 
-bool qa_q2_monster_action(qa_q2_game *game, qa_actor_id id,
+static bool monster_action(qa_q2_game *game, qa_actor_id id,
                           qa_q2_monster_action_kind action, qa_actor_id other,
                           float value, qa_error *error) {
   if (game == NULL || id.slot >= game->capacity ||
@@ -786,6 +787,27 @@ bool qa_q2_monster_action(qa_q2_game *game, qa_actor_id id,
   }
   qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Unknown Q2 monster action");
   return false;
+}
+
+typedef struct monster_action_call {
+  qa_q2_game *game;
+  qa_q2_monster_action_kind action;
+  qa_actor_id other;
+  float value;
+} monster_action_call;
+
+static bool run_monster_action(void *context, qa_actor_id id, qa_error *error) {
+  const monster_action_call *call = context;
+  return monster_action(call->game, id, call->action, call->other, call->value, error);
+}
+
+bool qa_q2_monster_action(qa_q2_game *game, qa_actor_id id,
+                          qa_q2_monster_action_kind action, qa_actor_id other,
+                          float value, qa_error *error) {
+  if (!game || !q2_actor_live(game, id))
+    return monster_action(game, id, action, other, value, error);
+  monster_action_call call = {.game = game, .action = action, .other = other, .value = value};
+  return qa_q2_run_actor(game, id, run_monster_action, &call, error);
 }
 
 static bool public_monster_context(qa_q2_game *game, qa_actor_id id,
@@ -1206,7 +1228,7 @@ static bool initialize_body(qa_q2_game *game, q2_actor *actor,
   return true;
 }
 
-static bool set_power_cells(q2m_context *context, qa_power_kind kind, float cells,
+bool q2m_set_power_cells(q2m_context *context, qa_power_kind kind, float cells,
                             qa_error *error) {
   qa_q2_game *game = context->game;
   qa_actor_id id = context->actor->id;
@@ -1259,6 +1281,14 @@ static bool initialize_combat(qa_q2_game *game, q2_actor *actor,
     combat.armor.powered.kind = QA_POWER_SHIELD;
     combat.armor.powered.cells =
         monster->definition->flags & Q2M_BOSS ? 400.0f : 200.0f;
+  }
+  if (monster->definition->species == Q2M_WIDOW ||
+      monster->definition->species == Q2M_WIDOW2) {
+    combat.armor.powered = (qa_power_armor){0};
+    if (game->options.skill == 3)
+      combat.armor.powered = (qa_power_armor){
+          .kind = QA_POWER_SHIELD,
+          .cells = monster->definition->species == Q2M_WIDOW ? 500.0f : 750.0f};
   }
   if (qa_combat_storage_serial(game->services.combat, actor->id)) {
     if (!qa_combat_set_health(game->services.combat, actor->id, combat.health, error))
@@ -1538,6 +1568,16 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
     return false;
   }
   monster->initialized = true;
+  if (definition->species == Q2M_STALKER && (monster->spawnflags & 8u)) {
+    actor->physics.gravity_direction.z = 1;
+    context.body.angles.z = 180;
+    if (!q2m_write_body(&context, true, error))
+      return false;
+    if (!q2m_alive(&context))
+      return true;
+  }
+  if (definition->species == Q2M_WIDOW)
+    game->widow_damage_multiplier = 1;
   if (!q2m_summon_initialize(&context, error)) {
     if (q2m_alive(&context)) {
       actor->monster = NULL;
@@ -1551,7 +1591,7 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   monster->initial_power_armor = context.combat.armor.powered.kind;
   monster->max_power_armor = context.combat.armor.powered.cells;
   if (monster->initial_power_armor != QA_POWER_NONE) {
-    if (!set_power_cells(&context, monster->initial_power_armor, monster->max_power_armor, error))
+    if (!q2m_set_power_cells(&context, monster->initial_power_armor, monster->max_power_armor, error))
       return false;
     if (!q2m_alive(&context))
       return true;
@@ -1599,7 +1639,7 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
     if (!qa_combat_set_armor(game->services.combat, id, &armor, error) ||
         !q2m_alive(&context))
       return !q2m_alive(&context);
-    if (!set_power_cells(&context, monster->initial_power_armor, monster->max_power_armor, error))
+    if (!q2m_set_power_cells(&context, monster->initial_power_armor, monster->max_power_armor, error))
       return false;
     if (!q2m_alive(&context))
       return true;
@@ -1867,6 +1907,7 @@ bool q2_monster_tick(qa_q2_game *game, q2_actor *actor, qa_error *error) {
       .game = game, .actor = actor, .monster = actor->monster};
   if (!q2m_refresh(&context, error))
     return false;
+  q2m_widow_power_think(&context);
   bool handled;
   if (!q2m_lifecycle_tick(&context, &handled, error))
     return false;
@@ -1883,6 +1924,12 @@ bool q2_monster_tick(qa_q2_game *game, q2_actor *actor, qa_error *error) {
     return false;
   if (!q2m_alive(&context))
     return true;
+  if (context.monster->definition->species == Q2M_WIDOW2 &&
+      context.monster->death_ns != 0) {
+    if (game->now_ns < context.monster->death_ns)
+      return true;
+    return q2m_widow_explode(&context, error);
+  }
   if (!q2m_boss_explosion_tick(&context, error))
     return false;
   if (!q2m_alive(&context) || actor->projectile.kind != Q2_PROJECTILE_NONE ||

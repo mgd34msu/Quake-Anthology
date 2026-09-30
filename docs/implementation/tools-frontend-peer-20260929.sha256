@@ -1,0 +1,7 @@
+0739b8e694375b408d685fd97ffe0bd9c0b1329e8cfd401863f5ee1de411b8ab  src/app/frontend/frame.c
+86a3c628fb907bd39d1cab7bfb2ffa61aad9ad2b4d7323c9266f2055336f6db2  src/app/frontend/lifetime.c
+12e2664d572547ea8a0295ede3e4389c994d0bdf8164bbd9141fe712483ff3d4  src/app/frontend/seats.c
+7db4ca3f5a13503beccfbc22fb36048c99e59a2300382995a21cfabbb64135ba  src/app/frontend/source.c
+3e043fa2df761317caa70278ca385dc456ff129db6c5ffc2ed98c46ace3d5938  src/console/seat.c
+60eb968b982bf8ad302b41d1a0338a5a5788603ffb5fddfb701ae57c7cf8e972  src/input/seat.c
+9ae8809970b79cf98dde9d72102da16db24425352de85be00d0e03b817518554  docs/implementation/tools-frontend-peer-20260929.md

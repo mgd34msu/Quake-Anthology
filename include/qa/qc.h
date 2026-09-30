@@ -319,6 +319,13 @@ typedef struct qa_qc_host {
     qa_qc_unknown_builtin_fn unknown_builtin;
     uint32_t (*random_u32)(void *context);
     bool (*server_active)(void *context);
+    /* Optional selected movement authority. Called as a pure ownership lookup;
+     * it must not execute guest code or alter the actor registry. When absent,
+     * owned actors and this host's execution actors retain legacy authority. */
+    bool (*may_move)(void *context, qa_actor_id actor);
+    /* Declared component fields are projected by prepare_entity instead of
+     * the implicit original body-field projection on borrowed actors. */
+    bool declared_projection;
     qa_qc_entity_access_fn prepare_entity;
     bool (*checkpoint)(void *context, qa_buffer *out, qa_error *error);
     bool (*restore)(void *context, qa_bytes state, qa_error *error);
@@ -371,6 +378,9 @@ void qa_qc_actor_released(qa_qc_instance *instance, qa_actor_record released);
 /* Reacquire OWNED actors from the registry's owner/source map after restore or
  * travel. Checkpoints restore borrowed identities from saved actor IDs. */
 bool qa_qc_rebind_sources(qa_qc_instance *instance, qa_error *error);
+/* Host map admission uses the same allocator/removal rules as guest builtins. */
+bool qa_qc_spawn_entity(qa_qc_instance *, int32_t *reference, qa_error *);
+bool qa_qc_remove_entity(qa_qc_instance *, int32_t reference, qa_error *);
 
 bool qa_qc_execute(qa_qc_instance *instance, uint32_t function,
                    uint32_t argument_count, qa_error *error);
@@ -426,6 +436,10 @@ bool qa_qc_set_global_float(qa_qc_instance *, uint32_t word,
                             float value, qa_error *error);
 bool qa_qc_set_global_vector(qa_qc_instance *, uint32_t word,
                              qa_vec3 value, qa_error *error);
+/* Host ABI staging/restoration, without guest-write observation. The words
+ * remain checked against the program layout; checkpoint callbacks cannot use it. */
+bool qa_qc_stage_globals(qa_qc_instance *, uint32_t word, const uint32_t *,
+                          uint32_t count, qa_error *);
 bool qa_qc_entity_int(qa_qc_instance *, int32_t reference, uint32_t word,
                       int32_t *out, qa_error *error);
 bool qa_qc_entity_float(qa_qc_instance *, int32_t reference, uint32_t word,

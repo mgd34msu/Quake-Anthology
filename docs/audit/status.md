@@ -1,5 +1,17 @@
 # Open recovery work
 
+## Resumption review, 2026-09-29
+
+The user's first bounded existing-code review/fix pass is complete. Seven GPT-6.1 Sol high-effort workers plus the coordinator corrected 32 reported defect groups across 52 source/header/build files. Every correction packet received independent source review; the [current review report](review-20260929.md) links the findings, peer evidence, exact hashes and uncovered files. No engine build or runtime check was run. This does not complete the broader AUDIT or BASELINE.
+
+The current ledger plan is revision 7, acknowledged by the coordinator; the review progress report was accepted at cursor 809. The original feature criteria remain unchanged. The fresh aggregate Jev comparison failed with `getaddrinfo EAI_AGAIN api.typesafe.ai`, so there is no new task acceptance result. Local Git staging also failed because `.git` is read-only in this session. Neither limitation was bypassed or represented as a pass.
+
+The per-task rows below preserve the earlier recovery evidence and open original obligations. They are not a fresh completion inventory of every later committed or uncommitted implementation. This bounded pass does not supersede those original requirements.
+
+## Original recovery obligations
+
+Final resumption handoff was accepted at ledger cursor 811, plan revision 7; AUDIT remains `in_progress`. The stalled-work progress check passed, independently of the unavailable fresh task comparison. All seven current review workers have finished.
+
 This is the nonterminal recovery register for the original B00-B34 scopes. It belongs to the active AUDIT work record `w_357ddd74810a4aa8a3bb84fdd7095fb8`; independent review contributions are recorded under that work. Original goals and criteria remain in `../dependencies.json`. No scope is replaced by this register.
 
 The ledger API refuses both updates to terminal work and new claims against terminal tasks. B00-B07 and B09 therefore retain historical reported-complete records, **not accepted completion**. Their acceptance remains open here and behind AUDIT's direct BASELINE prerequisite. This explicitly tracks the unresolved original obligations without rewriting ledger history or treating those old reports as passes.
@@ -44,7 +56,7 @@ The ledger API refuses both updates to terminal work and new claims against term
 
 An individual source correction does not close its parent task. A task needs sufficient source evidence against its original criteria, independent re-review of its corrections, and the actual Jev judgment. P01 runtime qualification still follows the complete baseline. No project build or executable was run for this register.
 
-Explicit installed Jev progress was recorded at cursor 621, AUDIT revision 12,
+The earlier installed Jev progress snapshot was recorded at cursor 621, AUDIT revision 12,
 against commit `437e22196025b59040d1fab05f304d9c00ce6ea6`; B31 work is revision 3.
 The incidental stalled-work check passed; that is not task acceptance. Automatic
 client hook delivery remains unverified. Direct task judgments and their bounded

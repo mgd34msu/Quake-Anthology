@@ -34,6 +34,7 @@ endif()
 find_package(ZLIB REQUIRED)
 find_package(PNG REQUIRED)
 find_package(JPEG REQUIRED)
+find_package(CURL 7.85 REQUIRED)
 find_package(ICU REQUIRED COMPONENTS uc)
 find_package(Freetype REQUIRED)
 find_package(Threads REQUIRED)
@@ -50,6 +51,7 @@ add_library(qa_core STATIC
     src/core/json_writer.c
     src/core/strings.c
     src/core/text.c
+    src/core/tokenizer.c
     src/core/normals.c)
 target_include_directories(qa_core PUBLIC include)
 target_link_libraries(qa_core PUBLIC qa_data PRIVATE ICU::uc)
@@ -104,16 +106,17 @@ target_link_libraries(qa_navigation_assets PUBLIC qa_core)
 add_library(qa_world STATIC
     src/world/actors.c
     src/world/body.c
-    src/world/spatial.c
+    src/world/checkpoint.c
     src/world/collision/contents.c
     src/world/collision/geometry.c
-    src/world/collision/world.c
     src/world/collision/q1.c
     src/world/collision/q1/geometry.c
     src/world/collision/q2.c
     src/world/collision/q3.c
     src/world/collision/q3/model.c
-    src/world/collision/q3/patch.c)
+    src/world/collision/q3/patch.c
+    src/world/collision/world.c
+    src/world/spatial.c)
 target_link_libraries(qa_world PUBLIC qa_content)
 
 add_library(qa_session STATIC src/session/session.c src/session/scheduler.c)
@@ -208,15 +211,23 @@ add_library(qa_builtin STATIC
 target_link_libraries(qa_builtin PUBLIC qa_session qa_gameplay qa_movement)
 
 add_library(qa_game_q1 STATIC
+    src/gameplay/q1/addon_monsters.c
+    src/gameplay/q1/armagon.c
     src/gameplay/q1/boss_children.c
     src/gameplay/q1/boss_final.c
     src/gameplay/q1/boss_oldnew.c
     src/gameplay/q1/boss_projectiles.c
     src/gameplay/q1/boss_small.c
-    src/gameplay/q1/addon_monsters.c
-    src/gameplay/q1/armagon.c
     src/gameplay/q1/character.c
     src/gameplay/q1/charm.c
+    src/gameplay/q1/checkpoint/codec.c
+    src/gameplay/q1/checkpoint/entity.c
+    src/gameplay/q1/checkpoint/io.c
+    src/gameplay/q1/checkpoint/map.c
+    src/gameplay/q1/checkpoint/monster.c
+    src/gameplay/q1/checkpoint/player.c
+    src/gameplay/q1/checkpoint/runtime.c
+    src/gameplay/q1/checkpoint/shared.c
     src/gameplay/q1/clone.c
     src/gameplay/q1/demodog.c
     src/gameplay/q1/dragon.c
@@ -235,21 +246,32 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/horde.c
     src/gameplay/q1/infected.c
     src/gameplay/q1/lavaman.c
-    src/gameplay/q1/maps/bosses.c
+    src/gameplay/q1/maps/addon_brushes.c
+    src/gameplay/q1/maps/addon_campaign.c
+    src/gameplay/q1/maps/addon_controls.c
+    src/gameplay/q1/maps/addon_effects.c
+    src/gameplay/q1/maps/addon_fields.c
+    src/gameplay/q1/maps/addon_horde.c
     src/gameplay/q1/maps/addon_misc.c
+    src/gameplay/q1/maps/addon_triggers.c
+    src/gameplay/q1/maps/addon_visuals.c
+    src/gameplay/q1/maps/bosses.c
     src/gameplay/q1/maps/hipnotic_brushes.c
+    src/gameplay/q1/maps/hipnotic_hazards.c
     src/gameplay/q1/maps/hipnotic_misc.c
     src/gameplay/q1/maps/hipnotic_particles.c
+    src/gameplay/q1/maps/hipnotic_rotation.c
     src/gameplay/q1/maps/hipnotic_spawn.c
     src/gameplay/q1/maps/hipnotic_triggers.c
     src/gameplay/q1/maps/movers.c
+    src/gameplay/q1/maps/navigation.c
     src/gameplay/q1/maps/observer.c
     src/gameplay/q1/maps/paths.c
+    src/gameplay/q1/maps/rogue_ending.c
+    src/gameplay/q1/maps/rogue_hazards.c
     src/gameplay/q1/maps/rogue_pendulum.c
     src/gameplay/q1/maps/rogue_plats.c
     src/gameplay/q1/maps/rogue_time.c
-    src/gameplay/q1/maps/rogue_ending.c
-    src/gameplay/q1/maps/rogue_hazards.c
     src/gameplay/q1/maps/runtime.c
     src/gameplay/q1/maps/special.c
     src/gameplay/q1/maps/trains.c
@@ -261,8 +283,8 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/monster_actions.c
     src/gameplay/q1/monster_lifecycle.c
     src/gameplay/q1/monsters.c
-    src/gameplay/q1/obituary.c
     src/gameplay/q1/morph.c
+    src/gameplay/q1/obituary.c
     src/gameplay/q1/overlord.c
     src/gameplay/q1/pickups.c
     src/gameplay/q1/powers.c
@@ -293,6 +315,7 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/entities/lights.c
     src/gameplay/q2/entities/motion.c
     src/gameplay/q2/entities/movers.c
+    src/gameplay/q2/entities/navigation.c
     src/gameplay/q2/entities/q64.c
     src/gameplay/q2/entities/rerelease.c
     src/gameplay/q2/entities/routes.c
@@ -315,6 +338,7 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/items/drop.c
     src/gameplay/q2/items/grants.c
     src/gameplay/q2/items/lifecycle.c
+    src/gameplay/q2/items/observation.c
     src/gameplay/q2/items/powers.c
     src/gameplay/q2/items/random.c
     src/gameplay/q2/items/touch.c
@@ -331,12 +355,15 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/monsters/corpse.c
     src/gameplay/q2/monsters/lifecycle.c
     src/gameplay/q2/monsters/medic.c
+    src/gameplay/q2/monsters/melee.c
     src/gameplay/q2/monsters/moves.c
     src/gameplay/q2/monsters/proboscis.c
     src/gameplay/q2/monsters/reinforcements.c
     src/gameplay/q2/monsters/roster.c
     src/gameplay/q2/monsters/spawn.c
     src/gameplay/q2/monsters/spawn_growth.c
+    src/gameplay/q2/monsters/widow_death.c
+    src/gameplay/q2/monsters/widow_power.c
     src/gameplay/q2/nuke.c
     src/gameplay/q2/player/admission.c
     src/gameplay/q2/player/checkpoint.c
@@ -363,25 +390,26 @@ add_library(qa_game_q2 STATIC
 target_link_libraries(qa_game_q2 PUBLIC qa_builtin qa_campaign)
 
 add_library(qa_game_q3 STATIC
-    src/gameplay/q3/game.c
-    src/gameplay/q3/weapons.c
-    src/gameplay/q3/missiles.c
-    src/gameplay/q3/player.c
-    src/gameplay/q3/items.c
-    src/gameplay/q3/holdables.c
-    src/gameplay/q3/movers.c
+    src/gameplay/q3/checkpoint.c
     src/gameplay/q3/death.c
     src/gameplay/q3/feedback.c
-    src/gameplay/q3/view.c
-    src/gameplay/q3/checkpoint.c
-    src/gameplay/q3/map/runtime.c
-    src/gameplay/q3/map/spawn.c
+    src/gameplay/q3/game.c
+    src/gameplay/q3/holdables.c
+    src/gameplay/q3/items.c
+    src/gameplay/q3/map/checkpoint.c
     src/gameplay/q3/map/items.c
-    src/gameplay/q3/map/targets.c
-    src/gameplay/q3/map/triggers.c
     src/gameplay/q3/map/misc.c
     src/gameplay/q3/map/movers.c
-    src/gameplay/q3/map/checkpoint.c)
+    src/gameplay/q3/map/runtime.c
+    src/gameplay/q3/map/spawn.c
+    src/gameplay/q3/map/targets.c
+    src/gameplay/q3/map/triggers.c
+    src/gameplay/q3/missiles.c
+    src/gameplay/q3/movers.c
+    src/gameplay/q3/player.c
+    src/gameplay/q3/rankings.c
+    src/gameplay/q3/view.c
+    src/gameplay/q3/weapons.c)
 target_link_libraries(qa_game_q3 PUBLIC qa_builtin)
 
 add_library(qa_player_services STATIC
@@ -431,6 +459,28 @@ target_link_libraries(qa_modes PUBLIC qa_game_q1 qa_game_q2 qa_game_q3)
 
 add_library(qa_bots STATIC
     src/bots/actions.c
+    src/bots/ai/checkpoint.c
+    src/bots/ai/combat.c
+    src/bots/ai/console.c
+    src/bots/ai/decision.c
+    src/bots/ai/frame.c
+    src/bots/ai/orders.c
+    src/bots/ai/reset.c
+    src/bots/ai/roster.c
+    src/bots/ai/team.c
+    src/bots/chat/asset.c
+    src/bots/chat/checkpoint.c
+    src/bots/chat/construct.c
+    src/bots/chat/integrity.c
+    src/bots/chat/parse.c
+    src/bots/chat/reply_parse.c
+    src/bots/chat/state.c
+    src/bots/chat/strings.c
+    src/bots/goals/choose.c
+    src/bots/goals/core.c
+    src/bots/goals/map.c
+    src/bots/goals/report.c
+    src/bots/knowledge.c
     src/bots/library/bsp.c
     src/bots/library/character.c
     src/bots/library/core.c
@@ -442,24 +492,13 @@ add_library(qa_bots STATIC
     src/bots/library/weights.c
     src/bots/library/weights_mutate.c
     src/bots/library/weights_parse.c
-    src/bots/chat/asset.c
-    src/bots/chat/checkpoint.c
-    src/bots/chat/construct.c
-    src/bots/chat/integrity.c
-    src/bots/chat/parse.c
-    src/bots/chat/reply_parse.c
-    src/bots/chat/state.c
-    src/bots/chat/strings.c
-    src/bots/goals/core.c
-    src/bots/goals/map.c
-    src/bots/goals/choose.c
-    src/bots/goals/report.c
     src/bots/movement/controller.c
     src/bots/movement/direction.c
     src/bots/movement/ground.c
     src/bots/movement/ladder.c
     src/bots/movement/queries.c
     src/bots/movement/routing.c
+    src/bots/movement/source.c
     src/bots/movement/special.c
     src/bots/movement/state.c
     src/bots/movement/view.c
@@ -467,7 +506,17 @@ add_library(qa_bots STATIC
     src/bots/navigation/info.c
     src/bots/navigation/jump_pad.c
     src/bots/navigation/prediction.c
-    src/bots/navigation/routes.c)
+    src/bots/navigation/routes.c
+    src/bots/navigation/source.c
+    src/bots/perception.c
+    src/bots/random.c
+    src/bots/runtime/characteristics.c
+    src/bots/runtime/core.c
+    src/bots/runtime/handles.c
+    src/bots/runtime/observations.c
+    src/bots/runtime/setup.c
+    src/bots/runtime/variables.c
+    src/bots/source.c)
 target_link_libraries(qa_bots PUBLIC qa_builtin qa_navigation qa_script qa_content)
 
 add_library(qa_catalog STATIC
@@ -548,6 +597,7 @@ add_library(qa_scene STATIC
     src/render/material/deform.c
     src/render/material/library.c
     src/render/material/math.c
+    src/render/material/order.c
     src/render/material/parser.c
     src/render/material/submit.c)
 target_link_libraries(qa_scene PUBLIC qa_world)
@@ -593,8 +643,14 @@ add_library(qa_settings STATIC
 target_link_libraries(qa_settings PUBLIC qa_input)
 
 add_library(qa_network STATIC
+    src/network/admin/owner.c
+    src/network/browser/owner.c
+    src/network/browser/persistence.c
+    src/network/browser/wire.c
     src/network/connections.c
     src/network/dosbox.c
+    src/network/downloads/owner.c
+    src/network/downloads/window.c
     src/network/ipx.c
     src/network/message.c
     src/network/q1/channels.c
@@ -644,6 +700,9 @@ add_library(qa_network STATIC
     src/network/q3/server.c
     src/network/q3/visibility.c
     src/network/reliability.c
+    src/network/runtime/commands.c
+    src/network/runtime/session.c
+    src/network/runtime/unified.c
     src/network/socks.c
     src/network/transport.c
     src/network/unified/channel.c
@@ -652,7 +711,7 @@ add_library(qa_network STATIC
     src/network/unified/document.c
     src/network/unified/packet.c
     src/network/unified/schema.c)
-target_link_libraries(qa_network PUBLIC qa_world PRIVATE ZLIB::ZLIB)
+target_link_libraries(qa_network PUBLIC qa_world qa_movement qa_content qa_http PRIVATE ZLIB::ZLIB)
 
 add_library(qa_qvm STATIC
     src/compat/qvm/compatibility.c
@@ -678,8 +737,169 @@ target_link_libraries(qa_native_host PUBLIC
     qa_native qa_qvm qa_console qa_gameplay qa_movement qa_campaign
     PRIVATE qa_network)
 
+add_library(qa_qc_host STATIC
+    src/compat/qc_host/builtins.c
+    src/compat/qc_host/call.c
+    src/compat/qc_host/entities.c
+    src/compat/qc_host/game.c
+    src/compat/qc_host/physics.c)
+target_link_libraries(qa_qc_host PUBLIC qa_qc qa_builtin qa_console qa_movement)
+
+add_library(qa_q3_presentation STATIC
+    src/presentation/q3/assets.c
+    src/presentation/q3/audio.c
+    src/presentation/q3/cinematics.c
+    src/presentation/q3/core.c
+    src/presentation/q3/models.c
+    src/presentation/q3/picture.c
+    src/presentation/q3/render.c
+    src/presentation/q3/scene.c)
+target_link_libraries(qa_q3_presentation PUBLIC qa_scene qa_audio qa_media qa_text qa_input)
+
+add_library(qa_q3_host STATIC
+    src/compat/q3_host/bot_actions.c
+    src/compat/q3_host/bot_chat.c
+    src/compat/q3_host/bot_genetic.c
+    src/compat/q3_host/bot_goals.c
+    src/compat/q3_host/bot_library.c
+    src/compat/q3_host/bot_movement.c
+    src/compat/q3_host/bot_navigation.c
+    src/compat/q3_host/bot_records.c
+    src/compat/q3_host/bot_weapons.c
+    src/compat/q3_host/checkpoint.c
+    src/compat/q3_host/client_collision.c
+    src/compat/q3_host/client_input.c
+    src/compat/q3_host/client_keys.c
+    src/compat/q3_host/common.c
+    src/compat/q3_host/cvars.c
+    src/compat/q3_host/entity_tokens.c
+    src/compat/q3_host/files.c
+    src/compat/q3_host/game_checkpoint.c
+    src/compat/q3_host/game_portals.c
+    src/compat/q3_host/game_records.c
+    src/compat/q3_host/game_spatial.c
+    src/compat/q3_host/host.c
+    src/compat/q3_host/information.c
+    src/compat/q3_host/input_lifetime.c
+    src/compat/q3_host/memory.c
+    src/compat/q3_host/presentation.c
+    src/compat/q3_host/scripts.c
+    src/compat/q3_host/signatures.c)
+target_link_libraries(qa_q3_host PUBLIC qa_qvm qa_native_host qa_q3_presentation qa_bots qa_script qa_console qa_input)
+
+add_library(qa_application STATIC
+    src/app/application/arsenal.c
+    src/app/application/arsenal_guest.c
+    src/app/application/bots.c
+    src/app/application/bots_arsenal.c
+    src/app/application/bots_navigation.c
+    src/app/application/bots_projection.c
+    src/app/application/bots_submit.c
+    src/app/application/composition.c
+    src/app/application/control.c
+    src/app/application/events.c
+    src/app/application/guest_admission.c
+    src/app/application/guest_bots.c
+    src/app/application/guest_input_profile.c
+    src/app/application/guest_projection.c
+    src/app/application/guest_projection_profile.c
+    src/app/application/guest_q3.c
+    src/app/application/guest_q3_clients.c
+    src/app/application/guest_q3_effects.c
+    src/app/application/guest_q3_exports.c
+    src/app/application/guest_q3_roles.c
+    src/app/application/guest_q3_server.c
+    src/app/application/guest_qc.c
+    src/app/application/guest_qc_checkpoint.c
+    src/app/application/guest_qc_clients.c
+    src/app/application/guest_qc_declared.c
+    src/app/application/guest_qc_imports.c
+    src/app/application/guest_qc_input.c
+    src/app/application/guest_qc_messages.c
+    src/app/application/guest_qc_projection.c
+    src/app/application/guest_qc_qualification.c
+    src/app/application/guest_services.c
+    src/app/application/lifetime.c
+    src/app/application/map.c
+    src/app/application/map_players.c
+    src/app/application/map_travel.c
+    src/app/application/match.c
+    src/app/application/owner.c
+    src/app/application/providers.c
+    src/app/application/publication.c
+    src/app/application/services.c
+    src/app/application/visuals.c)
+target_link_libraries(qa_application PUBLIC qa_persistence qa_configuration qa_game_q1 qa_game_q2 qa_game_q3 qa_campaign qa_modes qa_player_services qa_qc_host qa_q3_host)
+
+add_library(qa_ui STATIC
+    src/ui/controller.c
+    src/ui/draw.c
+    src/ui/hud.c
+    src/ui/input.c
+    src/ui/library.c
+    src/ui/llm.c
+    src/ui/mods.c
+    src/ui/q2_layout.c
+    src/ui/rankings.c
+    src/ui/search.c
+    src/ui/wheel.c)
+target_link_libraries(qa_ui PUBLIC qa_application qa_text qa_input qa_settings qa_scene)
+
+add_library(qa_http STATIC
+    src/tools/http.c)
+target_link_libraries(qa_http PUBLIC qa_core PRIVATE CURL::libcurl)
+
+add_library(qa_tools STATIC
+    src/tools/camera.c
+    src/tools/camera_author.c
+    src/tools/camera_io.c
+    src/tools/capture.c
+    src/tools/controller.c
+    src/tools/debug.c
+    src/tools/diagnostics.c
+    src/tools/llm.c
+    src/tools/llm_auth.c
+    src/tools/llm_batch.c
+    src/tools/llm_catalog.c
+    src/tools/llm_console.c
+    src/tools/llm_models.c
+    src/tools/llm_request.c
+    src/tools/llm_settings.c
+    src/tools/llm_stream.c
+    src/tools/profiler.c)
+target_link_libraries(qa_tools PUBLIC qa_builtin qa_scene qa_content qa_console qa_text qa_media qa_q3_presentation qa_http)
+
+add_library(qa_persistence STATIC
+    src/persistence/actors.c
+    src/persistence/coordinator.c
+    src/persistence/demo.c
+    src/persistence/image.c
+    src/persistence/recovery.c
+    src/persistence/session.c
+    src/persistence/strings.c
+    src/persistence/world.c)
+target_link_libraries(qa_persistence PUBLIC qa_session qa_content qa_gameplay qa_movement qa_network)
+
+add_library(qa_frontend STATIC
+    src/app/frontend/audio_identity.c
+    src/app/frontend/commands.c
+    src/app/frontend/frame.c
+    src/app/frontend/launch.c
+    src/app/frontend/lifetime.c
+    src/app/frontend/options.c
+    src/app/frontend/presentation.c
+    src/app/frontend/resources.c
+    src/app/frontend/seats.c
+    src/app/frontend/tools.c
+    src/app/frontend/wheels.c)
+target_link_libraries(qa_frontend PUBLIC qa_application qa_ui qa_tools qa_display qa_render_cpu qa_render_gl qa_input qa_settings qa_audio qa_q3_presentation qa_network PRIVATE SDL2::SDL2)
+
+if(WIN32)
+    target_link_libraries(qa_tools PRIVATE bcrypt ws2_32 Psapi)
+endif()
+
 add_executable(quake-anthology src/main.c)
-target_link_libraries(quake-anthology PRIVATE qa_content)
+target_link_libraries(quake-anthology PRIVATE qa_content qa_frontend)
 target_compile_definitions(quake-anthology PRIVATE QA_VERSION="${PROJECT_VERSION}")
 
 include(CTest)

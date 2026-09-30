@@ -638,7 +638,8 @@ static bool submit_surface(qa_scene_world *world, qaw_surface *surface, qa_mater
 {
     context->lightmap = surface->lightmap;
     context->fog_index = surface->fog_index;
-    context->time_offset = surface->material_time_offset;
+    context->time_offset = surface->material_time_offset +
+        (input->entity_material ? input->entity_material->shader_time : 0.0f);
     size_t first = frame->command_count;
     bool result = world->bsp.family == QA_BSP_Q3 ? qaw_submit_q3(world, surface, context, input, frame, error)
         : qaw_submit_legacy(world, surface, context, input, frame, error);
@@ -727,9 +728,21 @@ static bool world_submit_model(qa_scene_world *world, uint32_t model_index,
     if (!fragment_context(world, input, frame, &context, error)) return false;
     context.entity = entity;
     context.entity_color = color;
+    if (input->entity_material) {
+        const qa_scene_world_entity *material = input->entity_material;
+        context.ambient = material->ambient;
+        context.ambient_alpha = 1.0f;
+        context.directed = material->directed;
+        context.light_direction = material->light_direction;
+        context.entity_texcoord = material->shader_texcoord;
+        context.shadow_plane = material->shadow_plane;
+        context.projection_shadow = material->projection_shadow;
+    }
     context.model = qa_scene_model_matrix(transform);
     context.local_view_origin = qaw_local_point(transform, input->view.origin);
-    context.non_normalized_axis = transform->scale[0] != 1 || transform->scale[1] != 1 || transform->scale[2] != 1;
+    context.non_normalized_axis = transform->scale[0] != 1 || transform->scale[1] != 1 ||
+        transform->scale[2] != 1 ||
+        (input->entity_material && input->entity_material->non_normalized_axis);
     float scale = fminf(fabsf(transform->scale[0]), fminf(fabsf(transform->scale[1]), fabsf(transform->scale[2])));
     if (!(scale > 0) || !isfinite(scale)) return world_error(error, QA_ERROR_ARGUMENT, "invalid inline model scale");
     qa_scene_world_input local_input = *input;

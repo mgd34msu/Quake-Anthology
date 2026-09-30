@@ -46,7 +46,8 @@ typedef enum q2_projectile_kind {
     Q2_PROBOSCIS,
     Q2_PROBOSCIS_SEGMENT,
     Q2_RERELEASE_SPAWN_GROWTH,
-    Q2_RERELEASE_SPAWN_BEAM
+    Q2_RERELEASE_SPAWN_BEAM,
+    Q2_LOOGIE
 } q2_projectile_kind;
 typedef enum q2_proboscis_phase {
     Q2_PROBOSCIS_FLYING,
@@ -124,6 +125,8 @@ struct qa_q2_game {
     bool release_failed;
     unsigned hand_steps;
     bool lmctf_plasma_quad;
+    uint8_t widow_damage_multiplier;
+    uint8_t widow_shot_phase;
     qa_q2_weapon_definition definitions[QA_Q2_WEAPON_COUNT];
     qa_item_id items[QA_Q2_WEAPON_COUNT], ammo[QA_Q2_WEAPON_COUNT];
     qa_string_id view_models[QA_Q2_WEAPON_COUNT];
@@ -167,6 +170,7 @@ void q2_actor_publish_prepared(qa_q2_game *, q2_actor *, qa_actor_id, bool new_s
 void q2_actor_order(qa_q2_game *, q2_actor *, uint64_t);
 bool q2_actor_live(qa_q2_game *, qa_actor_id);
 float q2_random(qa_q2_game *);
+bool q2_monster_timed_invulnerability(const q2_actor *, uint64_t now_ns);
 float q2_crandom(qa_q2_game *);
 void q2_rerelease_seed(qa_q2_game *, uint32_t);
 uint32_t q2_rerelease_word(qa_q2_game *);
@@ -292,7 +296,13 @@ bool q2_nuke_reaction(qa_q2_game *, q2_actor *, const qa_damage_outcome *, qa_er
 q2_trace_frame *q2_scratch_acquire(qa_q2_game *, qa_error *);
 q2_trace_frame *q2_nearby(qa_q2_game *, qa_vec3 origin, float radius, qa_error *);
 q2_trace_frame *q2_player_roster(qa_q2_game *, qa_error *);
-enum { Q2_GIB_HEAD = 1u, Q2_GIB_METALLIC = 2u, Q2_GIB_SKINNED = 4u, Q2_GIB_UPRIGHT = 8u };
+enum {
+    Q2_GIB_HEAD = 1u, Q2_GIB_METALLIC = 2u, Q2_GIB_SKINNED = 4u, Q2_GIB_UPRIGHT = 8u,
+    Q2_GIB_WIDOW = 16u, Q2_GIB_WIDOW_SIZED = 32u, Q2_GIB_WIDOW_HIT_SOUND = 64u,
+    Q2_GIB_WIDOW_LEGS = 128u
+};
+bool q2_widow_legs_think(qa_q2_game *, q2_actor *, qa_error *);
+bool q2_widow_gib_touch(qa_q2_game *, const qa_touch_contact *, qa_error *);
 bool q2_spawn_gib(qa_q2_game *, qa_actor_id source, const char *model, float damage, uint32_t flags,
                   int skin, float scale, qa_error *);
 bool q2_spawn_debris(qa_q2_game *, qa_actor_id source, qa_error *);
@@ -306,6 +316,8 @@ bool q2_trap_capture_gibs(qa_q2_game *, q2_actor *, qa_error *);
 bool q2_fire_actor_bolt(qa_q2_game *, qa_actor_id source, qa_actor_id credited_owner, qa_vec3 start,
                         qa_vec3 direction, float damage, float speed, uint64_t effects,
                         int means_of_death, bool green, qa_error *);
+bool q2_fire_actor_loogie(qa_q2_game *, qa_actor_id source, qa_vec3 start, qa_vec3 direction,
+                          qa_error *);
 bool q2_fire_actor_rocket(qa_q2_game *, qa_actor_id source, qa_actor_id credited_owner,
                           qa_vec3 start, qa_vec3 direction, float damage, float speed,
                           float splash_damage, float radius, int direct_mod, int splash_mod,

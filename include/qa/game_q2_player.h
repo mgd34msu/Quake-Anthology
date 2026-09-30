@@ -117,12 +117,18 @@ typedef struct qa_q2_player_services {
     bool (*emit)(void *, const qa_q2_player_event *, qa_error *);
     bool (*weapon_state)(void *, qa_actor_id, qa_q2_character_weapon *, qa_error *);
     bool (*weapon_input)(void *, qa_actor_id, qa_q2_weapon_input *, qa_error *);
+    /* Read-only selected arsenal ownership. Without a host projection the
+     * admission's use_q2_weapons flag supplies standalone ownership. */
+    bool (*weapon_selected)(void *, qa_actor_id);
     bool (*banned)(void *, const char *address);
     bool (*score)(void *, qa_actor_id victim, qa_actor_id attacker, qa_actor_id recipient,
                   int change, int means, qa_error *);
     /* Nonmutating read. Both score callbacks address the same selected scoring
      * context and must be provided together. */
     bool (*score_read)(void *, qa_actor_id, int32_t *, qa_error *);
+    /* The shared confirmed-damage owner applies score changes. Native
+     * obituary supplies presentation only; score_read remains authoritative. */
+    bool shared_score_owned;
     bool (*spawned)(void *, qa_actor_id, qa_error *);
     bool (*persistent_inventory)(void *, qa_actor_id, qa_error *);
     bool (*select_spawn)(void *, qa_actor_id, qa_vec3 *, qa_vec3 *, bool *, qa_error *);
@@ -244,6 +250,7 @@ bool qa_q2_player_connect(qa_q2_game *, const char *, bool bot, qa_q2_connection
 bool qa_q2_player_admit(qa_q2_game *, qa_actor_id, const qa_q2_player_admission *, qa_error *);
 bool qa_q2_player_userinfo(qa_q2_game *, qa_actor_id, const char *, qa_error *);
 bool qa_q2_player_read(qa_q2_game *, qa_actor_id, qa_q2_player_info *);
+bool qa_q2_player_notarget(qa_q2_game *, qa_actor_id, bool *enabled, qa_error *);
 bool qa_q2_player_controlled(const qa_q2_game *, qa_actor_id);
 bool qa_q2_player_projection(qa_q2_game *, qa_actor_id, qa_builtin_player_info *);
 bool qa_q2_player_score(qa_q2_game *, qa_actor_id, int score, int ping, qa_error *);

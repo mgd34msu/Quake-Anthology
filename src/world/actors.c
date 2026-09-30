@@ -320,6 +320,15 @@ bool qa_actors_next(const qa_actor_registry *registry, uint32_t *cursor,
 uint32_t qa_actors_count(const qa_actor_registry *registry) { return registry == NULL ? 0 : registry->live_count; }
 uint32_t qa_actors_capacity(const qa_actor_registry *registry) { return registry == NULL ? 0 : registry->capacity; }
 uint64_t qa_actors_revision(const qa_actor_registry *registry) { return registry == NULL ? 0 : registry->revision; }
+uint64_t qa_actors_identity(const qa_actor_registry *registry) { return registry == NULL ? 0 : registry->identity; }
+
+bool qa_actors_set_release_observer(qa_actor_registry *registry, qa_actor_release_fn release, void *context)
+{
+    if (!registry || registry->callback_depth || registry->clearing) return false;
+    registry->release = release;
+    registry->context = context;
+    return true;
+}
 
 bool qa_actors_checkpoint(const qa_actor_registry *registry,
                           qa_actor_checkpoint *out, qa_error *error)

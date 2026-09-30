@@ -4,6 +4,12 @@
 #include "qa/builtin.h"
 
 typedef struct qa_q2_game qa_q2_game;
+typedef struct qa_command_invocation qa_command_invocation;
+bool qa_q2_game_grant_arsenal(qa_q2_game *, qa_actor_id, bool ammo, qa_error *);
+bool qa_q2_game_give_item(qa_q2_game *, qa_actor_id, size_t, const char *const *, bool *handled,
+                         qa_error *);
+bool qa_q2_game_console_command(qa_q2_game *, qa_actor_id, const qa_command_invocation *,
+                                 bool *handled, qa_error *);
 typedef bool (*qa_q2_actor_fn)(void *, qa_actor_id, qa_error *);
 qa_actor_id qa_q2_current_actor(const qa_q2_game *);
 bool qa_q2_run_actor(qa_q2_game *, qa_actor_id, qa_q2_actor_fn, void *, qa_error *);
@@ -261,6 +267,9 @@ bool qa_q2_destroy(qa_q2_game *, qa_error *);
  * Registry must be empty. Names are interned before publication; zero spawn
  * point means empty. Connection identity and player carry stay with the host. */
 bool qa_q2_begin_map(qa_q2_game *, qa_string_id map_name, qa_string_id spawn_point, qa_error *);
+/* Provider-owned temporary protection, without reading composed combat state. */
+bool qa_q2_timed_invulnerability(qa_q2_game *, qa_actor_id);
+bool qa_q2_powerups_present(qa_q2_game *, qa_actor_id);
 const qa_q2_weapon_definition *qa_q2_weapon_definition_at(const qa_q2_game *, qa_q2_weapon);
 qa_q2_weapon qa_q2_weapon_from_classname(const qa_q2_game *, const char *);
 bool qa_q2_weapon_bind(qa_q2_game *, qa_actor_id, qa_q2_weapon, qa_error *);
@@ -273,6 +282,10 @@ bool qa_q2_weapon_holster(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_weapon_resume(qa_q2_game *, qa_actor_id, const qa_q2_weapon_input *, qa_q2_weapon,
                          qa_error *);
 bool qa_q2_weapon_can_drop(qa_q2_game *, qa_actor_id, qa_q2_weapon, bool *, qa_error *);
+/* Retains held controls and attack edges without advancing the arsenal. The
+ * existing weapon checkpoint owns both the controls and the pending edge. */
+bool qa_q2_weapon_controls(qa_q2_game *, qa_actor_id, const qa_q2_weapon_input *, qa_error *);
+bool qa_q2_weapon_controls_read(qa_q2_game *, qa_actor_id, qa_q2_weapon_input *, qa_error *);
 /* Called in the owning actor's source turn, regardless of its character family.
  * Exact integer source times avoid per-frame conversion and drifting deadlines. */
 bool qa_q2_weapon_tick(qa_q2_game *, qa_actor_id, const qa_q2_weapon_input *, uint64_t now_ns,
@@ -317,6 +330,8 @@ typedef struct qa_q2_runtime_checkpoint {
     uint64_t rerelease_draws, sequence, actor_sequence, now_ns, frame_ns;
     qa_q2_grapple_options grapple_options;
     bool lmctf_plasma_quad;
+    uint8_t widow_damage_multiplier;
+    uint8_t widow_shot_phase;
 } qa_q2_runtime_checkpoint;
 typedef struct qa_q2_projectile_checkpoint {
     uint32_t kind;

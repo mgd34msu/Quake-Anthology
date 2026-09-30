@@ -249,10 +249,16 @@ bool qa_native_create_runner(qa_native_module *module, const qa_native_options *
 bool qa_native_create(qa_native_module *module, const qa_native_options *options,
                       const qa_native_runner_config *runner, qa_native_instance **out,
                       qa_error *error);
-/* A direct instance remains owned by the caller if its in-process Shutdown
- * entry fails. A runner instance is always consumed after destruction begins;
- * false reports a guest or transport failure after the process is reclaimed. */
+/* Once can_destroy succeeds, destruction consumes either backend even if a
+ * shutdown, unload callback or transport fault is returned. Admission rejection
+ * leaves the caller's owner live. */
 bool qa_native_destroy(qa_native_instance *instance, qa_error *error);
+/* True only when destruction will pass its initial ownership admission.
+ * Shutdown or runner cleanup may still fail after admission. */
+bool qa_native_can_destroy(const qa_native_instance *instance);
+/* True only on the owning thread during direct or runner loader teardown.
+ * Memory/import operations remain valid; exports and new teardown reject. */
+bool qa_native_unloading_owner(const qa_native_instance *instance);
 qa_native_backend qa_native_get_backend(const qa_native_instance *instance);
 qa_native_lifecycle qa_native_get_lifecycle(const qa_native_instance *instance);
 const qa_native_module *qa_native_get_module(const qa_native_instance *instance);

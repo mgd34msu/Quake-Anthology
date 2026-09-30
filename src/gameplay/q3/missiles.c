@@ -174,7 +174,14 @@ bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3
                            .delta = velocity}}};
     qa_combat_state owner_state;
     qa_error ignored = {0};
-    if (qa_combat_read(game->options.services.combat, owner, &owner_state, &ignored))
+    bool described = qa_combat_read(game->options.services.combat, owner, &owner_state, &ignored);
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_MISSILE) {
+        if (out)
+            *out = (qa_actor_id){0};
+        return true;
+    }
+    if (described)
         entry->state.missile.team = owner_state.team;
     if (weapon == QA_Q3_W_GRAPPLE) {
         q3_actor *player = q3_actor_get(game, owner);
@@ -219,11 +226,14 @@ bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3
 }
 static bool set_origin(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
-    if (!entry)
+    if (!entry || entry->kind != Q3_ACTOR_MISSILE)
         return true;
     qa_body_state body;
     if (!qa_world_body_read(game->options.services.world, actor, &body, error))
         return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_MISSILE)
+        return true;
     body.origin = origin;
     body.velocity = qa_v3(0, 0, 0);
     entry->state.missile.trajectory =
@@ -244,6 +254,9 @@ static bool impact_event(qa_q3_game *game, qa_actor_id actor, qa_actor_id target
     bool flesh = player &&
                  qa_combat_read(game->options.services.combat, target, &state, &ignored) &&
                  state.can_take_damage;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_MISSILE)
+        return true;
     uint8_t parameter = 0;
     (void)qa_normal_byte(normal, &parameter);
     return q3_event(game, actor, target, QA_BUILTIN_IMPACT, flesh ? 50 : (flags & 0x1000 ? 52 : 51),
@@ -297,10 +310,16 @@ static bool attach_hook(qa_q3_game *game, qa_actor_id actor, const qa_trace_resu
         qa_body_state body;
         if (!qa_world_body_read(game->options.services.world, trace->actor, &body, error))
             return false;
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_MISSILE)
+            return true;
         origin = qa_vec_add(body.origin,
                             qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), 0.5f));
         entry->state.missile.attached = trace->actor;
     }
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_MISSILE)
+        return true;
     origin = qa_physics_q3_snap_towards(origin, entry->state.missile.trajectory.base);
     if (!set_origin(game, actor, origin, error))
         return false;
@@ -325,12 +344,16 @@ static bool stick_mine(qa_q3_game *game, qa_actor_id actor, const qa_trace_resul
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry)
         return true;
-    q3_actor *target = q3_actor_get(game, trace->actor);
     qa_combat_state state;
     qa_error ignored = {0};
-    if (q3_is_player(game, trace->actor) &&
-        qa_combat_read(game->options.services.combat, trace->actor, &state, &ignored) &&
-        state.health > 0) {
+    bool living_player = q3_is_player(game, trace->actor) &&
+                         qa_combat_read(game->options.services.combat, trace->actor, &state,
+                                        &ignored) && state.health > 0;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_MISSILE)
+        return true;
+    q3_actor *target = q3_actor_get(game, trace->actor);
+    if (living_player) {
         q3_actor *prior = NULL;
         for (uint32_t i = 0; i < game->capacity; ++i) {
             q3_actor *candidate = &game->actors[i];
@@ -394,6 +417,9 @@ static bool missile_impact(qa_q3_game *game, qa_actor_id actor, const qa_trace_r
         trace->hit == QA_TRACE_HIT_ACTOR &&
         qa_combat_read(game->options.services.combat, trace->actor, &target, &ignored) &&
         target.can_take_damage;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_MISSILE)
+        return true;
     if (!damageable && (missile.flags & 0x30u)) {
         bool stopped;
         if (!qa_physics_q3_bounce(&game->physics, actor, &entry->state.missile.trajectory, trace,
@@ -518,7 +544,13 @@ static bool activate_mine(qa_q3_game *game, qa_actor_id actor, qa_error *error) 
 }
 bool q3_missile_trigger(qa_q3_game *game, qa_actor_id actor, qa_actor_id player, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
-    if (!entry || entry->kind != Q3_ACTOR_MISSILE || !q3_is_player(game, player) ||
+    if (!entry || entry->kind != Q3_ACTOR_MISSILE ||
+        entry->state.missile.phase != Q3_MISSILE_PROX_ARMED)
+        return true;
+    if (!q3_is_player(game, player))
+        return true;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_MISSILE ||
         entry->state.missile.phase != Q3_MISSILE_PROX_ARMED)
         return true;
     qa_body_state mine_body, body;
@@ -527,6 +559,10 @@ bool q3_missile_trigger(qa_q3_game *game, qa_actor_id actor, qa_actor_id player,
         !qa_world_body_read(game->options.services.world, player, &body, error) ||
         !qa_combat_read(game->options.services.combat, player, &combat, error))
         return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_MISSILE ||
+        entry->state.missile.phase != Q3_MISSILE_PROX_ARMED)
+        return true;
     if (qa_vec_length(qa_vec_sub(body.origin, mine_body.origin)) > entry->state.missile.radius ||
         (game->options.rules.game_type >= 3 && entry->state.missile.team == combat.team))
         return true;
@@ -537,6 +573,10 @@ bool q3_missile_trigger(qa_q3_game *game, qa_actor_id actor, qa_actor_id player,
                                policy, false, &visible, error))
         return false;
     if (!visible)
+        return true;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_MISSILE ||
+        entry->state.missile.phase != Q3_MISSILE_PROX_ARMED)
         return true;
     qa_actor_id trigger = entry->state.missile.trigger;
     entry->state.missile.phase = Q3_MISSILE_PROX_TRIGGERED;

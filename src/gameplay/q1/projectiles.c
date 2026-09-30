@@ -69,9 +69,10 @@ bool q1_projectile_spawn(qa_q1_game *g, qa_actor_id owner, qa_q1_weapon weapon,
         !qa_world_body_write(g->services.world, entity->id, &body, error) ||
         !q1_link(g, entity, error))
         goto fail;
-    double lifetime = grenade                                                                  ? 2.5
-                      : kind == Q1_ROCKET || kind == Q1_ENFORCER_LASER || kind == Q1_VORE_BALL ? 5
-                                                                                               : 6;
+    double lifetime = grenade ? q1_weapon_shape(QA_Q1_GRENADE)->lifetime
+                      : kind == Q1_ROCKET || kind == Q1_ENFORCER_LASER || kind == Q1_VORE_BALL
+                          ? q1_weapon_shape(QA_Q1_ROCKET)->lifetime
+                          : q1_weapon_shape(QA_Q1_NAILGUN)->lifetime;
     q1_think_kind think =
         kind == Q1_GRENADE || kind == Q1_OGRE_GRENADE ? Q1_THINK_EXPLODE : Q1_THINK_REMOVE;
     if (!q1_schedule(g, entity, lifetime, think, error))
@@ -133,7 +134,7 @@ bool q1_explode(qa_q1_game *g, q1_actor *entity, qa_actor_id direct, qa_error *e
         return false;
     bool rocket = projectile.kind == Q1_ROCKET || projectile.kind == Q1_LAVA_BALL;
     if (rocket && direct.registry && q1_health(g, direct) != 0) {
-        float amount = 100 + q1_random(g) * 20;
+        float amount = (q1_weapon_shape(QA_Q1_ROCKET)->damage-10) + q1_random(g)*20;
         q1_actor *target = q1_entity(g, direct);
         if (target && target->kind == Q1_MONSTER &&
             target->state.monster.species->species == QA_Q1_SHAMBLER)
@@ -143,7 +144,8 @@ bool q1_explode(qa_q1_game *g, q1_actor *entity, qa_actor_id direct, qa_error *e
         if (!q1_alive(g, entity->id))
             return true;
     }
-    float radius = projectile.kind == Q1_OGRE_GRENADE || projectile.kind == Q1_VORE_BALL ? 40 : 120;
+    float radius = projectile.kind == Q1_OGRE_GRENADE || projectile.kind == Q1_VORE_BALL
+                       ? 40 : q1_weapon_shape(QA_Q1_ROCKET)->blast_damage;
     if (!q1_radius(g, entity->id, entity->owner, radius, direct, projectile.weapon, error))
         return false;
     if (!q1_alive(g, entity->id))
@@ -216,7 +218,8 @@ bool q1_projectile_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
     case Q1_SUPERSPIKE:
     case Q1_WIZARD_SPIKE:
     case Q1_KNIGHT_SPIKE: {
-        float amount = projectile.kind == Q1_SUPERSPIKE ? 18 : 9;
+        float amount = q1_weapon_shape(projectile.kind == Q1_SUPERSPIKE
+                                          ? QA_Q1_SUPER_NAILGUN : QA_Q1_NAILGUN)->damage;
         if (q1_damageable(g, other)) {
             if (!q1_effect(g, QA_BUILTIN_IMPACT, other, body.origin, amount, 1, error) ||
                 !q1_damage(g, other, entity->id, entity->owner, amount, projectile.weapon, error))

@@ -107,6 +107,35 @@ static bool bind_world(qa_native_host *host, uint32_t slot, qa_error *error)
     return qa_native_bind_slot(host->instance, &binding, error);
 }
 
+bool qa_native_host_detach_actor(qa_native_host *host, uint32_t slot,
+                                  qa_actor_id actor, qa_error *error)
+{
+    if (!host || host->kind != NATIVE_HOST_Q2_GAME || !qa_native_host_destroy_ready(host) ||
+        !host->world.world || !qa_world_idle(host->world.world))
+        return native_host_fail(error, QA_ERROR_ARGUMENT, slot, "Native actor detach requires drained source/world callbacks");
+    qa_native_slot_binding binding;
+    if (!qa_native_slot(host->instance, slot, &binding, error)) return false;
+    if (binding.kind == QA_NATIVE_SLOT_FREE) return true;
+    if (binding.kind != QA_NATIVE_SLOT_BORROWED || !qa_actor_id_equal(binding.actor, actor))
+        return native_host_fail(error, QA_ERROR_ARGUMENT, slot, "Native actor detach differs from its borrowed full generation");
+    qa_native_slot_binding cleared = {.kind = QA_NATIVE_SLOT_FREE, .slot = slot};
+    if (!qa_native_bind_slot(host->instance, &cleared, error)) return false;
+    if (slot < host->retained_capacity) host->retained_clients[slot] = false;
+    return true;
+}
+
+bool qa_native_host_world_actor_bind(qa_native_host *host, qa_actor_id actor, qa_error *error)
+{
+    if (!host || host->kind != NATIVE_HOST_Q2_GAME || !qa_native_host_destroy_ready(host) ||
+        !qa_world_idle(host->world.world) || !actor_live(host, actor))
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Native world binding requires an idle live canonical actor");
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(host->world.session), actor);
+    if (record->owner != host->world.owner || !record->has_source || record->source_slot)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Native world actor differs from its owner/source world slot");
+    host->world.world_actor = actor;
+    return bind_world(host, 0, error);
+}
+
 bool native_host_actor_for_address(qa_native_host *host, qa_native_address address,
                                    bool observe, qa_actor_id *out, uint32_t *out_slot,
                                    qa_error *error)

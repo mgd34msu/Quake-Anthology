@@ -36,6 +36,30 @@ static bot_variable *find_variable(const qa_bot_library *library, const char *na
             return v;
     return NULL;
 }
+bool qa_bot_library_variable_find_from(const qa_bot_library *library, void *context,
+                                       bool (*byte)(void *, size_t, uint8_t *, qa_error *),
+                                       const qa_bot_variable **out, qa_error *e) {
+    if (!out) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing bot variable lookup output");
+        return false;
+    }
+    *out = NULL;
+    if (!library || !byte) return true;
+    for (bot_variable *v = library->variables; v; v = v->next) {
+        bool equal = true;
+        for (size_t i = 0; i < 99999; ++i) {
+            uint8_t candidate;
+            if (!byte(context, i, &candidate, e)) return false;
+            if (folded((unsigned char)v->name[i]) != folded(candidate)) {
+                equal = false;
+                break;
+            }
+            if (!v->name[i]) break;
+        }
+        if (equal) { *out = &v->view; return true; }
+    }
+    return true;
+}
 bool qa_bot_variable_number(const char *text, float *out, qa_error *e) {
     if (!text || !out) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "missing bot variable numeric text/output");

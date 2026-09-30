@@ -76,7 +76,8 @@ void q2_client_release_state(q2_actor *a) {
 bool qa_q2_players_configure(qa_q2_game *g, const qa_q2_player_rules *r,
                              const qa_q2_player_services *s, qa_error *e) {
     if (!g || !r || !s || !s->movement || !s->set_movement || !s->emit ||
-        (!!s->score != !!s->score_read) || r->coop_num_lives < 0 ||
+        (s->shared_score_owned ? (!s->score_read || s->score)
+                              : (!!s->score != !!s->score_read)) || r->coop_num_lives < 0 ||
         !isfinite(r->roll_speed) || r->roll_speed <= 0 || !isfinite(r->force_respawn_seconds) ||
         r->force_respawn_seconds < 0 || !isfinite(r->flood_seconds) || r->flood_seconds < 0 ||
         !isfinite(r->flood_wait_seconds) || r->flood_wait_seconds < 0 || !isfinite(r->roll_angle) ||
@@ -245,12 +246,15 @@ bool qa_q2_player_carry_capture(qa_q2_game *g, qa_actor_id id, qa_q2_player_carr
     q2_power_state *powers = q2_powers(g, id, e);
     if (!powers)
         return false;
+    int32_t score;
+    if (!q2_player_score_read(g, id, &score, e))
+        return false;
     qa_q2_player_carry c = {.health = combat.health,
                             .maximum_health = powers->maximum_health,
                             .armor = combat.armor,
                             .weapon = a->weapon_bound ? a->weapon.weapon : QA_Q2_WEAPON_NONE,
                             .selected_item = a->client->info.selected_item,
-                            .score = a->client->info.score,
+                            .score = score,
                             .power_cubes = powers->power_cubes,
                             .flags = (a->client->info.god ? 16u : 0) |
                                      (a->client->info.notarget ? 32u : 0) |
@@ -301,12 +305,21 @@ bool qa_q2_player_carry_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_playe
     traits.invulnerable = s->info.god;
     return qa_combat_set_traits(g->services.combat, id, &traits, e);
 }
+bool qa_q2_player_notarget(qa_q2_game *g, qa_actor_id id, bool *enabled, qa_error *error) {
+    q2_actor *source = q2_actor_get(g, id, false, NULL);
+    if (!source || !source->client || !enabled) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 notarget requires an actual player");
+        return false;
+    }
+    *enabled = source->client->info.notarget = !source->client->info.notarget;
+    return true;
+}
 bool qa_q2_player_read(qa_q2_game *g, qa_actor_id id, qa_q2_player_info *out) {
     q2_actor *a = g ? q2_actor_get(g, id, false, NULL) : NULL;
     if (!a || !a->client || !out)
         return false;
     *out = a->client->info;
-    return true;
+    return q2_player_score_read(g, id, &out->score, NULL);
 }
 bool qa_q2_player_projection(qa_q2_game *g, qa_actor_id id, qa_builtin_player_info *out) {
     q2_actor *a = g ? q2_actor_get(g, id, false, NULL) : NULL;

@@ -1,0 +1,314 @@
+{
+  "scope": "Final source/hash metadata for this bounded review; files may contain preexisting implementation. Not runtime qualification or all-source review.",
+  "at": "2026-09-29T21:29:06.745645+00:00",
+  "head": "fda00b110e790bf826c0ba9b602ebe1466751bab",
+  "plan_revision": 7,
+  "files": [
+    {
+      "path": "CMakeLists.txt",
+      "lane": "build",
+      "sha256": "f8dfe9007a7deb52d1957ae316fc44ab654eb24e47c57a6609882ae1e772b743"
+    },
+    {
+      "path": "include/qa/text.h",
+      "lane": "foundations",
+      "sha256": "43271b0fae95066fc7ddac44c3105f1afb9360c6767cdffd04a74d2d6af685cf"
+    },
+    {
+      "path": "src/core/number.c",
+      "lane": "foundations",
+      "sha256": "091725950c2ec44fe53adf917ad63939cb2f625d1d8c3ed1f6015ee59f09a119"
+    },
+    {
+      "path": "src/console/text.c",
+      "lane": "foundations",
+      "sha256": "a8a9e8953bd19c9d72e51fa02e8f973678eec661c7029be2e9583e418acecb49"
+    },
+    {
+      "path": "src/console/cvars.c",
+      "lane": "foundations",
+      "sha256": "07a7a0de54a80124be60b389d02f7c453652c2beb1543e14f47a106e180c2bd7"
+    },
+    {
+      "path": "src/console/commands.c",
+      "lane": "foundations",
+      "sha256": "139945b9376345be56fb8a7313ea9ac393fa74c884b44da7530c76b938bbde83"
+    },
+    {
+      "path": "src/gameplay/q1/runtime.c",
+      "lane": "q1",
+      "sha256": "4c197f205d5db7c08aa9ffff203a75da670749013dcb83de13592ce7d148b26f"
+    },
+    {
+      "path": "src/gameplay/q1/weapons.c",
+      "lane": "q1",
+      "sha256": "caddde0a8a1e28399421d78bc3d7eb3c3b00b27d848c7340b998515845e61311"
+    },
+    {
+      "path": "src/gameplay/q1/checkpoint/player.c",
+      "lane": "q1",
+      "sha256": "eb06d4740eef00913de99d358483223265c182d36ec4f2e29a1a67d22ad20d48"
+    },
+    {
+      "path": "src/gameplay/q2/game.c",
+      "lane": "q2",
+      "sha256": "c43eb142a11f4982ef29099aff7d3f4064744dc806e67c20684f483a5a79ba92"
+    },
+    {
+      "path": "src/gameplay/q2/monsters/core.c",
+      "lane": "q2",
+      "sha256": "1f8f03f75affb6d3751245fa5b7cabb22f7340a937213af2f69ff2342bf3f62d"
+    },
+    {
+      "path": "src/gameplay/q2/monsters/checkpoint.c",
+      "lane": "q2",
+      "sha256": "24fd56dbad480cbb91adb78cfdd0847af53e620f4275497d29ca2d706cdaeb0b"
+    },
+    {
+      "path": "src/gameplay/q2/monsters/beam.c",
+      "lane": "q2",
+      "sha256": "bdf904685cda9a4b3643ac1ebcc38886e4c6c6fca2d25303d858343c78004c7c"
+    },
+    {
+      "path": "src/gameplay/q2/monsters/widow_power.c",
+      "lane": "q2",
+      "sha256": "0bed5bad85ac463dd8d3151ee245163823f944af1708adaea3b58f5f7fa2427d"
+    },
+    {
+      "path": "src/gameplay/q2/entities/state.c",
+      "lane": "q2",
+      "sha256": "937d2a2b08ea57e7f273d6672296eca36be8c4323e17e48087a6dd7bc1a99455"
+    },
+    {
+      "path": "src/gameplay/q2/entities/lifecycle.c",
+      "lane": "q2",
+      "sha256": "425056d01468bfc05aac9870a1713d7dd7c696cff17ec2df4cdd80489cb343b5"
+    },
+    {
+      "path": "include/qa/operation.h",
+      "lane": "q3_shared",
+      "sha256": "85ff155e3975110127a9fb19c710036cad12e6289318751edd3e54ae5e83389e"
+    },
+    {
+      "path": "src/gameplay/operation.c",
+      "lane": "q3_shared",
+      "sha256": "c69338daad24b6ddd89680a2497bfa0e8a4374aff8b86ce613177ad8145d9af7"
+    },
+    {
+      "path": "src/gameplay/inventory.c",
+      "lane": "q3_shared",
+      "sha256": "fe6f355a2c9dca9e6c30ad1859452672e44adf9dbe77baf36a9347c5538573d8"
+    },
+    {
+      "path": "src/gameplay/combat.c",
+      "lane": "q3_shared",
+      "sha256": "63a57835dd2c44d091482985d172f51381328148e45401434f60565b2050422f"
+    },
+    {
+      "path": "src/gameplay/q3/checkpoint.c",
+      "lane": "q3_shared",
+      "sha256": "a75796b2112e371d74ad2895bf500f80067c36e2a9199e9915885e18f8bb60be"
+    },
+    {
+      "path": "src/gameplay/q3/death.c",
+      "lane": "q3_shared",
+      "sha256": "b9daffebdc9c4fb1fefb80840ef812f2fc819b15f13a1e489022b96c45dcaf9c"
+    },
+    {
+      "path": "src/gameplay/q3/game.c",
+      "lane": "q3_shared",
+      "sha256": "84e0ef89ac21e1b9013ea2eb5ce87fe8399926aaffa4429031d276e1b1797fe7"
+    },
+    {
+      "path": "src/gameplay/q3/missiles.c",
+      "lane": "q3_shared",
+      "sha256": "af177f4321fc28bb2ae4ce937d6dfe70def962bbc7b3b83833125844e0353350"
+    },
+    {
+      "path": "src/gameplay/q3/movers.c",
+      "lane": "q3_shared",
+      "sha256": "f91dbfa2831c05ebf9a9849cc99722c55110d8352b5cad16870f1d96b687155a"
+    },
+    {
+      "path": "src/gameplay/q3/player.c",
+      "lane": "q3_shared",
+      "sha256": "9e8dc792fc7bce2c055b443ab313f3a7a485b1e17b3b92ab3b2f6f941ff945ef"
+    },
+    {
+      "path": "include/qa/session.h",
+      "lane": "world_session",
+      "sha256": "5f557e2b3498cb2354aec1f31f778688e918e81cda8914e5f0f14ec831eba412"
+    },
+    {
+      "path": "src/session/session.c",
+      "lane": "world_session",
+      "sha256": "d783a05454f81f926d821ef067f75ce7dbbfe733c29a6c627207f5d74e85e756"
+    },
+    {
+      "path": "include/qa/world.h",
+      "lane": "world_session",
+      "sha256": "583f3821c9e44917950afdfb71b742c3d2e41e75c0cf2a1051f5953b96031720"
+    },
+    {
+      "path": "src/world/body.c",
+      "lane": "world_session",
+      "sha256": "09e0438bc35ad8967ca6ecf0e6f850319a7de5a3d65c2fff17361c2faad3599c"
+    },
+    {
+      "path": "include/qa/bot_runtime.h",
+      "lane": "bots_compat",
+      "sha256": "6aac314347c962c4f6e31afcf9aa8eed62b29c997e07fd369623e495c2d1f2b9"
+    },
+    {
+      "path": "src/bots/runtime/internal.h",
+      "lane": "bots_compat",
+      "sha256": "1c25b415d333c36146db9d3996173c75166c04124fb4c7d3ccbf7b986c14c8ce"
+    },
+    {
+      "path": "src/bots/runtime/core.c",
+      "lane": "bots_compat",
+      "sha256": "d6e0eafac0037f396649d647936f3e51f0ec3481f9848c909a1bdcb86c7fcc71"
+    },
+    {
+      "path": "src/bots/runtime/setup.c",
+      "lane": "bots_compat",
+      "sha256": "d55371d619773202f39ff754bfe5fc35bfd9b56fa213cae5083623c65303e2aa"
+    },
+    {
+      "path": "src/compat/q3_host/host.c",
+      "lane": "bots_compat",
+      "sha256": "fc3cf253d7c76eee0e7f581a6ad98d620445a583414d1ff09628ea93a21bf11e"
+    },
+    {
+      "path": "src/compat/q3_host/bot_library.c",
+      "lane": "bots_compat",
+      "sha256": "96c5f57735a0556978ae40f1abb6c29947de1d6d31048c006912fd8c3062b252"
+    },
+    {
+      "path": "src/compat/q3_host/bot_chat.c",
+      "lane": "bots_compat",
+      "sha256": "7c8ec2ce04ea54b9f8e3e88cc33f5f402e4f6e1b5cb24611b3d6f88c585ed29f"
+    },
+    {
+      "path": "src/compat/q3_host/game_records.c",
+      "lane": "bots_compat",
+      "sha256": "7124c960b32e98bb0d0dfb324cb8ffe6da5cb3acfd384f40dbad373d7557abbe"
+    },
+    {
+      "path": "src/compat/native_host/host.c",
+      "lane": "bots_compat",
+      "sha256": "7f3c837874d03e0ef9a53b0017a4d75e1488d326c8319e84c180444ac1e364b6"
+    },
+    {
+      "path": "src/compat/native_host/checkpoint.c",
+      "lane": "bots_compat",
+      "sha256": "2cb71fcd911f49af8ca8b407ee9c63ef840be96d27dccc050ca762d9eb3550b4"
+    },
+    {
+      "path": "include/qa/native.h",
+      "lane": "bots_compat",
+      "sha256": "7d13c043e762261270012a0c63ee88e0d88f554e81e7b59a9a26fcb464cffa15"
+    },
+    {
+      "path": "src/compat/native/instance.c",
+      "lane": "bots_compat",
+      "sha256": "51bd39f15cf3827b4e39196d935ac8fbb97d4c98f48c81fcd7b8d4370b938403"
+    },
+    {
+      "path": "src/app/application/internal.h",
+      "lane": "presentation_app",
+      "sha256": "01f215069c6bf4c577aa99f1f8ebe1c6845f1a156b84b58bdfa1c57783a20c14"
+    },
+    {
+      "path": "src/app/application/lifetime.c",
+      "lane": "presentation_app",
+      "sha256": "47d2e312c18a8a21dccb08964d34bd16d4b4036a07382bd497341905cc8c7030"
+    },
+    {
+      "path": "src/app/application/owner.c",
+      "lane": "presentation_app",
+      "sha256": "a094e83a432af0f14c8b71f5408970ebb7d3a8ec7597aab527c9681e36f3cf59"
+    },
+    {
+      "path": "src/app/application/control.c",
+      "lane": "presentation_app",
+      "sha256": "8219912caa65972e40c02006759732732b702849c506d61e67fcbfdb2cdf5655"
+    },
+    {
+      "path": "src/app/application/services.c",
+      "lane": "presentation_app",
+      "sha256": "51c9ed85345a358d5024941c01df2bc48b99082e83cd93c10ddd2f710d2c8549"
+    },
+    {
+      "path": "src/app/application/composition.c",
+      "lane": "presentation_app",
+      "sha256": "447ddb4d7e5dcfb3dfdf1af37be6ef8453c8aa832335e928a205d2f2048cccbb"
+    },
+    {
+      "path": "src/app/application/publication.c",
+      "lane": "presentation_app",
+      "sha256": "affb4184a689016f8c52db4f95739ab316651c14c77382bfabf46192d5653cb1"
+    },
+    {
+      "path": "src/app/application/match.c",
+      "lane": "presentation_app",
+      "sha256": "ad32a2c2cb736827c0949c5a9726657e5372327f8fa5ebcc271ac5ff7a4dc290"
+    },
+    {
+      "path": "src/presentation/q3/audio.c",
+      "lane": "presentation_app",
+      "sha256": "7af28936aad25b913570a2be20e014b2e07d9b371c118eb81c73f8619c77cf4f"
+    },
+    {
+      "path": "src/media/cinematic.c",
+      "lane": "presentation_app",
+      "sha256": "def3c1f6e574fb3f2a611997aa6536eabf6d2ac9d230d759eccd8825b5a5e1fc"
+    }
+  ],
+  "reports": [
+    {
+      "path": "docs/audit/review-20260929-bots-compat.md",
+      "sha256": "31ecf64484bb0001a34f0f1e9e196aca8d87e701b620a97007d37f69d5b71baa"
+    },
+    {
+      "path": "docs/audit/review-20260929-foundations.md",
+      "sha256": "3b89a198d175df19e4f4948e7da027663f10455e3d9ad38060640d07b9b095e6"
+    },
+    {
+      "path": "docs/audit/review-20260929-jev-input.md",
+      "sha256": "e1a0a698d06d2e30c8c2c14c138403c9ef8d01ebcdf059550fa32956276657ea"
+    },
+    {
+      "path": "docs/audit/review-20260929-presentation-app.md",
+      "sha256": "882d774138850dc11479390e47daa8e8c14cbe32c25f03d20cfd716e5b2084ee"
+    },
+    {
+      "path": "docs/audit/review-20260929-q1-console-peer.md",
+      "sha256": "a48597d9fa3f90b66ae02ad4c21667265c724f163605695461bfa9b7f2fd4a8f"
+    },
+    {
+      "path": "docs/audit/review-20260929-q1.md",
+      "sha256": "24d4dd6f8c97045f6c118d47eef406787de294db519d3223ebe9c76fcd5b47d9"
+    },
+    {
+      "path": "docs/audit/review-20260929-q2.md",
+      "sha256": "613ec3c5242af36dafaf1a90e97aa4d5d59fded5ca5cd862582e0a7dfdb2cbcf"
+    },
+    {
+      "path": "docs/audit/review-20260929-q3-gameplay.md",
+      "sha256": "fc6ed3a04f21740fbaf0a821cade5a6b936239926ab809adc7cfe8d5f0348c93"
+    },
+    {
+      "path": "docs/audit/review-20260929-root.md",
+      "sha256": "f69c112e95fd724fcfcf8c6a9bc549aef2b5cef2b41e7d4da89af6c8b99f5693"
+    },
+    {
+      "path": "docs/audit/review-20260929-world-network.md",
+      "sha256": "aba1542eaa5b0efaef2e1a1ddcd22027161df0347f2204ac049b1cc8eeaebe43"
+    },
+    {
+      "path": "docs/audit/review-20260929.md",
+      "sha256": "9774377ef176e3087456ba218caebb29ad11836966f6a6806f3ba91bc92aa4f8"
+    }
+  ]
+}

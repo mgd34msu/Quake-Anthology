@@ -2,7 +2,7 @@
 
 bool qa_native_read(const qa_native_instance *instance, qa_native_address source, void *out,
                     size_t bytes, qa_error *error) {
-    if (!instance || instance->destroying)
+    if (!instance || (instance->destroying && !qa_native_unloading_owner(instance)))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "live native instance is required for memory reads");
     return instance->backend == QA_NATIVE_BACKEND_DIRECT
@@ -12,7 +12,7 @@ bool qa_native_read(const qa_native_instance *instance, qa_native_address source
 
 bool qa_native_write(qa_native_instance *instance, qa_native_address destination, qa_bytes bytes,
                      qa_error *error) {
-    if (!instance || instance->destroying || (!bytes.data && bytes.size))
+    if (!instance || (instance->destroying && !qa_native_unloading_owner(instance)) || (!bytes.data && bytes.size))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "live native instance and bytes are required for memory writes");
     return instance->backend == QA_NATIVE_BACKEND_DIRECT
@@ -95,7 +95,7 @@ bool qa_native_read_string(const qa_native_instance *instance, qa_native_address
 
 bool qa_native_allocate(qa_native_instance *instance, size_t bytes, int32_t tag,
                         qa_native_address *out, qa_error *error) {
-    if (!instance || !out || instance->destroying)
+    if (!instance || !out || (instance->destroying && !qa_native_unloading_owner(instance)))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "live native instance and allocation output are required");
     if (instance->backend == QA_NATIVE_BACKEND_RUNNER)
@@ -118,7 +118,7 @@ bool qa_native_allocate(qa_native_instance *instance, size_t bytes, int32_t tag,
 }
 
 bool qa_native_free(qa_native_instance *instance, qa_native_address address, qa_error *error) {
-    if (!instance || instance->destroying)
+    if (!instance || (instance->destroying && !qa_native_unloading_owner(instance)))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "live native instance is required for tagged free");
     if (!address)
@@ -139,7 +139,7 @@ bool qa_native_free(qa_native_instance *instance, qa_native_address address, qa_
 }
 
 void qa_native_free_tag(qa_native_instance *instance, int32_t tag) {
-    if (!instance)
+    if (!instance || (instance->destroying && !qa_native_unloading_owner(instance)))
         return;
     if (instance->backend == QA_NATIVE_BACKEND_RUNNER) {
         qa_error ignored = {0};
@@ -242,7 +242,7 @@ bool qa_native_entity_slot(const qa_native_instance *instance, qa_native_address
 
 bool qa_native_bind_slot(qa_native_instance *instance, const qa_native_slot_binding *binding,
                          qa_error *error) {
-    if (!instance || !binding || binding->slot >= instance->entities.capacity ||
+    if (!instance || instance->destroying || !binding || binding->slot >= instance->entities.capacity ||
         binding->kind > QA_NATIVE_SLOT_BORROWED)
         return native_fail(error, QA_ERROR_ARGUMENT, binding ? binding->slot : 0,
                            "invalid native source slot binding");

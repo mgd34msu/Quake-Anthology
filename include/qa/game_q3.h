@@ -4,8 +4,13 @@
 #include "qa/builtin.h"
 #include "qa/movement.h"
 #include "qa/physics.h"
+#include "qa/rankings.h"
 
 typedef struct qa_q3_game qa_q3_game;
+bool qa_q3_game_grant_arsenal(qa_q3_game *, qa_actor_id, bool ammo, qa_error *);
+bool qa_q3_game_give_item(qa_q3_game *, qa_actor_id, size_t, const char *const *, bool *handled,
+                         qa_error *);
+typedef struct qa_command_invocation qa_command_invocation;
 typedef enum qa_q3_product { QA_Q3_ARENA, QA_Q3_TEAM_ARENA } qa_q3_product;
 typedef enum qa_q3_weapon {
     QA_Q3_W_NONE,
@@ -24,6 +29,7 @@ typedef enum qa_q3_weapon {
     QA_Q3_W_CHAINGUN,
     QA_Q3_WEAPON_COUNT
 } qa_q3_weapon;
+const char *qa_q3_weapon_identity_name(qa_q3_weapon);
 typedef enum qa_q3_powerup {
     QA_Q3_P_NONE,
     QA_Q3_P_QUAD,
@@ -125,6 +131,7 @@ typedef struct qa_q3_player_state {
     qa_actor_id hook, attached_mine, persistent_item, portal;
     bool spectator, dead, gibbed, respawned, use_item_held, fire_held, grapple_pull;
     bool damage_from_world, noclip, invulnerability_expanded, death_cleanup_done, gauntlet_contact;
+    bool no_target;
 } qa_q3_player_state;
 
 typedef struct qa_q3_rules {
@@ -132,6 +139,10 @@ typedef struct qa_q3_rules {
     float quad_factor, knockback, weapon_respawn_seconds, team_weapon_respawn_seconds;
     bool friendly_fire, blood, intermission;
 } qa_q3_rules;
+typedef enum qa_q3_source_award {
+    QA_Q3_AWARD_DEFEND = 11,
+    QA_Q3_AWARD_ASSIST = 12
+} qa_q3_source_award;
 typedef struct qa_q3_hooks {
     void *context;
     /* Match and map owners handle their own obligations; selection does not
@@ -149,6 +160,16 @@ typedef struct qa_q3_hooks {
     bool (*foreign_mover_write)(void *, qa_actor_id, const qa_q3_mover_state *, qa_error *);
     qa_actor_owner (*combat_provider)(void *, qa_actor_id target, qa_actor_owner fallback);
     bool (*mover_action)(void *, qa_q3_mover_action, qa_actor_id, qa_actor_id, int32_t, qa_error *);
+    /* Queue reports and copy borrowed strings. These callbacks may inspect,
+     * but must not mutate or destroy the provider. A missing sink skips reports. */
+    bool (*ranking_report)(void *, const qa_ranking_source_report *, qa_error *);
+    bool (*ranking_warmup)(void *);
+    bool (*cheats_enabled)(void *);
+    bool (*console_motion)(void *, qa_actor_id, bool noclip, qa_error *);
+    bool (*grant_arsenal)(void *, qa_actor_id, bool ammo, bool *handled, qa_error *);
+    bool (*give_item)(void *, qa_actor_id, size_t, const char *const *, bool *handled, qa_error *);
+    bool (*suicide)(void *, qa_actor_id, qa_error *);
+    bool (*award)(void *, qa_actor_id, qa_q3_source_award, qa_error *);
 } qa_q3_hooks;
 typedef struct qa_q3_options {
     qa_builtin_services services;
@@ -165,7 +186,13 @@ bool qa_q3_create(const qa_q3_options *, qa_q3_game **, qa_error *);
 qa_component qa_q3_component(qa_q3_game *);
 bool qa_q3_combat_policy(qa_q3_game *, qa_combat_policy *, qa_error *);
 bool qa_q3_destroy(qa_q3_game *, qa_error *);
+bool qa_q3_destroy_ready(const qa_q3_game *);
+bool qa_q3_pickups_rebind(qa_q3_game *, qa_error *);
+bool qa_q3_inventory_admit(qa_q3_game *, qa_actor_id, qa_error *);
+bool qa_q3_inventory_rebind(qa_q3_game *, qa_error *);
 bool qa_q3_set_rules(qa_q3_game *, const qa_q3_rules *, qa_error *);
+bool qa_q3_game_console_command(qa_q3_game *, qa_actor_id, const qa_command_invocation *,
+                                bool *handled, qa_error *);
 qa_item_id qa_q3_weapon_item(const qa_q3_game *, qa_q3_weapon, bool ammo);
 qa_item_id qa_q3_item_identity(const qa_q3_game *, uint32_t item_index);
 bool qa_q3_bind_player(qa_q3_game *, qa_actor_id, uint32_t selections, int32_t handicap,
@@ -186,6 +213,7 @@ bool qa_q3_bind_player_validate(qa_q3_game *, const qa_q3_player_binding *, qa_e
 bool qa_q3_bind_player_commit(qa_q3_game *, qa_q3_player_binding *, qa_error *);
 bool qa_q3_bind_player_rollback(qa_q3_game *, qa_q3_player_binding *, qa_error *);
 bool qa_q3_player_read(const qa_q3_game *, qa_actor_id, qa_q3_player_state *);
+bool qa_q3_player_notarget(qa_q3_game *, qa_actor_id, bool *enabled, qa_error *);
 bool qa_q3_player_set_view(qa_q3_game *, qa_actor_id, qa_vec3 angles, float view_height,
                            qa_error *);
 /* Private character presentation and input suppression only. The application
@@ -247,6 +275,10 @@ bool qa_q3_activate_holdable(qa_q3_game *, qa_actor_id, qa_q3_holdable expected,
 bool qa_q3_movement_environment(qa_q3_game *, qa_actor_id, qa_movement_environment *, qa_error *);
 bool qa_q3_prepare_movement(qa_q3_game *, qa_actor_id, qa_movement_input *, qa_error *);
 qa_movement_control qa_q3_movement_phase(void *, qa_movement_phase, qa_movement_call *, qa_error *);
+/* Shared hosts choose the current arsenal owner independently of character,
+ * movement and effect projections. The standalone phase keeps source defaults. */
+qa_movement_control qa_q3_movement_phase_selected(void *, qa_movement_phase, qa_movement_call *,
+                                                 bool arsenal_selected, qa_error *);
 qa_movement_control qa_q3_movement_effect(void *, const qa_movement_effect *, qa_movement_call *,
                                           qa_error *);
 
@@ -355,12 +387,17 @@ typedef struct qa_q3_kamikaze_cooldown {
     qa_actor_id actor;
     int32_t damage_after, shock_after;
 } qa_q3_kamikaze_cooldown;
+typedef struct qa_q3_ranking_hit {
+    int32_t frame, self, attacker, method;
+    bool valid;
+} qa_q3_ranking_hit;
 typedef struct qa_q3_checkpoint {
     uint32_t version, random_state, death_animation, body_queue_index;
     qa_q3_product product;
     qa_q3_rules rules;
     int32_t previous_ms, now_ms;
     uint64_t attack_sequence;
+    qa_q3_ranking_hit ranking_hit;
     qa_actor_id body_queue[8];
     qa_q3_actor_state *actors;
     size_t actor_count;
@@ -374,6 +411,14 @@ typedef struct qa_q3_checkpoint {
 bool qa_q3_checkpoint_capture(const qa_q3_game *, qa_q3_checkpoint *, qa_error *);
 bool qa_q3_checkpoint_restore(qa_q3_game *, const qa_q3_checkpoint *, qa_error *);
 void qa_q3_checkpoint_free(qa_q3_checkpoint *);
+bool qa_q3_ranking_capture(qa_q3_game *, qa_actor_id, qa_error *);
+bool qa_q3_ranking_flag_pickup(qa_q3_game *, qa_actor_id, qa_error *);
+bool qa_q3_ranking_team_name(qa_q3_game *, qa_actor_id, const char *, qa_error *);
+bool qa_q3_ranking_weapon_time(qa_q3_game *, qa_actor_id, qa_q3_weapon, int32_t, qa_error *);
+/* The shared damage owner submits each committed outcome once, independent of
+ * the selected character/effects providers. Damage precedes death reporting. */
+bool qa_q3_ranking_damage(qa_q3_game *, const qa_damage_outcome *, qa_error *);
+bool qa_q3_ranking_death(qa_q3_game *, const qa_damage_outcome *, qa_error *);
 bool qa_q3_projectile_read(const qa_q3_game *, qa_actor_id, qa_q3_projectile_state *);
 bool qa_q3_projectile_steer(qa_q3_game *, qa_actor_id, qa_vec3 velocity, qa_error *);
 typedef enum qa_q3_entity_kind {

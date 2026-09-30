@@ -141,6 +141,8 @@ static bool pull_velocity(qa_q1_game *g, q1_actor *hook, q1_player *player, bool
     if (!qa_world_body_read(g->services.world, player->id, &body, error) ||
         !qa_world_body_read(g->services.world, hook->id, &head, error))
         return false;
+    if (!q1_alive(g, player->id) || !q1_alive(g, hook->id))
+        return true;
     qa_vec3 forward, up;
     qa_builtin_angle_vectors(body.angles, &forward, NULL, &up);
     qa_vec3 delta = qa_vec_sub(
@@ -153,6 +155,8 @@ static bool pull_velocity(qa_q1_game *g, q1_actor *hook, q1_player *player, bool
         body.ground = (qa_actor_id){0};
     if (!qa_world_body_write(g->services.world, player->id, &body, error))
         return false;
+    if (!q1_alive(g, player->id) || !q1_alive(g, hook->id))
+        return true;
     qa_builtin_motion_change change = {.reason = QA_BUILTIN_MOTION_LAUNCH, .body = body};
     if (!g->services.motion_changed(g->services.context, player->id, &change, error))
         return false;
@@ -485,6 +489,8 @@ bool q1_grapple_frame(qa_q1_game *g, q1_player *player, qa_error *error) {
         if (!q1_weapon_event(g, player, 0, 0, error))
             return false;
     }
+    if (!q1_alive(g, hook->id) || !q1_alive(g, player->id))
+        return true;
     if (ctf && g->options.edition == QA_Q1_CLASSIC)
         return true;
     qa_body_state body, head;
@@ -509,5 +515,7 @@ bool q1_grapple_frame(qa_q1_game *g, q1_player *player, qa_error *error) {
                              .end = qa_vec_add(body.origin, qa_v3(0, 0, 16)),
                              .time_ns = g->time_ns,
                              .code = 6};
+    if (!q1_alive(g, hook->id) || !q1_alive(g, player->id))
+        return true;
     return qa_builtin_emit(&g->services, &beam, error);
 }

@@ -53,6 +53,13 @@ bool qa_inventory_destroy(qa_inventory *, qa_error *);
 void qa_inventory_actor_released(qa_inventory *, qa_actor_record);
 bool qa_inventory_create_actor(qa_inventory *, qa_actor_id, const qa_inventory_entry *, size_t, qa_error *);
 bool qa_inventory_bind(qa_inventory *, qa_actor_id, const qa_inventory_binding *, qa_error *);
+/* Adopt a local primary without replacing item groups or native-only entries.
+ * Overlapping counts move into the source's declared policy and capacity.
+ * Detach snapshots the exact source binding back into canonical local storage.
+ * Both operations require the actor's inventory callbacks to have drained. */
+bool qa_inventory_adopt_primary(qa_inventory *, qa_actor_id, const qa_inventory_binding *,
+                                qa_inventory_lease *, qa_error *);
+bool qa_inventory_detach_primary(qa_inventory *, qa_inventory_lease, void *context, qa_error *);
 bool qa_inventory_bind_items(qa_inventory *, qa_actor_id, const qa_inventory_items *, qa_inventory_lease *, qa_error *);
 /* Native definitions share primary count storage. An explicitly admitted
  * external item override shadows these actions until its lease closes.
@@ -152,6 +159,8 @@ typedef struct qa_pickup_grant_plan {
 bool qa_pickup_preview_grants(const qa_inventory_entry *, size_t, const qa_pickup_grant_plan *, qa_supply_preview_result *, qa_error *);
 bool qa_supply_apply(qa_supply *, qa_actor_id, const qa_supply_offer *, const qa_supply_options *, bool *, qa_error *);
 bool qa_supply_preview(qa_supply *, qa_actor_id, const qa_supply_offer *, bool canonical, qa_supply_preview_result *, qa_error *);
+bool qa_supply_cargo_preview(qa_supply *, qa_actor_id, const qa_pickup_cargo *, size_t,
+                              bool canonical, qa_supply_preview_result *, qa_error *);
 void qa_supply_preview_free(qa_supply_preview_result *);
 typedef struct qa_supply_weapon { qa_item_id item, ammo; bool drop; } qa_supply_weapon;
 /* Outputs parallel the selected array; zero means the source cannot drop it.

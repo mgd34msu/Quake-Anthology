@@ -7,8 +7,9 @@ static qa_vec3 beam_angles(qa_vec3 direction) {
 }
 
 static bool controller_live(qa_q2_game *game, q2_actor *actor,
+                            const struct qa_q2_monster *expected,
                             q2m_controller_kind kind) {
-  return actor != NULL && actor->monster != NULL &&
+  return actor != NULL && actor->monster == expected && expected != NULL &&
          actor->monster->controller_kind == kind &&
          q2_actor_live(game, actor->id);
 }
@@ -57,14 +58,16 @@ static bool beam_damage(qa_q2_game *game, q2_actor *actor, qa_actor_id target,
   struct qa_q2_monster *beam = actor->monster;
   qa_combat_state combat;
   qa_error ignored = {0};
-  if (!qa_combat_read(game->services.combat, target, &combat, &ignored) ||
-      !combat.can_take_damage ||
+  if (!qa_combat_read(game->services.combat, target, &combat, &ignored))
+    return true;
+  if (!controller_live(game, actor, beam, Q2M_CONTROLLER_BEAM) ||
+      !q2_actor_live(game, target) || !combat.can_take_damage ||
       qa_actor_id_equal(target, beam->controller_owner))
     return true;
   qa_builtin_actor_traits traits = {0};
   if (game->services.actor_traits != NULL)
     game->services.actor_traits(game->services.context, target, &traits);
-  if (!controller_live(game, actor, Q2M_CONTROLLER_BEAM))
+  if (!controller_live(game, actor, beam, Q2M_CONTROLLER_BEAM))
     return true;
   if (traits.laser_immune || traits.no_source_friendly_fire)
     return true;
@@ -80,12 +83,15 @@ static bool beam_damage(qa_q2_game *game, q2_actor *actor, qa_actor_id target,
                  (float)game->options.skill, beam->controller_direction, point,
                  normal, false, error))
     return false;
-  if (!controller_live(game, actor, Q2M_CONTROLLER_BEAM) ||
+  if (!controller_live(game, actor, beam, Q2M_CONTROLLER_BEAM) ||
       beam->controller_damage >= 0.0f ||
       !traits.player)
     return true;
   if (!qa_combat_read(game->services.combat, target, &combat, &ignored) ||
       combat.health <= 100.0f)
+    return true;
+  if (!controller_live(game, actor, beam, Q2M_CONTROLLER_BEAM) ||
+      !q2_actor_live(game, target))
     return true;
   return qa_combat_set_health(game->services.combat, target,
                               combat.health + beam->controller_damage, error);
@@ -96,6 +102,8 @@ static bool beam_fire(qa_q2_game *game, q2_actor *actor, qa_error *error) {
   qa_body_state body;
   if (!qa_world_body_read(game->services.world, actor->id, &body, error))
     return false;
+  if (!controller_live(game, actor, beam, Q2M_CONTROLLER_BEAM))
+    return true;
   qa_vec3 start = body.origin;
   qa_vec3 end = qa_vec_add(start, qa_vec_scale(beam->controller_direction,
                                                2048.0f));
@@ -112,7 +120,7 @@ static bool beam_fire(qa_q2_game *game, q2_actor *actor, qa_error *error) {
     qa_trace_result trace;
     if (!qa_world_trace(game->services.world, &query, &trace, error))
       return false;
-    if (!controller_live(game, actor, Q2M_CONTROLLER_BEAM))
+    if (!controller_live(game, actor, beam, Q2M_CONTROLLER_BEAM))
       return true;
     endpoint = trace.end;
     if (trace.hit != QA_TRACE_HIT_ACTOR) {
@@ -125,14 +133,14 @@ static bool beam_fire(qa_q2_game *game, q2_actor *actor, qa_error *error) {
     qa_builtin_actor_traits traits = {0};
     if (game->services.actor_traits != NULL)
       game->services.actor_traits(game->services.context, trace.actor, &traits);
-    if (!controller_live(game, actor, Q2M_CONTROLLER_BEAM))
+    if (!controller_live(game, actor, beam, Q2M_CONTROLLER_BEAM))
       return true;
     if (!beam_damage(game, actor, trace.actor, trace.end,
                      trace.contact ? trace.contact_plane.normal
                                    : qa_v3(0.0f, 0.0f, 0.0f),
                      error))
       return false;
-    if (!controller_live(game, actor, Q2M_CONTROLLER_BEAM))
+    if (!controller_live(game, actor, beam, Q2M_CONTROLLER_BEAM))
       return true;
     if (!traits.monster && !traits.player) {
       if (!spark_event(game, actor, &trace, error))
@@ -142,7 +150,7 @@ static bool beam_fire(qa_q2_game *game, q2_actor *actor, qa_error *error) {
     ignored_actor = trace.actor;
     start = trace.end;
   }
-  return !controller_live(game, actor, Q2M_CONTROLLER_BEAM) ||
+  return !controller_live(game, actor, beam, Q2M_CONTROLLER_BEAM) ||
          beam_event(game, actor, body.origin, endpoint, error);
 }
 
@@ -172,6 +180,8 @@ bool q2m_spawn_monster_beam(q2m_context *context, qa_actor_id target,
           (float)(sin((double)context->game->now_ns / 1e9) * 8.0);
     aim = qa_vec_normalize(qa_vec_sub(center, origin));
   }
+  if (!q2m_alive(context))
+    return true;
   qa_body_state body = {
       .origin = origin,
       .angles = beam_angles(aim),
@@ -187,6 +197,9 @@ bool q2m_spawn_monster_beam(q2m_context *context, qa_actor_id target,
   qa_actor_id id;
   if (!qa_builtin_spawn_actor(&context->game->services, &spawn, &id, error))
     return false;
+  if (!q2m_alive(context))
+    return !q2_actor_live(context->game, id) ||
+           qa_session_release(context->game->services.session, id, error);
   q2_actor *actor = q2_actor_get(context->game, id, true, error);
   if (actor == NULL) {
     qa_session_release(context->game->services.session, id, NULL);
@@ -232,6 +245,9 @@ bool q2m_spawn_boss_exploder(q2m_context *context, qa_error *error) {
   qa_actor_id id;
   if (!qa_builtin_spawn_actor(&context->game->services, &spawn, &id, error))
     return false;
+  if (!q2m_alive(context))
+    return !q2_actor_live(context->game, id) ||
+           qa_session_release(context->game->services.session, id, error);
   q2_actor *actor = q2_actor_get(context->game, id, true, error);
   if (actor == NULL) {
     qa_session_release(context->game->services.session, id, NULL);
@@ -275,6 +291,9 @@ bool q2m_schedule_makron_spawn(q2m_context *context, qa_error *error) {
   qa_actor_id id;
   if (!qa_builtin_spawn_actor(&context->game->services, &spawn, &id, error))
     return false;
+  if (!q2m_alive(context))
+    return !q2_actor_live(context->game, id) ||
+           qa_session_release(context->game->services.session, id, error);
   q2_actor *actor = q2_actor_get(context->game, id, true, error);
   if (actor == NULL) {
     qa_session_release(context->game->services.session, id, NULL);
@@ -318,6 +337,11 @@ static bool boss_exploder_tick(qa_q2_game *game, q2_actor *actor,
   qa_body_state body;
   if (!qa_world_body_read(game->services.world, owner_id, &body, error))
     return false;
+  if (!controller_live(game, actor, controller, Q2M_CONTROLLER_BOSS_EXPLODER) ||
+      !q2_actor_live(game, owner_id) || !owner->monster ||
+      !owner->monster->definition || owner->projectile.kind != Q2_PROJECTILE_NONE ||
+      owner->monster->gibbed)
+    return true;
   qa_vec3 span = qa_vec_sub(body.bounds.maxs, body.bounds.mins);
   qa_vec3 origin = qa_vec_add(
       qa_vec_add(body.origin, body.bounds.mins),
@@ -340,8 +364,7 @@ static bool boss_exploder_tick(qa_q2_game *game, q2_actor *actor,
   if (!qa_builtin_resource(&game->services, effect, &event.resource, error) ||
       !qa_builtin_emit(&game->services, &event, error))
     return false;
-  if (!controller_live(game, actor, Q2M_CONTROLLER_BOSS_EXPLODER) ||
-      actor->monster != controller)
+  if (!controller_live(game, actor, controller, Q2M_CONTROLLER_BOSS_EXPLODER))
     return true;
   ++controller->count;
   controller->controller_ns =
@@ -408,7 +431,7 @@ bool q2m_controller_tick(qa_q2_game *game, q2_actor *actor,
     return boss_exploder_tick(game, actor, error);
   if (controller->controller_kind == Q2M_CONTROLLER_MAKRON_SPAWN)
     return makron_spawn_tick(game, actor, error);
-  if (!controller_live(game, actor, Q2M_CONTROLLER_BEAM))
+  if (!controller_live(game, actor, controller, Q2M_CONTROLLER_BEAM))
     return true;
   if (game->now_ns < controller->controller_ns)
     return true;

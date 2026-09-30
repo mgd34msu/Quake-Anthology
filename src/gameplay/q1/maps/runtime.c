@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_q1_checkpoint.h"
 #include <errno.h>
 #include <limits.h>
 
@@ -8,7 +9,7 @@ bool q1_map_fail(qa_error *error, const char *message) {
 }
 static bool map_options_valid(const qa_q1_game *g, const qa_q1_map_options *options,
                               qa_error *error) {
-    if (!g || !options || !options->targets || !options->level || !options->server_flags ||
+    if (!g || g->destroy_pending || !options || !options->targets || !options->level || !options->server_flags ||
         !options->static_model || !options->ambient || !options->lightstyle ||
         !options->set_skill || !options->secret_found || !g->services.actor_traits ||
         !g->services.physics || !g->services.physics->services.read ||
@@ -42,7 +43,7 @@ static void door_groups_free(q1_door_group *group) {
 bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_error *error) {
     if (!map_options_valid(g, options, error))
         return false;
-    if (!g->maps || !qa_session_safe(g->services.session) ||
+    if (!g->maps || g->observation_depth || !qa_session_safe(g->services.session) ||
         qa_actors_count(qa_session_actors(g->services.session)))
         return q1_map_fail(error, "Q1 map reset requires a retired world at a safe point");
     if (!qa_strings_text(qa_session_strings(g->services.session), options->current_map).size)
@@ -56,8 +57,18 @@ bool qa_q1_game_begin_map(qa_q1_game *g, const qa_q1_map_options *options, qa_er
 
     qa_q1_map_options replacement = *options;
     q1_map_state *states = g->maps->allocated;
+    q1_rotate_target *rotated = g->maps->rotated_targets;
+    qa_actor_id *frame_ticks = g->maps->frame_ticks;
+    q1_addon_contact *contacts = g->maps->addon_contacts;
+    if (contacts)
+        memset(contacts, 0, g->capacity * sizeof(*contacts));
+    if (rotated)
+        memset(rotated, 0, g->capacity * sizeof(*rotated));
     door_groups_free(g->maps->door_groups);
-    *g->maps = (q1_map_runtime){.options = replacement, .allocated = states, .lightning_end = -1};
+    *g->maps = (q1_map_runtime){.options = replacement, .allocated = states,
+                               .rotated_targets = rotated, .frame_ticks = frame_ticks,
+                               .addon_contacts = contacts,
+                               .lightning_end = -1};
     while (states) {
         q1_map_state *next = states->allocated_next;
         *states = (q1_map_state){.allocated_next = next, .pool_next = g->maps->spare};
@@ -112,11 +123,45 @@ static bool target_set_targetname(void *context, qa_actor_id actor, qa_string_id
     entity->targetname = value;
     return true;
 }
+static bool target_set_delay(void *context, qa_actor_id actor, float value, qa_error *error) {
+    q1_actor *entity = q1_entity(context, actor);
+    if (!entity || !entity->native || !isfinite(value))
+        return q1_map_fail(error, "Q1 delay field owner is unavailable");
+    entity->delay = value;
+    return true;
+}
 static bool target_field(void *context, qa_actor_id actor, const char *key, qa_target_field *out) {
     qa_q1_game *g = context;
     q1_actor *entity = q1_entity(g, actor);
     if (!entity)
         return false;
+    if (entity->map && q1_map_is_fog(entity->map->kind)) {
+        if (!strcmp(key, "fog_density")) {
+            *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+                                     .value.number = entity->map->fog_density};
+            return true;
+        }
+        if (!strcmp(key, "fog_color")) {
+            *out = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR,
+                                     .value.vector = entity->map->fog_color};
+            return true;
+        }
+        if (!strcmp(key, "fog_info_entity")) {
+            *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
+                                     .value.text = entity->map->fog_info_entity};
+            return true;
+        }
+    }
+    if (!strcmp(key, "is_frozen") || !strcmp(key, "addon.frozenDamageable") ||
+        !strcmp(key, "storednextthink") || !strcmp(key, "alpha")) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+            .value.number = !strcmp(key, "is_frozen") ? entity->frozen.active
+                            : !strcmp(key, "addon.frozenDamageable") ? entity->frozen.damageable
+                            : !strcmp(key, "alpha") ? entity->alpha
+                            : entity->map && entity->map->kind == Q1_MAP_ADDON_SHAKE
+                                ? entity->map->active_until : entity->frozen.next_think};
+        return true;
+    }
     static const struct {
         const char *name;
         size_t offset;
@@ -126,6 +171,8 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
                    {"killtarget", offsetof(q1_actor, killtarget)},
                    {"message", offsetof(q1_actor, message)}},
       numbers[] = {{"speed", offsetof(q1_actor, speed)},
+                   {"dmg", offsetof(q1_actor, damage)},
+                   {"damage", offsetof(q1_actor, damage)},
                    {"wait", offsetof(q1_actor, wait)},
                    {"delay", offsetof(q1_actor, delay)}};
     for (size_t i = 0; i < sizeof(strings) / sizeof(*strings); ++i)
@@ -148,6 +195,28 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
     if (entity->map && !strcmp(key, "style")) {
         *out =
             (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER, .value.number = entity->map->style};
+        return true;
+    }
+    if (entity->map && !strcmp(key, "category")) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
+                                 .value.text = entity->map->category};
+        return true;
+    }
+    if (entity->map && !strcmp(key, "goal_state")) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
+                                 .value.number = entity->map->goal_state};
+        return true;
+    }
+    if (entity->map && !strcmp(key, "state")) {
+        bool moving = q1_map_is_mover(entity->map->kind) || q1_map_is_rogue_plat(entity->map->kind);
+        if (!moving)
+            return false;
+        static const char *const states[] = {"bottom", "up", "top", "down"};
+        qa_string_id value;
+        if (!qa_strings_intern_cstr(qa_session_strings(g->services.session),
+                                    states[entity->map->pending.mover.position], &value, NULL))
+            return false;
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = value};
         return true;
     }
     if (entity->map &&
@@ -193,7 +262,9 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
         }
     }
     if (entity->map && (!strcmp(key, "height") ||
-                        (entity->map->kind == Q1_MAP_ROGUE_PLAT && !strcmp(key, "cnt")))) {
+                        ((entity->map->kind == Q1_MAP_ROGUE_PLAT ||
+                          entity->map->kind == Q1_MAP_ELECTRODE_TARGET ||
+                          entity->map->electrode_button) && !strcmp(key, "cnt")))) {
         *out =
             (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
                               .value.number = !strcmp(key, "height") ? entity->map->height
@@ -243,6 +314,19 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT, .value.text = entity->map->event};
         return true;
     }
+    if (entity->map && (!strcmp(key, "group") || !strcmp(key, "path") ||
+                        !strcmp(key, "noise") || !strcmp(key, "noise1"))) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
+                                 .value.text = !strcmp(key, "group") ? entity->map->group
+                                               : !strcmp(key, "path") ? entity->map->path
+                                               : entity->map->noise[!strcmp(key, "noise1")]};
+        return true;
+    }
+    if (entity->map && !strcmp(key, "rotate")) {
+        *out = (qa_target_field){.kind = QA_TARGET_FIELD_VECTOR,
+                                 .value.vector = entity->map->rotate};
+        return true;
+    }
     if (entity->map && (!strcmp(key, "spawnfunction") || !strcmp(key, "spawnclassname"))) {
         *out = (qa_target_field){.kind = QA_TARGET_FIELD_TEXT,
                                  .value.text = !strcmp(key, "spawnfunction")
@@ -274,10 +358,16 @@ static bool target_field(void *context, qa_actor_id actor, const char *key, qa_t
     }
     return false;
 }
-bool q1_map_bind_target(qa_q1_game *g, q1_actor *entity, qa_error *error) {
-    if (!g->maps || !entity->native)
-        return true;
-    qa_target_binding binding = {.actor = entity->id,
+bool qa_q1_game_target_binding(qa_q1_game *g, qa_actor_id actor, qa_target_binding *out,
+                                qa_error *error) {
+    if (!g || !out) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q1 target binding request");
+        return false;
+    }
+    q1_actor *entity = q1_entity(g, actor);
+    if (!g->maps || !entity || !entity->native)
+        return false;
+    *out = (qa_target_binding){.actor = entity->id,
                                  .context = g,
                                  .source = g->options.quakeworld ? QA_CLOCK_QUAKEWORLD
                                                                  : QA_CLOCK_NETQUAKE,
@@ -285,7 +375,16 @@ bool q1_map_bind_target(qa_q1_game *g, q1_actor *entity, qa_error *error) {
                                  .use = target_use,
                                  .field = target_field,
                                  .set_target = target_set_target,
+                                 .set_delay = target_set_delay,
                                  .set_targetname = target_set_targetname};
+    return true;
+}
+bool q1_map_bind_target(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    if (!g->maps || !entity->native)
+        return true;
+    qa_target_binding binding;
+    if (!qa_q1_game_target_binding(g, entity->id, &binding, error))
+        return false;
     return qa_targets_bind(g->maps->options.targets, &binding, error);
 }
 qa_string_id qa_q1_game_map_name(const qa_q1_game *g) {
@@ -319,6 +418,7 @@ q1_map_state *q1_map_allocate(qa_q1_game *g, q1_actor *entity, qa_error *error) 
     return state;
 }
 void q1_map_actor_released(qa_q1_game *g, q1_actor *entity) {
+    q1_map_frame_tick_remove(g, entity->id);
     if (g->maps && entity->native)
         qa_targets_unbind_context(g->maps->options.targets, entity->id, g);
     if (!entity->map)
@@ -354,6 +454,9 @@ void q1_map_destroy(qa_q1_game *g) {
         state = next;
     }
     door_groups_free(g->maps->door_groups);
+    free(g->maps->rotated_targets);
+    free(g->maps->frame_ticks);
+    free(g->maps->addon_contacts);
     free(g->maps);
     g->maps = NULL;
 }
@@ -369,6 +472,13 @@ bool q1_map_clone(qa_q1_game *g, const q1_actor *source, q1_actor *destination, 
     copy->pool_next = NULL;
     if (copy->action == Q1_MAP_DELAYED_USE)
         copy->pending.delayed.source = destination->id;
+    if (g->maps->rotated_targets) {
+        q1_rotate_target *row = &g->maps->rotated_targets[source->id.slot];
+        if (qa_actor_id_equal(row->actor, source->id)) {
+            g->maps->rotated_targets[destination->id.slot] = *row;
+            g->maps->rotated_targets[destination->id.slot].actor = destination->id;
+        }
+    }
     return true;
 }
 bool q1_map_collision(const q1_actor *entity, qa_actor_collision *collision) {
@@ -440,28 +550,47 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
         source->duration,      source->distance,     source->next_think_seconds,
         source->counter_value, source->spawn_multi,  source->spawn_silent,
         source->gravity,       source->current_ammo, source->pain_finished,
-        source->weapon,        source->frags};
+        source->weapon,        source->frags, source->goal_state, source->fog_density};
     for (size_t i = 0; i < sizeof(numbers) / sizeof(*numbers); ++i)
         if (!isfinite(numbers[i]))
             return q1_map_fail(error, "nonfinite Q1 authored field");
     if (!qa_vec_finite(source->mangle) || !qa_vec_finite(source->movedir) ||
+        !qa_vec_finite(source->rotate) || !qa_vec_finite(source->dest) ||
+        !qa_vec_finite(source->dest2) || !qa_vec_finite(source->pos2) ||
+        !qa_vec_finite(source->angular_velocity) || !qa_vec_finite(source->particle_size) ||
+        !qa_vec_finite(source->fog_color) ||
         (source->has_view_offset && !qa_vec_finite(source->view_offset)))
         return q1_map_fail(error, "invalid Q1 authored direction");
     q1_map_state *state = entity->map;
     const char *input[] = {
         source->model,   source->map,    source->noise,          source->noise1,
         source->noise2,  source->noise3, source->endtext,        source->intermissiontext,
-        source->netname, source->event,  source->spawn_function, source->spawn_classname};
+        source->netname, source->event,  source->spawn_function, source->spawn_classname,
+        source->group, source->path, source->category, source->fog_info_entity};
     qa_string_id *output[] = {
         &state->original_model, &state->map,      &state->noise[0],       &state->noise[1],
         &state->noise[2],       &state->noise[3], &state->endtext,        &state->intermissiontext,
-        &state->netname,        &state->event,    &state->spawn_function, &state->spawn_classname};
+        &state->netname,        &state->event,    &state->spawn_function, &state->spawn_classname,
+        &state->group, &state->path, &state->category, &state->fog_info_entity};
     for (size_t i = 0; i < sizeof(input) / sizeof(*input); ++i)
         if (input[i] && input[i][0] &&
             !qa_builtin_resource(&g->services, input[i], output[i], error))
             return false;
     entity->model = state->original_model;
     state->mangle = source->mangle;
+    state->rotate = source->rotate;
+    state->dest = source->dest;
+    state->dest2 = source->dest2;
+    state->has_dest2 = source->has_dest2;
+    state->pos2 = source->pos2;
+    state->particle_size = source->particle_size;
+    state->fog_color = source->fog_color;
+    state->fog_density = source->fog_density;
+    entity->skin = source->skin;
+    if (q1_map_is_addon_brush(state->kind)) {
+        entity->physics.angular_velocity = source->angular_velocity;
+        entity->frame = source->frame;
+    }
     state->view_offset = source->view_offset;
     state->has_view_offset = source->has_view_offset;
     state->height = source->height;
@@ -475,11 +604,15 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
     state->duration = source->duration;
     state->distance = source->distance;
     state->initial_think = source->next_think_seconds;
+    if (q1_map_is_hip_hazard(state->kind))
+        state->pending.hazard.enabled = source->initial_state != 0;
     state->sounds = source->sounds;
     state->style = source->style;
     state->color_map = source->color_map;
     state->impulse = source->impulse;
     state->counter_value = source->counter_value;
+    state->goal_state = source->goal_state;
+    state->field_state = (float)source->initial_state;
     state->particle_color = source->particle_color;
     state->spawn_multi = source->spawn_multi;
     state->spawn_silent = source->spawn_silent;
@@ -539,9 +672,68 @@ static q1_map_kind classify(const char *name) {
                    {"func_wall", Q1_MAP_WALL},
                    {"func_door", Q1_MAP_DOOR},
                    {"func_button", Q1_MAP_BUTTON},
+                   {"func_axe_button", Q1_MAP_BUTTON},
+                   {"trigger_door_relay", Q1_MAP_ADDON_DOOR_RELAY},
+                   {"trigger_doorgroup_relay", Q1_MAP_ADDON_DOOR_GROUP},
+                   {"trigger_lore", Q1_MAP_ADDON_LORE},
+                   {"trigger_music", Q1_MAP_ADDON_MUSIC},
+                   {"trigger_heal", Q1_MAP_ADDON_HEAL},
+                   {"trigger_quad", Q1_MAP_ADDON_QUAD},
+                   {"trigger_teleport_silent", Q1_MAP_ADDON_SILENT_TELEPORT},
+                   {"trigger_cutscene", Q1_MAP_ADDON_CUTSCENE},
+                   {"trigger_relay_setskill", Q1_MAP_ADDON_SKILL},
+                   {"trigger_explosion_repeater", Q1_MAP_ADDON_EXPLOSION_REPEATER},
+                   {"horde_manager", Q1_MAP_HORDE_MANAGER},
+                   {"info_monster_start", Q1_MAP_HORDE_NORMAL},
+                   {"info_monster_start_ranged", Q1_MAP_HORDE_RANGED},
+                   {"info_monster_start_flying", Q1_MAP_HORDE_FLYING},
+                   {"info_monster_start_boss", Q1_MAP_HORDE_BOSS},
+                   {"info_horde_ammo", Q1_MAP_HORDE_AMMO},
+                   {"info_horde_item", Q1_MAP_HORDE_ITEM},
+                   {"info_horde_key", Q1_MAP_HORDE_KEY},
+                   {"trigger_screenshake", Q1_MAP_ADDON_SHAKE},
+                   {"trigger_sound", Q1_MAP_ADDON_SOUND},
+                   {"trigger_lightning", Q1_MAP_ADDON_LIGHTNING},
+                   {"trigger_fade", Q1_MAP_ADDON_FADE_TRIGGER},
+                   {"trigger_freeze", Q1_MAP_ADDON_FREEZE},
+                   {"particle_embers", Q1_MAP_ADDON_EMBERS},
+                   {"particle_embers_tall", Q1_MAP_ADDON_EMBERS_TALL},
+                   {"particle_tele", Q1_MAP_ADDON_PARTICLE_TELE},
+                   {"particle_tele_fountain", Q1_MAP_ADDON_FOUNTAIN},
                    {"func_door_secret", Q1_MAP_SECRET_DOOR},
                    {"func_plat", Q1_MAP_PLAT},
                    {"func_train", Q1_MAP_TRAIN},
+                   {"trap_spike_mine", Q1_MAP_SPIKE_MINE},
+                   {"trap_lightning", Q1_MAP_HIP_LIGHTNING},
+                   {"trap_lightning_triggered", Q1_MAP_HIP_LIGHTNING_TRIGGERED},
+                   {"trap_lightning_switched", Q1_MAP_HIP_LIGHTNING_SWITCHED},
+                   {"trap_tesla_coil", Q1_MAP_TESLA},
+                   {"info_rotate", Q1_MAP_ROTATE_INFO},
+                   {"path_rotate", Q1_MAP_ROTATE_PATH},
+                   {"rotate_object", Q1_MAP_ROTATE_OBJECT},
+                   {"func_rotate_entity", Q1_MAP_ROTATE_ENTITY},
+                   {"func_rotate_door", Q1_MAP_ROTATE_DOOR},
+                   {"func_movewall", Q1_MAP_MOVEWALL},
+                   {"func_clock", Q1_MAP_CLOCK},
+                   {"func_rotate_train", Q1_MAP_ROTATE_TRAIN},
+                   {"dynamiclight", Q1_MAP_DYNAMIC_LIGHT},
+                   {"target_lightramp", Q1_MAP_LIGHT_RAMP},
+                   {"light_candle", Q1_MAP_CANDLE},
+                   {"light_flame_gas", Q1_MAP_GAS_FLAME},
+                   {"misc_rope", Q1_MAP_ROPE},
+                   {"func_bob", Q1_MAP_ADDON_BOB},
+                   {"func_toss", Q1_MAP_ADDON_TOSS},
+                   {"func_shatter", Q1_MAP_ADDON_SHATTER},
+                   {"func_debris", Q1_MAP_ADDON_DEBRIS},
+                   {"func_explode", Q1_MAP_ADDON_EXPLODE},
+                   {"func_hurt", Q1_MAP_ADDON_HURT},
+                   {"func_fade", Q1_MAP_ADDON_FADE},
+                   {"misc_model", Q1_MAP_ADDON_MODEL},
+                   {"rotate_object_continuously", Q1_MAP_ADDON_ROTATE},
+                   {"info_rotate_axis", Q1_MAP_ADDON_AXIS},
+                   {"func_breakable", Q1_MAP_ADDON_BREAKABLE},
+                   {"trap_gods_wrath", Q1_MAP_GODS_WRATH},
+                   {"trap_gravity_well", Q1_MAP_GRAVITY_WELL},
                    {"func_train2", Q1_MAP_TRAIN2},
                    {"func_bobbingwater", Q1_MAP_BOBBING_WATER},
                    {"func_pushable", Q1_MAP_PUSHABLE},
@@ -549,7 +741,16 @@ static q1_map_kind classify(const char *name) {
                    {"func_episodegate", Q1_MAP_GATE},
                    {"func_bossgate", Q1_MAP_GATE},
                    {"func_illusionary", Q1_MAP_STATIC},
+                   {"misc_corpse", Q1_MAP_STATIC},
                    {"item_sigil", Q1_MAP_SIGIL},
+                   {"misc_rune_indicator", Q1_MAP_RUNE_INDICATOR},
+                   {"mge2m2_rune_pickup_fixer", Q1_MAP_SIGIL_FIXER},
+                   {"mge2m2_electrode_target", Q1_MAP_ELECTRODE_TARGET},
+                   {"mge2m2_electrode_button", Q1_MAP_BUTTON},
+                   {"mge2m2_rune_egg_opener", Q1_MAP_EGG_OPENER},
+                   {"info_fog", Q1_MAP_FOG_INFO},
+                   {"trigger_fog", Q1_MAP_FOG_TRIGGER},
+                   {"trigger_fog_transition", Q1_MAP_FOG_TRANSITION},
                    {"trap_spikeshooter", Q1_MAP_SHOOTER},
                    {"trap_shooter", Q1_MAP_SHOOTER},
                    {"misc_fireball", Q1_MAP_FIREBALL_SOURCE},
@@ -566,6 +767,9 @@ static q1_map_kind classify(const char *name) {
                    {"ambient_light_buzz", Q1_MAP_AMBIENT},
                    {"ambient_swamp1", Q1_MAP_AMBIENT},
                    {"ambient_swamp2", Q1_MAP_AMBIENT},
+                   {"ambient_drone", Q1_MAP_AMBIENT},
+                   {"ambient_comp_hum", Q1_MAP_AMBIENT},
+                   {"ambient_generic", Q1_MAP_AMBIENT},
                    {"viewthing", Q1_MAP_VIEW},
                    {"misc_noisemaker", Q1_MAP_NOISE},
                    {"event_lightning", Q1_MAP_LIGHTNING},
@@ -596,12 +800,29 @@ static q1_map_kind classify(const char *name) {
                    {"trigger_once", Q1_MAP_MULTI},
                    {"trigger_secret", Q1_MAP_MULTI},
                    {"trigger_counter", Q1_MAP_COUNTER},
+                   {"trigger_counter_timed", Q1_MAP_ADDON_COUNTER_TIMED},
+                   {"trigger_repeater", Q1_MAP_ADDON_REPEATER},
+                   {"trigger_multitouch", Q1_MAP_ADDON_MULTITOUCH},
+                   {"trigger_explosion", Q1_MAP_ADDON_EXPLOSION},
+                   {"trigger_changetarget", Q1_MAP_ADDON_CHANGE_TARGET},
+                   {"trigger_cleanup_corpses", Q1_MAP_ADDON_CLEANUP},
+                   {"mge2m2_cleanup_corpses", Q1_MAP_ADDON_CLEANUP},
+                   {"trigger_always", Q1_MAP_ADDON_ALWAYS},
+                   {"trigger_rune_relay", Q1_MAP_ADDON_RUNE_RELAY},
+                   {"trigger_rune_counter", Q1_MAP_ADDON_RUNE_COUNTER},
+                   {"trigger_bloodynightmare_relay", Q1_MAP_ADDON_BN_RELAY},
+                   {"trigger_sacrifice_counter", Q1_MAP_ADDON_SACRIFICE_COUNTER},
+                   {"trigger_check_sacrifices", Q1_MAP_ADDON_CHECK_SACRIFICES},
+                   {"trigger_relay_killmonster", Q1_MAP_ADDON_KILL_MONSTER},
+                   {"trigger_health_relay", Q1_MAP_ADDON_HEALTH_RELAY},
                    {"trigger_relay", Q1_MAP_RELAY},
                    {"trigger_teleport", Q1_MAP_TELEPORT},
                    {"info_teleport_destination", Q1_MAP_DESTINATION},
                    {"trigger_hurt", Q1_MAP_HURT},
                    {"trigger_push", Q1_MAP_PUSH},
+                   {"trigger_shelter_portal", Q1_MAP_SHELTER},
                    {"trigger_changelevel", Q1_MAP_CHANGELEVEL},
+                   {"hub_trigger_changelevel", Q1_MAP_CHANGELEVEL},
                    {"trigger_setskill", Q1_MAP_SETSKILL},
                    {"trigger_onlyregistered", Q1_MAP_REGISTERED},
                    {"trigger_monsterjump", Q1_MAP_MONSTERJUMP},
@@ -611,6 +832,7 @@ static q1_map_kind classify(const char *name) {
                    {"target_cancelpause", Q1_MAP_CANCEL_PAUSE},
                    {"target_switchpath", Q1_MAP_SWITCH_PATH},
                    {"info_player_start", Q1_MAP_POINT},
+                   {"info_player_start_hub", Q1_MAP_POINT},
                    {"info_player_start2", Q1_MAP_POINT},
                    {"info_player_coop", Q1_MAP_POINT},
                    {"info_player_deathmatch", Q1_MAP_POINT},
@@ -630,6 +852,42 @@ static q1_map_kind classify(const char *name) {
 bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, bool *handled,
                   qa_error *error) {
     q1_map_kind kind = classify(spawn->classname);
+    bool addon = g->options.program == QA_Q1_DOPA || g->options.program == QA_Q1_MG1 ||
+                 g->options.program == QA_Q1_MG3;
+    if (!addon && (q1_map_is_addon_effect(kind) || q1_map_is_fog(kind)))
+        kind = Q1_MAP_FIELDS;
+    if (g->options.program != QA_Q1_MG3 && q1_map_is_addon_control(kind))
+        kind = Q1_MAP_FIELDS;
+    if (g->options.program != QA_Q1_DOPA && g->options.program != QA_Q1_MG1 &&
+        q1_map_is_horde(kind))
+        kind = Q1_MAP_FIELDS;
+    if ((!addon && (q1_map_is_addon_campaign(kind) ||
+                    !strcmp(spawn->classname, "info_player_start_hub") ||
+                    !strcmp(spawn->classname, "hub_trigger_changelevel"))) ||
+        (g->options.program == QA_Q1_MG3 &&
+         (kind == Q1_MAP_SIGIL_FIXER || kind == Q1_MAP_ELECTRODE_TARGET ||
+          kind == Q1_MAP_EGG_OPENER || !strcmp(spawn->classname, "hub_trigger_changelevel"))) ||
+        ((g->options.program != QA_Q1_DOPA && g->options.program != QA_Q1_MG1) &&
+         !strcmp(spawn->classname, "mge2m2_electrode_button")) ||
+        (g->options.program != QA_Q1_MG3 && !strcmp(spawn->classname, "func_axe_button")))
+        kind = Q1_MAP_FIELDS;
+    if (addon && kind == Q1_MAP_COUNTER)
+        kind = Q1_MAP_ADDON_COUNTER;
+    if ((!addon && q1_map_is_addon_trigger(kind)) ||
+        (g->options.program != QA_Q1_MG3 && q1_map_is_addon_trigger(kind) &&
+         kind >= Q1_MAP_ADDON_ALWAYS) ||
+        (g->options.program == QA_Q1_MG3 &&
+         !strcmp(spawn->classname, "mge2m2_cleanup_corpses")))
+        kind = Q1_MAP_FIELDS;
+    bool addon_static = !strcmp(spawn->classname, "misc_corpse") ||
+                        !strcmp(spawn->classname, "ambient_drone") ||
+                        !strcmp(spawn->classname, "ambient_comp_hum") ||
+                        !strcmp(spawn->classname, "ambient_generic");
+    if ((!addon && (addon_static || q1_map_is_addon_visual(kind) || q1_map_is_addon_brush(kind) ||
+                    kind == Q1_MAP_SHELTER)) ||
+        ((kind == Q1_MAP_ROPE || kind == Q1_MAP_ADDON_BREAKABLE) &&
+         g->options.program != QA_Q1_MG3))
+        kind = Q1_MAP_FIELDS;
     if (g->options.program != QA_Q1_ROGUE &&
         (kind == Q1_MAP_PENDULUM || q1_map_is_rogue_plat(kind) || q1_map_is_time_actor(kind) ||
          q1_map_is_rogue_hazard(kind)))
@@ -639,7 +897,8 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
         kind = Q1_MAP_FIELDS;
     if (g->options.program != QA_Q1_HIPNOTIC &&
         (kind == Q1_MAP_FOLLOW || kind == Q1_MAP_TRAIN2 || kind == Q1_MAP_BOBBING_WATER ||
-         kind == Q1_MAP_PUSHABLE || kind == Q1_MAP_SPAWNER || q1_map_is_hip_trigger(kind)))
+         kind == Q1_MAP_PUSHABLE || kind == Q1_MAP_SPAWNER || q1_map_is_hip_trigger(kind) ||
+         q1_map_is_hip_hazard(kind) || q1_map_is_rotation(kind)))
         kind = Q1_MAP_FIELDS;
     *handled = kind != Q1_MAP_FIELDS;
     if (!*handled && !spawn->map_fields)
@@ -648,11 +907,45 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     if (!state)
         return false;
     state->kind = kind;
+    state->electrode_button = *handled && !strcmp(spawn->classname, "mge2m2_electrode_button");
     if (!fields(g, entity, spawn->map_fields, error))
         return false;
     if (!*handled)
         return true;
     entity->kind = Q1_MAP;
+    if (q1_map_is_fog(kind))
+        return q1_map_addon_fog_spawn(g, entity, error);
+    if (q1_map_is_addon_effect(kind))
+        return q1_map_addon_effect_spawn(g, entity, error);
+    if (q1_map_is_horde(kind))
+        return q1_map_horde_spawn(g, entity, error);
+    if (q1_map_is_addon_control(kind))
+        return q1_map_addon_control_spawn(g, entity, error);
+    if (q1_map_is_addon_campaign(kind))
+        return q1_map_addon_campaign_spawn(g, entity, error);
+    if (addon && kind == Q1_MAP_SIGIL)
+        return q1_map_addon_sigil_spawn(g, entity, error);
+    if (addon && kind == Q1_MAP_GATE && !strcmp(spawn->classname, "func_bossgate"))
+        return q1_map_addon_bossgate_spawn(g, entity, error);
+    if (q1_map_is_addon_trigger(kind))
+        return q1_map_addon_trigger_spawn(g, entity, error);
+    if (q1_map_is_addon_brush(kind))
+        return q1_map_addon_brush_spawn(g, entity, error);
+    if (q1_map_is_addon_field(g, kind))
+        return q1_map_addon_field_spawn(g, entity, error);
+    if (q1_map_is_addon_visual(kind))
+        return q1_map_addon_visual_spawn(g, entity, error);
+    if (addon && (kind == Q1_MAP_LIGHT || kind == Q1_MAP_STATIC)) {
+        bool selected;
+        if (!q1_map_addon_light_spawn(g, entity, &selected, error))
+            return false;
+        if (selected)
+            return true;
+    }
+    if (q1_map_is_rotation(kind))
+        return q1_map_rotation_spawn(g, entity, error);
+    if (q1_map_is_hip_hazard(kind))
+        return q1_map_hip_hazard_spawn(g, entity, error);
     if (q1_map_is_rogue_hazard(kind))
         return q1_map_rogue_hazard_spawn(g, entity, error);
     if (q1_map_is_time_actor(kind))
@@ -807,6 +1100,28 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
                 qa_error *error) {
     if (!entity->map || !entity->map->use_enabled)
         return true;
+    if (q1_map_is_fog(entity->map->kind))
+        return q1_map_addon_fog_activate(g, entity, other, error);
+    if (q1_map_is_addon_effect(entity->map->kind))
+        return q1_map_addon_effect_use(g, entity, activator, error);
+    if (q1_map_is_horde(entity->map->kind))
+        return q1_map_horde_use(g, entity, error);
+    if (q1_map_is_addon_control(entity->map->kind))
+        return q1_map_addon_control_use(g, entity, activator, error);
+    if (q1_map_is_addon_campaign(entity->map->kind))
+        return q1_map_addon_campaign_use(g, entity, activator, error);
+    if (q1_map_is_addon_trigger(entity->map->kind))
+        return q1_map_addon_trigger_use(g, entity, activator, error);
+    if (q1_map_is_addon_brush(entity->map->kind))
+        return q1_map_addon_brush_use(g, entity, error);
+    if (q1_map_is_addon_field(g, entity->map->kind))
+        return q1_map_addon_field_use(g, entity, error);
+    if (q1_map_is_addon_visual(entity->map->kind))
+        return q1_map_addon_visual_use(g, entity, error);
+    if (q1_map_is_rotation(entity->map->kind))
+        return q1_map_rotation_use(g, entity, error);
+    if (q1_map_is_hip_hazard(entity->map->kind))
+        return q1_map_hip_hazard_use(g, entity, activator, error);
     if (q1_map_is_rogue_hazard(entity->map->kind))
         return q1_map_rogue_hazard_use(g, entity, other, activator, error);
     if (q1_map_is_rogue_plat(entity->map->kind))
@@ -843,6 +1158,37 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
 }
 bool q1_map_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contact *contact,
                   qa_error *error) {
+    if (entity->map && q1_map_is_fog(entity->map->kind))
+        return !entity->map->touch_enabled ||
+               q1_map_addon_fog_activate(g, entity, contact->other, error);
+    if (entity->map && entity->map->electrode_button)
+        return !entity->map->touch_enabled ||
+               q1_map_addon_electrode_touch(g, entity, contact->other, error);
+    if (entity->map && q1_map_is_addon_effect(entity->map->kind))
+        return true;
+    if (entity->map && q1_map_is_horde(entity->map->kind))
+        return true;
+    if (entity->map && q1_map_is_addon_control(entity->map->kind))
+        return !entity->map->touch_enabled ||
+               q1_map_addon_control_touch(g, entity, contact->other, error);
+    if (entity->map && q1_map_is_addon_campaign(entity->map->kind))
+        return true;
+    if (entity->map && q1_map_is_addon_trigger(entity->map->kind))
+        return !entity->map->touch_enabled ||
+               q1_map_addon_trigger_touch(g, entity, contact->other, error);
+    if (entity->map && q1_map_is_addon_brush(entity->map->kind))
+        return !entity->map->touch_enabled ||
+               q1_map_addon_brush_touch(g, entity, contact->other, error);
+    if (entity->map && q1_map_is_addon_field(g, entity->map->kind))
+        return !entity->map->touch_enabled ||
+               q1_map_addon_field_touch(g, entity, contact->other, error);
+    if (entity->map && q1_map_is_rotation(entity->map->kind))
+        return !entity->map->touch_enabled ||
+               q1_map_rotation_touch(g, entity, contact->other, false, error);
+    if (entity->map && q1_map_is_addon_visual(entity->map->kind))
+        return true;
+    if (entity->map && entity->map->touch_enabled && q1_map_is_hip_hazard(entity->map->kind))
+        return q1_map_hip_hazard_touch(g, entity, contact->other, error);
     if (entity->map && entity->map->touch_enabled && q1_map_is_rogue_hazard(entity->map->kind))
         return q1_map_rogue_hazard_touch(g, entity, contact->other, error);
     if (entity->map && entity->map->touch_enabled && q1_map_is_rogue_plat(entity->map->kind))
@@ -865,6 +1211,10 @@ bool q1_map_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contact *conta
            q1_map_trigger_touch(g, entity, contact, error);
 }
 bool q1_map_blocked(qa_q1_game *g, q1_actor *entity, qa_actor_id obstacle, qa_error *error) {
+    if (entity->map && q1_map_is_addon_brush(entity->map->kind))
+        return q1_map_addon_brush_blocked(g, entity, obstacle, error);
+    if (entity->map && q1_map_is_rotation(entity->map->kind))
+        return q1_map_rotation_touch(g, entity, obstacle, true, error);
     if (entity->map && q1_map_is_rogue_plat(entity->map->kind))
         return q1_map_rogue_plat_blocked(g, entity, obstacle, error);
     return !entity->map || !q1_map_is_mover(entity->map->kind) ||
@@ -872,6 +1222,24 @@ bool q1_map_blocked(qa_q1_game *g, q1_actor *entity, qa_actor_id obstacle, qa_er
 }
 bool q1_map_reaction(qa_q1_game *g, q1_actor *entity, const qa_damage_outcome *outcome,
                      qa_error *error) {
+    if (q1_map_is_addon_effect(entity->map->kind))
+        return true;
+    if (q1_map_is_horde(entity->map->kind))
+        return true;
+    if (q1_map_is_addon_control(entity->map->kind))
+        return true;
+    if (q1_map_is_addon_trigger(entity->map->kind))
+        return true;
+    if (q1_map_is_addon_brush(entity->map->kind))
+        return q1_map_addon_brush_reaction(g, entity, outcome, error);
+    if (q1_map_is_addon_field(g, entity->map->kind))
+        return true;
+    if (q1_map_is_rotation(entity->map->kind))
+        return true;
+    if (q1_map_is_addon_visual(entity->map->kind))
+        return true;
+    if (q1_map_is_hip_hazard(entity->map->kind))
+        return q1_map_hip_hazard_reaction(g, entity, outcome, error);
     if (q1_map_is_time_actor(entity->map->kind))
         return q1_map_time_reaction(g, entity, outcome, error);
     if (q1_map_is_rogue_plat(entity->map->kind))
@@ -898,6 +1266,31 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_map_state *state = entity->map;
     q1_map_action action = state->action;
     state->action = Q1_MAP_IDLE;
+    if (action >= Q1_MAP_ADDON_SHAKE_TICK && action <= Q1_MAP_ADDON_PARTICLE_TICK) {
+        if (!q1_map_addon_effect_action_matches(state->kind, action))
+            return q1_map_fail(error, "invalid Q1 addon effect continuation owner");
+        return q1_map_addon_effect_think(g, entity, action, error);
+    }
+    if (action == Q1_MAP_ADDON_EXPLOSION_REPEAT) {
+        if (state->kind != Q1_MAP_ADDON_EXPLOSION_REPEATER)
+            return q1_map_fail(error, "invalid Q1 explosion repeater continuation owner");
+        return q1_map_addon_control_think(g, entity, error);
+    }
+    if (action == Q1_MAP_CAMPAIGN_USE_TARGETS || action == Q1_MAP_SIGIL_FIX) {
+        if (!q1_map_campaign_action_matches(state->kind, action))
+            return q1_map_fail(error, "invalid Q1 campaign continuation owner");
+        return q1_map_addon_campaign_think(g, entity, action, error);
+    }
+    if (action >= Q1_MAP_ADDON_COUNTER_RESET && action <= Q1_MAP_ADDON_EXPLOSION_FIRE)
+        return q1_map_addon_trigger_think(g, entity, action, error);
+    if (action >= Q1_MAP_ADDON_BOB_STEP && action <= Q1_MAP_ADDON_BREAKABLE_STOP)
+        return q1_map_addon_brush_think(g, entity, action, error);
+    if (action == Q1_MAP_LIGHT_RAMP_INIT)
+        return q1_map_addon_visual_think(g, entity, error);
+    if (action >= Q1_MAP_ROTATE_FIRST && action <= Q1_MAP_ROTATE_TRAIN_TICK)
+        return q1_map_rotation_think(g, entity, action, error);
+    if (action >= Q1_MAP_MINE_FIRST && action <= Q1_MAP_GRAVITY_PULL)
+        return q1_map_hip_hazard_think(g, entity, action, error);
     if (action >= Q1_MAP_ROGUE_QUAKE_START && action <= Q1_MAP_LTRAIL_CHAIN)
         return q1_map_rogue_hazard_think(g, entity, action, error);
     if (action >= Q1_MAP_ENDING_CONTROL && action <= Q1_MAP_CAMERA_TRACK)
@@ -928,8 +1321,11 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     case Q1_MAP_REMOVE:
         return q1_remove(g, entity, error);
     case Q1_MAP_REARM:
-        if (state->kind == Q1_MAP_HURT)
+        if (state->kind == Q1_MAP_HURT) {
             entity->physics.solid = QA_PHYSICS_TRIGGER;
+            if (q1_map_is_addon_field(g, state->kind))
+                q1_map_cancel(g, entity);
+        }
         else if (entity->max_health > 0) {
             if (!qa_combat_set_health(g->services.combat, entity->id, entity->max_health, error) ||
                 !q1_map_damageable(g, entity, true, error))
@@ -945,6 +1341,9 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return !q1_alive(g, entity->id) || q1_remove(g, entity, error);
     }
     case Q1_MAP_BEGIN_LEVEL:
+        if (g->options.program == QA_Q1_DOPA || g->options.program == QA_Q1_MG1 ||
+            g->options.program == QA_Q1_MG3)
+            return q1_map_addon_changelevel_begin(g, entity, error);
         return qa_q1_level_begin(g->maps->options.level, state->map, entity->activator, g->time,
                                  error);
     case Q1_MAP_PENDING_LEVEL:

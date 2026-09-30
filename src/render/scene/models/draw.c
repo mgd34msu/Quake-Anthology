@@ -45,9 +45,10 @@ static qa_material_context material_context(const qa_scene_model_input *input, b
     context.fog_has_surface = input->fog_has_surface;
     context.fog_surface = input->fog_surface;
     context.mirror = input->view.mirror;
-    context.non_normalized_axis = input->family == QA_SCENE_Q3 && (input->non_normalized_axis || (input->flags & 128) != 0);
+    context.non_normalized_axis = input->family == QA_SCENE_Q3 && input->non_normalized_axis;
     context.projection_shadow = input->family == QA_SCENE_Q3 && (input->flags & 256) != 0;
     context.fog = input->fog;
+    context.fog_volume_color = input->fog.color;
     qa_vec3 delta = qa_vec_sub(input->view.origin, model_origin(input));
     if (world) context.local_view_origin = input->view.origin;
     else {
@@ -55,7 +56,7 @@ static qa_material_context material_context(const qa_scene_model_input *input, b
         for (unsigned i = 0; i < 3; ++i)
             axes[i] = qa_vec_scale(model_vec(input->transform.axes[i]), input->transform.scale[i]);
         float length = qa_vec_length(axes[0]);
-        float scale = input->family == QA_SCENE_Q3 && (input->non_normalized_axis || (input->flags & 128)) ? (length ? 1 / length : 0) : 1;
+        float scale = input->family == QA_SCENE_Q3 && input->non_normalized_axis ? (length ? 1 / length : 0) : 1;
         context.local_view_origin = qa_v3(qa_vec_dot(delta, axes[0]) * scale,
             qa_vec_dot(delta, axes[1]) * scale, qa_vec_dot(delta, axes[2]) * scale);
     }

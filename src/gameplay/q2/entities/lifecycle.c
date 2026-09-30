@@ -99,6 +99,8 @@ bool qa_q2_entity_spawn(qa_q2_game *g, qa_actor_id id, const qa_q2_map_fields *f
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, id, &body, e))
         return false;
+    if (q2_actor_get(g, id, false, NULL) != a || a->entity != s)
+        return true;
     const char *model = q2_field_text(g, s, "model");
     if (*model == '*') {
         char *end;
@@ -115,6 +117,8 @@ bool qa_q2_entity_spawn(qa_q2_game *g, qa_actor_id id, const qa_q2_map_fields *f
             return false;
         if (!qa_world_body_write(g->services.world, id, &body, e))
             return false;
+        if (q2_actor_get(g, id, false, NULL) != a || a->entity != s)
+            return true;
     }
     if (!a->physics_bound) {
         a->physics = qa_physics_properties_default(QA_COLLISION_Q2);
@@ -156,8 +160,8 @@ bool qa_q2_entity_spawn(qa_q2_game *g, qa_actor_id id, const qa_q2_map_fields *f
         return true;
     return q2_scenery_spawn(g, a, handled, e);
 }
-bool qa_q2_entity_use(qa_q2_game *g, qa_actor_id id, qa_actor_id other, qa_actor_id activator,
-                      qa_error *e) {
+static bool entity_use(qa_q2_game *g, qa_actor_id id, qa_actor_id other, qa_actor_id activator,
+                       qa_error *e) {
     q2_actor *a = g ? q2_actor_get(g, id, false, NULL) : NULL;
     if (a && a->monster && a->projectile.kind == Q2_PROJECTILE_NONE)
         return qa_q2_monster_action(g, id, QA_Q2_MONSTER_USE, activator, 0, e);
@@ -192,6 +196,21 @@ bool qa_q2_entity_use(qa_q2_game *g, qa_actor_id id, qa_actor_id other, qa_actor
     if (handled || !q2_actor_live(g, id))
         return true;
     return q2_scenery_use(g, a, other, activator, &handled, e);
+}
+typedef struct entity_use_call {
+    qa_q2_game *game;
+    qa_actor_id other, activator;
+} entity_use_call;
+static bool run_entity_use(void *context, qa_actor_id id, qa_error *e) {
+    entity_use_call *call = context;
+    return entity_use(call->game, id, call->other, call->activator, e);
+}
+bool qa_q2_entity_use(qa_q2_game *g, qa_actor_id id, qa_actor_id other, qa_actor_id activator,
+                      qa_error *e) {
+    if (!g || !q2_actor_live(g, id))
+        return true;
+    entity_use_call call = {.game = g, .other = other, .activator = activator};
+    return qa_q2_run_actor(g, id, run_entity_use, &call, e);
 }
 bool q2_entity_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (a->projectile.kind != Q2_PROJECTILE_NONE || !a->entity)

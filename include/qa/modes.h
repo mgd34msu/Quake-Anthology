@@ -4,6 +4,7 @@
 #include "qa/builtin.h"
 
 typedef struct qa_modes qa_modes;
+typedef struct qa_command_invocation qa_command_invocation;
 typedef struct qa_mode_id {
     uint32_t slot;
     uint64_t generation;
@@ -138,6 +139,8 @@ typedef struct qa_mode_player_state {
     bool spectator, scoreboard, ready, leader;
     uint64_t spectator_since_ns;
     int8_t automatic_follow;
+    int32_t ctf_last_team;
+    float ctf_status, ctf_access;
 } qa_mode_player_state;
 typedef struct qa_mode_player_view {
     qa_mode_id mode;
@@ -173,7 +176,7 @@ typedef struct qa_mode_view {
     uint64_t time_ns, started_ns, deadline_ns;
     int32_t team_scores[3], team_captures[3];
     size_t playing, voting, sorted_count;
-    bool ready_exit;
+    bool ready_exit, ctf_pregame_over;
 } qa_mode_view;
 typedef enum qa_objective_phase {
     QA_OBJECTIVE_HOME,
@@ -291,6 +294,15 @@ typedef struct qa_modes_hooks {
     bool (*grant_loot)(void *, qa_actor_id item, qa_actor_id player, bool *accepted, qa_error *);
     bool (*loot_alpha)(void *, qa_actor_id, float, qa_error *);
     bool (*horde_head)(void *, qa_actor_id, bool enabled, qa_error *);
+    /* The source owner returns its next RNG draw in [0,1). An absent hook uses
+     * the native mode stream. Horde preserves the source's draw ordering. */
+    float (*source_random)(void *, qa_mode_id);
+    /* Read live authored state without changing shared deadlines/occupancy.
+     * False with QA_OK means the source point no longer exists. */
+    bool (*horde_point)(void *, qa_mode_id, qa_actor_id, qa_vec3 *origin, qa_vec3 *angles,
+                        qa_string_id *target, uint32_t *flags, qa_error *);
+    bool (*horde_manager)(void *, qa_mode_id, qa_actor_id, qa_string_id *target,
+                          qa_actor_id *activator, qa_error *);
     bool (*campaign_restart)(void *, qa_mode_id, uint32_t initial_flags, qa_error *);
     bool (*map_allowed)(void *, qa_mode_id, qa_string_id);
     bool (*team_equipment)(void *, qa_actor_id, qa_item_id *weapon, uint64_t *powerups, qa_error *);
@@ -322,6 +334,17 @@ bool qa_modes_read(qa_modes *, qa_mode_id, qa_mode_view *, qa_error *);
 bool qa_modes_at(qa_modes *, size_t index, qa_mode_id *, qa_mode_view *, qa_error *);
 bool qa_modes_player(qa_modes *, const qa_match_player *, qa_error *);
 bool qa_modes_player_read(qa_modes *, qa_mode_id, qa_actor_id, qa_mode_player_view *, qa_error *);
+typedef struct qa_mode_ctf_view {
+    int32_t last_team;
+    float status, access;
+    bool start_map, pregame_over, observer, grapple_disabled;
+} qa_mode_ctf_view;
+/* Only the admitted ThreeWave instance supplies this source continuation.
+ * Grapple mechanic and slot ownership are read separately from equipment. */
+bool qa_modes_ctf_read(qa_modes *, qa_mode_id, qa_actor_id, qa_mode_ctf_view *, qa_error *);
+bool qa_modes_ctf_restore_player(qa_modes *, qa_mode_id, qa_actor_id,
+                                  int32_t last_team, float status, float access, qa_error *);
+bool qa_modes_ctf_pregame_end(qa_modes *, qa_mode_id, qa_error *);
 bool qa_modes_join(qa_modes *, qa_mode_id, qa_actor_id, qa_team_id, bool observer, qa_error *);
 /* Command admission follows source death/reset/respawn rules. join is the
  * lower-level connection/restore admission and does not synthesize a death. */
@@ -346,6 +369,7 @@ bool qa_modes_observe(qa_modes *, qa_mode_id, qa_actor_id, qa_team_id filter, bo
 bool qa_modes_scoreboard(qa_modes *, qa_mode_id, qa_actor_id, bool visible, qa_error *);
 bool qa_modes_choose_team(qa_modes *, qa_mode_id, qa_actor_id, qa_team_id *, qa_error *);
 bool qa_modes_statistics(qa_modes *, qa_mode_id, qa_actor_id, qa_mode_statistics *, qa_error *);
+bool qa_modes_source_award(qa_modes *, qa_mode_id, qa_actor_id, int32_t source_award, qa_error *);
 bool qa_modes_bind_player(qa_modes *, qa_mode_id, qa_actor_id, const qa_match_binding *, qa_match_lease *,
                           qa_error *);
 bool qa_modes_unbind_player(qa_modes *, qa_match_lease, qa_error *);
@@ -397,6 +421,8 @@ bool qa_modes_referee(qa_modes *, qa_mode_id, qa_actor_id, unsigned level, qa_er
 bool qa_modes_admin(qa_modes *, qa_mode_id, qa_actor_id, qa_mode_admin_action, qa_string_id map,
                     bool *accepted, qa_error *);
 bool qa_modes_can_move(qa_modes *, qa_mode_id, qa_actor_id);
+bool qa_modes_console_command(qa_modes *, qa_mode_id, qa_actor_id,
+                               const qa_command_invocation *, bool *handled, qa_error *);
 typedef struct qa_mode_location {
     qa_actor_id actor;
     qa_string_id message;
@@ -454,6 +480,7 @@ bool qa_modes_give_item(qa_modes *, qa_mode_id, qa_actor_id, qa_item_id,
 bool qa_modes_item_action(qa_modes *, qa_mode_id, qa_actor_id, qa_item_id, qa_item_action, bool *handled,
                           qa_error *);
 bool qa_modes_object_read(qa_modes *, qa_actor_id, qa_mode_object_view *);
+bool qa_modes_object_home(qa_modes *, qa_actor_id, qa_vec3 *, qa_bounds *, qa_error *);
 bool qa_modes_object_at(qa_modes *, size_t index, qa_actor_id *, qa_mode_object_view *, qa_error *);
 bool qa_modes_object_reaction(qa_modes *, const qa_damage_outcome *, qa_error *);
 bool qa_modes_object_damage(qa_modes *, qa_mode_id, qa_damage_request *, bool *allowed, qa_error *);

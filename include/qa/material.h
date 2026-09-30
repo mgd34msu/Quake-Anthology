@@ -2,6 +2,18 @@
 #define QA_MATERIAL_H
 #include "qa/scene.h"
 
+typedef struct qa_material_order_entry qa_material_order_entry;
+/* One renderer owner spans independently mounted provider libraries. All
+ * operations are serialized. Libraries retain it; scene frames borrow it. */
+qa_material_order *qa_material_order_create(qa_error *);
+void qa_material_order_destroy(qa_material_order *);
+bool qa_material_order_prepare(qa_material_order *, qa_error *);
+bool qa_material_order_rank(const qa_material_order *, const qa_material *, uint32_t *, qa_error *);
+/* Published renderer-wide registrations; array lives in scratch, materials
+ * borrow until library/order mutation. Observation does not prepare queues. */
+bool qa_material_order_snapshot(const qa_material_order *, bool sorted, qa_arena *,
+                                const qa_material *const **, size_t *, qa_error *);
+
 typedef enum qa_material_wave_kind { QA_WAVE_SIN, QA_WAVE_SQUARE, QA_WAVE_TRIANGLE,
     QA_WAVE_SAWTOOTH, QA_WAVE_INVERSE_SAWTOOTH, QA_WAVE_NOISE, QA_WAVE_NONE } qa_material_wave_kind;
 typedef struct qa_material_wave { qa_material_wave_kind kind; float base, amplitude, phase, frequency; } qa_material_wave;
@@ -49,6 +61,8 @@ struct qa_material {
     char *name;
     uint64_t identity, revision;
     uint32_t registration, sorted_index;
+    int32_t lightmap_index;
+    qa_material_order_entry *order_entry;
     qa_scene_family family;
     bool default_shader;
     qa_material_profile profile;
@@ -71,6 +85,12 @@ struct qa_material {
     const qa_material *remapped;
     float remap_time_offset;
 };
+typedef enum qa_material_iterator { QA_MATERIAL_GENERIC, QA_MATERIAL_SKY,
+    QA_MATERIAL_VERTEX_LIT, QA_MATERIAL_LIGHTMAPPED } qa_material_iterator;
+/* Uses the same retained-stage planner as submission, without geometry, queue
+ * execution or resource loading. Fragment lighting selects its actual path. */
+bool qa_material_diagnostic_plan(const qa_material *, bool fragment_lighting,
+                                  size_t *passes, qa_material_iterator *, qa_error *);
 typedef struct qa_material_context {
     qa_scene_view view;
     qa_scene_matrix model;
@@ -112,7 +132,7 @@ typedef struct qa_material_context {
     const qa_scene_image *(*video_frame)(void *, uint64_t, double, qa_error *);
     void *video_context;
 } qa_material_context;
-qa_material_library *qa_material_library_create(qa_scene_resources *, qa_error *);
+qa_material_library *qa_material_library_create(qa_scene_resources *, qa_material_order *, qa_error *);
 /* Registration starts cinematics in source directive order. The returned image
  * is borrowed; the library retains it. NULL means the cinematic did not start. */
 typedef const qa_scene_image *(*qa_material_video_start_fn)(void *, const char *, qa_error *);

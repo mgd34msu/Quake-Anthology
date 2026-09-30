@@ -439,11 +439,14 @@ bool qa_cinematic_pause(qa_cinematic *movie, bool paused, qa_error *error) {
     if ((paused && movie->status != QA_MEDIA_PLAYING) ||
         (!paused && movie->status != QA_MEDIA_PAUSED))
         return true;
-    if (!pause_clock(movie, paused, error))
-        return false;
-    movie->status = paused ? QA_MEDIA_PAUSED : QA_MEDIA_PLAYING;
-    qa_audio_raw_pause(movie->raw, paused);
-    return true;
+    movie->busy = true;
+    bool ok = pause_clock(movie, paused, error);
+    if (ok) {
+        movie->status = paused ? QA_MEDIA_PAUSED : QA_MEDIA_PLAYING;
+        qa_audio_raw_pause(movie->raw, paused);
+    }
+    movie->busy = false;
+    return ok;
 }
 bool qa_cinematic_end_playback(qa_cinematic *movie, qa_cinematic_end reason, qa_error *error) {
     if (!movie || movie->busy || reason < QA_CINEMATIC_FINISHED || reason > QA_CINEMATIC_STOPPED)
@@ -463,17 +466,20 @@ const qa_media_frame *qa_cinematic_frame(const qa_cinematic *movie) {
 uint64_t qa_cinematic_revision(const qa_cinematic *movie) { return movie->revision; }
 bool qa_cinematic_time(qa_cinematic *movie, double *elapsed, double *source, uint64_t *loop,
                        qa_error *error) {
-    if (!movie || !elapsed || !source || !loop || !cinematic_elapsed(movie, elapsed, error))
-        return false;
-    *source = movie->has_picture
-                  ? movie->picture.source_ms + fmax(0, *elapsed - movie->picture.presentation_ms)
-                  : *elapsed;
-    *loop = movie->has_picture ? movie->picture.loop : 0;
-    return true;
+    if (!movie || !elapsed || !source || !loop || movie->busy)
+        return cinematic_fail(error, "Cannot query active cinematic time");
+    movie->busy = true;
+    bool ok = cinematic_elapsed(movie, elapsed, error);
+    if (ok) {
+        *source = movie->has_picture
+                      ? movie->picture.source_ms + fmax(0, *elapsed - movie->picture.presentation_ms)
+                      : *elapsed;
+        *loop = movie->has_picture ? movie->picture.loop : 0;
+    }
+    movie->busy = false;
+    return ok;
 }
-bool qa_cinematic_capture(qa_cinematic *movie, qa_cinematic_checkpoint *out, qa_error *error) {
-    if (!movie || !out || movie->busy || movie->faulted)
-        return cinematic_fail(error, "Cannot checkpoint active or failed cinematic");
+static bool capture(qa_cinematic *movie, qa_cinematic_checkpoint *out, qa_error *error) {
     qa_cinematic_checkpoint saved = {.format = movie->format,
                                      .target = movie->options.target,
                                      .audio_audience = movie->options.audio_audience,
@@ -521,6 +527,14 @@ bool qa_cinematic_capture(qa_cinematic *movie, qa_cinematic_checkpoint *out, qa_
     }
     *out = saved;
     return true;
+}
+bool qa_cinematic_capture(qa_cinematic *movie, qa_cinematic_checkpoint *out, qa_error *error) {
+    if (!movie || !out || movie->busy || movie->faulted)
+        return cinematic_fail(error, "Cannot checkpoint active or failed cinematic");
+    movie->busy = true;
+    bool ok = capture(movie, out, error);
+    movie->busy = false;
+    return ok;
 }
 void qa_cinematic_checkpoint_free(qa_cinematic_checkpoint *saved) {
     if (!saved)

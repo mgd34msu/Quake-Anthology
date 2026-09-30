@@ -27,6 +27,16 @@ bool qa_q2_powerups_read(qa_q2_game *g, qa_actor_id id, qa_q2_powerups *out, qa_
     *out = a && qa_actor_id_equal(a->id, id) && a->powers ? a->powers->values : (qa_q2_powerups){0};
     return true;
 }
+bool qa_q2_timed_invulnerability(qa_q2_game *g, qa_actor_id id) {
+    q2_actor *actor = g ? q2_actor_get(g, id, false, NULL) : NULL;
+    return actor && ((actor->powers &&
+                       actor->powers->values.invulnerability_until_ns > g->now_ns) ||
+                      q2_monster_timed_invulnerability(actor, g->now_ns));
+}
+bool qa_q2_powerups_present(qa_q2_game *g, qa_actor_id id) {
+    q2_actor *actor = g ? q2_actor_get(g, id, false, NULL) : NULL;
+    return actor && actor->powers;
+}
 bool qa_q2_powerups_clear(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     q2_power_state *p = q2_powers(g, id, e);
     if (!p)

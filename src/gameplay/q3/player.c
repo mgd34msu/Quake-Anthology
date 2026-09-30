@@ -1,6 +1,14 @@
 #include "internal.h"
 
-bool qa_q3_activate_holdable(qa_q3_game *game, qa_actor_id actor, qa_q3_holdable expected,
+bool qa_q3_player_notarget(qa_q3_game *game, qa_actor_id actor, bool *enabled, qa_error *error) {
+    q3_actor *source = q3_actor_get(game, actor);
+    if (!source || source->kind != Q3_ACTOR_PLAYER || !enabled)
+        return q3_fail(error, "Q3 notarget requires an actual player");
+    *enabled = source->state.player.no_target = !source->state.player.no_target;
+    return true;
+}
+
+static bool activate_holdable(qa_q3_game *game, qa_actor_id actor, qa_q3_holdable expected,
                              bool prediction, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER || expected < QA_Q3_H_NONE ||
@@ -23,10 +31,23 @@ bool qa_q3_activate_holdable(qa_q3_game *game, qa_actor_id actor, qa_q3_holdable
         return true;
     player->use_item_held = true;
     player->holdable = QA_Q3_H_NONE;
+    if (!q3_inventory_holdable_changed(game, actor, expected, QA_Q3_H_NONE, error))
+        return false;
+    if (!q3_actor_get(game, actor))
+        return true;
     if (!q3_player_event(game, actor, 24 + (int32_t)expected, 0, error))
         return false;
     return prediction || !q3_actor_get(game, actor) ||
            q3_use_holdable(game, actor, expected, error);
+}
+bool qa_q3_activate_holdable(qa_q3_game *game, qa_actor_id actor, qa_q3_holdable expected,
+                             bool prediction, qa_error *error) {
+    if (!game || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid Q3 holdable action boundary");
+    ++game->observation_depth;
+    bool okay = activate_holdable(game, actor, expected, prediction, error);
+    --game->observation_depth;
+    return okay;
 }
 
 bool qa_q3_bind_player_begin(qa_q3_game *game, qa_actor_id actor, uint32_t selections,
@@ -375,6 +396,7 @@ bool qa_q3_spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_state
     }
     player->flags = (player->flags & (4u | 0x4000u | 0x80000u)) ^ 4u;
     player->dead = player->gibbed = player->death_cleanup_done = false;
+    player->no_target = player->noclip = false;
     player->respawned = true;
     player->respawn_after = game->now_ms;
     player->max_health = player->handicap;
@@ -414,6 +436,12 @@ bool qa_q3_spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_state
         (qa_actor_id){0};
     player->grapple_pull = player->fire_held = player->use_item_held = false;
     ++player->spawn_count;
+    if (!qa_q3_inventory_admit(game, actor, error))
+        return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
+    player = &entry->state.player;
     if (!(player->selections & QA_Q3_CHARACTER))
         return true;
     q3_force_view(player, spawn->angles, 100);
@@ -639,8 +667,12 @@ bool qa_q3_arsenal_step(qa_q3_game *game, qa_actor_id actor, const qa_q3_control
                                  -1, &stored, error))
             return false;
     }
-    if (!q3_player_event(game, actor, 23, 0, error) ||
-        (!command->prediction && !qa_q3_fire_weapon(game, actor, weapon, error)))
+    if (!q3_player_event(game, actor, 23, 0, error))
+        return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
+    if (!command->prediction && !qa_q3_fire_weapon(game, actor, weapon, error))
         return false;
     entry = q3_actor_get(game, actor);
     if (!entry)
@@ -1057,8 +1089,12 @@ bool qa_q3_prepare_movement(qa_q3_game *game, qa_actor_id actor, qa_movement_inp
     }
     return true;
 }
-static bool expand_invulnerability(qa_q3_game *game, qa_actor_id actor, qa_q3_player_state *player,
+static bool expand_invulnerability(qa_q3_game *game, qa_actor_id actor,
                                    qa_error *error) {
+    q3_actor *entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
+    qa_q3_player_state *player = &entry->state.player;
     if (player->invulnerability_until <= game->now_ms || player->invulnerability_expanded)
         return true;
     qa_body_state body;
@@ -1082,11 +1118,15 @@ static bool expand_invulnerability(qa_q3_game *game, qa_actor_id actor, qa_q3_pl
             qa_bounds_overlap(bounds, linked.absolute_bounds))
             return true;
     }
-    player->invulnerability_expanded = true;
+    entry = q3_actor_get(game, actor);
+    if (entry && entry->kind == Q3_ACTOR_PLAYER &&
+        entry->state.player.invulnerability_until > game->now_ms)
+        entry->state.player.invulnerability_expanded = true;
     return true;
 }
-qa_movement_control qa_q3_movement_phase(void *context, qa_movement_phase phase,
-                                         qa_movement_call *call, qa_error *error) {
+qa_movement_control qa_q3_movement_phase_selected(void *context, qa_movement_phase phase,
+                                                  qa_movement_call *call, bool arsenal_selected,
+                                                  qa_error *error) {
     qa_q3_game *game = context;
     q3_actor *entry = q3_actor_get(game, call->actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
@@ -1122,8 +1162,12 @@ qa_movement_control qa_q3_movement_phase(void *context, qa_movement_phase phase,
         p->jumppad_entity = movement->jump_pad.registry
                                 ? q3_entity_number(game, movement->jump_pad)
                                 : 0;
-        if (!call->prediction && !expand_invulnerability(game, call->actor, p, error))
+        if (!call->prediction && !expand_invulnerability(game, call->actor, error))
             return QA_MOVEMENT_ERROR;
+        entry = q3_actor_get(game, call->actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+            return QA_MOVEMENT_REMOVED;
+        p = &entry->state.player;
         if (p->invulnerability_expanded)
             movement->movement_flags |= 0x4000u;
     } else if (phase == QA_MOVE_WEAPON) {
@@ -1137,6 +1181,8 @@ qa_movement_control qa_q3_movement_phase(void *context, qa_movement_phase phase,
         }
         if (call->command->kind != QA_MOVEMENT_Q3)
             return QA_MOVEMENT_CONTINUE;
+        if (!arsenal_selected)
+            goto phase_done;
         if (!call->prediction) {
             qa_body_state body;
             if (!qa_world_body_read(game->options.services.world, call->actor, &body, error))
@@ -1181,6 +1227,7 @@ qa_movement_control qa_q3_movement_phase(void *context, qa_movement_phase phase,
     } else if (phase == QA_MOVE_TORSO && !p->dead && !p->torso_timer_ms &&
                p->weapon_phase == QA_Q3_READY)
         p->torso_animation = (p->torso_animation & 128) | (p->weapon == QA_Q3_W_GAUNTLET ? 12 : 11);
+phase_done:
     entry = q3_actor_get(game, call->actor);
     if (!entry)
         return QA_MOVEMENT_REMOVED;
@@ -1196,6 +1243,10 @@ qa_movement_control qa_q3_movement_phase(void *context, qa_movement_phase phase,
             call->state->data.q3.movement_flags &= ~0x800u;
     }
     return QA_MOVEMENT_CONTINUE;
+}
+qa_movement_control qa_q3_movement_phase(void *context, qa_movement_phase phase,
+                                         qa_movement_call *call, qa_error *error) {
+    return qa_q3_movement_phase_selected(context, phase, call, true, error);
 }
 qa_movement_control qa_q3_movement_effect(void *context, const qa_movement_effect *effect,
                                           qa_movement_call *call, qa_error *error) {

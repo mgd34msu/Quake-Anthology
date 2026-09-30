@@ -705,6 +705,13 @@ bool qa_q2_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
         return false;
     qa_vec3 normal = contact->has_plane ? contact->plane.normal : qa_v3(0, 0, 0);
     bool hurt = q2_target_damageable(g, contact->other);
+    if (p.kind == Q2_LOOGIE) {
+        qa_attack attack = q2_projectile_attack(g, id, &p, 38, 4u);
+        if (hurt && !q2_damage(g, &attack, contact->other, p.damage, 1,
+                                body.velocity, body.origin, normal, false, e))
+            return false;
+        return !live(g, id) || qa_session_release(g->services.session, id, e);
+    }
     if (p.kind == Q2_TRACKER)
         return tracker_touch(g, id, &p, contact, &body, e);
     if (p.kind == Q2_GRENADE) {
@@ -917,6 +924,7 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
         return true;
     bool monster = creature && !player;
     const char *name = kind == Q2_BOLT        ? "bolt"
+                       : kind == Q2_LOOGIE    ? "loogie"
                        : kind == Q2_ROCKET    ? "rocket"
                        : kind == Q2_BFG_BALL  ? "bfg blast"
                        : kind == Q2_ION       ? "ion"
@@ -926,6 +934,7 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
                        : hand                 ? (c->rerelease ? "hand_grenade" : "hgrenade")
                                               : "grenade";
     const char *model = kind == Q2_BOLT        ? "models/objects/laser/tris.md2"
+                        : kind == Q2_LOOGIE    ? "models/objects/loogy/tris.md2"
                         : kind == Q2_ROCKET    ? "models/objects/rocket/tris.md2"
                         : kind == Q2_BFG_BALL  ? "sprites/s_bfg1.sp2"
                         : kind == Q2_ION       ? "models/objects/boomrang/tris.md2"
@@ -941,7 +950,7 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
     if (source_kind == Q2_GREEN_BOLT && !c->rerelease)
         model = "models/proj/laser2/tris.md2";
     if ((kind == Q2_BOLT && (!c->rerelease || source_kind == Q2_GREEN_BOLT)) || kind == Q2_ION ||
-        kind == Q2_FLECHETTE)
+        kind == Q2_FLECHETTE || kind == Q2_LOOGIE)
         direction = qa_vec_normalize(direction);
     qa_vec3 dodge_start = start, dodge_direction = direction;
     qa_actor_definition definition;
@@ -989,7 +998,7 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
         .hand = hand,
         .held = held,
         .scale = 1,
-        .dodgeable = kind != Q2_BFG_BALL &&
+        .dodgeable = kind != Q2_BFG_BALL && kind != Q2_LOOGIE &&
                      (c->rerelease || kind == Q2_ION || kind == Q2_PLASMA || kind == Q2_FLECHETTE ||
                       kind == Q2_TRACKER || source_kind == Q2_GREEN_BOLT)};
     a->projectile.effects =
@@ -1030,7 +1039,7 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
                                            : QA_PHYSICS_FLY_MISSILE;
     a->physics.solid = hand && fuse <= 0 ? QA_PHYSICS_NOT_SOLID : QA_PHYSICS_BOX;
     a->physics.clip_mask =
-        c->rerelease ? (c->input.players_collide ? Q2_PROJECTILE_MASK
+        c->rerelease && kind != Q2_LOOGIE ? (c->input.players_collide ? Q2_PROJECTILE_MASK
                                                  : Q2_PROJECTILE_MASK & ~Q2_PLAYER_CONTENTS)
                      : Q2_SHOT_MASK;
     if (kind == Q2_TRACKER) {
@@ -1140,11 +1149,12 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
         kind == Q2_ION || kind == Q2_FLECHETTE || kind == Q2_TRACKER || source_kind == Q2_GREEN_BOLT
             ? a->projectile.movedir
             : dodge_direction;
-    if (kind != Q2_GRENADE && kind != Q2_BFG_BALL && !check_dodge(c, dodge_start, dodge, speed, e))
+    if (kind != Q2_GRENADE && kind != Q2_BFG_BALL && kind != Q2_LOOGIE &&
+        !check_dodge(c, dodge_start, dodge, speed, e))
         return false;
     if (!live(g, id) || !live(g, c->actor->id))
         return true;
-    if (kind == Q2_BOLT || kind == Q2_ION || kind == Q2_TRACKER ||
+    if (kind == Q2_BOLT || kind == Q2_ION || kind == Q2_TRACKER || kind == Q2_LOOGIE ||
         (kind == Q2_FLECHETTE && c->rerelease)) {
         if (kind != Q2_BOLT || source_kind == Q2_GREEN_BOLT) {
             if (!qa_world_body_read(g->services.world, id, &spawn.body, e))
@@ -1164,18 +1174,20 @@ bool q2_projectile_spawn(q2_weapon_call *c, q2_projectile_kind kind, qa_vec3 sta
         if (!qa_world_trace(g->services.world, &query, &trace, e))
             return false;
         if (trace.fraction < 1) {
-            spawn.body.origin = c->rerelease ? qa_vec_add(trace.end, trace.contact_plane.normal)
+            spawn.body.origin = c->rerelease && kind != Q2_LOOGIE
+                                             ? qa_vec_add(trace.end, trace.contact_plane.normal)
                                              : qa_vec_add(start, qa_vec_scale(direction, -10));
             if (!qa_world_body_write(g->services.world, id, &spawn.body, e))
                 return false;
             qa_touch_contact contact = {.self = id,
                                         .other = trace.hit == QA_TRACE_HIT_ACTOR ? trace.actor
                                                                                  : (qa_actor_id){0},
-                                        .has_plane = c->rerelease && trace.contact,
+                                        .has_plane = c->rerelease && kind != Q2_LOOGIE && trace.contact,
                                         .plane = trace.contact_plane,
-                                        .has_surface = c->rerelease && trace.has_surface,
+                                        .has_surface = c->rerelease && kind != Q2_LOOGIE && trace.has_surface,
                                         .surface = trace.surface};
-            if (!qa_q2_touch(g, &contact, e))
+            if ((kind != Q2_LOOGIE || trace.hit == QA_TRACE_HIT_ACTOR) &&
+                !qa_q2_touch(g, &contact, e))
                 return false;
         }
     }

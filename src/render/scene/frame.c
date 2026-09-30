@@ -34,6 +34,15 @@ void qa_scene_frame_init(qa_scene_frame *frame, uint64_t owner)
     qa_arena_init(&frame->storage, 262144);
 }
 
+bool qa_scene_frame_material_order(qa_scene_frame *frame, qa_material_order *order, qa_error *error)
+{
+    if (!frame || frame->group_count) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "bind material order before preparing scene groups");
+        return false;
+    }
+    frame->material_order = order; return true;
+}
+
 void qa_scene_frame_reset(qa_scene_frame *frame, uint64_t sequence)
 {
     if (frame == NULL) return;
@@ -221,20 +230,21 @@ bool qa_scene_frame_picture(qa_scene_frame *frame, const qa_scene_image *image, 
     return qa_scene_frame_picture_f(frame, image, target, destination, uv, color, error);
 }
 
-bool qa_scene_frame_picture_f(qa_scene_frame *frame, const qa_scene_image *image, qa_scene_rect target,
-                              qa_scene_rect_f rect, qa_scene_vec4 uv, qa_scene_vec4 color, qa_error *error)
+bool qa_scene_picture_geometry(qa_scene_frame *frame, qa_scene_rect target,
+                               qa_scene_rect_f rect, qa_scene_vec4 uv, qa_scene_vec4 color,
+                               qa_scene_mesh *out, qa_error *error)
 {
-    if (frame == NULL || image == NULL || target.width == 0 || target.height == 0 ||
+    if (frame == NULL || out == NULL || target.width == 0 || target.height == 0 ||
         !isfinite(rect.x) || !isfinite(rect.y) || !isfinite(rect.width) || !isfinite(rect.height) ||
         !isfinite(rect.x + rect.width) || !isfinite(rect.y + rect.height)) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "picture requires a frame, image and viewport");
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "picture geometry requires a frame, output and viewport");
         return false;
     }
     float left = fmaxf(fminf(rect.x, rect.x + rect.width), (float)target.x);
     float top = fmaxf(fminf(rect.y, rect.y + rect.height), (float)target.y);
     float right = fminf(fmaxf(rect.x, rect.x + rect.width), (float)((int64_t)target.x + target.width));
     float bottom = fminf(fmaxf(rect.y, rect.y + rect.height), (float)((int64_t)target.y + target.height));
-    if (right <= left || bottom <= top) return true;
+    if (right <= left || bottom <= top) { *out = (qa_scene_mesh){0}; return true; }
     float s0 = uv.x + (uv.z - uv.x) * (left - rect.x) / rect.width;
     float s1 = uv.x + (uv.z - uv.x) * (right - rect.x) / rect.width;
     float t0 = uv.y + (uv.w - uv.y) * (top - rect.y) / rect.height;
@@ -246,17 +256,36 @@ bool qa_scene_frame_picture_f(qa_scene_frame *frame, const qa_scene_image *image
     if (vertices == NULL || indices == NULL) return false;
     const uint32_t pattern[6] = {0, 1, 2, 0, 2, 3};
     memcpy(indices, pattern, sizeof(pattern));
-    float x0 = (left - (float)target.x) / (float)target.width * 2 - 1;
-    float x1 = (right - (float)target.x) / (float)target.width * 2 - 1;
-    float y0 = 1 - (top - (float)target.y) / (float)target.height * 2;
-    float y1 = 1 - (bottom - (float)target.y) / (float)target.height * 2;
-    vertices[0] = (qa_scene_vertex){.position = {x0, y0, 0}, .texcoord = {s0, t0}, .color = color};
-    vertices[1] = (qa_scene_vertex){.position = {x1, y0, 0}, .texcoord = {s1, t0}, .color = color};
-    vertices[2] = (qa_scene_vertex){.position = {x1, y1, 0}, .texcoord = {s1, t1}, .color = color};
-    vertices[3] = (qa_scene_vertex){.position = {x0, y1, 0}, .texcoord = {s0, t1}, .color = color};
+    vertices[0] = (qa_scene_vertex){.position = {left, top, 0}, .texcoord = {s0, t0}, .color = color};
+    vertices[1] = (qa_scene_vertex){.position = {right, top, 0}, .texcoord = {s1, t0}, .color = color};
+    vertices[2] = (qa_scene_vertex){.position = {right, bottom, 0}, .texcoord = {s1, t1}, .color = color};
+    vertices[3] = (qa_scene_vertex){.position = {left, bottom, 0}, .texcoord = {s0, t1}, .color = color};
+    for (size_t i = 0; i < 4; ++i) vertices[i].normal.z = 1;
+    *out = (qa_scene_mesh){.vertices = vertices, .indices = indices, .vertex_count = 4,
+        .index_count = 6, .primitive = QA_SCENE_TRIANGLES,
+        .bounds = {{left, top, 0}, {right, bottom, 0}}};
+    return true;
+}
+
+bool qa_scene_frame_picture_f(qa_scene_frame *frame, const qa_scene_image *image, qa_scene_rect target,
+                              qa_scene_rect_f rect, qa_scene_vec4 uv, qa_scene_vec4 color, qa_error *error)
+{
+    if (!image) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "picture requires an image"); return false;
+    }
+    qa_scene_mesh mesh;
+    if (!qa_scene_picture_geometry(frame, target, rect, uv, color, &mesh, error)) return false;
+    if (!mesh.vertex_count) return true;
+    qa_scene_vertex *vertices = (qa_scene_vertex *)mesh.vertices;
+    for (size_t i = 0; i < mesh.vertex_count; ++i) {
+        vertices[i].normal = qa_v3(0, 0, 0);
+        vertices[i].position.x = (vertices[i].position.x - (float)target.x) / (float)target.width * 2 - 1;
+        vertices[i].position.y = 1 - (vertices[i].position.y - (float)target.y) / (float)target.height * 2;
+    }
+    mesh.bounds = (qa_bounds){{vertices[0].position.x, vertices[2].position.y, 0},
+        {vertices[2].position.x, vertices[0].position.y, 0}};
     qa_scene_command view = {.kind = QA_SCENE_COMMAND_VIEW, .data.view = {.viewport = target}};
-    qa_scene_draw draw = {.mesh = {.vertices = vertices, .indices = indices, .vertex_count = 4,
-        .index_count = 6, .primitive = QA_SCENE_TRIANGLES}, .textures = {image, NULL}, .texture_count = 1};
+    qa_scene_draw draw = {.mesh = mesh, .textures = {image, NULL}, .texture_count = 1};
     qa_scene_matrix_identity(&draw.model);
     qa_scene_matrix_identity(&draw.mvp);
     qa_scene_state_default(&draw.state);

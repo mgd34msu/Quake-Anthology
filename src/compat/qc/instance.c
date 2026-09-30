@@ -244,6 +244,7 @@ bool qa_qc_instance_create(const qa_qc_program *program,
                            qa_qc_instance **out, qa_error *error)
 {
     if (program == NULL || options == NULL || out == NULL
+        || (options->host.declared_projection && !options->host.prepare_entity)
         || !valid_profile(program, options->profile))
         return qc_fail(error, QA_ERROR_ARGUMENT, 0, "invalid QuakeC program profile or output");
     if (options->host.world != NULL
@@ -634,7 +635,7 @@ bool qc_refresh_borrowed(qa_qc_instance *instance, uint32_t slot,
 {
     if (slot >= instance->entity_count
         || instance->slots[slot].kind != QA_QC_SLOT_BORROWED
-        || instance->options.host.world == NULL) return true;
+        || instance->options.host.world == NULL || instance->options.host.declared_projection) return true;
     if (instance->callback_depth == UINT32_MAX)
         return qc_fail(error, QA_ERROR_ARGUMENT, slot,
                        "QuakeC projection callback depth exhausted");
@@ -1012,14 +1013,34 @@ bool qc_host_remove(qa_qc_instance *instance, int32_t reference,
     return true;
 }
 
-static bool may_move(const qa_qc_instance *instance, uint32_t slot)
+static bool may_move(qa_qc_instance *instance, uint32_t slot)
 {
+    if (instance->options.host.may_move != NULL) {
+        qc_slot binding = instance->slots[slot];
+        bool allowed = instance->options.host.may_move(instance->options.host.context, binding.actor);
+        return allowed && slot_matches(instance, slot, binding.kind, binding.actor)
+            && actor_live(instance, binding.actor, NULL);
+    }
     if (instance->slots[slot].kind == QA_QC_SLOT_OWNED) return true;
     qa_actor_owner execution;
     return instance->options.host.session != NULL
         && qa_session_execution(instance->options.host.session,
                                 instance->slots[slot].actor, &execution)
         && execution == instance->options.host.owner;
+}
+
+bool qa_qc_spawn_entity(qa_qc_instance *instance, int32_t *reference, qa_error *error)
+{
+    if (!instance || !reference)
+        return qc_fail(error, QA_ERROR_ARGUMENT, 0, "invalid QC map allocation");
+    return qc_host_spawn(instance, reference, error);
+}
+
+bool qa_qc_remove_entity(qa_qc_instance *instance, int32_t reference, qa_error *error)
+{
+    if (!instance)
+        return qc_fail(error, QA_ERROR_ARGUMENT, 0, "invalid QC map removal");
+    return qc_host_remove(instance, reference, error);
 }
 
 static bool set_field_vector(qa_qc_instance *instance, uint32_t slot,

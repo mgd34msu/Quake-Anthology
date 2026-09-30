@@ -364,6 +364,8 @@ static bool rail(qa_q3_game *game, qa_actor_id shooter, q3_attack_geometry attac
             player->impressive_count = q3_add_time(player->impressive_count, 1);
             player->flags = (player->flags & ~UINT32_C(0x38848)) | 0x8000u;
             player->reward_until = q3_add_time(game->now_ms, 2000);
+            if (!q3_ranking_reward(game, shooter, 0x8000u, error))
+                return false;
         }
     }
     return true;
@@ -375,6 +377,8 @@ bool qa_q3_fire_weapon(qa_q3_game *game, qa_actor_id shooter, qa_q3_weapon weapo
         return q3_fail(error, "weapon outside selected Q3 product");
     q3_attack_geometry attack;
     if (!attack_geometry(game, shooter, &attack, error))
+        return false;
+    if (!q3_ranking_fire(game, shooter, weapon, error))
         return false;
     q3_actor *entry = q3_actor_get(game, shooter);
     if (weapon != QA_Q3_W_GAUNTLET && weapon != QA_Q3_W_GRAPPLE)

@@ -22,6 +22,8 @@ bool qa_parse_number(qa_bytes input, double *out, qa_error *error);
  * prefix produces zero; overflow/underflow and nonfinite values are preserved.
  * False reports an argument/resource failure, never a rejected numeric token. */
 bool qa_parse_atof(const char *text, double *out, qa_error *error);
+/* The same prefix conversion rounded directly to binary32. */
+bool qa_parse_atof_float(const char *text, float *out, qa_error *error);
 /* Finite double serialization in the same C locale, with round-trip precision. */
 bool qa_format_number(double value, char out[32], qa_error *error);
 /* Fixed decimal C-locale formatting, rounding ties to even. Nonfinite values

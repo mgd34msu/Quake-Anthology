@@ -1,0 +1,121 @@
+path	inspection	notes	sha256
+include/qa/application.h	full_source	Read current file in full; review does not establish runtime qualification	c38996091e70b4a5c26792a39a033820fbfbbac836c975394a9fc71f020b157a
+include/qa/audio.h	uncovered	Not inspected in this contributor pass	e7cc29f2cc43896d48a52551a489027e4c1f315eb5fbd7bb63ce057b3248e789
+include/qa/input.h	uncovered	Not inspected in this contributor pass	a2552e36b8b63d2b0746d9119f90cd6d551f20ff7922b77b1bdfee99339bbd88
+include/qa/material.h	bounded_source	Current diff and API relationships	4273132e0653ea71292ebf1b404477c03ca2da87e175844f97ebef4104abc471
+include/qa/media.h	uncovered	Not inspected in this contributor pass	744bfabf44269ecbef9fa636bf12af29136f87cb210a14d6d5a9168daa08d094
+include/qa/q3_presentation.h	full_source	Read current file in full; review does not establish runtime qualification	9510d9b2833e0bbeb0bc8ffffa857efed71eb4eb46a0cf64346a18851f8a4844
+include/qa/scene.h	bounded_source	Current diff and scene group/frame relationships	89b47a1d4a902fc05a912dc63a9899eee207f05503919de4360aa58cdf02d070
+src/app/application/composition.c	full_source	Read current file in full; review does not establish runtime qualification	447ddb4d7e5dcfb3dfdf1af37be6ef8453c8aa832335e928a205d2f2048cccbb
+src/app/application/control.c	full_source	Read current file in full; review does not establish runtime qualification	8219912caa65972e40c02006759732732b702849c506d61e67fcbfdb2cdf5655
+src/app/application/events.c	full_source	Read current file in full; review does not establish runtime qualification	6dc2e23a3ab5188462725be3541818a47d4c46b5cbc5a123ccc05683b9767059
+src/app/application/internal.h	full_source	Read current file in full; review does not establish runtime qualification	01f215069c6bf4c577aa99f1f8ebe1c6845f1a156b84b58bdfa1c57783a20c14
+src/app/application/lifetime.c	full_source	Read current file in full; review does not establish runtime qualification	47d2e312c18a8a21dccb08964d34bd16d4b4036a07382bd497341905cc8c7030
+src/app/application/map.c	bounded_source	Lines 1-220 and 1410-end, parsing/admission/map publication; cutscene call site	e9f81f66b6604b94391525620f08306689871eca4d1db2ab0b6b7969fbb46852
+src/app/application/match.c	full_source	Read current file in full; review does not establish runtime qualification	ad32a2c2cb736827c0949c5a9726657e5372327f8fa5ebcc271ac5ff7a4dc290
+src/app/application/owner.c	full_source	Read current file in full; review does not establish runtime qualification	a094e83a432af0f14c8b71f5408970ebb7d3a8ec7597aab527c9681e36f3cf59
+src/app/application/providers.c	full_source	Read current file in full; review does not establish runtime qualification	9edfd2d9dad9c590e342eaa8440b4e82ddd1380c12abe3a49b851e1395731ac9
+src/app/application/publication.c	full_source	Read current file in full; review does not establish runtime qualification	affb4184a689016f8c52db4f95739ab316651c14c77382bfabf46192d5653cb1
+src/app/application/services.c	bounded_source	Motion publication/control routing, lines 852-end	51c9ed85345a358d5024941c01df2bc48b99082e83cd93c10ddd2f710d2c8549
+src/audio/bank.c	uncovered	Not inspected in this contributor pass	fe1bd66cc1d475716352b14de8ba65b4ea286709f7ce9ab85360248db8fdc18a
+src/audio/codec_internal.h	uncovered	Not inspected in this contributor pass	658d34086811a80490c6d5f2f33b62dd3698554e554d5e55e659b1e6e8b73448
+src/audio/codecs.c	uncovered	Not inspected in this contributor pass	f45826f3d2cec9e24c332b137edfdc8c432eef04c1f16595d12b69d4efe857e3
+src/audio/device.c	uncovered	Not inspected in this contributor pass	5f919ac21b87dbe63a52d971e2b4ebea90f00cf9df78da9911ec62266a780cf9
+src/audio/engine.c	uncovered	Not inspected in this contributor pass	7bada3cc87ff0b451cdb916abaf4e139203da0b33ab44431ec1aab083fad2979
+src/audio/environments.c	uncovered	Not inspected in this contributor pass	36256b201dd9ff98d380d1ec522ed20e1ce736343f287e00976ba21ea1ce1db4
+src/audio/mixer.c	bounded_source	Q3 listener actor spatialization/voice-limit and loop-doppler consumers; owner loop clear bodies	094f602201a79de95a6f6392db667acbeaa3e73471d7db1d783a73610e6d7f5e
+src/audio/mixer_internal.h	uncovered	Not inspected in this contributor pass	df2a479114ffd93aebb536fed74805927cfaac3942436e8057e857705c12da38
+src/audio/music.c	uncovered	Not inspected in this contributor pass	e30bdff3c55d32bc93099fd956fad033db79b32a1322ae4ce9f4e3390ae3ebdc
+src/audio/output.c	full_source	Read current file in full; review does not establish runtime qualification	a15a47b634b27cac09a4fabf504f8d89b1c014ec6f9dbab2a8c4628abdd95b31
+src/audio/reverb.c	uncovered	Not inspected in this contributor pass	c36fb332812d99436d3e702c3c543dc409457f57bb3fe7b97a47cfa64641031f
+src/audio/reverb_presets.h	uncovered	Not inspected in this contributor pass	120dbbe059b5af45f422771bb07a1107434df9a90d5a128c21473d55ed117a48
+src/audio/streams.c	full_source	Read current file in full; review does not establish runtime qualification	8307c91d8188077afb3c9b4e7eb4331891c7f084a738afdbd3625f1fcb9f0f9a
+src/audio/wavelet.c	uncovered	Not inspected in this contributor pass	d9b960a92f0e41ec7766dd272dba7348567d262492bd5e4f2f35792795d48db5
+src/input/bindings.c	uncovered	Not inspected in this contributor pass	e429ddf4167e416e2bfad04458090678b13d26d16f2176f0787f5c4593fadeb2
+src/input/buttons.c	full_source	Read current file in full; review does not establish runtime qualification	590317981e6b73efba2088d4f8810aeec50c4a32cc6814740ba4e896e704bf42
+src/input/client_commands.c	uncovered	Not inspected in this contributor pass	253a7cc9716786e12151acb51df7d2306f2e53963afbf2468263e89ec031f7fa
+src/input/commands.c	uncovered	Not inspected in this contributor pass	19d9612da35a4ec567d13d35eca8f202c406fa939dc48ca13482a8bac39b9089
+src/input/gamepad.c	full_source	Read current file in full; review does not establish runtime qualification	e028c955801945b929c05a58c2c8dcf5be80041067445dc6a26b4894baed0c01
+src/input/haptics.c	full_source	Read current file in full; review does not establish runtime qualification	d88fba3fa1d43c4c59c7f4892d5863d7e670b54153f0b49048863011da03f4d1
+src/input/internal.h	uncovered	Not inspected in this contributor pass	e6ea238d486561134c22223684c2b6e18155c1515791447c89df0b457f7842c3
+src/input/keys.c	uncovered	Not inspected in this contributor pass	b7f77cf81a7a64a2e7899ffc45a2a91d623e0747a6258079623976f3e16c72a1
+src/input/mouse.c	full_source	Read current file in full; review does not establish runtime qualification	e5ebe61a9c96b9c12e176b6869d8a9f14e40efe2ce4090cf4105bcf1f70dda5a
+src/input/seat.c	uncovered	Not inspected in this contributor pass	2d086e4f09d59e87cf8cb93feb17e53927818c2b3a633bf0fa6154cc01a71f03
+src/input/settings.c	uncovered	Not inspected in this contributor pass	58557367c44aa4091de5be6133200151457e1d9a9fd64d156cf0570d2fdb544d
+src/input/source_devices.c	uncovered	Not inspected in this contributor pass	c348738228814d7bef6edc4d9c8a4d784de1065ceb422670a05708aa7fcc370a
+src/media/cin.c	full_source	Read current file in full; review does not establish runtime qualification	116752ef4831ca2238ebf2d8cb343b4ccaad03dc9824fe0084db92cfeea39cd9
+src/media/cin_playback.c	full_source	Read current file in full; review does not establish runtime qualification	c9957e98d593a286751105d31172e3dfc0acf66c983c9700911d9f33f1a8eea0
+src/media/cinematic.c	full_source	Read current file in full; operation clock callbacks now hold busy guard; runtime unqualified	def3c1f6e574fb3f2a611997aa6536eabf6d2ac9d230d759eccd8825b5a5e1fc
+src/media/cinematic_internal.h	full_source	Read current file in full; review does not establish runtime qualification	f7cb3de71d350ae1583b4f6353b442e42a13affcfba10a7c090f3910bc1085d6
+src/media/cinematic_scene.c	full_source	Read current file in full; review does not establish runtime qualification	597d1296594ab69dfcd0b38c08cf472ba90c85de1c0354122e4ff16225303700
+src/media/library.c	full_source	Read current file in full; review does not establish runtime qualification	82f0138dc5ef4bbec25c048a8f3521629a1692182d671f312cbbdfe9f0839af4
+src/media/material_movies.c	full_source	Read current file in full; review does not establish runtime qualification	6b6f0192ff617f1dabec07ed0c8522e0040e955e0c2d2f637e3a60fbab252953
+src/media/ogg.c	uncovered	Not inspected in this contributor pass	09d619d8b030eeb2e310b54e39c4ec8a2b8f90fbfe0e7833f2733f2160c78197
+src/media/ogv.c	uncovered	Not inspected in this contributor pass	53540b4775f3af6a613981d4396914feb4d92a727cec993ca80f075eb77e4457
+src/media/ogv_internal.h	uncovered	Not inspected in this contributor pass	09f22098260066de6525990fceeb979e65677e84fb5514a6b10dda45e6fffcd1
+src/media/roq_audio.c	uncovered	Not inspected in this contributor pass	fa89240666f66324c671f33ee87d96dbd0001173a9f36ab5971eb40d771cd6f1
+src/media/roq_codebook.c	uncovered	Not inspected in this contributor pass	9e54800ad20408b23613d6347fd0e73dbbf39e68ef9377e9e02e76fd09578771
+src/media/roq_decoder.c	uncovered	Not inspected in this contributor pass	0bbabb4fa5289c418f0cfbc628a187b6db9419775bc44c480402f04def4e106f
+src/media/roq_internal.h	uncovered	Not inspected in this contributor pass	e16698a6d2bb5ebabd6fe24093ed93dba09f80938a5c82faa046475e0e1edf72
+src/media/roq_playback.c	uncovered	Not inspected in this contributor pass	4d369c118ac2a380cb6bd7c3e0aee56aeac858b20ccf89875e3dfa4668306fe9
+src/media/roq_stream.c	uncovered	Not inspected in this contributor pass	72bfc8f50f0e4147be3abbc8380535ea398138684b7c8849b9e4338913bd22ac
+src/media/source.c	full_source	Read current file in full; review does not establish runtime qualification	0668e946f4dfc3d920929017ab9e178577d31ef1ba63c73473763e43e70ab972
+src/presentation/q3/assets.c	full_source	Read current file in full; review does not establish runtime qualification	c617be071dc973d708ec867af2592a0de742d5deba2276f274786f8d1957e1da
+src/presentation/q3/audio.c	full_source	Read current file in full; review does not establish runtime qualification	7af28936aad25b913570a2be20e014b2e07d9b371c118eb81c73f8619c77cf4f
+src/presentation/q3/cinematics.c	full_source	Read current file in full; review does not establish runtime qualification	61520ed54db7f147b387efe82bc653cc60cec9f9486320ba0ee8af8e0d793a24
+src/presentation/q3/core.c	full_source	Read current file in full; review does not establish runtime qualification	6ac227ecfda9391e61280d0ce1e427f4f2c69f185b764f98fe58c1f1a3e1f38c
+src/presentation/q3/internal.h	full_source	Read current file in full; review does not establish runtime qualification	7a0fcc4e8c6563571076865ab2e82408f93e3ddf3bea6f1fc1da97c77cb65a60
+src/presentation/q3/models.c	full_source	Read current file in full; review does not establish runtime qualification	d36d03518df3e838b1a826322705da82e57e9a4cc52c3172da1ed5d236370564
+src/presentation/q3/scene.c	full_source	Read current file in full; review does not establish runtime qualification	295b1a1020f52c2fb78adaa586bdef49b2bd7e61c9d8acd116fbb686b8e1a6ad
+src/render/cpu/fog.c	uncovered	Not inspected in this contributor pass	3577ffa7b8185bbc523b054b915802da178da04c7dba0eaeac23d767f419ff4b
+src/render/cpu/fragment.c	uncovered	Not inspected in this contributor pass	bd53f9ec865eece94517628a5012b8b1bda55f7e442edffef6373b36304e02d2
+src/render/cpu/internal.h	uncovered	Not inspected in this contributor pass	84a1ae7f1dfa0f7a2d2433abda7526c0b4250bd6926d678f7a1424c9376491b5
+src/render/cpu/raster.c	uncovered	Not inspected in this contributor pass	7743d4b2884771d739b243317dc368652ad126ca7e92597d933c86b70b9616f7
+src/render/cpu/renderer.c	uncovered	Not inspected in this contributor pass	c90b99da1e3ebd6cdc71bc424c840e6e6c8a5ddc74465f9ffc1d395bb9d8984b
+src/render/cpu/texture.c	uncovered	Not inspected in this contributor pass	8135904f1c4b0c4d0d147646d43ea239a9ae4da8051ba1ea1f8e83db90b84fe6
+src/render/gl/api.c	uncovered	Not inspected in this contributor pass	34414437b61f991a04f4b67e70e5b1c1d4456ecdb98ca8c69318e8ea05a3a4e7
+src/render/gl/internal.h	uncovered	Not inspected in this contributor pass	f24ccf55ff90448330f75cf545c90614fa304903d6b092041875a80a9ec85dfc
+src/render/gl/passes.c	uncovered	Not inspected in this contributor pass	902efcab6aa31bbb39a048fac8ae9fa730e910b6c78b054ea25bcd084c5db487
+src/render/gl/program.c	uncovered	Not inspected in this contributor pass	23faa0ccf06749459c3912d217d5b4fc497f29a202515bde3e4005165183bbf0
+src/render/gl/renderer.c	uncovered	Not inspected in this contributor pass	3de4d5252f75cbf857f9932cb83ca48223f5b3074a6c1c10b0aac843fe940829
+src/render/gl/resources.c	bounded_source	Lines 1-400: texture upload/cache/retain/prune and retained/streamed geometry upload/prune	db29826014fb6514797734b483b44717289cc705e0dc7f1764f13058c0ed7370
+src/render/material/color.c	uncovered	Not inspected in this contributor pass	36b81dd1af6d531422c6099b77ca2ad45e1cddd79d27cf1fb53b8fdef766119e
+src/render/material/coordinates.c	uncovered	Not inspected in this contributor pass	5619bf2ec356828933d71bd7630ebf61594f4c25baf9ba8fd66638390d64b6b4
+src/render/material/deform.c	uncovered	Not inspected in this contributor pass	f5a984188fa01f5b158154f2494ba97125816017b83da768e485d872f8870ea6
+src/render/material/internal.h	uncovered	Not inspected in this contributor pass	464665ab0201f2e179a964294e4cb596b42847cb9d5c969204f1315fdc248d7f
+src/render/material/library.c	bounded_source	Current diff plus record destruction, publication, registration reserve, generated replacement, creation and destruction bodies	43cf8142881421528e8f251be6c2fa322a6cf50d38f5c885c3e99b67055aedc6
+src/render/material/library_internal.h	full_source	Read current file in full; review does not establish runtime qualification	e08f8d106c0f8abb2ff2a79859c69be48e153f9b4027a454a4106ced1b641749
+src/render/material/math.c	uncovered	Not inspected in this contributor pass	65cc2df3741fbb4f06e5ce77f38171d2ae034a756085fee54aa91c4bfd5075c8
+src/render/material/order.c	full_source	Read current file in full; review does not establish runtime qualification	c109b6e761d6b38b7884312e051809d4fdea65c5e98d8a99685236568710de1e
+src/render/material/parser.c	uncovered	Not inspected in this contributor pass	ea6a24678dd3f2da1d107327afa81180ce1e99cccc624cc13e36d72f035cede9
+src/render/material/submit.c	uncovered	Not inspected in this contributor pass	09c197b9114e53548c85504ec923c0e79726885a991f90110d7747a105e37344
+src/render/scene/effects.c	uncovered	Not inspected in this contributor pass	d4659ec75275c51824c2a7a3a0bad7c89fcecd21e16ecd90af449674e883d62c
+src/render/scene/effects/internal.h	uncovered	Not inspected in this contributor pass	b751d1fe65b99a99aa09c02875fdf140b436510263ced5f70c062a7bd93278e1
+src/render/scene/effects/particles.c	uncovered	Not inspected in this contributor pass	68475835273a62b978bcadbcf5cb050bade9e86feeabe478c831aac681f6d573
+src/render/scene/effects/primitives.c	uncovered	Not inspected in this contributor pass	80d762b4396a0fa037277cfc194bc286a9f38879247b7af0c185fd4a4dc28974
+src/render/scene/effects/shadows.c	uncovered	Not inspected in this contributor pass	ba655a6be8af38d252d2b598c6ac43bbc01d6b4f7ae6d62d342f031ab9d253ae
+src/render/scene/effects/sky.c	uncovered	Not inspected in this contributor pass	620e0149a37943d57ed182c53964b0a3a601ce904cbec43bbc3876363c4ef420
+src/render/scene/effects/stencil.c	uncovered	Not inspected in this contributor pass	65e26421ab3012f38b6c0983c59c4649d8518ffa0e5a173ab74dd64d0bc1c7ed
+src/render/scene/frame.c	full_source	Read current file in full; review does not establish runtime qualification	a6ac8d8618c00503df7c40498a7458e2cc435f6131e7b224d128d171c2ef1bc7
+src/render/scene/math.c	uncovered	Not inspected in this contributor pass	2d3807da3eea2ade21a01663b5a331060a8f004f8d26817349e33ad1dfaedb78
+src/render/scene/models.c	uncovered	Not inspected in this contributor pass	d1b4c9850e9ca7264e1fcc661a3eb06b82a449f0fcad7d0abecfc2fca9b0e2e6
+src/render/scene/models/alias_shadedots.inc	uncovered	Not inspected in this contributor pass	3a8e1ae20d03e8cfadac368e1dea82ffc131619f872dcc5d5e0585399fd31e7d
+src/render/scene/models/draw.c	uncovered	Not inspected in this contributor pass	235cc9f32ccd7d3de005deba0e5caa53eb18c4c3e0cefcb8d9cbbf30a2e91f3f
+src/render/scene/models/images.c	uncovered	Not inspected in this contributor pass	8a0988aff838e74085c43788cc702f2315ca73307c68f4da28784f78e11784db
+src/render/scene/models/internal.h	uncovered	Not inspected in this contributor pass	af566d3fca0025091133b14fd727c38d346c06503362ef46d08864f971b27df0
+src/render/scene/models/lighting.c	uncovered	Not inspected in this contributor pass	3e8766d3fe042b40daebf8d0940b113dd7c1f8b7ef29d1abe41b2e5f67b33123
+src/render/scene/models/shadows.c	uncovered	Not inspected in this contributor pass	4b56d01ea6b3896f68908fbfd0868dd95b49680b3f1b8de1f384573a5702e484
+src/render/scene/models/sprites.c	uncovered	Not inspected in this contributor pass	f5f463f53fb0c648d977a611c79b1c3d661b4b511ce8613459978432cd29e66d
+src/render/scene/models/topology.c	uncovered	Not inspected in this contributor pass	6a92d7acb82c8705821f980d27ef8c0f612644c0531df8e648bde106157ea701
+src/render/scene/resources.c	uncovered	Not inspected in this contributor pass	d3278b24f476d8b4bd403b6dff1d1d80faae8248043009727105c405d7204a95
+src/render/scene/sort.c	full_source	Read current file in full; review does not establish runtime qualification	ab60a86cc0ea257bc2cccf2e62b9da57e91484cdc89e8f91eba312091a12372c
+src/render/scene/world.c	uncovered	Not inspected in this contributor pass	883d14ac82a8fa5c06c12c12dc51d8bb241253492aa0f690734cb40e1a21ae8a
+src/render/scene/world/internal.h	uncovered	Not inspected in this contributor pass	e6143365584491436436360d5dbe88176fe58ccd0fae69151a7cb870efa564da
+src/render/scene/world/legacy.c	uncovered	Not inspected in this contributor pass	b63dbf00f369ee3920a708cba6854a6c2a928bfd4f58be17b04761887add9a6e
+src/render/scene/world/legacy/geometry.c	uncovered	Not inspected in this contributor pass	04f0272425e65452939b8fdde4e00bd4aafb0efc7631caa6e02f668b94405fa4
+src/render/scene/world/legacy/internal.h	uncovered	Not inspected in this contributor pass	24bb42e1658acf74b95e05e4679897765828c2fe6917386a59c15a43c28c9edf
+src/render/scene/world/legacy/lighting.c	uncovered	Not inspected in this contributor pass	f81a3d584d3f91efccfd7cb086157ab1363bad7e7b4a4e756504c749d430dc0c
+src/render/scene/world/legacy/textures.c	uncovered	Not inspected in this contributor pass	4e8be6e7e0e9678e8fa87ee34cc9ab2f248d137df06d981a8a3923daf11c24e2
+src/render/scene/world/q3.c	uncovered	Not inspected in this contributor pass	7fd61f47b0639e28ef00225fe215f37a9cc3255fa290bc01f03da717ee0e1f6c
+src/render/scene/world/q3/patch.c	uncovered	Not inspected in this contributor pass	0110a1390da8ecaa305c4d3e6fa81caca272e6bd56391c07b718595b5cd9ddc5
+src/render/scene/world/q3/patch.h	uncovered	Not inspected in this contributor pass	3981fbcba3721bfffd68652d2868fc4d8cd784ab489fa03672212edd3928364c

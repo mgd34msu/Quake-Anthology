@@ -1,0 +1,127 @@
+#ifndef QA_BOTS_H
+#define QA_BOTS_H
+
+#include "qa/bot_knowledge.h"
+#include "qa/bot_perception.h"
+#include "qa/modes.h"
+
+typedef struct qa_bots qa_bots;
+typedef enum qa_bot_decision {
+    QA_BOT_INTERMISSION, QA_BOT_OBSERVER, QA_BOT_RESPAWNING, QA_BOT_STANDING,
+    QA_BOT_ACTIVATING, QA_BOT_SEEK_NEARBY, QA_BOT_SEEK_LONG_TERM,
+    QA_BOT_FIGHTING, QA_BOT_CHASING, QA_BOT_RETREATING, QA_BOT_BATTLE_NEARBY
+} qa_bot_decision;
+typedef enum qa_bot_order_kind { QA_BOT_ORDER_NONE, QA_BOT_ORDER_POINT, QA_BOT_ORDER_FOLLOW } qa_bot_order_kind;
+typedef enum qa_bot_order_status { QA_BOT_ORDER_ERROR, QA_BOT_ORDER_SUCCESS, QA_BOT_ORDER_ACTIVE } qa_bot_order_status;
+typedef struct qa_bot_order {
+    qa_bot_order_kind kind;
+    qa_bot_order_status status;
+    qa_vec3 point;
+    qa_actor_id target;
+} qa_bot_order;
+typedef enum qa_bot_source_callback {
+    QA_BOT_PRE_THINK, QA_BOT_POST_THINK, QA_BOT_BEGIN_FRAME, QA_BOT_END_FRAME
+} qa_bot_source_callback;
+/* Values are detached observations of the selected character and arsenal.
+ * They carry no storage authority over the canonical actor or inventory. */
+typedef struct qa_bot_player {
+    bool connected, observer, intermission, dead, grounded, crouched, teleported;
+    bool water_jump, grapple_pull, firing, invisible, chatting;
+    bool carrying_objective;
+    qa_vec3 origin, velocity, eye, view_angles;
+    int32_t delta_angles[3];
+    uint32_t presence;
+    int32_t current_weapon, weapon_state, weapon_time_ms;
+    int32_t inventory[QA_BOT_INVENTORY_SIZE];
+    qa_actor_id last_attacker, last_victim;
+    int32_t deaths, kills, last_damage_cause;
+    float air_time, teleport_time;
+    uint64_t spawn_sequence;
+    uint64_t teleport_sequence;
+} qa_bot_player;
+typedef struct qa_bot_entity {
+    qa_bot_entity_update observation;
+    int32_t number;
+    bool present, linked, hidden, missile, grapple, temporary_event, proximity_trigger;
+} qa_bot_entity;
+typedef struct qa_bot_controls {
+    int32_t think_time_ms;
+    bool paused, challenge, fast_chat, no_chat, rocket_jump, grapple, report;
+} qa_bot_controls;
+typedef struct qa_bot_activation {
+    qa_actor_id blocker, target;
+    qa_bot_goal goal;
+    qa_vec3 blocker_origin, target_origin, aim;
+    bool shoot;
+} qa_bot_activation;
+typedef struct qa_bot_admission {
+    qa_actor_id actor;
+    uint32_t client;
+    int32_t entity;
+    const char *character_file, *name;
+    float skill;
+    /* Objectives/orders select this explicit independent mode. Canonical
+     * connection, body and inventory remain the ordinary shared owners. */
+    qa_mode_id mode;
+    bool team_arena;
+} qa_bot_admission;
+typedef struct qa_bot_view {
+    qa_actor_id actor, enemy;
+    uint32_t client;
+    int32_t entity, weapon;
+    qa_mode_id mode;
+    qa_bot_decision decision;
+    qa_bot_order order;
+    float enter_time, think_time;
+} qa_bot_view;
+typedef struct qa_bot_services {
+    void *context;
+    qa_builtin_services shared;
+    qa_modes *modes;
+    bool (*player)(void *, qa_actor_id, qa_bot_player *, qa_error *);
+    bool (*entity)(void *, qa_actor_id, qa_bot_entity *, qa_error *);
+    bool (*arsenal)(void *, qa_actor_id, const qa_bot_weapon_knowledge **, size_t *,
+                     void **lease, qa_error *);
+    void (*arsenal_end)(void *, void *lease);
+    /* Submit to normal actor command admission, which interprets actions using
+     * the selected movement/arsenal. Source Q3 command is supplied as well for
+     * its exact byte/angle semantics; foreign providers use semantic input. */
+    bool (*submit)(void *, qa_actor_id, const qa_bot_input *, const qa_movement_command *, qa_error *);
+    bool (*console)(void *, qa_actor_id, char *text, size_t, bool *found, qa_error *);
+    bool (*controls)(void *, qa_bot_controls *, qa_error *);
+    bool (*set_think_time)(void *, int32_t milliseconds, qa_error *);
+    bool (*check_spawn)(void *, qa_error *);
+    bool (*command)(void *, qa_actor_id, const char *, qa_error *);
+    bool (*activation)(void *, qa_actor_id bot, int32_t blocker_entity,
+                        qa_bot_activation *, bool *found, qa_error *);
+    bool (*predict_motion)(void *, qa_actor_id target,
+                            const qa_bot_movement_prediction_query *,
+                            qa_bot_movement_prediction *, bool *available, qa_error *);
+    void (*diagnostic)(void *, qa_script_severity, const char *);
+} qa_bot_services;
+/* The runtime is borrowed and shared with botlib hosts. Actor allocation and
+ * connection membership are supplied by the existing session/mode owners. */
+bool qa_bots_create(qa_bot_runtime *, const qa_bot_services *, qa_bots **, qa_error *);
+/* Retains the population when one of its synchronous callbacks is active. */
+bool qa_bots_destroy(qa_bots *, qa_error *);
+bool qa_bots_can_destroy(const qa_bots *);
+bool qa_bots_admit(qa_bots *, const qa_bot_admission *, qa_error *);
+bool qa_bots_release(qa_bots *, qa_actor_id, qa_error *);
+bool qa_bots_actor_released(qa_bots *, const qa_actor_record *, qa_error *);
+bool qa_bots_frame(qa_bots *, int32_t source_time_ms, qa_error *);
+bool qa_bots_level_reset(qa_bots *, qa_error *);
+bool qa_bots_read(const qa_bots *, qa_actor_id, qa_bot_view *, qa_error *);
+bool qa_bots_move_to(qa_bots *, qa_actor_id, qa_vec3, qa_bot_order_status *, qa_error *);
+bool qa_bots_follow(qa_bots *, qa_actor_id, qa_actor_id target, qa_bot_order_status *, qa_error *);
+bool qa_bots_clear_order(qa_bots *, qa_actor_id, qa_error *);
+qa_bot_order_status qa_bots_order_status(const qa_bots *, qa_actor_id);
+typedef struct qa_bots_checkpoint qa_bots_checkpoint;
+/* Capture owns private decisions, actions, goals, movement, chat queues and
+ * learned weights. The canonical actors and shared session RNG are separate
+ * checkpoint owners. Restore requires those same actor/resource bindings. */
+bool qa_bots_capture(qa_bots *, qa_bots_checkpoint **, qa_error *);
+bool qa_bots_checkpoint_validate(qa_bots *, const qa_bots_checkpoint *, qa_error *);
+bool qa_bots_restore(qa_bots *, const qa_bots_checkpoint *, qa_error *);
+void qa_bots_checkpoint_destroy(qa_bots_checkpoint *);
+
+#endif

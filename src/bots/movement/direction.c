@@ -1,6 +1,6 @@
 #include "internal.h"
 
-static bool direction(bot_travel *t, qa_vec3 direction, float speed, uint32_t type, bool *moved,
+static bool direction(bot_travel *t, const qa_bot_vector_source *direction, float speed, uint32_t type, bool *moved,
                       qa_error *e) {
     qa_bot_move_input *s = &t->state->input;
     uint32_t caps = t->graph->profile.capabilities;
@@ -11,7 +11,9 @@ static bool direction(bot_travel *t, qa_vec3 direction, float speed, uint32_t ty
     if (swimming) {
         if (!(caps & QA_NAV_CAPABILITY(QA_NAV_SWIM)))
             return true;
-        if (!bot_move_action(t, qa_vec_normalize(direction), speed, e))
+        qa_vec3 vector;
+        if (!qa_bot_vector_read(direction, &vector, e) ||
+            !bot_move_action(t, qa_vec_normalize(vector), speed, e))
             return false;
         *moved = true;
         return true;
@@ -23,7 +25,7 @@ static bool direction(bot_travel *t, qa_vec3 direction, float speed, uint32_t ty
         s->flags |= QA_BOT_MOVE_ON_GROUND;
     if (s->flags & QA_BOT_MOVE_ON_GROUND) {
         bool barrier;
-        if (!bot_barrier_jump(t, direction, speed, &barrier, e))
+        if (!bot_barrier_jump_from(t, direction, speed, &barrier, e))
             return false;
         if (barrier) {
             *moved = true;
@@ -32,7 +34,10 @@ static bool direction(bot_travel *t, qa_vec3 direction, float speed, uint32_t ty
         s->flags &= ~QA_BOT_MOVE_BARRIER_JUMP;
         uint32_t presence =
             (type & QA_BOT_DIRECTION_CROUCH) && !(type & QA_BOT_DIRECTION_JUMP) ? 4 : 2;
-        qa_vec3 horizontal = qa_vec_normalize(qa_v3(direction.x, direction.y, 0));
+        qa_vec3 horizontal = {0};
+        if (!qa_bot_vector_component(direction, 0, &horizontal.x, e) ||
+            !qa_bot_vector_component(direction, 1, &horizontal.y, e)) return false;
+        horizontal = qa_vec_normalize(horizontal);
         float gap;
         if (!(type & QA_BOT_DIRECTION_JUMP)) {
             if (!bot_gap_distance(t, s->origin, horizontal, &gap, e))
@@ -84,7 +89,8 @@ static bool direction(bot_travel *t, qa_vec3 direction, float speed, uint32_t ty
         if (!bot_move_action(t, horizontal, speed, e))
             return false;
     } else if ((s->flags & QA_BOT_MOVE_BARRIER_JUMP) && s->velocity.z < 50) {
-        if (!bot_move_action(t, direction, speed, e))
+        qa_vec3 vector;
+        if (!qa_bot_vector_read(direction, &vector, e) || !bot_move_action(t, vector, speed, e))
             return false;
     }
     *moved = true;
@@ -92,16 +98,25 @@ static bool direction(bot_travel *t, qa_vec3 direction, float speed, uint32_t ty
 }
 bool qa_bot_moves_direction(qa_bot_moves *m, uint32_t handle, qa_vec3 vector, float speed,
                             uint32_t type, bool *moved, qa_error *e) {
+    if (!qa_vec_finite(vector) || !isfinite(speed))
+        return bot_move_fail(e, "invalid bot movement direction");
+    qa_bot_vector_source source = {.value = &vector};
+    return qa_bot_moves_direction_from(m, handle, &source, speed, type, moved, e);
+}
+bool qa_bot_moves_direction_from(qa_bot_moves *m, uint32_t handle,
+                                 const qa_bot_vector_source *source, float speed,
+                                 uint32_t type, bool *moved, qa_error *e) {
     if (!bot_move_mutable(m, e))
         return false;
     qa_bot_move_state *state = bot_move_state(m, handle, e);
     if (!state)
         return false;
-    if (!moved || !qa_vec_finite(vector) || !isfinite(speed))
-        return bot_move_fail(e, "invalid bot movement direction");
+    if (!moved || !source || (!source->value && !source->read))
+        return bot_move_fail(e, "missing bot movement direction fields");
     m->busy = true;
     bot_travel t;
-    bool ok = bot_travel_begin(m, state, &t, e) && direction(&t, vector, speed, type, moved, e);
+    bool ok = bot_travel_ready(m, e) && bot_travel_begin(m, state, &t, e) &&
+        direction(&t, source, speed, type, moved, e);
     m->busy = false;
     return ok;
 }

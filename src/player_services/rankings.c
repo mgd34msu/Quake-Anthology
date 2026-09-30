@@ -318,6 +318,9 @@ bool qa_rankings_end(qa_rankings *rankings, qa_error *error) {
     }
     return leave(rankings, !failures, error);
 }
+bool qa_rankings_close_ready(const qa_rankings *rankings) {
+    return !rankings || !rankings->busy;
+}
 bool qa_rankings_close(qa_rankings *rankings, qa_error *error) {
     if (!rankings)
         return true;

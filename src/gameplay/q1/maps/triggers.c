@@ -1,6 +1,8 @@
 #include "internal.h"
 
-static bool addon(const qa_q1_game *g) { return g->options.program >= QA_Q1_DOPA; }
+static bool addon(const qa_q1_game *g) {
+    return g->options.program >= QA_Q1_DOPA && g->options.program <= QA_Q1_MG3;
+}
 qa_vec3 q1_map_direction(qa_vec3 angles) {
     if (!angles.x && !angles.z && angles.y == -1)
         return qa_v3(0, 0, 1);
@@ -48,11 +50,16 @@ static bool remove_addon_trigger(qa_q1_game *g, q1_actor *entity) {
            (entity->spawnflags & (262144u << qa_q1_mg3_rune_count(*g->maps->options.server_flags)));
 }
 static bool multi_enable(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    qa_actor_id id = entity->id;
     q1_map_state *state = entity->map;
     if (!entity->wait)
         entity->wait = .2f;
     if (!q1_map_trigger_init(g, entity, true, error))
         return false;
+    entity = q1_entity(g, id);
+    if (!entity || !entity->map)
+        return true;
+    state = entity->map;
     state->dormant = false;
     state->use_enabled = true;
     if (addon(g) ? entity->max_health != 0 : entity->max_health > 0) {
@@ -60,12 +67,17 @@ static bool multi_enable(qa_q1_game *g, q1_actor *entity, qa_error *error) {
             return q1_map_fail(error, "Q1 trigger combines health and notouch");
         if (!q1_map_damageable(g, entity, true, error))
             return false;
+        entity = q1_entity(g, id);
+        if (!entity || !entity->map)
+            return true;
         entity->physics.solid = QA_PHYSICS_BOX;
     } else
         state->touch_enabled = !(entity->spawnflags & 1u);
     return q1_link(g, entity, error);
 }
 bool q1_map_trigger_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    if (q1_map_is_addon_field(g, entity->map->kind))
+        return q1_map_addon_field_spawn(g, entity, error);
     q1_map_state *state = entity->map;
     if (remove_addon_trigger(g, entity))
         return q1_remove(g, entity, error);
@@ -119,8 +131,16 @@ bool q1_map_trigger_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         return !q1_alive(g, entity->id) || q1_link(g, entity, error);
     }
     case Q1_MAP_CHANGELEVEL:
+        if (addon(g) && q1_classnamed(g, entity->id, "hub_trigger_changelevel") &&
+            (*g->maps->options.server_flags & 31) != 31)
+            return q1_remove(g, entity, error);
         if (!q1_map_text(g, state->map))
             return q1_map_fail(error, "Q1 changelevel has no map");
+        if (addon(g) && ((!g->options.coop && (entity->spawnflags & 32768u)) ||
+            (g->options.program == QA_Q1_MG3 &&
+             (entity->spawnflags &
+              (262144u << qa_q1_mg3_rune_count(*g->maps->options.server_flags))))))
+            return q1_remove(g, entity, error);
         break;
     case Q1_MAP_MONSTERJUMP: {
         qa_body_state body;
@@ -160,12 +180,16 @@ bool q1_map_grounded(qa_q1_game *g, q1_actor *entity, qa_actor_id other) {
     return qa_world_body_read(g->services.world, other, &body, NULL) && body.ground.registry;
 }
 bool q1_map_multi_fire(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {
+    qa_actor_id id = entity->id;
     q1_map_state *state = entity->map;
     if (entity->next_think > g->time)
         return true;
     bool secret = q1_classnamed(g, entity->id, "trigger_secret");
     if (secret) {
         if (!q1_map_player(g, activator))
+            return true;
+        entity = q1_entity(g, id);
+        if (!entity || !entity->map)
             return true;
         if (g->maps->found_secrets == UINT32_MAX)
             return q1_map_fail(error, "Q1 found-secret count overflow");
@@ -191,6 +215,10 @@ bool q1_map_multi_fire(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, q
     entity->activator = activator;
     if (!q1_map_damageable(g, entity, false, error))
         return false;
+    entity = q1_entity(g, id);
+    if (!entity || !entity->map)
+        return true;
+    state = entity->map;
     const char *sound = state->sounds == 1   ? "misc/secret.wav"
                         : state->sounds == 2 ? "misc/talk.wav"
                         : state->sounds == 3 ? "misc/trigger1.wav"
@@ -350,7 +378,8 @@ static bool changelevel(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_e
         return false;
     if (!q1_alive(g, entity->id))
         return true;
-    if ((entity->spawnflags & 1u) && !g->options.deathmatch)
+    if ((entity->spawnflags & 1u) && !g->options.deathmatch &&
+        (!addon(g) || !q1_map_text(g, entity->map->endtext)))
         return qa_q1_level_travel(
             options->level, same_level ? options->current_map : entity->map->map, other, error);
     entity->map->touch_enabled = false;
@@ -414,6 +443,8 @@ bool q1_map_trigger_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contac
     qa_actor_id other = contact->other;
     if (!q1_alive(g, other))
         return true;
+    if (q1_map_is_addon_field(g, entity->map->kind))
+        return q1_map_addon_field_touch(g, entity, other, error);
     q1_map_state *state = entity->map;
     qa_body_state body;
     switch (state->kind) {

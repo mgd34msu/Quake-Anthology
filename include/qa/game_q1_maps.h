@@ -2,6 +2,8 @@
 #define QA_GAME_Q1_MAPS_H
 
 #include "qa/campaign_q1_sources.h"
+#include "qa/horde.h"
+#include "qa/navigation.h"
 
 /* Authored values are borrowed only during spawn. The map provider interns
  * strings and retains typed fields beside the native actor continuation. */
@@ -9,13 +11,19 @@ typedef struct qa_q1_map_fields {
     const char *model, *map, *noise, *noise1, *noise2, *noise3;
     const char *endtext, *intermissiontext, *netname, *event;
     const char *spawn_function, *spawn_classname;
-    qa_vec3 mangle, movedir, view_offset;
-    bool has_movedir, has_view_offset;
+    const char *group, *path, *category, *fog_info_entity;
+    qa_vec3 mangle, movedir, view_offset, rotate;
+    qa_vec3 dest, dest2, pos2, angular_velocity;
+    qa_vec3 particle_size;
+    qa_vec3 fog_color;
+    float fog_density;
+    bool has_movedir, has_view_offset, has_dest2;
     float height, lip, width, length, pause_time;
     float volume, duration, distance, next_think_seconds;
     float spawn_multi, spawn_silent, gravity, current_ammo, pain_finished, weapon, frags;
     int32_t sounds, style, world_type, color_map, impulse;
-    float counter_value;
+    int32_t initial_state, frame, skin;
+    float counter_value, goal_state;
     int32_t particle_color;
 } qa_q1_map_fields;
 
@@ -24,6 +32,12 @@ typedef struct qa_q1_static_model {
     qa_vec3 origin, angles;
     int32_t frame, skin, color_map;
 } qa_q1_static_model;
+typedef struct qa_q1_fog_state {
+    qa_actor_id active;
+    float density;
+    qa_vec3 color;
+} qa_q1_fog_state;
+bool qa_q1_game_map_fog_read(const qa_q1_game *, qa_actor_id, qa_q1_fog_state *);
 typedef struct qa_q1_map_finale_view {
     uint32_t stage;
     qa_string_id map, text;
@@ -54,6 +68,17 @@ typedef struct qa_q1_path_change {
     qa_string_id target;
     double pause_until, follow_until;
 } qa_q1_path_change;
+typedef enum qa_q1_map_mover_kind {
+    QA_Q1_MOVER_DOOR, QA_Q1_MOVER_ELEVATOR, QA_Q1_MOVER_TRAIN,
+    QA_Q1_MOVER_BOBBING, QA_Q1_MOVER_STATIC
+} qa_q1_map_mover_kind;
+typedef struct qa_q1_map_mover_view {
+    qa_actor_id actor, activation;
+    qa_nav_entity_state navigation;
+    qa_q1_map_mover_kind kind;
+    uint32_t inline_model;
+    bool has_inline_model, shootable, useable;
+} qa_q1_map_mover_view;
 typedef struct qa_q1_map_options {
     qa_targets *targets;
     qa_q1_level *level;
@@ -80,6 +105,19 @@ typedef struct qa_q1_map_options {
      * Supply both callbacks together. */
     bool (*path_read)(void *, qa_actor_id, qa_q1_path_state *);
     bool (*path_change)(void *, qa_actor_id, const qa_q1_path_change *, qa_error *);
+    bool (*target_damage)(void *, qa_actor_id, float damage, qa_error *);
+    bool (*relay_mover)(void *, qa_actor_id, bool close, qa_actor_id activator, qa_error *);
+    bool (*egg_mover)(void *, qa_actor_id, qa_error *);
+    bool (*grant_quad)(void *, qa_actor_id, double source_expiry, qa_error *);
+    bool (*horde_control)(void *, qa_actor_id, bool check_wave, qa_error *);
+    bool (*horde_keys)(void *, bool gold, int change, qa_error *);
+    bool (*alpha_read)(void *, qa_actor_id, float *, qa_error *);
+    bool (*alpha_write)(void *, qa_actor_id, float, qa_error *);
+    bool (*retire_actor)(void *, qa_actor_id, qa_error *);
+    bool (*schedule_remove)(void *, qa_actor_id, double delay, qa_error *);
+    bool (*freeze_actor)(void *, qa_actor_id, qa_error *);
+    bool (*fog_player)(void *, qa_actor_id, float density, qa_vec3 color, float duration,
+                        qa_error *);
     /* Cinematic control mutates the selected movement/view/weapon owners.
      * Required when a map starts a cinematic; the map retains its own actors. */
     bool (*control_player)(void *, qa_actor_id, qa_vec3 origin, qa_vec3 angles, qa_vec3 view_offset,
@@ -104,6 +142,25 @@ bool qa_q1_game_maps_finish(qa_q1_game *, qa_error *);
 /* These adapters handle native actors only, for application owner dispatch. */
 bool qa_q1_game_path_read(const qa_q1_game *, qa_actor_id, qa_q1_path_state *);
 bool qa_q1_game_path_change(qa_q1_game *, qa_actor_id, const qa_q1_path_change *, qa_error *);
+bool qa_q1_game_map_damage(qa_q1_game *, qa_actor_id, float damage, bool *handled, qa_error *);
+bool qa_q1_game_map_relay_mover(qa_q1_game *, qa_actor_id, bool close,
+                               qa_actor_id activator, bool *handled, qa_error *);
+bool qa_q1_game_map_egg_mover(qa_q1_game *, qa_actor_id, bool *handled, qa_error *);
+/* The selected mode owns waves, deadlines, loot and keys. Authored admission
+ * reads canonical geometry into caller storage before mode configuration. */
+bool qa_q1_game_map_horde_read(qa_q1_game *, qa_horde_options *, qa_horde_point *,
+                              size_t capacity, size_t *count, bool *found, qa_error *);
+/* Updates only authored fields; shared Horde keeps next_ns and occupied. */
+bool qa_q1_game_map_horde_point_read(qa_q1_game *, qa_actor_id, qa_horde_point *,
+                                    bool *found, qa_error *);
+bool qa_q1_game_map_horde_manager_read(qa_q1_game *, qa_actor_id, qa_string_id *target,
+                                      qa_actor_id *activator, bool *found, qa_error *);
+/* Stops are detached into caller storage and remain valid until that storage
+ * is reused. Reserve registry capacity; no source state or save payload is
+ * allocated. Native activator chains select actual usable/shootable buttons. */
+bool qa_q1_game_map_mover_read(qa_q1_game *, qa_actor_id, qa_q1_map_mover_view *,
+                              qa_nav_train_stop *stops, size_t capacity, size_t *count,
+                              bool *found, qa_error *);
 /* Follower-owned adapter for native Rogue actors touching any authored corner. */
 bool qa_q1_game_rogue_path_touch(qa_q1_game *, qa_actor_id corner, qa_actor_id follower,
                                  bool *handled, qa_error *);
@@ -114,7 +171,7 @@ bool qa_q1_game_map_after_physics(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_game_rogue_earthquake(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_game_time_machine_crash(qa_q1_game *, qa_error *);
 /* Native gameplay resets precede this campaign transition. The new-game flag
- * changes departing travel health only; current live health remains intact. */
+ * changes departing travel health and max health; live health remains intact. */
 bool qa_q1_game_map_finish_addon(qa_q1_game *, qa_q1_map_ending, qa_error *);
 bool qa_q1_game_map_new_game_travel(const qa_q1_game *);
 bool qa_q1_game_map_finale(qa_q1_game *, qa_actor_id oldone, bool finish, qa_error *);

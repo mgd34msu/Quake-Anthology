@@ -114,5 +114,6 @@ bool qa_rankings_unavailable(qa_rankings *, const char *reason, qa_error *);
 /* End attempts every active logout and finish even when earlier cleanup fails. */
 bool qa_rankings_end(qa_rankings *, qa_error *);
 bool qa_rankings_close(qa_rankings *, qa_error *);
+bool qa_rankings_close_ready(const qa_rankings *);
 
 #endif

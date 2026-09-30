@@ -221,6 +221,7 @@ static void vertex_lighting_collapse(qa_material *material, float sort, int32_t 
 
 void qa_material_finish(qa_material *material, int32_t lightmap_index)
 {
+    material->lightmap_index = lightmap_index;
     float sort = material->sort;
     if (material->sky) sort = 2;
     if (material->polygon_offset && sort == 0) sort = 4;
@@ -300,6 +301,7 @@ memory:
 
 static void record_free(qa_material_record *record)
 {
+    qa_material_order_remove(record->material.order_entry);
     qa_material_clear(&record->material);
     free(record->base_name);
     qa_scene_image_release(record->base_image);
@@ -330,6 +332,7 @@ static bool publish(qa_material_library *library, qa_material_record *record, qa
     material->revision = 1;
     material->fog_image = library->fog_image;
     material->dlight_image = library->dlight_image;
+    if (!qa_material_order_publish(material->order_entry, error)) return false;
     size_t index = library->count;
     while (index && library->ordered[index - 1]->material.sort > material->sort) {
         library->ordered[index] = library->ordered[index - 1];
@@ -494,6 +497,10 @@ static bool register_material(qa_material_library *library, const char *name,
     record->material.family = options.family;
     record->material.cull = QA_CULL_FRONT;
     record->material.profile = library->profile;
+    if (!qa_material_order_reserve(library->order, &record->material,
+                                      &record->material.order_entry, error)) {
+        record_free(record); return false;
+    }
     if (base_image != NULL) {
         record->base_name = qa_material_string(base_name != NULL ? base_name : base_image->name, error);
         if (record->base_name == NULL) { record_free(record); return false; }
@@ -618,7 +625,10 @@ bool qa_material_register_generated_picture(qa_material_library *library, const 
     const qa_material *recovered = NULL;
     for (size_t i = 0; i < ready; ++i) {
         qa_material *destination = &prepared[i].record->material;
+        qa_material_order_entry *entry = destination->order_entry;
         qa_material_clear(destination); *destination = prepared[i].material;
+        destination->order_entry = entry;
+        qa_material_order_changed(entry);
         if (recovered == NULL || destination->registration < recovered->registration) recovered = destination;
     }
     free(prepared);
@@ -907,10 +917,11 @@ bool qa_material_remap(qa_material_library *library, const char *original,
     return true;
 }
 
-qa_material_library *qa_material_library_create(qa_scene_resources *resources, qa_error *error)
+qa_material_library *qa_material_library_create(qa_scene_resources *resources,
+                                                  qa_material_order *order, qa_error *error)
 {
-    if (!resources) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Material library requires scene resources");
+    if (!resources || !order) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Material library requires scene resources and shared renderer order");
         return NULL;
     }
     qa_material_library *library = calloc(1, sizeof(*library));
@@ -918,7 +929,9 @@ qa_material_library *qa_material_library_create(qa_scene_resources *resources, q
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating material library");
         return NULL;
     }
+    if (!qa_material_order_retain(order, error)) { free(library); return NULL; }
     library->resources = resources;
+    library->order = order;
     library->profile = (qa_material_profile){.detail_textures = true,
         .multitexture = true, .texture_env_add = true};
     uint8_t fog[256 * 32 * 4], dlight[16 * 16 * 4];
@@ -981,5 +994,6 @@ void qa_material_library_destroy(qa_material_library *library)
     free(library->ordered);
     qa_scene_image_release(library->fog_image);
     qa_scene_image_release(library->dlight_image);
+    qa_material_order_destroy(library->order);
     free(library);
 }

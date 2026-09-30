@@ -31,16 +31,18 @@ static bool finish(qa_q1_game *g, q1_player *player, float delay, int32_t frame,
 bool q1_hipnotic_launch_laser(qa_q1_game *g, qa_actor_id owner, qa_q1_weapon weapon, qa_vec3 origin,
                               qa_vec3 direction, bool light, qa_error *error) {
     q1_actor *laser;
-    qa_vec3 velocity = qa_vec_scale(qa_vec_normalize(direction), 1000);
+    const qa_q1_weapon_view *shape = q1_weapon_shape(weapon == QA_Q1_MG3_LASER
+                                                      ? weapon : QA_Q1_LASER);
+    qa_vec3 velocity = qa_vec_scale(qa_vec_normalize(direction), shape->speed);
     if (!q1_projectile_spawn(g, owner, weapon, Q1_HIP_LASER, origin, velocity, &laser, error))
         return false;
     laser->effects = light ? 8 : 0;
-    laser->speed = 1000;
+    laser->speed = shape->speed;
     laser->physics.angular_velocity = qa_v3(0, 0, 400);
     laser->state.projectile.damage =
-        weapon == QA_Q1_MG3_LASER ? (light ? 20 : 15) : (light ? 25 : 18);
+        light ? (weapon == QA_Q1_MG3_LASER ? 20 : 25) : shape->damage;
     laser->state.projectile.movedir = velocity;
-    laser->state.projectile.expires = g->time + 5;
+    laser->state.projectile.expires = g->time + shape->lifetime;
     return q1_schedule(g, laser, 0, Q1_THINK_HIP_LASER, error) &&
            q1_sound(g, owner, "hipweap/laserg.wav", 1, 1, error) &&
            q1_launch_behavior(g, laser, QA_BUILTIN_BOLT, error);
@@ -94,7 +96,7 @@ bool q1_hipnotic_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
             return false;
         player->continuous = true;
         player->animation_at = -1;
-        return finish(g, player, 0.1f, paired ? 1 : 4, -1, error);
+        return finish(g, player, q1_weapon_interval(player->weapon), paired ? 1 : 4, -1, error);
     }
     if (player->weapon == QA_Q1_PROXIMITY) {
         qa_vec3 velocity;
@@ -106,23 +108,25 @@ bool q1_hipnotic_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
         player->continuous = false;
         player->animation_at = g->time;
         player->animation_base = 1;
-        return finish(g, player, 0.6f, 1, -2, error);
+        return finish(g, player, q1_weapon_interval(player->weapon), 1, -2, error);
     }
     q1_actor *strike;
     if (!q1_create(g, "hipnotic_hammer_strike", Q1_TIMER, player->id, &strike, error) ||
-        !q1_schedule(g, strike, 0.3, Q1_THINK_HAMMER_STRIKE, error))
+        !q1_schedule(g, strike, q1_weapon_shape(player->weapon)->launch_delay,
+                      Q1_THINK_HAMMER_STRIKE, error))
         return false;
     strike->state.projectile.weapon = player->weapon;
     player->continuous = false;
     player->animation_at = g->time;
     player->animation_base = q1_ammo_count(g, player->id, QA_Q1_CELLS) < 30 ? 32 : 38;
-    return finish(g, player, 0.8f, 1, 0, error);
+    return finish(g, player, q1_weapon_interval(player->weapon), 1, 0, error);
 }
 static bool proximity_explode(qa_q1_game *g, q1_actor *mine, qa_error *error) {
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, mine->id, &body, error))
         return false;
-    if (!q1_radius(g, mine->id, mine->state.projectile.activator, 95, (qa_actor_id){0},
+    if (!q1_radius(g, mine->id, mine->state.projectile.activator,
+                   q1_weapon_shape(QA_Q1_PROXIMITY)->blast_damage, (qa_actor_id){0},
                    QA_Q1_PROXIMITY, error))
         return false;
     if (!q1_alive(g, mine->id))
@@ -276,34 +280,10 @@ static bool proximity_watch(qa_q1_game *g, q1_actor *mine, qa_error *error) {
 }
 static bool hammer_damage(qa_q1_game *g, qa_actor_id from, qa_vec3 start, qa_vec3 end, float damage,
                           qa_q1_weapon weapon, qa_error *error) {
-    qa_vec3 delta = qa_vec_sub(end, start), side = qa_v3(-delta.y * 16, -delta.y * 16, 0);
-    qa_vec3 offsets[] = {{0, 0, 0}, side, {-side.x, -side.y, 0}};
-    qa_actor_id hits[3];
-    size_t count = 0;
-    for (unsigned i = 0; i < 3; ++i) {
-        qa_trace_result trace;
-        if (!q1_trace(g, qa_vec_add(start, offsets[i]), qa_vec_add(end, offsets[i]), from, true,
-                      &trace, error))
-            return false;
-        if (trace.hit != QA_TRACE_HIT_ACTOR)
-            continue;
-        bool duplicate = false;
-        for (size_t j = 0; j < count; ++j)
-            duplicate |= qa_actor_id_equal(hits[j], trace.actor);
-        if (duplicate)
-            continue;
-        hits[count++] = trace.actor;
-        q1_player *player = q1_player_get(g, trace.actor);
-        if (!q1_damageable(g, trace.actor) || (player && player->power_expires[QA_Q1_WETSUIT] != 0))
-            continue;
-        qa_string_id cause;
-        if (!qa_builtin_resource(&g->services, "electric", &cause, error) ||
-            !q1_effect(g, QA_BUILTIN_IMPACT, trace.actor, trace.end, damage * 4, 225, error) ||
-            !q1_damage_typed(g, trace.actor, from, from, damage, weapon, QA_Q1_ARMOR_NORMAL, cause,
-                             error))
-            return false;
-    }
-    return true;
+    return q1_electric_rays(g, from, from, from, start, end, damage, damage * 4, 225,
+                            qa_v3(0, 0, 100), Q1_LIGHTNING_PARTICLES |
+                            Q1_LIGHTNING_REMEMBER_ALL | Q1_LIGHTNING_WETSUIT,
+                            weapon, "electric", error);
 }
 bool q1_hipnotic_hammer_base(qa_q1_game *g, q1_player *player, qa_vec3 origin, qa_q1_weapon weapon,
                              qa_error *error) {
@@ -413,17 +393,8 @@ static bool hammer_bolt(qa_q1_game *g, q1_actor *bolt, qa_error *error) {
             q1_actor *native = q1_entity(g, actor);
             if (native && (native->physics.flags & QA_PHYSICS_TEAM_SLAVE))
                 continue;
-            bool owned = false;
-            for (uint32_t j = 0; j < g->capacity; ++j) {
-                q1_actor *other = g->actors[j];
-                if (other && other->kind == Q1_TIMER && other->think == Q1_THINK_HAMMER_BOLT &&
-                    other->state.projectile.count == 1 &&
-                    qa_actor_id_equal(other->state.projectile.enemy, actor)) {
-                    owned = true;
-                    break;
-                }
-            }
-            if (owned || !qa_world_body_read(g->services.world, actor, &body, NULL))
+            if (q1_hipnotic_lightning_claimed(g, actor) ||
+                !qa_world_body_read(g->services.world, actor, &body, NULL))
                 continue;
             float distance = qa_vec_length(qa_vec_sub(body.origin, origin));
             if (distance >= best)

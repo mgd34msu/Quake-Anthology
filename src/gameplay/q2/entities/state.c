@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/text.h"
+#include "qa/game_q2_monsters.h"
 #include <float.h>
 
 static bool number(qa_q2_game *g, qa_string_id id, double *out) {
@@ -95,6 +96,8 @@ static bool field(void *context, qa_actor_id id, const char *key, qa_target_fiel
     if (!strcmp(key, "health")) {
         qa_combat_state combat;
         bool has_combat = qa_combat_read(g->services.combat, id, &combat, NULL);
+        if (q2_actor_get(g, id, false, NULL) != a || a->entity != s)
+            return false;
         if (!has_combat && !s)
             return false;
         *value = (qa_target_field){.kind = QA_TARGET_FIELD_NUMBER,
@@ -169,6 +172,23 @@ static bool set_targetname(void *context, qa_actor_id id, qa_string_id name, qa_
 static bool set_target(void *context, qa_actor_id id, qa_string_id name, qa_error *e) {
     return qa_q2_entity_set_target(context, id, name, e);
 }
+static bool set_delay(void *context, qa_actor_id id, double value, qa_error *e) {
+    qa_q2_game *g = context;
+    q2_actor *a = q2_actor_get(g, id, false, NULL);
+    if (!a || (!a->entity && !a->item)) {
+        qa_error_set(e, QA_ERROR_NOT_FOUND, 0, "Q2 delay owner is missing");
+        return false;
+    }
+    if (!isfinite(value) || fabs(value) > FLT_MAX) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 target delay exceeds source float range");
+        return false;
+    }
+    if (a->item)
+        a->item->spawn.delay = (float)value;
+    else
+        a->entity->delay = (float)value;
+    return true;
+}
 bool q2_entity_bind(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_targets *targets = g->entity_runtime->services.targets;
     if (!targets) {
@@ -185,7 +205,8 @@ bool q2_entity_bind(qa_q2_game *g, q2_actor *a, qa_error *e) {
                                               .use = use,
                                               .field = field,
                                               .set_targetname = set_targetname,
-                                              .set_target = set_target},
+                                              .set_target = set_target,
+                                              .set_delay = set_delay},
                          e))
         return false;
     a->entity_game = g;
@@ -268,27 +289,49 @@ bool q2_map_event(qa_q2_game *g, const qa_q2_map_event *event, qa_error *e) {
 bool q2_entity_show(qa_q2_game *g, q2_actor *a, qa_error *e) {
     return q2_publish_visual(g, a->id, &a->entity->visual, e);
 }
-bool qa_q2_entity_visual(qa_q2_game *g, qa_actor_id id, qa_q2_visual *out, qa_error *e) {
+bool qa_q2_presentation_read(qa_q2_game *g, qa_actor_id id, qa_q2_visual *out) {
     q2_actor *a = g ? q2_actor_get(g, id, false, NULL) : NULL;
+    if (!a || !out || !q2_actor_live(g, id))
+        return false;
+    qa_q2_visual view = {0};
+    qa_q2_projectile_view projectile;
+    qa_q2_monster_view monster;
+    if (qa_q2_projectile_read(g, id, &projectile)) {
+        view = (qa_q2_visual){.models = {projectile.model}, .frame = projectile.frame,
+            .old_frame = -1, .skin = projectile.skin, .effects = projectile.effects,
+            .render_flags = projectile.render_flags, .scale = projectile.scale,
+            .alpha = projectile.alpha, .visible = projectile.visible};
+    } else if (qa_q2_monster_read(g, id, &monster)) {
+        view = (qa_q2_visual){.models = {monster.model}, .frame = monster.frame,
+            .old_frame = monster.old_frame, .skin = monster.skin, .effects = monster.effects,
+            .render_flags = monster.render_flags, .scale = monster.scale,
+            .alpha = 1, .visible = monster.visible};
+    } else if (a->client)
+        view = a->client->visual;
+    else if (a->item)
+        view = a->item->visual;
+    else if (a->entity)
+        view = a->entity->visual;
+    else
+        return false;
+    view.effects |= qa_q2_actor_extra_effects(g, id);
+    *out = view;
+    return true;
+}
+bool qa_q2_entity_visual(qa_q2_game *g, qa_actor_id id, qa_q2_visual *out, qa_error *e) {
     if (!out || !g || !q2_actor_live(g, id)) {
         qa_error_set(e, QA_ERROR_NOT_FOUND, 0, "Q2 visual actor is missing");
         return false;
     }
-    if (a && a->projectile.kind == Q2_PROJECTILE_NONE && a->client)
-        *out = a->client->visual;
-    else if (a && a->projectile.kind == Q2_PROJECTILE_NONE && a->item)
-        *out = a->item->visual;
-    else if (a && a->projectile.kind == Q2_PROJECTILE_NONE && a->entity && !a->monster)
-        *out = a->entity->visual;
-    else if (g->entity_runtime->services.read_visual)
+    if (qa_q2_presentation_read(g, id, out))
+        return true;
+    if (g->entity_runtime && g->entity_runtime->services.read_visual)
         return g->entity_runtime->services.read_visual(g->entity_runtime->services.context, id, out,
                                                        e);
     else {
         qa_error_set(e, QA_ERROR_NOT_FOUND, 0, "Q2 visual is missing");
         return false;
     }
-    out->effects |= qa_q2_actor_extra_effects(g, id);
-    return true;
 }
 bool q2_entity_schedule(qa_q2_game *g, q2_actor *a, q2_entity_think think, float seconds) {
     a->entity->think = think;

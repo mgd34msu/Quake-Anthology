@@ -69,7 +69,7 @@ static void free_saved_cvars(saved_cvar *cvars, size_t count)
     free(cvars);
 }
 
-bool qa_native_host_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *error)
+static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *error)
 {
     if (!host || !host->instance || !out || host->destroying || host->restoring ||
         host->message_failed)
@@ -209,12 +209,22 @@ bool qa_native_host_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *e
     return true;
 }
 
+bool qa_native_host_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *error)
+{
+    if (!host || host->callback_depth)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "native host checkpoint requires an idle callback owner");
+    ++host->callback_depth;
+    bool ok = capture_checkpoint(host, out, error);
+    --host->callback_depth;
+    return ok;
+}
+
 static bool span(const uint8_t *cursor, const uint8_t *end, size_t size)
 {
     return size <= (size_t)(end - cursor);
 }
 
-bool qa_native_host_restore(qa_native_host *host, qa_bytes state, qa_error *error)
+static bool restore_checkpoint(qa_native_host *host, qa_bytes state, qa_error *error)
 {
     if (!host || !host->instance || host->destroying || host->restoring ||
         !state.data || state.size < HOST_CHECKPOINT_HEADER)
@@ -420,4 +430,14 @@ truncated:
     free_saved_cvars(cvars, cvar_count);
     return native_host_fail(error, QA_ERROR_FORMAT, (size_t)(cursor - state.data),
                             "native host checkpoint payload is truncated");
+}
+
+bool qa_native_host_restore(qa_native_host *host, qa_bytes state, qa_error *error)
+{
+    if (!host || host->callback_depth)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "native host restore requires an idle callback owner");
+    ++host->callback_depth;
+    bool ok = restore_checkpoint(host, state, error);
+    --host->callback_depth;
+    return ok;
 }

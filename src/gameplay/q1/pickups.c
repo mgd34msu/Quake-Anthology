@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/game_q1_maps.h"
+#include <float.h>
 #include <stdio.h>
 
 enum {
@@ -455,7 +456,10 @@ static bool define_item(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         body.origin.z += 8;
         body.bounds = (qa_bounds){{-16, -16, -8}, {16, 16, 48}};
     }
-    return qa_world_body_write(g->services.world, entity->id, &body, error);
+    qa_actor_id actor = entity->id;
+    if (!qa_world_body_write(g->services.world, actor, &body, error))
+        return false;
+    return !q1_alive(g, actor) || q1_pickup_observe(g, entity, error);
 }
 
 bool q1_pickup_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
@@ -1079,4 +1083,239 @@ fail:
     if (q1_alive(g, pack->id))
         q1_remove(g, pack, NULL);
     return false;
+}
+
+static float protection_value(qa_regular_armor armor) {
+    float absorption = armor.kind == QA_ARMOR_Q1 ? armor.protection.q1_absorption
+        : armor.kind == QA_ARMOR_Q2 ? armor.protection.q2.normal
+        : armor.kind == QA_ARMOR_Q3 ? armor.protection.q3_protection : 0;
+    return armor.points * absorption;
+}
+static bool inventory_benefit(qa_q1_game *g, qa_actor_id actor, qa_item_id item, double amount,
+                               double missing_capacity, float *utility, qa_error *error) {
+    qa_inventory_entry before;
+    qa_error read_error = {0};
+    if (!qa_inventory_entry_read(g->services.inventory, actor, item, &before, &read_error)) {
+        if (read_error.code != QA_ERROR_NOT_FOUND || missing_capacity < 0) {
+            if (error)
+                *error = read_error;
+            return false;
+        }
+        before = (qa_inventory_entry){.item = item, .capacity = missing_capacity,
+                                       .policy = QA_COUNT_SOURCE_FLOAT};
+    }
+    qa_inventory_entry after;
+    double given;
+    bool writes;
+    if (!qa_inventory_preview_give(&before, amount, &after, &given, &writes, error))
+        return false;
+    *utility = (float)fmin(FLT_MAX, (double)*utility + fmax(0, given));
+    return true;
+}
+static bool pickup_preview(qa_q1_game *g, qa_actor_id actor, const q1_pickup *item,
+                            float *utility, bool *accepted, qa_error *error) {
+    *utility = 0;
+    *accepted = false;
+    q1_player *player = q1_player_get(g, actor);
+    if (item->drop != Q1_DROP_NONE) {
+        if (item->drop == Q1_DROP_CTF_AMMO) {
+            for (unsigned i = 0; i < 4; ++i)
+                if (item->ammo[i] != 0 && !inventory_benefit(g, actor, g->ammo[i], item->ammo[i],
+                                        -1, utility, error))
+                    return false;
+        } else if (!inventory_benefit(g, actor, item->item, 1,
+                                      item->drop == Q1_DROP_ROGUE_WEAPON ? -1 : 1,
+                                      utility, error))
+            return false;
+        *accepted = true;
+        return true;
+    }
+    switch (item->kind) {
+    case Q1_ITEM_HEALTH: {
+        float health = q1_health(g, actor), limit = item->mega ? 250 : player ? player->max_health : 100;
+        qa_builtin_actor_traits traits;
+        if (!item->mega && g->services.actor_traits &&
+            g->services.actor_traits(g->services.context, actor, &traits))
+            limit = traits.max_health;
+        if (health > 0 && health < limit) {
+            *accepted = true;
+            *utility = fmaxf(0, fminf(limit, health + item->count) - health);
+        }
+        return true;
+    }
+    case Q1_ITEM_ARMOR:
+    case Q1_ITEM_MG3_SHARD: {
+        qa_combat_state state;
+        if (!qa_combat_read(g->services.combat, actor, &state, error))
+            return false;
+        qa_regular_armor armor = state.armor.regular;
+        if (armor.kind == QA_ARMOR_SOURCE)
+            return true;
+        float before = protection_value(armor);
+        if (item->kind == Q1_ITEM_ARMOR) {
+            *utility = fmaxf(0, item->count * item->absorption - before);
+            *accepted = *utility > 0;
+        } else if (armor.points < 200) {
+            float absorption = armor.kind == QA_ARMOR_Q1 ? fmaxf(.3f, armor.protection.q1_absorption) : .3f;
+            *utility = fmaxf(0, fminf(200, armor.points + 5) * absorption - before);
+            *accepted = true;
+        }
+        return true;
+    }
+    case Q1_ITEM_KEY:
+    case Q1_ITEM_SPHERE:
+        if (!inventory_benefit(g, actor, item->kind == Q1_ITEM_SPHERE ? g->vengeance_item : item->item,
+                                1, 1, utility, error))
+            return false;
+        *accepted = *utility > 0;
+        return true;
+    case Q1_ITEM_POWER: {
+        if (!isfinite(item->count) || item->count < 0 || item->count >= QA_Q1_POWER_COUNT ||
+            floorf(item->count) != item->count) {
+            qa_error_set(error, QA_ERROR_FORMAT, actor.slot, "Invalid observed Q1 power identity");
+            return false;
+        }
+        unsigned kind = (unsigned)item->count;
+        *accepted = true;
+        *utility = (float)fmax(0, g->time + item->duration -
+                                   fmax(g->time, qa_q1_game_power_expires(g, actor, (qa_q1_power)kind)));
+        return true;
+    }
+    case Q1_ITEM_HORN:
+    case Q1_ITEM_MG3_UPGRADE:
+    case Q1_ITEM_MG3_BLOODY:
+        *accepted = item->kind == Q1_ITEM_HORN || player != NULL;
+        *utility = *accepted ? 1 : 0;
+        return true;
+    default:
+        break;
+    }
+    qa_supply *selected = supply(g, actor);
+    qa_supply_preview_result preview = {0};
+    bool ok;
+    if (item->kind == Q1_ITEM_BACKPACK) {
+        qa_pickup_cargo cargo[QA_Q1_AMMO_COUNT + 1];
+        size_t count = 0;
+        for (unsigned i = 0; i < QA_Q1_AMMO_COUNT; ++i)
+            cargo[count++] = (qa_pickup_cargo){g->ammo[i], item->ammo[i], false};
+        if (item->weapon < QA_Q1_WEAPON_COUNT)
+            cargo[count++] = (qa_pickup_cargo){g->weapons[item->weapon], 1, true};
+        ok = qa_supply_cargo_preview(selected, actor, cargo, count, false, &preview, error);
+    } else if (item->kind == Q1_ITEM_AMMO || item->kind == Q1_ITEM_WEAPON) {
+        int ammo = item->kind == Q1_ITEM_WEAPON ? q1_weapon_ammo(item->weapon) : -1;
+        if (item->weapon == QA_Q1_MJOLNIR || item->weapon == QA_Q1_MG3_MJOLNIR)
+            ammo = QA_Q1_CELLS;
+        qa_pickup_grant grant = {.item = item->kind == Q1_ITEM_AMMO ? item->item
+                                        : ammo >= 0 ? g->ammo[ammo] : 0, .amount = item->count};
+        qa_supply_offer offer = {.kind = item->kind == Q1_ITEM_WEAPON ? QA_SUPPLY_WEAPON : QA_SUPPLY_AMMO,
+                                 .item = item->item, .ammo = &grant,
+                                 .ammo_count = item->kind == Q1_ITEM_AMMO || ammo >= 0 ? 1 : 0};
+        ok = qa_supply_preview(selected, actor, &offer, false, &preview, error);
+    } else {
+        qa_error_set(error, QA_ERROR_FORMAT, item->kind, "Unknown Q1 observed pickup kind");
+        return false;
+    }
+    if (ok) {
+        *accepted = preview.accepted;
+        double benefit = 0;
+        for (size_t i = 0; i < preview.weapon_count; ++i)
+            benefit += fmax(0, preview.weapons[i].given);
+        for (size_t i = 0; i < preview.ammo_count; ++i)
+            benefit += fmax(0, preview.ammo[i].given);
+        *utility = (float)fmin(benefit, FLT_MAX);
+    }
+    qa_supply_preview_free(&preview);
+    return ok;
+}
+static bool pickup_inspect(void *context, qa_actor_id pickup, qa_actor_id actor,
+                             qa_pickup_offer *offer, float *utility, bool *available,
+                             qa_error *error) {
+    qa_q1_game *g = context;
+    *available = false;
+    *utility = 0;
+    q1_actor *e = q1_entity(g, pickup);
+    if (!e || e->kind != Q1_PICKUP || g->destroy_pending)
+        return true;
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    q1_pickup item = e->state.pickup;
+    qa_actor_id owner = e->owner;
+    double owner_wait = e->next_think - g->time;
+    *offer = (qa_pickup_offer){.pickup = pickup, .recipient = actor,
+                               .source = g->options.provider, .item = item.item,
+                               .override_count = e->count != 0, .count = e->count,
+                               .dropped = item.kind == Q1_ITEM_BACKPACK || item.drop != Q1_DROP_NONE,
+                               .time_ns = g->time_ns};
+    qa_pickup_cargo cargo[QA_Q1_AMMO_COUNT + 1];
+    if (item.kind == Q1_ITEM_BACKPACK)
+        for (unsigned i = 0; i < QA_Q1_AMMO_COUNT; ++i)
+            cargo[offer->cargo_count++] = (qa_pickup_cargo){g->ammo[i], item.ammo[i], false};
+    if (item.kind == Q1_ITEM_BACKPACK && item.weapon < QA_Q1_WEAPON_COUNT)
+        cargo[offer->cargo_count++] = (qa_pickup_cargo){g->weapons[item.weapon], 1, true};
+    offer->cargo = offer->cargo_count ? cargo : NULL;
+    if (item.kind == Q1_ITEM_AMMO || item.kind == Q1_ITEM_WEAPON || item.kind == Q1_ITEM_KEY)
+        offer->default_resource = (qa_pickup_resource){.kind = QA_PICKUP_INVENTORY, .item = item.item};
+    else if (item.kind == Q1_ITEM_ARMOR || item.kind == Q1_ITEM_MG3_SHARD)
+        offer->default_resource = (qa_pickup_resource){.kind = QA_PICKUP_PROTECTION,
+                                                       .channel = QA_PROTECTION_REGULAR};
+    bool ok = true, eligible = false;
+    qa_q1_target target;
+    qa_builtin_actor_traits traits = {0};
+    if (!item.hidden && e->physics.solid == QA_PHYSICS_TRIGGER &&
+        ((item.drop != Q1_DROP_NONE && item.drop != Q1_DROP_CTF_AMMO) ||
+         item.kind == Q1_ITEM_HORN || q1_health(g, actor) > 0) &&
+        q1_target(g, actor, &target) && target.player) {
+        eligible = true;
+        if (g->services.actor_traits)
+            g->services.actor_traits(g->services.context, actor, &traits);
+        if (item.drop != Q1_DROP_NONE && traits.spectator)
+            eligible = false;
+        if (item.drop == Q1_DROP_ROGUE_WEAPON && !q1_player_get(g, actor))
+            eligible = false;
+        if (item.drop != Q1_DROP_CTF_AMMO && qa_actor_id_equal(owner, actor) &&
+            (item.drop != Q1_DROP_NONE ? owner_wait > 119 : owner_wait > 120 - item.owner_delay))
+            eligible = false;
+        if (eligible && item.kind == Q1_ITEM_WEAPON && item.drop == Q1_DROP_NONE && weapon_leave(g)) {
+            bool owned;
+            ok = qa_supply_owns(supply(g, actor), actor, item.item, &owned, error);
+            if (ok)
+                eligible = !owned;
+        }
+    }
+    if (ok && eligible && q1_alive(g, pickup) && q1_alive(g, actor) && !g->destroy_pending) {
+        bool handled;
+        ok = qa_pickups_preview(g->services.pickups, offer, utility, available, &handled, error);
+        if (ok && !handled && !g->destroy_pending && q1_alive(g, pickup) && q1_alive(g, actor))
+            ok = pickup_preview(g, actor, &item, utility, available, error);
+    }
+    offer->cargo = NULL;
+    offer->cargo_count = 0;
+    e = q1_entity(g, pickup);
+    if (!e || !q1_alive(g, actor) || e->kind != Q1_PICKUP || e->state.pickup.hidden ||
+        e->state.pickup.item != item.item || e->physics.solid != QA_PHYSICS_TRIGGER || g->destroy_pending) {
+        *available = false;
+        *utility = 0;
+    }
+    qa_q1_game_operation_end(&operation);
+    return ok;
+}
+bool q1_pickup_observe(qa_q1_game *g, q1_actor *e, qa_error *error) {
+    if (!g->services.pickups || !q1_alive(g, e->id))
+        return true;
+    qa_pickup_observer observer = {.context = g, .inspect = pickup_inspect};
+    return qa_pickups_observe(g->services.pickups, e->id, g->options.provider,
+                               &observer, &e->pickup_observation, error);
+}
+bool qa_q1_game_pickups_rebind(qa_q1_game *g, qa_error *error) {
+    if (!g || g->observation_depth || g->destroy_pending) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q1 pickup rebinding boundary");
+        return false;
+    }
+    for (uint32_t slot = 0; slot < g->capacity; ++slot) {
+        q1_actor *e = g->actors[slot];
+        if (e && e->active && e->kind == Q1_PICKUP && !q1_pickup_observe(g, e, error))
+            return false;
+    }
+    return true;
 }

@@ -1,0 +1,97 @@
+#ifndef APPLICATION_GUEST_QC_INTERNAL_H
+#define APPLICATION_GUEST_QC_INTERNAL_H
+#include "internal.h"
+#include "qa/qc_host.h"
+#include "qa/network_q1_nq.h"
+#include "qa/network_q1_qw.h"
+#include "qa/model.h"
+#include "qa/text.h"
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+
+typedef struct application_qc_resource {
+    char *name;
+    qa_resource *source;
+    qa_qc_game_resource value;
+    qa_qc_resource_kind kind;
+    bool world_model;
+} application_qc_resource;
+typedef struct application_qc_client {
+    qa_actor_id actor;
+    uint32_t seat;
+    float parms[16];
+    bool connected, spawned, has_parms;
+    bool spectator;
+    bool primary_character;
+} application_qc_client;
+typedef struct application_qc_message {
+    uint32_t destination;
+    qa_actor_id recipient;
+    uint8_t *data;
+    size_t size, capacity;
+    bool overflowed;
+    qa_application_protocol_reference *references;
+    size_t reference_count, reference_capacity;
+} application_qc_message;
+typedef struct application_qc_actor {
+    struct application_qc_state *engine;
+    qa_actor_id actor;
+    int32_t reference;
+    bool collision_bound;
+} application_qc_actor;
+struct application_qc_state {
+    application_provider *provider;
+    qa_world *world;
+    qa_builtin_services services;
+    qa_builtin_random random;
+    qa_cvars *cvars;
+    qa_console *console;
+    qa_command_context command_context;
+    qa_qc_profile profile;
+    qa_net_protocol_id protocol;
+    application_qc_resource *resources;
+    size_t resource_count, resource_capacity;
+    application_qc_client *clients;
+    uint32_t max_clients, check_slot;
+    float check_time;
+    int32_t check_cluster;
+    uint64_t source_time_ns;
+    qa_source_frame frame;
+    bool has_frame;
+    bool loading, projecting;
+    bool initialized;
+    struct application_qc_input_scope *input_scope;
+    float serverflags;
+    char *lightstyles[64];
+    application_qc_message *messages;
+    size_t message_count, message_capacity;
+    qa_builtin_actor_snapshot observations;
+    application_qc_actor *actors;
+    uint32_t actor_capacity;
+};
+bool application_qc_import(void *, qa_qc_instance *, qa_qc_builtin, const char *, qa_error *);
+bool application_qc_capture_engine(void *, qa_buffer *, qa_error *);
+bool application_qc_restore_engine(void *, qa_bytes, qa_error *);
+bool application_qc_flush(struct application_qc_state *, qa_error *);
+bool application_qc_write_message(struct application_qc_state *, qa_qc_instance *, qa_qc_builtin, qa_error *);
+bool application_qc_multicast(struct application_qc_state *, qa_qc_instance *, qa_error *);
+bool application_qc_resource_lookup(void *, qa_qc_resource_kind, const char *, bool,
+                                    qa_qc_game_resource *, qa_error *);
+const qa_qc_definition *application_qc_field(struct application_qc_state *, const char *, qa_qc_value_type, qa_error *);
+bool application_qc_float(struct application_qc_state *, int32_t, const char *, float *, qa_error *);
+bool application_qc_set_float(struct application_qc_state *, int32_t, const char *, float, qa_error *);
+bool application_qc_reference(struct application_qc_state *, qa_actor_id, int32_t *, qa_error *);
+bool application_qc_named(struct application_qc_state *, const char *, qa_actor_id, qa_error *);
+bool application_qc_spectator_callback(struct application_qc_state *, const char *, qa_actor_id, qa_error *);
+qa_console *application_qc_create_console(struct application_qc_state *, qa_cvars *, qa_error *);
+bool application_qc_prepare_entity(void *, qa_qc_instance *, const qa_qc_entity_access *, qa_error *);
+bool application_qc_may_move(void *, qa_actor_id);
+bool application_qc_input_idle(const application_provider *);
+bool application_qc_console_command(application_provider *, qa_actor_id, const char *,
+                                      bool client_command, bool *handled, qa_error *);
+bool application_qc_think_binding(application_provider *,qa_actor_id,uint32_t,
+                                  qa_think_fn *,void **,qa_error *);
+bool application_qc_input_abort(application_provider *, qa_actor_id, bool, qa_error *);
+bool application_qc_project_body_store(struct application_qc_state *, qa_qc_instance *, const qa_qc_store_event *, qa_error *);
+#endif

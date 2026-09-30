@@ -1,0 +1,244 @@
+#include "guest_input_private.h"
+#include "qa/json.h"
+
+static bool word(const qa_json_document *doc, qa_json_id object, const char *key,
+                  uint32_t *out, qa_error *error)
+{
+    uint64_t value;
+    if (!qa_json_u64(doc, qa_json_get(doc, object, key), &value, error)) return false;
+    if (value > UINT32_MAX)
+        return application_fail(error, QA_ERROR_FORMAT, "Guest input word exceeds its source range");
+    *out = (uint32_t)value;
+    return true;
+}
+
+static bool mode(const qa_json_document *doc, qa_json_id object, const char *key,
+                  int32_t *out, qa_error *error)
+{
+    int64_t value;
+    if (!qa_json_i64(doc, qa_json_get(doc, object, key), &value, error)) return false;
+    if (value < INT32_MIN || value > INT32_MAX)
+        return application_fail(error, QA_ERROR_FORMAT, "Guest input mode exceeds its source range");
+    *out = (int32_t)value;
+    return true;
+}
+
+static bool entry(const qa_qvm_instruction *code, size_t count, uint32_t at,
+                   qa_error *error)
+{
+    return (at < count && code[at].opcode == QA_QVM_ENTER) ||
+           application_fail(error, QA_ERROR_FORMAT, "Guest input entry is not an original function");
+}
+
+static bool region(const qa_qvm_image *image, const qa_qvm_instruction *code, size_t count, uint32_t owner,
+                    uint32_t first, uint32_t join, qa_error *error)
+{
+    if (owner >= first || first >= join || join >= count)
+        return application_fail(error, QA_ERROR_FORMAT, "Guest movement region leaves its source function");
+    for (uint32_t at = owner + 1; at <= join; ++at)
+        if (code[at].opcode == QA_QVM_ENTER)
+            return application_fail(error, QA_ERROR_FORMAT, "Guest movement region crosses a source function");
+    return qa_qvm_qualify_source_region(image, owner, first, join, error);
+}
+
+void application_guest_input_profile_free(application_guest_input_profile *profile)
+{
+    if (!profile) return;
+    free(profile->weapon_branches);
+    free(profile->weapon_indirections);
+    free(profile->intermission_modes);
+    *profile = (application_guest_input_profile){0};
+}
+
+static bool qualify(q3g_role *role, application_guest_input_profile *p, qa_error *error)
+{
+    size_t count;
+    const qa_qvm_instruction *code = qa_qvm_image_instructions(role->image, &count);
+    const uint32_t entries[] = {p->client_think, p->run_client, p->client_spawn, p->move, p->slice};
+    size_t memory = qa_qvm_image_memory_size(role->image);
+    if (p->entity_stride < qa_qvm_shared_entity_bytes(role->abi) ||
+        p->client_stride < qa_qvm_player_bytes(role->abi) ||
+        p->entity_stride > memory || p->client_stride > memory ||
+        p->entity_stride % 4 || p->client_stride % 4 || p->client_pointer % 4 ||
+        p->client_pointer > p->entity_stride - 4)
+        return application_fail(error, QA_ERROR_FORMAT, "Guest input records differ from their source ABI");
+    for (size_t i = 0; i < sizeof(entries) / sizeof(entries[0]); ++i)
+        if (!entry(code, count, entries[i], error)) return false;
+    if (p->has_locomotion) {
+        if (!region(role->image, code, count, p->slice, p->locomotion_entry, p->locomotion_join, error))
+            return false;
+        if (p->movement_global % 4 || p->movement_global > memory - 4 ||
+            p->movement_mins % 4 || p->movement_maxs % 4 || p->movement_water % 4)
+            return application_fail(error, QA_ERROR_FORMAT, "Guest movement projection is unaligned");
+    }
+    if (p->has_weapons) {
+        if (!entry(code, count, p->weapon_dispatcher, error)) return false;
+        if (p->weapon_pointer_offset % 4 ||
+            (p->weapon_pointer_global && (p->weapon_pointer_base % 4 || p->weapon_pointer_base > memory - 4)))
+            return application_fail(error, QA_ERROR_FORMAT, "Guest weapon actor pointer leaves source memory");
+        for (size_t i = 0; i < p->weapon_indirection_count; ++i)
+            if (p->weapon_indirections[i] % 4)
+                return application_fail(error, QA_ERROR_FORMAT, "Guest weapon actor pointer is unaligned");
+        for (size_t i = 0; i < p->weapon_branch_count; ++i) {
+            uint32_t at = p->weapon_branches[i].instruction;
+            if (at <= p->weapon_dispatcher || at >= count || code[at].opcode < QA_QVM_EQ ||
+                code[at].opcode > QA_QVM_GEF)
+                return application_fail(error, QA_ERROR_FORMAT, "Guest weapon predicate is not a source decision");
+            uint32_t owner = at;
+            while (owner && code[owner].opcode != QA_QVM_ENTER) --owner;
+            if (owner != p->weapon_dispatcher)
+                return application_fail(error, QA_ERROR_FORMAT, "Guest weapon predicate leaves its dispatcher");
+            for (size_t j = 0; j < i; ++j)
+                if (p->weapon_branches[j].instruction == at)
+                    return application_fail(error, QA_ERROR_FORMAT, "Guest weapon predicate is duplicated");
+        }
+    }
+    return true;
+}
+
+bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
+                                           application_guest_input_profile *out, qa_error *error)
+{
+    if (!role || !out || role->kind != QA_QVM_GAME)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Guest input profile needs a game role");
+    application_guest_input_profile p = {0};
+    if (!role->image) { *out = p; return true; }
+    if (!primary.size) {
+        char digest[65]; qa_sha256_hex(qa_qvm_image_digest(role->image), digest);
+        if (!strcmp(digest, "b9e396cf5ed2b913548cd92e2b0886ad5992653c8903fa3f9ed0b1f4167ca43e")) {
+            p = (application_guest_input_profile){.entity_stride = 856, .client_stride = 872,
+                .client_pointer = 516, .client_think = 114858, .run_client = 114917,
+                .client_spawn = 125027, .move = 22369, .slice = 21620,
+                .input_present = true, .has_modes = true, .normal_mode = 0,
+                .noclip_mode = 1, .freeze_mode = 4};
+        } else if (!strcmp(digest, "9751bad99a2d138f96a9b0436d2ea2d965b86214175dc33e4cea95e059419337")) {
+            p = (application_guest_input_profile){.entity_stride = 876, .client_stride = 944,
+                .client_pointer = 516, .client_think = 120292, .run_client = 120383,
+                .client_spawn = 132015, .move = 35535, .slice = 34707,
+                .input_present = true, .has_modes = true, .normal_mode = 0,
+                .noclip_mode = 1, .freeze_mode = 4, .has_locomotion = true,
+                .locomotion_entry = 35397, .locomotion_join = 35503, .movement_global = 1091860,
+                .movement_mins = 180, .movement_maxs = 192, .movement_water = 208,
+                .has_weapons = true, .weapon_dispatcher = 33648, .weapon_branch_count = 1,
+                .weapon_pointer_global = true, .weapon_pointer_base = 1091860,
+                .weapon_indirection_count = 1};
+            p.weapon_branches = malloc(sizeof(*p.weapon_branches));
+            p.weapon_indirections = calloc(1, sizeof(*p.weapon_indirections));
+            if (!p.weapon_branches || !p.weapon_indirections) {
+                application_guest_input_profile_free(&p);
+                return application_fail(error, QA_ERROR_MEMORY, "Allocating guest weapon source pointer");
+            }
+            p.weapon_branches[0] = (application_guest_branch){34044, false};
+        }
+        if (p.input_present && !qualify(role, &p, error)) {
+            application_guest_input_profile_free(&p); return false;
+        }
+        *out = p; return true;
+    }
+    qa_json_document *doc;
+    if (!qa_json_parse(primary, &doc, error)) return false;
+    qa_json_id root = qa_json_root(doc), input = qa_json_get(doc, root, "input");
+    qa_json_id entries = qa_json_get(doc, input, "entries");
+    bool ok = word(doc, input, "entityStride", &p.entity_stride, error) &&
+        word(doc, input, "clientStride", &p.client_stride, error) &&
+        word(doc, input, "clientPointer", &p.client_pointer, error) &&
+        word(doc, entries, "clientThink", &p.client_think, error) &&
+        word(doc, entries, "runClient", &p.run_client, error) &&
+        word(doc, entries, "clientSpawn", &p.client_spawn, error) &&
+        word(doc, entries, "move", &p.move, error) && word(doc, entries, "slice", &p.slice, error);
+    qa_json_id modes = qa_json_get(doc, input, "movementModes");
+    if (ok && modes != QA_JSON_NONE) {
+        ok = mode(doc, modes, "normal", &p.normal_mode, error) &&
+             mode(doc, modes, "noclip", &p.noclip_mode, error) &&
+             mode(doc, modes, "freeze", &p.freeze_mode, error);
+        p.has_modes = ok;
+    }
+    qa_json_id intermission = qa_json_get(doc, input, "intermission");
+    if (ok && qa_json_type(doc, intermission) != QA_JSON_ARRAY)
+        ok = application_fail(error, QA_ERROR_FORMAT, "Guest input intermission modes require a source list");
+    p.intermission_count = qa_json_size(doc, intermission);
+    if (ok && p.intermission_count) {
+        p.intermission_modes = calloc(p.intermission_count, sizeof(*p.intermission_modes));
+        if (!p.intermission_modes)
+            ok = application_fail(error, QA_ERROR_MEMORY, "Allocating guest intermission modes");
+    }
+    for (size_t i = 0; ok && i < p.intermission_count; ++i) {
+        int64_t value;
+        ok = qa_json_i64(doc, qa_json_at(doc, intermission, i), &value, error);
+        if (ok && (value < INT32_MIN || value > INT32_MAX))
+            ok = application_fail(error, QA_ERROR_FORMAT, "Guest intermission mode exceeds its source word");
+        if (ok) p.intermission_modes[i] = (int32_t)value;
+    }
+    qa_json_id weapons = qa_json_get(doc, root, "weapons");
+    qa_json_id movement = qa_json_get(doc, weapons, "equipmentMovement");
+    qa_json_id locomotion = qa_json_get(doc, movement, "locomotion");
+    uint32_t move, slice;
+    if (ok) {
+        uint32_t entity_stride, client_stride, client_pointer;
+        ok = word(doc, weapons, "entityStride", &entity_stride, error) &&
+            word(doc, weapons, "clientStride", &client_stride, error) &&
+            word(doc, weapons, "clientPointer", &client_pointer, error);
+        if (ok && (entity_stride != p.entity_stride || client_stride != p.client_stride ||
+                   client_pointer != p.client_pointer))
+            ok = application_fail(error, QA_ERROR_FORMAT, "Guest input and weapon record layouts disagree");
+        if (ok) ok = word(doc, movement, "move", &move, error) && word(doc, movement, "slice", &slice, error) &&
+            word(doc, movement, "movementGlobal", &p.movement_global, error) &&
+            word(doc, movement, "mins", &p.movement_mins, error) &&
+            word(doc, movement, "maxs", &p.movement_maxs, error) &&
+            word(doc, qa_json_get(doc, weapons, "waterLevel"), "movementOffset", &p.movement_water, error) &&
+            word(doc, locomotion, "entry", &p.locomotion_entry, error) &&
+            word(doc, locomotion, "join", &p.locomotion_join, error);
+        if (ok && (move != p.move || slice != p.slice))
+            ok = application_fail(error, QA_ERROR_FORMAT, "Guest input and weapon movement entries disagree");
+        p.has_locomotion = ok;
+    }
+    qa_json_id stage = qa_json_get(doc, weapons, "stage");
+    qa_json_id branches = qa_json_get(doc, stage, "predicates");
+    if (ok) {
+        qa_json_id dispatcher = qa_json_get(doc, stage, "dispatcher");
+        qa_json_id actor = qa_json_get(doc, dispatcher, "actor");
+        qa_json_id pointer = qa_json_get(doc, actor, "pointer");
+        ok = word(doc, dispatcher, "entry", &p.weapon_dispatcher, error);
+        if (ok && !qa_json_string_equal(doc, qa_json_get(doc, actor, "record"), "client"))
+            ok = application_fail(error, QA_ERROR_FORMAT, "Guest weapon actor is not a source client record");
+        if (ok) {
+            p.weapon_pointer_global = qa_json_string_equal(doc, qa_json_get(doc, pointer, "kind"), "global");
+            if (!p.weapon_pointer_global && !qa_json_string_equal(doc, qa_json_get(doc, pointer, "kind"), "argument"))
+                ok = application_fail(error, QA_ERROR_FORMAT, "Guest weapon pointer has no source addressing mode");
+        }
+        if (ok) ok = word(doc, pointer, p.weapon_pointer_global ? "address" : "index", &p.weapon_pointer_base, error) &&
+                     word(doc, pointer, "offset", &p.weapon_pointer_offset, error);
+        qa_json_id indirections = qa_json_get(doc, pointer, "indirections");
+        if (ok && qa_json_type(doc, indirections) != QA_JSON_ARRAY)
+            ok = application_fail(error, QA_ERROR_FORMAT, "Guest weapon pointer path is missing");
+        p.weapon_indirection_count = qa_json_size(doc, indirections);
+        if (ok && p.weapon_indirection_count) {
+            p.weapon_indirections = calloc(p.weapon_indirection_count, sizeof(*p.weapon_indirections));
+            if (!p.weapon_indirections) ok = application_fail(error, QA_ERROR_MEMORY, "Allocating guest weapon pointer path");
+        }
+        for (size_t i = 0; ok && i < p.weapon_indirection_count; ++i) {
+            uint64_t value;
+            ok = qa_json_u64(doc, qa_json_at(doc, indirections, i), &value, error);
+            if (ok && value > UINT32_MAX) ok = application_fail(error, QA_ERROR_FORMAT, "Guest pointer path exceeds its source word");
+            if (ok) p.weapon_indirections[i] = (uint32_t)value;
+        }
+        if (ok && qa_json_type(doc, branches) != QA_JSON_ARRAY)
+            ok = application_fail(error, QA_ERROR_FORMAT, "Guest weapon predicates require a source list");
+        p.weapon_branch_count = qa_json_size(doc, branches);
+        if (ok && p.weapon_branch_count) {
+            p.weapon_branches = calloc(p.weapon_branch_count, sizeof(*p.weapon_branches));
+            if (!p.weapon_branches) ok = application_fail(error, QA_ERROR_MEMORY, "Allocating guest weapon predicates");
+        }
+        for (size_t i = 0; ok && i < p.weapon_branch_count; ++i) {
+            qa_json_id b = qa_json_at(doc, branches, i);
+            ok = word(doc, b, "instruction", &p.weapon_branches[i].instruction, error) &&
+                 qa_json_bool(doc, qa_json_get(doc, b, "unselected"), &p.weapon_branches[i].unselected, error);
+        }
+        p.has_weapons = ok;
+    }
+    qa_json_destroy(doc);
+    p.input_present = ok;
+    if (ok) ok = qualify(role, &p, error);
+    if (!ok) { application_guest_input_profile_free(&p); return false; }
+    *out = p; return true;
+}

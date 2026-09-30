@@ -422,7 +422,8 @@ static bool q2_application(qa_native_host *host, const qa_native_import_call *ca
         return native_host_fail(error, QA_ERROR_UNSUPPORTED, call->slot,
                                 "native Q2 application service is unbound");
     qa_native_host_q2_application_call application = {
-        .host = host, .instance = host->instance, .import = call};
+        .host = host, .instance = host->instance, .import = call,
+        .seat = host->q2_seat, .seat_bound = host->q2_seat_bound};
     return host->q2_application(host->q2_application_context, &application, result, error);
 }
 

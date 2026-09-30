@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../checkpoint_internal.h"
 
 static bool range_valid(qa_bot_chat_range range, size_t count) {
     return range.first <= count && range.count <= count - range.first;
@@ -180,8 +181,8 @@ memory:
     qa_error_set(e, QA_ERROR_MEMORY, 0, "Capturing bot console messages");
     return false;
 }
-bool qa_bot_chat_restore_state(qa_bot_chat *s, const qa_bot_chat_state *state, qa_error *e) {
-    if (s == NULL || state == NULL || state->gender > 2 || state->last_handle > 8192 ||
+static bool valid_state(const qa_bot_chat_state *state, qa_error *e) {
+    if (state == NULL || state->gender > 2 || state->last_handle > 8192 ||
         memchr(state->name, 0, sizeof(state->name)) == NULL ||
         memchr(state->message, 0, sizeof(state->message)) == NULL ||
         state->console_count >= UINT32_MAX || (state->console_count != 0 && state->console == NULL))
@@ -191,27 +192,84 @@ bool qa_bot_chat_restore_state(qa_bot_chat *s, const qa_bot_chat_state *state, q
             !isfinite(state->console[i].time) ||
             memchr(state->console[i].text, 0, sizeof(state->console[i].text)) == NULL)
             goto invalid;
-    size_t other = s->system->console_count - s->console_count;
-    if (state->console_count > SIZE_MAX - other ||
-        !chat_reserve_console(s->system, other + state->console_count, e))
-        return false;
-    while (s->first_console != QA_BOT_NO_INDEX)
-        qa_bot_chat_console_remove(s, s->system->console[s->first_console].message.handle);
-    s->client = state->client;
-    s->gender = state->gender;
-    memcpy(s->name, state->name, sizeof(s->name));
-    memcpy(s->message, state->message, sizeof(s->message));
-    for (size_t i = 0; i < state->console_count; ++i) {
-        const qa_bot_console_message *message = state->console + i;
-        if (!qa_bot_chat_console_queue(s, message->type, message->text, message->time, NULL, e))
-            return false;
-        s->system->console[s->last_console].message = *message;
-    }
-    s->last_handle = state->last_handle;
     return true;
 invalid:
     qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid per-bot chat checkpoint");
     return false;
+}
+static void clear_console(qa_bot_chat *s) {
+    qa_bot_chat_system *system=s->system;
+    uint32_t index=s->first_console;
+    while (index!=QA_BOT_NO_INDEX) {
+        chat_console_cell *cell=&system->console[index];
+        uint32_t next=cell->next;
+        cell->next=system->free_console;cell->previous=QA_BOT_NO_INDEX;
+        system->free_console=index;
+        index=next;
+    }
+    system->console_count-=s->console_count;
+    s->console_count=0;s->first_console=s->last_console=QA_BOT_NO_INDEX;
+}
+static void commit_state(qa_bot_chat *s, const qa_bot_chat_state *state) {
+    s->client=state->client;s->gender=state->gender;s->last_handle=state->last_handle;
+    memcpy(s->name,state->name,sizeof(s->name));memcpy(s->message,state->message,sizeof(s->message));
+    qa_bot_chat_system *system=s->system;
+    for (size_t i=0;i<state->console_count;++i) {
+        uint32_t index=system->free_console;
+        chat_console_cell *cell=&system->console[index];
+        system->free_console=cell->next;
+        *cell=(chat_console_cell){.message=state->console[i],.previous=s->last_console,.next=QA_BOT_NO_INDEX};
+        if (s->last_console!=QA_BOT_NO_INDEX) system->console[s->last_console].next=index;
+        else s->first_console=index;
+        s->last_console=index;++s->console_count;++system->console_count;
+    }
+}
+bool qa_bot_chat_restore_state(qa_bot_chat *s, const qa_bot_chat_state *state, qa_error *e) {
+    if (!s || s->retired || s->system->restoring || !valid_state(state,e)) return false;
+    size_t other = s->system->console_count - s->console_count;
+    if (state->console_count > SIZE_MAX - other ||
+        !chat_reserve_console(s->system, other + state->console_count, e))
+        return false;
+    clear_console(s);commit_state(s,state);
+    return true;
+}
+struct bot_chat_restore {
+    const bot_chat_restore_entry *entries;
+    size_t count;
+    qa_bot_chat_system *system;
+};
+bool bot_chat_restore_prepare(const bot_chat_restore_entry *entries, size_t count,
+                              bot_chat_restore **out, qa_error *e) {
+    *out=NULL;
+    if (!count) return true;
+    qa_bot_chat_system *system=entries[0].chat?entries[0].chat->system:NULL;
+    if (!system || system->retired || system->restoring) goto invalid;
+    size_t removed=0,added=0;
+    for (size_t i=0;i<count;++i) {
+        qa_bot_chat *s=entries[i].chat;
+        if (!s || s->retired || s->system!=system || !valid_state(entries[i].state,e)) goto invalid;
+        for (size_t j=0;j<i;++j) if (entries[j].chat==s) goto invalid;
+        if (s->console_count>SIZE_MAX-removed || entries[i].state->console_count>SIZE_MAX-added) goto invalid;
+        removed+=s->console_count;added+=entries[i].state->console_count;
+    }
+    if (removed>system->console_count || added>SIZE_MAX-(system->console_count-removed)) goto invalid;
+    bot_chat_restore *prepared=malloc(sizeof(*prepared));
+    if (!prepared) { qa_error_set(e,QA_ERROR_MEMORY,0,"preparing shared bot chat checkpoint");return false; }
+    if (!chat_reserve_console(system,system->console_count-removed+added,e)) {free(prepared);return false;}
+    *prepared=(bot_chat_restore){.entries=entries,.count=count,.system=system};
+    system->restoring=true;
+    *out=prepared;return true;
+invalid:
+    qa_error_set(e,QA_ERROR_FORMAT,0,"invalid shared bot chat checkpoint bindings");return false;
+}
+void bot_chat_restore_finish(bot_chat_restore *prepared, bool commit) {
+    if (!prepared) return;
+    if (commit) {
+        for (size_t i=0;i<prepared->count;++i) clear_console(prepared->entries[i].chat);
+        for (size_t i=0;i<prepared->count;++i) commit_state(prepared->entries[i].chat,prepared->entries[i].state);
+    }
+    prepared->system->restoring=false;
+    free(prepared);
 }
 void qa_bot_chat_state_free(qa_bot_chat_state *state) {
     if (state != NULL) {

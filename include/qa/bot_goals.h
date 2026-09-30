@@ -70,6 +70,7 @@ typedef struct qa_bot_goals qa_bot_goals;
 bool qa_bot_goals_create(qa_bot_items *, const qa_bot_goal_options *, const qa_bot_goal_services *,
                          qa_bot_goals **, qa_error *);
 void qa_bot_goals_destroy(qa_bot_goals *);
+bool qa_bot_goals_active(const qa_bot_goals *);
 bool qa_bot_goals_reconfigure(qa_bot_goals *, qa_bot_items *, int32_t game_type,
                               uint32_t next_map_capacity, qa_error *);
 /* A NULL config suspends source item queries while retaining prior immutable

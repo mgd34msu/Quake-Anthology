@@ -284,6 +284,7 @@ struct qa_q2_monster {
   uint64_t air_ns, environment_ns, jump_ns, flies_ns, fly_position_ns;
   uint64_t recovery_ns, death_ns, spawn_ns, timestamp_ns, coop_check_ns;
   uint64_t react_ns;
+  qa_builtin_powerups widow_powers;
   q2m_corpse_phase corpse_phase;
   uint64_t corpse_due_ns, corpse_end_ns;
   qa_actor_id enemy, old_enemy, goal, move_target, commander, activator;
@@ -295,6 +296,7 @@ struct qa_q2_monster {
   qa_vec3 last_sighting, saved_goal, blind_fire_target;
   qa_vec3 fly_ideal_position, fly_recovery_direction;
   qa_vec3 last_damage_point, saved_attack_position;
+  qa_vec3 widow_previous_target;
   qa_vec3 controller_direction;
   qa_attack last_attack;
   float pending_damage, pending_kick;
@@ -406,6 +408,9 @@ bool q2m_fire(q2m_context *, const q2m_fire_spec *, qa_error *);
 bool q2m_widow_disrupt(q2m_context *, qa_error *);
 bool q2m_melee(q2m_context *, float range, float damage, float kick,
                qa_error *);
+bool q2m_hit(q2m_context *, qa_vec3 aim, float damage, float kick, bool *, qa_error *);
+bool q2m_species_melee(q2m_context *, const char *, bool *, qa_error *);
+bool q2m_stalker_callback(q2m_context *, const char *, bool *, qa_error *);
 bool q2m_damage_enemy(q2m_context *, float range, int canonical_mod,
                       uint32_t flags, float damage, float kick, bool *hit,
                       qa_error *);
@@ -413,6 +418,10 @@ bool q2m_dispatch(q2m_context *, const char *, qa_error *);
 bool q2m_pain(q2m_context *, qa_error *);
 bool q2m_die(q2m_context *, qa_error *);
 bool q2m_corpse(q2m_context *, qa_error *);
+bool q2m_set_power_cells(q2m_context *, qa_power_kind, float cells, qa_error *);
+bool q2m_widow_powerups(q2m_context *, qa_error *);
+void q2m_widow_power_think(q2m_context *);
+void q2m_widow_clear_powerups(q2m_context *);
 bool q2m_corpse_phase_valid(const qa_q2_game *, q2m_species, q2m_corpse_phase);
 bool q2m_corpse_callback(q2m_context *, const char *, qa_error *);
 bool q2m_corpse_tick(q2m_context *, bool *handled, qa_error *);
@@ -420,6 +429,9 @@ bool q2m_hover_dying(q2m_context *, qa_error *);
 bool q2m_hover_explode(q2m_context *, qa_error *);
 bool q2m_start_boss_explosion(q2m_context *, qa_error *);
 bool q2m_boss_explosion_tick(q2m_context *, qa_error *);
+bool q2m_widow_death_action(q2m_context *, const char *, bool *, qa_error *);
+bool q2m_widow_explode(q2m_context *, qa_error *);
+bool q2m_widow_death_gibs(q2m_context *, float, qa_error *);
 bool q2m_finish_boss_death(q2m_context *, qa_error *);
 bool q2m_world_effects(q2m_context *, qa_error *);
 bool q2m_touch(q2m_context *, const qa_touch_contact *, qa_error *);

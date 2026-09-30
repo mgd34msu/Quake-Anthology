@@ -1,0 +1,183 @@
+#include "internal.h"
+#include <errno.h>
+#include <stdio.h>
+
+bool frontend_fail(qa_error *error, qa_status status, const char *message)
+{
+    qa_error_set(error, status, 0, "%s", message);
+    return false;
+}
+void qa_frontend_options_default(qa_frontend_options *options)
+{
+    if (!options) return;
+    *options = (qa_frontend_options){.seats = 1, .gamma = 1, .audio = true,
+        .network_protocol = {QA_NET_UNIFIED_1, 0, 0}, .network_port = 27960,
+        .font_directory = "/usr/share/fonts/truetype/dejavu", .font_file = "DejaVuSans.ttf"};
+    qa_application_options_default(&options->application);
+    options->application.content_root = "../qfiles";
+    qa_display_options_default(&options->display);
+    options->display.title = "Quake Anthology";
+}
+static bool push(const char ***array, size_t *count, const char *value, qa_error *error)
+{
+    if (*count >= SIZE_MAX / sizeof(**array)) return frontend_fail(error, QA_ERROR_MEMORY, "too many startup arguments");
+    const char **next = realloc((void *)*array, (*count + 1) * sizeof(*next));
+    if (!next) return frontend_fail(error, QA_ERROR_MEMORY, "retaining startup arguments");
+    next[(*count)++] = value;
+    *array = next;
+    return true;
+}
+static bool integer(const char *text, uint64_t low, uint64_t high, uint64_t *out, qa_error *error)
+{
+    char *end;
+    errno = 0;
+    unsigned long long value = strtoull(text, &end, 10);
+    if (!*text || *text == '-' || errno || *end || value < low || value > high)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "numeric startup argument outside its range");
+    *out = (uint64_t)value;
+    return true;
+}
+bool frontend_protocol(const char *text, qa_net_protocol_id *out, qa_error *error)
+{
+    static const struct { const char *name; qa_net_protocol kind; uint32_t revision; } choices[] = {
+        {"nq15", QA_NET_NQ15, 0}, {"fitz666", QA_NET_FITZ666, 0}, {"rmq999", QA_NET_RMQ999, 0},
+        {"qw28", QA_NET_QW28, 0}, {"qw29", QA_NET_QW29, 0}, {"q2-34", QA_NET_Q2_34, 0},
+        {"r1q2-35", QA_NET_R1Q2_35, 1905}, {"q2pro-36", QA_NET_Q2PRO_36, 1026},
+        {"q2repro-1038", QA_NET_Q2REPRO_1038, 0}, {"q2kex-2023", QA_NET_Q2KEX_2023, 0},
+        {"q3-68", QA_NET_Q3_68, 0}, {"unified-1", QA_NET_UNIFIED_1, 0}
+    };
+    for (size_t i = 0; i < sizeof(choices) / sizeof(*choices); ++i) if (!strcmp(text, choices[i].name)) {
+        *out = (qa_net_protocol_id){choices[i].kind, choices[i].revision, 0};
+        return qa_net_protocol_valid(*out, error);
+    }
+    return frontend_fail(error, QA_ERROR_ARGUMENT, "unknown network protocol");
+}
+/* Each shell argv element is a source token. Quote token arguments explicitly
+ * so semicolons, whitespace and embedded quotes cannot become another command. */
+static bool startup(int argc, char *const argv[], int *index, qa_frontend_options *options, qa_error *error)
+{
+    int begin = *index, end = begin + 1;
+    const char *name = argv[begin] + 1;
+    unsigned required = !strcmp(name, "bind") || !strcmp(name, "set") || !strcmp(name, "seta") ||
+        !strcmp(name, "setu") || !strcmp(name, "sets") || !strcmp(name, "alias") ? 2 : 0;
+    while (end < argc && strncmp(argv[end], "--", 2) &&
+        ((unsigned)(end - begin - 1) < required || argv[end][0] != '+')) ++end;
+    if ((unsigned)(end - begin - 1) < required)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "startup command is missing required arguments");
+    size_t bytes = strlen(argv[begin] + 1) + 1;
+    for (int i = begin + 1; i < end; ++i) {
+        size_t n = strlen(argv[i]);
+        if (n > (SIZE_MAX - bytes - 4) / 2) return frontend_fail(error, QA_ERROR_MEMORY, "startup command too long");
+        bytes += n * 2 + 4;
+    }
+    char *command = malloc(bytes);
+    if (!command) return frontend_fail(error, QA_ERROR_MEMORY, "retaining startup command");
+    size_t at = strlen(argv[begin] + 1);
+    memcpy(command, argv[begin] + 1, at);
+    for (int i = begin + 1; i < end; ++i) {
+        command[at++] = ' '; command[at++] = '"';
+        for (const char *p = argv[i]; *p; ++p) {
+            /* Source tokenizers do not interpret C string escapes. Embedded
+             * double quotes are rejected instead of silently changing syntax. */
+            if (*p == '"' || *p == '\n' || *p == '\r') {
+                free(command); return frontend_fail(error, QA_ERROR_ARGUMENT, "startup token contains an unsupported quote or newline");
+            }
+            command[at++] = *p;
+        }
+        command[at++] = '"';
+    }
+    command[at] = 0;
+    if (!push(&options->startup, &options->startup_count, command, error)) { free(command); return false; }
+    *index = end - 1;
+    return true;
+}
+bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options *options, qa_error *error)
+{
+    if (!options || argc < 1 || !argv) return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid startup arguments");
+    qa_frontend_options_default(options);
+    for (int i = 1; i < argc; ++i) {
+        const char *arg = argv[i];
+        if (*arg == '+') { if (!startup(argc, argv, &i, options, error)) goto fail; continue; }
+        if (!strcmp(arg, "--menu")) { options->menu = true; continue; }
+        if (!strcmp(arg, "--dedicated")) { options->dedicated = true; continue; }
+        if (!strcmp(arg, "--hidden")) { options->display.hidden = true; continue; }
+        if (!strcmp(arg, "--no-audio")) { options->audio = false; continue; }
+        if (!strcmp(arg, "--list-content")) continue;
+        if (i + 1 == argc) { frontend_fail(error, QA_ERROR_ARGUMENT, "startup option needs a value"); goto fail; }
+        const char *value = argv[++i];
+        if (!strcmp(arg, "--content-root")) options->application.content_root = value;
+        else if (!strcmp(arg, "--user-content-root")) options->application.user_root = value;
+        else if (!strcmp(arg, "--game")) options->game = value;
+        else if (!strcmp(arg, "--map-game")) options->map_game = value;
+        else if (!strcmp(arg, "--map")) options->map = value;
+        else if (!strcmp(arg, "--movement")) options->movement = value;
+        else if (!strcmp(arg, "--character")) options->character = value;
+        else if (!strcmp(arg, "--font-directory")) options->font_directory = value;
+        else if (!strcmp(arg, "--font")) options->font_file = value;
+        else if (!strcmp(arg, "--host")) options->network_host = value;
+        else if (!strcmp(arg, "--connect")) options->network_connect = value;
+        else if (!strcmp(arg, "--protocol")) { if (!frontend_protocol(value, &options->network_protocol, error)) goto fail; }
+        else if (!strcmp(arg, "--port")) {
+            uint64_t number;
+            if (!integer(value, 1, UINT16_MAX, &number, error)) goto fail;
+            options->network_port = (uint16_t)number;
+        }
+        else if (!strcmp(arg, "--mod")) { if (!push(&options->mods, &options->mod_count, value, error)) goto fail; }
+        else if (!strcmp(arg, "--renderer")) {
+            if (!strcmp(value, "gl")) options->display.backend = QA_DISPLAY_OPENGL;
+            else if (!strcmp(value, "cpu")) options->display.backend = QA_DISPLAY_CPU;
+            else { frontend_fail(error, QA_ERROR_ARGUMENT, "renderer must be cpu or gl"); goto fail; }
+        } else if (!strcmp(arg, "--gamma")) {
+            char *end; errno = 0;
+            options->gamma = strtof(value, &end);
+            if (!*value || *end || errno || !isfinite(options->gamma) || options->gamma < .5f || options->gamma > 3) {
+                frontend_fail(error, QA_ERROR_ARGUMENT, "gamma must be between 0.5 and 3"); goto fail;
+            }
+        } else {
+            uint64_t number;
+            uint64_t high = !strcmp(arg, "--seats") ? 4 : !strcmp(arg, "--frames") ? UINT64_MAX : 16384;
+            uint64_t low = !strcmp(arg, "--frames") ? 0 : 1;
+            if (strcmp(arg, "--width") && strcmp(arg, "--height") && strcmp(arg, "--seats") && strcmp(arg, "--frames")) {
+                qa_error_set(error, QA_ERROR_ARGUMENT, 0, "unknown startup option: %s", arg); goto fail;
+            }
+            if (!integer(value, low, high, &number, error)) goto fail;
+            if (!strcmp(arg, "--width")) options->display.width = (uint32_t)number;
+            else if (!strcmp(arg, "--height")) options->display.height = (uint32_t)number;
+            else if (!strcmp(arg, "--seats")) options->seats = (unsigned)number;
+            else options->frame_limit = number;
+        }
+    }
+    if (!options->game && (options->map || options->map_game || options->movement || options->character || options->mod_count)) {
+        frontend_fail(error, QA_ERROR_ARGUMENT, "explicit source selections require --game"); goto fail;
+    }
+    if (options->dedicated && !options->game) { frontend_fail(error, QA_ERROR_ARGUMENT, "dedicated startup requires --game"); goto fail; }
+    if (options->network_host && options->network_connect) { frontend_fail(error, QA_ERROR_ARGUMENT, "select one host or remote connection"); goto fail; }
+    options->menu |= !options->game;
+    return true;
+fail:
+    qa_frontend_options_destroy(options);
+    return false;
+}
+void qa_frontend_options_destroy(qa_frontend_options *options)
+{
+    if (!options) return;
+    for (size_t i = 0; i < options->startup_count; ++i) free((void *)options->startup[i]);
+    free((void *)options->startup); free((void *)options->mods);
+    options->startup = NULL; options->startup_count = 0;
+    options->mods = NULL; options->mod_count = 0;
+}
+bool qa_frontend_list_content(const qa_frontend_options *options, FILE *stream, qa_error *error)
+{
+    if (!options || !stream) return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid content listing");
+    qa_application *application = NULL;
+    if (!qa_application_create(&options->application, &application, error)) return false;
+    qa_catalog *catalog = qa_application_catalog(application);
+    for (size_t i = 0; i < qa_catalog_count(catalog); ++i) {
+        const qa_product *product = qa_catalog_at(catalog, i);
+        fprintf(stream, "%s\t%s\t%s\n", product->key, product->availability == QA_CONTENT_INSTALLED ? "installed" : "unavailable", product->title);
+    }
+    bool written = !ferror(stream);
+    if (!written) frontend_fail(error, QA_ERROR_IO, "writing content listing");
+    bool closed = qa_application_destroy(application, error);
+    return written && closed;
+}

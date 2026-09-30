@@ -435,6 +435,16 @@ static bool run(q2_weapon_call *c, qa_error *e) {
     return true;
 }
 bool q2_weapon_powerups(q2_weapon_call *c, qa_error *e) {
+    if (c->game->options.services.powerups != NULL) {
+        qa_builtin_powerups powers;
+        if (!c->game->options.services.powerups(c->game->options.services.context,
+                c->game->options.owner, c->actor->id, &powers, e))
+            return false;
+        c->input.quad_until_ns = powers.quad_until_ns;
+        c->input.double_until_ns = powers.double_until_ns;
+        c->input.quad_fire_until_ns = powers.quad_fire_until_ns;
+        return true;
+    }
     qa_q2_powerups powers;
     if (!qa_q2_powerups_read(c->game, c->actor->id, &powers, e))
         return false;
@@ -446,8 +456,35 @@ bool q2_weapon_powerups(q2_weapon_call *c, qa_error *e) {
         c->input.quad_fire_until_ns = powers.quad_fire_until_ns;
     return true;
 }
-bool qa_q2_weapon_tick(qa_q2_game *g, qa_actor_id id, const qa_q2_weapon_input *in, uint64_t now,
-                       uint64_t frame, qa_error *e) {
+bool qa_q2_weapon_controls_read(qa_q2_game *g, qa_actor_id id, qa_q2_weapon_input *out,
+                                 qa_error *e) {
+    if (!g || !out) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 weapon control observation");
+        return false;
+    }
+    q2_actor *a = weapon_actor(g, id, e);
+    if (!a)
+        return false;
+    *out = a->input;
+    return true;
+}
+bool qa_q2_weapon_controls(qa_q2_game *g, qa_actor_id id, const qa_q2_weapon_input *in,
+                            qa_error *e) {
+    if (!g || !in || !qa_vec_finite(in->angles) || !isfinite(in->gravity) ||
+        !isfinite(in->view_height) || (unsigned)in->hand > QA_Q2_CENTER_HAND ||
+        (unsigned)in->source_rules > QA_Q2_WEAPON_RULES_LMCTF) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 weapon controls");
+        return false;
+    }
+    q2_actor *a = weapon_actor(g, id, e);
+    if (!a)
+        return false;
+    a->input = *in;
+    a->weapon.latched_attack |= in->latched_attack;
+    return true;
+}
+static bool weapon_tick(qa_q2_game *g, qa_actor_id id, const qa_q2_weapon_input *in, uint64_t now,
+                        uint64_t frame, qa_error *e) {
     q2_actor *a = weapon_actor(g, id, e);
     if (a == NULL || in == NULL || !qa_vec_finite(in->angles) || !isfinite(in->gravity) ||
         !isfinite(in->view_height) || (unsigned)in->hand > QA_Q2_CENTER_HAND ||
@@ -461,6 +498,8 @@ bool qa_q2_weapon_tick(qa_q2_game *g, qa_actor_id id, const qa_q2_weapon_input *
     context(g, a, in, now, frame, &c);
     if (!q2_weapon_powerups(&c, e))
         return false;
+    if (!q2_actor_live(g, id))
+        return true;
     a->input = c.input;
     a->weapon.latched_attack |= in->latched_attack;
     if (in->spectator)
@@ -526,4 +565,18 @@ bool qa_q2_weapon_tick(qa_q2_game *g, qa_actor_id id, const qa_q2_weapon_input *
         }
     }
     return !q2_actor_live(g, id) || q2_present(&c, e);
+}
+typedef struct weapon_tick_call {
+    qa_q2_game *game;
+    const qa_q2_weapon_input *input;
+    uint64_t now_ns, frame_ns;
+} weapon_tick_call;
+static bool run_weapon_tick(void *context, qa_actor_id id, qa_error *e) {
+    weapon_tick_call *call = context;
+    return weapon_tick(call->game, id, call->input, call->now_ns, call->frame_ns, e);
+}
+bool qa_q2_weapon_tick(qa_q2_game *g, qa_actor_id id, const qa_q2_weapon_input *in, uint64_t now,
+                       uint64_t frame, qa_error *e) {
+    weapon_tick_call call = {.game = g, .input = in, .now_ns = now, .frame_ns = frame};
+    return qa_q2_run_actor(g, id, run_weapon_tick, &call, e);
 }

@@ -53,10 +53,16 @@ static void sweep(qa_operation *operation) {
     }
 }
 
-bool qa_operation_destroy(qa_operation *operation, qa_error *error) {
+bool qa_operation_destroy_validate(const qa_operation *operation, qa_error *error) {
     if (!operation) return true;
     if (operation->depth) return argument(error,"cannot destroy an operation during a callback");
     if (operation->admissions) return argument(error,"abort hook admissions before operation destruction");
+    return true;
+}
+
+bool qa_operation_destroy(qa_operation *operation, qa_error *error) {
+    if (!qa_operation_destroy_validate(operation,error)) return false;
+    if (!operation) return true;
     qa_operation_clear(operation);
     while (operation->spare) {
         operation_frame *frame=operation->spare;

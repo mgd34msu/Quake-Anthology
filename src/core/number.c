@@ -175,3 +175,18 @@ bool qa_parse_atof(const char *text, double *out, qa_error *error) {
 #endif
     return true;
 }
+
+bool qa_parse_atof_float(const char *text, float *out, qa_error *error) {
+    if (!text || !out) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid atof input");
+        return false;
+    }
+    if (!ready(error))
+        return false;
+#if defined(_WIN32)
+    *out = _strtof_l(text, NULL, numeric_locale);
+#else
+    *out = strtof_l(text, NULL, numeric_locale);
+#endif
+    return true;
+}

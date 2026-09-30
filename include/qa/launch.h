@@ -8,6 +8,8 @@ typedef struct qa_launch_draft qa_launch_draft;
 typedef struct qa_launch_snapshot qa_launch_snapshot;
 typedef struct qa_configuration qa_configuration;
 typedef struct qa_configuration_transaction qa_configuration_transaction;
+typedef struct qa_launch_instance_storage qa_launch_instance_storage;
+typedef struct qa_launch_instance_lease qa_launch_instance_lease;
 
 typedef enum qa_launch_role {
     QA_ROLE_ENTITIES, QA_ROLE_CAMPAIGN, QA_ROLE_TRANSITION, QA_ROLE_MOVEMENT,
@@ -121,7 +123,15 @@ typedef struct qa_launch_choices {
  * choice never silently rewrites another choice. Borrowed views expire on edit. */
 bool qa_launch_draft_create(qa_catalog *, qa_product_id preset, const char *map,
                              qa_launch_draft **, qa_error *);
+/* Save/migration reconstruct every choice explicitly, without preset defaults. */
+bool qa_launch_draft_create_empty(qa_catalog *, qa_launch_draft **, qa_error *);
 bool qa_launch_draft_copy(const qa_launch_draft *, qa_launch_draft **, qa_error *);
+/* Preserve every choice without inserting defaults. Product IDs are resolved
+ * by stable identity in the replacement catalog; missing products fail without
+ * changing the source draft or publishing a partial result. */
+bool qa_launch_draft_rebase(const qa_launch_draft *, qa_catalog *,
+                            qa_launch_draft **, qa_error *);
+bool qa_launch_snapshot_draft_copy(const qa_launch_snapshot *, qa_launch_draft **, qa_error *);
 void qa_launch_draft_destroy(qa_launch_draft *);
 const qa_launch_choices *qa_launch_draft_choices(const qa_launch_draft *);
 qa_catalog *qa_launch_draft_catalog(const qa_launch_draft *);
@@ -158,12 +168,24 @@ typedef struct qa_launch_instance {
     size_t behavior_count;
     qa_sha256_digest identity; /* Implementation/configuration identity, excluding roles. */
     void *state;
+    /* Private immutable storage identity used by detached metadata leases. */
+    qa_launch_instance_storage *storage;
 } qa_launch_instance;
 typedef struct qa_launch_resource {
     qa_product_id product;
     const char *path;
     const qa_resource *resource;
 } qa_launch_resource;
+
+/* Retains the immutable descriptor/resources without retaining execution or
+ * the snapshot. The lease view preserves this view's snapshot-local roles.
+ * state remains borrowed: this lease does not defer close_instance. Acquire
+ * during prepare_instance or while the source view is still alive; release
+ * only after the consumer has stopped using all descriptor/resource views. */
+bool qa_launch_instance_retain_metadata(const qa_launch_instance *,
+                                        qa_launch_instance_lease **, qa_error *);
+const qa_launch_instance *qa_launch_instance_lease_view(const qa_launch_instance_lease *);
+void qa_launch_instance_lease_release(qa_launch_instance_lease *);
 
 /* B25/B34 prepare native or qualified external state in detached ownership.
  * Preparation may warm the session's append-only string table, because an
@@ -206,6 +228,10 @@ typedef struct qa_configuration_hooks {
     void (*rollback_publication)(void *, void *ticket);
     void (*publish)(void *, const qa_launch_snapshot *previous,
                      const qa_launch_snapshot *candidate, void *ticket);
+    /* Checked retirement runs with the current snapshot still retained.
+     * Failure keeps the manager available so the owner can finish retirement.
+     * The callback must retain incomplete owners and allow retry. */
+    bool (*retire)(void *, const qa_launch_snapshot *, qa_error *);
 } qa_configuration_hooks;
 bool qa_configuration_create(const qa_configuration_hooks *, qa_configuration **, qa_error *);
 /* Destroy is permitted only at a safe point and with no open transactions. */

@@ -1,5 +1,6 @@
 #include "qa/archive.h"
 #include "qa/bsp.h"
+#include "qa/frontend.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -7,11 +8,33 @@
 static void usage(FILE *stream)
 {
     fputs("Quake Anthology native C engine\n"
-          "Usage: quake-anthology --help | --version\n"
+          "Usage: quake-anthology [options] [+command arguments]\n"
+          "       quake-anthology --help | --version\n"
           "       quake-anthology --inspect-bsp FILE\n"
           "       quake-anthology --list ARCHIVE\n"
           "       quake-anthology --inspect-bsp ARCHIVE MEMBER\n"
-          "The baseline engine is under construction.\n", stream);
+          "\n"
+          "  --content-root PATH      Installed game data root, default ../qfiles\n"
+          "  --user-content-root PATH Writable user content root\n"
+          "  --list-content           List discovered products\n"
+          "  --menu                   Open the startup menu, default without --game\n"
+          "  --game PRODUCT           Select installed native or external game\n"
+          "  --map-game PRODUCT       Select map content independently\n"
+          "  --map NAME               Select map or authored start\n"
+          "  --movement q1|qw|q2|q3|PRODUCT\n"
+          "  --character q1|q2|q3|PRODUCT\n"
+          "  --mod PRODUCT/COMPONENT   Enable independent addition, repeat to combine\n"
+          "  --dedicated              Run server and stdin console without a window\n"
+          "  --host ADDRESS --port N  Select server endpoint\n"
+          "  --connect ADDRESS        Select remote endpoint\n"
+          "  --protocol NAME          Select explicit wire protocol\n"
+          "  --renderer cpu|gl        Select native output\n"
+          "  --width N --height N     Set window dimensions\n"
+          "  --seats 1..4             Local player seats\n"
+          "  --gamma 0.5..3           Output brightness\n"
+          "  --frames N               Stop after N frames, zero is unlimited\n"
+          "  --hidden --no-audio      Select window visibility and audio delivery\n"
+          "  --font-directory PATH --font FILE  Native menu font resource\n", stream);
 }
 
 static int report_error(const char *source, const qa_error *error)
@@ -93,7 +116,7 @@ int main(int argc, char **argv)
         printf("Quake Anthology %s (baseline development)\n", QA_VERSION);
         return 0;
     }
-    if (argc == 1 || (argc == 2 && strcmp(argv[1], "--help") == 0)) {
+    if (argc == 2 && strcmp(argv[1], "--help") == 0) {
         usage(stdout);
         return 0;
     }
@@ -103,6 +126,31 @@ int main(int argc, char **argv)
         return inspect_archive(argv[2], NULL);
     if (argc == 4 && strcmp(argv[1], "--inspect-bsp") == 0)
         return inspect_archive(argv[2], argv[3]);
-    usage(stderr);
-    return 2;
+    qa_frontend_options options;
+    qa_error error = {0};
+    if (!qa_frontend_options_parse(argc, argv, &options, &error)) {
+        report_error("startup", &error);
+        usage(stderr);
+        return 2;
+    }
+    bool list = false;
+    for (int i = 1; i < argc; ++i) list |= strcmp(argv[i], "--list-content") == 0;
+    bool ok;
+    if (list) {
+        ok = qa_frontend_list_content(&options, stdout, &error);
+    } else {
+        qa_frontend *frontend = NULL;
+        ok = qa_frontend_create(&options, &frontend, &error);
+        if (ok) {
+            ok = qa_frontend_run(frontend, &error);
+            qa_error cleanup = {0};
+            if (!qa_frontend_destroy(frontend, &cleanup)) {
+                if (ok) error = cleanup;
+                else fprintf(stderr, "shutdown: %s\n", cleanup.message);
+                ok = false;
+            }
+        }
+    }
+    qa_frontend_options_destroy(&options);
+    return ok ? 0 : report_error("application", &error);
 }

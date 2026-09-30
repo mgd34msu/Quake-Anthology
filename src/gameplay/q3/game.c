@@ -128,6 +128,13 @@ static bool physics_read(void *context, qa_actor_id actor, qa_physics_properties
         out->clip_mask = 1;
     return true;
 }
+const char *qa_q3_weapon_identity_name(qa_q3_weapon weapon) {
+    static const char *const names[QA_Q3_WEAPON_COUNT] = {
+        NULL, "gauntlet", "machinegun", "shotgun", "grenadelauncher", "rocketlauncher",
+        "lightning", "railgun", "plasmagun", "bfg", "grapple", "nailgun",
+        "proxlauncher", "chaingun"};
+    return weapon > QA_Q3_W_NONE && weapon < QA_Q3_WEAPON_COUNT ? names[weapon] : NULL;
+}
 bool qa_q3_create(const qa_q3_options *options, qa_q3_game **out, qa_error *error) {
     if (!options || !out || !options->owner || options->product < QA_Q3_ARENA ||
         options->product > QA_Q3_TEAM_ARENA || !options->services.pickups ||
@@ -143,10 +150,14 @@ bool qa_q3_create(const qa_q3_options *options, qa_q3_game **out, qa_error *erro
     game->actors = calloc(game->capacity, sizeof(*game->actors));
     game->kamikaze_cooldowns = calloc(game->capacity, sizeof(*game->kamikaze_cooldowns));
     game->player_binding_tokens = calloc(game->capacity, sizeof(*game->player_binding_tokens));
-    if (!game->actors || !game->kamikaze_cooldowns || !game->player_binding_tokens) {
+    game->item_observations = calloc(game->capacity, sizeof(*game->item_observations));
+    game->inventory_owners = calloc(game->capacity, sizeof(*game->inventory_owners));
+    if (!game->actors || !game->kamikaze_cooldowns || !game->player_binding_tokens || !game->item_observations || !game->inventory_owners) {
         free(game->actors);
         free(game->kamikaze_cooldowns);
         free(game->player_binding_tokens);
+        free(game->item_observations);
+        free(game->inventory_owners);
         free(game);
         qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q3 actor extensions");
         return false;
@@ -157,17 +168,13 @@ bool qa_q3_create(const qa_q3_options *options, qa_q3_game **out, qa_error *erro
                                  .max_velocity = 2000,
                                  .stop_speed = 100,
                                  .services = {.context = game, .read = physics_read}};
-    static const char *const names[QA_Q3_WEAPON_COUNT] = {
-        NULL,           "gauntlet", "machinegun", "shotgun", "grenadelauncher", "rocketlauncher",
-        "lightning",    "railgun",  "plasmagun",  "bfg",     "grapple",         "nailgun",
-        "proxlauncher", "chaingun"};
     for (int i = 1; i < QA_Q3_WEAPON_COUNT; ++i) {
         char name[64];
-        snprintf(name, sizeof(name), "q3:weapon/%s", names[i]);
+        snprintf(name, sizeof(name), "q3:weapon/%s", qa_q3_weapon_identity_name((qa_q3_weapon)i));
         if (!qa_builtin_resource(&options->services, name, &game->weapon_items[i], error))
             goto fail;
         if (i != QA_Q3_W_GAUNTLET && i != QA_Q3_W_GRAPPLE) {
-            snprintf(name, sizeof(name), "q3:ammo/%s", names[i]);
+            snprintf(name, sizeof(name), "q3:ammo/%s", qa_q3_weapon_identity_name((qa_q3_weapon)i));
             if (!qa_builtin_resource(&options->services, name, &game->ammo_items[i], error))
                 goto fail;
         }
@@ -179,17 +186,34 @@ bool qa_q3_create(const qa_q3_options *options, qa_q3_game **out, qa_error *erro
 fail:
     free(game->kamikaze_cooldowns);
     free(game->player_binding_tokens);
+    free(game->item_observations);
+    free(game->inventory_owners);
     free(game->actors);
     free(game);
     return false;
 }
+bool qa_q3_destroy_ready(const qa_q3_game *game) {
+    return !game || (!game->observation_depth && qa_session_safe(game->options.services.session) &&
+        qa_world_idle(game->options.services.world) && qa_combat_idle(game->options.services.combat));
+}
 bool qa_q3_destroy(qa_q3_game *game, qa_error *error) {
     if (!game)
         return true;
-    if (!qa_session_safe(game->options.services.session) ||
-        !qa_combat_idle(game->options.services.combat))
+    if (!qa_q3_destroy_ready(game))
         return q3_fail(error, "Q3 provider destruction requires a safe point");
+    for (uint32_t i = 0; i < game->capacity; ++i) {
+        q3_inventory_owner *owner = &game->inventory_owners[i];
+        if (qa_inventory_lease_current(game->options.services.inventory, owner->weapons) &&
+            !qa_inventory_close_items(game->options.services.inventory, owner->weapons, error))
+            return false;
+        if (qa_inventory_lease_current(game->options.services.inventory, owner->holdables) &&
+            !qa_inventory_close_items(game->options.services.inventory, owner->holdables, error))
+            return false;
+    }
     q3_map_destroy(game);
+    for(uint32_t i=0;i<game->capacity;++i)
+        if(game->item_observations[i].serial)
+            qa_pickups_observation_close(game->options.services.pickups,game->item_observations[i],NULL);
     while (game->snapshot_frames) {
         q3_snapshot_frame *next = game->snapshot_frames->next;
         qa_builtin_snapshot_free(&game->snapshot_frames->snapshot);
@@ -198,12 +222,14 @@ bool qa_q3_destroy(qa_q3_game *game, qa_error *error) {
     }
     free(game->kamikaze_cooldowns);
     free(game->player_binding_tokens);
+    free(game->item_observations);
+    free(game->inventory_owners);
     free(game->actors);
     free(game);
     return true;
 }
 bool qa_q3_set_rules(qa_q3_game *game, const qa_q3_rules *rules, qa_error *error) {
-    if (!game || !valid_rules(rules))
+    if (!game || game->observation_depth || !valid_rules(rules))
         return q3_fail(error, "invalid Q3 game rules");
     game->options.rules = *rules;
     return true;
@@ -313,6 +339,7 @@ bool qa_q3_actor_traits(const qa_q3_game *game, qa_actor_id actor, qa_builtin_ac
     if (entry->kind == Q3_ACTOR_PLAYER) {
         out->player = true;
         out->spectator = entry->state.player.spectator;
+        out->no_target = entry->state.player.no_target;
         out->view_height = entry->state.player.view_height;
         out->max_health = (float)entry->state.player.max_health;
         out->grounded = entry->state.player.ground_entity_number >= 0 &&
@@ -476,10 +503,22 @@ bool qa_q3_actor_frame(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
 void qa_q3_actor_released(qa_q3_game *game, qa_actor_record record) {
     if (!game || record.id.slot >= game->capacity)
         return;
+    if(qa_actor_id_equal(game->item_observations[record.id.slot].actor,record.id)) {
+        qa_pickups_observation_close(game->options.services.pickups,game->item_observations[record.id.slot],NULL);
+        game->item_observations[record.id.slot]=(qa_pickup_lease){0};
+    }
     q3_map_actor_released(game, record);
     if (qa_actor_id_equal(game->kamikaze_cooldowns[record.id.slot].actor, record.id))
         game->kamikaze_cooldowns[record.id.slot] = (q3_kamikaze_cooldown){0};
     game->player_binding_tokens[record.id.slot] = 0;
+    q3_inventory_owner *inventory = &game->inventory_owners[record.id.slot];
+    if (qa_actor_id_equal(inventory->actor, record.id)) {
+        if (qa_inventory_lease_current(game->options.services.inventory, inventory->weapons))
+            qa_inventory_close_items(game->options.services.inventory, inventory->weapons, NULL);
+        if (qa_inventory_lease_current(game->options.services.inventory, inventory->holdables))
+            qa_inventory_close_items(game->options.services.inventory, inventory->holdables, NULL);
+        *inventory = (q3_inventory_owner){0};
+    }
     q3_actor *entry = &game->actors[record.id.slot];
     if (qa_actor_id_equal(entry->actor, record.id)) {
         q3_actor retired = *entry;

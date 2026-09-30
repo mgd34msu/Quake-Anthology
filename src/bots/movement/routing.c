@@ -14,10 +14,13 @@ static bool reserve(void **data, size_t *capacity, size_t count, size_t width, q
     *capacity = count;
     return true;
 }
-bool bot_travel_begin(qa_bot_moves *moves, qa_bot_move_state *state, bot_travel *out, qa_error *e) {
+bool bot_travel_ready(const qa_bot_moves *moves, qa_error *e) {
     for (size_t i = 0; i < BOT_MOVE_VARIABLE_COUNT; ++i)
         if (!moves->variables[i])
             return bot_move_fail(e, "source bot movement requires setup");
+    return true;
+}
+bool bot_travel_begin(qa_bot_moves *moves, qa_bot_move_state *state, bot_travel *out, qa_error *e) {
     qa_bot_navigation *navigation =
         moves->services.navigation(moves->services.context, state->input.client);
     if (!navigation)
@@ -153,17 +156,19 @@ static int candidate_compare(const void *first, const void *second) {
         return a->time < b->time ? -1 : 1;
     return a->order < b->order ? -1 : a->order != b->order;
 }
-bool bot_reach_select(bot_travel *t, const qa_bot_goal *goal, uint32_t travel_flags,
+bool bot_reach_select(bot_travel *t, const qa_bot_move_goal_source *goal, uint32_t travel_flags,
                       uint32_t move_flags, uint32_t *number, uint32_t *result_flags, qa_error *e) {
     qa_bot_move_state *s = t->state;
     qa_bot_moves *m = t->moves;
     *number = *result_flags = 0;
-    if (qa_nav_asset_aas(t->graph->asset) &&
-        ((qa_bot_navigation_area(t->navigation, s->area).contents |
-          qa_bot_navigation_area(t->navigation, (uint32_t)goal->area).contents) &
-         256)) {
-        travel_flags |= 0x800000;
-        move_flags |= 0x800000;
+    uint32_t goal_area;
+    if (qa_nav_asset_aas(t->graph->asset)) {
+        if (!bot_goal_area(goal, &goal_area, e)) return false;
+        if ((qa_bot_navigation_area(t->navigation, s->area).contents |
+             qa_bot_navigation_area(t->navigation, goal_area).contents) & 256) {
+            travel_flags |= 0x800000;
+            move_flags |= 0x800000;
+        }
     }
     uint32_t node = qa_bot_navigation_node(t->navigation, s->area);
     size_t count = qa_navigation_outgoing_count(t->runtime, node), candidates = 0;
@@ -179,10 +184,12 @@ bool bot_reach_select(bot_travel *t, const qa_bot_goal *goal, uint32_t travel_fl
             continue;
         if (s->avoid_reachability == reach.number && s->avoid_time >= m->time && s->avoid_tries > 4)
             continue;
-        if (s->last_goal_area == (uint32_t)goal->area && reach.area == s->last_area)
+        if (!bot_goal_area(goal, &goal_area, e)) return false;
+        if (s->last_goal_area == goal_area && reach.area == s->last_area)
             continue;
+        if (!bot_goal_area(goal, &goal_area, e)) return false;
         qa_bot_nav_route_query query = {.area = reach.area,
-                                        .goal_area = (uint32_t)goal->area,
+                                        .goal_area = goal_area,
                                         .travel_flags = travel_flags,
                                         .origin = reach.end,
                                         .has_origin = true};
@@ -214,7 +221,7 @@ bool bot_reach_select(bot_travel *t, const qa_bot_goal *goal, uint32_t travel_fl
     }
     return true;
 }
-bool bot_travel_points(bot_travel *t, qa_vec3 origin, uint32_t area, const qa_bot_goal *goal,
+bool bot_travel_points(bot_travel *t, const qa_bot_vector_source *source, uint32_t area, uint32_t goal_area,
                        uint32_t flags, bool *found, qa_error *e) {
     qa_bot_moves *m = t->moves;
     *found = false;
@@ -235,10 +242,17 @@ bool bot_travel_points(bot_travel *t, qa_vec3 origin, uint32_t area, const qa_bo
             memset(m->visited, 0, m->visited_capacity * sizeof(*m->visited));
         m->visit_generation = 1;
     }
-    m->points[m->point_count++] = origin;
-    while (area != (uint32_t)goal->area) {
+    /* The initial point stays borrowed until its consumer reaches it. */
+    m->points[m->point_count++] = qa_v3(0, 0, 0);
+    qa_vec3 origin;
+    qa_bot_vector_source current = *source;
+    while (area != goal_area) {
+        if (!area || !goal_area ||
+            !qa_navigation_node(t->runtime, qa_bot_navigation_node(t->navigation, area)) ||
+            !qa_navigation_node(t->runtime, qa_bot_navigation_node(t->navigation, goal_area))) return true;
+        if (!qa_bot_vector_read(&current, &origin, e)) return false;
         qa_bot_nav_route_query query = {.area = area,
-                                        .goal_area = (uint32_t)goal->area,
+                                        .goal_area = goal_area,
                                         .travel_flags = flags,
                                         .origin = origin,
                                         .has_origin = true};
@@ -258,6 +272,7 @@ bool bot_travel_points(bot_travel *t, qa_vec3 origin, uint32_t area, const qa_bo
         m->points[m->point_count++] = edge->end;
         area = qa_bot_navigation_source_area(t->navigation, edge->to);
         origin = edge->end;
+        current = (qa_bot_vector_source){.value = &origin};
     }
     *found = true;
     return true;

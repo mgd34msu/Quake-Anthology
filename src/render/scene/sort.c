@@ -97,7 +97,8 @@ static bool finish_range(qa_scene_frame *frame, size_t start, size_t end,
             group->priority = ordering->sort;
         }
         if (group->kind == QA_SCENE_GROUP_SOURCE) {
-            uint32_t rank = group->material->sorted_index;
+            uint32_t rank;
+            if (!qa_material_order_rank(frame->material_order, group->material, &rank, error)) return false;
             if (rank >= 16384) {
                 qa_error_set(error, QA_ERROR_ARGUMENT, 0, "source shader rank exceeds draw sort field");
                 return false;
@@ -141,6 +142,10 @@ bool qa_scene_frame_finish(qa_scene_frame *frame, const qa_scene_view *view,
         return false;
     }
     if (frame->group_count != 0) {
+        bool source = false;
+        for (size_t i = 0; i < frame->group_count; ++i)
+            if (frame->groups[i].kind == QA_SCENE_GROUP_SOURCE) { source = true; break; }
+        if (source && !qa_material_order_prepare(frame->material_order, error)) return false;
         if (frame->group_count > (size_t)PTRDIFF_MAX / 3 / sizeof(qa_scene_group *) ||
             frame->command_count > (size_t)PTRDIFF_MAX / sizeof(qa_scene_command)) {
             qa_error_set(error, QA_ERROR_MEMORY, 0, "scene sorting storage overflow"); return false;

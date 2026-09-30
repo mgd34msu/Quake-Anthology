@@ -8,19 +8,22 @@
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct scene_names { qa_strings *strings; size_t references; } scene_names;
+typedef struct owned_image owned_image;
+typedef struct scene_names { qa_strings *strings; size_t references; owned_image *images; size_t image_count; } scene_names;
 typedef struct image_lineage { uint64_t revision; size_t references; } image_lineage;
 struct qa_scene_geometry {
     atomic_size_t active, references;
     qa_scene_vertex *vertices;
     uint32_t *indices;
 };
-typedef struct owned_image {
+struct owned_image {
     qa_scene_image image;
     scene_names *names;
     qa_scene_image_level *levels;
     image_lineage *lineage;
-} owned_image;
+    owned_image *next, *previous;
+    bool listed;
+};
 typedef struct image_cache {
     uint64_t source, logical_source;
     qa_string_id name;
@@ -230,6 +233,12 @@ void qa_scene_image_release(const qa_scene_image *image)
     if (image == NULL) return;
     owned_image *owned = (owned_image *)image;
     if (--owned->image.references != 0) return;
+    if (owned->listed) {
+        if (owned->previous) owned->previous->next = owned->next;
+        else owned->names->images = owned->next;
+        if (owned->next) owned->next->previous = owned->previous;
+        --owned->names->image_count;
+    }
     for (size_t i = 1; i < image->animation_count; ++i)
         qa_scene_image_release(image->animation[i]);
     free((void *)image->animation);
@@ -327,11 +336,27 @@ bool qa_scene_image_create(qa_scene_resources *resources, const char *name, qa_s
         owned->levels[i].pixels = pixels;
     }
     *out = &owned->image;
+    owned->next = owned->names->images;
+    if (owned->next) owned->next->previous = owned;
+    owned->names->images = owned; ++owned->names->image_count; owned->listed = true;
     resources->registrations_started = true;
     return true;
 allocation_failed:
     qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate scene image");
     return false;
+}
+bool qa_scene_resources_images(const qa_scene_resources *resources, qa_arena *scratch,
+                               const qa_scene_image *const **out, size_t *count, qa_error *error)
+{
+    if (!resources || !scratch || !out || !count || resources->names->image_count > SIZE_MAX / sizeof(qa_scene_image *)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid scene image inventory observation"); return false;
+    }
+    size_t n = resources->names->image_count;
+    const qa_scene_image **rows = n ? qa_arena_alloc(scratch, n * sizeof(*rows), _Alignof(qa_scene_image *), error) : NULL;
+    if (n && !rows) return false;
+    size_t at = n;
+    for (const owned_image *image = resources->names->images; image; image = image->next) rows[--at] = &image->image;
+    *out = rows; *count = n; return true;
 }
 
 bool qa_scene_image_replace(qa_scene_resources *resources, const qa_scene_image *source,

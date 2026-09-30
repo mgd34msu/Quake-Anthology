@@ -314,8 +314,41 @@ typedef struct qa_pickup_rule {
     size_t write_count;
     void *context;
     bool (*take)(void *, const qa_pickup_offer *, qa_pickup_execution *, qa_pickup_outcome *, qa_error *);
+    /* Synchronous read-only projection of this same recipient grant policy.
+     * Keep context alive through the callback; do not take or mutate items. */
+    bool (*preview)(void *, const qa_pickup_offer *, float *utility, bool *accepted, qa_error *);
 } qa_pickup_rule;
 typedef struct qa_pickup_lease { qa_actor_id actor; uint64_t serial; } qa_pickup_lease;
+typedef struct qa_pickup_observer {
+    void *context;
+    /* Inspect must not take an item or change gameplay. The source keeps its
+     * owner alive throughout this callback and computes utility using the same
+     * source offer and recipient preview as pickup execution. Offer cargo is
+     * borrowed only within the callback; the registry copies scalar fields. */
+    bool (*inspect)(void *, qa_actor_id pickup, qa_actor_id recipient,
+                    qa_pickup_offer *, float *utility, bool *available, qa_error *);
+} qa_pickup_observer;
+typedef struct qa_pickup_observation {
+    qa_actor_id pickup, recipient;
+    qa_actor_owner source;
+    qa_item_id item;
+    float utility;
+    bool available, dropped;
+} qa_pickup_observation;
+/* One live offer owner per world pickup. Rebinding retires the old lease;
+ * retirement closes automatically and an explicit close is idempotent.
+ * Recipient replacement rules remain separate from world observations. */
+bool qa_pickups_observe(qa_pickups *, qa_actor_id, qa_actor_owner,
+                         const qa_pickup_observer *, qa_pickup_lease *, qa_error *);
+bool qa_pickups_observation_close(qa_pickups *, qa_pickup_lease, qa_error *);
+bool qa_pickups_observation_current(qa_pickups *, qa_pickup_lease);
+bool qa_pickups_inspect(qa_pickups *, qa_actor_id pickup, qa_actor_id recipient,
+                         qa_pickup_observation *, bool *found, qa_error *);
+/* Source observers call this while their offer cargo remains borrowed. When
+ * handled=false the selected original source computes its own native preview.
+ * Blocked/stale grants are handled refusals; replacements use their own policy. */
+bool qa_pickups_preview(qa_pickups *, const qa_pickup_offer *, float *utility,
+                         bool *accepted, bool *handled, qa_error *);
 typedef struct qa_pickup_continuation {
     void *context;
     bool (*eligible)(void *, const qa_pickup_offer *, bool *, qa_error *);

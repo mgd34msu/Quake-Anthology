@@ -3,6 +3,7 @@
 #include <math.h>
 
 _Thread_local qa_native_instance *native_active_instance;
+static void free_allocations(qa_native_instance *);
 
 static bool exact_target(qa_native_target left, qa_native_target right) {
     return left.os == right.os && left.arch == right.arch && left.abi == right.abi &&
@@ -96,14 +97,21 @@ bool qa_native_create_direct(qa_native_module *module, const qa_native_options *
     *out = instance;
     return true;
 
-fail:
-    native_profile_unbind(instance);
+fail: {
+    qa_native_instance *previous_close = native_active_instance;
+    instance->destroying = instance->unloading = true;
+    native_active_instance = instance; instance->active_depth = 1;
     native_direct_close(instance);
+    instance->active_depth = 0; native_active_instance = previous_close;
+    instance->unloading = false;
+    native_profile_unbind(instance);
+    free_allocations(instance);
     qa_native_module_release(instance->module);
     free(instance->slots);
     native_regions_destroy(instance);
     free(instance);
     return false;
+}
 }
 
 bool qa_native_create(qa_native_module *module, const qa_native_options *options,
@@ -133,35 +141,54 @@ static void free_allocations(qa_native_instance *instance) {
     instance->allocations = NULL;
 }
 
+bool qa_native_can_destroy(const qa_native_instance *instance) {
+    return instance && !instance->active_depth && !instance->callback_depth &&
+        !instance->checkpointing && !instance->destroying;
+}
+
+bool qa_native_unloading_owner(const qa_native_instance *instance) {
+    return instance && instance->unloading && instance->active_depth && native_active_instance == instance;
+}
+
 bool qa_native_destroy(qa_native_instance *instance, qa_error *error) {
     if (!instance)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native instance is required for destruction");
-    if (instance->active_depth || instance->callback_depth || instance->checkpointing ||
-        instance->destroying)
+    if (!qa_native_can_destroy(instance))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "active native instance cannot be destroyed");
     bool completed = true;
-    if (instance->lifecycle == QA_NATIVE_INITIALIZED && !qa_native_shutdown(instance, error)) {
-        if (instance->backend == QA_NATIVE_BACKEND_DIRECT)
-            return false;
-        completed = false;
+    qa_error first = {0}, current = {0};
+    if (instance->lifecycle == QA_NATIVE_INITIALIZED && !qa_native_shutdown(instance, &current)) {
+        completed = false; first = current;
     }
     instance->destroying = true;
-    free_allocations(instance);
     if (instance->backend == QA_NATIVE_BACKEND_DIRECT) {
-        native_profile_unbind(instance);
+        qa_native_instance *previous = native_active_instance;
+        instance->failed = false; instance->failure = (qa_error){0};
+        instance->unloading = true; instance->active_depth = 1;
+        native_active_instance = instance;
         native_direct_close(instance);
+        instance->active_depth = 0; native_active_instance = previous;
+        instance->unloading = false;
+        if (!report_latched(instance, &current) && completed) { completed = false; first = current; }
+        native_profile_unbind(instance);
     } else {
-        if (!native_runner_close(instance, completed ? error : NULL))
-            completed = false;
+        qa_native_instance *previous = native_active_instance;
+        instance->unloading = true; instance->active_depth = 1;
+        native_active_instance = instance;
+        if (!native_runner_close(instance, &current) && completed) { completed = false; first = current; }
+        instance->active_depth = 0; native_active_instance = previous;
+        instance->unloading = false;
         native_profile_unbind(instance);
     }
+    free_allocations(instance);
     qa_native_module_release(instance->module);
     free(instance->slots);
     native_regions_destroy(instance);
     memset(instance, 0, sizeof(*instance));
     free(instance);
+    if (!completed && error) *error = first;
     return completed;
 }
 
@@ -269,9 +296,9 @@ static bool entry_allowed(qa_native_instance *instance, const native_entry_bindi
 bool qa_native_call(qa_native_instance *instance, const char *entry,
                     const qa_native_value *arguments, size_t argument_count,
                     qa_native_value *result, qa_error *error) {
-    if (!instance || !entry)
+    if (!instance || !entry || (argument_count && !arguments))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
-                           "native instance and entry name are required");
+                           "native instance, entry name and counted arguments are required");
     const qa_native_signature *signature = qa_native_entry_signature(instance, entry);
     const native_entry_binding *binding = native_entry(instance, entry);
     if (!signature) {
@@ -280,6 +307,10 @@ bool qa_native_call(qa_native_instance *instance, const char *entry,
     }
     if (!entry_allowed(instance, binding, arguments, argument_count, error))
         return false;
+    bool shutdown = instance->module->info.profile == QA_NATIVE_Q3_VMMAIN ?
+        argument_count && arguments[0].as.i32 == (instance->options.q3_role == QA_QVM_UI ? 2 : 1) :
+        !strcmp(entry, "Shutdown");
+    instance->pending_shutdown = shutdown;
     bool called;
     if (instance->backend == QA_NATIVE_BACKEND_DIRECT) {
         called = native_call_binding(instance, binding, arguments, argument_count, result, error);
@@ -291,6 +322,7 @@ bool qa_native_call(qa_native_instance *instance, const char *entry,
         --instance->active_depth;
         native_active_instance = previous;
     }
+    instance->pending_shutdown = false;
     if (!called)
         return false;
     if (instance->module->info.profile == QA_NATIVE_Q3_VMMAIN) {
@@ -380,7 +412,7 @@ bool qa_native_ql_shutdown(qa_native_instance *instance, bool restart, qa_error 
 
 bool qa_native_export(const qa_native_instance *instance, const char *name, qa_native_address *out,
                       qa_error *error) {
-    if (!instance)
+    if (!instance || instance->destroying)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native instance is required for export lookup");
     return instance->backend == QA_NATIVE_BACKEND_DIRECT

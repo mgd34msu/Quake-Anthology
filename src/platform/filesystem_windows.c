@@ -3,6 +3,7 @@
 #endif
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <sddl.h>
 
 #include "filesystem_internal.h"
 
@@ -1069,10 +1070,54 @@ static wchar_t *wide_child(const wchar_t *parent, const wchar_t *leaf,
 bool qa_fs_root_replace(qa_fs_root *root, const char *relative,
                         qa_bytes bytes, uint64_t nonce, qa_error *error)
 {
-    if (root == NULL || (bytes.data == NULL && bytes.size != 0)
+    bool created;
+    return qa_fs_root_publish(root, relative, bytes, nonce, false, false, &created, error);
+}
+
+static PSECURITY_DESCRIPTOR private_descriptor(qa_error *error)
+{
+    HANDLE token = NULL;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+        fail_windows(error, "cannot inspect private-file owner", "", GetLastError()); return NULL;
+    }
+    DWORD size = 0;
+    (void)GetTokenInformation(token, TokenUser, NULL, 0, &size);
+    TOKEN_USER *user = size ? malloc(size) : NULL;
+    if (!user) {
+        CloseHandle(token); qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating private-file owner"); return NULL;
+    }
+    if (!GetTokenInformation(token, TokenUser, user, size, &size)) {
+        DWORD code = GetLastError(); free(user); CloseHandle(token);
+        fail_windows(error, "cannot inspect private-file owner", "", code); return NULL;
+    }
+    LPWSTR sid = NULL;
+    bool ok = ConvertSidToStringSidW(user->User.Sid, &sid) != 0;
+    DWORD code = GetLastError(); free(user); CloseHandle(token);
+    if (!ok) { fail_windows(error, "cannot encode private-file owner", "", code); return NULL; }
+    size_t length = wcslen(sid);
+    if (length > (SIZE_MAX / sizeof(wchar_t) - 32) / 2) {
+        LocalFree(sid); qa_error_set(error, QA_ERROR_MEMORY, 0, "private-file owner is too long"); return NULL;
+    }
+    size_t capacity = length * 2 + 32;
+    wchar_t *text = malloc(capacity * sizeof(*text));
+    if (!text) { LocalFree(sid); qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating private-file permissions"); return NULL; }
+    (void)swprintf(text, capacity, L"O:%lsD:P(A;;FA;;;%ls)", sid, sid);
+    LocalFree(sid);
+    PSECURITY_DESCRIPTOR descriptor = NULL;
+    ok = ConvertStringSecurityDescriptorToSecurityDescriptorW(text, SDDL_REVISION_1, &descriptor, NULL) != 0;
+    code = GetLastError(); free(text);
+    if (!ok) fail_windows(error, "cannot encode private-file permissions", "", code);
+    return descriptor;
+}
+
+bool qa_fs_root_publish(qa_fs_root *root, const char *relative,
+                        qa_bytes bytes, uint64_t nonce, bool exclusive,
+                        bool private_file, bool *created, qa_error *error)
+{
+    if (root == NULL || created == NULL || (bytes.data == NULL && bytes.size != 0)
         || bytes.size > (size_t)PTRDIFF_MAX
         || !qa_fs_relative_valid(relative, false, error)) {
-        if (root == NULL || (bytes.data == NULL && bytes.size != 0)
+        if (root == NULL || created == NULL || (bytes.data == NULL && bytes.size != 0)
             || bytes.size > (size_t)PTRDIFF_MAX)
             qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                          "invalid atomic file replacement");
@@ -1092,6 +1137,9 @@ bool qa_fs_root_replace(qa_fs_root *root, const char *relative,
         writable_path_close(&locked);
         return false;
     }
+    if (exclusive && kind != QA_FS_MISSING) {
+        free(target); writable_path_close(&locked); *created = false; return true;
+    }
     if (kind != QA_FS_MISSING && kind != QA_FS_REGULAR) {
         qa_error_set(error, QA_ERROR_IO, 0,
                      "write target is not a regular file: %s", relative);
@@ -1102,6 +1150,9 @@ bool qa_fs_root_replace(qa_fs_root *root, const char *relative,
     wchar_t name[112];
     wchar_t *temporary = NULL;
     HANDLE handle = INVALID_HANDLE_VALUE;
+    PSECURITY_DESCRIPTOR descriptor = private_file ? private_descriptor(error) : NULL;
+    if (private_file && !descriptor) { free(target); writable_path_close(&locked); return false; }
+    SECURITY_ATTRIBUTES attributes = {sizeof attributes, descriptor, FALSE};
     for (unsigned int attempt = 0; attempt < 64; ++attempt) {
         (void)swprintf(name, sizeof(name) / sizeof(name[0]),
                        L".qa-write-%lu-%llu-%u",
@@ -1116,13 +1167,14 @@ bool qa_fs_root_replace(qa_fs_root *root, const char *relative,
             continue;
         handle = CreateFileW(temporary, GENERIC_WRITE | FILE_READ_ATTRIBUTES,
                              FILE_SHARE_READ | FILE_SHARE_DELETE,
-                             NULL, CREATE_NEW,
+                             private_file ? &attributes : NULL, CREATE_NEW,
                              FILE_ATTRIBUTE_TEMPORARY
                              | FILE_FLAG_OPEN_REPARSE_POINT,
                              NULL);
         if (handle != INVALID_HANDLE_VALUE || GetLastError() != ERROR_FILE_EXISTS)
             break;
     }
+    if (descriptor) LocalFree(descriptor);
     if (temporary == NULL) {
         free(target);
         writable_path_close(&locked);
@@ -1175,11 +1227,15 @@ bool qa_fs_root_replace(qa_fs_root *root, const char *relative,
     }
     handle = INVALID_HANDLE_VALUE;
     if (!MoveFileExW(temporary, target,
-                     MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+                     (exclusive ? 0 : MOVEFILE_REPLACE_EXISTING) | MOVEFILE_WRITE_THROUGH)) {
+        DWORD code = GetLastError();
+        if (exclusive && (code == ERROR_FILE_EXISTS || code == ERROR_ALREADY_EXISTS)) {
+            DeleteFileW(temporary); *created = false; success = true; goto done;
+        }
         fail_windows(error, "cannot replace", relative, GetLastError());
         goto done;
     }
-    success = true;
+    *created = true; success = true;
 done:
     if (handle != INVALID_HANDLE_VALUE)
         CloseHandle(handle);
@@ -1428,4 +1484,208 @@ void qa_fs_stream_close(qa_fs_stream *stream)
         CloseHandle(stream->handle);
     free(stream->path);
     free(stream);
+}
+
+struct qa_fs_stage {
+    HANDLE handle;
+    writable_path locked;
+    wchar_t *temporary, *target;
+    char *display;
+    bool sealed, published;
+};
+static bool stage_argument(qa_error *error, const char *message) {
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message); return false;
+}
+static bool stage_identity(qa_fs_stage *stage, qa_fs_identity *out, qa_error *error) {
+    BY_HANDLE_FILE_INFORMATION legacy, named;
+    FILE_BASIC_INFO basic, named_basic;
+    if (!handle_info(stage->handle, &legacy, &basic, error, stage->display)) return false;
+    HANDLE check = CreateFileW(stage->temporary, FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
+        FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    if (check == INVALID_HANDLE_VALUE)
+        return fail_windows(error, "cannot inspect stage name", stage->display, GetLastError());
+    bool ok = handle_info(check, &named, &named_basic, error, stage->display);
+    CloseHandle(check);
+    if (!ok) return false;
+    if (kind_from_attributes(legacy.dwFileAttributes) != QA_FS_REGULAR ||
+        kind_from_attributes(named.dwFileAttributes) != QA_FS_REGULAR ||
+        legacy.nNumberOfLinks != 1 || !same_handle_object(&legacy, &named)) {
+        qa_error_set(error, QA_ERROR_IO, 0, "Staged file identity or link count changed: %s", stage->display); return false;
+    }
+    identity_from_info(&legacy, &basic, out); return true;
+}
+bool qa_fs_stage_open(qa_fs_root *root, const char *target, uint64_t nonce, bool resume,
+                       qa_fs_stage **out, uint64_t *initial, qa_error *error) {
+    if (!root || !out || !initial || !qa_fs_relative_valid(target, false, error))
+        return stage_argument(error, "Invalid contained staging request");
+    qa_fs_stage *stage = calloc(1, sizeof(*stage));
+    if (!stage) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating file stage"); return false; }
+    stage->handle = INVALID_HANDLE_VALUE; stage->display = copy_string(target);
+    if (!stage->display || !writable_parent(root, target, !resume, &stage->locked, error)) {
+        if (!stage->display) qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining stage target");
+        qa_fs_stage_close(stage, true); return false;
+    }
+    wchar_t name[64];
+    (void)swprintf(name, sizeof(name) / sizeof(name[0]), L".qa-stage-%016llx", (unsigned long long)nonce);
+    stage->temporary = wide_child(stage->locked.parent_path, name, error);
+    stage->target = wide_child(stage->locked.parent_path, stage->locked.leaf, error);
+    if (!stage->temporary || !stage->target) { qa_fs_stage_close(stage, true); return false; }
+    if (CompareStringOrdinal(stage->temporary, -1, stage->target, -1, TRUE) == CSTR_EQUAL) {
+        qa_fs_stage_close(stage, true); return stage_argument(error, "Stage and target names must differ");
+    }
+    PSECURITY_DESCRIPTOR descriptor = resume ? NULL : private_descriptor(error);
+    if (!resume && !descriptor) { qa_fs_stage_close(stage, true); return false; }
+    SECURITY_ATTRIBUTES attributes = {sizeof(attributes), descriptor, FALSE};
+    stage->handle = CreateFileW(stage->temporary, GENERIC_READ | GENERIC_WRITE | DELETE | FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_DELETE, resume ? NULL : &attributes, resume ? OPEN_EXISTING : CREATE_NEW,
+        FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    DWORD code = GetLastError();
+    if (descriptor) LocalFree(descriptor);
+    if (stage->handle == INVALID_HANDLE_VALUE) {
+        qa_fs_stage_close(stage, true); return fail_windows(error, "cannot open staged file", target, code);
+    }
+    wchar_t *opened = handle_path(stage->handle, error);
+    bool contained = opened && path_within(stage->locked.root_path, opened);
+    free(opened);
+    qa_fs_identity identity;
+    if (!contained || !stage_identity(stage, &identity, error)) {
+        if (!contained && (!error || error->code == QA_OK)) stage_argument(error, "Stage escapes retained root");
+        qa_fs_stage_close(stage, resume); return false;
+    }
+    *initial = identity.words[2]; *out = stage; return true;
+}
+bool qa_fs_stage_size(qa_fs_stage *stage, uint64_t *out, qa_error *error) {
+    if (!stage || !out) return stage_argument(error, "Missing stage size output");
+    LARGE_INTEGER size;
+    if (!GetFileSizeEx(stage->handle, &size) || size.QuadPart < 0)
+        return fail_windows(error, "cannot inspect staged size", stage->display, GetLastError());
+    *out = (uint64_t)size.QuadPart; return true;
+}
+bool qa_fs_stage_read(qa_fs_stage *stage, uint64_t offset, void *bytes, size_t capacity,
+                       size_t *received, qa_error *error) {
+    if (!stage || !received || (capacity && !bytes) || offset > INT64_MAX ||
+        (uint64_t)capacity > (uint64_t)INT64_MAX - offset)
+        return stage_argument(error, "Invalid stage read range");
+    *received = 0;
+    LARGE_INTEGER position = {.QuadPart = (LONGLONG)offset};
+    if (!SetFilePointerEx(stage->handle, position, NULL, FILE_BEGIN))
+        return fail_windows(error, "cannot seek staged file", stage->display, GetLastError());
+    while (*received < capacity) {
+        size_t remaining = capacity - *received;
+        DWORD request = remaining > UINT32_C(0x7ffff000) ? UINT32_C(0x7ffff000) : (DWORD)remaining;
+        DWORD count = 0;
+        if (!ReadFile(stage->handle, (uint8_t *)bytes + *received, request, &count, NULL))
+            return fail_windows(error, "cannot read staged file", stage->display, GetLastError());
+        if (!count) break;
+        *received += count;
+    }
+    return true;
+}
+bool qa_fs_stage_write(qa_fs_stage *stage, uint64_t offset, qa_bytes bytes, size_t *written, qa_error *error) {
+    if (!stage || !written || stage->sealed || stage->published || (bytes.size && !bytes.data) ||
+        offset > INT64_MAX || (uint64_t)bytes.size > (uint64_t)INT64_MAX - offset)
+        return stage_argument(error, "Invalid stage write range/state");
+    *written = 0;
+    LARGE_INTEGER position = {.QuadPart = (LONGLONG)offset};
+    if (!SetFilePointerEx(stage->handle, position, NULL, FILE_BEGIN))
+        return fail_windows(error, "cannot seek staged file", stage->display, GetLastError());
+    while (*written < bytes.size) {
+        size_t remaining = bytes.size - *written;
+        DWORD request = remaining > UINT32_C(0x7ffff000) ? UINT32_C(0x7ffff000) : (DWORD)remaining;
+        DWORD count = 0;
+        if (!WriteFile(stage->handle, bytes.data + *written, request, &count, NULL) || !count)
+            return fail_windows(error, "cannot write staged file", stage->display, GetLastError());
+        *written += count;
+    }
+    return true;
+}
+bool qa_fs_stage_seal(qa_fs_stage *stage, qa_fs_identity *identity, qa_error *error) {
+    if (!stage || !identity || stage->published) return stage_argument(error, "Invalid stage seal");
+    if (!FlushFileBuffers(stage->handle)) return fail_windows(error, "cannot sync staged file", stage->display, GetLastError());
+    if (!stage_identity(stage, identity, error)) return false;
+    stage->sealed = true; return true;
+}
+struct qa_fs_stage_mapping { qa_bytes bytes; HANDLE mapping; };
+qa_bytes qa_fs_stage_mapping_bytes(const qa_fs_stage_mapping *mapping) {
+    return mapping ? mapping->bytes : (qa_bytes){0};
+}
+void qa_fs_stage_unmap(qa_fs_stage_mapping *mapping) {
+    if (!mapping) return;
+    if (mapping->bytes.data) UnmapViewOfFile(mapping->bytes.data);
+    if (mapping->mapping) CloseHandle(mapping->mapping);
+    free(mapping);
+}
+bool qa_fs_stage_map(qa_fs_stage *stage, qa_fs_stage_mapping **out, qa_error *error) {
+    qa_fs_identity identity;
+    if (!stage || !out || !stage->sealed || stage->published) return stage_argument(error, "Stage mapping requires a sealed unpublished file");
+    if (!stage_identity(stage, &identity, error)) return false;
+    LARGE_INTEGER size;
+    if (!GetFileSizeEx(stage->handle, &size)) return fail_windows(error, "cannot inspect staged mapping size", stage->display, GetLastError());
+    if (size.QuadPart < 0 || (uint64_t)size.QuadPart > SIZE_MAX || (uint64_t)size.QuadPart > PTRDIFF_MAX)
+        return stage_argument(error, "Stage exceeds mapping address range");
+    qa_fs_stage_mapping *mapping = calloc(1, sizeof(*mapping));
+    if (!mapping) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating stage inspection mapping"); return false; }
+    if (size.QuadPart) {
+        mapping->mapping = CreateFileMappingW(stage->handle, NULL, PAGE_READONLY, 0, 0, NULL);
+        if (mapping->mapping) mapping->bytes.data = MapViewOfFile(mapping->mapping, FILE_MAP_READ, 0, 0, (SIZE_T)size.QuadPart);
+        if (!mapping->mapping || !mapping->bytes.data) { DWORD code = GetLastError(); qa_fs_stage_unmap(mapping); return fail_windows(error, "cannot map staged file", stage->display, code); }
+        mapping->bytes.size = (size_t)size.QuadPart;
+    }
+    qa_fs_identity current;
+    if (!stage_identity(stage, &current, error) || !qa_fs_identity_equal(&identity, &current)) {
+        qa_fs_stage_unmap(mapping); return stage_argument(error, "Stage changed during mapping admission");
+    }
+    *out = mapping; return true;
+}
+bool qa_fs_stage_publish(qa_fs_stage *stage, const qa_fs_identity *expected, bool exclusive,
+                          bool *created, qa_error *error) {
+    if (!stage || !expected || !created || !stage->sealed || stage->published)
+        return stage_argument(error, "Invalid stage publication");
+    *created = false;
+    qa_fs_identity identity;
+    if (!stage_identity(stage, &identity, error)) return false;
+    if (!qa_fs_identity_equal(expected, &identity)) {
+        qa_error_set(error, QA_ERROR_IO, 0, "Staged file changed after inspection"); return false;
+    }
+    qa_fs_entry_kind kind;
+    if (!status_wide(stage->target, false, &kind, NULL, error, stage->display)) return false;
+    if (exclusive && kind != QA_FS_MISSING) return true;
+    if (!exclusive && kind != QA_FS_MISSING && kind != QA_FS_REGULAR)
+        return stage_argument(error, "Stage target is not regular");
+    size_t characters = wcslen(stage->target);
+    if (characters > (SIZE_MAX - sizeof(FILE_RENAME_INFO)) / sizeof(wchar_t) ||
+        characters > UINT32_MAX / sizeof(wchar_t)) return stage_argument(error, "Stage target path too long");
+    size_t size = sizeof(FILE_RENAME_INFO) + characters * sizeof(wchar_t);
+    if (size > UINT32_MAX) return stage_argument(error, "Stage rename exceeds system limit");
+    FILE_RENAME_INFO *rename = calloc(1, size);
+    if (!rename) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating stage rename"); return false; }
+    rename->ReplaceIfExists = !exclusive;
+    rename->FileNameLength = (DWORD)(characters * sizeof(wchar_t));
+    memcpy(rename->FileName, stage->target, rename->FileNameLength);
+    bool ok = SetFileInformationByHandle(stage->handle, FileRenameInfo, rename, (DWORD)size) != 0;
+    DWORD code = GetLastError(); free(rename);
+    if (!ok) {
+        if (exclusive && (code == ERROR_FILE_EXISTS || code == ERROR_ALREADY_EXISTS)) return true;
+        return fail_windows(error, "cannot publish staged file", stage->display, code);
+    }
+    stage->published = true; *created = true;
+    if (!FlushFileBuffers(stage->handle)) return fail_windows(error, "cannot sync published stage", stage->display, GetLastError());
+    return true;
+}
+void qa_fs_stage_close(qa_fs_stage *stage, bool keep) {
+    if (!stage) return;
+    if (stage->handle != INVALID_HANDLE_VALUE) {
+        if (!keep && !stage->published) {
+            FILE_DISPOSITION_INFO disposition = {TRUE};
+            (void)SetFileInformationByHandle(stage->handle, FileDispositionInfo, &disposition, sizeof(disposition));
+        } else if (keep && !stage->published) (void)FlushFileBuffers(stage->handle);
+        CloseHandle(stage->handle);
+    }
+    writable_path_close(&stage->locked); free(stage->temporary); free(stage->target); free(stage->display); free(stage);
+}
+
+bool qa_fs_stream_sync(qa_fs_stream *stream, qa_error *error) {
+    if (!stream) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing writable stream"); return false; }
+    return FlushFileBuffers(stream->handle) != 0 || fail_windows(error, "cannot sync writable stream", stream->path, GetLastError());
 }

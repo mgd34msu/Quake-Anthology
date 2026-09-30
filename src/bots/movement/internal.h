@@ -1,6 +1,6 @@
 #ifndef QA_BOT_MOVEMENT_INTERNAL_H
 #define QA_BOT_MOVEMENT_INTERNAL_H
-#include "qa/bot_movement.h"
+#include "qa/bot_movement_source.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -93,12 +93,13 @@ static inline float bot_variable(const bot_travel *t, bot_move_variable v) {
     return t->moves->variables[v]->value;
 }
 bool bot_travel_begin(qa_bot_moves *, qa_bot_move_state *, bot_travel *, qa_error *);
+bool bot_travel_ready(const qa_bot_moves *, qa_error *);
 bool bot_reach_read(const bot_travel *, uint32_t, bot_reach *, bool *, qa_error *);
 bool bot_reach_describe(const bot_travel *, const qa_nav_edge *, bot_reach *, qa_error *);
-bool bot_reach_select(bot_travel *, const qa_bot_goal *, uint32_t, uint32_t, uint32_t *, uint32_t *,
+bool bot_reach_select(bot_travel *, const qa_bot_move_goal_source *, uint32_t, uint32_t, uint32_t *, uint32_t *,
                       qa_error *);
 float bot_reach_time(const bot_reach *);
-bool bot_travel_points(bot_travel *, qa_vec3, uint32_t, const qa_bot_goal *, uint32_t, bool *,
+bool bot_travel_points(bot_travel *, const qa_bot_vector_source *, uint32_t, uint32_t, uint32_t, bool *,
                        qa_error *);
 bool bot_trace(bot_travel *, qa_vec3, qa_vec3, const qa_bounds *, int32_t, uint32_t,
                qa_trace_result *, qa_error *);
@@ -113,6 +114,7 @@ bool bot_model(bot_travel *, int32_t, qa_bot_travel_model *, bool *, qa_error *)
 bool bot_predict(bot_travel *, const qa_nav_prediction_query *, qa_error *);
 bool bot_gap_distance(bot_travel *, qa_vec3, qa_vec3, float *, qa_error *);
 bool bot_barrier_jump(bot_travel *, qa_vec3, float, bool *, qa_error *);
+bool bot_barrier_jump_from(bot_travel *, const qa_bot_vector_source *, float, bool *, qa_error *);
 bool bot_blocked(bot_travel *, qa_vec3, bool, qa_bot_move_result *, qa_error *);
 bool bot_air_control(bot_travel *, qa_vec3, bool *, qa_vec3 *, float *, qa_error *);
 bool bot_jump_speed(bot_travel *, qa_vec3, qa_vec3, float, float *, qa_error *);
@@ -130,4 +132,11 @@ bool bot_move_mutable(qa_bot_moves *, qa_error *);
 qa_bot_move_state *bot_move_state(const qa_bot_moves *, uint32_t, qa_error *);
 void bot_move_avoid(qa_bot_moves *, qa_bot_move_state *, uint32_t, float);
 void bot_move_set_reach(qa_bot_move_state *, uint32_t);
+bool bot_goal_area(const qa_bot_move_goal_source *, uint32_t *, qa_error *);
+qa_bot_vector_source bot_goal_origin(const qa_bot_move_goal_source *);
+bool bot_result_read(const qa_bot_move_result_io *, qa_bot_move_result_field, int32_t *, qa_error *);
+bool bot_result_write(const qa_bot_move_result_io *, qa_bot_move_result_field, int32_t, qa_error *);
+bool bot_result_flags(const qa_bot_move_result_io *, uint32_t, qa_error *);
+bool bot_result_clear(const qa_bot_move_result_io *, qa_error *);
+bool bot_result_copy(const qa_bot_move_result_io *, const qa_bot_move_result *, qa_error *);
 #endif

@@ -1,5 +1,10 @@
 #include "internal.h"
 
+static bool weapon_selected(qa_q2_game *g, q2_actor *a) {
+    qa_q2_player_services *services = &g->player_runtime->services;
+    return services->weapon_selected ? services->weapon_selected(services->context, a->id)
+                                     : a->client->use_weapons;
+}
 static bool weapon_turn(qa_q2_game *g, q2_actor *a, bool latched, qa_error *e) {
     qa_q2_player_services *services = &g->player_runtime->services;
     qa_q2_weapon_input input = a->input;
@@ -12,6 +17,7 @@ static bool weapon_turn(qa_q2_game *g, q2_actor *a, bool latched, qa_error *e) {
     input.hand = a->client->hand;
     input.notarget = a->client->info.notarget;
     input.view_height = a->client->info.view_height;
+    input.weapon_thunk = a->client->weapon_thunk;
     return qa_q2_weapon_tick(g, a->id, &input, g->now_ns, g->frame_ns, e);
 }
 bool q2_client_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
@@ -56,7 +62,10 @@ bool q2_client_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
             s->event = 6;
         return q2_player_print(g, (qa_actor_id){0}, 2, text, e);
     }
-    if (s->use_weapons && !s->info.spectator && !s->weapon_thunk) {
+    bool selected = weapon_selected(g, a);
+    if (!q2_actor_live(g, a->id))
+        return true;
+    if (selected && !s->info.spectator && !s->weapon_thunk) {
         if (!weapon_turn(g, a, (s->latched_buttons & 1) != 0, e))
             return false;
     } else
@@ -91,7 +100,8 @@ bool q2_client_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     s->latched_buttons = 0;
     return true;
 }
-bool qa_q2_player_after_movement(qa_q2_game *g, qa_actor_id id, qa_error *e) {
+static bool after_movement(void *context, qa_actor_id id, qa_error *e) {
+    qa_q2_game *g = context;
     q2_actor *a = q2_client(g, id, e);
     if (!a)
         return false;
@@ -114,13 +124,16 @@ bool qa_q2_player_after_movement(qa_q2_game *g, qa_actor_id id, qa_error *e) {
             p->exit = true;
         return true;
     }
+    bool selected = weapon_selected(g, a);
+    if (!q2_actor_live(g, id))
+        return true;
     if (s->info.spectator) {
         if (s->latched_buttons & 1) {
             s->latched_buttons &= ~1u;
             if (!qa_q2_player_chase(g, id, 1, true, e))
                 return false;
         }
-    } else if (s->use_weapons && (s->latched_buttons & 1) && !s->weapon_thunk) {
+    } else if (selected && (s->latched_buttons & 1) && !s->weapon_thunk) {
         s->weapon_thunk = true;
         if (!weapon_turn(g, a, true, e))
             return false;
@@ -137,6 +150,9 @@ bool qa_q2_player_after_movement(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     if (g->options.edition == QA_Q2_RERELEASE && q2_actor_live(g, id))
         return q2_player_falling(g, a, &m, e);
     return true;
+}
+bool qa_q2_player_after_movement(qa_q2_game *g, qa_actor_id id, qa_error *e) {
+    return qa_q2_run_actor(g, id, after_movement, g, e);
 }
 bool qa_q2_player_end_frame(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     q2_actor *a = q2_client(g, id, e);

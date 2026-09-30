@@ -9,6 +9,7 @@
 
 typedef struct qa_material qa_material;
 typedef struct qa_material_library qa_material_library;
+typedef struct qa_material_order qa_material_order;
 typedef struct qa_scene_resources qa_scene_resources;
 typedef struct qa_scene_world qa_scene_world;
 typedef struct qa_scene_model qa_scene_model;
@@ -72,6 +73,10 @@ typedef struct qa_scene_image_policy {
 
 qa_scene_resources *qa_scene_resources_create(qa_vfs *, qa_error *);
 void qa_scene_resources_destroy(qa_scene_resources *);
+/* Live immutable image versions allocated by this resource owner. Array lives
+ * in scratch; images borrow until the next owner/image mutation. No loading. */
+bool qa_scene_resources_images(const qa_scene_resources *, qa_arena *,
+                               const qa_scene_image *const **, size_t *, qa_error *);
 /* Set image policy/fullbright range before content loads. Recreate resources
  * and dependent worlds/models when these registration settings change. */
 bool qa_scene_image_policy_controls(int32_t override_level, uint32_t usage_mask,
@@ -251,6 +256,9 @@ typedef struct qa_scene_group {
  * in storage. Frame geometry pins survive command rollback until reset. */
 typedef struct qa_scene_frame {
     uint64_t sequence, owner;
+    /* Borrowed renderer registration owner. Libraries and their material
+     * records outlive preparation of every pending source group. */
+    qa_material_order *material_order;
     qa_arena storage;
     qa_scene_command *commands;
     size_t command_count, command_capacity;
@@ -266,6 +274,7 @@ typedef struct qa_scene_frame {
     size_t sort_command_capacity;
 } qa_scene_frame;
 void qa_scene_frame_init(qa_scene_frame *, uint64_t owner);
+bool qa_scene_frame_material_order(qa_scene_frame *, qa_material_order *, qa_error *);
 void qa_scene_frame_reset(qa_scene_frame *, uint64_t sequence);
 void qa_scene_frame_destroy(qa_scene_frame *);
 bool qa_scene_frame_emit(qa_scene_frame *, const qa_scene_command *, qa_error *);
@@ -289,6 +298,9 @@ bool qa_scene_frame_picture(qa_scene_frame *, const qa_scene_image *, qa_scene_r
                             qa_scene_rect rect, qa_scene_vec4 uv, qa_scene_vec4 color, qa_error *);
 bool qa_scene_frame_picture_f(qa_scene_frame *, const qa_scene_image *, qa_scene_rect target,
                               qa_scene_rect_f rect, qa_scene_vec4 uv, qa_scene_vec4 color, qa_error *);
+/* Clipped pixel-space quad owned by frame storage. Empty output means no overlap. */
+bool qa_scene_picture_geometry(qa_scene_frame *, qa_scene_rect target, qa_scene_rect_f,
+                               qa_scene_vec4 uv, qa_scene_vec4 color, qa_scene_mesh *, qa_error *);
 void qa_scene_state_default(qa_scene_state *);
 void qa_scene_matrix_identity(qa_scene_matrix *);
 qa_scene_matrix qa_scene_matrix_multiply(qa_scene_matrix, qa_scene_matrix);
@@ -311,6 +323,12 @@ typedef struct qa_scene_world_options {
     qa_bytes external_lit;
     qa_scene_q1_lightmap_encoding q1_lightmap_encoding;
 } qa_scene_world_options;
+typedef struct qa_scene_world_entity {
+    qa_vec3 ambient, directed, light_direction;
+    qa_scene_vec2 shader_texcoord;
+    float shader_time, shadow_plane;
+    bool non_normalized_axis, projection_shadow;
+} qa_scene_world_entity;
 typedef struct qa_scene_world_input {
     qa_scene_view view;
     double seconds;
@@ -350,6 +368,8 @@ typedef struct qa_scene_world_input {
     bool (*flare)(void *, uint32_t surface, qa_vec3 origin, qa_vec3 color,
                   qa_vec3 normal, const qa_scene_view *, qa_scene_frame *, qa_error *);
     void *flare_context;
+    /* Optional inline-model material context, borrowed for one submission. */
+    const qa_scene_world_entity *entity_material;
 } qa_scene_world_input;
 /* World retains a private immutable BSP byte copy and owns render resources;
  * material library and resource service must outlive it. */

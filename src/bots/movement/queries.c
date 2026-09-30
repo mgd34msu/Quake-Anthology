@@ -112,6 +112,11 @@ bool bot_gap_distance(bot_travel *t, qa_vec3 origin, qa_vec3 direction, float *o
     return true;
 }
 bool bot_barrier_jump(bot_travel *t, qa_vec3 direction, float speed, bool *out, qa_error *e) {
+    qa_bot_vector_source source = {.value = &direction};
+    return bot_barrier_jump_from(t, &source, speed, out, e);
+}
+bool bot_barrier_jump_from(bot_travel *t, const qa_bot_vector_source *direction, float speed,
+                           bool *out, qa_error *e) {
     *out = false;
     if (!(t->graph->profile.capabilities & QA_NAV_CAPABILITY(QA_NAV_JUMP)))
         return true;
@@ -124,7 +129,10 @@ bool bot_barrier_jump(bot_travel *t, qa_vec3 direction, float speed, bool *out, 
     if (trace.start_solid || trace.all_solid ||
         trace.end.z - s->origin.z < bot_variable(t, BOT_STEP))
         return true;
-    qa_vec3 horizontal = qa_vec_normalize(qa_v3(direction.x, direction.y, 0));
+    qa_vec3 horizontal = {0};
+    if (!qa_bot_vector_component(direction, 0, &horizontal.x, e) ||
+        !qa_bot_vector_component(direction, 1, &horizontal.y, e)) return false;
+    horizontal = qa_vec_normalize(horizontal);
     float distance = (s->think_time * speed) * .5f;
     end = bot_ma(s->origin, distance, horizontal);
     end.z = trace.end.z;

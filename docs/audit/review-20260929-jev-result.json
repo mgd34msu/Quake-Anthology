@@ -1,0 +1,16 @@
+{
+  "at": "2026-09-29T21:31:04.417573+00:00",
+  "task_id": "AUDIT",
+  "plan_revision": 7,
+  "scope": "Fresh aggregate comparison of selected current review evidence with unchanged original AUDIT criteria",
+  "available": false,
+  "disposition": null,
+  "criteria_verdicts": null,
+  "command": "node /home/buzzkill/.local/share/vibecheck-jev/judge-task.mjs AUDIT docs/audit/review-20260929-jev-input.md",
+  "exit_code": 1,
+  "failure": "TypeError: fetch failed; getaddrinfo EAI_AGAIN api.typesafe.ai",
+  "evidence_path": "docs/audit/review-20260929-jev-input.md",
+  "evidence_sha256": "e1a0a698d06d2e30c8c2c14c138403c9ef8d01ebcdf059550fa32956276657ea",
+  "graph_sha256": "927c4c83faf42c4026846ea288de6120770f5150f69eacf5a1d4fe57287cf9d7",
+  "note": "No judgment or acceptance established. Direct MCP progress/ledger checks are separate and do not substitute for this comparison."
+}

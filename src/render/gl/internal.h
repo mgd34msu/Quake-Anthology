@@ -207,7 +207,8 @@ struct qa_gl_renderer {
     qa_scene_draw_buffer draw_buffer;
     float gamma;
     uint64_t sequence;
-    bool overdraw, closed;
+    uint32_t presented_width, presented_height;
+    bool overdraw, closed, presented;
 };
 
 bool gl_api_load(qa_gl_renderer *renderer, qa_error *error);

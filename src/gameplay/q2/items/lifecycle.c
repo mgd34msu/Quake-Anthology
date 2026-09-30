@@ -22,6 +22,8 @@ void q2_items_close(qa_q2_game *g) {
 }
 void q2_items_release_state(q2_actor *a) {
     if (a->item) {
+        if (a->item->observations && a->item->observation.serial)
+            qa_pickups_observation_close(a->item->observations, a->item->observation, NULL);
         if (!a->entity) {
             q2_entity_unbind(a->entity_game, a);
             a->entity_game = NULL;
@@ -74,6 +76,8 @@ bool q2_item_visual(qa_q2_game *g, q2_actor *a, qa_error *e) {
 }
 bool q2_item_change_collision(qa_q2_game *g, q2_actor *a, qa_physics_solid solid, qa_error *e) {
     if (!a->entity_targets && !q2_entity_bind(g, a, e))
+        return false;
+    if (!a->item->observation.serial && !q2_item_observe(g, a, e))
         return false;
     a->physics_bound = true;
     a->physics.solid = solid;

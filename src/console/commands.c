@@ -1,14 +1,23 @@
 #include "internal.h"
+#include "qa/text.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct command_contribution {
+    uint64_t owner;
+    struct command_contribution *next;
+} command_contribution;
+
 typedef struct command_entry {
     qa_console_entry view;
     qa_command_handler handler;
     void *user;
+    command_contribution *contributions;
+    uint64_t registration_owner;
+    bool ordinary_registration;
     struct command_entry *next;
 } command_entry;
 
@@ -39,6 +48,11 @@ typedef struct command_frame {
     const qa_command_invocation *invocation;
     struct command_frame *parent;
 } command_frame;
+typedef struct output_frame {
+    void (*print)(void *, const qa_command_context *, const char *);
+    void *user;
+    struct output_frame *parent;
+} output_frame;
 
 struct qa_console {
     qa_console_options options;
@@ -56,6 +70,8 @@ struct qa_console {
     retired_id *owners;
     retired_id *clients;
     command_frame *frame;
+    output_frame *redirect;
+    unsigned output_calls;
     size_t alias_count;
     bool draining;
 };
@@ -86,6 +102,9 @@ static bool valid_context(const qa_console *console, const qa_command_context *c
         return qac_fail(error, QA_ERROR_ARGUMENT, "command context does not belong to this session");
     if (retired(console->owners, context->owner) || (context->client != 0 && retired(console->clients, context->client)))
         return qac_fail(error, QA_ERROR_ARGUMENT, "command owner or client has retired");
+    if (console->options.context_active != NULL &&
+        !console->options.context_active(console->options.user, context))
+        return qac_fail(error, QA_ERROR_ARGUMENT, "command publication or actor has retired");
     return true;
 }
 
@@ -93,6 +112,9 @@ static bool same_context(const qa_command_context *a, const qa_command_context *
                           bool ignore_direct)
 {
     return a->session == b->session && a->owner == b->owner && a->client == b->client &&
+           a->registry == b->registry && a->generation == b->generation &&
+           a->actor.registry == b->actor.registry &&
+           a->actor.generation == b->actor.generation && a->actor.slot == b->actor.slot &&
            a->seat == b->seat && a->dialect == b->dialect && a->origin == b->origin &&
            a->console_text == b->console_text && (ignore_direct || a->direct == b->direct) &&
            ((a->script == NULL && b->script == NULL) ||
@@ -129,7 +151,31 @@ static void free_chunks(command_chunk *chunk)
 
 static void output(qa_console *console, const qa_command_context *context, const char *text)
 {
-    if (console->options.print != NULL) console->options.print(console->options.user, context, text);
+    void (*print)(void *, const qa_command_context *, const char *) =
+        console->redirect == NULL ? console->options.print : console->redirect->print;
+    void *user = console->redirect == NULL ? console->options.user : console->redirect->user;
+    if (print != NULL) {
+        ++console->output_calls;
+        print(user, context, text);
+        --console->output_calls;
+    }
+}
+
+void qa_console_emit(qa_console *console, const qa_command_context *context, const char *text)
+{
+    if (console != NULL && text != NULL)
+        output(console, context_for(console, context), text);
+}
+
+bool qa_console_idle(const qa_console *console)
+{
+    return console == NULL || (console->frame == NULL && console->redirect == NULL &&
+        console->output_calls == 0 && !console->draining);
+}
+
+bool qa_console_output_redirected(const qa_console *console)
+{
+    return console != NULL && console->redirect != NULL;
 }
 
 static void output_value(qa_console *console, const qa_command_context *context,
@@ -174,6 +220,21 @@ static size_t buffer_limit(const qa_console *console, qa_console_dialect dialect
         dialect == QA_CONSOLE_Q3 ? 16384 : 8192;
 }
 
+bool qa_console_limits(qa_console *console, const qa_command_context *context,
+                        size_t *maximum_command, size_t *maximum_buffer,
+                        qa_error *error)
+{
+    if (console == NULL || maximum_command == NULL || maximum_buffer == NULL)
+        return qac_fail(error, QA_ERROR_ARGUMENT, "invalid console limit request");
+    const qa_command_context *active = context_for(console, context);
+    if (!qac_dialect_valid(active->dialect))
+        return qac_fail(error, QA_ERROR_ARGUMENT, "invalid console limit dialect");
+    *maximum_command = console->options.maximum_command == 0
+                           ? 1024 : console->options.maximum_command;
+    *maximum_buffer = buffer_limit(console, active->dialect);
+    return true;
+}
+
 static command_chunk *text_chunk(const qa_command_context *context, const char *text,
                                    size_t length, bool newline, qa_error *error)
 {
@@ -198,6 +259,9 @@ static bool queue_text(qa_console *console, const qa_command_context *context,
     if (console == NULL || text == NULL)
         return qac_fail(error, QA_ERROR_ARGUMENT, "invalid command buffer arguments");
     qa_command_context inherited = *context_for(console, context);
+    if (console->options.capture_context != NULL &&
+        !console->options.capture_context(console->options.user, &inherited, &inherited, error))
+        return false;
     if (context == NULL && console->frame != NULL) inherited.direct = false;
     context = &inherited;
     if (!valid_context(console, context, error)) return false;
@@ -253,6 +317,10 @@ static void free_command(command_entry *entry)
     free((char *)entry->view.name);
     free((char *)entry->view.description);
     qac_document_free(entry->view.documentation);
+    while (entry->contributions) {
+        command_contribution *next = entry->contributions->next;
+        free(entry->contributions); entry->contributions = next;
+    }
     free(entry);
 }
 
@@ -265,7 +333,7 @@ static void free_alias(alias_entry *alias)
 
 void qa_console_destroy(qa_console *console)
 {
-    if (console == NULL) return;
+    if (console == NULL || !qa_console_idle(console)) return;
     while (console->commands != NULL) {
         command_entry *next = console->commands->next;
         free_command(console->commands);
@@ -356,8 +424,21 @@ bool qa_console_register(qa_console *console, const char *name, const char *desc
         return qac_fail(error, QA_ERROR_ARGUMENT, "invalid command declaration");
     if (is_builtin(console, name)) return qac_fail(error, QA_ERROR_ARGUMENT, "command name is a builtin");
     for (command_entry *entry = console->commands; entry != NULL; entry = entry->next)
-        if (entry->view.owner == owner && strcmp(entry->view.name, name) == 0)
-            return qac_fail(error, QA_ERROR_ARGUMENT, "command is already registered");
+        if (entry->view.owner == owner && strcmp(entry->view.name, name) == 0) {
+            if (entry->ordinary_registration)
+                return qac_fail(error, QA_ERROR_ARGUMENT, "command is already registered");
+            char *copy = qac_copy(description == NULL ? "" : description, error);
+            if (copy == NULL)
+                return false;
+            free((char *)entry->view.description);
+            entry->view.description = copy;
+            entry->view.engine_command = engine_command;
+            entry->handler = handler;
+            entry->user = user;
+            entry->ordinary_registration = true;
+            entry->registration_owner = owner;
+            return true;
+        }
     qa_cvars *registry = cvar_owner(console, context_for(console, NULL), name);
     const qa_cvar_view *variable = qa_cvars_find(registry, name);
     if (context_for(console, NULL)->dialect != QA_CONSOLE_Q3 && variable != NULL && *variable->value != '\0')
@@ -371,9 +452,38 @@ bool qa_console_register(qa_console *console, const char *name, const char *desc
     entry->view.engine_command = engine_command;
     entry->handler = handler;
     entry->user = user;
+    entry->ordinary_registration = true;
+    entry->registration_owner = owner;
     entry->next = console->commands;
     console->commands = entry;
     return true;
+}
+
+bool qa_console_register_owned(qa_console *console, const char *name, const char *description,
+                                 uint64_t dispatch_owner, uint64_t lifetime_owner,
+                                 bool engine_command, qa_command_handler handler,
+                                 void *user, qa_error *error)
+{
+    if (console == NULL || retired(console->owners, lifetime_owner))
+        return qac_fail(error, QA_ERROR_ARGUMENT, "command callback owner has retired");
+    if (!qa_console_register(console, name, description, dispatch_owner, engine_command,
+                                handler, user, error))
+        return false;
+    for (command_entry *entry = console->commands; entry != NULL; entry = entry->next)
+        if (entry->view.owner == dispatch_owner && strcmp(entry->view.name, name) == 0) {
+            entry->registration_owner = lifetime_owner;
+            return true;
+        }
+    return qac_fail(error, QA_ERROR_ARGUMENT, "registered command lost its dispatch entry");
+}
+
+static void clear_registration(command_entry *entry)
+{
+    entry->ordinary_registration = false;
+    entry->handler = NULL;
+    entry->user = NULL;
+    entry->view.engine_command = false;
+    (void)qac_document_replace(&entry->view.documentation, NULL, NULL);
 }
 
 bool qa_console_unregister(qa_console *console, const char *name, uint64_t owner)
@@ -383,8 +493,59 @@ bool qa_console_unregister(qa_console *console, const char *name, uint64_t owner
     while (*link != NULL) {
         command_entry *entry = *link;
         if (entry->view.owner == owner && strcmp(entry->view.name, name) == 0) {
-            *link = entry->next;
-            free_command(entry);
+            if (!entry->ordinary_registration) return false;
+            clear_registration(entry);
+            if (!entry->contributions) { *link = entry->next; free_command(entry); }
+            return true;
+        }
+        link = &entry->next;
+    }
+    return false;
+}
+
+bool qa_console_contribute(qa_console *console, const char *name,
+                             uint64_t dispatch_owner, uint64_t lifetime_owner, qa_error *error)
+{
+    if (!console || !name || !*name || !lifetime_owner ||
+        strpbrk(name, " \t\r\n;\"") || retired(console->owners, dispatch_owner) ||
+        retired(console->owners, lifetime_owner))
+        return qac_fail(error, QA_ERROR_ARGUMENT, "invalid command contribution");
+    command_entry *entry = NULL;
+    for (command_entry *candidate = console->commands; candidate; candidate = candidate->next)
+        if (candidate->view.owner == dispatch_owner && qac_equal(candidate->view.name, name)) {
+            entry = candidate; break;
+        }
+    if (entry) {
+        for (command_contribution *item = entry->contributions; item; item = item->next)
+            if (item->owner == lifetime_owner) return true;
+    }
+    command_contribution *item = malloc(sizeof(*item));
+    if (!item) return qac_fail(error, QA_ERROR_MEMORY, "retaining command contribution");
+    if (!entry) {
+        if (!qa_console_register(console, name, NULL, dispatch_owner, false, NULL, NULL, error)) {
+            free(item); return false;
+        }
+        entry = console->commands; entry->ordinary_registration = false;
+    }
+    *item = (command_contribution){lifetime_owner, entry->contributions};
+    entry->contributions = item; return true;
+}
+
+bool qa_console_uncontribute(qa_console *console, const char *name,
+                               uint64_t dispatch_owner, uint64_t lifetime_owner)
+{
+    if (!console || !name) return false;
+    command_entry **link = &console->commands;
+    while (*link) {
+        command_entry *entry = *link;
+        if (entry->view.owner == dispatch_owner && qac_equal(entry->view.name, name)) {
+            command_contribution **item = &entry->contributions;
+            while (*item && (*item)->owner != lifetime_owner) item = &(*item)->next;
+            if (!*item) return false;
+            command_contribution *removed = *item; *item = removed->next; free(removed);
+            if (!entry->contributions && !entry->ordinary_registration) {
+                *link = entry->next; free_command(entry);
+            }
             return true;
         }
         link = &entry->next;
@@ -685,13 +846,31 @@ bool qa_console_execute_now(qa_console *console, const qa_command_context *conte
 {
     if (console == NULL) return qac_fail(error, QA_ERROR_ARGUMENT, "console is NULL");
     if (text == NULL || *text == '\0') return qa_console_drain(console, 0, NULL, error);
+    qa_command_context source = *context_for(console, context);
+    if (console->options.capture_context != NULL &&
+        !console->options.capture_context(console->options.user, &source, &source, error))
+        return false;
     qa_command_context inherited;
-    if (!copy_context(&inherited, context_for(console, context), error)) return false;
+    if (!copy_context(&inherited, &source, error)) return false;
     if (console->frame != NULL) inherited.direct = false;
     char *raw = qac_copy(text, error);
     bool ok = raw != NULL && dispatch(console, &inherited, raw, error);
     free(raw);
     free((char *)inherited.script);
+    return ok;
+}
+
+bool qa_console_execute_capture(qa_console *console, const qa_command_context *context,
+                                  const char *text,
+                                  void (*print)(void *, const qa_command_context *, const char *),
+                                  void *user, qa_error *error)
+{
+    if (console == NULL || print == NULL)
+        return qac_fail(error, QA_ERROR_ARGUMENT, "console output capture requires a sink");
+    output_frame frame = {.print = print, .user = user, .parent = console->redirect};
+    console->redirect = &frame;
+    bool ok = qa_console_execute_now(console, context, text, error);
+    console->redirect = frame.parent;
     return ok;
 }
 
@@ -870,7 +1049,18 @@ static bool remove_id(qa_console *console, uint64_t id, bool owner, qa_error *er
         command_entry **command = &console->commands;
         while (*command != NULL) {
             command_entry *entry = *command;
-            if (entry->view.owner != id) { command = &entry->next; continue; }
+            if (entry->view.owner != id) {
+                if (entry->ordinary_registration && entry->registration_owner == id)
+                    clear_registration(entry);
+                command_contribution **item = &entry->contributions;
+                while (*item) {
+                    if ((*item)->owner != id) { item = &(*item)->next; continue; }
+                    command_contribution *removed = *item; *item = removed->next; free(removed);
+                }
+                if (entry->ordinary_registration || entry->contributions) {
+                    command = &entry->next; continue;
+                }
+            }
             *command = entry->next;
             free_command(entry);
         }
@@ -1200,9 +1390,8 @@ static bool builtin(qa_console *console, const qa_command_invocation *command,
     float value = variable->number + (qac_equal(name, "dec") ? -amount : amount);
     if (value == variable->number) return qa_cvars_set_console(registry, variable_name, variable->value, error);
     char formatted[64];
-    if (!isfinite(value)) (void)snprintf(formatted, sizeof(formatted), "%s", isnan(value) ? "nan" : value < 0 ? "-inf" : "inf");
-    else if (value - floorf(value) < 0.000001f) (void)snprintf(formatted, sizeof(formatted), "%.0f", (double)value);
-    else (void)snprintf(formatted, sizeof(formatted), "%f", (double)value);
+    unsigned digits = isfinite(value) && value - floorf(value) < 0.000001f ? 0 : 6;
+    if (!qa_format_fixed(value, digits, formatted, sizeof(formatted), error)) return false;
     formatted[31] = '\0';
     return qa_cvars_set_console(registry, variable_name, formatted, error);
 }

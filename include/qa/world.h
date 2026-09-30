@@ -55,6 +55,9 @@ typedef struct qa_body_link_state { uint64_t link_count; bool linked; qa_body_st
  * clears/releases the registry. Calls and callbacks have one thread owner.
  * Callbacks may mutate actors/links; destroying the world within one is rejected. */
 bool qa_world_create(qa_actor_registry *, qa_collision_geometry *, const qa_world_hooks *, qa_world **, qa_error *);
+/* False for NULL or during a world callback/spatial visit. Geometry admissions
+ * have separate ownership and must still be aborted before world destruction. */
+bool qa_world_idle(const qa_world *);
 bool qa_world_destroy(qa_world *, qa_error *);
 qa_actor_registry *qa_world_actors(qa_world *);
 qa_collision_geometry *qa_world_geometry(qa_world *);
@@ -81,8 +84,12 @@ bool qa_world_body_write(qa_world *, qa_actor_id, const qa_body_state *, qa_erro
  * Neither operation relinks. Reads use current metadata with retained bounds. */
 bool qa_world_set_collision(qa_world *, qa_actor_id, const qa_actor_collision *, qa_error *);
 bool qa_world_collision_bind(qa_world *, qa_actor_id, const qa_collision_binding *, qa_error *);
+/* Idle teardown removes only the expected context. Absent/retired actors or a
+ * replacement context are successful no-ops; no collision/link state changes. */
+bool qa_world_collision_unbind(qa_world *, qa_actor_id, void *expected_context, qa_error *);
 /* False with no error means absent; reader/validation failures set an error. */
 bool qa_world_get_collision(qa_world *, qa_actor_id, qa_actor_collision *, qa_error *);
+bool qa_world_collision_validate(qa_world *, const qa_actor_collision *, qa_error *);
 bool qa_world_attach(qa_world *, qa_actor_id, const qa_body_attachment *, qa_error *);
 bool qa_world_detach(qa_world *, qa_actor_id, qa_error *);
 bool qa_world_attachment(const qa_world *, qa_actor_id, qa_body_attachment *);
@@ -103,6 +110,37 @@ bool qa_world_suspend_collision(qa_world *, qa_actor_id, qa_error *);
 bool qa_world_linked(const qa_world *, qa_actor_id, qa_linked_body *);
 bool qa_world_link_state(const qa_world *, qa_actor_id, qa_body_link_state *);
 bool qa_world_restore_link_state(qa_world *, qa_actor_id, const qa_body_link_state *, qa_error *);
+
+typedef struct qa_world_body_checkpoint {
+    qa_saved_actor_id actor, ground, stored_ground, linked_ground, collision_owner,
+                      stored_collision_owner, retained_collision_owner, anchor;
+    qa_body_state state, stored_state;
+    qa_body_link_state link;
+    qa_actor_collision collision, stored_collision, retained_collision;
+    qa_body_attachment attachment;
+    uint64_t storage_serial, collision_serial, attachment_order;
+    bool external_body, external_collision, has_collision, effective_collision, attached;
+    bool has_ground, has_stored_ground, has_linked_ground, has_collision_owner,
+         has_stored_collision_owner, has_retained_collision_owner, has_anchor;
+} qa_world_body_checkpoint;
+typedef struct qa_world_spatial_checkpoint {
+    qa_saved_actor_id actor;
+    uint32_t sector;
+} qa_world_spatial_checkpoint;
+typedef struct qa_world_checkpoint {
+    qa_world_body_checkpoint *bodies;
+    qa_world_spatial_checkpoint *spatial; /* Sector list order, including Q3 head insertion. */
+    size_t body_count, spatial_count;
+    uint64_t attachment_order, body_serial;
+} qa_world_checkpoint;
+/* Capture keeps live state distinct from retained link/collision snapshots and
+ * captures suspended membership. Callback addresses never enter this value.
+ * Restore requires an isolated candidate after providers recreate bindings.
+ * Failure may leave that candidate partially restored; discard it. External
+ * binding kind and effective authoritative state must match the saved owner. */
+bool qa_world_checkpoint_capture(qa_world *, qa_world_checkpoint *, qa_error *);
+bool qa_world_checkpoint_restore(qa_world *, const qa_world_checkpoint *, qa_error *);
+void qa_world_checkpoint_free(qa_world_checkpoint *);
 
 typedef enum qa_spatial_visit { QA_SPATIAL_CONTINUE, QA_SPATIAL_STOP_SECTOR, QA_SPATIAL_STOP } qa_spatial_visit;
 typedef qa_spatial_visit (*qa_spatial_visit_fn)(void *, const qa_spatial_actor *);

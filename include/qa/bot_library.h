@@ -32,6 +32,11 @@ typedef struct qa_bot_variable {
  * string is borrowed until its next successful set. Names compare in ASCII
  * source order without locale; a set marks modified even when text is equal. */
 const qa_bot_variable *qa_bot_library_variable(const qa_bot_library *, const char *name);
+/* The optional byte reader models a borrowed name; NULL is a null source name.
+ * Only compared bytes are consumed, in reverse variable insertion order. */
+bool qa_bot_library_variable_find_from(const qa_bot_library *, void *context,
+                                       bool (*byte)(void *, size_t, uint8_t *, qa_error *),
+                                       const qa_bot_variable **, qa_error *);
 bool qa_bot_library_variable_default(qa_bot_library *, const char *name, const char *value,
                                      const qa_bot_variable **, qa_error *);
 bool qa_bot_library_variable_set(qa_bot_library *, const char *name, const char *value, qa_error *);

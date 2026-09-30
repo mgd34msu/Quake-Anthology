@@ -19,6 +19,7 @@ if(UNIX)
     target_compile_definitions(qa_data PRIVATE _POSIX_C_SOURCE=200809L)
 elseif(WIN32)
     target_sources(qa_data PRIVATE src/platform/file_windows.c src/platform/filesystem_windows.c)
+    target_link_libraries(qa_data PRIVATE Advapi32)
 endif()
 
 add_library(qa_native STATIC

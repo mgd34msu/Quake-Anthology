@@ -67,9 +67,39 @@ void qa_q1_spawn_selector_destroy(qa_q1_spawn_selector *selector) {
 }
 qa_actor_id qa_q1_spawn_last(const qa_q1_spawn_selector *selector) { return selector->last; }
 bool qa_q1_spawn_restore_last(qa_q1_spawn_selector *selector, qa_actor_id last, qa_error *error) {
-    if (selector->active || (last.registry ? !live(selector, last) : last.slot || last.generation))
+    if (!selector || selector->active || (last.registry ? !live(selector, last) : last.slot || last.generation))
         return fail(error, "Invalid Q1 saved spawn point");
     selector->last = last;
+    return true;
+}
+bool qa_q1_spawn_selector_checkpoint_capture(const qa_q1_spawn_selector *selector,
+                                              qa_q1_spawn_selector_checkpoint *out,
+                                              qa_error *error) {
+    if (!selector || !out || selector->active ||
+        (!selector->last.registry && (selector->last.slot || selector->last.generation)))
+        return fail(error, "Invalid or active Q1 spawn selector checkpoint");
+    if (selector->last.registry) {
+        qa_saved_actor_id saved;
+        if (!qa_actors_save_reference(qa_session_actors(selector->options.services.session),
+                                       selector->last, &saved, error))
+            return false;
+    }
+    *out = (qa_q1_spawn_selector_checkpoint){.last = selector->last};
+    return true;
+}
+bool qa_q1_spawn_selector_checkpoint_restore(qa_q1_spawn_selector *selector,
+                                              const qa_q1_spawn_selector_checkpoint *checkpoint,
+                                              qa_error *error) {
+    if (!selector || !checkpoint || selector->active ||
+        (!checkpoint->last.registry && (checkpoint->last.slot || checkpoint->last.generation)))
+        return fail(error, "Invalid or active Q1 spawn selector restoration");
+    if (checkpoint->last.registry) {
+        qa_saved_actor_id saved;
+        if (!qa_actors_save_reference(qa_session_actors(selector->options.services.session),
+                                       checkpoint->last, &saved, error))
+            return false;
+    }
+    selector->last = checkpoint->last;
     return true;
 }
 static bool player_body(qa_q1_spawn_selector *selector, qa_actor_id actor, bool living,

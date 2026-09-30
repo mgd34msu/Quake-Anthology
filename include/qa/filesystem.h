@@ -94,6 +94,12 @@ bool qa_fs_file_read_snapshot(qa_fs_file *file,
 
 bool qa_fs_root_replace(qa_fs_root *root, const char *relative,
                         qa_bytes bytes, uint64_t nonce, qa_error *error);
+/* Publish a complete temporary file. Exclusive admission returns true with
+ * created=false when a leaf already exists. Private files are owner-only.
+ * A failed durability sync may follow publication; callers must not retry a
+ * private credential write with stale data. */
+bool qa_fs_root_publish(qa_fs_root *, const char *, qa_bytes, uint64_t nonce,
+                        bool exclusive, bool private_file, bool *created, qa_error *);
 bool qa_fs_root_remove(qa_fs_root *root, const char *relative,
                        qa_error *error);
 
@@ -116,6 +122,37 @@ bool qa_fs_stream_write(qa_fs_stream *stream, qa_bytes bytes,
                         uint64_t *resulting_size, qa_error *error);
 bool qa_fs_stream_size(qa_fs_stream *stream, uint64_t *out,
                        qa_error *error);
+/* Flush the retained writable handle without changing file identity/position. */
+bool qa_fs_stream_sync(qa_fs_stream *, qa_error *);
 void qa_fs_stream_close(qa_fs_stream *stream);
+
+typedef struct qa_fs_stage qa_fs_stage;
+/* Retains the contained target parent and a private temporary file named by
+ * nonce. Fresh creation is exclusive; resume requires that exact regular file
+ * and never truncates. The caller persists target/nonce/content identity for
+ * recovery and revalidates retained bytes before resuming a transfer. */
+bool qa_fs_stage_open(qa_fs_root *, const char *target, uint64_t nonce,
+                       bool resume, qa_fs_stage **, uint64_t *initial_size, qa_error *);
+bool qa_fs_stage_size(qa_fs_stage *, uint64_t *, qa_error *);
+bool qa_fs_stage_read(qa_fs_stage *, uint64_t offset, void *, size_t capacity,
+                       size_t *read, qa_error *);
+bool qa_fs_stage_write(qa_fs_stage *, uint64_t offset, qa_bytes,
+                        size_t *written, qa_error *);
+/* Flushes and freezes writes. Consumers inspect/hash by read-at, then publish
+ * the same retained file identity. Exclusive publication never replaces an
+ * installed target. created is valid even after a durability-sync failure. */
+bool qa_fs_stage_seal(qa_fs_stage *, qa_fs_identity *, qa_error *);
+typedef struct qa_fs_stage_mapping qa_fs_stage_mapping;
+/* Read-only, demand-paged inspection of the same sealed file handle. No file
+ * bytes are copied into a heap buffer. The mapping survives stage close and
+ * expires on unmap; callers unmap before publication/teardown. */
+bool qa_fs_stage_map(qa_fs_stage *, qa_fs_stage_mapping **, qa_error *);
+qa_bytes qa_fs_stage_mapping_bytes(const qa_fs_stage_mapping *);
+void qa_fs_stage_unmap(qa_fs_stage_mapping *);
+bool qa_fs_stage_publish(qa_fs_stage *, const qa_fs_identity *,
+                          bool exclusive, bool *created, qa_error *);
+/* keep=true retains an unpublished temporary for restart; false removes it.
+ * Publication consumes only the temporary name, not the retained stage handle. */
+void qa_fs_stage_close(qa_fs_stage *, bool keep);
 
 #endif

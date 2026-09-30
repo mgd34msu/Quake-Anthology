@@ -19,6 +19,14 @@ typedef struct pickup_registration {
 } pickup_registration;
 
 typedef enum pickup_consumption { PICKUP_LIVE, PICKUP_REMOVING, PICKUP_CONSUMED } pickup_consumption;
+typedef struct pickup_observation_owner {
+    struct pickup_observation_owner *retired_next;
+    qa_actor_id actor;
+    qa_actor_owner owner;
+    uint64_t serial;
+    qa_pickup_observer observer;
+    bool active;
+} pickup_observation_owner;
 struct qa_pickup_execution {
     struct qa_pickup_execution *previous;
     qa_pickups *service;
@@ -40,6 +48,9 @@ struct qa_pickups {
     qa_pickup_execution *scopes;
     uint64_t serial;
     size_t calls;
+    pickup_observation_owner **observations, *retired_observations;
+    uint32_t observation_capacity;
+    size_t observation_calls;
     void *eligibility_context;
     bool (*eligible)(void *, const qa_pickup_offer *, bool *, qa_error *);
 };
@@ -103,6 +114,11 @@ static void sweep(qa_pickups *service)
             qa_inventory_pickup_release(service->inventory, registration->actor, registration);
             registration_free(registration);
         } else link = &registration->next;
+    }
+    while (service->retired_observations) {
+        pickup_observation_owner *retired=service->retired_observations;
+        service->retired_observations=retired->retired_next;
+        free(retired);
     }
 }
 
@@ -182,7 +198,83 @@ bool qa_pickups_destroy(qa_pickups *service, qa_error *e)
     if (!service) return true;
     if (!qa_pickups_idle(service)) return fail(e, QA_ERROR_ARGUMENT, "Cannot destroy pickup service during callbacks");
     for (pickup_registration *r = service->registrations; r; r = r->next) r->active = false;
-    sweep(service); free(service); return true;
+    sweep(service);
+    for(uint32_t i=0;i<service->observation_capacity;++i) free(service->observations[i]);
+    free(service->observations);free(service);return true;
+}
+
+static pickup_observation_owner *observation_get(qa_pickups *service,qa_actor_id actor) {
+    if(actor.slot>=service->observation_capacity) return NULL;
+    pickup_observation_owner *owner=service->observations[actor.slot];
+    return owner && owner->active && qa_actor_id_equal(owner->actor,actor)?owner:NULL;
+}
+static void observation_retire(qa_pickups *service,pickup_observation_owner *owner) {
+    if(!owner || !owner->active) return;
+    owner->active=false;
+    if(service->observations[owner->actor.slot]==owner) service->observations[owner->actor.slot]=NULL;
+    owner->retired_next=service->retired_observations;service->retired_observations=owner;
+}
+bool qa_pickups_observe(qa_pickups *service,qa_actor_id actor,qa_actor_owner owner,
+                         const qa_pickup_observer *observer,qa_pickup_lease *out,qa_error *e) {
+    if(!service || !owner || !observer || !observer->inspect || !out ||
+       !qa_actors_get(service->actors,actor)) return fail(e,QA_ERROR_ARGUMENT,"invalid pickup observation binding");
+    if(service->serial==UINT64_MAX) return fail(e,QA_ERROR_ARGUMENT,"pickup observation identity exhausted");
+    pickup_observation_owner *previous=actor.slot<service->observation_capacity?service->observations[actor.slot]:NULL;
+    if(previous && qa_actor_id_equal(previous->actor,actor) && previous->owner!=owner)
+        return fail(e,QA_ERROR_ARGUMENT,"pickup observation belongs to another source");
+    if(actor.slot>=service->observation_capacity) {
+        uint32_t capacity=qa_actors_capacity(service->actors);
+        if((size_t)capacity>SIZE_MAX/sizeof(*service->observations)) return fail(e,QA_ERROR_MEMORY,"pickup observation table overflow");
+        pickup_observation_owner **slots=realloc(service->observations,(size_t)capacity*sizeof(*slots));
+        if(!slots) return fail(e,QA_ERROR_MEMORY,"allocating pickup observation table");
+        memset(slots+service->observation_capacity,0,(capacity-service->observation_capacity)*sizeof(*slots));
+        service->observations=slots;service->observation_capacity=capacity;
+    }
+    pickup_observation_owner *binding=malloc(sizeof(*binding));
+    if(!binding) return fail(e,QA_ERROR_MEMORY,"allocating pickup observation owner");
+    *binding=(pickup_observation_owner){.actor=actor,.owner=owner,.serial=++service->serial,.observer=*observer,.active=true};
+    observation_retire(service,previous);service->observations[actor.slot]=binding;
+    *out=(qa_pickup_lease){actor,binding->serial};sweep(service);return true;
+}
+bool qa_pickups_observation_close(qa_pickups *service,qa_pickup_lease lease,qa_error *e) {
+    if(!service) return fail(e,QA_ERROR_ARGUMENT,"missing pickup observation service");
+    pickup_observation_owner *owner=observation_get(service,lease.actor);
+    if(owner && owner->serial==lease.serial) observation_retire(service,owner);
+    sweep(service);return true;
+}
+bool qa_pickups_observation_current(qa_pickups *service,qa_pickup_lease lease) {
+    if(!service || !qa_actors_get(service->actors,lease.actor)) return false;
+    pickup_observation_owner *owner=observation_get(service,lease.actor);
+    return owner && owner->serial==lease.serial;
+}
+static bool observation_current(qa_pickups *service,pickup_observation_owner *owner,qa_actor_id recipient) {
+    return owner->active && observation_get(service,owner->actor)==owner &&
+        qa_actors_get(service->actors,owner->actor) && qa_actors_get(service->actors,recipient);
+}
+bool qa_pickups_inspect(qa_pickups *service,qa_actor_id pickup,qa_actor_id recipient,
+                         qa_pickup_observation *out,bool *found,qa_error *e) {
+    if(!service || !out || !found || !qa_actors_get(service->actors,recipient))
+        return fail(e,QA_ERROR_ARGUMENT,"invalid pickup observation request");
+    *found=false;
+    pickup_observation_owner *owner=observation_get(service,pickup);
+    if(!owner || !qa_actors_get(service->actors,pickup)) return true;
+    if(service->calls==SIZE_MAX || service->observation_calls==SIZE_MAX)
+        return fail(e,QA_ERROR_ARGUMENT,"pickup observation nesting exhausted");
+    ++service->calls;++service->observation_calls;
+    qa_pickup_offer offer={0};bool available=false;float utility=0;
+    bool ok=owner->observer.inspect(owner->observer.context,pickup,recipient,&offer,&utility,&available,e);
+    if(ok && observation_current(service,owner,recipient) && available) {
+        if(!qa_actor_id_equal(offer.pickup,pickup) || !qa_actor_id_equal(offer.recipient,recipient) ||
+           offer.source!=owner->owner || (offer.cargo_count && !offer.cargo))
+            ok=fail(e,QA_ERROR_ARGUMENT,"pickup observation returned a different source or actor");
+        if(ok && (!isfinite(utility) || utility<0)) ok=fail(e,QA_ERROR_ARGUMENT,"pickup observation utility must be finite and nonnegative");
+    }
+    if(ok && observation_current(service,owner,recipient)) {
+        *out=(qa_pickup_observation){.pickup=pickup,.recipient=recipient,.source=owner->owner,
+            .item=offer.item,.utility=utility,.available=available,.dropped=offer.dropped};
+        *found=true;
+    }
+    --service->observation_calls;--service->calls;sweep(service);return ok;
 }
 
 void qa_pickups_actor_released(qa_pickups *service, qa_actor_record actor)
@@ -190,6 +282,7 @@ void qa_pickups_actor_released(qa_pickups *service, qa_actor_record actor)
     if (!service) return;
     for (pickup_registration *r = service->registrations; r; r = r->next)
         if (qa_actor_id_equal(r->actor, actor.id)) r->active = false;
+    observation_retire(service,observation_get(service,actor.id));
     sweep(service);
 }
 
@@ -431,6 +524,31 @@ static bool select_pickup(qa_pickup_execution *execution, qa_error *e)
     return true;
 }
 
+bool qa_pickups_preview(qa_pickups *service,const qa_pickup_offer *offer,float *utility,
+                         bool *accepted,bool *handled,qa_error *e)
+{
+    if(!utility || !accepted || !handled)
+        return fail(e,QA_ERROR_ARGUMENT,"missing pickup preview result");
+    *utility=0;*accepted=false;*handled=true;
+    if(service && service->observation_calls==SIZE_MAX)
+        return fail(e,QA_ERROR_ARGUMENT,"pickup observation nesting exhausted");
+    qa_pickup_execution execution;
+    if(!scope_open(service,offer,&execution,e)) return false;
+    if(!execution.open) return true;
+    ++service->observation_calls;
+    bool ok=select_pickup(&execution,e);
+    if(ok && execution.selection==QA_PICKUP_SELECT_ORIGINAL) *handled=false;
+    else if(ok && execution.selection==QA_PICKUP_SELECT_REPLACEMENT) {
+        if(!execution.rule->rule.preview)
+            ok=fail(e,QA_ERROR_UNSUPPORTED,"selected pickup replacement has no read-only preview");
+        else ok=execution.rule->rule.preview(execution.rule->rule.context,&execution.offer,utility,accepted,e);
+        if(ok && (!isfinite(*utility) || *utility<0))
+            ok=fail(e,QA_ERROR_ARGUMENT,"pickup preview utility must be finite and nonnegative");
+        if(ok && !qa_pickup_current(&execution)) {*utility=0;*accepted=false;}
+    }
+    --service->observation_calls;scope_close(&execution);return ok;
+}
+
 bool qa_pickup_execute_grant(qa_pickup_execution *execution, qa_pickup_outcome *out, qa_error *e)
 {
     if (!execution || !out || !execution->open || execution->selection != QA_PICKUP_SELECT_REPLACEMENT)
@@ -498,6 +616,7 @@ bool qa_pickup_consume(qa_pickup_execution *execution, bool (*remove)(void *, qa
 bool qa_pickups_touch(qa_pickups *service, const qa_pickup_offer *offer,
                       const qa_pickup_continuation *continuation, qa_pickup_outcome *out, qa_error *e)
 {
+    if(service && service->observation_calls) return fail(e,QA_ERROR_ARGUMENT,"pickup observations cannot take items");
     if (!continuation || !continuation->original || !continuation->complete || !out)
         return fail(e, QA_ERROR_ARGUMENT, "Incomplete pickup touch continuation");
     qa_pickup_execution execution;
@@ -530,6 +649,7 @@ done:
 bool qa_pickups_run_source(qa_pickups *service, const qa_pickup_offer *offer,
                            qa_pickup_source_fn callback, void *context, qa_error *e)
 {
+    if(service && service->observation_calls) return fail(e,QA_ERROR_ARGUMENT,"pickup observations cannot execute grants");
     if (!callback) return fail(e, QA_ERROR_ARGUMENT, "Missing original pickup source callback");
     qa_pickup_execution execution;
     if (!scope_open(service, offer, &execution, e)) return false;
@@ -1014,40 +1134,58 @@ done:
     return ok;
 }
 
-bool qa_supply_preview(qa_supply *supply, qa_actor_id actor, const qa_supply_offer *offer,
-                        bool canonical, qa_supply_preview_result *out, qa_error *e)
+static bool preview_resolved(qa_supply *supply, qa_actor_id actor, const supply_grants *grants,
+                              bool weapon_offer, qa_supply_preview_result *out, qa_error *e)
 {
-    if (!out) return fail(e, QA_ERROR_ARGUMENT, "Missing supply preview result");
-    if (!supply_current(supply, e)) return false;
-    supply_enter(supply);
-    supply_grants grants = {0};
     qa_supply_preview_result result = {0};
     qa_inventory_entry *entries = NULL;
     qa_pickup_grant *weapons = NULL;
-    qa_supply_options options = {.canonical = canonical};
     size_t count = 0;
-    bool ok = resolve_offer(supply, offer, &options, &grants, e) && require_entries(supply, actor, &grants, e) &&
+    bool ok = require_entries(supply, actor, grants, e) &&
         qa_inventory_entries(supply->inventory, actor, NULL, 0, &count, e) && supply_current(supply, e);
     if (!ok) goto done;
-    if (count > SIZE_MAX / sizeof(*entries) || grants.weapon_count > SIZE_MAX / sizeof(*weapons)) {
+    if (count > SIZE_MAX / sizeof(*entries) || grants->weapon_count > SIZE_MAX / sizeof(*weapons)) {
         ok = fail(e, QA_ERROR_MEMORY, "Pickup preview size overflow"); goto done;
     }
     entries = malloc((count ? count : 1) * sizeof(*entries));
-    weapons = grants.weapon_count ? calloc(grants.weapon_count, sizeof(*weapons)) : NULL;
-    if (!entries || (grants.weapon_count && !weapons)) {
+    weapons = grants->weapon_count ? calloc(grants->weapon_count, sizeof(*weapons)) : NULL;
+    if (!entries || (grants->weapon_count && !weapons)) {
         ok = fail(e, QA_ERROR_MEMORY, "Cannot allocate pickup preview"); goto done;
     }
     ok = qa_inventory_entries(supply->inventory, actor, entries, count, &count, e) && supply_current(supply, e);
     if (!ok) goto done;
-    for (size_t i = 0; i < grants.weapon_count; ++i) weapons[i] = (qa_pickup_grant){grants.weapons[i], 1};
-    qa_pickup_grant_plan plan = {.weapon_offer = offer->kind == QA_SUPPLY_WEAPON, .weapons = weapons,
-        .weapon_count = grants.weapon_count, .ammo = grants.ammo, .ammo_count = grants.ammo_count};
+    for (size_t i = 0; i < grants->weapon_count; ++i) weapons[i] = (qa_pickup_grant){grants->weapons[i], 1};
+    qa_pickup_grant_plan plan = {.weapon_offer = weapon_offer, .weapons = weapons,
+        .weapon_count = grants->weapon_count, .ammo = grants->ammo, .ammo_count = grants->ammo_count};
     ok = qa_pickup_preview_grants(entries, count, &plan, &result, e);
 done:
-    free(entries); free(weapons); grants_free(&grants); supply_leave(supply);
+    free(entries); free(weapons);
     if (ok) *out = result;
     else qa_supply_preview_free(&result);
     return ok;
+}
+bool qa_supply_preview(qa_supply *supply, qa_actor_id actor, const qa_supply_offer *offer,
+                        bool canonical, qa_supply_preview_result *out, qa_error *e)
+{
+    if(!out) return fail(e,QA_ERROR_ARGUMENT,"Missing supply preview result");
+    if(!supply_current(supply,e)) return false;
+    supply_enter(supply);
+    supply_grants grants={0};qa_supply_options options={.canonical=canonical};
+    bool ok=resolve_offer(supply,offer,&options,&grants,e) &&
+        preview_resolved(supply,actor,&grants,offer->kind==QA_SUPPLY_WEAPON,out,e);
+    grants_free(&grants);supply_leave(supply);return ok;
+}
+bool qa_supply_cargo_preview(qa_supply *supply,qa_actor_id actor,const qa_pickup_cargo *cargo,
+                              size_t count,bool canonical,qa_supply_preview_result *out,qa_error *e)
+{
+    if(!out) return fail(e,QA_ERROR_ARGUMENT,"Missing cargo preview result");
+    if(!supply_current(supply,e) || !cargo_valid(cargo,count,e)) return false;
+    supply_enter(supply);supply_grants grants={0};bool ok=true;
+    for(size_t i=0;ok && i<count;++i)
+        if(cargo[i].weapon) ok=resolve_weapon(supply,&grants,cargo[i].item,canonical,e);
+        else ok=resolve_ammo(supply,&grants,(qa_pickup_grant){cargo[i].item,cargo[i].count},canonical,false,e);
+    if(ok) ok=preview_resolved(supply,actor,&grants,true,out,e);
+    grants_free(&grants);supply_leave(supply);return ok;
 }
 
 static qa_item_id source_owner(const qa_supply_source_owner *owners, size_t count, qa_item_id item)

@@ -831,6 +831,16 @@ bool q1_monster_frame(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 }
 
 bool q1_monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec, qa_error *error) {
+    if (g->options.program == QA_Q1_CTF) {
+        static const char *const removed[] = {
+            "monster_army", "monster_dog", "monster_ogre", "monster_ogre_marksman",
+            "monster_knight", "monster_hell_knight", "monster_wizard", "monster_demon1",
+            "monster_shambler", "monster_zombie", "monster_tarbaby", "monster_fish",
+            "monster_enforcer", "monster_shalrath", "monster_boss", "monster_oldone"};
+        for (size_t i = 0; i < sizeof(removed) / sizeof(*removed); ++i)
+            if (q1_classnamed(g, entity->id, removed[i]))
+                return q1_remove(g, entity, error);
+    }
     if (!g->services.physics) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "native Q1 monsters require shared physics");
         return false;
@@ -848,7 +858,8 @@ bool q1_monster_spawn(qa_q1_game *g, q1_actor *entity, const q1_species *spec, q
                                          .path = entity->target,
                                          .current_frame = q1_frame_index(spec->stand),
                                          .next_frame = q1_frame_index(spec->stand)};
-    bool addon = g->options.program >= QA_Q1_DOPA && spec->species <= QA_Q1_ZOMBIE;
+    bool addon = g->options.program >= QA_Q1_DOPA && g->options.program <= QA_Q1_MG3 &&
+                 spec->species <= QA_Q1_ZOMBIE;
     if (addon && (g->options.coop ? (entity->spawnflags & 131072u) : (entity->spawnflags & 32768u)))
         return q1_remove(g, entity, error);
     if (addon && g->options.program == QA_Q1_MG3) {

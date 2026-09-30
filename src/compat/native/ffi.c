@@ -319,7 +319,6 @@ bool native_ffi_call(qa_native_instance *instance, qa_native_address address,
                      const qa_native_signature *signature, native_ffi_signature *prepared,
                      const qa_native_value *arguments, size_t argument_count,
                      qa_native_value *result, qa_error *error) {
-    (void)instance;
     if (!address || !signature || !prepared || argument_count != signature->parameter_count ||
         (argument_count && !arguments))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
@@ -367,6 +366,7 @@ bool native_ffi_call(qa_native_instance *instance, qa_native_address address,
         uintptr_t integer;
         void (*function)(void);
     } target = {.integer = (uintptr_t)address};
+    native_call_started(instance);
     ffi_call(&prepared->cif, target.function, result_storage, values);
     bool ok = read_result(signature, prepared, &scalar_result, aggregate_result, result, error);
     free(aggregate_result);

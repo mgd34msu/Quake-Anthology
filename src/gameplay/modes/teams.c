@@ -314,7 +314,13 @@ bool qa_modes_suicide(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool *handl
     mode_player *player = mode_player_get(m, actor);
     if (!v || !member || !player || !handled)
         return mode_fail(e, "invalid mode suicide");
-    *handled = v->value.rules.source == QA_MODE_THREEWAVE;
+    *handled = v->value.rules.source == QA_MODE_THREEWAVE || v->value.rules.source >= QA_MODE_Q3;
+    if (v->value.rules.source >= QA_MODE_Q3) {
+        qa_combat_state combat;
+        if (!qa_combat_read(m->options.services.combat, actor, &combat, e))
+            return false;
+        return member->player.spectator || combat.health <= 0 || team_death(m, v, actor, true, e);
+    }
     if (!*handled || member->player.spectator || v->value.rules.start_map)
         return true;
     if (member->suicide_count > 3)
@@ -463,8 +469,8 @@ static bool controls(qa_modes *m, qa_mode_id id, qa_actor_id actor, const qa_mod
     if (!qa_modes_team(m, v->id, actor, &current, e))
         return false;
     if (!p->player.spectator && !v->value.rules.start_map && v->value.rules.teamplay >= 0 &&
-        current != p->last_team) {
-        qa_team_id previous = p->last_team;
+        (current != p->last_team || p->player.ctf_last_team < 0)) {
+        qa_team_id previous = p->player.ctf_last_team < 0 ? 0 : p->last_team;
         if ((v->value.rules.teamplay & 64) && previous) {
             if (p->suicide_count > 3 && m->options.hooks.disconnect &&
                 !MODE_CALLBACK(m, m->options.hooks.disconnect(m->options.hooks.context, actor, e)))
@@ -478,13 +484,17 @@ static bool controls(qa_modes *m, qa_mode_id id, qa_actor_id actor, const qa_mod
         } else {
             if (previous && !team_death(m, v, actor, false, e))
                 return false;
-            if (!current && !qa_modes_choose_team(m, id, actor, &current, e))
+            if ((!current || p->player.ctf_last_team < 0) &&
+                !qa_modes_choose_team(m, id, actor, &current, e))
                 return false;
             if (!qa_modes_set_team(m, v->id, actor, current, e) || !qa_modes_set_score(m, id, actor, 0, e))
                 return false;
             p->last_team = current;
         }
     }
+    p->player.ctf_last_team = v->value.rules.start_map || p->player.spectator ? 1
+        : p->last_team == v->value.rules.teams[0] ? 5
+        : p->last_team == v->value.rules.teams[1] ? 14 : p->player.ctf_last_team;
     if (p->player.spectator)
         return observer_move(m, v, p, input, e);
     if (impulse == 22 || (impulse == 1 && !input->grapple_selected)) {

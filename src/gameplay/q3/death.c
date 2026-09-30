@@ -65,10 +65,20 @@ bool q3_death_rewards(qa_q3_game *game, qa_actor_id victim, const qa_damage_requ
     if (!entry || !killer || killer->kind != Q3_ACTOR_PLAYER ||
         qa_actor_id_equal(victim, killer->actor))
         return true;
+    qa_actor_id attacker = request->attack.attacker;
     qa_combat_state vc, kc;
-    if (!qa_combat_read(game->options.services.combat, victim, &vc, error) ||
-        !qa_combat_read(game->options.services.combat, killer->actor, &kc, error))
+    if (!qa_combat_read(game->options.services.combat, victim, &vc, error))
         return false;
+    killer = q3_actor_get(game, attacker);
+    if (!killer || killer->kind != Q3_ACTOR_PLAYER)
+        return true;
+    if (!qa_combat_read(game->options.services.combat, attacker, &kc, error))
+        return false;
+    entry = q3_actor_get(game, victim);
+    killer = q3_actor_get(game, attacker);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER || !killer ||
+        killer->kind != Q3_ACTOR_PLAYER)
+        return true;
     if (game->options.rules.game_type >= 3 && vc.team == kc.team)
         return true;
     qa_q3_player_state *player = &killer->state.player;
@@ -82,6 +92,8 @@ bool q3_death_rewards(qa_q3_game *game, qa_actor_id victim, const qa_damage_requ
         player->excellent_count = q3_add_time(player->excellent_count, 1);
         player->flags = (player->flags & ~0x38848u) | 8u;
         player->reward_until = q3_add_time(game->now_ms, 2000);
+        if (!q3_ranking_reward(game, attacker, 8u, error))
+            return false;
     }
     player->last_kill_ms = game->now_ms;
     return true;

@@ -2,6 +2,7 @@
 #define QA_CONSOLE_H
 
 #include "qa/common.h"
+#include "qa/actors.h"
 
 typedef enum qa_console_dialect {
     QA_CONSOLE_Q1,
@@ -30,6 +31,10 @@ typedef struct qa_command_context {
     bool direct;
     bool console_text;
     const char *script;
+    /* Application owners stamp deferred work with the exact world/provider
+     * publication and optional canonical actor. Generic consoles leave zero. */
+    uint64_t registry, generation;
+    qa_actor_id actor;
 } qa_command_context;
 
 typedef struct qa_command_tokens {
@@ -151,10 +156,32 @@ bool qa_cvars_set_cheats(qa_cvars *registry, bool allowed, qa_error *error);
 void qa_cvars_set_server_active(qa_cvars *registry, bool active);
 void qa_cvars_set_high_characters(qa_cvars *registry, bool enabled);
 void qa_cvars_remove_owner(qa_cvars *registry, uint64_t owner);
+/* Promote the scalar to the registry lifetime. Binding ownership is unchanged;
+ * remove_owner still detaches a retiring owner's callbacks. Idempotent. */
+bool qa_cvars_retain_shared(qa_cvars *, const char *name, qa_error *);
 uint32_t qa_cvars_take_modified_flags(qa_cvars *registry);
 void qa_cvars_mark_modified_flags(qa_cvars *registry, uint32_t flags);
 void qa_cvars_clear_modified(qa_cvars *registry, const char *name);
 bool qa_cvars_take_userinfo_modified(qa_cvars *registry);
+typedef struct qa_cvar_registry_state {
+    size_t next_handle;
+    uint32_t modified_flags;
+    bool userinfo_modified, server_active, high_characters, cheats;
+} qa_cvar_registry_state;
+typedef struct qa_cvar_record_state {
+    const char *name;
+    size_t handle;
+    uint64_t owner, modification_count;
+    bool modified, console_created;
+} qa_cvar_record_state;
+/* Metadata complements typed value/reset/latch/flag restoration. Names borrow
+ * the registry; capture requires room for qa_cvars_count records. Restore
+ * validates the complete set before changing metadata, calls no notifications,
+ * and rejects bound variables whose owner/handle would change. */
+bool qa_cvars_capture_metadata(const qa_cvars *, qa_cvar_registry_state *,
+                                qa_cvar_record_state *, size_t, qa_error *);
+bool qa_cvars_restore_metadata(qa_cvars *, const qa_cvar_registry_state *,
+                                const qa_cvar_record_state *, size_t, qa_error *);
 /* Outputs are owned NUL-terminated text; size excludes the terminator. */
 bool qa_cvars_info(const qa_cvars *registry, uint32_t flags, size_t maximum_length,
                     qa_buffer *out, qa_error *error);
@@ -213,6 +240,8 @@ typedef struct qa_console_options {
     size_t maximum_buffer;
     size_t maximum_command;
     bool disable_builtins;
+    bool (*capture_context)(void *user, const qa_command_context *, qa_command_context *, qa_error *);
+    bool (*context_active)(void *user, const qa_command_context *);
 } qa_console_options;
 
 typedef struct qa_console_entry {
@@ -233,11 +262,25 @@ bool qa_console_set_profile(qa_console *console, qa_console_dialect dialect,
 bool qa_console_register(qa_console *console, const char *name, const char *description,
                            uint64_t owner, bool engine_command, qa_command_handler handler,
                            void *user, qa_error *error);
+/* Dispatch visibility and callback lifetime may differ for shared engine
+ * commands. Retirement clears the handler while other contributions survive. */
+bool qa_console_register_owned(qa_console *, const char *name, const char *description,
+                                 uint64_t dispatch_owner, uint64_t lifetime_owner,
+                                 bool engine_command, qa_command_handler, void *, qa_error *);
+/* A shared dispatch entry retains independent role lifetime contributions.
+ * Repeated contributions are idempotent. Removing the dispatch owner retires
+ * the entry; removing a lifetime owner retires only its contributions. */
+bool qa_console_contribute(qa_console *, const char *name, uint64_t dispatch_owner,
+                            uint64_t lifetime_owner, qa_error *);
+bool qa_console_uncontribute(qa_console *, const char *name, uint64_t dispatch_owner,
+                              uint64_t lifetime_owner);
 bool qa_console_unregister(qa_console *console, const char *name, uint64_t owner);
 /* Documentation is copied; NULL removes it. Registration owns its lifetime. */
 bool qa_console_document(qa_console *, const char *name, uint64_t owner,
                          const qa_console_documentation *, qa_error *);
 qa_cvars *qa_console_visible_cvars(qa_console *, const qa_command_context *, size_t ordinal);
+bool qa_console_limits(qa_console *, const qa_command_context *,
+                        size_t *maximum_command, size_t *maximum_buffer, qa_error *);
 qa_cvars *qa_console_cvar_owner(qa_console *, const qa_command_context *, const char *name);
 const qa_console_entry *qa_console_entry_at(const qa_console *console, size_t ordinal);
 const qa_console_entry *qa_console_context_entry_at(const qa_console *, const qa_command_context *, size_t ordinal);
@@ -254,6 +297,13 @@ bool qa_console_insert(qa_console *console, const qa_command_context *context,
                          const char *text, qa_error *error);
 bool qa_console_execute_now(qa_console *console, const qa_command_context *context,
                               const char *text, qa_error *error);
+/* Output redirection covers this synchronous invocation and nested commands.
+ * Deferred commands retain their ordinary console output owner. */
+bool qa_console_execute_capture(qa_console *, const qa_command_context *, const char *,
+    void (*print)(void *, const qa_command_context *, const char *), void *, qa_error *);
+void qa_console_emit(qa_console *, const qa_command_context *, const char *);
+bool qa_console_idle(const qa_console *);
+bool qa_console_output_redirected(const qa_console *);
 /* One frame of queued work, respecting wait. Zero budget is unlimited. */
 bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_error *error);
 bool qa_console_defer(qa_console *console, qa_error *error);

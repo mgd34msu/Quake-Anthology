@@ -1,0 +1,38 @@
+# Launch metadata and retained guest ownership review, 2026-09-29
+
+Reviewer: presentation/application worker. Source inspection only; no compiler, parser, executable, test or benchmark ran. Root application integration is still being frozen; its acceptance will be recorded separately from the immutable lease core.
+
+## Immutable metadata lease core
+
+Read `include/qa/launch.h` and the owner, lease, snapshot release, preparation, reuse, failure and transaction publication paths in `src/session/configuration/transaction.c`. Reviewed hashes:
+
+| File | SHA-256 |
+|---|---|
+| `include/qa/launch.h` | `7960bc5c48918473028ca464c9428f90b71576ad690a48e17ff1be20af6711cf` |
+| `src/session/configuration/transaction.c` | `d00d4ad8340c75834b1ba543da7e1f71a65642e4cd8f56609db9143356db0ea3` |
+
+No confirmed defect found in this bounded lease core. Final execution release clears `prepared` and sets `closing` before invoking `close_instance`. Releasing the final lease inside that callback cannot dispose the owner until the callback returns. A deferred release instead keeps immutable resources, mount view, declaration interfaces, behavior references and identity/catalog ownership live until its own final lease release. The lease does not retain execution or a snapshot. Reused instances retain their independent execution reference while disposing the temporary candidate identity. Preparation failure transfers a nonnull state to exactly one close callback; a failure before state creation has no execution close callback.
+
+Each lease copies the particular view's roles. Snapshot bindings continue to own their current role view. A lease acquired during preparation contains the then-current borrowed state field; application metadata consumers do not use it as the current execution/routing authority.
+
+## Confirmed integration defect
+
+`src/app/application/map.c` checked `provider->launch->roles` when deciding whether to initialize auxiliary QC map state. That descriptor records initial construction metadata. A role-only rebinding reuses execution, so an initially roleless enabled mod could later acquire a gameplay role while retaining initial roles zero and skip initialization. The world worker changed the guard to locate the provider's actual candidate snapshot instance, verify its state identity, and use that snapshot's roles. Independently reread the repair at the auxiliary provider loop. This is a source repair, not runtime verification.
+
+## Independent qualified guest input review
+
+Read the complete input profile, input adapter and private declarations; inspected only the new source-region qualifier declaration/definition and its existing qualification/binding dependencies in the larger QVM files. Exact hashes: `arsenal_guest.c` `7d9c1c21b87bef8f0440135cb64b7faad0c6f552f09f5b9e71b5e434ddeb52c9`, `guest_input_profile.c` `cce983f7ac3b160545974336d438f43c3f2b863002decda5e1931a2cb92a28de`, `guest_input_private.h` `8a7c1491b3fac08d6a77947c3febc1dc6046ce88dd98456e47c77753e20d2d6a`, `qvm.h` `576173039cac29d39b3a61e177a1a761510a966f7ade71f493b40934a10d8393`, `execute.c` `b5f4e54b3ad16ef88263dfb077123aac2ddc952e900d9a661fb8ca11a4d1c56f`.
+
+No additional confirmed defect in that bounded packet. The outer motion lease covers actual ClientThink and canonical completion, then unwinds at its sole post-admission return path; retained command and in-command state clear after unwind. Full actor IDs and source/table matching protect resumed writes. Failed profile qualification frees its owned intermission, pointer and branch arrays; failed hook attachment retains teardown access through the role. The new qualifier delegates to the same non-evaluation source-region proof used by actual binding. The worker separately exposed host world-ground translation and retired-motion-depth defects, which the host owner is repairing. Native mixed regions, non-normal foreign movement, retained RunClient completion, the other primary interface roles and runtime behavior are excluded from this acceptance.
+
+## Root consumer review
+
+The root nine-file consumer freeze is `/tmp/qa-root-ownership-freeze.txt`; all nine hashes matched during this review. Read provider preparation/construction/cleanup and complete lifetime, composition, owner and publication sources, the guest service defaults/factory, relevant public/internal ownership fields, and explicit translation-unit metadata in CMake. Also traced the called launch lease, Q1 retained-operation, guest role, native instance/profile binding and bot lifecycle boundaries. The QC qualification/input and bot implementation internals have separate owners and are excluded from this consumer review.
+
+Confirmed P1: detached native Q3 preparation called `construct_and_reserve` → provider construction → native instance creation → `native_profile_bind` / `bind_q3`, which executes the source `dllEntry`. That source entry can invoke the installed shared cvar/console bridge before publication. Registering a cvar promotes its scalar to registry ownership zero; candidate abort removes role registrations but cannot remove that scalar or reverse an existing cvar mutation. A failed preparation could therefore change the active configuration. Source INIT being deferred did not make native instance creation inert. The parent authorized a producer repair: native creation and input attachment now enter committed activation. That repair is in `/tmp/qa-q3-native-activation-freeze.txt` and requires independent review by the world worker. This reviewer implemented the producer repair and does not independently accept it.
+
+No additional confirmed defect in the bounded root consumer packet. Provider preparation retains its metadata lease before parsing or qualification and releases it on prepublication failure; final close destroys execution before releasing qualification, program/module/image, product catalog and metadata. The intrusive live-provider list includes retained detached owners for the guest activity guard. Construction retains the product's actual catalog and Q1 keeps a separate lifetime token across component retirement. Configuration, publication, frame advance and public destruction check guest activity at their respective boundaries. Committed travel captures carry before source change-parms/shutdown; those source services and bot population retire before old actors and geometry, and bot publication follows successful map/player publication. The continuation-only velocity default updates shared control state through its typed helper rather than recursively publishing the guest body. Readiness distinguishes retained rejection from consumed faulted session destruction.
+
+The Q2 and world workers independently matched and accepted the native activation source repair. With that producer acceptance, no confirmed defect remains in this bounded frozen consumer/activation packet. Subsequent root header changes and the newly authorized native shutdown/unload teardown packet require separate review. The QVM executor clears invocation failure on a later root invocation; it is not permanently faulted by a failed callback. The new shutdown/unload repair is tracked in `native-unload-lifetime-20260929.md` and is not accepted by this consumer review.
+
+Root owns the provider metadata lease consumers, all-retained guest guard, and committed publication ordering. Full B25/B34 configuration qualification, portable continuations, actual frontend/snapshot/bot services, mixed guest gameplay and complete baseline behavior remain outside this bounded review. Source whitespace checks passed for this report and the worker's changed producer files. No build or runtime result follows from source inspection or metadata checks.

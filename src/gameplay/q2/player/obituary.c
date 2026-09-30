@@ -62,6 +62,8 @@ static bool score(qa_q2_game *g, q2_actor *victim, qa_actor_id attacker, qa_acto
     if (!q2_actor_live(g, recipient))
         return true;
     qa_q2_player_services *s = &g->player_runtime->services;
+    if (s->shared_score_owned)
+        return true;
     if (s->score)
         return s->score(s->context, victim->id, attacker, recipient, change, means, e);
     q2_actor *native = q2_client(g, recipient, e);

@@ -327,7 +327,7 @@ bool q2_item_catalog(qa_q2_game *g, qa_error *e) {
             d->kind == QA_Q2_ITEM_SHARD || d->kind == QA_Q2_ITEM_MAX_HEALTH ||
             d->kind == QA_Q2_ITEM_PACK || d->kind == QA_Q2_ITEM_FOOD)
             continue;
-        bool use = d->kind == QA_Q2_ITEM_POWER || d->kind == QA_Q2_ITEM_POWER_ARMOR ||
+        bool use = d->weapon != QA_Q2_WEAPON_NONE || d->kind == QA_Q2_ITEM_POWER || d->kind == QA_Q2_ITEM_POWER_ARMOR ||
                    d->kind == QA_Q2_ITEM_SPHERE || d->kind == QA_Q2_ITEM_DECOY ||
                    d->kind == QA_Q2_ITEM_NUKE || d->kind == QA_Q2_ITEM_COMPASS ||
                    d->kind == QA_Q2_ITEM_FLASHLIGHT;

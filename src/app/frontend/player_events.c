@@ -1,0 +1,149 @@
+#include "internal.h"
+
+static bool scores(frontend_seat *seat, const qa_q2_player_event *event, qa_error *error)
+{
+    if (event->count > SIZE_MAX / sizeof(qa_hud_score))
+        return frontend_fail(error, QA_ERROR_MEMORY, "Q2 score list overflow");
+    size_t bytes = 0;
+    for (size_t i = 0; i < event->count; ++i) {
+        size_t length = strlen(event->scores[i].name ? event->scores[i].name : "") + 1;
+        if (length > SIZE_MAX - bytes) return frontend_fail(error, QA_ERROR_MEMORY, "Q2 score names overflow");
+        bytes += length;
+    }
+    qa_hud_score *rows = event->count ? calloc(event->count, sizeof(*rows)) : NULL;
+    char *names = bytes ? malloc(bytes) : NULL;
+    if ((event->count && !rows) || (bytes && !names)) {
+        free(rows); free(names); return frontend_fail(error, QA_ERROR_MEMORY, "retaining Q2 scores");
+    }
+    const qa_actor_record *local = qa_actors_get(qa_world_actors(qa_application_world(seat->frontend->application)), event->actor);
+    size_t offset = 0;
+    for (size_t i = 0; i < event->count; ++i) {
+        const qa_q2_score_row *source = &event->scores[i];
+        const char *name = source->name ? source->name : "";
+        size_t length = strlen(name) + 1; memcpy(names + offset, name, length);
+        rows[i] = (qa_hud_score){.name = names + offset, .score = source->score, .ping = source->ping,
+            .local = local && local->has_source && local->source_slot == source->slot, .spectator = source->spectator};
+        offset += length;
+    }
+    free(seat->q2_scores); free(seat->q2_score_names);
+    seat->q2_scores = rows; seat->q2_score_names = names; seat->q2_score_count = event->count;
+    return true;
+}
+static bool timer(frontend_seat *seat, uint64_t time_ns, qa_error *error)
+{
+    if (!seat->q2_view.timer_item || seat->q2_view.timer_seconds <= 0) {
+        seat->q2_timer.until_ns = 0; return true;
+    }
+    uint64_t duration = (uint64_t)seat->q2_view.timer_seconds * UINT64_C(1000000000);
+    if (duration > UINT64_MAX - time_ns) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 timer deadline overflow");
+    if (seat->q2_timer_item == seat->q2_view.timer_item) {
+        seat->q2_timer.until_ns = time_ns + duration; return true;
+    }
+    free(seat->q2_timer_label); seat->q2_timer_label = NULL;
+    seat->q2_timer = (qa_hud_timer){0};
+    qa_inventory *inventory = qa_application_inventory(seat->frontend->application);
+    size_t count = 0;
+    if (!qa_inventory_item_definitions(inventory, seat->q2_actor, NULL, 0, &count, error)) return false;
+    if (count > SIZE_MAX / sizeof(qa_item_definition)) return frontend_fail(error, QA_ERROR_MEMORY, "Q2 timer definitions overflow");
+    qa_item_definition *items = count ? malloc(count * sizeof(*items)) : NULL;
+    if (count && !items) return frontend_fail(error, QA_ERROR_MEMORY, "reading Q2 timer definition");
+    bool ok = qa_inventory_item_definitions(inventory, seat->q2_actor, items, count, &count, error);
+    for (size_t i = 0; ok && i < count; ++i) {
+        if (items[i].item != seat->q2_view.timer_item || !items[i].label) continue;
+        size_t size = strlen(items[i].label) + 1;
+        seat->q2_timer_label = malloc(size);
+        if (!seat->q2_timer_label) ok = frontend_fail(error, QA_ERROR_MEMORY, "retaining Q2 timer label");
+        else memcpy(seat->q2_timer_label, items[i].label, size);
+        break;
+    }
+    free(items);
+    if (ok) {
+        seat->q2_timer_item = seat->q2_view.timer_item;
+        seat->q2_timer = (qa_hud_timer){.label = seat->q2_timer_label, .until_ns = time_ns + duration};
+    }
+    return ok;
+}
+static bool help_line(frontend_seat *seat, unsigned slot, const char *text, qa_error *error)
+{
+    char *copy = NULL;
+    if (text && *text) {
+        size_t size = strlen(text) + 1; copy = malloc(size);
+        if (!copy) return frontend_fail(error, QA_ERROR_MEMORY, "retaining Q2 help text");
+        memcpy(copy, text, size);
+    }
+    free(seat->q2_help_text[slot]); seat->q2_help_text[slot] = copy;
+    seat->q2_help_lines[slot] = copy ? copy : "";
+    return true;
+}
+void frontend_player_retire(frontend_seat *seat)
+{
+    free(seat->q2_scores); free(seat->q2_score_names); free(seat->q2_timer_label);
+    seat->q2_scores = NULL; seat->q2_score_names = NULL; seat->q2_timer_label = NULL; seat->q2_score_count = 0;
+    for (unsigned i = 0; i < 2; ++i) { free(seat->q2_help_text[i]); seat->q2_help_text[i] = NULL; seat->q2_help_lines[i] = ""; }
+    seat->q2_timer_item = 0;
+    seat->q2_actor = (qa_actor_id){0}; seat->q2_view = (qa_q2_player_view){0}; seat->q2_timer = (qa_hud_timer){0};
+    seat->q2_view_ready = seat->q2_inventory = seat->q2_help = false;
+}
+bool frontend_player_events(qa_frontend *frontend, qa_error *error)
+{
+    for (size_t i = 0; i < qa_application_q2_player_event_count(frontend->application); ++i) {
+        qa_application_q2_player_event observed;
+        if (!qa_application_q2_player_event_at(frontend->application, i, &observed))
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 player event queue changed during presentation");
+        const qa_q2_player_event *event = &observed.event;
+        for (unsigned j = 0; j < frontend->options.seats; ++j) {
+            frontend_seat *seat = &frontend->seats[j]; qa_actor_id actor;
+            if (!qa_application_player_actor(frontend->application, j, &actor) ||
+                (event->actor.registry && !qa_actor_id_equal(actor, event->actor))) continue;
+            if (seat->q2_actor.registry && !qa_actor_id_equal(actor, seat->q2_actor)) frontend_player_retire(seat);
+            seat->q2_actor = actor;
+            switch (event->kind) {
+            case QA_Q2_PLAYER_VIEW:
+                seat->q2_view = event->view; seat->q2_view_ready = true;
+                seat->q2_vitals[0] = (qa_hud_value){.label = "Health", .value = event->view.health, .warning = event->view.health <= 25};
+                seat->q2_vitals[1] = (qa_hud_value){.label = "Armor", .value = event->view.armor, .warning = (event->view.flashes & 2) != 0};
+                seat->q2_vitals[2] = (qa_hud_value){.label = "Ammo", .value = event->view.ammo};
+                if (!timer(seat, frontend->time_ns, error)) return false;
+                break;
+            case QA_Q2_PLAYER_SCOREBOARD: if (!scores(seat, event, error)) return false; break;
+            case QA_Q2_PLAYER_INVENTORY: seat->q2_inventory = event->visible; break;
+            case QA_Q2_PLAYER_HELP: seat->q2_help = event->visible; break;
+            case QA_Q2_PLAYER_PRINT:
+                if (event->text && !qa_hud_notify(seat->hud, event->text, event->level == 3,
+                        frontend->time_ns, UINT64_C(4000000000), error)) return false;
+                break;
+            case QA_Q2_PLAYER_STUFFTEXT: {
+                if (!event->text) break;
+                qa_command_context command = {.owner = observed.provider, .seat = j, .actor = actor,
+                    .dialect = QA_CONSOLE_Q2, .origin = QA_COMMAND_SERVER, .script = "q2:stufftext"};
+                if (!qa_application_capture_command_context(frontend->application, &command, &command, error) ||
+                    !qa_console_append(qa_application_console(frontend->application), &command, event->text, error)) return false;
+                break;
+            }
+            default: break;
+            }
+        }
+    }
+    qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
+    for (size_t i = 0; i < qa_application_q2_map_event_count(frontend->application); ++i) {
+        qa_application_q2_map_event observed;
+        if (!qa_application_q2_map_event_at(frontend->application, i, &observed))
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "Q2 map event queue changed during presentation");
+        const qa_q2_map_event *event = &observed.event;
+        if (event->kind != QA_Q2_MAP_HELP && event->kind != QA_Q2_MAP_HELP_COMPUTER && event->kind != QA_Q2_MAP_STORY) continue;
+        for (unsigned j = 0; j < frontend->options.seats; ++j) {
+            frontend_seat *seat = &frontend->seats[j]; qa_actor_id actor;
+            if (!qa_application_player_actor(frontend->application, j, &actor) ||
+                (event->recipient.registry && !qa_actor_id_equal(actor, event->recipient))) continue;
+            const char *text = qa_strings_cstr(strings, event->text);
+            if (event->kind == QA_Q2_MAP_HELP && event->slot >= 1 && event->slot <= 2) {
+                if (!help_line(seat, (unsigned)event->slot - 1, text, error)) return false;
+            } else if (event->kind == QA_Q2_MAP_HELP_COMPUTER) {
+                seat->q2_help = event->visible;
+                if (!help_line(seat, 0, text, error) || !help_line(seat, 1, qa_strings_cstr(strings, event->resource), error)) return false;
+            } else if (event->kind == QA_Q2_MAP_STORY && text &&
+                !qa_hud_center_print(seat->hud, text, frontend->time_ns, UINT64_C(6000000000), false, UINT64_C(50000000), error)) return false;
+        }
+    }
+    return true;
+}

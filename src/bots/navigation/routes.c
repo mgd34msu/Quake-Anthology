@@ -1,7 +1,11 @@
 #include "internal.h"
+#include "qa/bot_navigation_source.h"
 
 static bool route_time(qa_bot_route_prediction *result, const qa_aas_setting *initial,
-                       qa_vec3 origin, qa_vec3 start, uint32_t travel, qa_error *e) {
+                       const qa_bot_vector_source *source, qa_vec3 start, uint32_t travel,
+                       qa_error *e) {
+    qa_vec3 origin;
+    if (!qa_bot_vector_read(source, &origin, e)) return false;
     uint16_t area;
     if (!qa_navigation_aas_area_time(initial, origin, start, &area, e)) return false;
     uint64_t total = (uint64_t)(uint32_t)result->time + area + travel;
@@ -13,8 +17,22 @@ bool qa_bot_navigation_predict_route(qa_bot_navigation *n, const qa_bot_route_pr
                                      qa_bot_route_prediction *out, qa_error *e) {
     if (!n || !q || !out || !q->route.has_origin)
         return bot_nav_fail(e, "invalid bot route prediction");
-    qa_bot_route_prediction result = {.end_area = q->route.goal_area,
-                                      .end_position = q->route.origin};
+    qa_bot_vector_source origin = {.value = &q->route.origin};
+    qa_bot_route_source_prediction result;
+    if (!qa_bot_navigation_predict_route_from(n, q, &origin, &result, e)) return false;
+    if (result.end_is_origin) result.value.end_position = q->route.origin;
+    *out = result.value;
+    return true;
+}
+bool qa_bot_navigation_predict_route_from(qa_bot_navigation *n,
+                                          const qa_bot_route_prediction_query *q,
+                                          const qa_bot_vector_source *origin,
+                                          qa_bot_route_source_prediction *out, qa_error *e) {
+    if (!n || !q || !origin || (!origin->value && !origin->read) || !out ||
+        !q->route.has_origin)
+        return bot_nav_fail(e, "invalid source bot route prediction");
+    qa_bot_route_prediction result = {.end_area = q->route.goal_area};
+    bool end_is_origin = true, current_is_origin = true;
     qa_bot_nav_route_query current = q->route;
     qa_bot_nav_area first = qa_bot_navigation_area(n, current.area);
     qa_aas_setting initial = {.presence = (int32_t)first.presence, .flags = (int32_t)first.flags};
@@ -23,11 +41,15 @@ bool qa_bot_navigation_predict_route(qa_bot_navigation *n, const qa_bot_route_pr
     for (size_t count = 0; current.area != current.goal_area && count < g->node_count &&
          (!q->maximum_areas || (q->maximum_areas > 0 && count < (uint32_t)q->maximum_areas)); ++count) {
         qa_bot_nav_route route;
+        if (current_is_origin && current.area && current.goal_area &&
+            qa_navigation_node(n->runtime, qa_bot_navigation_node(n, current.area)) &&
+            qa_navigation_node(n->runtime, qa_bot_navigation_node(n, current.goal_area)) &&
+            !qa_bot_vector_read(origin, &current.origin, e)) return false;
         if (!qa_bot_navigation_route(n, &current, &route, e)) return false;
         const qa_nav_edge *edge = route.found ? qa_bot_navigation_reachability(n, route.next_reachability) : NULL;
         if (!edge) {
             result.stop_event = QA_BOT_ROUTE_NO_ROUTE;
-            *out = result;
+            *out = (qa_bot_route_source_prediction){result, end_is_origin};
             return true;
         }
         uint32_t flags = qa_nav_edge_travel_flag(edge);
@@ -44,9 +66,10 @@ bool qa_bot_navigation_predict_route(qa_bot_navigation *n, const qa_bot_route_pr
                 result.end_contents = qa_bot_navigation_area(n, current.area).contents;
                 result.end_travel_flags = flags;
                 result.end_position = edge->start;
+                end_is_origin = false;
                 result.succeeded = true;
                 result.stop_event = QA_BOT_ROUTE_TRAVEL;
-                *out = result;
+                *out = (qa_bot_route_source_prediction){result, end_is_origin};
                 return true;
             }
             qa_bot_nav_area dest = qa_bot_navigation_area(n, destination);
@@ -57,10 +80,11 @@ bool qa_bot_navigation_predict_route(qa_bot_navigation *n, const qa_bot_route_pr
                 result.end_contents = dest.contents;
                 result.end_travel_flags = contents_flags;
                 result.end_position = edge->end;
-                if (!route_time(&result, &initial, q->route.origin, edge->start, travel, e)) return false;
+                end_is_origin = false;
+                if (!route_time(&result, &initial, origin, edge->start, travel, e)) return false;
                 result.succeeded = true;
                 result.stop_event = QA_BOT_ROUTE_TRAVEL;
-                *out = result;
+                *out = (qa_bot_route_source_prediction){result, end_is_origin};
                 return true;
             }
         }
@@ -84,33 +108,37 @@ bool qa_bot_navigation_predict_route(qa_bot_navigation *n, const qa_bot_route_pr
                 result.end_area = area;
                 result.end_contents = contents;
                 result.end_position = edge->end;
-                if (!route_time(&result, &initial, q->route.origin, edge->start, travel, e)) return false;
+                end_is_origin = false;
+                if (!route_time(&result, &initial, origin, edge->start, travel, e)) return false;
                 result.succeeded = true;
                 result.stop_event = QA_BOT_ROUTE_CONTENTS;
-                *out = result;
+                *out = (qa_bot_route_source_prediction){result, end_is_origin};
                 return true;
             }
             if ((q->stop_events & QA_BOT_ROUTE_AREA) && area == q->stop_area) {
                 result.end_area = area;
                 result.end_contents = contents;
                 result.end_position = edge->start;
+                end_is_origin = false;
                 result.succeeded = true;
                 result.stop_event = QA_BOT_ROUTE_AREA;
-                *out = result;
+                *out = (qa_bot_route_source_prediction){result, end_is_origin};
                 return true;
             }
         }
-        if (!route_time(&result, &initial, q->route.origin, edge->start, travel, e)) return false;
+        if (!route_time(&result, &initial, origin, edge->start, travel, e)) return false;
         result.end_area = destination;
         result.end_contents = qa_bot_navigation_area(n, destination).contents;
         result.end_position = edge->end;
+        end_is_origin = false;
         result.end_travel_flags = flags;
         current.area = destination;
         current.origin = edge->end;
+        current_is_origin = false;
         if (q->maximum_time && result.time > q->maximum_time) break;
     }
     result.succeeded = current.area == current.goal_area;
-    *out = result;
+    *out = (qa_bot_route_source_prediction){result, end_is_origin};
     return true;
 }
 

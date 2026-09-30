@@ -1115,9 +1115,11 @@ bool native_runner_call(qa_native_instance *instance, const char *entry,
     bool received = false;
     bool ok = native_wire_put_string(&request, entry, error) &&
               encode_values(&request, arguments, count, error);
-    if (ok)
+    if (ok) {
+        native_call_started(instance);
         received = runner_request(instance, NATIVE_WIRE_CALL,
                                   (qa_bytes){request.data, request.size}, &response, error);
+    }
     if (received)
         ok = decode_call_result(response, &spec->signature.result, result, error);
     else

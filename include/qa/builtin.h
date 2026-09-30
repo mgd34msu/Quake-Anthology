@@ -81,6 +81,13 @@ typedef struct qa_builtin_player_info {
     bool connected, spectator, dead;
 } qa_builtin_player_info;
 
+/* Selected effects owners project absolute session deadlines; zero means the
+ * effect is absent. This view does not grant effects or own their timers. */
+typedef struct qa_builtin_powerups {
+    uint64_t quad_until_ns, double_until_ns, invulnerability_until_ns;
+    uint64_t quad_fire_until_ns;
+} qa_builtin_powerups;
+
 typedef enum qa_builtin_motion_reason {
     QA_BUILTIN_MOTION_TELEPORT,
     QA_BUILTIN_MOTION_LAUNCH,
@@ -136,6 +143,10 @@ typedef struct qa_builtin_services {
     bool (*players)(void *, qa_actor_id *, size_t capacity, size_t *count, qa_error *);
     /* Read-only; false means this actor has no connected player projection. */
     bool (*player_info)(void *, qa_actor_id, qa_builtin_player_info *);
+    /* Read-only. Success returns zero deadlines when no selected effect applies. */
+    /* Deadlines are translated to the observer's source clock. */
+    bool (*powerups)(void *, qa_actor_owner observer, qa_actor_id,
+                     qa_builtin_powerups *, qa_error *);
     /* Body storage is already committed. The selected movement owner updates
      * its continuation and command-angle delta before subsequent commands. */
     bool (*motion_changed)(void *, qa_actor_id, const qa_builtin_motion_change *, qa_error *);

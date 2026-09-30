@@ -638,6 +638,18 @@ bool qa_qc_set_global_int(qa_qc_instance *instance, uint32_t word,
     return qc_write_global(instance, word, &bits, 1u, error);
 }
 
+bool qa_qc_stage_globals(qa_qc_instance *instance, uint32_t word,
+                          const uint32_t *values, uint32_t count, qa_error *error)
+{
+    if (!instance || instance->destroying || instance->checkpointing ||
+        (count && !values))
+        return memory_fail(error, QA_ERROR_ARGUMENT, word, "invalid QC host staging");
+    if (!qc_global_range(instance, word, count, error)) return false;
+    for (uint32_t i = 0; i < count; ++i)
+        qc_store_word(instance->globals, word + i, values[i]);
+    return true;
+}
+
 bool qa_qc_set_global_float(qa_qc_instance *instance, uint32_t word,
                             float value, qa_error *error)
 {

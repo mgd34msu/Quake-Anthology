@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/text.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -324,7 +325,11 @@ bool qa_command_filter(const char *pattern, const char *name, bool case_sensitiv
 
 float qac_number(const char *text, qa_console_dialect dialect)
 {
-    if (!qac_q1(dialect)) return strtof(text, NULL);
+    if (!qac_q1(dialect)) {
+        float value = 0;
+        (void)qa_parse_atof_float(text, &value, NULL);
+        return value;
+    }
     bool negative = *text == '-';
     if (negative) ++text;
     double value = 0;

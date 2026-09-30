@@ -1,6 +1,7 @@
 #include "internal.h"
 
-bool q1_lightning_rays(qa_q1_game *g, qa_actor_id attacker, qa_actor_id inflictor, qa_vec3 start,
+bool q1_electric_rays(qa_q1_game *g, qa_actor_id attacker, qa_actor_id inflictor,
+                       qa_actor_id ignore, qa_vec3 start,
                        qa_vec3 end, float damage, float blood, int32_t color, qa_vec3 direction,
                        uint32_t flags, qa_q1_weapon weapon, const char *cause, qa_error *error) {
     qa_vec3 delta = qa_vec_sub(end, start), side = qa_v3(-delta.y * 16, -delta.y * 16, 0);
@@ -12,7 +13,7 @@ bool q1_lightning_rays(qa_q1_game *g, qa_actor_id attacker, qa_actor_id inflicto
         return false;
     for (size_t i = 0; i < 3; ++i) {
         qa_trace_result trace;
-        if (!q1_trace(g, qa_vec_add(start, offsets[i]), qa_vec_add(end, offsets[i]), inflictor,
+        if (!q1_trace(g, qa_vec_add(start, offsets[i]), qa_vec_add(end, offsets[i]), ignore,
                       true, &trace, error))
             return false;
         if (trace.hit != QA_TRACE_HIT_ACTOR)
@@ -37,6 +38,9 @@ bool q1_lightning_rays(qa_q1_game *g, qa_actor_id attacker, qa_actor_id inflicto
         bool damageable = present && combat.can_take_damage;
         if (damageable || (flags & Q1_LIGHTNING_REMEMBER_ALL))
             hit[count++] = trace.actor;
+        if ((flags & Q1_LIGHTNING_WETSUIT) &&
+            qa_q1_game_power_expires(g, trace.actor, QA_Q1_WETSUIT) != 0)
+            continue;
         if (damageable) {
             double particles = blood > 0 ? ceilf(blood) : 0;
             if (!isfinite(blood) || particles > INT32_MAX) {
@@ -75,4 +79,10 @@ bool q1_lightning_rays(qa_q1_game *g, qa_actor_id attacker, qa_actor_id inflicto
             return true;
     }
     return true;
+}
+bool q1_lightning_rays(qa_q1_game *g, qa_actor_id attacker, qa_actor_id inflictor, qa_vec3 start,
+                       qa_vec3 end, float damage, float blood, int32_t color, qa_vec3 direction,
+                       uint32_t flags, qa_q1_weapon weapon, const char *cause, qa_error *error) {
+    return q1_electric_rays(g, attacker, inflictor, inflictor, start, end, damage, blood, color,
+                            direction, flags, weapon, cause, error);
 }

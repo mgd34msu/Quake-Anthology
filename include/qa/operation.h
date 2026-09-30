@@ -34,6 +34,7 @@ typedef struct qa_operation_hook {
  * retained invocation storage. No-hook dispatch calls canonical directly. */
 bool qa_operation_create(size_t request_size, size_t result_size, qa_operation **out, qa_error *error);
 bool qa_operation_destroy(qa_operation *operation, qa_error *error);
+bool qa_operation_destroy_validate(const qa_operation *operation, qa_error *error);
 bool qa_operation_register(qa_operation *operation, const qa_operation_hook *hook,
                            qa_operation_registration *out, qa_error *error);
 /* Prepare reserves a hook without exposing it to dispatch. A nonzero retiring

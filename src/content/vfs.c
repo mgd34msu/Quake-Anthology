@@ -43,6 +43,7 @@ struct qa_resource_pool {
 
 typedef struct mount {
     qa_mount_id id;
+    char *path;
     qa_archive_comparison comparison;
     package *archive;
     qa_fs_file *archive_file;
@@ -369,6 +370,8 @@ qa_vfs *qa_vfs_clone(const qa_vfs *vfs, qa_error *error)
         mount *source = malloc(sizeof(*source));
         if (source == NULL) goto memory_failure;
         *source = *vfs->mounts[i];
+        source->path = copy_string(vfs->mounts[i]->path);
+        if (source->path == NULL) { free(source); goto memory_failure; }
         qa_fs_file_retain(source->archive_file);
         qa_fs_root_retain(source->root);
         source->referenced = false;
@@ -416,6 +419,7 @@ static void mount_free(mount *source)
     if (source->archive != NULL) package_release(source->archive);
     qa_fs_file_close(source->archive_file);
     qa_fs_root_close(source->root);
+    free(source->path);
     free(source);
 }
 
@@ -581,6 +585,11 @@ bool qa_vfs_mount_archive(qa_vfs *vfs, const char *path, qa_archive_kind kind,
         return false;
     }
     source->comparison = comparison;
+    source->path = copy_string(path);
+    if (!source->path) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain mount path");
+        mount_free(source); return false;
+    }
     if (vfs->q3_demo && !demo_package_allowed(source->archive, error)) {
         mount_free(source);
         return false;
@@ -610,6 +619,11 @@ bool qa_vfs_mount_directory(qa_vfs *vfs, const char *path,
         return false;
     }
     source->root = root;
+    source->path = copy_string(path);
+    if (!source->path) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain mount path");
+        mount_free(source); return false;
+    }
     source->comparison = comparison;
     source->writable = writable;
     if (!add_mount(vfs, source, out, error)) {
@@ -1456,8 +1470,9 @@ static mount *writable_mount(qa_vfs *vfs, qa_mount_id id, qa_error *error)
     return source;
 }
 
-bool qa_vfs_write(qa_vfs *vfs, qa_mount_id id, const char *path,
-                  qa_bytes bytes, qa_error *error)
+static bool write_publish(qa_vfs *vfs, qa_mount_id id, const char *path,
+                          qa_bytes bytes, bool exclusive, bool private_file,
+                          bool *created, qa_error *error)
 {
     mount *source = writable_mount(vfs, id, error);
     if (source == NULL) return false;
@@ -1468,10 +1483,27 @@ bool qa_vfs_write(qa_vfs *vfs, qa_mount_id id, const char *path,
     char *normalized = qa_vfs_normalize_path(path, error);
     if (normalized == NULL) return false;
     uint64_t nonce = vfs->next_temporary++;
-    bool success = qa_fs_root_replace(source->root, normalized, bytes,
-                                      nonce, error);
+    bool success = qa_fs_root_publish(source->root, normalized, bytes,
+                                      nonce, exclusive, private_file, created, error);
     free(normalized);
     return success;
+}
+
+bool qa_vfs_write(qa_vfs *vfs, qa_mount_id id, const char *path, qa_bytes bytes, qa_error *error)
+{
+    bool created;
+    return write_publish(vfs, id, path, bytes, false, false, &created, error);
+}
+bool qa_vfs_write_exclusive(qa_vfs *vfs, qa_mount_id id, const char *path,
+                            qa_bytes bytes, bool *created, qa_error *error)
+{
+    if (!created) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "missing exclusive write result"); return false; }
+    return write_publish(vfs, id, path, bytes, true, false, created, error);
+}
+bool qa_vfs_write_private(qa_vfs *vfs, qa_mount_id id, const char *path, qa_bytes bytes, qa_error *error)
+{
+    bool created;
+    return write_publish(vfs, id, path, bytes, false, true, &created, error);
 }
 
 bool qa_vfs_remove(qa_vfs *vfs, qa_mount_id id, const char *path, qa_error *error)
@@ -1602,4 +1634,33 @@ void qa_vfs_file_close(qa_vfs_file *file)
     qa_fs_stream_close(file->stream);
     free(file->path);
     free(file);
+}
+
+const char *qa_vfs_mount_path(const qa_vfs *vfs, qa_mount_id id) {
+    const mount *source = find_mount(vfs, id); return source ? source->path : NULL;
+}
+size_t qa_vfs_prefix_count(const qa_vfs *vfs) {
+    size_t count = 0;
+    if (vfs) for (const prefix_order *rule = vfs->prefixes; rule; rule = rule->next) ++count;
+    return count;
+}
+bool qa_vfs_prefix_at(const qa_vfs *vfs, size_t index, const char **prefix,
+                       const qa_mount_id **order, size_t *count) {
+    if (!vfs || !prefix || !order || !count) return false;
+    const prefix_order *rule = vfs->prefixes;
+    while (rule && index) { rule = rule->next; --index; }
+    if (!rule) return false;
+    *prefix = rule->prefix; *order = rule->order; *count = vfs->count; return true;
+}
+size_t qa_vfs_resource_count(const qa_vfs *vfs) {
+    size_t count = 0;
+    if (vfs) for (const qa_resource *resource = vfs->pool->resources; resource; resource = resource->next) ++count;
+    return count;
+}
+const qa_resource *qa_vfs_resource_at(const qa_vfs *vfs, size_t index, size_t *readers) {
+    if (!vfs) return NULL;
+    const qa_resource *resource = vfs->pool->resources;
+    while (resource && index) { resource = resource->next; --index; }
+    if (resource && readers) *readers = resource->references ? resource->references - 1 : 0;
+    return resource;
 }

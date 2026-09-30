@@ -41,7 +41,7 @@ bool q2_checkpoint_idle(qa_q2_game *g, qa_error *e) {
 bool qa_q2_runtime_capture(qa_q2_game *g, qa_q2_runtime_checkpoint *out, qa_error *e) {
     if (g == NULL || out == NULL || !q2_checkpoint_idle(g, e))
         return false;
-    *out = (qa_q2_runtime_checkpoint){.version = 1,
+    *out = (qa_q2_runtime_checkpoint){.version = 3,
                                       .edition = g->options.edition,
                                       .product = g->options.product,
                                       .random = g->random,
@@ -52,15 +52,20 @@ bool qa_q2_runtime_capture(qa_q2_game *g, qa_q2_runtime_checkpoint *out, qa_erro
                                       .now_ns = g->now_ns,
                                       .frame_ns = g->frame_ns,
                                       .grapple_options = g->grapple_options,
-                                      .lmctf_plasma_quad = g->lmctf_plasma_quad};
+                                      .lmctf_plasma_quad = g->lmctf_plasma_quad,
+                                      .widow_damage_multiplier = g->widow_damage_multiplier,
+                                      .widow_shot_phase = g->widow_shot_phase};
     for (size_t i = 0; i < 624; ++i)
         out->rerelease_words[i] = g->rerelease_random.words[i];
     return true;
 }
 bool qa_q2_runtime_restore(qa_q2_game *g, const qa_q2_runtime_checkpoint *state, qa_error *e) {
-    if (g == NULL || state == NULL || state->version != 1 || state->edition != g->options.edition ||
-        state->product != g->options.product || state->random.front >= 31 ||
-        state->random.rear >= 31 || state->rerelease_index > 624 || state->frame_ns == 0) {
+    if (g == NULL || state == NULL || state->version != 3 || state->edition != g->options.edition ||
+        state->product != g->options.product || state->widow_shot_phase >= 4 ||
+        state->random.front >= 31 ||
+        state->random.rear >= 31 || state->rerelease_index > 624 || state->frame_ns == 0 ||
+        (state->widow_damage_multiplier != 1 && state->widow_damage_multiplier != 2 &&
+         state->widow_damage_multiplier != 4)) {
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid Q2 runtime checkpoint");
         return false;
     }
@@ -76,6 +81,8 @@ bool qa_q2_runtime_restore(qa_q2_game *g, const qa_q2_runtime_checkpoint *state,
     g->now_ns = state->now_ns;
     g->frame_ns = state->frame_ns;
     g->lmctf_plasma_quad = state->lmctf_plasma_quad;
+    g->widow_damage_multiplier = state->widow_damage_multiplier;
+    g->widow_shot_phase = state->widow_shot_phase;
     return true;
 }
 bool qa_q2_actor_capture(qa_q2_game *g, qa_actor_id id, qa_q2_actor_checkpoint *out, qa_error *e) {
@@ -174,7 +181,16 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
         return false;
     }
     const qa_q2_projectile_checkpoint *p = &s->projectile;
-    if (p->kind > Q2_RERELEASE_SPAWN_BEAM ||
+    if (p->kind > Q2_LOOGIE ||
+        ((p->gib_flags & Q2_GIB_WIDOW_LEGS) != 0 &&
+         (p->kind != Q2_GIB || p->frame < 0 || p->frame > 23 ||
+          p->phase < 0 || p->phase > 1 || p->expire_ns != UINT64_MAX ||
+          (p->phase == 1 && (p->frame != 23 || p->effect_ns == 0)) ||
+          p->gib_flags != Q2_GIB_WIDOW_LEGS)) ||
+        ((p->gib_flags & (Q2_GIB_WIDOW | Q2_GIB_WIDOW_SIZED | Q2_GIB_WIDOW_HIT_SOUND)) != 0 &&
+         (p->kind != Q2_GIB || (p->gib_flags & Q2_GIB_WIDOW) == 0 ||
+          ((p->gib_flags & Q2_GIB_WIDOW_HIT_SOUND) != 0 &&
+           (p->gib_flags & Q2_GIB_WIDOW_SIZED) == 0))) ||
         (p->kind == Q2_PROBOSCIS &&
          (p->phase < Q2_PROBOSCIS_FLYING || p->phase > Q2_PROBOSCIS_RETURNED)) ||
         (p->kind == Q2_PROBOSCIS_SEGMENT && p->phase != 0) ||

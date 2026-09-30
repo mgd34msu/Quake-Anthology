@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../checkpoint_internal.h"
 #include <stdio.h>
 
 bool bot_goal_fail(qa_error *e, const char *message) {
@@ -8,6 +9,7 @@ bool bot_goal_fail(qa_error *e, const char *message) {
 bool bot_goal_mutable(qa_bot_goals *g, qa_error *e) {
     return g && !g->busy ? true : bot_goal_fail(e, "goal owner is absent or executing a query");
 }
+bool qa_bot_goals_active(const qa_bot_goals *g) { return g && g->busy; }
 bool qa_bot_goals_has_handle(const qa_bot_goals *g, uint32_t id) {
     return g && id && id <= g->options.maximum_states && g->states[id - 1].used;
 }
@@ -86,7 +88,7 @@ bool qa_bot_goals_create(qa_bot_items *items, const qa_bot_goal_options *options
     return true;
 }
 void qa_bot_goals_destroy(qa_bot_goals *g) {
-    if (!g) return;
+    if (!g || g->busy) return;
     for (uint32_t i = 0; i < g->options.maximum_states; ++i) release_weights(g, &g->states[i]);
     bot_goal_map_clear(g);
     qa_bot_weight_workspace_destroy(g->workspace);
@@ -355,4 +357,33 @@ bool qa_bot_goals_restore(qa_bot_goals *g, uint32_t id, const qa_bot_goal_state 
     s->state = *state;
     s->used = true;
     return true;
+}
+
+struct bot_goal_restore {
+    qa_bot_goals *owner;
+    uint32_t id;
+    bot_goal_slot slot;
+};
+void bot_goal_restore_lock(qa_bot_goals *g, bool locked) { g->busy = locked; }
+bool bot_goal_restore_prepare(qa_bot_goals *g, uint32_t id, const qa_bot_goal_state *state,
+                              qa_bot_weights *weights, bot_goal_restore **out, qa_error *e) {
+    if (!qa_bot_goals_has_handle(g,id) || !state || state->stack_top >= QA_BOT_GOAL_STACK)
+        return bot_goal_fail(e,"invalid prepared goal checkpoint");
+    for (size_t i=0;i<QA_BOT_AVOID_GOALS;++i)
+        if (!isfinite(state->avoid[i].expires)) return bot_goal_fail(e,"invalid saved avoid time");
+    bot_goal_restore *prepared=calloc(1,sizeof(*prepared));
+    if (!prepared) { qa_error_set(e,QA_ERROR_MEMORY,0,"preparing goal checkpoint");return false; }
+    prepared->owner=g;prepared->id=id;
+    if (!bind_weights(g,&prepared->slot,weights,e)) { free(prepared);return false; }
+    prepared->slot.state=*state;prepared->slot.used=true;
+    *out=prepared;return true;
+}
+void bot_goal_restore_finish(bot_goal_restore *prepared, bool commit) {
+    if (!prepared) return;
+    if (commit) {
+        bot_goal_slot *slot=&prepared->owner->states[prepared->id-1];
+        release_weights(prepared->owner,slot);
+        *slot=prepared->slot;
+    } else release_weights(prepared->owner,&prepared->slot);
+    free(prepared);
 }

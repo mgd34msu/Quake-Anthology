@@ -59,6 +59,11 @@ bool qa_launch_draft_create(qa_catalog *catalog, qa_product_id product, const ch
     if (!launch_defaults(d, product, map, error)) { qa_launch_draft_destroy(d); return false; }
     *out = d; return true;
 }
+bool qa_launch_draft_create_empty(qa_catalog *catalog, qa_launch_draft **out, qa_error *error)
+{
+    if (!out) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing empty launch draft output"); return false; }
+    return launch_empty(catalog, out, error);
+}
 void qa_launch_draft_destroy(qa_launch_draft *d)
 {
     if (!d) return;
@@ -276,14 +281,45 @@ bool qa_launch_set_weapon_behavior(qa_launch_draft *d, const qa_launch_weapon_be
     ((qa_launch_weapon_behavior *)d->choices.behaviors)[i] = v; return true;
 }
 
-bool qa_launch_draft_copy(const qa_launch_draft *source, qa_launch_draft **out, qa_error *error)
+static bool rebase_product(const qa_catalog *source, const qa_catalog *target,
+                            qa_product_id *id, qa_error *error)
+{
+    if (*id == 0 || source == target) return true;
+    const qa_product *old = qa_catalog_product(source, *id);
+    if (!old) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "launch choice has an unknown product");
+        return false;
+    }
+    for (size_t i = 0; i < qa_catalog_count(target); ++i) {
+        const qa_product *product = qa_catalog_at(target, i);
+        if (!strcmp(old->identity, product->identity)) {
+            *id = product->id;
+            return true;
+        }
+    }
+    qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "selected product is missing from refreshed catalog: %s",
+                 old->identity);
+    return false;
+}
+
+bool qa_launch_draft_rebase(const qa_launch_draft *source, qa_catalog *catalog,
+                            qa_launch_draft **out, qa_error *error)
 {
     if (!source || !out) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "cannot copy a missing launch draft"); return false; }
     qa_launch_draft *d;
-    if (!launch_empty(source->catalog, &d, error)) return false;
+    if (!launch_empty(catalog, &d, error)) return false;
     const qa_launch_choices *v = &source->choices;
-    if (!qa_launch_set_world(d, &v->world, error)) goto fail;
-    for (size_t i = 0; i < v->provider_count; ++i) if (!qa_launch_set_provider(d, &v->providers[i], error)) goto fail;
+    qa_launch_world world = v->world;
+    if (!rebase_product(source->catalog, catalog, &world.preset, error) ||
+        !rebase_product(source->catalog, catalog, &world.geometry, error) ||
+        !rebase_product(source->catalog, catalog, &world.presentation, error) ||
+        !rebase_product(source->catalog, catalog, &world.environment_product, error) ||
+        !qa_launch_set_world(d, &world, error)) goto fail;
+    for (size_t i = 0; i < v->provider_count; ++i) {
+        qa_launch_provider provider = v->providers[i];
+        if (!rebase_product(source->catalog, catalog, &provider.product, error) ||
+            !qa_launch_set_provider(d, &provider, error)) goto fail;
+    }
     for (size_t i = 0; i < v->binding_count; ++i) if (!qa_launch_bind(d, &v->bindings[i], error)) goto fail;
     for (size_t i = 0; i < v->mod_count; ++i) if (!qa_launch_set_mod(d, &v->mods[i], error)) goto fail;
     for (size_t i = 0; i < v->mode_count; ++i) if (!qa_launch_set_mode(d, &v->modes[i], error)) goto fail;
@@ -295,4 +331,9 @@ bool qa_launch_draft_copy(const qa_launch_draft *source, qa_launch_draft **out, 
     *out = d; return true;
 fail:
     qa_launch_draft_destroy(d); return false;
+}
+
+bool qa_launch_draft_copy(const qa_launch_draft *source, qa_launch_draft **out, qa_error *error)
+{
+    return qa_launch_draft_rebase(source, source ? source->catalog : NULL, out, error);
 }

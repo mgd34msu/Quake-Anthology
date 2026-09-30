@@ -61,10 +61,15 @@ bool qa_world_create(qa_actor_registry *actors, qa_collision_geometry *geometry,
     *out=world; return true;
 }
 
+bool qa_world_idle(const qa_world *world)
+{
+    return world!=NULL && world->callback_depth==0 && world->visit_depth==0;
+}
+
 bool qa_world_destroy(qa_world *world, qa_error *error)
 {
     if(world==NULL) return true;
-    if(world->callback_depth!=0 || world->visit_depth!=0)
+    if(!qa_world_idle(world))
         return fail(error,QA_ERROR_ARGUMENT,"Cannot destroy world during a callback or spatial visit");
     if(world->geometry_admission!=NULL)
         return fail(error,QA_ERROR_ARGUMENT,"Abort geometry admission before world destruction");
@@ -268,6 +273,12 @@ static bool valid_collision(qa_world *world,const qa_actor_collision *collision,
     return true;
 }
 
+bool qa_world_collision_validate(qa_world *world,const qa_actor_collision *collision,qa_error *error)
+{
+    if(world==NULL) return fail(error,QA_ERROR_ARGUMENT,"Collision validation requires a world");
+    return valid_collision(world,collision,QA_ERROR_FORMAT,error);
+}
+
 bool qa_world_set_collision(qa_world *world,qa_actor_id actor,const qa_actor_collision *collision,qa_error *error)
 {
     qa_world_body *body=qa_world_find_body(world,actor);
@@ -288,6 +299,19 @@ bool qa_world_collision_bind(qa_world *world,qa_actor_id actor,const qa_collisio
         return fail(error,QA_ERROR_ARGUMENT,"Collision binding identity exhausted");
     ++body->collision_serial;
     body->collision_binding=binding!=NULL?*binding:(qa_collision_binding){0};
+    return true;
+}
+bool qa_world_collision_unbind(qa_world *world,qa_actor_id actor,void *expected_context,qa_error *error)
+{
+    if(world==NULL || !qa_world_idle(world))
+        return fail(error,QA_ERROR_ARGUMENT,"Collision binding teardown requires an idle world");
+    qa_world_body *body=qa_world_find_body(world,actor);
+    if(body==NULL || body->collision_binding.read==NULL || body->collision_binding.context!=expected_context)
+        return true;
+    if(body->collision_serial==UINT64_MAX)
+        return fail(error,QA_ERROR_ARGUMENT,"Collision binding identity exhausted");
+    ++body->collision_serial;
+    body->collision_binding=(qa_collision_binding){0};
     return true;
 }
 

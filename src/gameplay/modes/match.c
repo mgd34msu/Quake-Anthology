@@ -248,6 +248,8 @@ bool qa_modes_end(qa_modes *m, qa_mode_id id, qa_string_id reason, qa_error *e) 
         return mode_fail(e, "stale match end");
     if (v->value.phase >= QA_MODE_EXIT_PENDING)
         return true;
+    if (v->value.rules.source == QA_MODE_THREEWAVE)
+        v->value.ctf_pregame_over = true;
     qa_mode_event event = {
         .kind = QA_MODE_MESSAGE, .mode = id, .text = reason, .time_ns = v->value.time_ns};
     if (m->options.hooks.event &&

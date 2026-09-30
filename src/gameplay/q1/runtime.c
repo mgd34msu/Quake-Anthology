@@ -1,4 +1,5 @@
 #include "boss_internal.h"
+#include "qa/game_q1_checkpoint.h"
 
 static const char *const weapon_names[QA_Q1_WEAPON_COUNT] = {"q1:weapon/axe",
                                                              "q1:weapon/shotgun",
@@ -19,7 +20,7 @@ static const char *const weapon_names[QA_Q1_WEAPON_COUNT] = {"q1:weapon/axe",
                                                              "q1:weapon/rogue:grapple",
                                                              "q1:weapon/mg3:laser",
                                                              "q1:weapon/mg3:mjolnir",
-                                                             "q1:weapon/ctf:grapple"};
+                                                             "q1:ctf/weapon/grapple"};
 static const char *const ammo_names[QA_Q1_AMMO_COUNT] = {
     "q1:ammo/shells",   "q1:ammo/nails",         "q1:ammo/rockets",
     "q1:ammo/cells",    "rogue:ammo/lava-nails", "rogue:ammo/multi-rockets",
@@ -30,23 +31,70 @@ static const char *const weapon_models[QA_Q1_WEAPON_COUNT] = {
     "progs/v_laserg.mdl", "progs/v_hammer.mdl", "progs/v_prox.mdl",   "progs/v_lava.mdl",
     "progs/v_lava2.mdl",  "progs/v_multi.mdl",  "progs/v_multi2.mdl", "progs/v_plasma.mdl",
     "progs/v_grpple.mdl", "progs/v_laserg.mdl", "progs/v_hammer.mdl", "progs/v_grpple.mdl"};
+const char *qa_q1_weapon_identity(qa_q1_weapon weapon) {
+    return (unsigned)weapon < QA_Q1_WEAPON_COUNT ? weapon_names[weapon] : NULL;
+}
+bool qa_q1_weapon_source(qa_q1_program program, uint32_t value, qa_q1_weapon *out) {
+    if (!out || (unsigned)program > QA_Q1_CTF)
+        return false;
+    if (value == (program == QA_Q1_ROGUE ? 2048u : 4096u)) {
+        *out = QA_Q1_AXE;
+        return true;
+    }
+    for (unsigned bit = 1, weapon = QA_Q1_SHOTGUN; weapon <= QA_Q1_LIGHTNING;
+         bit <<= 1, ++weapon)
+        if (value == bit) {
+            *out = (qa_q1_weapon)weapon;
+            return true;
+        }
+    if (program == QA_Q1_HIPNOTIC) {
+        if (value == 128u) *out = QA_Q1_MJOLNIR;
+        else if (value == 65536u) *out = QA_Q1_PROXIMITY;
+        else if (value == 8388608u) *out = QA_Q1_LASER;
+        else return false;
+        return true;
+    }
+    if (program == QA_Q1_ROGUE) {
+        for (unsigned bit = 4096u, weapon = QA_Q1_LAVA_NAILGUN; weapon <= QA_Q1_PLASMA;
+             bit <<= 1, ++weapon)
+            if (value == bit) {
+                *out = (qa_q1_weapon)weapon;
+                return true;
+            }
+        if (value == 8388608u) {
+            *out = QA_Q1_ROGUE_GRAPPLE;
+            return true;
+        }
+    }
+    if (program == QA_Q1_CTF && value == 128u) {
+        *out = QA_Q1_CTF_GRAPPLE;
+        return true;
+    }
+    if (program == QA_Q1_MG3) {
+        if (value == 128u) *out = QA_Q1_MG3_MJOLNIR;
+        else if (value == 8388608u) *out = QA_Q1_MG3_LASER;
+        else return false;
+        return true;
+    }
+    return false;
+}
 
 q1_actor *q1_entity(qa_q1_game *g, qa_actor_id actor) {
-    if (!g || actor.slot >= g->capacity ||
+    if (!g || g->destroy_pending || actor.slot >= g->capacity ||
         !qa_actors_get(qa_session_actors(g->services.session), actor))
         return NULL;
     q1_actor *entity = g->actors[actor.slot];
     return entity && entity->active && qa_actor_id_equal(entity->id, actor) ? entity : NULL;
 }
 const q1_actor *q1_entity_const(const qa_q1_game *g, qa_actor_id actor) {
-    if (!g || actor.slot >= g->capacity ||
+    if (!g || g->destroy_pending || actor.slot >= g->capacity ||
         !qa_actors_get(qa_session_actors(g->services.session), actor))
         return NULL;
     const q1_actor *entity = g->actors[actor.slot];
     return entity && entity->active && qa_actor_id_equal(entity->id, actor) ? entity : NULL;
 }
 q1_player *q1_player_get(qa_q1_game *g, qa_actor_id actor) {
-    if (!g || actor.slot >= g->capacity ||
+    if (!g || g->destroy_pending || actor.slot >= g->capacity ||
         !qa_actors_get(qa_session_actors(g->services.session), actor))
         return NULL;
     q1_player *player = g->players[actor.slot];
@@ -92,9 +140,11 @@ q1_player *q1_player_allocate(qa_q1_game *g, qa_actor_id actor, qa_error *error)
     return player;
 }
 bool q1_alive(qa_q1_game *g, qa_actor_id actor) {
-    return qa_actors_get(qa_session_actors(g->services.session), actor) != NULL;
+    return g && !g->destroy_pending &&
+           qa_actors_get(qa_session_actors(g->services.session), actor) != NULL;
 }
 float q1_random(qa_q1_game *g) { return qa_builtin_random_unit(&g->random); }
+float qa_q1_game_random(qa_q1_game *g) { return g && !g->destroy_pending ? q1_random(g) : 0; }
 float q1_health(qa_q1_game *g, qa_actor_id actor) {
     qa_combat_state state;
     return qa_combat_read(g->services.combat, actor, &state, NULL) ? state.health : 0;
@@ -157,6 +207,8 @@ bool q1_model(qa_q1_game *g, q1_actor *entity, const char *path, qa_error *error
 }
 bool q1_sound_resource(qa_q1_game *g, qa_actor_id actor, qa_string_id resource, int32_t channel,
                        float attenuation, float volume, qa_error *error) {
+    if (g->destroy_pending)
+        return true;
     qa_builtin_event event = {.kind = QA_BUILTIN_SOUND,
                               .family = QA_GAME_Q1,
                               .provider = g->options.provider,
@@ -169,6 +221,8 @@ bool q1_sound_resource(qa_q1_game *g, qa_actor_id actor, qa_string_id resource, 
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, actor, &body, error))
         return false;
+    if (g->destroy_pending)
+        return true;
     event.origin =
         qa_vec_add(body.origin, qa_vec_scale(qa_vec_add(body.bounds.mins, body.bounds.maxs), .5f));
     return qa_builtin_emit(&g->services, &event, error);
@@ -181,6 +235,8 @@ bool q1_sound(qa_q1_game *g, qa_actor_id actor, const char *path, int32_t channe
 }
 bool q1_effect(qa_q1_game *g, qa_builtin_event_kind kind, qa_actor_id actor, qa_vec3 origin,
                float value, int32_t code, qa_error *error) {
+    if (g->destroy_pending)
+        return true;
     qa_builtin_event event = {.kind = kind,
                               .family = QA_GAME_Q1,
                               .provider = g->options.provider,
@@ -234,11 +290,23 @@ static bool combat_context(void *context, const qa_damage_request *request,
                     .teamplay = g->options.teamplay}};
     return true;
 }
+static bool operation_finish(qa_q1_game_operation *operation, bool ok, qa_error *error) {
+    if (ok && !qa_q1_game_operation_live(operation)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 source retired during native operation");
+        ok = false;
+    }
+    qa_q1_game_operation_end(operation);
+    return ok;
+}
 static bool begin_frame(void *context, qa_session *session, const qa_source_frame *frame,
                         qa_error *error) {
     (void)session;
-    (void)error;
     qa_q1_game *g = context;
+    if (g->destroy_pending || g->observation_depth) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,
+                     "Q1 source frame cannot advance during borrowed work or teardown");
+        return false;
+    }
     q1_map_frame_begin(g);
     while (g->retired_actors) {
         q1_actor *entity = g->retired_actors;
@@ -255,9 +323,13 @@ static bool begin_frame(void *context, qa_session *session, const qa_source_fram
     g->time_ns = frame->time_ns;
     g->time = (double)frame->time_ns / 1000000000.0;
     g->elapsed = (double)frame->elapsed_ns / 1000000000.0;
-    return true;
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    bool ok = q1_map_addon_frame(g, error);
+    return operation_finish(&operation, ok, error);
 }
-static bool actor_frame(void *context, qa_session *session, qa_actor_id actor,
+static bool actor_frame_inner(void *context, qa_session *session, qa_actor_id actor,
                         const qa_source_frame *frame, qa_error *error) {
     (void)session;
     qa_q1_game *g = context;
@@ -275,6 +347,9 @@ static bool actor_frame(void *context, qa_session *session, qa_actor_id actor,
                 qa_body_state body;
                 if (!qa_world_body_read(g->services.world, actor, &body, error))
                     return false;
+                entity = q1_entity(g, actor);
+                if (!entity)
+                    return true;
                 entity->state.projectile.movedir = body.velocity;
                 entity->speed = qa_vec_length(body.velocity);
             }
@@ -286,6 +361,14 @@ static bool actor_frame(void *context, qa_session *session, qa_actor_id actor,
     if (entity->physics.motion == QA_PHYSICS_PUSH)
         return qa_physics_step_q1_pusher(g->services.physics, actor, frame, false, &result, error);
     return qa_physics_step(g->services.physics, actor, frame, &result, error);
+}
+static bool actor_frame(void *context, qa_session *session, qa_actor_id actor,
+                         const qa_source_frame *frame, qa_error *error) {
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(context, &operation, error))
+        return false;
+    bool ok = actor_frame_inner(context, session, actor, frame, error);
+    return operation_finish(&operation, ok, error);
 }
 static void released(void *context, qa_session *session, qa_actor_record actor) {
     (void)session;
@@ -323,6 +406,10 @@ bool qa_q1_game_create(const qa_builtin_services *services, const qa_q1_options 
     for (size_t i = 0; i < QA_Q1_AMMO_COUNT; ++i)
         if (!qa_builtin_resource(services, ammo_names[i], &g->ammo[i], error))
             goto fail;
+    if (!qa_builtin_resource(services, "progs/v_hammer_glow.mdl", &g->hammer_glow_model, error) ||
+        !qa_builtin_resource(services, "progs/v_bloodshot.mdl", &g->blood_shotgun_model, error) ||
+        !qa_builtin_resource(services, "progs/v_bloodshot2.mdl", &g->blood_super_shotgun_model, error))
+        goto fail;
     if (!qa_builtin_resource(services, "progs/player.mdl", &g->player_model, error) ||
         !qa_builtin_resource(services, "progs/eyes.mdl", &g->eyes_model, error) ||
         !qa_builtin_resource(services, "progs/h_player.mdl", &g->player_head_model, error) ||
@@ -342,9 +429,52 @@ memory:
     qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q1 native provider state");
     return false;
 }
+bool qa_q1_game_operation_begin(qa_q1_game *g, qa_q1_game_operation *operation, qa_error *error) {
+    if (!g || !operation || g->destroy_pending || g->observation_depth == SIZE_MAX) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 native operation is unavailable");
+        return false;
+    }
+    *operation = (qa_q1_game_operation){.game = g};
+    ++g->observation_depth;
+    return true;
+}
+bool qa_q1_game_operation_live(const qa_q1_game_operation *operation) {
+    return operation && operation->game && !operation->game->destroy_pending;
+}
+bool qa_q1_game_retain(qa_q1_game *g, qa_q1_game_operation *operation, qa_error *error) {
+    if (!g || !operation || g->destroy_pending || g->retention_depth == SIZE_MAX) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 callback owner is unavailable");
+        return false;
+    }
+    *operation = (qa_q1_game_operation){.game = g, .retained_owner = true};
+    ++g->retention_depth;
+    return true;
+}
+void qa_q1_game_operation_end(qa_q1_game_operation *operation) {
+    if (!operation || !operation->game)
+        return;
+    qa_q1_game *g = operation->game;
+    bool retained = operation->retained_owner;
+    *operation = (qa_q1_game_operation){0};
+    if (retained)
+        --g->retention_depth;
+    else
+        --g->observation_depth;
+    if (!g->observation_depth && !g->retention_depth && g->destroy_pending)
+        qa_q1_game_destroy(g);
+}
 void qa_q1_game_destroy(qa_q1_game *g) {
     if (!g)
         return;
+    if (g->observation_depth || g->retention_depth) {
+        g->destroy_pending = true;
+        return;
+    }
+    if (g->services.pickups)
+        for (uint32_t i = 0; i < g->capacity; ++i)
+            if (g->actors[i] && g->actors[i]->pickup_observation.serial)
+                qa_pickups_observation_close(g->services.pickups,
+                                              g->actors[i]->pickup_observation, NULL);
     q1_map_destroy(g);
     qa_supply_destroy(g->source_supply);
     while (g->allocated_actors) {
@@ -398,6 +528,8 @@ void qa_q1_game_actor_released(qa_q1_game *g, qa_actor_record actor) {
     if (!g || actor.id.slot >= g->capacity)
         return;
     q1_grapple_released(g, actor.id);
+    q1_map_rotation_released(g, actor.id);
+    q1_map_addon_released(g, actor.id);
     q1_actor *entity = g->actors[actor.id.slot];
     if (entity && qa_actor_id_equal(entity->id, actor.id)) {
         q1_map_actor_released(g, entity);
@@ -468,6 +600,9 @@ bool q1_remove(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return !q1_alive(g, entity->id) || qa_session_release(g->services.session, entity->id, error);
 }
 bool q1_link(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    if (entity->kind == Q1_PICKUP && !entity->pickup_observation.serial &&
+        !q1_pickup_observe(g, entity, error))
+        return false;
     qa_actor_collision collision = {.family = QA_COLLISION_Q1,
                                     .shape = QA_SHAPE_BOX,
                                     .contents = -2,
@@ -488,9 +623,12 @@ bool q1_link(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 static bool think_callback(void *context, qa_actor_id actor, const qa_source_frame *frame,
                            qa_error *error) {
     qa_q1_game *g = context;
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
     q1_actor *entity = q1_entity(g, actor);
     if (!entity)
-        return true;
+        return operation_finish(&operation, true, error);
     double previous = g->time;
     uint64_t previous_ns = g->time_ns;
     g->time_ns = frame->time_ns;
@@ -498,7 +636,20 @@ static bool think_callback(void *context, qa_actor_id actor, const qa_source_fra
     bool result = q1_think(g, entity, error);
     g->time = previous;
     g->time_ns = previous_ns;
-    return result;
+    return operation_finish(&operation, result, error);
+}
+bool qa_q1_game_think_binding(qa_q1_game *g, qa_actor_id actor, uint32_t callback_id,
+                               qa_think_fn *callback, void **context, qa_error *error) {
+    q1_actor *entity = q1_entity(g, actor);
+    if (!entity || !callback || !context || callback_id == Q1_THINK_NONE ||
+        callback_id > Q1_THINK_SPAWN_TEMPLATE || entity->think != (q1_think_kind)callback_id ||
+        entity->physics.motion == QA_PHYSICS_PUSH) {
+        qa_error_set(error, QA_ERROR_FORMAT, actor.slot, "Invalid restored Q1 think binding");
+        return false;
+    }
+    *callback = think_callback;
+    *context = g;
+    return true;
 }
 bool q1_schedule(qa_q1_game *g, q1_actor *entity, double delay, q1_think_kind kind,
                  qa_error *error) {
@@ -777,6 +928,11 @@ static bool spawn_actor(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_s
     qa_actor_id actor;
     if (!qa_builtin_spawn_actor(&g->services, &request, &actor, error))
         return false;
+    if (!q1_alive(g, actor)) {
+        (void)qa_session_release(g->services.session, actor, NULL);
+        *out = (qa_actor_id){0};
+        return true;
+    }
     q1_actor *entity = allocate_state(g, actor, error);
     if (!entity) {
         (void)qa_session_release(g->services.session, actor, NULL);
@@ -862,17 +1018,28 @@ fail:
     return false;
 }
 bool qa_q1_game_spawn(qa_q1_game *g, const qa_q1_spawn *spawn, qa_actor_id *out, qa_error *error) {
-    return spawn_actor(g, spawn, NULL, out, error);
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    bool ok = spawn_actor(g, spawn, NULL, out, error);
+    if (out && (!ok || !qa_q1_game_operation_live(&operation)))
+        *out = (qa_actor_id){0};
+    return operation_finish(&operation, ok, error);
 }
 bool q1_spawn_template(qa_q1_game *g, const qa_q1_spawn *spawn, const qa_body_state *body,
                        qa_actor_id *out, qa_error *error) {
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
     int32_t previous = g->options.deathmatch;
     g->options.deathmatch = 0;
     bool ok = spawn_actor(g, spawn, body, out, error);
     g->options.deathmatch = previous;
-    return ok;
+    if (out && (!ok || !qa_q1_game_operation_live(&operation)))
+        *out = (qa_actor_id){0};
+    return operation_finish(&operation, ok, error);
 }
-bool qa_q1_game_touch(qa_q1_game *g, const qa_touch_contact *contact, qa_error *error) {
+static bool touch_inner(qa_q1_game *g, const qa_touch_contact *contact, qa_error *error) {
     q1_actor *entity = q1_entity(g, contact->self);
     if (!entity || entity->touch_disabled)
         return true;
@@ -895,10 +1062,17 @@ bool qa_q1_game_touch(qa_q1_game *g, const qa_touch_contact *contact, qa_error *
         return q1_teledeath_touch(g, entity, contact->other, error);
     return true;
 }
+bool qa_q1_game_touch(qa_q1_game *g, const qa_touch_contact *contact, qa_error *error) {
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    bool ok = touch_inner(g, contact, error);
+    return operation_finish(&operation, ok, error);
+}
 bool qa_q1_game_use(qa_q1_game *g, qa_actor_id actor, qa_actor_id activator, qa_error *error) {
     return qa_q1_game_use_from(g, actor, activator, activator, error);
 }
-bool qa_q1_game_use_from(qa_q1_game *g, qa_actor_id actor, qa_actor_id other, qa_actor_id activator,
+static bool use_inner(qa_q1_game *g, qa_actor_id actor, qa_actor_id other, qa_actor_id activator,
                          qa_error *error) {
     q1_actor *entity = q1_entity(g, actor);
     if (entity && entity->kind == Q1_MAP)
@@ -932,9 +1106,24 @@ bool qa_q1_game_use_from(qa_q1_game *g, qa_actor_id actor, qa_actor_id other, qa
     }
     return !entity || entity->kind != Q1_MONSTER || q1_monster_use(g, entity, activator, error);
 }
-bool qa_q1_game_blocked(qa_q1_game *g, qa_actor_id actor, qa_actor_id obstacle, qa_error *error) {
+bool qa_q1_game_use_from(qa_q1_game *g, qa_actor_id actor, qa_actor_id other,
+                         qa_actor_id activator, qa_error *error) {
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    bool ok = use_inner(g, actor, other, activator, error);
+    return operation_finish(&operation, ok, error);
+}
+static bool blocked_inner(qa_q1_game *g, qa_actor_id actor, qa_actor_id obstacle, qa_error *error) {
     q1_actor *entity = q1_entity(g, actor);
     return !entity || entity->kind != Q1_MAP || q1_map_blocked(g, entity, obstacle, error);
+}
+bool qa_q1_game_blocked(qa_q1_game *g, qa_actor_id actor, qa_actor_id obstacle, qa_error *error) {
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    bool ok = blocked_inner(g, actor, obstacle, error);
+    return operation_finish(&operation, ok, error);
 }
 bool qa_q1_game_pusher_think(qa_q1_game *g, qa_actor_id actor, const qa_source_frame *frame,
                              qa_error *error) {
@@ -944,7 +1133,7 @@ bool qa_q1_game_pusher_think(qa_q1_game *g, qa_actor_id actor, const qa_source_f
     }
     return think_callback(g, actor, frame, error);
 }
-bool qa_q1_game_reaction(qa_q1_game *g, const qa_damage_outcome *outcome, qa_error *error) {
+static bool reaction_inner(qa_q1_game *g, const qa_damage_outcome *outcome, qa_error *error) {
     q1_actor *entity = q1_entity(g, outcome->request.target);
     if (entity && entity->kind == Q1_BOSS_CHILD)
         return q1_boss_child_reaction(g, entity, outcome, error);
@@ -962,6 +1151,13 @@ bool qa_q1_game_reaction(qa_q1_game *g, const qa_damage_outcome *outcome, qa_err
                                outcome->result.applied_damage, error);
     return true;
 }
+bool qa_q1_game_reaction(qa_q1_game *g, const qa_damage_outcome *outcome, qa_error *error) {
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    bool ok = reaction_inner(g, outcome, error);
+    return operation_finish(&operation, ok, error);
+}
 bool qa_q1_game_presentation(const qa_q1_game *g, qa_actor_id actor, qa_q1_presentation *out) {
     const q1_actor *entity = q1_entity_const(g, actor);
     if (!entity || !out)
@@ -976,6 +1172,12 @@ bool qa_q1_game_presentation(const qa_q1_game *g, qa_actor_id actor, qa_q1_prese
                                 .alpha = entity->alpha,
                                 .scale = entity->scale};
     return true;
+}
+static uint64_t hostile_deadline_ns(double seconds) {
+    if (!(seconds > 0))
+        return 0;
+    double ns = seconds * 1000000000.0;
+    return !isfinite(ns) || ns >= (double)UINT64_MAX ? UINT64_MAX : (uint64_t)ns;
 }
 bool qa_q1_game_actor_traits(const qa_q1_game *g, qa_actor_id actor, qa_builtin_actor_traits *out) {
     if (!g || !out || actor.slot >= g->capacity ||
@@ -1009,9 +1211,9 @@ bool qa_q1_game_actor_traits(const qa_q1_game *g, qa_actor_id actor, qa_builtin_
                                                                                  : 25,
         .invisible = player && player->power_expires[QA_Q1_INVISIBILITY] > g->time,
         .hostile_until_ns =
-            player && player->hostile_until > 0 ? (uint64_t)(player->hostile_until * 1000000000.0)
+            player && player->hostile_until > 0 ? hostile_deadline_ns(player->hostile_until)
             : entity && entity->kind == Q1_MONSTER && entity->state.monster.hostile_until > 0
-                ? (uint64_t)(entity->state.monster.hostile_until * 1000000000.0)
+                ? hostile_deadline_ns(entity->state.monster.hostile_until)
                 : 0};
     return true;
 }

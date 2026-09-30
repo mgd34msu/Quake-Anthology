@@ -551,6 +551,15 @@ bool qa_modes_object_read(qa_modes *m, qa_actor_id actor, qa_mode_object_view *o
     }
     return true;
 }
+bool qa_modes_object_home(qa_modes *m, qa_actor_id actor, qa_vec3 *origin,
+                           qa_bounds *bounds, qa_error *error) {
+    mode_object *object = mode_object_get(m, actor);
+    if (!object || !origin || !bounds)
+        return mode_fail(error, "objective home needs a live object and outputs");
+    *origin = object->spec.origin;
+    *bounds = object->spec.bounds;
+    return true;
+}
 bool qa_modes_object_at(qa_modes *m, size_t index, qa_actor_id *actor, qa_mode_object_view *out,
                         qa_error *e) {
     if (!m || !actor || !out)

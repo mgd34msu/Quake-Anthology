@@ -1,5 +1,7 @@
 #include "internal.h"
 
+static void free_records(qa_native_host *);
+
 static const native_host_classic_layout classic32 = {
     .edict = {.bytes = 260, .inuse = 88, .linkcount = 92,
               .area = 176, .area2 = 180, .flags = 184,
@@ -128,7 +130,7 @@ bool qa_native_host_create_q2_game(qa_native_module *module,
     if (!host->message ||
         !configure_instance(host, module, &options->instance, options->instance.runner,
                             error)) {
-        free(host->message);
+        free_records(host);
         free(host);
         return false;
     }
@@ -151,11 +153,14 @@ bool qa_native_host_create_q2_cgame(qa_native_module *module,
     host->engine = options->engine;
     host->q2_application = options->application;
     host->q2_application_context = options->application_context;
+    host->q2_seat = options->seat;
+    host->q2_seat_bound = options->seat_bound;
     host->cvars = options->cvars;
     host->console = options->console;
     host->command_context = options->command_context;
     if (!configure_instance(host, module, &options->instance, options->instance.runner,
                             error)) {
+        free_records(host);
         free(host);
         return false;
     }
@@ -197,6 +202,7 @@ bool qa_native_host_create_q3(qa_native_module *module,
     host->command_context = options->command_context;
     if (!configure_instance(host, module, &options->instance, options->instance.runner,
                             error)) {
+        free_records(host);
         free(host);
         return false;
     }
@@ -232,18 +238,18 @@ static void free_records(qa_native_host *host)
     free(host->retained_clients);
 }
 
+bool qa_native_host_destroy_ready(const qa_native_host *host)
+{
+    return host && !host->destroying && !host->callback_depth && qa_native_can_destroy(host->instance);
+}
+
 bool qa_native_host_destroy(qa_native_host *host, qa_error *error)
 {
-    if (!host || host->destroying || host->callback_depth)
+    if (!qa_native_host_destroy_ready(host))
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "live native host adapter is required");
     host->destroying = true;
-    qa_native_backend backend = qa_native_get_backend(host->instance);
     bool ok = qa_native_destroy(host->instance, error);
-    if (!ok && backend == QA_NATIVE_BACKEND_DIRECT) {
-        host->destroying = false;
-        return false;
-    }
     host->instance = NULL;
     free_records(host);
     free(host);

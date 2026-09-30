@@ -194,6 +194,8 @@ bool q3_use_holdable(qa_q3_game *game, qa_actor_id actor, qa_q3_holdable holdabl
         return q3_fail(error, "holdable requires Q3 player state");
     if (game->options.product == QA_Q3_ARENA && holdable > QA_Q3_H_MEDKIT)
         return q3_fail(error, "holdable requires Team Arena");
+    if (!q3_ranking_holdable(game, actor, holdable, error))
+        return false;
     switch (holdable) {
     case QA_Q3_H_NONE:
         return true;

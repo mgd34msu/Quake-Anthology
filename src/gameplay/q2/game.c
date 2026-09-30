@@ -159,6 +159,10 @@ static bool begin_frame(void *context, qa_session *session, const qa_source_fram
                         qa_error *e) {
     (void)session;
     qa_q2_game *g = context;
+    if (g->current_actor.registry) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 source frame cannot reenter an actor invocation");
+        return false;
+    }
     if (g->release_failed) {
         if (e != NULL)
             *e = g->release_error;
@@ -265,6 +269,7 @@ bool qa_q2_create(const qa_builtin_services *services, const qa_q2_options *opti
     }
     g->services = *services;
     g->options = *options;
+    g->widow_damage_multiplier = 1;
     g->grapple_options = (qa_q2_grapple_options){
         .fly_speed = 650, .pull_speed = 650, .damage = 10, .players_collide = true};
     if (hooks != NULL)
@@ -304,10 +309,13 @@ qa_component qa_q2_component(qa_q2_game *g) {
 bool qa_q2_destroy(qa_q2_game *g, qa_error *e) {
     if (g == NULL)
         return true;
-    if (!qa_session_safe(g->services.session)) {
+    if (!qa_session_safe(g->services.session) || !qa_world_idle(g->services.world) ||
+        !qa_combat_idle(g->services.combat)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Q2 provider destruction requires a safe point");
         return false;
     }
+    if (!q2_checkpoint_idle(g, e))
+        return false;
     close_game(g);
     return true;
 }

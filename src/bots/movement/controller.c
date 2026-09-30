@@ -66,13 +66,18 @@ static bool travel(bot_travel *t, const bot_reach *reach, bool airborne, qa_bot_
         return bot_ground_travel(t, reach, airborne, out, e);
     }
 }
-static bool goal_area(bot_travel *t, const qa_bot_goal *goal, qa_bot_move_result *out,
+static bool goal_area(bot_travel *t, const qa_bot_move_goal_source *goal, qa_bot_move_result *out,
                       qa_error *e) {
     qa_bot_move_state *state = t->state;
     bool swimming = (state->input.flags & QA_BOT_MOVE_SWIMMING) != 0;
-    qa_vec3 delta = qa_vec_sub(goal->origin, state->input.origin);
-    if (!swimming)
-        delta.z = 0;
+    qa_bot_vector_source origin = bot_goal_origin(goal);
+    qa_vec3 delta = {0};
+    if (!qa_bot_vector_component(&origin, 0, &delta.x, e) ||
+        !qa_bot_vector_component(&origin, 1, &delta.y, e) ||
+        (swimming && !qa_bot_vector_component(&origin, 2, &delta.z, e))) return false;
+    delta.x -= state->input.origin.x;
+    delta.y -= state->input.origin.y;
+    if (swimming) delta.z -= state->input.origin.z;
     qa_vec3 direction = qa_vec_normalize(delta);
     float speed = 400 - (400 - 4 * fminf(qa_vec_length(delta), 100));
     if (speed < 10)
@@ -87,11 +92,11 @@ static bool goal_area(bot_travel *t, const qa_bot_goal *goal, qa_bot_move_result
     }
     bot_move_set_reach(state, 0);
     state->last_area = 0;
-    state->last_goal_area = (uint32_t)goal->area;
+    if (!bot_goal_area(goal, &state->last_goal_area, e)) return false;
     state->last_origin = state->input.origin;
     return true;
 }
-static bool standing_entity(bot_travel *t, qa_bot_move_result *out, bool *stop, qa_error *e) {
+static bool standing_entity(bot_travel *t, const qa_bot_move_result_io *out, bool *stop, qa_error *e) {
     qa_bot_move_state *state = t->state;
     qa_bot_move_input *s = &state->input;
     qa_vec3 end = s->origin;
@@ -136,9 +141,8 @@ static bool standing_entity(bot_travel *t, qa_bot_move_result *out, bool *stop, 
                 state->reachability_time = t->moves->time + bot_reach_time(&prior);
             }
         }
-        if (!*stop)
-            out->flags |= model.kind == QA_BOT_MODEL_ELEVATOR ? QA_BOT_MOVE_ON_ELEVATOR
-                                                              : QA_BOT_MOVE_ON_BOBBING;
+        if (!*stop && !bot_result_flags(out, model.kind == QA_BOT_MODEL_ELEVATOR ?
+            QA_BOT_MOVE_ON_ELEVATOR : QA_BOT_MOVE_ON_BOBBING, e)) return false;
     } else if (found && (model.kind == QA_BOT_MODEL_DOOR || model.kind == QA_BOT_MODEL_TRAIN)) {
         if (!qa_bot_navigation_fuzzy(t->navigation, s->origin, &state->area, e))
             return false;
@@ -146,14 +150,14 @@ static bool standing_entity(bot_travel *t, qa_bot_move_result *out, bool *stop, 
     } else
         *stop = true;
     if (*stop) {
-        out->blocked = true;
-        out->block_entity = entity;
-        out->flags |= QA_BOT_MOVE_ON_OBSTACLE;
+        if (!bot_result_write(out, QA_BOT_RESULT_BLOCKED, 1, e) ||
+            !bot_result_write(out, QA_BOT_RESULT_BLOCK_ENTITY, entity, e) ||
+            !bot_result_flags(out, QA_BOT_MOVE_ON_OBSTACLE, e)) return false;
     }
     return true;
 }
-static bool goal_grounded(bot_travel *t, const qa_bot_goal *goal, uint32_t flags,
-                          qa_bot_move_result *out, bool *finished, qa_error *e) {
+static bool goal_grounded(bot_travel *t, const qa_bot_move_goal_source *goal, uint32_t flags,
+                          const qa_bot_move_result_io *out, bool *finished, qa_error *e) {
     qa_bot_move_state *state = t->state;
     *finished = false;
     if (!qa_bot_navigation_fuzzy(t->navigation, state->input.origin, &state->area, e))
@@ -173,16 +177,18 @@ static bool goal_grounded(bot_travel *t, const qa_bot_goal *goal, uint32_t flags
         }
     }
     if (!state->area) {
-        out->failure = true;
-        out->blocked = true;
-        out->block_entity = 0;
-        out->type = 8;
         *finished = true;
-        return true;
+        return bot_result_write(out, QA_BOT_RESULT_FAILURE, 1, e) &&
+            bot_result_write(out, QA_BOT_RESULT_BLOCKED, 1, e) &&
+            bot_result_write(out, QA_BOT_RESULT_BLOCK_ENTITY, 0, e) &&
+            bot_result_write(out, QA_BOT_RESULT_TYPE, 8, e);
     }
-    if (state->area == (uint32_t)goal->area) {
+    uint32_t target_area;
+    if (!bot_goal_area(goal, &target_area, e)) return false;
+    if (state->area == target_area) {
         *finished = true;
-        return goal_area(t, goal, out, e);
+        qa_bot_move_result moved;
+        return goal_area(t, goal, &moved, e) && bot_result_copy(out, &moved, e);
     }
     uint32_t number = found ? state->last_reachability : 0;
     if (number) {
@@ -198,13 +204,17 @@ static bool goal_grounded(bot_travel *t, const qa_bot_goal *goal, uint32_t flags
                 (state->input.flags & QA_BOT_MOVE_GRAPPLE_RESET))
                 number = 0;
         } else if (type == BOT_ELEVATOR || type == BOT_BOBBING) {
-            if (out->flags & QA_BOT_MOVE_ON_BOBBING)
+            int32_t result_flags;
+            if (!bot_result_read(out, QA_BOT_RESULT_FLAGS, &result_flags, e)) return false;
+            if ((uint32_t)result_flags & QA_BOT_MOVE_ON_BOBBING)
                 state->reachability_time = t->moves->time + 5;
             if (state->area == prior.area || state->reachability_time < t->moves->time)
                 number = 0;
-        } else if (state->last_goal_area != (uint32_t)goal->area ||
-                   state->reachability_time < t->moves->time || state->last_area != state->area)
-            number = 0;
+        } else {
+            if (!bot_goal_area(goal, &target_area, e)) return false;
+            if (state->last_goal_area != target_area || state->reachability_time < t->moves->time ||
+                state->last_area != state->area) number = 0;
+        }
     }
     uint32_t result_flags = 0;
     if (!number) {
@@ -222,26 +232,27 @@ static bool goal_grounded(bot_travel *t, const qa_bot_goal *goal, uint32_t flags
         }
     }
     bot_move_set_reach(state, number);
-    state->last_goal_area = (uint32_t)goal->area;
+    if (!bot_goal_area(goal, &state->last_goal_area, e)) return false;
     state->last_area = state->area;
     if (!bot_reach_read(t, number, &prior, &found, e))
         return false;
-    if (!found)
-        out->failure = true;
+    if (!found) {
+        if (!bot_result_write(out, QA_BOT_RESULT_FAILURE, 1, e)) return false;
+    }
     else {
         qa_bot_move_result moved;
         bool changed;
         if (!travel(t, &prior, false, &moved, &changed, e))
             return false;
-        if (changed)
-            *out = moved;
-        out->travel_type = (int32_t)prior.type;
+        if (changed && !bot_result_copy(out, &moved, e)) return false;
+        int32_t type;
+        memcpy(&type, &prior.type, sizeof(type));
+        if (!bot_result_write(out, QA_BOT_RESULT_TRAVEL_TYPE, type, e)) return false;
     }
-    out->flags |= result_flags;
-    return true;
+    return bot_result_flags(out, result_flags, e);
 }
-static bool goal_airborne(bot_travel *t, const qa_bot_goal *goal, uint32_t flags,
-                          qa_bot_move_result *out, qa_error *e) {
+static bool goal_airborne(bot_travel *t, const qa_bot_move_goal_source *goal, uint32_t flags,
+                          const qa_bot_move_result_io *out, qa_error *e) {
     qa_bot_move_state *state = t->state;
     qa_vec3 end = bot_ma(state->input.origin, -2 * state->input.think_time, state->input.velocity);
     qa_aas_crossing areas[16];
@@ -288,20 +299,20 @@ static bool goal_airborne(bot_travel *t, const qa_bot_goal *goal, uint32_t flags
         bool changed;
         if (!travel(t, &reach, true, &moved, &changed, e))
             return false;
-        if (changed)
-            *out = moved;
-        out->travel_type = (int32_t)reach.type;
+        if (changed && !bot_result_copy(out, &moved, e)) return false;
+        int32_t type;
+        memcpy(&type, &reach.type, sizeof(type));
+        if (!bot_result_write(out, QA_BOT_RESULT_TRAVEL_TYPE, type, e)) return false;
     }
     return true;
 }
-static bool move_goal(bot_travel *t, const qa_bot_goal *goal, uint32_t flags,
-                      qa_bot_move_result *out, qa_error *e) {
+static bool move_goal(bot_travel *t, const qa_bot_move_goal_source *goal, uint32_t flags,
+                      const qa_bot_move_result_io *out, qa_error *e) {
     qa_bot_move_state *state = t->state;
     if (!bot_reset_grapple(t, e))
         return false;
     if (!goal) {
-        out->failure = true;
-        return true;
+        return bot_result_write(out, QA_BOT_RESULT_FAILURE, 1, e);
     }
     state->input.flags &= ~(QA_BOT_MOVE_SWIMMING | QA_BOT_MOVE_AGAINST_LADDER);
     bool grounded;
@@ -334,31 +345,41 @@ static bool move_goal(bot_travel *t, const qa_bot_goal *goal, uint32_t flags,
             return true;
     } else if (!goal_airborne(t, goal, flags, out, e))
         return false;
-    if (out->blocked)
+    int32_t blocked;
+    if (!bot_result_read(out, QA_BOT_RESULT_BLOCKED, &blocked, e)) return false;
+    if (blocked)
         state->reachability_time -= 10 * state->input.think_time;
     state->last_origin = state->input.origin;
     return true;
 }
 bool qa_bot_moves_goal(qa_bot_moves *m, uint32_t handle, const qa_bot_goal *goal, uint32_t flags,
                        qa_bot_move_result *out, qa_error *e) {
-    if (!bot_move_mutable(m, e))
-        return false;
     if (!out || (goal && !qa_vec_finite(goal->origin)))
         return bot_move_fail(e, "invalid bot move goal/output");
-    out->failure = false;
-    out->type = 0;
-    out->blocked = false;
-    out->block_entity = 0;
-    out->travel_type = 0;
-    out->flags = 0;
+    qa_bot_move_goal_source source = {.value = goal};
+    qa_bot_move_result_io target = {.value = out};
+    return qa_bot_moves_goal_from(m, handle, goal ? &source : NULL, flags, &target, e);
+}
+bool qa_bot_moves_goal_from(qa_bot_moves *m, uint32_t handle,
+                            const qa_bot_move_goal_source *goal, uint32_t flags,
+                            const qa_bot_move_result_io *out, qa_error *e) {
+    if (!bot_move_mutable(m, e)) return false;
+    if (!out || (!out->value && (!out->read || !out->write || !out->write_vector)) ||
+        (goal && !goal->value && (!goal->area || (!goal->origin.value && !goal->origin.read))))
+        return bot_move_fail(e, "missing bot move goal/result fields");
+    m->busy = true;
+    bool ok = bot_result_clear(out, e);
+    if (!ok) goto done;
     qa_bot_move_state *state = bot_move_state(m, handle, e);
     if (!state) {
-        out->failure = true;
-        return false;
+        (void)bot_result_write(out, QA_BOT_RESULT_FAILURE, 1, e);
+        ok = false;
+        goto done;
     }
-    m->busy = true;
     bot_travel t;
-    bool ok = bot_travel_begin(m, state, &t, e) && move_goal(&t, goal, flags, out, e);
+    ok = bot_travel_ready(m, e) && bot_travel_begin(m, state, &t, e) &&
+        move_goal(&t, goal, flags, out, e);
+done:
     m->busy = false;
     return ok;
 }

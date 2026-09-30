@@ -31,6 +31,8 @@ typedef struct q2_item_state {
     size_t picked_count, picked_capacity;
     qa_q2_visual visual;
     struct q2_companion *companion;
+    qa_pickups *observations;
+    qa_pickup_lease observation;
 } q2_item_state;
 typedef struct q2_power_state {
     qa_q2_game *game;
@@ -71,6 +73,11 @@ bool q2_item_console_pickup(qa_q2_game *, qa_actor_id, const qa_q2_item_definiti
 bool q2_item_catalog(qa_q2_game *, qa_error *);
 bool q2_item_ensure(qa_q2_game *, qa_actor_id, const qa_q2_item_definition *, qa_error *);
 bool q2_item_grant(qa_q2_game *, q2_actor *, qa_actor_id, bool *, qa_error *);
+qa_pickup_offer q2_item_offer(qa_q2_game *, const q2_actor *, qa_actor_id);
+bool q2_item_eligible(qa_q2_game *, q2_actor *, qa_actor_id, bool *, qa_error *);
+bool q2_item_observe(qa_q2_game *, q2_actor *, qa_error *);
+bool q2_item_armor_result(qa_q2_game *, const qa_q2_item_definition *,
+                          const qa_regular_armor *, qa_regular_armor *);
 bool q2_item_finish(qa_q2_game *, q2_actor *, qa_actor_id, qa_error *);
 bool q2_item_sound(qa_q2_game *, qa_actor_id, const char *, qa_error *);
 bool q2_item_visual(qa_q2_game *, q2_actor *, qa_error *);

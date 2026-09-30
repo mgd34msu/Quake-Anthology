@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "project_id": "quake-anthology",
-  "ledger_plan_revision": 6,
+  "ledger_plan_revision": 7,
   "policy": {
     "goal": "Finish the native C rewrite of ../quake-typescript as one engine with full Q1/QW/Q2/Q3, expansion, rerelease, and mod interoperability, then perform a deep performance and enhancement pass.",
     "rules": [
@@ -15,7 +15,7 @@
       "Use vibecheck-jev to claim/report work and its verified status. Keep the full dependency graph and acceptance criteria current.",
       "Coordinator owns shared Git staging and local commits. Workers use exclusive paths and never change ../quake-typescript, ../qsrc, or ../qfiles.",
       "Baseline completion and final release are distinct. Do not claim whole-project completion from scaffolding, parser tools, compilation, or partial subsystems.",
-      "Use a soft cap of six concurrent agents across the entire worker tree, excluding the main coordinator. Let existing assignments finish to reduce the current count. Do not spawn, reactivate, or reassign workers while above six; a temporary excess later requires a concrete task need.",
+      "For the 2026-09-29 review session use GPT-6.1 Sol for all agents and descendants, only medium/high/xhigh effort, and a soft cap of eight agents across the full worker tree. Do not spawn descendants without coordinator assignment; temporary excess requires a concrete need.",
       "Keep all licensing and copyright notices in the root LICENSE file. Do not add per-file copyright notices, SPDX headers, or invented contributor attribution.",
       "Do not copy source files from ../quake-typescript or ../qsrc. Write native C implementations from required behavior and contracts, removing duplicated services, avoidable allocations, repeated preparation and TypeScript-specific machinery during implementation. Authored immutable data may be represented in shared C tables; engine implementations must not be transplanted."
     ],
@@ -45,7 +45,7 @@
       ],
       "rules": [
         "Read code and donor contracts. Do not replace source evidence with author assertions or treat a model verdict as runtime qualification.",
-        "Use the six existing workers with independent review assignments. Root owns integration and Git. Preserve current edits and exclusive source ownership."
+        "Use the current GPT-6.1 Sol review workers within the eight-agent soft cap. Root coordinates exclusive source ownership and independent confirmation. Preserve existing edits."
       ],
       "status": "pending"
     },
@@ -58,7 +58,7 @@
         "Ledger and local graph cover all 23 donor functional targets; baseline completion precedes gameplay evaluation and deep enhancement."
       ],
       "rules": [
-        "Use a soft cap of six concurrent agents across the entire worker tree, excluding the main coordinator. Let existing assignments finish to reduce the current count. Do not spawn, reactivate, or reassign workers while above six; a temporary excess later requires a concrete task need.",
+        "For the 2026-09-29 review session use GPT-6.1 Sol for all agents and descendants, only medium/high/xhigh effort, and a soft cap of eight agents across the full worker tree. Do not spawn descendants without coordinator assignment; temporary excess requires a concrete need.",
         "Keep all licensing and copyright notices in the root LICENSE file. Do not add per-file copyright notices, SPDX headers, or invented contributor attribution."
       ],
       "status": "pending"

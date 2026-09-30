@@ -11,6 +11,7 @@
 #include "qa/session.h"
 #include "qa/targets.h"
 #include "qa/vfs.h"
+#include "qa/network_q2.h"
 
 typedef struct qa_native_host qa_native_host;
 
@@ -43,6 +44,7 @@ typedef struct qa_native_host_sound {
     uint8_t channel;
     float volume, attenuation, time_offset;
     bool positioned, local, reliable;
+    const char *name;
 } qa_native_host_sound;
 
 typedef enum qa_native_host_message_target {
@@ -74,6 +76,12 @@ typedef struct qa_native_host_command_view {
     const char *tail;
 } qa_native_host_command_view;
 
+typedef struct qa_native_host_q2_hud_view {
+    int32_t x, y, width, height;
+    int32_t safe_x, safe_y, safe_width, safe_height;
+    int32_t scale;
+} qa_native_host_q2_hud_view;
+
 typedef struct qa_native_host_engine_services {
     void *context;
     void (*print)(void *, const qa_native_host_print *);
@@ -89,6 +97,11 @@ typedef struct qa_native_host_engine_services {
     bool (*extension)(void *, qa_native_profile, const char *, qa_native_address *, qa_error *);
     bool (*checkpoint)(void *, qa_buffer *, qa_error *);
     bool (*restore)(void *, qa_bytes, qa_error *);
+    void *frontend_lifetime;
+    void (*release_frontend)(void *);
+    qa_vfs *content_files;
+    qa_cvars *cvars;
+    bool (*hud_view)(void *, uint32_t seat, qa_native_host_q2_hud_view *, qa_error *);
 } qa_native_host_engine_services;
 
 typedef struct qa_native_host_instance_options {
@@ -138,6 +151,8 @@ typedef struct qa_native_host_q2_application_call {
     qa_native_host *host;
     qa_native_instance *instance;
     const qa_native_import_call *import;
+    uint32_t seat;
+    bool seat_bound;
 } qa_native_host_q2_application_call;
 
 /* These callbacks own services whose state is outside gameplay authority:
@@ -172,6 +187,8 @@ typedef struct qa_native_host_q2_cgame_options {
     qa_console *console;
     qa_command_context command_context;
     size_t maximum_string_bytes;
+    uint32_t seat;
+    bool seat_bound;
 } qa_native_host_q2_cgame_options;
 
 typedef struct qa_native_host_guest_memory {
@@ -229,6 +246,8 @@ bool qa_native_host_create_q2_cgame(qa_native_module *, const qa_native_host_q2_
 bool qa_native_host_create_q3(qa_native_module *, const qa_native_host_q3_options *,
                               qa_native_host **, qa_error *);
 bool qa_native_host_destroy(qa_native_host *, qa_error *);
+/* Admitted destruction consumes the host, including a returned cleanup fault. */
+bool qa_native_host_destroy_ready(const qa_native_host *);
 
 qa_native_instance *qa_native_host_instance(qa_native_host *);
 qa_native_profile qa_native_host_profile(const qa_native_host *);
@@ -238,6 +257,9 @@ bool qa_native_host_q3_memory(qa_native_host *, qa_qvm_role, qa_qvm_abi,
 /* Dispatch after the shared registry invalidates the released ID. Clears only
  * matching owned/borrowed bindings; repeated notifications are harmless. */
 bool qa_native_host_actor_released(qa_native_host *, qa_actor_record, qa_error *);
+bool qa_native_host_detach_actor(qa_native_host *, uint32_t source_slot,
+                                  qa_actor_id, qa_error *);
+bool qa_native_host_world_actor_bind(qa_native_host *, qa_actor_id, qa_error *);
 
 bool qa_native_host_initialize(qa_native_host *, int32_t level_time, int32_t random_seed,
                                bool restart, qa_error *);
@@ -246,6 +268,8 @@ bool qa_native_host_spawn_entities(qa_native_host *, const char *map, const char
                                    const char *spawn_point, qa_error *);
 bool qa_native_host_run_frame(qa_native_host *, bool main_loop, qa_error *);
 bool qa_native_host_prep_frame(qa_native_host *, qa_error *);
+bool qa_native_host_q2_player_state(qa_native_host *, uint32_t source_slot,
+                                     qa_buffer *, qa_error *);
 bool qa_native_host_server_command(qa_native_host *, qa_error *);
 
 typedef struct qa_native_host_client_request {

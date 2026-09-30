@@ -69,14 +69,19 @@ typedef struct qa_session_options {
     bool mixed_order;
     /* Shared body/link/collision cleanup runs before component notification. */
     qa_session_release_fn actor_released;
+    /* Runs once per due source and live actor, in source registration order,
+     * before the actor's selected physics. Receives that source's own clock. */
+    qa_component_actor_fn source_actor;
     qa_component_actor_fn after_actor;
     void *release_context;
 } qa_session_options;
 
 qa_clock_config qa_clock_defaults(qa_clock_kind kind);
 bool qa_session_create(const qa_session_options *options, qa_session **out, qa_error *error);
-/* Outside a safe point, failure leaves the session intact. At a safe point,
- * destruction releases everything even if false reports a cleanup error. */
+/* Requires a safe point and no component or scheduler admissions. If ready,
+ * destruction consumes the session even when false reports a cleanup error.
+ * Otherwise failure leaves the session intact. NULL is ready to destroy. */
+bool qa_session_destroy_ready(const qa_session *session);
 bool qa_session_destroy(qa_session *session, qa_error *error);
 /* Component state transfers only on successful add. Removal retires its actors
  * and scheduling before close; foreign actors must first rebind their execution. */
@@ -104,6 +109,35 @@ bool qa_session_faulted(const qa_session *session);
 const qa_error *qa_session_error(const qa_session *session);
 uint64_t qa_session_elapsed(const qa_session *session);
 bool qa_session_restore_elapsed(qa_session *session, uint64_t elapsed_ns, qa_error *error);
+typedef struct qa_session_component_checkpoint {
+    qa_actor_owner owner;
+    qa_clock_config config;
+    qa_clock_state state;
+    uint64_t order;
+} qa_session_component_checkpoint;
+typedef struct qa_session_execution_checkpoint {
+    qa_saved_actor_id actor;
+    qa_actor_owner provider;
+} qa_session_execution_checkpoint;
+typedef struct qa_session_checkpoint {
+    qa_session_component_checkpoint *components;
+    qa_session_execution_checkpoint *executions;
+    size_t component_count, execution_count;
+    uint64_t elapsed_ns, next_order;
+    uint32_t actor_capacity, component_capacity;
+    bool mixed_order;
+    qa_scheduler_checkpoint scheduler;
+} qa_session_checkpoint;
+/* Fresh candidate before shared services borrow actors or strings. The supplied
+ * exact saved string table transfers only on success. Definitions/provider IDs
+ * refer to that table; actor history enters a fresh registry namespace. */
+bool qa_session_create_restored(const qa_session_options *, const qa_actor_checkpoint *,
+                                 qa_strings *owned_strings, qa_session **, qa_error *);
+bool qa_session_checkpoint_capture(qa_session *, qa_session_checkpoint *, qa_error *);
+/* Isolated candidate after providers and actor ownership have been rebuilt. */
+bool qa_session_checkpoint_restore(qa_session *, const qa_session_checkpoint *,
+                                    qa_think_resolve_fn, void *, qa_error *);
+void qa_session_checkpoint_free(qa_session_checkpoint *);
 const qa_actor_registry *qa_session_actors(const qa_session *session);
 /* Mutable borrow for the shared world service. Gameplay uses session allocation
  * and release. Direct allocations must use registered owners and cannot run

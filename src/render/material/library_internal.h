@@ -39,6 +39,7 @@ typedef struct qa_material_generated {
 
 struct qa_material_library {
     qa_scene_resources *resources;
+    qa_material_order *order;
     qa_scene_image *fog_image, *dlight_image;
     qa_material_script *scripts[QA_MATERIAL_BUCKETS];
     qa_material_record *records[QA_MATERIAL_BUCKETS];
@@ -53,6 +54,12 @@ struct qa_material_library {
     float sky_height;
     bool has_sun;
 };
+
+bool qa_material_order_retain(qa_material_order *, qa_error *);
+bool qa_material_order_reserve(qa_material_order *, const qa_material *, qa_material_order_entry **, qa_error *);
+bool qa_material_order_publish(qa_material_order_entry *, qa_error *);
+void qa_material_order_remove(qa_material_order_entry *);
+void qa_material_order_changed(qa_material_order_entry *);
 
 char *qa_material_string(const char *, qa_error *);
 char *qa_material_name(const char *, qa_error *);

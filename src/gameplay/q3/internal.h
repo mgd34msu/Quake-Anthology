@@ -44,6 +44,12 @@ typedef qa_q3_item_state q3_item_state;
 typedef qa_q3_actor_state q3_actor;
 typedef qa_q3_kamikaze_cooldown q3_kamikaze_cooldown;
 typedef struct q3_map_runtime q3_map_runtime;
+typedef struct q3_inventory_owner {
+    qa_q3_game *game;
+    qa_actor_id actor;
+    qa_inventory_lease weapons, holdables;
+    uint32_t selections;
+} q3_inventory_owner;
 struct qa_q3_map_actor_state;
 typedef struct q3_snapshot_frame {
     struct q3_snapshot_frame *next;
@@ -56,11 +62,15 @@ struct qa_q3_game {
     q3_kamikaze_cooldown *kamikaze_cooldowns;
     uint64_t *player_binding_tokens;
     uint64_t player_binding_serial;
+    qa_pickup_lease *item_observations;
+    q3_inventory_owner *inventory_owners;
+    size_t observation_depth;
     uint32_t capacity, rng, death_animation;
     qa_item_id weapon_items[QA_Q3_WEAPON_COUNT], ammo_items[QA_Q3_WEAPON_COUNT];
     qa_item_id item_ids[52];
     int32_t previous_ms, now_ms;
     uint64_t attack_sequence;
+    qa_q3_ranking_hit ranking_hit;
     qa_actor_id body_queue[8];
     uint32_t body_queue_index;
     q3_snapshot_frame *snapshot_frames;
@@ -73,6 +83,8 @@ bool q3_fail(qa_error *, const char *);
 bool q3_rollback_spawn(qa_q3_game *, qa_actor_id, qa_error *);
 q3_snapshot_frame *q3_bounds_snapshot(qa_q3_game *, qa_bounds, qa_collision_role, qa_error *);
 bool q3_use_holdable(qa_q3_game *, qa_actor_id, qa_q3_holdable, qa_error *);
+bool q3_inventory_holdable_changed(qa_q3_game *, qa_actor_id, qa_q3_holdable before,
+                                    qa_q3_holdable after, qa_error *);
 bool q3_player_state_valid(const qa_q3_player_state *);
 void q3_force_view(qa_q3_player_state *, qa_vec3, int32_t lock_ms);
 int32_t q3_entity_number(const qa_q3_game *, qa_actor_id);
@@ -94,6 +106,10 @@ bool q3_radius(qa_q3_game *, qa_actor_id inflictor, qa_actor_id attacker, qa_q3_
                bool *accuracy, qa_error *);
 bool q3_accuracy(qa_q3_game *, qa_actor_id target, qa_actor_id attacker);
 bool q3_is_player(qa_q3_game *, qa_actor_id);
+bool q3_ranking_fire(qa_q3_game *, qa_actor_id, qa_q3_weapon, qa_error *);
+bool q3_ranking_pickup(qa_q3_game *, qa_actor_id, const qa_q3_item *, int32_t, qa_error *);
+bool q3_ranking_holdable(qa_q3_game *, qa_actor_id, qa_q3_holdable, qa_error *);
+bool q3_ranking_reward(qa_q3_game *, qa_actor_id, uint32_t, qa_error *);
 void q3_credit_accuracy(qa_q3_game *, qa_actor_id);
 bool q3_invulnerability(qa_q3_game *, qa_actor_id, qa_vec3 direction, qa_vec3 point,
                         qa_vec3 *impact, qa_vec3 *normal, bool *hit, qa_error *);
@@ -108,6 +124,10 @@ bool q3_item_bind_existing(qa_q3_game *, qa_actor_id, const qa_q3_item_spawn *, 
                            bool initial_powerup_delay, bool *placed, qa_error *);
 bool q3_item_touch(qa_q3_game *, qa_actor_id item, qa_actor_id recipient,
                    bool allow_hidden, bool *accepted, qa_error *);
+bool q3_item_observation_bind(qa_q3_game *, qa_actor_id, qa_pickup_lease *, qa_error *);
+bool q3_item_observations_prepare(qa_q3_game *, const q3_actor *, qa_pickup_lease **, qa_error *);
+void q3_item_observations_abort(qa_q3_game *, qa_pickup_lease *);
+void q3_item_observations_commit(qa_q3_game *, qa_pickup_lease *);
 bool q3_kamikaze_step(qa_q3_game *, qa_actor_id, qa_error *);
 bool q3_portal_step(qa_q3_game *, qa_actor_id, qa_error *);
 bool q3_combat_describe(void *, const qa_damage_request *, const qa_combat_state *,

@@ -20,12 +20,14 @@ static bool snapshot_acquire(qa_q1_game *g, bool players, q1_actor_snapshot **ou
     q1_actor_snapshot *snapshot = snapshot_slot(g, error);
     if (!snapshot)
         return false;
+    snapshot->borrowed = true;
     if (!(players ? qa_builtin_players(&g->services, &snapshot->shared, error)
-                  : qa_builtin_observations(&g->services, &snapshot->shared, error)))
+                  : qa_builtin_observations(&g->services, &snapshot->shared, error))) {
+        snapshot->borrowed = false;
         return false;
+    }
     snapshot->actors = snapshot->shared.ids;
     snapshot->count = snapshot->shared.count;
-    snapshot->borrowed = true;
     *out = snapshot;
     return true;
 }
@@ -43,6 +45,7 @@ bool q1_snapshot_targets(qa_q1_game *g, qa_targets *targets, qa_string_id name,
         !qa_builtin_snapshot_reserve(
             &snapshot->shared, qa_actors_capacity(qa_session_actors(g->services.session)), error))
         return false;
+    snapshot->borrowed = true;
     qa_target_cursor cursor = {0};
     qa_actor_id actor;
     size_t count = 0;
@@ -50,7 +53,6 @@ bool q1_snapshot_targets(qa_q1_game *g, qa_targets *targets, qa_string_id name,
         snapshot->shared.ids[count++] = actor;
     snapshot->shared.count = snapshot->count = count;
     snapshot->actors = snapshot->shared.ids;
-    snapshot->borrowed = true;
     *out = snapshot;
     return true;
 }

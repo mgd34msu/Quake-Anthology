@@ -57,11 +57,10 @@ static bool ammo_pack(qa_q2_game *g, qa_actor_id id, bool full, qa_error *e) {
     }
     return true;
 }
-static bool armor(qa_q2_game *g, qa_actor_id id, const qa_q2_item_definition *d,
-                  const qa_regular_armor *old, bool *accepted, qa_error *e) {
-    *accepted = false;
+bool q2_item_armor_result(qa_q2_game *g, const qa_q2_item_definition *d,
+                          const qa_regular_armor *old, qa_regular_armor *out) {
     if (old->kind == QA_ARMOR_SOURCE)
-        return true;
+        return false;
     qa_regular_armor next = *old;
     const qa_q2_item_definition *jacket = qa_q2_item_lookup(g, "item_armor_jacket");
     if (d->kind == QA_Q2_ITEM_SHARD) {
@@ -91,8 +90,17 @@ static bool armor(qa_q2_game *g, qa_actor_id id, const qa_q2_item_definition *d,
                 : 0;
         next.points = fminf(maximum, old->points + salvage);
         if (next.points <= old->points)
-            return true;
+            return false;
     }
+    *out = next;
+    return true;
+}
+static bool armor(qa_q2_game *g, qa_actor_id id, const qa_q2_item_definition *d,
+                  const qa_regular_armor *old, bool *accepted, qa_error *e) {
+    qa_regular_armor next;
+    *accepted = false;
+    if (!q2_item_armor_result(g, d, old, &next))
+        return true;
     if (!qa_combat_set_regular_armor(g->services.combat, id, &next, e))
         return false;
     *accepted = true;

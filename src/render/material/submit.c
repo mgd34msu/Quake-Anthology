@@ -310,6 +310,37 @@ static bool emit_fog(const qa_material *material, const qa_material *original,
     if (context->fog.kind != QA_FOG_NONE && !emit_fog_pass(material, original, geometry, context, false, frame, error)) return false;
     return true;
 }
+static bool material_plan(const qa_material *material, bool fragment_lighting,
+                           qa_scene_texture_environment *environment, qa_scene_state *state,
+                           size_t *passes, qa_material_iterator *iterator)
+{
+    bool collapsed = material->profile.multitexture && !fragment_lighting && material->stage_count >= 2 &&
+        active_stage(&material->stages[0]) && active_stage(&material->stages[1]) &&
+        collapse_stages(&material->stages[0], &material->stages[1], environment, state);
+    if (collapsed && *environment == QA_TEXTURE_ADD && !material->profile.texture_env_add) collapsed = false;
+    size_t pass_count = material->stage_count - (collapsed ? 1u : 0u);
+    *passes = pass_count; *iterator = material->sky ? QA_MATERIAL_SKY : QA_MATERIAL_GENERIC;
+    if (!material->profile.ignore_fast_path && !fragment_lighting && pass_count == 1 &&
+        !material->sky && !material->polygon_offset && material->deform_count == 0) {
+        const qa_material_stage *first = &material->stages[0];
+        if (first->rgb == QA_COLOR_LIGHTING_DIFFUSE && first->alpha == QA_COLOR_IDENTITY &&
+            first->tcgen == QA_TC_TEXTURE && !collapsed) *iterator = QA_MATERIAL_VERTEX_LIT;
+        else if (collapsed && first->rgb == QA_COLOR_IDENTITY && first->alpha == QA_COLOR_IDENTITY &&
+             ((first->tcgen == QA_TC_TEXTURE && material->stages[1].tcgen == QA_TC_LIGHTMAP) ||
+              (first->tcgen == QA_TC_LIGHTMAP && material->stages[1].tcgen == QA_TC_TEXTURE))) *iterator = QA_MATERIAL_LIGHTMAPPED;
+    }
+    return collapsed;
+}
+bool qa_material_diagnostic_plan(const qa_material *material, bool fragment_lighting,
+                                  size_t *passes, qa_material_iterator *iterator, qa_error *error)
+{
+    if (!material || !passes || !iterator) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid material diagnostic observation"); return false;
+    }
+    qa_scene_state state = {0}; qa_scene_texture_environment environment = QA_TEXTURE_MODULATE;
+    (void)material_plan(material, fragment_lighting, &environment, &state, passes, iterator);
+    return true;
+}
 static bool execute_material(const qa_material *material, const qa_material *original,
                               const qa_scene_mesh *geometry, const qa_material_context *context,
                               float time, qa_scene_frame *frame, qa_error *error)
@@ -317,23 +348,10 @@ static bool execute_material(const qa_material *material, const qa_material *ori
     qa_scene_vec4 *previous = frame_array(frame, geometry->vertex_count, sizeof(*previous), alignof(qa_scene_vec4), error);
     if (previous == NULL) return false;
     memset(previous, 0, geometry->vertex_count * sizeof(*previous));
-    qa_scene_state collapsed_state = {0};
-    qa_scene_texture_environment collapsed_environment = QA_TEXTURE_MODULATE;
-    bool collapsed = material->profile.multitexture && !context->fragment_lighting && material->stage_count >= 2 &&
-        active_stage(&material->stages[0]) && active_stage(&material->stages[1]) &&
-        collapse_stages(&material->stages[0], &material->stages[1], &collapsed_environment, &collapsed_state);
-    if (collapsed && collapsed_environment == QA_TEXTURE_ADD && !material->profile.texture_env_add) collapsed = false;
-    size_t pass_count = material->stage_count - (collapsed ? 1u : 0u);
-    bool fast_iterator = false;
-    if (!material->profile.ignore_fast_path && !context->fragment_lighting && pass_count == 1 &&
-        !material->sky && !material->polygon_offset && material->deform_count == 0) {
-        const qa_material_stage *first = &material->stages[0];
-        fast_iterator = (first->rgb == QA_COLOR_LIGHTING_DIFFUSE && first->alpha == QA_COLOR_IDENTITY &&
-                         first->tcgen == QA_TC_TEXTURE && !collapsed) ||
-            (collapsed && first->rgb == QA_COLOR_IDENTITY && first->alpha == QA_COLOR_IDENTITY &&
-             ((first->tcgen == QA_TC_TEXTURE && material->stages[1].tcgen == QA_TC_LIGHTMAP) ||
-              (first->tcgen == QA_TC_LIGHTMAP && material->stages[1].tcgen == QA_TC_TEXTURE)));
-    }
+    qa_scene_state collapsed_state = {0}; qa_scene_texture_environment collapsed_environment = QA_TEXTURE_MODULATE;
+    size_t passes; qa_material_iterator iterator;
+    bool collapsed = material_plan(material, context->fragment_lighting, &collapsed_environment, &collapsed_state, &passes, &iterator);
+    bool fast_iterator = iterator == QA_MATERIAL_VERTEX_LIT || iterator == QA_MATERIAL_LIGHTMAPPED;
     for (size_t i = 0; i < material->stage_count; ++i) {
         const qa_material_stage *stage = &material->stages[i];
         if (!active_stage(stage)) continue;

@@ -1,12 +1,17 @@
 #include "internal.h"
+#include "qa/launch_save.h"
 
-typedef struct instance_owner {
-    size_t references;
+typedef struct qa_launch_instance_storage {
+    size_t references, leases;
     qa_launch_instance view;
     qa_launch_draft *identity;
     qa_configuration_hooks hooks;
-    bool prepared;
+    bool prepared, closing;
 } instance_owner;
+struct qa_launch_instance_lease {
+    instance_owner *owner;
+    qa_launch_instance view;
+};
 typedef struct instance_binding {
     instance_owner *owner;
     qa_launch_instance view;
@@ -33,15 +38,15 @@ struct qa_configuration_transaction {
     uint64_t generation;
     void *ticket;
     bool validated;
+    bool restoring;
+    uint64_t restored_generation;
 };
 
 static bool error_message(qa_error *error, const char *message)
 { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message); return false; }
 
-static void owner_release(instance_owner *owner)
+static void owner_dispose(instance_owner *owner)
 {
-    if (!owner || --owner->references) return;
-    if (owner->prepared) owner->hooks.close_instance(owner->hooks.context, owner->view.state);
     qa_resource_release((qa_resource *)owner->view.artifact);
     qa_resource_release((qa_resource *)owner->view.declaration);
     for (size_t i = 0; i < owner->view.interface_count; ++i)
@@ -51,6 +56,48 @@ static void owner_release(instance_owner *owner)
     qa_vfs_destroy(owner->view.content);
     qa_launch_draft_destroy(owner->identity);
     free(owner);
+}
+static void owner_release(instance_owner *owner)
+{
+    if (!owner || --owner->references) return;
+    if (owner->prepared) {
+        owner->prepared = false;
+        owner->closing = true;
+        owner->hooks.close_instance(owner->hooks.context, owner->view.state);
+        owner->closing = false;
+    }
+    if (!owner->leases) owner_dispose(owner);
+}
+bool qa_launch_instance_retain_metadata(const qa_launch_instance *instance,
+                                        qa_launch_instance_lease **out, qa_error *error)
+{
+    if (!instance || !instance->storage || !out)
+        return error_message(error, "metadata lease needs a retained launch instance and output");
+    *out = NULL;
+    instance_owner *owner = instance->storage;
+    if (owner->leases == SIZE_MAX) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "launch metadata leases are exhausted");
+        return false;
+    }
+    qa_launch_instance_lease *lease = malloc(sizeof(*lease));
+    if (!lease) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain launch metadata");
+        return false;
+    }
+    *lease = (qa_launch_instance_lease){.owner = owner, .view = *instance};
+    ++owner->leases;
+    *out = lease;
+    return true;
+}
+const qa_launch_instance *qa_launch_instance_lease_view(const qa_launch_instance_lease *lease)
+{ return lease ? &lease->view : NULL; }
+void qa_launch_instance_lease_release(qa_launch_instance_lease *lease)
+{
+    if (!lease) return;
+    instance_owner *owner = lease->owner;
+    free(lease);
+    if (!--owner->leases && !owner->references && !owner->closing)
+        owner_dispose(owner);
 }
 void qa_launch_snapshot_retain(const qa_launch_snapshot *snapshot)
 { if (snapshot) ++((qa_launch_snapshot *)snapshot)->references; }
@@ -65,6 +112,13 @@ void qa_launch_snapshot_release(const qa_launch_snapshot *snapshot)
 }
 const qa_launch_choices *qa_launch_snapshot_choices(const qa_launch_snapshot *s)
 { return s ? &s->draft->choices : NULL; }
+bool qa_launch_snapshot_draft_copy(const qa_launch_snapshot *s,
+                                    qa_launch_draft **out, qa_error *error)
+{
+    if (!s || !out)
+        return error_message(error, "snapshot copy needs an active snapshot and output");
+    return qa_launch_draft_copy(s->draft, out, error);
+}
 qa_catalog *qa_launch_snapshot_catalog(const qa_launch_snapshot *s)
 { return s ? s->draft->catalog : NULL; }
 qa_vfs *qa_launch_snapshot_mounts(const qa_launch_snapshot *s) { return s ? s->mounts : NULL; }
@@ -229,6 +283,7 @@ static bool prepare_instance(qa_configuration_transaction *transaction, const qa
     instance_owner *owner = calloc(1, sizeof(*owner));
     if (!owner) { qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate selected provider"); return false; }
     owner->references = 1; owner->hooks = transaction->manager->hooks;
+    owner->view.storage = owner;
     if (!launch_empty(candidate->draft->catalog, &owner->identity, error) ||
         !qa_launch_set_provider(owner->identity, selection, error)) goto fail;
     owner->view.selection = owner->identity->choices.providers[0];
@@ -333,6 +388,11 @@ bool qa_configuration_destroy(qa_configuration *manager, qa_error *error)
         return error_message(error, "configuration destruction requires a safe point");
     }
     qa_launch_snapshot *previous = manager->current;
+    if (manager->hooks.retire != NULL &&
+        !manager->hooks.retire(manager->hooks.context, previous, error)) {
+        manager->busy = false;
+        return false;
+    }
     manager->current = NULL;
     manager->hooks.publish(manager->hooks.context, previous, NULL, NULL);
     qa_launch_snapshot_release(previous); free(manager); return true;
@@ -388,6 +448,7 @@ fail:
 bool qa_configuration_validate(qa_configuration_transaction *t, qa_error *error)
 {
     if (!t || t->manager->busy) return error_message(error, "invalid or reentrant configuration validation");
+    if (t->restoring) return error_message(error, "restored configuration cannot replay ordinary publication");
     if (t->generation != t->manager->generation) return error_message(error, "configuration changed while this candidate was being prepared");
     if (t->validated) return true;
     t->manager->busy = true;
@@ -406,6 +467,7 @@ bool qa_configuration_validate(qa_configuration_transaction *t, qa_error *error)
 bool qa_configuration_commit(qa_configuration_transaction *t, qa_error *error)
 {
     if (!t || !t->validated) return error_message(error, "configuration must be validated before commit");
+    if (t->restoring) return error_message(error, "restored configuration needs isolated publication");
     qa_configuration *manager = t->manager;
     if (manager->busy || t->generation != manager->generation || manager->generation == UINT64_MAX)
         return error_message(error, "configuration candidate is stale or publication is already active");
@@ -432,3 +494,42 @@ bool qa_configuration_abort(qa_configuration_transaction *t, qa_error *error)
 }
 const qa_launch_snapshot *qa_configuration_candidate(const qa_configuration_transaction *t)
 { return t ? t->candidate : NULL; }
+
+bool qa_configuration_checkpoint_capture(const qa_configuration *manager,
+    qa_configuration_checkpoint *out, qa_error *error)
+{
+    if (!manager || !out || manager->busy || manager->transactions ||
+        !manager->hooks.safe(manager->hooks.context))
+        return error_message(error, "configuration capture requires a committed safe point");
+    *out = (qa_configuration_checkpoint){manager->generation, manager->current != NULL};
+    return true;
+}
+
+bool qa_configuration_prepare_restored(qa_configuration *manager, const qa_launch_draft *draft,
+    const qa_configuration_checkpoint *checkpoint, qa_configuration_transaction **out, qa_error *error)
+{
+    if (!manager || !checkpoint || !out || manager->busy || manager->transactions ||
+        manager->current || manager->generation || !checkpoint->has_current || !checkpoint->generation ||
+        !manager->hooks.safe(manager->hooks.context))
+        return error_message(error, "configuration restoration requires a fresh isolated manager and saved current snapshot");
+    if (!qa_configuration_prepare(manager, draft, out, error)) return false;
+    (*out)->restoring = true;
+    (*out)->restored_generation = checkpoint->generation;
+    return true;
+}
+
+bool qa_configuration_commit_restored(qa_configuration_transaction *t, qa_error *error)
+{
+    if (!t || !t->restoring || t->validated || !t->candidate || !t->restored_generation)
+        return error_message(error, "isolated configuration publication requires a prepared restore transaction");
+    qa_configuration *manager = t->manager;
+    if (manager->busy || manager->current || manager->generation || manager->transactions != 1 ||
+        !manager->hooks.safe(manager->hooks.context))
+        return error_message(error, "isolated configuration candidate is stale or busy");
+    manager->current = t->candidate; t->candidate = NULL;
+    manager->generation = t->restored_generation;
+    qa_launch_snapshot_release(t->previous);
+    --manager->transactions;
+    free(t);
+    return true;
+}

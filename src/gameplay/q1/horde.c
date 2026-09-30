@@ -62,19 +62,35 @@ bool qa_q1_horde_axe_chain(qa_q1_game *g, qa_actor_id actor, uint32_t hits, doub
     return true;
 }
 
-bool q1_horde_axe_delay(qa_q1_game *g, q1_player *player, float *interval, qa_error *error) {
-    if (player->weapon != QA_Q1_AXE ||
-        (g->options.program != QA_Q1_DOPA && g->options.program != QA_Q1_MG1) ||
+bool q1_horde_axe_interval(qa_q1_game *g, q1_player *player, float *interval, bool *enabled,
+                           qa_error *error) {
+    *enabled = false;
+    if ((g->options.program != QA_Q1_DOPA && g->options.program != QA_Q1_MG1) ||
         !(qa_q1_game_campaign_flags(g) & 4))
         return true;
-    bool enabled;
-    if (!horde_enabled(g, &enabled, error))
+    if (!horde_enabled(g, enabled, error))
         return false;
-    if (!enabled)
+    if (!q1_alive(g, player->id)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, player->id.slot,
+                     "Q1 axe observation retired during source policy");
+        return false;
+    }
+    if (!*enabled)
         return true;
     bool chop = player->horde_axe_chain >= 2 && g->time < player->horde_axe_chain_until;
-    player->animation_base = chop ? 1 : 5;
     *interval = chop ? 0.8f : player->horde_axe_chain > 1 ? 0.6f : 0.4f;
+    return true;
+}
+bool q1_horde_axe_delay(qa_q1_game *g, q1_player *player, float *interval, qa_error *error) {
+    if (player->weapon != QA_Q1_AXE)
+        return true;
+    bool enabled;
+    if (!q1_horde_axe_interval(g, player, interval, &enabled, error))
+        return false;
+    if (enabled) {
+        bool chop = player->horde_axe_chain >= 2 && g->time < player->horde_axe_chain_until;
+        player->animation_base = chop ? 1 : 5;
+    }
     return true;
 }
 

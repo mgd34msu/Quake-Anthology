@@ -1,0 +1,29 @@
+#ifndef QA_GAME_Q1_CHECKPOINT_H
+#define QA_GAME_Q1_CHECKPOINT_H
+
+#include "qa/game_q1.h"
+
+typedef struct qa_q1_restore qa_q1_restore;
+
+/* The owned byte stream contains native continuation only. Shared actor,
+ * body, inventory, combat, campaign and scheduler state belongs to its owner.
+ * Strings are deduplicated by value; actor references use the registry's
+ * checkpoint identity domain. No native address is persisted. */
+bool qa_q1_game_capture(qa_q1_game *, qa_buffer *, qa_error *);
+/* Prepare requires a safe session and an empty native provider after shared
+ * actors have been restored. It does not run source callbacks. Interned string
+ * additions may survive abort; gameplay state remains unpublished. */
+bool qa_q1_game_restore_prepare(qa_q1_game *, qa_bytes, qa_q1_restore **, qa_error *);
+bool qa_q1_game_restore_validate(const qa_q1_restore *, qa_error *);
+bool qa_q1_game_restore_commit(qa_q1_restore *, qa_error *);
+void qa_q1_game_restore_abort(qa_q1_restore *);
+/* Resolve scheduler callbacks after native continuation is published. The
+ * shared save owner retains due time, sequence, boundary and execution owner. */
+bool qa_q1_game_think_binding(qa_q1_game *, qa_actor_id, uint32_t callback_id, qa_think_fn *,
+                              void **context, qa_error *);
+/* Shared target restoration binds only native actor claims. The borrowed
+ * callback context is this game, which must outlive every published binding.
+ * An absent native claim returns false without an error. */
+bool qa_q1_game_target_binding(qa_q1_game *, qa_actor_id, qa_target_binding *, qa_error *);
+
+#endif

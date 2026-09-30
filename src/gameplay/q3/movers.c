@@ -16,9 +16,11 @@ bool qa_q3_bind_mover(qa_q3_game *game, qa_actor_id actor, const qa_q3_mover_def
 static bool mover_read(void *context, qa_actor_id actor, qa_q3_mover_state *out) {
     qa_q3_game *game = context;
     q3_actor *entry = q3_actor_get(game, actor);
-    if ((!entry || entry->kind == Q3_ACTOR_PLAYER) && game->options.hooks.foreign_mover_read &&
-        game->options.hooks.foreign_mover_read(game->options.hooks.context, actor, out))
-        return true;
+    if ((!entry || entry->kind == Q3_ACTOR_PLAYER) && game->options.hooks.foreign_mover_read) {
+        if (game->options.hooks.foreign_mover_read(game->options.hooks.context, actor, out))
+            return qa_actors_get(qa_session_actors(game->options.services.session), actor) != NULL;
+        entry = q3_actor_get(game, actor);
+    }
     if (!entry)
         return false;
     if (entry->kind == Q3_ACTOR_MOVER) {
@@ -57,12 +59,18 @@ static bool mover_write(void *context, qa_actor_id actor, const qa_q3_mover_stat
     qa_q3_game *game = context;
     q3_actor *entry = q3_actor_get(game, actor);
     qa_q3_mover_state foreign;
-    if ((!entry || entry->kind == Q3_ACTOR_PLAYER) && game->options.hooks.foreign_mover_read &&
-        game->options.hooks.foreign_mover_read(game->options.hooks.context, actor, &foreign)) {
-        if (!game->options.hooks.foreign_mover_write)
-            return q3_fail(error, "foreign mover state has no writer");
-        return game->options.hooks.foreign_mover_write(game->options.hooks.context, actor, state,
-                                                       error);
+    if ((!entry || entry->kind == Q3_ACTOR_PLAYER) && game->options.hooks.foreign_mover_read) {
+        bool selected = game->options.hooks.foreign_mover_read(
+            game->options.hooks.context, actor, &foreign);
+        if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
+            return true;
+        if (selected) {
+            if (!game->options.hooks.foreign_mover_write)
+                return q3_fail(error, "foreign mover state has no writer");
+            return game->options.hooks.foreign_mover_write(game->options.hooks.context, actor,
+                                                           state, error);
+        }
+        entry = q3_actor_get(game, actor);
     }
     if (!entry) {
         if (game->options.hooks.foreign_mover_write)

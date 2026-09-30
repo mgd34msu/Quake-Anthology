@@ -1,6 +1,6 @@
 # Implementation dependency graph
 
-This view records all 41 tasks in [dependencies.json](dependencies.json), published as vibecheck-jev plan revision 6. The ledger owns current work claims. Reports recorded before judgment recovery are unverified; see [the recovery audit](audit/README.md). Local task status fields retain the published snapshot and are not a live completion report.
+This view records all 41 tasks in [dependencies.json](dependencies.json), originally published as vibecheck-jev plan revision 6. The current ledger policy is revision 7; the feature criteria and dependencies remain unchanged. The ledger owns current work claims. Reports recorded before judgment recovery are unverified; see [the recovery audit](audit/README.md). Local task status fields retain the published snapshot and are not a live completion report. The [source status table](implementation/source-status-20260929.md) gives a dated subsystem estimate.
 
 ```mermaid
 flowchart LR

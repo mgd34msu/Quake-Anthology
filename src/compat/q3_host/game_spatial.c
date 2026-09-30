@@ -1,0 +1,321 @@
+#include "internal.h"
+#include <math.h>
+
+static bool source_slot(q3_call *call, uint32_t number, q3_record *record,
+                          qa_qvm_entity_shared *shared, qa_error *error)
+{
+    return q3_game_entity_record(call, number, record, error) &&
+        qa_q3_abi_read_shared_entity(&record->abi, 0, shared, error);
+}
+
+static bool same_actor(q3_call *call, uint32_t number, qa_actor_id expected, qa_error *error)
+{
+    return (qa_actor_id_equal(call->host->game->slots[number].actor, expected) &&
+            (!expected.registry || qa_actors_get(qa_session_actors(call->host->options.session), expected))) ||
+        q3_fail(error, QA_ERROR_NOT_FOUND, number, "Q3 actor changed during spatial operation");
+}
+
+static bool actor_word(q3_call *call, uint32_t number, qa_actor_id actor,
+                         uint64_t address, uint32_t word, qa_error *error)
+{
+    return q3_write_word(call, address, word, error) && same_actor(call, number, actor, error);
+}
+
+static bool actor_vector(q3_call *call, uint32_t number, qa_actor_id actor,
+                           uint64_t address, qa_vec3 vector, qa_error *error)
+{
+    const float values[] = {vector.x, vector.y, vector.z};
+    for (size_t i = 0; i < 3; ++i)
+        if (!actor_word(call, number, actor, address + i * 4,
+                        (uint32_t)q3_float_bits(values[i]), error)) return false;
+    return true;
+}
+
+static qa_trace_policy policy(qa_q3_host *host, uint32_t contents)
+{
+    qa_trace_policy result = qa_collision_default_policy(QA_COLLISION_Q3);
+    result.contents_mask = contents;
+    const qa_cvar_view *curves = qa_cvars_find(host->options.cvars, "cm_noCurves");
+    const qa_cvar_view *player = qa_cvars_find(host->options.cvars, "cm_playerCurveClip");
+    result.curves = !curves || curves->number == 0;
+    result.player_curve_clip = !player || player->integer != 0;
+    return result;
+}
+
+static bool pass_actor(q3_call *call, int32_t number, qa_actor_id *out, qa_error *error)
+{
+    *out = (qa_actor_id){0};
+    if (number < 0 || number >= 1022 || call->host->game->slots[number].input_retired) return true;
+    return qa_q3_host_actor(call->host, (uint32_t)number, true, out, error);
+}
+
+static bool trace(q3_call *call, bool capsule, qa_error *error)
+{
+    qa_trace_query query = {.shape.kind = capsule ? QA_SHAPE_CAPSULE : QA_SHAPE_BOX,
+        .policy = policy(call->host, (uint32_t)q3_integer(call, 6))};
+    if (!q3_vector(call, call->arguments[1], &query.start, error) ||
+        !q3_vector(call, call->arguments[4], &query.end, error) ||
+        (call->arguments[2] && !q3_vector(call, call->arguments[2], &query.shape.bounds.mins, error)) ||
+        (call->arguments[3] && !q3_vector(call, call->arguments[3], &query.shape.bounds.maxs, error)) ||
+        !pass_actor(call, q3_integer(call, 5), &query.pass_actor, error)) return false;
+    qa_trace_result hit;
+    if (!qa_world_trace(call->host->options.world, &query, &hit, error)) return false;
+    uint32_t number = hit.fraction == 1 ? 1023 : 1022;
+    if (hit.hit == QA_TRACE_HIT_ACTOR && !qa_q3_host_actor_slot(call->host, hit.actor, &number, error)) return false;
+    q3_record output;
+    return q3_record_open(call, call->arguments[0], 56, &output, error) &&
+        qa_q3_abi_write_trace(&output.abi, 0, &hit, (int32_t)number, error);
+}
+
+static bool point_contents(q3_call *call, int32_t *result, qa_error *error)
+{
+    qa_point_query query = {.policy = qa_collision_default_policy(QA_COLLISION_Q3), .q3_server_entities = true};
+    if (!q3_vector(call, call->arguments[0], &query.point, error)) return false;
+    int32_t excluded = q3_integer(call, 1);
+    if (excluded >= 0 && excluded < 1022) query.pass_actor = call->host->game->slots[excluded].actor;
+    qa_point_contents contents;
+    if (!qa_world_point_contents(call->host->options.world, &query, &contents, error)) return false;
+    *result = contents.contents; return true;
+}
+
+static bool contact(q3_call *call, bool capsule, int32_t *result, qa_error *error)
+{
+    qa_trace_query query = {.shape.kind = capsule ? QA_SHAPE_CAPSULE : QA_SHAPE_BOX,
+        .policy = policy(call->host, UINT32_MAX)};
+    uint32_t number;
+    if (!q3_vector(call, call->arguments[0], &query.shape.bounds.mins, error) ||
+        !q3_vector(call, call->arguments[1], &query.shape.bounds.maxs, error) ||
+        !q3_game_pointer_slot(call, call->arguments[2], &number, error)) return false;
+    q3_record record; qa_qvm_entity_shared shared;
+    if (!source_slot(call, number, &record, &shared, error)) return false;
+    query.target.origin = shared.origin; query.target.angles = shared.angles;
+    qa_collision_geometry *geometry = qa_world_geometry(call->host->options.world);
+    qa_trace_result hit; bool ok;
+    if (shared.inline_model) {
+        query.target.inline_model = true;
+        query.target.model = qa_load_u32le(record.abi.bytes.data + 160);
+        ok = qa_collision_trace(geometry, &query, &hit, error);
+    } else if (shared.server_flags & 1024)
+        ok = qa_collision_trace_q3_capsule(geometry, &query, shared.local_bounds, true, &hit, error);
+    else ok = qa_collision_trace_q3_box(&query, shared.local_bounds, true, &hit, error);
+    if (ok) *result = hit.start_solid || hit.all_solid;
+    return ok;
+}
+
+static bool area_entities(q3_call *call, int32_t *result, qa_error *error)
+{
+    qa_bounds bounds;
+    if (!q3_vector(call, call->arguments[0], &bounds.mins, error) ||
+        !q3_vector(call, call->arguments[1], &bounds.maxs, error)) return false;
+    size_t capacity = qa_actors_count(qa_session_actors(call->host->options.session));
+    qa_actor_id *actors = capacity ? qa_arena_alloc(&call->host->scratch,
+        capacity * sizeof(*actors), _Alignof(qa_actor_id), error) : NULL;
+    if (capacity && !actors) return false;
+    size_t count; bool overflow;
+    if (!qa_world_query(call->host->options.world, bounds, QA_COLLISION_BOTH,
+                         actors, capacity, &count, &overflow, error)) return false;
+    if (overflow) return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 actor query changed during snapshot");
+    int32_t maximum = q3_integer(call, 3);
+    if (maximum >= 0 && count > (size_t)maximum) count = (size_t)maximum;
+    if (!count) return true;
+    uint32_t *numbers = qa_arena_alloc(&call->host->scratch, count * sizeof(*numbers), _Alignof(uint32_t), error);
+    if (!numbers) return false;
+    for (size_t i = 0; i < count; ++i)
+        if (!qa_q3_host_actor_slot(call->host, actors[i], &numbers[i], error)) return false;
+    q3_record output;
+    if (!q3_record_open(call, call->arguments[2], count * 4, &output, error)) return false;
+    for (size_t i = 0; i < count; ++i)
+        if (!q3_write_word(call, call->arguments[2] + i * 4, numbers[i], error)) return false;
+    *result = (int32_t)count; return true;
+}
+
+static int compare_cluster(const void *a, const void *b)
+{
+    int64_t first = ((const qa_collision_leaf *)a)->cluster, second = ((const qa_collision_leaf *)b)->cluster;
+    return (first > second) - (first < second);
+}
+
+static uint32_t solid_byte(float value)
+{
+    if (isnan(value)) return 0;
+    return value < 1 ? 1 : value > 255 ? 255 : (uint32_t)value;
+}
+
+bool qa_q3_host_link(qa_q3_host *host, uint32_t number, qa_error *error)
+{
+    q3_call call;
+    if (!q3_game_begin(host, &call, error)) return false;
+    q3_record record; qa_qvm_entity_shared shared;
+    if (!source_slot(&call, number, &record, &shared, error)) return q3_game_end(&call, false);
+    size_t linked_offset = q3_shared_offset(host->options.abi, 416);
+    if (host->game->slots[number].input_retired)
+        return q3_game_end(&call, actor_word(&call, number, host->game->slots[number].actor,
+                                             record.address + linked_offset, 0, error));
+    qa_actor_id actor;
+    if (!qa_q3_host_actor(host, number, true, &actor, error)) return q3_game_end(&call, false);
+    q3_entity_slot *slot = &host->game->slots[number];
+    if ((!slot->borrowed && !qa_world_unlink(host->options.world, actor, error)) ||
+        !same_actor(&call, number, actor, error) || !q3_game_entity_record(&call, number, &record, error) ||
+        !actor_word(&call, number, actor, record.address + linked_offset, 0, error) ||
+        !source_slot(&call, number, &record, &shared, error)) return q3_game_end(&call, false);
+    uint32_t solid = shared.inline_model ? 0xffffffu : !(shared.contents & 0x02000001) ? 0 :
+        (solid_byte(shared.local_bounds.maxs.z + 32) << 16) |
+        (solid_byte(-shared.local_bounds.mins.z) << 8) | solid_byte(shared.local_bounds.maxs.x);
+    if (!actor_word(&call, number, actor, record.address + 176, solid, error) ||
+        !source_slot(&call, number, &record, &shared, error)) return q3_game_end(&call, false);
+    qa_bounds bounds = shared.local_bounds;
+    if (shared.inline_model && (shared.angles.x || shared.angles.y || shared.angles.z)) {
+        qa_vec3 extent = qa_v3(fmaxf(fabsf(bounds.mins.x), fabsf(bounds.maxs.x)),
+                               fmaxf(fabsf(bounds.mins.y), fabsf(bounds.maxs.y)),
+                               fmaxf(fabsf(bounds.mins.z), fabsf(bounds.maxs.z)));
+        float radius = sqrtf(qa_vec_dot(extent, extent));
+        bounds = (qa_bounds){qa_v3(-radius, -radius, -radius), qa_v3(radius, radius, radius)};
+    }
+    bounds.mins = qa_vec_sub(qa_vec_add(shared.origin, bounds.mins), qa_v3(1, 1, 1));
+    bounds.maxs = qa_vec_add(qa_vec_add(shared.origin, bounds.maxs), qa_v3(1, 1, 1));
+    if (!actor_vector(&call, number, actor, record.address + q3_shared_offset(host->options.abi, 464), bounds.mins, error) ||
+        !actor_vector(&call, number, actor, record.address + q3_shared_offset(host->options.abi, 476), bounds.maxs, error) ||
+        !source_slot(&call, number, &record, &shared, error)) return q3_game_end(&call, false);
+    bounds = shared.absolute_bounds;
+    qa_collision_geometry *geometry = qa_world_geometry(host->options.world);
+    bool native = qa_collision_geometry_family(geometry) == QA_COLLISION_Q3;
+    size_t capacity = native ? 128 : qa_bsp_record_count(qa_collision_bsp(geometry), QA_BSP_LEAVES);
+    uint32_t *leaves = capacity ? qa_arena_alloc(&host->scratch, capacity * sizeof(*leaves), _Alignof(uint32_t), error) : NULL;
+    if (capacity && !leaves) return q3_game_end(&call, false);
+    qa_leaf_list list;
+    if (!qa_collision_box_leaves(geometry, bounds, leaves, capacity, &list, error)) return q3_game_end(&call, false);
+    qa_collision_leaf *metadata = list.count ? qa_arena_alloc(&host->scratch,
+        list.count * sizeof(*metadata), _Alignof(qa_collision_leaf), error) : NULL;
+    if (list.count && !metadata) return q3_game_end(&call, false);
+    int32_t area = -1, area2 = -1;
+    for (size_t i = 0; i < list.count; ++i) {
+        if (!qa_collision_leaf_at(geometry, leaves[i], metadata + i, error)) return q3_game_end(&call, false);
+        int32_t current = (int32_t)metadata[i].area;
+        if (current == -1) continue;
+        if (area != -1 && area != current) area2 = current;
+        else area = current;
+    }
+    if (!native && list.count > 1) qsort(metadata, list.count, sizeof(*metadata), compare_cluster);
+    slot->has_visibility = true; slot->area = area; slot->area2 = area2;
+    slot->last_cluster = 0; slot->cluster_count = 0;
+    for (size_t i = 0; i < list.count; ++i) {
+        if (metadata[i].cluster == -1) continue;
+        slot->clusters[slot->cluster_count++] = (int32_t)metadata[i].cluster;
+        if (slot->cluster_count == 16) {
+            qa_collision_leaf last;
+            if (native) {
+                if (!qa_collision_leaf_at(geometry, list.last_leaf, &last, error)) return q3_game_end(&call, false);
+            } else last = metadata[list.count - 1];
+            slot->last_cluster = (int32_t)last.cluster; break;
+        }
+    }
+    if (!list.count) return q3_game_end(&call, true);
+    if ((!slot->borrowed && !qa_world_link_bounds(host->options.world, actor, &bounds, error)) ||
+        !same_actor(&call, number, actor, error) ||
+        !source_slot(&call, number, &record, &shared, error)) return q3_game_end(&call, false);
+    bool ok = actor_word(&call, number, actor, record.address + q3_shared_offset(host->options.abi, 420),
+                           (uint32_t)shared.linkcount + 1u, error) &&
+        actor_word(&call, number, actor, record.address + linked_offset, 1, error);
+    return q3_game_end(&call, ok);
+}
+
+bool qa_q3_host_unlink(qa_q3_host *host, uint32_t number, qa_error *error)
+{
+    q3_call call;
+    if (!q3_game_begin(host, &call, error)) return false;
+    q3_record record;
+    if (!q3_game_entity_record(&call, number, &record, error)) return q3_game_end(&call, false);
+    q3_entity_slot *slot = &host->game->slots[number];
+    qa_actor_id actor = slot->actor; bool borrowed = slot->borrowed;
+    bool ok = actor_word(&call, number, actor, record.address + q3_shared_offset(host->options.abi, 416), 0, error);
+    if (ok && actor.registry && !borrowed)
+        ok = qa_world_unlink(host->options.world, actor, error) && same_actor(&call, number, actor, error);
+    return q3_game_end(&call, ok);
+}
+
+bool qa_q3_host_visibility_read(qa_q3_host *host, uint32_t number,
+                                 qa_q3_host_visibility *out, bool *present, qa_error *error)
+{
+    q3_call call;
+    if (!out || !present || !q3_game_begin(host, &call, error)) return false;
+    q3_record record;
+    bool ok = q3_game_entity_record(&call, number, &record, error);
+    if (ok) {
+        q3_entity_slot *slot = &host->game->slots[number];
+        *present = slot->has_visibility;
+        if (*present) {
+            *out = (qa_q3_host_visibility){.area = slot->area, .area2 = slot->area2,
+                .last_cluster = slot->last_cluster, .cluster_count = slot->cluster_count};
+            memcpy(out->clusters, slot->clusters, slot->cluster_count * sizeof(*slot->clusters));
+        }
+    }
+    return q3_game_end(&call, ok);
+}
+
+static bool brush_model(q3_call *call, qa_error *error)
+{
+    qa_buffer name = {0};
+    if (!q3_string(call, call->arguments[1], &name, error)) return false;
+    if (name.data[0] != '*') {
+        qa_buffer_free(&name); return q3_fail(error, QA_ERROR_ARGUMENT, 0, "SV_SetBrushModel requires an inline model name");
+    }
+    uint32_t bits = (uint32_t)(unsigned long)strtol((const char *)name.data + 1, NULL, 10);
+    qa_buffer_free(&name);
+    uint32_t number; q3_record record; qa_bounds bounds;
+    if (!q3_game_pointer_slot(call, call->arguments[0], &number, error) ||
+        !qa_collision_model_bounds(qa_world_geometry(call->host->options.world), bits, &bounds, error) ||
+        !q3_game_entity_record(call, number, &record, error)) return false;
+    qa_qvm_abi abi = call->host->options.abi;
+    qa_actor_id actor = call->host->game->slots[number].actor;
+    if (!actor_word(call, number, actor, record.address + 160, bits, error) ||
+        !actor_word(call, number, actor, record.address + q3_shared_offset(abi, 432), 1, error) ||
+        !actor_vector(call, number, actor, record.address + q3_shared_offset(abi, 436), bounds.mins, error) ||
+        !actor_vector(call, number, actor, record.address + q3_shared_offset(abi, 448), bounds.maxs, error) ||
+        !actor_word(call, number, actor, record.address + q3_shared_offset(abi, 460), UINT32_MAX, error)) return false;
+    return qa_q3_host_link(call->host, number, error);
+}
+
+q3_service_result q3_game_spatial(q3_call *call, int32_t *result, qa_error *error)
+{
+    if (call->host->options.role != QA_QVM_GAME) return Q3_UNHANDLED;
+    int32_t code = call->service;
+    if ((code < 23 || code > 33) && code != 43 && code != 44) return Q3_UNHANDLED;
+    bool ok = true; qa_collision_geometry *geometry = qa_world_geometry(call->host->options.world);
+    switch (code) {
+    case 23: ok = brush_model(call, error); break;
+    case 24: case 43: ok = trace(call, code == 43, error); break;
+    case 25: ok = point_contents(call, result, error); break;
+    case 26: case 27: {
+        qa_vec3 first, second; qa_collision_leaf a, b; bool visible, connected = true;
+        ok = q3_vector(call, call->arguments[0], &first, error) &&
+            q3_vector(call, call->arguments[1], &second, error) &&
+            qa_collision_point_leaf(geometry, first, &a, error) && qa_collision_point_leaf(geometry, second, &b, error) &&
+            qa_collision_cluster_visible(geometry, (int32_t)a.cluster, (int32_t)b.cluster, false, &visible, error);
+        if (ok && visible && code == 26)
+            ok = qa_collision_areas_connected(geometry, (int32_t)a.area, (int32_t)b.area, &connected, error);
+        if (ok) *result = visible && connected; break;
+    }
+    case 29: {
+        bool connected;
+        ok = qa_collision_areas_connected(geometry, q3_integer(call, 0), q3_integer(call, 1), &connected, error);
+        if (ok) *result = connected; break;
+    }
+    case 28: {
+        uint32_t number; qa_q3_host_visibility visibility; bool present;
+        ok = q3_game_pointer_slot(call, call->arguments[0], &number, error) &&
+            qa_q3_host_visibility_read(call->host, number, &visibility, &present, error);
+        if (ok && present && visibility.area2 != -1)
+            ok = q3_game_portal(call->host, visibility.area, visibility.area2, q3_integer(call, 1) != 0, error);
+        break;
+    }
+    case 30: case 31: {
+        uint32_t number;
+        ok = q3_game_pointer_slot(call, call->arguments[0], &number, error) &&
+            (code == 30 ? qa_q3_host_link(call->host, number, error) : qa_q3_host_unlink(call->host, number, error)); break;
+    }
+    case 32: ok = area_entities(call, result, error); break;
+    case 33: case 44: ok = contact(call, code == 44, result, error); break;
+    default: return Q3_UNHANDLED;
+    }
+    return ok ? Q3_COMPLETED : Q3_FAILED;
+}

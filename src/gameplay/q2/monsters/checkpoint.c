@@ -13,16 +13,8 @@ static bool save_reference(qa_q2_game *game, qa_actor_id id,
   return true;
 }
 
-static bool callback_boundary(const qa_q2_game *game, qa_error *error) {
-  for (const q2_trace_frame *frame = game->trace_frames; frame != NULL;
-       frame = frame->next) {
-    if (!frame->active)
-      continue;
-    qa_error_set(error, QA_ERROR_ARGUMENT, 0,
-                 "Q2 monster checkpoint requires a gameplay callback boundary");
-    return false;
-  }
-  return true;
+static bool callback_boundary(qa_q2_game *game, qa_error *error) {
+  return q2_checkpoint_idle(game, error);
 }
 
 static bool resolve_reference(qa_q2_game *game, qa_q2_saved_reference saved,
@@ -79,6 +71,7 @@ static bool finite_checkpoint(const qa_q2_monster_checkpoint *state) {
          qa_vec_finite(state->fly_recovery_direction) &&
          qa_vec_finite(state->last_damage_point) &&
          qa_vec_finite(state->saved_attack_position) &&
+         qa_vec_finite(state->widow_previous_target) &&
          qa_vec_finite(state->controller_direction) &&
          qa_vec_finite(state->sound_target.origin);
 }
@@ -138,7 +131,7 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
   }
   const struct qa_q2_monster *monster = actor->monster;
   qa_q2_monster_checkpoint saved = {
-      .version = 7,
+      .version = 9,
       .start_phase = (uint32_t)monster->start_phase,
       .combat_target = monster->combat_target,
       .start_due_ns = monster->start_due_ns,
@@ -201,6 +194,7 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
       .timestamp_ns = monster->timestamp_ns,
       .coop_check_ns = monster->coop_check_ns,
       .react_ns = monster->react_ns,
+      .widow_powers = monster->widow_powers,
       .sound_target = {.origin = monster->sound_target.origin,
                        .time_ns = monster->sound_target.time_ns,
                        .present = monster->sound_target.present},
@@ -211,6 +205,7 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
       .fly_recovery_direction = monster->fly_recovery_direction,
       .last_damage_point = monster->last_damage_point,
       .saved_attack_position = monster->saved_attack_position,
+      .widow_previous_target = monster->widow_previous_target,
       .controller_direction = monster->controller_direction,
       .last_attack = monster->last_attack,
       .pending_damage = monster->pending_damage,
@@ -379,7 +374,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   if (!callback_boundary(game, error))
     return false;
   bool controller = saved->controller_kind != Q2M_CONTROLLER_NONE;
-  if (saved->version != 7 || saved->start_phase > Q2M_START_MANUAL ||
+  if (saved->version != 9 || saved->start_phase > Q2M_START_MANUAL ||
       saved->corpse_phase > Q2M_CORPSE_HOVER ||
       (saved->corpse_phase != Q2M_CORPSE_IDLE && !saved->corpse) ||
       saved->initial_power_armor > QA_POWER_SHIELD || saved->max_power_armor < 0 ||
@@ -452,7 +447,8 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
     actor->physics.motion = QA_PHYSICS_STATIONARY;
     actor->physics.solid = QA_PHYSICS_NOT_SOLID;
     actor->physics.clip_mask = 0;
-    q2m_free_monster(previous);
+    if (previous)
+      q2m_retire_monster(game, previous);
     return true;
   }
   const q2m_definition *definition =
@@ -461,6 +457,11 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   if (definition == NULL || move_set == NULL) {
     qa_error_set(error, QA_ERROR_FORMAT, 0,
                  "Q2 monster checkpoint definition is unavailable");
+    return false;
+  }
+  if (definition->species == Q2M_WIDOW2 && saved->death_ns != 0 &&
+      (!saved->dead || saved->count < 0 || saved->count > 12)) {
+    qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid Widow explosion checkpoint");
     return false;
   }
   if (!q2m_corpse_phase_valid(game, definition->species,
@@ -548,6 +549,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   Q2M_RESTORE(timestamp_ns);
   Q2M_RESTORE(coop_check_ns);
   Q2M_RESTORE(react_ns);
+  Q2M_RESTORE(widow_powers);
   Q2M_RESTORE(old_frame);
   Q2M_RESTORE(render_flags);
   monster->start_phase = (q2m_start_phase)saved->start_phase;
@@ -561,6 +563,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   Q2M_RESTORE(fly_recovery_direction);
   Q2M_RESTORE(last_damage_point);
   Q2M_RESTORE(saved_attack_position);
+  Q2M_RESTORE(widow_previous_target);
   Q2M_RESTORE(last_attack);
   Q2M_RESTORE(pending_damage);
   Q2M_RESTORE(pending_kick);
@@ -676,6 +679,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   struct qa_q2_monster *previous = actor->monster;
   actor->monster = monster;
   actor->physics_bound = true;
-  q2m_free_monster(previous);
+  if (previous)
+    q2m_retire_monster(game, previous);
   return true;
 }

@@ -2,6 +2,7 @@
 #define QA_GAME_Q2_ENTITIES_H
 #include "qa/game_q2.h"
 #include "qa/targets.h"
+#include "qa/navigation.h"
 
 typedef struct qa_q2_visual {
     qa_string_id models[4];
@@ -399,7 +400,24 @@ bool qa_q2_entity_use_targets(qa_q2_game *, qa_actor_id, qa_actor_id activator, 
 /* Shared target delay dispatch creates a native DelayedUse actor. */
 bool qa_q2_entity_defer_targets(qa_q2_game *, const qa_target_use *, qa_error *);
 bool qa_q2_entity_visual(qa_q2_game *, qa_actor_id, qa_q2_visual *, qa_error *);
+/* Native source state only; no selected-owner callbacks or fallback publication. */
+bool qa_q2_presentation_read(qa_q2_game *, qa_actor_id, qa_q2_visual *);
 bool qa_q2_entity_team(qa_q2_game *, qa_actor_id, qa_actor_id *master, qa_actor_id *next);
+typedef enum qa_q2_map_mover_kind {
+    QA_Q2_MOVER_DOOR, QA_Q2_MOVER_ELEVATOR, QA_Q2_MOVER_TRAIN, QA_Q2_MOVER_STATIC
+} qa_q2_map_mover_kind;
+typedef struct qa_q2_map_mover_view {
+    qa_actor_id actor, controller, activation;
+    qa_nav_entity_state navigation;
+    qa_q2_map_mover_kind kind;
+    uint32_t inline_model;
+    bool has_inline_model, shootable, useable, route_ambiguous;
+} qa_q2_map_mover_view;
+/* Caller storage owns the detached route prefix. Ambiguous or truncated
+ * successors are never presented as a deterministic source choice. */
+bool qa_q2_entity_mover_read(qa_q2_game *, qa_actor_id, qa_q2_map_mover_view *,
+                             qa_nav_train_stop *, size_t capacity, size_t *count,
+                             bool *found, qa_error *);
 bool qa_q2_entity_field(qa_q2_game *, qa_actor_id, const char *key, qa_string_id *value);
 bool qa_q2_entity_set_target(qa_q2_game *, qa_actor_id, qa_string_id, qa_error *);
 bool qa_q2_entity_set_targetname(qa_q2_game *, qa_actor_id, qa_string_id, qa_error *);

@@ -432,6 +432,49 @@ bool qa_modes_player_read(qa_modes *m, qa_mode_id id, qa_actor_id actor,
     *out = view;
     return true;
 }
+bool qa_modes_ctf_read(qa_modes *m, qa_mode_id id, qa_actor_id actor,
+                       qa_mode_ctf_view *out, qa_error *e) {
+    mode_instance *v = mode_get(m, id);
+    mode_member *p = mode_member_get(m, v, actor);
+    if (!v || !p || !out || v->value.rules.source != QA_MODE_THREEWAVE ||
+        !v->value.rules.enabled)
+        return mode_fail(e, "unknown ThreeWave continuation");
+    *out = (qa_mode_ctf_view){.last_team = p->player.ctf_last_team,
+        .status = p->player.ctf_status, .access = p->player.ctf_access,
+        .start_map = v->value.rules.start_map,
+        .pregame_over = v->value.ctf_pregame_over,
+        .observer = p->player.spectator,
+        .grapple_disabled = (v->value.rules.teamplay & 2048) != 0};
+    return true;
+}
+bool qa_modes_ctf_restore_player(qa_modes *m, qa_mode_id id, qa_actor_id actor,
+                                  int32_t last_team, float status, float access, qa_error *e) {
+    mode_instance *v = mode_get(m, id);
+    mode_member *p = mode_member_get(m, v, actor);
+    if (!v || !p || v->value.rules.source != QA_MODE_THREEWAVE ||
+        !isfinite(status) || !isfinite(access))
+        return mode_fail(e, "invalid ThreeWave player continuation");
+    if (!v->value.rules.start_map && (last_team == 5 || last_team == 14)) {
+        qa_team_id team = v->value.rules.teams[last_team == 5 ? 0 : 1];
+        if (!qa_modes_set_team(m, id, actor, team, e))
+            return false;
+        p = mode_member_get(m, v, actor);
+        if (!p)
+            return true;
+        p->last_team = team;
+    }
+    p->player.ctf_last_team = v->value.rules.start_map ? 1 : last_team;
+    p->player.ctf_status = status;
+    p->player.ctf_access = access;
+    return true;
+}
+bool qa_modes_ctf_pregame_end(qa_modes *m, qa_mode_id id, qa_error *e) {
+    mode_instance *v = mode_get(m, id);
+    if (!v || v->value.rules.source != QA_MODE_THREEWAVE)
+        return mode_fail(e, "unknown ThreeWave pregame owner");
+    v->value.ctf_pregame_over = true;
+    return true;
+}
 bool qa_modes_bind_player(qa_modes *m, qa_mode_id id, qa_actor_id actor, const qa_match_binding *binding,
                           qa_match_lease *out, qa_error *e) {
     mode_instance *v = mode_get(m, id);
@@ -592,6 +635,16 @@ bool qa_modes_statistics(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_mode_
     *out = p->stats;
     return true;
 }
+bool qa_modes_source_award(qa_modes *m, qa_mode_id id, qa_actor_id actor,
+                            int32_t source_award, qa_error *e) {
+    mode_instance *v = mode_get(m, id);
+    mode_member *p = mode_member_get(m, v, actor);
+    if (!v || !p || v->value.rules.source < QA_MODE_Q3 ||
+        (source_award != 11 && source_award != 12))
+        return mode_fail(e, "invalid source mode award");
+    mode_stat_add(v, source_award == 11 ? &p->stats.defenses : &p->stats.assists, 1);
+    return true;
+}
 bool qa_modes_team_score(qa_modes *m, qa_mode_id id, qa_team_id team, int32_t amount, qa_error *e) {
     mode_instance *v = mode_get(m, id);
     int index = v ? mode_team_index(v, team) : -1;
@@ -641,6 +694,10 @@ bool mode_join(qa_modes *m, mode_instance *v, qa_actor_id actor, qa_team_id team
     if (observer)
         member->player.spectator_since_ns = v->value.time_ns;
     member->last_team = team;
+    if (v->value.rules.source == QA_MODE_THREEWAVE)
+        member->player.ctf_last_team = v->value.rules.start_map || observer ? 1
+            : team == v->value.rules.teams[0] ? 5
+            : team == v->value.rules.teams[1] ? 14 : -1;
     member->spawn_state = 0;
     if (m->options.hooks.spectator &&
         !MODE_CALLBACK(m, m->options.hooks.spectator(m->options.hooks.context, id, actor, observer, e)))

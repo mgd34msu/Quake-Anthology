@@ -478,12 +478,24 @@ bool qa_input_seat_event(qa_input_seat *s, const qa_input_event *event, bool *co
             released = qa_input_seat_release(s, event->time_ms, error);
     } else if (!s->focused)
         return true;
+    bool used = false;
+    bool dispatched = !s->options.before_ui ||
+        s->options.before_ui(s->options.before_ui_user, s, event, &used, error);
     qa_ui_record ui = s->ui[s->ui_count - 1];
-    bool used = ui.handler && ui.handler(ui.user, s, s->focus, event);
+    if (dispatched && !used) used = ui.handler && ui.handler(ui.user, s, s->focus, event);
+    /* A rejected source event also suppresses a new gameplay press, while an
+     * already held physical release must reach digital() below. */
+    if (!dispatched) used = true;
     if (consumed)
         *consumed = used || s->focus == QA_INPUT_GAME;
-    if (!released)
+    if (!released || !dispatched) {
+        if ((event->kind == QA_INPUT_EVENT_KEY || event->kind == QA_INPUT_EVENT_BUTTON) &&
+            !event->down && qa_input_physical_valid(event->input)) {
+            qa_error retirement = {0};
+            (void)digital(s, event->input, false, event->time_ms, true, &retirement);
+        }
         return false;
+    }
     switch (event->kind) {
     case QA_INPUT_EVENT_KEY:
     case QA_INPUT_EVENT_BUTTON:

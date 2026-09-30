@@ -61,9 +61,9 @@ bool q2_green_touch(qa_q2_game *g, q2_actor *a, const qa_touch_contact *contact,
         return false;
     return !q2_actor_live(g, id) || qa_session_release(g->services.session, id, e);
 }
-bool q2_fire_actor_bolt(qa_q2_game *g, qa_actor_id source, qa_actor_id credited_owner,
+static bool fire_actor_bolt(qa_q2_game *g, qa_actor_id source, qa_actor_id credited_owner,
                         qa_vec3 start, qa_vec3 direction, float damage, float speed,
-                        uint64_t effects, int means_of_death, bool green, qa_error *e) {
+                        uint64_t effects, int means_of_death, q2_projectile_kind kind, qa_error *e) {
     q2_actor *a = q2_actor_get(g, source, true, e);
     if (a == NULL)
         return false;
@@ -78,12 +78,20 @@ bool q2_fire_actor_bolt(qa_q2_game *g, qa_actor_id source, qa_actor_id credited_
                            .attack_owner = credited_owner,
                            .has_projectile_effects = true,
                            .projectile_effects = effects};
-    return q2_projectile_spawn(&call,
-                               green                  ? Q2_GREEN_BOLT
-                               : means_of_death == 58 ? Q2_BLUE_BOLT
-                                                      : Q2_BOLT,
-                               start, direction, damage, 1, speed, green ? 128 : 0, 0, 2,
+    return q2_projectile_spawn(&call, kind,
+                               start, direction, damage, 1, speed, kind == Q2_GREEN_BOLT ? 128 : 0, 0, 2,
                                means_of_death, 0, false, false, e);
+}
+bool q2_fire_actor_bolt(qa_q2_game *g, qa_actor_id source, qa_actor_id credited_owner,
+                        qa_vec3 start, qa_vec3 direction, float damage, float speed,
+                        uint64_t effects, int means_of_death, bool green, qa_error *e) {
+    return fire_actor_bolt(g, source, credited_owner, start, direction, damage, speed, effects,
+                            means_of_death, green ? Q2_GREEN_BOLT
+                              : means_of_death == 58 ? Q2_BLUE_BOLT : Q2_BOLT, e);
+}
+bool q2_fire_actor_loogie(qa_q2_game *g, qa_actor_id source, qa_vec3 start,
+                          qa_vec3 direction, qa_error *e) {
+    return fire_actor_bolt(g, source, source, start, direction, 5, 550, 8, 38, Q2_LOOGIE, e);
 }
 bool q2_fire_actor_rocket(qa_q2_game *g, qa_actor_id source, qa_actor_id credited_owner,
                           qa_vec3 start, qa_vec3 direction, float damage, float speed,

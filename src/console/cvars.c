@@ -1,28 +1,34 @@
-#include "internal.h"
+#include "cvars_private.h"
+#include "qa/text.h"
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct cvar {
-    qa_cvar_view view;
-    qa_cvar_binding binding;
-    bool bound;
-    struct cvar *next;
-} cvar;
+bool qac_cvars_touch(qa_cvars *registry, qa_error *error)
+{
+    if (!registry) return qac_fail(error, QA_ERROR_ARGUMENT, "cvar mutation requires its registry");
+    if (registry->mutation_revision == UINT64_MAX)
+        return qac_fail(error, QA_ERROR_MEMORY, "cvar mutation identity is exhausted");
+    ++registry->mutation_revision;
+    return true;
+}
 
-struct qa_cvars {
-    qa_cvar_options options;
-    cvar *first;
-    size_t count;
-    size_t next_handle;
-    uint32_t changed_flags;
-    bool userinfo_modified;
-    bool server_active;
-    bool high_characters;
-    bool cheats;
-};
+bool qa_cvars_capture_metadata(const qa_cvars *registry, qa_cvar_registry_state *out,
+                                qa_cvar_record_state *records, size_t capacity, qa_error *error)
+{
+    if (registry == NULL || out == NULL || capacity < registry->count || (registry->count && records == NULL))
+        return qac_fail(error, QA_ERROR_ARGUMENT, "cvar metadata capture needs complete output storage");
+    *out = (qa_cvar_registry_state){registry->next_handle, registry->changed_flags,
+        registry->userinfo_modified, registry->server_active, registry->high_characters, registry->cheats};
+    size_t index = 0;
+    for (const cvar *entry = registry->first; entry != NULL; entry = entry->next) {
+        records[index++] = (qa_cvar_record_state){entry->view.name, entry->view.handle,
+            entry->view.owner, entry->view.modification_count, entry->view.modified, entry->view.console_created};
+    }
+    return true;
+}
 
 static const uint32_t q2_no_archive = QA_Q2_CVAR_NOSET | QA_Q2_CVAR_CHEAT |
     QA_Q2_CVAR_PRIVATE | QA_Q2_CVAR_READONLY | QA_Q2_CVAR_NO_ARCHIVE;
@@ -38,6 +44,40 @@ static cvar *find_variable(const qa_cvars *registry, const char *name)
     for (cvar *entry = registry->first; entry != NULL; entry = entry->next)
         if (name_equal(registry, name, entry->view.name)) return entry;
     return NULL;
+}
+bool qa_cvars_restore_metadata(qa_cvars *registry, const qa_cvar_registry_state *state,
+                                const qa_cvar_record_state *records, size_t count, qa_error *error)
+{
+    if (!qac_cvars_touch(registry, error)) return false;
+    if (registry == NULL || state == NULL || count != registry->count || (count && records == NULL))
+        return qac_fail(error, QA_ERROR_ARGUMENT, "cvar metadata does not cover this registry");
+    for (size_t i = 0; i < count; ++i) {
+        cvar *entry = find_variable(registry, records[i].name);
+        if (entry == NULL || records[i].handle >= state->next_handle ||
+            (entry->bound && (entry->view.owner != records[i].owner || entry->view.handle != records[i].handle)))
+            return qac_fail(error, QA_ERROR_FORMAT, "invalid saved cvar metadata identity");
+        for (size_t earlier = 0; earlier < i; ++earlier)
+            if (records[earlier].handle == records[i].handle || name_equal(registry, records[earlier].name, records[i].name))
+                return qac_fail(error, QA_ERROR_FORMAT, "duplicate saved cvar metadata identity");
+    }
+    for (size_t i = 0; i < count; ++i) {
+        cvar *entry = find_variable(registry, records[i].name);
+        entry->view.handle = records[i].handle; entry->view.owner = records[i].owner;
+        entry->view.modification_count = records[i].modification_count;
+        entry->view.modified = records[i].modified; entry->view.console_created = records[i].console_created;
+    }
+    registry->next_handle = state->next_handle; registry->changed_flags = state->modified_flags;
+    registry->userinfo_modified = state->userinfo_modified; registry->server_active = state->server_active;
+    registry->high_characters = state->high_characters; registry->cheats = state->cheats;
+    return true;
+}
+bool qa_cvars_retain_shared(qa_cvars *registry, const char *name, qa_error *error)
+{
+    if (!qac_cvars_touch(registry, error)) return false;
+    cvar *entry = find_variable(registry, name);
+    if (entry == NULL) return qac_fail(error, QA_ERROR_NOT_FOUND, "shared cvar is not registered");
+    entry->view.owner = 0;
+    return true;
 }
 
 static void print_message(const qa_cvars *registry, const char *name, const char *message)
@@ -65,7 +105,7 @@ static const char *source_name(const qa_cvars *registry, const char *name)
     return registry->options.dialect == QA_CONSOLE_Q3 && !valid_info(name) ? "BADNAME" : name;
 }
 
-static void free_variable(cvar *entry)
+void qac_cvars_entry_free(cvar *entry)
 {
     free((char *)entry->view.name);
     free((char *)entry->view.value);
@@ -79,6 +119,7 @@ static void free_variable(cvar *entry)
 bool qa_cvars_document(qa_cvars *registry, const char *name, uint64_t owner,
                         const qa_console_documentation *doc, qa_error *error)
 {
+    if (!qac_cvars_touch(registry, error)) return false;
     cvar *entry = find_variable(registry, name);
     if (!entry || entry->view.owner != owner)
         return qac_fail(error, QA_ERROR_NOT_FOUND, "cvar documentation owner not found");
@@ -161,7 +202,7 @@ void qa_cvars_destroy(qa_cvars *registry)
     cvar *entry = registry->first;
     while (entry != NULL) {
         cvar *next = entry->next;
-        free_variable(entry);
+        qac_cvars_entry_free(entry);
         entry = next;
     }
     free(registry);
@@ -207,6 +248,7 @@ size_t qa_cvars_handle_count(const qa_cvars *registry)
 bool qa_cvars_bind(qa_cvars *registry, const char *name, const qa_cvar_binding *binding,
                     qa_error *error)
 {
+    if (!qac_cvars_touch(registry, error)) return false;
     cvar *entry = find_variable(registry, name);
     if (entry == NULL || binding == NULL)
         return qac_fail(error, QA_ERROR_ARGUMENT, "binding requires a registered cvar");
@@ -222,6 +264,7 @@ bool qa_cvars_bind(qa_cvars *registry, const char *name, const qa_cvar_binding *
 
 void qa_cvars_unbind(qa_cvars *registry, const char *name, uint64_t owner)
 {
+    if (!qac_cvars_touch(registry, NULL)) return;
     cvar *entry = find_variable(registry, name);
     if (entry != NULL && entry->bound && entry->binding.owner == owner) {
         entry->binding = (qa_cvar_binding){0};
@@ -233,6 +276,7 @@ bool qa_cvars_register(qa_cvars *registry, const char *name, const char *default
                         uint32_t flags, uint64_t owner, const char *description,
                         qa_error *error)
 {
+    if (!qac_cvars_touch(registry, error)) return false;
     if (registry == NULL || name == NULL || default_value == NULL)
         return qac_fail(error, QA_ERROR_ARGUMENT, "cvar registration requires name and default");
     name = source_name(registry, name);
@@ -292,7 +336,7 @@ bool qa_cvars_register(qa_cvars *registry, const char *name, const char *default
     entry->view.description = qac_copy(description == NULL ? "" : description, error);
     if (entry->view.name == NULL || entry->view.value == NULL ||
         entry->view.reset_value == NULL || entry->view.description == NULL) {
-        free_variable(entry);
+        qac_cvars_entry_free(entry);
         return false;
     }
     entry->view.flags = q2 && (flags & q2_no_archive) != 0 ? flags & ~UINT32_C(1) : flags;
@@ -311,6 +355,7 @@ bool qa_cvars_register(qa_cvars *registry, const char *name, const char *default
 bool qa_cvars_set(qa_cvars *registry, const char *name, const char *value,
                    bool force, qa_error *error)
 {
+    if (!qac_cvars_touch(registry, error)) return false;
     if (registry == NULL || name == NULL || value == NULL)
         return qac_fail(error, QA_ERROR_ARGUMENT, "cvar set requires name and value");
     name = source_name(registry, name);
@@ -397,6 +442,7 @@ bool qa_cvars_set(qa_cvars *registry, const char *name, const char *value,
 bool qa_cvars_set_console(qa_cvars *registry, const char *name, const char *value,
                            qa_error *error)
 {
+    if (!qac_cvars_touch(registry, error)) return false;
     if (registry == NULL || name == NULL || value == NULL)
         return qac_fail(error, QA_ERROR_ARGUMENT, "invalid console cvar arguments");
     cvar *entry = find_variable(registry, name);
@@ -412,13 +458,14 @@ bool qa_cvars_set_console(qa_cvars *registry, const char *name, const char *valu
 
 bool qa_cvars_set_number(qa_cvars *registry, const char *name, float value, qa_error *error)
 {
+    if (!qac_cvars_touch(registry, error)) return false;
     if (registry == NULL || !isfinite(value))
         return qac_fail(error, QA_ERROR_ARGUMENT, "cvar numeric set requires a finite float");
     char text[64];
     if (!qac_q1(registry->options.dialect) && value >= -2147483648.0f &&
         value < 2147483648.0f && truncf(value) == value)
         (void)snprintf(text, sizeof(text), "%d", (int32_t)value);
-    else (void)snprintf(text, sizeof(text), "%f", (double)value);
+    else if (!qa_format_fixed(value, 6, text, sizeof(text), error)) return false;
     if (strlen(text) >= 32) {
         if (qac_q1(registry->options.dialect))
             return qac_fail(error, QA_ERROR_FORMAT, "numeric cvar exceeds source value buffer");
@@ -431,6 +478,7 @@ bool qa_cvars_set_number(qa_cvars *registry, const char *name, float value, qa_e
 bool qa_cvars_full_set(qa_cvars *registry, const char *name, const char *value,
                         uint32_t flags, qa_error *error)
 {
+    if (!qac_cvars_touch(registry, error)) return false;
     if (registry == NULL || !qac_q2(registry->options.dialect) || name == NULL || value == NULL)
         return qac_fail(error, QA_ERROR_ARGUMENT, "full cvar set requires a Q2 registry");
     cvar *entry = find_variable(registry, name);
@@ -446,6 +494,7 @@ bool qa_cvars_full_set(qa_cvars *registry, const char *name, const char *value,
 bool qa_cvars_set_flags(qa_cvars *registry, const char *name, const char *value,
                          uint32_t flag, qa_error *error)
 {
+    if (!qac_cvars_touch(registry, error)) return false;
     if (registry == NULL || name == NULL || value == NULL ||
         (flag != QA_CVAR_ARCHIVE && flag != QA_CVAR_USERINFO && flag != QA_CVAR_SERVERINFO))
         return qac_fail(error, QA_ERROR_ARGUMENT, "invalid cvar command flag");
@@ -479,6 +528,7 @@ bool qa_cvars_set_flags(qa_cvars *registry, const char *name, const char *value,
 
 bool qa_cvars_stage(qa_cvars *registry, const char *name, const char *value, qa_error *error)
 {
+    if (!qac_cvars_touch(registry, error)) return false;
     if (registry == NULL || name == NULL || value == NULL)
         return qac_fail(error, QA_ERROR_ARGUMENT, "invalid staged cvar arguments");
     cvar *entry = find_variable(registry, name);
@@ -504,6 +554,7 @@ bool qa_cvars_stage(qa_cvars *registry, const char *name, const char *value, qa_
 
 bool qa_cvars_apply_latched(qa_cvars *registry, const char *name, qa_error *error)
 {
+    if (!qac_cvars_touch(registry, error)) return false;
     if (registry == NULL) return qac_fail(error, QA_ERROR_ARGUMENT, "cvar registry is NULL");
     for (cvar *entry = registry->first; entry != NULL; entry = entry->next) {
         if ((name != NULL && !name_equal(registry, name, entry->view.name)) || entry->view.latched_value == NULL) continue;
@@ -522,6 +573,7 @@ bool qa_cvars_apply_latched(qa_cvars *registry, const char *name, qa_error *erro
 
 bool qa_cvars_reset(qa_cvars *registry, const char *name, bool force, qa_error *error)
 {
+    if (!qac_cvars_touch(registry, error)) return false;
     cvar *entry = find_variable(registry, name);
     if (entry == NULL) return qac_fail(error, QA_ERROR_NOT_FOUND, "cannot reset unregistered cvar");
     return qa_cvars_set(registry, name, entry->view.reset_value, force, error);
@@ -529,6 +581,7 @@ bool qa_cvars_reset(qa_cvars *registry, const char *name, bool force, qa_error *
 
 bool qa_cvars_restart(qa_cvars *registry, qa_error *error)
 {
+    if (!qac_cvars_touch(registry, error)) return false;
     if (registry == NULL || registry->options.dialect != QA_CONSOLE_Q3)
         return qac_fail(error, QA_ERROR_ARGUMENT, "cvar restart requires a Q3 registry");
     cvar **link = &registry->first;
@@ -538,7 +591,7 @@ bool qa_cvars_restart(qa_cvars *registry, qa_error *error)
             link = &entry->next;
         } else if ((entry->view.flags & QA_CVAR_USER_CREATED) != 0) {
             *link = entry->next;
-            free_variable(entry);
+            qac_cvars_entry_free(entry);
             --registry->count;
         } else {
             if (!qa_cvars_set(registry, entry->view.name, entry->view.reset_value, true, error)) return false;
@@ -550,6 +603,7 @@ bool qa_cvars_restart(qa_cvars *registry, qa_error *error)
 
 bool qa_cvars_set_cheats(qa_cvars *registry, bool allowed, qa_error *error)
 {
+    if (!qac_cvars_touch(registry, error)) return false;
     if (registry == NULL) return qac_fail(error, QA_ERROR_ARGUMENT, "cvar registry is NULL");
     registry->cheats = allowed;
     if (allowed || registry->options.dialect != QA_CONSOLE_Q3) return true;
@@ -562,11 +616,12 @@ bool qa_cvars_set_cheats(qa_cvars *registry, bool allowed, qa_error *error)
     return true;
 }
 
-void qa_cvars_set_server_active(qa_cvars *registry, bool active) { registry->server_active = active; }
-void qa_cvars_set_high_characters(qa_cvars *registry, bool enabled) { registry->high_characters = enabled; }
+void qa_cvars_set_server_active(qa_cvars *registry, bool active) { if (qac_cvars_touch(registry, NULL)) registry->server_active = active; }
+void qa_cvars_set_high_characters(qa_cvars *registry, bool enabled) { if (qac_cvars_touch(registry, NULL)) registry->high_characters = enabled; }
 
 void qa_cvars_remove_owner(qa_cvars *registry, uint64_t owner)
 {
+    if (!qac_cvars_touch(registry, NULL)) return;
     if (registry == NULL) return;
     cvar **link = &registry->first;
     while (*link != NULL) {
@@ -580,12 +635,13 @@ void qa_cvars_remove_owner(qa_cvars *registry, uint64_t owner)
         registry->changed_flags |= entry->view.flags;
         if ((entry->view.flags & QA_CVAR_USERINFO) != 0) registry->userinfo_modified = true;
         --registry->count;
-        free_variable(entry);
+        qac_cvars_entry_free(entry);
     }
 }
 
 uint32_t qa_cvars_take_modified_flags(qa_cvars *registry)
 {
+    if (!qac_cvars_touch(registry, NULL)) return 0;
     uint32_t flags = registry->changed_flags;
     registry->changed_flags = 0;
     return flags;
@@ -593,17 +649,20 @@ uint32_t qa_cvars_take_modified_flags(qa_cvars *registry)
 
 void qa_cvars_mark_modified_flags(qa_cvars *registry, uint32_t flags)
 {
+    if (!qac_cvars_touch(registry, NULL)) return;
     registry->changed_flags |= flags;
 }
 
 void qa_cvars_clear_modified(qa_cvars *registry, const char *name)
 {
+    if (!qac_cvars_touch(registry, NULL)) return;
     cvar *entry = find_variable(registry, name);
     if (entry != NULL) entry->view.modified = false;
 }
 
 bool qa_cvars_take_userinfo_modified(qa_cvars *registry)
 {
+    if (!qac_cvars_touch(registry, NULL)) return false;
     bool modified = registry->userinfo_modified;
     registry->userinfo_modified = false;
     return modified;

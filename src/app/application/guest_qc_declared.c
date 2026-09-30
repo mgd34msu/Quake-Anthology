@@ -1,0 +1,326 @@
+#include "guest_qc_profile.h"
+#include <stdio.h>
+#include <float.h>
+
+static qa_qc_game_value resolve(const application_qc_value *value, const application_qc_inputs *inputs)
+{
+    if (!value->input) return value->constant;
+    qa_qc_game_value out = {.kind = QA_QC_GAME_FLOAT};
+    const qa_movement_command *command = inputs->command;
+    switch (value->source) {
+    case QC_INPUT_SELF: out.kind = QA_QC_GAME_ACTOR; out.value.actor = inputs->self; break;
+    case QC_INPUT_OTHER: out.kind = QA_QC_GAME_ACTOR; out.value.actor = inputs->other; break;
+    case QC_INPUT_TIME: out.value.number = (float)((double)inputs->time_ns / 1e9); break;
+    case QC_INPUT_ELAPSED: out.value.number = (float)((double)inputs->elapsed_ns / 1e9); break;
+    case QC_INPUT_ANGLES: out.kind = QA_QC_GAME_VECTOR; if (command) out.value.vector = command->angles; break;
+    case QC_INPUT_ATTACK: case QC_INPUT_JUMP: case QC_INPUT_IMPULSE:
+    case QC_INPUT_FORWARD: case QC_INPUT_SIDE: case QC_INPUT_UP:
+        if (command) out.value.number = application_qc_input_scalar(command, value->source);
+        break;
+    case QC_INPUT_COUNT: break;
+    }
+    return out;
+}
+bool application_qc_run_calls(struct application_qc_state *engine, const application_qc_calls *calls,
+                                const application_qc_inputs *inputs, qa_error *error)
+{
+    for (size_t i = 0; i < calls->count; ++i) {
+        const application_qc_call *call = &calls->values[i]; qa_qc_game_value arguments[8];
+        if (inputs->self.registry && !qa_actors_get(qa_session_actors(engine->services.session), inputs->self))
+            return application_fail(error, QA_ERROR_NOT_FOUND, "QC qualified callback lost its actor generation");
+        for (size_t j = 0; j < call->argument_count; ++j) arguments[j] = resolve(&call->arguments[j], inputs);
+        qa_qc_game_global local[16];
+        qa_qc_game_global *globals = call->global_count <= 16 ? local : calloc(call->global_count, sizeof(*globals));
+        if (!globals) return application_fail(error, QA_ERROR_MEMORY, "Allocating qualified QC globals");
+        for (size_t j = 0; j < call->global_count; ++j)
+            globals[j] = (qa_qc_game_global){call->globals[j].definition->name, resolve(&call->globals[j].value, inputs)};
+        bool ok = qa_qc_game_call_index(engine->provider->state.qc.game, call->function, arguments,
+            call->argument_count, globals, call->global_count, NULL, error);
+        if (globals != local) free(globals);
+        if (!ok) return false;
+    }
+    return true;
+}
+static bool project_value(qa_qc_instance *vm, int32_t reference, const qa_qc_definition *field,
+                            qa_qc_game_value value, qa_error *error)
+{
+    switch (value.kind) {
+    case QA_QC_GAME_FLOAT: return qa_qc_project_entity_float(vm, reference, field->offset, value.value.number, error);
+    case QA_QC_GAME_VECTOR: return qa_qc_project_entity_vector(vm, reference, field->offset, value.value.vector, error);
+    case QA_QC_GAME_STRING: {
+        static const char prefix[] = "qc-projection:";
+        size_t length = strlen(value.value.string);
+        if (length > SIZE_MAX - sizeof(prefix)) return application_fail(error, QA_ERROR_MEMORY, "QC projection string name overflow");
+        char *name = malloc(length + sizeof(prefix));
+        if (!name) return application_fail(error, QA_ERROR_MEMORY, "Allocating QC projection string name");
+        memcpy(name, prefix, sizeof(prefix) - 1);
+        memcpy(name + sizeof(prefix) - 1, value.value.string, length + 1);
+        int32_t text;
+        bool ok = qa_qc_engine_string(vm, name, value.value.string, length + 1, &text, error);
+        free(name);
+        return ok && qa_qc_project_entity_int(vm, reference, field->offset, text, error);
+    }
+    default: return application_fail(error, QA_ERROR_ARGUMENT, "QC declared field projection has an invalid type");
+    }
+}
+bool application_qc_seed_fields(struct application_qc_state *engine, qa_actor_id actor, qa_error *error)
+{
+    const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
+    if (!profile) return true;
+    int32_t reference;
+    if (!qa_qc_actor_reference(engine->provider->state.qc.instance, actor, false, &reference, error)) return false;
+    for (size_t i = 0; i < profile->field_count; ++i)
+        if (profile->fields[i].kind == QC_FIELD_CONSTANT &&
+            !project_value(engine->provider->state.qc.instance, reference, profile->fields[i].definition,
+                profile->fields[i].constant.constant, error)) return false;
+    return true;
+}
+bool application_qc_prepare_markers(struct application_qc_state *engine, qa_error *error)
+{
+    if (!engine->provider->state.qc.qualified) return true;
+    if (!qa_builtin_observations(&engine->services, &engine->observations, error)) return false;
+    for (size_t i = 0; i < engine->observations.count; ++i) {
+        qa_actor_id actor = engine->observations.ids[i];
+        if (!qa_actors_get(qa_session_actors(engine->services.session), actor)) continue;
+        qa_builtin_player_info player;
+        if (engine->services.player_info && engine->services.player_info(engine->services.context, actor, &player) && player.connected) continue;
+        int32_t reference;
+        qa_error absent = {0};
+        if (qa_qc_actor_reference(engine->provider->state.qc.instance, actor, false, &reference, &absent)) continue;
+        if (absent.code != QA_ERROR_NOT_FOUND) { if (error) *error = absent; return false; }
+        if (!application_qc_reference(engine, actor, &reference, error) || !application_qc_seed_fields(engine, actor, error)) return false;
+    }
+    return true;
+}
+static bool actor_current(struct application_qc_state *engine, qa_qc_instance *vm,
+                            int32_t reference, qa_actor_id expected, qa_error *error)
+{
+    (void)engine;
+    qa_actor_id actor;
+    return qa_qc_reference_actor(vm, reference, &actor, error) &&
+        (qa_actor_id_equal(actor, expected) || application_fail(error, QA_ERROR_NOT_FOUND, "QC declared actor projection changed generation"));
+}
+bool application_qc_project_declared(struct application_qc_state *engine, qa_qc_instance *vm,
+                                      const qa_qc_entity_access *access, qa_error *error)
+{
+    const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
+    if (!profile || access->binding.kind != QA_QC_SLOT_BORROWED || engine->projecting) return true;
+    engine->projecting = true; bool ok = true;
+    for (size_t i = 0; ok && i < profile->field_count; ++i) {
+        const application_qc_bound_field *field = &profile->fields[i]; const qa_qc_definition *def = field->definition;
+        uint32_t width = def->type == QA_QC_VECTOR ? 3u : 1u;
+        if (def->offset >= access->word + access->count || def->offset + width <= access->word) continue;
+        qa_qc_game_value value = {.kind = QA_QC_GAME_FLOAT}; qa_body_state body;
+        switch (field->kind) {
+        case QC_FIELD_PRIVATE: case QC_FIELD_CONSTANT: case QC_FIELD_INPUT: case QC_FIELD_THINK: case QC_FIELD_NEXTTHINK: continue;
+        case QC_FIELD_HEALTH: {
+            qa_combat_state combat;
+            ok = qa_combat_read(engine->services.combat, access->binding.actor, &combat, error);
+            if (ok) value.value.number = combat.health;
+            break;
+        }
+        case QC_FIELD_INVENTORY: {
+            qa_inventory_entry entry; qa_error absent = {0};
+            if (qa_inventory_entry_read(engine->services.inventory, access->binding.actor, field->item, &entry, &absent)) {
+                ok = isfinite(entry.count) && fabs(entry.count) <= FLT_MAX;
+                if (ok) value.value.number = (float)entry.count;
+                else application_fail(error, QA_ERROR_FORMAT, "Canonical inventory count exceeds QC binary32");
+            }
+            else if (absent.code != QA_ERROR_NOT_FOUND) { if (error) *error = absent; ok = false; }
+            break;
+        }
+        case QC_FIELD_CLASSNAME: {
+            qa_builtin_actor_traits traits = {0};
+            if (engine->services.actor_traits) engine->services.actor_traits(engine->services.context, access->binding.actor, &traits);
+            const qa_actor_record *record = qa_actors_get(qa_session_actors(engine->services.session), access->binding.actor);
+            qa_string_id classname = traits.classname ? traits.classname : record ? record->definition : 0;
+            value.kind = QA_QC_GAME_STRING;
+            value.value.string = qa_strings_cstr(qa_session_strings(engine->services.session), classname);
+            ok = classname != 0 && value.value.string != NULL;
+            if (!ok) application_fail(error, QA_ERROR_UNSUPPORTED, "QC marker classname has no canonical metadata");
+            break;
+        }
+        case QC_FIELD_CLIENT_FLAGS: {
+            qa_builtin_player_info player; qa_builtin_actor_traits traits = {0}; float previous;
+            bool client = engine->services.player_info && engine->services.player_info(engine->services.context, access->binding.actor, &player) && player.connected;
+            if (client && engine->services.actor_traits) engine->services.actor_traits(engine->services.context, access->binding.actor, &traits);
+            ok = qa_qc_entity_float(vm, access->reference, def->offset, &previous, error) && isfinite(previous);
+            uint32_t bits = 0;
+            if (ok) {
+                double wrapped = fmod(trunc((double)previous), 4294967296.0); if (wrapped < 0) wrapped += 4294967296.0;
+                bits = (uint32_t)wrapped & field->private_mask;
+                if (client) bits |= 8u | (traits.no_target ? 128u : 0u);
+                if (client && field->grounded) {
+                    ok = qa_world_body_read(engine->world, access->binding.actor, &body, error);
+                    if (ok && body.ground.registry) bits |= 512u;
+                }
+                value.value.number = (float)bits;
+            }
+            break;
+        }
+        case QC_FIELD_VIEW: {
+            qa_builtin_player_info player;
+            bool client = engine->services.player_info && engine->services.player_info(engine->services.context, access->binding.actor, &player) && player.connected;
+            value.kind = QA_QC_GAME_VECTOR; value.value.vector = qa_v3(0, 0, client ? player.view_height : 0); break;
+        }
+        case QC_FIELD_ORIGIN: case QC_FIELD_VELOCITY: case QC_FIELD_ANGLES: case QC_FIELD_MIN: case QC_FIELD_MAX:
+            ok = qa_world_body_read(engine->world, access->binding.actor, &body, error);
+            value.kind = QA_QC_GAME_VECTOR;
+            if (ok) value.value.vector = field->kind == QC_FIELD_ORIGIN ? body.origin : field->kind == QC_FIELD_VELOCITY ? body.velocity :
+                field->kind == QC_FIELD_ANGLES ? body.angles : field->kind == QC_FIELD_MIN ? body.bounds.mins : body.bounds.maxs;
+            break;
+        }
+        if (ok) ok = actor_current(engine, vm, access->reference, access->binding.actor, error) &&
+            project_value(vm, access->reference, def, value, error);
+    }
+    engine->projecting = false; return ok;
+}
+bool application_qc_store_declared(struct application_qc_state *engine, qa_qc_instance *vm,
+                                    const qa_qc_store_event *event, qa_error *error)
+{
+    const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
+    if (!profile || engine->projecting || event->kind != QA_QC_STORE_ENTITY || !event->entity_reference) return true;
+    qa_actor_id actor; qa_qc_slot_binding binding;
+    qa_qc_entity_layout layout = qa_qc_default_entity_layout(engine->provider->state.qc.program, engine->profile);
+    if (!qa_qc_reference_actor(vm, event->entity_reference, &actor, error) ||
+        !qa_qc_slot(vm, (uint32_t)event->entity_reference / layout.stride_bytes, &binding)) return false;
+    if (binding.kind != QA_QC_SLOT_BORROWED) return true;
+    engine->projecting = true; bool ok = true;
+    for (size_t i = 0; ok && i < profile->field_count; ++i) {
+        const application_qc_bound_field *field = &profile->fields[i]; const qa_qc_definition *def = field->definition;
+        uint32_t width = def->type == QA_QC_VECTOR ? 3u : 1u;
+        if (def->offset >= event->word + event->count || def->offset + width <= event->word) continue;
+        float scalar; qa_vec3 vector; qa_body_state body;
+        switch (field->kind) {
+        case QC_FIELD_PRIVATE: case QC_FIELD_CONSTANT: case QC_FIELD_INPUT: case QC_FIELD_THINK: case QC_FIELD_NEXTTHINK: break;
+        case QC_FIELD_CLASSNAME: case QC_FIELD_VIEW:
+            ok = application_fail(error, QA_ERROR_ARGUMENT, "QC store requires a declared canonical output owner"); break;
+        case QC_FIELD_HEALTH:
+            ok = qa_qc_entity_float(vm, event->entity_reference, def->offset, &scalar, error) &&
+                qa_combat_set_health(engine->services.combat, actor, scalar, error); break;
+        case QC_FIELD_INVENTORY: {
+            qa_inventory_entry entry;
+            ok = qa_qc_entity_float(vm, event->entity_reference, def->offset, &scalar, error) &&
+                qa_inventory_entry_read(engine->services.inventory, actor, field->item, &entry, error);
+            if (ok) { entry.count = scalar; ok = qa_inventory_configure(engine->services.inventory, actor, &entry, NULL, NULL, error); }
+            break;
+        }
+        case QC_FIELD_CLIENT_FLAGS: {
+            float before; memcpy(&before, &event->before[def->offset - event->word], sizeof(before));
+            ok = qa_qc_entity_float(vm, event->entity_reference, def->offset, &scalar, error) && isfinite(before) && isfinite(scalar) &&
+                (double)before >= INT32_MIN && (double)before <= INT32_MAX && (double)scalar >= INT32_MIN && (double)scalar <= INT32_MAX;
+            if (ok) {
+                uint32_t next = (uint32_t)(int32_t)scalar, changed = ((uint32_t)(int32_t)before ^ next) & ~field->private_mask;
+                if (changed) {
+                    ok = field->grounded && changed == 512u && !(next & 512u);
+                    if (ok) { ok = qa_world_body_read(engine->world, actor, &body, error); if (ok) { body.ground = (qa_actor_id){0}; ok = qa_world_body_write(engine->world, actor, &body, error); } }
+                    if (!ok && error && error->code == QA_OK) application_fail(error, QA_ERROR_ARGUMENT, "QC changed canonical client flags without ownership");
+                }
+            }
+            break;
+        }
+        case QC_FIELD_ORIGIN: case QC_FIELD_VELOCITY: case QC_FIELD_ANGLES: case QC_FIELD_MIN: case QC_FIELD_MAX:
+            ok = qa_world_body_read(engine->world, actor, &body, error) && qa_qc_entity_vector(vm, event->entity_reference, def->offset, &vector, error);
+            if (ok) {
+                if (field->kind == QC_FIELD_ORIGIN) body.origin = vector;
+                else if (field->kind == QC_FIELD_VELOCITY) body.velocity = vector;
+                else if (field->kind == QC_FIELD_ANGLES) body.angles = vector;
+                else if (field->kind == QC_FIELD_MIN) body.bounds.mins = vector;
+                else body.bounds.maxs = vector;
+                ok = qa_world_body_write(engine->world, actor, &body, error);
+            }
+            break;
+        }
+        if (ok) ok = actor_current(engine, vm, event->entity_reference, actor, error);
+    }
+    engine->projecting = false;
+    if (!ok && error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "Invalid QC declared source store");
+    return ok;
+}
+bool application_qc_load_declared_map(struct application_qc_state *engine, const qa_bsp_view *bsp,
+                                        const qa_entities *entities, qa_string_id map, qa_string_id spawn, qa_error *error)
+{
+    (void)spawn;
+    if (!engine || !bsp || !entities || !entities->count || engine->has_frame)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC component map initialization requires an idle shared map");
+    const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
+    const char *path = qa_strings_cstr(qa_session_strings(engine->services.session), map);
+    if (!profile || !path || !qa_qc_game_loading(engine->provider->state.qc.game, true, error)) return false;
+    engine->loading = true; qa_cvars_set_server_active(engine->cvars, false);
+    engine->check_slot = 0; engine->check_time = 0; engine->check_cluster = -1;
+    if (!engine->source_time_ns) engine->source_time_ns = UINT64_C(1000000000);
+    qa_qc_instance *vm = engine->provider->state.qc.instance;
+    if (!qa_qc_game_set_time(engine->provider->state.qc.game, (double)engine->source_time_ns / 1e9, 0, error)) return false;
+    static const char *names[] = {"skill", "deathmatch", "coop", "teamplay"};
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        const qa_qc_definition *global = qa_qc_program_find_global(engine->provider->state.qc.program, names[i]);
+        const qa_cvar_view *cvar = qa_cvars_find(engine->cvars, names[i]);
+        if (global && global->type == QA_QC_FLOAT && !qa_qc_set_global_float(vm, global->offset, cvar->number, error)) return false;
+    }
+    const qa_qc_definition *mapname = qa_qc_program_find_global(engine->provider->state.qc.program, "mapname");
+    if (mapname && mapname->type == QA_QC_STRING) {
+        const char *base = strncmp(path, "maps/", 5) == 0 ? path + 5 : path;
+        size_t length = strlen(base); char *short_name = malloc(length + 1);
+        if (!short_name) return application_fail(error, QA_ERROR_MEMORY, "Allocating QC component map name");
+        memcpy(short_name, base, length + 1);
+        if (length >= 4 && strcmp(short_name + length - 4, ".bsp") == 0) short_name[length - 4] = 0;
+        int32_t string; size_t capacity = length + 1; if (capacity < 128) capacity = 128;
+        bool ok = qa_qc_engine_string(vm, "component-mapname", short_name, capacity, &string, error) &&
+            qa_qc_set_global_int(vm, mapname->offset, string, error);
+        free(short_name); if (!ok) return false;
+    }
+    if (!application_qc_prepare_markers(engine, error)) return false;
+    if (!engine->initialized) {
+        application_qc_inputs inputs = {.time_ns = engine->source_time_ns};
+        if (!application_qc_run_calls(engine, &profile->initialize, &inputs, error)) return false;
+        engine->initialized = true;
+    }
+    if (!application_qc_flush(engine, error) || !qa_qc_game_loading(engine->provider->state.qc.game, false, error)) return false;
+    engine->loading = false; qa_cvars_set_server_active(engine->cvars, true); return true;
+}
+bool application_qc_client_think(struct application_qc_state *engine, qa_actor_id actor,
+                                  const qa_source_frame *frame, qa_error *error)
+{
+    const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
+    const qa_qc_definition *think = NULL, *deadline = NULL;
+    for (size_t i = 0; i < profile->field_count; ++i) {
+        if (profile->fields[i].kind == QC_FIELD_THINK) think = profile->fields[i].definition;
+        if (profile->fields[i].kind == QC_FIELD_NEXTTHINK) deadline = profile->fields[i].definition;
+    }
+    if (!think) {
+        think = qa_qc_program_find_field(engine->provider->state.qc.program, "think");
+        deadline = qa_qc_program_find_field(engine->provider->state.qc.program, "nextthink");
+    }
+    if (!think && !deadline) return true;
+    if (!think || !deadline || think->type != QA_QC_FUNCTION || deadline->type != QA_QC_FLOAT)
+        return application_fail(error, QA_ERROR_FORMAT, "QC component think fields have invalid types");
+    qa_qc_instance *vm = engine->provider->state.qc.instance;
+    int32_t reference;
+    if (!application_qc_reference(engine, actor, &reference, error)) return false;
+    double now = (double)frame->time_ns / 1e9, end = now + (double)frame->elapsed_ns / 1e9;
+    while (qa_actors_get(qa_session_actors(engine->services.session), actor)) {
+        bool admitted = false;
+        for (uint32_t i = 1; i <= engine->max_clients; ++i)
+            admitted |= engine->clients[i].spawned && qa_actor_id_equal(engine->clients[i].actor, actor);
+        if (!admitted) return true;
+        float due; int32_t function;
+        if (!qa_qc_entity_float(vm, reference, deadline->offset, &due, error) ||
+            !qa_qc_entity_int(vm, reference, think->offset, &function, error)) return false;
+        if (!isfinite(due)) return application_fail(error, QA_ERROR_FORMAT, "QC component think deadline is nonfinite");
+        if (!(due > 0) || (double)due > end) return true;
+        float callback_time = (float)fmax((double)due, now);
+        qa_qc_game_global globals[3] = {
+            {"self", {QA_QC_GAME_ACTOR, {.actor = actor}}},
+            {"other", {QA_QC_GAME_ACTOR, {.actor = {0}}}},
+            {"time", {QA_QC_GAME_FLOAT, {.number = callback_time}}}
+        };
+        if (!qa_qc_project_entity_float(vm, reference, deadline->offset, 0, error) || function <= 0 ||
+            !qa_qc_game_call_index(engine->provider->state.qc.game, (uint32_t)function,
+                NULL, 0, globals, 3, NULL, error)) {
+            if (error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "QC component think callback is absent");
+            return false;
+        }
+        if (engine->profile != QA_QC_QUAKEWORLD) return true;
+    }
+    return true;
+}

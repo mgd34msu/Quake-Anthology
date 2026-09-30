@@ -262,6 +262,11 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
     }
     if (!q2_actor_live(g, a->id))
         return true;
+    int32_t score;
+    if (!q2_player_score_read(g, a->id, &score, e))
+        return false;
+    if (!q2_actor_live(g, a->id))
+        return true;
     float dt = (float)((double)g->frame_ns / Q2_NS),
           speed = hypotf(body.velocity.x, body.velocity.y);
     bool duck = m->ducked && (!rr || m->grounded);
@@ -277,7 +282,7 @@ bool q2_player_build_view(qa_q2_game *g, q2_actor *a, const qa_q2_player_movemen
     qa_q2_player_view view = {.angles = m->view_angles,
                               .fov = intermission ? 90 : s->fov,
                               .health = combat.health,
-                              .score = s->info.score,
+                              .score = score,
                               .selected_item = s->info.selected_item,
                               .spectator = s->info.spectator,
                               .flashes = flashes};

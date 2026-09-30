@@ -46,17 +46,19 @@ bool q1_missile_velocity(qa_q1_game *g, q1_actor *entity, qa_vec3 velocity, qa_e
     return qa_world_body_write(g->services.world, entity->id, &body, error);
 }
 bool q1_grenade_velocity(qa_q1_game *g, q1_player *player, qa_vec3 *out, qa_error *error) {
+    const qa_q1_weapon_view *shape = q1_weapon_shape(QA_Q1_GRENADE);
     qa_vec3 direction;
     qa_builtin_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up);
     if (!q1_aim(g, player->id, g->forward, &direction, error))
         return false;
     if (player->input.view_angles.x == 0) {
-        *out = qa_vec_scale(direction, 600);
-        out->z = 200;
+        *out = qa_vec_scale(direction, shape->speed);
+        out->z = shape->extra_z_velocity;
         return true;
     }
     float x = (q1_random(g) * 2 - 1) * 10, y = (q1_random(g) * 2 - 1) * 10;
-    *out = qa_vec_add(qa_vec_add(qa_vec_scale(g->forward, 600), qa_vec_scale(g->up, 200)),
+    *out = qa_vec_add(qa_vec_add(qa_vec_scale(g->forward, shape->speed),
+                                qa_vec_scale(g->up, shape->extra_z_velocity)),
                       qa_vec_add(qa_vec_scale(g->right, x), qa_vec_scale(g->up, y)));
     return true;
 }

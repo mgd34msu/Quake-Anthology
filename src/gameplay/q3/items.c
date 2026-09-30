@@ -358,6 +358,7 @@ bool q3_item_bind_existing(qa_q3_game *game, qa_actor_id actor,
                                       .delta = input->velocity,
                                       .time_ms = game->now_ms},
                        .expire_at = input->dropped ? q3_add_time(game->now_ms, 30000) : 0}};
+    if(!q3_item_observation_bind(game,actor,&game->item_observations[actor.slot],error)) return false;
     if (initial_powerup_delay && items[input->item_index].kind == QA_Q3_ITEM_POWERUP &&
         !input->dropped) {
         available = false;
@@ -404,6 +405,119 @@ bool qa_q3_spawn_item(qa_q3_game *game, const qa_q3_item_spawn *input, qa_actor_
     *out = actor;
     return true;
 }
+static bool item_observation(void *opaque,qa_actor_id pickup,qa_actor_id recipient,
+                              qa_pickup_offer *offer,float *utility,bool *available,qa_error *error) {
+    qa_q3_game *game=opaque;*utility=0;*available=false;
+    if(game->observation_depth==SIZE_MAX) return q3_fail(error,"Q3 item observation nesting exhausted");
+    ++game->observation_depth;bool ok=true;
+    q3_actor *entry=q3_actor_get(game,pickup);
+    if(!entry || entry->kind!=Q3_ACTOR_ITEM || entry->state.item.hidden) goto done;
+    qa_q3_item_spawn spawn=entry->state.item.spawn;
+    const qa_q3_item *item=&items[spawn.item_index];
+    qa_pickup_resource resource={0};
+    if(item->kind==QA_Q3_ITEM_WEAPON || item->kind==QA_Q3_ITEM_AMMO)
+        resource=(qa_pickup_resource){.kind=QA_PICKUP_INVENTORY,.item=game->item_ids[spawn.item_index]};
+    else if(item->kind==QA_Q3_ITEM_ARMOR)
+        resource=(qa_pickup_resource){.kind=QA_PICKUP_PROTECTION,.channel=QA_PROTECTION_REGULAR};
+    *offer=(qa_pickup_offer){.pickup=pickup,.recipient=recipient,.source=game->options.owner,
+        .item=game->item_ids[spawn.item_index],.default_resource=resource,.dropped=spawn.dropped,
+        .override_count=spawn.count!=0,.count=spawn.count,.time_ns=(uint64_t)(uint32_t)game->now_ms*1000000,
+        .grant=item->kind==QA_Q3_ITEM_TEAM?QA_PICKUP_MAP_COUPLED:resource.kind?QA_PICKUP_RESOURCE_GRANT:QA_PICKUP_SOURCE_EFFECT};
+    qa_combat_state combat;
+    if(!qa_combat_read(game->options.services.combat,recipient,&combat,error)) {ok=false;goto done;}
+    if(combat.health<=0) goto done;
+    bool handled;
+    if(!qa_pickups_preview(game->options.services.pickups,offer,utility,available,&handled,error)) {ok=false;goto done;}
+    if(handled) goto done;
+    q3_actor *player_actor=q3_actor_get(game,recipient);
+    if(!q3_actor_get(game,pickup) || !player_actor || player_actor->kind!=Q3_ACTOR_PLAYER) goto done;
+    qa_q3_player_state player=player_actor->state.player;
+    float maximum=(float)player.max_health;
+    int32_t quantity=spawn.count?spawn.count:item->quantity;
+    switch(item->kind) {
+    case QA_Q3_ITEM_WEAPON:
+    case QA_Q3_ITEM_AMMO: {
+        if(!(player.selections&QA_Q3_ARSENAL)) break;
+        int32_t ammo;
+        if(!q3_ammo_read(game,recipient,(qa_q3_weapon)item->tag,&ammo,error)) {ok=false;break;}
+        if(item->kind==QA_Q3_ITEM_AMMO && ammo>=200) break;
+        if(item->kind==QA_Q3_ITEM_WEAPON) {
+            qa_inventory_entry weapon;
+            if(!qa_inventory_entry_read(game->options.services.inventory,recipient,game->weapon_items[item->tag],&weapon,error)) {ok=false;break;}
+            *utility=weapon.count>0?0:10;
+            if(spawn.count<0) quantity=0;
+            else if(!spawn.dropped && game->options.rules.game_type!=3) quantity=ammo<quantity?quantity-ammo:1;
+        }
+        int32_t after=q3_add_time(ammo,quantity);if(after>200) after=200;
+        *utility+=fmaxf(0,(float)((int64_t)after-ammo));*available=true;break;
+    }
+    case QA_Q3_ITEM_HEALTH:
+        if(player.persistent!=QA_Q3_P_GUARD && (item->quantity==5 || item->quantity==100)) maximum*=2;
+        *utility=fmaxf(0,fminf(maximum,combat.health+(float)quantity)-combat.health);
+        *available=combat.health<maximum;break;
+    case QA_Q3_ITEM_ARMOR:
+        if(player.persistent==QA_Q3_P_SCOUT) break;
+        if(player.persistent!=QA_Q3_P_GUARD) maximum*=2;
+        *utility=fmaxf(0,fminf(maximum,combat.armor.regular.points+(float)item->quantity)-combat.armor.regular.points);
+        *available=combat.armor.regular.points<maximum;break;
+    case QA_Q3_ITEM_HOLDABLE: *available=player.holdable==QA_Q3_H_NONE;*utility=*available?1:0;break;
+    case QA_Q3_ITEM_POWERUP: *available=true;*utility=fmaxf(0,(float)quantity);break;
+    case QA_Q3_ITEM_PERSISTENT: {
+        int32_t team=game->options.hooks.source_team?
+            game->options.hooks.source_team(game->options.hooks.context,recipient):0;
+        *available=!player.persistent && game->options.product==QA_Q3_TEAM_ARENA &&
+            (!(spawn.team_restriction&2) || team==1) && (!(spawn.team_restriction&4) || team==2);
+        *utility=*available?1:0;break;
+    }
+    /* Explicit selected-mode objectives are considered by native team AI;
+     * observing them must not call the mutating objective pickup hook. */
+    case QA_Q3_ITEM_TEAM: break;
+    default: break;
+    }
+done:
+    if(!q3_actor_get(game,pickup) || !qa_actors_get(qa_session_actors(game->options.services.session),recipient)) {
+        *available=false;*utility=0;
+    }
+    --game->observation_depth;return ok;
+}
+bool q3_item_observation_bind(qa_q3_game *game,qa_actor_id actor,qa_pickup_lease *out,qa_error *error) {
+    qa_pickup_observer observer={.context=game,.inspect=item_observation};
+    return qa_pickups_observe(game->options.services.pickups,actor,game->options.owner,&observer,out,error);
+}
+void q3_item_observations_abort(qa_q3_game *game,qa_pickup_lease *candidate) {
+    if(!candidate) return;
+    for(uint32_t i=0;i<game->capacity;++i)
+        if(candidate[i].serial && candidate[i].serial!=game->item_observations[i].serial)
+            qa_pickups_observation_close(game->options.services.pickups,candidate[i],NULL);
+    free(candidate);
+}
+bool q3_item_observations_prepare(qa_q3_game *game,const q3_actor *actors,qa_pickup_lease **out,qa_error *error) {
+    qa_pickup_lease *candidate=calloc(game->capacity,sizeof(*candidate));
+    if(!candidate) {qa_error_set(error,QA_ERROR_MEMORY,0,"allocating Q3 item observation restore bindings");return false;}
+    for(uint32_t i=0;i<game->capacity;++i) {
+        if(actors[i].kind!=Q3_ACTOR_ITEM) continue;
+        if(qa_actor_id_equal(game->item_observations[i].actor,actors[i].actor) &&
+           qa_pickups_observation_current(game->options.services.pickups,game->item_observations[i]))
+            candidate[i]=game->item_observations[i];
+        else if(!q3_item_observation_bind(game,actors[i].actor,&candidate[i],error)) {
+            q3_item_observations_abort(game,candidate);return false;
+        }
+    }
+    *out=candidate;return true;
+}
+void q3_item_observations_commit(qa_q3_game *game,qa_pickup_lease *candidate) {
+    for(uint32_t i=0;i<game->capacity;++i)
+        if(game->item_observations[i].serial && game->item_observations[i].serial!=candidate[i].serial)
+            qa_pickups_observation_close(game->options.services.pickups,game->item_observations[i],NULL);
+    free(game->item_observations);game->item_observations=candidate;
+}
+bool qa_q3_pickups_rebind(qa_q3_game *game,qa_error *error) {
+    if(!game || game->observation_depth) return q3_fail(error,"Q3 item bindings are borrowed");
+    qa_pickup_lease *candidate;
+    if(!q3_item_observations_prepare(game,game->actors,&candidate,error)) return false;
+    q3_item_observations_commit(game,candidate);return true;
+}
+
 typedef struct pickup_context {
     qa_q3_game *game;
     qa_actor_id item;
@@ -533,6 +647,9 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
         player->holdable = (qa_q3_holdable)item->tag;
         if (player->holdable == QA_Q3_H_KAMIKAZE)
             player->flags |= 0x200u;
+        if (!q3_inventory_holdable_changed(game, offer->recipient, QA_Q3_H_NONE,
+                                            (qa_q3_holdable)item->tag, error))
+            return false;
         break;
     case QA_Q3_ITEM_POWERUP: {
         int32_t until = player->powerups[item->tag];
@@ -594,6 +711,9 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
     }
     if (!pickup_original_live(game, offer, NULL, NULL))
         return true;
+    if (!q3_ranking_pickup(game, offer->recipient, item,
+                           spawn.count ? spawn.count : item->quantity, error))
+        return false;
     *accepted = true;
     return true;
 }

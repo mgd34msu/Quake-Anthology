@@ -6,27 +6,39 @@ struct action_command {
     const char *name;
     qa_input_action action;
 };
-static const struct action_command actions[] = {{"attack", QA_INPUT_ATTACK},
-                                                {"jump", QA_INPUT_JUMP},
-                                                {"forward", QA_INPUT_FORWARD},
-                                                {"back", QA_INPUT_BACK},
-                                                {"moveleft", QA_INPUT_MOVE_LEFT},
-                                                {"moveright", QA_INPUT_MOVE_RIGHT},
-                                                {"moveup", QA_INPUT_MOVE_UP},
-                                                {"movedown", QA_INPUT_MOVE_DOWN},
-                                                {"use", QA_INPUT_USE},
-                                                {"crouch", QA_INPUT_CROUCH},
-                                                {"speed", QA_INPUT_WALK},
-                                                {"scores", QA_INPUT_SCORES},
-                                                {"showscores", QA_INPUT_SCORES},
-                                                {"left", QA_INPUT_TURN_LEFT},
-                                                {"right", QA_INPUT_TURN_RIGHT},
-                                                {"lookup", QA_INPUT_LOOK_UP},
-                                                {"lookdown", QA_INPUT_LOOK_DOWN},
-                                                {"strafe", QA_INPUT_STRAFE},
-                                                {"mlook", QA_INPUT_MLOOK},
-                                                {"klook", QA_INPUT_KLOOK},
-                                                {"holster", QA_INPUT_HOLSTER}};
+static const struct action_command actions[] = {{"+attack", QA_INPUT_ATTACK},
+                                                {"+jump", QA_INPUT_JUMP},
+                                                {"+forward", QA_INPUT_FORWARD},
+                                                {"+back", QA_INPUT_BACK},
+                                                {"+moveleft", QA_INPUT_MOVE_LEFT},
+                                                {"+moveright", QA_INPUT_MOVE_RIGHT},
+                                                {"+moveup", QA_INPUT_MOVE_UP},
+                                                {"+movedown", QA_INPUT_MOVE_DOWN},
+                                                {"+use", QA_INPUT_USE},
+                                                {"+crouch", QA_INPUT_CROUCH},
+                                                {"+speed", QA_INPUT_WALK},
+                                                {"+scores", QA_INPUT_SCORES},
+                                                {"+showscores", QA_INPUT_SCORES},
+                                                {"+left", QA_INPUT_TURN_LEFT},
+                                                {"+right", QA_INPUT_TURN_RIGHT},
+                                                {"+lookup", QA_INPUT_LOOK_UP},
+                                                {"+lookdown", QA_INPUT_LOOK_DOWN},
+                                                {"+strafe", QA_INPUT_STRAFE},
+                                                {"+mlook", QA_INPUT_MLOOK},
+                                                {"+klook", QA_INPUT_KLOOK},
+                                                {"+holster", QA_INPUT_HOLSTER}};
+const char *qa_input_action_command(qa_input_action action) {
+    for (size_t i = 0; i < sizeof(actions) / sizeof(*actions); ++i)
+        if (actions[i].action == action)
+            return actions[i].name;
+    static const char *const buttons[] = {
+        "+button0", "+button1", "+button2", "+button3", "+button4",
+        "+button5", "+button6", "+button7", "+button8", "+button9",
+        "+button10", "+button11", "+button12", "+button13", "+button14"};
+    if (action >= QA_INPUT_BUTTON0 && action <= QA_INPUT_BUTTON14)
+        return buttons[(unsigned)action - (unsigned)QA_INPUT_BUTTON0];
+    return NULL;
+}
 struct qa_input_console {
     qa_input_console_options options;
     char names[96][32];
@@ -63,7 +75,7 @@ static bool command(void *user, const qa_command_invocation *cmd, qa_error *erro
         }
         qa_input_action action = QA_INPUT_ACTION_COUNT;
         for (size_t i = 0; i < sizeof(actions) / sizeof(*actions); ++i)
-            if (qa_input_ascii_equal(base, actions[i].name)) {
+            if (qa_input_ascii_equal(base, actions[i].name + 1)) {
                 action = actions[i].action;
                 break;
             }
@@ -167,7 +179,7 @@ static bool register_command(qa_input_console *c, const char *name, qa_error *er
         return true;
     if (c->count >= sizeof(c->names) / sizeof(*c->names) || strlen(name) >= sizeof(c->names[0]))
         return false;
-    if (!qa_console_register(c->options.console, name, "Local seat input", c->options.owner, true,
+    if (!qa_console_register_owned(c->options.console, name, "Local seat input", 0, c->options.owner, true,
                              command, c, error))
         return false;
     (void)snprintf(c->names[c->count++], sizeof(c->names[0]), "%s", name);
@@ -187,7 +199,7 @@ qa_input_console *qa_input_console_create(const qa_input_console_options *o, qa_
     char name[32];
     for (size_t i = 0; i < sizeof(actions) / sizeof(*actions); ++i)
         for (unsigned down = 0; down < 2; ++down) {
-            (void)snprintf(name, sizeof(name), "%c%s", down ? '+' : '-', actions[i].name);
+            (void)snprintf(name, sizeof(name), "%c%s", down ? '+' : '-', actions[i].name + 1);
             if (!register_command(c, name, error))
                 goto fail;
         }
@@ -218,10 +230,11 @@ void qa_input_console_destroy(qa_input_console *c) {
     if (!c)
         return;
     for (size_t i = 0; i < c->count; ++i)
-        qa_console_unregister(c->options.console, c->names[i], c->options.owner);
+        qa_console_unregister(c->options.console, c->names[i], 0);
     free(c);
 }
-bool qa_input_default_bindings(qa_input_seat *s, int32_t device, qa_error *error) {
+static bool default_bindings(qa_input_seat *s, int32_t device, bool replace, qa_error *error) {
+    if (!s) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Default bindings require an input seat"); return false; }
     static const char *const defs[][2] = {{"w", "+forward"},
                                           {"s", "+back"},
                                           {"a", "+moveleft"},
@@ -241,15 +254,25 @@ bool qa_input_default_bindings(qa_input_seat *s, int32_t device, qa_error *error
                                           {"GAMEPAD_LEFT_SHOULDER", "weapprev"},
                                           {"GAMEPAD_RIGHT_SHOULDER", "weapnext"},
                                           {"GAMEPAD_BACK", "+scores"}};
+    qa_input_binding bindings[sizeof(defs) / sizeof(*defs)];
     for (size_t i = 0; i < sizeof(defs) / sizeof(*defs); ++i) {
-        qa_input_binding b = {.kind = QA_BIND_COMMAND, .command = defs[i][1]};
+        bindings[i] = (qa_input_binding){.kind = QA_BIND_COMMAND, .command = defs[i][1]};
         if (s->options.context.dialect <= QA_CONSOLE_QW && (i == 4 || i == 13))
-            b.command = "+jump";
-        if (!qa_input_physical_parse(defs[i][0], device, &b.input) ||
-            !qa_input_seat_bind(s, &b, error))
-            return false;
+            bindings[i].command = "+jump";
+        if (!qa_input_physical_parse(defs[i][0], device, &bindings[i].input)) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Default key name is invalid"); return false;
+        }
     }
+    if (replace) return qa_input_seat_replace_bindings(s, bindings, sizeof(bindings) / sizeof(*bindings), error);
+    for (size_t i = 0; i < sizeof(bindings) / sizeof(*bindings); ++i)
+        if (!qa_input_seat_bind(s, &bindings[i], error)) return false;
     return true;
+}
+bool qa_input_default_bindings(qa_input_seat *s, int32_t device, qa_error *error) {
+    return default_bindings(s, device, false, error);
+}
+bool qa_input_reset_default_bindings(qa_input_seat *s, int32_t device, qa_error *error) {
+    return default_bindings(s, device, true, error);
 }
 bool qa_input_bindings_config(const qa_input_seat *s, bool controllers, qa_buffer *out,
                               qa_error *error) {
@@ -263,8 +286,8 @@ bool qa_input_bindings_config(const qa_input_seat *s, bool controllers, qa_buffe
     for (size_t i = 0; success && i < s->binding_count; ++i) {
         const qa_input_binding *b = &s->bindings[i]->view;
         char key[96];
-        if (b->kind != QA_BIND_COMMAND)
-            continue;
+        const char *bound_command = b->kind == QA_BIND_COMMAND ? b->command : qa_input_action_command(b->action);
+        if (!bound_command) continue;
         if (b->input.kind < QA_PHYSICAL_BUTTON) {
             if (!qa_input_physical_name(b->input, key, sizeof(key)))
                 continue;
@@ -279,7 +302,7 @@ bool qa_input_bindings_config(const qa_input_seat *s, bool controllers, qa_buffe
                 continue;
         } else
             continue;
-        if (strpbrk(b->command, "\"\r\n")) {
+        if (strpbrk(bound_command, "\"\r\n")) {
             qa_error_set(error, QA_ERROR_FORMAT, 0,
                          "Source cfg cannot encode this binding; use structured seat "
                          "settings");
@@ -289,7 +312,7 @@ bool qa_input_bindings_config(const qa_input_seat *s, bool controllers, qa_buffe
         success = qa_input_text_append(&text, "bind \"", 6, error) &&
                   qa_input_text_append(&text, key, strlen(key), error) &&
                   qa_input_text_append(&text, "\" \"", 3, error) &&
-                  qa_input_text_append(&text, b->command, strlen(b->command), error) &&
+                  qa_input_text_append(&text, bound_command, strlen(bound_command), error) &&
                   qa_input_text_append(&text, "\"\n", 2, error);
     }
     if (success)

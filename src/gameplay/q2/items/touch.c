@@ -48,11 +48,11 @@ static bool mark_picked(q2_item_state *item, uint32_t player, qa_error *e) {
     item->picked_slots[item->picked_count++] = player;
     return true;
 }
-static bool eligible(void *context, const qa_pickup_offer *offer, bool *allowed, qa_error *e) {
-    (void)offer;
-    item_touch *call = context;
-    qa_q2_game *g = call->game;
-    q2_item_state *item = call->actor->item;
+bool q2_item_eligible(qa_q2_game *g, q2_actor *actor, qa_actor_id recipient,
+                       bool *allowed, qa_error *e) {
+    item_touch value = {.game = g, .actor = actor, .player = recipient};
+    const item_touch *call = &value;
+    q2_item_state *item = actor->item;
     *allowed = false;
     if (!live(call) || !item->visible || !item->touchable ||
         (item->temporary && qa_actor_id_equal(item->owner, call->player)))
@@ -65,7 +65,7 @@ static bool eligible(void *context, const qa_pickup_offer *offer, bool *allowed,
     qa_combat_state combat;
     if (!qa_combat_read(g->services.combat, call->player, &combat, e))
         return false;
-    if (combat.health < 1)
+    if (!live(call) || combat.health < 1)
         return true;
     if (instanced(g)) {
         uint32_t player;
@@ -76,6 +76,11 @@ static bool eligible(void *context, const qa_pickup_offer *offer, bool *allowed,
     }
     *allowed = true;
     return true;
+}
+static bool eligible(void *context, const qa_pickup_offer *offer, bool *allowed, qa_error *e) {
+    (void)offer;
+    item_touch *call = context;
+    return q2_item_eligible(call->game, call->actor, call->player, allowed, e);
 }
 static bool original(void *context, const qa_pickup_offer *offer, bool *accepted, qa_error *e) {
     (void)offer;
@@ -178,14 +183,7 @@ static bool complete(void *context, const qa_pickup_offer *offer, bool accepted,
                ? qa_session_release(g->services.session, a->id, e)
                : true;
 }
-bool q2_item_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
-    q2_actor *a = contact->self.slot < g->capacity ? g->actors[contact->self.slot] : NULL;
-    if (!a || !qa_actor_id_equal(a->id, contact->self) || !a->item)
-        return true;
-    if (a->item->companion)
-        return q2_companion_touch(g, contact, e);
-    if (a->item->dispatching)
-        return true;
+qa_pickup_offer q2_item_offer(qa_q2_game *g, const q2_actor *a, qa_actor_id recipient) {
     const qa_q2_item_definition *d = a->item->definition;
     qa_pickup_resource resource = {0};
     if (d->kind == QA_Q2_ITEM_ARMOR || d->kind == QA_Q2_ITEM_SHARD)
@@ -197,8 +195,7 @@ bool q2_item_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) 
     else if (d->kind == QA_Q2_ITEM_AMMO || d->kind == QA_Q2_ITEM_WEAPON ||
              d->kind == QA_Q2_ITEM_KEY)
         resource = (qa_pickup_resource){.kind = QA_PICKUP_INVENTORY, .item = d->item};
-    item_touch call = {.game = g, .actor = a, .player = contact->other};
-    qa_pickup_offer offer = {.recipient = contact->other,
+    return (qa_pickup_offer){.recipient = recipient,
                              .pickup = a->id,
                              .source = g->options.owner,
                              .item = d->item,
@@ -207,6 +204,17 @@ bool q2_item_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) 
                              .count = a->item->spawn.count,
                              .dropped = (a->item->spawn.spawnflags & 0x30000) != 0,
                              .time_ns = g->now_ns};
+}
+bool q2_item_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
+    q2_actor *a = contact->self.slot < g->capacity ? g->actors[contact->self.slot] : NULL;
+    if (!a || !qa_actor_id_equal(a->id, contact->self) || !a->item)
+        return true;
+    if (a->item->companion)
+        return q2_companion_touch(g, contact, e);
+    if (a->item->dispatching)
+        return true;
+    item_touch call = {.game = g, .actor = a, .player = contact->other};
+    qa_pickup_offer offer = q2_item_offer(g, a, contact->other);
     qa_pickup_continuation continuation = {
         .context = &call, .eligible = eligible, .original = original, .complete = complete};
     a->item->dispatching = true;

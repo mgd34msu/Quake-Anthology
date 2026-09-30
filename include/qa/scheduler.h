@@ -86,6 +86,34 @@ bool qa_scheduler_advance(qa_scheduler *scheduler, const qa_source_frame *frames
 bool qa_scheduler_clear(qa_scheduler *scheduler, qa_error *error);
 bool qa_scheduler_active(const qa_scheduler *scheduler);
 bool qa_scheduler_has_admissions(const qa_scheduler *scheduler);
+typedef struct qa_scheduler_provider_checkpoint {
+    qa_actor_owner owner;
+    qa_clock_kind kind;
+    uint64_t order;
+} qa_scheduler_provider_checkpoint;
+typedef struct qa_scheduler_think_checkpoint {
+    qa_saved_actor_id actor;
+    qa_actor_owner execution_provider;
+    uint32_t callback_id;
+    uint64_t due_ns, sequence;
+    qa_think_boundary boundary;
+} qa_scheduler_think_checkpoint;
+typedef struct qa_scheduler_checkpoint {
+    qa_scheduler_provider_checkpoint *providers;
+    qa_scheduler_think_checkpoint *thinks;
+    size_t provider_count, think_count;
+    uint64_t next_order;
+    bool mixed_order;
+} qa_scheduler_checkpoint;
+typedef bool (*qa_think_resolve_fn)(void *, qa_actor_owner, qa_actor_id, uint32_t,
+                                    qa_think_fn *, void **callback_context, qa_error *);
+bool qa_scheduler_checkpoint_capture(const qa_scheduler *, qa_scheduler_checkpoint *, qa_error *);
+/* Isolated candidate only. All providers must already be registered. Resolver
+ * maps declared callback identities to the restored provider's state, never a
+ * saved address. Validation/preparation finishes before pending work changes. */
+bool qa_scheduler_checkpoint_restore(qa_scheduler *, const qa_scheduler_checkpoint *,
+                                      qa_think_resolve_fn, void *, qa_error *);
+void qa_scheduler_checkpoint_free(qa_scheduler_checkpoint *);
 bool qa_frame_project(const qa_source_frame *frame, qa_actor_owner provider,
                        qa_clock_kind kind, qa_source_frame *out, qa_error *error);
 

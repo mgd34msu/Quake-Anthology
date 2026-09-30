@@ -123,7 +123,7 @@ struct qa_native_instance {
     native_region_slot *regions;
     size_t region_count;
     uint32_t active_depth, callback_depth, region_depth;
-    bool checkpointing, destroying, failed;
+    bool checkpointing, destroying, unloading, pending_shutdown, failed;
     qa_error failure;
 };
 
@@ -155,6 +155,14 @@ struct qa_native_declaration {
 };
 
 extern _Thread_local qa_native_instance *native_active_instance;
+
+/* Set only at a validated source-call or encoded runner handoff boundary. */
+static inline void native_call_started(qa_native_instance *instance) {
+    if (instance && instance->pending_shutdown) {
+        instance->pending_shutdown = false;
+        instance->lifecycle = QA_NATIVE_SHUT_DOWN;
+    }
+}
 
 static inline bool native_fail(qa_error *error, qa_status code, size_t offset,
                                const char *message) {

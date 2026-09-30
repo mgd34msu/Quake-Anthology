@@ -186,7 +186,7 @@ static bool missing_initial(qa_bot_chat *state, const char *name, qa_error *e) {
 }
 bool qa_bot_chat_initial(qa_bot_chat *state, const char *name, uint32_t context,
                          const char *const variables[8], float time, bool *found, qa_error *e) {
-    if (state == NULL || state->retired || found == NULL || !isfinite(time)) {
+    if (state == NULL || state->retired || state->system->restoring || found == NULL || !isfinite(time)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid initial bot chat request");
         return false;
     }
@@ -252,7 +252,7 @@ static bool reply_key(const qa_bot_chat_asset *a, const qa_bot_chat_key *key,
 bool qa_bot_chat_reply_message(qa_bot_chat *state, const char *input, uint32_t context,
                                uint32_t variable_context, const char *const variables[8],
                                float time, bool *found, qa_error *e) {
-    if (state == NULL || input == NULL || found == NULL || !isfinite(time)) {
+    if (state == NULL || state->retired || state->system->restoring || input == NULL || found == NULL || !isfinite(time)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid bot reply request");
         return false;
     }

@@ -149,6 +149,8 @@ typedef struct qa_qvm_evaluation_stack { uint32_t floor, top; } qa_qvm_evaluatio
 bool qa_qvm_bind_branches(const qa_qvm_call *, const qa_qvm_branch_binding *, size_t, qa_error *);
 bool qa_qvm_bind_regions(const qa_qvm_call *, const qa_qvm_region_binding *, size_t, qa_error *);
 bool qa_qvm_qualify_region(const qa_qvm_image *, uint32_t owner, const qa_qvm_region_evaluation *, qa_error *);
+bool qa_qvm_qualify_source_region(const qa_qvm_image *, uint32_t owner,
+                                  uint32_t entry, uint32_t join, qa_error *);
 bool qa_qvm_evaluate_region(qa_qvm *, uint32_t owner, const int32_t *arguments, size_t argument_count,
                             const qa_qvm_region_evaluation *, const int32_t *inputs,
                             const qa_qvm_evaluation_stack *, int32_t *, qa_error *);

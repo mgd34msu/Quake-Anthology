@@ -1,0 +1,372 @@
+--- a/include/qa/bot_runtime.h
++++ b/include/qa/bot_runtime.h
+@@ -50,6 +50,11 @@
+                             qa_bot_runtime **, qa_error *);
+ /* Fails without retiring storage when a callback or borrowed owner is active. */
+ bool qa_bot_runtime_destroy(qa_bot_runtime *, qa_error *);
++/* Keep borrowed bot owners alive across observed source reads and writes.
++ * Ordinary bot calls may nest; owner replacement and teardown require no
++ * outstanding leases. End each successful begin exactly once. */
++bool qa_bot_runtime_lease_begin(qa_bot_runtime *, qa_error *);
++void qa_bot_runtime_lease_end(qa_bot_runtime *);
+ bool qa_bot_runtime_setup(qa_bot_runtime *, int32_t *source_result, qa_error *);
+ bool qa_bot_runtime_shutdown(qa_bot_runtime *, qa_error *);
+ bool qa_bot_runtime_initialized(const qa_bot_runtime *);
+--- a/src/bots/runtime/internal.h
++++ b/src/bots/runtime/internal.h
+@@ -28,7 +28,7 @@
+     qa_bot_weapons *weapon_config;
+     qa_bot_entity_info *entities;
+     qa_bot_goal_entity *goal_entities;
+-    size_t entity_capacity, observation_leases;
++    size_t entity_capacity, observation_leases, owner_leases;
+     bot_observation_link *observation_links;
+     size_t *observation_buckets;
+     size_t observation_head, observation_tail, observation_free;
+@@ -40,6 +40,7 @@
+ };
+ bool bot_runtime_fail(qa_error *, const char *);
+ bool bot_runtime_mutable(qa_bot_runtime *, qa_error *);
++bool bot_runtime_owners_idle(qa_bot_runtime *, qa_error *);
+ bool bot_runtime_variable(qa_bot_runtime *, const char *, const char *, const qa_bot_variable **, qa_error *);
+ bool bot_runtime_integer(qa_bot_runtime *, const char *, const char *, int32_t *, qa_error *);
+ void bot_runtime_handles_close(qa_bot_runtime *);
+--- a/src/bots/runtime/core.c
++++ b/src/bots/runtime/core.c
+@@ -7,6 +7,21 @@
+ bool bot_runtime_mutable(qa_bot_runtime *r, qa_error *e) {
+     return r && !r->closed && !r->busy && !r->observation_leases ? true :
+         bot_runtime_fail(e, "bot runtime is absent, closed or executing a callback");
++}
++bool bot_runtime_owners_idle(qa_bot_runtime *r, qa_error *e) {
++    return r && !r->busy && !r->observation_leases && !r->owner_leases &&
++        !qa_bot_moves_active(r->moves) && !qa_bot_goals_active(r->goals) &&
++        !qa_bot_chat_system_active(r->chat_system) ? true :
++        bot_runtime_fail(e, "bot runtime owners are absent or in use");
++}
++bool qa_bot_runtime_lease_begin(qa_bot_runtime *r, qa_error *e) {
++    if (!r || r->owner_leases == SIZE_MAX)
++        return bot_runtime_fail(e, "bot runtime owner lease is unavailable");
++    ++r->owner_leases;
++    return true;
++}
++void qa_bot_runtime_lease_end(qa_bot_runtime *r) {
++    if (r && r->owner_leases) --r->owner_leases;
+ }
+ bool bot_runtime_variable(qa_bot_runtime *r, const char *name, const char *fallback,
+                            const qa_bot_variable **out, qa_error *e) {
+@@ -72,9 +87,7 @@
+ }
+ bool qa_bot_runtime_destroy(qa_bot_runtime *r, qa_error *e) {
+     if (!r) return true;
+-    if (r->busy || r->observation_leases || qa_bot_moves_active(r->moves) ||
+-        qa_bot_goals_active(r->goals) || qa_bot_chat_system_active(r->chat_system))
+-        return bot_runtime_fail(e, "cannot destroy an active bot runtime");
++    if (!bot_runtime_owners_idle(r, e)) return false;
+     close(r);
+     qa_bot_actions_destroy(r->actions);
+     bot_runtime_observations_close(r);
+@@ -87,9 +100,7 @@
+ bool qa_bot_runtime_shutdown(qa_bot_runtime *r, qa_error *e) {
+     if (r && r->closed) return true;
+     if (!bot_runtime_mutable(r, e)) return false;
+-    if (qa_bot_moves_active(r->moves) || qa_bot_goals_active(r->goals) ||
+-        qa_bot_chat_system_active(r->chat_system))
+-        return bot_runtime_fail(e, "cannot shut down active bot controllers");
++    if (!bot_runtime_owners_idle(r, e)) return false;
+     close(r);
+     return true;
+ }
+@@ -130,7 +141,7 @@
+     return ok;
+ }
+ bool qa_bot_runtime_attach_map(qa_bot_runtime *r, const qa_bot_runtime_map *map, qa_error *e) {
+-    if (!bot_runtime_mutable(r, e)) return false;
++    if (!bot_runtime_mutable(r, e) || !bot_runtime_owners_idle(r, e)) return false;
+     if (!map || !map->name || !map->navigation || (map->source_entities.size && !map->source_entities.data))
+         return bot_runtime_fail(e, "invalid bot map binding");
+     size_t size = strlen(map->name) + 1;
+@@ -145,8 +156,7 @@
+     return true;
+ }
+ bool qa_bot_runtime_load_map(qa_bot_runtime *r, const char *name, qa_error *e) {
+-    if (!r || r->busy || r->observation_leases)
+-        return bot_runtime_fail(e, "bot runtime is absent or executing a callback");
++    if (!bot_runtime_owners_idle(r, e)) return false;
+     bool module = r->options.observations == QA_BOT_OBSERVATION_MODULE;
+     if ((!module && (!r->initialized || r->closed)) ||
+         !name || !r->map_name || strcmp(name, r->map_name) != 0)
+@@ -188,7 +198,7 @@
+         r->bsp ? qa_bot_bsp_entities(r->bsp) : r->map.entities : NULL;
+ }
+ bool qa_bot_runtime_init_level_items(qa_bot_runtime *r, qa_error *e) {
+-    if (!bot_runtime_mutable(r, e)) return false;
++    if (!bot_runtime_mutable(r, e) || !bot_runtime_owners_idle(r, e)) return false;
+     const qa_entities *entities = qa_bot_runtime_bsp(r);
+     if (!entities || !r->map.navigation)
+         return bot_runtime_fail(e, "BotInitLevelItems requires a retained goal world");
+--- a/src/bots/runtime/setup.c
++++ b/src/bots/runtime/setup.c
+@@ -320,8 +320,7 @@
+ }
+ bool qa_bot_runtime_setup(qa_bot_runtime *r, int32_t *result, qa_error *e) {
+     if (!bot_runtime_mutable(r, e)) return false;
+-    if (qa_bot_moves_active(r->moves) || qa_bot_goals_active(r->goals))
+-        return bot_runtime_fail(e, "cannot reconfigure active bot controllers");
++    if (!bot_runtime_owners_idle(r, e)) return false;
+     if (!result) return bot_runtime_fail(e, "missing bot setup source result");
+     *result = 0;
+     r->busy = true;
+--- a/src/compat/q3_host/host.c
++++ b/src/compat/q3_host/host.c
+@@ -1,5 +1,6 @@
+ #include "internal.h"
+ #include "qa/input.h"
++#include "qa/bot_runtime.h"
+ 
+ static bool vm_read(void *context, uint64_t address, void *out, size_t size, qa_error *error)
+ {
+@@ -44,10 +45,18 @@
+                                          q3_client_input, q3_client_keys, q3_game_records, q3_game_spatial,
+                                          q3_entity_tokens};
+     *result = 0;
++    qa_bot_runtime *runtime = call->host->options.bots;
++    bool leased = runtime && call->host->options.role == QA_QVM_GAME &&
++        call->service >= 202 && call->service != 206 && call->service != 541;
++    if (leased && !qa_bot_runtime_lease_begin(runtime, error)) return false;
+     for (size_t i = 0; i < sizeof(handlers) / sizeof(handlers[0]); ++i) {
+         q3_service_result handled = handlers[i](call, result, error);
+-        if (handled != Q3_UNHANDLED) return handled == Q3_COMPLETED;
+-    }
++        if (handled != Q3_UNHANDLED) {
++            if (leased) qa_bot_runtime_lease_end(runtime);
++            return handled == Q3_COMPLETED;
++        }
++    }
++    if (leased) qa_bot_runtime_lease_end(runtime);
+     return q3_fail(error, QA_ERROR_UNSUPPORTED, (size_t)(uint32_t)call->source_service,
+                     "Q3 service owner is unbound");
+ }
+--- a/src/compat/q3_host/bot_library.c
++++ b/src/compat/q3_host/bot_library.c
+@@ -177,10 +177,16 @@
+         q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 bot resource library is closed"); return Q3_FAILED;
+     }
+     qa_buffer name = {0}, value = {0};
++    if (call->service == 206) {
++        if (!qa_bot_runtime_lease_begin(runtime, error)) return Q3_FAILED;
++        bool ok = q3_string(call, call->arguments[0], &name, error);
++        qa_bot_runtime_lease_end(runtime);
++        if (ok) ok = qa_bot_runtime_load_map(runtime, (const char *)name.data, error);
++        qa_buffer_free(&name);
++        return ok ? Q3_COMPLETED : Q3_FAILED;
++    }
+     bool ok = q3_string(call, call->arguments[0], &name, error);
+-    if (ok && call->service == 206)
+-        ok = qa_bot_runtime_load_map(runtime, (const char *)name.data, error);
+-    else if (ok && call->service == 202)
++    if (ok && call->service == 202)
+         ok = q3_string(call, call->arguments[1], &value, error) &&
+              qa_bot_library_variable_set(library, (const char *)name.data, (const char *)value.data, error);
+     else if (ok) {
+--- a/src/compat/q3_host/bot_chat.c
++++ b/src/compat/q3_host/bot_chat.c
+@@ -90,7 +90,7 @@
+     }
+     qa_buffer_free(&memory->snapshot);
+     if (!q3_string(memory->call, memory->address, &memory->snapshot, error)) return false;
+-    *out = (qa_bytes){memory->snapshot.data, memory->snapshot.size - 1}; return true;
++    *out = (qa_bytes){memory->snapshot.data, memory->snapshot.size}; return true;
+ }
+ 
+ static bool capture_offset(void *context, uint32_t index, int32_t *out, qa_error *error)
+--- a/src/compat/q3_host/game_records.c
++++ b/src/compat/q3_host/game_records.c
+@@ -256,39 +256,84 @@
+     return q3_game_end(&call, ok);
+ }
+ 
++typedef struct body_write_scope {
++    q3_call *call;
++    qa_actor_id actor;
++    uint32_t number, entity_stride, client_stride;
++    uint64_t entities, clients, record_address;
++} body_write_scope;
++
++static bool body_write_current(const body_write_scope *scope, qa_error *error)
++{
++    qa_q3_host *host = scope->call->host;
++    return (host->game->entities == scope->entities && host->game->clients == scope->clients &&
++        host->game->entity_stride == scope->entity_stride && host->game->client_stride == scope->client_stride &&
++        scope->number < host->game->entity_count &&
++        qa_actor_id_equal(host->game->slots[scope->number].actor, scope->actor) &&
++        qa_actors_get(qa_session_actors(host->options.session), scope->actor)) ||
++        q3_fail(error, QA_ERROR_NOT_FOUND, scope->number, "Q3 body actor or table changed during source writes");
++}
++
++static bool body_write_bytes(const body_write_scope *scope, uint64_t address,
++                               qa_bytes bytes, qa_error *error)
++{
++    return body_write_current(scope, error) && q3_write(scope->call, address, bytes, error) &&
++        body_write_current(scope, error);
++}
++
++static bool body_record_write(void *context, size_t offset, qa_bytes bytes, qa_error *error)
++{
++    body_write_scope *scope = context;
++    return body_write_bytes(scope, scope->record_address + offset, bytes, error);
++}
++
++static bool body_vector_write(const body_write_scope *scope, uint64_t address,
++                                qa_vec3 vector, qa_error *error)
++{
++    const float values[] = {vector.x, vector.y, vector.z};
++    for (size_t i = 0; i < 3; ++i) {
++        uint8_t bytes[4]; qa_store_u32le(bytes, (uint32_t)q3_float_bits(values[i]));
++        if (!body_write_bytes(scope, address + i * 4u, (qa_bytes){bytes, sizeof(bytes)}, error)) return false;
++    }
++    return true;
++}
++
+ static bool body_write(void *context, const qa_body_state *body, qa_error *error)
+ {
+     q3_entity_slot *slot = context; qa_q3_host *host = slot->host; q3_call call;
+     if (!current(slot, error) || !q3_game_begin(host, &call, error)) return false;
+-    qa_actor_id expected = slot->actor;
+-    q3_record entity; bool ok = q3_game_entity_record(&call, slot->number, &entity, error);
++    body_write_scope scope = {.call = &call, .actor = slot->actor, .number = slot->number,
++        .entities = host->game->entities, .clients = host->game->clients,
++        .entity_stride = host->game->entity_stride, .client_stride = host->game->client_stride};
++    q3_record entity; bool ok = q3_game_entity_record(&call, slot->number, &entity, error) &&
++        body_write_current(&scope, error);
+     if (ok && slot->input_motion) {
+         qa_q3_player player; q3_record record;
+-        ok = q3_game_player_record(&call, slot->number, &record, error) &&
++        ok = q3_game_player_record(&call, slot->number, &record, error) && body_write_current(&scope, error) &&
+              qa_q3_abi_read_player(&record.abi, 0, true, &player, error);
+         if (ok) {
+             const float origin[] = {body->origin.x, body->origin.y, body->origin.z};
+             const float velocity[] = {body->velocity.x, body->velocity.y, body->velocity.z};
+             memcpy(player.origin, origin, sizeof(origin)); memcpy(player.velocity, velocity, sizeof(velocity));
++            scope.record_address = record.address;
++            record.abi.context = &scope; record.abi.write = body_record_write;
+             ok = qa_q3_abi_write_player(&record.abi, 0, true, true, &player, error);
+         }
+     } else if (ok && slot->number < host->options.server.maximum_clients && host->options.server.player_velocity) {
+-        ok = host->options.server.player_velocity(host->options.server.context, slot->actor, body->velocity, error);
++        ok = host->options.server.player_velocity(host->options.server.context, scope.actor, body->velocity, error) &&
++            body_write_current(&scope, error);
+     }
+     uint64_t address = ok ? entity.address : 0;
+     const qa_vec3 vectors[] = {body->origin, body->angles, body->bounds.mins, body->bounds.maxs, body->velocity};
+     const size_t fields[] = {q3_shared_offset(host->options.abi, 488), q3_shared_offset(host->options.abi, 500),
+         q3_shared_offset(host->options.abi, 436), q3_shared_offset(host->options.abi, 448), 36};
+     for (size_t i = 0; ok && i < 5; ++i)
+-        ok = (qa_actor_id_equal(slot->actor, expected) ||
+-              q3_fail(error, QA_ERROR_NOT_FOUND, slot->number, "Q3 body actor changed during source writes")) &&
+-             current(slot, error) && q3_write_vector(&call, address + fields[i], vectors[i], error);
++        ok = body_vector_write(&scope, address + fields[i], vectors[i], error);
+     if (ok && !slot->input_motion) {
+-        if (!qa_actor_id_equal(slot->actor, expected))
+-            return q3_game_end(&call, q3_fail(error, QA_ERROR_NOT_FOUND, slot->number, "Q3 body actor changed during source writes"));
+         uint32_t ground = 1023;
+         if (body->ground.registry) ok = qa_q3_host_actor_slot(host, body->ground, &ground, error);
+-        if (ok) ok = q3_write_word(&call, address + 148, ground, error);
++        uint8_t bytes[4]; qa_store_u32le(bytes, ground);
++        if (ok) ok = body_write_bytes(&scope, address + 148, (qa_bytes){bytes, sizeof(bytes)}, error);
+     }
+     return q3_game_end(&call, ok);
+ }
+--- a/src/compat/native_host/host.c
++++ b/src/compat/native_host/host.c
+@@ -234,7 +234,7 @@
+ 
+ bool qa_native_host_destroy(qa_native_host *host, qa_error *error)
+ {
+-    if (!host || host->destroying || host->callback_depth)
++    if (!host || host->destroying || host->callback_depth || !qa_native_can_destroy(host->instance))
+         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
+                                 "live native host adapter is required");
+     host->destroying = true;
+--- a/src/compat/native_host/checkpoint.c
++++ b/src/compat/native_host/checkpoint.c
+@@ -69,7 +69,7 @@
+     free(cvars);
+ }
+ 
+-bool qa_native_host_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *error)
++static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *error)
+ {
+     if (!host || !host->instance || !out || host->destroying || host->restoring ||
+         host->message_failed)
+@@ -209,12 +209,22 @@
+     return true;
+ }
+ 
++bool qa_native_host_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *error)
++{
++    if (!host || host->callback_depth)
++        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "native host checkpoint requires an idle callback owner");
++    ++host->callback_depth;
++    bool ok = capture_checkpoint(host, out, error);
++    --host->callback_depth;
++    return ok;
++}
++
+ static bool span(const uint8_t *cursor, const uint8_t *end, size_t size)
+ {
+     return size <= (size_t)(end - cursor);
+ }
+ 
+-bool qa_native_host_restore(qa_native_host *host, qa_bytes state, qa_error *error)
++static bool restore_checkpoint(qa_native_host *host, qa_bytes state, qa_error *error)
+ {
+     if (!host || !host->instance || host->destroying || host->restoring ||
+         !state.data || state.size < HOST_CHECKPOINT_HEADER)
+@@ -421,3 +431,13 @@
+     return native_host_fail(error, QA_ERROR_FORMAT, (size_t)(cursor - state.data),
+                             "native host checkpoint payload is truncated");
+ }
++
++bool qa_native_host_restore(qa_native_host *host, qa_bytes state, qa_error *error)
++{
++    if (!host || host->callback_depth)
++        return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "native host restore requires an idle callback owner");
++    ++host->callback_depth;
++    bool ok = restore_checkpoint(host, state, error);
++    --host->callback_depth;
++    return ok;
++}
+--- a/include/qa/native.h
++++ b/include/qa/native.h
+@@ -253,6 +253,9 @@
+  * entry fails. A runner instance is always consumed after destruction begins;
+  * false reports a guest or transport failure after the process is reclaimed. */
+ bool qa_native_destroy(qa_native_instance *instance, qa_error *error);
++/* True only when destruction will pass its initial ownership admission.
++ * Shutdown or runner cleanup may still fail after admission. */
++bool qa_native_can_destroy(const qa_native_instance *instance);
+ qa_native_backend qa_native_get_backend(const qa_native_instance *instance);
+ qa_native_lifecycle qa_native_get_lifecycle(const qa_native_instance *instance);
+ const qa_native_module *qa_native_get_module(const qa_native_instance *instance);
+--- a/src/compat/native/instance.c
++++ b/src/compat/native/instance.c
+@@ -133,12 +133,16 @@
+     instance->allocations = NULL;
+ }
+ 
++bool qa_native_can_destroy(const qa_native_instance *instance) {
++    return instance && !instance->active_depth && !instance->callback_depth &&
++        !instance->checkpointing && !instance->destroying;
++}
++
+ bool qa_native_destroy(qa_native_instance *instance, qa_error *error) {
+     if (!instance)
+         return native_fail(error, QA_ERROR_ARGUMENT, 0,
+                            "native instance is required for destruction");
+-    if (instance->active_depth || instance->callback_depth || instance->checkpointing ||
+-        instance->destroying)
++    if (!qa_native_can_destroy(instance))
+         return native_fail(error, QA_ERROR_ARGUMENT, 0,
+                            "active native instance cannot be destroyed");
+     bool completed = true;

@@ -125,6 +125,13 @@ typedef struct qa_q1_spawn_options {
     size_t rule_count;
 } qa_q1_spawn_options;
 typedef struct qa_q1_spawn_selector qa_q1_spawn_selector;
+typedef struct qa_q1_spawn_selector_checkpoint {
+    qa_actor_id last;
+} qa_q1_spawn_selector_checkpoint;
+bool qa_q1_spawn_selector_checkpoint_capture(const qa_q1_spawn_selector *,
+                                              qa_q1_spawn_selector_checkpoint *, qa_error *);
+bool qa_q1_spawn_selector_checkpoint_restore(qa_q1_spawn_selector *,
+                                              const qa_q1_spawn_selector_checkpoint *, qa_error *);
 qa_q1_spawn_selector *qa_q1_spawn_selector_create(const qa_q1_spawn_options *, qa_error *);
 void qa_q1_spawn_selector_destroy(qa_q1_spawn_selector *);
 /* Points retain authored source order. Read-only callbacks must not mutate the

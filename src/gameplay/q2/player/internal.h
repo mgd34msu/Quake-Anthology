@@ -84,6 +84,8 @@ bool q2_map_transition(qa_q2_game *, qa_actor_id, qa_actor_id, qa_string_id, con
 bool q2_map_poi(qa_q2_game *, qa_actor_id, qa_vec3 *, qa_string_id *, bool *, qa_error *);
 bool q2_map_in_phs(qa_q2_game *, qa_vec3, qa_vec3);
 bool q2_player_compass_update(qa_q2_game *, q2_actor *, bool, qa_error *);
+bool q2_player_command(qa_q2_game *, qa_actor_id, const char *, size_t,
+                        const char *const *, bool *handled, qa_error *);
 static inline float q2_clamp(float x, float low, float high) { return fminf(high, fmaxf(low, x)); }
 static inline float q2_seconds_left(uint64_t end, uint64_t now) {
     return end > now ? (float)((double)(end - now) / Q2_NS) : 0;

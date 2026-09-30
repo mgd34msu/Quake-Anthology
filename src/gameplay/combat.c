@@ -458,7 +458,11 @@ bool qa_combat_set_armor(qa_combat *combat, qa_actor_id actor, const qa_armor *a
         if (entry->external) {
             qa_combat_binding binding = entry->binding;
             ++combat->active_calls;
-            ok = (!binding.validate_armor || binding.validate_armor(binding.context, &original, error)) && binding.write_armor(binding.context, &original, error);
+            ok = !binding.validate_armor || binding.validate_armor(binding.context, &original, error);
+            --combat->active_calls;
+            if (!ok || !ownership(combat, entry, actor, serial, owners, error)) return false;
+            ++combat->active_calls;
+            ok = binding.write_armor(binding.context, &original, error);
             --combat->active_calls;
             if (!ok) return false;
         } else entry->state.armor = original;

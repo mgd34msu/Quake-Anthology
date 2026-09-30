@@ -669,13 +669,14 @@ static bool child_checkpoint_restore(native_child_state *state, native_wire_read
 static bool child_destroy(native_child_state *state, native_wire_reader *reader, qa_error *error) {
     if (!native_wire_end(reader, error))
         return false;
-    if (state->instance && !qa_native_destroy(state->instance, error))
-        return false;
+    if (state->instance && !qa_native_can_destroy(state->instance))
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native child destruction requires idle ownership");
+    bool ok = !state->instance || qa_native_destroy(state->instance, error);
     state->instance = NULL;
     qa_native_module_release(state->module);
     state->module = NULL;
     state->stop = true;
-    return true;
+    return ok;
 }
 
 static bool child_handle_request(native_child_state *state, const native_wire_frame *frame,

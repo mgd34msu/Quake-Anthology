@@ -1,6 +1,7 @@
 #include "qa/scheduler.h"
 
 #include <stdlib.h>
+#include <string.h>
 
 #define NO_HEAP_SLOT UINT32_MAX
 
@@ -43,6 +44,7 @@ struct qa_scheduler {
     bool mixed;
     bool advancing;
     bool has_cursor;
+    bool checkpointing;
     qa_think_dispatch_fn dispatch;
     void *context;
 };
@@ -174,7 +176,7 @@ bool qa_scheduler_create(qa_actor_registry *actors, uint32_t provider_capacity,
 
 bool qa_scheduler_active(const qa_scheduler *scheduler)
 {
-    return scheduler != NULL && (scheduler->advancing || scheduler->dispatch_depth != 0);
+    return scheduler != NULL && (scheduler->advancing || scheduler->dispatch_depth != 0 || scheduler->checkpointing);
 }
 
 bool qa_scheduler_has_admissions(const qa_scheduler *scheduler)
@@ -288,7 +290,7 @@ bool qa_scheduler_unregister(qa_scheduler *scheduler, qa_actor_owner owner, qa_e
 
 bool qa_scheduler_schedule(qa_scheduler *scheduler, const qa_think *think, qa_error *error)
 {
-    if (scheduler == NULL || think == NULL || think->callback == NULL
+    if (scheduler == NULL || scheduler->checkpointing || think == NULL || think->callback == NULL
         || think->boundary < QA_THINK_BEFORE_PHYSICS || think->boundary > QA_THINK_AFTER_PHYSICS)
         return fail(error, QA_ERROR_ARGUMENT, "Invalid actor think");
     const qa_actor_record *actor = qa_actors_get(scheduler->actors, think->actor);
@@ -308,7 +310,7 @@ bool qa_scheduler_schedule(qa_scheduler *scheduler, const qa_think *think, qa_er
 
 void qa_scheduler_cancel(qa_scheduler *scheduler, qa_actor_id actor)
 {
-    if (scheduler == NULL || actor.slot >= scheduler->capacity) return;
+    if (scheduler == NULL || scheduler->checkpointing || actor.slot >= scheduler->capacity) return;
     pending_think *pending = &scheduler->pending[actor.slot];
     if (pending->pending && qa_actor_id_equal(pending->think.actor, actor)) {
         heap_remove(scheduler, pending);
@@ -436,5 +438,114 @@ bool qa_scheduler_advance(qa_scheduler *scheduler, const qa_source_frame *frames
     }
     scheduler->advancing = false;
     scheduler->has_cursor = false;
+    return ok;
+}
+
+void qa_scheduler_checkpoint_free(qa_scheduler_checkpoint *value)
+{
+    if (!value) return;
+    free(value->providers); free(value->thinks);
+    *value = (qa_scheduler_checkpoint){0};
+}
+
+bool qa_scheduler_checkpoint_capture(const qa_scheduler *scheduler,
+                                      qa_scheduler_checkpoint *out, qa_error *error)
+{
+    if (!scheduler || !out || qa_scheduler_active(scheduler) || scheduler->admissions)
+        return fail(error, QA_ERROR_ARGUMENT, "Scheduler capture requires a safe point without admissions");
+    qa_scheduler_checkpoint value = {.next_order = scheduler->next_order, .mixed_order = scheduler->mixed};
+    for (uint32_t i = 0; i < scheduler->provider_capacity; ++i)
+        if (scheduler->providers[i].active) ++value.provider_count;
+    for (uint32_t i = 0; i < scheduler->capacity; ++i)
+        if (scheduler->pending[i].pending && qa_actors_get(scheduler->actors, scheduler->pending[i].think.actor))
+            ++value.think_count;
+    value.providers = value.provider_count ? calloc(value.provider_count, sizeof(*value.providers)) : NULL;
+    value.thinks = value.think_count ? calloc(value.think_count, sizeof(*value.thinks)) : NULL;
+    if ((value.provider_count && !value.providers) || (value.think_count && !value.thinks)) {
+        qa_scheduler_checkpoint_free(&value);
+        return fail(error, QA_ERROR_MEMORY, "Allocating scheduler checkpoint");
+    }
+    size_t index = 0;
+    for (uint32_t i = 0; i < scheduler->provider_capacity; ++i) {
+        const provider_clock *clock = scheduler->providers + i;
+        if (clock->active) value.providers[index++] = (qa_scheduler_provider_checkpoint){clock->owner, clock->kind, clock->order};
+    }
+    index = 0;
+    for (uint32_t i = 0; i < scheduler->capacity; ++i) {
+        const qa_think *think = &scheduler->pending[i].think;
+        if (!scheduler->pending[i].pending || !qa_actors_get(scheduler->actors, think->actor)) continue;
+        qa_scheduler_think_checkpoint *saved = value.thinks + index++;
+        if (!qa_actors_save_reference(scheduler->actors, think->actor, &saved->actor, error)) {
+            qa_scheduler_checkpoint_free(&value); return false;
+        }
+        saved->execution_provider = think->execution_provider;
+        saved->callback_id = think->callback_id;
+        saved->due_ns = think->due_ns; saved->sequence = think->sequence; saved->boundary = think->boundary;
+    }
+    *out = value;
+    return true;
+}
+
+bool qa_scheduler_checkpoint_restore(qa_scheduler *scheduler, const qa_scheduler_checkpoint *value,
+                                      qa_think_resolve_fn resolve, void *context, qa_error *error)
+{
+    if (!scheduler || !value || !resolve || qa_scheduler_active(scheduler) || scheduler->admissions ||
+        value->mixed_order != scheduler->mixed || value->provider_count > scheduler->provider_capacity ||
+        value->think_count > scheduler->capacity || (value->provider_count && !value->providers) ||
+        (value->think_count && !value->thinks))
+        return fail(error, QA_ERROR_ARGUMENT, "Invalid candidate scheduler checkpoint");
+    size_t active = 0;
+    for (uint32_t i = 0; i < scheduler->provider_capacity; ++i) if (scheduler->providers[i].active) ++active;
+    if (active != value->provider_count) return fail(error, QA_ERROR_FORMAT, "Scheduler saved provider set differs from candidate");
+    for (size_t i = 0; i < value->provider_count; ++i) {
+        const qa_scheduler_provider_checkpoint *saved = value->providers + i;
+        provider_clock *clock = provider(scheduler, saved->owner);
+        if (!clock || clock->kind != saved->kind || saved->order >= value->next_order)
+            return fail(error, QA_ERROR_FORMAT, "Invalid saved scheduler provider order or dialect");
+        for (size_t j = 0; j < i; ++j)
+            if (value->providers[j].owner == saved->owner || value->providers[j].order == saved->order)
+                return fail(error, QA_ERROR_FORMAT, "Duplicate scheduler provider identity/order");
+    }
+    pending_think *prepared = calloc(scheduler->capacity, sizeof(*prepared));
+    if (!prepared) return fail(error, QA_ERROR_MEMORY, "Allocating restored scheduler work");
+    for (uint32_t i = 0; i < scheduler->capacity; ++i) prepared[i].heap_slot = NO_HEAP_SLOT;
+    uint64_t revision = qa_actors_revision(scheduler->actors);
+    scheduler->checkpointing = true;
+    bool ok = true;
+    for (size_t i = 0; ok && i < value->think_count; ++i) {
+        const qa_scheduler_think_checkpoint *saved = value->thinks + i;
+        const qa_actor_record *actor = qa_actors_resolve_saved(scheduler->actors, saved->actor);
+        if (!actor || prepared[actor->id.slot].pending || !provider(scheduler, saved->execution_provider) ||
+            !provider(scheduler, actor->owner) || (unsigned)saved->boundary > QA_THINK_AFTER_PHYSICS) {
+            ok = fail(error, QA_ERROR_FORMAT, "Invalid saved scheduled actor/provider"); break;
+        }
+        pending_think *pending = prepared + actor->id.slot;
+        pending->think = (qa_think){.actor = actor->id, .execution_provider = saved->execution_provider,
+            .callback_id = saved->callback_id, .due_ns = saved->due_ns, .sequence = saved->sequence,
+            .boundary = saved->boundary};
+        ok = resolve(context, saved->execution_provider, actor->id, saved->callback_id,
+                     &pending->think.callback, &pending->think.context, error);
+        if (!ok) break;
+        if (!pending->think.callback || qa_actors_revision(scheduler->actors) != revision ||
+            scheduler->advancing || scheduler->dispatch_depth || scheduler->admissions) {
+            ok = fail(error, QA_ERROR_FORMAT, "Scheduled callback resolver changed candidate ownership"); break;
+        }
+        pending->owner = actor->owner;
+        pending->source_slot = actor->has_source ? actor->source_slot : actor->id.slot;
+        for (size_t j = 0; j < value->provider_count; ++j)
+            if (value->providers[j].owner == actor->owner) pending->provider_order = value->providers[j].order;
+        pending->pending = true;
+    }
+    scheduler->checkpointing = false;
+    if (ok) {
+        for (size_t i = 0; i < value->provider_count; ++i)
+            provider(scheduler, value->providers[i].owner)->order = value->providers[i].order;
+        free(scheduler->pending);
+        scheduler->pending = prepared;
+        scheduler->next_order = value->next_order;
+        scheduler->heap_count = 0;
+        for (uint32_t i = 0; i < scheduler->capacity; ++i)
+            if (prepared[i].pending) heap_insert(scheduler, i);
+    } else free(prepared);
     return ok;
 }

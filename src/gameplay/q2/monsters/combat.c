@@ -116,6 +116,104 @@ bool q2m_melee(q2m_context *context, float range, float damage, float kick,
   return result;
 }
 
+bool q2m_hit(q2m_context *context, qa_vec3 aim, float damage, float kick,
+              bool *hit, qa_error *error) {
+  *hit = false;
+  qa_q2_game *game = context->game;
+  qa_actor_id enemy = context->monster->enemy;
+  if (!q2m_alive(context) || !q2_actor_live(game, enemy))
+    return true;
+  qa_body_state target_body;
+  if (!qa_world_body_read(game->services.world, enemy, &target_body, error))
+    return !q2m_alive(context) || !q2_actor_live(game, enemy);
+  if (!q2m_alive(context) || !q2_actor_live(game, enemy))
+    return true;
+  bool rerelease = game->options.edition == QA_Q2_RERELEASE;
+  qa_vec3 delta = qa_vec_sub(target_body.origin, context->body.origin);
+  float range = q2m_body_distance(game->options.edition, &context->body, &target_body);
+  if (range > aim.x)
+    return true;
+  float side = aim.y;
+  if (side > context->body.bounds.mins.x && side < context->body.bounds.maxs.x) {
+    if (!rerelease)
+      range -= target_body.bounds.maxs.x;
+  } else {
+    side = side < 0.0f ? target_body.bounds.mins.x : target_body.bounds.maxs.x;
+  }
+  qa_vec3 point = qa_vec_add(context->body.origin, qa_vec_scale(delta, range));
+  if (rerelease) {
+    qa_vec3 mins = qa_vec_add(target_body.origin, target_body.bounds.mins);
+    qa_vec3 maxs = qa_vec_add(target_body.origin, target_body.bounds.maxs);
+    point = qa_v3(fmaxf(mins.x, fminf(maxs.x, context->body.origin.x)),
+                  fmaxf(mins.y, fminf(maxs.y, context->body.origin.y)),
+                  fmaxf(mins.z, fminf(maxs.z, context->body.origin.z)));
+  }
+  qa_actor_id target = enemy;
+  for (unsigned segment = 0; segment != (rerelease ? 2u : 1u); ++segment) {
+    qa_trace_query query = {.start = segment ? point : context->body.origin,
+        .end = segment ? target_body.origin : point,
+        .pass_actor = context->actor->id,
+        .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+    query.policy.contents_mask = rerelease ? Q2_PROJECTILE_MASK : Q2_SHOT_MASK;
+    qa_trace_result trace;
+    if (!qa_world_trace(game->services.world, &query, &trace, error))
+      return false;
+    if (!q2m_alive(context) || !q2_actor_live(game, enemy))
+      return true;
+    if (trace.fraction < 1.0f) {
+      if (trace.hit != QA_TRACE_HIT_ACTOR)
+        return true;
+      qa_combat_state combat;
+      qa_error observed = {0};
+      bool described = qa_combat_read(game->services.combat, trace.actor, &combat, &observed);
+      if (!q2m_alive(context) || !q2_actor_live(game, enemy))
+        return true;
+      if (!described || !combat.can_take_damage)
+        return true;
+      qa_builtin_actor_traits traits = {0};
+      if (game->services.actor_traits)
+        game->services.actor_traits(game->services.context, trace.actor, &traits);
+      if (!q2m_alive(context) || !q2_actor_live(game, enemy))
+        return true;
+      target = traits.monster || traits.player ? enemy : trace.actor;
+    }
+  }
+  qa_vec3 forward, right, up;
+  qa_builtin_angle_vectors(context->body.angles, &forward, &right, &up);
+  qa_vec3 impact = qa_vec_add(context->body.origin,
+      qa_vec_add(qa_vec_scale(forward, range),
+          qa_vec_add(qa_vec_scale(right, side), qa_vec_scale(up, aim.z))));
+  qa_attack attack = {.attacker = context->actor->id, .inflictor = context->actor->id,
+      .combat_provider = game->options.owner,
+      .cause = qa_q2_damage_cause(game->options.edition, game->options.product,
+                                  Q2M_MOD_HIT, 8u)};
+  if (!q2_damage(game, &attack, target, damage, truncf(kick / 2.0f),
+                   qa_vec_sub(impact, target_body.origin), impact, qa_v3(0, 0, 0), false, error))
+    return false;
+  if (!q2m_alive(context))
+    return true;
+  qa_builtin_actor_traits traits = {0};
+  if (game->services.actor_traits && q2_actor_live(game, target))
+    game->services.actor_traits(game->services.context, target, &traits);
+  if (!q2m_alive(context) || (!traits.monster && !traits.player))
+    return true;
+  *hit = true;
+  if (!q2_actor_live(game, enemy))
+    return true;
+  qa_body_state current;
+  if (!qa_world_body_read(game->services.world, enemy, &current, error))
+    return !q2m_alive(context) || !q2_actor_live(game, enemy);
+  if (!q2m_alive(context) || !q2_actor_live(game, enemy))
+    return true;
+  qa_vec3 center = qa_vec_add(current.origin,
+      qa_vec_scale(qa_vec_add(current.bounds.mins, current.bounds.maxs), .5f));
+  current.velocity = qa_vec_add(current.velocity,
+      qa_vec_scale(qa_vec_normalize(qa_vec_sub(center, impact)), kick));
+  if (current.velocity.z > 0.0f)
+    current.ground = (qa_actor_id){0};
+  return qa_world_body_write(game->services.world, enemy, &current, error);
+}
+
 static float monster_projectile_speed(const q2m_context *context,
                                       q2m_attack_kind kind) {
   q2m_species species = context->monster->definition->species;
@@ -1781,16 +1879,6 @@ static const q2m_gib_piece rerelease_guardian_gibs[] = {
     GIB("models/monsters/guardian/gib7.md2", 1,
         Q2_GIB_HEAD | Q2_GIB_METALLIC),
 };
-static const q2m_gib_piece widow2_death_gibs[] = {
-    GIB("models/objects/gibs/bone/tris.md2", 2, 0),
-    GIB("models/objects/gibs/sm_meat/tris.md2", 3, 0),
-    GIB("models/monsters/blackwidow2/gib1/tris.md2", 3, Q2_GIB_METALLIC),
-    GIB("models/monsters/blackwidow2/gib2/tris.md2", 3, Q2_GIB_METALLIC),
-    GIB("models/monsters/blackwidow2/gib3/tris.md2", 2, Q2_GIB_METALLIC),
-    GIB("models/monsters/blackwidow/gib3/tris.md2", 2, Q2_GIB_METALLIC),
-    GIB("models/objects/gibs/chest/tris.md2", 1, 0),
-    GIB("models/objects/gibs/head2/tris.md2", 1, Q2_GIB_HEAD),
-};
 
 #undef GIB
 #undef SCALED_GIB
@@ -2115,6 +2203,11 @@ static bool kill_widow2_stalkers(q2m_context *context, qa_error *error) {
                          context->monster->enemy, &enemy_body, &ignored))
     point = enemy_body.origin;
 
+  if (!q2m_alive(context)) {
+    scratch->active = false;
+    return true;
+  }
+
   bool result = true;
   for (size_t index = 0; index < scratch->snapshot.count; ++index) {
     qa_actor_id id = scratch->snapshot.ids[index];
@@ -2132,14 +2225,16 @@ static bool kill_widow2_stalkers(q2m_context *context, qa_error *error) {
       result = false;
       break;
     }
-    if (combat.health <= 0.0f)
+    if (!q2m_alive(context))
+      break;
+    if (!q2_actor_live(context->game, id) || combat.health <= 0.0f)
       continue;
     qa_attack attack = {
         .attacker = context->actor->id,
         .inflictor = context->actor->id,
         .combat_provider = context->game->options.owner,
         .cause = qa_q2_damage_cause(context->game->options.edition,
-                                    context->game->options.product, 8, 0),
+                                    context->game->options.product, 0, 8),
     };
     if (!q2_damage(context->game, &attack, id, combat.health + 1.0f, 0.0f,
                    qa_v3(0, 0, 0), point, qa_v3(0, 0, 0), false, error)) {
@@ -2165,14 +2260,12 @@ static bool widow_death(q2m_context *context, bool sequel, qa_error *error) {
       return false;
     if (!q2m_alive(context))
       return true;
-    return spawn_gib_recipe(
-        context, widow2_death_gibs,
-        sizeof(widow2_death_gibs) / sizeof(widow2_death_gibs[0]), damage,
-        error);
+    return q2m_widow_death_gibs(context, damage, error);
   }
   if (monster->dead)
     return true;
 
+  q2m_widow_clear_powerups(context);
   monster->dead = true;
   monster->touch_active = false;
   monster->can_take_damage = false;

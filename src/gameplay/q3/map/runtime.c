@@ -83,6 +83,7 @@ static void level_state_reset(qa_q3_game *game, const qa_q3_map_options *options
     game->rng = options->random_seed;
     game->death_animation = 0;
     game->body_queue_index = 0;
+    game->ranking_hit = (qa_q3_ranking_hit){0};
     memset(game->body_queue, 0, sizeof(game->body_queue));
     memset(game->actors, 0, game->capacity * sizeof(*game->actors));
     memset(game->kamikaze_cooldowns, 0,

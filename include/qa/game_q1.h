@@ -4,6 +4,7 @@
 #include "qa/builtin.h"
 #include "qa/movement.h"
 #include "qa/targets.h"
+#include "qa/console.h"
 
 typedef struct qa_q1_game qa_q1_game;
 struct qa_q1_map_fields;
@@ -182,6 +183,11 @@ typedef struct qa_q1_host {
     bool (*monster_path)(void *, qa_actor_id, qa_vec3 goal, float distance, qa_q1_path_result *,
                          qa_error *);
     bool (*weapon_changed)(void *, qa_actor_id, qa_item_id acquired, qa_error *);
+    bool (*console_cheat)(void *, qa_actor_id, const char *name, bool *enabled, qa_error *);
+    bool (*console_suicide)(void *, qa_actor_id, qa_error *);
+    bool (*console_give_item)(void *, qa_actor_id, const qa_command_invocation *,
+                              bool *handled, qa_error *);
+    bool (*console_power)(void *, qa_actor_id, qa_q1_power, double source_expiry, qa_error *);
 } qa_q1_host;
 typedef struct qa_q1_boss_fields {
     const char *wave1, *wave2, *wave3, *teleport_target;
@@ -222,6 +228,7 @@ typedef struct qa_q1_presentation {
 } qa_q1_presentation;
 typedef struct qa_q1_player_view {
     qa_q1_weapon weapon;
+    qa_string_id weapon_model;
     int32_t weapon_frame;
     qa_vec3 punch_angles;
     float max_health;
@@ -282,6 +289,20 @@ bool qa_q1_mg3_hammer_body_frame(const qa_q1_game *, qa_actor_id, int32_t *);
 bool qa_q1_game_create(const qa_builtin_services *, const qa_q1_options *, const qa_q1_host *,
                        qa_q1_game **, qa_error *);
 void qa_q1_game_destroy(qa_q1_game *);
+typedef struct qa_q1_game_operation {
+    qa_q1_game *game;
+    bool retained_owner;
+} qa_q1_game_operation;
+/* Hold one operation across a caller's complete native callback chain. Do not
+ * copy an active lease. Teardown requests reject subsequent work; the last
+ * operation end may reclaim the game and clears the lease before doing so. */
+bool qa_q1_game_operation_begin(qa_q1_game *, qa_q1_game_operation *, qa_error *);
+/* Retain callback-owner storage without marking an operation active. Retire
+ * all borrowed world/session/target contexts before ending this owner lease. */
+bool qa_q1_game_retain(qa_q1_game *, qa_q1_game_operation *, qa_error *);
+bool qa_q1_game_operation_live(const qa_q1_game_operation *);
+void qa_q1_game_operation_end(qa_q1_game_operation *);
+bool qa_q1_game_pickups_rebind(qa_q1_game *, qa_error *);
 bool qa_q1_game_component(qa_q1_game *, qa_component *, qa_error *);
 bool qa_q1_game_combat_policy(qa_q1_game *, qa_combat_policy *, qa_error *);
 bool qa_q1_game_spawn(qa_q1_game *, const qa_q1_spawn *, qa_actor_id *, qa_error *);
@@ -304,9 +325,45 @@ bool qa_q1_spawn_multi_explosion(qa_q1_game *, qa_vec3 origin, float radius, flo
 /* An arsenal can attach to any existing shared player. Character selection is
  * independent; attach never replaces body, health, armor or movement. */
 bool qa_q1_player_attach(qa_q1_game *, qa_actor_id, bool initial_inventory, qa_error *);
+/* Reset this source arsenal's inventory entries, preserving foreign namespaces. */
+bool qa_q1_player_inventory_reset(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_player_input(qa_q1_game *, qa_actor_id, const qa_q1_input *, qa_error *);
 bool qa_q1_player_select(qa_q1_game *, qa_actor_id, qa_q1_weapon, qa_error *);
 bool qa_q1_player_read(const qa_q1_game *, qa_actor_id, qa_q1_player_view *);
+float qa_q1_game_random(qa_q1_game *);
+bool qa_q1_game_console_command(qa_q1_game *, qa_actor_id, const qa_command_invocation *,
+                                 bool *handled, qa_error *);
+typedef enum qa_q1_console_operation {
+    QA_Q1_CONSOLE_UNKNOWN, QA_Q1_CONSOLE_WORLD, QA_Q1_CONSOLE_CHARACTER,
+    QA_Q1_CONSOLE_MOVEMENT, QA_Q1_CONSOLE_ARSENAL, QA_Q1_CONSOLE_EQUIPMENT,
+    QA_Q1_CONSOLE_MODE
+} qa_q1_console_operation;
+bool qa_q1_game_console_operation(const qa_q1_game *, const qa_command_invocation *,
+                                   qa_q1_console_operation *);
+bool qa_q1_game_freeze(qa_q1_game *, qa_actor_id, bool *handled, qa_error *);
+typedef struct qa_q1_weapon_view {
+    qa_q1_weapon weapon;
+    qa_item_id item, ammo;
+    double ammo_count, ammo_per_shot, attack_finished, ready_at;
+    float attack_interval, fire_interval;
+    float speed, range, damage, blast_damage, blast_radius;
+    float horizontal_spread, vertical_spread, gravity, gravity_acceleration;
+    float extra_z_velocity, lifetime, launch_delay;
+    qa_vec3 launch_angles;
+    qa_vec3 muzzle_offsets[2];
+    uint32_t shots;
+    uint8_t muzzle_count;
+    bool owned, available, melee, grapple, discharge, conditional_strike;
+} qa_q1_weapon_view;
+/* Detached source facts for the next shot, without consuming ammo or RNG.
+ * Muzzle offsets are world-space vectors relative to the actor origin.
+ * Damage is a nominal per-projectile estimate before target/power modifiers;
+ * delayed hammer effects and selected projectile replacement remain conditional. */
+bool qa_q1_player_weapon_read(qa_q1_game *, qa_actor_id, qa_q1_weapon,
+                              qa_q1_weapon_view *, bool *found, qa_error *);
+/* Native travel fields only; shared health/armor/inventory are applied by the
+ * campaign owner before selecting the carried weapon and extension state. */
+bool qa_q1_player_travel_reset(qa_q1_game *, qa_actor_id, float max_health, qa_error *);
 bool qa_q1_player_power(qa_q1_game *, qa_actor_id, qa_q1_power, double expires, qa_error *);
 bool qa_q1_player_auto_switch(qa_q1_game *, qa_actor_id, qa_q1_auto_switch, qa_error *);
 bool qa_q1_game_damage_effect(qa_q1_game *, qa_damage_effect_stage, const qa_damage_request *,
@@ -363,6 +420,8 @@ bool qa_q1_game_physics_write(qa_q1_game *, qa_actor_id, const qa_physics_proper
 bool qa_q1_game_water_transition(qa_q1_game *, qa_actor_id, qa_error *);
 void qa_q1_game_actor_released(qa_q1_game *, qa_actor_record);
 qa_item_id qa_q1_weapon_item(const qa_q1_game *, qa_q1_weapon);
+const char *qa_q1_weapon_identity(qa_q1_weapon);
+bool qa_q1_weapon_source(qa_q1_program, uint32_t source_value, qa_q1_weapon *);
 qa_item_id qa_q1_ammo_item(const qa_q1_game *, qa_q1_ammo);
 
 #endif

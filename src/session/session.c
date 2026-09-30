@@ -276,6 +276,162 @@ failed:
     return false;
 }
 
+bool qa_session_create_restored(const qa_session_options *options, const qa_actor_checkpoint *actors,
+                                 qa_strings *owned_strings, qa_session **out, qa_error *error)
+{
+    if (!options || !actors || !owned_strings || !out || actors->capacity != options->actor_capacity ||
+        actors->count > actors->capacity || (actors->count && !actors->slots))
+        return fail(error, QA_ERROR_ARGUMENT, "Restored session requires matching actors/options/strings");
+    for (uint32_t i = 0; i < actors->count; ++i)
+        if (actors->slots[i].active &&
+            (!qa_strings_text(owned_strings, actors->slots[i].owner).data ||
+             !qa_strings_text(owned_strings, actors->slots[i].definition).data))
+            return fail(error, QA_ERROR_FORMAT, "Saved actor owner/definition is outside the saved string table");
+    qa_session *session = NULL;
+    if (!qa_session_create(options, &session, error)) return false;
+    qa_actor_registry *restored = NULL;
+    /* Until publication this registry has no release observer, so allocation
+     * failure cleanup cannot dispatch through half-constructed application data. */
+    if (!qa_actors_restore(actors, NULL, NULL, &restored, error)) {
+        (void)qa_session_destroy(session, NULL); return false;
+    }
+    qa_scheduler *scheduler = NULL;
+    if (!qa_scheduler_create(restored, options->component_capacity, options->mixed_order,
+                              dispatch_think, session, &scheduler, error)) {
+        (void)qa_actors_destroy(restored, NULL);
+        (void)qa_session_destroy(session, NULL); return false;
+    }
+    (void)qa_scheduler_destroy(session->scheduler, NULL);
+    (void)qa_actors_destroy(session->actors, NULL);
+    qa_strings_destroy(session->strings);
+    session->actors = restored;
+    session->scheduler = scheduler;
+    session->strings = owned_strings;
+    qa_actors_set_release_observer(restored, actor_released, session);
+    *out = session;
+    return true;
+}
+
+void qa_session_checkpoint_free(qa_session_checkpoint *value)
+{
+    if (!value) return;
+    free(value->components); free(value->executions);
+    qa_scheduler_checkpoint_free(&value->scheduler);
+    *value = (qa_session_checkpoint){0};
+}
+
+bool qa_session_checkpoint_capture(qa_session *session, qa_session_checkpoint *out, qa_error *error)
+{
+    if (!qa_session_safe(session) || !out || session->admissions || session->faulted ||
+        qa_scheduler_has_admissions(session->scheduler))
+        return fail(error, QA_ERROR_ARGUMENT, "Session capture requires a healthy safe point without admissions");
+    if (!reconcile_turns(session, error)) return false;
+    qa_session_checkpoint value = {.elapsed_ns = session->elapsed_ns, .next_order = session->next_order,
+        .actor_capacity = session->options.actor_capacity, .component_capacity = session->options.component_capacity,
+        .mixed_order = session->options.mixed_order, .execution_count = qa_actors_count(session->actors)};
+    for (uint32_t i = 0; i < session->options.component_capacity; ++i)
+        if (session->components[i].active) ++value.component_count;
+    value.components = value.component_count ? calloc(value.component_count, sizeof(*value.components)) : NULL;
+    value.executions = value.execution_count ? calloc(value.execution_count, sizeof(*value.executions)) : NULL;
+    if ((value.component_count && !value.components) || (value.execution_count && !value.executions)) {
+        qa_session_checkpoint_free(&value);
+        return fail(error, QA_ERROR_MEMORY, "Allocating session checkpoint");
+    }
+    size_t index = 0;
+    for (uint32_t i = 0; i < session->options.component_capacity; ++i) {
+        const component_state *entry = session->components + i;
+        if (entry->active) value.components[index++] = (qa_session_component_checkpoint){
+            entry->component.owner, entry->component.clock, entry->clock, entry->order};
+    }
+    uint32_t cursor = 0;
+    const qa_actor_record *actor;
+    index = 0;
+    while (qa_actors_next(session->actors, &cursor, &actor)) {
+        qa_session_execution_checkpoint *execution = value.executions + index++;
+        if (!qa_actors_save_reference(session->actors, actor->id, &execution->actor, error) ||
+            !qa_session_execution(session, actor->id, &execution->provider)) {
+            qa_session_checkpoint_free(&value); return false;
+        }
+    }
+    if (!qa_scheduler_checkpoint_capture(session->scheduler, &value.scheduler, error)) {
+        qa_session_checkpoint_free(&value); return false;
+    }
+    *out = value;
+    return true;
+}
+
+static bool checkpoint_clock_equal(qa_clock_config a, qa_clock_config b)
+{
+    return a.kind == b.kind && a.initial_time_ns == b.initial_time_ns && a.interval_ns == b.interval_ns &&
+        a.minimum_frame_ns == b.minimum_frame_ns && a.maximum_frame_ns == b.maximum_frame_ns &&
+        a.initial_lead_ns == b.initial_lead_ns && a.maximum_steps == b.maximum_steps;
+}
+
+bool qa_session_checkpoint_restore(qa_session *session, const qa_session_checkpoint *value,
+                                    qa_think_resolve_fn resolve, void *context, qa_error *error)
+{
+    if (!qa_session_safe(session) || session->admissions || session->faulted || !value || !resolve ||
+        value->actor_capacity != session->options.actor_capacity ||
+        value->component_capacity != session->options.component_capacity ||
+        value->mixed_order != session->options.mixed_order ||
+        value->component_count > session->options.component_capacity ||
+        value->execution_count != qa_actors_count(session->actors) ||
+        (value->component_count && !value->components) || (value->execution_count && !value->executions) ||
+        value->scheduler.next_order != value->next_order || value->scheduler.provider_count != value->component_count ||
+        (value->scheduler.provider_count && !value->scheduler.providers) ||
+        (value->scheduler.think_count && !value->scheduler.thinks) ||
+        value->scheduler.think_count > value->execution_count || value->scheduler.mixed_order != value->mixed_order)
+        return fail(error, QA_ERROR_ARGUMENT, "Invalid isolated session checkpoint");
+    size_t active = 0;
+    for (uint32_t i = 0; i < session->options.component_capacity; ++i) if (session->components[i].active) ++active;
+    if (active != value->component_count) return fail(error, QA_ERROR_FORMAT, "Saved component set differs from candidate");
+    for (size_t i = 0; i < value->component_count; ++i) {
+        const qa_session_component_checkpoint *saved = value->components + i;
+        component_state *entry = component(session, saved->owner);
+        if (!entry || !checkpoint_clock_equal(entry->component.clock, saved->config) ||
+            saved->order >= value->next_order || saved->state.host_origin_ns > value->elapsed_ns)
+            return fail(error, QA_ERROR_FORMAT, "Saved component order or clock configuration differs from candidate");
+        bool scheduler_found = false;
+        for (size_t j = 0; j < value->scheduler.provider_count; ++j)
+            if (value->scheduler.providers[j].owner == saved->owner &&
+                value->scheduler.providers[j].order == saved->order &&
+                value->scheduler.providers[j].kind == saved->config.kind) scheduler_found = true;
+        if (!scheduler_found) return fail(error, QA_ERROR_FORMAT, "Saved scheduler disagrees with component ordering");
+        for (size_t j = 0; j < i; ++j)
+            if (value->components[j].owner == saved->owner || value->components[j].order == saved->order)
+                return fail(error, QA_ERROR_FORMAT, "Duplicate saved component ordering");
+        if (!qa_session_restore_clock(session, saved->owner, &saved->state, error)) return false;
+        entry->order = saved->order;
+    }
+    uint8_t *seen = calloc(session->options.actor_capacity, 1);
+    if (!seen) return fail(error, QA_ERROR_MEMORY, "Allocating restored execution validation");
+    bool ok = true;
+    for (size_t i = 0; ok && i < value->execution_count; ++i) {
+        const qa_session_execution_checkpoint *saved = value->executions + i;
+        const qa_actor_record *actor = qa_actors_resolve_saved(session->actors, saved->actor);
+        if (!actor || seen[actor->id.slot] || !component(session, saved->provider)) {
+            ok = fail(error, QA_ERROR_FORMAT, "Invalid or duplicate saved actor execution"); break;
+        }
+        seen[actor->id.slot] = 1;
+        session->executions[actor->id.slot] = (actor_execution){actor->id, saved->provider};
+    }
+    free(seen);
+    if (!ok || !qa_scheduler_checkpoint_restore(session->scheduler, &value->scheduler, resolve, context, error)) return false;
+    for (size_t i = 0; i < value->scheduler.think_count; ++i) {
+        const qa_scheduler_think_checkpoint *saved = value->scheduler.thinks + i;
+        const qa_actor_record *actor = qa_actors_resolve_saved(session->actors, saved->actor);
+        qa_actor_owner owner;
+        if (!actor || !qa_session_execution(session, actor->id, &owner) || owner != saved->execution_provider)
+            return fail(error, QA_ERROR_FORMAT, "Restored scheduled work disagrees with actor execution");
+    }
+    session->elapsed_ns = value->elapsed_ns;
+    session->next_order = value->next_order;
+    session->turn_count = 0;
+    for (uint32_t i = 0; i < session->options.actor_capacity; ++i) session->turn_positions[i] = NO_TURN;
+    session->turn_revision = qa_actors_revision(session->actors) - 1u;
+    return reconcile_turns(session, error);
+}
+
 bool qa_session_safe(const qa_session *session)
 {
     return session != NULL && !session->stepping && !session->transitioning
@@ -528,6 +684,20 @@ static bool invoke_physics(void *context, qa_session *session, qa_error *error)
     return value->actor_frame(value->state, session, invocation->actor, &invocation->provider->clock.frame, error);
 }
 
+static component_state *ordered_component(qa_session *, uint64_t, bool);
+
+typedef struct source_actor_invocation {
+    qa_actor_id actor;
+    qa_source_frame frame;
+} source_actor_invocation;
+
+static bool invoke_source_actor(void *context, qa_session *session, qa_error *error)
+{
+    source_actor_invocation *invocation = context;
+    return session->options.source_actor(session->options.release_context, session,
+                                         invocation->actor, &invocation->frame, error);
+}
+
 static bool actor_frames(qa_session *session, qa_error *error)
 {
     actor_turn cursor = {0};
@@ -544,6 +714,21 @@ static bool actor_frames(qa_session *session, qa_error *error)
         have_cursor = true;
         const qa_actor_record *actor = qa_actors_get(session->actors, turn.actor);
         if (actor == NULL) continue;
+        if (session->options.source_actor != NULL) {
+            component_state *source = ordered_component(session, 0, true);
+            while (source != NULL) {
+                if (source->in_frame) {
+                    source_actor_invocation invocation = {turn.actor, source->clock.frame};
+                    invocation.frame.phase = QA_ENTITY_PHYSICS;
+                    if (!qa_session_invoke(session, turn.actor, QA_INVOKE_PHYSICS,
+                                            invoke_source_actor, &invocation, error)) return false;
+                    if (qa_actors_get(session->actors, turn.actor) == NULL) break;
+                }
+                source = ordered_component(session, source->order, false);
+            }
+            actor = qa_actors_get(session->actors, turn.actor);
+            if (actor == NULL) continue;
+        }
         actor_execution execution = session->executions[actor->id.slot];
         component_state *provider_state = component(session,
             qa_actor_id_equal(execution.actor, actor->id) ? execution.provider : actor->owner);
@@ -743,12 +928,20 @@ bool qa_session_replace_world(qa_session *session, void *candidate, qa_cleanup_f
     return true;
 }
 
+bool qa_session_destroy_ready(const qa_session *session)
+{
+    return session == NULL || (qa_session_safe(session) && session->admissions == 0
+        && !qa_scheduler_has_admissions(session->scheduler));
+}
+
 bool qa_session_destroy(qa_session *session, qa_error *error)
 {
     if (session == NULL) return true;
-    if (!qa_session_safe(session)) return fail(error, QA_ERROR_ARGUMENT, "Session destroy requires a safe point");
-    if (session->admissions != 0 || qa_scheduler_has_admissions(session->scheduler))
+    if (!qa_session_destroy_ready(session)) {
+        if (!qa_session_safe(session))
+            return fail(error, QA_ERROR_ARGUMENT, "Session destroy requires a safe point");
         return fail(error, QA_ERROR_ARGUMENT, "Abort component and scheduler admissions before session destruction");
+    }
     session->transitioning = true;
     (void)qa_actors_clear(session->actors, NULL);
     for (;;) {

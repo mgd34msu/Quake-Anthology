@@ -711,6 +711,11 @@ bool qa_qvm_qualify_region(const qa_qvm_image *image, uint32_t owner,
     if (evaluation == NULL) return error_at(error, owner, "Missing QVM region evaluation");
     return qualify(image, owner, evaluation->entry, evaluation->join, evaluation, false, error);
 }
+bool qa_qvm_qualify_source_region(const qa_qvm_image *image, uint32_t owner,
+                                  uint32_t entry, uint32_t join, qa_error *error)
+{
+    return qualify(image, owner, entry, join, NULL, false, error);
+}
 
 static bool arithmetic(uint8_t op, int32_t left, int32_t right, int32_t *out, qa_error *error)
 {

@@ -1,0 +1,113 @@
+#ifndef QA_NETWORK_RUNTIME_H
+#define QA_NETWORK_RUNTIME_H
+
+#include "qa/network_unified.h"
+
+#define QA_NETWORK_COMMAND_BACKUP 128u
+#define QA_NETWORK_MAX_SEATS 4u
+
+typedef struct qa_network_runtime qa_network_runtime;
+typedef struct qa_network_command {
+    qa_net_client_id client;
+    qa_net_seat_id seat;
+    qa_actor_id actor;
+    uint64_t epoch;
+    qa_movement_command movement;
+    bool has_arsenal;
+    qa_unified_arsenal arsenal;
+} qa_network_command;
+/* A snapshot borrows the admitted producer's complete owner checkpoint. The
+ * runtime stores command history only, never another actor world/inventory. */
+typedef struct qa_network_snapshot {
+    qa_net_seat_id seat;
+    qa_actor_id actor;
+    qa_movement_kind movement;
+    uint64_t epoch, sequence, acknowledged_command, server_time_ns;
+    const void *owner_checkpoint;
+} qa_network_snapshot;
+typedef struct qa_network_hooks {
+    void *context;
+    qa_net_admit_fn admit;
+    bool (*controlled)(void *, qa_net_client_id, qa_net_seat_id,
+                       qa_actor_id, qa_movement_kind, qa_bytes arsenal, qa_error *);
+    bool (*command)(void *, const qa_network_command *, qa_error *);
+    /* Restore every prediction-owned component together before replay. replay
+     * must use the selected movement kernel and prediction effects policy. */
+    bool (*restore)(void *, const qa_network_snapshot *, qa_error *);
+    bool (*replay)(void *, const qa_network_command *, qa_error *);
+    void (*disconnected)(void *, qa_net_client_id, const char *reason);
+    bool (*connectionless)(void *, qa_network_runtime *, const qa_net_datagram *, qa_error *);
+    /* Must authenticate retained identity before changing its endpoint. */
+    bool (*reconnect)(void *, const qa_net_client *, const qa_net_address *, qa_bytes proof, qa_error *);
+} qa_network_hooks;
+/* One adapter per connection. Source adapters own dialect histories, not
+ * seats/world/clocks. receive must authenticate packets before invoking runtime
+ * command/snapshot/received. All callbacks run on the runtime owner thread.
+ * No callback may attach/detach/travel/pump/destroy the runtime. */
+typedef struct qa_network_peer_ops {
+    bool (*receive)(void *, qa_network_runtime *, qa_net_client_id,
+                    const qa_net_datagram *, qa_error *);
+    bool (*flush)(void *, qa_network_runtime *, qa_net_client_id, uint64_t now_ns, qa_error *);
+    bool (*command)(void *, const qa_network_command *, qa_error *);
+    /* Queue signon/travel through source reliability, retire stale wire deltas.
+     * Failure after restart faults this connection and disconnects it. */
+    bool (*restart)(void *, uint64_t epoch, const qa_sha256_digest *, qa_error *);
+    bool (*rebind)(void *, const qa_net_address *, qa_error *);
+    void (*close)(void *);
+} qa_network_peer_ops;
+typedef struct qa_network_options {
+    uint64_t owner, timeout_ns;
+    uint32_t clients, packets_per_pump;
+    qa_network_hooks hooks;
+} qa_network_options;
+/* Transport transfers on successful create; peers transfer on successful
+ * attach. The runtime is the sole receiver and closes all owned resources. */
+bool qa_network_create(qa_net_transport *, const qa_network_options *, qa_network_runtime **, qa_error *);
+void qa_network_destroy(qa_network_runtime *);
+const qa_net_connections *qa_network_connections(const qa_network_runtime *);
+bool qa_network_callbacks_idle(const qa_network_runtime *);
+bool qa_network_attach(qa_network_runtime *, const qa_net_connect *,
+                        const qa_network_peer_ops *, void *peer, uint64_t now_ns,
+                        qa_net_client_id *, qa_error *);
+bool qa_network_detach(qa_network_runtime *, qa_net_client_id, const char *, qa_error *);
+bool qa_network_pump(qa_network_runtime *, uint64_t now_ns, qa_error *);
+bool qa_network_send(qa_network_runtime *, qa_net_client_id, qa_bytes, qa_error *);
+/* Connectionless services share this transport; they never open a second
+ * receive owner. The address is not a connection admission. */
+bool qa_network_send_address(qa_network_runtime *, const qa_net_address *, qa_bytes, qa_error *);
+bool qa_network_received(qa_network_runtime *, qa_net_client_id, uint64_t now_ns, qa_error *);
+bool qa_network_phase(qa_network_runtime *, qa_net_client_id, qa_net_phase, qa_error *);
+uint64_t qa_network_epoch(const qa_network_runtime *, qa_net_client_id);
+/* submit records a local command and invokes the dialect's encoder. accept
+ * invokes gameplay once for an authenticated remote command. Duplicate source
+ * sequences are ignored. Rejection never advances the accepted sequence. */
+bool qa_network_submit(qa_network_runtime *, const qa_network_command *, qa_error *);
+bool qa_network_accept(qa_network_runtime *, const qa_network_command *, qa_error *);
+bool qa_network_snapshot_apply(qa_network_runtime *, qa_net_client_id,
+                                const qa_network_snapshot *, qa_error *);
+bool qa_network_restart(qa_network_runtime *, qa_net_client_id,
+                         const qa_sha256_digest *, qa_error *);
+bool qa_network_reconnect(qa_network_runtime *, qa_net_client_id,
+                           const qa_net_address *, qa_bytes proof, uint64_t now_ns, qa_error *);
+/* Direct unified reliability adapter. Content/identity negotiation remains the
+ * application admission owner's job. Incoming QTCM packets identify an actor;
+ * resolve must bind it to an authenticated seat and selected providers. Other
+ * reliable/frame documents go to the complete-state producer/consumer. */
+typedef struct qa_network_unified_hooks {
+    void *context;
+    bool (*resolve)(void *, qa_net_client_id, uint32_t slot, uint32_t generation,
+                    qa_net_seat_id *, qa_unified_controlled_actor *, qa_error *);
+    bool (*delivery)(void *, qa_network_runtime *, qa_net_client_id,
+                     const qa_unified_delivery *, qa_error *);
+    bool (*restart)(void *, uint64_t epoch, const qa_sha256_digest *,
+                    qa_unified_channel *, qa_error *);
+} qa_network_unified_hooks;
+bool qa_network_attach_unified(qa_network_runtime *, const qa_net_connect *,
+                                qa_unified_token, const qa_unified_limits *,
+                                const qa_network_unified_hooks *, uint64_t now_ns,
+                                qa_net_client_id *, qa_error *);
+bool qa_network_unified_reliable(qa_network_runtime *, qa_net_client_id, qa_bytes,
+                                  uint32_t *sequence, qa_error *);
+bool qa_network_unified_frame(qa_network_runtime *, qa_net_client_id, qa_bytes,
+                               uint32_t required_reliable, qa_error *);
+#endif

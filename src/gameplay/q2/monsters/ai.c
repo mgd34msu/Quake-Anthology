@@ -1721,11 +1721,114 @@ static bool default_attack(q2m_context *context, bool *selected, qa_error *error
   return true;
 }
 
+static bool widow_check_attack(q2m_context *context, bool *selected, qa_error *error) {
+  struct qa_q2_monster *monster = context->monster;
+  qa_q2_game *game = context->game;
+  qa_actor_id enemy = monster->enemy;
+  qa_body_state target;
+  bool present;
+  if (!attack_body(context, enemy, &target, &present, error))
+    return false;
+  if (!present)
+    return true;
+  qa_builtin_actor_traits traits;
+  if (!actor_traits(context, enemy, &traits, error) ||
+      !q2m_widow_powerups(context, error))
+    return false;
+  if (!q2m_alive(context) || !q2_actor_live(game, enemy))
+    return true;
+  bool second = monster->definition->species == Q2M_WIDOW2;
+  if (!second && strcmp(monster->move->name, "widow_move_run") == 0 &&
+      ((monster->frame >= 14 && monster->frame <= 18) || monster->frame == 22))
+    return true;
+  float distance = q2m_body_distance(game->options.edition, &context->body, &target);
+  bool slots = q2m_summon_has_slots(monster, 2);
+  if (q2m_random(game) < .8f && slots && distance > 150.0f) {
+    monster->source_blocked = true;
+    monster->attack_state = Q2M_MISSILE;
+    *selected = true;
+    return true;
+  }
+  float health;
+  if (!attack_health(context, enemy, &health, error))
+    return false;
+  if (!q2m_alive(context) || !q2_actor_live(game, enemy))
+    return true;
+  bool nonsolid = false;
+  if (health > 0.0f) {
+    qa_trace_query query = {
+        .start = qa_vec_add(context->body.origin, qa_v3(0, 0, monster->view_height)),
+        .end = qa_vec_add(target.origin, qa_v3(0, 0, traits.view_height)),
+        .pass_actor = context->actor->id,
+        .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+    query.policy.contents_mask = UINT32_C(0x02000019);
+    qa_trace_result trace;
+    if (!qa_world_trace(game->services.world, &query, &trace, error))
+      return false;
+    if (!q2m_alive(context) || !q2_actor_live(game, enemy))
+      return true;
+    if (trace.hit != QA_TRACE_HIT_ACTOR || !qa_actor_id_equal(trace.actor, enemy)) {
+      if (traits.player && slots) {
+        monster->attack_state = Q2M_BLIND;
+        *selected = true;
+        return true;
+      }
+      if (!nonsolid_target(context, enemy, &nonsolid, error))
+        return false;
+      if (!q2m_alive(context) || !q2_actor_live(game, enemy) ||
+          !nonsolid || trace.fraction < 1.0f)
+        return true;
+    }
+  }
+  monster->ideal_yaw = vector_yaw(qa_vec_sub(target.origin, context->body.origin));
+  bool melee = distance <= 100.0f;
+  if (second) {
+    qa_vec3 forward, right, up;
+    qa_builtin_angle_vectors(context->body.angles, &forward, &right, &up);
+    qa_vec3 tongue = qa_vec_add(context->body.origin,
+        qa_vec_add(qa_vec_scale(forward, 17.48f),
+            qa_vec_add(qa_vec_scale(right, .10f), qa_vec_scale(up, 68.92f))));
+    qa_vec3 delta = qa_vec_sub(tongue, target.origin);
+    float pitch = q2m_vector_angles(delta).x;
+    if (pitch < -180.0f)
+      pitch += 360.0f;
+    melee = monster->timestamp_ns < game->now_ns && distance < 300.0f &&
+            qa_vec_length(delta) <= 256.0f && fabsf(pitch) <= 30.0f;
+  }
+  if (melee) {
+    if (game->options.skill == 0 && floorf(q2m_random(game) * 4.0f) != 0.0f)
+      return true;
+    monster->attack_state = Q2M_MELEE;
+    *selected = true;
+    return true;
+  }
+  if (game->now_ns < monster->attack_ns)
+    return true;
+  float chance = monster->stand_ground ? .4f
+      : second ? (distance < 1000.0f ? .8f : .5f)
+      : distance < 80.0f ? .8f : distance < 500.0f ? .7f
+      : distance < 1000.0f ? .6f : .5f;
+  bool fire = q2m_random(game) < chance;
+  if (!fire && !nonsolid_target(context, enemy, &nonsolid, error))
+    return false;
+  if (!q2m_alive(context) || !q2_actor_live(game, enemy))
+    return true;
+  if (fire || nonsolid) {
+    monster->attack_state = Q2M_MISSILE;
+    *selected = true;
+  }
+  return true;
+}
+
 static bool check_attack_slot(q2m_context *context, bool *selected, bool *started,
                               qa_error *error) {
   bool handled;
   if (!q2m_medic_check_attack(context, &handled, selected, started, error))
     return false;
+  if (!handled && q2m_alive(context) &&
+      (context->monster->definition->species == Q2M_WIDOW ||
+       context->monster->definition->species == Q2M_WIDOW2))
+    return widow_check_attack(context, selected, error);
   return handled || !q2m_alive(context) || default_attack(context, selected, error);
 }
 

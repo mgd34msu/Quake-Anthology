@@ -2,19 +2,40 @@
 #include <stdio.h>
 
 bool q1_map_make_static(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    qa_actor_id id = entity->id;
     qa_body_state body;
-    if (!qa_world_body_read(g->services.world, entity->id, &body, error))
+    if (!qa_world_body_read(g->services.world, id, &body, error))
         return false;
+    entity = q1_entity(g, id);
+    if (!entity || !entity->map)
+        return true;
     qa_q1_static_model model = {.model = entity->model,
                                 .origin = body.origin,
                                 .angles = body.angles,
                                 .frame = entity->frame,
                                 .skin = entity->skin,
                                 .color_map = entity->map->color_map};
-    return g->maps->options.static_model(g->maps->options.context, &model, error) &&
-           (!q1_alive(g, entity->id) || q1_remove(g, entity, error));
+    if (!g->maps->options.static_model(g->maps->options.context, &model, error))
+        return false;
+    entity = q1_entity(g, id);
+    return !entity || q1_remove(g, entity, error);
 }
 static bool ambient(qa_q1_game *g, q1_actor *entity, qa_vec3 origin, qa_error *error) {
+    bool addon = g->options.program == QA_Q1_DOPA || g->options.program == QA_Q1_MG1 ||
+                 g->options.program == QA_Q1_MG3;
+    qa_actor_id id = entity->id;
+    if (addon && q1_classnamed(g, id, "ambient_generic")) {
+        qa_string_id sound = entity->map->noise[0];
+        if (!sound)
+            return q1_remove(g, entity, error);
+        float volume = entity->map->volume ? entity->map->volume : .5f;
+        float attenuation = entity->delay ? entity->delay : 3;
+        if (!g->maps->options.ambient(g->maps->options.context, origin, sound, volume,
+                                    attenuation, error))
+            return false;
+        entity = q1_entity(g, id);
+        return !entity || q1_map_make_static(g, entity, error);
+    }
     static const struct {
         const char *classname, *sound;
         float volume;
@@ -24,16 +45,58 @@ static bool ambient(qa_q1_game *g, q1_actor *entity, qa_vec3 origin, qa_error *e
                   {"ambient_thunder", "ambience/thunder1.wav", .5f},
                   {"ambient_light_buzz", "ambience/fl_hum1.wav", .5f},
                   {"ambient_swamp1", "ambience/swamp1.wav", .5f},
-                  {"ambient_swamp2", "ambience/swamp2.wav", .5f}};
+                  {"ambient_swamp2", "ambience/swamp2.wav", .5f},
+                  {"ambient_drone", "ambience/drone6.wav", .5f},
+                  {"ambient_comp_hum", "ambience/comp1.wav", 1}};
     for (size_t i = 0; i < sizeof(sounds) / sizeof(*sounds); ++i)
-        if (q1_classnamed(g, entity->id, sounds[i].classname))
-            return q1_map_ambient(g, origin, sounds[i].sound, sounds[i].volume, error);
+        if (q1_classnamed(g, id, sounds[i].classname)) {
+            if (!q1_map_ambient(g, origin, sounds[i].sound, sounds[i].volume, error))
+                return false;
+            entity = q1_entity(g, id);
+            return !addon || !entity || q1_map_make_static(g, entity, error);
+        }
     return q1_map_fail(error, "unknown Q1 ambient source");
 }
-bool q1_map_special_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, entity->id, &body, error))
+static bool corpse(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    if (g->options.program == QA_Q1_MG3 &&
+        ((g->options.coop ? entity->spawnflags & 131072u : entity->spawnflags & 32768u) ||
+         (entity->spawnflags &
+          (262144u << qa_q1_mg3_rune_count(*g->maps->options.server_flags)))))
+        return q1_remove(g, entity, error);
+    static const struct {
+        const char *model;
+        int32_t frame;
+    } poses[] = {
+        {"demon", 53}, {"dog", 16}, {"dog", 25}, {"enforcer", 54}, {"enforcer", 65},
+        {"fish", 38}, {"hknight", 53}, {"hknight", 62}, {"knight", 85}, {"knight", 96},
+        {"ogre", 116}, {"ogre", 126}, {"shalrath", 22}, {"shambler", 87},
+        {"soldier", 17}, {"soldier", 28}, {"wizard", 53}, {"player", 49},
+        {"player", 60}, {"player", 69}, {"player", 84}, {"player", 93}, {"player", 102},
+        {"h_demon", 0}, {"h_dog", 0}, {"h_guard", 0}, {"h_hellkn", 0}, {"h_knight", 0},
+        {"h_mega", 0}, {"h_ogre", 0}, {"h_player", 0}, {"h_shal", 0}, {"h_shams", 0},
+        {"h_wizard", 0}, {"h_zombie", 0}, {"gib1", 0}, {"gib2", 0}, {"gib3", 0}};
+    int32_t style = entity->map->style;
+    if (style < 0 || (size_t)style >= sizeof(poses) / sizeof(*poses))
+        return q1_map_fail(error, "Q1 misc_corpse has invalid style");
+    entity->frame = poses[style].frame;
+    entity->physics.solid = QA_PHYSICS_NOT_SOLID;
+    entity->physics.motion = QA_PHYSICS_STATIONARY;
+    char model[48];
+    snprintf(model, sizeof(model), "progs/%s.mdl", poses[style].model);
+    qa_actor_id id = entity->id;
+    if (!q1_model(g, entity, model, error))
         return false;
+    entity = q1_entity(g, id);
+    return !entity || q1_link(g, entity, error);
+}
+bool q1_map_special_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    qa_actor_id id = entity->id;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, id, &body, error))
+        return false;
+    entity = q1_entity(g, id);
+    if (!entity || !entity->map)
+        return true;
     q1_map_state *state = entity->map;
     switch (state->kind) {
     case Q1_MAP_GATE: {
@@ -54,6 +117,8 @@ bool q1_map_special_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         break;
     }
     case Q1_MAP_STATIC:
+        if (q1_classnamed(g, id, "misc_corpse"))
+            return corpse(g, entity, error);
         if (q1_classnamed(g, entity->id, "func_illusionary")) {
             body.angles = qa_v3(0, 0, 0);
             if (!qa_world_body_write(g->services.world, entity->id, &body, error))
@@ -153,6 +218,10 @@ bool q1_map_special_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, 
     return entity->map->kind != Q1_MAP_SHOOTER || shooter_fire(g, entity, error);
 }
 bool q1_map_special_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *error) {
+    if (entity->map->kind == Q1_MAP_SIGIL &&
+        (g->options.program == QA_Q1_DOPA || g->options.program == QA_Q1_MG1 ||
+         g->options.program == QA_Q1_MG3))
+        return q1_map_addon_sigil_touch(g, entity, other, error);
     if (entity->map->kind == Q1_MAP_FIREBALL) {
         if (!q1_damage(g, other, entity->id, entity->id, 20, QA_Q1_WEAPON_COUNT, error))
             return false;
@@ -222,9 +291,13 @@ static bool fireball_fly(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 bool q1_map_special_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, qa_error *error) {
     switch (action) {
     case Q1_MAP_SIGIL_PLACE: {
+        qa_actor_id id = entity->id;
         qa_body_state body;
-        if (!qa_world_body_read(g->services.world, entity->id, &body, error))
+        if (!qa_world_body_read(g->services.world, id, &body, error))
             return false;
+        entity = q1_entity(g, id);
+        if (!entity || !entity->map)
+            return true;
         qa_vec3 start = qa_vec_add(body.origin, qa_v3(0, 0, 6));
         qa_trace_query query = {.start = start,
                                 .end = qa_vec_add(start, qa_v3(0, 0, -256)),
@@ -234,13 +307,18 @@ bool q1_map_special_think(qa_q1_game *g, q1_actor *entity, q1_map_action action,
         qa_trace_result trace;
         if (!qa_world_trace(g->services.world, &query, &trace, error))
             return false;
+        entity = q1_entity(g, id);
+        if (!entity || !entity->map)
+            return true;
         if (trace.all_solid || trace.fraction == 1)
             return q1_remove(g, entity, error);
         body.origin = trace.end;
         body.velocity = qa_v3(0, 0, 0);
         body.ground = trace.actor;
-        return qa_world_body_write(g->services.world, entity->id, &body, error) &&
-               q1_link(g, entity, error);
+        if (!qa_world_body_write(g->services.world, id, &body, error))
+            return false;
+        entity = q1_entity(g, id);
+        return !entity || !entity->map || q1_link(g, entity, error);
     }
     case Q1_MAP_SHOOTER_FIRE:
         return shooter_fire(g, entity, error) &&

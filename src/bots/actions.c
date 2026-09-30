@@ -1,5 +1,6 @@
 #include "qa/bot_actions.h"
 #include "qa/builtin.h"
+#include "checkpoint_internal.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -15,18 +16,25 @@ struct qa_bot_actions {
     qa_bot_input *inputs;
     uint32_t capacity;
     bool initialized;
+    bool restoring;
 };
 
 static bool action_fail(qa_error *e, const char *message) {
     qa_error_set(e, QA_ERROR_ARGUMENT, 0, "%s", message);
     return false;
 }
-static qa_bot_input *action_input(const qa_bot_actions *actions, uint32_t client, qa_error *e) {
+static qa_bot_input *action_read(const qa_bot_actions *actions, uint32_t client, qa_error *e) {
     if (!actions || !actions->initialized || client >= actions->capacity) {
         action_fail(e, "bot action client is outside the initialized instance");
         return NULL;
     }
     return &actions->inputs[client];
+}
+static qa_bot_input *action_input(qa_bot_actions *actions, uint32_t client, qa_error *e) {
+    if (actions && actions->restoring) {
+        action_fail(e,"bot actions are preparing a checkpoint");return NULL;
+    }
+    return action_read(actions,client,e);
 }
 bool qa_bot_actions_create(uint32_t clients, const qa_bot_action_services *services,
                            qa_bot_actions **out, qa_error *e) {
@@ -46,7 +54,7 @@ bool qa_bot_actions_create(uint32_t clients, const qa_bot_action_services *servi
     return true;
 }
 void qa_bot_actions_destroy(qa_bot_actions *actions) {
-    if (actions) {
+    if (actions && !actions->restoring) {
         qa_bot_actions_shutdown(actions);
         free(actions);
     }
@@ -55,7 +63,7 @@ uint32_t qa_bot_actions_capacity(const qa_bot_actions *actions) {
     return actions ? actions->capacity : 0;
 }
 bool qa_bot_actions_setup(qa_bot_actions *actions, uint32_t clients, qa_error *e) {
-    if (!actions || clients > INT32_MAX / 40 || clients > SIZE_MAX / sizeof(qa_bot_input))
+    if (!actions || actions->restoring || clients > INT32_MAX / 40 || clients > SIZE_MAX / sizeof(qa_bot_input))
         return action_fail(e, "bot action capacity exceeds source allocation range");
     qa_bot_input *inputs = clients ? calloc(clients, sizeof(*inputs)) : NULL;
     if (clients && !inputs) {
@@ -69,7 +77,7 @@ bool qa_bot_actions_setup(qa_bot_actions *actions, uint32_t clients, qa_error *e
     return true;
 }
 void qa_bot_actions_shutdown(qa_bot_actions *actions) {
-    if (!actions)
+    if (!actions || actions->restoring)
         return;
     free(actions->inputs);
     actions->inputs = NULL;
@@ -131,7 +139,7 @@ bool qa_bot_actions_read(const qa_bot_actions *actions, uint32_t client, qa_bot_
                          qa_error *e) {
     if (!out)
         return action_fail(e, "missing bot input output");
-    const qa_bot_input *input = action_input(actions, client, e);
+    const qa_bot_input *input = action_read(actions, client, e);
     if (!input)
         return false;
     *out = *input;
@@ -146,6 +154,10 @@ bool qa_bot_actions_restore(qa_bot_actions *actions, uint32_t client, const qa_b
         return false;
     *input = *saved;
     return true;
+}
+void bot_action_restore_lock(qa_bot_actions *actions, bool locked) { actions->restoring=locked; }
+qa_bot_input *bot_action_restore_input(qa_bot_actions *actions, uint32_t client, qa_error *e) {
+    return action_read(actions,client,e);
 }
 bool qa_bot_actions_reset(qa_bot_actions *actions, uint32_t client, qa_error *e) {
     qa_bot_input *input = action_input(actions, client, e);
@@ -165,7 +177,7 @@ void qa_bot_actions_end_regular(qa_bot_actions *actions, int32_t client, float t
 }
 bool qa_bot_actions_text(qa_bot_actions *actions, int32_t client, qa_bot_text_action action,
                          int32_t recipient, const char *text, qa_error *e) {
-    if (!actions || !actions->services.command || !text || action < QA_BOT_COMMAND ||
+    if (!actions || actions->restoring || !actions->services.command || !text || action < QA_BOT_COMMAND ||
         action > QA_BOT_DROP_INVENTORY)
         return action_fail(e, "invalid bot command action");
     if (action == QA_BOT_COMMAND)

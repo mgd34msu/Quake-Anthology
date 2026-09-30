@@ -23,6 +23,10 @@ qa_gl_renderer *qa_gl_create(const qa_gl_options *options, qa_error *error);
 /* The display must outlive its renderer. */
 void qa_gl_destroy(qa_gl_renderer *renderer);
 const qa_gl_capabilities *qa_gl_capabilities_get(const qa_gl_renderer *renderer);
+/* Current GPU residency. Array in scratch; images borrow until backend
+ * progress/destruction or resource mutation. Does not prune or upload. */
+bool qa_gl_resident_images(const qa_gl_renderer *, qa_arena *,
+                           const qa_scene_image *const **, size_t *, qa_error *);
 
 /* Executes finalized scene commands in their published order. The call is
  * synchronous; callers may reset the frame after it returns. */
@@ -33,6 +37,9 @@ bool qa_gl_set_gamma(qa_gl_renderer *renderer, float gamma, qa_error *error);
 /* Captures tightly packed RGBA8 rows from top to bottom after output gamma. */
 bool qa_gl_capture(qa_gl_renderer *renderer, qa_buffer *out,
                    uint32_t *width, uint32_t *height, qa_error *error);
+/* Captures the front buffer published by the last successful scene swap,
+ * including output gamma. Valid until the next execution or drawable change. */
+bool qa_gl_capture_presented(qa_gl_renderer *, qa_buffer *, uint32_t *, uint32_t *, qa_error *);
 /* Window coordinates use OpenGL's bottom-left origin. */
 bool qa_gl_read_depth(qa_gl_renderer *renderer, uint32_t x, uint32_t y,
                       float *out, qa_error *error);

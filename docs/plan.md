@@ -4,7 +4,7 @@ This plan ports `../quake-typescript` into a native C engine. It carries forward
 
 Baseline implementation is underway. The [dependency graph](dependency-graph.md) and [machine-readable plan](dependencies.json) carry the 41 tasks published to vibecheck-jev. The immediate [recovery audit](audit/README.md) checks all prior work against the original task criteria after discovery that ledger judgments were not running. Local progress commits are authorized. The owner will add a remote later.
 
-Use a soft cap of six concurrent workers across the full agent tree, in addition to the main coordinator. Let existing assignments finish to reduce the current count; do not replace finished workers while above six. Temporary excess is allowed when a concrete task needs it.
+For this session, use GPT-6.1 Sol for all agents and subagents, with medium, high, or xhigh effort. Keep a soft cap of eight agents across the full tree, including the coordinator. Temporary excess is allowed when a concrete task needs it. The bounded review and its confirmed repairs are recorded in `docs/audit/review-20260929.md`; baseline implementation resumed on September 29 under the original feature criteria. Continue source review during implementation.
 
 Keep licensing and copyright notices in the root `LICENSE` file. Do not add per-file notices, SPDX headers, or invented contributor attribution.
 

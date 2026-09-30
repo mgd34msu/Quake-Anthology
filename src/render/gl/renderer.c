@@ -540,6 +540,7 @@ bool qa_gl_execute(qa_gl_renderer *renderer, const qa_scene_frame *frame,
                          "Invalid OpenGL frame or renderer owner");
         return false;
     }
+    renderer->presented = false;
     gl_textures_prune(renderer);
     gl_meshes_prune(renderer);
     renderer->sequence = frame->sequence;
@@ -579,7 +580,9 @@ bool qa_gl_execute(qa_gl_renderer *renderer, const qa_scene_frame *frame,
             ok = (!renderer->opacity.active || renderer->opacity.value == 1) &&
                  renderer->target == NULL &&
                  gl_output_resolve(renderer, error) &&
+                 gl_dimensions(renderer, &renderer->presented_width, &renderer->presented_height, error) &&
                  qa_display_swap(renderer->options.display, error);
+            if (ok) renderer->presented = true;
             if (!ok && renderer->opacity.active &&
                 renderer->opacity.value != 1)
                 qa_error_set(error, QA_ERROR_ARGUMENT, 0,
@@ -650,16 +653,16 @@ static bool pack_state(qa_gl_renderer *renderer, GLint alignment,
     return gl_check(renderer, "OpenGL pack-state setup", error);
 }
 
-bool qa_gl_capture(qa_gl_renderer *renderer, qa_buffer *out,
-                   uint32_t *out_width, uint32_t *out_height, qa_error *error)
+static bool capture(qa_gl_renderer *renderer, bool presented, qa_buffer *out,
+                     uint32_t *out_width, uint32_t *out_height, qa_error *error)
 {
     if (renderer == NULL || renderer->closed || out == NULL ||
         renderer->opacity.active || renderer->target != NULL ||
         !qa_display_make_current(renderer->options.display, error) ||
-        !gl_output_resolve(renderer, error)) {
+        (presented ? !renderer->presented : !gl_output_resolve(renderer, error))) {
         if (renderer == NULL || renderer->closed || out == NULL ||
             (renderer != NULL &&
-             (renderer->opacity.active || renderer->target != NULL)))
+             (renderer->opacity.active || renderer->target != NULL || (presented && !renderer->presented))))
             qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                          "Invalid OpenGL capture state");
         return false;
@@ -674,6 +677,9 @@ bool qa_gl_capture(qa_gl_renderer *renderer, qa_buffer *out,
         return false;
     }
     size_t row_bytes = (size_t)width * 4;
+    if (presented && (width != renderer->presented_width || height != renderer->presented_height)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "presented drawable changed before capture"); return false;
+    }
     size_t bytes = row_bytes * height;
     uint8_t *pixels = malloc(bytes);
     uint8_t *row = malloc(row_bytes);
@@ -685,7 +691,9 @@ bool qa_gl_capture(qa_gl_renderer *renderer, qa_buffer *out,
         return false;
     }
     renderer->gl.BindFramebuffer(GL_FRAMEBUFFER, 0);
-    renderer->gl.ReadBuffer(gl_draw_buffer_name(renderer->draw_buffer));
+    GLenum read_buffer = gl_draw_buffer_name(renderer->draw_buffer);
+    if (presented) read_buffer = renderer->draw_buffer == QA_DRAW_BACK_LEFT ? GL_FRONT_LEFT : renderer->draw_buffer == QA_DRAW_BACK_RIGHT ? GL_FRONT_RIGHT : GL_FRONT;
+    renderer->gl.ReadBuffer(read_buffer);
     if (!pack_state(renderer, 1, error)) {
         free(pixels); free(row); return false;
     }
@@ -707,6 +715,12 @@ bool qa_gl_capture(qa_gl_renderer *renderer, qa_buffer *out,
     if (out_height != NULL) *out_height = height;
     return true;
 }
+bool qa_gl_capture(qa_gl_renderer *renderer, qa_buffer *out,
+                   uint32_t *width, uint32_t *height, qa_error *error)
+{ return capture(renderer, false, out, width, height, error); }
+bool qa_gl_capture_presented(qa_gl_renderer *renderer, qa_buffer *out,
+                             uint32_t *width, uint32_t *height, qa_error *error)
+{ return capture(renderer, true, out, width, height, error); }
 
 bool qa_gl_read_depth(qa_gl_renderer *renderer, uint32_t x, uint32_t y,
                       float *out, qa_error *error)

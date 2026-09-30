@@ -131,6 +131,7 @@ typedef struct qa_bot_chat qa_bot_chat;
 bool qa_bot_chat_system_create(const qa_bot_chat_services *, const qa_bot_chat_options *,
                                qa_bot_chat_system **, qa_error *);
 void qa_bot_chat_system_destroy(qa_bot_chat_system *);
+bool qa_bot_chat_system_active(const qa_bot_chat_system *);
 bool qa_bot_chat_system_configure(qa_bot_chat_system *, const qa_bot_chat_options *, qa_error *);
 bool qa_bot_chat_create(qa_bot_chat_system *, int32_t client, qa_bot_chat **, qa_error *);
 void qa_bot_chat_destroy(qa_bot_chat *);

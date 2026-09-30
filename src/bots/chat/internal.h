@@ -33,7 +33,7 @@ struct qa_bot_chat_system {
     qa_bot_chat *states;
     size_t references;
     uint64_t revision;
-    bool retired;
+    bool retired, restoring;
 };
 struct qa_bot_chat {
     qa_bot_chat_system *system;

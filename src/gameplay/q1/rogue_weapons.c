@@ -33,7 +33,8 @@ static bool grenade_explode(qa_q1_game *g, q1_actor *grenade, bool mini, qa_erro
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, grenade->id, &body, error))
         return false;
-    float amount = mini ? is_player(g, grenade->owner) ? 90 : 60 : 120;
+    float amount = mini ? is_player(g, grenade->owner) ? 90 : 60
+                         : q1_weapon_shape(QA_Q1_MULTI_GRENADE)->blast_damage;
     if (!q1_radius(g, grenade->id, grenade->owner, amount, (qa_actor_id){0}, QA_Q1_MULTI_GRENADE,
                    error))
         return false;
@@ -46,7 +47,7 @@ static bool rocket_explode(qa_q1_game *g, q1_actor *rocket, qa_actor_id direct, 
     if (!qa_world_body_read(g->services.world, rocket->id, &body, error))
         return false;
     if (direct.registry && q1_health(g, direct) != 0) {
-        float damage = 60 + q1_random(g) * 15;
+        float damage = (q1_weapon_shape(QA_Q1_MULTI_ROCKET)->damage-7.5f) + q1_random(g)*15;
         if (q1_classnamed(g, direct, "monster_shambler") ||
             q1_classnamed(g, direct, "monster_dragon"))
             damage *= 0.5f;
@@ -55,7 +56,8 @@ static bool rocket_explode(qa_q1_game *g, q1_actor *rocket, qa_actor_id direct, 
         if (!q1_alive(g, rocket->id))
             return true;
     }
-    if (!q1_radius(g, rocket->id, rocket->owner, 75, direct, QA_Q1_MULTI_ROCKET, error))
+    if (!q1_radius(g, rocket->id, rocket->owner,
+                   q1_weapon_shape(QA_Q1_MULTI_ROCKET)->blast_damage, direct, QA_Q1_MULTI_ROCKET, error))
         return false;
     if (!q1_alive(g, rocket->id))
         return true;
@@ -148,7 +150,7 @@ static bool plasma_explode(qa_q1_game *g, q1_actor *plasma, qa_actor_id other, q
     qa_body_state self;
     if (!qa_world_body_read(g->services.world, plasma->id, &self, error))
         return false;
-    float damage = 80 + q1_random(g) * 20;
+    float damage = (q1_weapon_shape(QA_Q1_PLASMA)->damage-10) + q1_random(g)*20;
     if (!q1_sound(g, plasma->id, "plasma/explode.wav", 1, 1, error))
         return false;
     if (q1_health(g, other) != 0) {
@@ -159,7 +161,8 @@ static bool plasma_explode(qa_q1_game *g, q1_actor *plasma, qa_actor_id other, q
         if (!q1_alive(g, plasma->id))
             return true;
     }
-    if (!q1_radius(g, plasma->id, plasma->owner, 70, other, QA_Q1_PLASMA, error))
+    if (!q1_radius(g, plasma->id, plasma->owner,
+                   q1_weapon_shape(QA_Q1_PLASMA)->blast_damage, other, QA_Q1_PLASMA, error))
         return false;
     if (!q1_alive(g, plasma->id))
         return true;
@@ -277,7 +280,8 @@ bool q1_rogue_launch_plasma(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin, qa
     if (!g->options.coop && !g->options.deathmatch)
         projectile->effects = 4;
     if (!q1_sound(g, projectile->id, "plasma/flight.wav", 1, 1, error) ||
-        !q1_schedule(g, projectile, 0.1, Q1_THINK_PLASMA_LAUNCH, error) ||
+        !q1_schedule(g, projectile, q1_weapon_shape(QA_Q1_PLASMA)->launch_delay,
+                      Q1_THINK_PLASMA_LAUNCH, error) ||
         !q1_launch_behavior(g, projectile, QA_BUILTIN_PLASMA, error))
         return false;
     if (out)
@@ -306,13 +310,14 @@ bool q1_rogue_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
             !q1_aim(g, player->id, g->forward, &direction, error) ||
             !q1_projectile_spawn(
                 g, player->id, powered ? QA_Q1_LAVA_SUPER_NAILGUN : QA_Q1_LAVA_NAILGUN,
-                Q1_LAVA_SPIKE, origin, qa_vec_scale(direction, 1000), &projectile, error))
+                Q1_LAVA_SPIKE, origin, qa_vec_scale(direction,q1_weapon_shape(player->weapon)->speed),
+                &projectile, error))
             return false;
         projectile->state.projectile.count = powered ? 1 : 0;
         if (!q1_launch_behavior(g, projectile, QA_BUILTIN_NAIL, error))
             return false;
         player->nail_side = -player->nail_side;
-        return finish(g, player, 0.2f, true, error);
+        return finish(g, player, q1_weapon_interval(player->weapon), true, error);
     }
     case QA_Q1_MULTI_GRENADE: {
         qa_vec3 velocity;
@@ -327,7 +332,7 @@ bool q1_rogue_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
             !q1_launch_behavior(g, projectile, QA_BUILTIN_GRENADE, error) ||
             !q1_sound(g, player->id, "weapons/grenade.wav", 1, 1, error))
             return false;
-        return finish(g, player, 0.6f, false, error);
+        return finish(g, player, q1_weapon_interval(player->weapon), false, error);
     }
     case QA_Q1_MULTI_ROCKET: {
         if (!q1_consume(g, player->id, QA_Q1_MULTI_ROCKETS, 1, error))
@@ -380,7 +385,7 @@ bool q1_rogue_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
             }
         }
         return q1_sound(g, player->id, "weapons/sgun1.wav", 1, 1, error) &&
-               finish(g, player, 0.8f, false, error);
+               finish(g, player, q1_weapon_interval(player->weapon), false, error);
     }
     case QA_Q1_PLASMA: {
         float ammo = (float)q1_ammo_count(g, player->id, QA_Q1_PLASMA_CELLS);
@@ -409,7 +414,7 @@ bool q1_rogue_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
                 !qa_builtin_emit(&g->services, &sound, error))
                 return false;
         }
-        return finish(g, player, 1, false, error);
+        return finish(g, player, q1_weapon_interval(player->weapon), false, error);
     }
     default:
         qa_error_set(error, QA_ERROR_ARGUMENT, player->weapon, "invalid Rogue arsenal weapon");
@@ -433,7 +438,8 @@ bool q1_rogue_think(qa_q1_game *g, q1_actor *entity, q1_think_kind kind, qa_erro
         if (!qa_world_body_read(g->services.world, entity->id, &body, error))
             return false;
         if (q1_native_trajectory(g, entity->id) &&
-            !q1_missile_velocity(g, entity, qa_vec_scale(qa_vec_normalize(body.velocity), 1250),
+            !q1_missile_velocity(g, entity, qa_vec_scale(qa_vec_normalize(body.velocity),
+                                                        q1_weapon_shape(QA_Q1_PLASMA)->speed),
                                  error))
             return false;
         return q1_schedule(g, entity, 5, Q1_THINK_REMOVE, error);

@@ -41,6 +41,16 @@ typedef struct qa_vfs_mount_info {
 size_t qa_vfs_mount_count(const qa_vfs *vfs);
 /* Info follows default search order. Its digest is borrowed until unmount. */
 bool qa_vfs_mount_at(const qa_vfs *vfs, size_t index, qa_vfs_mount_info *out);
+/* Diagnostic borrows remain valid until their mount/rule is removed or changed.
+ * Pool resource borrows remain valid until trim or pool teardown; retain a
+ * resource before keeping it across mutations. Includes cached resources with
+ * zero external readers, and resources shared with other views of this pool. */
+const char *qa_vfs_mount_path(const qa_vfs *, qa_mount_id);
+size_t qa_vfs_prefix_count(const qa_vfs *);
+bool qa_vfs_prefix_at(const qa_vfs *, size_t index, const char **prefix,
+                       const qa_mount_id **order, size_t *count);
+size_t qa_vfs_resource_count(const qa_vfs *);
+const qa_resource *qa_vfs_resource_at(const qa_vfs *, size_t index, size_t *readers);
 void qa_vfs_clear_references(qa_vfs *vfs);
 
 /* New mounts append at lowest priority. Paths are native filesystem paths.
@@ -130,6 +140,9 @@ bool qa_resource_archive_origin(const qa_resource *resource,
  * forbid symlinks. Existing acquired byte versions are never modified. */
 bool qa_vfs_write(qa_vfs *vfs, qa_mount_id mount, const char *path,
                   qa_bytes bytes, qa_error *error);
+bool qa_vfs_write_exclusive(qa_vfs *, qa_mount_id, const char *, qa_bytes,
+                            bool *created, qa_error *);
+bool qa_vfs_write_private(qa_vfs *, qa_mount_id, const char *, qa_bytes, qa_error *);
 bool qa_vfs_remove(qa_vfs *vfs, qa_mount_id mount, const char *path,
                    qa_error *error);
 

@@ -5,6 +5,8 @@ bool q1_message(qa_q1_game *g, qa_actor_id actor, const char *text, qa_error *er
 }
 bool q1_message_args(qa_q1_game *g, qa_actor_id actor, const char *text,
                      const qa_builtin_message_arg *arguments, size_t count, qa_error *error) {
+    if (g->destroy_pending)
+        return true;
     if (!text[0])
         return true;
     qa_builtin_event event = {.kind = QA_BUILTIN_MESSAGE,
@@ -55,8 +57,12 @@ bool q1_enable_combos(qa_q1_game *g, q1_player *player, qa_error *error) {
         if (powered.count > 0)
             continue;
         double given;
+        if (!q1_alive(g, player->id))
+            return true;
         if (!qa_inventory_give(g->services.inventory, player->id, powered.item, 1, &given, error))
             return false;
+        if (!q1_alive(g, player->id))
+            return true;
         if (given && !q1_message(g, player->id, combos[i].message, error))
             return false;
         if (!q1_alive(g, player->id))
@@ -74,9 +80,13 @@ qa_q1_weapon q1_combo_weapon(qa_q1_game *g, q1_player *player, qa_q1_weapon weap
 }
 
 static bool commit_motion(qa_q1_game *g, qa_actor_id actor, const qa_body_state *body,
-                          qa_error *error) {
+                           qa_error *error) {
+    if (!q1_alive(g, actor))
+        return true;
     if (!qa_world_body_write(g->services.world, actor, body, error))
         return false;
+    if (!q1_alive(g, actor))
+        return true;
     if (!g->services.motion_changed) {
         qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
                      "Q1 timed movement effect requires selected movement continuation");
@@ -133,6 +143,8 @@ bool q1_power_frame(qa_q1_game *g, q1_player *player, qa_error *error) {
                                                &physics))
             water = (uint8_t)physics.water_level;
     }
+    if (!q1_alive(g, player->id))
+        return true;
     if (player->power_expires[QA_Q1_WETSUIT] > g->time) {
         player->air_finished = player->character_state.air_until = g->time + 12;
         if (water >= 2) {
@@ -147,6 +159,8 @@ bool q1_power_frame(qa_q1_game *g, q1_player *player, qa_error *error) {
                 qa_body_state body;
                 if (!qa_world_body_read(g->services.world, player->id, &body, error))
                     return false;
+                if (!q1_alive(g, player->id))
+                    return true;
                 body.velocity = qa_vec_scale(body.velocity, water == 2 ? 1.25f : 1.5f);
                 player->wetsuit_scaled_frame = g->time_ns;
                 player->wetsuit_scaled_level = water;

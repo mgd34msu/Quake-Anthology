@@ -83,6 +83,7 @@ bool qa_actors_next(const qa_actor_registry *registry, uint32_t *cursor,
 uint32_t qa_actors_count(const qa_actor_registry *registry);
 uint32_t qa_actors_capacity(const qa_actor_registry *registry);
 uint64_t qa_actors_revision(const qa_actor_registry *registry);
+uint64_t qa_actors_identity(const qa_actor_registry *registry);
 
 /* Checkpoints are owned memory, separate from wire/file encoding. Snapshot and
  * restore require no active release callback. Restore creates a fresh namespace
@@ -108,5 +109,8 @@ bool qa_actors_reference_saved(const qa_actor_registry *registry,
  * Failure leaves all mappings unchanged. Each owner can rebind once per restore. */
 bool qa_actors_rebind_restored_source(qa_actor_registry *registry,
                                      qa_actor_owner owner, qa_error *error);
+/* Fresh restoration setup before any service borrows the registry. No release
+ * callback or clear may be active. This changes only the retained observer. */
+bool qa_actors_set_release_observer(qa_actor_registry *, qa_actor_release_fn, void *);
 
 #endif

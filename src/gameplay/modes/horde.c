@@ -22,7 +22,57 @@ typedef struct squad {
     squad_member members[3];
     size_t count;
     qa_horde_point_kind kind;
+    bool double_demon;
 } squad;
+static float random_value(qa_modes *m, mode_instance *v) {
+    return m->options.hooks.source_random
+               ? m->options.hooks.source_random(m->options.hooks.context, v->id)
+               : mode_random_float(m);
+}
+static bool read_manager(qa_modes *m, mode_instance *v, horde_state *h,
+                         qa_string_id *target, qa_actor_id *activator, bool *present,
+                         qa_error *e) {
+    *target = h->options.target;
+    *activator = h->options.manager;
+    *present = mode_live(m, h->options.manager);
+    if (!*present || !m->options.hooks.horde_manager)
+        return true;
+    qa_error observed = {0};
+    if (!m->options.hooks.horde_manager(m->options.hooks.context, v->id,
+                                         h->options.manager, target, activator, &observed)) {
+        *present = false;
+        if (observed.code == QA_OK)
+            return true;
+        if (e)
+            *e = observed;
+        return false;
+    }
+    return true;
+}
+static bool read_point(qa_modes *m, mode_instance *v, qa_horde_point *point,
+                       bool *present, qa_error *e) {
+    *present = true;
+    if (!m->options.hooks.horde_point)
+        return true;
+    qa_error observed = {0};
+    qa_vec3 origin, angles;
+    qa_string_id target;
+    uint32_t flags;
+    if (!m->options.hooks.horde_point(m->options.hooks.context, v->id, point->actor,
+                                      &origin, &angles, &target, &flags, &observed)) {
+        *present = false;
+        if (observed.code == QA_OK)
+            return true;
+        if (e)
+            *e = observed;
+        return false;
+    }
+    point->origin = origin;
+    point->angles = angles;
+    point->target = target;
+    point->flags = flags;
+    return true;
+}
 
 bool mode_horde_retire(qa_modes *m, mode_instance *v, qa_error *e) {
     horde_state *h = v->horde;
@@ -103,7 +153,7 @@ bool qa_modes_horde_configure(qa_modes *m, qa_mode_id id, const qa_horde_options
     for (size_t i = 0; i < count; ++i)
         if (h->points[i].kind == QA_HORDE_AMMO)
             h->points[i].next_ns = v->value.time_ns + 10 * MODE_SECOND +
-                                   (uint64_t)(mode_random_float(m) * 3 * (float)MODE_SECOND);
+                                   (uint64_t)(random_value(m, v) * 3 * (float)MODE_SECOND);
     mode_horde_free(v);
     v->horde = h;
     return true;
@@ -143,7 +193,7 @@ static qa_actor_id choose_target(qa_modes *m, mode_instance *v) {
     size_t count = living(m, v), seen = 0;
     if (!count)
         return (qa_actor_id){0};
-    float roll = mode_random_float(m) * (float)count;
+    float roll = random_value(m, v) * (float)count;
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
         uint32_t i = m->players_order.ids[ordinal].slot;
         mode_member *p = &v->members[i];
@@ -168,6 +218,11 @@ static bool blocked(qa_modes *m, mode_instance *v, const qa_horde_point *point) 
         mode_member *p = &v->members[i];
         if (!p->joined || !mode_alive(m, p->actor))
             continue;
+        qa_builtin_player_info info = {0};
+        if (m->options.services.player_info &&
+            m->options.services.player_info(m->options.services.context, p->actor, &info) &&
+            info.dead)
+            continue;
         qa_body_state body;
         if (!qa_world_body_read(m->options.services.world, p->actor, &body, NULL))
             continue;
@@ -178,37 +233,57 @@ static bool blocked(qa_modes *m, mode_instance *v, const qa_horde_point *point) 
     }
     return false;
 }
-static qa_horde_point *choose_point(qa_modes *m, mode_instance *v, horde_state *h,
-                                    qa_horde_point_kind kind) {
+static bool choose_point(qa_modes *m, mode_instance *v, horde_state *h,
+                          qa_horde_point_kind kind, qa_horde_point **out, qa_error *e) {
+    *out = NULL;
     for (int pass = 0; pass < 2; ++pass) {
         size_t total = 0;
-        for (size_t i = 0; i < h->point_count; ++i)
-            if (h->points[i].kind == kind)
-                ++total;
-        float roll = mode_random_float(m) * (float)total;
         qa_horde_point *first = NULL;
+        for (size_t i = 0; i < h->point_count; ++i) {
+            qa_horde_point *p = &h->points[i];
+            if (p->kind != kind)
+                continue;
+            bool present;
+            if (!read_point(m, v, p, &present, e))
+                return false;
+            if (!present)
+                continue;
+            ++total;
+            if (p->kind == kind && !(p->flags & 1u) && v->value.time_ns > p->next_ns &&
+                !blocked(m, v, p) && !first)
+                first = p;
+        }
+        if (!first) {
+            if (kind == QA_HORDE_NORMAL)
+                return true;
+            kind = QA_HORDE_NORMAL;
+            continue;
+        }
+        float roll = random_value(m, v) * (float)total;
         size_t index = 0;
         for (size_t i = 0; i < h->point_count; ++i) {
             qa_horde_point *p = &h->points[i];
             if (p->kind != kind)
                 continue;
+            bool present;
+            if (!read_point(m, v, p, &present, e))
+                return false;
+            if (!present)
+                continue;
             ++index;
             if ((p->flags & 1u) || v->value.time_ns <= p->next_ns || blocked(m, v, p))
                 continue;
-            if (!first)
-                first = p;
-            if ((float)index >= roll)
-                return p;
+            if ((float)index >= roll) {
+                *out = p;
+                return true;
+            }
         }
-        if (first)
-            return first;
-        if (kind == QA_HORDE_NORMAL)
-            break;
-        kind = QA_HORDE_NORMAL;
+        *out = first;
+        return true;
     }
-    return NULL;
+    return true;
 }
-static squad choose_squad(qa_modes *m, horde_state *h, int category) {
+static squad choose_squad(qa_modes *m, mode_instance *v, horde_state *h, int category) {
     squad result = {.kind = QA_HORDE_NORMAL};
     int pick = -1;
     float roll;
@@ -216,28 +291,28 @@ static squad choose_squad(qa_modes *m, horde_state *h, int category) {
         if (category == 2)
             return result;
         if (category == 1) {
-            pick = mode_random_float(m) * 2 < 1.5f ? 4 : 5;
+            pick = random_value(m, v) * 2 < 1.5f ? 4 : 5;
             result.kind = QA_HORDE_RANGED;
         } else {
-            roll = mode_random_float(m) * 4;
+            roll = random_value(m, v) * 4;
             pick = roll < 1 ? 0 : roll < 2 ? 1 : roll < 3.5f ? 2 : 3;
             if (pick == 3)
                 result.kind = QA_HORDE_RANGED;
         }
     } else if (category == 0) {
-        roll = mode_random_float(m) * 4;
+        roll = random_value(m, v) * 4;
         pick = roll < 2 ? 6 : roll < 3 ? 7 : 8;
         if (pick == 8)
             result.kind = QA_HORDE_FLYING;
     } else if (category == 1) {
-        roll = mode_random_float(m) * 4;
+        roll = random_value(m, v) * 4;
         pick = roll < 1 ? 9 : roll < 2 ? 10 : roll < 3 ? 5 : 11;
         if (pick == 5)
             result.kind = QA_HORDE_RANGED;
         else if (pick == 11)
             result.kind = QA_HORDE_FLYING;
     } else {
-        roll = mode_random_float(m) * 3;
+        roll = random_value(m, v) * 3;
         pick = roll < 1 ? 12 : roll < 2.5f ? 13 : 14;
         if (pick != 13)
             result.kind = QA_HORDE_BOSS;
@@ -310,12 +385,12 @@ static squad choose_squad(qa_modes *m, horde_state *h, int category) {
         result.members[0] = (squad_member){"shambler", {0}};
         break;
     case 13: {
-        bool shambler = skill >= 3 && mode_random_float(m) > .8f;
-        result.count = shambler || skill >= 1 ? 2 : 1;
+        result.double_demon = true;
+        result.count = skill >= 1 ? 2 : 1;
         result.members[0] =
-            (squad_member){shambler ? "shambler" : "demon1",
+            (squad_member){"demon1",
                            {result.count == 2 ? 40 : 0, result.count == 2 ? 40 : 0, 0}};
-        result.members[1] = (squad_member){shambler ? "shambler" : "demon1", {-40, -40, 0}};
+        result.members[1] = (squad_member){"demon1", {-40, -40, 0}};
         break;
     }
     case 14:
@@ -334,8 +409,8 @@ static bool spawn_loot(qa_modes *m, mode_instance *v, horde_state *h, size_t poi
     bool big = false;
     qa_bounds bounds = {{0, 0, 0}, {32, 32, 56}};
     if (kind == HORDE_AMMO) {
-        big = mode_random_float(m) * 4 <= 1;
-        float roll = mode_random_float(m) * 20;
+        big = random_value(m, v) * 4 <= 1;
+        float roll = random_value(m, v) * 20;
         if (roll <= 7) {
             classname = "item_shells";
             identity = "q1:ammo/shells";
@@ -377,7 +452,7 @@ static bool spawn_loot(qa_modes *m, mode_instance *v, horde_state *h, size_t poi
         capacity = 1;
         bounds = (qa_bounds){{-16, -16, -25}, {16, 16, 32}};
     } else if (kind == HORDE_POWER) {
-        classname = mode_random_float(m) < .25f ? "item_artifact_invulnerability"
+        classname = random_value(m, v) < .25f ? "item_artifact_invulnerability"
                                                 : "item_artifact_super_damage";
         bounds = (qa_bounds){{-12, -12, -12}, {12, 12, 12}};
     }
@@ -435,32 +510,60 @@ static bool prepare(qa_modes *m, mode_instance *v, horde_state *h, qa_error *e) 
     for (size_t i = 0; i < h->point_count; ++i)
         if (h->points[i].kind == QA_HORDE_ITEM && !h->points[i].occupied)
             h->points[i].next_ns =
-                v->value.time_ns + (uint64_t)(mode_random_float(m) * 2 * (float)MODE_SECOND) + 1;
-    if (h->options.target && m->options.services.use_targets &&
+                v->value.time_ns + (uint64_t)(random_value(m, v) * 2 * (float)MODE_SECOND) + 1;
+    qa_string_id target;
+    qa_actor_id activator;
+    bool manager_present;
+    if (!read_manager(m, v, h, &target, &activator, &manager_present, e))
+        return false;
+    if (!manager_present)
+        return true;
+    if (target && m->options.services.use_targets &&
         !m->options.services.use_targets(m->options.services.context, h->options.manager,
-                                         h->options.manager, h->options.target, 0, 0, e))
+                                         activator, target, 0, 0, e))
         return false;
     return mode_event(m, v, QA_MODE_HORDE_WAVE, (qa_actor_id){0}, (qa_actor_id){0},
                       h->options.manager, 0, h->value.wave, level, e);
 }
 static bool spawn_squad(qa_modes *m, mode_instance *v, horde_state *h, qa_error *e) {
     int category = h->value.fodder > 0 ? 0 : h->value.elites > 0 ? 1 : 2;
-    squad s = choose_squad(m, h, category);
+    squad s = choose_squad(m, v, h, category);
     if (!s.count) {
         h->value.bosses = 0;
         h->value.next_ns = v->value.time_ns + MODE_SECOND;
         return true;
     }
-    qa_horde_point *point = choose_point(m, v, h, s.kind);
+    qa_horde_point *point;
+    if (!choose_point(m, v, h, s.kind, &point, e))
+        return false;
     if (!point) {
         h->value.next_ns = v->value.time_ns + MODE_SECOND;
         return true;
     }
     point->next_ns = v->value.time_ns + 5 * MODE_SECOND;
+    qa_string_id manager_target;
+    qa_actor_id activator;
+    bool manager_present;
+    if (!read_manager(m, v, h, &manager_target, &activator, &manager_present, e))
+        return false;
+    if (!manager_present) {
+        h->value.next_ns = v->value.time_ns + MODE_SECOND;
+        return true;
+    }
     if (point->target && m->options.services.use_targets &&
         !m->options.services.use_targets(m->options.services.context, point->actor,
-                                         h->options.manager, point->target, 0, 0, e))
+                                         activator, point->target, 0, 0, e))
         return false;
+    bool present;
+    if (!read_point(m, v, point, &present, e))
+        return false;
+    if (!present) {
+        h->value.next_ns = v->value.time_ns + MODE_SECOND;
+        return true;
+    }
+    if (s.double_demon && h->options.skill >= 3 && random_value(m, v) > .8f)
+        for (size_t i = 0; i < s.count; ++i)
+            s.members[i].name = "shambler";
     for (size_t i = 0; i < s.count; ++i) {
         char name[48];
         size_t n = strlen(s.members[i].name);
@@ -490,7 +593,7 @@ static bool spawn_squad(qa_modes *m, mode_instance *v, horde_state *h, qa_error 
         h->value.next_ns = v->value.time_ns + 30 * MODE_SECOND;
     } else
         h->value.next_ns = v->value.time_ns + 2 * MODE_SECOND +
-                           (uint64_t)(mode_random_float(m) * (float)MODE_SECOND);
+                           (uint64_t)(random_value(m, v) * (float)MODE_SECOND);
     return true;
 }
 static bool check_wave(qa_modes *m, mode_instance *v, horde_state *h, qa_error *e) {
@@ -530,13 +633,19 @@ static bool check_wave(qa_modes *m, mode_instance *v, horde_state *h, qa_error *
                         : h->value.wave <= 9 ? 4
                                              : 8;
         size_t first = SIZE_MAX, chosen = SIZE_MAX;
-        for (size_t i = 0; i < h->point_count; ++i)
+        for (size_t i = 0; i < h->point_count; ++i) {
             if (h->points[i].kind == QA_HORDE_KEY) {
+                bool present;
+                if (!read_point(m, v, &h->points[i], &present, e))
+                    return false;
+                if (!present)
+                    continue;
                 if (first == SIZE_MAX)
                     first = i;
                 if (chosen == SIZE_MAX && (h->points[i].flags & flag))
                     chosen = i;
             }
+        }
         bool gold = chosen == SIZE_MAX ? h->value.wave == 9 : flag == 4;
         if (chosen == SIZE_MAX)
             chosen = first;
@@ -649,7 +758,7 @@ static bool before_death(qa_modes *m, mode_instance *v, const qa_damage_outcome 
                         killer->stats.streak, 0, e))
             return false;
     }
-    if (mode_random_float(m) >= h->value.powerup_chance)
+    if (random_value(m, v) >= h->value.powerup_chance)
         h->value.powerup_chance += .025f;
     else {
         h->value.powerup_chance = .025f;
@@ -861,8 +970,15 @@ bool mode_horde_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
         if (point->occupied || !point->next_ns || point->next_ns > v->value.time_ns)
             continue;
         if (point->kind == QA_HORDE_AMMO || point->kind == QA_HORDE_ITEM) {
+            bool present;
+            if (!read_point(m, v, point, &present, e))
+                return false;
+            if (!present) {
+                point->next_ns = 0;
+                continue;
+            }
             horde_loot_kind kind = point->kind == QA_HORDE_AMMO   ? HORDE_AMMO
-                                   : mode_random_float(m) * 6 < 5 ? HORDE_HEALTH
+                                   : random_value(m, v) * 6 < 5 ? HORDE_HEALTH
                                                                   : HORDE_ARMOR;
             if (!spawn_loot(m, v, h, i, kind, point->origin, (qa_vec3){0}, e))
                 return false;
@@ -905,7 +1021,7 @@ bool qa_modes_horde_finish(qa_modes *m, qa_mode_id id, qa_error *e) {
         if (!qa_actor_id_equal(monster->actor, actor))
             *monster = (horde_monster){.actor = actor};
         monster->kill_ns = v->value.time_ns + MODE_SECOND / 5 +
-                           (uint64_t)(mode_random_float(m) * 1.8f * (float)MODE_SECOND);
+                           (uint64_t)(random_value(m, v) * 1.8f * (float)MODE_SECOND);
     }
     return true;
 }

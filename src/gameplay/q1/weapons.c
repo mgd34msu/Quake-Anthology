@@ -1,4 +1,82 @@
 #include "internal.h"
+#include <float.h>
+
+const qa_q1_weapon_view *q1_weapon_shape(qa_q1_weapon weapon) {
+    static const qa_q1_weapon_view shapes[QA_Q1_WEAPON_COUNT] = {
+        [QA_Q1_AXE] = {.attack_interval = .5f, .range = 64, .damage = 20, .shots = 1, .melee = true,
+                       .launch_delay = .2f},
+        [QA_Q1_SHOTGUN] = {.attack_interval = .5f, .range = 2048, .damage = 4, .shots = 6,
+                           .ammo_per_shot = 1, .horizontal_spread = .04f, .vertical_spread = .04f},
+        [QA_Q1_SUPER_SHOTGUN] = {.attack_interval = .7f, .range = 2048, .damage = 4, .shots = 14,
+                                 .ammo_per_shot = 2, .horizontal_spread = .14f, .vertical_spread = .08f},
+        [QA_Q1_NAILGUN] = {.attack_interval = .2f, .fire_interval = .1f, .speed = 1000, .range = 6000,
+                           .damage = 9, .shots = 1, .ammo_per_shot = 1, .lifetime = 6},
+        [QA_Q1_SUPER_NAILGUN] = {.attack_interval = .2f, .fire_interval = .1f, .speed = 1000, .range = 6000,
+                                 .damage = 18, .shots = 1, .ammo_per_shot = 2, .lifetime = 6},
+        [QA_Q1_GRENADE] = {.attack_interval = .6f, .speed = 600, .range = 1500, .damage = 120,
+                           .blast_damage = 120, .blast_radius = 160, .shots = 1, .ammo_per_shot = 1,
+                           .gravity = 1, .extra_z_velocity = 200, .lifetime = 2.5f},
+        [QA_Q1_ROCKET] = {.attack_interval = .8f, .speed = 1000, .range = 5000, .damage = 110,
+                          .blast_damage = 120, .blast_radius = 160, .shots = 1, .ammo_per_shot = 1, .lifetime = 5},
+        [QA_Q1_LIGHTNING] = {.attack_interval = .1f, .fire_interval = .1f, .range = 600, .damage = 30,
+                             .shots = 1, .ammo_per_shot = 1},
+        [QA_Q1_LASER] = {.attack_interval = .1f, .speed = 1000, .range = 5000, .damage = 18,
+                         .shots = 2, .ammo_per_shot = 1, .lifetime = 5},
+        [QA_Q1_MJOLNIR] = {.attack_interval = .8f, .range = 64, .damage = 50, .shots = 1, .melee = true,
+                           .conditional_strike = true, .launch_delay = .3f},
+        [QA_Q1_PROXIMITY] = {.attack_interval = .6f, .speed = 600, .range = 9000, .damage = 95,
+                             .blast_damage = 95, .blast_radius = 135, .shots = 1, .ammo_per_shot = 1,
+                             .gravity = 1, .extra_z_velocity = 200, .lifetime = 15},
+        [QA_Q1_LAVA_NAILGUN] = {.attack_interval = .2f, .fire_interval = .1f, .speed = 1000, .range = 6000,
+                                .damage = 9, .shots = 1, .ammo_per_shot = 1, .lifetime = 6},
+        [QA_Q1_LAVA_SUPER_NAILGUN] = {.attack_interval = .2f, .fire_interval = .1f, .speed = 1000,
+                                      .range = 6000, .damage = 18, .shots = 1, .ammo_per_shot = 2, .lifetime = 6},
+        [QA_Q1_MULTI_GRENADE] = {.attack_interval = .6f, .speed = 600, .range = 600, .damage = 120,
+                                 .blast_damage = 120, .blast_radius = 160, .shots = 1, .ammo_per_shot = 1,
+                                 .gravity = 1, .extra_z_velocity = 200, .lifetime = 1,
+                                 .conditional_strike = true},
+        [QA_Q1_MULTI_ROCKET] = {.attack_interval = .8f, .speed = 1000, .range = 4000, .damage = 67.5f,
+                                .blast_damage = 75, .blast_radius = 115, .shots = 4, .ammo_per_shot = 1, .lifetime = 4},
+        [QA_Q1_PLASMA] = {.attack_interval = 1, .speed = 1250, .range = 6250, .damage = 90,
+                          .blast_damage = 70, .blast_radius = 110, .shots = 1, .ammo_per_shot = 1, .lifetime = 5,
+                          .conditional_strike = true, .launch_delay = .1f},
+        [QA_Q1_ROGUE_GRAPPLE] = {.speed = 800, .range = 1600, .shots = 1, .grapple = true, .lifetime = 2},
+        [QA_Q1_MG3_LASER] = {.attack_interval = .1f, .speed = 1000, .range = 5000, .damage = 15,
+                             .shots = 2, .ammo_per_shot = 1, .lifetime = 5},
+        [QA_Q1_MG3_MJOLNIR] = {.attack_interval = .5f, .range = 64, .damage = 40, .shots = 1, .melee = true,
+                               .conditional_strike = true, .launch_delay = .2f},
+        [QA_Q1_CTF_GRAPPLE] = {.attack_interval = .1f, .speed = 800, .range = 4000, .shots = 1,
+                               .grapple = true, .lifetime = 5}};
+    return &shapes[weapon];
+}
+float q1_weapon_interval(qa_q1_weapon weapon) {
+    return q1_weapon_shape(weapon)->attack_interval;
+}
+
+static bool base_parameters(qa_q1_game *g, q1_player *player, qa_q1_weapon weapon,
+                             qa_q1_weapon_parameters *parameters, qa_error *error) {
+    *parameters = (qa_q1_weapon_parameters){
+        .interval = weapon == QA_Q1_LIGHTNING && player->weapon == weapon && player->continuous
+                        ? .2f : q1_weapon_interval(weapon),
+        .nail_speed = 1000};
+    if (weapon == QA_Q1_SHOTGUN && (player->mg3_progress.bloody & 1))
+        parameters->interval = .28f;
+    return q1_weapon_parameters(g, player->id, weapon, parameters, error);
+}
+
+static void shotgun_shape(const q1_player *player, qa_q1_weapon weapon, double shells,
+                            qa_q1_weapon_view *view) {
+    bool super = weapon == QA_Q1_SUPER_SHOTGUN && shells > 1;
+    const qa_q1_weapon_view *shape = q1_weapon_shape(super ? weapon : QA_Q1_SHOTGUN);
+    view->ammo_per_shot = shape->ammo_per_shot;
+    view->shots = shape->shots;
+    view->horizontal_spread = shape->horizontal_spread;
+    view->vertical_spread = shape->vertical_spread;
+    if (super && (player->mg3_progress.bloody & 2)) {
+        view->shots = 28;
+        view->horizontal_spread = .3f;
+    }
+}
 
 double q1_ammo_count(qa_q1_game *g, qa_actor_id actor, qa_q1_ammo ammo) {
     qa_inventory_entry entry;
@@ -100,29 +178,81 @@ qa_q1_weapon q1_best_weapon_before(qa_q1_game *g, q1_player *player,
     }
     return QA_Q1_AXE;
 }
+static qa_string_id weapon_model(const qa_q1_game *g, const q1_player *player) {
+    if (player->weapon == QA_Q1_MG3_MJOLNIR && player->mg3_hammer_glow &&
+        player->mg3_hammer_until > g->time)
+        return g->hammer_glow_model;
+    if (player->weapon == QA_Q1_SHOTGUN && (player->mg3_progress.bloody & 1))
+        return g->blood_shotgun_model;
+    if (player->weapon == QA_Q1_SUPER_SHOTGUN && (player->mg3_progress.bloody & 2))
+        return g->blood_super_shotgun_model;
+    return g->weapon_models[player->weapon];
+}
 bool q1_weapon_event(qa_q1_game *g, q1_player *player, float punch, int32_t attack,
                      qa_error *error) {
+    if (g->destroy_pending)
+        return true;
     qa_builtin_event event = {.kind = QA_BUILTIN_ANIMATION,
                               .family = QA_GAME_Q1,
                               .provider = g->options.provider,
                               .actor = player->id,
                               .time_ns = g->time_ns,
-                              .resource = g->weapon_models[player->weapon],
+                              .resource = weapon_model(g, player),
                               .frame = player->weapon_frame,
                               .value = punch,
                               .code = attack,
                               .flags = (uint32_t)player->weapon};
-    const char *model = player->weapon == QA_Q1_MG3_MJOLNIR && player->mg3_hammer_glow &&
-                                player->mg3_hammer_until > g->time
-                            ? "progs/v_hammer_glow.mdl"
-                        : player->weapon == QA_Q1_SHOTGUN && (player->mg3_progress.bloody & 1)
-                            ? "progs/v_bloodshot.mdl"
-                        : player->weapon == QA_Q1_SUPER_SHOTGUN && (player->mg3_progress.bloody & 2)
-                            ? "progs/v_bloodshot2.mdl"
-                            : NULL;
-    if (model && !qa_builtin_resource(&g->services, model, &event.resource, error))
-        return false;
     return qa_builtin_emit(&g->services, &event, error);
+}
+static bool reset_inventory(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+    qa_inventory_entry entries[QA_Q1_WEAPON_COUNT + QA_Q1_AMMO_COUNT];
+    for (size_t i = 0; i < QA_Q1_WEAPON_COUNT; ++i)
+        entries[i] = (qa_inventory_entry){.item = g->weapons[i],
+                                          .count = i == QA_Q1_AXE || i == QA_Q1_SHOTGUN ? 1 : 0,
+                                          .capacity = 1,
+                                          .policy = QA_COUNT_SOURCE_FLOAT};
+    if (g->options.program == QA_Q1_ROGUE && g->options.deathmatch && g->options.teamplay >= 4)
+        entries[QA_Q1_ROGUE_GRAPPLE].count = 1;
+    for (size_t i = 0; i < QA_Q1_AMMO_COUNT; ++i)
+        entries[QA_Q1_WEAPON_COUNT + i] = (qa_inventory_entry){
+            .item = g->ammo[i],
+            .count = i == QA_Q1_SHELLS ? 25 : 0,
+            .capacity = i == QA_Q1_NAILS || i == QA_Q1_LAVA_NAILS ? 200 : 100,
+            .policy = QA_COUNT_SOURCE_FLOAT};
+    size_t count = sizeof(entries) / sizeof(*entries);
+    if (!qa_inventory_has(g->services.inventory, actor)) {
+        if (!qa_inventory_create_actor(g->services.inventory, actor, entries, count, error))
+            return false;
+    } else
+        for (size_t i = 0; i < count; ++i) {
+            if (!qa_inventory_configure(g->services.inventory, actor, &entries[i], NULL, NULL,
+                                        error))
+                return false;
+            if (!q1_alive(g, actor)) {
+                qa_error_set(error,QA_ERROR_ARGUMENT,actor.slot,"Q1 inventory reset retired its actor");
+                return false;
+            }
+        }
+    return true;
+}
+bool qa_q1_player_inventory_reset(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g,&operation,error))
+        return false;
+    q1_player *player = q1_player_get(g, actor);
+    bool result = false;
+    if (!player || !player->arsenal) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 inventory reset needs an arsenal");
+    } else {
+        result = reset_inventory(g, actor, error) &&
+                 (g->options.program != QA_Q1_MG3 || q1_mg3_capacities(g, player, error));
+        if (result && !q1_alive(g,actor)) {
+            qa_error_set(error,QA_ERROR_ARGUMENT,actor.slot,"Q1 inventory reset requested teardown");
+            result = false;
+        }
+    }
+    qa_q1_game_operation_end(&operation);
+    return result;
 }
 bool qa_q1_player_attach(qa_q1_game *g, qa_actor_id actor, bool initial_inventory,
                          qa_error *error) {
@@ -133,31 +263,8 @@ bool qa_q1_player_attach(qa_q1_game *g, qa_actor_id actor, bool initial_inventor
     q1_player *existing = q1_player_get(g, actor);
     if (existing && existing->arsenal)
         return true;
-    if (initial_inventory) {
-        qa_inventory_entry entries[QA_Q1_WEAPON_COUNT + QA_Q1_AMMO_COUNT];
-        for (size_t i = 0; i < QA_Q1_WEAPON_COUNT; ++i)
-            entries[i] = (qa_inventory_entry){.item = g->weapons[i],
-                                              .count = i == QA_Q1_AXE || i == QA_Q1_SHOTGUN ? 1 : 0,
-                                              .capacity = 1,
-                                              .policy = QA_COUNT_SOURCE_FLOAT};
-        if (g->options.program == QA_Q1_ROGUE && g->options.deathmatch && g->options.teamplay >= 4)
-            entries[QA_Q1_ROGUE_GRAPPLE].count = 1;
-        for (size_t i = 0; i < QA_Q1_AMMO_COUNT; ++i)
-            entries[QA_Q1_WEAPON_COUNT + i] = (qa_inventory_entry){
-                .item = g->ammo[i],
-                .count = i == QA_Q1_SHELLS ? 25 : 0,
-                .capacity = i == QA_Q1_NAILS || i == QA_Q1_LAVA_NAILS ? 200 : 100,
-                .policy = QA_COUNT_SOURCE_FLOAT};
-        size_t count = sizeof(entries) / sizeof(*entries);
-        if (!qa_inventory_has(g->services.inventory, actor)) {
-            if (!qa_inventory_create_actor(g->services.inventory, actor, entries, count, error))
-                return false;
-        } else
-            for (size_t i = 0; i < count; ++i)
-                if (!qa_inventory_configure(g->services.inventory, actor, &entries[i], NULL, NULL,
-                                            error))
-                    return false;
-    }
+    if (initial_inventory && !reset_inventory(g, actor, error))
+        return false;
     q1_player *player = q1_player_allocate(g, actor, error);
     if (!player)
         return false;
@@ -209,6 +316,7 @@ bool qa_q1_player_read(const qa_q1_game *g, qa_actor_id actor, qa_q1_player_view
     if (!player || !player->active || !player->arsenal || !qa_actor_id_equal(player->id, actor))
         return false;
     *out = (qa_q1_player_view){.weapon = player->weapon,
+                               .weapon_model = weapon_model(g, player),
                                .weapon_frame = player->weapon_frame,
                                .punch_angles = player->punch,
                                .max_health = player->max_health,
@@ -239,6 +347,24 @@ bool qa_q1_player_power(qa_q1_game *g, qa_actor_id actor, qa_q1_power power, dou
     return q1_effect(g, QA_BUILTIN_ITEM, actor, qa_v3(0, 0, 0), (float)expires, (int32_t)power,
                      error);
 }
+bool qa_q1_player_travel_reset(qa_q1_game *g, qa_actor_id actor, float max_health,
+                               qa_error *error) {
+    q1_player *player = q1_player_get(g, actor);
+    if (!player || !isfinite(max_health) || max_health <= 0) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "invalid Q1 native travel state");
+        return false;
+    }
+    player->max_health = max_health;
+    for (unsigned i = 0; i < QA_Q1_POWER_COUNT; ++i) {
+        if (player->power_expires[i] != 0 &&
+            !qa_q1_player_power(g, actor, (qa_q1_power)i, 0, error))
+            return false;
+        if (!q1_alive(g, actor))
+            return true;
+    }
+    player->mega_rot_at = -1;
+    return true;
+}
 bool qa_q1_game_invulnerable(const qa_q1_game *g, qa_actor_id actor) {
     return g && qa_q1_game_power_expires(g, actor, QA_Q1_INVULNERABILITY) > g->time;
 }
@@ -253,12 +379,14 @@ double qa_q1_game_power_expires(const qa_q1_game *g, qa_actor_id actor, qa_q1_po
                ? player->power_expires[power]
                : 0;
 }
-bool qa_q1_player_prethink(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+static bool player_prethink(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     q1_player *player = q1_player_get(g, actor);
     if (!player)
         return true;
     if (g->options.program == QA_Q1_MG3 && !q1_mg3_weapon_frame(g, player, error))
         return false;
+    if (!q1_alive(g, actor))
+        return true;
     if (!q1_power_frame(g, player, error))
         return false;
     if (!q1_alive(g, actor))
@@ -269,26 +397,35 @@ bool qa_q1_player_prethink(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
         return true;
     if (player->mega_rot_at >= 0 && player->mega_rot_at <= g->time) {
         float health = q1_health(g, actor);
+        if (!q1_alive(g, actor))
+            return true;
         if (health > player->max_health) {
             if (!qa_combat_set_health(g->services.combat, actor, health - 1, error))
                 return false;
+            if (!q1_alive(g, actor))
+                return true;
             player->mega_rot_at = g->time + 1;
         } else
             player->mega_rot_at = -1;
     }
-    for (size_t i = 0; i < QA_Q1_POWER_COUNT; ++i)
+    for (size_t i = 0; i < QA_Q1_POWER_COUNT; ++i) {
         if (player->power_expires[i] > 0 && player->power_expires[i] <= g->time &&
             !qa_q1_player_power(g, actor, (qa_q1_power)i, 0, error))
             return false;
+        if (!q1_alive(g, actor))
+            return true;
+    }
     if (!player->continuous && player->animation_at >= 0 && player->weapon != QA_Q1_ROGUE_GRAPPLE &&
         player->weapon != QA_Q1_CTF_GRAPPLE) {
-        int32_t frame = (int32_t)floor((g->time - player->animation_at) / 0.1);
+        double frame = fmax(0, floor((g->time - player->animation_at) / 0.1));
         int32_t count = player->weapon == QA_Q1_AXE || player->weapon == QA_Q1_MG3_MJOLNIR ? 4 : 6;
-        int32_t next = frame >= count ? 0 : player->animation_base + frame;
+        int32_t next = frame >= count ? 0 : player->animation_base + (int32_t)frame;
         if (next != player->weapon_frame) {
             player->weapon_frame = next;
             if (!q1_weapon_event(g, player, 0, 0, error))
                 return false;
+            if (!q1_alive(g, actor))
+                return true;
         }
         if (frame >= count)
             player->animation_at = -1;
@@ -298,6 +435,19 @@ bool qa_q1_player_prethink(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
         player->punch =
             qa_vec_scale(player->punch, fmaxf(0, magnitude - (float)g->elapsed * 10) / magnitude);
     return true;
+}
+bool qa_q1_player_prethink(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    bool ok = player_prethink(g, actor, error);
+    if (!qa_q1_game_operation_live(&operation)) {
+        if (ok || (error && error->code == QA_OK))
+            qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 teardown requested during player prethink");
+        ok = false;
+    }
+    qa_q1_game_operation_end(&operation);
+    return ok;
 }
 bool q1_environment_damage(qa_q1_game *g, qa_actor_id actor, float amount, qa_hazard hazard,
                            qa_error *error) {
@@ -421,6 +571,7 @@ bool q1_aim(qa_q1_game *g, qa_actor_id actor, qa_vec3 forward, qa_vec3 *out, qa_
 }
 bool q1_bullets(qa_q1_game *g, qa_actor_id actor, qa_vec3 direction, qa_vec3 angles, unsigned count,
                 float spread_x, float spread_y, qa_q1_weapon weapon, qa_error *error) {
+    const qa_q1_weapon_view *shape = q1_weapon_shape(QA_Q1_SHOTGUN);
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, actor, &body, error))
         return false;
@@ -435,14 +586,14 @@ bool q1_bullets(qa_q1_game *g, qa_actor_id actor, qa_vec3 direction, qa_vec3 ang
         qa_vec3 ray =
             qa_vec_add(direction, qa_vec_add(qa_vec_scale(g->right, x), qa_vec_scale(g->up, y)));
         qa_trace_result trace;
-        if (!q1_trace(g, source, qa_vec_add(source, qa_vec_scale(ray, 2048)), actor, true, &trace,
+        if (!q1_trace(g, source, qa_vec_add(source, qa_vec_scale(ray, shape->range)), actor, true, &trace,
                       error))
             return false;
         if (trace.fraction == 1)
             continue;
         qa_vec3 point = qa_vec_sub(trace.end, qa_vec_scale(ray, 4));
         if (trace.hit == QA_TRACE_HIT_ACTOR && q1_damageable(g, trace.actor)) {
-            if (!q1_effect(g, QA_BUILTIN_IMPACT, trace.actor, point, 4, 1, error))
+            if (!q1_effect(g, QA_BUILTIN_IMPACT, trace.actor, point, shape->damage, 1, error))
                 return false;
             if (!qa_actor_id_equal(pending, trace.actor)) {
                 if (pending.registry && q1_alive(g, pending) &&
@@ -451,7 +602,7 @@ bool q1_bullets(qa_q1_game *g, qa_actor_id actor, qa_vec3 direction, qa_vec3 ang
                 pending = trace.actor;
                 amount = 0;
             }
-            amount += 4;
+            amount += shape->damage;
         } else if (!q1_effect(g, QA_BUILTIN_IMPACT, trace.actor, point, 1, 2, error))
             return false;
     }
@@ -472,7 +623,8 @@ static bool lightning(qa_q1_game *g, q1_player *player, qa_error *error) {
     qa_builtin_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up);
     qa_vec3 start = qa_vec_add(body.origin, qa_v3(0, 0, 16));
     qa_trace_result wall;
-    if (!q1_trace(g, start, qa_vec_add(start, qa_vec_scale(g->forward, 600)), player->id, false,
+    const qa_q1_weapon_view *shape = q1_weapon_shape(QA_Q1_LIGHTNING);
+    if (!q1_trace(g, start, qa_vec_add(start, qa_vec_scale(g->forward, shape->range)), player->id, false,
                   &wall, error))
         return false;
     qa_builtin_event event = {.kind = QA_BUILTIN_BEAM,
@@ -486,7 +638,7 @@ static bool lightning(qa_q1_game *g, q1_player *player, qa_error *error) {
     if (!qa_builtin_emit(&g->services, &event, error))
         return false;
     qa_vec3 end = qa_vec_add(wall.end, qa_vec_scale(g->forward, 4));
-    return q1_lightning_rays(g, player->id, player->id, body.origin, end, 30, 120, 1,
+    return q1_lightning_rays(g, player->id, player->id, body.origin, end, shape->damage, 120, 1,
                              qa_v3(0, 0, 0), 0, QA_Q1_LIGHTNING, NULL, error);
 }
 
@@ -495,6 +647,11 @@ bool q1_weapon_parameters(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon,
     if (g->host.weapon_parameters &&
         !g->host.weapon_parameters(g->host.context, actor, weapon, parameters, error))
         return false;
+    if (!q1_alive(g, actor)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+                     "Q1 weapon policy retired the source actor");
+        return false;
+    }
     if (!isfinite(parameters->interval) || parameters->interval <= 0 ||
         !isfinite(parameters->nail_speed) || parameters->nail_speed <= 0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
@@ -502,6 +659,137 @@ bool q1_weapon_parameters(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon,
         return false;
     }
     return true;
+}
+
+static bool weapon_observe(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon,
+                            qa_q1_weapon_view *out, bool *found, qa_error *error) {
+    q1_player *player = q1_player_get(g, actor);
+    if (!player || !player->arsenal)
+        return true;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, actor, &body, error))
+        return false;
+    if (!q1_alive(g, actor))
+        return true;
+    qa_q1_weapon_view view = *q1_weapon_shape(weapon);
+    view.weapon = weapon;
+    view.item = g->weapons[weapon];
+    int ammo = q1_weapon_ammo(weapon);
+    view.ammo = ammo < 0 ? 0 : g->ammo[ammo];
+    qa_q1_weapon_parameters parameters = {.interval=view.attack_interval,.nail_speed=1000};
+    if (weapon <= QA_Q1_LIGHTNING) {
+        if (!base_parameters(g, player, weapon, &parameters, error))
+            return false;
+        if (weapon == QA_Q1_AXE) {
+            bool horde;
+            if (!q1_horde_axe_interval(g, player, &parameters.interval, &horde, error))
+                return false;
+        }
+    } else if ((weapon >= QA_Q1_LASER && weapon <= QA_Q1_PROXIMITY) ||
+               weapon == QA_Q1_MG3_LASER || weapon == QA_Q1_MG3_MJOLNIR) {
+        if (!q1_weapon_parameters(g, actor, weapon, &parameters, error))
+            return false;
+    }
+    if (!q1_alive(g, actor))
+        return true;
+    view.ammo_count = ammo < 0 ? 0 : q1_ammo_count(g, actor, (qa_q1_ammo)ammo);
+    view.owned = owns(g, actor, weapon);
+    view.available = view.owned && (ammo < 0 || view.ammo_count >= 1);
+    view.attack_finished = player->attack_finished;
+    view.ready_at = player->weapon == weapon && player->continuous
+                        ? player->next_weapon_frame : player->attack_finished;
+    view.attack_interval = parameters.interval;
+    if (!view.fire_interval)
+        view.fire_interval = parameters.interval;
+    view.gravity_acceleration = view.gravity *
+        (g->services.physics ? g->services.physics->gravity : g->options.gravity);
+    view.launch_angles = player->input.view_angles;
+    qa_vec3 forward, right, up;
+    qa_builtin_angle_vectors(view.launch_angles, &forward, &right, &up);
+    view.muzzle_count = 1;
+    if (weapon == QA_Q1_SHOTGUN || weapon == QA_Q1_SUPER_SHOTGUN) {
+        shotgun_shape(player,weapon,view.ammo_count,&view);
+        view.muzzle_offsets[0] = qa_vec_scale(forward, 10);
+        view.muzzle_offsets[0].z = body.bounds.mins.z +
+                                  (body.bounds.maxs.z-body.bounds.mins.z)*.7f;
+    } else if (weapon == QA_Q1_NAILGUN || weapon == QA_Q1_SUPER_NAILGUN ||
+               weapon == QA_Q1_LAVA_NAILGUN || weapon == QA_Q1_LAVA_SUPER_NAILGUN) {
+        bool super = (weapon == QA_Q1_SUPER_NAILGUN || weapon == QA_Q1_LAVA_SUPER_NAILGUN) &&
+                     view.ammo_count >= 2;
+        if (!super) {
+            view.ammo_per_shot = 1;
+            view.damage = q1_weapon_shape(QA_Q1_NAILGUN)->damage;
+        }
+        if (weapon == QA_Q1_NAILGUN || weapon == QA_Q1_SUPER_NAILGUN) {
+            view.speed = parameters.nail_speed;
+            view.range = (float)fmin((double)view.speed*view.lifetime,FLT_MAX);
+        }
+        view.muzzle_offsets[0] = qa_vec_add(qa_v3(0,0,16),
+            qa_vec_scale(right, super ? 0 : (float)player->nail_side*4));
+    } else if (weapon == QA_Q1_LASER || weapon == QA_Q1_MG3_LASER) {
+        bool paired = player->weapon != weapon || !player->continuous || player->weapon_frame == 4;
+        qa_vec3 origin = qa_vec_add(qa_vec_scale(up,6),
+            qa_vec_scale(qa_vec_normalize(qa_v3(forward.x,forward.y,0)),12));
+        view.shots = paired ? 2 : 1;
+        if (paired) {
+            float offset = 6*.707f;
+            view.muzzle_count = 2;
+            view.muzzle_offsets[0] = qa_vec_sub(qa_vec_add(origin,qa_vec_scale(right,offset)),
+                                              qa_vec_scale(up,offset));
+            view.muzzle_offsets[1] = qa_vec_sub(view.muzzle_offsets[0],qa_vec_scale(right,offset*2));
+        } else
+            view.muzzle_offsets[0] = qa_vec_add(origin,qa_vec_scale(up,6));
+    } else if (weapon == QA_Q1_ROCKET || weapon == QA_Q1_MULTI_ROCKET || weapon == QA_Q1_PLASMA ||
+               view.grapple) {
+        float offset = view.grapple ? 16 : weapon == QA_Q1_PLASMA ? 24 : 8;
+        view.muzzle_offsets[0] = qa_vec_add(qa_vec_scale(forward,offset),qa_v3(0,0,16));
+    } else if (view.melee || weapon == QA_Q1_LIGHTNING)
+        view.muzzle_offsets[0] = qa_v3(0,0,16);
+    if ((weapon == QA_Q1_LIGHTNING || weapon == QA_Q1_PLASMA) && player->input.water_level > 1) {
+        view.discharge = true;
+        view.ammo_per_shot = view.ammo_count;
+        view.speed = 0;
+        view.shots = 1;
+        view.damage = view.blast_damage = (float)fmin(35*view.ammo_count,FLT_MAX);
+        view.range = view.blast_radius = (float)fmin((double)view.blast_damage+40,FLT_MAX);
+        view.muzzle_offsets[0] = qa_v3(0,0,0);
+    }
+    if (player->mg3_infinite_ammo)
+        view.ammo_per_shot = 0;
+    if (ammo >= 0)
+        view.available = view.available && view.ammo_count >= view.ammo_per_shot;
+    if (weapon == QA_Q1_CTF_GRAPPLE && player->grapple_weapon.selected) {
+        view.attack_finished = view.ready_at = player->grapple_weapon.attack_finished;
+        view.available = view.available && player->grapple_weapon.available;
+    }
+    if (!q1_alive(g, actor))
+        return true;
+    *out = view;
+    *found = true;
+    return true;
+}
+bool qa_q1_player_weapon_read(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon,
+                              qa_q1_weapon_view *out, bool *found, qa_error *error) {
+    if (!out || !found || (unsigned)weapon >= QA_Q1_WEAPON_COUNT) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "invalid Q1 weapon observation");
+        return false;
+    }
+    *out = (qa_q1_weapon_view){0};
+    *found = false;
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g,&operation,error))
+        return false;
+    bool result = weapon_observe(g,actor,weapon,out,found,error);
+    if (!qa_q1_game_operation_live(&operation)) {
+        *out = (qa_q1_weapon_view){0};
+        *found = false;
+        if (result) {
+            qa_error_set(error,QA_ERROR_ARGUMENT,actor.slot,"Q1 weapon observation requested teardown");
+            result = false;
+        }
+    }
+    qa_q1_game_operation_end(&operation);
+    return result;
 }
 
 bool q1_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
@@ -520,13 +808,8 @@ bool q1_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
     bool repeating = player->continuous;
     qa_builtin_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up);
     qa_vec3 forward = g->forward, right = g->right, up = g->up;
-    static const float intervals[] = {0.5f, 0.5f, 0.7f, 0.2f, 0.2f, 0.6f, 0.8f, 0.1f};
-    qa_q1_weapon_parameters parameters = {
-        .interval = weapon == QA_Q1_LIGHTNING && repeating ? 0.2f : intervals[weapon],
-        .nail_speed = 1000};
-    if (weapon == QA_Q1_SHOTGUN && (player->mg3_progress.bloody & 1))
-        parameters.interval = 0.28f;
-    if (!q1_weapon_parameters(g, player->id, weapon, &parameters, error))
+    qa_q1_weapon_parameters parameters;
+    if (!base_parameters(g, player, weapon, &parameters, error))
         return false;
     float punch = -2;
     int32_t attack = (int32_t)weapon;
@@ -549,28 +832,23 @@ bool q1_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
         attack = choice < 0.25f ? 0 : choice < 0.5f ? 1 : choice < 0.75f ? 2 : 3;
         player->animation_base = (choice >= 0.25f && choice < 0.5f) || choice >= 0.75f ? 5 : 1;
         if (!q1_create(g, "axe_strike", Q1_TIMER, player->id, &projectile, error) ||
-            !q1_schedule(g, projectile, 0.2, Q1_THINK_AXE, error))
+            !q1_schedule(g, projectile, q1_weapon_shape(weapon)->launch_delay, Q1_THINK_AXE, error))
             return false;
         break;
     }
     case QA_Q1_SHOTGUN:
     case QA_Q1_SUPER_SHOTGUN: {
-        bool super =
-            weapon == QA_Q1_SUPER_SHOTGUN && q1_ammo_count(g, player->id, QA_Q1_SHELLS) > 1;
-        bool bloody = super && (player->mg3_progress.bloody & 2);
+        double shells = q1_ammo_count(g,player->id,QA_Q1_SHELLS);
+        bool super = weapon == QA_Q1_SUPER_SHOTGUN && shells > 1;
+        qa_q1_weapon_view shape = *q1_weapon_shape(weapon);
+        shotgun_shape(player,weapon,shells,&shape);
         punch = super ? -4 : -2;
-        if (!q1_consume(g, player->id, QA_Q1_SHELLS, super ? 2 : 1, error) ||
+        if (!q1_consume(g, player->id, QA_Q1_SHELLS, shape.ammo_per_shot, error) ||
             !q1_sound(g, player->id, super ? "weapons/shotgn2.wav" : "weapons/guncock.wav", 1, 1,
                       error) ||
             !q1_aim(g, player->id, forward, &direction, error) ||
-            !q1_bullets(g, player->id, direction, player->input.view_angles,
-                        bloody  ? 28u
-                        : super ? 14u
-                                : 6u,
-                        bloody  ? 0.3f
-                        : super ? 0.14f
-                                : 0.04f,
-                        super ? 0.08f : 0.04f, weapon, error))
+            !q1_bullets(g, player->id, direction, player->input.view_angles,shape.shots,
+                        shape.horizontal_spread,shape.vertical_spread,weapon,error))
             return false;
         break;
     }
@@ -596,11 +874,12 @@ bool q1_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
         if (player->input.view_angles.x == 0) {
             if (!q1_aim(g, player->id, forward, &direction, error))
                 return false;
-            velocity = qa_vec_scale(direction, 600);
-            velocity.z = 200;
+            velocity = qa_vec_scale(direction, q1_weapon_shape(weapon)->speed);
+            velocity.z = q1_weapon_shape(weapon)->extra_z_velocity;
         } else {
             float x = (q1_random(g) * 2 - 1) * 10, y = (q1_random(g) * 2 - 1) * 10;
-            velocity = qa_vec_add(qa_vec_add(qa_vec_scale(forward, 600), qa_vec_scale(up, 200)),
+            velocity = qa_vec_add(qa_vec_add(qa_vec_scale(forward, q1_weapon_shape(weapon)->speed),
+                                             qa_vec_scale(up, q1_weapon_shape(weapon)->extra_z_velocity)),
                                   qa_vec_add(qa_vec_scale(right, x), qa_vec_scale(up, y)));
         }
         if (!q1_consume(g, player->id, QA_Q1_ROCKETS, 1, error) ||
@@ -617,7 +896,7 @@ bool q1_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
             !q1_projectile_spawn(
                 g, player->id, weapon, Q1_ROCKET,
                 qa_vec_add(qa_vec_add(body.origin, qa_vec_scale(forward, 8)), qa_v3(0, 0, 16)),
-                qa_vec_scale(direction, 1000), &projectile, error))
+                qa_vec_scale(direction, q1_weapon_shape(weapon)->speed), &projectile, error))
             return false;
         break;
     case QA_Q1_LIGHTNING:
@@ -654,13 +933,14 @@ bool q1_axe_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
     qa_builtin_angle_vectors(player->input.view_angles, &g->forward, &g->right, &g->up);
     qa_vec3 start = qa_vec_add(body.origin, qa_v3(0, 0, 16));
     qa_trace_result trace;
-    if (!q1_trace(g, start, qa_vec_add(start, qa_vec_scale(g->forward, 64)), player->id, true,
+    const qa_q1_weapon_view *shape = q1_weapon_shape(QA_Q1_AXE);
+    if (!q1_trace(g, start, qa_vec_add(start, qa_vec_scale(g->forward, shape->range)), player->id, true,
                   &trace, error))
         return false;
     if (trace.fraction < 1) {
         if (trace.hit == QA_TRACE_HIT_ACTOR && q1_damageable(g, trace.actor)) {
-            if (!q1_effect(g, QA_BUILTIN_IMPACT, trace.actor, trace.end, 20, 1, error) ||
-                !q1_damage(g, trace.actor, player->id, player->id, 20, QA_Q1_AXE, error))
+            if (!q1_effect(g, QA_BUILTIN_IMPACT, trace.actor, trace.end, shape->damage, 1, error) ||
+                !q1_damage(g, trace.actor, player->id, player->id, shape->damage, QA_Q1_AXE, error))
                 return false;
         } else if (!q1_sound(g, player->id, "player/axhit2.wav", 1, 1, error) ||
                    !q1_effect(g, QA_BUILTIN_IMPACT, (qa_actor_id){0}, trace.end, 3, 2, error))

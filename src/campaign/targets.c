@@ -167,6 +167,28 @@ bool qa_targets_set_target(qa_targets *targets, qa_actor_id actor, qa_string_id 
                            qa_error *error) {
     return set_target_field(targets, actor, name, false, error);
 }
+bool qa_targets_set_delay(qa_targets *targets, qa_actor_id actor, float seconds, qa_error *error) {
+    if (!targets || !isfinite(seconds))
+        return fail(error, "Invalid authored target delay");
+    const qa_target_binding *entry = binding(targets, actor);
+    if (!entry || !entry->set_delay) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Authored target has no delay setter");
+        return false;
+    }
+    qa_target_binding before = *entry;
+    uint64_t serial = targets->binding_serial[actor.slot];
+    targets->dirty = true;
+    bool ok = before.set_delay(before.context, actor, seconds, error);
+    targets->dirty = true;
+    if (!ok)
+        return false;
+    entry = binding(targets, actor);
+    if (!entry || targets->binding_serial[actor.slot] != serial) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Authored target owner changed during delay write");
+        return false;
+    }
+    return true;
+}
 bool qa_targets_field(const qa_targets *targets, qa_actor_id actor, const char *key,
                       qa_target_field *out) {
     const qa_target_binding *entry = binding(targets, actor);

@@ -285,6 +285,8 @@ typedef struct qa_physical_input {
 bool qa_input_physical_parse(const char *, int32_t device, qa_physical_input *out);
 bool qa_input_physical_valid(qa_physical_input);
 bool qa_input_physical_name(qa_physical_input, char *out, size_t size);
+/* Canonical held command, including +; NULL for an unknown action. */
+const char *qa_input_action_command(qa_input_action);
 typedef enum qa_binding_kind { QA_BIND_ACTION, QA_BIND_COMMAND } qa_binding_kind;
 typedef struct qa_input_binding {
     qa_physical_input input;
@@ -329,6 +331,10 @@ typedef struct qa_input_seat_options {
     qa_gamepad_tuning gamepad;
     qa_input_ui_handler ui;
     void *ui_user;
+    /* Source catchers run before the native UI stack. Consumed events still
+     * update physical key state and retire releases; this is one dispatcher. */
+    bool (*before_ui)(void *, qa_input_seat *, const qa_input_event *, bool *consumed, qa_error *);
+    void *before_ui_user;
 } qa_input_seat_options;
 qa_input_seat *qa_input_seat_create(const qa_input_seat_options *, qa_error *);
 /* Release held input before retiring the console. Destruction only frees
@@ -386,6 +392,8 @@ bool qa_input_mouse_settings_write(qa_cvars *, const qa_mouse_tuning *, qa_error
 bool qa_input_device_settings_register(qa_cvars *, qa_error *);
 bool qa_input_bindings_config(const qa_input_seat *, bool controllers, qa_buffer *, qa_error *);
 bool qa_input_default_bindings(qa_input_seat *, int32_t device, qa_error *);
+/* Copy and validate the default list before replacing current bindings. */
+bool qa_input_reset_default_bindings(qa_input_seat *, int32_t device, qa_error *);
 typedef struct qa_input_weapon_binding {
     const char *id, *label;
     bool powerup;

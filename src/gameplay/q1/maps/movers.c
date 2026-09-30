@@ -81,8 +81,11 @@ static bool door_up(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     if (!q1_alive(g, entity->id))
         return true;
     move->position = Q1_MAP_UP;
-    return q1_map_move(g, entity, move->pos2, Q1_MAP_DOOR_TOP, error) &&
-           q1_map_targets(g, entity, entity->activator, error);
+    qa_actor_id id = entity->id;
+    if (!q1_map_move(g, entity, move->pos2, Q1_MAP_DOOR_TOP, error))
+        return false;
+    entity = q1_entity(g, id);
+    return !entity || !entity->map || q1_map_targets(g, entity, entity->activator, error);
 }
 static bool door_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {
     q1_actor *master = door_master(g, entity);
@@ -104,6 +107,78 @@ static bool door_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_
             return false;
     }
     return true;
+}
+bool q1_map_addon_relay_mover(qa_q1_game *g, q1_actor *e, bool close,
+                             qa_actor_id activator, qa_error *error) {
+    if (e->map->kind == Q1_MAP_DOOR)
+        return close ? q1_map_door_down(g, e, error) : door_up(g, e, error);
+    if (e->map->kind == Q1_MAP_BUTTON)
+        return close ? q1_map_mover_think(g, e, Q1_MAP_BUTTON_RETURN, error)
+                     : q1_map_mover_use(g, e, activator, error);
+    return true;
+}
+bool q1_map_addon_egg_mover(qa_q1_game *g, q1_actor *e, qa_error *error) {
+    qa_actor_id id = e->id;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, id, &body, error))
+        return false;
+    e = q1_entity(g, id);
+    if (!e || !e->map || e->map->kind != Q1_MAP_DOOR)
+        return true;
+    q1_map_movement *move = &e->map->pending.mover;
+    e->map->movedir = e->map->has_dest2 ? e->map->dest2 : move->dest2;
+    move->pos1 = body.origin;
+    move->pos2 = qa_vec_add(body.origin, e->map->movedir);
+    move->position = Q1_MAP_BOTTOM;
+    e->speed = 500;
+    e->map->sounds = 1;
+    if (!qa_builtin_resource(&g->services, "doors/drclos4.wav", &e->map->noise[1], error) ||
+        !qa_builtin_resource(&g->services, "doors/doormv1.wav", &e->map->noise[2], error))
+        return false;
+    return door_up(g, e, error);
+}
+bool qa_q1_game_map_egg_mover(qa_q1_game *g, qa_actor_id actor, bool *handled,
+                             qa_error *error) {
+    if (!g || !handled)
+        return q1_map_fail(error, "Invalid Q1 egg mover operation");
+    *handled = false;
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    q1_actor *e = q1_entity(g, actor);
+    bool ok = true;
+    if (e && e->native && e->map && e->map->kind == Q1_MAP_DOOR) {
+        *handled = true;
+        ok = q1_map_addon_egg_mover(g, e, error);
+    }
+    if (ok && !qa_q1_game_operation_live(&operation)) {
+        q1_map_fail(error, "Q1 source retired during egg mover operation");
+        ok = false;
+    }
+    qa_q1_game_operation_end(&operation);
+    return ok;
+}
+bool qa_q1_game_map_relay_mover(qa_q1_game *g, qa_actor_id actor, bool close,
+                               qa_actor_id activator, bool *handled, qa_error *error) {
+    if (!g || !handled)
+        return q1_map_fail(error, "Invalid Q1 directed mover operation");
+    *handled = false;
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    q1_actor *e = q1_entity(g, actor);
+    bool ok = true;
+    if (e && e->native && e->map &&
+        (e->map->kind == Q1_MAP_DOOR || e->map->kind == Q1_MAP_BUTTON)) {
+        *handled = true;
+        ok = q1_map_addon_relay_mover(g, e, close, activator, error);
+    }
+    if (ok && !qa_q1_game_operation_live(&operation)) {
+        q1_map_fail(error, "Q1 source retired during directed mover operation");
+        ok = false;
+    }
+    qa_q1_game_operation_end(&operation);
+    return ok;
 }
 static bool button_fire(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa_error *error) {
     static const char *const sounds[] = {"buttons/airbut1.wav", "buttons/switch21.wav",
@@ -222,6 +297,14 @@ bool q1_map_plat_trigger(qa_q1_game *g, q1_actor *owner, q1_map_kind kind, qa_bo
 }
 bool q1_map_mover_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     qa_actor_id id = entity->id;
+    if (g->options.program == QA_Q1_MG3 && q1_classnamed(g, id, "func_axe_button")) {
+        entity->max_health = 1;
+        if (!qa_combat_set_health(g->services.combat, id, 1, error))
+            return false;
+        entity = q1_entity(g, id);
+        if (!entity || !entity->map)
+            return true;
+    }
     q1_map_state *state = entity->map;
     if (state->kind == Q1_MAP_TRAIN || state->kind == Q1_MAP_TRAIN2)
         return q1_map_train_spawn(g, entity, error);
@@ -422,7 +505,90 @@ bool q1_map_mover_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator, qa
         return true;
     }
 }
+static bool horde_key(qa_q1_game *g, qa_actor_id actor, bool gold, bool *has,
+                       qa_error *error) {
+    *has = false;
+    if (!qa_inventory_has(g->services.inventory, actor))
+        return true;
+    qa_item_id item;
+    if (!qa_builtin_resource(&g->services, gold ? "q1:key/gold" : "q1:key/silver", &item, error))
+        return false;
+    qa_inventory_entry entry;
+    qa_error missing = {0};
+    if (!qa_inventory_entry_read(g->services.inventory, actor, item, &entry, &missing)) {
+        if (missing.code == QA_ERROR_NOT_FOUND)
+            return true;
+        if (error)
+            *error = missing;
+        return false;
+    }
+    *has = entry.count != 0;
+    return true;
+}
+static bool horde_door_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other,
+                              qa_error *error) {
+    qa_actor_id id = entity->id;
+    q1_actor *master = door_master(g, entity);
+    if (!master || !master->map || !q1_map_player(g, other) || master->map->cooldown > g->time)
+        return true;
+    qa_actor_id master_id = master->id;
+    master->map->cooldown = g->time + 2;
+    const char *message = qa_strings_cstr(qa_session_strings(g->services.session), master->message);
+    if (message && *message) {
+        if (!q1_message(g, other, message, error))
+            return false;
+        if (!q1_alive(g, other) || !q1_alive(g, id) || !q1_alive(g, master_id))
+            return true;
+        if (!q1_sound(g, other, "misc/talk.wav", 2, 1, error))
+            return false;
+    }
+    entity = q1_entity(g, id);
+    master = q1_entity(g, master_id);
+    if (!entity || !entity->map || !master || !master->map || !q1_alive(g, other))
+        return true;
+    bool silver = (entity->spawnflags & 16) != 0, gold = (entity->spawnflags & 8) != 0;
+    if (!silver && !gold)
+        return true;
+    bool has_silver = false, has_gold = false;
+    if ((silver && !horde_key(g, other, false, &has_silver, error)) ||
+        (gold && !horde_key(g, other, true, &has_gold, error)))
+        return false;
+    if (!q1_alive(g, id) || !q1_alive(g, master_id) || !q1_alive(g, other))
+        return true;
+    if ((silver && !has_silver) || (gold && !has_gold)) {
+        if (!q1_sound(g, id, g->options.world_type == 2 ? "doors/basetry.wav"
+                           : g->options.world_type == 1 ? "doors/runetry.wav"
+                                                        : "doors/medtry.wav", 2, 1, error))
+            return false;
+        if (silver == gold || !q1_alive(g, other))
+            return true;
+        char text[64];
+        snprintf(text, sizeof(text), "$qc_need_%s_%s", silver ? "silver" : "gold",
+                 g->options.world_type == 2 ? "keycard"
+                 : g->options.world_type == 1 ? "runekey" : "key");
+        return q1_message(g, other, text, error);
+    }
+    if (!g->maps->options.horde_keys)
+        return q1_map_fail(error, "Q1 Horde door requires the selected shared key owner");
+    if (!g->maps->options.horde_keys(g->maps->options.context, !silver, -1, error))
+        return false;
+    master = q1_entity(g, master_id);
+    if (!master || !master->map || !q1_alive(g, other))
+        return true;
+    const q1_door_group *group = master->map->pending.mover.group;
+    if (group) {
+        for (size_t i = 0; i < group->count; ++i) {
+            q1_actor *door = q1_entity(g, group->members[i]);
+            if (door && door->map)
+                door->map->touch_enabled = false;
+        }
+    } else
+        master->map->touch_enabled = false;
+    return door_use(g, master, other, error);
+}
 static bool door_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *error) {
+    if (q1_map_horde_present(g))
+        return horde_door_touch(g, entity, other, error);
     q1_actor *master = door_master(g, entity);
     if (!master || !q1_map_player(g, other) || master->map->cooldown > g->time)
         return true;
@@ -624,7 +790,9 @@ bool q1_map_mover_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, q
         entity->frame = 0;
         if (entity->max_health > 0 && !q1_map_damageable(g, entity, true, error))
             return false;
-        return q1_map_move(g, entity, move->pos1, Q1_MAP_BUTTON_BOTTOM, error);
+        entity = q1_entity(g, id);
+        return !entity || !entity->map ||
+               q1_map_move(g, entity, entity->map->pending.mover.pos1, Q1_MAP_BUTTON_BOTTOM, error);
     case Q1_MAP_BUTTON_BOTTOM:
         move->position = Q1_MAP_BOTTOM;
         return true;

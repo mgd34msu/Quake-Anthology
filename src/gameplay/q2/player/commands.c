@@ -124,16 +124,9 @@ static bool use_item(qa_q2_game *g, q2_actor *a, const qa_q2_item_definition *d,
         snprintf(text, sizeof(text), "Out of item: %s\n", d->name);
         return q2_player_print(g, a->id, 2, text, e);
     }
-    bool used;
-    if (d->weapon) {
-        qa_q2_selection selection;
-        if (!qa_q2_weapon_select(g, a->id, d->weapon, false, &selection, e))
-            return false;
-        if (selection == QA_Q2_NO_AMMO || selection == QA_Q2_INSUFFICIENT_AMMO)
-            return q2_player_print(g, a->id, 2, "Not enough ammo.\n", e);
-    } else if (!qa_q2_item_use(g, a->id, d->item, &used, e))
+    if (!qa_inventory_item_action(g->services.inventory, a->id, d->item, QA_ITEM_USE, e))
         return false;
-    if (q2_actor_live(g, a->id))
+    if (q2_actor_live(g, a->id) && a->client)
         a->client->info.selected_item = d->item;
     return true;
 }
@@ -167,12 +160,18 @@ static bool drop_item(qa_q2_game *g, q2_actor *a, const qa_q2_item_definition *d
         return false;
     if (!owned)
         return q2_player_print(g, a->id, 2, "Out of item.\n", e);
-    qa_actor_id drop;
-    bool accepted;
-    if (!qa_q2_item_drop(g, a->id, d->item, &(qa_q2_drop_options){0}, &drop, &accepted, e))
-        return false;
-    return accepted || !q2_actor_live(g, a->id) ||
-           q2_player_print(g, a->id, 2, "Can't drop current weapon\n", e);
+    return qa_inventory_item_action(g->services.inventory, a->id, d->item, QA_ITEM_DROP, e);
+}
+static bool item_command(qa_q2_game *g, q2_actor *a, const char *text, bool using, qa_error *e) {
+    const qa_q2_item_definition *item = qa_q2_item_lookup(g, text);
+    if (!item) {
+        bool supplied;
+        if (!supplemental_action(g, a, text, using ? QA_ITEM_USE : QA_ITEM_DROP, &supplied, e))
+            return false;
+        if (supplied || !q2_actor_live(g, a->id))
+            return true;
+    }
+    return using ? use_item(g, a, item, e) : drop_item(g, a, item, e);
 }
 static bool flood_allowed(qa_q2_game *g, q2_actor *a, bool *allowed, qa_error *e) {
     q2_client_state *s = a->client;
@@ -334,6 +333,8 @@ static bool give_ammo(qa_q2_game *g, qa_actor_id actor, const qa_q2_item_definit
     return okay;
 }
 static bool power_after_give(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    if (!a->client)
+        return true;
     const qa_q2_item_definition *cells = qa_q2_item_lookup(g, "ammo_cells"),
                                 *shield = qa_q2_item_lookup(g, "item_power_shield"),
                                 *screen = qa_q2_item_lookup(g, "item_power_screen");
@@ -351,7 +352,38 @@ static bool power_after_give(qa_q2_game *g, q2_actor *a, qa_error *e) {
     return !((active && !enough) || (!active && automatic != -1 && enough)) ||
            qa_q2_item_use(g, a->id, owned ? shield->item : screen->item, &used, e);
 }
-static bool give(qa_q2_game *g, q2_actor *a, size_t count, const char *const *args, qa_error *e) {
+static bool grant_arsenal(qa_q2_game *g, qa_actor_id actor, bool ammo, qa_error *e) {
+    for (size_t i = 0; i < qa_q2_item_count(g) && q2_actor_live(g, actor); ++i) {
+        const qa_q2_item_definition *d = qa_q2_item_at(g, i);
+        if (ammo ? d->kind != QA_Q2_ITEM_AMMO
+                 : !d->weapon || d->console_give == QA_Q2_GIVE_INVENTORY_ONLY)
+            continue;
+        if (!q2_item_ensure(g, actor, d, e))
+            return false;
+        qa_inventory_entry entry;
+        if (!qa_inventory_entry_read(g->services.inventory, actor, d->item, &entry, e))
+            return false;
+        entry.count = ammo ? fmin(entry.count + 1000, entry.capacity) : entry.count + 1;
+        if (!qa_inventory_configure(g->services.inventory, actor, &entry, NULL, NULL, e))
+            return false;
+    }
+    return true;
+}
+typedef struct arsenal_grant_call { qa_q2_game *game; bool ammo; } arsenal_grant_call;
+static bool arsenal_grant(void *context, qa_actor_id actor, qa_error *error) {
+    arsenal_grant_call *call = context;
+    return grant_arsenal(call->game, actor, call->ammo, error);
+}
+bool qa_q2_game_grant_arsenal(qa_q2_game *g, qa_actor_id actor, bool ammo, qa_error *error) {
+    if (!g || !q2_actor_get(g, actor, false, NULL)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q2 arsenal grant requires a native actor");
+        return false;
+    }
+    arsenal_grant_call call = {g, ammo};
+    return qa_q2_run_actor(g, actor, arsenal_grant, &call, error);
+}
+static bool give(qa_q2_game *g, q2_actor *a, size_t count, const char *const *args,
+                 bool selected, qa_error *e) {
     char requested[1024];
     join_arguments(count, args, requested, sizeof(requested));
     bool all = equal_name(requested, "all"), rr = g->options.edition == QA_Q2_RERELEASE;
@@ -368,7 +400,7 @@ static bool give(qa_q2_game *g, q2_actor *a, size_t count, const char *const *ar
     for (int category = 0; category < 2; category++)
         if (all || equal_name(requested, category ? "ammo" : "weapons")) {
             bool handled = false;
-            if (services->grant_arsenal &&
+            if (selected && services->grant_arsenal &&
                 !services->grant_arsenal(services->context, a->id, category != 0, &handled, e))
                 return false;
             if (!q2_actor_live(g, a->id))
@@ -378,22 +410,8 @@ static bool give(qa_q2_game *g, q2_actor *a, size_t count, const char *const *ar
                     if (!q2_item_console_pickup(g, a->id, qa_q2_item_lookup(g, "item_pack"), e))
                         return false;
                 }
-                for (size_t i = 0; i < qa_q2_item_count(g) && q2_actor_live(g, a->id); i++) {
-                    const qa_q2_item_definition *d = qa_q2_item_at(g, i);
-                    if (category ? d->kind != QA_Q2_ITEM_AMMO
-                                 : !d->weapon || d->console_give == QA_Q2_GIVE_INVENTORY_ONLY)
-                        continue;
-                    if (!q2_item_ensure(g, a->id, d, e))
-                        return false;
-                    qa_inventory_entry entry;
-                    if (!qa_inventory_entry_read(g->services.inventory, a->id, d->item, &entry, e))
-                        return false;
-                    entry.count =
-                        category ? fmin(entry.count + 1000, entry.capacity) : entry.count + 1;
-                    if (!qa_inventory_configure(g->services.inventory, a->id, &entry, NULL, NULL,
-                                                e))
-                        return false;
-                }
+                if (!grant_arsenal(g, a->id, category != 0, e))
+                    return false;
             }
             if (!all || !q2_actor_live(g, a->id))
                 return true;
@@ -452,7 +470,7 @@ static bool give(qa_q2_game *g, q2_actor *a, size_t count, const char *const *ar
     qa_q2_supplemental_item extra;
     if (!give_lookup(g, requested, count ? args[0] : NULL, &d, &extra)) {
         bool handled = false;
-        if (services->give_item &&
+        if (selected && services->give_item &&
             !services->give_item(services->context, a->id, count, args, &handled, e))
             return false;
         return handled || q2_player_print(g, a->id, 2, "unknown item\n", e);
@@ -472,7 +490,7 @@ static bool give(qa_q2_game *g, q2_actor *a, size_t count, const char *const *ar
     qa_supply *supply = q2_item_supply(g, a->id);
     if ((d->weapon || d->kind == QA_Q2_ITEM_AMMO) &&
         (!supply || !qa_supply_maps(supply, d->item, d->kind != QA_Q2_ITEM_AMMO)) &&
-        services->give_item) {
+        selected && services->give_item) {
         const char *selected_args[2] = {
             qa_strings_cstr(qa_session_strings(g->services.session), d->item),
             count == 2 ? args[1] : NULL};
@@ -492,6 +510,42 @@ static bool give(qa_q2_game *g, q2_actor *a, size_t count, const char *const *ar
     if (d->kind == QA_Q2_ITEM_AMMO)
         return give_ammo(g, a->id, d, count == 2, count == 2 ? argument_integer(args[1]) : 0, e);
     return q2_item_console_pickup(g, a->id, d, e);
+}
+typedef struct item_give_call {
+    qa_q2_game *game;
+    size_t count;
+    const char *const *args;
+    bool *handled;
+} item_give_call;
+static bool item_give(void *context, qa_actor_id actor, qa_error *error) {
+    item_give_call *call = context;
+    char requested[1024];
+    join_arguments(call->count, call->args, requested, sizeof(requested));
+    const qa_q2_item_definition *definition;
+    qa_q2_supplemental_item extra;
+    if (!give_lookup(call->game, requested, call->count ? call->args[0] : NULL,
+                     &definition, &extra))
+        return true;
+    q2_actor *source = q2_actor_get(call->game, actor, false, NULL);
+    if (!source)
+        return true;
+    *call->handled = true;
+    return give(call->game, source, call->count, call->args, false, error);
+}
+bool qa_q2_game_give_item(qa_q2_game *g, qa_actor_id actor, size_t count,
+                          const char *const *args, bool *handled, qa_error *error) {
+    if (!g || !handled || (count && !args)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q2 source item grant");
+        return false;
+    }
+    *handled = false;
+    for (size_t i = 0; i < count; ++i)
+        if (!args[i]) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q2 source item name");
+            return false;
+        }
+    item_give_call call = {g, count, args, handled};
+    return qa_q2_run_actor(g, actor, item_give, &call, error);
 }
 static bool players_list(qa_q2_game *g, q2_actor *a, bool scores, qa_error *e) {
     q2_player_list *list = q2_player_list_acquire(g, true, e);
@@ -536,9 +590,10 @@ static bool players_list(qa_q2_game *g, q2_actor *a, bool scores, qa_error *e) {
     list->active = false;
     return q2_player_print(g, a->id, 2, text, e);
 }
-bool qa_q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_t count,
-                          const char *const *args, qa_error *e) {
-    q2_actor *a = q2_client(g, id, e);
+bool q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_t count,
+                        const char *const *args, bool *recognized, qa_error *e) {
+    *recognized = true;
+    q2_actor *a = g ? q2_actor_get(g, id, false, NULL) : NULL;
     if (!a || !command || (count && !args)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 player command");
         return false;
@@ -559,6 +614,23 @@ bool qa_q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, si
         return true;
     char text[2048];
     join_arguments(count, args, text, sizeof(text));
+    if (!s) {
+        if (p->intermission)
+            return true;
+        if (equal_name(command, "use") || equal_name(command, "drop"))
+            return item_command(g, a, text, equal_name(command, "use"), e);
+        if (equal_name(command, "give")) {
+            if ((g->options.edition == QA_Q2_RERELEASE ? p->rules.max_clients > 1
+                                                       : g->options.deathmatch) &&
+                !p->rules.cheats)
+                return q2_player_print(g, id, 2,
+                                      "You must run the server with '+set cheats 1' to "
+                                      "enable this command.\n", e);
+            return give(g, a, count, args, true, e);
+        }
+        *recognized = false;
+        return true;
+    }
     if (equal_name(command, "say") || equal_name(command, "say_team"))
         return say(g, a, text, equal_name(command, "say_team"), e);
     if (equal_name(command, "players") || equal_name(command, "playerlist"))
@@ -590,18 +662,8 @@ bool qa_q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, si
     }
     if (p->intermission)
         return true;
-    if (equal_name(command, "use") || equal_name(command, "drop")) {
-        bool using = equal_name(command, "use");
-        const qa_q2_item_definition *item = qa_q2_item_lookup(g, text);
-        if (!item) {
-            bool handled;
-            if (!supplemental_action(g, a, text, using ? QA_ITEM_USE : QA_ITEM_DROP, &handled, e))
-                return false;
-            if (handled || !q2_actor_live(g, id))
-                return true;
-        }
-        return using ? use_item(g, a, item, e) : drop_item(g, a, item, e);
-    }
+    if (equal_name(command, "use") || equal_name(command, "drop"))
+        return item_command(g, a, text, equal_name(command, "use"), e);
     if (equal_name(command, "inven")) {
         s->show_scores = s->show_help = false;
         s->show_inventory = !s->show_inventory;
@@ -696,7 +758,7 @@ bool qa_q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, si
                                    "enable this command.\n",
                                    e);
         if (equal_name(command, "give"))
-            return give(g, a, count, args, e);
+            return give(g, a, count, args, true, e);
         if (equal_name(command, "target")) {
             qa_string_id target;
             if (!qa_builtin_resource(&g->services, text, &target, e))
@@ -718,8 +780,8 @@ bool qa_q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, si
             if (!qa_combat_set_traits(g->services.combat, id, &combat, e))
                 return false;
         } else if (equal_name(command, "notarget")) {
-            s->info.notarget = !s->info.notarget;
-            enabled = s->info.notarget;
+            if (!qa_q2_player_notarget(g, id, &enabled, e))
+                return false;
         } else {
             s->info.noclip = !s->info.noclip;
             enabled = s->info.noclip;
@@ -732,7 +794,19 @@ bool qa_q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, si
                  enabled ? "ON" : "OFF");
         return !q2_actor_live(g, id) || q2_player_print(g, id, 2, text, e);
     }
-    char unknown[2048];
+    *recognized = false;
+    return true;
+}
+bool qa_q2_player_command(qa_q2_game *g, qa_actor_id id, const char *command, size_t count,
+                          const char *const *args, qa_error *e) {
+    bool handled;
+    if (!q2_player_command(g, id, command, count, args, &handled, e))
+        return false;
+    if (handled || !q2_actor_live(g, id))
+        return true;
+    char text[2048], unknown[2048];
+    join_arguments(count, args, text, sizeof(text));
     snprintf(unknown, sizeof(unknown), "%s%s%.1800s", command, count ? " " : "", text);
-    return say(g, a, unknown, false, e);
+    q2_actor *a = q2_client(g, id, e);
+    return a && say(g, a, unknown, false, e);
 }

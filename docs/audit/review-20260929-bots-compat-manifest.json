@@ -1,0 +1,66 @@
+{
+  "scope": "repair only; existing uncommitted implementation preserved",
+  "before_method": "Exact inverse of this review changes for untracked sources; HEAD for the two previously clean tracked native_host files. The inverse is metadata reconstruction, not an independently captured initial snapshot.",
+  "files": [
+    {
+      "path": "include/qa/bot_runtime.h",
+      "before_sha256": "fea431248f02a46e6e87999bd5d27cbf9ad39450512820d90bea804a447d0ad5",
+      "after_sha256": "6aac314347c962c4f6e31afcf9aa8eed62b29c997e07fd369623e495c2d1f2b9"
+    },
+    {
+      "path": "src/bots/runtime/internal.h",
+      "before_sha256": "776f0f673fe2147d9cd0b349760018595115d555f59ef7c80ae1529e16ab7fd7",
+      "after_sha256": "1c25b415d333c36146db9d3996173c75166c04124fb4c7d3ccbf7b986c14c8ce"
+    },
+    {
+      "path": "src/bots/runtime/core.c",
+      "before_sha256": "43c040019cb3a5118f24eb34596092e918d1452b5a6bdce5d40666e93034f768",
+      "after_sha256": "d6e0eafac0037f396649d647936f3e51f0ec3481f9848c909a1bdcb86c7fcc71"
+    },
+    {
+      "path": "src/bots/runtime/setup.c",
+      "before_sha256": "43750183d985597a6c6c05f40e8cee69f5811c80fb99bb8a7bfef3631275a26e",
+      "after_sha256": "d55371d619773202f39ff754bfe5fc35bfd9b56fa213cae5083623c65303e2aa"
+    },
+    {
+      "path": "src/compat/q3_host/host.c",
+      "before_sha256": "89485bf1c0f2e8bde04ccbaa576a335e8aab73e5510aa1bf51c83a422fb77fed",
+      "after_sha256": "fc3cf253d7c76eee0e7f581a6ad98d620445a583414d1ff09628ea93a21bf11e"
+    },
+    {
+      "path": "src/compat/q3_host/bot_library.c",
+      "before_sha256": "ad4cb3f234bf148957edd5d10a7bcd5c73a4b877fa4fafd2ba4dd78df6a1c5bc",
+      "after_sha256": "96c5f57735a0556978ae40f1abb6c29947de1d6d31048c006912fd8c3062b252"
+    },
+    {
+      "path": "src/compat/q3_host/bot_chat.c",
+      "before_sha256": "05042ef87be825d16c4f8aefc987f33854ea2f8a78c5d2436566f9385ae8ea97",
+      "after_sha256": "7c8ec2ce04ea54b9f8e3e88cc33f5f402e4f6e1b5cb24611b3d6f88c585ed29f"
+    },
+    {
+      "path": "src/compat/q3_host/game_records.c",
+      "before_sha256": "36f88aaaab0d733a985edfa69d2daac613ad09d8389cfdcce97b3463e049e38d",
+      "after_sha256": "7124c960b32e98bb0d0dfb324cb8ffe6da5cb3acfd384f40dbad373d7557abbe"
+    },
+    {
+      "path": "src/compat/native_host/host.c",
+      "before_sha256": "e674c4d108c2ec7a796c473dd1085c6bcf116362b277d3c3fcdbc82f755b8a63",
+      "after_sha256": "7f3c837874d03e0ef9a53b0017a4d75e1488d326c8319e84c180444ac1e364b6"
+    },
+    {
+      "path": "src/compat/native_host/checkpoint.c",
+      "before_sha256": "7368239771c94bdf85050cdfd942862e4fb408c1dcf76afb4e83c0cf43be7eec",
+      "after_sha256": "2cb71fcd911f49af8ca8b407ee9c63ef840be96d27dccc050ca762d9eb3550b4"
+    },
+    {
+      "path": "include/qa/native.h",
+      "before_sha256": "c013ea81d65e2835cde18bde8c70eefbee7f7353f7624e7f5bdd61f8dda6b2f1",
+      "after_sha256": "7d13c043e762261270012a0c63ee88e0d88f554e81e7b59a9a26fcb464cffa15"
+    },
+    {
+      "path": "src/compat/native/instance.c",
+      "before_sha256": "e6d195bbbe1ec8064b15d330c115c824ec083bc2a714960ae1bf5566f624ca14",
+      "after_sha256": "51bd39f15cf3827b4e39196d935ac8fbb97d4c98f48c81fcd7b8d4370b938403"
+    }
+  ]
+}

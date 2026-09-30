@@ -109,6 +109,8 @@ typedef struct qa_q2_monster_checkpoint {
   uint64_t air_ns, environment_ns, jump_ns, flies_ns, fly_position_ns;
   uint64_t recovery_ns, death_ns, spawn_ns, timestamp_ns, coop_check_ns;
   uint64_t react_ns;
+  qa_builtin_powerups widow_powers;
+  qa_vec3 widow_previous_target;
   uint32_t corpse_phase;
   uint64_t corpse_due_ns, corpse_end_ns;
   qa_q2_saved_reference enemy, old_enemy, goal, move_target;

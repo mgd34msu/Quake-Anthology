@@ -185,17 +185,21 @@ bool q2_spawn_model_debris(qa_q2_game *g, qa_actor_id source, const char *model,
     return qa_world_body_read(g->services.world, source, &body, e) &&
            debris(g, body, model, speed, origin, e);
 }
-bool q2_gib_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
+static bool gib_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
     q2_actor *a = q2_actor_get(g, contact->self, false, e);
     if (a == NULL)
         return false;
     q2_projectile *p = &a->projectile;
     if (p->kind != Q2_GIB || p->armed)
         return true;
+    if ((p->gib_flags & Q2_GIB_WIDOW_SIZED) != 0)
+        return q2_widow_gib_touch(g, contact, e);
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
         return false;
-    if (g->options.edition == QA_Q2_RERELEASE) {
+    if (!q2_actor_live(g, a->id))
+        return true;
+    if (g->options.edition == QA_Q2_RERELEASE && (p->gib_flags & Q2_GIB_WIDOW) == 0) {
         if ((p->gib_flags & Q2_GIB_UPRIGHT) != 0 && contact->has_plane &&
             contact->plane.normal.z > 0.7f) {
             body.angles.x = fmaxf(-5, fminf(5, body.angles.x));
@@ -219,6 +223,8 @@ bool q2_gib_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
     body.angles = angles_for(right);
     if (!qa_world_body_write(g->services.world, a->id, &body, e))
         return false;
+    if (!q2_actor_live(g, a->id))
+        return true;
     const char *model = qa_strings_cstr(qa_session_strings(g->services.session), p->model);
     if (model != NULL && strcmp(model, "models/objects/gibs/sm_meat/tris.md2") == 0) {
         ++p->frame;
@@ -228,8 +234,22 @@ bool q2_gib_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
     }
     return true;
 }
+typedef struct gib_contact_call {
+    qa_q2_game *game;
+    const qa_touch_contact *contact;
+} gib_contact_call;
+static bool gib_contact(void *context, qa_actor_id actor, qa_error *e) {
+    (void)actor;
+    gib_contact_call *call = context;
+    return gib_touch(call->game, call->contact, e);
+}
+bool q2_gib_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) {
+    gib_contact_call call = {g, contact};
+    return qa_q2_run_actor(g, contact->self, gib_contact, &call, e);
+}
 bool q2_gib_reaction(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcome, qa_error *e) {
-    if (a->projectile.kind == Q2_DEBRIS || g->options.edition == QA_Q2_CLASSIC ||
+    if (a->projectile.kind == Q2_DEBRIS ||
+        (a->projectile.gib_flags & Q2_GIB_WIDOW) != 0 || g->options.edition == QA_Q2_CLASSIC ||
         (outcome->request.attack.cause.kind == QA_CAUSE_Q2 &&
          outcome->request.attack.cause.source.q2.means_of_death == 20))
         return qa_session_release(g->services.session, a->id, e);
@@ -237,6 +257,8 @@ bool q2_gib_reaction(qa_q2_game *g, q2_actor *a, const qa_damage_outcome *outcom
 }
 bool q2_gib_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_projectile *p = &a->projectile;
+    if ((p->gib_flags & Q2_GIB_WIDOW_LEGS) != 0)
+        return q2_widow_legs_think(g, a, e);
     if (p->kind == Q2_SPAWN_GROWTH) {
         if (p->next_ns > g->now_ns)
             return true;

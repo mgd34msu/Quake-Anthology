@@ -495,3 +495,19 @@ void gl_resources_destroy(qa_gl_renderer *renderer)
     memset(&renderer->stream, 0, sizeof(renderer->stream));
     renderer->white_texture = 0;
 }
+
+bool qa_gl_resident_images(const qa_gl_renderer *renderer, qa_arena *scratch,
+                           const qa_scene_image *const **out, size_t *count, qa_error *error)
+{
+    if (!renderer || renderer->closed || !scratch || !out || !count) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid GPU image inventory observation"); return false;
+    }
+    size_t n = 0;
+    for (const gl_texture_entry *entry = renderer->textures; entry; entry = entry->next) ++n;
+    if (n > SIZE_MAX / sizeof(qa_scene_image *)) { qa_error_set(error, QA_ERROR_MEMORY, 0, "GPU inventory count overflow"); return false; }
+    const qa_scene_image **rows = n ? qa_arena_alloc(scratch, n * sizeof(*rows), _Alignof(qa_scene_image *), error) : NULL;
+    if (n && !rows) return false;
+    size_t at = n;
+    for (const gl_texture_entry *entry = renderer->textures; entry; entry = entry->next) rows[--at] = entry->image;
+    *out = rows; *count = n; return true;
+}

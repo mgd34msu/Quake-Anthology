@@ -216,6 +216,11 @@ bool qa_q2_item_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_item_checkpoi
         a->powers = NULL;
         goto fail;
     }
+    if (a->item && !q2_item_observe(g, a, e)) {
+        a->item = NULL;
+        a->powers = NULL;
+        goto fail;
+    }
     return true;
 memory:
     qa_error_set(e, QA_ERROR_MEMORY, 0, "Restoring Q2 item state");

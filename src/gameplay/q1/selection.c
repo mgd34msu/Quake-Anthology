@@ -122,6 +122,11 @@ bool q1_weapon_impulse(qa_q1_game *g, q1_player *player, uint8_t impulse, qa_err
         if (handled || !q1_alive(g, player->id))
             return true;
     }
+    bool source_handled;
+    if (!q1_source_impulse(g, player->id, impulse, &source_handled, error))
+        return false;
+    if (source_handled || !q1_alive(g, player->id))
+        return true;
     if (impulse == 10 || impulse == 12)
         return cycle(g, player, impulse == 12, error);
     qa_q1_weapon selected =

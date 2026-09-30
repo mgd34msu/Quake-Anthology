@@ -12,13 +12,15 @@ bool q1_mg3_hammer_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
     if (!q1_create(g, "mg3_hammer_strike", Q1_TIMER, player->id, &strike, error))
         return false;
     player->mg3_hammer_body = q1_ammo_count(g, player->id, QA_Q1_CELLS) < 30 ? 31 : 37;
-    if (!q1_schedule(g, strike, 0.2, Q1_THINK_MG3_HAMMER, error))
+    if (!q1_schedule(g, strike, q1_weapon_shape(player->weapon)->launch_delay,
+                     Q1_THINK_MG3_HAMMER, error))
         return false;
     player->continuous = false;
     player->animation_at = g->time;
     player->animation_base = player->weapon_frame = 1;
     player->hostile_until = g->time + 1;
-    return attack_delay(g, player, 0.5f, error) && q1_weapon_event(g, player, 0, 0, error);
+    return attack_delay(g, player, q1_weapon_interval(player->weapon), error) &&
+           q1_weapon_event(g, player, 0, 0, error);
 }
 bool q1_mg3_hammer_strike(qa_q1_game *g, q1_actor *strike, qa_error *error) {
     q1_player *player = q1_player_get(g, strike->owner);
@@ -109,6 +111,8 @@ bool qa_q1_mg3_hammer_body_frame(const qa_q1_game *g, qa_actor_id actor, int32_t
 bool q1_mg3_weapon_frame(qa_q1_game *g, q1_player *player, qa_error *error) {
     if (!player->arsenal || q1_health(g, player->id) <= 0)
         return true;
+    if (!q1_alive(g, player->id))
+        return true;
     if (player->weapon == QA_Q1_MG3_MJOLNIR && player->mg3_hammer_glow &&
         player->mg3_hammer_until <= g->time) {
         player->mg3_hammer_glow = false;
@@ -123,6 +127,8 @@ bool q1_mg3_weapon_frame(qa_q1_game *g, q1_player *player, qa_error *error) {
     int ammo = q1_weapon_ammo(player->weapon);
     if (ammo < 0 || q1_ammo_count(g, player->id, (qa_q1_ammo)ammo) != 0)
         return true;
+    if (!q1_alive(g, player->id))
+        return true;
     static const char *const names[] = {"item_shells", "item_spikes", "item_rockets", "item_cells"};
     if (ammo < 4) {
         for (uint32_t i = 0; i < g->capacity; ++i) {
@@ -133,6 +139,8 @@ bool q1_mg3_weapon_frame(qa_q1_game *g, q1_player *player, qa_error *error) {
                 continue;
             if (!q1_schedule(g, item, 0.5 * q1_random(g), Q1_THINK_RESPAWN, error))
                 return false;
+            if (!q1_alive(g, player->id))
+                return true;
         }
     }
     return qa_q1_player_select(g, player->id, q1_best_weapon(g, player), error);

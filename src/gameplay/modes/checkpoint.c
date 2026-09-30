@@ -67,7 +67,7 @@ static qa_mode_object_checkpoint capture_object(const mode_object *o) {
 }
 static bool checkpoint_capture(qa_modes *m, qa_modes_checkpoint *out, qa_error *e) {
     qa_modes_checkpoint saved = {
-        .version = 2, .random = m->random, .attack_sequence = m->attack_sequence};
+        .version = 3, .random = m->random, .attack_sequence = m->attack_sequence};
     saved.players = calloc(m->actor_capacity, sizeof(*saved.players));
     saved.modes = calloc(m->mode_capacity, sizeof(*saved.modes));
     saved.objects = calloc(m->actor_capacity, sizeof(*saved.objects));
@@ -211,6 +211,7 @@ static bool validate_instance(qa_modes *m, const qa_mode_checkpoint *v, qa_error
             p->introduction_frames < 0 || p->suicide_count < 0 ||
             !reference(m, p->player.follow_target) || p->player.automatic_follow < 0 ||
             p->player.automatic_follow > 2 ||
+            !isfinite(p->player.ctf_status) || !isfinite(p->player.ctf_access) ||
             (p->external_owner && !m->options.hooks.restore_player_binding))
             return mode_fail(e, "invalid saved mode member");
         for (int j = 0; j < 4; ++j)
@@ -319,7 +320,7 @@ static bool restore_instance(qa_modes *m, const qa_mode_checkpoint *saved, qa_er
     return mode_horde_restore(m, v, saved->horde, e);
 }
 bool qa_modes_checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved, qa_error *e) {
-    if (!m || m->callback_depth || !saved || saved->version != 2 ||
+    if (!m || m->callback_depth || !saved || saved->version != 3 ||
         saved->player_count > m->actor_capacity || saved->mode_count > m->mode_capacity ||
         saved->object_count > m->actor_capacity ||
         saved->external_objective_count > m->objective_capacity ||

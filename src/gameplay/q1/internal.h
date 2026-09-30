@@ -282,6 +282,7 @@ typedef struct q1_timed_effect {
 typedef struct q1_actor {
     struct q1_actor *allocation_next, *pool_next;
     q1_map_state *map;
+    qa_pickup_lease pickup_observation;
     qa_actor_id id, owner, activator;
     qa_string_id classname, model, target, targetname, killtarget, message;
     qa_vec3 initial_angles;
@@ -293,6 +294,12 @@ typedef struct q1_actor {
     uint32_t spawnflags, effects;
     int32_t frame, skin;
     bool active, native, aimed_damage, consumed_corpse, axe_hit, touch_disabled;
+    struct {
+        q1_think_kind think;
+        double next_think;
+        int64_t physics_think;
+        bool active, damageable;
+    } frozen;
     union {
         q1_monster monster;
         q1_projectile projectile;
@@ -374,10 +381,14 @@ struct qa_q1_game {
     qa_vec3 forward, right, up;
     qa_item_id weapons[QA_Q1_WEAPON_COUNT], ammo[QA_Q1_AMMO_COUNT];
     qa_string_id weapon_models[QA_Q1_WEAPON_COUNT];
+    qa_string_id hammer_glow_model, blood_shotgun_model, blood_super_shotgun_model;
     qa_string_id player_model, eyes_model, player_head_model;
     qa_item_id vengeance_item;
     qa_supply *source_supply;
     q1_actor_snapshot *snapshots;
+    size_t observation_depth;
+    size_t retention_depth;
+    bool destroy_pending;
     bool run_straight;
     bool component_admitted;
     uint8_t rune_knight_melee, enemy_range;
@@ -393,8 +404,12 @@ bool q1_map_think(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_map_reaction(qa_q1_game *, q1_actor *, const qa_damage_outcome *, qa_error *);
 bool q1_map_clone(qa_q1_game *, const q1_actor *, q1_actor *, qa_error *);
 void q1_map_actor_released(qa_q1_game *, q1_actor *);
+void q1_map_rotation_released(qa_q1_game *, qa_actor_id);
+void q1_map_addon_released(qa_q1_game *, qa_actor_id);
+void q1_map_addon_clone(qa_q1_game *, qa_actor_id, qa_actor_id);
 void q1_map_destroy(qa_q1_game *);
 void q1_map_frame_begin(qa_q1_game *);
+bool q1_map_addon_frame(qa_q1_game *, qa_error *);
 bool q1_map_collision(const q1_actor *, qa_actor_collision *);
 bool q1_map_bind_target(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_spawn_template(qa_q1_game *, const qa_q1_spawn *, const qa_body_state *, qa_actor_id *,
@@ -522,11 +537,17 @@ bool q1_bullets(qa_q1_game *, qa_actor_id, qa_vec3, qa_vec3, unsigned, float, fl
 enum {
     Q1_LIGHTNING_DAMAGE_FIRST = 1u,
     Q1_LIGHTNING_REMEMBER_ALL = 2u,
-    Q1_LIGHTNING_PARTICLES = 4u
+    Q1_LIGHTNING_PARTICLES = 4u,
+    Q1_LIGHTNING_WETSUIT = 8u
 };
 bool q1_lightning_rays(qa_q1_game *, qa_actor_id attacker, qa_actor_id inflictor, qa_vec3 start,
                        qa_vec3 end, float damage, float blood, int32_t color, qa_vec3 direction,
                        uint32_t flags, qa_q1_weapon, const char *cause, qa_error *);
+bool q1_electric_rays(qa_q1_game *, qa_actor_id attacker, qa_actor_id inflictor,
+                      qa_actor_id ignore, qa_vec3 start, qa_vec3 end, float damage, float blood,
+                      int32_t color, qa_vec3 direction, uint32_t flags, qa_q1_weapon,
+                      const char *cause, qa_error *);
+bool q1_hipnotic_lightning_claimed(const qa_q1_game *, qa_actor_id);
 bool q1_axe_strike(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_projectile_spawn(qa_q1_game *, qa_actor_id, qa_q1_weapon, q1_projectile_kind, qa_vec3,
                          qa_vec3, q1_actor **, qa_error *);
@@ -604,6 +625,7 @@ bool q1_gremlin_fire_nail(qa_q1_game *, q1_actor *, bool laser, qa_error *);
 bool q1_gremlin_lightning(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_gremlin_backpack(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_weapon_impulse(qa_q1_game *, q1_player *, uint8_t, qa_error *);
+bool q1_source_impulse(qa_q1_game *, qa_actor_id, uint8_t, bool *handled, qa_error *);
 bool q1_monster_pain(qa_q1_game *, q1_actor *, qa_actor_id, float, qa_error *);
 bool q1_monster_die(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_monster_use(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
@@ -621,6 +643,7 @@ bool q1_monster_melee(qa_q1_game *, q1_actor *, float range, float scale, unsign
                       bool visible, qa_error *);
 bool q1_pickup_spawn(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_pickup_supply_create(qa_q1_game *, qa_error *);
+bool q1_pickup_observe(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_pickup_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
 bool q1_pickup_use(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_pickup_think(qa_q1_game *, q1_actor *, qa_error *);
@@ -630,6 +653,9 @@ bool q1_spawn_backpack(qa_q1_game *, qa_vec3, qa_q1_weapon, const float ammo[QA_
                        q1_actor **, qa_error *);
 qa_q1_weapon q1_best_weapon(qa_q1_game *, q1_player *);
 int q1_weapon_ammo(qa_q1_weapon);
+float q1_weapon_interval(qa_q1_weapon);
+const qa_q1_weapon_view *q1_weapon_shape(qa_q1_weapon);
+bool q1_horde_axe_interval(qa_q1_game *, q1_player *, float *, bool *, qa_error *);
 bool q1_character_bubbles(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_bubble_think(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_environment_damage(qa_q1_game *, qa_actor_id, float, qa_hazard, qa_error *);

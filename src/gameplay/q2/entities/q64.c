@@ -338,22 +338,35 @@ bool q2_q64_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e) 
     if (!qa_world_body_read(g->services.world, a->id, &from, e) ||
         !qa_world_body_read(g->services.world, target, &to, e))
         return false;
+    if (!q2_actor_live(g, a->id))
+        return true;
     s->goal = target;
     s->activator = activator;
     qa_builtin_actor_traits traits = {0};
-    if (q2_actor_live(g, activator) && g->services.actor_traits &&
-        g->services.actor_traits(g->services.context, activator, &traits) && traits.player) {
+    bool player = q2_actor_live(g, activator) && g->services.actor_traits &&
+                  g->services.actor_traits(g->services.context, activator, &traits) && traits.player;
+    if (!q2_actor_live(g, a->id))
+        return true;
+    if (player) {
         qa_body_state body;
         qa_q2_visual visual;
         if (!qa_world_body_read(g->services.world, activator, &body, e) ||
             !qa_q2_entity_visual(g, activator, &visual, e))
             return false;
+        if (!q2_actor_live(g, a->id))
+            return true;
         q2_actor *copy;
         if (!q2_entity_native_spawn(g, "target_camera_dummy", &body, Q2E_CAMERA_DUMMY, &copy, e))
             return false;
+        qa_actor_id copy_id = copy->id;
+        if (!q2_actor_live(g, a->id)) {
+            return !q2_actor_live(g, copy_id) ||
+                   qa_session_release(g->services.session, copy_id, e);
+        }
         copy->entity->q64 = calloc(1, sizeof(*copy->entity->q64));
         if (!copy->entity->q64) {
             qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q64 camera dummy");
+            (void)qa_session_release(g->services.session, copy_id, NULL);
             return false;
         }
         s->enemy = copy->id;
@@ -363,16 +376,27 @@ bool q2_q64_use(qa_q2_game *g, q2_actor *a, qa_actor_id activator, qa_error *e) 
         copy->entity->visual.visible = true;
         copy->physics.motion = QA_PHYSICS_STEP;
         q2_entity_schedule(g, copy, Q2ET_CAMERA_DUMMY, .1f);
-        if (!q2_entity_solid(g, copy, QA_PHYSICS_BOX, e) || !q2_entity_show(g, copy, e))
+        bool okay = q2_entity_solid(g, copy, QA_PHYSICS_BOX, e);
+        if (okay && q2_actor_live(g, a->id) && q2_actor_live(g, copy_id))
+            okay = q2_entity_show(g, copy, e);
+        if (!okay) {
+            if (q2_actor_live(g, copy_id))
+                (void)qa_session_release(g->services.session, copy_id, NULL);
             return false;
+        }
         if (!q2_actor_live(g, a->id))
-            return true;
+            return !q2_actor_live(g, copy_id) ||
+                   qa_session_release(g->services.session, copy_id, e);
+        if (!q2_actor_live(g, copy_id))
+            s->enemy = (qa_actor_id){0};
     }
     v->distance = v->remaining = qa_vec_length(qa_vec_sub(to.origin, from.origin));
     v->speed = s->speed;
     v->angles = qa_v3(0, 0, 0);
     if (!look_at(g, a, from.origin, &v->angles, e))
         return false;
+    if (!q2_actor_live(g, a->id))
+        return true;
     q2_players *players = g->player_runtime;
     players->intermission = true;
     players->next_map = 0;

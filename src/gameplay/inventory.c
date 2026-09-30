@@ -426,6 +426,8 @@ bool qa_inventory_destroy(qa_inventory *table, qa_error *e)
 {
     if (!table) return true;
     if (table->calls) return fail(e, QA_ERROR_ARGUMENT, "Cannot destroy inventory during a callback");
+    for (size_t i = 0; i < 4; ++i)
+        if (!qa_operation_destroy_validate(table->operations[i], e)) return false;
     for (size_t i = 0; i < 4; ++i) qa_operation_destroy(table->operations[i], NULL);
     for (uint32_t i = 0; i < table->capacity; ++i) if (table->stores[i]) drop_store(table->stores[i]);
     free(table->stores); free(table); return true;
@@ -466,6 +468,156 @@ bool qa_inventory_bind(qa_inventory *table, qa_actor_id actor, const qa_inventor
     store->primary = *binding;
     if (!install(table, actor, store, e)) { free(store); return false; }
     return true;
+}
+
+static bool primary_snapshot(qa_inventory *table, inventory_store *store,
+                             const qa_inventory_binding *binding,
+                             qa_inventory_entry **out, size_t *out_count, qa_error *e)
+{
+    uint64_t revision = store->revision;
+    size_t count = binding->count(binding->context);
+    if (!require_current(table, store, NULL, e)) return false;
+    if (store->revision != revision)
+        return fail(e, QA_ERROR_NOT_FOUND, "Inventory changed during primary count callback");
+    if (count > SIZE_MAX / sizeof(qa_inventory_entry))
+        return fail(e, QA_ERROR_MEMORY, "Primary inventory snapshot size overflow");
+    qa_inventory_entry *entries = count ? calloc(count, sizeof(*entries)) : NULL;
+    if (count && !entries) return fail(e, QA_ERROR_MEMORY, "Cannot snapshot primary inventory");
+    for (size_t i = 0; i < count; ++i) {
+        qa_inventory_entry entry;
+        if (!binding->at(binding->context, i, &entry, e) ||
+            !require_current(table, store, NULL, e) ||
+            !qa_inventory_validate_entry(&entry, &entries[i], e)) goto failed;
+        if (store->revision != revision) {
+            fail(e, QA_ERROR_NOT_FOUND, "Inventory changed during primary entry callback");
+            goto failed;
+        }
+        for (size_t j = 0; j < i; ++j) if (entries[j].item == entries[i].item) {
+            fail(e, QA_ERROR_FORMAT, "Duplicate primary inventory item"); goto failed;
+        }
+    }
+    *out = entries; *out_count = count; return true;
+failed:
+    free(entries); return false;
+}
+
+bool qa_inventory_adopt_primary(qa_inventory *table, qa_actor_id actor,
+                                const qa_inventory_binding *binding,
+                                qa_inventory_lease *out, qa_error *e)
+{
+    if (!out || !binding_valid(binding))
+        return fail(e, QA_ERROR_ARGUMENT, "Incomplete primary inventory admission");
+    if (!qa_inventory_has(table, actor)) {
+        if (!qa_inventory_bind(table, actor, binding, e)) return false;
+        *out = (qa_inventory_lease){actor, table->stores[actor.slot]->serial}; return true;
+    }
+    inventory_store *store = acquire(table, actor);
+    if (!store) return fail(e, QA_ERROR_NOT_FOUND, "Primary inventory actor retired");
+    bool ok = false;
+    qa_inventory_entry *source = NULL, *adopted = NULL;
+    size_t count = 0, written = 0;
+    if (store->references != 2) {
+        fail(e, QA_ERROR_ARGUMENT, "Primary inventory admission requires idle callbacks"); goto done;
+    }
+    if (!store->local) {
+        if (store->primary.context != binding->context || store->primary.count != binding->count ||
+            store->primary.at != binding->at || store->primary.write != binding->write ||
+            store->primary.mutable_capacity != binding->mutable_capacity) {
+            fail(e, QA_ERROR_ARGUMENT, "Primary inventory already belongs to another source"); goto done;
+        }
+        *out = (qa_inventory_lease){actor, store->serial}; ok = true; goto done;
+    }
+    if (!primary_snapshot(table, store, binding, &source, &count, e)) goto done;
+    if (store->references != 2) {
+        fail(e, QA_ERROR_ARGUMENT, "Primary inventory callback retained an admission lease"); goto done;
+    }
+    adopted = count ? malloc(count * sizeof(*adopted)) : NULL;
+    if (count && !adopted) { fail(e, QA_ERROR_MEMORY, "Cannot prepare primary inventory adoption"); goto done; }
+    for (size_t i = 0; i < count; ++i) {
+        adopted[i] = source[i];
+        size_t local = local_index(store, source[i].item);
+        if (local < store->count) {
+            adopted[i].count = store->entries[local].count;
+            qa_inventory_entry normalized;
+            if (!qa_inventory_validate_entry(&adopted[i], &normalized, e)) goto done;
+            if (normalized.count != adopted[i].count) {
+                fail(e, QA_ERROR_ARGUMENT, "Canonical inventory count cannot be preserved by source representation"); goto done;
+            }
+            adopted[i] = normalized;
+        }
+    }
+    if (table->serial == UINT64_MAX || store->revision == UINT64_MAX) {
+        fail(e, QA_ERROR_ARGUMENT, "Primary inventory admission identity exhausted"); goto done;
+    }
+    uint64_t serial = ++table->serial, revision = store->revision;
+    for (size_t i = 0; i < count; ++i) {
+        written = i + 1;
+        if (adopted[i].count != source[i].count &&
+            !binding->write(binding->context, &adopted[i], e)) goto rollback;
+        if (!require_current(table, store, NULL, e)) goto rollback;
+        if (store->revision != revision) {
+            fail(e, QA_ERROR_NOT_FOUND, "Inventory changed during primary adoption write"); goto rollback;
+        }
+    }
+    size_t retained = 0;
+    for (size_t i = 0; i < store->count; ++i) {
+        bool external = false;
+        for (size_t j = 0; j < count; ++j) if (store->entries[i].item == source[j].item) { external = true; break; }
+        if (!external) store->entries[retained++] = store->entries[i];
+    }
+    store->count = retained; store->local = false; store->primary = *binding;
+    store->serial = serial; store_changed(store);
+    *out = (qa_inventory_lease){actor, serial}; ok = true; goto done;
+rollback:
+    if (current(table, store, NULL) && store->revision == revision) {
+        qa_error original = e ? *e : (qa_error){0};
+        while (written) {
+            size_t i = --written;
+            if (adopted[i].count != source[i].count) {
+                qa_error rollback_error = {0};
+                if (!binding->write(binding->context, &source[i], &rollback_error)) {
+                    if (e) *e = rollback_error;
+                    goto done;
+                }
+                if (!current(table, store, NULL) || store->revision != revision) goto done;
+            }
+        }
+        if (e) *e = original;
+    }
+done:
+    free(adopted); free(source); release_store(table, store); return ok;
+}
+
+bool qa_inventory_detach_primary(qa_inventory *table, qa_inventory_lease lease,
+                                 void *context, qa_error *e)
+{
+    inventory_store *store = acquire(table, lease.actor);
+    if (!store) return fail(e, QA_ERROR_NOT_FOUND, "Primary inventory detach actor retired");
+    bool ok = false;
+    qa_inventory_entry *source = NULL;
+    size_t count = 0;
+    if (store->local || store->serial != lease.serial || store->primary.context != context) {
+        fail(e, QA_ERROR_NOT_FOUND, "Primary inventory detach binding changed"); goto done;
+    }
+    if (store->references != 2 || store->revision == UINT64_MAX || table->serial == UINT64_MAX) {
+        fail(e, QA_ERROR_ARGUMENT, "Primary inventory detach requires idle callbacks and available identity"); goto done;
+    }
+    if (!primary_snapshot(table, store, &store->primary, &source, &count, e)) goto done;
+    if (store->references != 2 || table->serial == UINT64_MAX || store->revision == UINT64_MAX) {
+        fail(e, QA_ERROR_ARGUMENT, "Primary inventory changed while preparing detach"); goto done;
+    }
+    for (size_t i = 0; i < count; ++i) if (local_index(store, source[i].item) < store->count) {
+        fail(e, QA_ERROR_FORMAT, "Source primary duplicates native inventory storage"); goto done;
+    }
+    if (count > SIZE_MAX - store->count) {
+        fail(e, QA_ERROR_MEMORY, "Primary inventory detach size overflow"); goto done;
+    }
+    if (!reserve_entries(store, store->count + count, e)) goto done;
+    if (count) memcpy(store->entries + store->count, source, count * sizeof(*source));
+    store->count += count; store->local = true; store->primary = (qa_inventory_binding){0};
+    store->serial = ++table->serial; store_changed(store); ok = true;
+done:
+    free(source); release_store(table, store); return ok;
 }
 
 bool qa_inventory_create_actor(qa_inventory *table, qa_actor_id actor,

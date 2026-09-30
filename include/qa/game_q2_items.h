@@ -116,6 +116,7 @@ bool qa_q2_items_start(qa_q2_game *, qa_actor_id, const char *expression, qa_err
 bool qa_q2_powerups_read(qa_q2_game *, qa_actor_id, qa_q2_powerups *, qa_error *);
 bool qa_q2_powerups_clear(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_items_publish_visibility(qa_q2_game *, qa_actor_id, qa_error *);
+bool qa_q2_pickups_rebind(qa_q2_game *, qa_error *);
 typedef struct qa_q2_companion_checkpoint {
     uint32_t kind;
     qa_q2_saved_reference owner, enemy, child, credit;
