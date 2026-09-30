@@ -45,34 +45,51 @@ bool qa_q1_game_map_finish_addon(qa_q1_game *g, qa_q1_map_ending ending, qa_erro
 }
 
 bool q1_map_sacrifice_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, entity->id, &body, error))
-        return false;
-    entity->max_health = 100;
-    entity->aimed_damage = !(entity->spawnflags & 1);
-    entity->physics.solid = QA_PHYSICS_BOX;
-    entity->physics.motion = QA_PHYSICS_STEP;
+    qa_actor_id id = entity->id;
     entity->map->use_enabled = true;
-    if (!qa_combat_set_health(g->services.combat, entity->id, 100, error) ||
-        !q1_map_damageable(g, entity, entity->aimed_damage, error))
+    if (!qa_combat_set_health(g->services.combat, id, 100, error))
         return false;
+    entity = sacrifice(g, id);
+    if (!entity) return true;
+    entity->max_health = 100;
+    entity->physics.solid = QA_PHYSICS_BOX;
+    bool damageable = !(entity->spawnflags & 1);
+    qa_combat_state traits;
+    if (!qa_combat_read_traits(g->services.combat, id, &traits, error)) return false;
+    if (!sacrifice(g, id)) return true;
+    traits.can_take_damage = damageable;
+    if (!qa_combat_set_traits(g->services.combat, id, &traits, error)) return false;
+    if (!sacrifice(g, id)) return true;
+    if (!qa_combat_read_traits(g->services.combat, id, &traits, error)) return false;
+    entity = sacrifice(g, id);
+    if (!entity) return true;
+    entity->aimed_damage = traits.can_take_damage;
+    entity->physics.motion = QA_PHYSICS_STEP;
     bool floating = (entity->spawnflags & 2) != 0;
     if (floating) {
+        if (!q1_model(g, entity, "progs/player_hanging.mdl", error)) return false;
         entity->count = 0;
         entity->physics.angular_velocity = qa_v3(0, 36, 0);
+        qa_body_state body;
+        if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
+        entity = sacrifice(g, id);
+        if (!entity) return true;
         entity->map->pending.mover.destination = body.origin;
     } else {
         entity->count = (float)(5 + floor((double)q1_random(g) * 65 + .5));
+        if (!q1_model(g, entity, "progs/player_hanging_animated.mdl", error)) return false;
         entity->frame = (int32_t)entity->count;
     }
+    if (!q1_map_schedule(g, entity, .1,
+                          floating ? Q1_MAP_SACRIFICE_FLOAT : Q1_MAP_SACRIFICE_ANIMATE,
+                          error)) return false;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
+    if (!sacrifice(g, id)) return true;
     body.bounds = (qa_bounds){{-16, -16, -56}, {16, 16, 0}};
-    return q1_model(g, entity,
-                    floating ? "progs/player_hanging.mdl" : "progs/player_hanging_animated.mdl",
-                    error) &&
-           qa_world_body_write(g->services.world, entity->id, &body, error) &&
-           q1_map_schedule(g, entity, .1,
-                           floating ? Q1_MAP_SACRIFICE_FLOAT : Q1_MAP_SACRIFICE_ANIMATE, error) &&
-           q1_link(g, entity, error);
+    if (!qa_world_body_write(g->services.world, id, &body, error)) return false;
+    entity = sacrifice(g, id);
+    return !entity || q1_link(g, entity, error);
 }
 
 bool q1_map_sacrifice_gib(qa_q1_game *g, q1_actor *entity, qa_error *error) {
