@@ -1,4 +1,6 @@
 #include "qa/network_q1_channel.h"
+#include "qa/network_q1_connection_save.h"
+#include "../q3/save_fields.h"
 
 #include <inttypes.h>
 #include <stdio.h>
@@ -627,4 +629,202 @@ bool qa_qw_master_next(qa_qw_master_heartbeat *heartbeat, uint64_t now_ns, uint3
     if (!qa_qw_heartbeat(next_sequence, active_clients, writer)) return false;
     heartbeat->sequence = next_sequence; heartbeat->previous_ns = now_ns; heartbeat->sent = true;
     *present = true; return true;
+}
+
+static uint8_t saved_reason_kind(const qa_q1_connect_state *state, const char *owned)
+{
+    if (owned) return state->reason == owned ? 1 : 3;
+    return !state->reason ? 0 : !strcmp(state->reason, "No response") ? 2 : 3;
+}
+static bool nq_connect_saved_valid(const qa_nq_connect_client *client)
+{
+    if (!client || client->state.challenge || (!client->sent && client->sent_ns)) return false;
+    uint8_t reason = saved_reason_kind(&client->state, client->owned_reason);
+    switch (client->state.phase) {
+    case QA_Q1_CONNECT_WAITING:
+        return client->state.attempts <= 3 && client->sent == (client->state.attempts != 0) &&
+            !client->state.port && !reason;
+    case QA_Q1_CONNECT_CONNECTED:
+        return !client->state.attempts && client->state.port && !reason;
+    case QA_Q1_CONNECT_REJECTED:
+        return !client->state.attempts && !client->state.port &&
+            (reason == 1 || (reason == 2 && client->sent));
+    default: return false;
+    }
+}
+static bool qw_connect_saved_valid(const qa_qw_connect_client *client)
+{
+    if (!client || !client->userinfo || strlen(client->userinfo) > 65500 ||
+        strpbrk(client->userinfo, "\"\r\n") || client->state.attempts || client->state.port) return false;
+    uint8_t reason = saved_reason_kind(&client->state, client->owned_reason);
+    switch (client->state.phase) {
+    case QA_Q1_CONNECT_CHALLENGE: return !client->state.challenge && !reason;
+    case QA_Q1_CONNECT_REQUESTING: return !reason;
+    case QA_Q1_CONNECT_CONNECTED: return !client->state.challenge && !reason;
+    case QA_Q1_CONNECT_REJECTED: return !client->state.challenge && reason == 1;
+    default: return false;
+    }
+}
+static bool connect_state_write(qa_net_writer *writer, const qa_q1_connect_state *state,
+    uint64_t sent_ns, bool sent, const char *owned_reason)
+{
+    uint8_t reason = saved_reason_kind(state, owned_reason);
+    return qa_net_write_u32(writer, state->phase) && qa_net_write_u32(writer, state->attempts) &&
+        qa_net_write_u16(writer, state->port) && qa_net_write_i32(writer, state->challenge) &&
+        qa_net_write_u64(writer, sent_ns) && qa_net_write_u8(writer, sent) && qa_net_write_u8(writer, reason) &&
+        (reason != 1 || qa_net_write_string(writer, owned_reason));
+}
+static bool connect_state_read(qa_net_reader *reader, qa_q1_connect_state *state,
+    uint64_t *sent_ns, bool *sent, char **owned_reason)
+{
+    state->phase = (qa_q1_connect_phase)qa_net_read_u32(reader);
+    state->attempts = qa_net_read_u32(reader); state->port = qa_net_read_u16(reader);
+    state->challenge = qa_net_read_i32(reader); *sent_ns = qa_net_read_u64(reader);
+    *sent = q3_save_bool(reader); uint8_t reason = qa_net_read_u8(reader);
+    if (reader->failed || reason > 2) return qa_net_reader_fail(reader, "Invalid Q1 connection rejection ownership");
+    if (reason == 1) {
+        const char *text;
+        if (!qa_q1_read_cstring(reader, &text)) return false;
+        *owned_reason = copy_text(text, reader->error);
+        if (!*owned_reason) { reader->failed = true; return false; }
+        state->reason = *owned_reason;
+    } else state->reason = reason == 2 ? "No response" : NULL;
+    return true;
+}
+bool qa_nq_connect_checkpoint(const qa_nq_connect_client *client, qa_buffer *out, qa_error *error)
+{
+    if (!out || !nq_connect_saved_valid(client)) return fail(error, QA_ERROR_ARGUMENT, "Invalid actual NetQuake connect owner");
+    size_t size = 32;
+    if (client->owned_reason) {
+        size_t length = strlen(client->owned_reason);
+        if (length > SIZE_MAX - size - 1) return fail(error, QA_ERROR_MEMORY, "NetQuake rejection extent exceeds memory");
+        size += length + 1;
+    }
+    uint8_t *data = malloc(size);
+    if (!data) return fail(error, QA_ERROR_MEMORY, "Encoding NetQuake connection continuation");
+    qa_net_writer writer; qa_net_writer_init(&writer, data, size, error);
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x4e434151)) && qa_net_write_u32(&writer, 1) &&
+        connect_state_write(&writer, &client->state, client->sent_ns, client->sent, client->owned_reason);
+    if (!ok || writer.failed) { free(data); return false; }
+    *out = (qa_buffer){data, qa_net_writer_size(&writer)}; return true;
+}
+bool qa_nq_connect_restore_checkpoint(qa_bytes bytes, qa_nq_connect_client **out, qa_error *error)
+{
+    if (!out || *out || (bytes.size && !bytes.data)) return fail(error, QA_ERROR_ARGUMENT, "NetQuake connect restore requires empty output");
+    qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
+    if (qa_net_read_u32(&reader) != UINT32_C(0x4e434151) || qa_net_read_u32(&reader) != 1)
+        return fail(error, QA_ERROR_FORMAT, "Invalid NetQuake connect continuation schema");
+    qa_nq_connect_client *client = NULL;
+    if (!qa_nq_connect_create(&client, error)) return false;
+    bool ok = connect_state_read(&reader, &client->state, &client->sent_ns, &client->sent, &client->owned_reason) &&
+        qa_net_reader_finish(&reader) && nq_connect_saved_valid(client);
+    if (!ok) {
+        qa_nq_connect_destroy(client);
+        if (!error || error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Invalid saved NetQuake connection state");
+        return false;
+    }
+    *out = client; return true;
+}
+bool qa_qw_connect_checkpoint(const qa_qw_connect_client *client, qa_buffer *out, qa_error *error)
+{
+    if (!out || !qw_connect_saved_valid(client)) return fail(error, QA_ERROR_ARGUMENT, "Invalid actual QuakeWorld connect owner");
+    size_t size = 35 + strlen(client->userinfo);
+    if (client->owned_reason) {
+        size_t length = strlen(client->owned_reason);
+        if (length > SIZE_MAX - size - 1) return fail(error, QA_ERROR_MEMORY, "QuakeWorld rejection extent exceeds memory");
+        size += length + 1;
+    }
+    uint8_t *data = malloc(size);
+    if (!data) return fail(error, QA_ERROR_MEMORY, "Encoding QuakeWorld connection continuation");
+    qa_net_writer writer; qa_net_writer_init(&writer, data, size, error);
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x57434151)) && qa_net_write_u32(&writer, 1) &&
+        qa_net_write_u16(&writer, client->qport) && qa_net_write_string(&writer, client->userinfo) &&
+        connect_state_write(&writer, &client->state, client->sent_ns, client->sent, client->owned_reason);
+    if (!ok || writer.failed) { free(data); return false; }
+    *out = (qa_buffer){data, qa_net_writer_size(&writer)}; return true;
+}
+bool qa_qw_connect_restore_checkpoint(qa_bytes bytes, uint16_t qport, const char *userinfo,
+    qa_qw_connect_client **out, qa_error *error)
+{
+    if (!out || *out || !userinfo || (bytes.size && !bytes.data))
+        return fail(error, QA_ERROR_ARGUMENT, "QuakeWorld connect restore requires qualified identity and empty output");
+    qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
+    const char *saved_info;
+    if (qa_net_read_u32(&reader) != UINT32_C(0x57434151) || qa_net_read_u32(&reader) != 1 ||
+        qa_net_read_u16(&reader) != qport || !qa_q1_read_cstring(&reader, &saved_info) || strcmp(saved_info, userinfo))
+        return fail(error, QA_ERROR_FORMAT, "QuakeWorld connect continuation identity differs");
+    qa_qw_connect_client *client = NULL;
+    if (!qa_qw_connect_create(qport, userinfo, &client, error)) return false;
+    bool ok = connect_state_read(&reader, &client->state, &client->sent_ns, &client->sent, &client->owned_reason) &&
+        qa_net_reader_finish(&reader) && qw_connect_saved_valid(client);
+    if (!ok) {
+        qa_qw_connect_destroy(client);
+        if (!error || error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Invalid saved QuakeWorld connection state");
+        return false;
+    }
+    *out = client; return true;
+}
+
+static bool challenges_saved_valid(const qa_qw_challenges *challenges)
+{
+    if (!challenges || !challenges->random || !challenges->records || !challenges->capacity ||
+        challenges->count > challenges->capacity) return false;
+    for (size_t i = 0; i < challenges->capacity; ++i) {
+        const qw_challenge_record *record = &challenges->records[i];
+        if (!qa_net_address_equal(&record->address, &record->address, true) ||
+            (record->challenge & UINT32_C(0x80008000)) ||
+            record->issued_seconds > UINT64_MAX / UINT64_C(1000000000)) return false;
+        if (i < challenges->count)
+            for (size_t j = 0; j < i; ++j)
+                if (qa_net_address_equal(&record->address, &challenges->records[j].address, false)) return false;
+    }
+    return true;
+}
+bool qa_qw_challenges_checkpoint(const qa_qw_challenges *challenges, qa_buffer *out, qa_error *error)
+{
+    if (!out || !challenges_saved_valid(challenges) || challenges->capacity > (SIZE_MAX - 24) / 146)
+        return fail(error, QA_ERROR_ARGUMENT, "Invalid actual QuakeWorld challenge table");
+    size_t capacity = 24 + challenges->capacity * 146;
+    uint8_t *data = malloc(capacity);
+    if (!data) return fail(error, QA_ERROR_MEMORY, "Encoding QuakeWorld challenges");
+    qa_net_writer writer; qa_net_writer_init(&writer, data, capacity, error);
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x48434151)) && qa_net_write_u32(&writer, 1) &&
+        qa_net_write_u64(&writer, challenges->capacity) && qa_net_write_u64(&writer, challenges->count);
+    for (size_t i = 0; ok && i < challenges->capacity; ++i) {
+        const qw_challenge_record *record = &challenges->records[i];
+        ok = q3_save_address(&writer, &record->address) && qa_net_write_u32(&writer, record->challenge) &&
+            qa_net_write_u64(&writer, record->issued_seconds);
+    }
+    if (!ok || writer.failed) { free(data); return false; }
+    *out = (qa_buffer){data, qa_net_writer_size(&writer)}; return true;
+}
+bool qa_qw_challenges_restore_checkpoint(qa_bytes bytes, size_t capacity, qa_qw_random_fn random,
+    void *context, qa_qw_challenges **out, qa_error *error)
+{
+    if (!out || *out || !random || (bytes.size && !bytes.data))
+        return fail(error, QA_ERROR_ARGUMENT, "QuakeWorld challenges restore requires candidate binding and empty output");
+    qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
+    if (qa_net_read_u32(&reader) != UINT32_C(0x48434151) || qa_net_read_u32(&reader) != 1 ||
+        qa_net_read_u64(&reader) != capacity)
+        return fail(error, QA_ERROR_FORMAT, "QuakeWorld challenge continuation capacity differs");
+    uint64_t count = qa_net_read_u64(&reader);
+    if (reader.failed || count > capacity || capacity > qa_net_reader_remaining(&reader) / 20)
+        return fail(error, QA_ERROR_FORMAT, "Truncated QuakeWorld challenge table");
+    qa_qw_challenges *challenges = NULL;
+    if (!qa_qw_challenges_create(capacity, random, context, &challenges, error)) return false;
+    challenges->count = (size_t)count;
+    bool ok = true;
+    for (size_t i = 0; ok && i < capacity; ++i) {
+        qw_challenge_record *record = &challenges->records[i];
+        ok = q3_restore_address(&reader, &record->address);
+        record->challenge = qa_net_read_u32(&reader); record->issued_seconds = qa_net_read_u64(&reader);
+        ok = ok && !reader.failed;
+    }
+    if (ok) ok = qa_net_reader_finish(&reader) && challenges_saved_valid(challenges);
+    if (!ok) {
+        qa_qw_challenges_destroy(challenges);
+        if (!error || error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Invalid saved QuakeWorld challenge records");
+        return false;
+    }
+    *out = challenges; return true;
 }

@@ -705,6 +705,7 @@ add_library(qa_network STATIC
     src/network/q1/handshake.c
     src/network/q1/history.c
     src/network/q1/netquake.c
+    src/network/q1/peer_save.c
     src/network/q1/quakeworld.c
     src/network/q1/scalar.c
     src/network/q1/session.c

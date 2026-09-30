@@ -1,4 +1,5 @@
 #include "qa/network_q1_qw.h"
+#include "qa/network_q1_decoder_save.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -790,4 +791,44 @@ bool qa_qw_decoder_restore(qa_net_reader *r, qa_qw_decoder *d)
     free(d->baselines); free(d->names); *d=*next; free(next); return true;
 fail:
     qa_qw_decoder_destroy(next); return false;
+}
+
+static bool decoder_admitted(const qa_qw_decoder *decoder, qa_net_protocol_id protocol)
+{
+    return decoder && profile_valid(protocol) && decoder->protocol.kind==protocol.kind &&
+        decoder->protocol.revision==protocol.revision && decoder->protocol.flags==protocol.flags;
+}
+bool qa_qw_decoder_checkpoint(const qa_qw_decoder *decoder, qa_net_protocol_id protocol,
+    qa_buffer *out, qa_error *failure)
+{
+    if (!out || !decoder_admitted(decoder,protocol))
+        return error(failure,QA_ERROR_ARGUMENT,"QuakeWorld decoder requires admitted source dialect");
+    size_t capacity=32;
+    for (size_t i=0;i<decoder->baseline_capacity;++i) if (decoder->baselines[i].valid) capacity+=54;
+    for (size_t i=0;i<QA_QW_UPDATE_BACKUP;++i) {
+        if (decoder->frames[i].valid) capacity+=5+54*decoder->frames[i].frame.count;
+        if (decoder->requests[i].valid) capacity+=9;
+    }
+    uint8_t *data=malloc(capacity);
+    if (!data) return error(failure,QA_ERROR_MEMORY,"Encoding QuakeWorld decoder continuation");
+    qa_net_writer writer; qa_net_writer_init(&writer,data,capacity,failure);
+    if (!qa_qw_decoder_save(&writer,decoder)) { free(data); return false; }
+    *out=(qa_buffer){data,qa_net_writer_size(&writer)}; return true;
+}
+bool qa_qw_decoder_restore_checkpoint(qa_bytes bytes, qa_net_protocol_id protocol, qa_qw_decoder **out, qa_error *failure)
+{
+    if (!out || *out || !profile_valid(protocol) || (bytes.size && !bytes.data))
+        return error(failure,QA_ERROR_ARGUMENT,"QuakeWorld decoder restore requires admitted source and empty output");
+    qa_net_reader reader; qa_net_reader_init(&reader,bytes,failure);
+    qa_net_protocol_id saved;
+    if (qa_net_read_u32(&reader)!=UINT32_C(0x43445751) || qa_net_read_u32(&reader)!=1 ||
+        !qa_q1_read_protocol(&reader,true,&saved)) return qa_net_reader_fail(&reader,"Invalid QuakeWorld decoder continuation schema");
+    if (saved.kind!=protocol.kind || saved.revision!=protocol.revision || saved.flags!=protocol.flags)
+        return qa_net_reader_fail(&reader,"QuakeWorld decoder source admission differs");
+    qa_qw_decoder *candidate=qa_qw_decoder_create(protocol,failure);
+    if (!candidate) return false;
+    qa_net_reader_init(&reader,bytes,failure);
+    if (!qa_qw_decoder_restore(&reader,candidate) || !qa_net_reader_finish(&reader) ||
+        !decoder_admitted(candidate,protocol)) { qa_qw_decoder_destroy(candidate); return false; }
+    *out=candidate; return true;
 }

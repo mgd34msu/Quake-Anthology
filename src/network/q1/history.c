@@ -1,5 +1,7 @@
 #include "qa/network_q1.h"
+#include "qa/network_q1_history_save.h"
 #include <math.h>
+#include <stdlib.h>
 #include <string.h>
 
 void qa_qw_history_init(qa_qw_history *h) { if (h) memset(h,0,sizeof(*h)); }
@@ -71,4 +73,63 @@ void qa_qw_prediction_interpolate(const float a[3], const float av[3],
         out[i]=teleport ? b[i] : (float)((double)a[i]+f*((double)b[i]-a[i]));
         velocity[i]=teleport ? bv[i] : (float)((double)av[i]+f*((double)bv[i]-av[i]));
     }
+}
+
+static bool history_valid(const qa_qw_history *history)
+{
+    if (!history || !isfinite(history->latency_seconds)) return false;
+    for (size_t i=0;i<QA_QW_UPDATE_BACKUP;++i) {
+        const qa_qw_history_frame *frame=&history->frames[i];
+        if (frame->sequence>UINT32_C(0x7fffffff) || !isfinite(frame->sent_seconds) ||
+            (frame->valid && (frame->sequence&(QA_QW_UPDATE_BACKUP-1))!=i)) return false;
+        for (size_t j=0;j<3;++j) if (!isfinite(frame->command.angles[j])) return false;
+    }
+    return true;
+}
+bool qa_qw_history_checkpoint(const qa_qw_history *history, qa_buffer *out, qa_error *error)
+{
+    if (!out || !history_valid(history)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"QuakeWorld history capture requires valid native state"); return false;
+    }
+    size_t capacity=16+QA_QW_UPDATE_BACKUP*34;
+    uint8_t *data=malloc(capacity);
+    if (!data) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"Encoding QuakeWorld command history"); return false;
+    }
+    qa_net_writer writer; qa_net_writer_init(&writer,data,capacity,error);
+    bool ok=qa_net_write_u32(&writer,UINT32_C(0x48574151)) && qa_net_write_u32(&writer,1) &&
+        qa_net_write_f64(&writer,history->latency_seconds);
+    for (size_t i=0;i<QA_QW_UPDATE_BACKUP && ok;++i) {
+        const qa_qw_history_frame *frame=&history->frames[i]; const qa_qw_command *command=&frame->command;
+        ok=qa_net_write_u8(&writer,frame->valid) && qa_net_write_u32(&writer,frame->sequence) &&
+            qa_net_write_f64(&writer,frame->sent_seconds);
+        for (size_t j=0;j<3 && ok;++j) ok=qa_net_write_f32(&writer,command->angles[j]);
+        if (ok) ok=qa_net_write_i16(&writer,command->forward) && qa_net_write_i16(&writer,command->side) &&
+            qa_net_write_i16(&writer,command->up) && qa_net_write_u8(&writer,command->msec) &&
+            qa_net_write_u8(&writer,command->buttons) && qa_net_write_u8(&writer,command->impulse);
+    }
+    if (!ok || writer.failed) { free(data); return false; }
+    *out=(qa_buffer){data,qa_net_writer_size(&writer)}; return true;
+}
+bool qa_qw_history_restore_checkpoint(qa_bytes bytes, qa_qw_history *out, qa_error *error)
+{
+    if (!out || (bytes.size && !bytes.data)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"QuakeWorld history restore requires a candidate value"); return false;
+    }
+    qa_net_reader reader; qa_net_reader_init(&reader,bytes,error);
+    if (qa_net_read_u32(&reader)!=UINT32_C(0x48574151) || qa_net_read_u32(&reader)!=1)
+        return qa_net_reader_fail(&reader,"Invalid QuakeWorld command history schema");
+    qa_qw_history saved={0}; saved.latency_seconds=qa_net_read_f64(&reader);
+    for (size_t i=0;i<QA_QW_UPDATE_BACKUP;++i) {
+        qa_qw_history_frame *frame=&saved.frames[i]; qa_qw_command *command=&frame->command;
+        uint8_t valid=qa_net_read_u8(&reader);
+        if (valid>1) return qa_net_reader_fail(&reader,"Invalid QuakeWorld history slot flag");
+        frame->valid=valid!=0; frame->sequence=qa_net_read_u32(&reader); frame->sent_seconds=qa_net_read_f64(&reader);
+        for (size_t j=0;j<3;++j) command->angles[j]=qa_net_read_f32(&reader);
+        command->forward=qa_net_read_i16(&reader); command->side=qa_net_read_i16(&reader); command->up=qa_net_read_i16(&reader);
+        command->msec=qa_net_read_u8(&reader); command->buttons=qa_net_read_u8(&reader); command->impulse=qa_net_read_u8(&reader);
+    }
+    if (!qa_net_reader_finish(&reader)) return false;
+    if (!history_valid(&saved)) return qa_net_reader_fail(&reader,"Invalid QuakeWorld retained command history");
+    *out=saved; return true;
 }

@@ -1036,7 +1036,7 @@ static bool detached_send(void *context, const qa_net_address *to, qa_bytes byte
     return frontend_fail(error, QA_ERROR_ARGUMENT, "detached network candidate has no published transport");
 }
 static bool detached_receive(void *context, uint64_t now, qa_net_datagram *packet, qa_error *error)
-{ (void)context; (void)now; (void)error; *packet = (qa_net_datagram){.kind = QA_NET_POLL_NONE}; return true; }
+{ (void)context; (void)now; (void)error; *packet = (qa_net_datagram){.kind = QA_NET_POLL_EMPTY}; return true; }
 static void detached_close(void *context) { (void)context; }
 static bool detached_ready(const void *context) { (void)context; return false; }
 static bool detached_transport(const qa_net_address *address, qa_net_transport **out, qa_error *error)

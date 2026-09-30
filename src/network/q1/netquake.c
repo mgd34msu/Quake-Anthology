@@ -1,4 +1,5 @@
 #include "qa/network_q1_nq.h"
+#include "qa/network_q1_decoder_save.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -657,4 +658,47 @@ bool qa_nq_decoder_restore(qa_net_reader *r, qa_nq_decoder *d)
     if (!qa_net_reader_finish(r)) { qa_nq_decoder_destroy(next); return false; }
     qa_nq_decoder old=*d; *d=*next; *next=old;
     qa_nq_decoder_destroy(next); return true;
+}
+
+static bool decoder_admitted(const qa_nq_decoder *decoder, qa_net_protocol_id protocol, qa_nq_options options)
+{
+    return decoder && nq_profile(protocol) && decoder->protocol.kind==protocol.kind &&
+        decoder->protocol.revision==protocol.revision && decoder->protocol.flags==protocol.flags &&
+        decoder->options.standard_quake==options.standard_quake && decoder->options.private_rerelease==options.private_rerelease;
+}
+bool qa_nq_decoder_checkpoint(const qa_nq_decoder *decoder, qa_net_protocol_id protocol,
+    qa_nq_options options, qa_buffer *out, qa_error *error)
+{
+    if (!out || !decoder_admitted(decoder,protocol,options)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"NetQuake decoder requires admitted source dialect and options"); return false;
+    }
+    size_t count=0;
+    for (size_t i=0;i<65536;++i) if (decoder->present[i]) ++count;
+    size_t capacity=32+count*34;
+    uint8_t *data=malloc(capacity);
+    if (!data) { qa_error_set(error,QA_ERROR_MEMORY,0,"Encoding NetQuake decoder continuation"); return false; }
+    qa_net_writer writer; qa_net_writer_init(&writer,data,capacity,error);
+    if (!qa_nq_decoder_save(&writer,decoder)) { free(data); return false; }
+    *out=(qa_buffer){data,qa_net_writer_size(&writer)}; return true;
+}
+bool qa_nq_decoder_restore_checkpoint(qa_bytes bytes, qa_net_protocol_id protocol, qa_nq_options options,
+    qa_nq_decoder **out, qa_error *error)
+{
+    if (!out || *out || !nq_profile(protocol) || (bytes.size && !bytes.data)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"NetQuake decoder restore requires admitted source and empty output"); return false;
+    }
+    qa_net_reader reader; qa_net_reader_init(&reader,bytes,error);
+    qa_net_protocol_id saved;
+    if (qa_net_read_u32(&reader)!=UINT32_C(0x4443514e) || qa_net_read_u32(&reader)!=1 ||
+        !qa_q1_read_protocol(&reader,false,&saved)) return qa_net_reader_fail(&reader,"Invalid NetQuake decoder continuation schema");
+    uint8_t flags=qa_net_read_u8(&reader);
+    if (reader.failed || saved.kind!=protocol.kind || saved.revision!=protocol.revision || saved.flags!=protocol.flags ||
+        flags!=(uint8_t)((options.standard_quake?1:0)|(options.private_rerelease?2:0)))
+        return qa_net_reader_fail(&reader,"NetQuake decoder source admission differs");
+    qa_nq_decoder *candidate=NULL;
+    if (!qa_nq_decoder_create(protocol,options,&candidate,error)) return false;
+    qa_net_reader_init(&reader,bytes,error);
+    if (!qa_nq_decoder_restore(&reader,candidate) || !qa_net_reader_finish(&reader) ||
+        !decoder_admitted(candidate,protocol,options)) { qa_nq_decoder_destroy(candidate); return false; }
+    *out=candidate; return true;
 }

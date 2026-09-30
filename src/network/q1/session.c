@@ -1,4 +1,5 @@
 #include "qa/network_q1_session.h"
+#include "qa/network_q1_session_save.h"
 #include "qa/network_q1_qw.h"
 #include <errno.h>
 #include <inttypes.h>
@@ -316,4 +317,155 @@ bool qa_qw_choose_protocol(uint32_t requested, bool needs_wide, qa_net_protocol_
     if (requested!=0 && requested!=28 && requested!=29) { qa_error_set(e,QA_ERROR_ARGUMENT,0,"Unknown QW selection"); return false; }
     bool wide=requested==29 || (!requested && needs_wide);
     return qa_q1_profile(wide?29:28,wide?130:0,out,e);
+}
+
+static bool save_fail(qa_error *error, qa_status status, const char *message)
+{ qa_error_set(error, status, 0, "%s", message); return false; }
+static bool nq_identity_valid(const qa_nq_signon *state)
+{
+    return state && state->stage <= 4 && state->name && state->spawn_parameters &&
+        !strpbrk(state->name, "\"\r\n") && !strpbrk(state->spawn_parameters, "\r\n;");
+}
+bool qa_nq_signon_checkpoint(const qa_nq_signon *state, qa_buffer *out, qa_error *error)
+{
+    if (!out || !nq_identity_valid(state)) return save_fail(error, QA_ERROR_ARGUMENT, "NetQuake signon requires its prepared seat identity");
+    size_t name = strlen(state->name), parameters = strlen(state->spawn_parameters);
+    if (name > SIZE_MAX - 17 || parameters > SIZE_MAX - 17 - name)
+        return save_fail(error, QA_ERROR_MEMORY, "NetQuake signon identity extent exceeds memory");
+    size_t capacity = 17 + name + parameters;
+    uint8_t *data = malloc(capacity);
+    if (!data) return save_fail(error, QA_ERROR_MEMORY, "Encoding NetQuake signon continuation");
+    qa_net_writer writer; qa_net_writer_init(&writer, data, capacity, error);
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x534e4151)) && qa_net_write_u32(&writer, 1) &&
+        qa_net_write_u8(&writer, state->stage) && qa_net_write_u8(&writer, state->color) &&
+        qa_net_write_u8(&writer, state->has_extension_flags) && qa_net_write_u32(&writer, state->extension_flags) &&
+        qa_net_write_string(&writer, state->name) && qa_net_write_string(&writer, state->spawn_parameters);
+    if (!ok || writer.failed) { free(data); return false; }
+    *out = (qa_buffer){data, qa_net_writer_size(&writer)}; return true;
+}
+bool qa_nq_signon_restore_checkpoint(qa_bytes bytes, const qa_nq_signon *identity,
+    qa_nq_signon *out, qa_error *error)
+{
+    if (!out || out->stage || out->name || out->spawn_parameters || !nq_identity_valid(identity) ||
+        (bytes.size && !bytes.data)) return save_fail(error, QA_ERROR_ARGUMENT, "NetQuake signon restore requires admitted identity and empty output");
+    qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
+    if (qa_net_read_u32(&reader) != UINT32_C(0x534e4151) || qa_net_read_u32(&reader) != 1)
+        return save_fail(error, QA_ERROR_FORMAT, "Invalid NetQuake signon continuation schema");
+    uint8_t stage = qa_net_read_u8(&reader), color = qa_net_read_u8(&reader), flags = qa_net_read_u8(&reader);
+    uint32_t extension = qa_net_read_u32(&reader); const char *name, *parameters;
+    if (reader.failed || stage > 4 || flags > 1 || color != identity->color ||
+        (flags != 0) != identity->has_extension_flags || extension != identity->extension_flags ||
+        !qa_q1_read_cstring(&reader, &name) || !qa_q1_read_cstring(&reader, &parameters) ||
+        strcmp(name, identity->name) || strcmp(parameters, identity->spawn_parameters) || !qa_net_reader_finish(&reader))
+        return save_fail(error, QA_ERROR_FORMAT, "NetQuake signon continuation seat identity differs");
+    *out = *identity; out->stage = stage; return true;
+}
+bool qa_qw_signon_checkpoint(const qa_qw_signon *state, qa_buffer *out, qa_error *error)
+{
+    if (!state || !out) return save_fail(error, QA_ERROR_ARGUMENT, "Missing QuakeWorld signon owner/output");
+    if (state->downloading || state->offset || state->download.state || state->download.size ||
+        state->download.read || state->download.close)
+        return save_fail(error, QA_ERROR_UNSUPPORTED, "Installed QuakeWorld source download requires its actual content continuation owner");
+    uint8_t *data = malloc(10);
+    if (!data) return save_fail(error, QA_ERROR_MEMORY, "Encoding QuakeWorld signon continuation");
+    qa_net_writer writer; qa_net_writer_init(&writer, data, 10, error);
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x53574151)) && qa_net_write_u32(&writer, 1) &&
+        qa_net_write_u8(&writer, state->donor_wide) && qa_net_write_u8(&writer, state->spawned);
+    if (!ok || writer.failed) { free(data); return false; }
+    *out = (qa_buffer){data, qa_net_writer_size(&writer)}; return true;
+}
+bool qa_qw_signon_restore_checkpoint(qa_bytes bytes, const qa_qw_signon_host *host, bool wide,
+    qa_qw_signon **out, qa_error *error)
+{
+    if (!out || *out || (bytes.size && !bytes.data)) return save_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld signon restore requires empty output");
+    qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
+    if (qa_net_read_u32(&reader) != UINT32_C(0x53574151) || qa_net_read_u32(&reader) != 1)
+        return save_fail(error, QA_ERROR_FORMAT, "Invalid QuakeWorld signon continuation schema");
+    uint8_t saved_wide = qa_net_read_u8(&reader), spawned = qa_net_read_u8(&reader);
+    if (reader.failed || saved_wide > 1 || spawned > 1 || (saved_wide != 0) != wide || !qa_net_reader_finish(&reader))
+        return save_fail(error, QA_ERROR_FORMAT, "QuakeWorld signon continuation capability differs");
+    qa_qw_signon *state = NULL;
+    if (!qa_qw_signon_create(host, wide, &state, error)) return false;
+    state->spawned = spawned != 0; *out = state; return true;
+}
+
+static bool precache_saved_valid(const qa_qw_precache *state)
+{
+    if (!state || !qa_q1_profile_valid(state->protocol, NULL) || !qa_q1_is_qw(state->protocol)) return false;
+    size_t limit = state->protocol.kind == QA_NET_QW28 ? 256 : 8192;
+    if (state->model_count >= limit || state->sound_count >= limit ||
+        (state->model_count && !state->models) || (state->sound_count && !state->sounds)) return false;
+    for (size_t i = 0; i < state->model_count; ++i) if (!state->models[i] || !*state->models[i]) return false;
+    for (size_t i = 0; i < state->sound_count; ++i) if (!state->sounds[i] || !*state->sounds[i]) return false;
+    return true;
+}
+bool qa_qw_precache_checkpoint(const qa_qw_precache *state, qa_buffer *out, qa_error *error)
+{
+    if (!out || !precache_saved_valid(state)) return save_fail(error, QA_ERROR_ARGUMENT, "Invalid actual QuakeWorld precache owner");
+    size_t capacity = 40;
+    for (unsigned list = 0; list < 2; ++list) {
+        char *const *names = list ? state->sounds : state->models;
+        size_t count = list ? state->sound_count : state->model_count;
+        for (size_t i = 0; i < count; ++i) {
+            size_t length = strlen(names[i]);
+            if (capacity == SIZE_MAX || length > SIZE_MAX - capacity - 1)
+                return save_fail(error, QA_ERROR_MEMORY, "QuakeWorld precache name extent exceeds memory");
+            capacity += length + 1;
+        }
+    }
+    uint8_t *data = malloc(capacity);
+    if (!data) return save_fail(error, QA_ERROR_MEMORY, "Encoding QuakeWorld precache continuation");
+    qa_net_writer writer; qa_net_writer_init(&writer, data, capacity, error);
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x50574151)) && qa_net_write_u32(&writer, 1) &&
+        qa_net_write_u32(&writer, state->protocol.kind) && qa_net_write_u32(&writer, state->protocol.revision) &&
+        qa_net_write_u32(&writer, state->protocol.flags) && qa_net_write_i32(&writer, state->server_count) &&
+        qa_net_write_u64(&writer, state->model_count) && qa_net_write_u64(&writer, state->sound_count);
+    for (size_t i = 0; ok && i < state->model_count; ++i) ok = qa_net_write_string(&writer, state->models[i]);
+    for (size_t i = 0; ok && i < state->sound_count; ++i) ok = qa_net_write_string(&writer, state->sounds[i]);
+    if (!ok || writer.failed) { free(data); return false; }
+    *out = (qa_buffer){data, qa_net_writer_size(&writer)}; return true;
+}
+static bool precache_names_read(qa_net_reader *reader, size_t count, char ***names, size_t *owned_count)
+{
+    char **list = count ? calloc(count, sizeof(*list)) : NULL;
+    if (count && !list) return save_fail(reader->error, QA_ERROR_MEMORY, "Restoring QuakeWorld precache names");
+    *names = list; *owned_count = count;
+    for (size_t i = 0; i < count; ++i) {
+        const char *text;
+        if (!qa_q1_read_cstring(reader, &text) || !*text) return false;
+        size_t length = strlen(text);
+        if (length == SIZE_MAX || !(list[i] = malloc(length + 1)))
+            return save_fail(reader->error, QA_ERROR_MEMORY, "Retaining QuakeWorld precache name");
+        memcpy(list[i], text, length + 1);
+    }
+    return true;
+}
+bool qa_qw_precache_restore_checkpoint(qa_bytes bytes, qa_net_protocol_id protocol,
+    qa_qw_precache **out, qa_error *error)
+{
+    if (!out || *out || (bytes.size && !bytes.data) || !qa_q1_profile_valid(protocol, error) || !qa_q1_is_qw(protocol))
+        return save_fail(error, QA_ERROR_ARGUMENT, "QuakeWorld precache restore requires admitted dialect and empty output");
+    qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
+    if (qa_net_read_u32(&reader) != UINT32_C(0x50574151) || qa_net_read_u32(&reader) != 1 ||
+        qa_net_read_u32(&reader) != (uint32_t)protocol.kind || qa_net_read_u32(&reader) != protocol.revision ||
+        qa_net_read_u32(&reader) != protocol.flags)
+        return save_fail(error, QA_ERROR_FORMAT, "QuakeWorld precache continuation dialect differs");
+    int32_t server_count = qa_net_read_i32(&reader);
+    uint64_t models = qa_net_read_u64(&reader), sounds = qa_net_read_u64(&reader);
+    size_t limit = protocol.kind == QA_NET_QW28 ? 256 : 8192;
+    if (reader.failed || models >= limit || sounds >= limit ||
+        models + sounds > qa_net_reader_remaining(&reader) / 2)
+        return save_fail(error, QA_ERROR_FORMAT, "Truncated QuakeWorld precache name tables");
+    qa_qw_precache *state = NULL;
+    if (!qa_qw_precache_create(protocol, &state, error)) return false;
+    state->server_count = server_count;
+    bool ok = precache_names_read(&reader, (size_t)models, &state->models, &state->model_count) &&
+        precache_names_read(&reader, (size_t)sounds, &state->sounds, &state->sound_count) &&
+        qa_net_reader_finish(&reader) && precache_saved_valid(state);
+    if (!ok) {
+        qa_qw_precache_destroy(state);
+        if (!error || error->code == QA_OK) save_fail(error, QA_ERROR_FORMAT, "Invalid saved QuakeWorld precache names");
+        return false;
+    }
+    *out = state; return true;
 }

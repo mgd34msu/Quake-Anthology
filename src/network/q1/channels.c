@@ -1,5 +1,6 @@
 #include "qa/network_q1_channel.h"
 #include "qa/network_q1_save.h"
+#include "qa/network_q1_peer_save.h"
 #include "qa/network_reliability_save.h"
 
 #include <math.h>
@@ -334,4 +335,22 @@ bool qa_qw_channel_restore_checkpoint(qa_bytes bytes, qa_q1_channel_side side, u
     channel->rate = rate; channel->last_received_ns = received;
     channel->frame_latency = latency; channel->frame_interval_ms = interval;
     *out = channel; return true;
+}
+
+bool qa_nq_channel_save_policy(const qa_nq_channel *channel, size_t *message, size_t *fragment)
+{
+    size_t capacity, retained_fragment; uint64_t retry;
+    if (!channel || !message || !fragment ||
+        !qa_net_stopwait_limits(channel->reliable, &capacity, &retained_fragment, &retry) ||
+        capacity != channel->message_bytes || retry != UINT64_C(1000000000)) return false;
+    *message = channel->message_bytes; *fragment = retained_fragment;
+    return true;
+}
+
+bool qa_qw_channel_save_policy(const qa_qw_channel *channel, size_t *message,
+    qa_q1_channel_side *side, uint16_t *qport)
+{
+    if (!channel || !message || !side || !qport) return false;
+    *message = channel->capacity; *side = channel->side; *qport = channel->qport;
+    return true;
 }
