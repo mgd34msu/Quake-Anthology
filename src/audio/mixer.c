@@ -60,11 +60,30 @@ static void log_message(qa_audio_mixer *mixer, const char *message) {
 static bool allow_mutation(qa_audio_mixer *mixer, qa_error *error) {
     if (!mixer)
         return mixer_error(error, QA_ERROR_ARGUMENT, "Missing audio mixer");
-    if (mixer->callback_active)
+    if (mixer->callback_active || mixer->round_locked)
         return mixer_error(error, QA_ERROR_ARGUMENT, "Audio callbacks cannot mutate their mixer");
     if (mixer->destroy_requested || mixer->destroying)
         return mixer_error(error, QA_ERROR_ARGUMENT, "Audio mixer is being destroyed");
     return true;
+}
+
+bool qa_audio_mixer_callbacks_idle(const qa_audio_mixer *mixer) {
+    return mixer && !mixer->callback_active && !mixer->dispatching &&
+        !mixer->destroy_requested && !mixer->destroying && !mixer->round_locked;
+}
+
+bool qa_audio_mixer_round_lock(qa_audio_mixer *mixer, qa_error *error) {
+    if (!qa_audio_mixer_callbacks_idle(mixer))
+        return mixer_error(error, QA_ERROR_ARGUMENT, "Audio round mixer still has an operation owner");
+    mixer->round_locked = true;
+    return true;
+}
+
+bool qa_audio_mixer_round_unlock(qa_audio_mixer *mixer) {
+    if (!mixer || !mixer->round_locked) return true;
+    bool result = !mixer->round_destroy_requested;
+    mixer->round_locked = false; mixer->round_destroy_requested = false;
+    return result;
 }
 
 static void debug_raw(qa_audio_mixer *mixer, const char *operation) {
@@ -547,6 +566,10 @@ bool qa_audio_mixer_create(const qa_audio_mixer_options *options, qa_audio_mixer
 }
 
 void qa_audio_mixer_destroy(qa_audio_mixer *mixer) {
+    if (mixer && mixer->round_locked) {
+        mixer->round_destroy_requested = true;
+        return;
+    }
     if (!mixer || mixer->callback_active)
         return;
     if (mixer->dispatching) {
@@ -656,7 +679,7 @@ bool qa_audio_mixer_position_owner(qa_audio_mixer *mixer, uint64_t actor, uint64
 }
 
 void qa_audio_mixer_geometry(qa_audio_mixer *mixer, qa_audio_transmission_fn fn, void *user) {
-    if (!mixer || mixer->callback_active)
+    if (!mixer || mixer->callback_active || mixer->round_locked)
         return;
     mixer->transmission = fn;
     mixer->transmission_user = user;
@@ -665,13 +688,13 @@ void qa_audio_mixer_geometry(qa_audio_mixer *mixer, qa_audio_transmission_fn fn,
 
 void qa_audio_mixer_effects_gain(qa_audio_mixer *mixer, float gain) {
     double scaled = gain * 255.0f;
-    if (mixer && !mixer->callback_active && isfinite(gain) && scaled >= INT32_MIN &&
+    if (mixer && !mixer->callback_active && !mixer->round_locked && isfinite(gain) && scaled >= INT32_MIN &&
         scaled <= INT32_MAX)
         mixer->effects_gain = gain;
 }
 
 void qa_audio_mixer_doppler(qa_audio_mixer *mixer, bool enabled) {
-    if (mixer && !mixer->callback_active)
+    if (mixer && !mixer->callback_active && !mixer->round_locked)
         mixer->doppler_enabled = enabled;
 }
 
@@ -1052,7 +1075,7 @@ bool qa_audio_mixer_end_loop_frame(qa_audio_mixer *mixer, qa_error *error) {
 }
 
 void qa_audio_mixer_clear_loops(qa_audio_mixer *mixer, bool all) {
-    if (!mixer || mixer->callback_active)
+    if (!mixer || mixer->callback_active || mixer->round_locked)
         return;
     for (size_t i = 0; i < mixer->loop_count; i++)
         if (all || !mixer->loops[i].request.persistent)
@@ -1061,7 +1084,7 @@ void qa_audio_mixer_clear_loops(qa_audio_mixer *mixer, bool all) {
 }
 
 void qa_audio_mixer_stop_loop(qa_audio_mixer *mixer, uint64_t actor, uint64_t owner) {
-    if (!mixer || mixer->callback_active)
+    if (!mixer || mixer->callback_active || mixer->round_locked)
         return;
     for (size_t i = 0; i < mixer->loop_count; i++)
         if (mixer->loops[i].request.sound.actor == actor &&
@@ -1070,7 +1093,7 @@ void qa_audio_mixer_stop_loop(qa_audio_mixer *mixer, uint64_t actor, uint64_t ow
 }
 
 void qa_audio_mixer_clear_seat_loops(qa_audio_mixer *mixer, uint64_t owner, bool all) {
-    if (!mixer || mixer->callback_active)
+    if (!mixer || mixer->callback_active || mixer->round_locked)
         return;
     for (size_t i = 0; i < mixer->loop_count; i++) {
         qa_mixer_loop *loop = &mixer->loops[i];
@@ -1082,7 +1105,7 @@ void qa_audio_mixer_clear_seat_loops(qa_audio_mixer *mixer, uint64_t owner, bool
 }
 
 void qa_audio_mixer_stop_seat_loop(qa_audio_mixer *mixer, uint64_t actor, uint64_t owner) {
-    if (!mixer || mixer->callback_active)
+    if (!mixer || mixer->callback_active || mixer->round_locked)
         return;
     for (size_t i = 0; i < mixer->loop_count; i++) {
         qa_mixer_loop *loop = &mixer->loops[i];
@@ -1095,7 +1118,7 @@ void qa_audio_mixer_stop_seat_loop(qa_audio_mixer *mixer, uint64_t actor, uint64
 
 void qa_audio_mixer_stop_channel(qa_audio_mixer *mixer, uint64_t actor, uint64_t owner,
                                  qa_audio_family family, int32_t channel) {
-    if (!mixer || mixer->callback_active || !family_valid(family) ||
+    if (!mixer || mixer->callback_active || mixer->round_locked || !family_valid(family) ||
         (channel < 0 && !(family == QA_AUDIO_Q1 && channel == -1)))
         return;
     if (channel == 0) {
@@ -1115,7 +1138,7 @@ void qa_audio_mixer_stop_channel(qa_audio_mixer *mixer, uint64_t actor, uint64_t
 }
 
 void qa_audio_mixer_stop_actor(qa_audio_mixer *mixer, uint64_t actor, uint64_t owner) {
-    if (!mixer || mixer->callback_active)
+    if (!mixer || mixer->callback_active || mixer->round_locked)
         return;
     for (size_t i = 0; i < mixer->voice_count; i++)
         if (mixer->voices[i].state != QA_MIXER_FREE && mixer->voices[i].sound.actor == actor &&
@@ -1126,7 +1149,7 @@ void qa_audio_mixer_stop_actor(qa_audio_mixer *mixer, uint64_t actor, uint64_t o
 }
 
 void qa_audio_mixer_stop_owner(qa_audio_mixer *mixer, uint64_t owner) {
-    if (!mixer || mixer->callback_active)
+    if (!mixer || mixer->callback_active || mixer->round_locked)
         return;
     for (size_t i = 0; i < mixer->voice_count; i++)
         if (mixer->voices[i].state != QA_MIXER_FREE && mixer->voices[i].sound.owner == owner)
@@ -1153,14 +1176,20 @@ static void stop_all_state(qa_audio_mixer *mixer) {
     mixer->transmission_count = 0;
     mixer->source_begin_offset = 0;
     mixer->schedule_order = 0;
-    qa_audio_mixer_clear_raw(mixer);
+    mixer->raw_end = mixer->paint_time;
     if (mixer->options.log && setting(mixer, "developer"))
         log_message(mixer, "Channel memory manager started\n");
 }
 
 void qa_audio_mixer_stop_all(qa_audio_mixer *mixer) {
-    if (!mixer || mixer->callback_active)
+    if (!mixer || mixer->callback_active || mixer->round_locked)
         return;
+    stop_all_state(mixer);
+    flush_notifications(mixer);
+}
+
+void qa_audio_mixer_round_stop(qa_audio_mixer *mixer) {
+    if (!mixer || !mixer->round_locked) return;
     stop_all_state(mixer);
     flush_notifications(mixer);
 }
@@ -1205,7 +1234,7 @@ bool qa_audio_mixer_static(qa_audio_mixer *mixer, uint64_t key, qa_audio_sample 
 }
 
 void qa_audio_mixer_remove_static(qa_audio_mixer *mixer, uint64_t key) {
-    if (!mixer || mixer->callback_active)
+    if (!mixer || mixer->callback_active || mixer->round_locked)
         return;
     for (size_t i = 0; i < mixer->voice_count; i++)
         if (mixer->voices[i].state != QA_MIXER_FREE && mixer->voices[i].role == QA_MIXER_STATIC &&
@@ -1369,7 +1398,7 @@ bool qa_audio_mixer_raw(qa_audio_mixer *mixer, qa_bytes bytes, size_t frames, un
 }
 
 void qa_audio_mixer_clear_raw(qa_audio_mixer *mixer) {
-    if (mixer && !mixer->callback_active)
+    if (mixer && !mixer->callback_active && !mixer->round_locked)
         mixer->raw_end = mixer->paint_time;
 }
 
@@ -1419,7 +1448,7 @@ static bool scan_starts(qa_audio_mixer *mixer) {
 }
 
 bool qa_audio_mixer_scan_starts(qa_audio_mixer *mixer) {
-    if (!mixer || mixer->callback_active || mixer->destroy_requested || mixer->destroying)
+    if (!mixer || mixer->callback_active || mixer->round_locked || mixer->destroy_requested || mixer->destroying)
         return false;
     bool started = scan_starts(mixer);
     flush_notifications(mixer);
@@ -1662,7 +1691,7 @@ bool qa_audio_mixer_rebase(qa_audio_mixer *mixer, uint64_t delivered_frame, qa_e
 }
 
 void qa_audio_mixer_clear_buffer(qa_audio_mixer *mixer) {
-    if (!mixer || mixer->callback_active)
+    if (!mixer || mixer->callback_active || mixer->round_locked)
         return;
     double begin_offset = mixer->source_begin_offset;
     uint64_t order = mixer->schedule_order;
@@ -1676,16 +1705,16 @@ void qa_audio_mixer_clear_buffer(qa_audio_mixer *mixer) {
 int64_t qa_audio_mixer_raw_end(const qa_audio_mixer *mixer) { return mixer ? mixer->raw_end : 0; }
 
 int32_t *qa_audio_mixer_raw_samples(qa_audio_mixer *mixer) {
-    return mixer && !mixer->callback_active ? mixer->raw : NULL;
+    return mixer && !mixer->callback_active && !mixer->round_locked ? mixer->raw : NULL;
 }
 
 void qa_audio_mixer_reset_raw(qa_audio_mixer *mixer, bool stopped) {
-    if (mixer && !mixer->callback_active)
+    if (mixer && !mixer->callback_active && !mixer->round_locked)
         mixer->raw_end = stopped ? 0 : mixer->sound_time;
 }
 
 void qa_audio_mixer_enable(qa_audio_mixer *mixer, bool enabled) {
-    if (mixer && !mixer->callback_active)
+    if (mixer && !mixer->callback_active && !mixer->round_locked)
         mixer->enabled = enabled;
 }
 

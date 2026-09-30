@@ -30,18 +30,41 @@ static void nested(qa_ac_writer *w, bool success, qa_buffer *bytes) {
     else qa_ac_blob(w, (qa_bytes){bytes->data, bytes->size});
     qa_buffer_free(bytes);
 }
+static const qa_audio_mixer *owned_mixer(const qa_audio_engine *engine, size_t index)
+{
+    return index < engine->seat_count ?
+        (engine->seats[index] ? engine->seats[index]->mixer : NULL) :
+        engine->round_mixers[index - engine->seat_count].mixer;
+}
+void qa_audio_engine_discard(qa_audio_engine *engine)
+{
+    if (!engine) return;
+    engine->options.observer = NULL;
+    for (size_t i = 0; i < engine->seat_count + engine->round_mixer_count; ++i) {
+        qa_audio_mixer *mixer = i < engine->seat_count
+            ? (engine->seats[i] ? engine->seats[i]->mixer : NULL) : engine->round_mixers[i - engine->seat_count].mixer;
+        if (!mixer) continue;
+        mixer->options.observer = NULL; mixer->options.setting = NULL; mixer->options.log = NULL;
+        mixer->options.random = NULL; mixer->options.milliseconds = NULL;
+        mixer->options.allocate_voice_id = NULL; mixer->transmission = NULL;
+    }
+    qa_audio_engine_destroy(engine);
+}
 bool qa_audio_engine_assets_read(const qa_audio_engine *engine, qa_audio_asset ***out,
     size_t *out_count, qa_error *error)
 {
     if (!engine || !out || *out || !out_count || engine->operation_depth || engine->callback_depth ||
-        engine->destroy_pending || engine->destroying || (engine->seat_count && !engine->seats)) {
+        engine->destroy_pending || engine->destroying || (engine->seat_count && !engine->seats) ||
+        (engine->round_mixer_count && !engine->round_mixers) ||
+        engine->round_mixer_count > SIZE_MAX - engine->seat_count) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Audio asset inventory requires an idle engine and empty output");
         return false;
     }
+    size_t owners = engine->seat_count + engine->round_mixer_count;
     size_t count = 0;
-    for (size_t i = 0; i < engine->seat_count; ++i) {
-        const qa_audio_mixer *mixer = engine->seats[i] ? engine->seats[i]->mixer : NULL;
-        if (!mixer || mixer->callback_active || mixer->dispatching || mixer->destroy_requested || mixer->destroying ||
+    for (size_t i = 0; i < owners; ++i) {
+        const qa_audio_mixer *mixer = owned_mixer(engine, i);
+        if (!qa_audio_mixer_callbacks_idle(mixer) ||
             mixer->prepared_count > mixer->prepared_capacity || (mixer->prepared_capacity && !mixer->prepared)) {
             qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Audio asset inventory requires actual idle seat mixers");
             return false;
@@ -67,8 +90,8 @@ bool qa_audio_engine_assets_read(const qa_audio_engine *engine, qa_audio_asset *
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating borrowed engine asset inventory"); return false;
     }
     size_t used = 0;
-    for (size_t i = 0; i < engine->seat_count; ++i) {
-        const qa_audio_mixer *mixer = engine->seats[i]->mixer;
+    for (size_t i = 0; i < owners; ++i) {
+        const qa_audio_mixer *mixer = owned_mixer(engine, i);
         for (size_t j = 0; j < mixer->prepared_count; ++j)
             if (mixer->prepared[j] && mixer->prepared[j]->asset) assets[used++] = mixer->prepared[j]->asset;
     }
@@ -76,8 +99,7 @@ bool qa_audio_engine_assets_read(const qa_audio_engine *engine, qa_audio_asset *
 }
 bool qa_audio_engine_checkpoint(const qa_audio_engine *engine, const qa_audio_checkpoint_refs *refs,
                                  qa_buffer *out, qa_error *error) {
-    if (!engine || !out || engine->operation_depth || engine->callback_depth ||
-        engine->destroy_pending || engine->destroying) {
+    if (!out || !qa_audio_engine_round_ready(engine, error)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Engine checkpoint requires completed operations and callbacks"); return false;
     }
     for (size_t i = 0; i < engine->seat_count; ++i)
@@ -103,7 +125,7 @@ bool qa_audio_engine_checkpoint(const qa_audio_engine *engine, const qa_audio_ch
         else qa_buffer_free(&bytes);
         selection[i] = j;
     }
-    qa_ac_write(&w, "QAEN", 4); qa_ac_u32(&w, 1); qa_ac_u32(&w, engine->options.sample_rate);
+    qa_ac_write(&w, "QAEN", 4); qa_ac_u32(&w, 2); qa_ac_u32(&w, engine->options.sample_rate);
     qa_ac_u32(&w, engine->options.output_channels); qa_ac_u64(&w, engine->options.mix_frames);
     qa_ac_u64(&w, engine->options.initial_voices); qa_ac_u32(&w, callback_mask(&engine->options));
     qa_ac_u32(&w, engine->geometry != NULL); qa_ac_u64(&w, engine->clock); qa_ac_u64(&w, engine->next_voice);
@@ -111,6 +133,7 @@ bool qa_audio_engine_checkpoint(const qa_audio_engine *engine, const qa_audio_ch
     qa_ac_u32(&w, engine->paused); qa_ac_u32(&w, engine->doppler);
     qa_ac_u64(&w, engine->seat_count); qa_ac_u64(&w, engine->position_count); qa_ac_u64(&w, engine->bus_count);
     qa_ac_u64(&w, definition_count);
+    qa_ac_u64(&w, engine->round_mixer_count);
     for (size_t i = 0; !w.failed && i < definition_count; ++i)
         qa_ac_blob(&w, (qa_bytes){definitions[i].data, definitions[i].size});
     for (size_t i = 0; !w.failed && i < engine->seat_count; ++i) {
@@ -132,6 +155,11 @@ bool qa_audio_engine_checkpoint(const qa_audio_engine *engine, const qa_audio_ch
         qa_ac_u32(&w, bus->raw != NULL);
         if (!w.failed) nested(&w, bus->raw ? qa_audio_raw_checkpoint(bus->raw, &bytes, error) :
                              qa_audio_music_checkpoint(bus->music, &bytes, error), &bytes);
+    }
+    for (size_t i = 0; !w.failed && i < engine->round_mixer_count; ++i) {
+        const audio_round_mixer *retained = &engine->round_mixers[i]; qa_buffer bytes = {0};
+        qa_ac_u32(&w, retained->seat);
+        nested(&w, qa_audio_mixer_checkpoint(retained->mixer, refs, &bytes, error), &bytes);
     }
     for (size_t i = 0; i < definition_count; ++i) qa_buffer_free(&definitions[i]);
     free(definitions); free(selection); return qa_ac_finish(&w, out);
@@ -157,7 +185,7 @@ bool qa_audio_engine_restore(qa_bytes bytes, const qa_audio_engine_options *opti
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid isolated audio engine destination"); return false;
     }
     qa_ac_reader r = {.bytes = bytes, .error = error}; qa_bytes magic;
-    if (!qa_ac_read(&r, 4, &magic) || memcmp(magic.data, "QAEN", 4) || qa_ac_get32(&r) != 1 ||
+    if (!qa_ac_read(&r, 4, &magic) || memcmp(magic.data, "QAEN", 4) || qa_ac_get32(&r) != 2 ||
         qa_ac_get32(&r) != options->sample_rate || qa_ac_get32(&r) != options->output_channels ||
         qa_ac_get64(&r) != (options->mix_frames ? options->mix_frames : 4096) ||
         qa_ac_get64(&r) != (options->initial_voices ? options->initial_voices : 96) ||
@@ -172,13 +200,18 @@ bool qa_audio_engine_restore(qa_bytes bytes, const qa_audio_engine_options *opti
         qa_ac_bad(&r, "Invalid saved engine clock or gain");
     size_t seats = get_count(&r, sizeof(*engine->seats)), positions = get_count(&r, sizeof(*engine->positions));
     size_t buses = get_count(&r, sizeof(*engine->buses)), definition_count = get_count(&r, sizeof(qa_audio_environments *));
+    size_t retained = get_count(&r, sizeof(*engine->round_mixers));
     if (definition_count > seats) qa_ac_bad(&r, "Unowned audio environment definitions");
     engine->seats = get_array(&r, seats, sizeof(*engine->seats));
     engine->positions = get_array(&r, positions, sizeof(*engine->positions));
     engine->buses = get_array(&r, buses, sizeof(*engine->buses));
+    engine->round_mixers = get_array(&r, retained, sizeof(*engine->round_mixers));
     qa_audio_environments **definitions = get_array(&r, definition_count, sizeof(*definitions));
     size_t *definition_uses = get_array(&r, definition_count, sizeof(*definition_uses));
-    if (!r.failed) { engine->position_capacity = positions; engine->bus_capacity = buses; }
+    if (!r.failed) {
+        engine->position_capacity = positions; engine->bus_capacity = buses;
+        engine->round_mixer_capacity = retained;
+    }
     for (size_t i = 0; !r.failed && i < definition_count; ++i) {
         qa_bytes data;
         if (qa_ac_getblob(&r, &data) && !qa_audio_environments_restore(data, &definitions[i], error)) r.failed = true;
@@ -247,6 +280,25 @@ bool qa_audio_engine_restore(qa_bytes bytes, const qa_audio_engine_options *opti
             if (engine->buses[j].id == bus->id && (engine->buses[j].raw != NULL) == raw)
                 qa_ac_bad(&r, "Duplicate restored audio bus");
     }
+    for (size_t i = 0; !r.failed && i < retained; ++i) {
+        audio_round_mixer *held = &engine->round_mixers[engine->round_mixer_count++];
+        held->seat = qa_ac_get32(&r); qa_bytes data;
+        if (held->seat == QA_AUDIO_WORLD) qa_ac_bad(&r, "Retained round mixer has no seat");
+        for (size_t j = 0; !r.failed && j < engine->seat_count; ++j)
+            if (engine->seats[j]->listener.seat == held->seat) qa_ac_bad(&r, "Retained mixer duplicates an active seat");
+        for (size_t j = 0; !r.failed && j < i; ++j)
+            if (engine->round_mixers[j].seat == held->seat) qa_ac_bad(&r, "Duplicate retained round mixer seat");
+        if (!r.failed && qa_ac_getblob(&r, &data) &&
+            !qa_audio_mixer_restore(data, &mixer_options, refs, &held->mixer, error)) r.failed = true;
+        if (!r.failed && (held->mixer->listener.seat != held->seat || held->mixer->loop_count ||
+            held->mixer->loop_mix_count || held->mixer->position_count || held->mixer->transmission_count ||
+            held->mixer->event_head != SIZE_MAX || held->mixer->source_begin_offset != 0 ||
+            held->mixer->schedule_order || held->mixer->raw_end != held->mixer->paint_time))
+            qa_ac_bad(&r, "Retained mixer is not at its real stopped round boundary");
+        for (size_t j = 0; !r.failed && j < held->mixer->voice_count; ++j)
+            if (held->mixer->voices[j].state != QA_MIXER_FREE)
+                qa_ac_bad(&r, "Retained round mixer contains an active source voice");
+    }
     if (!r.failed && r.offset != bytes.size) qa_ac_bad(&r, "Engine checkpoint has trailing fields");
     if (definitions) for (size_t i = 0; i < definition_count; ++i) qa_audio_environments_destroy(definitions[i]);
     free(definitions); free(definition_uses);
@@ -257,7 +309,7 @@ bool qa_audio_engine_restore_into(qa_audio_engine *engine, qa_bytes bytes,
     const qa_audio_checkpoint_refs *refs, qa_error *error)
 {
     if (!engine || engine->operation_depth || engine->callback_depth || engine->destroy_pending ||
-        engine->destroying || engine->seat_count || engine->position_count || engine->bus_count ||
+        engine->destroying || engine->seat_count || engine->round_mixer_count || engine->position_count || engine->bus_count ||
         engine->clock || engine->next_voice) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Audio import requires an empty idle candidate engine");
         return false;
@@ -266,8 +318,8 @@ bool qa_audio_engine_restore_into(qa_audio_engine *engine, qa_bytes bytes,
     if (!qa_audio_engine_restore(bytes, &engine->options, refs, &decoded, error)) return false;
     qa_audio_engine previous = *engine;
     *engine = *decoded; *decoded = previous;
-    for (size_t i = 0; i < engine->seat_count; ++i) {
-        qa_audio_mixer *mixer = engine->seats[i]->mixer;
+    for (size_t i = 0; i < engine->seat_count + engine->round_mixer_count; ++i) {
+        qa_audio_mixer *mixer = (qa_audio_mixer *)owned_mixer(engine, i);
         mixer->options.voice_id_user = engine;
         if (engine->options.observer) mixer->options.observer_user = engine;
     }

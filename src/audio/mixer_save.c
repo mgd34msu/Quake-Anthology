@@ -150,7 +150,7 @@ static void get_sound_resource(qa_audio_play *play, qa_mixer_prepared *p) {
 
 bool qa_audio_mixer_checkpoint(const qa_audio_mixer *m, const qa_audio_checkpoint_refs *refs,
     qa_buffer *out, qa_error *error) {
-    if (!m || !out || m->callback_active || m->dispatching || m->destroy_requested || m->destroying ||
+    if (!out || !qa_audio_mixer_callbacks_idle(m) ||
         m->event_head != SIZE_MAX || m->event_tail != SIZE_MAX) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Mixer checkpoint requires drained callbacks and notifications"); return false;
     }

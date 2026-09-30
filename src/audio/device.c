@@ -34,7 +34,7 @@ struct qa_audio_device {
     uint64_t previous_pump_frame;
     size_t pump_intervals[8], pump_interval_count, pump_interval_next;
     bool playing, paused, resume_on_attach;
-    bool have_pump_engine, have_previous_pump, output_started, handoff_pending;
+    bool have_pump_engine, have_previous_pump, output_started, handoff_pending, pumping;
 };
 
 static bool device_error(qa_error *error, qa_status code, const char *message) {
@@ -411,6 +411,28 @@ void qa_audio_device_clear(qa_audio_device *device) {
                              true, NULL);
 }
 
+bool qa_audio_device_round_ready(const qa_audio_device *device, qa_error *error) {
+    if (!device || !device->conversion || device->pumping || device->handoff_pending)
+        return device_error(error, QA_ERROR_ARGUMENT, "Audio round requires its idle published device owner");
+    return true;
+}
+
+bool qa_audio_device_reset_round(qa_audio_device *device, qa_error *error) {
+    if (!qa_audio_device_round_ready(device, error)) return false;
+    qa_audio_raw_stream *conversion = NULL;
+    if (!qa_audio_raw_create(device->options.format.sample_rate, &conversion, error)) return false;
+    bool playing = device->playing;
+    if (device->id) stop_playback(device);
+    qa_audio_device_clear(device);
+    qa_audio_raw_destroy(device->conversion); device->conversion = conversion;
+    device->have_pump_engine = false; device->pump_engine_identity = 0;
+    device->previous_pump_frame = 0;
+    memset(device->pump_intervals, 0, sizeof(device->pump_intervals));
+    device->staged_start = 0;
+    if (playing) start_playback(device);
+    return true;
+}
+
 void qa_audio_device_detach(qa_audio_device *device) {
     if (device == NULL || device->id == 0)
         return;
@@ -756,7 +778,11 @@ static bool pump_device(qa_audio_device *device, qa_audio_engine *engine, size_t
 bool qa_audio_device_pump(qa_audio_device *device, qa_audio_engine *engine, size_t target_frames,
                           qa_error *error) {
     size_t mixed_frames;
-    return pump_device(device, engine, target_frames, false, 0, &mixed_frames, error);
+    if (!device || device->pumping)
+        return device_error(error, QA_ERROR_ARGUMENT, "Audio device pump is absent or executing");
+    device->pumping = true;
+    bool ok = pump_device(device, engine, target_frames, false, 0, &mixed_frames, error);
+    device->pumping = false; return ok;
 }
 
 bool qa_audio_device_pump_auto(qa_audio_device *device, qa_audio_engine *engine,
@@ -766,5 +792,9 @@ bool qa_audio_device_pump_auto(qa_audio_device *device, qa_audio_engine *engine,
     *mixed_frames = 0;
     if (!isfinite(measured_work_ms) || measured_work_ms < 0)
         return device_error(error, QA_ERROR_ARGUMENT, "Invalid measured audio pump work duration");
-    return pump_device(device, engine, 0, true, measured_work_ms, mixed_frames, error);
+    if (!device || device->pumping)
+        return device_error(error, QA_ERROR_ARGUMENT, "Audio device pump is absent or executing");
+    device->pumping = true;
+    bool ok = pump_device(device, engine, 0, true, measured_work_ms, mixed_frames, error);
+    device->pumping = false; return ok;
 }

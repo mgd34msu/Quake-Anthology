@@ -419,6 +419,9 @@ void qa_audio_engine_remove_stream(qa_audio_engine *engine, uint64_t id);
 void qa_audio_engine_remove_music(qa_audio_engine *engine, uint64_t id);
 /* Clears round-specific listeners, source positions, voices and buses;
  * preserves clock. */
+/* Read-only qualification; never dispatches observers or advances playback. */
+bool qa_audio_mixer_callbacks_idle(const qa_audio_mixer *);
+bool qa_audio_engine_round_ready(const qa_audio_engine *, qa_error *);
 bool qa_audio_engine_reset_round(qa_audio_engine *engine, qa_error *error);
 /* Successful attachment transfers selector ownership to exactly one seat. */
 bool qa_audio_engine_environment(qa_audio_engine *engine, uint32_t seat,
@@ -458,6 +461,8 @@ bool qa_audio_device_open(const qa_audio_device_options *options, qa_audio_devic
 void qa_audio_device_close(qa_audio_device *device);
 void qa_audio_device_pause(qa_audio_device *device, bool paused);
 void qa_audio_device_clear(qa_audio_device *device);
+bool qa_audio_device_round_ready(const qa_audio_device *, qa_error *);
+bool qa_audio_device_reset_round(qa_audio_device *, qa_error *);
 void qa_audio_device_detach(qa_audio_device *device);
 /* Selection retains pending PCM, resampling it if the device rate changes.
  * Failure retains/restores the previous output or its detached queued state. */

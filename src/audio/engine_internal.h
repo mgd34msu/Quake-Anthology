@@ -9,6 +9,7 @@ typedef struct audio_seat {
     qa_audio_environment *environment;
 } audio_seat;
 typedef struct audio_position { uint64_t actor; qa_vec3 position; } audio_position;
+typedef struct audio_round_mixer { uint32_t seat; qa_audio_mixer *mixer; } audio_round_mixer;
 typedef struct audio_bus {
     uint64_t id;
     uint32_t audience;
@@ -20,6 +21,8 @@ struct qa_audio_engine {
     qa_audio_engine_options options;
     audio_seat **seats;
     size_t seat_count;
+    audio_round_mixer *round_mixers;
+    size_t round_mixer_count, round_mixer_capacity;
     audio_position *positions;
     size_t position_count, position_capacity;
     audio_bus *buses;
@@ -30,6 +33,7 @@ struct qa_audio_engine {
     double milliseconds;
     float effects_gain;
     bool paused, doppler, destroy_pending, destroying;
+    bool round_resetting, round_destroy_requested;
     unsigned operation_depth, callback_depth;
     qa_audio_transmission_fn geometry;
     void *geometry_user;

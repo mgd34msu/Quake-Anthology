@@ -108,7 +108,12 @@ struct qa_audio_mixer {
     float effects_gain;
     bool doppler_enabled, callback_active, enabled;
     bool dispatching, destroy_requested, destroying;
+    bool round_locked, round_destroy_requested;
     uint32_t random_state;
 };
+
+bool qa_audio_mixer_round_lock(qa_audio_mixer *, qa_error *);
+void qa_audio_mixer_round_stop(qa_audio_mixer *);
+bool qa_audio_mixer_round_unlock(qa_audio_mixer *);
 
 #endif
