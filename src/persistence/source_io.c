@@ -20,10 +20,12 @@ bool qa_source_save_writer(qa_source_save_io *io, qa_session *session, qa_error 
 }
 bool qa_source_save_reader(qa_source_save_io *io, qa_session *session, qa_bytes bytes, qa_error *error)
 {
-    if (!io || (bytes.size && !bytes.data)) {
+    if (!io) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "source save reader requires its state and bytes"); return false;
     }
     *io = (qa_source_save_io){.session = session, .direction = QA_SOURCE_SAVE_READ, .input = bytes, .error = error};
+    if (bytes.size && !bytes.data)
+        return io_fail(io, QA_ERROR_ARGUMENT, "source save reader requires its state and bytes");
     return true;
 }
 void qa_source_save_dispose(qa_source_save_io *io)
