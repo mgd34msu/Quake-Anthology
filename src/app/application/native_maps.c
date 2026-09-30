@@ -147,7 +147,6 @@ static bool source_console(map_parser *parser, qa_mode_id mode, qa_error *error)
         selected = console;
         context = candidate;
     }
-    if (!selected && source->kind == APPLICATION_PROVIDER_Q3) selected = app->console;
     if (!selected || context.owner != source->owner || context.dialect != QA_CONSOLE_Q3)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "nextmap needs an actual Q3 source console");
     context.origin = QA_COMMAND_SERVER;

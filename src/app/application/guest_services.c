@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "native_q3_console.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -47,6 +48,24 @@ static void release_script(void *context, void *lease)
     qa_resource_release(lease);
 }
 
+static qa_cvars *cvar_owner(void *context, const qa_command_context *command, const char *name)
+{
+    qa_application *application = context;
+    for (application_provider *p = application->live_providers; command && p; p = p->next_live)
+        if (p->owner == command->owner && p->kind == APPLICATION_PROVIDER_Q3)
+            return p->constructed && p->attached && !p->close_pending
+                ? application_native_q3_cvar_owner(p, name) : NULL;
+    return application->cvars;
+}
+
+static qa_cvars *visible_cvars(void *context, const qa_command_context *command, size_t index)
+{
+    qa_application *application = context;
+    qa_cvars *source = cvar_owner(context, command, "");
+    return index == 0 ? source : index == 1 && source != application->cvars
+        ? application->cvars : NULL;
+}
+
 bool application_console_create(qa_application *application, qa_error *error)
 {
     qa_cvar_options cvars = {.dialect = QA_CONSOLE_Q3,
@@ -56,6 +75,7 @@ bool application_console_create(qa_application *application, qa_error *error)
     qa_console_options console = {.context = {.dialect = QA_CONSOLE_Q3,
         .origin = QA_COMMAND_LOCAL}, .cvars = application->cvars,
         .user = application, .print = application_console_print,
+        .cvar_owner = cvar_owner, .visible_cvars = visible_cvars,
         .read_script = read_script, .release_script = release_script,
         .capture_context = application_command_capture,
         .context_active = application_command_active,

@@ -2,6 +2,7 @@
 #include "guest_native_q2_private.h"
 #include "guest_projection_private.h"
 #include "guest_qc_internal.h"
+#include "native_q3_console.h"
 
 bool application_guest_frontend_rebind_ready(application_provider *provider,
     const qa_scene_frame *current_frame, void *current_context, qa_error *error)
@@ -33,6 +34,8 @@ bool application_guest_console_at(application_provider *provider, size_t index,
                                     qa_command_context *context)
 {
     if (!provider || !provider->constructed || !console) return false;
+    if (provider->kind == APPLICATION_PROVIDER_Q3)
+        return !index && application_native_q3_console_at(provider, console, cvars, context);
     if (provider->kind == APPLICATION_PROVIDER_QC) {
         struct application_qc_state *engine = provider->state.qc.engine;
         if (index || !engine || !engine->console) return false;
@@ -71,7 +74,12 @@ bool application_guest_console_scope(application_provider *provider,
     if (!provider || !provider->constructed || !console || !out)
         return false;
     qa_application_console_scope scope = {.provider = provider->owner};
-    if (provider->kind == APPLICATION_PROVIDER_QC) {
+    if (provider->kind == APPLICATION_PROVIDER_Q3) {
+        qa_console *source = NULL;
+        if (!application_native_q3_console_at(provider, &source, NULL, NULL) || source != console)
+            return false;
+        scope.kind = QA_APPLICATION_CONSOLE_Q3_GAME;
+    } else if (provider->kind == APPLICATION_PROVIDER_QC) {
         struct application_qc_state *engine = provider->state.qc.engine;
         if (!engine || engine->console != console)
             return false;
