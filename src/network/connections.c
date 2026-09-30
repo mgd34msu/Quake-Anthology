@@ -1,4 +1,6 @@
 #include "qa/network.h"
+#include "qa/network_save.h"
+#include "q3/save_fields.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -227,4 +229,100 @@ bool qa_net_client_expired(const qa_net_client *client, uint64_t now_ns, uint64_
 {
     return client != NULL && client->attachment != QA_NET_LOCAL_SEAT && now_ns >= client->received_ns &&
         now_ns - client->received_ns > timeout_ns;
+}
+
+bool qa_net_connections_checkpoint(const qa_net_connections *table, qa_net_writer *w)
+{
+    if (!table || table->admitting) return qa_net_writer_fail(w, "Connection checkpoint requires idle admission");
+    if (!qa_net_write_u32(w, 1) || !qa_net_write_u32(w, table->capacity)) return false;
+    for (uint32_t i = 0; i < table->capacity; ++i) {
+        const client_slot *slot = &table->slots[i]; const qa_net_client *c = &slot->client;
+        if (!qa_net_write_u64(w, slot->generation) || !qa_net_write_u8(w, slot->occupied) ||
+            !qa_net_write_u8(w, slot->retired)) return false;
+        if (!slot->occupied) continue;
+        if (c->seat_count > QA_NETWORK_MAX_SEATS)
+            return qa_net_writer_fail(w, "Connection checkpoint seat extent exceeds its runtime owner");
+        if (!qa_net_write_u32(w, c->attachment) || !q3_save_address(w, &c->endpoint) ||
+            !qa_net_write_u32(w, c->protocol.kind) || !qa_net_write_u32(w, c->protocol.revision) ||
+            !qa_net_write_u32(w, c->protocol.flags) ||
+            !qa_net_write_u32(w, c->phase) || !qa_net_write_u64(w, c->connected_ns) ||
+            !qa_net_write_u64(w, c->received_ns) || !qa_net_write_data(w, c->composition.bytes, 32) ||
+            !qa_net_write_u32(w, (uint32_t)c->seat_count)) return false;
+        for (size_t j = 0; j < c->seat_count; ++j)
+            if (!qa_net_write_u32(w, c->seats[j].seat.index) || !qa_net_write_u32(w, c->seats[j].remote_index)) return false;
+    }
+    return true;
+}
+
+bool qa_net_connections_restore(qa_net_reader *r, uint64_t owner, uint32_t capacity,
+    qa_net_admit_fn admit, void *context, qa_net_connections **out)
+{
+    if (!r || !out) return r && qa_net_reader_fail(r, "Missing candidate connection table");
+    uint32_t version = qa_net_read_u32(r), saved_capacity = qa_net_read_u32(r);
+    if (version != 1 || saved_capacity != capacity)
+        return qa_net_reader_fail(r, "Candidate connection table capacity differs");
+    qa_net_connections *table = NULL;
+    if (r->failed || !qa_net_connections_create(owner, capacity, admit, context, &table, r->error)) return false;
+    for (uint32_t i = 0; i < capacity; ++i) {
+        client_slot *slot = &table->slots[i];
+        slot->generation = qa_net_read_u64(r);
+        bool occupied = q3_save_bool(r); slot->retired = q3_save_bool(r);
+        if (r->failed || !slot->generation || (slot->retired && (occupied || slot->generation != UINT64_MAX))) {
+            qa_net_reader_fail(r, "Invalid saved connection generation lifecycle"); goto failure;
+        }
+        if (!occupied) continue;
+        qa_net_client *c = &slot->client;
+        c->id = (qa_net_client_id){owner, slot->generation, i};
+        c->attachment = (qa_net_attachment)qa_net_read_u32(r);
+        if (!q3_restore_address(r, &c->endpoint)) goto failure;
+        c->protocol.kind = (qa_net_protocol)qa_net_read_u32(r); c->protocol.revision = qa_net_read_u32(r);
+        c->protocol.flags = qa_net_read_u32(r);
+        c->phase = (qa_net_phase)qa_net_read_u32(r); c->connected_ns = qa_net_read_u64(r);
+        c->received_ns = qa_net_read_u64(r);
+        if (!qa_net_read_data(r, c->composition.bytes, 32)) goto failure;
+        c->seat_count = qa_net_read_u32(r);
+        char endpoint[256];
+        if (r->failed || c->seat_count > QA_NETWORK_MAX_SEATS || (unsigned)c->phase > QA_NET_ACTIVE ||
+            c->received_ns < c->connected_ns ||
+            (c->attachment != QA_NET_LOCAL_SEAT && c->attachment != QA_NET_REMOTE && c->attachment != QA_NET_HEADLESS) ||
+            (c->attachment == QA_NET_LOCAL_SEAT && c->seat_count != 1) ||
+            (c->attachment == QA_NET_HEADLESS && c->seat_count) ||
+            (c->endpoint.kind != QA_NET_LOOPBACK && !c->endpoint.port) ||
+            !qa_net_protocol_valid(c->protocol, r->error) ||
+            !qa_net_address_format(&c->endpoint, endpoint, sizeof(endpoint), r->error)) {
+            qa_net_reader_fail(r, "Invalid saved connection admission fields"); goto failure;
+        }
+        slot->seats = c->seat_count ? calloc(c->seat_count, sizeof(*slot->seats)) : NULL;
+        if (c->seat_count && !slot->seats) {
+            qa_error_set(r->error, QA_ERROR_MEMORY, 0, "Restoring connection seats"); r->failed = true; goto failure;
+        }
+        c->seats = slot->seats;
+        for (size_t j = 0; j < c->seat_count; ++j) {
+            slot->seats[j].seat = (qa_net_seat_id){owner, qa_net_read_u32(r)};
+            slot->seats[j].remote_index = qa_net_read_u32(r);
+            for (size_t k = 0; k < j; ++k)
+                if (slot->seats[k].seat.index == slot->seats[j].seat.index ||
+                    slot->seats[k].remote_index == slot->seats[j].remote_index) {
+                    qa_net_reader_fail(r, "Duplicate restored connection seat"); goto failure;
+                }
+            for (uint32_t k = 0; k < i; ++k)
+                if (table->slots[k].occupied && qa_net_client_owns_seat(&table->slots[k].client, slot->seats[j].seat)) {
+                    qa_net_reader_fail(r, "Restored seat belongs to multiple clients"); goto failure;
+                }
+        }
+        for (uint32_t k = 0; k < i; ++k)
+            if (table->slots[k].occupied && qa_net_address_equal(&table->slots[k].client.endpoint, &c->endpoint, true)) {
+                qa_net_reader_fail(r, "Restored endpoint belongs to multiple clients"); goto failure;
+            }
+        qa_net_connect request = {.attachment = c->attachment, .endpoint = c->endpoint, .protocol = c->protocol,
+            .seats = c->seats, .seat_count = c->seat_count, .composition = c->composition};
+        table->admitting = true;
+        bool accepted = !r->failed && table->admit(table->context, &request, r->error);
+        table->admitting = false;
+        if (!accepted) { r->failed = true; goto failure; }
+        slot->occupied = true;
+    }
+    *out = table; return true;
+failure:
+    qa_net_connections_destroy(table); return false;
 }

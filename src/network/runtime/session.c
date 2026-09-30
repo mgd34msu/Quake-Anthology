@@ -16,7 +16,7 @@ qa_network_peer *qa_network_peer_get(qa_network_runtime *runtime, qa_net_client_
     }
     return peer;
 }
-static bool admission(void *context, const qa_net_connect *request, qa_error *error) {
+bool qa_network_admission(void *context, const qa_net_connect *request, qa_error *error) {
     qa_network_runtime *runtime = context;
     runtime->callback = true;
     bool ok = runtime->options.hooks.admit(runtime->options.hooks.context, request, error);
@@ -34,7 +34,7 @@ bool qa_network_create(qa_net_transport *transport, const qa_network_options *op
     runtime->options = *options;
     runtime->peers = calloc(options->clients, sizeof(*runtime->peers));
     if (!runtime->peers || !qa_net_connections_create(options->owner, options->clients,
-        admission, runtime, &runtime->connections, error)) {
+        qa_network_admission, runtime, &runtime->connections, error)) {
         if (!runtime->peers) qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating network peers");
         free(runtime->peers); free(runtime); return false;
     }

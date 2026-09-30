@@ -1,5 +1,8 @@
 #include "internal.h"
 #include "qa/network_q3_runtime.h"
+#include "qa/network_save.h"
+#include "../q3/client_private.h"
+#include "../q3/server_private.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -248,4 +251,63 @@ bool qa_network_q3_reconnect_channel(qa_network_runtime *runtime, qa_net_client_
     if (!qa_q3_server_peer_create((qa_q3_identity){id, true, client->seats[0].seat}, product,
         &client->endpoint, challenge, qport, &source, &next, error)) return false;
     qa_q3_server_peer_destroy(p->source); p->source = next; p->defer_signon = true; return true;
+}
+
+bool qa_network_q3_checkpoint_peer(const qa_network_peer *peer, uint32_t *kind,
+    qa_buffer *out, qa_error *error)
+{
+    if (peer->ops.receive == client_receive) {
+        *kind = QA_NETWORK_SOURCE_Q3_CLIENT;
+        return qa_q3_client_peer_checkpoint(((q3_runtime_client *)peer->state)->source, out, error);
+    }
+    if (peer->ops.receive == receive) {
+        q3_runtime_peer *p = peer->state; qa_buffer source = {0};
+        *kind = QA_NETWORK_SOURCE_Q3_SERVER;
+        if (!qa_q3_server_peer_checkpoint(p->source, &source, error)) return false;
+        qa_buffer bytes = {malloc(source.size + 1), source.size + 1};
+        if (!bytes.data) {
+            qa_buffer_free(&source); qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining Q3 server adapter continuation"); return false;
+        }
+        bytes.data[0] = p->defer_signon;
+        memcpy(bytes.data + 1, source.data, source.size); qa_buffer_free(&source); *out = bytes; return true;
+    }
+    return qa_network_fail(error, "Installed network dialect has no concrete continuation codec");
+}
+
+bool qa_network_q3_restore_peer(qa_network_runtime *runtime, const qa_net_client *client,
+    uint32_t kind, qa_bytes bytes, const qa_network_checkpoint_refs *refs,
+    qa_network_peer *peer, qa_error *error)
+{
+    if (!refs || !refs->source || client->protocol.kind != QA_NET_Q3_68 || client->seat_count != 1 ||
+        (kind != QA_NETWORK_SOURCE_Q3_CLIENT && kind != QA_NETWORK_SOURCE_Q3_SERVER))
+        return qa_network_fail(error, "Saved network peer lacks its qualified source consumer");
+    qa_q3_client_hooks client_hooks = {0}; qa_q3_server_hooks server_hooks = {0};
+    if (!refs->source(refs->context, client, (qa_network_source_kind)kind, &client_hooks, &server_hooks, error)) return false;
+    qa_q3_identity identity = {client->id, true, client->seats[0].seat};
+    if (kind == QA_NETWORK_SOURCE_Q3_CLIENT) {
+        q3_runtime_client *p = calloc(1, sizeof(*p));
+        if (!p) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring Q3 runtime client"); return false; }
+        if (!qa_q3_client_peer_restore(bytes, identity, &client_hooks, &p->source, error)) { free(p); return false; }
+        if (p->source->demo || !qa_net_address_equal(&p->source->remote, &client->endpoint, true)) {
+            client_close(p); return qa_network_fail(error, "Restored Q3 client endpoint or live mode differs");
+        }
+        peer->ops = client_ops; peer->state = p; return true;
+    }
+    if (!bytes.size || bytes.data[0] > 1 || !server_hooks.world || !server_hooks.command ||
+        !server_hooks.enter_world || !server_hooks.think || !server_hooks.resend_gamestate ||
+        !server_hooks.pure_rejected_snapshot || !server_hooks.drop)
+        return qa_network_fail(error, "Saved Q3 server adapter lacks complete source bindings");
+    q3_runtime_peer *p = calloc(1, sizeof(*p));
+    if (!p) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring Q3 runtime server"); return false; }
+    p->runtime = runtime; p->id = client->id; p->hooks = server_hooks; p->defer_signon = bytes.data[0] != 0;
+    qa_q3_server_hooks source = {.context = p, .world = world, .command = source_command,
+        .enter_world = enter, .think = think, .resend_gamestate = signon,
+        .pure_rejected_snapshot = rejected, .drop = drop, .send = send};
+    if (!qa_q3_server_peer_restore((qa_bytes){bytes.data + 1, bytes.size - 1}, identity, &source, &p->source, error)) {
+        free(p); return false;
+    }
+    if (!qa_net_address_equal(&p->source->remote, &client->endpoint, true)) {
+        close_peer(p); return qa_network_fail(error, "Restored Q3 server endpoint differs");
+    }
+    p->product = p->source->product; peer->ops = ops; peer->state = p; return true;
 }

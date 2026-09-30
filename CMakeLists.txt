@@ -730,6 +730,8 @@ add_library(qa_network STATIC
     src/network/runtime/commands.c
     src/network/runtime/q3.c
     src/network/runtime/session.c
+    src/network/runtime/save.c
+    src/network/runtime/prediction_save.c
     src/network/runtime/unified.c
     src/network/socks.c
     src/network/transport.c

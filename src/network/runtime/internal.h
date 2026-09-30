@@ -33,4 +33,9 @@ struct qa_network_runtime {
 qa_network_peer *qa_network_peer_get(qa_network_runtime *, qa_net_client_id, qa_error *);
 void qa_network_history_clear(qa_network_peer *);
 bool qa_network_fail(qa_error *, const char *);
+bool qa_network_admission(void *, const qa_net_connect *, qa_error *);
+struct qa_network_checkpoint_refs;
+bool qa_network_q3_checkpoint_peer(const qa_network_peer *, uint32_t *, qa_buffer *, qa_error *);
+bool qa_network_q3_restore_peer(qa_network_runtime *, const qa_net_client *, uint32_t, qa_bytes,
+    const struct qa_network_checkpoint_refs *, qa_network_peer *, qa_error *);
 #endif
