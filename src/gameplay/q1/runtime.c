@@ -343,7 +343,7 @@ static bool operation_finish(qa_q1_game_operation *operation, bool ok, qa_error 
     qa_q1_game_operation_end(operation);
     return ok;
 }
-static bool begin_frame(void *context, qa_session *session, const qa_source_frame *frame,
+static bool prepare_frame(void *context, qa_session *session, const qa_source_frame *frame,
                         qa_error *error) {
     (void)session;
     qa_q1_game *g = context;
@@ -368,6 +368,13 @@ static bool begin_frame(void *context, qa_session *session, const qa_source_fram
     g->time_ns = frame->time_ns;
     g->time = (double)frame->time_ns / 1000000000.0;
     g->elapsed = (double)frame->elapsed_ns / 1000000000.0;
+    return true;
+}
+static bool begin_frame(void *context, qa_session *session, const qa_source_frame *frame,
+                        qa_error *error) {
+    (void)session;
+    (void)frame;
+    qa_q1_game *g = context;
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(g, &operation, error))
         return false;
@@ -573,6 +580,7 @@ bool qa_q1_game_component(qa_q1_game *g, qa_component *out, qa_error *error) {
         .owner = g->options.provider,
         .clock = qa_clock_defaults(g->options.quakeworld ? QA_CLOCK_QUAKEWORLD : QA_CLOCK_NETQUAKE),
         .state = g,
+        .prepare_frame = prepare_frame,
         .begin_frame = begin_frame,
         .actor_frame = actor_frame,
         .actor_released = released};
@@ -717,6 +725,16 @@ bool qa_q1_game_think_binding(qa_q1_game *g, qa_actor_id actor, uint32_t callbac
     *context = g;
     return true;
 }
+bool q1_local_time(const q1_actor *entity, double *out, qa_error *error) {
+    double value = entity->physics.q1_pusher.local_seconds;
+    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, entity->id.slot,
+                     "Q1 local time exceeds finite float range");
+        return false;
+    }
+    *out = fabs(value) > FLT_MAX ? (value < 0 ? -FLT_MAX : FLT_MAX) : (float)value;
+    return true;
+}
 bool q1_think_deadline(double time, double delay, double *out, qa_error *error) {
     double value = time + delay;
     if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127) {
@@ -732,6 +750,12 @@ bool q1_schedule(qa_q1_game *g, q1_actor *entity, double delay, q1_think_kind ki
     double due;
     if (!q1_think_deadline(g->time, delay, &due, error))
         return false;
+    if (entity->physics.motion == QA_PHYSICS_PUSH) {
+        qa_scheduler_cancel(qa_session_scheduler(g->services.session), entity->id);
+        entity->think = kind;
+        entity->next_think = due;
+        return true;
+    }
     if (due >= (double)UINT64_MAX / 1000000000.0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 think deadline out of range");
         return false;
@@ -1299,7 +1323,12 @@ bool qa_q1_game_physics_read(const qa_q1_game *g, qa_actor_id actor, qa_physics_
     const q1_actor *entity = q1_entity_const(g, actor);
     if (!entity || !out)
         return false;
+    double local;
+    if (!q1_local_time(entity, &local, NULL))
+        return false;
     *out = entity->physics;
+    out->q1_pusher.local_seconds = local;
+    out->q1_pusher.next_think_seconds = entity->next_think;
     return true;
 }
 bool qa_q1_game_physics_write(qa_q1_game *g, qa_actor_id actor, const qa_physics_properties *state,
@@ -1309,7 +1338,14 @@ bool qa_q1_game_physics_write(qa_q1_game *g, qa_actor_id actor, const qa_physics
         qa_error_set(error, QA_ERROR_NOT_FOUND, actor.slot, "Q1 physics actor retired");
         return false;
     }
+    if (!isfinite(state->q1_pusher.local_seconds) ||
+        !isfinite(state->q1_pusher.next_think_seconds)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Invalid Q1 source pusher clock");
+        return false;
+    }
     entity->physics = *state;
+    entity->next_think = state->q1_pusher.next_think_seconds;
+    entity->physics.q1_pusher.next_think_seconds = 0;
     return true;
 }
 bool qa_q1_game_water_transition(qa_q1_game *g, qa_actor_id actor, qa_error *error) {

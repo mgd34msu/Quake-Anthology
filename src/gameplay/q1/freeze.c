@@ -13,7 +13,6 @@ static bool toggle(qa_q1_game *g, qa_actor_id id, qa_error *error) {
             return true;
         e->frozen.think = e->think;
         e->frozen.next_think = e->next_think;
-        e->frozen.physics_think = e->physics.next_think_ns;
         e->frozen.damageable = combat.can_take_damage;
         if (!q1_map_damageable(g, e, false, error))
             return false;
@@ -23,7 +22,6 @@ static bool toggle(qa_q1_game *g, qa_actor_id id, qa_error *error) {
         qa_scheduler_cancel(qa_session_scheduler(g->services.session), id);
         e->think = Q1_THINK_NONE;
         e->next_think = -1;
-        e->physics.next_think_ns = -1;
         e->frozen.active = true;
         return true;
     }
@@ -33,7 +31,6 @@ static bool toggle(qa_q1_game *g, qa_actor_id id, qa_error *error) {
     if (e->physics.motion == QA_PHYSICS_PUSH) {
         e->think = think;
         e->next_think = due;
-        e->physics.next_think_ns = e->frozen.physics_think;
     } else if (think != Q1_THINK_NONE && due >= 0) {
         if (!q1_schedule(g, e, due - g->time, think, error))
             return false;

@@ -296,8 +296,8 @@ bool q1_boss_gib_vectors(qa_q1_game *g, q1_actor *source, qa_error *error) {
         gib->physics.motion = QA_PHYSICS_BOUNCE;
         float x = q1_random(g) * 600, y = q1_random(g) * 600, z = q1_random(g) * 600;
         gib->physics.angular_velocity = qa_v3(x, y, z);
-        gib->physics.local_time_ns = (int64_t)g->time_ns;
-        if (!q1_model(g, gib,
+        if (!q1_think_deadline(g->time, 0, &gib->physics.q1_pusher.local_seconds, error) ||
+            !q1_model(g, gib,
                       choice < .3f   ? "progs/gib1.mdl"
                       : choice < .6f ? "progs/gib2.mdl"
                                      : "progs/gib3.mdl",

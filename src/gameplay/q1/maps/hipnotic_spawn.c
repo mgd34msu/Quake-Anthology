@@ -5,16 +5,7 @@ static q1_actor *spawner(qa_q1_game *g, qa_actor_id id) {
     return entity && entity->map && entity->map->kind == Q1_MAP_SPAWNER ? entity : NULL;
 }
 bool q1_map_spawn_template_wait(qa_q1_game *g, q1_actor *entity, qa_error *error) {
-    bool push = entity->physics.motion == QA_PHYSICS_PUSH;
-    if (push && (g->time + 1) * 1000000000.0 >= (double)INT64_MAX)
-        return q1_map_fail(error, "Q1 template local think deadline overflow");
-    if (!q1_schedule(g, entity, 1, Q1_THINK_SPAWN_TEMPLATE, error))
-        return false;
-    if (push) {
-        qa_scheduler_cancel(qa_session_scheduler(g->services.session), entity->id);
-        entity->physics.next_think_ns = (int64_t)(entity->next_think * 1000000000.0);
-    }
-    return true;
+    return q1_schedule(g, entity, 1, Q1_THINK_SPAWN_TEMPLATE, error);
 }
 static bool make_template(qa_q1_game *g, qa_actor_id mold, const qa_q1_spawn *source,
                           const char *classname, qa_actor_id *out, qa_error *error) {

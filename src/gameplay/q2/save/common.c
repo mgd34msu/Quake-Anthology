@@ -62,7 +62,8 @@ static bool physics(q2_save_io *io, qa_physics_properties *s) {
     Q2U(family); Q2U(motion); Q2U(solid); Q2B(q2_rerelease);
     Q2U(flags); Q2U(clip_mask); Q2V(angular_velocity); Q2V(gravity_direction);
     Q2F(gravity_scale); Q2F(delta_yaw); Q2F(ideal_yaw); Q2F(yaw_speed);
-    Q2I(water_level); Q2I(water_type); Q2S(i64, local_time_ns); Q2S(i64, next_think_ns);
+    Q2I(water_level); Q2I(water_type);
+    Q2S(f64, q1_pusher.local_seconds); Q2S(f64, q1_pusher.next_think_seconds);
     return true;
 }
 static bool grapple(q2_save_io *io, qa_q2_grapple_state *s) {

@@ -70,8 +70,7 @@ static bool push_team(qa_q2_game *g, q2_actor *a, qa_error *e) {
             float seconds = (float)((double)g->frame_ns / 1e9);
             parts[count++] = (qa_physics_push){.actor = part->id,
                 .displacement = qa_vec_scale(body.velocity, seconds),
-                .angular_displacement = qa_vec_scale(part->physics.angular_velocity, seconds),
-                .elapsed_ns = g->frame_ns};
+                .angular_displacement = qa_vec_scale(part->physics.angular_velocity, seconds)};
             qa_actor_id next = part->entity ? part->entity->team_next : (qa_actor_id){0};
             part = next.registry ? q2_actor_get(g, next, false, NULL) : NULL;
             if (next.registry && (!part || !part->entity || !part->physics_bound)) {

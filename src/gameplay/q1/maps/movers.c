@@ -758,7 +758,6 @@ bool q1_map_mover_think(qa_q1_game *g, q1_actor *entity, q1_map_action action, q
         if (!entity || !entity->map)
             return true;
         move = &entity->map->pending.mover;
-        entity->physics.next_think_ns = -1;
         entity->next_think = -1;
         move->moving = false;
     }

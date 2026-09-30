@@ -59,9 +59,8 @@ bool q1_save_physics(q1_save_io *io, qa_physics_properties *physics) {
     Q1_SAVE(io, i32, physics->water_type);
     Q1_SAVE(io, actor, physics->enemy);
     Q1_SAVE(io, actor, physics->goal);
-    Q1_SAVE(io, i64, physics->local_time_ns);
-    Q1_SAVE(io, i64, physics->next_think_ns);
-    if (physics->water_level < 0 || physics->water_level > 3)
-        return q1_save_fail(io, "Invalid Q1 checkpoint water level");
+    Q1_SAVE(io, double, physics->q1_pusher.local_seconds);
+    if (io->reading)
+        physics->q1_pusher.next_think_seconds = 0;
     return true;
 }

@@ -219,7 +219,8 @@ static bool rubble(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         piece->map->touch_enabled = true;
         piece->physics.motion = QA_PHYSICS_BOUNCE;
         piece->physics.solid = QA_PHYSICS_BOX;
-        piece->physics.local_time_ns = (int64_t)g->time_ns;
+        if (!q1_think_deadline(g->time, 0, &piece->physics.q1_pusher.local_seconds, error))
+            goto failed;
         qa_body_state body = {.origin = source.origin};
         body.velocity.x = 70 * (q1_random(g) * 2 - 1);
         body.velocity.y = 70 * (q1_random(g) * 2 - 1);
@@ -287,7 +288,9 @@ bool q1_map_hip_misc_use(qa_q1_game *g, q1_actor *entity, qa_actor_id activator,
 bool q1_map_hip_misc_touch(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_error *error) {
     if (entity->map->kind != Q1_MAP_RUBBLE)
         return true;
-    double local_time = (double)entity->physics.local_time_ns / 1000000000.0;
+    double local_time;
+    if (!q1_local_time(entity, &local_time, error))
+        return false;
     qa_combat_state combat;
     if (local_time < entity->map->cooldown ||
         !qa_combat_read(g->services.combat, other, &combat, NULL) || !combat.can_take_damage)

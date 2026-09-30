@@ -24,6 +24,12 @@ enum qa_physics_flags {
     QA_PHYSICS_KEEP_MOVE_WHILE_TURNING = 1u << 11
 };
 
+typedef struct qa_q1_pusher_clock {
+    /* Read the source's local seconds and deadline directly. Local advance
+     * and rollback use binary64 arithmetic followed by a binary32 store. */
+    double local_seconds, next_think_seconds;
+} qa_q1_pusher_clock;
+
 /* These fields belong to the game/provider. Bodies, collision and source
  * clocks remain owned by the shared world and session. Defaults are explicit;
  * a zero clip_mask is significant for NEW_TOSS. */
@@ -37,7 +43,7 @@ typedef struct qa_physics_properties {
     float gravity_scale, delta_yaw, ideal_yaw, yaw_speed;
     int32_t water_level, water_type;
     qa_actor_id enemy, goal;
-    int64_t local_time_ns, next_think_ns;
+    qa_q1_pusher_clock q1_pusher;
 } qa_physics_properties;
 
 typedef enum qa_physics_event_kind {
@@ -57,7 +63,7 @@ typedef struct qa_physics_services {
     bool (*touch)(void *, const qa_touch_contact *, qa_error *);
     bool (*blocked)(void *, qa_actor_id pusher, qa_actor_id obstacle, qa_error *);
     bool (*event)(void *, const qa_physics_event *, qa_error *);
-    /* Q1 local-pusher think: next_think_ns is cleared before entry. Other
+    /* Q1 local-pusher think: next_think_seconds is cleared before entry. Other
      * thinks use the session scheduler at the caller's source boundary. */
     bool (*pusher_think)(void *, qa_actor_id, const qa_source_frame *, qa_error *);
     /* Ascending source traversal. NULL orders source slots then owner/host
@@ -126,7 +132,8 @@ qa_vec3 qa_physics_clip_velocity(qa_vec3, qa_vec3 normal, float overbounce);
 typedef struct qa_physics_push {
     qa_actor_id actor;
     qa_vec3 displacement, angular_displacement;
-    uint64_t elapsed_ns;
+    /* Q1 local-clock interval; displacement-only and Q2 pushes use zero. */
+    double q1_elapsed_seconds;
 } qa_physics_push;
 /* Q1 invokes blocked before restoring moved actors in forward order. Q2
  * restores the whole team in reverse order before blocked; success touches

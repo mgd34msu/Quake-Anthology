@@ -1,4 +1,14 @@
 #include "internal.h"
+#include <float.h>
+
+static bool q1_store(double value, float *out, qa_error *error) {
+    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 pusher value exceeds finite binary32");
+        return false;
+    }
+    *out = fabs(value) > FLT_MAX ? (value < 0 ? -FLT_MAX : FLT_MAX) : (float)value;
+    return true;
+}
 #include <stdlib.h>
 
 typedef struct ph_pushed {
@@ -105,15 +115,13 @@ static bool q1_push(qa_physics *p, const qa_physics_push *input,
     qa_physics_properties props;
     int read = ph_read(p, input->actor, &original, &props, error);
     if (read <= 0) { result->status = QA_PHYSICS_REMOVED; return read == 0; }
-    if (input->elapsed_ns > INT64_MAX || props.local_time_ns > INT64_MAX-(int64_t)input->elapsed_ns) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 pusher local time overflow"); return false;
-    }
     bool rotating = ph_moving(input->angular_displacement);
-    int64_t local = props.local_time_ns+(int64_t)input->elapsed_ns;
     qa_linked_body linked;
     qa_bounds original_bounds = qa_world_linked(p->world, input->actor, &linked) ?
         linked.absolute_bounds : qa_bounds_translate(original.bounds, original.origin);
-    props.local_time_ns = local;
+    float local;
+    if (!q1_store(props.q1_pusher.local_seconds + input->q1_elapsed_seconds, &local, error)) return false;
+    props.q1_pusher.local_seconds = local;
     if (!ph_properties(p, input->actor, &props, error)) return false;
     if (!ph_moving(input->displacement) && !rotating) return true;
     read = ph_read(p, input->actor, &body, &props, error);
@@ -199,10 +207,8 @@ static bool q1_push(qa_physics *p, const qa_physics_push *input,
         if (!read) { result->status = QA_PHYSICS_REMOVED; break; }
         body.origin = original.origin;
         body.angles = original.angles;
-        if (props.local_time_ns < INT64_MIN+(int64_t)input->elapsed_ns) {
-            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 pusher rollback time underflow"); ok = false; break;
-        }
-        props.local_time_ns -= (int64_t)input->elapsed_ns;
+        if (!q1_store(props.q1_pusher.local_seconds - input->q1_elapsed_seconds, &local, error)) { ok = false; break; }
+        props.q1_pusher.local_seconds = local;
         if (!ph_write(p, input->actor, &body, error) || !ph_properties(p, input->actor, &props, error) ||
             !ph_link(p, input->actor, false, error)) { ok = false; break; }
         result->status = QA_PHYSICS_BLOCKED;
@@ -310,7 +316,8 @@ static bool q2_push(qa_physics *p, const qa_physics_push *input,
 
 bool qa_physics_push_pusher(qa_physics *p, const qa_physics_push *input,
                             qa_physics_result *result, qa_error *error) {
-    if (!p || !input || !result || !qa_vec_finite(input->displacement) || !qa_vec_finite(input->angular_displacement)) {
+    if (!p || !input || !result || !qa_vec_finite(input->displacement) || !qa_vec_finite(input->angular_displacement) ||
+        !isfinite(input->q1_elapsed_seconds) || input->q1_elapsed_seconds < 0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid pusher displacement"); return false;
     }
     *result = (qa_physics_result){.status = QA_PHYSICS_MOVED};
@@ -332,7 +339,8 @@ bool qa_physics_push_team(qa_physics *p, const qa_physics_push *parts, size_t co
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid or nested pusher team transaction"); return false;
     }
     for (size_t i = 0; i < count; ++i)
-        if (!qa_vec_finite(parts[i].displacement) || !qa_vec_finite(parts[i].angular_displacement)) {
+        if (!qa_vec_finite(parts[i].displacement) || !qa_vec_finite(parts[i].angular_displacement) ||
+            !isfinite(parts[i].q1_elapsed_seconds) || parts[i].q1_elapsed_seconds < 0) {
             qa_error_set(error, QA_ERROR_ARGUMENT, i, "Invalid pusher team displacement"); return false;
         }
     *result = (qa_physics_result){.status = QA_PHYSICS_MOVED};
@@ -364,23 +372,24 @@ bool qa_physics_step_q1_pusher(qa_physics *p, qa_actor_id actor,
     qa_physics_properties props;
     int read = ph_read(p, actor, &body, &props, error);
     if (read <= 0) { result->status = QA_PHYSICS_REMOVED; return read == 0; }
-    int64_t old_time = props.local_time_ns, think_time = props.next_think_ns;
-    if (frame->elapsed_ns > INT64_MAX || old_time > INT64_MAX-(int64_t)frame->elapsed_ns) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 pusher frame time overflow"); return false;
-    }
-    uint64_t elapsed = think_time < old_time+(int64_t)frame->elapsed_ns ?
-        (think_time > old_time ? (uint64_t)think_time-(uint64_t)old_time : 0) : frame->elapsed_ns;
-    if (elapsed) {
-        float seconds = (float)((double)elapsed*0.000000001);
-        qa_physics_push push = {.actor = actor, .elapsed_ns = elapsed};
-        if (rotate) push.angular_displacement = qa_vec_scale(props.angular_velocity, seconds);
-        else push.displacement = qa_vec_scale(body.velocity, seconds);
+    double old_time = props.q1_pusher.local_seconds, think_time = props.q1_pusher.next_think_seconds;
+    double seconds = (double)frame->elapsed_ns / 1e9;
+    double elapsed = think_time < old_time + seconds ? fmax(0, think_time - old_time) : seconds;
+    if (elapsed != 0) {
+        qa_physics_push push = {.actor = actor, .q1_elapsed_seconds = elapsed};
+        qa_vec3 velocity = rotate ? props.angular_velocity : body.velocity;
+        qa_vec3 displacement;
+        if (!q1_store((double)velocity.x * elapsed, &displacement.x, error) ||
+            !q1_store((double)velocity.y * elapsed, &displacement.y, error) ||
+            !q1_store((double)velocity.z * elapsed, &displacement.z, error)) return false;
+        if (rotate) push.angular_displacement = displacement;
+        else push.displacement = displacement;
         if (!qa_physics_push_pusher(p, &push, result, error)) return false;
     }
     read = ph_read(p, actor, &body, &props, error);
     if (read <= 0) { result->status = QA_PHYSICS_REMOVED; return read == 0; }
-    if (think_time > old_time && think_time <= props.local_time_ns) {
-        props.next_think_ns = 0;
+    if (think_time > old_time && think_time <= props.q1_pusher.local_seconds) {
+        props.q1_pusher.next_think_seconds = 0;
         if (!ph_properties(p, actor, &props, error)) return false;
         if (ph_live(p, actor) && p->services.pusher_think &&
             !p->services.pusher_think(p->services.context, actor, frame, error)) return false;

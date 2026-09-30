@@ -522,14 +522,11 @@ bool q1_map_schedule(qa_q1_game *g, q1_actor *entity, double delay, q1_map_actio
     if (!isfinite(delay))
         return q1_map_fail(error, "invalid Q1 map think delay");
     if (entity->physics.motion == QA_PHYSICS_PUSH) {
-        double due;
-        if (!q1_think_deadline((double)entity->physics.local_time_ns / 1000000000.0,
-                               delay, &due, error))
+        double local, due;
+        if (!q1_local_time(entity, &local, error) ||
+            !q1_think_deadline(local, delay, &due, error))
             return false;
-        double deadline = due * 1000000000.0;
-        if (deadline >= (double)INT64_MAX || deadline <= (double)INT64_MIN)
-            return q1_map_fail(error, "Q1 local map deadline overflow");
-        entity->physics.next_think_ns = (int64_t)deadline;
+        qa_scheduler_cancel(qa_session_scheduler(g->services.session), entity->id);
         entity->think = Q1_THINK_MAP;
         entity->next_think = due;
     } else if (!q1_schedule(g, entity, delay, Q1_THINK_MAP, error))
@@ -541,7 +538,6 @@ void q1_map_cancel(qa_q1_game *g, q1_actor *entity) {
     qa_scheduler_cancel(qa_session_scheduler(g->services.session), entity->id);
     entity->think = Q1_THINK_NONE;
     entity->next_think = -1;
-    entity->physics.next_think_ns = -1;
     if (entity->map)
         entity->map->action = Q1_MAP_IDLE;
 }
@@ -581,6 +577,7 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
         source->height,        source->lip,          source->width,
         source->length,        source->pause_time,   source->volume,
         source->duration,      source->distance,     source->next_think_seconds,
+        source->local_time_seconds,
         source->counter_value, source->spawn_multi,  source->spawn_silent,
         source->gravity,       source->current_ammo, source->pain_finished,
         source->weapon,        source->frags, source->goal_state, source->fog_density};
@@ -610,6 +607,7 @@ static bool fields(qa_q1_game *g, q1_actor *entity, const qa_q1_map_fields *sour
             !qa_builtin_resource(&g->services, input[i], output[i], error))
             return false;
     entity->model = state->original_model;
+    entity->physics.q1_pusher.local_seconds = source->local_time_seconds;
     state->mangle = source->mangle;
     state->rotate = source->rotate;
     state->dest = source->dest;

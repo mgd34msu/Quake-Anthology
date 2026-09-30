@@ -223,7 +223,7 @@ static bool mover_read(qa_q1_game *g, qa_actor_id actor, qa_q1_map_mover_view *o
                                                              stop_offset)
                                                : state->pending.mover.destination;
         bool scheduled = rotating ? state->pending.rotation.end_time != 0
-            : e->physics.next_think_ns >= 0 && state->action != Q1_MAP_IDLE;
+            : e->next_think >= 0 && state->action != Q1_MAP_IDLE;
         view.navigation.data.train.origin = body.origin;
         view.navigation.data.train.running = view.navigation.has_destination || scheduled;
         if (!train_stops(g, source_actor, source_kind, stop_offset,

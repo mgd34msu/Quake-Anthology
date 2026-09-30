@@ -298,7 +298,6 @@ typedef struct q1_actor {
     struct {
         q1_think_kind think;
         double next_think;
-        int64_t physics_think;
         bool active, damageable;
     } frozen;
     union {
@@ -497,6 +496,7 @@ bool q1_create(qa_q1_game *, const char *, q1_entity_kind, qa_actor_id owner, q1
                qa_error *);
 bool q1_remove(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_schedule(qa_q1_game *, q1_actor *, double, q1_think_kind, qa_error *);
+bool q1_local_time(const q1_actor *, double *, qa_error *);
 bool q1_think_deadline(double, double, double *, qa_error *);
 bool q1_think(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_link(qa_q1_game *, q1_actor *, qa_error *);

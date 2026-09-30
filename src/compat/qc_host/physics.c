@@ -1,4 +1,5 @@
 #include "internal.h"
+#include <float.h>
 
 static bool scalar(qa_qc_game *game, int32_t reference, const char *name, float fallback,
                    bool optional, float *out, qa_error *error) {
@@ -30,10 +31,11 @@ static uint32_t flags_word(float value) {
     if (bits < 0) bits += 4294967296.0;
     return (uint32_t)bits;
 }
-static int64_t deadline(float seconds) {
-    double ns = (double)seconds * 1000000000.0;
-    if (!(ns > 0)) return 0;
-    return ns >= (double)INT64_MAX ? INT64_MAX : (int64_t)ns;
+static bool clock_word(double value, float *out, qa_error *error) {
+    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127)
+        return qc_game_fail(error, QA_ERROR_ARGUMENT, "QC pusher clock exceeds finite binary32");
+    *out = fabs(value) > FLT_MAX ? (value < 0 ? -FLT_MAX : FLT_MAX) : (float)value;
+    return true;
 }
 static bool still_actor(qa_qc_game *game, int32_t reference, qa_actor_id actor, qa_error *error) {
     qa_actor_id current;
@@ -97,7 +99,7 @@ bool qa_qc_game_read_physics(qa_qc_game *game, qa_actor_id actor, qa_physics_pro
         return qc_game_fail(error, QA_ERROR_FORMAT, "QC water properties exceed source bounds");
     value.water_level = (int32_t)water_level; value.water_type = (int32_t)water_type;
     if (!value.gravity_scale) value.gravity_scale = 1;
-    value.local_time_ns = deadline(local); value.next_think_ns = deadline(next);
+    value.q1_pusher = (qa_q1_pusher_clock){.local_seconds = local, .next_think_seconds = next};
     if (!still_actor(game, reference, actor, error)) return false;
     *out = value; return true;
 }
@@ -117,7 +119,9 @@ bool qa_qc_game_write_physics(qa_qc_game *game, qa_actor_id actor,
         return qc_game_fail(error, QA_ERROR_ARGUMENT, "Invalid QC physics store");
     int32_t reference;
     if (!qa_qc_actor_reference(game->vm, actor, false, &reference, error)) return false;
-    float flags;
+    float flags, local, next;
+    if (!clock_word(value->q1_pusher.local_seconds, &local, error) ||
+        !clock_word(value->q1_pusher.next_think_seconds, &next, error)) return false;
     if (!scalar(game, reference, "flags", 0, false, &flags, error)) return false;
     uint32_t bits = flags_word(flags) & ~(1u | 2u | 1024u | 512u);
     if (value->flags & QA_PHYSICS_FLYING) bits |= 1u;
@@ -132,8 +136,8 @@ bool qa_qc_game_write_physics(qa_qc_game *game, qa_actor_id actor,
         !store_scalar(game, reference, actor, "watertype", (float)value->water_type, error) ||
         !store_scalar(game, reference, actor, "ideal_yaw", value->ideal_yaw, error) ||
         !store_scalar(game, reference, actor, "yaw_speed", value->yaw_speed, error) ||
-        !store_scalar(game, reference, actor, "ltime", (float)((double)value->local_time_ns / 1000000000.0), error) ||
-        !store_scalar(game, reference, actor, "nextthink", (float)((double)value->next_think_ns / 1000000000.0), error) ||
+        !store_scalar(game, reference, actor, "ltime", local, error) ||
+        !store_scalar(game, reference, actor, "nextthink", next, error) ||
         !qa_qc_set_entity_vector(game->vm, reference, angular->offset, value->angular_velocity, error)) return false;
     return still_actor(game, reference, actor, error);
 }

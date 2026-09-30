@@ -23,7 +23,7 @@ typedef struct qa_q1_map_fields {
     float fog_density;
     bool has_movedir, has_view_offset, has_dest2;
     float height, lip, width, length, pause_time;
-    float volume, duration, distance, next_think_seconds;
+    float volume, duration, distance, next_think_seconds, local_time_seconds;
     float spawn_multi, spawn_silent, gravity, current_ammo, pain_finished, weapon, frags;
     int32_t sounds, style, world_type, color_map, impulse;
     int32_t initial_state, frame, skin;

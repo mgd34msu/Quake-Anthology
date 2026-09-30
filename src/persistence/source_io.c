@@ -227,7 +227,8 @@ bool qa_persistence_physics(qa_source_save_io *io, qa_physics_properties *value)
         qa_source_save_f32(io, &value->ideal_yaw) && qa_source_save_f32(io, &value->yaw_speed) &&
         qa_source_save_i32(io, &value->water_level) && qa_source_save_i32(io, &value->water_type) &&
         qa_source_save_actor(io, &value->enemy) && qa_source_save_actor(io, &value->goal) &&
-        qa_source_save_i64(io, &value->local_time_ns) && qa_source_save_i64(io, &value->next_think_ns);
+        qa_source_save_f64(io, &value->q1_pusher.local_seconds) &&
+        qa_source_save_f64(io, &value->q1_pusher.next_think_seconds);
 }
 
 bool qa_persistence_collision(qa_source_save_io *io, qa_actor_collision *value)

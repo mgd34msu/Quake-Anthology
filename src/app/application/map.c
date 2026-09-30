@@ -1076,6 +1076,8 @@ static bool q1_spawn_entity(application_provider *provider,
         !entity_float(entities, index, "wait", 0, &spawn.wait, error) ||
         !entity_float(entities, index, "delay", 0, &spawn.delay, error) ||
         !entity_float(entities, index, "dmg", 0, &spawn.damage, error) ||
+        !entity_float(entities, index, "ltime", 0,
+                      &fields.local_time_seconds, error) ||
         !entity_float(entities, index, "count", 0, &spawn.count, error))
         return false;
     if (!has_angles) {

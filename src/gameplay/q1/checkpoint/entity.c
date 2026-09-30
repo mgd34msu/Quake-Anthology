@@ -155,10 +155,9 @@ bool q1_save_entity(q1_save_io *io, q1_actor *a) {
     Q1_SAVE(io, double, a->next_think);
     Q1_SAVE_ENUM(io, a->frozen.think, Q1_THINK_SPAWN_TEMPLATE);
     Q1_SAVE(io, double, a->frozen.next_think);
-    Q1_SAVE(io, i64, a->frozen.physics_think);
     Q1_SAVE(io, bool, a->frozen.active);
     Q1_SAVE(io, bool, a->frozen.damageable);
-    if (a->frozen.active && (a->think != Q1_THINK_NONE || a->physics.next_think_ns != -1))
+    if (a->frozen.active && (a->think != Q1_THINK_NONE || a->next_think != -1))
         return q1_save_fail(io, "Frozen Q1 actor retained a running continuation");
     Q1_SAVE(io, float, a->max_health);
     Q1_SAVE(io, float, a->delay);

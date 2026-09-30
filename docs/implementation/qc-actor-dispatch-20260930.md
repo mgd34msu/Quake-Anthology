@@ -8,8 +8,11 @@ The write scope is `src/app/application/guest_qc.c`,
 `src/app/application/guest_qc_internal.h`,
 `src/app/application/guest_qc_checkpoint.c`,
 `src/app/application/guest_qc_declared.c` and
-`src/compat/qc_host/physics.c`. Root owns shared declarations, scheduler APIs,
-physics APIs, application service integration, build definitions and Git.
+`src/compat/qc_host/physics.c`. The source-clock follow-up additionally owns
+`include/qa/physics.h`, `src/movement/entity/pushers.c`,
+`src/persistence/source_io.c` and narrow version changes in
+`src/gameplay/modes/checkpoint.c` and `src/gameplay/modes/save.c`.
+Root owns application service integration, build definitions and Git.
 
 ## Behavioral evidence
 
@@ -45,6 +48,16 @@ physics APIs, application service integration, build definitions and Git.
   water transition and splash policy. Source initialization sets waterlevel to
   one. Leaving water preserves raw empty or solid contents in waterlevel,
   including negative values.
+- `../quake-typescript/src/movement/q1/pusher.ts:43-51,108-113,129-144`
+  advances and rolls back local time with donor binary64 addition/subtraction
+  and a final binary32 store. Think timing compares the captured deadline with
+  the actual local time read after the push. `compat/qc/pusher-host.ts` reads
+  raw binary32 `ltime` and `nextthink`; the native projection in
+  `app/bootstrap/simulation/native-q1-pusher.ts` reads source fields directly.
+- Native `foundation/entity-services.ts:363-371` deliberately rounds
+  `schedule` and `scheduleAt` deadlines to binary32. Native `nextThink` remains
+  a source-owned double property; the shared nanosecond scheduler is a
+  projection rather than the authority for local pusher timing.
 
 ## Native changes
 
@@ -97,20 +110,40 @@ the old BEFORE-think contract and is rejected instead of silently replaying it
 under the new source ordering. Root separately validates restored scheduler
 boundary metadata.
 
+The shared Q1 pusher now uses `qa_q1_pusher_clock` source seconds. QC fields
+promote their actual binary32 values without clamping positive, zero or negative
+deadlines. Move-time subtraction and velocity scaling use binary64 arithmetic;
+displacement and local advance store their final binary32 results. A blocked
+push rereads the live pusher and subtracts the interval from that current local
+clock before the blocked callback and forward actor rollback. The think gate
+uses the captured original deadline and the actual post-push local clock, then
+clears the current deadline before invoking the real provider callback.
+Float stores admit the finite nearest-binary32 rounding range before narrowing;
+values below the overflow midpoint still round to finite `FLT_MAX`. Nonfinite
+results and values at or above that midpoint fail before an out-of-range cast.
+
+`qa_physics_push.q1_elapsed_seconds` carries the actual Q1 interval. Explicit
+displacement pushes and Q2 pushes retain a zero interval. The portable physics
+codec now preserves both source-second values as f64. Mode saves write and
+require private version 8 and typed checkpoint version 10, rejecting old integer
+clock bit interpretations. Native Q1 and Q2 owners separately migrate their
+actual producers, projection and private codecs.
+
 ## Integration and remaining work
 
-Root must expose the water helper in shared application declarations and route
-the QC branch of `physics_q1_water_transition` to it. That lets colliding toss
-actors use the same source water policy as post-STEP actors. Root's generic
+Root exposes the water helper in shared application declarations and routes
+the QC branch of `physics_q1_water_transition` to it. Colliding toss actors
+therefore use the same source water policy as post-STEP actors. Root's generic
 single-dispatch scheduler API and captured-procedure physics API are separate
 review packets.
 
-QC local pusher time still passes through the existing int64 nanosecond adapter
-in `qc_host/physics.c` and `movement/entity/pushers.c`. This packet does not
-establish IEEE source-local-clock parity. Classic player movement callback
-integration remains root-owned; qualified client scheduling was traced and kept
-in its existing frame contract. Complete QW missile traversal, media admission,
-save integration and executable behavior require their own acceptance evidence.
+The source-clock migration requires coordinated native Q1 producer and private
+codec acceptance, plus the Q2 codec/type migration; the shared edits alone do
+not establish complete pusher behavior. Classic player movement callback
+integration remains coordinated with the actual control/session producer;
+qualified client scheduling retains its existing frame contract. Complete QW
+missile traversal, media admission, save integration and executable behavior
+require their own acceptance evidence.
 
 ## Review freeze
 
@@ -119,7 +152,10 @@ The initial bounded six-file SHA-256 manifest is
 and committed by root at `3e6c032`. The two-file callback-time follow-up is
 `/tmp/qc-actor-time-20260930.sha256`, accepted by independent Q1 source review
 and committed by root at `7aec7ba`. The two-file frametime follow-up is
-`/tmp/qc-actor-frametime-20260930.sha256`. It changes `guest_qc.c` and this report.
+`/tmp/qc-actor-frametime-20260930.sha256`, accepted by independent Q1 source
+review and committed by root at `b6ab79d`. The shared source-clock follow-up is
+`/tmp/qc-pusher-clock-20260930.sha256`. It changes the six shared/codec paths
+listed above and this report.
 Independent source review must read the frozen files against the cited oracle
 paths and root API declarations. Whitespace and digest checks are allowed before
 BASELINE; runtime checks are not acceptance evidence for this packet because
