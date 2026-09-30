@@ -560,12 +560,21 @@ static bool cable(q2m_context *c, qa_error *error) {
             return true;
         target.monster->resurrecting = true;
         if (rogue(c)) {
-            if (!q2m_damageable(&target, false, error))
-                return false;
+            target.monster->can_take_damage = false;
+            if (!heal_effects(&target, error))
+                return !q2m_alive(c) || !q2m_alive(&target);
             if (!q2m_alive(c) || !q2m_alive(&target))
                 return true;
-            if (!heal_effects(&target, error))
-                return false;
+            qa_combat_state traits;
+            if (!qa_combat_read_traits(c->game->services.combat, target_id, &traits, error))
+                return !q2m_alive(c) || !q2m_alive(&target);
+            if (!q2m_alive(c) || !q2m_alive(&target))
+                return true;
+            traits.can_take_damage = false;
+            if (!qa_combat_set_traits(c->game->services.combat, target_id, &traits, error))
+                return !q2m_alive(c) || !q2m_alive(&target);
+            if (!q2m_alive(c) || !q2m_alive(&target))
+                return true;
         }
     } else if (frame == MEDIC_REVIVE) {
         if (!revive(c, &target, error))
@@ -588,7 +597,7 @@ static bool cable(q2m_context *c, qa_error *error) {
     }
     if (!q2m_alive(c))
         return true;
-    if (rerelease(c))
+    if (rogue(c))
         target_id = c->monster->enemy;
     if (!q2_actor_live(c->game, target_id))
         return true;
