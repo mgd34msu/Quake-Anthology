@@ -20,6 +20,9 @@ struct frontend_native_q2 {
     qa_frontend *frontend;
     qa_application *application;
     qa_actor_owner owner;
+    void *owner_context;
+    bool (*owner_idle)(void *);
+    unsigned active_imports;
     uint64_t identity;
     qa_native_profile profile;
     qa_vfs *mounts;
@@ -248,7 +251,7 @@ static bool world_text(frontend_native_q2 *source, const qa_native_host_q2_appli
     return qa_font_world_store_submit(source->world_text, &text,
         (double)source->frontend->time_ns / 1000000000, call->import->arguments[4 + offset].as.f32, error);
 }
-static bool application_import(void *context, const qa_native_host_q2_application_call *call,
+static bool application_import_body(void *context, const qa_native_host_q2_application_call *call,
     qa_native_value *result, qa_error *error)
 {
     frontend_native_q2 *source = context; const qa_native_import_call *import = call->import;
@@ -398,7 +401,7 @@ static bool application_import(void *context, const qa_native_host_q2_applicatio
     }
     return frontend_fail(error, QA_ERROR_UNSUPPORTED, "native Q2 platform import is not bound");
 }
-static void platform_print(void *context, const qa_native_host_print *print)
+static void platform_print_body(void *context, const qa_native_host_print *print)
 {
     frontend_native_q2 *source = context; qa_frontend *frontend = source->frontend;
     if (!print || !print->text || print->kind == QA_NATIVE_HOST_PRINT_DEBUG) return;
@@ -420,7 +423,7 @@ static void platform_print(void *context, const qa_native_host_print *print)
         if (!ok) fprintf(stderr, "native Q2 print: %s\n", error.message);
     }
 }
-static bool platform_sound(void *context, const qa_native_host_sound *event, qa_error *error)
+static bool platform_sound_body(void *context, const qa_native_host_sound *event, qa_error *error)
 {
     frontend_native_q2 *source = context; qa_frontend *frontend = source->frontend;
     if (!frontend->audio) return true;
@@ -449,7 +452,7 @@ static bool platform_sound(void *context, const qa_native_host_sound *event, qa_
     bool ok = qa_audio_engine_play(frontend->audio, &sound, (int32_t)((frontend->time_ns / 1000000) & INT32_MAX), error);
     qa_audio_asset_release(asset); return ok;
 }
-static bool platform_hud_view(void *context, uint32_t seat,
+static bool platform_hud_view_body(void *context, uint32_t seat,
     qa_native_host_q2_hud_view *out, qa_error *error)
 {
     frontend_native_q2 *source = context;
@@ -463,6 +466,39 @@ static bool platform_hud_view(void *context, uint32_t seat,
         .safe_x = rect.x, .safe_y = rect.y,
         .safe_width = (int32_t)rect.width, .safe_height = (int32_t)rect.height, .scale = 1};
     return true;
+}
+static bool application_import(void *context, const qa_native_host_q2_application_call *call,
+    qa_native_value *result, qa_error *error)
+{
+    frontend_native_q2 *source = context;
+    ++source->active_imports;
+    bool ok = application_import_body(context, call, result, error);
+    --source->active_imports;
+    return ok;
+}
+static void platform_print(void *context, const qa_native_host_print *print)
+{
+    frontend_native_q2 *source = context;
+    ++source->active_imports;
+    platform_print_body(context, print);
+    --source->active_imports;
+}
+static bool platform_sound(void *context, const qa_native_host_sound *event, qa_error *error)
+{
+    frontend_native_q2 *source = context;
+    ++source->active_imports;
+    bool ok = platform_sound_body(context, event, error);
+    --source->active_imports;
+    return ok;
+}
+static bool platform_hud_view(void *context, uint32_t seat,
+    qa_native_host_q2_hud_view *out, qa_error *error)
+{
+    frontend_native_q2 *source = context;
+    ++source->active_imports;
+    bool ok = platform_hud_view_body(context, seat, out, error);
+    --source->active_imports;
+    return ok;
 }
 static void release_source(void *context)
 {
@@ -499,6 +535,7 @@ bool frontend_native_q2_services(void *context, qa_application *application, qa_
     frontend_native_q2 *source = calloc(1, sizeof(*source));
     if (!source) return frontend_fail(error, QA_ERROR_MEMORY, "allocating native Q2 frontend lease");
     source->frontend = frontend; source->application = application; source->owner = owner; source->profile = profile;
+    source->owner_context = engine->owner_context; source->owner_idle = engine->owner_idle;
     source->identity = FRONTEND_OWNER + ++frontend->next_source_id;
     source->frame_time_ns = frontend->time_ns;
     source->cvars = engine->cvars; source->mounts = qa_vfs_clone(engine->content_files, error);
@@ -551,4 +588,31 @@ const qa_scene_resources *frontend_native_q2_images_at(qa_frontend *frontend, si
     for (frontend_native_q2 *source = frontend->native_q2; source; source = source->next)
         if (source->images && index-- == 0) return source->images;
     return NULL;
+}
+
+bool frontend_native_q2_rebind_ready(const qa_frontend *candidate, const qa_frontend *published,
+    qa_error *error)
+{
+    if (!candidate || !published || candidate == published || candidate->stepping || published->stepping ||
+        !candidate->application || candidate->options.seats != published->options.seats ||
+        candidate->options.dedicated != published->options.dedicated)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 frontend adoption requires idle matching frontends");
+    for (frontend_native_q2 *source = candidate->native_q2; source; source = source->next) {
+        if ((source->frontend != candidate && source->frontend != published) ||
+            source->application != candidate->application || source->active_imports ||
+            !source->owner_idle || !source->owner_idle(source->owner_context) ||
+            (source->seat_bound && source->seat >= candidate->options.seats))
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 frontend lease has active or mismatched source references");
+    }
+    for (frontend_native_q2 *source = published->native_q2; source; source = source->next)
+        if (source->frontend != published || source->application != published->application ||
+            source->active_imports || !source->owner_idle || !source->owner_idle(source->owner_context))
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "published native Q2 frontend owner is active");
+    return true;
+}
+
+void frontend_native_q2_rebind(qa_frontend *owned, qa_frontend *destination)
+{
+    for (frontend_native_q2 *source = owned->native_q2; source; source = source->next)
+        source->frontend = destination;
 }

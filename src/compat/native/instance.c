@@ -52,9 +52,9 @@ bool qa_native_create_direct(qa_native_module *module, const qa_native_options *
     if (!module || !options || !out)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native module, options and output are required");
-    if (options->declaration && options->declaration->region_count)
-        return native_fail(error, QA_ERROR_UNSUPPORTED, options->declaration->region_count,
-                           "declared native regions require the instrumented runner backend");
+    if (options->observe || (options->declaration && options->declaration->region_count))
+        return native_fail(error, QA_ERROR_UNSUPPORTED, 0,
+                           "native regions and observers require the instrumented runner backend");
     if ((module->info.profile == QA_NATIVE_Q3_VMMAIN) &&
         (!options->describe_syscall || !options->syscall))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
@@ -120,8 +120,9 @@ bool qa_native_create(qa_native_module *module, const qa_native_options *options
     if (!module)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native module is required for backend selection");
-    bool needs_regions = options && options->declaration && options->declaration->region_count;
-    return exact_target(module->info.image.target, qa_native_host_target()) && !needs_regions
+    bool instrumented = options && (options->observe ||
+                        (options->declaration && options->declaration->region_count));
+    return exact_target(module->info.image.target, qa_native_host_target()) && !instrumented
                ? qa_native_create_direct(module, options, out, error)
                : qa_native_create_runner(module, options, runner, out, error);
 }
@@ -186,6 +187,7 @@ bool qa_native_destroy(qa_native_instance *instance, qa_error *error) {
     qa_native_module_release(instance->module);
     free(instance->slots);
     native_regions_destroy(instance);
+    native_observers_destroy(instance);
     memset(instance, 0, sizeof(*instance));
     free(instance);
     if (!completed && error) *error = first;
@@ -244,9 +246,9 @@ static bool entry_allowed(qa_native_instance *instance, const native_entry_bindi
     if (instance->checkpointing || instance->destroying)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native instance cannot enter during checkpoint or destruction");
-    if (instance->region_depth)
+    if (instance->region_depth || instance->write_depth)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
-                           "native instance cannot reenter while an inline region is suspended");
+                           "native instance cannot reenter while an instruction callback is suspended");
     if (instance->module->info.profile == QA_NATIVE_Q3_VMMAIN) {
         if (!argument_count || arguments[0].type != QA_NATIVE_I32)
             return native_fail(error, QA_ERROR_ARGUMENT, 0,
@@ -434,7 +436,8 @@ bool qa_native_invoke(qa_native_instance *instance, qa_native_address entry,
                       const qa_native_signature *signature, const qa_native_value *arguments,
                       size_t argument_count, qa_native_value *result, qa_error *error) {
     if (!instance || !entry || !signature || instance->lifecycle != QA_NATIVE_INITIALIZED ||
-        instance->checkpointing || instance->destroying || instance->region_depth)
+        instance->checkpointing || instance->destroying || instance->region_depth ||
+        instance->write_depth)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "initialized native instance and declared entry are required");
     if (instance->backend == QA_NATIVE_BACKEND_RUNNER) {

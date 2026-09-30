@@ -2,6 +2,8 @@
 
 #include "dr_api.h"
 #include "drmgr.h"
+#include "drutil.h"
+#include "hook_control.h"
 #include "wire_constants.h"
 
 #include <stdint.h>
@@ -50,6 +52,7 @@ static uint32_t call_depth;
 static thread_id_t owner_thread;
 static file_t hook_input;
 static file_t hook_output;
+static bool observer_control(native_hook_control *control);
 
 static bool hook_u64_fits_size(uint64_t value) {
 #if SIZE_MAX < UINT64_MAX
@@ -186,6 +189,20 @@ static bool send_operation_reply(const hook_frame *request, bool ok, const uint8
 }
 
 static bool service_memory_request(const hook_frame *frame) {
+    if (frame->opcode == NATIVE_WIRE_OBSERVER_CONTROL) {
+        if (frame->payload_size != 48u)
+            return send_operation_reply(frame, false, NULL, 0, "instrumented watch control extent is invalid");
+        native_hook_control control = {.magic = load_u64(frame->payload),
+                                       .operation = load_u64(frame->payload + 8u),
+                                       .id = load_u64(frame->payload + 16u),
+                                       .address = load_u64(frame->payload + 24u),
+                                       .size = load_u64(frame->payload + 32u),
+                                       .replacement = load_u64(frame->payload + 40u)};
+        bool ok = (control.operation == NATIVE_HOOK_WATCH_ADD ||
+                   control.operation == NATIVE_HOOK_WATCH_REMOVE) && observer_control(&control);
+        return send_operation_reply(frame, ok, NULL, 0,
+                                    ok ? NULL : "instrumented watch control is invalid");
+    }
     if (frame->opcode == NATIVE_WIRE_READ) {
         if (frame->payload_size != 16u)
             return send_operation_reply(frame, false, NULL, 0,
@@ -412,6 +429,8 @@ static void region_clean_call(ptr_uint_t encoded_id, ptr_uint_t encoded_phase) {
     }
 }
 
+#include "instrument_observe.inc"
+
 static dr_emit_flags_t instrument_instruction(void *drcontext, void *tag, instrlist_t *list,
                                               instr_t *instruction, bool for_trace,
                                               bool translating, void *user_data) {
@@ -419,10 +438,18 @@ static dr_emit_flags_t instrument_instruction(void *drcontext, void *tag, instrl
     (void)for_trace;
     (void)translating;
     (void)user_data;
-    if (!module_base || !instr_is_app(instruction))
+    instr_t *fetch = drmgr_orig_app_instr_for_fetch(drcontext);
+    instr_t *operands = drmgr_orig_app_instr_for_operands(drcontext);
+    if (!fetch && !operands)
         return DR_EMIT_DEFAULT;
-    app_pc pc = instr_get_app_pc(instruction);
-    for (size_t index = 0; index < region_count; ++index) {
+    app_pc pc = instr_get_app_pc(fetch ? fetch : operands);
+    hook_instruction *write = operands && instr_writes_memory(operands)
+                                  ? observer_instruction(drcontext, operands, pc) : NULL;
+    dr_insert_clean_call_ex(drcontext, list, instruction, (void *)observer_instruction_clean,
+                            DR_CLEANCALL_READS_APP_CONTEXT |
+                            DR_CLEANCALL_WRITES_APP_CONTEXT, 2,
+                            OPND_CREATE_INTPTR(pc), OPND_CREATE_INTPTR(write));
+    for (size_t index = 0; module_base && fetch && index < region_count; ++index) {
         uint32_t phase;
         if (pc == module_base + regions[index].entry)
             phase = 0u;
@@ -434,6 +461,10 @@ static dr_emit_flags_t instrument_instruction(void *drcontext, void *tag, instrl
                                 DR_CLEANCALL_READS_APP_CONTEXT | DR_CLEANCALL_WRITES_APP_CONTEXT, 2,
                                 OPND_CREATE_INTPTR(index), OPND_CREATE_INTPTR(phase));
     }
+    if (write)
+        dr_insert_clean_call_ex(drcontext, list, instruction, (void *)observer_capture_clean,
+                                DR_CLEANCALL_SAVE_FLOAT | DR_CLEANCALL_READS_APP_CONTEXT, 1,
+                                OPND_CREATE_INTPTR(write));
     return DR_EMIT_DEFAULT;
 }
 
@@ -465,6 +496,19 @@ static bool decodes_to(app_pc entry, app_pc join) {
 
 static void module_load(void *drcontext, const module_data_t *module, bool loaded) {
     (void)loaded;
+    if (!control_entry) {
+        app_pc candidate = (app_pc)dr_get_proc_address(module->handle,
+                                                      "qa_native_runner_hook_control");
+#if defined(WINDOWS) && !defined(X64)
+        if (!candidate)
+            candidate = (app_pc)dr_get_proc_address(module->handle,
+                                                    "_qa_native_runner_hook_control");
+#endif
+        if (candidate) {
+            control_entry = candidate;
+            owner_thread = dr_get_thread_id(drcontext);
+        }
+    }
     if (module_base)
         return;
     const char *preferred = dr_module_preferred_name(module);
@@ -493,7 +537,7 @@ static void module_load(void *drcontext, const module_data_t *module, bool loade
 static void module_unload(void *drcontext, const module_data_t *module) {
     (void)drcontext;
     if (module->start == module_base)
-        module_base = NULL;
+        observer_module_unload();
 }
 
 static bool read_descriptor(const char *path) {
@@ -556,10 +600,18 @@ static bool read_descriptor(const char *path) {
 }
 
 static void client_exit(void) {
+#ifdef UNIX
+    drmgr_unregister_signal_event(observer_signal);
+#else
+    drmgr_unregister_exception_event(observer_exception);
+#endif
+    observer_destroy();
+    drmgr_unregister_bb_app2app_event(observer_app2app);
     drmgr_unregister_bb_insertion_event(instrument_instruction);
     drmgr_unregister_module_load_event(module_load);
     drmgr_unregister_module_unload_event(module_unload);
     drmgr_exit();
+    drutil_exit();
     if (regions)
         dr_global_free(regions, region_count * sizeof(*regions));
     if (module_name)
@@ -571,11 +623,21 @@ DR_EXPORT void dr_client_main(client_id_t id, int argc, const char *argv[]) {
     dr_set_client_name("Quake Anthology native region client", "");
     hook_input = dr_get_stdin_file();
     hook_output = dr_get_stdout_file();
-    if (argc < 1 || !read_descriptor(argv[argc - 1]) || !drmgr_init() ||
+    instruction_lock = dr_mutex_create();
+    if (!instruction_lock || argc < 1 || !read_descriptor(argv[argc - 1]) ||
+        !drmgr_init() || !drutil_init() ||
+        !drmgr_register_bb_app2app_event(observer_app2app, NULL) ||
         !drmgr_register_module_load_event(module_load) ||
         !drmgr_register_module_unload_event(module_unload) ||
         !drmgr_register_bb_instrumentation_event(NULL, instrument_instruction, NULL))
         dr_abort();
+#ifdef UNIX
+    if (!drmgr_register_signal_event(observer_signal))
+        dr_abort();
+#else
+    if (!drmgr_register_exception_event(observer_exception))
+        dr_abort();
+#endif
     dr_register_exit_event(client_exit);
 }
 

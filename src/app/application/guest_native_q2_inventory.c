@@ -358,19 +358,81 @@ bool application_native_q2_inventory_admit(struct application_native_q2 *engine,
     if (!engine->primary_inventory) return application_fail(error, QA_ERROR_UNSUPPORTED, "Native Q2 primary inventory requires its artifact-qualified world profile");
     if (!resolve(engine, error)) return false;
     client->inventory_engine = engine; client->inventory_slot = slot;
-    if (client->inventory_bound) return true;
+    if (client->inventory_bound) {
+        if (client->inventory_prepared && !qa_inventory_primary_current(
+            engine->provider->application->inventory, client->inventory_lease, client))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 inventory restore claim has not been published");
+        client->inventory_prepared = false;
+        return true;
+    }
     qa_inventory_binding binding = {client, inventory_count, inventory_at, inventory_write, inventory_mutable};
     if (!qa_inventory_adopt_primary(engine->provider->application->inventory, client->actor, &binding, &client->inventory_lease, error)) return false;
-    client->inventory_bound = true; return true;
+    client->inventory_bound = true; client->inventory_prepared = false; return true;
 }
 bool application_native_q2_inventory_detach(struct application_native_q2 *engine, uint32_t slot, qa_error *error)
 {
     application_native_q2_client *client = &engine->clients[slot];
     if (!client->inventory_bound) return true;
+    if (client->inventory_prepared && !qa_inventory_primary_current(
+        engine->provider->application->inventory, client->inventory_lease, client)) {
+        client->inventory_bound = false; client->inventory_prepared = false;
+        client->inventory_lease = (qa_inventory_lease){0};
+        return true;
+    }
     if (qa_actors_get(qa_session_actors(engine->provider->application->session), client->actor) &&
         !qa_inventory_detach_primary(engine->provider->application->inventory, client->inventory_lease, client, error)) return false;
-    client->inventory_bound = false; return true;
+    client->inventory_bound = false; client->inventory_prepared = false;
+    client->inventory_lease = (qa_inventory_lease){0}; return true;
 }
+
+bool application_native_q2_inventory_binding(application_provider *provider, qa_actor_id actor,
+    uint64_t saved_serial, qa_inventory_binding *out, qa_error *error)
+{
+    struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
+    if (!engine || !engine->primary_inventory || !provider->state.native.host || !out ||
+        !saved_serial || !engine->map_ready ||
+        application_provider_for(provider->application, actor, QA_ROLE_INVENTORY, NULL) != provider)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Restored native Q2 inventory requires its live qualified source owner");
+    application_native_q2_client *client = NULL;
+    uint32_t slot = 0;
+    for (uint32_t i = 1; i < 257; ++i) {
+        application_native_q2_client *candidate = &engine->clients[i];
+        if (candidate->reserved && candidate->connected && candidate->begun &&
+            qa_actor_id_equal(candidate->actor, actor)) { client = candidate; slot = i; break; }
+    }
+    if (!client) return application_fail(error, QA_ERROR_NOT_FOUND, "Restored native Q2 inventory client is absent");
+    if (client->inventory_bound && (client->inventory_lease.serial != saved_serial ||
+        !qa_actor_id_equal(client->inventory_lease.actor, actor)))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Restored native Q2 inventory lease differs from its live source lease");
+    bool claimed = false;
+    for (uint32_t i = 1; i < 257; ++i) claimed = claimed || engine->clients[i].inventory_bound;
+    if (!claimed) engine->primary_inventory->resolved = false;
+    if (!resolve(engine, error)) return false;
+    client->inventory_engine = engine; client->inventory_slot = slot;
+    qa_native_address address;
+    if (!client_address(client, &address, error)) return false;
+    *out = (qa_inventory_binding){client, inventory_count, inventory_at, inventory_write, inventory_mutable};
+    if (!client->inventory_bound) client->inventory_prepared = true;
+    client->inventory_lease = (qa_inventory_lease){actor, saved_serial};
+    client->inventory_bound = true;
+    return true;
+}
+
+bool application_native_q2_inventory_finish(application_provider *provider, qa_error *error)
+{
+    struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
+    if (!engine || !application_native_q2_idle(provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 inventory restore finish requires an idle source owner");
+    for (uint32_t i = 1; i < 257; ++i) {
+        const application_native_q2_client *client = &engine->clients[i];
+        if (client->inventory_prepared && (!client->inventory_bound ||
+            !qa_inventory_primary_current(provider->application->inventory, client->inventory_lease, client)))
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q2 prepared inventory primary was not published");
+    }
+    for (uint32_t i = 1; i < 257; ++i) engine->clients[i].inventory_prepared = false;
+    return true;
+}
+
 bool application_native_q2_inventory_close(struct application_native_q2 *engine, qa_error *error)
 {
     for (uint32_t i = 1; i < 257; ++i) if (!application_native_q2_inventory_detach(engine, i, error)) return false;

@@ -42,15 +42,18 @@ static bool child_request(native_child_state *state, uint16_t opcode, qa_bytes p
         return native_fail(error, QA_ERROR_ARGUMENT, connection->depth,
                            "native runner callback depth is exhausted");
     ++connection->depth;
+    native_hooks_depth(connection->depth);
     uint64_t sequence;
     if (!native_wire_send(connection, opcode, 0, payload, &sequence, error)) {
         --connection->depth;
+        native_hooks_depth(connection->depth);
         return false;
     }
     for (;;) {
         native_wire_frame frame = {0};
         if (!native_wire_receive(connection, &frame, error)) {
             --connection->depth;
+            native_hooks_depth(connection->depth);
             return false;
         }
         bool reply =
@@ -64,6 +67,7 @@ static bool child_request(native_child_state *state, uint16_t opcode, qa_bytes p
             native_wire_frame_free(&frame);
             native_wire_poison(connection, error);
             --connection->depth;
+            native_hooks_depth(connection->depth);
             return false;
         }
         if (reply) {
@@ -73,12 +77,14 @@ static bool child_request(native_child_state *state, uint16_t opcode, qa_bytes p
                 native_wire_frame_free(&frame);
                 native_wire_poison(connection, error);
                 --connection->depth;
+                native_hooks_depth(connection->depth);
                 return false;
             }
             if (!remote_ok) {
                 native_wire_poison(connection, error);
                 native_wire_frame_free(&frame);
                 --connection->depth;
+                native_hooks_depth(connection->depth);
                 return false;
             }
             size_t remaining = reader.bytes.size - reader.offset;
@@ -89,6 +95,7 @@ static bool child_request(native_child_state *state, uint16_t opcode, qa_bytes p
             frame.payload = (qa_buffer){0};
             native_wire_frame_free(&frame);
             --connection->depth;
+            native_hooks_depth(connection->depth);
             return true;
         }
         if (request) {
@@ -97,6 +104,7 @@ static bool child_request(native_child_state *state, uint16_t opcode, qa_bytes p
             if (!handled) {
                 native_wire_poison(connection, error);
                 --connection->depth;
+                native_hooks_depth(connection->depth);
                 return false;
             }
             continue;
@@ -105,6 +113,7 @@ static bool child_request(native_child_state *state, uint16_t opcode, qa_bytes p
         native_fail(error, QA_ERROR_FORMAT, 0, "native runner request ordering is invalid");
         native_wire_poison(connection, error);
         --connection->depth;
+        native_hooks_depth(connection->depth);
         return false;
     }
 }
@@ -552,6 +561,173 @@ static bool child_export(native_child_state *state, native_wire_reader *reader,
     return ok;
 }
 
+static bool child_observer_entry(void *context, qa_native_instance *instance,
+                                 qa_native_entry_observer *binding,
+                                 const qa_native_value *arguments, size_t count,
+                                 qa_native_value *result, qa_error *error) {
+    native_child_state *state = context;
+    if (state->instance != instance)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native entry callback instance changed");
+    native_wire_buffer request = {0};
+    qa_buffer response = {0}, storage = {0};
+    bool received = false;
+    bool ok = native_wire_put_u64(&request, binding->id, error) &&
+              native_wire_put_u64(&request, binding->ffi.result->size, error) &&
+              child_encode_values(&request, arguments, count, error);
+    if (ok)
+        received = child_request(state, NATIVE_WIRE_OBSERVER_ENTRY,
+                                  (qa_bytes){request.data, request.size}, &response, error);
+    if (received) {
+        native_wire_reader reader = {.bytes = {response.data, response.size}};
+        qa_native_value decoded = {0};
+        ok = native_wire_get_value(&reader, &decoded, &storage, error) &&
+             native_wire_end(&reader, error) && decoded.type == binding->signature.result.kind;
+        if (ok && decoded.type == QA_NATIVE_BYTES) {
+            if (result->type != QA_NATIVE_BYTES || storage.size != result->as.bytes.size)
+                ok = native_fail(error, QA_ERROR_FORMAT, storage.size,
+                                 "native entry aggregate result extent changed");
+            else
+                memcpy(result->as.bytes.data, storage.data, storage.size);
+        } else if (ok) {
+            *result = decoded;
+        }
+    } else {
+        ok = false;
+    }
+    native_wire_buffer_free(&request);
+    qa_buffer_free(&response);
+    qa_buffer_free(&storage);
+    return child_finish_response(state, received, ok, error);
+}
+
+static qa_native_entry_observer *child_observer_find(native_child_state *state, uint64_t id) {
+    qa_native_entry_observer *binding = state->instance->entry_observers;
+    while (binding && binding->id != id)
+        binding = binding->next;
+    return binding;
+}
+
+static bool child_observer_add(native_child_state *state, native_wire_reader *reader,
+                               qa_error *error) {
+    qa_native_entry_observer *binding = calloc(1, sizeof(*binding));
+    if (!binding)
+        return native_fail(error, QA_ERROR_MEMORY, 0, "allocating runner entry observer");
+    binding->instance = state->instance;
+    binding->callback = child_observer_entry;
+    binding->context = state;
+    bool ok = native_wire_get_u64(reader, &binding->id, error) &&
+              native_wire_get_u64(reader, &binding->address, error) &&
+              native_wire_get_signature(reader, &binding->signature, error) &&
+              native_wire_end(reader, error);
+    if (ok && (!binding->id || child_observer_find(state, binding->id) ||
+               binding->address < state->instance->image_base ||
+               binding->address - state->instance->image_base >= state->instance->image_bytes))
+        ok = native_fail(error, QA_ERROR_FORMAT, 0, "runner entry observer address is invalid");
+    if (ok)
+        ok = native_ffi_prepare(&binding->ffi, &binding->signature, error);
+    if (ok) {
+        binding->closure = ffi_closure_alloc(sizeof(*binding->closure), &binding->code);
+        if (!binding->closure)
+            ok = native_fail(error, QA_ERROR_MEMORY, 0, "allocating runner entry closure");
+    }
+    if (ok && ffi_prep_closure_loc(binding->closure, &binding->ffi.cif, native_observer_dispatch,
+                                   binding, binding->code) != FFI_OK)
+        ok = native_fail(error, QA_ERROR_UNSUPPORTED, 0, "preparing runner entry closure");
+    if (ok) {
+        native_hook_control control = {.operation = NATIVE_HOOK_ENTRY_ADD, .id = binding->id,
+                                       .address = binding->address,
+                                       .replacement = (uint64_t)(uintptr_t)binding->code};
+        if (!native_hooks_control(&control))
+            ok = native_fail(error, QA_ERROR_UNSUPPORTED, 0,
+                             "instrumented runner rejected entry registration");
+    }
+    if (!ok) {
+        if (binding->closure)
+            ffi_closure_free(binding->closure);
+        native_ffi_destroy(&binding->ffi);
+        native_wire_signature_free(&binding->signature);
+        free(binding);
+        return false;
+    }
+    binding->next = state->instance->entry_observers;
+    state->instance->entry_observers = binding;
+    return true;
+}
+
+static bool child_observer_remove(native_child_state *state, native_wire_reader *reader,
+                                  qa_error *error) {
+    uint64_t id;
+    if (!native_wire_get_u64(reader, &id, error) || !native_wire_end(reader, error))
+        return false;
+    qa_native_entry_observer *binding = child_observer_find(state, id);
+    if (!binding || binding->active_calls)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "runner entry observer is active or absent");
+    native_hook_control control = {.operation = NATIVE_HOOK_ENTRY_REMOVE, .id = id};
+    if (!native_hooks_control(&control))
+        return native_fail(error, QA_ERROR_UNSUPPORTED, 0, "removing runner entry interception");
+    qa_native_entry_observer **cursor = &state->instance->entry_observers;
+    while (*cursor != binding)
+        cursor = &(*cursor)->next;
+    *cursor = binding->next;
+    ffi_closure_free(binding->closure);
+    native_ffi_destroy(&binding->ffi);
+    native_wire_signature_free(&binding->signature);
+    free(binding);
+    return true;
+}
+
+static bool child_observer_original(native_child_state *state, native_wire_reader *reader,
+                                    native_wire_buffer *body, qa_error *error) {
+    uint64_t id = 0;
+    qa_native_value *arguments = NULL;
+    qa_buffer *storage = NULL, result_storage = {0};
+    size_t count = 0;
+    bool ok = native_wire_get_u64(reader, &id, error) &&
+              child_decode_values(reader, &arguments, &storage, &count, error) &&
+              native_wire_end(reader, error);
+    qa_native_entry_observer *binding = ok ? child_observer_find(state, id) : NULL;
+    if (ok && !binding)
+        ok = native_fail(error, QA_ERROR_ARGUMENT, 0, "original runner entry is absent");
+    qa_native_value result = {0};
+    if (ok)
+        ok = child_result_storage(&binding->signature, &result, &result_storage, error);
+    native_hook_control control = {.operation = NATIVE_HOOK_BYPASS_ARM, .id = id};
+    bool armed = ok && native_hooks_control(&control);
+    if (ok && !armed)
+        ok = native_fail(error, QA_ERROR_UNSUPPORTED, 0, "arming original runner entry bypass");
+    if (armed) {
+        ok = qa_native_invoke(state->instance, binding->address, &binding->signature, arguments,
+                              count, &result, error);
+        control.operation = NATIVE_HOOK_BYPASS_CLEAR;
+        bool consumed = native_hooks_control(&control);
+        if (ok && !consumed)
+            ok = native_fail(error, QA_ERROR_FORMAT, 0, "original runner entry bypass was not consumed");
+    }
+    if (ok)
+        ok = native_wire_put_value(body, &result, error);
+    child_values_free(arguments, storage, count);
+    qa_buffer_free(&result_storage);
+    return ok;
+}
+
+static bool child_observer_control(native_wire_reader *reader, qa_error *error) {
+    native_hook_control control = {0};
+    bool ok = native_wire_get_u64(reader, &control.magic, error) &&
+              native_wire_get_u64(reader, &control.operation, error) &&
+              native_wire_get_u64(reader, &control.id, error) &&
+              native_wire_get_u64(reader, &control.address, error) &&
+              native_wire_get_u64(reader, &control.size, error) &&
+              native_wire_get_u64(reader, &control.replacement, error) &&
+              native_wire_end(reader, error);
+    if (!ok)
+        return false;
+    if (control.magic != NATIVE_HOOK_CONTROL_MAGIC ||
+        (control.operation != NATIVE_HOOK_WATCH_ADD && control.operation != NATIVE_HOOK_WATCH_REMOVE))
+        return native_fail(error, QA_ERROR_FORMAT, 0, "runner watch control is invalid");
+    return native_hooks_control(&control) ||
+           native_fail(error, QA_ERROR_UNSUPPORTED, 0, "instrumented runner rejected write watch");
+}
+
 static bool child_read(native_child_state *state, native_wire_reader *reader,
                        native_wire_buffer *body, qa_error *error) {
     uint64_t address, count;
@@ -694,6 +870,18 @@ static bool child_handle_request(native_child_state *state, const native_wire_fr
         break;
     case NATIVE_WIRE_INVOKE:
         ok = state->instance && child_invoke(state, &reader, &body, &operation_error);
+        break;
+    case NATIVE_WIRE_OBSERVER_ENTRY_ADD:
+        ok = state->instance && child_observer_add(state, &reader, &operation_error);
+        break;
+    case NATIVE_WIRE_OBSERVER_ENTRY_REMOVE:
+        ok = state->instance && child_observer_remove(state, &reader, &operation_error);
+        break;
+    case NATIVE_WIRE_OBSERVER_ORIGINAL:
+        ok = state->instance && child_observer_original(state, &reader, &body, &operation_error);
+        break;
+    case NATIVE_WIRE_OBSERVER_CONTROL:
+        ok = state->instance && child_observer_control(&reader, &operation_error);
         break;
     case NATIVE_WIRE_EXPORT:
         ok = state->instance && child_export(state, &reader, &body, &operation_error);

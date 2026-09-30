@@ -104,7 +104,7 @@ static bool prepare_command(qa_native_instance *instance, const qa_native_runner
     qa_native_target target = instance->module->info.image.target;
     qa_native_target host = qa_native_host_target();
     const char *runner = runner_path(config, target);
-    bool instrumented = instance->region_count != 0;
+    bool instrumented = instance->options.observe || instance->region_count != 0;
     const char *drrun = instrumented ? drrun_path(config, target) : NULL;
     const char *client = instrumented ? client_path(config, target) : NULL;
     if (!runner)
@@ -733,6 +733,91 @@ static bool handle_region(qa_native_instance *instance, const native_wire_frame 
     return sent;
 }
 
+static bool handle_observer_entry(qa_native_instance *instance, const native_wire_frame *frame,
+                                  native_wire_reader *reader, qa_error *error) {
+    uint64_t id = 0, result_bytes = 0;
+    qa_error failure = {0};
+    qa_native_value *arguments = NULL;
+    qa_buffer *storage = NULL, result_storage = {0};
+    size_t count = 0;
+    bool ok = native_wire_get_u64(reader, &id, &failure) &&
+              native_wire_get_u64(reader, &result_bytes, &failure) &&
+              decode_values(reader, &arguments, &storage, &count, &failure) &&
+              native_wire_end(reader, &failure);
+    qa_native_entry_observer *binding = instance->entry_observers;
+    while (binding && binding->id != id)
+        binding = binding->next;
+    if (ok && (!binding || result_bytes > instance->runner->maximum_frame ||
+               !native_u64_fits_size(result_bytes) ||
+               !runner_arguments_ready(instance, &binding->signature, arguments, count,
+                                       &failure)))
+        ok = native_fail(&failure, QA_ERROR_FORMAT, 0, "native entry observer identity is invalid");
+    qa_native_value result = {.type = binding ? binding->signature.result.kind : QA_NATIVE_VOID};
+    if (ok && result.type == QA_NATIVE_BYTES) {
+        result_storage.data = calloc((size_t)result_bytes ? (size_t)result_bytes : 1u, 1u);
+        result_storage.size = (size_t)result_bytes;
+        if (!result_storage.data)
+            ok = native_fail(&failure, QA_ERROR_MEMORY, 0, "allocating native entry result");
+        else
+            result.as.bytes = (qa_native_memory){result_storage.data, result_storage.size};
+    }
+    if (ok) {
+        ++instance->callback_depth;
+        ++binding->active_calls;
+        ok = binding->callback(binding->context, instance, binding, arguments, count, &result,
+                                &failure);
+        --binding->active_calls;
+        --instance->callback_depth;
+        if (!ok && failure.code == QA_OK)
+            native_fail(&failure, QA_ERROR_ARGUMENT, 0, "native entry observer callback failed");
+        if (ok && result.type != binding->signature.result.kind)
+            ok = native_fail(&failure, QA_ERROR_ARGUMENT, 0, "native entry result type is invalid");
+    }
+    native_wire_buffer body = {0};
+    if (ok)
+        ok = native_wire_put_value(&body, &result, &failure);
+    bool sent = send_reply(instance->runner, frame, &body, ok ? NULL : &failure, error);
+    native_wire_buffer_free(&body);
+    qa_buffer_free(&result_storage);
+    free_values(arguments, storage, count);
+    return sent;
+}
+
+static bool handle_observer_write(qa_native_instance *instance, const native_wire_frame *frame,
+                                  native_wire_reader *reader, qa_error *error) {
+    uint64_t id = 0, offset = 0, size = 0;
+    qa_native_write_event event = {0};
+    qa_error failure = {0};
+    bool ok = native_wire_get_u64(reader, &id, &failure) &&
+              native_wire_get_u64(reader, &event.instruction, &failure) &&
+              native_wire_get_u64(reader, &offset, &failure) &&
+              native_wire_get_u64(reader, &size, &failure) &&
+              native_wire_get_bytes(reader, &event.before, &failure) &&
+              native_wire_get_bytes(reader, &event.after, &failure) &&
+              native_wire_end(reader, &failure);
+    qa_native_write_observer *binding = instance->write_observers;
+    while (binding && binding->id != id)
+        binding = binding->next;
+    if (ok && (!binding || offset > binding->size || size > binding->size - offset || !size ||
+               event.before.size != binding->size || event.after.size != binding->size))
+        ok = native_fail(&failure, QA_ERROR_FORMAT, 0, "native write observer extent is invalid");
+    if (ok) {
+        event.address = binding->address;
+        event.offset = (size_t)offset;
+        event.size = (size_t)size;
+        ++instance->callback_depth;
+        ++instance->write_depth;
+        ++binding->active_calls;
+        ok = binding->callback(binding->context, instance, &event, &failure);
+        --binding->active_calls;
+        --instance->write_depth;
+        --instance->callback_depth;
+        if (!ok && failure.code == QA_OK)
+            native_fail(&failure, QA_ERROR_ARGUMENT, 0, "native write observer callback failed");
+    }
+    return send_reply(instance->runner, frame, NULL, ok ? NULL : &failure, error);
+}
+
 static bool handle_callback(qa_native_instance *instance, const native_wire_frame *frame,
                             qa_error *error) {
     native_wire_reader reader = {.bytes = {frame->payload.data, frame->payload.size}};
@@ -749,6 +834,10 @@ static bool handle_callback(qa_native_instance *instance, const native_wire_fram
         return handle_host_restore(instance, frame, &reader, error);
     case NATIVE_WIRE_REGION:
         return handle_region(instance, frame, &reader, error);
+    case NATIVE_WIRE_OBSERVER_ENTRY:
+        return handle_observer_entry(instance, frame, &reader, error);
+    case NATIVE_WIRE_OBSERVER_WRITE:
+        return handle_observer_write(instance, frame, &reader, error);
     default:
         return native_fail(error, QA_ERROR_FORMAT, frame->opcode,
                            "native runner sent an unexpected callback");
@@ -845,6 +934,56 @@ static bool encode_values(native_wire_buffer *buffer, const qa_native_value *arg
     return true;
 }
 
+bool native_runner_observer_control(qa_native_instance *instance, native_hook_control control,
+                                    qa_error *error) {
+    native_wire_buffer request = {0};
+    qa_buffer response = {0};
+    bool ok = native_wire_put_u64(&request, NATIVE_HOOK_CONTROL_MAGIC, error) &&
+              native_wire_put_u64(&request, control.operation, error) &&
+              native_wire_put_u64(&request, control.id, error) &&
+              native_wire_put_u64(&request, control.address, error) &&
+              native_wire_put_u64(&request, control.size, error) &&
+              native_wire_put_u64(&request, control.replacement, error);
+    if (ok)
+        ok = runner_request(instance, NATIVE_WIRE_OBSERVER_CONTROL,
+                            (qa_bytes){request.data, request.size}, &response, error);
+    if (ok && response.size)
+        ok = native_fail(error, QA_ERROR_FORMAT, 0, "native observer control reply is not empty");
+    native_wire_buffer_free(&request);
+    qa_buffer_free(&response);
+    return ok;
+}
+
+bool native_runner_observer_entry_add(qa_native_entry_observer *binding, qa_error *error) {
+    native_wire_buffer request = {0};
+    qa_buffer response = {0};
+    bool ok = native_wire_put_u64(&request, binding->id, error) &&
+              native_wire_put_u64(&request, binding->address, error) &&
+              native_wire_put_signature(&request, &binding->signature, error);
+    if (ok)
+        ok = runner_request(binding->instance, NATIVE_WIRE_OBSERVER_ENTRY_ADD,
+                            (qa_bytes){request.data, request.size}, &response, error);
+    if (ok && response.size)
+        ok = native_fail(error, QA_ERROR_FORMAT, 0, "native observer add reply is not empty");
+    native_wire_buffer_free(&request);
+    qa_buffer_free(&response);
+    return ok;
+}
+
+bool native_runner_observer_entry_remove(qa_native_entry_observer *binding, qa_error *error) {
+    native_wire_buffer request = {0};
+    qa_buffer response = {0};
+    bool ok = native_wire_put_u64(&request, binding->id, error);
+    if (ok)
+        ok = runner_request(binding->instance, NATIVE_WIRE_OBSERVER_ENTRY_REMOVE,
+                            (qa_bytes){request.data, request.size}, &response, error);
+    if (ok && response.size)
+        ok = native_fail(error, QA_ERROR_FORMAT, 0, "native observer remove reply is not empty");
+    native_wire_buffer_free(&request);
+    qa_buffer_free(&response);
+    return ok;
+}
+
 static bool decode_call_result(qa_buffer response, const qa_native_type *expected,
                                qa_native_value *result, qa_error *error) {
     native_wire_reader reader = {.bytes = {response.data, response.size}};
@@ -891,7 +1030,7 @@ static bool runner_result_ready(const qa_native_type *expected, qa_native_value 
 }
 
 static bool write_region_descriptor(qa_native_instance *instance, char **path, qa_error *error) {
-    if (!instance->region_count)
+    if (!instance->options.observe && !instance->region_count)
         return true;
     qa_buffer descriptor = {0};
     if (!native_regions_descriptor(instance, &descriptor, error))
@@ -1167,6 +1306,29 @@ bool native_runner_invoke(qa_native_instance *instance, qa_native_address addres
         return false;
     }
     return ok;
+}
+
+bool native_runner_observer_original(qa_native_entry_observer *binding,
+                                     const qa_native_value *arguments, size_t count,
+                                     qa_native_value *result, qa_error *error) {
+    qa_native_instance *instance = binding->instance;
+    if (!runner_arguments_ready(instance, &binding->signature, arguments, count, error) ||
+        !runner_result_ready(&binding->signature.result, result, error))
+        return false;
+    native_wire_buffer request = {0};
+    qa_buffer response = {0};
+    bool received = false;
+    bool ok = native_wire_put_u64(&request, binding->id, error) &&
+              encode_values(&request, arguments, count, error);
+    if (ok)
+        received = runner_request(instance, NATIVE_WIRE_OBSERVER_ORIGINAL,
+                                  (qa_bytes){request.data, request.size}, &response, error);
+    ok = received && decode_call_result(response, &binding->signature.result, result, error);
+    native_wire_buffer_free(&request);
+    qa_buffer_free(&response);
+    if (ok)
+        ok = runner_sync_entities(instance, error);
+    return runner_finish_response(instance, received, ok, error);
 }
 
 bool native_runner_export(qa_native_instance *instance, const char *name, qa_native_address *out,

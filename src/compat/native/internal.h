@@ -4,6 +4,8 @@
 #include "qa/binary.h"
 #include "qa/json.h"
 #include "qa/native.h"
+#include "qa/native_observe.h"
+#include "hook_control.h"
 
 #include <ffi.h>
 
@@ -122,9 +124,37 @@ struct qa_native_instance {
     native_runner_connection *runner;
     native_region_slot *regions;
     size_t region_count;
-    uint32_t active_depth, callback_depth, region_depth;
+    qa_native_entry_observer *entry_observers;
+    qa_native_write_observer *write_observers;
+    uint64_t next_observer_id;
+    uint32_t active_depth, callback_depth, region_depth, write_depth;
     bool checkpointing, destroying, unloading, pending_shutdown, failed;
     qa_error failure;
+};
+
+struct qa_native_entry_observer {
+    qa_native_entry_observer *next;
+    qa_native_instance *instance;
+    uint64_t id;
+    qa_native_address address;
+    qa_native_signature signature;
+    qa_native_entry_observer_fn callback;
+    void *context;
+    uint32_t active_calls;
+    native_ffi_signature ffi;
+    ffi_closure *closure;
+    void *code;
+};
+
+struct qa_native_write_observer {
+    qa_native_write_observer *next;
+    qa_native_instance *instance;
+    uint64_t id;
+    qa_native_address address;
+    size_t size;
+    qa_native_write_observer_fn callback;
+    void *context;
+    uint32_t active_calls;
 };
 
 struct qa_native_region_binding {
@@ -208,6 +238,7 @@ bool native_import_bind(native_import_binding *binding, qa_native_instance *inst
                         const native_signature_spec *spec, qa_error *error);
 void native_import_unbind(native_import_binding *binding);
 void native_import_dispatch(ffi_cif *cif, void *result, void **arguments, void *context);
+void native_observer_dispatch(ffi_cif *cif, void *result, void **arguments, void *context);
 
 bool native_direct_open(qa_native_instance *instance, qa_error *error);
 void native_direct_close(qa_native_instance *instance);
@@ -248,6 +279,14 @@ bool native_runner_checkpoint_restore(qa_native_instance *instance,
                                       qa_native_restore_part part, qa_error *error);
 bool native_runner_region_event(qa_native_instance *instance, const qa_native_region_event *event,
                                 qa_native_region_decision *decision, qa_error *error);
+bool native_runner_observer_entry_add(qa_native_entry_observer *binding, qa_error *error);
+bool native_runner_observer_entry_remove(qa_native_entry_observer *binding, qa_error *error);
+bool native_runner_observer_original(qa_native_entry_observer *binding,
+                                     const qa_native_value *arguments, size_t count,
+                                     qa_native_value *result, qa_error *error);
+bool native_runner_observer_control(qa_native_instance *instance, native_hook_control control,
+                                    qa_error *error);
+void native_observers_destroy(qa_native_instance *instance);
 
 bool native_entity_table_store(qa_native_instance *instance, qa_native_entity_table table,
                                qa_error *error);

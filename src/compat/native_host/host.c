@@ -62,7 +62,8 @@ static bool configure_instance(qa_native_host *host, qa_native_module *module,
         .dependency_count = options->dependency_count,
         .tick_rate = options->tick_rate,
         .frame_seconds = options->frame_seconds,
-        .frame_milliseconds = options->frame_milliseconds};
+        .frame_milliseconds = options->frame_milliseconds,
+        .observe = options->observe};
     return qa_native_create(module, &native, runner, &host->instance, error);
 }
 

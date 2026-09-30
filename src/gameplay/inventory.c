@@ -538,6 +538,16 @@ done:
     free(adopted); free(source); release_store(table, store); return ok;
 }
 
+bool qa_inventory_primary_current(qa_inventory *table, qa_inventory_lease lease,
+                                  const void *context)
+{
+    if (!table || !lease.serial || lease.actor.slot >= table->capacity ||
+        !qa_actors_get(table->actors, lease.actor)) return false;
+    const inventory_store *store = table->stores[lease.actor.slot];
+    return store && qa_actor_id_equal(store->actor, lease.actor) && !store->local &&
+        store->serial == lease.serial && store->primary.context == context;
+}
+
 bool qa_inventory_detach_primary(qa_inventory *table, qa_inventory_lease lease,
                                  void *context, qa_error *e)
 {

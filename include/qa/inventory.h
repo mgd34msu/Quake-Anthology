@@ -60,6 +60,9 @@ bool qa_inventory_bind(qa_inventory *, qa_actor_id, const qa_inventory_binding *
 bool qa_inventory_adopt_primary(qa_inventory *, qa_actor_id, const qa_inventory_binding *,
                                 qa_inventory_lease *, qa_error *);
 bool qa_inventory_detach_primary(qa_inventory *, qa_inventory_lease, void *context, qa_error *);
+/* Read-only identity check for an actually published external primary. It
+ * calls no source callbacks and does not recognize prepared private claims. */
+bool qa_inventory_primary_current(qa_inventory *, qa_inventory_lease, const void *context);
 bool qa_inventory_bind_items(qa_inventory *, qa_actor_id, const qa_inventory_items *, qa_inventory_lease *, qa_error *);
 /* Native definitions share primary count storage. An explicitly admitted
  * external item override shadows these actions until its lease closes.

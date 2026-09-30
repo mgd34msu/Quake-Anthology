@@ -195,6 +195,8 @@ typedef struct qa_native_options {
     uint32_t tick_rate;
     float frame_seconds;
     uint32_t frame_milliseconds;
+    /* Requires the matching instrumented helper even without inline regions. */
+    bool observe;
 } qa_native_options;
 
 typedef enum qa_native_backend {

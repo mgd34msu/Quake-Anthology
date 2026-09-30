@@ -31,6 +31,7 @@ add_library(qa_native STATIC
     src/compat/native/instance.c
     src/compat/native/memory.c
     src/compat/native/module.c
+    src/compat/native/observe.c
     src/compat/native/profiles.c
     src/compat/native/protocol.c
     src/compat/native/region.c
@@ -39,6 +40,7 @@ add_library(qa_native STATIC
     src/compat/native/variadic.c)
 target_link_libraries(qa_native PUBLIC qa_data PRIVATE PkgConfig::LIBFFI ${CMAKE_DL_LIBS})
 add_executable(qa-native-runner src/compat/native/main.c)
+set_target_properties(qa-native-runner PROPERTIES ENABLE_EXPORTS ON)
 target_link_libraries(qa-native-runner PRIVATE qa_native)
 
 if(WIN32)
@@ -65,6 +67,7 @@ if(QA_NATIVE_DYNAMORIO)
     target_compile_definitions(qa-native-hooks PRIVATE QA_NATIVE_DYNAMORIO_CLIENT)
     configure_DynamoRIO_client(qa-native-hooks)
     use_DynamoRIO_extension(qa-native-hooks drmgr)
+    use_DynamoRIO_extension(qa-native-hooks drutil)
     set_target_properties(qa-native-hooks PROPERTIES PREFIX "")
     install(TARGETS qa-native-hooks
         LIBRARY DESTINATION "${QA_NATIVE_INSTALL_DIR}"

@@ -632,3 +632,31 @@ void native_import_unbind(native_import_binding *binding) {
     native_ffi_destroy(&binding->ffi);
     memset(binding, 0, sizeof(*binding));
 }
+
+void native_observer_dispatch(ffi_cif *cif, void *result, void **arguments, void *context) {
+    qa_native_entry_observer *binding = context;
+    qa_native_instance *instance = binding->instance;
+    if (cif->rtype->size && result)
+        memset(result, 0, cif->rtype->size);
+    if (!instance || native_active_instance != instance || !binding->callback)
+        return;
+    qa_native_value values[NATIVE_MAX_ARGUMENTS] = {{0}};
+    size_t count = binding->signature.parameter_count;
+    for (size_t index = 0; index < count; ++index)
+        values[index] = decode_value(binding->signature.parameters[index].kind,
+                                     cif->arg_types[index], arguments[index]);
+    qa_native_value output = {.type = binding->signature.result.kind};
+    if (output.type == QA_NATIVE_BYTES)
+        output.as.bytes = (qa_native_memory){result, cif->rtype->size};
+    qa_error error = {0};
+    ++binding->active_calls;
+    ++instance->callback_depth;
+    bool ok = binding->callback(binding->context, instance, binding, values, count, &output,
+                                &error);
+    --instance->callback_depth;
+    --binding->active_calls;
+    if (ok)
+        ok = encode_result(output, binding->signature.result.kind, cif->rtype, result, &error);
+    if (!ok)
+        native_latch_error(instance, &error);
+}

@@ -102,6 +102,9 @@ typedef struct qa_native_host_engine_services {
     qa_vfs *content_files;
     qa_cvars *cvars;
     bool (*hud_view)(void *, uint32_t seat, qa_native_host_q2_hud_view *, qa_error *);
+    /* Pure application-owner lifetime predicate for detached frontend adoption. */
+    void *owner_context;
+    bool (*owner_idle)(void *);
 } qa_native_host_engine_services;
 
 typedef struct qa_native_host_instance_options {
@@ -113,6 +116,7 @@ typedef struct qa_native_host_instance_options {
     uint32_t tick_rate;
     float frame_seconds;
     uint32_t frame_milliseconds;
+    bool observe;
 } qa_native_host_instance_options;
 
 typedef struct qa_native_host_world_services {

@@ -8,6 +8,12 @@ bool application_native_q2_idle(const application_provider *provider)
         (!provider->state.native.host || qa_native_host_destroy_ready(provider->state.native.host)));
 }
 
+static bool frontend_owner_idle(void *context)
+{
+    struct application_native_q2 *engine = context;
+    return engine && application_native_q2_idle(engine->provider);
+}
+
 static bool begin_frame(void *state, qa_session *session, const qa_source_frame *frame, qa_error *error)
 {
     (void)session;
@@ -162,6 +168,8 @@ bool application_construct_native_q2(qa_application *app, application_provider *
             "native-q2:entity", &engine->definition, error)) return false;
     engine->platform.content_files = provider->launch->content;
     engine->platform.cvars = engine->cvars;
+    engine->platform.owner_context = engine;
+    engine->platform.owner_idle = frontend_owner_idle;
     if (app->native_q2_services && !app->native_q2_services(app->guest_context, app,
             provider->owner, engine->profile, &engine->platform, &engine->application,
             &engine->application_context, error)) return false;
@@ -288,7 +296,7 @@ bool application_native_q2_retire_map(application_provider *provider, qa_error *
         if (engine->platform.release_frontend)
             engine->platform.release_frontend(engine->platform.frontend_lifetime);
         engine->platform = (qa_native_host_engine_services){.content_files = provider->launch->content,
-            .cvars = engine->cvars};
+            .cvars = engine->cvars, .owner_context = engine, .owner_idle = frontend_owner_idle};
         engine->application = NULL; engine->application_context = NULL;
         engine->hud_source_owner = 0;
         for (uint32_t i = 0; i < engine->configstring_count; ++i) {

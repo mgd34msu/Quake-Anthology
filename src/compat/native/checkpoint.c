@@ -259,6 +259,9 @@ bool qa_native_checkpoint_restore(qa_native_instance *instance,
                            "native checkpoint and restore part are required");
     if (!checkpoint_ready(instance, error) || !same_identity(instance, checkpoint, error))
         return false;
+    if (instance->entry_observers || instance->write_observers)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0,
+                           "native restore requires detached source entry and write observers");
     if (instance->backend == QA_NATIVE_BACKEND_RUNNER) {
         instance->checkpointing = true;
         bool ok = native_runner_checkpoint_restore(instance, checkpoint, part, error);

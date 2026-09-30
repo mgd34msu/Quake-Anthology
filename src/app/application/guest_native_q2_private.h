@@ -15,7 +15,7 @@ typedef struct application_native_q2_client {
     struct application_native_q2 *inventory_engine;
     uint32_t inventory_slot;
     qa_inventory_lease inventory_lease;
-    bool inventory_bound;
+    bool inventory_bound, inventory_prepared;
 } application_native_q2_client;
 
 struct application_native_q2 {
@@ -82,5 +82,8 @@ bool application_native_q2_restore_engine(void *, qa_bytes, qa_error *);
 bool application_native_q2_inventory_prepare(struct application_native_q2 *, qa_error *);
 bool application_native_q2_inventory_admit(struct application_native_q2 *, uint32_t, qa_error *);
 bool application_native_q2_inventory_detach(struct application_native_q2 *, uint32_t, qa_error *);
+bool application_native_q2_inventory_binding(application_provider *, qa_actor_id, uint64_t,
+    qa_inventory_binding *, qa_error *);
+bool application_native_q2_inventory_finish(application_provider *, qa_error *);
 bool application_native_q2_inventory_close(struct application_native_q2 *, qa_error *);
 #endif
