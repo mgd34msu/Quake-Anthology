@@ -5,6 +5,8 @@
 #include "native_q3_console.h"
 #include "guest_q3_save.h"
 
+#include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -439,6 +441,25 @@ static bool construct_q3(qa_application *application,
     qa_q3_rules rules = qa_q3_default_rules();
     rules.game_type = q3_game_type(profile.mode_kind);
     rules.friendly_fire = profile.friendly_fire;
+    if (!application_native_q3_console_create(provider, error))
+        return false;
+    qa_cvars *cvars = application_native_q3_console_registry(provider);
+    const qa_cvar_view *capacity = qa_cvars_find(cvars, "sv_maxclients");
+    if (!capacity || capacity->owner != provider->owner || choices->seat_count > 64)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Q3 startup has no actual scoped client capacity");
+    float requested = truncf(capacity->number);
+    float minimum = (float)(choices->seat_count ? choices->seat_count : 1);
+    if (requested < minimum)
+        requested = minimum;
+    if (!isfinite(requested) || requested < 1 || requested > 64)
+        return application_fail(error, QA_ERROR_FORMAT,
+                                "Q3 source client capacity must be between 1 and 64");
+    uint32_t max_clients = (uint32_t)requested;
+    char normalized[16];
+    snprintf(normalized, sizeof(normalized), "%u", max_clients);
+    if (!qa_cvars_set(cvars, "sv_maxclients", normalized, true, error))
+        return false;
     qa_q3_options options = {
         .services = application_builtin_services(application, world,
                                                  application->physics),
@@ -447,6 +468,7 @@ static bool construct_q3(qa_application *application,
                        ? QA_Q3_TEAM_ARENA
                        : QA_Q3_ARENA,
         .rules = rules,
+        .max_clients = max_clients,
         .hooks = {.context = provider,
                   .combat_provider = q3_combat_provider,
                   .cheats_enabled = application_native_cheats_enabled,
@@ -458,8 +480,7 @@ static bool construct_q3(qa_application *application,
                   .award = application_native_q3_award},
         .random_seed = (uint32_t)(provider->owner * UINT32_C(2246822519)),
     };
-    if (!qa_q3_create(&options, &provider->state.q3, error) ||
-        !application_native_q3_console_create(provider, error))
+    if (!qa_q3_create(&options, &provider->state.q3, error))
         return false;
     provider->component = qa_q3_component(provider->state.q3);
     provider->component.clock = provider->launch->selection.clock;
@@ -611,8 +632,7 @@ bool application_provider_deconstruct(application_provider *provider,
                                       "native provider still has active calls or bindings");
                 break;
             }
-            ok = qa_native_host_destroy(provider->state.native.host, error);
-            provider->state.native.host = NULL;
+            ok = qa_native_host_destroy_owned(&provider->state.native.host, error);
             if (!ok)
                 break;
         }

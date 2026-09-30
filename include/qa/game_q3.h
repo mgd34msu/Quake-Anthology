@@ -5,13 +5,13 @@
 #include "qa/movement.h"
 #include "qa/physics.h"
 #include "qa/rankings.h"
+#include "qa/game_q3_product.h"
 
 typedef struct qa_q3_game qa_q3_game;
 bool qa_q3_game_grant_arsenal(qa_q3_game *, qa_actor_id, bool ammo, qa_error *);
 bool qa_q3_game_give_item(qa_q3_game *, qa_actor_id, size_t, const char *const *, bool *handled,
                          qa_error *);
 typedef struct qa_command_invocation qa_command_invocation;
-typedef enum qa_q3_product { QA_Q3_ARENA, QA_Q3_TEAM_ARENA } qa_q3_product;
 typedef enum qa_q3_weapon {
     QA_Q3_W_NONE,
     QA_Q3_W_GAUNTLET,
@@ -166,6 +166,10 @@ typedef struct qa_q3_hooks {
     bool (*ranking_warmup)(void *);
     bool (*cheats_enabled)(void *);
     bool (*console_print)(void *, const char *, qa_error *);
+    bool (*server_command)(void *, int32_t source_slot_or_minus_one, const char *, qa_error *);
+    /* Called after the actual source slot commits. Text is borrowed only for
+     * this call; a failing notification leaves the source mutation committed. */
+    bool (*configstring_changed)(void *, uint32_t index, const char *, qa_error *);
     bool (*console_motion)(void *, qa_actor_id, bool noclip, qa_error *);
     bool (*grant_arsenal)(void *, qa_actor_id, bool ammo, bool *handled, qa_error *);
     bool (*give_item)(void *, qa_actor_id, size_t, const char *const *, bool *handled, qa_error *);

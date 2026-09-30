@@ -1,6 +1,7 @@
 #ifndef QA_NETWORK_Q3_H
 #define QA_NETWORK_Q3_H
 #include "qa/network.h"
+#include "qa/game_q3_product.h"
 
 #define QA_Q3_PROTOCOL 68
 #define QA_Q3_MESSAGE_BYTES 16384
@@ -18,7 +19,6 @@
 #define QA_Q3_DOWNLOAD_BYTES 2048
 #define QA_Q3_DOWNLOAD_WINDOW 8
 
-typedef enum qa_q3_product { QA_Q3_ARENA, QA_Q3_TEAM_ARENA } qa_q3_product;
 typedef struct qa_q3_trajectory {
     int32_t type, time, duration;
     float base[3], delta[3];

@@ -27,9 +27,17 @@ static bool write_value(qa_q3_game *game, uint32_t index, const char *text,
     if (!strcmp(prior, text)) return true;
     char *copy = *text ? copy_text(text, error) : NULL;
     if (*text && !copy) return false;
+    char *notice = game->options.hooks.configstring_changed ? copy_text(text, error) : NULL;
+    if (game->options.hooks.configstring_changed && !notice) {
+        free(copy);
+        return false;
+    }
     free(game->configstrings[index]);
     game->configstrings[index] = copy;
-    return !event || q3_map_emit(game, event, error);
+    bool okay = !notice || game->options.hooks.configstring_changed(
+        game->options.hooks.context, index, notice, error);
+    free(notice);
+    return okay && (!event || q3_map_emit(game, event, error));
 }
 bool q3_configstring_event(qa_q3_game *game, const qa_q3_map_event *event, qa_error *error) {
     if (!game || !game->map || !event || event->kind != QA_Q3_MAP_CONFIGSTRING ||
