@@ -1,4 +1,10 @@
 #include "internal.h"
+#include "native_q2_save.h"
+#include "save_private.h"
+#include "source_restore.h"
+#include "qa/persistence_content.h"
+#include "qa/font_save.h"
+#include "qa/font_world_save.h"
 #include "qa/localization.h"
 #include "qa/binary.h"
 #include <SDL.h>
@@ -26,6 +32,7 @@ struct frontend_native_q2 {
     uint64_t identity;
     qa_native_profile profile;
     qa_vfs *mounts;
+    const qa_vfs *provider_files; /* Borrowed from the genuine provider launch. */
     qa_cvars *cvars; /* Borrowed through guest shutdown and frontend lease release. */
     qa_scene_resources *images;
     qa_audio_bank *sounds;
@@ -41,6 +48,7 @@ struct frontend_native_q2 {
     uint32_t seat;
     qa_scene_rect viewport;
     bool seat_bound, alternate;
+    bool prepared, restored;
 };
 
 static bool source_files(frontend_native_q2 *source, qa_error *error)
@@ -531,18 +539,34 @@ bool frontend_native_q2_services(void *context, qa_application *application, qa_
         return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid native Q2 platform service binding");
     if (profile == QA_NATIVE_Q2_CGAME_API2023 && (frontend->options.dedicated || !frontend->options.seats))
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "native Q2 cgame requires a local presentation seat");
-    if (frontend->next_source_id == UINT64_MAX - QA_FRONTEND_COMMAND_OWNER - 1)
-        return frontend_fail(error, QA_ERROR_MEMORY, "native Q2 frontend identity exhausted");
-    frontend_native_q2 *source = calloc(1, sizeof(*source));
-    if (!source) return frontend_fail(error, QA_ERROR_MEMORY, "allocating native Q2 frontend lease");
-    source->frontend = frontend; source->application = application; source->owner = owner; source->profile = profile;
+    frontend_native_q2 *source = NULL;
+    if (frontend->source_restoring) {
+        if (frontend->application != application || !engine->owner_idle || !engine->owner_context)
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "restored native Q2 factory lacks its actual application owner");
+        for (frontend_native_q2 *item = frontend->native_q2; item; item = item->next)
+            if (item->owner == owner && item->profile == profile) {
+                if (source) return frontend_fail(error, QA_ERROR_FORMAT, "restored native Q2 factory has duplicate saved rows");
+                source = item;
+            }
+        if (!source || !source->prepared || source->frontend != frontend || source->application != application ||
+            source->provider_files != engine->content_files || !source->mounts || source->active_imports)
+            return frontend_fail(error, QA_ERROR_FORMAT, "native Q2 factory differs from its saved constructor topology");
+    } else {
+        if (frontend->next_source_id >= UINT64_MAX - QA_FRONTEND_COMMAND_OWNER - 1)
+            return frontend_fail(error, QA_ERROR_MEMORY, "native Q2 frontend identity exhausted");
+        source = calloc(1, sizeof(*source));
+        if (!source) return frontend_fail(error, QA_ERROR_MEMORY, "allocating native Q2 frontend lease");
+        source->frontend = frontend; source->application = application; source->owner = owner; source->profile = profile;
+        source->identity = QA_FRONTEND_COMMAND_OWNER + ++frontend->next_source_id;
+        source->frame_time_ns = frontend->time_ns;
+        source->provider_files = engine->content_files;
+        source->mounts = qa_vfs_clone(engine->content_files, error);
+        source->catalogs = qa_localization_pool_create(error); source->world_text = qa_font_world_store_create(error);
+        if (!source->mounts || !source->catalogs || !source->world_text) { release_source(source); return false; }
+        source->next = frontend->native_q2; frontend->native_q2 = source;
+    }
     source->owner_context = engine->owner_context; source->owner_idle = engine->owner_idle;
-    source->identity = QA_FRONTEND_COMMAND_OWNER + ++frontend->next_source_id;
-    source->frame_time_ns = frontend->time_ns;
-    source->cvars = engine->cvars; source->mounts = qa_vfs_clone(engine->content_files, error);
-    source->catalogs = qa_localization_pool_create(error); source->world_text = qa_font_world_store_create(error);
-    if (!source->mounts || !source->catalogs || !source->world_text) { release_source(source); return false; }
-    source->next = frontend->native_q2; frontend->native_q2 = source;
+    source->cvars = engine->cvars; source->prepared = false;
     engine->context = source; engine->print = platform_print; engine->sound = platform_sound;
     engine->hud_view = platform_hud_view;
     engine->frontend_lifetime = source; engine->release_frontend = release_source;
@@ -616,7 +640,7 @@ bool frontend_native_q2_rebind_ready(const qa_frontend *candidate, const qa_fron
         candidate->options.dedicated != published->options.dedicated)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 frontend adoption requires idle matching frontends");
     for (frontend_native_q2 *source = candidate->native_q2; source; source = source->next) {
-        if ((source->frontend != candidate && source->frontend != published) ||
+        if (source->prepared || source->restored || (source->frontend != candidate && source->frontend != published) ||
             source->application != candidate->application || source->active_imports ||
             !source->owner_idle || !source->owner_idle(source->owner_context) ||
             (source->seat_bound && source->seat >= candidate->options.seats))
@@ -633,4 +657,314 @@ void frontend_native_q2_rebind(qa_frontend *owned, qa_frontend *destination)
 {
     for (frontend_native_q2 *source = owned->native_q2; source; source = source->next)
         source->frontend = destination;
+}
+
+typedef struct native_q2_plan {
+    qa_actor_owner owner;
+    uint32_t profile;
+    uint64_t identity, mounts_view, provider_view;
+    bool images, sounds, fonts;
+} native_q2_plan;
+static bool native_q2_plan_fields(qa_source_save_io *io, qa_strings *strings, native_q2_plan *plan)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    char *owner = !reading ? (char *)qa_strings_cstr(strings, plan->owner) : NULL;
+    if ((!reading && (!plan->owner || !owner || !*owner)) || !frontend_save_text(io, &owner)) return false;
+    if (reading) {
+        plan->owner = owner ? qa_strings_find(strings, (qa_bytes){(const uint8_t *)owner, strlen(owner)}) : 0;
+        free(owner);
+    }
+    return plan->owner && qa_source_save_u32(io, &plan->profile) &&
+        (plan->profile == QA_NATIVE_Q2_GAME_API3 || plan->profile == QA_NATIVE_Q2_GAME_API2023 ||
+         plan->profile == QA_NATIVE_Q2_CGAME_API2023) &&
+        qa_source_save_u64(io, &plan->identity) && plan->identity > QA_FRONTEND_COMMAND_OWNER &&
+        qa_source_save_u64(io, &plan->mounts_view) && qa_source_save_u64(io, &plan->provider_view) &&
+        plan->mounts_view && plan->provider_view && plan->mounts_view != plan->provider_view &&
+        qa_source_save_bool(io, &plan->images) && qa_source_save_bool(io, &plan->sounds) &&
+        qa_source_save_bool(io, &plan->fonts) && (!plan->fonts || plan->images);
+}
+static bool native_q2_plans(qa_source_save_io *io, qa_frontend *frontend,
+    native_q2_plan **plans, size_t *count)
+{
+    uint8_t magic[4] = {'Q','N','F','T'}; uint32_t version = 1;
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    size_t maximum = SIZE_MAX / sizeof(**plans);
+    if (reading && io->input.size / 37 < maximum) maximum = io->input.size / 37;
+    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QNFT", 4) ||
+        !qa_source_save_u32(io, &version) || version != 1 ||
+        !qa_source_save_count(io, count, maximum)) return false;
+    if (reading) {
+        *plans = calloc(*count ? *count : 1, sizeof(**plans));
+        if (!*plans) return frontend_fail(io->error, QA_ERROR_MEMORY, "retaining native Q2 constructor topology");
+    }
+    qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
+    for (size_t i = 0; i < *count; ++i) {
+        native_q2_plan *plan = *plans + i;
+        if (!native_q2_plan_fields(io, strings, plan) ||
+            plan->identity - QA_FRONTEND_COMMAND_OWNER > frontend->next_source_id ||
+            frontend_source_identity_used(frontend, plan->identity) ||
+            (plan->profile == QA_NATIVE_Q2_CGAME_API2023 && (frontend->options.dedicated || !frontend->options.seats))) return false;
+        for (size_t j = 0; j < i; ++j)
+            if (plan->identity == (*plans)[j].identity || plan->mounts_view == (*plans)[j].mounts_view ||
+                (plan->owner == (*plans)[j].owner && plan->profile == (*plans)[j].profile)) return false;
+    }
+    return true;
+}
+size_t frontend_native_q2_owner_count(const qa_frontend *frontend)
+{
+    size_t count = 0;
+    if (frontend) for (const frontend_native_q2 *source = frontend->native_q2; source; source = source->next) ++count;
+    return count;
+}
+bool frontend_native_q2_owner_read(const qa_frontend *frontend, size_t index,
+    frontend_native_q2_owner_view *out)
+{
+    if (!frontend || !out || frontend->stepping || !frontend->application) return false;
+    const frontend_native_q2 *source = frontend->native_q2;
+    while (source && index--) source = source->next;
+    if (!source || source->frontend != frontend || source->application != frontend->application || source->active_imports) return false;
+    *out = (frontend_native_q2_owner_view){.owner = source->owner, .profile = source->profile,
+        .identity = source->identity, .mounts = source->mounts, .provider_files = source->provider_files,
+        .images = source->images, .sounds = source->sounds, .fonts = source->fonts, .prepared = source->prepared};
+    return true;
+}
+bool frontend_native_q2_topology_checkpoint(const qa_frontend *frontend, qa_buffer *out, qa_error *error)
+{
+    if (!frontend || !frontend->application || frontend->stepping || frontend->source_restoring ||
+        !out || out->data || out->size)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 topology requires idle owners and empty output");
+    qa_application_content_graph *graph = qa_application_content_graph_read(frontend->application);
+    if (!graph) return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 topology requires its captured content graph");
+    size_t count = frontend_native_q2_owner_count(frontend);
+    native_q2_plan *plans = calloc(count ? count : 1, sizeof(*plans));
+    if (!plans) return frontend_fail(error, QA_ERROR_MEMORY, "retaining native Q2 topology capture");
+    bool ok = true; size_t index = 0;
+    for (const frontend_native_q2 *source = frontend->native_q2; source && ok; source = source->next, ++index) {
+        ok = !source->prepared && !source->restored && source->frontend == frontend &&
+            source->application == frontend->application && !source->active_imports &&
+            source->owner_idle && source->owner_idle(source->owner_context);
+        plans[index] = (native_q2_plan){.owner = source->owner, .profile = source->profile,
+            .identity = source->identity, .mounts_view = qa_application_content_view_id(graph, source->mounts),
+            .provider_view = qa_application_content_view_id(graph, source->provider_files),
+            .images = source->images != NULL, .sounds = source->sounds != NULL, .fonts = source->fonts != NULL};
+    }
+    qa_source_save_io io = {0};
+    ok = ok && qa_source_save_writer(&io, qa_application_session(frontend->application), error) &&
+        native_q2_plans(&io, (qa_frontend *)frontend, &plans, &count) && qa_source_save_finish(&io, out);
+    qa_source_save_dispose(&io); free(plans);
+    if (!ok && (!error || error->code == QA_OK)) frontend_fail(error, QA_ERROR_FORMAT, "native Q2 topology is not completely qualified");
+    return ok;
+}
+bool frontend_native_q2_prepare_restored(qa_frontend *frontend, qa_bytes bytes, qa_error *error)
+{
+    if (!frontend || !frontend->application || frontend->stepping || !frontend->source_restoring || frontend->native_q2)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 topology admission requires empty isolated native owners");
+    qa_application_content_graph *graph = qa_application_content_graph_read(frontend->application);
+    if (!graph) return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 topology lacks its restored content graph");
+    native_q2_plan *plans = NULL; size_t count = 0; qa_source_save_io io = {0};
+    bool ok = qa_source_save_reader(&io, qa_application_session(frontend->application), bytes, error) &&
+        native_q2_plans(&io, frontend, &plans, &count) && qa_source_save_finish(&io, NULL);
+    qa_source_save_dispose(&io);
+    for (size_t i = 0; ok && i < count; ++i) {
+        const qa_vfs *mounts = qa_application_content_view(graph, plans[i].mounts_view);
+        const qa_vfs *provider = qa_application_content_view(graph, plans[i].provider_view);
+        ok = mounts && provider && qa_vfs_resources(mounts) == qa_vfs_resources(provider);
+    }
+    if (!ok) {
+        free(plans);
+        if (!error || error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "native Q2 saved constructor topology is invalid");
+        return false;
+    }
+    frontend_native_q2 **tail = &frontend->native_q2;
+    for (size_t i = 0; ok && i < count; ++i) {
+        frontend_native_q2 *source = calloc(1, sizeof(*source));
+        if (!source) { ok = frontend_fail(error, QA_ERROR_MEMORY, "allocating prepared native Q2 lease"); break; }
+        *tail = source; tail = &source->next;
+        source->frontend = frontend; source->application = frontend->application;
+        source->owner = plans[i].owner; source->profile = (qa_native_profile)plans[i].profile;
+        source->identity = plans[i].identity; source->prepared = source->restored = true;
+        source->frame_time_ns = frontend->time_ns;
+        source->provider_files = qa_application_content_view(graph, plans[i].provider_view);
+        ok = qa_application_content_claim_view(graph, plans[i].mounts_view, &source->mounts, error);
+        if (ok) source->catalogs = qa_localization_pool_create(error);
+        if (ok) source->world_text = qa_font_world_store_create(error);
+        ok = ok && source->catalogs && source->world_text;
+        if (ok && plans[i].images) ok = (source->images = qa_scene_resources_create(source->mounts, error)) != NULL;
+        if (ok && plans[i].sounds) ok = qa_audio_bank_create(source->mounts, &source->sounds, error);
+        if (ok && plans[i].fonts) ok = (source->fonts = qa_font_library_create(source->mounts, source->images, error)) != NULL;
+    }
+    free(plans); return ok;
+}
+bool frontend_native_q2_topology_ready(const qa_frontend *frontend, qa_error *error)
+{
+    if (!frontend || !frontend->application || frontend->stepping || !frontend->source_restoring)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 restored topology requires idle constructor policy");
+    for (const frontend_native_q2 *source = frontend->native_q2; source; source = source->next)
+        if (source->prepared || !source->restored || source->frontend != frontend ||
+            source->application != frontend->application || source->active_imports || !source->owner_idle ||
+            !source->owner_idle(source->owner_context) || !source->mounts || !source->provider_files || !source->cvars)
+            return frontend_fail(error, QA_ERROR_FORMAT, "native Q2 saved lease was not bound to its actual provider");
+    return true;
+}
+void frontend_native_q2_topology_finish(qa_frontend *frontend)
+{
+    for (frontend_native_q2 *source = frontend->native_q2; source; source = source->next) source->restored = false;
+}
+bool frontend_native_q2_discard_unbound(qa_frontend *frontend, qa_error *error)
+{
+    if (!frontend || frontend->stepping)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 pending lease cleanup requires idle frontend");
+    for (const frontend_native_q2 *source = frontend->native_q2; source; source = source->next)
+        if (!source->prepared || source->active_imports || source->owner_context || source->owner_idle)
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "actual native Q2 application leases must retire before pending cleanup");
+    while (frontend->native_q2) release_source(frontend->native_q2);
+    return true;
+}
+
+typedef struct native_q2_private_record {
+    native_q2_plan plan;
+    uint64_t classic, frame_time_ns, previous_frame_time_ns;
+    float frame_seconds;
+    uint32_t seat;
+    qa_scene_rect viewport;
+    bool seat_bound, alternate;
+    qa_buffer world_text;
+} native_q2_private_record;
+static bool native_q2_game_private(const frontend_native_q2 *source, qa_error *error)
+{
+    if (source->profile != QA_NATIVE_Q2_GAME_API3 && source->profile != QA_NATIVE_Q2_GAME_API2023)
+        return frontend_fail(error, QA_ERROR_UNSUPPORTED, "native Q2 cgame frontend continuation requires qualified original guest allocations and catalogs");
+    if (!source->catalogs || qa_localization_pool_count(source->catalogs) || source->pictures || source->next_string)
+        return frontend_fail(error, QA_ERROR_FORMAT, "native Q2 GAME lease contains state outside its actual import profile");
+    for (size_t i = 0; i < 8; ++i)
+        if (source->strings[i].instance || source->strings[i].address || source->strings[i].capacity)
+            return frontend_fail(error, QA_ERROR_UNSUPPORTED, "native Q2 GAME lease has an unqualified guest return allocation");
+    return true;
+}
+static bool native_q2_world_encode(void *context, uint64_t content, uint64_t *out, qa_error *error)
+{
+    const frontend_native_q2 *source = context;
+    if (content != source->owner)
+        return frontend_fail(error, QA_ERROR_FORMAT, "native Q2 retained world text has a different source owner");
+    *out = 1; return true;
+}
+static bool native_q2_world_decode(void *context, uint64_t saved, uint64_t *out, qa_error *error)
+{
+    const frontend_native_q2 *source = context;
+    if (saved != 1 || !source->owner)
+        return frontend_fail(error, QA_ERROR_FORMAT, "native Q2 saved world text lacks its exact source owner");
+    *out = source->owner; return true;
+}
+static bool native_q2_private_fields(qa_source_save_io *io, qa_frontend *frontend,
+    native_q2_private_record *record)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
+    if (!native_q2_plan_fields(io, strings, &record->plan) ||
+        record->plan.profile == QA_NATIVE_Q2_CGAME_API2023 ||
+        !qa_source_save_u64(io, &record->classic) || !qa_source_save_u64(io, &record->frame_time_ns) ||
+        !qa_source_save_u64(io, &record->previous_frame_time_ns) || !qa_source_save_f32(io, &record->frame_seconds) ||
+        !isfinite(record->frame_seconds) || record->frame_seconds < 0 ||
+        !qa_source_save_u32(io, &record->seat) || !qa_source_save_i32(io, &record->viewport.x) ||
+        !qa_source_save_i32(io, &record->viewport.y) || !qa_source_save_u32(io, &record->viewport.width) ||
+        !qa_source_save_u32(io, &record->viewport.height) || !qa_source_save_bool(io, &record->seat_bound) ||
+        !qa_source_save_bool(io, &record->alternate) ||
+        (record->seat_bound && (frontend->options.dedicated || record->seat >= frontend->options.seats)) ||
+        (record->classic && !record->plan.fonts)) return false;
+    size_t length = reading ? 0 : record->world_text.size;
+    if (!qa_source_save_count(io, &length, reading ? io->input.size - io->offset : SIZE_MAX) || !length) return false;
+    if (reading) {
+        record->world_text.data = malloc(length);
+        if (!record->world_text.data) return frontend_fail(io->error, QA_ERROR_MEMORY, "retaining native Q2 world text continuation");
+        record->world_text.size = length;
+    }
+    return qa_source_save_bytes(io, record->world_text.data, length);
+}
+static bool native_q2_private_header(qa_source_save_io *io, size_t *count)
+{
+    uint8_t magic[4] = {'Q','N','F','P'}; uint32_t version = 1;
+    size_t maximum = SIZE_MAX / sizeof(native_q2_private_record);
+    if (io->direction == QA_SOURCE_SAVE_READ && io->input.size / 100 < maximum) maximum = io->input.size / 100;
+    return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QNFP", 4) &&
+        qa_source_save_u32(io, &version) && version == 1 && qa_source_save_count(io, count, maximum);
+}
+bool frontend_native_q2_private_checkpoint(const qa_frontend *frontend, qa_buffer *out, qa_error *error)
+{
+    if (!frontend || !frontend->application || frontend->stepping || frontend->source_restoring ||
+        !out || out->data || out->size)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 private capture requires idle real owners and empty output");
+    qa_application_content_graph *graph = qa_application_content_graph_read(frontend->application);
+    if (!graph) return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 private capture requires the actual content graph");
+    qa_source_save_io io = {0}; size_t count = frontend_native_q2_owner_count(frontend);
+    bool ok = qa_source_save_writer(&io, qa_application_session(frontend->application), error) && native_q2_private_header(&io, &count);
+    for (const frontend_native_q2 *source = frontend->native_q2; source && ok; source = source->next) {
+        ok = !source->prepared && !source->restored && source->frontend == frontend &&
+            source->application == frontend->application && !source->active_imports &&
+            source->owner_idle && source->owner_idle(source->owner_context) && native_q2_game_private(source, error);
+        native_q2_private_record record = {.plan = {.owner = source->owner, .profile = source->profile,
+            .identity = source->identity, .mounts_view = qa_application_content_view_id(graph, source->mounts),
+            .provider_view = qa_application_content_view_id(graph, source->provider_files),
+            .images = source->images != NULL, .sounds = source->sounds != NULL, .fonts = source->fonts != NULL},
+            .frame_time_ns = source->frame_time_ns, .previous_frame_time_ns = source->previous_frame_time_ns,
+            .frame_seconds = source->frame_seconds, .seat = source->seat, .viewport = source->viewport,
+            .seat_bound = source->seat_bound, .alternate = source->alternate};
+        if (source->classic) {
+            for (size_t i = 0; i < qa_font_library_record_count(source->fonts); ++i)
+                if (qa_font_library_record_at(source->fonts, i) == source->classic) record.classic = i + 1;
+            if (!record.classic) ok = frontend_fail(error, QA_ERROR_FORMAT, "native Q2 classic font is outside its actual library");
+        }
+        qa_font_world_checkpoint_refs refs = {.context = (void *)source, .content_encode = native_q2_world_encode};
+        ok = ok && qa_font_world_store_checkpoint(source->world_text, &refs, &record.world_text, error) &&
+            native_q2_private_fields(&io, (qa_frontend *)frontend, &record);
+        qa_buffer_free(&record.world_text);
+    }
+    ok = ok && qa_source_save_finish(&io, out); qa_source_save_dispose(&io);
+    if (!ok && (!error || error->code == QA_OK)) frontend_fail(error, QA_ERROR_FORMAT, "native Q2 private frontend state is invalid");
+    return ok;
+}
+bool frontend_native_q2_private_restore(qa_frontend *frontend, qa_bytes bytes, qa_error *error)
+{
+    if (!frontend_native_q2_topology_ready(frontend, error)) return false;
+    qa_application_content_graph *graph = qa_application_content_graph_read(frontend->application);
+    if (!graph) return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 private import requires its actual restored content graph");
+    size_t count = 0; native_q2_private_record *records = NULL; qa_source_save_io io = {0};
+    bool ok = qa_source_save_reader(&io, qa_application_session(frontend->application), bytes, error) &&
+        native_q2_private_header(&io, &count) && count == frontend_native_q2_owner_count(frontend);
+    if (ok && count) {
+        records = calloc(count, sizeof(*records));
+        if (!records) ok = frontend_fail(error, QA_ERROR_MEMORY, "preparing native Q2 private lease rows");
+    }
+    for (size_t i = 0; ok && i < count; ++i) ok = native_q2_private_fields(&io, frontend, records + i);
+    ok = ok && qa_source_save_finish(&io, NULL); qa_source_save_dispose(&io);
+    const frontend_native_q2 *actual = frontend->native_q2;
+    for (size_t i = 0; ok && i < count; ++i, actual = actual->next) {
+        const native_q2_private_record *record = records + i; const native_q2_plan *plan = &record->plan;
+        ok = native_q2_game_private(actual, error) && plan->owner == actual->owner && plan->profile == (uint32_t)actual->profile &&
+            plan->identity == actual->identity && plan->mounts_view == qa_application_content_view_id(graph, actual->mounts) &&
+            plan->provider_view == qa_application_content_view_id(graph, actual->provider_files) &&
+            plan->images == (actual->images != NULL) && plan->sounds == (actual->sounds != NULL) &&
+            plan->fonts == (actual->fonts != NULL);
+        if (ok && record->classic) {
+            const qa_font *font = record->classic - 1 <= SIZE_MAX ?
+                qa_font_library_record_at(actual->fonts, (size_t)(record->classic - 1)) : NULL;
+            qa_font_info info;
+            ok = font && qa_font_describe(font, &info) && info.kind == QA_FONT_CLASSIC && info.name &&
+                !strcmp(info.name, "native-q2:conchars");
+        }
+    }
+    frontend_native_q2 *source = frontend->native_q2;
+    for (size_t i = 0; ok && i < count; ++i, source = source->next) {
+        const native_q2_private_record *record = records + i;
+        qa_font_world_checkpoint_refs refs = {.context = source, .content_decode = native_q2_world_decode};
+        ok = qa_font_world_store_restore(source->world_text, (qa_bytes){record->world_text.data, record->world_text.size}, &refs, error);
+        if (!ok) break;
+        source->classic = record->classic ? qa_font_library_record_at(source->fonts, (size_t)(record->classic - 1)) : NULL;
+        source->frame_time_ns = record->frame_time_ns; source->previous_frame_time_ns = record->previous_frame_time_ns;
+        source->frame_seconds = record->frame_seconds; source->seat = record->seat; source->viewport = record->viewport;
+        source->seat_bound = record->seat_bound; source->alternate = record->alternate;
+    }
+    if (records) for (size_t i = 0; i < count; ++i) qa_buffer_free(&records[i].world_text);
+    free(records);
+    if (!ok && (!error || error->code == QA_OK)) frontend_fail(error, QA_ERROR_FORMAT, "saved native Q2 private frontend state differs from actual owners");
+    return ok;
 }

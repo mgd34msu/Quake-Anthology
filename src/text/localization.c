@@ -23,6 +23,11 @@ typedef struct loc_cache {
 struct qa_localization_pool {
     loc_cache *first;
 };
+size_t qa_localization_pool_count(const qa_localization_pool *pool) {
+    size_t count = 0;
+    if (pool) for (const loc_cache *row = pool->first; row; row = row->next) ++count;
+    return count;
+}
 typedef struct loc_reader {
     qa_bytes bytes;
     size_t at;

@@ -45,6 +45,8 @@ size_t qa_localize(const qa_localization *catalog, const char *base, const char 
 const char *qa_localization_language(const char *locale);
 
 qa_localization_pool *qa_localization_pool_create(qa_error *error);
+/* Read-only retained cache count; no trim, loading or reference changes. */
+size_t qa_localization_pool_count(const qa_localization_pool *pool);
 void qa_localization_pool_destroy(qa_localization_pool *pool);
 void qa_localization_pool_trim(qa_localization_pool *pool);
 /* Resolve through the caller's mounts first, then share by ordered content
