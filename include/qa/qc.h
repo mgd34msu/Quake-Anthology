@@ -369,6 +369,10 @@ bool qa_qc_unbind_actor(qa_qc_instance *instance, uint32_t slot,
                         qa_error *error);
 bool qa_qc_slot(const qa_qc_instance *instance, uint32_t slot,
                 qa_qc_slot_binding *out);
+/* Reads the actual ABI reference of an allocated physical row, including the
+ * world and reserved/free rows. This does not bind or project an actor. */
+bool qa_qc_slot_reference(const qa_qc_instance *, uint32_t slot,
+                           int32_t *out, qa_error *);
 bool qa_qc_actor_reference(qa_qc_instance *instance, qa_actor_id actor,
                            bool project, int32_t *out, qa_error *error);
 bool qa_qc_reference_actor(const qa_qc_instance *instance, int32_t reference,

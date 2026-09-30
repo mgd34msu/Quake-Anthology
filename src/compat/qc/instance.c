@@ -759,6 +759,15 @@ bool qa_qc_slot(const qa_qc_instance *instance, uint32_t slot,
     return true;
 }
 
+bool qa_qc_slot_reference(const qa_qc_instance *instance, uint32_t slot,
+                           int32_t *out, qa_error *error)
+{
+    if (instance == NULL || out == NULL || slot >= instance->entity_count)
+        return qc_fail(error, QA_ERROR_ARGUMENT, slot, "invalid QuakeC physical entity reference");
+    *out = reference_of(instance, slot);
+    return true;
+}
+
 bool qa_qc_actor_reference(qa_qc_instance *instance, qa_actor_id actor,
                            bool project, int32_t *out, qa_error *error)
 {
