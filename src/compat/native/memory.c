@@ -192,6 +192,20 @@ bool qa_native_entity_table_get(const qa_native_instance *instance, qa_native_en
     return true;
 }
 
+bool qa_native_terminal_entity_table(const qa_native_instance *instance,
+                                      qa_native_entity_table *out, qa_error *error) {
+    if (!out || !qa_native_terminal(instance) || !qa_native_can_destroy(instance))
+        return native_fail(error, QA_ERROR_ARGUMENT, 0,
+                           "cached native table requires a drained terminal runner");
+    if (instance->entities.capacity > instance->slot_capacity ||
+        instance->entities.count > instance->entities.capacity ||
+        (instance->entities.capacity && (!instance->entities.base || !instance->entities.stride)))
+        return native_fail(error, QA_ERROR_FORMAT, 0,
+                           "terminal native table differs from parent slot metadata");
+    *out = instance->entities;
+    return true;
+}
+
 bool native_entity_table_store(qa_native_instance *instance, qa_native_entity_table table,
                                qa_error *error) {
     if (!instance)

@@ -73,20 +73,28 @@ bool qa_native_host_actor_released(qa_native_host *host, qa_actor_record release
         return native_host_fail(error, QA_ERROR_ARGUMENT, released.id.slot,
                                 "native release notification requires an invalidated actor ID");
     qa_native_entity_table table;
-    if (!qa_native_entity_table_get(host->instance, &table, error)) return false;
+    bool terminal = qa_native_terminal(host->instance);
+    if (terminal && (!host->world.session || released.id.registry !=
+                    qa_actors_identity(qa_session_actors(host->world.session))))
+        return native_host_fail(error, QA_ERROR_ARGUMENT, released.id.slot,
+                                "terminal release belongs to another canonical registry");
+    if (!(terminal ? qa_native_terminal_entity_table(host->instance, &table, error)
+                   : qa_native_entity_table_get(host->instance, &table, error))) return false;
     ++host->callback_depth;
     bool ok = true;
     for (uint32_t slot = 0; slot < table.capacity; ++slot) {
         qa_native_slot_binding binding;
         if (!qa_native_slot(host->instance, slot, &binding, error)) { ok = false; break; }
-        if ((binding.kind != QA_NATIVE_SLOT_OWNED && binding.kind != QA_NATIVE_SLOT_BORROWED) ||
+        if ((binding.kind != QA_NATIVE_SLOT_OWNED && binding.kind != QA_NATIVE_SLOT_BORROWED &&
+             !(terminal && binding.kind == QA_NATIVE_SLOT_WORLD)) ||
             !qa_actor_id_equal(binding.actor, released.id)) continue;
         qa_native_slot_binding cleared = {.kind = QA_NATIVE_SLOT_FREE, .slot = slot};
         if (!qa_native_bind_slot(host->instance, &cleared, error)) { ok = false; break; }
         if (slot < host->retained_capacity) host->retained_clients[slot] = false;
         if (binding.kind == QA_NATIVE_SLOT_OWNED && host->world.release_actor) {
             host->world.release_actor(host->world.binding_context, host, slot, released.id);
-            if (!qa_native_entity_table_get(host->instance, &table, error)) { ok = false; break; }
+            if (!(terminal ? qa_native_terminal_entity_table(host->instance, &table, error)
+                           : qa_native_entity_table_get(host->instance, &table, error))) { ok = false; break; }
         }
     }
     --host->callback_depth;

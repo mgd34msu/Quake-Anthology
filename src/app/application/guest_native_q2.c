@@ -290,10 +290,16 @@ bool application_native_q2_retire_map(application_provider *provider, qa_error *
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 map retirement requires drained source callbacks");
     if (engine->profile == QA_NATIVE_Q2_CGAME_API2023 && provider->state.native.host) {
         if (engine->initialized) {
-            ++engine->calls;
-            bool ok = qa_native_host_shutdown(provider->state.native.host, false, error);
-            --engine->calls;
-            if (!ok) return false;
+            if (qa_native_terminal(qa_native_host_instance(provider->state.native.host))) {
+                if (!qa_native_host_terminal_retired(provider->state.native.host))
+                    return application_fail(error, QA_ERROR_ARGUMENT,
+                        "Terminal native Q2 cgame retirement requires drained retired ownership");
+            } else {
+                ++engine->calls;
+                bool ok = qa_native_host_shutdown(provider->state.native.host, false, error);
+                --engine->calls;
+                if (!ok) return false;
+            }
             engine->initialized = false;
         }
         if (!qa_native_host_destroy_ready(provider->state.native.host))

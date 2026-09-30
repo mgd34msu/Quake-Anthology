@@ -361,6 +361,11 @@ typedef struct qa_native_entity_table {
  * byte array is only the module's private shadow. */
 bool qa_native_entity_table_get(const qa_native_instance *instance, qa_native_entity_table *out,
                                 qa_error *error);
+/* Last parent-owned table metadata only, after an isolated runner has become
+ * terminal and all source callbacks have drained. Addresses cannot be used
+ * for source memory operations; this supports actual actor-release cleanup. */
+bool qa_native_terminal_entity_table(const qa_native_instance *, qa_native_entity_table *,
+                                     qa_error *);
 bool qa_native_set_entity_table(qa_native_instance *instance, qa_native_entity_table table,
                                 qa_error *error);
 bool qa_native_entity_address(const qa_native_instance *instance, uint32_t slot,
