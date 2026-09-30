@@ -501,6 +501,7 @@ add_library(qa_bots STATIC
     src/bots/chat/parse.c
     src/bots/chat/reply_parse.c
     src/bots/chat/state.c
+    src/bots/chat/system_save.c
     src/bots/chat/strings.c
     src/bots/goals/choose.c
     src/bots/goals/core.c
