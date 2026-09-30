@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/network_save.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +17,25 @@ static qa_network_seat *seat_get(qa_network_peer *peer, qa_net_seat_id id, qa_er
     for (size_t i = 0; i < peer->seat_count; ++i)
         if (peer->seats[i].id.owner == id.owner && peer->seats[i].id.index == id.index) return &peer->seats[i];
     qa_network_fail(error, "Connection does not own command seat"); return NULL;
+}
+bool qa_network_accepted_sequence(const qa_network_runtime *runtime, qa_net_client_id id,
+    qa_net_seat_id seat, bool *present, uint64_t *sequence, qa_error *error)
+{
+    if (!runtime || !present || !sequence || !qa_network_callbacks_idle(runtime))
+        return qa_network_fail(error, "Accepted-command lookup requires an idle runtime and outputs");
+    const qa_net_client *client = qa_net_connections_get(runtime->connections, id);
+    if (!client || id.slot >= runtime->options.clients)
+        return qa_network_fail(error, "Accepted-command lookup lacks its admitted connection");
+    const qa_network_peer *peer = runtime->peers + id.slot;
+    if (!peer->occupied || !qa_net_client_id_equal(peer->id, id))
+        return qa_network_fail(error, "Accepted-command lookup lacks its actual peer generation");
+    for (size_t i = 0; i < peer->seat_count; ++i) {
+        const qa_network_seat *state = peer->seats + i;
+        if (state->id.owner != seat.owner || state->id.index != seat.index) continue;
+        if (state->applying) return qa_network_fail(error, "Accepted-command seat callback is active");
+        *present = state->has_accepted; *sequence = state->accepted; return true;
+    }
+    return qa_network_fail(error, "Accepted-command lookup lacks its admitted source seat");
 }
 static bool authority(qa_network_runtime *runtime, const qa_network_command *command,
                        qa_network_peer **peer, qa_network_seat **seat, qa_error *error) {

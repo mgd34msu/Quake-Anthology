@@ -36,6 +36,10 @@ bool qa_application_network_player_next(const qa_application *, size_t *cursor,
  * sources need a complete native wire producer and fail this admission. */
 bool qa_application_network_q1_source(qa_application *, qa_actor_id,
     qa_actor_owner *, uint32_t *source_slot, qa_net_protocol_id *, qa_error *);
+/* Real source high-water edict extent and reserved client extent. Readonly;
+ * no edict refresh or source callback is performed. */
+bool qa_application_network_q1_extents(qa_application *, qa_actor_id,
+    uint32_t *client_slots, uint32_t *entity_slots, qa_error *);
 qa_cvars *qa_application_network_q1_cvars(qa_application *, qa_actor_id, qa_error *);
 bool qa_application_network_q1_entity(qa_application *, qa_actor_id source_player,
     qa_actor_id entity, qa_q1_entity *, qa_error *);

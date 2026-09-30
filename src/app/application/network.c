@@ -81,6 +81,14 @@ bool qa_application_network_q1_source(qa_application *app, qa_actor_id player,
     if (!engine) return false;
     *owner = engine->provider->owner; *protocol = engine->protocol; return true;
 }
+bool qa_application_network_q1_extents(qa_application *app, qa_actor_id player,
+    uint32_t *clients, uint32_t *entities, qa_error *error)
+{
+    if (!clients || !entities) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source extent outputs");
+    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    if (!engine) return false;
+    *clients = engine->max_clients; *entities = qa_qc_entity_count(engine->provider->state.qc.instance); return true;
+}
 static bool q1_wire_scalar(struct application_qc_state *engine, int32_t reference,
     const char *name, uint32_t maximum, uint32_t *out, qa_error *error)
 {

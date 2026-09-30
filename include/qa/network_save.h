@@ -43,4 +43,8 @@ bool qa_network_prediction_restore(qa_network_runtime *, const qa_network_checkp
  * admission. Keeps the live local socket endpoint and its sole receive owner. */
 void qa_network_transport_exchange(qa_network_runtime *, qa_network_runtime *);
 const qa_net_address *qa_network_local_address(const qa_network_runtime *);
+/* Read the actual accepted source-command counter for one admitted seat.
+ * Idle and readonly; it neither submits a command nor changes history. */
+bool qa_network_accepted_sequence(const qa_network_runtime *, qa_net_client_id,
+    qa_net_seat_id, bool *present, uint64_t *sequence, qa_error *);
 #endif

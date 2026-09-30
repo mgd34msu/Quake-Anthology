@@ -1,4 +1,4 @@
-#include "network_nq.h"
+#include "network_nq_private.h"
 #include "qa/application_network.h"
 #include "qa/collision.h"
 #include "qa/launch_identity.h"
@@ -9,47 +9,6 @@
 #include <stdio.h>
 #include <string.h>
 
-enum { NQ_CLIENTS = 64, NQ_MESSAGE = 8000, NQ_DATAGRAM = 1024, NQ_PENDING = 32 };
-typedef struct nq_frontend_peer {
-    struct frontend_nq_host *host;
-    qa_net_client_id client;
-    qa_net_seat_id seat;
-    qa_q1_entity *baselines;
-    size_t baseline_count;
-    qa_q1_command latest;
-    uint64_t input_sequence, tick_sequence, entered_ns;
-    uint32_t source_slot;
-    uint8_t impulse;
-    bool occupied, retiring, command_present;
-    char reason[256];
-} nq_frontend_peer;
-typedef struct nq_pending_control {
-    qa_net_address address;
-    uint64_t received_ns;
-    size_t size;
-    uint8_t bytes[1024];
-} nq_pending_control;
-typedef struct nq_status_cache {
-    char *name;
-    int32_t frags;
-    float source_frags;
-    uint8_t colors;
-    bool present;
-} nq_status_cache;
-struct frontend_nq_host {
-    qa_frontend *frontend;
-    qa_network_runtime *runtime;
-    qa_sha256_digest composition;
-    qa_actor_owner owner;
-    uint64_t generation, submillisecond_ns;
-    nq_frontend_peer peers[NQ_CLIENTS];
-    nq_pending_control pending[NQ_PENDING];
-    size_t pending_count;
-    unsigned busy;
-    char reply_address[128];
-    nq_status_cache board[256];
-    char *styles[64];
-};
 typedef struct nq_batch {
     uint8_t bytes[NQ_MESSAGE];
     size_t size;
@@ -299,6 +258,37 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
     qa_nq_message message = {.op = QA_NQ_PRINT, .data.text = "Unknown client command\n"};
     return qa_nq_write(&writer, (qa_net_protocol_id){.kind = QA_NET_NQ15}, (qa_nq_options){.standard_quake = true}, &message, NULL, 0) &&
         qa_network_nq_server_reliable(peer->host->runtime, id, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
+}
+bool frontend_nq_source_hooks(frontend_nq_host *host, const qa_net_client *client,
+    qa_network_nq_server_policy *policy, qa_network_nq_server_hooks *hooks, qa_error *error)
+{
+    nq_frontend_peer *peer = NULL;
+    if (!host || !client || !policy || !hooks)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Missing retained NetQuake source binding");
+    for (size_t i = 0; i < NQ_CLIENTS; ++i)
+        if (host->peers[i].occupied && qa_net_client_id_equal(host->peers[i].client, client->id)) peer = host->peers + i;
+    if (!peer || peer->host != host || client->attachment != QA_NET_REMOTE || client->protocol.kind != QA_NET_NQ15 ||
+        client->protocol.flags || client->protocol.revision || client->seat_count != 1 || client->seats[0].remote_index ||
+        client->seats[0].seat.owner != peer->seat.owner || client->seats[0].seat.index != peer->seat.index ||
+        !qa_sha256_equal(&client->composition, &host->composition))
+        return frontend_fail(error, QA_ERROR_FORMAT, "Restored NetQuake source is not its declared native connection seat");
+    size_t cursor = 0; qa_application_network_player row; bool found = false;
+    while (qa_application_network_player_next(host->frontend->application, &cursor, &row)) {
+        if (!qa_net_client_id_equal(row.client, client->id) || row.seat.owner != peer->seat.owner || row.seat.index != peer->seat.index) continue;
+        if (found || row.application_seat != peer->seat.index || row.source_slot != peer->source_slot ||
+            row.client_slot != peer->source_slot - 1 || (!peer->retiring && (row.retiring || row.deferred)))
+            return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake peer differs from its actual application roster");
+        if (!peer->retiring) {
+            qa_actor_id actor;
+            if (!peer_actor(peer, &actor, error) || !qa_actor_id_equal(actor, row.actor)) return false;
+        }
+        found = true;
+    }
+    if (!found) return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake source has no actual application player");
+    *policy = (qa_network_nq_server_policy){NQ_MESSAGE, NQ_DATAGRAM, 16u * NQ_MESSAGE};
+    *hooks = (qa_network_nq_server_hooks){.context = peer, .signon = source_signon, .begin = source_begin,
+        .command = source_command, .input = source_input, .drop = source_drop};
+    return true;
 }
 static bool server_info(void *context, qa_nq_control *out, qa_error *error)
 {
