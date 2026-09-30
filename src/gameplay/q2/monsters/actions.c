@@ -2474,6 +2474,32 @@ static bool reattack(q2m_context *context, const char *callback,
 
 static bool end_transition(q2m_context *context, const char *callback,
                            bool *handled, qa_error *error) {
+  if (context->monster->definition->species == Q2M_ACTOR &&
+      (!strcmp(callback, "actor_run") || !strcmp(callback, "actor_stand") ||
+       !strcmp(callback, "actor_walk"))) {
+    *handled = true;
+    const char *move = "actor_move_run";
+    if (!strcmp(callback, "actor_stand"))
+      move = "actor_move_stand";
+    else if (!strcmp(callback, "actor_walk"))
+      move = "actor_move_walk";
+    else if (context->game->now_ns < context->monster->pain_ns &&
+             !context->monster->enemy.registry)
+      move = context->monster->move_target.registry ? "actor_move_walk" : "actor_move_stand";
+    else if (context->monster->stand_ground)
+      move = "actor_move_stand";
+    if (!q2m_set_move(context, move, true, error))
+      return false;
+    if (!strcmp(move, "actor_move_stand") && context->game->now_ns < Q2M_SECOND) {
+      unsigned frames = (unsigned)(context->monster->move->last_frame -
+                                   context->monster->move->first_frame + 1);
+      unsigned choice = context->game->options.edition == QA_Q2_RERELEASE
+                            ? q2_random_bounded(context->game, frames)
+                            : qa_builtin_random_integer(&context->game->random) % frames;
+      context->monster->frame = context->monster->move->first_frame + (int)choice;
+    }
+    return true;
+  }
   if (context->game->options.edition == QA_Q2_RERELEASE &&
       (!strcmp(callback, "jorg_stand") || !strcmp(callback, "jorg_run"))) {
     *handled = true;

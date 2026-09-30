@@ -787,13 +787,17 @@ bool q2m_hunt_target(q2m_context *context, qa_error *error) {
   if (!q2m_alive(context))
     return true;
   context->monster->goal = context->actor->physics.goal = id;
+  bool actor_callback = context->monster->definition->species == Q2M_ACTOR;
+  if (actor_callback && !q2m_dispatch(context,
+      context->monster->stand_ground ? "actor_stand" : "actor_run", error))
+    return false;
   bool handled = false;
-  if (!context->monster->stand_ground &&
+  if (!actor_callback && !context->monster->stand_ground &&
       !q2m_medic_callback(context, "medic_run", &handled, error))
     return false;
   if (!q2m_alive(context))
     return true;
-  if (!handled && !q2m_set_move(context,
+  if (!actor_callback && !handled && !q2m_set_move(context,
       context->monster->stand_ground ? context->monster->definition->stand_move
                                     : context->monster->definition->run_move,
       context->monster->definition->species == Q2M_FIXBOT, error))

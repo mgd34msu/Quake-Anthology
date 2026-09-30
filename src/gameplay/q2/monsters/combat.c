@@ -1903,6 +1903,74 @@ static bool pain_rerelease_parasite(q2m_context *context, qa_error *error) {
          q2m_set_move(context, "parasite_move_pain1", false, error);
 }
 
+static bool pain_actor(q2m_context *context, qa_error *error) {
+  qa_q2_game *game = context->game;
+  struct qa_q2_monster *monster = context->monster;
+  bool rerelease = game->options.edition == QA_Q2_RERELEASE;
+  bool wounded = context->combat.health < monster->max_health * .5f;
+  if (wounded || rerelease)
+    monster->skin = wounded ? 1 : 0;
+  if (game->now_ns < monster->pain_ns)
+    return true;
+  monster->pain_ns = q2m_after(game->now_ns, 3);
+
+  qa_actor_id attacker = monster->last_attack.attacker;
+  qa_builtin_actor_traits traits = {0};
+  bool player = game->services.actor_traits && q2_actor_live(game, attacker) &&
+                game->services.actor_traits(game->services.context, attacker, &traits) &&
+                traits.player;
+  if (!q2m_alive(context))
+    return true;
+  if (player && q2_actor_live(game, attacker) &&
+      (rerelease ? q2_rerelease_float(game, 0, 1) : q2m_random(game)) < .4f) {
+    qa_body_state other, self;
+    if (!qa_world_body_read(game->services.world, attacker, &other, error))
+      return false;
+    if (!q2m_alive(context) || !q2_actor_live(game, attacker))
+      return true;
+    if (!qa_world_body_read(game->services.world, context->actor->id, &self, error))
+      return false;
+    if (!q2m_alive(context) || !q2_actor_live(game, attacker))
+      return true;
+    qa_vec3 direction = qa_vec_sub(other.origin, self.origin);
+    double yaw;
+    if (direction.x == 0)
+      yaw = direction.y == 0 ? 0 : direction.y > 0 ? 90 : rerelease ? 270 : -90;
+    else {
+      double angle = atan2(direction.y, direction.x);
+      yaw = rerelease ? angle * (180.0 / (double)0x1.921fb6p1f)
+                      : trunc(angle * 180.0 / 0x1.921fb54442d18p1);
+      if (yaw < 0)
+        yaw += 360;
+    }
+    monster->ideal_yaw = (float)yaw;
+    float draw = rerelease ? q2_rerelease_float(game, 0, 1) : q2m_random(game);
+    if (!q2m_set_move(context, draw < .5f ? "actor_move_flipoff" : "actor_move_taunt",
+                       true, error))
+      return false;
+    const qa_actor_record *record =
+        qa_actors_get(qa_session_actors(game->services.session), context->actor->id);
+    if (!record || !record->has_source) {
+      qa_error_set(error, QA_ERROR_ARGUMENT, context->actor->id.slot,
+                   "Q2 actor taunt requires its actual source entity number");
+      return false;
+    }
+    static const char *const names[] = {
+        "Hellrot", "Tokay", "Killme", "Disruptor", "Adrianator", "Rambear", "Titus", "Bitterman"};
+    static const char *const messages[] = {"Watch it", "#$@*&", "Idiot", "Check your targets"};
+    unsigned message = rerelease ? q2_random_bounded(game, 4)
+                                 : qa_builtin_random_integer(&game->random) % 3u;
+    char text[64];
+    snprintf(text, sizeof(text), "%s: %s!\n", names[record->source_slot % 8u], messages[message]);
+    return q2_player_print(game, attacker, 3, text, error);
+  }
+  static const char *const moves[] = {
+      "actor_move_pain1", "actor_move_pain2", "actor_move_pain3"};
+  unsigned choice = rerelease ? q2_random_bounded(game, 3)
+                              : qa_builtin_random_integer(&game->random) % 3u;
+  return q2m_set_move(context, moves[choice], true, error);
+}
+
 static bool pain_medic(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
@@ -1977,6 +2045,10 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
     return true;
   struct qa_q2_monster *monster = context->monster;
   q2m_species species = monster->definition->species;
+  if (species == Q2M_ACTOR)
+    return pain_actor(context, error);
+  if (species == Q2M_TURRET)
+    return true;
   if (species == Q2M_KAMIKAZE ||
       (species == Q2M_FLYER && context->combat.mass != 50 &&
        (context->game->options.edition == QA_Q2_RERELEASE ||

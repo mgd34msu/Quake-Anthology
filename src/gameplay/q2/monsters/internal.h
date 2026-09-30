@@ -358,6 +358,7 @@ bool q2m_link(q2m_context *, qa_error *);
 bool q2m_emit(q2m_context *, qa_builtin_event_kind, const char *, int, qa_vec3,
               qa_vec3, float, qa_error *);
 bool q2m_sound(q2m_context *, const char *, int, float, qa_error *);
+bool q2_player_print(qa_q2_game *, qa_actor_id, int, const char *, qa_error *);
 bool q2m_animation(q2m_context *, qa_error *);
 const q2m_frame *q2m_frame_at(const struct qa_q2_monster *, const q2m_move *, int, qa_error *);
 bool q2m_release(q2m_context *, qa_error *);
