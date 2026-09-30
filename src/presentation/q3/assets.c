@@ -203,6 +203,7 @@ bool qa_q3_register_picture_image(qa_q3_presentation_assets *a, const qa_scene_i
             if (ok) handle = (int32_t)a->shader_count + 1;
         }
         if (ok) ok = q3p_add_name(a, Q3P_SHADER, image->name, handle, false, error);
+        if (ok) q3p_find_name(a, Q3P_SHADER, image->name)->generated = true;
         if (ok && (size_t)handle > a->shader_count) a->shaders[a->shader_count++] = material;
     }
     --a->busy;

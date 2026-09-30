@@ -17,7 +17,7 @@ typedef struct q3p_name {
     uint64_t hash;
     q3p_resource_kind kind;
     int32_t handle;
-    bool option;
+    bool option, generated;
     char name[];
 } q3p_name;
 typedef struct q3p_model {

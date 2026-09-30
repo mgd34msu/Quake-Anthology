@@ -4,6 +4,7 @@
 #include "qa/cinematic.h"
 #include "qa/material.h"
 #include "qa/world.h"
+#include "qa/source_save.h"
 
 typedef struct qa_q3_presentation qa_q3_presentation;
 typedef struct qa_q3_presentation_assets qa_q3_presentation_assets;
@@ -29,6 +30,19 @@ typedef struct qa_q3_presentation_asset_options {
 bool qa_q3_presentation_assets_create(const qa_q3_presentation_asset_options *,
                                        qa_q3_presentation_assets **, qa_error *);
 void qa_q3_presentation_assets_destroy(qa_q3_presentation_assets *);
+typedef struct qa_q3_asset_checkpoint_refs {
+    void *context;
+    bool (*image_encode)(void *, const qa_scene_image *, qa_buffer *, qa_error *);
+    /* Returns an owned immutable candidate image version. */
+    bool (*image_decode)(void *, qa_bytes, qa_scene_image **, qa_error *);
+} qa_q3_asset_checkpoint_refs;
+bool qa_q3_presentation_assets_checkpoint(qa_q3_presentation_assets *, qa_session *,
+    const qa_q3_asset_checkpoint_refs *, qa_buffer *, qa_error *);
+/* Existing candidate has qualified provider services and its map bindings,
+ * but no registered handles. Failure retains partial candidate ownership;
+ * the candidate must be discarded, never published or reused. */
+bool qa_q3_presentation_assets_restore(qa_q3_presentation_assets *, qa_session *,
+    const qa_q3_asset_checkpoint_refs *, qa_bytes, qa_error *);
 typedef struct qa_q3_registered_model {
     int32_t handle;
     const char *name;
