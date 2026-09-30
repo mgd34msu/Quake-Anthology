@@ -796,7 +796,7 @@ bool q2m_hunt_target(q2m_context *context, qa_error *error) {
   if (!handled && !q2m_set_move(context,
       context->monster->stand_ground ? context->monster->definition->stand_move
                                     : context->monster->definition->run_move,
-      false, error))
+      context->monster->definition->species == Q2M_FIXBOT, error))
     return false;
   if (!q2m_alive(context))
     return true;

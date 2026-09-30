@@ -1593,6 +1593,12 @@ static bool pain_insane(q2m_context *context, qa_error *error) {
 
 static bool pain_gladiator(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
+  const bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  const bool chainfist = last_attack_chainfist(monster);
+  if (context->combat.health < monster->max_health * .5f) {
+    if (rerelease) monster->skin |= 1;
+    else monster->skin = 1;
+  } else if (rerelease) monster->skin &= ~1;
   const bool gladb = monster->definition->species == Q2M_GLADB;
   const bool airborne = context->body.velocity.z > 100.0f;
   const char *ground_move = gladb ? "gladb_move_pain" : "gladiator_move_pain";
@@ -1612,17 +1618,31 @@ static bool pain_gladiator(q2m_context *context, qa_error *error) {
     return false;
   if (!q2m_alive(context))
     return true;
-  bool animates = context->game->options.edition == QA_Q2_RERELEASE
-                      ? reacts_to_pain(context)
+  bool animates = rerelease
+                      ? reacts_to_pain_cause(context, chainfist)
                       : gladb || context->game->options.skill != 3;
-  return !animates ||
-         q2m_set_move(context, airborne ? air_move : ground_move, true, error);
+  if (!animates) return true;
+  qa_body_state current;
+  if (!qa_world_body_read(context->game->services.world, context->actor->id,
+                          &current, error)) return false;
+  return !q2m_alive(context) ||
+         q2m_set_move(context, current.velocity.z > 100 ? air_move : ground_move,
+                      true, error);
 }
 
 static bool pain_fixbot(q2m_context *context, float damage, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   if (context->game->now_ns < monster->pain_ns)
     return true;
+  const bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  if (rerelease) {
+    monster->fly_position_ns = 0;
+    monster->fly_acceleration = 5;
+    monster->fly_speed = 110;
+    monster->fly_buzzard = false;
+    monster->fly_min_distance = 300;
+    monster->fly_max_distance = 500;
+  }
   monster->pain_ns = q2m_after(context->game->now_ns, 3.0);
   if (!q2m_sound(context, "flyer/flypain1.wav", 2, 1.0f, error))
     return false;
@@ -1631,7 +1651,8 @@ static bool pain_fixbot(q2m_context *context, float damage, qa_error *error) {
   const char *move = damage <= 10.0f   ? "fixbot_move_pain3"
                      : damage <= 25.0f ? "fixbot_move_painb"
                                        : "fixbot_move_paina";
-  return q2m_set_move(context, move, true, error);
+  if (!q2m_set_move(context, move, true, error)) return false;
+  return !rerelease || q2m_medic_abort(context, false, false, false, error);
 }
 
 static bool pain_arachnid(q2m_context *context, qa_error *error) {
@@ -1736,7 +1757,7 @@ static bool pain_carrier(q2m_context *context, float damage, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   const bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
   const bool chainfist = last_attack_chainfist(monster);
-  if (context->combat.health < monster->base_health * .5f)
+  if (context->combat.health < monster->max_health * .5f)
     monster->skin = 1;
   else if (rerelease)
     monster->skin = 0;
@@ -1773,7 +1794,7 @@ static bool pain_widow(q2m_context *context, float damage, bool sequel,
   const bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
   const bool chainfist = last_attack_chainfist(monster);
   const int skill = context->game->options.skill;
-  if (context->combat.health < monster->base_health * .5f)
+  if (context->combat.health < monster->max_health * .5f)
     monster->skin = 1;
   else if (rerelease)
     monster->skin = 0;
@@ -1984,6 +2005,8 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
   if (species == Q2M_BOSS2) return pain_boss2(context, error);
   if (species == Q2M_GEKK) return pain_gekk(context, error);
   if (species == Q2M_INSANE) return pain_insane(context, error);
+  if (species == Q2M_GLADIATOR || species == Q2M_GLADB) return pain_gladiator(context, error);
+  if (species == Q2M_FIXBOT) return pain_fixbot(context, monster->pending_damage, error);
   if (species == Q2M_CARRIER) return pain_carrier(context, monster->pending_damage, error);
   if (species == Q2M_WIDOW || species == Q2M_WIDOW2)
     return pain_widow(context, monster->pending_damage, species == Q2M_WIDOW2, error);
@@ -2001,11 +2024,6 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
   else if (context->game->options.edition == QA_Q2_RERELEASE)
     monster->skin &= ~1;
   switch (species) {
-  case Q2M_GLADIATOR:
-  case Q2M_GLADB:
-    return pain_gladiator(context, error);
-  case Q2M_FIXBOT:
-    return pain_fixbot(context, damage, error);
   case Q2M_GUARDIAN:
     return pain_guardian(context, damage, error);
   case Q2M_STALKER:

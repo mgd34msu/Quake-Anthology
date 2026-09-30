@@ -139,7 +139,8 @@ static bool restore_enemy(q2m_context *c, bool *restored, qa_error *error) {
     if (!q2m_alive(c) || *restored)
         return true;
     c->monster->pause_ns = UINT64_C(100000000) * Q2M_SECOND;
-    return q2m_set_move(c, c->monster->definition->stand_move, false, error);
+    return q2m_set_move(c, c->monster->definition->stand_move,
+                        c->monster->definition->species == Q2M_FIXBOT, error);
 }
 
 static bool cleanup(q2m_context *c, bool change_frame, qa_error *error) {

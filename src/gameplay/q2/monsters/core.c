@@ -1613,6 +1613,15 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
       monster->fly_min_distance = 20.0f;
       monster->fly_max_distance = 200.0f;
       break;
+    case Q2M_FIXBOT:
+      monster->alternate_fly = true;
+      monster->fly_position_ns = 0;
+      monster->fly_acceleration = 5;
+      monster->fly_speed = 110;
+      monster->fly_buzzard = false;
+      monster->fly_min_distance = 300;
+      monster->fly_max_distance = 500;
+      break;
     case Q2M_FLYER:
       monster->alternate_fly = true;
       monster->fly_buzzard = true;
