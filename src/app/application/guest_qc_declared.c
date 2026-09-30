@@ -314,12 +314,16 @@ bool application_qc_client_think(struct application_qc_state *engine, qa_actor_i
             {"other", {QA_QC_GAME_ACTOR, {.actor = {0}}}},
             {"time", {QA_QC_GAME_FLOAT, {.number = callback_time}}}
         };
-        if (!qa_qc_project_entity_float(vm, reference, deadline->offset, 0, error) || function <= 0 ||
-            !qa_qc_game_call_index(engine->provider->state.qc.game, (uint32_t)function,
-                NULL, 0, globals, 3, NULL, error)) {
+        if (!qa_qc_project_entity_float(vm, reference, deadline->offset, 0, error) || function <= 0) {
             if (error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "QC component think callback is absent");
             return false;
         }
+        const float *previous_time = engine->client_think_time;
+        engine->client_think_time = &callback_time;
+        bool invoked = qa_qc_game_call_index(engine->provider->state.qc.game, (uint32_t)function,
+            NULL, 0, globals, 3, NULL, error);
+        engine->client_think_time = previous_time;
+        if (!invoked) return false;
         if (engine->profile != QA_QC_QUAKEWORLD) return true;
     }
     return true;

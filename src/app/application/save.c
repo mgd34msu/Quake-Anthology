@@ -418,14 +418,14 @@ bool application_save_metadata_capture(qa_application *application, qa_buffer *o
     if (!buffer.data) return application_fail(error, QA_ERROR_MEMORY, "cannot encode application metadata");
     qa_net_writer writer;
     qa_net_writer_init(&writer, buffer.data, size, error);
-    qa_net_write_data(&writer, "QAAP", 4); qa_net_write_u32(&writer, 1);
+    qa_net_write_data(&writer, "QAAP", 4); qa_net_write_u32(&writer, 2);
     qa_net_write_u64(&writer, application->catalog_generation);
     qa_net_write_u64(&writer, application->publication_generation);
     qa_net_write_u64(&writer, application->command_generation); qa_net_write_u64(&writer, application->map_revision);
     qa_net_write_u32(&writer, application->current_map); qa_net_write_u32(&writer, application->state);
     uint32_t flags = (application->discover_mods ? 1u : 0u) | (application->physics_ready ? 2u : 0u) |
         (application->primary_mode_ready ? 4u : 0u) | (application->map_view_ready ? 8u : 0u) |
-        (application->map_force_reload ? 16u : 0u);
+        (application->map_force_reload ? 16u : 0u) | (application->q1_paused ? 32u : 0u);
     qa_net_write_u32(&writer, flags); qa_net_write_u32(&writer, application->primary_mode.slot);
     qa_net_write_u64(&writer, application->primary_mode.generation);
     qa_net_write_u32(&writer, (uint32_t)application->mode_count);
@@ -490,7 +490,7 @@ bool application_save_metadata_restore(qa_application *candidate, qa_bytes bytes
     uint16_t reserved = qa_net_read_u16(&reader); random.draws = qa_net_read_u64(&reader);
     uint32_t geometry_length = qa_net_read_u32(&reader), presentation_length = qa_net_read_u32(&reader);
     size_t remaining = qa_net_reader_remaining(&reader);
-    if (reader.failed || version != 1 || reserved || (flags & ~31u) || !commands ||
+    if (reader.failed || version != 2 || reserved || (flags & ~63u) || !commands ||
         (state != QA_APPLICATION_READY && state != QA_APPLICATION_RUNNING) ||
         random.front >= 31 || random.rear >= 31 ||
         (map && !qa_strings_text(qa_session_strings(candidate->session), map).data) ||
@@ -523,6 +523,7 @@ bool application_save_metadata_restore(qa_application *candidate, qa_bytes bytes
     candidate->discover_mods = (flags & 1u) != 0; candidate->physics_ready = (flags & 2u) != 0;
     candidate->primary_mode_ready = (flags & 4u) != 0; candidate->map_view_ready = (flags & 8u) != 0;
     candidate->map_force_reload = (flags & 16u) != 0;
+    candidate->q1_paused = (flags & 32u) != 0;
     return true;
 }
 
@@ -1319,6 +1320,12 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
     }
     if (ok && candidate->command_generation != operation->restored_command_generation)
         ok = application_fail(error, QA_ERROR_FORMAT, "Console publication generation differs from saved application metadata");
+    if (ok && candidate->q1_paused) {
+        application_provider *source = application_world_provider(candidate, QA_ROLE_ENTITIES, "");
+        if (!source || (source->kind != APPLICATION_PROVIDER_Q1 &&
+                       source->kind != APPLICATION_PROVIDER_QC))
+            ok = application_fail(error, QA_ERROR_FORMAT, "Saved Quake pause has no active Quake source server");
+    }
     if (ok) ok = persistence_shared_match(candidate, image, error);
     const qa_save_record *configuration = qa_save_image_find(image, QA_SAVE_CONFIGURATION, "");
     qa_configuration_checkpoint checkpoint; qa_bytes identity;

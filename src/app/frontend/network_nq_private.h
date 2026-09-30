@@ -40,6 +40,7 @@ struct frontend_nq_host {
     nq_pending_control pending[NQ_PENDING];
     size_t pending_count;
     unsigned busy;
+    bool previous_pause;
     char reply_address[128];
     nq_status_cache board[256];
     char *styles[64];

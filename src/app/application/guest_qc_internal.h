@@ -63,6 +63,7 @@ struct application_qc_state {
     bool loading, projecting;
     bool initialized;
     struct application_qc_input_scope *input_scope;
+    const float *client_think_time;
     float serverflags;
     char *lightstyles[64];
     application_qc_message *messages;
@@ -84,6 +85,7 @@ bool application_qc_float(struct application_qc_state *, int32_t, const char *, 
 bool application_qc_set_float(struct application_qc_state *, int32_t, const char *, float, qa_error *);
 bool application_qc_reference(struct application_qc_state *, qa_actor_id, int32_t *, qa_error *);
 bool application_qc_named(struct application_qc_state *, const char *, qa_actor_id, qa_error *);
+bool application_qc_water_transition(application_provider *, qa_actor_id, qa_error *);
 bool application_qc_spectator_callback(struct application_qc_state *, const char *, qa_actor_id, qa_error *);
 qa_console *application_qc_create_console(struct application_qc_state *, qa_cvars *, qa_error *);
 bool application_qc_prepare_entity(void *, qa_qc_instance *, const qa_qc_entity_access *, qa_error *);

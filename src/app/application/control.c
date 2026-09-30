@@ -1061,6 +1061,10 @@ bool application_control_move_applied(qa_application *application,
         !application_guest_input_applying(application, actor))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "movement command sequence did not advance");
+    if (application->q1_paused) {
+        if (applied) *applied = *command;
+        return true;
+    }
     if (record->cutscene) {
         if (applied) { *applied = *command; applied->buttons = 0; }
         record->previous_buttons = record->buttons;

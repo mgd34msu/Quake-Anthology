@@ -2002,6 +2002,9 @@ bool application_map_publish(qa_application *application,
     application->current_map = current_map;
     application->map_geometry = choices->world.geometry;
     application->map_presentation = choices->world.presentation;
+    if (publication->map_provider->kind != APPLICATION_PROVIDER_Q1 &&
+        publication->map_provider->kind != APPLICATION_PROVIDER_QC)
+        application->q1_paused = false;
     ++application->map_revision;
     application->map_view_ready = true;
     for (size_t index = 0; index < application->provider_count; ++index) {

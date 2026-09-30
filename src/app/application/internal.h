@@ -257,6 +257,7 @@ struct qa_application {
     uint64_t command_generation, map_revision;
     qa_product_id map_geometry, map_presentation;
     bool map_view_ready;
+    bool q1_paused;
     application_operation operation;
     qa_application_state state;
     bool discover_mods;
@@ -350,6 +351,7 @@ bool application_qc_touch(application_provider *, const qa_touch_contact *, qa_e
 bool application_qc_blocked(application_provider *, qa_actor_id, qa_actor_id, qa_error *);
 bool application_qc_pusher_think(application_provider *, qa_actor_id,
                                  const qa_source_frame *, qa_error *);
+bool application_qc_water_transition(application_provider *, qa_actor_id, qa_error *);
 bool application_qc_actor_traits(application_provider *, qa_actor_id, qa_builtin_actor_traits *);
 bool application_qc_bind_player(application_provider *, uint32_t, uint32_t,
                                 qa_actor_id, const char *, bool, bool,
@@ -492,6 +494,7 @@ application_provider *application_provider_for(qa_application *, qa_actor_id,
 bool application_composition_create(qa_application *, qa_error *);
 bool application_composition_destroy(qa_application *, qa_error *);
 bool application_apply(qa_application *, const qa_launch_draft *, qa_error *);
+bool application_q1_pause_set(qa_application *, application_provider *, bool, qa_error *);
 bool application_map_prepare(qa_application *, application_publication *, qa_error *);
 bool application_map_publish(qa_application *, application_publication *, qa_error *);
 bool application_match_prepare(qa_application *, application_publication *, qa_error *);

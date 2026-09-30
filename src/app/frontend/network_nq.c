@@ -144,6 +144,8 @@ static bool source_signon(void *context, qa_net_client_id id, uint8_t stage,
     } else if (stage == 3) {
         if (!qa_application_remote_player_begin(host->frontend->application, peer->client, peer->seat, error) ||
             !peer_actor(peer, &actor, error) || !qa_application_network_q1_world_read(host->frontend->application, actor, &world, error)) return false;
+        message = (qa_nq_message){.op = QA_NQ_PAUSE, .data.value = qa_application_q1_paused(host->frontend->application)};
+        if (!batch_message(&batch, &message, options, error)) return false;
         message = (qa_nq_message){.op = QA_NQ_TIME, .data.seconds = world.seconds};
         if (!batch_message(&batch, &message, options, error)) return false;
         for (unsigned i = 0; i < 64; ++i) {
@@ -237,7 +239,7 @@ static bool source_chat(nq_frontend_peer *sender, qa_actor_id actor, bool team_o
 {
     char argument[NQ_MESSAGE], body[127]; size_t used = 0; bool first = true, present;
     for (;;) {
-        if (!qa_q1_token(&cursor, false, argument, sizeof(argument), &present, error)) return false;
+        if (!qa_q1_token(&cursor, true, argument, sizeof(argument), &present, error)) return false;
         if (!present) break;
         if (!first && used < sizeof(body) - 1) body[used++] = ' ';
         size_t length = strlen(argument), remaining = sizeof(body) - 1 - used;
@@ -280,25 +282,41 @@ static bool source_command(void *context, qa_net_client_id id, const char *text,
     nq_frontend_peer *peer = context; qa_actor_id actor;
     if (!qa_net_client_id_equal(id, peer->client) || !peer_actor(peer, &actor, error)) return false;
     const char *cursor = text; char command[32], first[1024], second[1024]; bool present;
-    if (!qa_q1_token(&cursor, false, command, sizeof(command), &present, error)) return false;
+    if (!qa_q1_token(&cursor, true, command, sizeof(command), &present, error)) return false;
     if (!present) return true;
     if (!strcmp(command, "say") || !strcmp(command, "say_team"))
         return source_chat(peer, actor, !strcmp(command, "say_team"), cursor, error);
     if (!strcmp(command, "kill"))
         return qa_application_network_q1_kill(peer->host->frontend->application, actor, error);
+    if (!strcmp(command, "pause")) {
+        qa_buffer text = {0}; bool changed;
+        if (!qa_application_network_q1_pause(peer->host->frontend->application, actor, &text, &changed, error)) return false;
+        uint8_t bytes[NQ_MESSAGE]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
+        qa_nq_message message = {.op = QA_NQ_PRINT, .data.text = (const char *)text.data};
+        bool ok = qa_nq_write(&writer, (qa_net_protocol_id){.kind = QA_NET_NQ15},
+            (qa_nq_options){.standard_quake = true}, &message, NULL, 0);
+        qa_buffer_free(&text);
+        for (size_t i = 0; ok && i < NQ_CLIENTS; ++i) {
+            nq_frontend_peer *target = peer->host->peers + i;
+            if (!target->occupied || target->retiring || (!changed && target != peer)) continue;
+            ok = qa_network_nq_server_reliable(peer->host->runtime, target->client,
+                (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
+        }
+        return ok;
+    }
     if (!strcmp(command, "name")) {
-        if (!qa_q1_token(&cursor, false, first, sizeof(first), &present, error)) return false;
+        if (!qa_q1_token(&cursor, true, first, sizeof(first), &present, error)) return false;
         return qa_application_network_q1_name(peer->host->frontend->application, actor, present ? first : "unconnected", error);
     }
     if (!strcmp(command, "color")) {
-        if (!qa_q1_token(&cursor, false, first, sizeof(first), &present, error)) return false;
+        if (!qa_q1_token(&cursor, true, first, sizeof(first), &present, error)) return false;
         int32_t top = present ? color_number(first) : 0;
-        if (!qa_q1_token(&cursor, false, second, sizeof(second), &present, error)) return false;
+        if (!qa_q1_token(&cursor, true, second, sizeof(second), &present, error)) return false;
         int32_t bottom = present ? color_number(second) : top;
         return qa_application_network_q1_colors(peer->host->frontend->application, actor, top, bottom, error);
     }
     static const char *const allowed[] = {"status", "god", "notarget", "fly", "noclip",
-        "pause", "kick", "ping", "give", "ban"};
+        "kick", "ping", "give", "ban"};
     for (size_t i = 0; i < sizeof(allowed) / sizeof(*allowed); ++i)
         if (!strcmp(command, allowed[i])) return qa_application_actor_command(peer->host->frontend->application, actor, text, error);
     uint8_t bytes[96]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
@@ -456,6 +474,7 @@ bool frontend_nq_create(qa_frontend *frontend, qa_network_runtime *runtime,
     if (!host) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating NetQuake frontend source owner");
     host->frontend = frontend; host->runtime = runtime; host->composition = *composition;
     host->generation = qa_application_configuration_generation(frontend->application);
+    host->previous_pause = qa_application_q1_paused(frontend->application);
     qa_actor_id actor; qa_application_network_q1_world world;
     if (!template_actor(host, &actor, error) || !qa_application_network_q1_world_read(frontend->application, actor, &world, error)) {
         free(host); return false;
@@ -543,7 +562,7 @@ bool frontend_nq_pump(frontend_nq_host *host, qa_error *error)
 }
 bool frontend_nq_tick(frontend_nq_host *host, uint64_t elapsed, bool retiring_map, qa_error *error)
 {
-    if (!host || retiring_map || !elapsed) return true;
+    if (!host || retiring_map || !elapsed || qa_application_q1_paused(host->frontend->application)) return true;
     if (host->busy || !qa_network_callbacks_idle(host->runtime) || elapsed > UINT64_MAX - host->submillisecond_ns)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "NetQuake source tick exceeds its idle clock boundary");
     uint64_t total = elapsed + host->submillisecond_ns, milliseconds = total / UINT64_C(1000000);
@@ -752,7 +771,17 @@ bool frontend_nq_publish(frontend_nq_host *host, qa_error *error)
     if (!frontend_nq_pump(host, error)) return false;
     qa_actor_id actor; qa_application_network_q1_world world;
     if (!template_actor(host, &actor, error) || !qa_application_network_q1_world_read(host->frontend->application, actor, &world, error)) return false;
-    ++host->busy; bool ok = publish_status(host, actor, &world, error);
+    ++host->busy; bool ok = true;
+    bool paused = qa_application_q1_paused(host->frontend->application);
+    if (paused != host->previous_pause) {
+        uint8_t bytes[2]; qa_net_writer writer; qa_net_writer_init(&writer, bytes, sizeof(bytes), error);
+        qa_nq_message message = {.op = QA_NQ_PAUSE, .data.value = paused};
+        ok = qa_nq_write(&writer, (qa_net_protocol_id){.kind = QA_NET_NQ15},
+            (qa_nq_options){.standard_quake = true}, &message, NULL, 0) &&
+            broadcast_emit(host, (qa_bytes){bytes, qa_net_writer_size(&writer)}, error);
+        if (ok) host->previous_pause = paused;
+    }
+    if (ok) ok = publish_status(host, actor, &world, error);
     for (size_t i = 0; ok && i < NQ_CLIENTS; ++i)
         if (host->peers[i].occupied && !host->peers[i].retiring) ok = publish_peer(host->peers + i, &world, error);
     --host->busy; return ok;

@@ -586,9 +586,20 @@ static bool physics_step(qa_physics *p, qa_actor_id actor, const qa_source_frame
     if (read < 0) return false;
     if (!read) { result->status = ph_live(p, actor) ? QA_PHYSICS_UNMANAGED : QA_PHYSICS_REMOVED; return true; }
     qa_physics_motion motion = selected ? *selected : props.motion;
-    if (!frame->elapsed_ns || motion == QA_PHYSICS_STATIONARY) return true;
+    if ((!frame->elapsed_ns && (!selected || motion != QA_PHYSICS_NOCLIP)) ||
+        motion == QA_PHYSICS_STATIONARY) return true;
     float seconds = (float)((double)frame->elapsed_ns*0.000000001);
     result->status = QA_PHYSICS_MOVED;
+    if (selected && motion == QA_PHYSICS_NOCLIP) {
+        double elapsed = (double)frame->elapsed_ns / 1000000000.0;
+        body.origin = qa_v3((float)((double)body.origin.x + (double)body.velocity.x * elapsed),
+            (float)((double)body.origin.y + (double)body.velocity.y * elapsed),
+            (float)((double)body.origin.z + (double)body.velocity.z * elapsed));
+        body.angles = qa_v3((float)((double)body.angles.x + (double)props.angular_velocity.x * elapsed),
+            (float)((double)body.angles.y + (double)props.angular_velocity.y * elapsed),
+            (float)((double)body.angles.z + (double)props.angular_velocity.z * elapsed));
+        return ph_write(p, actor, &body, error) && ph_link(p, actor, false, error);
+    }
     qa_body_attachment attachment;
     if (qa_world_attachment(p->world, actor, &attachment)) {
         qa_vec3 previous = body.origin;

@@ -622,6 +622,24 @@ void qa_application_guest_context_rebind(qa_application *application, void *cont
     application->guest_context = context;
 }
 
+bool qa_application_q1_paused(const qa_application *application)
+{ return application && application->q1_paused; }
+
+bool application_q1_pause_set(qa_application *application, application_provider *provider,
+    bool paused, qa_error *error)
+{
+    if (!application || application->operation != APPLICATION_IDLE ||
+        application->state != QA_APPLICATION_RUNNING || !application_guests_idle(application) ||
+        !qa_session_safe(application->session) || !qa_world_idle(application->world) ||
+        !provider || !provider->constructed || !provider->attached ||
+        provider != application_world_provider(application, QA_ROLE_ENTITIES, "") ||
+        (provider->kind != APPLICATION_PROVIDER_Q1 && provider->kind != APPLICATION_PROVIDER_QC))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Quake pause requires the idle active Quake source server");
+    application->q1_paused = paused;
+    return true;
+}
+
 bool qa_application_advance(qa_application *application, uint64_t elapsed_ns,
                             qa_error *error)
 {
@@ -630,6 +648,7 @@ bool qa_application_advance(qa_application *application, uint64_t elapsed_ns,
         application->state != QA_APPLICATION_RUNNING)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "frame advance requires an idle running application");
+    if (application->q1_paused) return true;
     application->operation = APPLICATION_ADVANCING;
     bool ok = qa_session_advance(application->session, elapsed_ns, error);
     if (ok)

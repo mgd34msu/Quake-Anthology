@@ -88,6 +88,11 @@ bool qa_application_network_q1_chat_recipients(qa_application *, qa_actor_id sen
 /* Invoke the real ClientKill callback for a healthy spawned nonspectator.
  * Reserved, spectator and already-dead source clients remain unchanged. */
 bool qa_application_network_q1_kill(qa_application *, qa_actor_id, qa_error *);
+/* Toggle the actual source pause when its optional pausable policy permits.
+ * Returns owned terminated announcement text and whether the flag changed.
+ * QuakeWorld spectators receive the original denial without changing state. */
+bool qa_application_network_q1_pause(qa_application *, qa_actor_id,
+    qa_buffer *empty_text, bool *changed, qa_error *);
 bool qa_application_network_q1_name(qa_application *, qa_actor_id, const char *, qa_error *);
 bool qa_application_network_q1_colors(qa_application *, qa_actor_id,
     int32_t top, int32_t bottom, qa_error *);

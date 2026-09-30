@@ -426,6 +426,50 @@ bool qa_application_network_q1_kill(qa_application *app, qa_actor_id player, qa_
     return ok;
 }
 
+bool qa_application_network_q1_pause(qa_application *app, qa_actor_id player,
+    qa_buffer *text, bool *changed, qa_error *error)
+{
+    if (!text || text->data || text->size || !changed)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 pause requires empty announcement output");
+    uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
+    if (!engine) return false;
+    if (app->operation != APPLICATION_IDLE || app->state != QA_APPLICATION_RUNNING ||
+        !application_qc_input_idle(engine->provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 pause requires its idle running source owner");
+    const qa_cvar_view *policy = qa_cvars_find(engine->cvars, "pausable");
+    const char *denial = policy && policy->number == 0 ? "Pause not allowed.\n" :
+        engine->profile == QA_QC_QUAKEWORLD && engine->clients[slot].spectator ? "Spectators can not pause.\n" : NULL;
+    bool paused = !qa_application_q1_paused(app);
+    const char *name = NULL, *suffix = paused ? " paused the game\n" : " unpaused the game\n";
+    if (!denial) {
+        const application_player_record *record = NULL;
+        for (size_t i = 0; app->players && i < app->players->count; ++i)
+            if (qa_actor_id_equal(app->players->records[i].actor, player)) {
+                record = app->players->records + i; break;
+            }
+        if (!record || record->retiring || record->source_slot != slot || record->character != engine->provider)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Q1 pause lacks its actual source roster admission");
+        name = record->name ? record->name : "unconnected";
+    }
+    size_t length = denial ? strlen(denial) : strlen(name);
+    if (!denial && length > SIZE_MAX - strlen(suffix) - 1)
+        return application_fail(error, QA_ERROR_MEMORY, "Q1 pause announcement extent overflows");
+    if (!denial) length += strlen(suffix);
+    if (length > 7998)
+        return application_fail(error, QA_ERROR_FORMAT, "Q1 pause announcement exceeds original reliable message extent");
+    qa_buffer result = {.data = malloc(length + 1), .size = length};
+    if (!result.data) return application_fail(error, QA_ERROR_MEMORY, "Allocating Q1 pause announcement");
+    if (denial) memcpy(result.data, denial, length + 1);
+    else {
+        size_t prefix = strlen(name);
+        memcpy(result.data, name, prefix); memcpy(result.data + prefix, suffix, length - prefix + 1);
+        if (!application_q1_pause_set(app, engine->provider, paused, error)) {
+            qa_buffer_free(&result); return false;
+        }
+    }
+    *text = result; *changed = denial == NULL; return true;
+}
+
 bool qa_application_network_q1_name(qa_application *app, qa_actor_id player,
     const char *name, qa_error *error)
 {

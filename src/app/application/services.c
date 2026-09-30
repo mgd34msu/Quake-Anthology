@@ -971,6 +971,8 @@ static bool physics_q1_water_transition(void *opaque, qa_actor_id actor,
         application, actor, QA_ROLE_MOVEMENT, "");
     if (provider != NULL && provider->kind == APPLICATION_PROVIDER_Q1)
         return qa_q1_game_water_transition(provider->state.q1, actor, error);
+    if (provider != NULL && provider->kind == APPLICATION_PROVIDER_QC)
+        return application_qc_water_transition(provider, actor, error);
     return application_fail(error, QA_ERROR_UNSUPPORTED,
                             "selected movement source has no Q1 water adapter");
 }

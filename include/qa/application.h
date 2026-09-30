@@ -218,6 +218,9 @@ qa_application_state qa_application_get_state(const qa_application *);
 const qa_error *qa_application_error(const qa_application *);
 void qa_application_request_stop(qa_application *);
 bool qa_application_should_stop(const qa_application *);
+/* The actual Quake source pause holds shared simulation and source clocks.
+ * Host presentation and transport clocks remain owned by the frontend. */
+bool qa_application_q1_paused(const qa_application *);
 
 /* All returned owners are borrowed. The application is the only mutable
  * lifecycle owner; subsystem adapters use these to bind typed services. */
