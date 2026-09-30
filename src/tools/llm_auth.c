@@ -121,7 +121,7 @@ void llm_auth_cancel(qa_llm *s) {
     qa_arena_destroy(&a->storage); qa_arena_destroy(&a->previous.storage); qa_buffer_free(&a->response.buffer); free(a);
 }
 void qa_llm_cancel_sign_in(qa_llm *s) {
-    if (!s || s->busy || !s->signing_in) return;
+    if (!s || s->busy || s->pending_restore || !s->signing_in) return;
     llm_auth_cancel(s); llm_fail(&s->auth_error, "subscription sign-in canceled");
 }
 static bool form_value(llm_text *text, const char *key, const char *value, qa_error *error) {
@@ -167,7 +167,7 @@ static llm_auth *auth_new(qa_llm *s, bool refresh, qa_error *error) {
     s->auth = a; return a;
 }
 bool qa_llm_sign_in(qa_llm *s, qa_error *error) {
-    if (!s || s->busy) return llm_fail(error, "subscription sign-in requires callbacks to return");
+    if (!s || s->busy || s->pending_restore) return llm_fail(error, "subscription sign-in requires restored continuation and returned callbacks");
     llm_auth_cancel(s); s->auth_error = (qa_error){0};
     llm_auth *a = auth_new(s, false, error); if (!a) return false;
     uint8_t bytes[32]; char challenge[44]; qa_sha256_digest digest; llm_text query = {0}, url = {0}; bool ok = false;

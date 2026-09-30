@@ -10,6 +10,20 @@ static const char *const four[] = {"none", "low", "medium", "high"};
 static const char *const five[] = {"none", "low", "medium", "high", "xhigh"};
 static const char *const six[] = {"none", "low", "medium", "high", "xhigh", "max"};
 static const char *const astra[] = {"low", "medium", "high", "xhigh", "max"};
+/* Persistent descriptors qualify these actual immutable owners. Equal owned
+ * provider arrays remain distinct; model names never choose a saved table. */
+static const struct { const char *const *values; size_t count; } effort_tables[] = {
+    {minimal, 4}, {high, 1}, {pro, 3}, {four, 4}, {five, 5}, {six, 6}, {astra, 5}
+};
+uint32_t llm_effort_table_identity(const char *const *values, size_t count) {
+    for (size_t i = 0; i < sizeof effort_tables / sizeof effort_tables[0]; ++i)
+        if (values == effort_tables[i].values && count == effort_tables[i].count) return (uint32_t)i + 1;
+    return 0;
+}
+const char *const *llm_effort_table_resolve(uint32_t id, size_t *count) {
+    if (!id || id > sizeof effort_tables / sizeof effort_tables[0]) return NULL;
+    *count = effort_tables[id - 1].count; return effort_tables[id - 1].values;
+}
 static const struct { const char *id; const char *const *efforts; size_t count; } reference_models[] = {
     {"gpt-5", minimal, 4}, {"gpt-5-pro", high, 1}, {"gpt-5.2-pro", pro, 3},
     {"gpt-5.4", five, 5}, {"gpt-5.4-pro", pro, 3}, {"gpt-5.4-mini", five, 5},
@@ -148,7 +162,7 @@ done:
     qa_json_destroy(d); if (ok) *out = next; else qa_arena_destroy(&next.storage); return ok;
 }
 const qa_llm_model *qa_llm_model_at(const qa_llm *s, qa_llm_provider provider, size_t index) {
-    if (!s || !llm_provider_valid(provider) || index >= s->catalogs[provider].count) return NULL;
+    if (!s || s->pending_restore || !llm_provider_valid(provider) || index >= s->catalogs[provider].count) return NULL;
     return &s->catalogs[provider].models[index];
 }
-size_t qa_llm_model_count(const qa_llm *s, qa_llm_provider provider) { return s && llm_provider_valid(provider) ? s->catalogs[provider].count : 0; }
+size_t qa_llm_model_count(const qa_llm *s, qa_llm_provider provider) { return s && !s->pending_restore && llm_provider_valid(provider) ? s->catalogs[provider].count : 0; }

@@ -1,4 +1,5 @@
 #include "tools_internal.h"
+#include "save_internal.h"
 #include <float.h>
 #include <math.h>
 #include <stdlib.h>
@@ -111,7 +112,37 @@ bool qa_debug_shape_lines(const qa_debug_shape *shape, qa_scene_vec4 color, bool
 }
 
 typedef struct timed_line { qa_debug_line line; double expires; uint64_t first_frame; bool instant, presented; } timed_line;
-struct qa_debug_store { timed_line *lines; size_t count, capacity; };
+struct qa_debug_store { timed_line *lines; size_t count, capacity; bool pending_restore; };
+void tools_debug_pending(qa_debug_store *store) { store->pending_restore = true; }
+void tools_debug_exchange(qa_debug_store *stable, qa_debug_store *candidate) {
+    qa_debug_store old = *stable; *stable = *candidate; *candidate = old;
+}
+bool tools_debug_fields(qa_source_save_io *io, qa_debug_store **holder) {
+    qa_debug_store *store = *holder;
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        store = calloc(1, sizeof *store);
+        if (!store) { io->failed = true; qa_error_set(io->error, QA_ERROR_MEMORY, io->offset, "allocating restored debug store"); return false; }
+        *holder = store;
+    }
+    if (!qa_source_save_count(io, &store->capacity, SIZE_MAX / sizeof *store->lines) || !store->capacity ||
+        !qa_source_save_count(io, &store->count, store->capacity)) return tool_save_fail(io, "invalid debug continuation capacity");
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        store->lines = calloc(store->capacity, sizeof *store->lines);
+        if (!store->lines) return tool_save_fail(io, "allocating debug continuation lines");
+    }
+    for (size_t i = 0; i < store->count; ++i) {
+        timed_line *v = &store->lines[i]; qa_scene_vec4 *color = &v->line.color;
+        if (!qa_source_save_vec3(io, &v->line.start) || !qa_source_save_vec3(io, &v->line.end) ||
+            !qa_source_save_f32(io, &color->x) || !qa_source_save_f32(io, &color->y) ||
+            !qa_source_save_f32(io, &color->z) || !qa_source_save_f32(io, &color->w) ||
+            !qa_source_save_bool(io, &v->line.depth_test) || !qa_source_save_f64(io, &v->expires) ||
+            !qa_source_save_u64(io, &v->first_frame) || !qa_source_save_bool(io, &v->instant) ||
+            !qa_source_save_bool(io, &v->presented) || !valid_line(v->line) || !isfinite(v->expires) ||
+            v->expires < 0 || v->expires > UINT32_MAX || v->instant != (v->expires == 0))
+            return tool_save_fail(io, "invalid debug line continuation");
+    }
+    return true;
+}
 static uint32_t source_milliseconds(double value) {
     double wrapped = fmod(trunc(value), 4294967296.0);
     if (wrapped < 0) wrapped += 4294967296.0;
@@ -126,9 +157,9 @@ bool qa_debug_store_create(size_t capacity, qa_debug_store **out, qa_error *erro
     store->capacity = capacity; *out = store; return true;
 }
 void qa_debug_store_destroy(qa_debug_store *store) { if (store) { free(store->lines); free(store); } }
-void qa_debug_store_clear(qa_debug_store *store) { if (store) store->count = 0; }
+void qa_debug_store_clear(qa_debug_store *store) { if (store && !store->pending_restore) store->count = 0; }
 bool qa_debug_store_submit(qa_debug_store *store, const qa_debug_line *lines, size_t count, double server_ms, uint32_t lifetime, qa_error *error) {
-    if (!store || (count && !lines) || !isfinite(server_ms)) return tools_fail(error, "invalid debug line submission");
+    if (!store || store->pending_restore || (count && !lines) || !isfinite(server_ms)) return tools_fail(error, "invalid or pending debug line submission");
     for (size_t i = 0; i < count; ++i) if (!valid_line(lines[i])) return tools_fail(error, "invalid debug line geometry");
     uint32_t now = source_milliseconds(server_ms), deadline = lifetime ? now + lifetime : 0;
     size_t keep = 0;
@@ -141,7 +172,7 @@ bool qa_debug_store_submit(qa_debug_store *store, const qa_debug_line *lines, si
 }
 bool qa_debug_store_snapshot(qa_debug_store *store, double server_ms, uint64_t frame,
                               qa_arena *scratch, const qa_debug_line **out, size_t *count, qa_error *error) {
-    if (!store || !scratch || !out || !count || !isfinite(server_ms)) return tools_fail(error, "invalid debug line snapshot");
+    if (!store || store->pending_restore || !scratch || !out || !count || !isfinite(server_ms)) return tools_fail(error, "invalid or pending debug line snapshot");
     qa_debug_line *lines = store->count ? qa_arena_alloc(scratch, store->count * sizeof(*lines), _Alignof(qa_debug_line), error) : NULL;
     if (store->count && !lines) return false;
     uint32_t now = source_milliseconds(server_ms); size_t keep = 0;

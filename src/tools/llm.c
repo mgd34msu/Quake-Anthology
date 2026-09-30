@@ -1,8 +1,11 @@
 #include "llm_internal.h"
+#include "qa/http_save.h"
+#include "save_internal.h"
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
-static bool admit(qa_llm *s, qa_error *error) { return (s && !s->busy) || llm_fail(error, "LLM mutation requires its callbacks to return"); }
+static bool admit(qa_llm *s, qa_error *error) { return (s && !s->busy && !s->pending_restore) || llm_fail(error, "LLM mutation requires restored continuation and returned callbacks"); }
 bool qa_llm_callbacks_idle(const qa_llm *s) { return !s || !s->busy; }
 double llm_wall_milliseconds(qa_llm *s) {
     ++s->busy; double now = s->options.wall_milliseconds(s->options.context); --s->busy; return now;
@@ -16,18 +19,30 @@ static void commit_preferences(qa_llm *s, llm_preferences *next) {
     qa_arena_destroy(&s->preferences.storage); s->preferences = *next; *next = (llm_preferences){0};
     s->settings_errors[0] = (qa_error){0};
 }
-bool qa_llm_create(const qa_llm_options *options, qa_llm **out, qa_error *error) {
-    if (!options || !out || !options->http || !options->settings || !options->private_mount || !options->owner ||
+bool qa_llm_create_empty(const qa_llm_options *options, qa_llm **out, qa_error *error) {
+    if (!options || !out || *out || !options->http || !options->settings || !options->private_mount || !options->owner ||
         !options->wall_milliseconds || !options->open_browser || !options->context_active || !options->print)
         return llm_fail(error, "invalid native LLM services");
     qa_llm *s = calloc(1, sizeof *s);
     if (!s) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating native LLM owner"); return false; }
-    s->options = *options; s->next_id = 1;
+    s->options = *options; s->next_id = 1; s->pending_restore = true;
     if (!s->options.request_timeout_ms) s->options.request_timeout_ms = 120000;
     if (!s->options.callback_timeout_ms) s->options.callback_timeout_ms = 180000;
     if (!s->options.callback_port) s->options.callback_port = 1455;
+    if (options->authorization_url) s->options.authorization_url = llm_arena_text(&s->option_storage,
+        (qa_bytes){(const uint8_t *)options->authorization_url, strlen(options->authorization_url)}, error);
+    if (options->token_url) s->options.token_url = llm_arena_text(&s->option_storage,
+        (qa_bytes){(const uint8_t *)options->token_url, strlen(options->token_url)}, error);
+    if ((options->authorization_url && !s->options.authorization_url) || (options->token_url && !s->options.token_url)) {
+        qa_arena_destroy(&s->option_storage); free(s); return false;
+    }
     s->preferences = (llm_preferences){.models = {"", ""}};
     s->other = (llm_other){.base_url = "", .model = ""};
+    *out = s; return true;
+}
+bool qa_llm_create(const qa_llm_options *options, qa_llm **out, qa_error *error) {
+    if (!qa_llm_create_empty(options, out, error)) return false;
+    qa_llm *s = *out;
     (void)llm_preferences_load(s, &s->preferences, &s->settings_errors[0]);
     (void)llm_credentials_load(s, &s->credentials, &s->settings_errors[1]);
     (void)llm_other_key_load(s, &s->other_key, &s->settings_errors[2]);
@@ -36,18 +51,137 @@ bool qa_llm_create(const qa_llm_options *options, qa_llm **out, qa_error *error)
     static const char *const files[] = {"llm.json", "chatgpt.key", "other.key", "other.service"};
     for (size_t i = 0; i < 4; ++i) if (s->settings_errors[i].code != QA_OK)
         qa_error_set(&s->settings_errors[i], QA_ERROR_IO, 0, "could not load %s; check its format and permissions", files[i]);
+    s->pending_restore = false;
     *out = s; return true;
 }
 bool qa_llm_destroy(qa_llm *s, qa_error *error) {
     if (!s) return true;
-    if (!admit(s, error)) return false;
+    if (s->busy) return llm_fail(error, "LLM teardown requires returned callbacks");
     if (!llm_console_detach_all(s, error)) return false;
     llm_auth_cancel(s); llm_jobs_destroy(s);
     qa_arena_destroy(&s->preferences.storage); qa_arena_destroy(&s->credentials.storage); qa_arena_destroy(&s->other.storage);
-    qa_buffer_free(&s->other_key);
+    qa_buffer_free(&s->other_key); qa_arena_destroy(&s->option_storage);
     for (size_t i = 0; i < 3; ++i) qa_arena_destroy(&s->catalogs[i].storage);
     free(s); return true;
 }
+bool qa_llm_checkpoint_ready(const qa_llm *s, qa_error *error) {
+    return (s && !s->busy && !s->pending_restore && !s->auth && !s->signing_in && llm_jobs_checkpoint_ready(s, error) &&
+        qa_http_checkpoint_ready(s->options.http, error)) || llm_fail(error, "LLM continuation requires returned callbacks and no live external transaction");
+}
+bool llm_saved_subscription(qa_source_save_io *io, qa_arena *arena, llm_subscription *p) {
+    if (!tool_save_arena_text(io, arena, &p->access_token) || !tool_save_arena_text(io, arena, &p->refresh_token) ||
+        !tool_save_arena_text(io, arena, &p->token_type) || !qa_source_save_f64(io, &p->expires_at) || !isfinite(p->expires_at) ||
+        !qa_source_save_count(io, &p->scope_count, SIZE_MAX / sizeof(char *))) return tool_save_fail(io, "invalid saved subscription credentials");
+    const char **scopes = (const char **)p->scopes;
+    if (io->direction == QA_SOURCE_SAVE_READ && p->scope_count) {
+        scopes = qa_arena_alloc(arena, p->scope_count * sizeof *scopes, _Alignof(char *), io->error);
+        p->scopes = scopes; if (!scopes) return tool_save_fail(io, "allocating saved subscription scopes");
+        memset(scopes, 0, p->scope_count * sizeof *scopes);
+    }
+    for (size_t i = 0; i < p->scope_count; ++i)
+        if (!tool_save_arena_text(io, arena, &scopes[i]) || !scopes[i]) return tool_save_fail(io, "invalid saved subscription scope");
+    return true;
+}
+static bool llm_saved_options_equal(const qa_llm_options *a, const qa_llm_options *b) {
+    return a->http == b->http && a->settings == b->settings && a->private_mount == b->private_mount && a->owner == b->owner &&
+        a->context == b->context && a->wall_milliseconds == b->wall_milliseconds && a->open_browser == b->open_browser &&
+        a->context_active == b->context_active && a->print == b->print && a->capture_context == b->capture_context;
+}
+static bool llm_saved_catalog(qa_source_save_io *io, llm_catalog *catalog) {
+    if (!qa_source_save_u64(io, &catalog->generation) || !qa_source_save_bool(io, &catalog->ready) ||
+        !qa_source_save_bool(io, &catalog->loading) || !tool_save_error(io, &catalog->error) ||
+        !qa_source_save_count(io, &catalog->count, SIZE_MAX / sizeof *catalog->models)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ && catalog->count) {
+        catalog->models = qa_arena_alloc(&catalog->storage, catalog->count * sizeof *catalog->models, _Alignof(qa_llm_model), io->error);
+        if (!catalog->models) return tool_save_fail(io, "allocating saved model catalog");
+        memset(catalog->models, 0, catalog->count * sizeof *catalog->models);
+    }
+    for (size_t i = 0; i < catalog->count; ++i) {
+        qa_llm_model *v = &catalog->models[i]; bool name_alias = v->id && v->name == v->id;
+        if (!tool_save_arena_text(io, &catalog->storage, &v->id) || !v->id || !*v->id ||
+            !qa_source_save_bool(io, &name_alias)) return tool_save_fail(io, "invalid saved model identity");
+        if (name_alias) v->name = v->id;
+        else if (!tool_save_arena_text(io, &catalog->storage, &v->name) || !v->name) return tool_save_fail(io, "invalid saved model label");
+        if (!tool_save_arena_text(io, &catalog->storage, &v->default_effort) ||
+            !qa_source_save_bool(io, &v->recommended) || !qa_source_save_count(io, &v->effort_count, SIZE_MAX / sizeof(char *))) return false;
+        uint32_t table_id = io->direction == QA_SOURCE_SAVE_WRITE ? llm_effort_table_identity(v->efforts, v->effort_count) : 0;
+        if (!qa_source_save_u32(io, &table_id)) return false;
+        size_t static_count = 0; const char *const *static_table = table_id ? llm_effort_table_resolve(table_id, &static_count) : NULL;
+        if (table_id && (!static_table || static_count != v->effort_count)) return tool_save_fail(io, "saved reasoning table descriptor has a foreign shape");
+        const char **efforts = (const char **)v->efforts;
+        if (io->direction == QA_SOURCE_SAVE_READ && v->effort_count) {
+            efforts = qa_arena_alloc(&catalog->storage, v->effort_count * sizeof *efforts, _Alignof(char *), io->error);
+            v->efforts = efforts; if (!efforts) return tool_save_fail(io, "allocating saved reasoning choices");
+            memset(efforts, 0, v->effort_count * sizeof *efforts);
+        }
+        for (size_t j = 0; j < v->effort_count; ++j) {
+            if (!tool_save_arena_text(io, &catalog->storage, &efforts[j]) || !efforts[j]) return tool_save_fail(io, "invalid saved reasoning choice");
+            if (static_table && strcmp(static_table[j], efforts[j])) return tool_save_fail(io, "saved immutable reasoning table differs from its actual owner");
+        }
+        if (io->direction == QA_SOURCE_SAVE_READ && static_table) v->efforts = static_table;
+        for (size_t j = 0; j < i; ++j) if (!strcmp(catalog->models[j].id, v->id)) return tool_save_fail(io, "duplicate saved model identity");
+        if (!llm_model_effort(v, v->default_effort)) return tool_save_fail(io, "saved default reasoning choice is absent");
+    }
+    return true;
+}
+static void llm_saved_private_free(qa_llm *s) {
+    llm_console_private_free(s); llm_jobs_destroy(s);
+    qa_arena_destroy(&s->option_storage); qa_arena_destroy(&s->preferences.storage);
+    qa_arena_destroy(&s->credentials.storage); qa_arena_destroy(&s->other.storage); qa_buffer_free(&s->other_key);
+    for (size_t i = 0; i < 3; ++i) qa_arena_destroy(&s->catalogs[i].storage);
+}
+static bool llm_saved_fields(qa_source_save_io *io, qa_llm *s, const qa_llm *installed, const qa_llm_checkpoint_refs *refs) {
+    uint32_t version = 1, provider = (uint32_t)s->preferences.provider; uint64_t service = 0;
+    if (!qa_source_save_u32(io, &version) || version != 1) return tool_save_fail(io, "unsupported LLM continuation version");
+    if (io->direction == QA_SOURCE_SAVE_WRITE && !refs->services_encode(refs->context, &s->options, &service, io->error)) return false;
+    if (!qa_source_save_u64(io, &service)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ && (!refs->services_decode(refs->context, service, &s->options, io->error) ||
+        !llm_saved_options_equal(&s->options, &installed->options))) return tool_save_fail(io, "LLM continuation services differ from installed candidate owners");
+    if (io->direction == QA_SOURCE_SAVE_READ) { s->options.authorization_url = NULL; s->options.token_url = NULL; }
+    if (!qa_source_save_u32(io, &s->options.request_timeout_ms) || !s->options.request_timeout_ms ||
+        !qa_source_save_u32(io, &s->options.callback_timeout_ms) || !s->options.callback_timeout_ms ||
+        !qa_source_save_u16(io, &s->options.callback_port) || !s->options.callback_port ||
+        !tool_save_arena_text(io, &s->option_storage, &s->options.authorization_url) ||
+        !tool_save_arena_text(io, &s->option_storage, &s->options.token_url) ||
+        !qa_source_save_u64(io, &s->next_id) || !qa_source_save_u64(io, &s->auth_generation) ||
+        !tool_save_error(io, &s->auth_error) || !qa_source_save_u32(io, &provider) || provider > QA_LLM_OTHER_API)
+        return tool_save_fail(io, "invalid LLM continuation settings");
+    s->preferences.provider = (qa_llm_provider)provider;
+    for (size_t i = 0; i < 2; ++i) if (!tool_save_arena_text(io, &s->preferences.storage, &s->preferences.models[i]) || !s->preferences.models[i]) return tool_save_fail(io, "missing saved LLM model preference");
+    for (size_t i = 0; i < 3; ++i) if (!tool_save_arena_text(io, &s->preferences.storage, &s->preferences.efforts[i])) return false;
+    if (!tool_save_arena_text(io, &s->credentials.storage, &s->credentials.api_key) || !qa_source_save_bool(io, &s->credentials.subscribed) ||
+        !llm_saved_subscription(io, &s->credentials.storage, &s->credentials.subscription) ||
+        !tool_save_arena_text(io, &s->other.storage, &s->other.base_url) || !s->other.base_url ||
+        !tool_save_arena_text(io, &s->other.storage, &s->other.model) || !s->other.model ||
+        !tool_save_blob(io, &s->other_key, true)) return false;
+    if (s->credentials.subscribed && (!s->credentials.subscription.access_token || !s->credentials.subscription.refresh_token || !s->credentials.subscription.token_type))
+        return tool_save_fail(io, "saved subscribed credentials lack tokens");
+    if (s->other_key.data && memchr(s->other_key.data, 0, s->other_key.size)) return tool_save_fail(io, "saved Other API key contains NUL");
+    for (size_t i = 0; i < 4; ++i) if (!tool_save_error(io, &s->settings_errors[i])) return false;
+    for (size_t i = 0; i < 3; ++i) if (!llm_saved_catalog(io, &s->catalogs[i])) return false;
+    return llm_console_fields(io, s, installed, refs) && llm_jobs_fields(io, s, refs);
+}
+bool qa_llm_checkpoint(const qa_llm *s, qa_session *session, const qa_llm_checkpoint_refs *refs, qa_buffer *out, qa_error *error) {
+    if (!out || !refs || !refs->services_encode || !refs->console_encode || !refs->command_context || !qa_llm_checkpoint_ready(s, error)) return false;
+    qa_source_save_io io = {0}; if (!qa_source_save_writer(&io, session, error)) return false;
+    bool ok = llm_saved_fields(&io, (qa_llm *)s, s, refs) && qa_source_save_finish(&io, out);
+    qa_source_save_dispose(&io); return ok;
+}
+bool qa_llm_restore(qa_llm *s, qa_session *session, const qa_llm_checkpoint_refs *refs, qa_bytes bytes, qa_error *error) {
+    if (!s || s->busy || s->auth || s->signing_in || !refs || !refs->services_decode || !refs->console_decode ||
+        !refs->command_context || !llm_jobs_checkpoint_ready(s, error) || !qa_http_checkpoint_ready(s->options.http, error)) return false;
+    qa_llm next = {0}; qa_source_save_io io = {0}; if (!qa_source_save_reader(&io, session, bytes, error)) return false;
+    bool ok = llm_saved_fields(&io, &next, s, refs) && qa_source_save_finish(&io, NULL) && llm_jobs_checkpoint_ready(&next, error);
+    if (ok) {
+        qa_llm old = *s; llm_console_exchange(s, &next); old.consoles = NULL;
+        *s = next; llm_jobs_rebind(s); llm_saved_private_free(&old);
+    } else llm_saved_private_free(&next);
+    qa_source_save_dispose(&io); return ok;
+}
+bool qa_llm_rebind_ready(const qa_llm *s, const void *old_context, const void *new_context, qa_error *error) {
+    return (s && !s->busy && !s->pending_restore && !s->auth && new_context && s->options.context == old_context) || llm_fail(error, "LLM publication requires its restored idle callback owner");
+}
+void qa_llm_rebind_context(qa_llm *s, void *context) { s->options.context = context; }
 bool qa_llm_tick(qa_llm *s, qa_error *error) {
     if (!admit(s, error)) return false;
     ++s->busy;
@@ -55,7 +189,7 @@ bool qa_llm_tick(qa_llm *s, qa_error *error) {
     --s->busy; return ok;
 }
 bool qa_llm_read(const qa_llm *s, qa_llm_snapshot *out, qa_error *error) {
-    if (!s || !out) return llm_fail(error, "invalid LLM settings observation");
+    if (!s || !out || s->pending_restore) return llm_fail(error, "invalid or pending LLM settings observation");
     qa_llm_snapshot snapshot = {.provider = s->preferences.provider, .models = {s->preferences.models[0], s->preferences.models[1], s->other.model},
         .efforts = {s->preferences.efforts[0], s->preferences.efforts[1], s->preferences.efforts[2]},
         .configured = {s->credentials.subscribed, s->credentials.api_key != NULL, s->other_key.data != NULL},

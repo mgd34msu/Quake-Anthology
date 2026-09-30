@@ -4,6 +4,7 @@
 #include "qa/arena.h"
 #include "qa/json.h"
 #include "qa/json_writer.h"
+#include "qa/llm_save.h"
 
 typedef struct llm_preferences {
     qa_arena storage;
@@ -39,6 +40,7 @@ typedef struct llm_console llm_console;
 typedef struct llm_auth llm_auth;
 struct qa_llm {
     qa_llm_options options;
+    qa_arena option_storage;
     llm_preferences preferences;
     llm_credentials credentials;
     llm_other other;
@@ -52,6 +54,7 @@ struct qa_llm {
     unsigned busy;
     qa_error auth_error;
     bool signing_in;
+    bool pending_restore;
     uint64_t auth_generation;
 };
 const char *llm_provider_name(qa_llm_provider);
@@ -74,6 +77,8 @@ bool llm_subscription_parse(const qa_json_document *, qa_json_id, qa_arena *, ll
 bool llm_catalog_parse(qa_llm_provider, qa_bytes, llm_catalog *, qa_error *);
 const qa_llm_model *llm_model_metadata(const qa_llm *, qa_llm_provider, const char *, qa_llm_model *reference);
 bool llm_model_effort(const qa_llm_model *, const char *);
+uint32_t llm_effort_table_identity(const char *const *, size_t);
+const char *const *llm_effort_table_resolve(uint32_t, size_t *);
 bool llm_auth_tick(qa_llm *, qa_error *);
 void llm_auth_cancel(qa_llm *);
 bool llm_jobs_tick(qa_llm *, qa_error *);
@@ -89,4 +94,13 @@ void llm_auth_refresh_users(qa_llm *, size_t);
 bool llm_subscription_account(const char *access_token, qa_buffer *, qa_error *);
 bool llm_session_id(char out[37], qa_error *);
 bool llm_discover_start(qa_llm *, qa_llm_provider, qa_error *);
+bool llm_saved_subscription(qa_source_save_io *, qa_arena *, llm_subscription *);
+bool llm_jobs_checkpoint_ready(const qa_llm *, qa_error *);
+bool llm_jobs_fields(qa_source_save_io *, qa_llm *, const qa_llm_checkpoint_refs *);
+void llm_jobs_rebind(qa_llm *);
+bool llm_console_fields(qa_source_save_io *, qa_llm *, const qa_llm *, const qa_llm_checkpoint_refs *);
+bool llm_console_observer_encode(const qa_llm *, const qa_llm_observer *, uint64_t *);
+bool llm_console_observer_decode(qa_llm *, uint64_t, qa_llm_observer *);
+void llm_console_private_free(qa_llm *);
+void llm_console_exchange(qa_llm *, qa_llm *);
 #endif

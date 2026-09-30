@@ -1,4 +1,6 @@
 #include "qa/http.h"
+#include "qa/http_save.h"
+#include "save_internal.h"
 #include <curl/curl.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -18,10 +20,31 @@ typedef struct http_transfer {
     uint64_t maximum_bytes;
     bool canceled;
 } http_transfer;
-struct qa_http { CURLM *multi; http_transfer *transfers; uint64_t next_id; bool pumping; };
+struct qa_http { CURLM *multi; http_transfer *transfers; uint64_t next_id; bool pumping, pending_restore; };
 bool qa_http_callbacks_idle(const qa_http *owner) { return !owner || !owner->pumping; }
 static bool fail(qa_error *error, qa_status status, const char *text) {
     qa_error_set(error, status, 0, "%s", text); return false;
+}
+bool qa_http_checkpoint_ready(const qa_http *owner, qa_error *error) {
+    return (owner && !owner->pumping && !owner->pending_restore && !owner->transfers) ||
+        fail(error, QA_ERROR_ARGUMENT, "HTTP continuation requires an empty native transfer queue");
+}
+bool qa_http_checkpoint(const qa_http *owner, qa_buffer *out, qa_error *error) {
+    if (!out || !qa_http_checkpoint_ready(owner, error)) return false;
+    qa_source_save_io io = {0}; uint32_t version = 1; uint64_t next = owner->next_id;
+    if (!qa_source_save_writer(&io, NULL, error)) return false;
+    bool ok = qa_source_save_u32(&io, &version) && qa_source_save_u64(&io, &next) && qa_source_save_finish(&io, out);
+    qa_source_save_dispose(&io); return ok;
+}
+bool qa_http_restore(qa_http *owner, qa_bytes bytes, qa_error *error) {
+    if (!owner || owner->pumping || owner->transfers) return fail(error, QA_ERROR_ARGUMENT, "HTTP restoration requires an empty native transfer queue");
+    qa_source_save_io io = {0}; uint32_t version = 0; uint64_t next = 0;
+    if (!qa_source_save_reader(&io, NULL, bytes, error)) return false;
+    bool ok = qa_source_save_u32(&io, &version) && version == 1 &&
+        qa_source_save_u64(&io, &next) && qa_source_save_finish(&io, NULL);
+    if (ok) { owner->next_id = next; owner->pending_restore = false; }
+    else if (!io.failed) fail(error, QA_ERROR_FORMAT, "unsupported HTTP continuation version");
+    qa_source_save_dispose(&io); return ok;
 }
 static char *copy_text(const char *text) {
     size_t n = strlen(text); if (n == SIZE_MAX) return NULL;
@@ -46,6 +69,11 @@ bool qa_http_create(qa_http **out, qa_error *error) {
     owner->multi = curl_multi_init(); owner->next_id = 1;
     if (!owner->multi) { free(owner); curl_global_cleanup(); return fail(error, QA_ERROR_MEMORY, "allocating HTTP transfer queue"); }
     *out = owner; return true;
+}
+bool qa_http_create_empty(qa_http **out, qa_error *error) {
+    if (!out || *out) return fail(error, QA_ERROR_ARGUMENT, "empty HTTP restoration requires an empty output");
+    if (!qa_http_create(out, error)) return false;
+    (*out)->pending_restore = true; return true;
 }
 bool qa_http_destroy(qa_http *owner, qa_error *error) {
     if (!owner) return true;
@@ -143,7 +171,7 @@ static size_t body_data(char *bytes, size_t size, size_t count, void *context) {
     return t->canceled ? 0 : n;
 }
 bool qa_http_submit(qa_http *owner, const qa_http_request *r, qa_http_request_id *out, qa_error *error) {
-    if (!owner || !r || !out || owner->pumping || !r->url || !header_name(r->method) ||
+    if (!owner || !r || !out || owner->pumping || owner->pending_restore || !r->url || !header_name(r->method) ||
         (r->header_count && !r->headers) || (r->body.size && !r->body.data) || r->body.size > (size_t)PTRDIFF_MAX ||
         !owner->next_id || !r->timeout_ms || r->timeout_ms > INT32_MAX ||
         r->connect_timeout_ms > INT32_MAX || r->maximum_redirects > INT32_MAX)
@@ -208,7 +236,7 @@ void qa_http_cancel(qa_http *owner, qa_http_request_id id) {
     }
 }
 bool qa_http_pump(qa_http *owner, qa_error *error) {
-    if (!owner || owner->pumping) return fail(error, QA_ERROR_ARGUMENT, "HTTP progress cannot reenter callbacks");
+    if (!owner || owner->pumping || owner->pending_restore) return fail(error, QA_ERROR_ARGUMENT, "HTTP progress requires restored continuation and returned callbacks");
     owner->pumping = true; int running = 0;
     CURLMcode result = curl_multi_perform(owner->multi, &running);
     int queued = 0; CURLMsg *message;
@@ -241,7 +269,7 @@ size_t qa_http_pending(const qa_http *owner) {
     return count;
 }
 bool qa_http_next_timeout(const qa_http *owner, uint32_t *milliseconds, bool *pending, qa_error *error) {
-    if (!owner || !milliseconds || !pending) return fail(error, QA_ERROR_ARGUMENT, "invalid HTTP wakeup query");
+    if (!owner || owner->pending_restore || !milliseconds || !pending) return fail(error, QA_ERROR_ARGUMENT, "invalid or pending HTTP wakeup query");
     long timeout = -1;
     if (curl_multi_timeout(owner->multi, &timeout) != CURLM_OK) return fail(error, QA_ERROR_IO, "HTTP wakeup query failed");
     *pending = qa_http_pending(owner) != 0;

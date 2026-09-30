@@ -1,4 +1,6 @@
 #include "camera_internal.h"
+#include "tools_internal.h"
+#include "save_internal.h"
 #include "qa/text.h"
 #include "qa/builtin.h"
 #include <float.h>
@@ -176,6 +178,131 @@ struct qa_camera_playback {
     size_t active_target;
     double start, last, total;
 };
+static bool camera_saved_path(qa_source_save_io *io, qa_arena *arena, qa_camera_path *path, camera_curve *curve) {
+    uint32_t kind = (uint32_t)path->kind;
+    if (!qa_source_save_u32(io, &kind) || kind > QA_CAMERA_SPLINE ||
+        !tool_save_arena_text(io, arena, &path->name) || !path->name ||
+        !qa_source_save_f64(io, &path->time_ms) || !isfinite(path->time_ms) || path->time_ms < 0 ||
+        !qa_source_save_f64(io, &path->base_velocity) || !isfinite(path->base_velocity) ||
+        !qa_source_save_count(io, &path->velocity_count, SIZE_MAX / sizeof(qa_camera_velocity)))
+        return tool_save_fail(io, "invalid saved camera path");
+    path->kind = (qa_camera_path_kind)kind;
+    qa_camera_velocity *velocities = (qa_camera_velocity *)path->velocities;
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        velocities = camera_array(arena, path->velocity_count, sizeof *velocities, _Alignof(qa_camera_velocity), io->error);
+        path->velocities = velocities;
+        if (path->velocity_count && !velocities) return tool_save_fail(io, "allocating saved camera velocities");
+    }
+    for (size_t i = 0; i < path->velocity_count; ++i) {
+        qa_camera_velocity *v = &velocities[i];
+        if (!qa_source_save_f64(io, &v->start_ms) || !qa_source_save_f64(io, &v->duration_ms) ||
+            !qa_source_save_f64(io, &v->speed) || !isfinite(v->start_ms) || !isfinite(v->duration_ms) ||
+            !isfinite(v->speed) || v->start_ms < 0 || v->duration_ms < 0 || v->speed < 0)
+            return tool_save_fail(io, "invalid saved camera velocity");
+    }
+    if (kind == QA_CAMERA_FIXED) {
+        if (!qa_source_save_vec3(io, &path->position.fixed) || !qa_vec_finite(path->position.fixed)) return tool_save_fail(io, "invalid saved fixed camera");
+    } else if (kind == QA_CAMERA_INTERPOLATED) {
+        if (!qa_source_save_vec3(io, &path->position.interpolated.start) || !qa_vec_finite(path->position.interpolated.start) ||
+            !qa_source_save_vec3(io, &path->position.interpolated.end) || !qa_vec_finite(path->position.interpolated.end)) return tool_save_fail(io, "invalid saved interpolated camera");
+    } else {
+        if (!qa_source_save_f32(io, &path->position.spline.granularity) || !isfinite(path->position.spline.granularity) ||
+            path->position.spline.granularity < .0001f || path->position.spline.granularity > 1 ||
+            !qa_source_save_count(io, &path->position.spline.count, SIZE_MAX / sizeof(qa_vec3)) || path->position.spline.count < 4)
+            return tool_save_fail(io, "invalid saved camera spline");
+        qa_vec3 *points = (qa_vec3 *)path->position.spline.points;
+        if (io->direction == QA_SOURCE_SAVE_READ) {
+            points = camera_array(arena, path->position.spline.count, sizeof *points, _Alignof(qa_vec3), io->error);
+            path->position.spline.points = points;
+            if (!points) return tool_save_fail(io, "allocating saved camera spline");
+        }
+        for (size_t i = 0; i < path->position.spline.count; ++i)
+            if (!qa_source_save_vec3(io, &points[i]) || !qa_vec_finite(points[i])) return tool_save_fail(io, "invalid saved camera spline point");
+    }
+    if (!qa_source_save_count(io, &curve->count, SIZE_MAX / sizeof(double)) || !curve->count ||
+        (kind == QA_CAMERA_FIXED && curve->count != 1) || (kind == QA_CAMERA_INTERPOLATED && curve->count != 2) ||
+        !qa_source_save_f64(io, &curve->distance) || !isfinite(curve->distance) || curve->distance < 0)
+        return tool_save_fail(io, "invalid saved compiled camera curve");
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        curve->points = camera_array(arena, curve->count, sizeof *curve->points, _Alignof(qa_vec3), io->error);
+        curve->distances = camera_array(arena, curve->count, sizeof *curve->distances, _Alignof(double), io->error);
+        if (!curve->points || !curve->distances) return tool_save_fail(io, "allocating saved compiled camera curve");
+    }
+    for (size_t i = 0; i < curve->count; ++i)
+        if (!qa_source_save_vec3(io, &curve->points[i]) || !qa_vec_finite(curve->points[i]) ||
+            !qa_source_save_f64(io, &curve->distances[i]) || !isfinite(curve->distances[i]) || curve->distances[i] < 0 ||
+            (!i && curve->distances[i] != 0) || (i && curve->distances[i] < curve->distances[i - 1]))
+            return tool_save_fail(io, "invalid saved compiled camera point");
+    return curve->distances[curve->count - 1] == curve->distance || tool_save_fail(io, "saved camera distance disagrees with curve");
+}
+static bool camera_saved_state(qa_source_save_io *io, path_state *state) {
+    return (qa_source_save_f64(io, &state->start) && qa_source_save_f64(io, &state->last) &&
+        qa_source_save_f64(io, &state->traveled) && qa_source_save_f64(io, &state->duration) &&
+        isfinite(state->start) && isfinite(state->last)) ||
+        tool_save_fail(io, "invalid saved camera path cursor");
+}
+bool tools_camera_fields(qa_source_save_io *io, qa_camera_document **document, qa_camera_playback **playback) {
+    bool present = *document != NULL, playing = *playback != NULL;
+    if (!qa_source_save_bool(io, &present) || !qa_source_save_bool(io, &playing) || (!present && playing)) return tool_save_fail(io, "saved camera playback lacks its document");
+    if (!present) return true;
+    qa_camera_document *d = *document;
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        d = calloc(1, sizeof *d); *document = d;
+        if (!d) return tool_save_fail(io, "allocating saved camera document");
+        d->references = 1;
+    }
+    qa_camera_definition *def = &d->definition;
+    if (!qa_source_save_f64(io, &def->seconds) || !isfinite(def->seconds) || def->seconds <= 0 ||
+        !qa_source_save_f32(io, &def->fov.value) || !qa_source_save_f32(io, &def->fov.start) ||
+        !qa_source_save_f32(io, &def->fov.end) || !qa_source_save_f64(io, &def->fov.time_ms) ||
+        !isfinite(def->fov.value) || def->fov.value <= 0 || def->fov.value >= 180 ||
+        !isfinite(def->fov.start) || def->fov.start <= 0 || def->fov.start >= 180 ||
+        !isfinite(def->fov.end) || def->fov.end <= 0 || def->fov.end >= 180 ||
+        !isfinite(def->fov.time_ms) || def->fov.time_ms < 0 ||
+        !camera_saved_path(io, &d->storage, &def->position, &d->position) ||
+        !qa_source_save_count(io, &def->target_count, SIZE_MAX / sizeof(qa_camera_path)) ||
+        !qa_source_save_count(io, &def->event_count, SIZE_MAX / sizeof(qa_camera_event))) return tool_save_fail(io, "invalid saved camera definition");
+    qa_camera_path *targets = (qa_camera_path *)def->targets; qa_camera_event *events = (qa_camera_event *)def->events;
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        targets = camera_array(&d->storage, def->target_count, sizeof *targets, _Alignof(qa_camera_path), io->error);
+        d->targets = camera_array(&d->storage, def->target_count, sizeof *d->targets, _Alignof(camera_curve), io->error);
+        events = camera_array(&d->storage, def->event_count, sizeof *events, _Alignof(qa_camera_event), io->error);
+        def->targets = targets; def->events = events;
+        if ((def->target_count && (!targets || !d->targets)) || (def->event_count && !events)) return tool_save_fail(io, "allocating saved camera definition");
+        if (targets) memset(targets, 0, def->target_count * sizeof *targets);
+        if (d->targets) memset(d->targets, 0, def->target_count * sizeof *d->targets);
+        if (events) memset(events, 0, def->event_count * sizeof *events);
+    }
+    for (size_t i = 0; i < def->target_count; ++i) if (!camera_saved_path(io, &d->storage, &targets[i], &d->targets[i])) return false;
+    for (size_t i = 0; i < def->event_count; ++i) {
+        qa_camera_event *v = &events[i];
+        if (!qa_source_save_u32(io, &v->type) || v->type > 9 || !qa_source_save_f64(io, &v->time_ms) ||
+            !isfinite(v->time_ms) || v->time_ms < 0 || !tool_save_arena_text(io, &d->storage, &v->parameter) || !v->parameter)
+            return tool_save_fail(io, "invalid saved camera event");
+        if (v->type == 1) { double seconds; if (!wait_seconds(v->parameter, &seconds, io->error)) return tool_save_fail(io, "invalid saved camera wait"); }
+        if (v->type == 4) {
+            bool found = false; for (size_t j = 0; j < def->target_count; ++j) if (!strcmp(targets[j].name, v->parameter)) found = true;
+            if (!found) return tool_save_fail(io, "saved camera event references an absent target");
+        }
+    }
+    if (!playing) return true;
+    qa_camera_playback *p = *playback;
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        p = calloc(1, sizeof *p); *playback = p;
+        if (!p) return tool_save_fail(io, "allocating saved camera playback");
+        p->document = d; qa_camera_retain(d);
+        p->targets = def->target_count ? calloc(def->target_count, sizeof *p->targets) : NULL;
+        p->triggered = def->event_count ? calloc(def->event_count, sizeof *p->triggered) : NULL;
+        if ((def->target_count && !p->targets) || (def->event_count && !p->triggered)) return tool_save_fail(io, "allocating saved camera playback arrays");
+    } else if (p->document != d) return tool_save_fail(io, "tools playback has a foreign document");
+    if (!qa_source_save_f64(io, &p->start) || !qa_source_save_f64(io, &p->last) || !qa_source_save_f64(io, &p->total) ||
+        !isfinite(p->start) || !isfinite(p->last) || p->last < p->start || !isfinite(p->total) || p->total <= 0 ||
+        !qa_source_save_count(io, &p->active_target, def->target_count ? def->target_count - 1 : 0) ||
+        !qa_source_save_bool(io, &p->stopped) || !camera_saved_state(io, &p->camera)) return tool_save_fail(io, "invalid saved camera playback timing");
+    for (size_t i = 0; i < def->target_count; ++i) if (!camera_saved_state(io, &p->targets[i])) return false;
+    for (size_t i = 0; i < def->event_count; ++i) if (!qa_source_save_bool(io, &p->triggered[i])) return false;
+    return true;
+}
 static void path_start(path_state *state, double time, double duration) {
     *state = (path_state){.start = time, .last = time, .duration = duration};
 }

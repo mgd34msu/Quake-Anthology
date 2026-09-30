@@ -1,4 +1,5 @@
 #include "llm_internal.h"
+#include "save_internal.h"
 #include "qa/text.h"
 #include <math.h>
 #include <stdlib.h>
@@ -34,6 +35,108 @@ static bool stream_emit(void *context, qa_bytes bytes, qa_error *error) {
     if (job->canceled) return llm_fail(error, "LLM request canceled");
     if (job->observer.text) job->observer.text(job->observer.context, job->id, bytes);
     return !job->canceled || llm_fail(error, "LLM request canceled");
+}
+static bool job_checkpoint_ready(const llm_job *job) {
+    return !job->active && !job->waiting_refresh && (!job->http_id || job->canceled || job->result) &&
+        (job->http_id || !job->result || job->canceled || job->error.code != QA_OK) &&
+        (job->http_id || job->result || job->canceled || (!job->retry && !job->status && !job->refresh_ticket && !job->rejected_token &&
+            !job->credential.access_token && !job->credential.refresh_token && !job->credential.token_type && !job->credential.expires_at &&
+            !job->credential.scopes && !job->credential.scope_count && job->error.code == QA_OK)) &&
+        (job->canceled || !job->result || job->retry || job->provider != QA_LLM_SUBSCRIPTION || (job->status != 401 && job->status != 403));
+}
+static bool unsent_text_empty(const llm_text *text) { return !text->buffer.data && !text->buffer.size && !text->capacity; }
+static bool unsent_stream_empty(const llm_job *job) {
+    const llm_stream *s = &job->stream;
+    return unsent_text_empty(&s->raw) && unsent_text_empty(&s->data) && unsent_text_empty(&s->event) && unsent_text_empty(&s->text) &&
+        unsent_text_empty(&job->response) && !s->cursor && !s->total_bytes && !s->utf8_count &&
+        !s->utf8_tail[0] && !s->utf8_tail[1] && !s->utf8_tail[2] && !s->utf8_tail[3] &&
+        !s->have_data && !s->received && !s->stopped && !s->completed && !s->finished && !s->done;
+}
+bool llm_jobs_checkpoint_ready(const qa_llm *s, qa_error *error) {
+    for (const llm_job *job = s->jobs; job; job = job->next)
+        if (!job_checkpoint_ready(job)) return llm_fail(error, "LLM continuation requires external request and refresh safe points");
+    return true;
+}
+void llm_jobs_rebind(qa_llm *s) {
+    for (llm_job *job = s->jobs; job; job = job->next) {
+        job->owner = s; job->stream.context = job; job->stream.emit = stream_emit;
+    }
+}
+static bool saved_job_text(qa_source_save_io *io, llm_text *text) {
+    if (!tool_save_blob(io, &text->buffer, true) || !qa_source_save_count(io, &text->capacity, SIZE_MAX)) return false;
+    if ((text->buffer.data && text->capacity <= text->buffer.size) || (!text->buffer.data && text->capacity)) return tool_save_fail(io, "invalid LLM continuation text capacity");
+    if (io->direction == QA_SOURCE_SAVE_READ && text->buffer.data && text->capacity != text->buffer.size + 1) {
+        uint8_t *bytes = realloc(text->buffer.data, text->capacity);
+        if (!bytes) return tool_save_fail(io, "allocating LLM continuation text capacity");
+        text->buffer.data = bytes;
+    }
+    return true;
+}
+static bool saved_job_stream(qa_source_save_io *io, llm_job *job) {
+    llm_stream *s = &job->stream; uint32_t provider = (uint32_t)s->provider;
+    if (!qa_source_save_u32(io, &provider) || provider != (uint32_t)job->provider ||
+        !saved_job_text(io, &s->raw) || !saved_job_text(io, &s->data) || !saved_job_text(io, &s->event) || !saved_job_text(io, &s->text) ||
+        !qa_source_save_count(io, &s->cursor, s->raw.buffer.size) || !qa_source_save_count(io, &s->total_bytes, 1048576) ||
+        !qa_source_save_bytes(io, s->utf8_tail, sizeof s->utf8_tail) || !qa_source_save_count(io, &s->utf8_count, 3) ||
+        !qa_source_save_bool(io, &s->have_data) || !qa_source_save_bool(io, &s->received) || !qa_source_save_bool(io, &s->stopped) ||
+        !qa_source_save_bool(io, &s->completed) || !qa_source_save_bool(io, &s->finished) || !qa_source_save_bool(io, &s->done))
+        return tool_save_fail(io, "invalid LLM stream continuation");
+    s->provider = (qa_llm_provider)provider; s->context = job; s->emit = stream_emit; return true;
+}
+bool llm_jobs_fields(qa_source_save_io *io, qa_llm *s, const qa_llm_checkpoint_refs *refs) {
+    size_t count = 0; for (llm_job *job = s->jobs; job; job = job->next) ++count;
+    if (!qa_source_save_count(io, &count, SIZE_MAX / sizeof(llm_job))) return false;
+    llm_job *job = s->jobs, **tail = &s->jobs;
+    for (size_t i = 0; i < count; ++i) {
+        if (io->direction == QA_SOURCE_SAVE_READ) {
+            job = calloc(1, sizeof *job); if (!job) return tool_save_fail(io, "allocating saved LLM job");
+            job->owner = s; *tail = job; tail = &job->next;
+        }
+        uint32_t provider = (uint32_t)job->provider, kind = (uint32_t)job->kind, status = job->status;
+        if (!qa_source_save_u64(io, &job->id) || !job->id || (s->next_id && job->id >= s->next_id) ||
+            !qa_source_save_u64(io, &job->http_id) || !qa_source_save_u32(io, &provider) || provider > QA_LLM_OTHER_API ||
+            !qa_source_save_u32(io, &kind) || kind > JOB_MODELS) return tool_save_fail(io, "invalid saved LLM job identity");
+        job->provider = (qa_llm_provider)provider; job->kind = (job_kind)kind;
+        if (!tool_save_arena_text(io, &job->storage, &job->prompt) || !tool_save_arena_text(io, &job->storage, &job->instructions) ||
+            !tool_save_arena_text(io, &job->storage, &job->model) || !tool_save_arena_text(io, &job->storage, &job->effort) ||
+            !tool_save_arena_text(io, &job->storage, &job->base_url) || !llm_saved_subscription(io, &job->storage, &job->credential)) return false;
+        bool rejected_alias = job->rejected_token && job->rejected_token == job->credential.access_token;
+        if (!qa_source_save_bool(io, &rejected_alias)) return false;
+        if (rejected_alias) { if (!job->credential.access_token) return tool_save_fail(io, "saved rejected token alias has no credential"); job->rejected_token = job->credential.access_token; }
+        else if (!tool_save_arena_text(io, &job->storage, &job->rejected_token)) return false;
+        if (!qa_source_save_f64(io, &job->deadline) || !isfinite(job->deadline) ||
+            !qa_source_save_u64(io, &job->catalog_generation) || !qa_source_save_u64(io, &job->refresh_ticket) ||
+            !qa_source_save_u32(io, &status) || !tool_save_error(io, &job->error) ||
+            !qa_source_save_bool(io, &job->active) || !qa_source_save_bool(io, &job->result) || !qa_source_save_bool(io, &job->canceled) ||
+            !qa_source_save_bool(io, &job->retry) || !qa_source_save_bool(io, &job->needs_metadata) || !qa_source_save_bool(io, &job->waiting_refresh))
+            return tool_save_fail(io, "invalid saved LLM job state");
+        job->status = status;
+        if (!job_checkpoint_ready(job)) return tool_save_fail(io, "saved LLM job is outside an external request safe point");
+        uint8_t observer = 0; uint64_t observer_id = 0;
+        if (io->direction == QA_SOURCE_SAVE_WRITE && !job->canceled) {
+            if (llm_console_observer_encode(s, &job->observer, &observer_id)) observer = 1;
+            else if (job->observer.context || job->observer.text || job->observer.complete) {
+                observer = 2;
+                if (!refs->observer_encode || !refs->observer_encode(refs->context, &job->observer, &observer_id, io->error)) return tool_save_fail(io, "unqualified external LLM observer");
+            }
+        }
+        if (!qa_source_save_u8(io, &observer) || observer > 2 || !qa_source_save_u64(io, &observer_id) ||
+            ((job->kind == JOB_MODELS || job->canceled) && observer)) return tool_save_fail(io, "invalid saved LLM observer kind");
+        if (io->direction == QA_SOURCE_SAVE_READ) {
+            if (observer == 1 && (observer_id != job->id || !llm_console_observer_decode(s, observer_id, &job->observer)))
+                return tool_save_fail(io, "saved LLM job has no actual console observer");
+            if (observer == 2 && (!refs->observer_decode || !refs->observer_decode(refs->context, observer_id, &job->observer, io->error)))
+                return tool_save_fail(io, "unresolved external LLM observer");
+            for (llm_job *previous = s->jobs; previous != job; previous = previous->next)
+                if (previous->id == job->id) return tool_save_fail(io, "duplicate saved LLM request identity");
+        }
+        if (!saved_job_stream(io, job) || !saved_job_text(io, &job->response)) return false;
+        if (!job->http_id && !job->result && !job->canceled && !unsent_stream_empty(job)) return tool_save_fail(io, "unsent LLM job contains external response lineage");
+        if (job->kind == JOB_REQUEST && (!job->prompt || !job->instructions || !job->model)) return tool_save_fail(io, "saved LLM request lacks admitted input");
+        if (job->provider == QA_LLM_OTHER_API && !job->base_url) return tool_save_fail(io, "saved Other API job lacks its admitted endpoint");
+        if (io->direction == QA_SOURCE_SAVE_WRITE) job = job->next;
+    }
+    return true;
 }
 static bool content_type(const char *text) {
     if (!text) return false;
@@ -173,7 +276,7 @@ static llm_job *job_create(qa_llm *s, job_kind kind, qa_llm_provider provider, q
 }
 bool qa_llm_request(qa_llm *s, const char *prompt, const char *instructions, const qa_llm_observer *observer,
                     qa_llm_request_id *out, qa_error *error) {
-    if (!s || s->busy || !prompt || !instructions || !observer || !out) return llm_fail(error, "invalid LLM request admission");
+    if (!s || s->busy || s->pending_restore || !prompt || !instructions || !observer || !out) return llm_fail(error, "invalid or pending LLM request admission");
     llm_preferences prefs = {0}; llm_other other = {0}; llm_job *job = NULL; bool ok = false;
     ++s->busy;
     if (!qa_utf8_valid((qa_bytes){(const uint8_t *)prompt, strlen(prompt)}) || !qa_utf8_valid((qa_bytes){(const uint8_t *)instructions, strlen(instructions)})) { llm_fail(error, "invalid LLM request UTF-8"); goto done; }
@@ -219,15 +322,15 @@ bool llm_discover_start(qa_llm *s, qa_llm_provider provider, qa_error *error) {
     job->next = s->jobs; s->jobs = job; return true;
 }
 bool qa_llm_discover_models(qa_llm *s, qa_llm_provider provider, qa_error *error) {
-    if (!s || s->busy) return llm_fail(error, "model discovery requires callbacks to return");
+    if (!s || s->busy || s->pending_restore) return llm_fail(error, "model discovery requires restored continuation and returned callbacks");
     ++s->busy; bool ok = llm_discover_start(s, provider, error); --s->busy; return ok;
 }
 bool qa_llm_cancel_model_discovery(qa_llm *s, qa_llm_provider provider, qa_error *error) {
-    if (!s || s->busy || !llm_provider_valid(provider)) return llm_fail(error, "model discovery cancellation requires callbacks to return");
+    if (!s || s->busy || s->pending_restore || !llm_provider_valid(provider)) return llm_fail(error, "model discovery cancellation requires restored continuation and returned callbacks");
     llm_jobs_cancel_provider(s, provider); s->catalogs[provider].loading = false; return true;
 }
 void qa_llm_cancel(qa_llm *s, qa_llm_request_id id) {
-    if (!s) return;
+    if (!s || s->pending_restore) return;
     for (llm_job *job = s->jobs; job; job = job->next) if (job->id == id) {
         job->canceled = true; if (job->active) qa_http_cancel(s->options.http, job->http_id); job->active = false; return;
     }

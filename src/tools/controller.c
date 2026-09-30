@@ -1,4 +1,5 @@
 #include "tools_internal.h"
+#include "save_internal.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -76,7 +77,7 @@ static bool load(qa_tools *tools, const char *path, const qa_command_context *so
 }
 static bool command(void *context, const qa_command_invocation *call, qa_error *error) {
     qa_tools *tools = context;
-    if (tools->busy) return tools_fail(error, "tools command cannot reenter its callbacks");
+    if (tools->busy || tools->pending_restore) return tools_fail(error, "tools command requires returned callbacks and restored continuation");
     ++tools->busy; tools->output_console = call->console; bool success = false;
     const char *name = call->argv[0];
     if (equal_name(name, "loadcamera")) {
@@ -163,6 +164,119 @@ bool qa_tools_create_diagnostics(qa_vfs *files, uint64_t owner, double (*millise
     qa_tools_options options={.files=files,.owner=owner,.milliseconds=milliseconds,.context=context};
     return create_owner(&options,out,error);
 }
+bool qa_tools_create_empty(const qa_tools_options *options, qa_tools **out, qa_error *error) {
+    if (!options || !out || *out || !options->files || !options->owner || !options->milliseconds)
+        return tools_fail(error, "empty tools require qualified files, clock and an empty output");
+    qa_tools *tools = calloc(1, sizeof *tools);
+    if (!tools) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating empty tools"); return false; }
+    tools->options = *options; tools->capture_tail = &tools->captures; tools->pending_restore = true;
+    if (!tools_profiler_empty(options, &tools->profiler, error) || !qa_debug_store_create(9216, &tools->debug, error)) {
+        (void)qa_profiler_destroy(tools->profiler, NULL); free(tools); return false;
+    }
+    tools_debug_pending(tools->debug);
+    *out = tools; return true;
+}
+static bool saved_options_equal(const qa_tools_options *a, const qa_tools_options *b) {
+    return a->files == b->files && a->output_mount == b->output_mount && a->owner == b->owner && a->context == b->context &&
+        a->milliseconds == b->milliseconds && a->profiler_milliseconds == b->profiler_milliseconds && a->read_frame == b->read_frame &&
+        a->context_active == b->context_active && a->map_name == b->map_name && a->print == b->print && a->forward == b->forward &&
+        a->diagnostic == b->diagnostic && a->files_for_context == b->files_for_context && a->capture_context == b->capture_context;
+}
+static void saved_private_free(qa_tools *tools) {
+    while (tools->captures) { tools_capture *v = tools->captures; tools->captures = v->next; capture_free(v); }
+    while (tools->consoles) { tools_console *v = tools->consoles; tools->consoles = v->next; free(v); }
+    reset_camera(tools); (void)qa_profiler_destroy(tools->profiler, NULL); qa_debug_store_destroy(tools->debug);
+}
+static bool saved_tools_fields(qa_source_save_io *io, qa_tools *tools, const qa_tools *installed, const qa_tools_checkpoint_refs *refs) {
+    uint32_t version = 1; uint64_t services = 0;
+    if (!qa_source_save_u32(io, &version) || version != 1) return tool_save_fail(io, "unsupported tools continuation version");
+    if (io->direction == QA_SOURCE_SAVE_WRITE && !refs->services_encode(refs->context, &tools->options, &services, io->error)) return false;
+    if (!qa_source_save_u64(io, &services)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ && (!refs->services_decode(refs->context, services, &tools->options, io->error) ||
+        !saved_options_equal(&tools->options, &installed->options))) return tool_save_fail(io, "tools continuation services differ from installed candidate owners");
+    size_t count = 0; for (tools_console *v = tools->consoles; v; v = v->next) ++count;
+    if (!qa_source_save_count(io, &count, SIZE_MAX / sizeof(tools_console))) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        size_t actual = 0; for (tools_console *v = installed->consoles; v; v = v->next) ++actual;
+        if (actual != count) return tool_save_fail(io, "tools continuation console roster differs from installed candidate");
+    }
+    tools_console *cursor = tools->consoles, **tail = &tools->consoles;
+    for (size_t i = 0; i < count; ++i) {
+        uint64_t id = 0; qa_console *console = NULL;
+        if (io->direction == QA_SOURCE_SAVE_WRITE && !refs->console_encode(refs->context, cursor->console, &id, io->error)) return false;
+        if (!qa_source_save_u64(io, &id)) return false;
+        if (io->direction == QA_SOURCE_SAVE_READ) {
+            if (!refs->console_decode(refs->context, id, &console, io->error) || !console) return tool_save_fail(io, "unresolved tools continuation console");
+            bool found = false; for (tools_console *v = installed->consoles; v; v = v->next) if (v->console == console) found = true;
+            if (!found) return tool_save_fail(io, "tools continuation console has no installed handlers");
+            for (tools_console *v = tools->consoles; v; v = v->next) if (v->console == console) return tool_save_fail(io, "duplicate tools continuation console");
+            tools_console *v = calloc(1, sizeof *v); if (!v) return tool_save_fail(io, "allocating tools continuation console");
+            v->console = console; *tail = v; tail = &v->next;
+        } else cursor = cursor->next;
+    }
+    if (!tools_profiler_fields(io, &tools->profiler, &tools->options) || !tools_debug_fields(io, &tools->debug) ||
+        !tools_camera_fields(io, &tools->camera, &tools->playback)) return false;
+    count = 0; for (tools_capture *v = tools->captures; v; v = v->next) ++count;
+    if (!qa_source_save_count(io, &count, SIZE_MAX / sizeof(tools_capture))) return false;
+    if (count && !output_ready(&tools->options)) return tool_save_fail(io, "tools capture continuation lacks installed output services");
+    tools_capture *request = tools->captures; tools_capture **capture_tail = &tools->captures;
+    for (size_t i = 0; i < count; ++i) {
+        if (io->direction == QA_SOURCE_SAVE_READ) {
+            request = calloc(1, sizeof *request); if (!request) return tool_save_fail(io, "allocating tools capture continuation");
+            *capture_tail = request;
+        }
+        capture_tail = &request->next;
+        uint32_t format = (uint32_t)request->format; char *script = request->script;
+        if (!tool_save_context(io, &request->source, &script)) { if (io->direction == QA_SOURCE_SAVE_READ) request->script = script; return false; }
+        if (io->direction == QA_SOURCE_SAVE_READ) request->script = script;
+        qa_command_context qualified = {0};
+        if (!refs->command_context(refs->context, &request->source, &qualified, io->error)) return false;
+        if (io->direction == QA_SOURCE_SAVE_READ) {
+            if (qualified.dialect != request->source.dialect || qualified.origin != request->source.origin || qualified.seat != request->source.seat ||
+                qualified.direct != request->source.direct || qualified.console_text != request->source.console_text)
+                return tool_save_fail(io, "tools continuation changed deferred command semantics");
+            qualified.script = request->script; request->source = qualified;
+        }
+        if (!tool_save_text(io, &request->name) || !qa_source_save_u32(io, &format) || format > QA_CAPTURE_JPEG ||
+            !qa_source_save_bool(io, &request->levelshot) || !qa_source_save_bool(io, &request->silent)) return tool_save_fail(io, "invalid capture continuation");
+        request->format = (qa_capture_format)format;
+        if (request->levelshot && !request->name) return tool_save_fail(io, "saved levelshot lacks its admitted map name");
+        if (io->direction == QA_SOURCE_SAVE_WRITE) request = request->next;
+    }
+    if (io->direction == QA_SOURCE_SAVE_READ) tools->capture_tail = capture_tail;
+    return true;
+}
+bool qa_tools_checkpoint_ready(const qa_tools *tools, qa_error *error) {
+    return (tools && !tools->pending_restore && !tools->busy && !tools->output_console && qa_profiler_idle(tools->profiler)) ||
+        tools_fail(error, "tools continuation requires returned callbacks and profiler scopes");
+}
+bool qa_tools_checkpoint(const qa_tools *tools, qa_session *session, const qa_tools_checkpoint_refs *refs, qa_buffer *out, qa_error *error) {
+    if (!qa_tools_checkpoint_ready(tools, error) || !out || !refs || !refs->services_encode ||
+        !refs->console_encode || !refs->command_context) return tools_fail(error, "tools continuation requires idle qualified owners");
+    qa_source_save_io io = {0}; if (!qa_source_save_writer(&io, session, error)) return false;
+    bool ok = saved_tools_fields(&io, (qa_tools *)tools, tools, refs) && qa_source_save_finish(&io, out);
+    qa_source_save_dispose(&io); return ok;
+}
+bool qa_tools_restore(qa_tools *tools, qa_session *session, const qa_tools_checkpoint_refs *refs, qa_bytes bytes, qa_error *error) {
+    if (!tools || tools->busy || tools->output_console || !qa_profiler_idle(tools->profiler) || !refs || !refs->services_decode ||
+        !refs->console_decode || !refs->command_context) return tools_fail(error, "tools restoration requires idle installed owners");
+    qa_source_save_io io = {0}; qa_tools next = {0};
+    if (!qa_source_save_reader(&io, session, bytes, error)) return false;
+    bool ok = saved_tools_fields(&io, &next, tools, refs) && qa_source_save_finish(&io, NULL);
+    if (ok) {
+        qa_tools old = *tools;
+        tools_profiler_exchange(tools->profiler, next.profiler); tools_debug_exchange(tools->debug, next.debug);
+        old.profiler = next.profiler; old.debug = next.debug; next.profiler = tools->profiler; next.debug = tools->debug;
+        *tools = next; if (!tools->captures) tools->capture_tail = &tools->captures;
+        saved_private_free(&old);
+    } else saved_private_free(&next);
+    qa_source_save_dispose(&io); return ok;
+}
+bool qa_tools_rebind_ready(const qa_tools *tools, const void *old_context, const void *new_context, qa_error *error) {
+    return (tools && !tools->pending_restore && !tools->busy && !tools->output_console && new_context && tools->options.context == old_context &&
+        tools_profiler_rebind_ready(tools->profiler, old_context, error)) || tools_fail(error, "tools publication requires its actual idle callback owner");
+}
+void qa_tools_rebind_context(qa_tools *tools, void *context) { tools->options.context = context; tools_profiler_rebind(tools->profiler, context); }
 bool qa_tools_attach_console(qa_tools *tools, qa_console *console, qa_error *error) {
     if (!tools || !console || tools->busy || !output_ready(&tools->options)) return tools_fail(error, "invalid tools console admission");
     for (tools_console *it = tools->consoles; it; it = it->next) if (it->console == console) return true;
@@ -210,24 +324,24 @@ bool qa_tools_destroy(qa_tools *tools, qa_error *error) {
     free(tools); return true;
 }
 bool qa_tools_set_files(qa_tools *tools, qa_vfs *files, qa_mount_id mount, qa_error *error) {
-    if (!tools || !files || !mount || tools->busy || tools->captures) return tools_fail(error, "tools filesystem change requires idle capture");
+    if (!tools || !files || !mount || tools->busy || tools->pending_restore || tools->captures) return tools_fail(error, "tools filesystem change requires restored idle capture");
     tools->options.files = files; tools->options.output_mount = mount; return true;
 }
 bool qa_tools_set_camera(qa_tools *tools, qa_camera_document *document, qa_error *error) {
-    if (!tools || tools->busy) return tools_fail(error, "camera editing requires callbacks to return");
+    if (!tools || tools->busy || tools->pending_restore) return tools_fail(error, "camera editing requires restored continuation and returned callbacks");
     qa_camera_retain(document); reset_camera(tools); tools->camera = document; return true;
 }
 bool qa_tools_start_camera(qa_tools *tools, qa_error *error) {
-    if (!tools || tools->busy) return tools_fail(error, "camera start requires callbacks to return");
+    if (!tools || tools->busy || tools->pending_restore) return tools_fail(error, "camera start requires restored continuation and returned callbacks");
     ++tools->busy; bool success = start(tools, error); --tools->busy; return success;
 }
 bool qa_tools_stop_camera(qa_tools *tools, qa_error *error) {
-    if (!tools || tools->busy) return tools_fail(error, "camera stop requires callbacks to return");
+    if (!tools || tools->busy || tools->pending_restore) return tools_fail(error, "camera stop requires restored continuation and returned callbacks");
     stop(tools); return true;
 }
 bool qa_tools_apply_camera(qa_tools *tools, const qa_scene_view *base, bool portal,
                             qa_arena *scratch, qa_scene_view *out, qa_error *error) {
-    if (!tools || !base || !out || !scratch || tools->busy) return tools_fail(error, "invalid camera view application");
+    if (!tools || !base || !out || !scratch || tools->busy || tools->pending_restore) return tools_fail(error, "invalid or pending camera view application");
     if (portal || !tools->playback) { *out = *base; return true; }
     ++tools->busy; qa_camera_sample sample; bool active = false;
     bool success = qa_camera_playback_sample(tools->playback, tools->options.milliseconds(tools->options.context), scratch, &sample, &active, error);
@@ -236,14 +350,14 @@ bool qa_tools_apply_camera(qa_tools *tools, const qa_scene_view *base, bool port
     --tools->busy; return success;
 }
 bool qa_tools_capture_frame(qa_tools *tools, const qa_command_context *source, qa_error *error) {
-    if (!tools || tools->busy || !output_ready(&tools->options)) return tools_fail(error, "capture admission requires idle bound output services");
+    if (!tools || tools->busy || tools->pending_restore || !output_ready(&tools->options)) return tools_fail(error, "capture admission requires restored idle output services");
     ++tools->busy; bool success = capture_queue(tools, source, QA_CAPTURE_TGA, NULL, false, false, error); --tools->busy; return success;
 }
 bool qa_tools_pending_capture(const qa_tools *tools) { return tools && tools->captures; }
 qa_profiler *qa_tools_profiler(qa_tools *tools) { return tools ? tools->profiler : NULL; }
 qa_debug_store *qa_tools_debug(qa_tools *tools) { return tools ? tools->debug : NULL; }
 bool qa_tools_after_present(qa_tools *tools, qa_error *error) {
-    if (!tools || tools->busy) return tools_fail(error, "capture presentation cannot reenter callbacks");
+    if (!tools || tools->busy || tools->pending_restore) return tools_fail(error, "capture presentation requires restored continuation and returned callbacks");
     if (!tools->captures) return true;
     ++tools->busy; qa_image image = {0}; qa_error read_error = {0};
     bool success = tools->options.read_frame(tools->options.context, &image, &read_error);

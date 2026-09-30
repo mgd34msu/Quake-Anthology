@@ -1,4 +1,5 @@
 #include "llm_internal.h"
+#include "save_internal.h"
 #include "qa/text.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,6 +11,7 @@ typedef struct console_request {
     qa_command_context source;
     qa_llm_request_id id;
     qa_buffer answer;
+    char *script;
     qa_error error;
     bool execute, ready;
 } console_request;
@@ -40,7 +42,7 @@ static void print(llm_console *binding, const qa_command_context *source, const 
     if (qa_console_output_redirected(binding->console)) qa_console_emit(binding->console, source, text);
     else if (s->options.print) s->options.print(s->options.context, source, text);
 }
-static void retire(console_request *request) { if (request) { qa_buffer_free(&request->answer); free(request); } }
+static void retire(console_request *request) { if (request) { qa_buffer_free(&request->answer); free(request->script); free(request); } }
 static void cancel(llm_console *binding, console_request **link) {
     console_request *request = *link; *link = request->next;
     qa_llm_cancel(binding->owner, request->id); retire(request);
@@ -55,9 +57,92 @@ static void completed(void *context, qa_llm_request_id id, qa_bytes answer, cons
     if (answer.size) memcpy(request->answer.data, answer.data, answer.size);
     request->answer.data[answer.size] = 0; request->answer.size = answer.size;
 }
+bool llm_console_observer_encode(const qa_llm *s, const qa_llm_observer *observer, uint64_t *id) {
+    if (observer->text || observer->complete != completed) return false;
+    for (const llm_console *b = s->consoles; b; b = b->next)
+        for (const console_request *r = b->requests; r; r = r->next)
+            if (observer->context == r && !r->ready) { *id = r->id; return true; }
+    return false;
+}
+bool llm_console_observer_decode(qa_llm *s, uint64_t id, qa_llm_observer *observer) {
+    for (llm_console *b = s->consoles; b; b = b->next)
+        for (console_request *r = b->requests; r; r = r->next)
+            if (r->id == id && !r->ready) { *observer = (qa_llm_observer){.context = r, .complete = completed}; return true; }
+    return false;
+}
+void llm_console_private_free(qa_llm *s) {
+    while (s->consoles) {
+        llm_console *b = s->consoles; s->consoles = b->next;
+        while (b->requests) { console_request *r = b->requests; b->requests = r->next; retire(r); }
+        free(b);
+    }
+}
+void llm_console_exchange(qa_llm *stable, qa_llm *candidate) {
+    llm_console *result = NULL, **tail = &result;
+    while (candidate->consoles) {
+        llm_console *stage = candidate->consoles; candidate->consoles = stage->next;
+        llm_console **link = &stable->consoles; while ((*link)->console != stage->console) link = &(*link)->next;
+        llm_console *binding = *link; *link = binding->next;
+        while (binding->requests) { console_request *r = binding->requests; binding->requests = r->next; retire(r); }
+        binding->requests = stage->requests; binding->owner = stable; binding->next = NULL;
+        for (console_request *r = binding->requests; r; r = r->next) r->binding = binding;
+        *tail = binding; tail = &binding->next; free(stage);
+    }
+    candidate->consoles = result;
+}
+bool llm_console_fields(qa_source_save_io *io, qa_llm *s, const qa_llm *installed, const qa_llm_checkpoint_refs *refs) {
+    size_t count = 0; for (llm_console *b = s->consoles; b; b = b->next) ++count;
+    if (!qa_source_save_count(io, &count, SIZE_MAX / sizeof(llm_console))) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        size_t actual = 0; for (llm_console *b = installed->consoles; b; b = b->next) ++actual;
+        if (actual != count) return tool_save_fail(io, "saved LLM console roster differs from installed candidate");
+    }
+    llm_console *binding = s->consoles, **tail = &s->consoles;
+    for (size_t i = 0; i < count; ++i) {
+        uint64_t id = 0; llm_console *actual = NULL;
+        if (io->direction == QA_SOURCE_SAVE_WRITE && !refs->console_encode(refs->context, binding->console, &id, io->error)) return false;
+        if (!qa_source_save_u64(io, &id)) return false;
+        if (io->direction == QA_SOURCE_SAVE_READ) {
+            qa_console *console = NULL;
+            if (!refs->console_decode(refs->context, id, &console, io->error) || !console) return tool_save_fail(io, "unresolved saved LLM console");
+            for (llm_console *b = installed->consoles; b; b = b->next) if (b->console == console) actual = b;
+            if (!actual) return tool_save_fail(io, "saved LLM console lacks installed callback bindings");
+            for (llm_console *b = s->consoles; b; b = b->next) if (b->console == console) return tool_save_fail(io, "duplicate saved LLM console");
+            binding = calloc(1, sizeof *binding); if (!binding) return tool_save_fail(io, "allocating saved LLM binding");
+            binding->owner = s; binding->console = console; *tail = binding; tail = &binding->next;
+        }
+        size_t requests = 0; for (console_request *r = binding->requests; r; r = r->next) ++requests;
+        if (!qa_source_save_count(io, &requests, SIZE_MAX / sizeof(console_request))) return false;
+        console_request *request = binding->requests, **request_tail = &binding->requests;
+        for (size_t j = 0; j < requests; ++j) {
+            if (io->direction == QA_SOURCE_SAVE_READ) {
+                request = calloc(1, sizeof *request); if (!request) return tool_save_fail(io, "allocating saved LLM console request");
+                request->binding = actual; *request_tail = request; request_tail = &request->next;
+            }
+            if (!qa_source_save_u64(io, &request->id) || !request->id || (s->next_id && request->id >= s->next_id) ||
+                !tool_save_context(io, &request->source, &request->script) || request->source.script || !local(&request->source) ||
+                !qa_source_save_bool(io, &request->execute) || !qa_source_save_bool(io, &request->ready) ||
+                !tool_save_blob(io, &request->answer, true) || !tool_save_error(io, &request->error)) return tool_save_fail(io, "invalid saved LLM console request");
+            if (request->answer.data && memchr(request->answer.data, 0, request->answer.size)) return tool_save_fail(io, "saved console answer contains NUL");
+            if (request->ready && request->error.code == QA_OK && !request->answer.data) return tool_save_fail(io, "saved successful console result lacks its owned answer");
+            qa_command_context qualified = {0};
+            if (!refs->command_context(refs->context, &request->source, &qualified, io->error)) return false;
+            if (io->direction == QA_SOURCE_SAVE_READ) {
+                if (qualified.dialect != request->source.dialect || qualified.origin != request->source.origin || qualified.seat != request->source.seat ||
+                    qualified.direct != request->source.direct || qualified.console_text != request->source.console_text)
+                    return tool_save_fail(io, "LLM continuation changed deferred command semantics");
+                qualified.script = request->script; request->source = qualified;
+                for (llm_console *b = s->consoles; b; b = b->next) for (console_request *r = b->requests; r; r = r->next)
+                    if (r != request && r->id == request->id) return tool_save_fail(io, "duplicate saved LLM console request identity");
+            } else request = request->next;
+        }
+        if (io->direction == QA_SOURCE_SAVE_WRITE) binding = binding->next;
+    }
+    return true;
+}
 static bool command(void *context, const qa_command_invocation *call, qa_error *error) {
     llm_console *binding = context; qa_llm *s = binding->owner;
-    if (s->busy) return llm_fail(error, "LLM commands require callbacks to return");
+    if (s->busy || s->pending_restore) return llm_fail(error, "LLM commands require restored continuation and returned callbacks");
     if (!local(&call->context)) return llm_fail(error, "LLM commands require direct input from a local player console");
     ++s->busy; bool active = s->options.context_active(s->options.context, &call->context); --s->busy;
     if (!active) return llm_fail(error, "LLM console context has retired");
