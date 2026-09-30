@@ -114,7 +114,16 @@ typedef struct qa_scene_vertex {
  * an existing active reference; cached retirement records cannot be revived.
  * References are atomic, but callers must synchronize frame publication and never reset a
  * frame while a backend consumes it. */
-qa_scene_geometry *qa_scene_geometry_adopt(qa_scene_vertex *, uint32_t *, qa_error *);
+qa_scene_geometry *qa_scene_geometry_adopt(qa_scene_vertex *, size_t vertex_allocation_count,
+                                          uint32_t *, size_t index_allocation_count, qa_error *);
+typedef struct qa_scene_geometry_view {
+    const qa_scene_vertex *vertices;
+    const uint32_t *indices;
+    size_t vertex_count, index_count;
+} qa_scene_geometry_view;
+/* Actual allocated extents, which may exceed a particular mesh's used prefix.
+ * Read requires an active owner reference; retirement-only caches have none. */
+bool qa_scene_geometry_read(const qa_scene_geometry *, qa_scene_geometry_view *);
 void qa_scene_geometry_retain(const qa_scene_geometry *);
 void qa_scene_geometry_release(const qa_scene_geometry *);
 /* Backend residency keeps only the retirement record alive. It cannot prolong

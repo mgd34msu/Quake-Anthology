@@ -11,15 +11,21 @@ struct qa_scene_geometry {
     atomic_size_t active, references;
     qa_scene_vertex *vertices;
     uint32_t *indices;
+    size_t vertex_count, index_count;
 };
 
 static const char *const format_extensions[] = {".png", ".jpg", ".tga", ".jpeg", ".bmp", ".gif"};
 static bool image_from_rgba(qa_scene_resources *, const char *, const qa_image *,
                             const qa_scene_image_options *, qa_scene_image **, qa_error *);
 
-qa_scene_geometry *qa_scene_geometry_adopt(qa_scene_vertex *vertices, uint32_t *indices,
-                                         qa_error *error)
+qa_scene_geometry *qa_scene_geometry_adopt(qa_scene_vertex *vertices, size_t vertex_count,
+                                         uint32_t *indices, size_t index_count, qa_error *error)
 {
+    if ((vertex_count && !vertices) || (index_count && !indices) ||
+        vertex_count > SIZE_MAX / sizeof(*vertices) || index_count > SIZE_MAX / sizeof(*indices)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid scene geometry allocation extents");
+        return NULL;
+    }
     qa_scene_geometry *geometry = malloc(sizeof(*geometry));
     if (geometry == NULL) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate scene geometry ownership");
@@ -29,7 +35,15 @@ qa_scene_geometry *qa_scene_geometry_adopt(qa_scene_vertex *vertices, uint32_t *
     atomic_init(&geometry->references, 1);
     geometry->vertices = vertices;
     geometry->indices = indices;
+    geometry->vertex_count = vertex_count;
+    geometry->index_count = index_count;
     return geometry;
+}
+bool qa_scene_geometry_read(const qa_scene_geometry *geometry, qa_scene_geometry_view *out)
+{
+    if (!out || !qa_scene_geometry_active(geometry)) return false;
+    *out = (qa_scene_geometry_view){geometry->vertices,geometry->indices,geometry->vertex_count,geometry->index_count};
+    return true;
 }
 
 void qa_scene_geometry_cache_retain(const qa_scene_geometry *borrowed)

@@ -88,7 +88,8 @@ bool scene_model_topology(qa_scene_model *model, uint32_t mesh_index, qa_error *
         free(name);
         if (!ok) return false;
     }
-    qa_scene_geometry *geometry = qa_scene_geometry_adopt(mesh->vertices, mesh->indices, error);
+    size_t allocated_corners = corners ? corners : 1;
+    qa_scene_geometry *geometry = qa_scene_geometry_adopt(mesh->vertices, allocated_corners, mesh->indices, allocated_corners, error);
     if (!geometry) return false;
     mesh->retained = (qa_scene_mesh){.identity = qa_scene_identity(),
         .revision = 1, .vertices = mesh->vertices, .indices = mesh->indices,

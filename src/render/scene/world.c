@@ -108,7 +108,7 @@ bool qaw_mesh_allocate(qa_scene_world *world, qaw_surface *surface,
     if (vertices != 0 && surface->vertices == NULL) return false;
     surface->indices = world_array(indices, sizeof(*surface->indices), error);
     if (indices != 0 && surface->indices == NULL) return false;
-    qa_scene_geometry *geometry = qa_scene_geometry_adopt(surface->vertices, surface->indices, error);
+    qa_scene_geometry *geometry = qa_scene_geometry_adopt(surface->vertices, vertices, surface->indices, indices, error);
     if (geometry == NULL) return false;
     surface->mesh = (qa_scene_mesh){
         .identity = qa_scene_identity(),
