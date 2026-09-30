@@ -335,6 +335,7 @@ static bool construct_q1(qa_application *application,
                        .find_targets = q1_find_targets,
                        .combat_provider = q1_combat_provider,
                        .weapon_parameters = application_q1_weapon_parameters,
+                       .weapon_observation = application_q1_weapon_observation,
                        .before_fire = application_q1_before_fire,
                        .attack_delay = application_q1_attack_delay,
                        .nail_fire = application_q1_nail_fire};

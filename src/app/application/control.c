@@ -14,7 +14,7 @@ typedef struct application_move_call {
     application_provider *character;
     application_provider *arsenal;
     application_provider *effects;
-    application_provider *entities;
+    application_provider *world;
     application_provider *q3[4];
     size_t q3_count;
     qa_q1_game_operation q1_operations[5];
@@ -40,7 +40,7 @@ static void end_q1_operations(application_move_call *move)
 static bool begin_q1_operations(application_move_call *move, qa_error *error)
 {
     application_provider *providers[] = {move->movement, move->character, move->arsenal,
-                                         move->effects, move->entities};
+                                         move->effects, move->world};
     for (size_t i = 0; i < sizeof(providers) / sizeof(providers[0]); ++i) {
         application_provider *provider = providers[i];
         if (!provider || provider->kind != APPLICATION_PROVIDER_Q1) continue;
@@ -992,13 +992,20 @@ static bool finish_native_players(application_move_call *move,
     }
     if (!live(move->application, actor))
         return true;
-    if (move->entities != NULL &&
-        move->entities->kind == APPLICATION_PROVIDER_Q1) {
+    application_provider *map = application_world_provider(move->application,
+                                                           QA_ROLE_ENTITIES, "");
+    if (map != NULL && map->constructed && map->attached && !map->close_pending &&
+        map->kind == APPLICATION_PROVIDER_Q1) {
         move->committed = true;
-        if (!qa_q1_game_rogue_earthquake(move->entities->state.q1, actor,
-                                         error) ||
-            !qa_q1_game_map_after_physics(move->entities->state.q1, actor,
-                                          error))
+        if (!qa_q1_game_rogue_earthquake(map->state.q1, actor, error))
+            return false;
+        if (!live(move->application, actor))
+            return true;
+        if (map->close_pending || !map->constructed || !map->attached ||
+            application_world_provider(move->application, QA_ROLE_ENTITIES, "") != map)
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                                    "Authored earthquake retired its selected world source");
+        if (!qa_q1_game_map_after_physics(map->state.q1, actor, error))
             return false;
     }
     if (!live(move->application, actor))
@@ -1099,8 +1106,7 @@ bool application_control_move_applied(qa_application *application,
                                             QA_ROLE_ARSENAL, ""),
         .effects = application_provider_for(application, actor,
                                             QA_ROLE_EFFECTS, ""),
-        .entities = application_provider_for(application, actor,
-                                             QA_ROLE_ENTITIES, ""),
+        .world = application_world_provider(application, QA_ROLE_ENTITIES, ""),
     };
     add_q3(&move, move.movement);
     add_q3(&move, move.character);
@@ -1245,7 +1251,7 @@ bool application_control_guest_complete(qa_application *application, qa_actor_id
         .arsenal = application_provider_for(application, actor, QA_ROLE_ARSENAL, ""),
         .character = application_provider_for(application, actor, QA_ROLE_CHARACTER, ""),
         .effects = application_provider_for(application, actor, QA_ROLE_EFFECTS, ""),
-        .entities = application_provider_for(application, actor, QA_ROLE_ENTITIES, "")};
+        .world = application_world_provider(application, QA_ROLE_ENTITIES, "")};
     qa_body_state body;
     bool ok = begin_q1_operations(&move, error) &&
               qa_world_body_read(application->world, actor, &body, error);
