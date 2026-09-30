@@ -29,6 +29,8 @@ bool frontend_source_complete_groups(const qa_frontend *, qa_error *);
 void frontend_source_finish_groups(qa_frontend *);
 /* Candidate teardown calls this after guest leases have retired. */
 bool frontend_source_discard_unbound(qa_frontend *, qa_error *);
+/* Includes admitted groups before their real provider factories bind. */
+bool frontend_source_identity_used(const qa_frontend *, uint64_t);
 bool frontend_source_group_role_read(const qa_frontend *, size_t group,
     size_t role, frontend_source_role_identity *);
 #endif

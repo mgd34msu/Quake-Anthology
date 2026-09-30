@@ -642,3 +642,11 @@ bool frontend_source_discard_unbound(qa_frontend *frontend, qa_error *error)
     }
     frontend->source_restoring = false; return true;
 }
+
+bool frontend_source_identity_used(const qa_frontend *frontend, uint64_t identity)
+{
+    if (!frontend) return false;
+    for (const frontend_source *source = frontend->sources; source; source = source->next)
+        if (source->identity == identity) return true;
+    return false;
+}

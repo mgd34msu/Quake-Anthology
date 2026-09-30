@@ -1020,6 +1020,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/commands.c
     src/app/frontend/content_inventory.c
     src/app/frontend/frame.c
+    src/app/frontend/image_inventory.c
     src/app/frontend/travel.c
     src/app/frontend/launch.c
     src/app/frontend/lifetime.c
