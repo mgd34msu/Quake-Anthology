@@ -121,6 +121,7 @@ static bool bind_player(application_provider *provider, uint32_t slot, uint32_t 
     if (!qualified && !spectator && !qa_qc_program_find_function(provider->state.qc.program, connect, &index))
         return application_fail(error, QA_ERROR_UNSUPPORTED, "QuakeC selected client callback is absent");
     if (!qa_qc_game_bind_client(provider->state.qc.game, slot, actor, error)) return false;
+    if (!client->connected && new_player) client->colors = 0;
     client->actor = actor; client->seat = seat; client->connected = true; client->spectator = spectator;
     client->primary_character = primary_character;
     if (qualified) {
@@ -173,7 +174,11 @@ bool application_qc_begin_player(application_provider *provider, qa_actor_id act
         if (client->spawned) return true;
         if (!client->has_parms || !qa_actors_get(qa_session_actors(engine->services.session), actor))
             return application_fail(error, QA_ERROR_ARGUMENT, "QC source begin lacks its retained actor or spawn parameters");
-        if (!parms(engine, client, false, error) || !(client->spectator ?
+        int32_t reference;
+        if (!application_qc_reference(engine, actor, &reference, error) ||
+            !application_qc_set_float(engine, reference, "colormap", (float)slot, error) ||
+            !application_qc_set_float(engine, reference, "team", (float)((client->colors & 15u) + 1u), error) ||
+            !parms(engine, client, false, error) || !(client->spectator ?
             application_qc_spectator_callback(engine, "SpectatorConnect", actor, error) :
             application_qc_named(engine, "ClientConnect", actor, error))) return false;
         if (!client->spectator && !application_qc_named(engine, "PutClientInServer", actor, error)) return false;
@@ -185,6 +190,30 @@ bool application_qc_begin_player(application_provider *provider, qa_actor_id act
             application_control_ensure(provider->application, actor, body.angles, &control, error);
     }
     return application_fail(error, QA_ERROR_NOT_FOUND, "QC source begin has no reserved connected client");
+}
+bool application_qc_client_colors(application_provider *provider, qa_actor_id actor,
+    int32_t top, int32_t bottom, qa_error *error)
+{
+    struct application_qc_state *engine = provider && provider->kind == APPLICATION_PROVIDER_QC ? provider->state.qc.engine : NULL;
+    if (!engine || provider->state.qc.qualified || !qa_qc_idle(provider->state.qc.instance) ||
+        !application_qc_input_idle(provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC client colors require an idle classic source client");
+    uint32_t shirt = (uint32_t)top & 15u, pants = (uint32_t)bottom & 15u;
+    if (shirt > 13) shirt = 13;
+    if (pants > 13) pants = 13;
+    for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
+        application_qc_client *client = &engine->clients[slot];
+        if (!client->connected || !qa_actor_id_equal(client->actor, actor)) continue;
+        int32_t reference; qa_qc_slot_binding binding;
+        if (!qa_actors_get(qa_session_actors(provider->application->session), actor) ||
+            !qa_qc_slot(provider->state.qc.instance, slot, &binding) || binding.kind != QA_QC_SLOT_BORROWED ||
+            !qa_actor_id_equal(binding.actor, actor) || !application_qc_reference(engine, actor, &reference, error))
+            return application_fail(error, QA_ERROR_ARGUMENT, "QC colors lack the connected borrowed client binding");
+        if (!application_qc_set_float(engine, reference, "team", (float)(pants + 1u), error)) return false;
+        client->colors = (uint8_t)((shirt << 4) | pants);
+        return true;
+    }
+    return application_fail(error, QA_ERROR_NOT_FOUND, "QC colors have no connected source client");
 }
 bool application_qc_change_parms(application_provider *provider, qa_error *error)
 {
