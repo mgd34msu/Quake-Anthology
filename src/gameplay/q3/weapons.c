@@ -74,9 +74,16 @@ static bool impact_event(qa_q3_game *game, qa_actor_id shooter, qa_q3_weapon wea
 }
 static bool bullet(qa_q3_game *game, qa_actor_id shooter, qa_q3_weapon weapon,
                    q3_attack_geometry attack, float spread, float damage, qa_error *error) {
-    float angle = q3_random(game) * Q3_PI * 2;
-    float vertical = sinf(angle) * q3_crandom(game) * spread * 16;
-    float horizontal = cosf(angle) * q3_crandom(game) * spread * 16;
+    float angle = q3_source_float_multiply(
+        q3_source_float_multiply(q3_random(game), Q3_PI), 2.0f);
+    float vertical = q3_source_float_multiply(
+        q3_source_float_multiply(
+            q3_source_float_multiply((float)sin((double)angle), q3_crandom(game)), spread),
+        16.0f);
+    float horizontal = q3_source_float_multiply(
+        q3_source_float_multiply(
+            q3_source_float_multiply((float)cos((double)angle), q3_crandom(game)), spread),
+        16.0f);
     qa_vec3 end =
         qa_vec_add(qa_vec_add(qa_vec_add(attack.muzzle, qa_vec_scale(attack.forward, 131072)),
                               qa_vec_scale(attack.right, horizontal)),
