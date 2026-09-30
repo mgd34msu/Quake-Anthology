@@ -1031,6 +1031,8 @@ static bool reacts_to_pain(const q2m_context *context) {
 
 static bool stop_loop_sound(q2m_context *context, const char *path, int channel,
                             qa_error *error) {
+  if (context->monster->definition->species == Q2M_GUARDIAN)
+    context->monster->weapon_sound = 0;
   qa_builtin_event event = {
       .kind = QA_BUILTIN_STOP_SOUND,
       .family = QA_GAME_Q2,
@@ -1247,6 +1249,61 @@ static bool pain_hover(q2m_context *context, qa_error *error) {
   return q2m_set_move(context, move, rerelease, error);
 }
 
+static bool pain_soldier(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  qa_q2_game *g = context->game;
+  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool heavy = m->definition->species == Q2M_SOLDIER_RIPPER ||
+               m->definition->species == Q2M_SOLDIER_HYPER ||
+               m->definition->species == Q2M_SOLDIER_LASER;
+  bool rogue = g->options.product == QA_Q2_ROGUE && !heavy;
+  if (context->combat.health < m->max_health * .5f)
+    m->skin |= 1;
+  else if (rerelease)
+    m->skin &= ~1;
+  if (rerelease || rogue) {
+    m->dodging = false;
+    if (rerelease && m->attack_state == Q2M_SLIDING)
+      m->attack_state = Q2M_STRAIGHT;
+    m->charging = false;
+    m->manual_steering = false;
+  }
+  const char *pain1 = heavy && !rerelease ? "soldierh_move_pain1" : "soldier_move_pain1";
+  const char *pain2 = heavy && !rerelease ? "soldierh_move_pain2" : "soldier_move_pain2";
+  const char *pain3 = heavy && !rerelease ? "soldierh_move_pain3" : "soldier_move_pain3";
+  const char *pain4 = heavy && !rerelease ? "soldierh_move_pain4" : "soldier_move_pain4";
+  bool airborne = context->body.velocity.z > 100.0f;
+  if (g->now_ns < m->pain_ns) {
+    if (!airborne || !m->move ||
+        (strcmp(m->move->name, pain1) != 0 && strcmp(m->move->name, pain2) != 0 &&
+         strcmp(m->move->name, pain3) != 0))
+      return true;
+  } else {
+    m->pain_ns = q2m_after(g->now_ns, 3.0);
+    int type = (rerelease ? m->count : m->skin) | 1;
+    const char *sound = type == 1 ? "soldier/solpain2.wav"
+                        : type == 3 ? "soldier/solpain1.wav"
+                                    : "soldier/solpain3.wav";
+    if (!q2m_sound(context, sound, 2, 1.0f, error)) return false;
+    if (!q2m_alive(context)) return true;
+    if (!airborne) {
+      if (rerelease ? !reacts_to_pain(context) : g->options.skill == 3)
+        return true;
+      float draw = q2m_random(g);
+      if (!q2m_set_move(context, draw < .33f ? pain1 : draw < .66f ? pain2 : pain3,
+                        true, error)) return false;
+      if ((rerelease || rogue) && m->ducked &&
+          !q2m_dispatch(context, "monster_duck_up", error)) return false;
+      return !q2m_alive(context) || q2m_soldier_sound_end(context, error);
+    }
+  }
+  if ((rerelease || rogue) && m->ducked &&
+      !q2m_dispatch(context, "monster_duck_up", error)) return false;
+  if (!q2m_alive(context)) return true;
+  if (!q2m_set_move(context, pain4, true, error)) return false;
+  return q2m_soldier_sound_end(context, error);
+}
+
 static bool pain_tank(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *m = context->monster;
   qa_q2_game *g = context->game;
@@ -1427,10 +1484,9 @@ static bool pain_guardian(q2m_context *context, float damage, qa_error *error) {
   monster->pain_ns = q2m_after(context->game->now_ns, 3.0);
   if (!reacts_to_pain(context))
     return true;
-  if (!stop_loop_sound(context, "weapons/hyprbl1a.wav", 1, error))
+  if (!q2m_set_move(context, "guardian_move_pain1", true, error))
     return false;
-  return !q2m_alive(context) ||
-         q2m_set_move(context, "guardian_move_pain1", true, error);
+  return stop_loop_sound(context, "weapons/hyprbl1a.wav", 0, error);
 }
 
 static bool pain_rerelease_makron(q2m_context *context, float damage,
@@ -1570,6 +1626,10 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
   if (species == Q2M_GUNNER) return pain_gunner(context, error);
   if (species == Q2M_HOVER || species == Q2M_DAEDALUS) return pain_hover(context, error);
   if (species == Q2M_TANK || species == Q2M_TANK_COMMANDER) return pain_tank(context, error);
+  if (species == Q2M_SOLDIER_LIGHT || species == Q2M_SOLDIER ||
+      species == Q2M_SOLDIER_SS || species == Q2M_SOLDIER_RIPPER ||
+      species == Q2M_SOLDIER_HYPER || species == Q2M_SOLDIER_LASER)
+    return pain_soldier(context, error);
   float damage = monster->pending_damage;
   if (context->combat.health < monster->base_health * 0.5f)
     monster->skin |= 1;
@@ -2464,6 +2524,15 @@ bool q2m_die(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   if (monster->gibbed)
     return true;
+  if (monster->definition->species == Q2M_SOLDIER_LIGHT ||
+      monster->definition->species == Q2M_SOLDIER ||
+      monster->definition->species == Q2M_SOLDIER_SS ||
+      monster->definition->species == Q2M_SOLDIER_RIPPER ||
+      monster->definition->species == Q2M_SOLDIER_HYPER ||
+      monster->definition->species == Q2M_SOLDIER_LASER) {
+    if (!q2m_soldier_sound_end(context, error)) return false;
+    if (!q2m_alive(context)) return true;
+  }
 
   if (!q2m_medic_died(context, error))
     return false;

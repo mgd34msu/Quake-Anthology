@@ -131,9 +131,10 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
   }
   const struct qa_q2_monster *monster = actor->monster;
   qa_q2_monster_checkpoint saved = {
-      .version = 9,
+      .version = 10,
       .start_phase = (uint32_t)monster->start_phase,
       .combat_target = monster->combat_target,
+      .weapon_sound = monster->weapon_sound,
       .start_due_ns = monster->start_due_ns,
       .death_notified = monster->death_notified,
       .spawnflags = monster->spawnflags,
@@ -374,7 +375,10 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   if (!callback_boundary(game, error))
     return false;
   bool controller = saved->controller_kind != Q2M_CONTROLLER_NONE;
-  if (saved->version != 9 || saved->start_phase > Q2M_START_MANUAL ||
+  if (saved->version != 10 || saved->start_phase > Q2M_START_MANUAL ||
+      (saved->weapon_sound && !qa_strings_text(qa_session_strings(game->services.session),
+                                               saved->weapon_sound).size) ||
+      (controller && saved->weapon_sound) ||
       saved->corpse_phase > Q2M_CORPSE_HOVER ||
       (saved->corpse_phase != Q2M_CORPSE_IDLE && !saved->corpse) ||
       saved->initial_power_armor > QA_POWER_SHIELD || saved->max_power_armor < 0 ||
@@ -505,6 +509,7 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   Q2M_RESTORE(skin);
   Q2M_RESTORE(style);
   Q2M_RESTORE(count);
+  Q2M_RESTORE(weapon_sound);
   Q2M_RESTORE(entity_scale);
   Q2M_RESTORE(animation_scale);
   Q2M_RESTORE(base_health);

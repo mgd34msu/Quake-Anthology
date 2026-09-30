@@ -92,7 +92,7 @@ typedef struct qa_q2_monster_checkpoint {
   char next_move[QA_Q2_MONSTER_MOVE_CAPACITY];
   uint32_t spawnflags, attack_state, spawned_by, controller_kind;
   uint32_t start_phase;
-  qa_string_id combat_target;
+  qa_string_id combat_target, weapon_sound;
   uint64_t start_due_ns;
   bool death_notified;
   int frame, next_frame, old_frame, skin, style, count;

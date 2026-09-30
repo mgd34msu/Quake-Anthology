@@ -481,6 +481,29 @@ static const q2m_definition rerelease_gladb = MONSTER(
     "gladiator_move_death", NULL, Q2M_ATTACK_PLASMA, Q2M_ATTACK_HIT, 100, 20,
     725);
 
+#define RERELEASE_SOLDIERH(name, species, health, attack, damage, speed) \
+  MONSTER(name, "models/monsters/soldier/tris.md2", \
+          "foundation/moves:rerelease_soldierMoves", species, Q2M_WALK, \
+          BOUNDS(-16, -16, -24, 16, 16, 32), health, -30, 100, 1, 0, 20, \
+          Q2M_HAS_RANGED | Q2M_DUCKS | Q2M_SIDESTEPS | \
+              (species == Q2M_SOLDIER_LASER ? 0 : Q2M_BLIND_FIRE), \
+          "soldier_move_stand1", "soldier_move_stand1", \
+          "soldier_move_walk1", "soldier_move_start_run", \
+          "soldierh_move_attack1", "soldierh_move_attack2", NULL, \
+          "soldier_move_pain1", "soldier_move_pain2", "soldier_move_pain3", \
+          "soldier_move_death1", "soldier_move_death2", attack, \
+          Q2M_ATTACK_NONE, damage, 0, speed)
+static const q2m_definition rerelease_soldier_ripper =
+    RERELEASE_SOLDIERH("monster_soldier_ripper", Q2M_SOLDIER_RIPPER,
+                      50, Q2M_ATTACK_ION, 5, 600);
+static const q2m_definition rerelease_soldier_hyper =
+    RERELEASE_SOLDIERH("monster_soldier_hypergun", Q2M_SOLDIER_HYPER,
+                      60, Q2M_ATTACK_BLUE_BOLT, 1, 600);
+static const q2m_definition rerelease_soldier_laser =
+    RERELEASE_SOLDIERH("monster_soldier_lasergun", Q2M_SOLDIER_LASER,
+                      70, Q2M_ATTACK_BEAM, 1, 1000);
+#undef RERELEASE_SOLDIERH
+
 static const q2m_definition *find_definition(const char *classname) {
   for (size_t i = 0; i < sizeof(definitions) / sizeof(definitions[0]); ++i)
     if (strcmp(definitions[i].classname, classname) == 0)
@@ -493,6 +516,12 @@ const q2m_definition *q2m_definition_for(const qa_q2_game *game,
   if (game == NULL || classname == NULL)
     return NULL;
   if (game->options.edition == QA_Q2_RERELEASE) {
+    if (strcmp(classname, "monster_soldier_ripper") == 0)
+      return &rerelease_soldier_ripper;
+    if (strcmp(classname, "monster_soldier_hypergun") == 0)
+      return &rerelease_soldier_hyper;
+    if (strcmp(classname, "monster_soldier_lasergun") == 0)
+      return &rerelease_soldier_laser;
     if (strcmp(classname, "monster_jorg") == 0)
       return &rerelease_jorg;
     if (strcmp(classname, "monster_gunner") == 0)

@@ -266,7 +266,7 @@ struct qa_q2_monster {
   const q2m_move_set *move_set;
   const q2m_move *move, *next_move;
   qa_string_id classname, model;
-  qa_string_id combat_target;
+  qa_string_id combat_target, weapon_sound;
   q2m_start_phase start_phase;
   uint64_t start_due_ns;
   bool death_notified;
@@ -412,6 +412,8 @@ bool q2m_melee(q2m_context *, float range, float damage, float kick,
                qa_error *);
 bool q2m_hit(q2m_context *, qa_vec3 aim, float damage, float kick, bool *, qa_error *);
 bool q2m_species_melee(q2m_context *, const char *, bool *, qa_error *);
+bool q2m_weapon_sound(q2m_context *, const char *path, qa_error *);
+bool q2m_soldier_sound_end(q2m_context *, qa_error *);
 bool q2m_stalker_callback(q2m_context *, const char *, bool *, qa_error *);
 bool q2m_stalker_pain(q2m_context *, bool reacts, bool chainfist, qa_error *);
 bool q2m_stalker_blocked(q2m_context *, float distance, bool *accepted, qa_error *);

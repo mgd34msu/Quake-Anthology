@@ -6,7 +6,7 @@ bool q2_save_monster(q2_save_io *io, qa_q2_monster_checkpoint *s) {
         !q2_save_text(io, s->move, sizeof(s->move)) ||
         !q2_save_text(io, s->next_move, sizeof(s->next_move))) return false;
     Q2U(spawnflags); Q2U(attack_state); Q2U(spawned_by); Q2U(controller_kind);
-    Q2U(start_phase); Q2N(combat_target); Q2T(start_due_ns); Q2B(death_notified);
+    Q2U(start_phase); Q2N(combat_target); Q2N(weapon_sound); Q2T(start_due_ns); Q2B(death_notified);
     Q2I(frame); Q2I(next_frame); Q2I(old_frame); Q2I(skin); Q2I(style); Q2I(count);
     Q2U(render_flags); Q2F(entity_scale); Q2F(animation_scale); Q2F(base_health);
     Q2F(health_scaling); Q2F(max_health); Q2F(max_power_armor); Q2U(initial_power_armor);

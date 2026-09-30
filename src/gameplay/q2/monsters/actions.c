@@ -338,12 +338,15 @@ static bool simple_sound(q2m_context *context, const char *callback,
   return q2m_sound(context, path, channel, attenuation, error);
 }
 
-static bool soldier_laser_sound(q2m_context *context, bool start,
-                                qa_error *error) {
-  if (context->monster->definition->species != Q2M_SOLDIER_LASER)
+bool q2m_weapon_sound(q2m_context *context, const char *path, qa_error *error) {
+  qa_string_id resource = context->monster->weapon_sound;
+  if (path && !qa_builtin_resource(&context->game->services, path, &resource, error))
+    return false;
+  if (!path && !resource)
     return true;
+  context->monster->weapon_sound = path ? resource : 0;
   qa_builtin_event event = {
-      .kind = start ? QA_BUILTIN_SOUND : QA_BUILTIN_STOP_SOUND,
+      .kind = path ? QA_BUILTIN_SOUND : QA_BUILTIN_STOP_SOUND,
       .family = QA_GAME_Q2,
       .provider = context->game->options.owner,
       .actor = context->actor->id,
@@ -352,13 +355,34 @@ static bool soldier_laser_sound(q2m_context *context, bool start,
       .origin = context->body.origin,
       .volume = 1.0f,
       .attenuation = 1.0f,
-      .channel = 1,
+      .channel = 0,
+      .resource = resource,
+      .flags = path ? 1u : 0u,
       .frame = context->monster->frame,
   };
-  if (!qa_builtin_resource(&context->game->services, "weapons/laser2.wav",
-                           &event.resource, error))
-    return false;
   return qa_builtin_emit(&context->game->services, &event, error);
+}
+
+bool q2m_soldier_sound_end(q2m_context *context, qa_error *error) {
+  if (context->game->options.edition != QA_Q2_RERELEASE ||
+      !context->monster->weapon_sound)
+    return true;
+  if (context->monster->count >= 2 && context->monster->count < 4 &&
+      !q2m_sound(context, "weapons/hyprbd1a.wav", 0, 1.0f, error))
+    return false;
+  return !q2m_alive(context) || q2m_weapon_sound(context, NULL, error);
+}
+
+static bool soldier_laser_sound(q2m_context *context, bool start,
+                                qa_error *error) {
+  if (context->game->options.edition != QA_Q2_RERELEASE)
+    return true;
+  if (!start)
+    return q2m_soldier_sound_end(context, error);
+  if (context->monster->style != 1 || context->monster->count < 2 ||
+      context->monster->count >= 4)
+    return true;
+  return q2m_weapon_sound(context, "weapons/hyprbl1a.wav", error);
 }
 
 static q2m_attack_kind attack_kind(q2m_context *context, const char *callback) {
@@ -938,6 +962,20 @@ static bool soldier_refire(q2m_context *context, bool force, bool *result,
 
 static bool soldier_run(q2m_context *context, qa_error *error) {
   context->monster->dodging = false;
+  if (context->game->options.edition == QA_Q2_RERELEASE) {
+    if (context->monster->attack_state == Q2M_SLIDING)
+      context->monster->attack_state = Q2M_STRAIGHT;
+    if (!q2m_soldier_sound_end(context, error)) return false;
+    if (!q2m_alive(context)) return true;
+    const char *move = context->monster->stand_ground ? "soldier_move_stand1"
+        : context->monster->move &&
+          (strcmp(context->monster->move->name, "soldier_move_walk1") == 0 ||
+           strcmp(context->monster->move->name, "soldier_move_walk2") == 0 ||
+           strcmp(context->monster->move->name, "soldier_move_start_run") == 0 ||
+           strcmp(context->monster->move->name, "soldier_move_run") == 0)
+            ? "soldier_move_run" : "soldier_move_start_run";
+    return q2m_set_move(context, move, true, error);
+  }
   context->monster->charging = false;
   context->monster->hold_frame = false;
   const char *move = context->monster->stand_ground
@@ -1148,6 +1186,10 @@ static bool soldier_callbacks(q2m_context *context, const char *callback,
     return set_duck(context, false, error);
   if (strcmp(callback, "soldier_start_charge") == 0) {
     monster->charging = true;
+    return true;
+  }
+  if (strcmp(callback, "soldier_stop_charge") == 0) {
+    monster->charging = false;
     return true;
   }
   if (strcmp(callback, "soldier_blind_check") == 0) {
@@ -2141,10 +2183,12 @@ static bool conditional_transition(q2m_context *context, const char *callback,
   }
 
   if (strcmp(callback, "guardian_atk1_finish") == 0) {
+    if (!q2m_set_move(context, "guardian_atk1_out", true, error))
+      return false;
+    monster->weapon_sound = 0;
     if (!stop_loop_sound(context, "weapons/hyprbl1a.wav", error))
       return false;
-    return !q2m_alive(context) ||
-           q2m_set_move(context, "guardian_atk1_out", false, error);
+    return true;
   }
 
   if (strcmp(callback, "widow_start_rail") == 0 ||
@@ -2405,6 +2449,20 @@ static bool reattack(q2m_context *context, const char *callback,
 
 static bool end_transition(q2m_context *context, const char *callback,
                            bool *handled, qa_error *error) {
+  if (context->game->options.edition == QA_Q2_RERELEASE &&
+      (strcmp(callback, "soldier_stand") == 0 ||
+       strcmp(callback, "soldier_run") == 0)) {
+    *handled = true;
+    if (strcmp(callback, "soldier_run") == 0)
+      return soldier_run(context, error);
+    float draw = q2m_random(context->game);
+    const char *move = !context->monster->move ||
+                      strcmp(context->monster->move->name, "soldier_move_stand1") != 0 ||
+                      draw < .6f ? "soldier_move_stand1"
+                        : draw < .8f ? "soldier_move_stand2" : "soldier_move_stand3";
+    if (!q2m_set_move(context, move, true, error)) return false;
+    return q2m_soldier_sound_end(context, error);
+  }
   if (strcmp(callback, "soldier_stand_up") == 0) {
     *handled = true;
     if (!q2m_set_move(context, "soldier_move_trip", false, error))
@@ -4190,12 +4248,7 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
   }
 
   if (strcmp(callback, "guardian_atk1_charge") == 0) {
-    qa_builtin_event loop = {.kind = QA_BUILTIN_SOUND, .family = QA_GAME_Q2,
-        .provider = context->game->options.owner, .actor = context->actor->id,
-        .time_ns = context->game->now_ns, .origin = context->body.origin,
-        .volume = 1.0f, .attenuation = 1.0f, .flags = 1u};
-    if (!qa_builtin_resource(&context->game->services, "weapons/hyprbl1a.wav",
-        &loop.resource, error) || !qa_builtin_emit(&context->game->services, &loop, error))
+    if (!q2m_weapon_sound(context, "weapons/hyprbl1a.wav", error))
       return false;
     return !q2m_alive(context) ||
            q2m_sound(context, "weapons/hyprbu1a.wav", 1, 1.0f, error);

@@ -320,8 +320,7 @@ static void dodge_capabilities(const q2m_context *context, bool *duck,
   *duck = false;
   *sidestep = false;
   if (rerelease) {
-    if (context->game->options.product == QA_Q2_XATRIX &&
-        (species == Q2M_GEKK || species_is_soldierh(species))) {
+    if (context->game->options.product == QA_Q2_XATRIX && species == Q2M_GEKK) {
       *duck = true;
       return;
     }
@@ -330,7 +329,7 @@ static void dodge_capabilities(const q2m_context *context, bool *duck,
       *sidestep = true;
       return;
     }
-    if (species == Q2M_INFANTRY || species_is_soldier(species)) {
+    if (species == Q2M_INFANTRY || species_is_soldier(species) || species_is_soldierh(species)) {
       *duck = true;
       *sidestep = true;
     } else if (species == Q2M_BERSERK) {
@@ -377,16 +376,14 @@ static bool dodge_duck(q2m_context *context, float eta_seconds, bool rogue,
          monster->frame == 227 || monster->frame == 255))
       return set_duck_bounds(context, false, error);
     move = "infantry_move_duck";
-  } else if (species_is_soldier(species)) {
-    if (!rogue && (move_is(monster, "soldier_move_trip") ||
-                   move_is(monster, "soldier_move_attack5") ||
-                   move_is(monster, "soldier_move_pain4")))
-      return true;
+  } else if (species_is_soldier(species) ||
+             (!rogue && species_is_soldierh(species))) {
     monster->hold_frame = false;
     if (!rogue && move_is(monster, "soldier_move_attack6"))
       move = "soldier_move_trip";
-    else if (!rogue && q2m_random(context->game) >= 0.5f)
-      move = "soldier_move_attack3";
+    else if (!rogue)
+      move = monster->cocked || q2_random_bounded(context->game, 2) == 0
+                 ? "soldier_move_duck" : "soldier_move_attack3";
     else
       move = "soldier_move_duck";
   } else if (species == Q2M_BERSERK) {
@@ -446,6 +443,10 @@ static bool dodge_duck(q2m_context *context, float eta_seconds, bool rogue,
   if (!q2m_alive(context))
     return true;
   *accepted = true;
+  if (!rogue && (species_is_soldier(species) || species_is_soldierh(species))) {
+    if (!q2m_soldier_sound_end(context, error)) return false;
+    if (!q2m_alive(context)) return true;
+  }
   return set_duck_bounds(context, true, error);
 }
 
@@ -475,13 +476,21 @@ static bool dodge_sidestep(q2m_context *context, bool rogue, bool *accepted,
     } else {
       move = "infantry_move_run";
     }
-  } else if (species_is_soldier(species)) {
+  } else if (species_is_soldier(species) ||
+             (!rogue && species_is_soldierh(species))) {
     if (!rogue && (move_is(monster, "soldier_move_trip") ||
                    move_is(monster, "soldier_move_attack5") ||
                    move_is(monster, "soldier_move_pain4")))
       return true;
+    if (!rogue && monster->count > 3 &&
+        (move_is(monster, "soldier_move_start_run") ||
+         move_is(monster, "soldier_move_run"))) {
+      *accepted = true;
+      return true;
+    }
     move =
-        monster->skin <= 3 ? "soldier_move_attack6" : "soldier_move_start_run";
+        (rogue ? monster->skin : monster->count) <= 3
+            ? "soldier_move_attack6" : "soldier_move_start_run";
   } else if (species == Q2M_BERSERK) {
     if (move_is(monster, "berserk_move_jump") ||
         move_is(monster, "berserk_move_jump2") ||
@@ -529,8 +538,11 @@ static bool dodge_sidestep(q2m_context *context, bool rogue, bool *accepted,
   }
   if (move == NULL || q2m_move_named(monster, move) == NULL)
     return true;
-  if (!move_is(monster, move) && !q2m_set_move(context, move, immediate, error))
-    return false;
+  if (!move_is(monster, move)) {
+    if (!q2m_set_move(context, move, immediate, error)) return false;
+    if (!rogue && (species_is_soldier(species) || species_is_soldierh(species)) &&
+        !q2m_soldier_sound_end(context, error)) return false;
+  }
   *accepted = q2m_alive(context);
   return true;
 }
@@ -623,7 +635,8 @@ bool q2_monster_dodge(qa_q2_game *game, qa_actor_id target,
        game->options.product != QA_Q2_ROGUE) ||
       (game->options.product == QA_Q2_XATRIX &&
        (monster->definition->species == Q2M_GEKK ||
-        species_is_soldierh(monster->definition->species))))
+        (game->options.edition == QA_Q2_CLASSIC &&
+         species_is_soldierh(monster->definition->species)))))
     return classic_dodge(&context, attacker, eta_seconds, error);
 
   if (monster->definition->species == Q2M_STALKER) {
@@ -1474,6 +1487,15 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   if (definition->species == Q2M_TANK_COMMANDER &&
       game->options.edition == QA_Q2_RERELEASE)
     monster->count = 1;
+  if (game->options.edition == QA_Q2_RERELEASE &&
+      (species_is_soldier(definition->species) ||
+       species_is_soldierh(definition->species))) {
+    monster->count = monster->skin;
+    if (species_is_soldierh(definition->species)) {
+      monster->style = 1;
+      monster->skin += 6;
+    }
+  }
   if (game->options.edition == QA_Q2_RERELEASE) {
     switch (definition->species) {
     case Q2M_PARASITE:
@@ -1653,6 +1675,13 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
       return !q2m_alive(&context);
   }
   bool automatic = !(definition->species == Q2M_TURRET && (monster->spawnflags & 128u));
+  if (game->options.edition == QA_Q2_RERELEASE &&
+      (species_is_soldier(definition->species) || species_is_soldierh(definition->species))) {
+    monster->move = NULL;
+    if (!q2m_dispatch(&context, monster->spawnflags & 8u ? "soldier_blind" : "soldier_stand", error))
+      return false;
+    if (!q2m_alive(&context)) return true;
+  }
   if (!q2m_lifecycle_admitted(&context, automatic, previous != NULL, error))
     return false;
   if (!q2m_alive(&context))
