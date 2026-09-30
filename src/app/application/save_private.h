@@ -4,6 +4,14 @@
 #include "qa/save.h"
 #include "qa/persistence_application.h"
 #include "qa/persistence_gameplay.h"
+#include "qa/console_save.h"
+
+typedef struct application_save_console_context {
+    qa_application *application;
+    uint64_t saved_command_generation;
+} application_save_console_context;
+bool application_save_console_resolvers(const application_save_console_context *,
+                                        qa_console_save_resolvers *, qa_error *);
 
 typedef struct application_save_foundation {
     qa_strings *strings;

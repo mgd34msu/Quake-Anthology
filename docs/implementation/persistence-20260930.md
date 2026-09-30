@@ -7,9 +7,10 @@ test, executable, sanitizer, benchmark or gameplay run qualified this packet.
 
 `qa_application_persistence_capture` acquires the application's serial
 persistence operation and constructs the exact owner inventory from the
-committed configuration. Fifteen shared owners have concrete application
+committed configuration. Sixteen shared owners have concrete application
 dispatch: strings, actors, session, world, configuration, roster, cvars,
-application, combat, inventory, pickups, targets, controls, modes and equipment.
+application, combat, inventory, pickups, targets, controls, modes, equipment and
+commands.
 Native Q1/Q2/Q3 and QC instances have concrete provider dispatch. Other
 services supply actual producer descriptors through
 `qa_application_persistence_ops.owners`. Missing producers fail capture; the
@@ -134,7 +135,7 @@ recaptured and compared byte-for-byte with the saved records. Lease regeneration
 or other reconnection changes therefore fail the candidate transaction.
 
 Remaining B30 work includes concrete codecs and application consumers for
-resources, campaign/hub worlds, progression, commands, events, navigation/bots,
+resources, campaign/hub worlds, progression, events, navigation/bots,
 connections, prediction, presentation, audio, input and media. Complete
 QVM/native module private continuations,
 original save adapters, migrations, level-entry autosave consumers,
@@ -171,6 +172,18 @@ registry/publication correctly. They cannot turn stale contexts into a fresh
 publication or execute commands. Canonical actor references remap through the
 candidate session. Complete decode, owned lifetime checks and unchanged
 candidate byte checks precede the dynamic state exchange; partial records are
-reachable by the ordinary console destructor. Application/provider console
-scope identity and coherent network client mapping remain root integration
-dependencies before this becomes the application commands owner.
+reachable by the ordinary console destructor. `QACM` version 1 dispatches every
+actual application/provider console using a sorted provider/role/seat scope,
+including physical-console aliases. The decoder requires the exact candidate
+console set and cross-checks the saved command generation against application
+metadata. Connections restore before commands so qualified network client
+identities can be available. Capture rechecks the actual command record after
+producer validation; restore compares candidate command bytes before and after
+final validation and rechecks shared continuations. The application descriptor
+retains qualified foundation string-owner identities and the declared frontend
+owner, upgrades only the exact saved current publication to the candidate actor
+registry, and keeps stale publications inactive. Actual application constructors
+currently declare scalar session/client zero; unqualified nonzero values fail
+restoration and cannot be invented from connection slots. The generic owner
+codec passed independent source review. Application scope and resolver helpers
+were inspected separately; complete runtime qualification remains deferred.

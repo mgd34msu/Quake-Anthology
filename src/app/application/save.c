@@ -19,6 +19,109 @@
 
 static bool persistence_shared_match(qa_application *, const qa_save_image *, qa_error *);
 
+typedef struct application_saved_console {
+    qa_application_console_scope scope;
+    qa_console *console;
+} application_saved_console;
+
+static int console_order(const void *left, const void *right)
+{
+    const qa_application_console_scope *a = &((const application_saved_console *)left)->scope;
+    const qa_application_console_scope *b = &((const application_saved_console *)right)->scope;
+    if (a->provider != b->provider) return a->provider < b->provider ? -1 : 1;
+    if (a->kind != b->kind) return a->kind < b->kind ? -1 : 1;
+    return a->seat == b->seat ? 0 : a->seat < b->seat ? -1 : 1;
+}
+
+static bool console_inventory(qa_application *app, application_saved_console **out,
+                               size_t *count, qa_error *error)
+{
+    *count = qa_application_console_count(app);
+    if (!*count || *count > SIZE_MAX / sizeof(application_saved_console))
+        return application_fail(error, QA_ERROR_FORMAT, "Application command owner has no complete console inventory");
+    application_saved_console *values = calloc(*count, sizeof(*values));
+    if (!values) return application_fail(error, QA_ERROR_MEMORY, "Retaining actual console scope inventory");
+    bool ok = true;
+    for (size_t i = 0; ok && i < *count; ++i) {
+        values[i].console = qa_application_console_at(app, i, NULL);
+        ok = values[i].console && qa_application_console_scope_read(app, values[i].console, &values[i].scope);
+    }
+    if (ok) {
+        qsort(values, *count, sizeof(*values), console_order);
+        for (size_t i = 1; ok && i < *count; ++i) ok = console_order(values + i - 1, values + i) != 0;
+    }
+    if (!ok) {
+        free(values);
+        return application_fail(error, QA_ERROR_FORMAT, "Actual consoles have missing or duplicate stable source scopes");
+    }
+    *out = values; return true;
+}
+
+static bool commands_header(qa_source_save_io *io, uint64_t *generation, size_t *count, size_t maximum)
+{
+    char magic[4] = {'Q','A','C','M'}; uint32_t version = 1;
+    return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QACM", 4) &&
+        qa_source_save_u32(io, &version) && version == 1 && qa_source_save_u64(io, generation) && *generation &&
+        qa_source_save_count(io, count, maximum);
+}
+
+static bool commands_scope(qa_source_save_io *io, qa_application_console_scope *scope)
+{
+    uint32_t kind = scope->kind;
+    if (!qa_source_save_string(io, &scope->provider) || !qa_source_save_u32(io, &kind) ||
+        kind > QA_APPLICATION_CONSOLE_Q3_UI || !qa_source_save_u32(io, &scope->seat)) return false;
+    scope->kind = (qa_application_console_kind)kind;
+    return scope->kind == QA_APPLICATION_CONSOLE_ENGINE ? !scope->provider && !scope->seat :
+        scope->provider && (scope->kind >= QA_APPLICATION_CONSOLE_Q3_CGAME || !scope->seat);
+}
+
+static bool application_commands_capture(qa_application *app, qa_buffer *out, qa_error *error)
+{
+    application_saved_console *values = NULL; size_t count = 0;
+    if (!console_inventory(app, &values, &count, error)) return false;
+    qa_source_save_io io = {0}; uint64_t generation = app->command_generation;
+    bool ok = qa_source_save_writer(&io, app->session, error) && commands_header(&io, &generation, &count, count);
+    for (size_t i = 0; ok && i < count; ++i) {
+        qa_buffer bytes = {0};
+        ok = commands_scope(&io, &values[i].scope) &&
+            qa_console_save_capture(values[i].console, app->session, &bytes, error) &&
+            qa_source_save_count(&io, &bytes.size, SIZE_MAX) && qa_source_save_bytes(&io, bytes.data, bytes.size);
+        qa_buffer_free(&bytes);
+    }
+    if (ok) ok = generation == app->command_generation && qa_source_save_finish(&io, out);
+    if (!ok && (!error || error->code == QA_OK))
+        application_fail(error, QA_ERROR_FORMAT, "Actual console continuation changed or could not be encoded");
+    qa_source_save_dispose(&io); free(values); return ok;
+}
+
+static bool application_commands_restore(qa_application *app, qa_bytes bytes,
+                                          uint64_t *restored_generation, qa_error *error)
+{
+    application_saved_console *values = NULL; size_t expected = 0;
+    if (!console_inventory(app, &values, &expected, error)) return false;
+    qa_source_save_io io = {0}; size_t count = 0; uint64_t generation = 0;
+    bool ok = qa_source_save_reader(&io, app->session, bytes, error) &&
+        commands_header(&io, &generation, &count, expected) && count == expected;
+    application_save_console_context context = {app, generation};
+    qa_console_save_resolvers resolve = {0};
+    if (ok) ok = application_save_console_resolvers(&context, &resolve, error);
+    for (size_t i = 0; ok && i < count; ++i) {
+        application_saved_console saved = {0}; size_t length = 0;
+        ok = commands_scope(&io, &saved.scope) && !console_order(&saved, values + i) &&
+            qa_source_save_count(&io, &length, SIZE_MAX) && io.offset <= io.input.size &&
+            length <= io.input.size - io.offset;
+        if (ok) {
+            qa_bytes payload = {io.input.data + io.offset, length}; io.offset += length;
+            ok = qa_console_save_restore(values[i].console, app->session, &resolve, payload, error);
+        }
+    }
+    if (ok) ok = qa_source_save_finish(&io, NULL);
+    if (ok) *restored_generation = generation;
+    else if (!error || error->code == QA_OK)
+        application_fail(error, QA_ERROR_FORMAT, "Saved command inventory differs from actual restored console scopes");
+    qa_source_save_dispose(&io); free(values); return ok;
+}
+
 static bool controls_fields(qa_source_save_io *io, qa_application *app,
                              application_control_record *record)
 {
@@ -455,6 +558,7 @@ typedef struct application_persistence {
     qa_buffer foundation[4];
     qa_buffer configuration;
     uint64_t configuration_generation, publication_generation, actor_revision;
+    uint64_t restored_command_generation;
     bool leased;
 } application_persistence;
 
@@ -527,6 +631,7 @@ static const char *shared_schema(qa_save_owner_kind kind)
     case QA_SAVE_CONTROLS: return "qa.controls";
     case QA_SAVE_MODES: return "qa.modes";
     case QA_SAVE_EQUIPMENT: return "qa.equipment";
+    case QA_SAVE_COMMANDS: return "qa.commands";
     default: return NULL;
     }
 }
@@ -807,6 +912,7 @@ static bool persistence_capture_owner(void *opaque, const qa_save_owner *owner,
     case QA_SAVE_CONTROLS: return application_controls_capture(app, out, error);
     case QA_SAVE_MODES: return qa_modes_capture(app->modes, out, error);
     case QA_SAVE_EQUIPMENT: return qa_equipment_capture(app->equipment, out, error);
+    case QA_SAVE_COMMANDS: return application_commands_capture(app, out, error);
     case QA_SAVE_PROVIDER: {
         application_provider *provider = saved_provider(app, owner->instance);
         if (provider && provider_schema(provider))
@@ -827,17 +933,22 @@ static bool persistence_capture_validate(void *opaque, const qa_save_image *imag
 {
     application_persistence *operation = opaque;
     bool ok = persistence_unchanged(operation, error) &&
-        persistence_shared_match(operation->active, image, error) &&
         operation->ops->validate(operation->ops->context, operation->active, image, error) &&
-        persistence_unchanged(operation, error);
-    qa_buffer strings = {0};
+        persistence_unchanged(operation, error) && persistence_shared_match(operation->active, image, error);
+    qa_buffer strings = {0}, commands = {0};
+    if (ok) ok = application_commands_capture(operation->active, &commands, error);
+    if (ok) {
+        const qa_save_record *saved = qa_save_image_find(image, QA_SAVE_COMMANDS, "");
+        if (!saved || commands.size != saved->payload.size || memcmp(commands.data, saved->payload.data, commands.size))
+            ok = application_fail(error, QA_ERROR_ARGUMENT, "producer changed queued console continuation during capture");
+    }
     if (ok) ok = qa_save_strings_encode(qa_session_strings(operation->active->session), &strings, error);
     if (ok) {
         const qa_save_record *saved = qa_save_image_find(image, QA_SAVE_STRINGS, "");
         if (strings.size != saved->payload.size || memcmp(strings.data, saved->payload.data, strings.size))
             ok = application_fail(error, QA_ERROR_ARGUMENT, "producer changed the ordered string table during capture");
     }
-    qa_buffer_free(&strings);
+    qa_buffer_free(&strings); qa_buffer_free(&commands);
     return ok;
 }
 
@@ -910,6 +1021,8 @@ static bool persistence_restore_owner(void *opaque, void *value,
     case QA_SAVE_CONTROLS: return application_controls_restore(candidate, record->payload, error);
     case QA_SAVE_MODES: return qa_modes_restore_bytes(candidate->modes, record->payload, error);
     case QA_SAVE_EQUIPMENT: return qa_equipment_restore_bytes(candidate->equipment, record->payload, error);
+    case QA_SAVE_COMMANDS: return application_commands_restore(candidate, record->payload,
+        &operation->restored_command_generation, error);
     case QA_SAVE_CVARS: {
         qa_cvars_restore *ticket = NULL;
         bool ok = qa_cvars_save_prepare(candidate->cvars, record->payload, &ticket, error) &&
@@ -979,6 +1092,8 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
     if (ok) ok = application_save_foundation_decode(image, &foundation, error) &&
         application_save_foundation_finish(candidate, &foundation, error);
     application_save_foundation_free(&foundation);
+    if (ok && candidate->command_generation != operation->restored_command_generation)
+        ok = application_fail(error, QA_ERROR_FORMAT, "Console publication generation differs from saved application metadata");
     if (ok) ok = persistence_shared_match(candidate, image, error);
     const qa_save_record *configuration = qa_save_image_find(image, QA_SAVE_CONFIGURATION, "");
     qa_configuration_checkpoint checkpoint; qa_bytes identity;
@@ -988,7 +1103,15 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
     if (ok && (candidate->map_revision != qa_save_image_metadata(image)->world_generation ||
         !persistence_safe(candidate)))
         ok = application_fail(error, QA_ERROR_FORMAT, "candidate application is not a complete idle saved world");
-    if (ok) ok = operation->ops->validate(operation->ops->context, candidate, image, error);
+    qa_buffer commands_before = {0}, commands_after = {0};
+    if (ok) ok = application_commands_capture(candidate, &commands_before, error) &&
+        operation->ops->validate(operation->ops->context, candidate, image, error) &&
+        persistence_shared_match(candidate, image, error) &&
+        application_commands_capture(candidate, &commands_after, error);
+    if (ok && (commands_before.size != commands_after.size ||
+        memcmp(commands_before.data, commands_after.data, commands_before.size)))
+        ok = application_fail(error, QA_ERROR_FORMAT, "final validation changed restored console continuation");
+    qa_buffer_free(&commands_before); qa_buffer_free(&commands_after);
     /* Producer restoration may reconnect bindings, but cannot allocate new
      * actor identities or replace the saved ordered string table. */
     qa_buffer actors = {0}, strings = {0}; qa_actor_checkpoint actor_state = {0};
