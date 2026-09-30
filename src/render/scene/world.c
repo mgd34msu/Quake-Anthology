@@ -224,6 +224,7 @@ static bool world_topology(qa_scene_world *world, qa_error *error)
         model->identity = qa_scene_identity();
         if (!qa_bsp_read_model(&world->bsp, i, &model->source, error)) return false;
         size_t capacity = model->source.membership_from_tree ? world->surface_count : model->source.faces.count;
+        model->surface_capacity = capacity;
         model->surfaces = world_array(capacity, sizeof(*model->surfaces), error);
         if (capacity != 0 && model->surfaces == NULL) return false;
         if (world->bsp.family == QA_BSP_Q3) {

@@ -27,7 +27,7 @@ typedef struct qaw_model {
     qa_bsp_model source;
     uint64_t identity;
     uint32_t *surfaces;
-    size_t surface_count;
+    size_t surface_count, surface_capacity;
 } qaw_model;
 
 typedef struct qaw_pending { int32_t child; uint32_t lights, planes; } qaw_pending;

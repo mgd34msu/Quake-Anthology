@@ -103,7 +103,13 @@ static bool geometry(qa_source_save_io *io, const qa_scene_world *world)
         FIELD(f32,&value.origin,x); FIELD(f32,&value.origin,y); FIELD(f32,&value.origin,z);
         for (size_t j=0;j<4;++j) if (!qa_source_save_i32(io,&value.headnodes[j])) return false;
         FIELD(i32,&value,visible_leaves); FIELD(bool,&value,membership_from_tree);
-        if (!range(io,&value.faces) || !range(io,&value.brushes) || !qa_source_save_count(io,&model.surface_count,SIZE_MAX)) return false;
+        size_t expected_capacity=value.membership_from_tree?world->surface_count:value.faces.count;
+        if (model.surface_capacity!=expected_capacity || model.surface_count>model.surface_capacity ||
+            (model.surface_capacity && !model.surfaces))
+            return failure(io->error,QA_ERROR_STATE,"World model surface allocation changed");
+        if (!range(io,&value.faces) || !range(io,&value.brushes) ||
+            !qa_source_save_count(io,&model.surface_capacity,SIZE_MAX) ||
+            !qa_source_save_count(io,&model.surface_count,model.surface_capacity)) return false;
         for (size_t j=0;j<model.surface_count;++j) {
             uint32_t value_index=model.surfaces[j]; if (!qa_source_save_u32(io,&value_index)) return false;
         }
@@ -243,9 +249,9 @@ static bool fields(qa_source_save_io *io, const qa_scene_world *world, qa_scene_
     q3_data *q3, const qa_scene_world_checkpoint_refs *refs, qa_bytes *lighting)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ, is_q3=world->bsp.family==QA_BSP_Q3;
-    uint8_t magic[4]={'Q','W','S','T'}; uint32_t schema=1;
+    uint8_t magic[4]={'Q','W','S','T'}; uint32_t schema=2;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QWST",4) ||
-        !qa_source_save_u32(io,&schema) || schema!=1 || !qualify(io,world)) return false;
+        !qa_source_save_u32(io,&schema) || schema!=2 || !qualify(io,world)) return false;
     if (reading) {
         if (!allocate(io,(void **)&saved->surfaces,world->surface_count,sizeof(*saved->surfaces)) ||
             !allocate(io,(void **)&saved->surface_marks,world->surface_count,sizeof(*saved->surface_marks)) ||
