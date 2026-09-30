@@ -15,6 +15,15 @@ typedef struct qa_application_persistence_owner {
     bool (*restore)(void *, qa_application *, qa_bytes, qa_error *);
 } qa_application_persistence_owner;
 
+/* A reconstruction graph owns its platform callbacks separately from the
+ * candidate. destroy returns false only while this context remains owned. */
+typedef struct qa_application_native_baseline_services {
+    qa_application_options options;
+    void *context;
+    bool (*ready)(void *, qa_error *);
+    bool (*destroy)(void *, qa_error *);
+} qa_application_native_baseline_services;
+
 typedef struct qa_application_persistence_ops {
     void *context;
     const qa_application_persistence_owner *owners;
@@ -24,6 +33,12 @@ typedef struct qa_application_persistence_ops {
      * active-service aliases. Resources referenced by a candidate must survive
      * failed teardown until a retained candidate is successfully destroyed. */
     bool (*prepare_services)(void *, qa_application *, const qa_save_image *, qa_error *);
+    /* Fill options and an owned lease for original native map reconstruction.
+     * The input options describe the isolated candidate; installed callbacks
+     * must instead borrow the returned, distinct platform context. Failed
+     * preparation may still return a lease, which the application retains. */
+    bool (*prepare_native_baseline)(void *, qa_application *, qa_actor_owner,
+                                    qa_application_native_baseline_services *, qa_error *);
     /* Optional detached external consumer preparation after the application's
      * own restored world/providers are constructed. Source initialization/spawn
      * callbacks must not run. Snapshot is borrowed until this callback returns. */

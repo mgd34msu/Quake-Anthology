@@ -44,6 +44,7 @@ typedef enum application_provider_kind {
 } application_provider_kind;
 
 typedef struct application_provider {
+    struct application_native_q3_console *native_q3_console;
     struct qa_application *application;
     application_provider_kind kind;
     const qa_launch_instance *launch;
@@ -235,6 +236,7 @@ struct qa_application {
     application_motion_record *motion;
     uint32_t motion_capacity;
     application_control_record *controls;
+    struct application_native_q2_scratch *native_baselines;
     uint32_t control_capacity;
     application_q2_visual_record *q2_visuals;
     uint32_t q2_visual_capacity;

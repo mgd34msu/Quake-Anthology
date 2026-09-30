@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "save_private.h"
+#include "save_native_q2.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -71,6 +72,7 @@ static bool discover(qa_application *application, bool discover_mods,
 
 static bool create_application(const qa_application_options *options,
                                 const qa_save_image *restore,
+                                const qa_strings *baseline_strings,
                                 qa_application **out, qa_error *error)
 {
     if (options == NULL || out == NULL || options->content_root == NULL ||
@@ -130,9 +132,22 @@ static bool create_application(const qa_application_options *options,
         .source_actor = application_arsenal_source_actor,
         .release_context = application,
     };
-    bool session_created = restore == NULL
-        ? qa_session_create(&session, &application->session, error)
-        : application_save_session_create(&session, restore, &application->session, error);
+    bool session_created;
+    if (baseline_strings != NULL) {
+        qa_buffer encoded = {0};
+        qa_strings *strings = NULL;
+        qa_actor_checkpoint actors = {.capacity = session.actor_capacity};
+        session_created = qa_save_strings_encode(baseline_strings, &encoded, error) &&
+            qa_save_strings_decode((qa_bytes){encoded.data, encoded.size}, &strings, error) &&
+            qa_session_create_restored(&session, &actors, strings, &application->session, error);
+        if (session_created) strings = NULL;
+        qa_strings_destroy(strings);
+        qa_buffer_free(&encoded);
+    } else {
+        session_created = restore == NULL
+            ? qa_session_create(&session, &application->session, error)
+            : application_save_session_create(&session, restore, &application->session, error);
+    }
     if (!session_created)
         goto fail;
     if (!qa_inventory_create(qa_session_actor_registry(application->session),
@@ -193,7 +208,7 @@ fail:
 bool qa_application_create(const qa_application_options *options,
                              qa_application **out, qa_error *error)
 {
-    return create_application(options, NULL, out, error);
+    return create_application(options, NULL, NULL, out, error);
 }
 
 bool application_create_restored(const qa_application_options *options,
@@ -202,7 +217,16 @@ bool application_create_restored(const qa_application_options *options,
 {
     if (image == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT, "restored application requires a save image");
-    return create_application(options, image, out, error);
+    return create_application(options, image, NULL, out, error);
+}
+
+bool application_create_native_baseline(const qa_application_options *options,
+                                         const qa_strings *strings,
+                                         qa_application **out, qa_error *error)
+{
+    if (strings == NULL)
+        return application_fail(error, QA_ERROR_ARGUMENT, "native baseline requires the exact source string namespace");
+    return create_application(options, NULL, strings, out, error);
 }
 
 qa_application_state qa_application_get_state(const qa_application *application)
@@ -637,6 +661,9 @@ bool qa_application_destroy(qa_application *application, qa_error *error)
 {
     if (application == NULL)
         return true;
+    if (application->operation == APPLICATION_IDLE &&
+        !application_native_q2_baselines_destroy(application, error))
+        return false;
     if (application->operation != APPLICATION_IDLE ||
         !application_guests_idle(application) ||
         !application_bots_can_destroy(application) ||
