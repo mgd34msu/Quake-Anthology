@@ -9,7 +9,7 @@
 #include "qa/network_services_save.h"
 #include "qa/network_downloads_save.h"
 #include "save_private.h"
-#include "network_nq.h"
+#include "network_nq_private.h"
 #include "../../network/service_save_fields.h"
 #include "qa/archive.h"
 #include "qa/bsp.h"
@@ -1044,7 +1044,8 @@ failed:
 static qa_network_options saved_network_options(qa_frontend_network *n)
 {
     return (qa_network_options){.owner = NETWORK_OWNER, .clients = 64, .packets_per_pump = 256,
-        .timeout_ns = UINT64_C(30000000000), .hooks = {.context = n, .admit = admit, .controlled = controlled,
+        .timeout_ns = n->frontend->options.network_host && n->frontend->options.network_protocol.kind == QA_NET_NQ15 ?
+            UINT64_C(65000000000) : UINT64_C(30000000000), .hooks = {.context = n, .admit = admit, .controlled = controlled,
         .command = remote_command, .disconnected = disconnected, .connectionless = connectionless, .reconnect = reconnect}};
 }
 static qa_browser_hooks saved_browser_hooks(qa_frontend_network *n)
@@ -1075,9 +1076,9 @@ static bool detached_transport(const qa_net_address *address, qa_net_transport *
 }
 static bool network_header(qa_source_save_io *io, bool *installed)
 {
-    uint32_t magic = UINT32_C(0x464e4151), version = 3;
+    uint32_t magic = UINT32_C(0x464e4151), version = 4;
     return qa_source_save_u32(io, &magic) && magic == UINT32_C(0x464e4151) &&
-        qa_source_save_u32(io, &version) && version == 3 && qa_source_save_bool(io, installed);
+        qa_source_save_u32(io, &version) && version == 4 && qa_source_save_bool(io, installed);
 }
 bool frontend_network_prepare_restored(qa_frontend *f, qa_bytes bytes, qa_error *error)
 {
@@ -1087,7 +1088,9 @@ bool frontend_network_prepare_restored(qa_frontend *f, qa_bytes bytes, qa_error 
     bool ok = qa_source_save_reader(&io, NULL, bytes, error) && network_header(&io, &installed);
     qa_source_save_dispose(&io); if (!ok) return false;
     if (!installed) return true;
-    if ((f->options.network_host && (f->options.network_protocol.kind != QA_NET_Q3_68 || f->options.network_connect)) ||
+    bool nq_host = f->options.network_protocol.kind == QA_NET_NQ15 &&
+        !f->options.network_protocol.flags && !f->options.network_protocol.revision;
+    if ((f->options.network_host && ((f->options.network_protocol.kind != QA_NET_Q3_68 && !nq_host) || f->options.network_connect)) ||
         (f->options.network_connect && !frontend_network_remote(f)))
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "restored frontend hosting or dialect needs its complete actual service consumer");
     qa_frontend_network *n = calloc(1, sizeof(*n));
@@ -1227,10 +1230,15 @@ static bool network_host_player(qa_frontend_network *n, const frontend_q3_peer *
 static bool network_metadata_valid(qa_frontend_network *n, bool hosting, qa_error *error)
 {
     qa_application *app = n->frontend->application;
-    if (n->q3_reconnect || (n->downloads && !n->content) || hosting != (n->frontend->options.network_host != NULL) ||
+    bool nq = n->nq_host != NULL;
+    if (n->q3_reconnect || (n->downloads && !n->content) || (hosting && nq) ||
+        (hosting || nq) != (n->frontend->options.network_host != NULL) ||
         n->q3_client_requested != frontend_network_remote(n->frontend) || !n->registered || n->q3_projection_epoch > 4 ||
         (n->q3_projection_epoch != 0 && n->q3_projection_epoch != 4))
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "installed frontend network service lacks a complete continuation consumer");
+    if (nq && (n->q3_client_requested || n->frontend->options.network_protocol.kind != QA_NET_NQ15 ||
+        n->frontend->options.network_protocol.flags || n->frontend->options.network_protocol.revision || n->q3_projection.owner))
+        return frontend_fail(error, QA_ERROR_FORMAT, "NetQuake hosting continuation has another installed dialect consumer");
     if (hosting) {
         if (n->q3_client_requested || n->frontend->options.network_protocol.kind != QA_NET_Q3_68 ||
             !n->q3_generation || n->q3_server_id <= 0 || (n->q3_server_bit != 0 && n->q3_server_bit != 4))
@@ -1328,8 +1336,29 @@ static bool network_restore_source(void *context, const qa_net_client *client, q
         .level_shot = client_level_shot, .local_server_running = client_local_server, .send = send_address};
     return true;
 }
+static bool network_restore_nq_source(void *context, const qa_net_client *client,
+    qa_network_nq_server_policy *policy, qa_network_nq_server_hooks *hooks, qa_error *error)
+{
+    qa_frontend_network *n = context;
+    return frontend_nq_source_hooks(n->nq_host, client, policy, hooks, error);
+}
 static qa_network_checkpoint_refs network_saved_refs(qa_frontend_network *n)
-{ return (qa_network_checkpoint_refs){n, network_restore_source, network_save_actor, network_restore_actor}; }
+{ return (qa_network_checkpoint_refs){n, network_restore_source, network_save_actor, network_restore_actor, network_restore_nq_source}; }
+static bool network_nq_commands_valid(qa_frontend_network *n, qa_error *error)
+{
+    if (!n->nq_host) return true;
+    for (size_t i = 0; i < NQ_CLIENTS; ++i) {
+        const nq_frontend_peer *p = n->nq_host->peers + i;
+        if (!p->occupied) continue;
+        bool present; uint64_t sequence; qa_network_nq_server_state state;
+        if (!qa_network_accepted_sequence(n->runtime, p->client, p->seat, &present, &sequence, error) ||
+            !qa_network_nq_server_state_read(n->runtime, p->client, &state, error) ||
+            (present && (!sequence || sequence != p->tick_sequence || state.stage != 4)) ||
+            (!present && (sequence || (p->tick_sequence && qa_network_epoch(n->runtime, p->client) == 1))))
+            return frontend_fail(error, QA_ERROR_FORMAT, "NetQuake source tick differs from its actual accepted command owner");
+    }
+    return true;
+}
 static bool network_blob(qa_source_save_io *io, qa_bytes *bytes)
 {
     size_t size = bytes->size;
@@ -1342,6 +1371,8 @@ static bool network_blob(qa_source_save_io *io, qa_bytes *bytes)
 static bool network_runtime_valid(qa_frontend_network *n, bool complete_world, qa_error *error)
 {
     if (!network_metadata_valid(n, n->q3_admission != NULL, error)) return false;
+    if (n->nq_host) return frontend_nq_qualified(n->nq_host, complete_world, error) &&
+        (!complete_world || network_nq_commands_valid(n, error));
     uint32_t cursor = 0; const qa_net_client *client = NULL; size_t count = 0;
     while (qa_net_connections_next(qa_network_connections(n->runtime), &cursor, &client)) {
         ++count;
@@ -1413,10 +1444,8 @@ bool frontend_network_checkpoint(qa_frontend *f, qa_buffer *connections, qa_buff
     if (!f || !f->application || !connections || !prediction || connections == prediction ||
         !frontend_network_world_change_ready(f, error)) return false;
     qa_frontend_network *n = f->network; bool installed = n != NULL;
-    if (n && n->nq_host)
-        return frontend_fail(error, QA_ERROR_UNSUPPORTED, "NetQuake frontend continuation requires its actual retained source host owner");
     if (n && !network_runtime_valid(n, true, error)) return false;
-    qa_source_save_io io = {0}, history = {0}; qa_buffer runtime = {0}, browser = {0}, admin = {0}, commands = {0}, jobs = {0}, admission = {0};
+    qa_source_save_io io = {0}, history = {0}; qa_buffer runtime = {0}, browser = {0}, admin = {0}, commands = {0}, jobs = {0}, admission = {0}, nq_state = {0};
     bool ok = qa_source_save_writer(&io, qa_application_session(f->application), error) && network_header(&io, &installed) &&
         qa_source_save_writer(&history, qa_application_session(f->application), error) && network_header(&history, &installed);
     if (ok && n) {
@@ -1431,6 +1460,13 @@ bool frontend_network_checkpoint(qa_frontend *f, qa_buffer *connections, qa_buff
         }
         qa_bytes admission_bytes = {admission.data, admission.size};
         if (ok && n->q3_admission) ok = network_blob(&io, &admission_bytes);
+        bool nq = n->nq_host != NULL;
+        if (ok) ok = qa_source_save_bool(&io, &nq);
+        if (ok && nq) {
+            ok = frontend_nq_checkpoint(n->nq_host, &nq_state, error);
+            qa_bytes bytes = {nq_state.data, nq_state.size};
+            if (ok) ok = network_blob(&io, &bytes);
+        }
         qa_network_checkpoint_refs refs = network_saved_refs(n);
         ok = ok && qa_network_connections_checkpoint(n->runtime, &runtime, error) &&
             qa_server_browser_checkpoint(n->browser, &browser, error) && qa_server_admin_checkpoint(n->admin, &admin, error) &&
@@ -1450,7 +1486,7 @@ bool frontend_network_checkpoint(qa_frontend *f, qa_buffer *connections, qa_buff
     qa_buffer complete = {0}, predicted = {0};
     if (ok) ok = qa_source_save_finish(&io, &complete) && qa_source_save_finish(&history, &predicted);
     qa_source_save_dispose(&io); qa_source_save_dispose(&history);
-    qa_buffer_free(&runtime); qa_buffer_free(&browser); qa_buffer_free(&admin); qa_buffer_free(&commands); qa_buffer_free(&jobs); qa_buffer_free(&admission);
+    qa_buffer_free(&runtime); qa_buffer_free(&browser); qa_buffer_free(&admin); qa_buffer_free(&commands); qa_buffer_free(&jobs); qa_buffer_free(&admission); qa_buffer_free(&nq_state);
     if (!ok) { qa_buffer_free(&complete); qa_buffer_free(&predicted); return false; }
     *connections = complete; *prediction = predicted; return true;
 }
@@ -1468,21 +1504,26 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
     }
     qa_frontend_network *n = f->network;
     uint32_t previous_cursor = 0; const qa_net_client *previous_client = NULL;
-    if (qa_net_connections_next(qa_network_connections(n->runtime), &previous_cursor, &previous_client) || n->q3_projection.owner || n->downloads || n->content || n->q3_admission) {
+    if (qa_net_connections_next(qa_network_connections(n->runtime), &previous_cursor, &previous_client) || n->q3_projection.owner || n->downloads || n->content || n->q3_admission || n->nq_host) {
         qa_source_save_dispose(&io);
         return frontend_fail(error, QA_ERROR_ARGUMENT, "network continuation may replace only an empty prepared candidate");
     }
     qa_frontend_network *state = calloc(1, sizeof(*state));
     if (!state) { qa_source_save_dispose(&io); return frontend_fail(error, QA_ERROR_MEMORY, "decoding network candidate fields"); }
     state->frontend = f; state->registered = n->registered;
-    qa_net_address local = {0}; qa_bytes runtime = {0}, browser = {0}, admin = {0}, jobs = {0}, admission = {0};
-    bool content = false, downloads = false, hosting = false;
+    qa_net_address local = {0}; qa_bytes runtime = {0}, browser = {0}, admin = {0}, jobs = {0}, admission = {0}, nq_state = {0};
+    bool content = false, downloads = false, hosting = false, nq = false;
     ok = ok && network_address_fields(&io, &local) && service_address_valid(&local) &&
-        network_frontend_fields(&io, state) && network_host_fields(&io, state, &hosting) && network_metadata_valid(state, hosting, error) &&
+        network_frontend_fields(&io, state) && network_host_fields(&io, state, &hosting) &&
         (!hosting || network_blob(&io, &admission)) &&
+        qa_source_save_bool(&io, &nq) && (!nq || network_blob(&io, &nq_state)) &&
         network_blob(&io, &runtime) && network_blob(&io, &browser) && network_blob(&io, &admin) &&
         qa_source_save_bool(&io, &content) && qa_source_save_bool(&io, &downloads) && (!downloads || content) &&
         (!downloads || network_blob(&io, &jobs)) && qa_source_save_finish(&io, NULL);
+    if (ok && hosting && nq)
+        ok = frontend_fail(error, QA_ERROR_FORMAT, "Network continuation declares two native host owners");
+    if (ok && nq) ok = frontend_nq_restore(f, n->runtime, nq_state, &state->nq_host, error);
+    if (ok) ok = network_metadata_valid(state, hosting, error);
     if (ok) {
         qa_network_runtime *previous = n->runtime; qa_server_browser *old_browser = n->browser; qa_server_admin *old_admin = n->admin;
         qa_fs_root *preferences = n->preferences;
@@ -1497,7 +1538,10 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
         if (ok) ok = detached_transport(&local, &transport, error);
         if (ok) ok = qa_network_connections_restore(runtime, transport, &options, &refs, &restored, error);
         if (!ok) qa_net_transport_close(transport);
-        else { n->runtime = restored; qa_network_destroy(previous); }
+        else {
+            n->runtime = restored; frontend_nq_rebind(n->nq_host, f, restored);
+            qa_network_destroy(previous);
+        }
         qa_browser_hooks browser_hooks = saved_browser_hooks(n); qa_admin_options admin_options = saved_admin_options(n);
         qa_server_browser *restored_browser = NULL; qa_server_admin *restored_admin = NULL;
         if (ok) ok = qa_server_browser_restore_checkpoint(browser, frontend_tools_http(f), 2048, &browser_hooks, &restored_browser, error) &&
@@ -1514,6 +1558,7 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
         }
         if (ok) ok = network_runtime_valid(n, false, error);
     }
+    if (state->nq_host && state->nq_host != n->nq_host) frontend_nq_destroy(state->nq_host);
     free(state); qa_source_save_dispose(&io); return ok;
 }
 bool frontend_network_restore_prediction(qa_frontend *f, qa_bytes bytes, qa_error *error)
@@ -1527,12 +1572,14 @@ bool frontend_network_restore_prediction(qa_frontend *f, qa_bytes bytes, qa_erro
     if (ok) ok = qa_source_save_finish(&io, NULL);
     if (ok && installed) {
         qa_network_checkpoint_refs refs = network_saved_refs(f->network);
-        ok = network_runtime_valid(f->network, false, error) && qa_network_prediction_restore(f->network->runtime, &refs, history, error);
+        ok = network_runtime_valid(f->network, false, error) && qa_network_prediction_restore(f->network->runtime, &refs, history, error) &&
+            network_nq_commands_valid(f->network, error);
     }
     qa_source_save_dispose(&io); return ok;
 }
 static bool network_host_cut(qa_frontend_network *n, qa_buffer *out, qa_error *error)
 {
+    if (n->nq_host) return frontend_nq_checkpoint(n->nq_host, out, error);
     qa_frontend_network *copy = malloc(sizeof(*copy));
     if (!copy) return frontend_fail(error, QA_ERROR_MEMORY, "qualifying retained hosting cut");
     *copy = *n;
@@ -1570,6 +1617,7 @@ bool frontend_network_rebind_ready(const qa_frontend *candidate, const qa_fronte
         !qa_http_callbacks_idle(frontend_tools_http((qa_frontend *)candidate)) || !qa_http_callbacks_idle(frontend_tools_http((qa_frontend *)published)) ||
         !qa_net_address_equal(qa_network_local_address(next->runtime), qa_network_local_address(active->runtime), true) ||
         (next->q3_admission != NULL) != (active->q3_admission != NULL) ||
+        (next->nq_host != NULL) != (active->nq_host != NULL) ||
         next->q3_client_requested != active->q3_client_requested ||
         (next->q3_client_requested && !qa_net_address_equal(&next->q3_client_admission.address, &active->q3_client_admission.address, true)) ||
         !network_runtime_valid(next, true, error) || !network_runtime_valid(active, true, error))
@@ -1584,11 +1632,11 @@ bool frontend_network_rebind_ready(const qa_frontend *candidate, const qa_fronte
         qa_download_checkpoint_refs active_resources = saved_download_refs(active);
         if (!qa_downloads_resources_ready(active->downloads, &active_resources, error)) return false;
     }
-    if (active->q3_admission) {
+    if (active->q3_admission || active->nq_host) {
         qa_buffer current_host = {0}, restored_host = {0};
         bool ok = network_host_cut(active, &current_host, error) && network_host_cut(next, &restored_host, error);
         if (ok && (current_host.size != restored_host.size || memcmp(current_host.data, restored_host.data, current_host.size)))
-            ok = frontend_fail(error, QA_ERROR_UNSUPPORTED, "live Q3 host advanced beyond its saved admission/source continuation cut");
+            ok = frontend_fail(error, QA_ERROR_UNSUPPORTED, "live native host advanced beyond its saved admission/source continuation cut");
         qa_buffer_free(&current_host); qa_buffer_free(&restored_host);
         if (!ok) return false;
     }
@@ -1603,11 +1651,23 @@ bool frontend_network_rebind_ready(const qa_frontend *candidate, const qa_fronte
         qa_network_connections_checkpoint(next->runtime, &restored, error);
     if (ok && (current.size != restored.size || memcmp(current.data, restored.data, current.size)))
         ok = frontend_fail(error, QA_ERROR_UNSUPPORTED, "live original peer advanced beyond the saved protocol continuation cut");
-    qa_buffer_free(&current); qa_buffer_free(&restored); return ok;
+    qa_buffer_free(&current); qa_buffer_free(&restored);
+    if (ok && active->nq_host) {
+        qa_network_checkpoint_refs active_refs = network_saved_refs(active), next_refs = network_saved_refs(next);
+        ok = qa_network_prediction_checkpoint(active->runtime, &active_refs, &current, error) &&
+            qa_network_prediction_checkpoint(next->runtime, &next_refs, &restored, error);
+        if (ok && (current.size != restored.size || memcmp(current.data, restored.data, current.size)))
+            ok = frontend_fail(error, QA_ERROR_UNSUPPORTED, "live NetQuake accepted command owner advanced beyond its saved cut");
+        qa_buffer_free(&current); qa_buffer_free(&restored);
+    }
+    return ok;
 }
 void frontend_network_rebind(qa_frontend *owned, qa_frontend *destination)
 {
-    if (owned->network) owned->network->frontend = destination;
+    if (owned->network) {
+        owned->network->frontend = destination;
+        frontend_nq_rebind(owned->network->nq_host, destination, owned->network->runtime);
+    }
     for (server_lease *lease = owned->network_server_leases; lease; lease = lease->next) lease->frontend = destination;
 }
 void frontend_network_transport_exchange(qa_frontend *active, qa_frontend *candidate)
