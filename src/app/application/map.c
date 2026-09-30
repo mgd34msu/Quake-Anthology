@@ -1,4 +1,5 @@
 #include "map_private.h"
+#include "portals.h"
 #include "qa/text.h"
 
 #include <float.h>
@@ -1235,8 +1236,7 @@ static bool q2_area_portal(void *opaque, uint32_t portal, bool open,
                            qa_error *error)
 {
     application_provider *provider = opaque;
-    return qa_collision_adjust_portal(provider->application->geometry, portal,
-                                      open ? 1 : -1, error);
+    return application_portal_q2(provider, portal, open, error);
 }
 
 static bool q2_transition(void *opaque, qa_actor_id source,
@@ -1767,8 +1767,8 @@ static bool q3_area_portal(application_provider *provider,
     free(leaves);
     if (!ok || first < 0 || second < 0)
         return ok;
-    return qa_collision_adjust_area_pair(provider->application->geometry,
-                                         first, second, open, error);
+    return application_portal_q3(provider, (uint32_t)first,
+                                 (uint32_t)second, open, error);
 }
 
 static bool q3_event(void *opaque, const qa_q3_map_event *event,

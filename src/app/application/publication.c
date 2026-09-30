@@ -4,6 +4,7 @@
 #include "save_private.h"
 #include "bots_save_private.h"
 #include "network_q1_signon.h"
+#include "portals.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -688,6 +689,8 @@ static bool retire_map_services(qa_application *application, bool carry,
             return false;
     }
     if (!application_bots_destroy(application, error))
+        return false;
+    if (!application_portals_close(application, 0, error))
         return false;
     return application->world_retired == NULL ||
         application->world_retired(application->guest_context, application, error);

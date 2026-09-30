@@ -195,6 +195,7 @@ struct qa_application {
     struct application_bots *bots;
     struct application_match_intents *match_intents;
     struct application_q1_signon *q1_signon;
+    struct application_portals *portals;
     bool map_force_reload;
     char *content_root;
     char *user_root;

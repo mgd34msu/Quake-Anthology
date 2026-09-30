@@ -18,6 +18,7 @@
 #include "match_intents.h"
 #include "network_q1_signon.h"
 #include "save_native_q2_record.h"
+#include "portals.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -720,7 +721,7 @@ static bool configuration_capture(qa_application *app, qa_buffer *out, qa_error 
 
 static bool application_capture(qa_application *app, qa_buffer *out, qa_error *error)
 {
-    enum { PART_COUNT = 5, HEADER_SIZE = 48 };
+    enum { PART_COUNT = 6, HEADER_SIZE = 56 };
     qa_buffer parts[PART_COUNT] = {0};
     application_match_intents *empty = NULL;
     application_match_intents *intents = app->match_intents;
@@ -731,7 +732,8 @@ static bool application_capture(qa_application *app, qa_buffer *out, qa_error *e
         application_map_checkpoint_capture(app, parts + 1, error) &&
         application_physics_capture(app, parts + 2, error) &&
         application_match_intents_capture(intents, app, parts + 3, error) &&
-        application_q1_signon_capture(app, parts + 4, error);
+        application_q1_signon_capture(app, parts + 4, error) &&
+        application_portals_capture(app, parts + 5, error);
     size_t size = HEADER_SIZE;
     for (size_t i = 0; ok && i < PART_COUNT; ++i) {
         if (!parts[i].size || parts[i].size > SIZE_MAX - size)
@@ -745,7 +747,7 @@ static bool application_capture(qa_application *app, qa_buffer *out, qa_error *e
         if (!bytes.data) ok = application_fail(error, QA_ERROR_MEMORY, "allocating application continuation");
     }
     if (ok) {
-        memcpy(bytes.data, "QAAO", 4); qa_store_u32le(bytes.data + 4, 2);
+        memcpy(bytes.data, "QAAO", 4); qa_store_u32le(bytes.data + 4, 3);
         size_t offset = HEADER_SIZE;
         for (size_t i = 0; i < PART_COUNT; ++i) {
             qa_store_u64le(bytes.data + 8 + i * 8, parts[i].size);
@@ -762,9 +764,9 @@ static bool application_capture(qa_application *app, qa_buffer *out, qa_error *e
 
 static bool application_restore(qa_application *app, qa_bytes bytes, qa_error *error)
 {
-    enum { PART_COUNT = 5, HEADER_SIZE = 48 };
+    enum { PART_COUNT = 6, HEADER_SIZE = 56 };
     if (!bytes.data || bytes.size < HEADER_SIZE || memcmp(bytes.data, "QAAO", 4) ||
-        qa_load_u32le(bytes.data + 4) != 2 || app->match_intents != NULL)
+        qa_load_u32le(bytes.data + 4) != 3 || app->match_intents != NULL)
         return application_fail(error, QA_ERROR_FORMAT, "invalid application continuation header");
     qa_bytes parts[PART_COUNT];
     size_t offset = HEADER_SIZE;
@@ -783,7 +785,8 @@ static bool application_restore(qa_application *app, qa_bytes bytes, qa_error *e
         application_map_checkpoint_restore(app, parts[1], error) &&
         application_physics_restore(app, parts[2], error) &&
         application_match_intents_restore(app->match_intents, app, parts[3], error) &&
-        application_q1_signon_restore(app, parts[4], error);
+        application_q1_signon_restore(app, parts[4], error) &&
+        application_portals_restore(app, parts[5], error);
 }
 
 static bool provider_capture(application_provider *provider, qa_save_purpose purpose,
@@ -883,7 +886,7 @@ static bool persistence_inventory(application_persistence *operation, qa_applica
         }
         if (schema) {
             owner->schema = schema;
-            owner->schema_version = owner->kind == QA_SAVE_APPLICATION ? 2 : 1;
+            owner->schema_version = owner->kind == QA_SAVE_APPLICATION ? 3 : 1;
             if (!owner->backend) owner->backend = "";
         } else {
             const qa_application_persistence_owner *binding = NULL;
@@ -1166,6 +1169,7 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
     if (ok) ok = application_save_foundation_decode(image, &foundation, error) &&
         application_save_foundation_finish(candidate, &foundation, error);
     application_save_foundation_free(&foundation);
+    if (ok) ok = application_portals_validate(candidate, error);
     if (ok) ok = application_bots_save_finish(candidate, error);
     if (ok && candidate->match_intents)
         ok = application_match_intents_reconnect(candidate->match_intents, candidate, error);

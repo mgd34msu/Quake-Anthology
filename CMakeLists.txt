@@ -922,6 +922,7 @@ add_library(qa_application STATIC
     src/app/application/network.c
     src/app/application/network_q1_signon.c
     src/app/application/owner.c
+    src/app/application/portals.c
     src/app/application/providers.c
     src/app/application/q1_weapon_rules.c
     src/app/application/presentation.c
@@ -944,6 +945,7 @@ add_library(qa_ui STATIC
     src/ui/library.c
     src/ui/llm.c
     src/ui/mods.c
+    src/ui/mods_save.c
     src/ui/q2_layout.c
     src/ui/rankings.c
     src/ui/search.c

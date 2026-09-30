@@ -3,6 +3,7 @@
 #include "network_q1_signon.h"
 #include "guest_native_q2_private.h"
 #include "native_q3_console.h"
+#include "portals.h"
 
 #include <stdlib.h>
 
@@ -66,6 +67,8 @@ bool application_provider_close(qa_application *application,
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "cannot close an attached provider");
     if (!application_provider_deconstruct(provider, error))
+        return false;
+    if (!application_portals_close(application, provider->owner, error))
         return false;
 
     if (provider->kind == APPLICATION_PROVIDER_QC) {
@@ -191,6 +194,7 @@ bool application_finalize(qa_application *application, qa_error *error)
     application_match_intents_destroy(application->match_intents);
     application->match_intents = NULL;
     application_q1_signon_destroy(application);
+    application_portals_destroy(application);
     qa_targets_destroy(application->targets);
     application->targets = NULL;
 

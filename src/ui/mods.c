@@ -1,22 +1,16 @@
-#include "internal.h"
+#include "mods_internal.h"
+#include "qa/ui_menu_save.h"
 #include <stdio.h>
 
-typedef struct mod_row { const char *component, *instance; bool enabled; char state[96]; } mod_row;
-struct qa_ui_mods {
-    qa_ui *ui;
-    qa_application *application;
-    qa_ui_id menu;
-    qa_launch_draft *draft;
-    qa_catalog *catalog;
-    qa_ui_row *rows;
-    mod_row *selections;
-    size_t count, capacity, selection_capacity, selected;
-    qa_ui_control controls[7];
-    char query[321], status[256], display[512];
-    qa_buffer query_lower;
-    bool dirty;
-    uint64_t revision, configuration_generation;
-};
+void ui_mods_cache_release(qa_ui_mods *mods) {
+    for (size_t i = 0; i < mods->count; ++i) {
+        free(mods->selections[i].retained_component);
+        free(mods->selections[i].retained_instance);
+        free(mods->selections[i].retained_label);
+    }
+    mods->count = 0;
+}
+const qa_catalog *qa_ui_mods_catalog(const qa_ui_mods *mods) { return mods ? mods->catalog : NULL; }
 enum { MOD_SEARCH = 1, MOD_LIST, MOD_TOGGLE, MOD_APPLY, MOD_CANCEL, MOD_REFRESH, MOD_STATUS };
 bool qa_ui_mods_cancel(qa_ui_mods *mods, qa_error *error) {
     if (!mods || mods->ui->drawing) return ui_fail(error, "invalid mod menu edit");
@@ -142,7 +136,7 @@ static bool factory(void *context, uint32_t seat, qa_ui_menu *out, qa_error *err
     qa_ui_mods *mods = context;
     (void)seat;
     if (mods->dirty) {
-        mods->count = 0;
+        ui_mods_cache_release(mods);
         const qa_launch_choices *choices = qa_launch_draft_choices(mods->draft);
         for (size_t i = 0; i < choices->mod_count; ++i) {
             const qa_launch_mod_selection *selection = &choices->mods[i];
@@ -197,18 +191,27 @@ static bool factory(void *context, uint32_t seat, qa_ui_menu *out, qa_error *err
                         .count = 7, .fullscreen = true};
     return true;
 }
-bool qa_ui_mods_create(qa_ui *ui, qa_application *application, qa_ui_id menu,
-                       qa_ui_mods **out, qa_error *error) {
+static bool create_owner(qa_ui *ui, qa_application *application, qa_ui_id menu,
+                       bool restored, qa_ui_mods **out, qa_error *error) {
     if (!ui || !application || !menu || !out) return ui_fail(error, "invalid mod menu owner");
     qa_ui_mods *mods = calloc(1, sizeof(*mods));
     if (!mods) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating mod menu"); return false; }
     mods->ui = ui; mods->application = application; mods->menu = menu;
-    if (!qa_ui_mods_cancel(mods, error) || !qa_ui_register(ui,
+    if ((!restored && !qa_ui_mods_cancel(mods, error)) || !qa_ui_register(ui,
         &(qa_ui_menu_registration){.id = menu, .context = mods, .factory = factory}, error)) {
         qa_launch_draft_destroy(mods->draft); qa_catalog_release(mods->catalog); free(mods); return false;
     }
     *out = mods;
     return true;
+}
+bool qa_ui_mods_create(qa_ui *ui, qa_application *application, qa_ui_id menu,
+                       qa_ui_mods **out, qa_error *error) {
+    return create_owner(ui, application, menu, false, out, error);
+}
+bool qa_ui_mods_create_restored(qa_ui *ui, qa_application *application, qa_ui_id menu,
+                       qa_ui_mods **out, qa_error *error) {
+    if (!out || *out) return ui_fail(error, "restored mod menu requires empty output");
+    return create_owner(ui, application, menu, true, out, error);
 }
 bool qa_ui_mods_destroy(qa_ui_mods *mods, double time, qa_error *error) {
     if (!mods) return true;
@@ -216,6 +219,7 @@ bool qa_ui_mods_destroy(qa_ui_mods *mods, double time, qa_error *error) {
     if (!qa_ui_unregister(mods->ui, mods->menu, time, error)) return false;
     qa_launch_draft_destroy(mods->draft); qa_catalog_release(mods->catalog);
     qa_buffer_free(&mods->query_lower);
+    ui_mods_cache_release(mods);
     free(mods->rows); free(mods->selections); free(mods);
     return true;
 }
