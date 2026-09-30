@@ -884,6 +884,7 @@ add_library(qa_application STATIC
     src/app/application/network.c
     src/app/application/owner.c
     src/app/application/providers.c
+    src/app/application/q1_weapon_rules.c
     src/app/application/presentation.c
     src/app/application/publication.c
     src/app/application/services.c

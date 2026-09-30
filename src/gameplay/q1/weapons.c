@@ -719,6 +719,19 @@ static bool before_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
     return true;
 }
 
+static bool nail_fire(qa_q1_game *g, q1_player *player, qa_error *error) {
+    qa_actor_id actor = player->id;
+    if (g->host.nail_fire &&
+        !g->host.nail_fire(g->host.context, actor, player->weapon, error))
+        return false;
+    if (q1_player_get(g, actor) != player) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+                     "Q1 nail firing policy retired the source player");
+        return false;
+    }
+    return true;
+}
+
 static bool weapon_observe(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon,
                             qa_q1_weapon_view *out, bool *found, qa_error *error) {
     q1_player *player = q1_player_get(g, actor);
@@ -922,6 +935,7 @@ static bool fire_weapon(qa_q1_game *g, q1_player *player, qa_error *error) {
             !q1_sound(g, player->id, super ? "weapons/spike2.wav" : "weapons/rocket1i.wav", 1, 1,
                       error) ||
             !q1_aim(g, player->id, forward, &direction, error) ||
+            !nail_fire(g, player, error) ||
             !q1_projectile_spawn(g, player->id, weapon, super ? Q1_SUPERSPIKE : Q1_SPIKE, origin,
                                  qa_vec_scale(direction, parameters.nail_speed), &projectile,
                                  error))
