@@ -142,6 +142,7 @@ add_library(qa_text STATIC
     src/text/captions.c
     src/text/media_captions.c
     src/text/font/library.c
+    src/text/font/save.c
     src/text/font/kfont.c
     src/text/font/freetype.c
     src/text/font/q3.c
