@@ -1,5 +1,6 @@
 #include "cinematic_internal.h"
 #include "qa/binary.h"
+#include "qa/audio_save.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -555,4 +556,42 @@ void qa_cinematic_checkpoint_free(qa_cinematic_checkpoint *saved) {
         break;
     }
     memset(saved, 0, sizeof(*saved));
+}
+
+bool qa_cinematic_audio_rebind_ready(qa_cinematic *movie, qa_audio_engine *engine,
+    uint64_t bus, qa_error *error)
+{
+    if (!movie || movie->busy || movie->faulted ||
+        (!engine && (!movie->options.silent && movie->format != QA_CINEMATIC_IMAGE)))
+        return cinematic_fail(error, "Cinematic audio exchange requires idle qualified owners");
+    qa_audio_raw_stream *next = engine ? qa_audio_engine_bus_stream(engine, bus) : NULL;
+    if ((movie->raw != NULL) != (next != NULL))
+        return cinematic_fail(error, "Cinematic raw queue presence differs from restored engine");
+    if (!next || movie->raw == next) return true;
+    qa_buffer original = {0}, candidate = {0};
+    bool ok = qa_audio_raw_checkpoint(movie->raw, &original, error) &&
+        qa_audio_raw_checkpoint(next, &candidate, error);
+    if (ok && (original.size != candidate.size || memcmp(original.data, candidate.data, original.size)))
+        ok = cinematic_fail(error, "Cinematic raw queue differs from restored engine");
+    qa_buffer_free(&original); qa_buffer_free(&candidate); return ok;
+}
+
+void qa_cinematic_audio_rebind(qa_cinematic *movie, qa_audio_engine *engine, uint64_t bus)
+{
+    movie->options.audio = engine; movie->options.audio_bus = bus;
+    movie->raw = engine ? qa_audio_engine_bus_stream(engine, bus) : NULL;
+}
+
+bool qa_cinematic_frame_rebind_ready(const qa_cinematic *movie, const qa_scene_frame *current,
+    qa_error *error)
+{
+    if (!movie || movie->busy || movie->faulted || (movie->image_frame && movie->image_frame != current))
+        return cinematic_fail(error, "Cinematic publication exchange requires an idle matching frame");
+    return true;
+}
+
+void qa_cinematic_frame_rebind(qa_cinematic *movie, const qa_scene_frame *current,
+    const qa_scene_frame *destination)
+{
+    if (movie->image_frame && movie->image_frame == current) movie->image_frame = destination;
 }

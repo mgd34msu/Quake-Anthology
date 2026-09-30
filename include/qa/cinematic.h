@@ -112,6 +112,12 @@ bool qa_cinematic_time(qa_cinematic *, double *elapsed_ms, double *source_ms, ui
                        qa_error *);
 bool qa_cinematic_capture(qa_cinematic *, qa_cinematic_checkpoint *, qa_error *);
 void qa_cinematic_checkpoint_free(qa_cinematic_checkpoint *);
+/* Reconnect a separately restored engine without replacing its retained raw
+ * queue. Qualify all movies before applying any owner pointer exchanges. */
+bool qa_cinematic_audio_rebind_ready(qa_cinematic *, qa_audio_engine *, uint64_t bus, qa_error *);
+void qa_cinematic_audio_rebind(qa_cinematic *, qa_audio_engine *, uint64_t bus);
+bool qa_cinematic_frame_rebind_ready(const qa_cinematic *, const qa_scene_frame *current, qa_error *);
+void qa_cinematic_frame_rebind(qa_cinematic *, const qa_scene_frame *current, const qa_scene_frame *destination);
 
 /* Publication appends an immutable image revision barrier. The scene owns a
  * reference until reset, allowing decoding to continue after submission. */

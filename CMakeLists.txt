@@ -591,7 +591,8 @@ add_library(qa_media STATIC
     src/media/cinematic_scene.c
     src/media/library.c
     src/media/material_movies.c)
-target_link_libraries(qa_media PUBLIC qa_content qa_audio qa_scene
+target_sources(qa_media PRIVATE src/media/save.c)
+target_link_libraries(qa_media PUBLIC qa_content qa_audio qa_scene qa_persistence
     PRIVATE PkgConfig::OGG PkgConfig::THEORADEC)
 
 add_library(qa_scene STATIC
