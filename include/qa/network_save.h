@@ -2,6 +2,7 @@
 #define QA_NETWORK_SAVE_H
 #include "qa/network_q3_runtime.h"
 #include "qa/network_q3_save.h"
+#include "qa/network_q1_runtime.h"
 
 /* Connection records replace the process-local owner namespace with the
  * admitted candidate owner, preserving slot generations and source seat IDs.
@@ -11,7 +12,8 @@ bool qa_net_connections_restore(qa_net_reader *, uint64_t owner, uint32_t capaci
     qa_net_admit_fn, void *, qa_net_connections **);
 
 typedef enum qa_network_source_kind {
-    QA_NETWORK_SOURCE_Q3_CLIENT = 1, QA_NETWORK_SOURCE_Q3_SERVER
+    QA_NETWORK_SOURCE_Q3_CLIENT = 1, QA_NETWORK_SOURCE_Q3_SERVER,
+    QA_NETWORK_SOURCE_NQ_SERVER
 } qa_network_source_kind;
 typedef struct qa_network_checkpoint_refs {
     void *context;
@@ -19,6 +21,8 @@ typedef struct qa_network_checkpoint_refs {
         qa_q3_client_hooks *, qa_q3_server_hooks *, qa_error *);
     bool (*save_actor)(void *, qa_actor_id, qa_saved_actor_id *, qa_error *);
     bool (*restore_actor)(void *, qa_saved_actor_id, qa_actor_id *, qa_error *);
+    bool (*source_nq)(void *, const qa_net_client *, qa_network_nq_server_policy *,
+        qa_network_nq_server_hooks *, qa_error *);
 } qa_network_checkpoint_refs;
 
 /* Transport is an explicitly prepared candidate binding. Source callback

@@ -2,6 +2,8 @@
 #include "qa/network_q1_runtime.h"
 #include "qa/network_q1_channel.h"
 #include "qa/network_q1_nq.h"
+#include "qa/network_q1_peer_save.h"
+#include "qa/network_save.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -218,4 +220,125 @@ bool qa_network_nq_server_state_read(qa_network_runtime *runtime, qa_net_client_
     if (!peer || !out) return qa_network_fail(error, "Missing original NetQuake peer state output");
     *out = (qa_network_nq_server_state){peer->input_sequence, peer->queued_bytes, peer->queued_messages,
         peer->stage, peer->started, peer->retiring}; return true;
+}
+
+bool qa_network_nq_peer(const qa_network_peer *peer)
+{ return peer && peer->ops.receive == receive; }
+const qa_q1_peer *qa_network_nq_server_view(qa_network_runtime *runtime, qa_net_client_id id)
+{ nq_server *peer = get(runtime, id, NULL); return peer ? &peer->native : NULL; }
+bool qa_network_nq_server_policy_read(qa_network_runtime *runtime, qa_net_client_id id,
+    qa_network_nq_server_policy *out, qa_error *error)
+{
+    nq_server *peer = get(runtime, id, error);
+    if (!peer || !out) return qa_network_fail(error, "Missing original NetQuake policy output");
+    *out = peer->policy; return true;
+}
+void qa_network_nq_transport_rebind(qa_network_peer *peer, qa_net_transport *transport)
+{
+    if (qa_network_nq_peer(peer)) ((nq_server *)peer->state)->native.transport = transport;
+}
+static bool continuation_valid(const nq_server *peer, const qa_net_client *client, qa_error *error)
+{
+    if (!client || client->protocol.kind != QA_NET_NQ15 || client->protocol.revision || client->protocol.flags ||
+        client->seat_count != 1 || peer->signon_active || peer->stage > 4 ||
+        peer->started != (peer->stage != 0) ||
+        (!peer->retiring && client->phase != (peer->stage < 2 ? QA_NET_CONNECTED :
+            peer->stage < 4 ? QA_NET_PRIMED : QA_NET_ACTIVE)) ||
+        !peer->policy.message_bytes || peer->policy.message_bytes > 65527 ||
+        !peer->policy.fragment_bytes || peer->policy.fragment_bytes > peer->policy.message_bytes ||
+        peer->policy.queued_bytes < peer->policy.message_bytes || peer->queued_bytes > peer->policy.queued_bytes)
+        return qa_network_fail(error, "NetQuake continuation differs from its original connection phase or source policy");
+    return true;
+}
+static qa_q1_peer_save_admission saved_admission(const nq_server *peer, const qa_net_client *client)
+{
+    return (qa_q1_peer_save_admission){.protocol = client->protocol, .transport = peer->runtime->transport,
+        .remote = client->endpoint, .message_bytes = peer->policy.message_bytes,
+        .channel.nq_fragment_bytes = peer->policy.fragment_bytes};
+}
+bool qa_network_nq_checkpoint_peer(const qa_network_peer *owner, qa_buffer *out, qa_error *error)
+{
+    if (!qa_network_nq_peer(owner) || !out)
+        return qa_network_fail(error, "Missing original NetQuake continuation owner");
+    const nq_server *peer = owner->state;
+    const qa_net_client *client = qa_net_connections_get(peer->runtime->connections, peer->id);
+    if (!continuation_valid(peer, client, error)) return false;
+    size_t count = 0, queued = 0, extent = 80; const nq_pending *last = NULL;
+    for (const nq_pending *pending = peer->first; pending; pending = pending->next) {
+        if (!pending->bytes.size || !pending->bytes.data || pending->bytes.size > peer->policy.message_bytes ||
+            pending->bytes.size > peer->policy.queued_bytes - queued || count >= peer->queued_messages ||
+            pending->bytes.size > SIZE_MAX - 8 || extent > SIZE_MAX - 8 - pending->bytes.size)
+            return qa_network_fail(error, "NetQuake reliable FIFO differs from its retained ownership and bounds");
+        queued += pending->bytes.size; extent += 8 + pending->bytes.size; ++count; last = pending;
+    }
+    if (count != peer->queued_messages || queued != peer->queued_bytes || last != peer->last)
+        return qa_network_fail(error, "NetQuake reliable FIFO allocator inventory differs");
+    qa_buffer native = {0}; qa_q1_peer_save_admission admission = saved_admission(peer, client);
+    if (!qa_q1_peer_checkpoint(&peer->native, &admission, &native, error)) return false;
+    if (native.size > SIZE_MAX - extent) {
+        qa_buffer_free(&native); return qa_network_fail(error, "NetQuake continuation extent overflow");
+    }
+    qa_buffer bytes = {malloc(extent + native.size), 0};
+    if (!bytes.data) {
+        qa_buffer_free(&native); qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining NetQuake runtime continuation"); return false;
+    }
+    qa_net_writer writer; qa_net_writer_init(&writer, bytes.data, extent + native.size, error);
+    bool ok = qa_net_write_u32(&writer, UINT32_C(0x534e4151)) && qa_net_write_u32(&writer, 1) &&
+        qa_net_write_u64(&writer, peer->policy.message_bytes) && qa_net_write_u64(&writer, peer->policy.fragment_bytes) &&
+        qa_net_write_u64(&writer, peer->policy.queued_bytes) && qa_net_write_u64(&writer, peer->input_sequence) &&
+        qa_net_write_u8(&writer, peer->stage) && qa_net_write_u8(&writer, peer->started) && qa_net_write_u8(&writer, peer->retiring) &&
+        qa_net_write_u64(&writer, peer->queued_bytes) && qa_net_write_u64(&writer, count);
+    for (const nq_pending *pending = peer->first; ok && pending; pending = pending->next)
+        ok = qa_net_write_u64(&writer, pending->bytes.size) &&
+            qa_net_write_data(&writer, pending->bytes.data, pending->bytes.size);
+    if (ok) ok = qa_net_write_u64(&writer, native.size) && qa_net_write_data(&writer, native.data, native.size);
+    qa_buffer_free(&native);
+    if (!ok) { qa_buffer_free(&bytes); return false; }
+    bytes.size = qa_net_writer_size(&writer); *out = bytes; return true;
+}
+bool qa_network_nq_restore_peer(qa_network_runtime *runtime, const qa_net_client *client, qa_bytes bytes,
+    const qa_network_checkpoint_refs *refs, qa_network_peer *owner, qa_error *error)
+{
+    if (!runtime || !client || !refs || !refs->source_nq || !owner || !bytes.data)
+        return qa_network_fail(error, "NetQuake restore requires its actual candidate source bindings");
+    qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
+    if (qa_net_read_u32(&reader) != UINT32_C(0x534e4151) || qa_net_read_u32(&reader) != 1)
+        return qa_net_reader_fail(&reader, "Invalid NetQuake runtime continuation schema");
+    uint64_t message = qa_net_read_u64(&reader), fragment = qa_net_read_u64(&reader), maximum = qa_net_read_u64(&reader);
+    nq_server *peer = calloc(1, sizeof(*peer));
+    if (!peer) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring NetQuake runtime owner"); return false; }
+    peer->runtime = runtime; peer->id = client->id;
+    peer->input_sequence = qa_net_read_u64(&reader); peer->stage = qa_net_read_u8(&reader);
+    uint8_t started = qa_net_read_u8(&reader), retiring = qa_net_read_u8(&reader);
+    uint64_t queued = qa_net_read_u64(&reader), count = qa_net_read_u64(&reader);
+    peer->started = started != 0; peer->retiring = retiring != 0;
+    bool ok = !reader.failed && started <= 1 && retiring <= 1 && message <= SIZE_MAX && fragment <= SIZE_MAX &&
+        maximum <= SIZE_MAX && queued <= maximum && count <= qa_net_reader_remaining(&reader) / 9;
+    if (ok) {
+        peer->policy = (qa_network_nq_server_policy){(size_t)message, (size_t)fragment, (size_t)maximum};
+        ok = continuation_valid(peer, client, error);
+    }
+    for (uint64_t i = 0; ok && i < count; ++i) {
+        uint64_t length = qa_net_read_u64(&reader); qa_bytes payload;
+        ok = !reader.failed && length && length <= SIZE_MAX &&
+            qa_net_read_bytes(&reader, (size_t)length, &payload) && queue(peer, payload, error);
+    }
+    qa_bytes native = {0}; uint64_t length = ok ? qa_net_read_u64(&reader) : 0;
+    if (ok) ok = peer->queued_bytes == queued && !reader.failed && length <= SIZE_MAX &&
+        qa_net_read_bytes(&reader, (size_t)length, &native) && qa_net_reader_finish(&reader);
+    qa_network_nq_server_policy policy = {0};
+    if (ok) ok = refs->source_nq(refs->context, client, &policy, &peer->hooks, error) &&
+        policy.message_bytes == peer->policy.message_bytes && policy.fragment_bytes == peer->policy.fragment_bytes &&
+        policy.queued_bytes == peer->policy.queued_bytes && peer->hooks.signon && peer->hooks.begin &&
+        peer->hooks.command && peer->hooks.input && peer->hooks.drop;
+    if (ok) {
+        qa_q1_peer_save_admission admission = saved_admission(peer, client);
+        ok = qa_q1_peer_restore_checkpoint(native, &admission, &peer->native, error);
+    }
+    if (!ok) {
+        close_peer(peer);
+        if (error && error->code == QA_OK) qa_error_set(error, QA_ERROR_FORMAT, 0, "Unqualified NetQuake runtime continuation");
+        return false;
+    }
+    owner->ops = ops; owner->state = peer; return true;
 }

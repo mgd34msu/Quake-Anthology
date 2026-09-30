@@ -38,4 +38,9 @@ struct qa_network_checkpoint_refs;
 bool qa_network_q3_checkpoint_peer(const qa_network_peer *, uint32_t *, qa_buffer *, qa_error *);
 bool qa_network_q3_restore_peer(qa_network_runtime *, const qa_net_client *, uint32_t, qa_bytes,
     const struct qa_network_checkpoint_refs *, qa_network_peer *, qa_error *);
+bool qa_network_nq_peer(const qa_network_peer *);
+bool qa_network_nq_checkpoint_peer(const qa_network_peer *, qa_buffer *, qa_error *);
+bool qa_network_nq_restore_peer(qa_network_runtime *, const qa_net_client *, qa_bytes,
+    const struct qa_network_checkpoint_refs *, qa_network_peer *, qa_error *);
+void qa_network_nq_transport_rebind(qa_network_peer *, qa_net_transport *);
 #endif

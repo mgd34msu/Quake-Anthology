@@ -2,6 +2,7 @@
 #define QA_NETWORK_Q1_RUNTIME_H
 #include "qa/network_runtime.h"
 #include "qa/network_q1_session.h"
+#include "qa/network_q1_channel.h"
 
 typedef struct qa_network_nq_server_policy {
     size_t message_bytes, fragment_bytes, queued_bytes;
@@ -39,4 +40,7 @@ bool qa_network_nq_server_frame(qa_network_runtime *, qa_net_client_id, qa_bytes
 bool qa_network_nq_server_drop(qa_network_runtime *, qa_net_client_id, const char *, qa_error *);
 bool qa_network_nq_server_state_read(qa_network_runtime *, qa_net_client_id,
     qa_network_nq_server_state *, qa_error *);
+const qa_q1_peer *qa_network_nq_server_view(qa_network_runtime *, qa_net_client_id);
+bool qa_network_nq_server_policy_read(qa_network_runtime *, qa_net_client_id,
+    qa_network_nq_server_policy *, qa_error *);
 #endif

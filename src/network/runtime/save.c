@@ -33,7 +33,10 @@ bool qa_network_connections_checkpoint(const qa_network_runtime *runtime, qa_buf
         if (!client || !peer->epoch || peer->seat_count != client->seat_count) {
             ok = qa_network_fail(error, "Network peer and connection inventory differ"); break;
         }
-        ok = qa_network_q3_checkpoint_peer(peer, &kinds[i], &sources[i], error);
+        if (qa_network_nq_peer(peer)) {
+            kinds[i] = QA_NETWORK_SOURCE_NQ_SERVER;
+            ok = qa_network_nq_checkpoint_peer(peer, &sources[i], error);
+        } else ok = qa_network_q3_checkpoint_peer(peer, &kinds[i], &sources[i], error);
         if (ok && (sources[i].size > SIZE_MAX - 24 || size > SIZE_MAX - 24 - sources[i].size))
             ok = qa_network_fail(error, "Network source continuation extent overflow");
         if (ok) { size += 24 + sources[i].size; ++count; }
@@ -67,7 +70,7 @@ bool qa_network_connections_restore(qa_bytes bytes, qa_net_transport *transport,
     const qa_network_options *options, const qa_network_checkpoint_refs *refs,
     qa_network_runtime **out, qa_error *error)
 {
-    if (!options || !out || !transport || !refs || !refs->source || !bytes.data)
+    if (!options || !out || !transport || !refs || (!refs->source && !refs->source_nq) || !bytes.data)
         return qa_network_fail(error, "Network restore requires qualified candidate consumers");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error);
     uint32_t tag = qa_net_read_u32(&r), version = qa_net_read_u32(&r);
@@ -98,7 +101,10 @@ bool qa_network_connections_restore(qa_bytes bytes, qa_net_transport *transport,
             qa_net_reader_fail(&r, "Saved source peer has no admitted connection"); goto failure;
         }
         qa_network_peer *peer = &runtime->peers[slot];
-        if (!qa_network_q3_restore_peer(runtime, client, kind, source, refs, peer, error)) goto failure;
+        bool restored = kind == QA_NETWORK_SOURCE_NQ_SERVER
+            ? qa_network_nq_restore_peer(runtime, client, source, refs, peer, error)
+            : qa_network_q3_restore_peer(runtime, client, kind, source, refs, peer, error);
+        if (!restored) goto failure;
         peer->seats = calloc(client->seat_count, sizeof(*peer->seats));
         if (!peer->seats) {
             peer->ops.close(peer->state); memset(peer, 0, sizeof(*peer));
@@ -123,6 +129,10 @@ void qa_network_transport_exchange(qa_network_runtime *active, qa_network_runtim
 {
     qa_net_transport *transport = active->transport;
     active->transport = candidate->transport; candidate->transport = transport;
+    for (uint32_t i = 0; i < active->options.clients; ++i)
+        if (active->peers[i].occupied) qa_network_nq_transport_rebind(&active->peers[i], active->transport);
+    for (uint32_t i = 0; i < candidate->options.clients; ++i)
+        if (candidate->peers[i].occupied) qa_network_nq_transport_rebind(&candidate->peers[i], candidate->transport);
 }
 const qa_net_address *qa_network_local_address(const qa_network_runtime *runtime)
 { return runtime ? qa_net_transport_address(runtime->transport) : NULL; }
