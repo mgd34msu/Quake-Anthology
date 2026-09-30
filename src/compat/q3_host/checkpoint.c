@@ -50,7 +50,8 @@ static bool idle(qa_q3_host *host, qa_error *error)
     if (!host || host->retired || host->restore_pending || host->calls)
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 checkpoint requires an idle live host");
     for (size_t i = 1; i < 64; ++i)
-        if (host->script_pending[i] || (host->scripts[i] && host->scripts[i]->operations))
+        if (host->script_pending[i] || (host->scripts[i] &&
+            (host->scripts[i]->operations || host->scripts[i]->retired)))
             return q3_fail(error, QA_ERROR_ARGUMENT, i, "Q3 script checkpoint operation is active");
     return true;
 }
@@ -73,11 +74,12 @@ static bool save_file(checkpoint_writer *writer, size_t slot, const q3_file *fil
     if (!path || strlen(path) >= UINT32_MAX)
         return q3_fail(error, QA_ERROR_FORMAT, slot, "invalid Q3 checkpoint file path");
     size_t length = strlen(path) + 1;
-    uint8_t row[72] = {0};
+    uint8_t row[80] = {0};
     qa_store_u32le(row, (uint32_t)slot); qa_store_u32le(row + 4, (uint32_t)file->kind);
     qa_store_u32le(row + 8, file->zip); qa_store_u32le(row + 12, state.mode);
     qa_store_u64le(row + 16, state.position); qa_store_u64le(row + 24, bytes.size);
     qa_store_u32le(row + 32, (uint32_t)length); memcpy(row + 40, digest.bytes, sizeof(digest.bytes));
+    qa_store_u64le(row + 72, file->serial);
     return append(writer, row, sizeof(row), error) && append(writer, path, length, error) &&
            append(writer, bytes.data, bytes.size, error);
 }
@@ -94,11 +96,27 @@ bool qa_q3_host_checkpoint(qa_q3_host *host, qa_buffer *out, qa_error *error)
         files += host->files[i].kind != Q3_FILE_CLOSED; scripts += host->scripts[i] != NULL;
     }
     checkpoint_writer writer = {0};
-    uint8_t header[32] = {'Q','3','H','C'};
-    qa_store_u32le(header + 4, 3); qa_store_u32le(header + 8, host->options.role);
+    uint8_t header[56] = {'Q','3','H','C'};
+    qa_store_u32le(header + 4, 4); qa_store_u32le(header + 8, host->options.role);
     qa_store_u32le(header + 12, host->options.abi); qa_store_u32le(header + 16, files);
     qa_store_u32le(header + 20, scripts);
     qa_store_u64le(header + 24, game.size);
+    qa_store_u64le(header + 32, host->file_serial);
+    qa_store_u64le(header + 40, host->script_generation);
+    qa_store_u32le(header + 48, host->bots_shutdown);
+    for (size_t i = 1; i < 64; ++i)
+        if (host->files[i].kind != Q3_FILE_CLOSED) {
+            if (!host->files[i].serial || host->files[i].serial > host->file_serial) {
+                qa_buffer_free(&game);
+                return q3_fail(error, QA_ERROR_FORMAT, i, "Q3 file serial leaves its actual owner generation");
+            }
+            for (size_t j = 1; j < i; ++j)
+                if (host->files[j].kind != Q3_FILE_CLOSED &&
+                    host->files[j].serial == host->files[i].serial) {
+                    qa_buffer_free(&game);
+                    return q3_fail(error, QA_ERROR_FORMAT, i, "Duplicate Q3 file lifetime identity");
+                }
+        }
     ++host->calls;
     bool ok = append(&writer, header, sizeof(header), error);
     uint8_t clipping[48];
@@ -137,19 +155,23 @@ bool qa_q3_host_checkpoint(qa_q3_host *host, qa_buffer *out, qa_error *error)
 }
 
 static bool restore_file(qa_q3_host *host, checkpoint_reader *reader, q3_file staged[64],
-                           uint64_t serial, qa_error *error)
+                           uint64_t file_serial, qa_error *error)
 {
     qa_bytes row, path, bytes;
-    if (!take(reader, 72, &row, error)) return false;
+    if (!take(reader, 80, &row, error)) return false;
     uint32_t slot = qa_load_u32le(row.data), kind = qa_load_u32le(row.data + 4);
     uint32_t zip = qa_load_u32le(row.data + 8), mode = qa_load_u32le(row.data + 12);
     uint64_t position = qa_load_u64le(row.data + 16), length = qa_load_u64le(row.data + 24);
     uint32_t path_length = qa_load_u32le(row.data + 32);
+    uint64_t serial = qa_load_u64le(row.data + 72);
     if (!slot || slot >= 64 || staged[slot].kind != Q3_FILE_CLOSED ||
         (kind != Q3_FILE_READ && kind != Q3_FILE_WRITE) || zip > 1 || !path_length ||
-        length > SIZE_MAX || qa_load_u32le(row.data + 36) ||
+        length > SIZE_MAX || qa_load_u32le(row.data + 36) || !serial || serial > file_serial ||
         (kind == Q3_FILE_READ ? mode != 0 || length > INT32_MAX : zip || length || mode > QA_VFS_APPEND_SYNC))
         return q3_fail(error, QA_ERROR_FORMAT, reader->offset, "invalid Q3 checkpoint file record");
+    for (size_t i = 1; i < 64; ++i)
+        if (staged[i].kind != Q3_FILE_CLOSED && staged[i].serial == serial)
+            return q3_fail(error, QA_ERROR_FORMAT, reader->offset, "Duplicate Q3 file lifetime identity");
     if (!take(reader, path_length, &path, error) || !take(reader, (size_t)length, &bytes, error)) return false;
     if (path.data[path.size - 1] || memchr(path.data, 0, path.size - 1))
         return q3_fail(error, QA_ERROR_FORMAT, reader->offset, "invalid Q3 checkpoint file name");
@@ -198,15 +220,18 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
     for (size_t i = 1; i < 64; ++i)
         if (host->files[i].kind != Q3_FILE_CLOSED || host->scripts[i])
             return q3_fail(error, QA_ERROR_ARGUMENT, i, "Q3 restore requires an unpublished empty host");
-    if (!input.data || input.size < 32 || memcmp(input.data, "Q3HC", 4) ||
-        qa_load_u32le(input.data + 4) != 3 || qa_load_u32le(input.data + 8) != (uint32_t)host->options.role ||
+    if (!input.data || input.size < 56 || memcmp(input.data, "Q3HC", 4) ||
+        qa_load_u32le(input.data + 4) != 4 || qa_load_u32le(input.data + 8) != (uint32_t)host->options.role ||
         qa_load_u32le(input.data + 12) != (uint32_t)host->options.abi)
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 host checkpoint identity mismatch");
     uint32_t file_count = qa_load_u32le(input.data + 16), script_count = qa_load_u32le(input.data + 20);
     uint64_t game_size = qa_load_u64le(input.data + 24);
-    if (file_count >= 64 || script_count >= 64)
+    uint64_t file_serial = qa_load_u64le(input.data + 32);
+    uint64_t script_generation = qa_load_u64le(input.data + 40);
+    uint32_t bots_shutdown = qa_load_u32le(input.data + 48);
+    if (file_count >= 64 || script_count >= 64 || bots_shutdown > 1 || qa_load_u32le(input.data + 52))
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 checkpoint handle count exceeds source capacity");
-    checkpoint_reader reader = {input, 32};
+    checkpoint_reader reader = {input, 56};
     qa_bytes clipping;
     if (!take(&reader, 48, &clipping, error)) return false;
     qa_bounds clip_bounds = {load_vector(clipping.data), load_vector(clipping.data + 12)};
@@ -237,7 +262,7 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
     q3_file files[64] = {0}; q3_script *scripts[64] = {0};
     bool ok = true;
     for (uint32_t i = 0; ok && i < file_count; ++i)
-        ok = restore_file(host, &reader, files, (uint64_t)i + 1, error);
+        ok = restore_file(host, &reader, files, file_serial, error);
     qa_script_services services = q3_script_services(host);
     for (uint32_t i = 0; ok && i < script_count; ++i) {
         qa_bytes row, bytes;
@@ -263,7 +288,9 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
     }
     if (ok) {
         memcpy(host->files, files, sizeof(files)); memcpy(host->scripts, scripts, sizeof(scripts));
-        host->file_serial = file_count;
+        host->file_serial = file_serial;
+        host->script_generation = script_generation;
+        host->bots_shutdown = bots_shutdown != 0;
         host->clip_bounds = clip_bounds; host->clip_brush = clip_brush;
         host->entity_cursor = restored_cursor; host->entity_parser = restored_parser;
         host->restore_pending = true;
