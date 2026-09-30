@@ -10,7 +10,7 @@
  * serials remain owner identities within the candidate's fresh actor registry. */
 typedef struct qa_persistence_gameplay_resolvers {
     void *context;
-    bool (*combat)(void *, qa_actor_id, qa_combat_binding *, qa_error *);
+    bool (*combat)(void *, qa_actor_id, uint64_t serial, qa_combat_binding *, qa_error *);
     bool (*admission)(void *, qa_actor_id, qa_combat_admission *, qa_error *);
     bool (*protection)(void *, qa_actor_id, qa_protection_channel,
                        const qa_protection_claim *, qa_protection_binding *, qa_error *);

@@ -135,7 +135,7 @@ static bool record(qa_source_save_io *io, qa_combat *combat, qa_inventory *inven
                 !qa_source_save_string(io, &owners[i])) return false;
         if (reading) {
             qa_combat_state observed;
-            if (!resolve || !resolve->combat || !resolve->combat(resolve->context, entry->actor, &entry->binding, io->error) ||
+            if (!resolve || !resolve->combat || !resolve->combat(resolve->context, entry->actor, entry->serial, &entry->binding, io->error) ||
                 binding_mask(&entry->binding) != mask || (mask & 7u) != 7u ||
                 !source_primary(combat, &entry->binding, &observed, io->error) || !same_state(&primary, &observed))
                 return fail(io->error, "Restored source combat authority differs from saved primary");
