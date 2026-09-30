@@ -1,4 +1,5 @@
 #include "qa/audio.h"
+#include "checkpoint_internal.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -79,6 +80,57 @@ bool qa_audio_reverb_create(uint32_t rate, qa_audio_reverb **out, qa_error *erro
 }
 
 void qa_audio_reverb_destroy(qa_audio_reverb *reverb) { free(reverb); }
+
+bool qa_audio_reverb_checkpoint(const qa_audio_reverb *reverb, qa_buffer *out, qa_error *error) {
+    if (!reverb || !out) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Reverb checkpoint requires its live owner"); return false;
+    }
+    qa_ac_writer w = {.error = error};
+    qa_ac_write(&w, "QARV", 4); qa_ac_u32(&w, 1); qa_ac_u32(&w, reverb->rate);
+    qa_ac_u64(&w, reverb->storage_length); qa_ac_u64(&w, reverb->position);
+    for (size_t channel = 0; channel < 2; ++channel) {
+        qa_ac_float(&w, reverb->shelf[channel]);
+        for (size_t i = 0; i < COMB_COUNT + ALLPASS_COUNT; ++i) {
+            const delay_line *line = i < COMB_COUNT ? &reverb->network[channel].comb[i] :
+                &reverb->network[channel].allpass[i - COMB_COUNT];
+            qa_ac_u64(&w, line->position); qa_ac_float(&w, line->store); qa_ac_float(&w, line->feedback);
+        }
+    }
+    for (size_t i = 0; i < reverb->storage_length; ++i) qa_ac_float(&w, reverb->storage[i]);
+    return qa_ac_finish(&w, out);
+}
+
+bool qa_audio_reverb_restore(qa_bytes bytes, qa_audio_reverb **out, qa_error *error) {
+    if (!out || !bytes.data || bytes.size < 28 || memcmp(bytes.data, "QARV", 4)) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid reverb checkpoint header"); return false;
+    }
+    qa_ac_reader r = {.bytes = bytes, .offset = 4, .error = error};
+    if (qa_ac_get32(&r) != 1) return qa_ac_bad(&r, "Unknown reverb checkpoint schema");
+    uint32_t rate = qa_ac_get32(&r);
+    uint64_t length = qa_ac_get64(&r), position = qa_ac_get64(&r);
+    if (r.failed || rate < 8000 || rate > 192000 || length > (bytes.size - r.offset) / 4)
+        return qa_ac_bad(&r, "Invalid reverb checkpoint extent or rate");
+    qa_audio_reverb *reverb = NULL;
+    if (!qa_audio_reverb_create(rate, &reverb, error)) return false;
+    if (length != reverb->storage_length || position >= reverb->delay_length) {
+        qa_audio_reverb_destroy(reverb); return qa_ac_bad(&r, "Reverb checkpoint delay dimensions differ");
+    }
+    reverb->position = (size_t)position;
+    for (size_t channel = 0; !r.failed && channel < 2; ++channel) {
+        reverb->shelf[channel] = qa_ac_getfloat(&r);
+        for (size_t i = 0; !r.failed && i < COMB_COUNT + ALLPASS_COUNT; ++i) {
+            delay_line *line = i < COMB_COUNT ? &reverb->network[channel].comb[i] :
+                &reverb->network[channel].allpass[i - COMB_COUNT];
+            uint64_t cursor = qa_ac_get64(&r);
+            if (cursor >= line->length) { qa_ac_bad(&r, "Reverb checkpoint cursor leaves its delay line"); break; }
+            line->position = (size_t)cursor; line->store = qa_ac_getfloat(&r); line->feedback = qa_ac_getfloat(&r);
+        }
+    }
+    for (size_t i = 0; !r.failed && i < reverb->storage_length; ++i) reverb->storage[i] = qa_ac_getfloat(&r);
+    if (!r.failed && r.offset != bytes.size) qa_ac_bad(&r, "Reverb checkpoint has trailing fields");
+    if (r.failed) { qa_audio_reverb_destroy(reverb); return false; }
+    *out = reverb; return true;
+}
 
 void qa_audio_reverb_reset(qa_audio_reverb *reverb) {
     if (!reverb)

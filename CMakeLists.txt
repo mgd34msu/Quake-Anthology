@@ -553,6 +553,7 @@ add_library(qa_audio STATIC
     src/audio/engine.c
     src/audio/environments.c
     src/audio/mixer.c
+    src/audio/mixer_save.c
     src/audio/music.c
     src/audio/output.c
     src/audio/reverb.c
