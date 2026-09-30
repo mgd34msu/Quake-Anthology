@@ -706,6 +706,7 @@ add_library(qa_network STATIC
     src/network/q3/visibility.c
     src/network/reliability.c
     src/network/runtime/commands.c
+    src/network/runtime/q3.c
     src/network/runtime/session.c
     src/network/runtime/unified.c
     src/network/socks.c
@@ -829,6 +830,7 @@ add_library(qa_application STATIC
     src/app/application/map_players.c
     src/app/application/map_travel.c
     src/app/application/match.c
+    src/app/application/network.c
     src/app/application/owner.c
     src/app/application/providers.c
     src/app/application/publication.c
@@ -892,6 +894,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/frame.c
     src/app/frontend/launch.c
     src/app/frontend/lifetime.c
+    src/app/frontend/network.c
     src/app/frontend/options.c
     src/app/frontend/presentation.c
     src/app/frontend/resources.c

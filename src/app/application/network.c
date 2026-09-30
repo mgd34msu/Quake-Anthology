@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "guest_q3_private.h"
 #include "qa/application_network.h"
+#include "qa/physics.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -210,6 +211,180 @@ const qa_q3_gamestate *qa_application_network_q3_gamestate(qa_application *appli
     uint32_t slot;
     struct application_q3_guest *engine = source(application, actor, &slot, NULL);
     return engine ? &engine->gamestate : NULL;
+}
+
+static q3g_role *external_cgame(qa_application *app, qa_actor_owner owner, uint32_t seat)
+{
+    for (size_t i = 0; app && i < app->provider_count; ++i) {
+        application_provider *provider = app->providers[i];
+        if (provider->owner != owner || !provider->attached) continue;
+        struct application_q3_guest *engine = q3g_engine(provider);
+        for (q3g_role *role = engine ? engine->roles : NULL; role; role = role->next)
+            if (role->kind == QA_QVM_CGAME && role->seat == seat && role->ready &&
+                !role->retired && !role->local_client && role->client_services.gamestate) return role;
+    }
+    return NULL;
+}
+
+bool qa_application_network_q3_client_actor(qa_application *app,
+    const qa_application_network_q3_projection *projection, uint32_t source_number,
+    qa_actor_id *out, bool *present, qa_error *error)
+{
+    if (!app || !projection || !out || !present || app->destroy_requested)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Missing remote Q3 actor projection owner");
+    *out = (qa_actor_id){0}; *present = false;
+    if (source_number >= QA_Q3_ENTITY_WORLD) return true;
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(app->session),
+        projection->actors[source_number]);
+    if (record && record->owner == projection->owner && record->definition == projection->definition &&
+        !record->has_source) {
+        *out = record->id; *present = true;
+    }
+    return true;
+}
+
+bool qa_application_network_q3_client_unproject(qa_application *app,
+    qa_application_network_q3_projection *projection, qa_error *error)
+{
+    if (!app || !projection || !qa_session_safe(app->session))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 projection retirement requires a safe session");
+    for (uint32_t i = 0; i < QA_Q3_ENTITY_WORLD; ++i) {
+        qa_actor_id actor = projection->actors[i];
+        const qa_actor_record *record = qa_actors_get(qa_session_actors(app->session), actor);
+        if (record) {
+            if (record->owner != projection->owner || record->definition != projection->definition || record->has_source)
+                return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 projection contains a foreign actor");
+            if (!qa_session_release(app->session, actor, error)) return false;
+        }
+        projection->actors[i] = (qa_actor_id){0};
+    }
+    projection->owner = 0; projection->definition = 0; return true;
+}
+
+static qa_trajectory projection_trajectory(const qa_q3_trajectory *source)
+{
+    return (qa_trajectory){(qa_trajectory_type)source->type, source->time, source->duration,
+        qa_v3(source->base[0], source->base[1], source->base[2]),
+        qa_v3(source->delta[0], source->delta[1], source->delta[2])};
+}
+static bool projection_snapshot(const qa_q3_snapshot *snapshot,
+    qa_body_state bodies[QA_Q3_ENTITY_WORLD], bool present[QA_Q3_ENTITY_WORLD],
+    qa_error *error)
+{
+    if (!snapshot) return true;
+    if (!snapshot->valid || snapshot->entity_count > QA_Q3_ENTITY_WORLD ||
+        (snapshot->entity_count && !snapshot->entities) || snapshot->player.clientNum < 0 ||
+        snapshot->player.clientNum >= 64 || !qa_vec_finite(qa_v3(snapshot->player.origin[0],
+            snapshot->player.origin[1], snapshot->player.origin[2])) ||
+        !qa_vec_finite(qa_v3(snapshot->player.velocity[0], snapshot->player.velocity[1], snapshot->player.velocity[2])) ||
+        !qa_vec_finite(qa_v3(snapshot->player.viewangles[0], snapshot->player.viewangles[1], snapshot->player.viewangles[2])))
+        return application_fail(error, QA_ERROR_FORMAT, "Invalid remote Q3 projection snapshot");
+    int32_t previous = -1;
+    for (size_t i = 0; i < snapshot->entity_count; ++i) {
+        const qa_q3_entity *entity = &snapshot->entities[i];
+        if (entity->number <= previous || entity->number >= QA_Q3_ENTITY_WORLD)
+            return application_fail(error, QA_ERROR_FORMAT, "Remote Q3 projection entity order or number is invalid");
+        previous = entity->number;
+        qa_body_state body = {0};
+        qa_trajectory trajectory = projection_trajectory(&entity->pos);
+        if (!qa_trajectory_position(&trajectory, snapshot->server_time, 800, &body.origin, error) ||
+            !qa_trajectory_velocity(&trajectory, snapshot->server_time, 800, &body.velocity, error) ||
+            !qa_vec_finite(body.origin) || !qa_vec_finite(body.velocity))
+            return application_fail(error, QA_ERROR_FORMAT, "Invalid remote Q3 entity position trajectory");
+        trajectory = projection_trajectory(&entity->apos);
+        if (!qa_trajectory_position(&trajectory, snapshot->server_time, 800, &body.angles, error) ||
+            !qa_vec_finite(body.angles)) return application_fail(error, QA_ERROR_FORMAT, "Invalid remote Q3 entity angular trajectory");
+        bodies[entity->number] = body; present[entity->number] = true;
+    }
+    bodies[snapshot->player.clientNum] = (qa_body_state){
+        .origin = qa_v3(snapshot->player.origin[0], snapshot->player.origin[1], snapshot->player.origin[2]),
+        .velocity = qa_v3(snapshot->player.velocity[0], snapshot->player.velocity[1], snapshot->player.velocity[2]),
+        .angles = qa_v3(snapshot->player.viewangles[0], snapshot->player.viewangles[1], snapshot->player.viewangles[2])};
+    present[snapshot->player.clientNum] = true;
+    return true;
+}
+
+bool qa_application_network_q3_client_project(qa_application *app, qa_actor_owner owner,
+    qa_application_network_q3_projection *projection, const qa_q3_snapshot *current,
+    const qa_q3_snapshot *next, qa_error *error)
+{
+    if (!app || !projection || !current || app->destroy_requested || app->operation != APPLICATION_IDLE ||
+        !qa_session_safe(app->session) || qa_session_faulted(app->session) || !external_cgame(app, owner, 0) ||
+        (projection->owner && projection->owner != owner))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 publication requires its admitted idle cgame owner");
+    qa_body_state bodies[QA_Q3_ENTITY_WORLD] = {0};
+    bool present[QA_Q3_ENTITY_WORLD] = {0};
+    /* Current state wins where both snapshots observe the same source number. */
+    if (!projection_snapshot(next, bodies, present, error) ||
+        !projection_snapshot(current, bodies, present, error)) return false;
+    qa_string_id definition;
+    if (!qa_strings_intern_cstr(qa_session_strings(app->session), "qa.network.q3.remote-entity", &definition, error)) return false;
+    if (projection->owner && projection->definition != definition)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 publication has a foreign definition");
+    projection->owner = owner; projection->definition = definition;
+    for (uint32_t i = 0; i < QA_Q3_ENTITY_WORLD; ++i) {
+        const qa_actor_record *record = qa_actors_get(qa_session_actors(app->session), projection->actors[i]);
+        if (record && (record->owner != owner || record->has_source || record->definition != definition))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 publication contains a foreign actor");
+        if (record && !present[i] && !qa_session_release(app->session, record->id, error)) return false;
+        if (!record || !present[i]) projection->actors[i] = (qa_actor_id){0};
+    }
+    for (uint32_t i = 0; i < QA_Q3_ENTITY_WORLD; ++i) {
+        if (!present[i]) continue;
+        if (!projection->actors[i].registry &&
+            !qa_session_allocate(app->session, owner, definition, false, 0, &projection->actors[i], error)) return false;
+        if (!qa_world_body_write(app->world, projection->actors[i], &bodies[i], error)) return false;
+    }
+    return true;
+}
+bool qa_application_network_q3_client_source(qa_application *app, qa_actor_id actor,
+    qa_actor_owner *owner, qa_q3_product *product, qa_error *error)
+{
+    uint32_t slot;
+    struct application_q3_guest *engine = source(app, actor, &slot, error);
+    application_provider *hud = app ? application_provider_for(app, actor, QA_ROLE_HUD, NULL) : NULL;
+    if (!engine || !owner || !product || !hud || q3g_engine(hud) != engine ||
+        !external_cgame(app, hud->owner, 0))
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 remote client requires the selected matching external cgame owner");
+    *owner = hud->owner; *product = engine->product; return true;
+}
+bool qa_application_network_q3_client_clear(qa_application *app, qa_actor_owner owner,
+    uint32_t seat, qa_error *error)
+{
+    q3g_role *role = external_cgame(app, owner, seat);
+    if (!role) return application_fail(error, QA_ERROR_ARGUMENT, "Q3 remote cgame owner is retired");
+    if (role->initialized) {
+        q3g_role *replacement = NULL;
+        return q3g_role_restart(role, &replacement, error);
+    }
+    qa_command_tokens_free(&role->arguments); return true;
+}
+bool qa_application_network_q3_client_command(qa_application *app, qa_actor_owner owner,
+    uint32_t seat, const qa_q3_tokens *tokens, qa_error *error)
+{
+    q3g_role *role = external_cgame(app, owner, seat);
+    if (!role || !tokens || tokens->truncated)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 server command lacks the current cgame argument owner");
+    size_t bytes = 0;
+    for (size_t i = 0; i < tokens->count; ++i) bytes += strlen(qa_q3_token(tokens, i)) + 1;
+    qa_command_tokens copy = {.count = tokens->count};
+    copy.values = calloc(tokens->count ? tokens->count : 1, sizeof(*copy.values));
+    copy.storage = malloc(bytes ? bytes : 1); copy.args_text = malloc(bytes + 1);
+    if (!copy.values || !copy.storage || !copy.args_text) {
+        qa_command_tokens_free(&copy); return application_fail(error, QA_ERROR_MEMORY, "Retaining Q3 cgame command arguments");
+    }
+    size_t cursor = 0, args = 0;
+    for (size_t i = 0; i < tokens->count; ++i) {
+        const char *value = qa_q3_token(tokens, i); size_t length = strlen(value);
+        copy.values[i] = copy.storage + cursor;
+        memcpy(copy.storage + cursor, value, length + 1); cursor += length + 1;
+        if (i) {
+            if (i > 1) copy.args_text[args++] = ' ';
+            memcpy(copy.args_text + args, value, length); args += length;
+        }
+    }
+    copy.args_text[args] = 0;
+    qa_command_tokens_free(&role->arguments); role->arguments = copy; return true;
 }
 
 typedef struct visibility_owner { qa_collision_geometry *geometry; qa_error failure; } visibility_owner;

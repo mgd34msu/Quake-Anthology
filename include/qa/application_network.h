@@ -48,4 +48,30 @@ bool qa_application_network_q3_userinfo(qa_application *, qa_actor_id, const cha
 bool qa_application_network_q3_snapshot(qa_application *, qa_actor_id,
     int32_t message_number, int32_t server_command_number, uint8_t flags,
     qa_application_network_q3_frame *, qa_error *);
+/* Qualified external cgame consumes native client snapshots and owns source
+ * prediction. Admission preserves the selected gameplay composition. */
+bool qa_application_network_q3_client_source(qa_application *, qa_actor_id,
+    qa_actor_owner *, qa_q3_product *, qa_error *);
+bool qa_application_network_q3_client_command(qa_application *, qa_actor_owner,
+    uint32_t seat, const qa_q3_tokens *, qa_error *);
+bool qa_application_network_q3_client_clear(qa_application *, qa_actor_owner,
+    uint32_t seat, qa_error *);
+/* Connection-owned projection, initialized to zero. Source numbers are kept
+ * here rather than in the local GAME source-slot namespace. Bodies contain
+ * authoritative snapshot state, remain unlinked, and grant no input authority.
+ * Keep current and next presentation snapshots together until the source clock
+ * transitions; release before closing the borrowed application. */
+typedef struct qa_application_network_q3_projection {
+    qa_actor_owner owner;
+    qa_actor_definition definition;
+    qa_actor_id actors[QA_Q3_ENTITY_WORLD];
+} qa_application_network_q3_projection;
+bool qa_application_network_q3_client_project(qa_application *, qa_actor_owner,
+    qa_application_network_q3_projection *, const qa_q3_snapshot *current,
+    const qa_q3_snapshot *next, qa_error *);
+bool qa_application_network_q3_client_unproject(qa_application *,
+    qa_application_network_q3_projection *, qa_error *);
+bool qa_application_network_q3_client_actor(qa_application *,
+    const qa_application_network_q3_projection *, uint32_t source,
+    qa_actor_id *, bool *present, qa_error *);
 #endif

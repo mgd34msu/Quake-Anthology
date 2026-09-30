@@ -82,6 +82,12 @@ void qa_q3_client_peer_destroy(qa_q3_client_peer *p) {
 const qa_q3_identity *qa_q3_client_peer_identity(const qa_q3_client_peer *p) { return &p->identity; }
 const qa_q3_gamestate *qa_q3_client_peer_gamestate(const qa_q3_client_peer *p) { return &p->gamestate; }
 const qa_q3_snapshot *qa_q3_client_peer_snapshot(const qa_q3_client_peer *p) { return p->has_snapshot ? &p->history[(uint32_t)p->latest_snapshot & 31].value : NULL; }
+const qa_q3_snapshot *qa_q3_client_peer_snapshot_at(const qa_q3_client_peer *p, int32_t number) {
+    if (!p || !p->has_snapshot || number < 0 || number > p->latest_snapshot ||
+        (int64_t)p->latest_snapshot - number >= QA_Q3_PACKET_BACKUP) return NULL;
+    const qa_q3_snapshot *value = &p->history[(uint32_t)number & (QA_Q3_PACKET_BACKUP - 1)].value;
+    return value->valid && value->message_number == number ? value : NULL;
+}
 bool qa_q3_client_peer_command(qa_q3_client_peer *p, const char *text, qa_error *e) {
     if (!p || p->disconnected) return fail(e, QA_ERROR_ARGUMENT, "Q3 client is disconnected");
     return current(p, e) && qa_q3_reliable_add(&p->reliable, QA_Q3_CLIENT, text, e);

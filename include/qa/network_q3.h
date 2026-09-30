@@ -6,6 +6,7 @@
 #define QA_Q3_MESSAGE_BYTES 16384
 #define QA_Q3_FRAGMENT_BYTES 1300
 #define QA_Q3_ENTITIES 1024
+#define QA_Q3_ENTITY_WORLD 1022
 #define QA_Q3_ENTITY_NONE 1023
 #define QA_Q3_CONFIGSTRINGS 1024
 #define QA_Q3_GAMESTATE_CHARS 16000
@@ -428,6 +429,8 @@ const qa_q3_identity *qa_q3_client_peer_identity(const qa_q3_client_peer *);
 /* Returned views remain borrowed until the next receive or history mutation. */
 const qa_q3_gamestate *qa_q3_client_peer_gamestate(const qa_q3_client_peer *);
 const qa_q3_snapshot *qa_q3_client_peer_snapshot(const qa_q3_client_peer *);
+/* Null denotes a missing, invalid or expired source history entry. */
+const qa_q3_snapshot *qa_q3_client_peer_snapshot_at(const qa_q3_client_peer *, int32_t);
 bool qa_q3_client_peer_command(qa_q3_client_peer *, const char *, qa_error *);
 bool qa_q3_client_peer_usercmd(qa_q3_client_peer *, const qa_q3_usercmd *, qa_error *);
 uint64_t qa_q3_client_peer_usercmd_number(const qa_q3_client_peer *);
