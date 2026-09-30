@@ -1036,6 +1036,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/presentation.c
     src/app/frontend/resources.c
     src/app/frontend/remaps.c
+    src/app/frontend/restore_topology.c
     src/app/frontend/seats.c
     src/app/frontend/source.c
     src/app/frontend/tools.c
