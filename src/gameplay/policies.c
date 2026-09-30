@@ -59,6 +59,22 @@ static bool effect(qa_combat *combat, const qa_combat_policy *policy, qa_damage_
         return qa_combat_argument(error, "source damage effect returned an invalid result");
     return true;
 }
+static bool lethal_health(qa_combat *combat, const qa_combat_policy *policy,
+                          const qa_damage_request *request, float *health,
+                          qa_reaction *reaction, bool *changed, qa_error *error) {
+    if (changed) *changed = false;
+    if (*health > 0) return true;
+    qa_damage_effect value = {.amount = *health, .allowed = true,
+                              .reaction = QA_REACTION_DEATH};
+    if (!effect(combat, policy, QA_DAMAGE_LETHAL_HEALTH, request, &value, error))
+        return false;
+    if (!qa_combat_live(combat, request->target)) return true;
+    if (changed) *changed = value.amount != *health || value.reaction != *reaction;
+    *health = value.amount;
+    *reaction = value.reaction;
+    return true;
+}
+
 static bool integer(float value, int32_t *out, qa_error *error) {
     double truncated = trunc((double)value);
     if (truncated < INT32_MIN || truncated > INT32_MAX || !isfinite(truncated))
@@ -205,16 +221,9 @@ static bool q1_damage(qa_combat *combat, const qa_combat_policy *policy,
         return false;
     float health = fmaxf(-99, target.health - take);
     qa_reaction reaction = health <= 0 ? QA_REACTION_DEATH : QA_REACTION_PAIN;
-    if (health <= 0) {
-        value =
-            (qa_damage_effect){.amount = health, .allowed = true, .reaction = QA_REACTION_DEATH};
-        if (!effect(combat, policy, QA_DAMAGE_LETHAL_HEALTH, request, &value, error))
-            return false;
-        if (!qa_combat_live(combat, request->target))
-            return true;
-        health = value.amount;
-        reaction = value.reaction;
-    }
+    if (!lethal_health(combat, policy, request, &health, &reaction, NULL, error))
+        return false;
+    if (!qa_combat_live(combat, request->target)) return true;
     if (!isfinite(health) || !isfinite(take))
         return qa_combat_argument(error, "Q1 damage arithmetic overflow");
     if (!qa_combat_set_health(combat, request->target, health, error))
@@ -367,12 +376,16 @@ static bool q2_damage(qa_combat *combat, const qa_combat_policy *policy,
     if (!take)
         return true;
     float health = fmaxf(-999, truncf(target.health - (float)take));
+    qa_reaction reaction = health <= 0 ? QA_REACTION_DEATH
+                           : source.suppress_pain ? QA_REACTION_NONE : QA_REACTION_PAIN;
+    bool lethal_changed;
+    if (!lethal_health(combat, policy, request, &health, &reaction, &lethal_changed, error))
+        return false;
+    if (!qa_combat_live(combat, request->target)) return true;
     if (!qa_combat_set_health(combat, request->target, health, error))
         return false;
     result->applied_damage = (float)take;
-    result->reaction = health <= 0            ? QA_REACTION_DEATH
-                       : source.suppress_pain ? QA_REACTION_NONE
-                                              : QA_REACTION_PAIN;
+    result->reaction = reaction;
     if ((policy->effect || combat->hooks.effect) && qa_combat_live(combat, request->target)) {
         value = (qa_damage_effect){
             .amount = result->applied_damage, .allowed = true, .reaction = result->reaction};
@@ -385,6 +398,7 @@ static bool q2_damage(qa_combat *combat, const qa_combat_policy *policy,
         if (!describe(combat, policy, request, &target, &attacker, &has_attacker, &context, error))
             return false;
         result->reaction = !qa_combat_live(combat, request->target) ? QA_REACTION_NONE
+                           : lethal_changed                         ? reaction
                            : target.health <= 0                     ? QA_REACTION_DEATH
                            : context.game.q2.suppress_pain          ? QA_REACTION_NONE
                                                                     : QA_REACTION_PAIN;
@@ -540,13 +554,16 @@ static bool q3_damage(qa_combat *combat, const qa_combat_policy *policy,
     int32_t previous_health;
     if (!integer(target.health, &previous_health, error))
         return false;
-    int32_t health = signed_word((uint32_t)previous_health - (uint32_t)take);
-    if (health < -999)
-        health = -999;
-    if (!qa_combat_set_health(combat, request->target, (float)health, error))
+    int32_t source_health = signed_word((uint32_t)previous_health - (uint32_t)take);
+    float health = source_health < -999 ? -999 : (float)source_health;
+    qa_reaction reaction = health <= 0 ? QA_REACTION_DEATH : QA_REACTION_PAIN;
+    if (!lethal_health(combat, policy, request, &health, &reaction, NULL, error))
+        return false;
+    if (!qa_combat_live(combat, request->target)) return true;
+    if (!qa_combat_set_health(combat, request->target, health, error))
         return false;
     result->applied_damage = (float)take;
-    result->reaction = health <= 0 ? QA_REACTION_DEATH : QA_REACTION_PAIN;
+    result->reaction = reaction;
     return true;
 }
 bool qa_combat_policy_execute(qa_combat *combat, const qa_combat_policy *policy,
