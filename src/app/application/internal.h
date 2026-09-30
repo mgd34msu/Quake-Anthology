@@ -294,6 +294,11 @@ bool application_native_horde_restart(void *, qa_mode_id, uint32_t, qa_error *);
 bool application_native_mode_select_weapon(void *, qa_actor_id, qa_item_id, qa_error *);
 application_provider *application_mode_provider(qa_application *, qa_mode_id);
 bool application_native_mode_emit(void *, qa_mode_id, const qa_builtin_event *, qa_error *);
+bool application_native_mode_q3_clock(void *, qa_mode_id, int32_t *, qa_error *);
+bool application_native_mode_q3_warmup_restart(void *, qa_mode_id, qa_error *);
+bool application_native_q3_settings_register(application_provider *, qa_error *);
+bool application_native_q3_settings_install(application_provider *, qa_error *);
+bool application_native_q3_settings_reconnect(application_provider *, qa_error *);
 bool application_native_mode_map_allowed(void *, qa_mode_id, qa_string_id);
 bool application_native_mode_rogue_runes_claim(void *, qa_mode_id, bool *, qa_error *);
 bool application_native_mode_rogue_runes_read(void *, qa_mode_id, qa_actor_id *, bool *);
@@ -444,6 +449,10 @@ qa_q1_program application_q1_program(const char *);
 bool application_provider_construct(qa_application *, application_provider *,
                                     qa_world *, qa_catalog *, const qa_product *,
                                     const qa_launch_choices *, qa_error *);
+struct qa_save_record;
+bool application_provider_construct_qvm_restored(qa_application *, application_provider *,
+    qa_world *, qa_catalog *, const qa_product *, const qa_launch_choices *,
+    const struct qa_save_record *, qa_error *);
 bool application_provider_deconstruct(application_provider *, qa_error *);
 bool application_provider_actor_released(application_provider *, qa_actor_record,
                                          qa_error *);

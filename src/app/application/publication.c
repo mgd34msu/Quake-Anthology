@@ -267,6 +267,7 @@ static qa_actor_owner retiring_component(application_publication *publication,
 
 static bool construct_and_reserve(qa_application *application,
                                   application_publication *publication,
+                                  const qa_save_image *image,
                                   qa_error *error)
 {
     if (publication->next_count > SIZE_MAX / sizeof(*publication->admissions))
@@ -300,9 +301,17 @@ static bool construct_and_reserve(qa_application *application,
         if (!provider->constructed) {
             const qa_product *product = qa_catalog_product(
                 catalog, provider->launch->selection.product);
-            if (product == NULL ||
-                !application_provider_construct(application, provider, world,
-                                                catalog, product, choices, error)) {
+            bool constructed = false;
+            if (product != NULL && image != NULL && provider->kind == APPLICATION_PROVIDER_QVM) {
+                const qa_save_record *record = qa_save_image_find(image, QA_SAVE_PROVIDER,
+                    provider->launch->selection.instance);
+                constructed = application_provider_construct_qvm_restored(application,
+                    provider, world, catalog, product, choices, record, error);
+            } else if (product != NULL) {
+                constructed = application_provider_construct(application, provider, world,
+                    catalog, product, choices, error);
+            }
+            if (!constructed) {
                 free(used);
                 return false;
             }
@@ -416,7 +425,7 @@ bool application_publication_prepare(qa_application *application,
         !application->world_change_ready(application->guest_context, application, error))
         return false;
     if (!prepare_world(application, publication, error) ||
-        !construct_and_reserve(application, publication, error) ||
+        !construct_and_reserve(application, publication, NULL, error) ||
         !application_match_prepare(application, publication, error))
         return false;
     return true;
@@ -645,7 +654,7 @@ bool application_save_prepare_content(qa_application *candidate,
                                                     navigation->payload, error);
         }
         if (ok)
-            ok = construct_and_reserve(candidate, publication, error) &&
+            ok = construct_and_reserve(candidate, publication, image, error) &&
                  application_match_prepare_equipment(candidate, publication, error);
     }
     if (ok) {

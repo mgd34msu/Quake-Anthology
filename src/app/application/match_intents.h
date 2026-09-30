@@ -11,8 +11,10 @@ bool application_match_intents_idle(const application_match_intents *);
 bool application_match_intents_enqueue(application_match_intents *, qa_application *,
     const qa_match_intent *, qa_error *);
 /* Only the frontend's drained idle boundary calls prepare/completed. Prepare
- * applies pre-map setters; it neither loads a map nor calls a travel parser. */
-bool application_match_intents_prepare(application_match_intents *, qa_application *, qa_error *);
+ * applies scoped setters; consumed is true when a config intent finished
+ * without a map transition. It neither loads a map nor calls a travel parser. */
+bool application_match_intents_prepare(application_match_intents *, qa_application *,
+                                        bool *consumed, qa_error *);
 bool application_match_intents_travel_read(const application_match_intents *,
     const application_next_map_plan **, qa_application_travel_request *);
 bool application_match_intents_waiting(const application_match_intents *, uint64_t *revision);

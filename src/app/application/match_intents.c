@@ -138,15 +138,19 @@ static bool context_read(application_match_intents *state, qa_application *app,
         return application_fail(error, QA_ERROR_ARGUMENT, "match map command publication retired");
     return true;
 }
+static bool config_intent(qa_match_intent_kind kind) {
+    return kind == QA_MATCH_GAME_TYPE || kind == QA_MATCH_WARMUP ||
+           kind == QA_MATCH_TIME_LIMIT || kind == QA_MATCH_FRAG_LIMIT;
+}
 bool application_match_intents_enqueue(application_match_intents *state, qa_application *app,
     const qa_match_intent *intent, qa_error *error) {
     if (!state || state->busy || !app || !intent || !app->session)
         return application_fail(error, QA_ERROR_ARGUMENT, "match map enqueue requires live owners");
-    if (intent->kind != QA_MATCH_NEXT_MAP && intent->kind != QA_MATCH_SELECTED_MAP)
+    if (intent->kind != QA_MATCH_NEXT_MAP && intent->kind != QA_MATCH_SELECTED_MAP && !config_intent(intent->kind))
         return application_fail(error, QA_ERROR_UNSUPPORTED, "match map intent lacks its source continuation");
     qa_bytes command = qa_strings_text(qa_session_strings(app->session), intent->source_command);
     if ((intent->kind == QA_MATCH_NEXT_MAP && intent->source_command) ||
-        (intent->kind == QA_MATCH_SELECTED_MAP && (!command.data || !command.size ||
+        (intent->kind != QA_MATCH_NEXT_MAP && (!command.data || !command.size ||
          command.size >= 1024 || memchr(command.data, 0, command.size))))
         return application_fail(error, QA_ERROR_ARGUMENT, "match map intent has no valid source snapshot");
     if (state->stage != MATCH_MAP_EMPTY)
@@ -173,6 +177,8 @@ static bool assignments(application_match_intents *state, qa_application *app,
         if (!boundary(app, error) || !context_read(state, app, after, error)) return false;
         qa_console *console = plan_console(app, &state->plan);
         application_map_assignment *value = &state->plan.assignments[state->cursor];
+        if (config_intent(state->kind) &&
+            !application_native_config_command_allowed(app, &state->plan, value->name, error)) return false;
         app->operation = APPLICATION_CONFIGURING;
         qa_cvars *cvars = qa_console_cvar_owner(console, &state->plan.context, value->name);
         if (!cvars || qa_cvars_dialect(cvars) != QA_CONSOLE_Q3) {
@@ -189,7 +195,8 @@ static bool assignments(application_match_intents *state, qa_application *app,
     }
     return true;
 }
-static bool prepare_inner(application_match_intents *state, qa_application *app, qa_error *error) {
+static bool prepare_inner(application_match_intents *state, qa_application *app,
+                           bool *consumed, qa_error *error) {
     if (state->stage == MATCH_MAP_EMPTY) return true;
     if (!boundary(app, error)) return false;
     if (state->stage == MATCH_MAP_AFTER) {
@@ -203,7 +210,9 @@ static bool prepare_inner(application_match_intents *state, qa_application *app,
         if (qa_application_travel_read(app, &travel))
             return application_fail(error, QA_ERROR_ARGUMENT, "ordinary travel is already pending");
         application_next_map_plan next = {0};
-        bool okay = state->kind == QA_MATCH_NEXT_MAP ?
+        bool okay = config_intent(state->kind) ?
+            application_native_config_plan(app, state->mode, state->kind, state->source_command, &next, error) :
+            state->kind == QA_MATCH_NEXT_MAP ?
             application_native_next_map_plan(app, state->mode, &next, error) :
             application_native_selected_map_plan(app, state->mode, state->source_command, &next, error);
         if (!okay) return false;
@@ -212,14 +221,17 @@ static bool prepare_inner(application_match_intents *state, qa_application *app,
     if (!context_read(state, app, false, error)) return false;
     if (state->stage == MATCH_MAP_BEFORE) {
         if (!assignments(state, app, state->plan.assignments_before_map, false, error)) return false;
+        if (config_intent(state->kind)) { clear(state); *consumed = true; return true; }
         state->stage = MATCH_MAP_WAIT;
     }
     return true;
 }
-bool application_match_intents_prepare(application_match_intents *state, qa_application *app, qa_error *error) {
-    if (!state || state->busy) return application_fail(error, QA_ERROR_ARGUMENT, "match map execution cannot reenter");
+bool application_match_intents_prepare(application_match_intents *state, qa_application *app,
+    bool *consumed, qa_error *error) {
+    if (!state || state->busy || !consumed) return application_fail(error, QA_ERROR_ARGUMENT, "match intent execution cannot reenter");
+    *consumed = false;
     state->busy = true;
-    bool okay = prepare_inner(state, app, error);
+    bool okay = prepare_inner(state, app, consumed, error);
     state->busy = false;
     return okay;
 }
@@ -263,16 +275,28 @@ bool application_match_intents_completed(application_match_intents *state, qa_ap
     if (!boundary(app, error)) return false;
     if (!destination(state, app, error)) return false;
     state->stage = MATCH_MAP_AFTER;
-    return application_match_intents_prepare(state, app, error);
+    bool consumed;
+    return application_match_intents_prepare(state, app, &consumed, error);
 }
 
 static bool text_field(qa_source_save_io *io, char **text) {
-    const char *value = *text;
-    if (!qa_source_save_text(io, &value)) return false;
-    if (io->direction == QA_SOURCE_SAVE_READ) {
-        *text = copy_text(value, io->error);
-        if (value && !*text) return false;
+    bool present = io->direction == QA_SOURCE_SAVE_WRITE && *text != NULL;
+    if (!qa_source_save_bool(io, &present)) return false;
+    if (!present) {
+        if (io->direction == QA_SOURCE_SAVE_READ) *text = NULL;
+        return true;
     }
+    uint64_t length = io->direction == QA_SOURCE_SAVE_WRITE ? strlen(*text) : 0;
+    if (!qa_source_save_u64(io, &length) || length >= SIZE_MAX) return false;
+    if (io->direction == QA_SOURCE_SAVE_WRITE)
+        return qa_source_save_bytes(io, *text, (size_t)length);
+    if (io->offset > io->input.size || length > io->input.size - io->offset) return false;
+    char *value = malloc((size_t)length + 1);
+    if (!value) return application_fail(io->error, QA_ERROR_MEMORY, "cannot restore private match text");
+    if (!qa_source_save_bytes(io, value, (size_t)length) ||
+        (length && memchr(value, 0, (size_t)length))) { free(value); return false; }
+    value[length] = 0;
+    *text = value;
     return true;
 }
 static bool context_fields(qa_source_save_io *io, qa_command_context *context) {
@@ -297,20 +321,20 @@ static bool context_fields(qa_source_save_io *io, qa_command_context *context) {
         context->registry && context->generation;
 }
 static bool stream(qa_source_save_io *io, application_match_intents *state) {
-    char magic[4] = {'Q','A','M','I'}; uint32_t version = 3, stage = state->stage;
+    char magic[4] = {'Q','A','M','I'}; uint32_t version = 4, stage = state->stage;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QAMI", 4) ||
-        !qa_source_save_u32(io, &version) || version != 3 ||
+        !qa_source_save_u32(io, &version) || version != 4 ||
         !qa_source_save_u32(io, &stage) || stage > MATCH_MAP_AFTER) return false;
     state->stage = (match_map_stage)stage;
     if (state->stage == MATCH_MAP_EMPTY) return true;
     uint32_t kind = state->kind;
     if (!qa_source_save_u32(io, &kind) ||
-        (kind != QA_MATCH_NEXT_MAP && kind != QA_MATCH_SELECTED_MAP) ||
+        (kind != QA_MATCH_NEXT_MAP && kind != QA_MATCH_SELECTED_MAP && !config_intent((qa_match_intent_kind)kind)) ||
         !qa_source_save_string(io, &state->source_command)) return false;
     state->kind = (qa_match_intent_kind)kind;
     qa_bytes command = qa_strings_text(qa_session_strings(io->session), state->source_command);
     if ((kind == QA_MATCH_NEXT_MAP && state->source_command) ||
-        (kind == QA_MATCH_SELECTED_MAP && (!command.data || !command.size || command.size >= 1024 ||
+        (kind != QA_MATCH_NEXT_MAP && (!command.data || !command.size || command.size >= 1024 ||
          memchr(command.data, 0, command.size)))) return false;
     size_t maximum = io->direction == QA_SOURCE_SAVE_READ ? io->input.size : SIZE_MAX;
     if (!qa_source_save_u32(io, &state->mode.slot) || !qa_source_save_u64(io, &state->mode.generation) ||
@@ -337,7 +361,11 @@ static bool stream(qa_source_save_io *io, application_match_intents *state) {
         !qa_source_save_count(io, &state->cursor, plan->assignment_count) ||
         !qa_source_save_u64(io, &state->revision)) return false;
     plan->mode = state->mode; plan->scope.kind = (qa_application_console_kind)scope_kind;
-    if (plan->owner != state->owner || plan->context.owner != state->owner || !plan->map || !plan->map[0] ||
+    bool config = config_intent(state->kind);
+    if (plan->owner != state->owner || plan->context.owner != state->owner ||
+        (config ? plan->map || state->stage != MATCH_MAP_BEFORE || state->revision ||
+                  !plan->assignment_count || plan->assignments_before_map != plan->assignment_count
+                : !plan->map || !plan->map[0]) ||
         !((scope_kind == QA_APPLICATION_CONSOLE_ENGINE && !plan->scope.provider && !plan->scope.seat) ||
           (scope_kind == QA_APPLICATION_CONSOLE_Q3_GAME && plan->scope.provider && !plan->scope.seat)) ||
         (state->stage == MATCH_MAP_BEFORE && (state->cursor > plan->assignments_before_map || state->revision)) ||
@@ -365,11 +393,26 @@ bool application_match_intents_reconnect(application_match_intents *state, qa_ap
     if (after && !destination(state, app, error)) return false;
     if (state->stage == MATCH_MAP_UNRESOLVED) return true;
     if (!plan_console(app, &state->plan)) return application_fail(error, QA_ERROR_FORMAT, "saved match console scope is absent");
-    char *map = NULL;
-    bool valid_map = application_source_map_path(source(app, state->owner), state->plan.map, &map, error);
-    bool exact_map = valid_map && !strcmp(map, state->plan.map);
-    free(map);
-    if (!exact_map) return application_fail(error, QA_ERROR_FORMAT, "saved match map is not qualified by its actual source");
+    if (config_intent(state->kind)) {
+        application_next_map_plan actual = {0};
+        if (!application_native_config_plan(app, state->mode, state->kind,
+            state->source_command, &actual, error)) return false;
+        bool equal = actual.assignment_count == state->plan.assignment_count &&
+                    actual.owner == state->plan.owner && actual.scope.kind == state->plan.scope.kind &&
+                    actual.scope.provider == state->plan.scope.provider && actual.scope.seat == state->plan.scope.seat;
+        for (size_t i = 0; equal && i < actual.assignment_count; ++i)
+                equal = !strcmp(actual.assignments[i].name, state->plan.assignments[i].name) &&
+                    !strcmp(actual.assignments[i].value, state->plan.assignments[i].value) &&
+                    actual.assignments[i].set_flags == state->plan.assignments[i].set_flags;
+        application_next_map_plan_free(&actual);
+        if (!equal) return application_fail(error, QA_ERROR_FORMAT, "saved config assignments differ from their actual source command");
+    } else {
+        char *map = NULL;
+        bool valid_map = application_source_map_path(source(app, state->owner), state->plan.map, &map, error);
+        bool exact_map = valid_map && !strcmp(map, state->plan.map);
+        free(map);
+        if (!exact_map) return application_fail(error, QA_ERROR_FORMAT, "saved match map is not qualified by its actual source");
+    }
     if (!after && !qa_application_command_context_active(app, &state->plan.context))
         return application_fail(error, QA_ERROR_FORMAT, "saved match command publication differs");
     if (state->stage == MATCH_MAP_WAIT && state->revision &&

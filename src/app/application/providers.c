@@ -3,6 +3,7 @@
 #include "guest_native_q2_private.h"
 #include "q1_weapon_rules.h"
 #include "native_q3_console.h"
+#include "guest_q3_save.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -519,6 +520,32 @@ bool application_provider_construct(qa_application *application,
                                 "unknown application provider runtime");
     }
     if (!ok) {
+        qa_error ignored = {0};
+        (void)application_provider_deconstruct(provider, &ignored);
+        return false;
+    }
+    return true;
+}
+
+bool application_provider_construct_qvm_restored(qa_application *application,
+    application_provider *provider, qa_world *world, qa_catalog *catalog,
+    const qa_product *product, const qa_launch_choices *choices,
+    const qa_save_record *record, qa_error *error)
+{
+    if (application == NULL || provider == NULL || world == NULL ||
+        catalog == NULL || product == NULL || choices == NULL || record == NULL ||
+        provider->application != application || provider->constructed ||
+        provider->kind != APPLICATION_PROVIDER_QVM ||
+        application->operation != APPLICATION_PERSISTING ||
+        qa_catalog_product(catalog, product->id) != product)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Invalid detached saved QVM provider construction");
+    provider->constructed = true;
+    qa_catalog_retain(catalog);
+    qa_catalog_release(provider->product_catalog);
+    provider->product_catalog = catalog;
+    provider->product = product;
+    if (!application_guest_q3_save_prepare(provider, world, product, choices, record, error)) {
         qa_error ignored = {0};
         (void)application_provider_deconstruct(provider, &ignored);
         return false;

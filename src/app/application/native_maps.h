@@ -33,5 +33,11 @@ bool application_native_mode_selected_map_command(void *, qa_mode_id, qa_string_
                                                    qa_string_id *command, qa_error *);
 bool application_native_selected_map_plan(qa_application *, qa_mode_id, qa_string_id command,
                                            application_next_map_plan *, qa_error *);
+/* Retain actual direct cvar commands with the source tokenizer. This plan has
+ * no map and executes only through the original scoped cvar setters. */
+bool application_native_config_plan(qa_application *, qa_mode_id, qa_match_intent_kind,
+                                     qa_string_id command, application_next_map_plan *, qa_error *);
+bool application_native_config_command_allowed(qa_application *, const application_next_map_plan *,
+                                                const char *name, qa_error *);
 
 #endif

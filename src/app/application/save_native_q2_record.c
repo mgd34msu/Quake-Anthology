@@ -109,6 +109,48 @@ static bool record_parts(application_provider *provider, qa_bytes bytes,
         application_fail(error, QA_ERROR_FORMAT, "native Q2 baseline map name differs from its selected source");
 }
 
+bool application_native_q2_save_matches(application_provider *provider, qa_bytes bytes,
+    qa_error *error)
+{
+    struct application_native_q2 *engine = provider && provider->kind == APPLICATION_PROVIDER_NATIVE
+        ? provider->state.native.q2_engine : NULL;
+    if (!engine || !engine->initialized || !engine->map_ready || !provider->map_bound ||
+        !provider->state.native.host || !application_native_q2_idle(provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 equivalence requires its complete idle source owner");
+    qa_bytes parts[NATIVE_RECORD_PARTS];
+    qa_native_checkpoint saved = {0}, actual = {0};
+    qa_buffer private = {0};
+    bool ok = application_native_q2_continuation_portable(provider, error) &&
+        record_parts(provider, bytes, parts, error) &&
+        qa_native_checkpoint_decode(parts[0], &saved, error) && complete(&saved, error);
+    const char *texts[] = {source_text(provider, engine->map_name), engine->entity_text,
+                          source_text(provider, engine->spawn_point)};
+    for (size_t i = 0; ok && i < 3; ++i)
+        if (!texts[i] || strcmp(texts[i], (const char *)parts[i + 2].data))
+            ok = application_fail(error, QA_ERROR_FORMAT, "Native Q2 actual source map text changed after restoration");
+    /* The qualified full graph covers actual post-export source continuation.
+     * GAME/LEVEL exports can mutate that state and contain historical pointers. */
+    if (ok)
+        ok = application_native_q2_continuation_capture(provider, &saved, &private, error);
+    if (ok && (private.size != parts[1].size || memcmp(private.data, parts[1].data, private.size)))
+        ok = application_fail(error, QA_ERROR_FORMAT, "Native Q2 complete portable private state changed after restoration");
+    qa_native_checkpoint_request request = {.autosave = saved.autosave,
+                                            .transition = saved.transition};
+    if (ok)
+        ok = qa_native_checkpoint_capture(qa_native_host_instance(provider->state.native.host),
+                                           request, &actual, error);
+    if (ok && (!actual.has_host || actual.has_game || actual.has_level ||
+        actual.kind != saved.kind || actual.profile != saved.profile || actual.q3_role != saved.q3_role ||
+        !actual.has_declaration || !qa_sha256_equal(&actual.declaration, &saved.declaration) ||
+        !qa_sha256_equal(&actual.image.digest, &saved.image.digest) ||
+        actual.host.size != saved.host.size || memcmp(actual.host.data, saved.host.data, actual.host.size)))
+        ok = application_fail(error, QA_ERROR_FORMAT, "Native Q2 actual HOST continuation changed after restoration");
+    qa_buffer_free(&private);
+    qa_native_checkpoint_free(&actual);
+    qa_native_checkpoint_free(&saved);
+    return ok;
+}
+
 bool application_native_q2_save_restore(application_provider *provider, qa_bytes bytes,
     const qa_application_options *options, const qa_application_persistence_ops *ops, qa_error *error)
 {

@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "native_maps.h"
+#include "native_q3_console.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -436,6 +437,94 @@ bool application_native_selected_map_plan(qa_application *app, qa_mode_id mode,
     if (!bytes.data || !bytes.size || bytes.size >= 1024 || memchr(bytes.data, 0, bytes.size))
         return application_fail(error, QA_ERROR_ARGUMENT, "selected-map intent lacks its actual source command");
     return map_plan(app, mode, qa_strings_cstr(qa_session_strings(app->session), command), out, error);
+}
+
+static const char *config_name(qa_match_intent_kind kind) {
+    switch (kind) {
+    case QA_MATCH_GAME_TYPE: return "g_gametype";
+    case QA_MATCH_WARMUP: return "g_doWarmup";
+    case QA_MATCH_TIME_LIMIT: return "timelimit";
+    case QA_MATCH_FRAG_LIMIT: return "fraglimit";
+    default: return NULL;
+    }
+}
+bool application_native_config_command_allowed(qa_application *app,
+    const application_next_map_plan *plan, const char *name, qa_error *error) {
+    application_provider *source = app && plan ? application_mode_provider(app, plan->mode) : NULL;
+    qa_console *console = NULL;
+    if (!source || source->kind != APPLICATION_PROVIDER_Q3 || source->owner != plan->owner ||
+        plan->scope.kind != QA_APPLICATION_CONSOLE_Q3_GAME || plan->scope.provider != source->owner ||
+        plan->scope.seat || plan->context.owner != source->owner || plan->context.actor.registry ||
+        plan->context.dialect != QA_CONSOLE_Q3 || plan->context.origin != QA_COMMAND_SERVER ||
+        !application_native_q3_console_at(source, &console, NULL, NULL) ||
+        !qa_application_command_context_active(app, &plan->context))
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "config command has no qualified native source fallback");
+    /* This actual source callback routes the retained zero-actor context to
+     * qa_q3_game_console_command, whose native player gate returns UNHANDLED.
+     * Guest callbacks require their own readonly command-policy capability. */
+    if (!name || qa_console_find(console, &plan->context, name))
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "config command is overridden by a real source command");
+    return true;
+}
+bool application_native_config_plan(qa_application *app, qa_mode_id mode,
+    qa_match_intent_kind kind, qa_string_id command, application_next_map_plan *out, qa_error *error) {
+    const char *expected = config_name(kind);
+    qa_bytes bytes = app && app->session ? qa_strings_text(qa_session_strings(app->session), command) : (qa_bytes){0};
+    if (!expected || !out || out->map || out->assignments || !bytes.data || !bytes.size ||
+        bytes.size >= 1024 || memchr(bytes.data, 0, bytes.size))
+        return application_fail(error, QA_ERROR_ARGUMENT, "config command has no actual source text");
+    map_parser parser = {.application = app};
+    bool okay = source_console(&parser, mode, error);
+    size_t offset = 0;
+    while (okay && offset < bytes.size) {
+        const char *text = (const char *)bytes.data + offset;
+        size_t length = qa_command_separator(text, bytes.size - offset, parser.plan.context.dialect);
+        size_t consumed = length < bytes.size - offset ? length + 1 : length;
+        size_t copied = length < parser.command_limit ? length : parser.command_limit - 1;
+        char *line = malloc(copied + 1);
+        if (!line) { okay = application_fail(error, QA_ERROR_MEMORY, "cannot inspect source config command"); break; }
+        memcpy(line, text, copied); line[copied] = 0;
+        offset += consumed;
+        qa_command_tokens tokens = {0};
+        okay = qa_command_tokenize(line, parser.plan.context.dialect, parser.plan.context.console_text, &tokens, error);
+        free(line);
+        if (okay && tokens.count) {
+            qa_cvars *cvars = qa_console_cvar_owner(parser.console, &parser.plan.context, tokens.values[0]);
+            const qa_cvar_view *variable = qa_cvars_find(cvars, tokens.values[0]);
+            if (!application_native_config_command_allowed(app, &parser.plan, tokens.values[0], error))
+                okay = false;
+            else if ((!parser.plan.assignment_count && !equal_name(tokens.values[0], expected)) ||
+                !cvars || qa_cvars_dialect(cvars) != QA_CONSOLE_Q3 || !variable || tokens.count < 2)
+                okay = application_fail(error, QA_ERROR_UNSUPPORTED, "config continuation lacks an actual direct source cvar command");
+            else {
+                application_map_assignment value = {.name = copy_text(tokens.values[0], error),
+                    .value = copy_text(tokens.values[1], error)};
+                size_t count = parser.plan.assignment_count;
+                application_map_assignment *items = value.name && value.value && count < SIZE_MAX / sizeof(*items)
+                    ? realloc(parser.plan.assignments, (count + 1) * sizeof(*items)) : NULL;
+                if (!items) {
+                    free(value.name); free(value.value);
+                    okay = application_fail(error, QA_ERROR_MEMORY, "cannot retain source config assignment");
+                } else {
+                    parser.plan.assignments = items;
+                    items[count] = value;
+                    parser.plan.assignment_count = count + 1;
+                }
+            }
+        }
+        qa_command_tokens_free(&tokens);
+    }
+    if (okay && !parser.plan.assignment_count)
+        okay = application_fail(error, QA_ERROR_FORMAT, "config continuation has no source assignment");
+    if (okay && !qa_application_command_context_active(app, &parser.plan.context))
+        okay = application_fail(error, QA_ERROR_ARGUMENT, "config source retired during admission");
+    if (okay) {
+        parser.plan.assignments_before_map = parser.plan.assignment_count;
+        *out = parser.plan;
+        parser.plan = (application_next_map_plan){0};
+    }
+    parser_free(&parser);
+    return okay;
 }
 bool application_native_mode_selected_map_command(void *opaque, qa_mode_id mode,
     qa_string_id map, qa_string_id *command, qa_error *error) {

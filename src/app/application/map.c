@@ -2004,6 +2004,14 @@ bool application_map_publish(qa_application *application,
     application->map_presentation = choices->world.presentation;
     ++application->map_revision;
     application->map_view_ready = true;
+    for (size_t index = 0; index < application->provider_count; ++index) {
+        application_provider *provider = application->providers[index];
+        if (provider != NULL && provider->attached && provider->constructed &&
+            provider->kind == APPLICATION_PROVIDER_Q3 &&
+            (!application_native_q3_settings_register(provider, error) ||
+             !application_native_q3_settings_install(provider, error)))
+            return false;
+    }
     if (!application_bots_prepare(application, choices, &publication->map,
                                    &publication->entities, error))
         return false;

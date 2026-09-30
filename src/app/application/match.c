@@ -44,7 +44,9 @@ static bool mode_intent(void *opaque, const qa_match_intent *intent,
                         qa_error *error)
 {
     qa_application *application = opaque;
-    if (intent->kind == QA_MATCH_NEXT_MAP || intent->kind == QA_MATCH_SELECTED_MAP) {
+    if (intent->kind == QA_MATCH_NEXT_MAP || intent->kind == QA_MATCH_SELECTED_MAP ||
+        intent->kind == QA_MATCH_WARMUP || intent->kind == QA_MATCH_TIME_LIMIT ||
+        intent->kind == QA_MATCH_FRAG_LIMIT || intent->kind == QA_MATCH_GAME_TYPE) {
         if (application->match_intents == NULL)
             application->match_intents = application_match_intents_create(error);
         return application->match_intents != NULL &&
@@ -122,6 +124,8 @@ static qa_modes_hooks mode_hooks(qa_application *application)
     return (qa_modes_hooks){.context = application,
                             .event = mode_event,
                             .emit = application_native_mode_emit,
+                            .q3_clock = application_native_mode_q3_clock,
+                            .q3_warmup_restart = application_native_mode_q3_warmup_restart,
                             .map_allowed = application_native_mode_map_allowed,
                             .next_map_allowed = application_native_mode_next_map_allowed,
                             .selected_map_command = application_native_mode_selected_map_command,
@@ -419,11 +423,14 @@ bool qa_application_prepare_match_travel(qa_application *application,
                                 "match travel requires idle shared owners");
     if (application->match_intents == NULL)
         return true;
+    bool consumed = false;
     if (!application_match_intents_reconnect(application->match_intents,
                                               application, error) ||
         !application_match_intents_prepare(application->match_intents,
-                                            application, error))
+                                            application, &consumed, error))
         return false;
+    if (consumed)
+        return true;
     const application_next_map_plan *plan = NULL;
     qa_application_travel_request request;
     if (!application_match_intents_travel_read(application->match_intents,
