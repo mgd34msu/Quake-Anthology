@@ -288,9 +288,7 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
         if (import->slot == 59 || import->slot == 60) return world_text(source, call, error);
         if (!strcmp(import->name, "SendToClipBoard")) {
             qa_buffer text = {0}; bool ok = text_argument(call, 0, &text, error);
-            if (ok && SDL_SetClipboardText((const char *)text.data) != 0) {
-                qa_error_set(error, QA_ERROR_IO, 0, "writing clipboard: %s", SDL_GetError()); ok = false;
-            }
+            if (ok) ok = frontend_clipboard_write(source->frontend, (const char *)text.data, error);
             qa_buffer_free(&text); return ok;
         }
     }
@@ -404,6 +402,9 @@ static bool application_import_body(void *context, const qa_native_host_q2_appli
 static void platform_print_body(void *context, const qa_native_host_print *print)
 {
     frontend_native_q2 *source = context; qa_frontend *frontend = source->frontend;
+    if (frontend->native_print) {
+        frontend->native_print(frontend->native_output_context, print); return;
+    }
     if (!print || !print->text || print->kind == QA_NATIVE_HOST_PRINT_DEBUG) return;
     fputs(print->text, stdout);
     if (frontend->options.dedicated) return;
@@ -588,6 +589,13 @@ const qa_scene_resources *frontend_native_q2_images_at(qa_frontend *frontend, si
     for (frontend_native_q2 *source = frontend->native_q2; source; source = source->next)
         if (source->images && index-- == 0) return source->images;
     return NULL;
+}
+bool frontend_native_q2_callbacks_idle(const qa_frontend *frontend)
+{
+    if (!frontend || frontend->stepping) return false;
+    for (const frontend_native_q2 *source=frontend->native_q2;source;source=source->next)
+        if (source->frontend!=frontend || source->application!=frontend->application || source->active_imports) return false;
+    return true;
 }
 
 bool frontend_native_q2_rebind_ready(const qa_frontend *candidate, const qa_frontend *published,

@@ -292,6 +292,15 @@ bool frontend_tools_create(qa_frontend *f, qa_error *error) {
     if (!qa_llm_create(&llm, &services->llm, error)) return false;
     return consoles_sync(f, error);
 }
+bool frontend_tools_create_diagnostics(qa_frontend *f, qa_vfs *files, qa_error *error) {
+    if (!f || f->tools || !files) return frontend_fail(error,QA_ERROR_ARGUMENT,"invalid detached frontend diagnostics admission");
+    qa_frontend_tools *services=calloc(1,sizeof(*services));
+    if (!services) return frontend_fail(error,QA_ERROR_MEMORY,"allocating detached frontend diagnostics");
+    services->frontend=f; services->debug_width=2; f->tools=services;
+    services->files=qa_vfs_clone(files,error);
+    return services->files && qa_tools_create_diagnostics(services->files,QA_FRONTEND_COMMAND_OWNER,
+        milliseconds,f,&services->owner,error);
+}
 bool frontend_tools_before_world_change(qa_frontend *f, qa_error *error) {
     if (!f || !f->tools) return true;
     qa_frontend_tools *services = f->tools;

@@ -86,6 +86,7 @@ typedef struct q2_actor {
     struct q2_actor *live_next, *live_previous;
     uint64_t source_order;
     uint64_t extra_effects;
+    float alpha;
     bool lmctf_plasma_bounce;
     qa_actor_id id;
     bool weapon_bound, physics_bound;

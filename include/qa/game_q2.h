@@ -306,6 +306,9 @@ bool qa_q2_damage_reaction(qa_q2_game *, const qa_damage_outcome *, qa_error *);
 bool qa_q2_item_reaction(qa_q2_game *, const qa_damage_outcome *, qa_error *);
 bool qa_q2_actor_traits(qa_q2_game *, qa_actor_id, qa_builtin_actor_traits *);
 uint64_t qa_q2_actor_extra_effects(qa_q2_game *, qa_actor_id);
+/* Actual source presentation alpha, including finite authored fade overshoot. */
+bool qa_q2_alpha_read(qa_q2_game *, qa_actor_id, float *, qa_error *);
+bool qa_q2_alpha(qa_q2_game *, qa_actor_id, float, qa_error *);
 bool qa_q2_actor_tick(qa_q2_game *, qa_actor_id, uint64_t now_ns, uint64_t frame_ns, qa_error *);
 typedef struct qa_q2_projectile_view {
     qa_string_id model, loop_sound;
@@ -350,6 +353,7 @@ typedef struct qa_q2_actor_checkpoint {
     uint32_t version;
     uint64_t source_order;
     uint64_t extra_effects;
+    float alpha;
     bool lmctf_plasma_bounce;
     bool weapon_bound, physics_bound;
     qa_q2_weapon_state weapon;

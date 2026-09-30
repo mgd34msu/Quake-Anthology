@@ -15,7 +15,7 @@ bool q2m_show(q2m_context *context, qa_error *error) {
                            .effects = context->actor->extra_effects,
                            .render_flags = monster->render_flags,
                            .scale = monster->entity_scale,
-                           .alpha = 1,
+                           .alpha = context->actor->alpha,
                            .visible = monster->visible};
     return q2_publish_visual(context->game, context->actor->id, &visual, error);
 }

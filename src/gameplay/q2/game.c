@@ -25,6 +25,7 @@ void q2_actor_publish_prepared(qa_q2_game *g, q2_actor *a, qa_actor_id id, bool 
         g->all_actors = a;
     }
     a->id = id;
+    a->alpha = 1;
     g->actors[id.slot] = a;
     a->source_order = ++g->actor_sequence;
     a->live_previous = g->last_actor;
@@ -379,7 +380,8 @@ bool qa_q2_projectile_read(qa_q2_game *g, qa_actor_id id, qa_q2_projectile_view 
                                    .frame = p->frame,
                                    .skin = p->skin,
                                    .scale = p->scale,
-                                   .alpha = p->kind == Q2_RERELEASE_SPAWN_GROWTH ? p->alpha : 1,
+                                   .alpha = p->kind == Q2_RERELEASE_SPAWN_GROWTH
+                                                ? p->alpha : g->actors[id.slot]->alpha,
                                    .visible = p->visible,
                                    .beam = p->kind == Q2_PROBOSCIS_SEGMENT ||
                                            p->kind == Q2_RERELEASE_SPAWN_BEAM,

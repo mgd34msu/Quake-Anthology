@@ -344,6 +344,7 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/entities/triggers.c
     src/gameplay/q2/entities/turrets.c
     src/gameplay/q2/game.c
+    src/gameplay/q2/alpha.c
     src/gameplay/q2/gibs.c
     src/gameplay/q2/grapple.c
     src/gameplay/q2/grapple_weapon.c
@@ -1003,6 +1004,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/lifetime.c
     src/app/frontend/map_events.c
     src/app/frontend/native_q2.c
+    src/app/frontend/native_q2_baseline.c
     src/app/frontend/network.c
     src/app/frontend/options.c
     src/app/frontend/particle_events.c

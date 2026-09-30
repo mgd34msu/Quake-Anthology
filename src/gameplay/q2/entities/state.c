@@ -315,7 +315,7 @@ bool qa_q2_presentation_read(qa_q2_game *g, qa_actor_id id, qa_q2_visual *out) {
         view = (qa_q2_visual){.models = {monster.model}, .frame = monster.frame,
             .old_frame = monster.old_frame, .skin = monster.skin, .effects = monster.effects,
             .render_flags = monster.render_flags, .scale = monster.scale,
-            .alpha = 1, .visible = monster.visible};
+            .alpha = a->alpha, .visible = monster.visible};
     } else if (a->client)
         view = a->client->visual;
     else if (a->item)
