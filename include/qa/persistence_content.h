@@ -25,6 +25,10 @@ qa_catalog *qa_application_content_catalog(const qa_application_content_graph *,
 qa_vfs *qa_application_content_view(const qa_application_content_graph *, uint64_t);
 const qa_resource *qa_application_content_resource(const qa_application_content_graph *,
     uint64_t pool, uint64_t resource);
+/* Resolves the actual immutable owner, including resources retained outside
+ * current caches. Both distinct outputs remain unchanged when it is absent. */
+bool qa_application_content_resource_id(const qa_application_content_graph *,
+    const qa_resource *, uint64_t *pool, uint64_t *resource);
 
 /* Only a restored graph can transfer a real owning pool/view reference. Each
  * private VFS has one destructor owner; catalog-owned views cannot be claimed.

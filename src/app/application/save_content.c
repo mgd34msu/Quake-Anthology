@@ -67,6 +67,18 @@ qa_vfs *qa_application_content_view(const qa_application_content_graph *g, uint6
 { return g && id && id <= g->view_count ? g->views[id - 1].value : NULL; }
 const qa_resource *qa_application_content_resource(const qa_application_content_graph *g, uint64_t pool, uint64_t resource)
 { return resource ? qa_resource_pool_find(qa_application_content_pool(g, pool), resource) : NULL; }
+bool qa_application_content_resource_id(const qa_application_content_graph *g,
+    const qa_resource *value, uint64_t *pool, uint64_t *resource)
+{
+    if (!g || !value || !pool || !resource || pool == resource) return false;
+    uint64_t id = qa_resource_id(value);
+    if (!id) return false;
+    for (size_t i = 0; i < g->pool_count; ++i) {
+        if (qa_resource_pool_find(g->pools[i].value, id) != value) continue;
+        *pool = i + 1; *resource = id; return true;
+    }
+    return false;
+}
 
 static bool add_pool(void *opaque, const qa_resource_pool *pool, qa_error *error)
 {
