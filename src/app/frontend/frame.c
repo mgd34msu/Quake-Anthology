@@ -144,7 +144,8 @@ static bool audio_positions(qa_frontend *frontend, qa_error *error)
 }
 bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error)
 {
-    if (!frontend || frontend->stepping || elapsed_ns > UINT64_MAX - frontend->time_ns)
+    if (!frontend || frontend->stepping || frontend->frame_number == UINT64_MAX ||
+        elapsed_ns > UINT64_MAX - frontend->time_ns)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid frontend frame duration or reentry");
     frontend->stepping = true;
     qa_application_travel_view pending;
@@ -204,7 +205,9 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
             }
         }
     }
-    if (ok) ++frontend->frame_number;
     frontend->stepping = false;
+    if (ok && !qa_application_should_stop(frontend->application))
+        ok = qa_application_complete_frame(frontend->application, error);
+    if (ok) ++frontend->frame_number;
     return ok && frontend_travel(frontend, error);
 }

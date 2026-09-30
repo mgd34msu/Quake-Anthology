@@ -2,6 +2,8 @@
 #include "save_private.h"
 #include "save_native_q2.h"
 #include "save_content.h"
+#include "qa/rankings_save.h"
+#include "qa/player_progress_save.h"
 #include "qa/catalog_save.h"
 
 #include <stdlib.h>
@@ -131,14 +133,21 @@ static bool create_application(const qa_application_options *options,
         application->resources = qa_resource_pool_create(error);
         if (application->resources == NULL) goto fail;
     }
-    if (!qa_rankings_create(options->ranking_provider, NULL, &application->rankings, error))
+    bool restored_owners = restore != NULL || baseline_strings != NULL;
+    const qa_ranking_provider *ranking_provider = baseline_strings ? NULL : options->ranking_provider;
+    bool rankings_created = restored_owners
+        ? qa_rankings_create_restored(ranking_provider, NULL, &application->rankings, error)
+        : qa_rankings_create(ranking_provider, NULL, &application->rankings, error);
+    if (!rankings_created)
         goto fail;
     if (application->user_root != NULL &&
         (!qa_fs_root_open(application->user_root, &application->user_files,
                           error) ||
-         !qa_player_progress_open(application->user_files,
-                                  "player-progress.json",
-                                  &application->progress, error)))
+         !(restored_owners
+            ? qa_player_progress_create_restored(application->user_files,
+                "player-progress.json", &application->progress, error)
+            : qa_player_progress_open(application->user_files,
+                "player-progress.json", &application->progress, error))))
         goto fail;
     application->catalog_generation = (restore || baseline_catalog)
         ? qa_catalog_generation(application->catalog) : options->catalog_generation;
@@ -624,6 +633,26 @@ void qa_application_guest_context_rebind(qa_application *application, void *cont
 
 bool qa_application_q1_paused(const qa_application *application)
 { return application && application->q1_paused; }
+
+uint64_t application_frame_revision(const qa_application *application)
+{ return application ? application->frame_revision : 0; }
+
+bool qa_application_complete_frame(qa_application *application, qa_error *error)
+{
+    if (!application || application->operation != APPLICATION_IDLE ||
+        application->publication_started || application->destroy_requested ||
+        application->finalizing || application->pending_close ||
+        (application->state != QA_APPLICATION_READY &&
+         application->state != QA_APPLICATION_RUNNING) ||
+        !application_guests_idle(application) || !qa_session_safe(application->session) ||
+        (application->world && !qa_world_idle(application->world)))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "completed frame requires its actual idle driver boundary");
+    if (application->frame_revision == UINT64_MAX)
+        return application_fail(error, QA_ERROR_MEMORY, "completed frame revision is exhausted");
+    ++application->frame_revision;
+    return true;
+}
 
 bool application_q1_pause_set(qa_application *application, application_provider *provider,
     bool paused, qa_error *error)

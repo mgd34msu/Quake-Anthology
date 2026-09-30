@@ -21,6 +21,7 @@
 #include "portals.h"
 #include "guest_q3_save.h"
 #include "save_content.h"
+#include "save_progression.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -378,7 +379,7 @@ bool application_save_foundation_finish(qa_application *candidate,
     return true;
 }
 
-#define APPLICATION_CHECKPOINT_HEADER 212u
+#define APPLICATION_CHECKPOINT_HEADER 220u
 
 static const char *saved_product(qa_application *application, qa_product_id id, qa_error *error)
 {
@@ -418,10 +419,11 @@ bool application_save_metadata_capture(qa_application *application, qa_buffer *o
     if (!buffer.data) return application_fail(error, QA_ERROR_MEMORY, "cannot encode application metadata");
     qa_net_writer writer;
     qa_net_writer_init(&writer, buffer.data, size, error);
-    qa_net_write_data(&writer, "QAAP", 4); qa_net_write_u32(&writer, 2);
+    qa_net_write_data(&writer, "QAAP", 4); qa_net_write_u32(&writer, 3);
     qa_net_write_u64(&writer, application->catalog_generation);
     qa_net_write_u64(&writer, application->publication_generation);
     qa_net_write_u64(&writer, application->command_generation); qa_net_write_u64(&writer, application->map_revision);
+    qa_net_write_u64(&writer, application->frame_revision);
     qa_net_write_u32(&writer, application->current_map); qa_net_write_u32(&writer, application->state);
     uint32_t flags = (application->discover_mods ? 1u : 0u) | (application->physics_ready ? 2u : 0u) |
         (application->primary_mode_ready ? 4u : 0u) | (application->map_view_ready ? 8u : 0u) |
@@ -478,6 +480,7 @@ bool application_save_metadata_restore(qa_application *candidate, qa_bytes bytes
     uint32_t version = qa_net_read_u32(&reader);
     uint64_t catalog = qa_net_read_u64(&reader), publication = qa_net_read_u64(&reader);
     uint64_t commands = qa_net_read_u64(&reader), revision = qa_net_read_u64(&reader);
+    uint64_t frame_revision = qa_net_read_u64(&reader);
     qa_string_id map = qa_net_read_u32(&reader);
     qa_application_state state = (qa_application_state)qa_net_read_u32(&reader);
     uint32_t flags = qa_net_read_u32(&reader);
@@ -490,7 +493,7 @@ bool application_save_metadata_restore(qa_application *candidate, qa_bytes bytes
     uint16_t reserved = qa_net_read_u16(&reader); random.draws = qa_net_read_u64(&reader);
     uint32_t geometry_length = qa_net_read_u32(&reader), presentation_length = qa_net_read_u32(&reader);
     size_t remaining = qa_net_reader_remaining(&reader);
-    if (reader.failed || version != 2 || reserved || (flags & ~63u) || !commands ||
+    if (reader.failed || version != 3 || reserved || (flags & ~63u) || !commands ||
         (state != QA_APPLICATION_READY && state != QA_APPLICATION_RUNNING) ||
         random.front >= 31 || random.rear >= 31 ||
         (map && !qa_strings_text(qa_session_strings(candidate->session), map).data) ||
@@ -518,6 +521,7 @@ bool application_save_metadata_restore(qa_application *candidate, qa_bytes bytes
     free(candidate->mode_ids); candidate->mode_ids = ids; candidate->mode_count = count;
     candidate->catalog_generation = catalog; candidate->publication_generation = publication;
     candidate->command_generation = commands; candidate->map_revision = revision;
+    candidate->frame_revision = frame_revision;
     candidate->current_map = map; candidate->state = state; candidate->primary_mode = primary;
     candidate->random = random; candidate->map_geometry = geometry; candidate->map_presentation = presentation;
     candidate->discover_mods = (flags & 1u) != 0; candidate->physics_ready = (flags & 2u) != 0;
@@ -565,6 +569,7 @@ typedef struct application_persistence {
     qa_application *retained;
     const qa_application_options *options;
     const qa_application_persistence_ops *ops;
+    const qa_save_image *image;
     qa_persistence_gameplay_resolvers resolvers;
     qa_save_owner *owners;
     size_t owner_count;
@@ -658,6 +663,7 @@ static const char *shared_schema(qa_save_owner_kind kind)
     case QA_SAVE_COMMANDS: return "qa.commands";
     case QA_SAVE_NAVIGATION: return "qa.navigation.application";
     case QA_SAVE_BOTS: return "qa.bots.application";
+    case QA_SAVE_PROGRESSION: return "qa.progression.application";
     default: return NULL;
     }
 }
@@ -1021,6 +1027,7 @@ static bool persistence_capture_owner(void *opaque, const qa_save_owner *owner,
     case QA_SAVE_COMMANDS: return application_commands_capture(app, out, error);
     case QA_SAVE_NAVIGATION: return application_navigation_save_capture(app, out, error);
     case QA_SAVE_BOTS: return application_bots_save_capture(app, out, error);
+    case QA_SAVE_PROGRESSION: return application_save_progression_capture(app, operation->ops, out, error);
     case QA_SAVE_PROVIDER: {
         application_provider *provider = saved_provider(app, owner->instance);
         if (provider && provider_schema(provider))
@@ -1073,6 +1080,12 @@ static bool persistence_capture_validate(void *opaque, const qa_save_image *imag
             ok = application_fail(error, QA_ERROR_ARGUMENT, "producer changed the ordered string table during capture");
     }
     qa_buffer_free(&strings); qa_buffer_free(&commands);
+    if (ok) {
+        const qa_save_record *progression = foundation_record(image,
+            QA_SAVE_PROGRESSION, "qa.progression.application", error);
+        ok = progression && application_save_progression_matches(operation->active,
+            operation->ops, progression->payload, error) && persistence_unchanged(operation, error);
+    }
     return ok;
 }
 
@@ -1118,6 +1131,10 @@ static bool persistence_create(void *opaque, const qa_save_image *image, void **
     if (checkpoint.generation != metadata->configuration_generation ||
         !qa_sha256_equal(&composition, &metadata->composition))
         return application_fail(error, QA_ERROR_FORMAT, "configuration continuation disagrees with save envelope");
+    const qa_save_record *progression = foundation_record(image,
+        QA_SAVE_PROGRESSION, "qa.progression.application", error);
+    if (!progression || !application_save_progression_prepare(operation->options,
+        operation->ops, progression->payload, error)) return false;
     qa_application *candidate = NULL;
     qa_application_content_graph *graph = NULL;
     const qa_save_record *resources = foundation_record(image, QA_SAVE_RESOURCES, "qa.content-graph", error);
@@ -1194,6 +1211,8 @@ static bool persistence_restore_owner(void *opaque, void *value,
         &operation->restored_command_generation, error);
     case QA_SAVE_NAVIGATION: return application_navigation_save_restore(candidate, record->payload, error);
     case QA_SAVE_BOTS: return application_bots_save_restore(candidate, record->payload, error);
+    case QA_SAVE_PROGRESSION: return application_save_progression_restore(candidate,
+        operation->ops, record->payload, error);
     case QA_SAVE_CVARS: {
         qa_cvars_restore *ticket = NULL;
         bool ok = qa_cvars_save_prepare(candidate->cvars, record->payload, &ticket, error) &&
@@ -1373,6 +1392,19 @@ static bool persistence_publish(void *opaque, void *value, qa_error *error)
     if (*operation->slot != operation->active || !persistence_unchanged(operation, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "active application changed before restored publication");
     if (!application_save_content_ready(candidate->content_graph, error)) return false;
+    const qa_save_record *progression = foundation_record(operation->image,
+        QA_SAVE_PROGRESSION, "qa.progression.application", error);
+    if (!progression || !application_save_progression_matches(candidate,
+        operation->ops, progression->payload, error) || !persistence_unchanged(operation, error))
+        return false;
+    if (!persistence_safe(candidate))
+        return application_fail(error, QA_ERROR_ARGUMENT, "progression validation changed the restored candidate");
+    bool relinquish_active = false;
+    candidate->operation = APPLICATION_PERSISTING;
+    if (!application_save_progression_handoff(operation->active, candidate,
+        operation->ops, &relinquish_active, error)) return false;
+    application_save_progression_publish(operation->active, candidate, relinquish_active);
+    candidate->operation = APPLICATION_IDLE;
     application_save_content_publish(candidate->content_graph);
     application_save_content_destroy(candidate->content_graph);
     candidate->content_graph = NULL;
@@ -1399,7 +1431,7 @@ bool qa_application_persistence_restore(qa_application **active,
         active == displaced || active == retained_on_failure || displaced == retained_on_failure)
         return application_fail(error, QA_ERROR_ARGUMENT, "application restore requires isolated content and owner producers");
     application_persistence operation = {.active = *active, .slot = active,
-        .options = options, .ops = ops};
+        .options = options, .ops = ops, .image = image};
     if (!persistence_lease(&operation, error)) return false;
     const qa_save_restore_ops restore = {.create = persistence_create, .restore = persistence_restore_owner,
         .finish = persistence_finish, .publish = persistence_publish, .discard = persistence_discard};

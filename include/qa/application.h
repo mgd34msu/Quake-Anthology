@@ -221,6 +221,10 @@ bool qa_application_should_stop(const qa_application *);
 /* The actual Quake source pause holds shared simulation and source clocks.
  * Host presentation and transport clocks remain owned by the frontend. */
 bool qa_application_q1_paused(const qa_application *);
+/* The actual driver reports one completed outer frame after its ordinary
+ * output work and before draining map/restart intents. Source simulation or
+ * restart settlement steps do not publish this revision. */
+bool qa_application_complete_frame(qa_application *, qa_error *);
 
 /* All returned owners are borrowed. The application is the only mutable
  * lifecycle owner; subsystem adapters use these to bind typed services. */

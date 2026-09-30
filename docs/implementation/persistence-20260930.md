@@ -560,7 +560,33 @@ distinguishes an active match transferred into the candidate from an unrelated
 old match; only a genuinely transferred old continuation is relinquished.
 Ordinary old teardown still closes unrelated matches. Publication then ungates
 the candidate rankings/progress owners with no source callbacks or allocation.
-Actual application registration, constructor calls and final pointer exchange
-remain root-owned integration work. The progress file itself remains the real
+The application now registers `qa.progression.application` version 1 and routes
+capture/import to these actual owners. Mandatory outer-record preparation runs
+before the content graph or application constructor. Restored construction
+installs the pending rankings and optional progress heaps before any consumer;
+it never reloads the progress file. Original native baseline reconstruction
+also uses pending empty heaps, with an unconfigured rankings backend, so its
+scratch application cannot alias or close the active ranking continuation.
+That baseline has no ranking/progress consumer or private record import.
+
+Capture compares progression again after external and shared/content checks.
+Restore compares the whole record after all provider/frontend/shared owners
+and content ownership readiness, then checks both applications' publication
+conditions. Both applications retain the persistence lease during the external
+handoff, preventing ordinary application reentry as well as rankings lifecycle
+reentry. The guarded backend handoff is the last fallible call; its success
+is followed only by progression publication, content admission metadata release
+and the application pointer exchange. Failure keeps the source active and the
+candidate pending for ordinary or retained retryable disposal. The progress
+file itself remains the real
 qualified profile backend: preserved `reload_required` causes its next ordinary
 durable recovery to read that backend, without candidate-side file replay.
+
+The application metadata now preserves the real completed outer-frame revision
+in `QAAP` version 3 (220-byte fixed header). The actual frontend reports that
+revision after successful output work and before map/restart intent draining;
+source advance and restart settlement do not increment it. The owner rejects
+busy/retiring/stopping frames and counter exhaustion. The frontend stopping
+iteration omits this notification, preserving ordinary quit behavior. These
+caller changes received source/diff checks only; executable qualification and
+the remaining installed frontend/native owners remain open.

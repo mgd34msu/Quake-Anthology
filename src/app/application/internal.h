@@ -240,6 +240,7 @@ struct qa_application {
     application_motion_record *motion;
     uint32_t motion_capacity;
     application_control_record *controls;
+    struct application_control_frames *control_frames;
     struct application_native_q2_scratch *native_baselines;
     uint32_t control_capacity;
     application_q2_visual_record *q2_visuals;
@@ -255,6 +256,7 @@ struct qa_application {
     uint64_t catalog_generation;
     uint64_t publication_generation;
     uint64_t command_generation, map_revision;
+    uint64_t frame_revision;
     qa_product_id map_geometry, map_presentation;
     bool map_view_ready;
     bool q1_paused;
@@ -495,6 +497,7 @@ bool application_composition_create(qa_application *, qa_error *);
 bool application_composition_destroy(qa_application *, qa_error *);
 bool application_apply(qa_application *, const qa_launch_draft *, qa_error *);
 bool application_q1_pause_set(qa_application *, application_provider *, bool, qa_error *);
+uint64_t application_frame_revision(const qa_application *);
 bool application_map_prepare(qa_application *, application_publication *, qa_error *);
 bool application_map_publish(qa_application *, application_publication *, qa_error *);
 bool application_match_prepare(qa_application *, application_publication *, qa_error *);
