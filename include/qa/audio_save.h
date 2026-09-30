@@ -18,6 +18,7 @@ typedef struct qa_audio_checkpoint_refs {
                    qa_audio_asset **, qa_error *);
     qa_audio_transmission_fn geometry;
     void *geometry_context;
+    bool (*environment)(void *, uint32_t seat, qa_audio_trace_fn *, void **, qa_error *);
 } qa_audio_checkpoint_refs;
 
 bool qa_audio_mixer_checkpoint(const qa_audio_mixer *, const qa_audio_checkpoint_refs *,
@@ -28,5 +29,19 @@ bool qa_audio_mixer_restore(qa_bytes, const qa_audio_mixer_options *,
                             const qa_audio_checkpoint_refs *, qa_audio_mixer **, qa_error *);
 bool qa_audio_reverb_checkpoint(const qa_audio_reverb *, qa_buffer *, qa_error *);
 bool qa_audio_reverb_restore(qa_bytes, qa_audio_reverb **, qa_error *);
+uint32_t qa_audio_reverb_rate(const qa_audio_reverb *);
+bool qa_audio_environment_definition_checkpoint(const qa_audio_environment *, qa_buffer *, qa_error *);
+bool qa_audio_environments_restore(qa_bytes, qa_audio_environments **, qa_error *);
+bool qa_audio_environment_checkpoint(const qa_audio_environment *, qa_buffer *, qa_error *);
+bool qa_audio_environment_restore(qa_bytes, const qa_audio_environments *, qa_audio_trace_fn,
+                                   void *, qa_audio_environment **, qa_error *);
+bool qa_audio_engine_checkpoint(const qa_audio_engine *, const qa_audio_checkpoint_refs *,
+                                 qa_buffer *, qa_error *);
+bool qa_audio_engine_restore(qa_bytes, const qa_audio_engine_options *,
+                             const qa_audio_checkpoint_refs *, qa_audio_engine **, qa_error *);
+/* Borrowed bus owners allow candidate source leases to reconnect without
+ * replacing the restored queues or decoder phase. */
+qa_audio_music *qa_audio_engine_bus_music(qa_audio_engine *, uint64_t bus);
+qa_audio_raw_stream *qa_audio_engine_bus_stream(qa_audio_engine *, uint64_t bus);
 
 #endif

@@ -559,6 +559,7 @@ add_library(qa_audio STATIC
     src/audio/codecs.c
     src/audio/device.c
     src/audio/engine.c
+    src/audio/engine_save.c
     src/audio/environments.c
     src/audio/mixer.c
     src/audio/mixer_save.c

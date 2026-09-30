@@ -80,6 +80,7 @@ bool qa_audio_reverb_create(uint32_t rate, qa_audio_reverb **out, qa_error *erro
 }
 
 void qa_audio_reverb_destroy(qa_audio_reverb *reverb) { free(reverb); }
+uint32_t qa_audio_reverb_rate(const qa_audio_reverb *reverb) { return reverb ? reverb->rate : 0; }
 
 bool qa_audio_reverb_checkpoint(const qa_audio_reverb *reverb, qa_buffer *out, qa_error *error) {
     if (!reverb || !out) {

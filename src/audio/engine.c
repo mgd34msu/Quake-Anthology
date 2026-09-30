@@ -1,44 +1,8 @@
-#include "qa/audio.h"
+#include "engine_internal.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct audio_seat {
-    qa_audio_listener listener;
-    qa_audio_mixer *mixer;
-    qa_audio_reverb *reverb;
-    qa_audio_underwater underwater;
-    qa_audio_environment *environment;
-} audio_seat;
-typedef struct audio_position {
-    uint64_t actor;
-    qa_vec3 position;
-} audio_position;
-typedef struct audio_bus {
-    uint64_t id;
-    uint32_t audience;
-    float gain;
-    qa_audio_raw_stream *raw;
-    qa_audio_music *music;
-} audio_bus;
-struct qa_audio_engine {
-    qa_audio_engine_options options;
-    audio_seat **seats;
-    size_t seat_count;
-    audio_position *positions;
-    size_t position_count, position_capacity;
-    audio_bus *buses;
-    size_t bus_count, bus_capacity;
-    float *sum, *seat_scratch;
-    int16_t *pcm_scratch;
-    uint64_t clock, next_voice;
-    double milliseconds;
-    float effects_gain;
-    bool paused, doppler, destroy_pending, destroying;
-    unsigned operation_depth, callback_depth;
-    qa_audio_transmission_fn geometry;
-    void *geometry_user;
-};
 static bool fail(qa_error *error, qa_status code, const char *message) {
     qa_error_set(error, code, 0, "%s", message);
     return false;
@@ -111,13 +75,8 @@ static void seat_destroy(audio_seat *seat) {
     qa_audio_environment_destroy(seat->environment);
     free(seat);
 }
-static bool seat_create(qa_audio_engine *engine, const qa_audio_listener *listener,
-                        audio_seat **out, qa_error *error) {
-    audio_seat *seat = calloc(1, sizeof(*seat));
-    if (!seat)
-        return fail(error, QA_ERROR_MEMORY, "Audio seat allocation failed");
-    seat->listener = *listener;
-    qa_audio_mixer_options options = {.sample_rate = engine->options.sample_rate,
+qa_audio_mixer_options qa_audio_engine_mixer_options(qa_audio_engine *engine) {
+    return (qa_audio_mixer_options){.sample_rate = engine->options.sample_rate,
                                       .output_channels = engine->options.output_channels,
                                       .initial_voices = engine->options.initial_voices,
                                       .random = engine->options.random,
@@ -131,6 +90,14 @@ static bool seat_create(qa_audio_engine *engine, const qa_audio_listener *listen
                                       .diagnostic_user = engine->options.diagnostic_user,
                                       .allocate_voice_id = allocate_voice,
                                       .voice_id_user = engine};
+}
+static bool seat_create(qa_audio_engine *engine, const qa_audio_listener *listener,
+                        audio_seat **out, qa_error *error) {
+    audio_seat *seat = calloc(1, sizeof(*seat));
+    if (!seat)
+        return fail(error, QA_ERROR_MEMORY, "Audio seat allocation failed");
+    seat->listener = *listener;
+    qa_audio_mixer_options options = qa_audio_engine_mixer_options(engine);
     if (!qa_audio_mixer_create(&options, &seat->mixer, error) ||
         !qa_audio_reverb_create(engine->options.sample_rate, &seat->reverb, error))
         goto failed;
@@ -200,6 +167,10 @@ void qa_audio_engine_destroy(qa_audio_engine *engine) {
     free(engine->seat_scratch);
     free(engine->pcm_scratch);
     free(engine);
+}
+void qa_audio_engine_discard(qa_audio_engine *engine) {
+    if (engine) engine->options.observer = NULL;
+    qa_audio_engine_destroy(engine);
 }
 static bool listeners_impl(qa_audio_engine *engine, const qa_audio_listener *listeners,
                            size_t count, qa_error *error) {
