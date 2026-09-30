@@ -469,7 +469,11 @@ failed:
 void qa_scene_resources_destroy(qa_scene_resources *resources)
 {
     if (resources == NULL) return;
-    for (size_t i = 0; i < resources->cache_count; ++i) qa_scene_image_release(resources->cache[i].image);
+    for (size_t i = 0; i < resources->cache_count; ++i) {
+        qa_scene_image_release(resources->cache[i].image);
+        qa_resource_release(resources->cache[i].source_record);
+        qa_resource_release(resources->cache[i].logical_record);
+    }
     free(resources->cache);
     for (size_t i = 0; i < 3; ++i) qa_buffer_free(&resources->palettes[i]);
     qa_scene_image_release(resources->white);
@@ -741,8 +745,8 @@ static bool same_options(const image_cache *entry, const qa_scene_image_options 
         (options->translation.size == 0 || memcmp(entry->translation, options->translation.data, 256) == 0);
 }
 
-static bool cache_add(qa_scene_resources *resources, qa_string_id name, uint64_t source,
-                      uint64_t logical_source, const qa_scene_image_options *options,
+static bool cache_add(qa_scene_resources *resources, qa_string_id name, qa_resource *source,
+                      qa_resource *logical_source, const qa_scene_image_options *options,
                       qa_scene_image *image, qa_error *error)
 {
     if (resources->cache_count == resources->cache_capacity) {
@@ -755,13 +759,15 @@ static bool cache_add(qa_scene_resources *resources, qa_string_id name, uint64_t
         resources->cache = grown; resources->cache_capacity = capacity;
     }
     image_cache *entry = &resources->cache[resources->cache_count++];
-    *entry = (image_cache){.source = source, .logical_source = logical_source, .name = name, .options = *options, .image = image};
+    *entry = (image_cache){.source = qa_resource_id(source), .logical_source = qa_resource_id(logical_source),
+        .source_record = source, .logical_record = logical_source, .name = name, .options = *options, .image = image};
     /* Stored span pointers are deliberately not used: cache array relocation
      * cannot invalidate option identity. Compare the embedded bytes above. */
     entry->options.palette_rgb.data = NULL; entry->options.translation.data = NULL;
     if (options->palette_rgb.size != 0) memcpy(entry->palette, options->palette_rgb.data, 768);
     if (options->translation.size != 0) memcpy(entry->translation, options->translation.data, 256);
     qa_scene_image_retain(image);
+    qa_resource_retain(source); qa_resource_retain(logical_source);
     return true;
 }
 
@@ -943,18 +949,17 @@ bool qa_scene_image_load(qa_scene_resources *resources, const char *name,
         if (!decode_asset(resources, name, path, qa_resource_bytes(resource), options, &image, error)) {
             failed = true; qa_resource_release(original); qa_resource_release(resource); break;
         }
-        qa_resource_release(resource);
         if (original != NULL && !logical_dimensions(original, logical_path, &image->logical_width, &image->logical_height, error)) {
-            failed = true; qa_resource_release(original); qa_scene_image_release(image); break;
+            failed = true; qa_resource_release(original); qa_resource_release(resource); qa_scene_image_release(image); break;
         }
-        qa_resource_release(original);
         for (size_t i = 1; i < image->animation_count; ++i) {
             qa_scene_image *frame = (qa_scene_image *)image->animation[i];
             frame->logical_width = image->logical_width; frame->logical_height = image->logical_height;
         }
-        if (!cache_add(resources, name_id, source_id, logical_id, options, image, error)) {
-            failed = true; qa_scene_image_release(image); break;
+        if (!cache_add(resources, name_id, resource, original, options, image, error)) {
+            failed = true; qa_resource_release(original); qa_resource_release(resource); qa_scene_image_release(image); break;
         }
+        qa_resource_release(original); qa_resource_release(resource);
         *out = image; result = true; break;
     }
     free(path); free(original_path);
