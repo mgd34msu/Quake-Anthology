@@ -3,6 +3,7 @@
 
 #include "qa/modes.h"
 #include "qa/modes_save.h"
+#include "qa/modes_q3_session.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -27,6 +28,8 @@ typedef struct mode_rank_entry {
     qa_actor_id actor;
     int32_t score;
     uint64_t spectator_since;
+    int32_t q3_spectator_time;
+    bool q3_source;
     uint32_t order;
     uint8_t group;
 } mode_rank_entry;
@@ -128,6 +131,10 @@ bool mode_set_phase(qa_modes *, mode_instance *, qa_mode_phase, uint64_t, qa_err
 bool mode_match_frame(qa_modes *, mode_instance *, uint64_t, qa_error *);
 bool mode_q3_warmup_frame(qa_modes *, mode_instance *, qa_error *);
 bool mode_q3_limits(qa_modes *, mode_instance *, qa_error *);
+bool mode_q3_session_initialize(qa_modes *, mode_instance *, qa_actor_id, qa_error *);
+bool mode_q3_session_team(qa_modes *, mode_instance *, qa_actor_id, bool, qa_error *);
+bool mode_q3_session_follow(qa_modes *, mode_instance *, qa_actor_id, qa_actor_id, int,
+                            qa_error *);
 bool mode_vote_frame(qa_modes *, mode_instance *, qa_error *);
 bool mode_intent_command_valid(const qa_modes *, qa_mode_source,
                                const qa_match_intent *, bool required);

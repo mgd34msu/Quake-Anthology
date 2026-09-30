@@ -75,7 +75,7 @@ static bool checkpoint_capture(qa_modes *m, qa_modes_checkpoint *out, qa_error *
     for (uint32_t i = 0; i < m->mode_capacity; ++i)
         if (m->instances[i].active && !mode_relic_source_current(m, &m->instances[i], e)) return false;
     qa_modes_checkpoint saved = {
-        .version = 8, .random = m->random, .attack_sequence = m->attack_sequence};
+        .version = 9, .random = m->random, .attack_sequence = m->attack_sequence};
     saved.players = calloc(m->actor_capacity, sizeof(*saved.players));
     saved.modes = calloc(m->mode_capacity, sizeof(*saved.modes));
     saved.objects = calloc(m->actor_capacity, sizeof(*saved.objects));
@@ -222,6 +222,10 @@ static bool validate_instance(qa_modes *m, const qa_mode_checkpoint *v, qa_error
             p->introduction_frames < 0 || p->suicide_count < 0 ||
             !reference(m, p->player.follow_target) || p->player.automatic_follow < 0 ||
             p->player.automatic_follow > 2 ||
+            p->player.q3_spectator_state < 0 || p->player.q3_spectator_state > 3 ||
+            p->player.q3_spectator_client < -2 || p->player.q3_spectator_client >= 64 ||
+            (v->value.rules.source < QA_MODE_Q3 && (p->player.q3_spectator_state ||
+                p->player.q3_spectator_time_ms || p->player.q3_spectator_client)) ||
             !isfinite(p->player.ctf_status) || !isfinite(p->player.ctf_access) ||
             (p->external_owner && !m->options.hooks.restore_player_binding))
             return mode_fail(e, "invalid saved mode member");
@@ -369,7 +373,7 @@ static bool restore_instance(qa_modes *m, const qa_mode_checkpoint *saved, qa_er
 }
 static bool checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved,
                                 bool reconnect, qa_error *e) {
-    if (!m || m->callback_depth || !saved || saved->version != 8 ||
+    if (!m || m->callback_depth || !saved || saved->version != 9 ||
         saved->player_count > m->actor_capacity || saved->mode_count > m->mode_capacity ||
         saved->object_count > m->actor_capacity ||
         saved->external_objective_count > m->objective_capacity ||

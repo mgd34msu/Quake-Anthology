@@ -200,7 +200,7 @@ static bool console_command(qa_modes *m, qa_mode_id id, qa_actor_id actor,
         if (named(name, "follow")) {
             *handled = true;
             if (command->argc != 2)
-                return (!p->player.follow_target.registry && !p->player.automatic_follow) ||
+                return p->player.q3_spectator_state != QA_MODE_Q3_SPECTATOR_FOLLOW ||
                        qa_modes_follow(m, id, actor, (qa_actor_id){0}, 0, 0, &accepted, e);
             char text[1024];
             q3_argument(command, 1, text);
@@ -226,7 +226,10 @@ static bool console_command(qa_modes *m, qa_mode_id id, qa_actor_id actor,
             return mode_event(m, v, QA_MODE_ROSTER, actor, (qa_actor_id){0}, (qa_actor_id){0},
                                 current, 0, 0, e);
         }
-        bool spectator = named(arg, "spectator") || named(arg, "s") || named(arg, "scoreboard");
+        bool q3 = v->value.rules.source >= QA_MODE_Q3;
+        bool score_view = named(arg, "scoreboard") || (q3 && named(arg, "score"));
+        int follow_slot = q3 && named(arg, "follow1") ? 1 : q3 && named(arg, "follow2") ? 2 : 0;
+        bool spectator = named(arg, "spectator") || named(arg, "s") || score_view || follow_slot;
         bool automatic = !*arg || named(arg, "auto");
         qa_team_id team = named(arg, "red") || named(arg, "r") || named(arg, "1")
                              ? v->value.rules.teams[0]
@@ -235,8 +238,14 @@ static bool console_command(qa_modes *m, qa_mode_id id, qa_actor_id actor,
         if (!spectator && !automatic && !team && !named(arg, "free") && !named(arg, "f"))
             return true;
         bool ok = qa_modes_request_team(m, id, actor, team, spectator, automatic, &accepted, e);
-        if (ok && accepted && named(arg, "scoreboard"))
+        if (ok && accepted && follow_slot)
+            ok = qa_modes_follow(m, id, actor, (qa_actor_id){0}, follow_slot, 0, &accepted, e);
+        if (ok && accepted && score_view) {
+            mode_member *current = mode_member_get(m, v, actor);
+            if (q3 && current)
+                current->player.q3_spectator_state = QA_MODE_Q3_SPECTATOR_SCOREBOARD;
             ok = qa_modes_scoreboard(m, id, actor, true, e);
+        }
         return ok;
     }
     if (named(name, "spectator") || named(name, "observe")) {

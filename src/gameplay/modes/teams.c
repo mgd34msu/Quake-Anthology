@@ -66,7 +66,8 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
         if (v->value.rules.kind == QA_MODE_DUEL && !member->player.spectator)
             member->player.losses = mode_add_i32(member->player.losses, 1);
     }
-    if (previous == team && member->player.spectator == observer) {
+    if (previous == team && member->player.spectator == observer &&
+        (!observer || v->value.rules.source < QA_MODE_Q3)) {
         *accepted = true;
         return true;
     }
@@ -152,6 +153,11 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
     member->player.follow_target = (qa_actor_id){0};
     member->player.automatic_follow = 0;
     member->player.observer_team = 0;
+    if (!mode_q3_session_team(m, v, actor, observer, e))
+        return false;
+    member = mode_member_get(m, v, actor);
+    if (!member)
+        return true;
     if (source >= QA_MODE_Q3) {
         qa_team_id affected[] = {previous, team};
         for (int side = 0; side < 2; ++side) {
@@ -251,6 +257,11 @@ static bool follow(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_actor_id ta
         if (!member)
             return true;
     }
+    if (!mode_q3_session_follow(m, v, actor, target, automatic, e))
+        return false;
+    member = mode_member_get(m, v, actor);
+    if (!member)
+        return true;
     member->player.follow_target = automatic ? (qa_actor_id){0} : target;
     member->player.automatic_follow = (int8_t)automatic;
     member->player.scoreboard = false;

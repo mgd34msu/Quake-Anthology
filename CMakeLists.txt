@@ -437,6 +437,7 @@ add_library(qa_game_q3 STATIC
     src/gameplay/q3/movers.c
     src/gameplay/q3/player.c
     src/gameplay/q3/rankings.c
+    src/gameplay/q3/round.c
     src/gameplay/q3/save.c
     src/gameplay/q3/view.c
     src/gameplay/q3/weapons.c)
@@ -478,6 +479,7 @@ add_library(qa_modes STATIC
     src/gameplay/modes/map.c
     src/gameplay/modes/match.c
     src/gameplay/modes/q3_settings.c
+    src/gameplay/modes/q3_session.c
     src/gameplay/modes/objectives.c
     src/gameplay/modes/objects.c
     src/gameplay/modes/placement.c

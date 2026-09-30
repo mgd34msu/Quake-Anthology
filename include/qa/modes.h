@@ -145,6 +145,9 @@ typedef struct qa_mode_player_state {
     bool spectator, scoreboard, ready, leader;
     uint64_t spectator_since_ns;
     int8_t automatic_follow;
+    /* Actual Q3 session values. Numeric spectatorClient persists even when
+     * its former canonical actor retires or the source stops following. */
+    int32_t q3_spectator_time_ms, q3_spectator_state, q3_spectator_client;
     int32_t ctf_last_team;
     float ctf_status, ctf_access;
 } qa_mode_player_state;

@@ -4,8 +4,12 @@ static int rank_compare(const void *left, const void *right) {
     const mode_rank_entry *a = left, *b = right;
     if (a->group != b->group)
         return a->group < b->group ? -1 : 1;
-    if (a->group == 1 && a->spectator_since != b->spectator_since)
-        return a->spectator_since < b->spectator_since ? -1 : 1;
+    if (a->group == 1) {
+        if (a->q3_source && b->q3_source && a->q3_spectator_time != b->q3_spectator_time)
+            return a->q3_spectator_time < b->q3_spectator_time ? -1 : 1;
+        if (!a->q3_source && a->spectator_since != b->spectator_since)
+            return a->spectator_since < b->spectator_since ? -1 : 1;
+    }
     if (!a->group && a->score != b->score)
         return a->score > b->score ? -1 : 1;
     return a->order < b->order ? -1 : a->order > b->order;
@@ -28,9 +32,14 @@ bool qa_modes_rank(qa_modes *m, qa_mode_id id, qa_error *e) {
             continue;
         qa_match_player value = p->value;
         const qa_mode_player_state *state = &member->player;
-        uint8_t group = state->scoreboard ? 3 : value.connecting ? 2 : state->spectator ? 1 : 0;
-        v->ranks[n++] = (mode_rank_entry){value.actor, score, state->spectator_since_ns,
-                                          (uint32_t)ordinal, group};
+        bool q3 = v->value.rules.source >= QA_MODE_Q3;
+        uint8_t group = (q3 ? state->q3_spectator_state == QA_MODE_Q3_SPECTATOR_SCOREBOARD ||
+                              state->q3_spectator_client < 0 : state->scoreboard)
+            ? 3 : value.connecting ? 2 : state->spectator ? 1 : 0;
+        v->ranks[n++] = (mode_rank_entry){.actor = value.actor, .score = score,
+            .spectator_since = state->spectator_since_ns,
+            .q3_spectator_time = state->q3_spectator_time_ms, .q3_source = q3,
+            .order = (uint32_t)ordinal, .group = group};
         if (!state->spectator && !value.connecting) {
             ++playing;
             if (!value.bot)
@@ -306,10 +315,16 @@ static bool exit_intermission(qa_modes *m, mode_instance *v, qa_error *e) {
         if (v->value.playing >= 2) {
             mode_member *loser = mode_member_get(m, v, v->sorted[1]);
             if (loser) {
+                qa_actor_id actor = loser->actor;
                 loser->player.spectator = true;
                 loser->player.spectator_since_ns = v->value.time_ns;
+                if (!mode_q3_session_team(m, v, actor, true, e))
+                    return false;
+                loser = mode_member_get(m, v, actor);
+                if (!loser)
+                    return mode_fail(e, "Q3 tournament loser retired during session transition");
                 if (m->options.hooks.spectator &&
-                    !m->options.hooks.spectator(m->options.hooks.context, v->id, loser->actor, true,
+                    !m->options.hooks.spectator(m->options.hooks.context, v->id, actor, true,
                                                 e))
                     return false;
             }
@@ -336,13 +351,20 @@ static bool duel_promote(qa_modes *m, mode_instance *v, qa_error *e) {
         mode_member *member = &v->members[i];
         mode_player *p = member->joined ? mode_player_get(m, member->actor) : NULL;
         if (p && p->value.connected && !p->value.connecting && member->player.spectator &&
-            !member->player.scoreboard &&
-            (!oldest || member->player.spectator_since_ns < oldest->player.spectator_since_ns))
+            (v->value.rules.source >= QA_MODE_Q3
+                ? member->player.q3_spectator_state != QA_MODE_Q3_SPECTATOR_SCOREBOARD &&
+                  member->player.q3_spectator_client >= 0
+                : !member->player.scoreboard) &&
+            (!oldest || (v->value.rules.source >= QA_MODE_Q3
+                ? member->player.q3_spectator_time_ms < oldest->player.q3_spectator_time_ms
+                : member->player.spectator_since_ns < oldest->player.spectator_since_ns)))
             oldest = member;
     }
     if (!oldest)
         return true;
     oldest->player.spectator = false;
+    if (!mode_q3_session_team(m, v, oldest->actor, false, e))
+        return false;
     if (m->options.hooks.spectator &&
         !m->options.hooks.spectator(m->options.hooks.context, v->id, oldest->actor, false, e))
         return false;
