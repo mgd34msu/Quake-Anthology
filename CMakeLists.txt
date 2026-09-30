@@ -604,6 +604,7 @@ add_library(qa_media STATIC
     src/media/save.c
     src/media/cinematic.c
     src/media/cinematic_scene.c
+    src/media/cinematic_presentation_save.c
     src/media/library.c
     src/media/material_movies.c)
 target_link_libraries(qa_media PUBLIC qa_content qa_audio qa_scene qa_persistence
@@ -640,6 +641,8 @@ add_library(qa_scene STATIC
     src/render/material/coordinates.c
     src/render/material/deform.c
     src/render/material/library.c
+    src/render/material/library_save.c
+    src/render/material/record_save.c
     src/render/material/math.c
     src/render/material/order.c
     src/render/material/parser.c
@@ -803,6 +806,8 @@ add_library(qa_q3_presentation STATIC
     src/presentation/q3/cinematics.c
     src/presentation/q3/core.c
     src/presentation/q3/models.c
+    src/presentation/q3/media_save.c
+    src/presentation/q3/scene_save.c
     src/presentation/q3/picture.c
     src/presentation/q3/render.c
     src/presentation/q3/scene.c)
@@ -906,6 +911,7 @@ target_link_libraries(qa_application PUBLIC qa_persistence qa_configuration qa_g
 
 add_library(qa_ui STATIC
     src/ui/controller.c
+    src/ui/save.c
     src/ui/draw.c
     src/ui/hud.c
     src/ui/input.c

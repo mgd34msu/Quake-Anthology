@@ -221,3 +221,23 @@ qa_audio_raw_stream *qa_audio_engine_bus_stream(qa_audio_engine *engine, uint64_
             if (engine->buses[i].id == bus && engine->buses[i].raw) return engine->buses[i].raw;
     return NULL;
 }
+
+bool qa_audio_engine_raw_checkpoint_ready(const qa_audio_engine *engine, uint64_t id,
+    uint32_t audience, float gain, qa_bytes saved, qa_error *error)
+{
+    if (!engine || engine->operation_depth || engine->callback_depth || engine->destroy_pending || engine->destroying ||
+        (saved.size && !saved.data)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Raw queue qualification requires an idle restored engine"); return false;
+    }
+    const audio_bus *bus = NULL;
+    for (size_t i=0;i<engine->bus_count;++i) if (engine->buses[i].id==id && engine->buses[i].raw) { bus=&engine->buses[i]; break; }
+    if ((bus!=NULL)!=(saved.size!=0) || (bus && (bus->audience!=audience || memcmp(&bus->gain,&gain,sizeof(gain))))) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Restored cinematic queue presence or route differs"); return false;
+    }
+    if (!bus) return true;
+    qa_buffer actual={0}; bool ok=qa_audio_raw_checkpoint(bus->raw,&actual,error);
+    if (ok && (actual.size!=saved.size || memcmp(actual.data,saved.data,saved.size))) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Restored cinematic raw queue differs"); ok=false;
+    }
+    qa_buffer_free(&actual); return ok;
+}

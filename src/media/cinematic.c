@@ -1,6 +1,7 @@
 #include "cinematic_internal.h"
 #include "qa/binary.h"
 #include "qa/audio_save.h"
+#include "qa/cinematic_restore.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -126,7 +127,7 @@ static bool queue_audio(void *context, const qa_media_audio *sound, qa_error *er
 }
 static void diagnostic(void *context, const char *text) {
     qa_cinematic *movie = context;
-    if (movie->options.diagnostic)
+    if (!movie->suppress_audio && movie->options.diagnostic)
         movie->options.diagnostic(movie->options.context, text);
 }
 static void dropped(void *context, uint64_t requested, uint64_t decoded) {
@@ -194,7 +195,7 @@ static void still_digest(const qa_scene_image *image, qa_sha256_digest *out) {
     qa_sha256_update(&hash, (qa_bytes){image->levels[0].pixels, image->levels[0].bytes});
     qa_sha256_final(&hash, out);
 }
-static bool restore(qa_cinematic *movie, const qa_cinematic_checkpoint *saved, qa_error *error) {
+static bool restore(qa_cinematic *movie, const qa_cinematic_checkpoint *saved, bool qualified, qa_error *error) {
     if (!saved->source || saved->format != movie->format ||
         !same_target(saved->target, movie->options.target) || saved->loop != movie->options.loop ||
         saved->audio_audience.kind != movie->options.audio_audience.kind ||
@@ -245,7 +246,11 @@ static bool restore(qa_cinematic *movie, const qa_cinematic_checkpoint *saved, q
         (saved->audio_attached && (saved->format == QA_CINEMATIC_IMAGE || saved->completed ||
                                   saved->silent || !movie->options.audio)))
         return cinematic_fail(error, "Saved cinematic has an invalid shared audio attachment");
-    if (saved->audio.size) {
+    if (qualified && saved->audio_attached) {
+        if (!qa_audio_engine_raw_checkpoint_ready(movie->options.audio, movie->options.audio_bus,
+            audio_audience(&movie->options), movie->options.gain,
+            (qa_bytes){saved->audio.data,saved->audio.size}, error)) return false;
+    } else if (saved->audio.size) {
         if (!movie->options.audio || saved->completed || saved->silent || !saved->audio.data)
             return cinematic_fail(error, "Saved cinematic audio has no active owner");
         qa_audio_raw_stream *raw;
@@ -262,9 +267,9 @@ static bool restore(qa_cinematic *movie, const qa_cinematic_checkpoint *saved, q
     movie->raw_attached = saved->audio_attached;
     return true;
 }
-bool qa_cinematic_create(const qa_cinematic_source *source, const qa_cinematic_options *options,
-                         const qa_cinematic_checkpoint *saved, qa_cinematic **out,
-                         qa_error *error) {
+static bool create(const qa_cinematic_source *source, const qa_cinematic_options *options,
+                   const qa_cinematic_checkpoint *saved, bool qualified, double anchor,
+                   qa_cinematic **out, qa_error *error) {
     if (!source || !source->name || !options || !options->clock.sample || !out ||
         source->format < QA_CINEMATIC_CIN || source->format > QA_CINEMATIC_IMAGE ||
         options->target.kind < QA_CINEMATIC_SEAT || options->target.kind > QA_CINEMATIC_MATERIAL ||
@@ -295,7 +300,10 @@ bool qa_cinematic_create(const qa_cinematic_source *source, const qa_cinematic_o
     memcpy(movie->name, source->name, length + 1);
     movie->asset = source->asset;
     qa_cinematic_asset_retain(movie->asset);
-    if (!wall_time(movie, &movie->start_ms, error)) {
+    if (qualified) {
+        movie->start_ms=movie->paused_at=anchor; movie->paused=true;
+    }
+    if (!qualified && !wall_time(movie, &movie->start_ms, error)) {
         free_movie(movie);
         return false;
     }
@@ -357,13 +365,26 @@ bool qa_cinematic_create(const qa_cinematic_source *source, const qa_cinematic_o
     }
     picture(movie);
     movie->dirty = movie->has_picture;
-    if (saved && !restore(movie, saved, error)) {
+    if (saved && !restore(movie, saved, qualified, error)) {
         free_movie(movie);
         return false;
     }
     movie->suppress_audio = false;
     *out = movie;
     return true;
+}
+bool qa_cinematic_create(const qa_cinematic_source *source, const qa_cinematic_options *options,
+    const qa_cinematic_checkpoint *saved, qa_cinematic **out, qa_error *error)
+{
+    return create(source,options,saved,false,0,out,error);
+}
+bool qa_cinematic_restore_qualified(const qa_cinematic_source *source, const qa_cinematic_options *options,
+    const qa_cinematic_checkpoint *saved, double anchor, qa_cinematic **out, qa_error *error)
+{
+    if (!source || !source->name || !saved || !saved->source || strcmp(source->name,saved->source) ||
+        !out || *out || !isfinite(anchor) || anchor<0)
+        return cinematic_fail(error,"Qualified cinematic restore requires an empty candidate and actual clock anchor");
+    return create(source,options,saved,true,anchor,out,error);
 }
 static bool finish(qa_cinematic *movie, qa_cinematic_end reason, qa_error *error) {
     if (movie->completed)

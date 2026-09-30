@@ -44,4 +44,9 @@ bool qa_audio_engine_restore(qa_bytes, const qa_audio_engine_options *,
 qa_audio_music *qa_audio_engine_bus_music(qa_audio_engine *, uint64_t bus);
 qa_audio_raw_stream *qa_audio_engine_bus_stream(qa_audio_engine *, uint64_t bus);
 
+/* Read-only qualification of a separately restored cinematic queue and route.
+ * An empty descriptor qualifies the actual absence of a raw queue. */
+bool qa_audio_engine_raw_checkpoint_ready(const qa_audio_engine *, uint64_t bus,
+    uint32_t audience, float gain, qa_bytes checkpoint, qa_error *);
+
 #endif

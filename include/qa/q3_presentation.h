@@ -30,6 +30,11 @@ typedef struct qa_q3_presentation_asset_options {
 bool qa_q3_presentation_assets_create(const qa_q3_presentation_asset_options *,
                                        qa_q3_presentation_assets **, qa_error *);
 void qa_q3_presentation_assets_destroy(qa_q3_presentation_assets *);
+/* Isolated restore replaces the library before source handles are decoded.
+ * The existing heap registry remains the installed service context. */
+bool qa_q3_presentation_materials_rebind_ready(const qa_q3_presentation *,
+    const qa_material_library *current, const qa_material_library *destination, qa_error *);
+void qa_q3_presentation_materials_rebind(qa_q3_presentation *, qa_material_library *);
 typedef struct qa_q3_asset_checkpoint_refs {
     void *context;
     bool (*image_encode)(void *, const qa_scene_image *, qa_buffer *, qa_error *);

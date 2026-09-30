@@ -1,4 +1,5 @@
 #include "qa/hud_wheel.h"
+#include "qa/hud_wheel_save.h"
 #include "qa/text.h"
 #include <math.h>
 #include <stdlib.h>
@@ -329,4 +330,70 @@ bool qa_hud_wheel_draw(qa_hud_wheel *w, const qa_hud_wheel_draw_options *options
         }
     }
     w->busy = false; return ok;
+}
+
+static bool wheel_key(qa_source_save_io *io, const qa_hud_wheel_checkpoint_refs *refs,
+    qa_hud_wheel_mode mode, uint64_t *value)
+{
+    bool present=*value!=0; uint64_t key=0;
+    if (io->direction==QA_SOURCE_SAVE_WRITE && present && (!refs || !refs->encode ||
+        !refs->encode(refs->context,mode,*value,&key,io->error))) return false;
+    if (!qa_source_save_bool(io,&present) || !qa_source_save_u64(io,&key)) return false;
+    if (!present && key) return false;
+    if (io->direction==QA_SOURCE_SAVE_READ) {
+        *value=0;
+        if (present && (!refs || !refs->decode || !refs->decode(refs->context,mode,key,value,io->error) || !*value)) return false;
+    }
+    return true;
+}
+static bool wheel_fields(qa_source_save_io *io, qa_hud_wheel *saved, const qa_hud_wheel *qualified,
+    const qa_hud_wheel_checkpoint_refs *refs)
+{
+    uint8_t magic[4]={'Q','A','W','H'}; uint32_t schema=1,seat=qualified->options.seat;
+    uint32_t mode=saved->mode,carousel=saved->carousel;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QAWH",4) || !qa_source_save_u32(io,&schema) || schema!=1 ||
+        !qa_source_save_u32(io,&seat) || seat!=qualified->options.seat) return false;
+    float radius=qualified->options.radius,distance=qualified->options.selection_distance,fade=qualified->options.fade_per_second;
+    uint64_t timeout=qualified->options.carousel_timeout_ns,lock=qualified->options.carousel_lock_ns;
+    bool deselect=qualified->options.q2_slot_zero_deselect;
+    if (!qa_source_save_f32(io,&radius) || memcmp(&radius,&qualified->options.radius,sizeof(radius)) ||
+        !qa_source_save_f32(io,&distance) || memcmp(&distance,&qualified->options.selection_distance,sizeof(distance)) ||
+        !qa_source_save_f32(io,&fade) || memcmp(&fade,&qualified->options.fade_per_second,sizeof(fade)) ||
+        !qa_source_save_u64(io,&timeout) || timeout!=qualified->options.carousel_timeout_ns ||
+        !qa_source_save_u64(io,&lock) || lock!=qualified->options.carousel_lock_ns ||
+        !qa_source_save_bool(io,&deselect) || deselect!=qualified->options.q2_slot_zero_deselect ||
+        !qa_source_save_u32(io,&mode) || mode>QA_HUD_WHEEL_POWERUPS ||
+        !qa_source_save_u32(io,&carousel) || carousel>CAROUSEL_CLOSING || !qa_source_save_bool(io,&saved->open)) return false;
+    if (io->direction==QA_SOURCE_SAVE_READ) { saved->mode=(qa_hud_wheel_mode)mode; saved->carousel=(carousel_state)carousel; }
+    if (!wheel_key(io,refs,saved->mode,&saved->selected) ||
+        !wheel_key(io,refs,QA_HUD_WHEEL_WEAPONS,&saved->carousel_selected) ||
+        !qa_source_save_u64(io,&saved->deselect_until) || !qa_source_save_u64(io,&saved->carousel_until) ||
+        !qa_source_save_u64(io,&saved->lock_until) || !qa_source_save_u64(io,&saved->last_update) ||
+        !qa_source_save_f32(io,&saved->position.x) || !qa_source_save_f32(io,&saved->position.y) ||
+        !qa_source_save_f32(io,&saved->analog.x) || !qa_source_save_f32(io,&saved->analog.y) ||
+        !qa_source_save_f32(io,&saved->opacity)) return false;
+    return isfinite(saved->position.x) && isfinite(saved->position.y) && isfinite(saved->analog.x) && isfinite(saved->analog.y) &&
+        isfinite(saved->opacity) && saved->opacity>=0 && saved->opacity<=1;
+}
+bool qa_hud_wheel_checkpoint(const qa_hud_wheel *wheel, const qa_hud_wheel_checkpoint_refs *refs,
+    qa_buffer *out, qa_error *error)
+{
+    if (!wheel || !out || wheel->busy) return wheel_fail(error,"Wheel capture requires an idle owner");
+    qa_hud_wheel saved=*wheel; qa_source_save_io io;
+    if (!qa_source_save_writer(&io,NULL,error)) return false;
+    bool ok=wheel_fields(&io,&saved,wheel,refs) && qa_source_save_finish(&io,out);
+    if (!ok && error && error->code==QA_OK) wheel_fail(error,"Wheel continuation or item identity is inconsistent");
+    qa_source_save_dispose(&io); return ok;
+}
+bool qa_hud_wheel_restore(qa_hud_wheel *wheel, const qa_hud_wheel_checkpoint_refs *refs,
+    qa_bytes bytes, qa_error *error)
+{
+    if (!wheel || wheel->busy || wheel->count || wheel->open || wheel->carousel!=CAROUSEL_CLOSED)
+        return wheel_fail(error,"Wheel restore requires an empty idle candidate");
+    qa_hud_wheel saved=*wheel; qa_source_save_io io;
+    if (!qa_source_save_reader(&io,NULL,bytes,error)) return false;
+    bool ok=wheel_fields(&io,&saved,wheel,refs) && qa_source_save_finish(&io,NULL);
+    if (ok) *wheel=saved;
+    else if (error && error->code==QA_OK) wheel_fail(error,"Saved wheel continuation or item identity is inconsistent");
+    qa_source_save_dispose(&io); return ok;
 }

@@ -12,6 +12,7 @@
 #include "qa/render_cpu.h"
 #include "qa/render_gl.h"
 #include "qa/q3_presentation.h"
+#include "qa/q3_key.h"
 #include "qa/tools.h"
 #include "qa/http.h"
 #include "qa/llm.h"
@@ -205,6 +206,27 @@ bool frontend_network_rebind_ready(const qa_frontend *, const qa_frontend *, qa_
 void frontend_network_rebind(qa_frontend *, qa_frontend *);
 void frontend_network_transport_exchange(qa_frontend *, qa_frontend *);
 bool frontend_network_source_services(qa_frontend *, qa_q3_host_options *, qa_error *);
+typedef struct frontend_source_group_view {
+    qa_actor_owner owner;
+    uint32_t seat;
+    uint64_t identity;
+    unsigned roles[3];
+    const qa_vfs *source_files;
+    qa_vfs *mounts;
+    qa_scene_resources *images;
+    qa_material_library *materials;
+    qa_font_library *fonts;
+    qa_audio_bank *sounds;
+    qa_audio_music *music;
+    qa_media_library *movies;
+    qa_q3_key *keys;
+    qa_q3_presentation_assets *assets;
+    qa_q3_presentation *presentation;
+    qa_audio_listener listener;
+    bool has_listener, music_attached;
+} frontend_source_group_view;
+size_t frontend_source_group_count(const qa_frontend *);
+bool frontend_source_group_read(const qa_frontend *, size_t, frontend_source_group_view *);
 bool frontend_source_services(void *, qa_application *, qa_actor_owner, qa_qvm_role, uint32_t, qa_q3_host_options *, qa_error *);
 bool frontend_source_frame(qa_frontend *, uint32_t, qa_scene_rect, qa_error *);
 bool frontend_source_retire_world(qa_frontend *, qa_error *);

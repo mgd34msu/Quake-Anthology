@@ -15,7 +15,7 @@ bool q3p_movie_close(qa_q3_presentation *p, uint32_t index, qa_cinematic_end rea
     free(movie.path); return ok;
 }
 
-static char *movie_path(const char *path, qa_error *error)
+char *q3p_movie_path(const char *path, qa_error *error)
 {
     size_t length = strlen(path);
     bool prefix = strchr(path, '/') == NULL;
@@ -45,7 +45,7 @@ static bool prepare(qa_q3_presentation *p, const char *request,
 {
     for (q3p_movie_source *source = p->movie_sources; source; source = source->next)
         if (!strcmp(source->request, request)) { *out = source; return true; }
-    char *name = movie_path(request, error);
+    char *name = q3p_movie_path(request, error);
     if (!name) return false;
     qa_q3_presentation_assets *assets = p->options.assets;
     qa_resource *resource = NULL; qa_error local = {0};

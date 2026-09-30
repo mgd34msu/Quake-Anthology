@@ -1,6 +1,7 @@
 #include "world/internal.h"
 #include "qa/scene_effects.h"
 #include "qa/scene_world_save.h"
+#include "qa/material_library_save.h"
 #include "qa/binary.h"
 
 #include <float.h>
@@ -17,6 +18,52 @@ uint64_t qa_scene_world_identity(const qa_scene_world *world)
 { return world ? world->identity : 0; }
 bool qa_scene_world_idle(const qa_scene_world *world)
 { return world && !world->transaction_depth && !world->admission_change_count; }
+size_t qa_scene_world_material_binding_count(const qa_scene_world *world)
+{ return world ? world->surface_count : 0; }
+bool qa_scene_world_material_binding_at(const qa_scene_world *world, size_t index, qa_scene_world_material_binding *out)
+{
+    if (!world || !out || index >= world->surface_count) return false;
+    const qaw_surface *surface = &world->surfaces[index];
+    *out = (qa_scene_world_material_binding){.current = surface->material, .base_current = surface->base_material};
+    return true;
+}
+static bool world_material_member(const qa_material_library *library, const qa_material *material, uint64_t world)
+{
+    if (!material) return true;
+    qa_material_library_record_view record;
+    return qa_material_library_record_read(library, material->sorted_index, &record) && record.material == material &&
+        material->order_entry && (!record.world_identity || record.world_identity == world);
+}
+bool qa_scene_world_materials_rebind_ready(const qa_scene_world *world, const qa_material_library *current,
+    const qa_material_library *destination, const qa_scene_world_material_binding *bindings, size_t count, qa_error *error)
+{
+    if (!qa_scene_world_idle(world) || !current || !destination || world->materials != current ||
+        !qa_material_library_order_ready(current) || !qa_material_library_order_ready(destination) ||
+        qa_material_library_resource_owner(destination) != world->resources ||
+        count != world->surface_count || (count && !bindings))
+        return world_error(error, QA_ERROR_ARGUMENT, "world material publication requires idle qualified owners");
+    for (size_t i = 0; i < count; ++i) {
+        const qaw_surface *surface = &world->surfaces[i]; const qa_scene_world_material_binding *binding = &bindings[i];
+        if (binding->current != surface->material || binding->base_current != surface->base_material ||
+            (binding->current != NULL) != (binding->destination != NULL) ||
+            (binding->base_current != NULL) != (binding->base_destination != NULL) ||
+            !world_material_member(current, binding->current, world->identity) ||
+            !world_material_member(current, binding->base_current, world->identity) ||
+            !world_material_member(destination, binding->destination, world->identity) ||
+            !world_material_member(destination, binding->base_destination, world->identity))
+            return world_error(error, QA_ERROR_ARGUMENT, "world material binding differs from its actual surface owners");
+    }
+    return true;
+}
+void qa_scene_world_materials_rebind(qa_scene_world *world, qa_material_library *destination,
+    const qa_scene_world_material_binding *bindings)
+{
+    for (size_t i = 0; i < world->surface_count; ++i) {
+        world->surfaces[i].material = bindings[i].destination;
+        world->surfaces[i].base_material = bindings[i].base_destination;
+    }
+    world->materials = destination;
+}
 
 static void *world_array(size_t count, size_t stride, qa_error *error)
 {

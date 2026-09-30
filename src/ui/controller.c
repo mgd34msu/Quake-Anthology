@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/ui_save.h"
 
 float ui_glyph_width(qa_ui *ui, uint32_t scalar) {
     qa_font_glyph glyph;
@@ -153,6 +154,11 @@ static bool input_handler(void *context, qa_input_seat *seat, qa_input_focus foc
         return true;
     }
     return consumed;
+}
+bool qa_ui_input_binding_read(const qa_ui *ui, qa_ui_input_binding *out)
+{
+    if (!ui || !out || ui->handling || ui->drawing) return false;
+    *out=(qa_ui_input_binding){ui->options.input,input_handler,(void*)ui,ui->input_token}; return true;
 }
 bool qa_ui_create(const qa_ui_options *options, qa_ui **out, qa_error *error) {
     if (!options || !out || !options->input || !options->white || !options->fonts.classic ||

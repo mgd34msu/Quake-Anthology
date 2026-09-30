@@ -1,4 +1,5 @@
 #include "library_internal.h"
+#include "library_save_private.h"
 #include "qa/material_save.h"
 #include "qa/source_save.h"
 
@@ -157,6 +158,12 @@ static bool order_signature(qa_source_save_io *io)
     uint8_t magic[4] = {'Q', 'A', 'M', 'O'}; uint32_t version = 1;
     return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QAMO", 4) &&
         qa_source_save_u32(io, &version) && version == 1;
+}
+bool qa_material_order_has_record(const qa_material_order *order, const qa_material *material)
+{
+    const qa_material_order_entry *entry = material ? material->order_entry : NULL;
+    return order && entry && entry->owner == order && entry->material == material &&
+        entry->slot < order->count && order->entries[entry->slot] == entry;
 }
 
 bool qa_material_order_checkpoint(const qa_material_order *order, const qa_material_checkpoint_refs *refs,

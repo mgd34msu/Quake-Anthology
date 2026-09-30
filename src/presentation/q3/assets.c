@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/material_library_save.h"
 
 static unsigned char key_byte(q3p_resource_kind kind, unsigned char byte)
 {
@@ -97,6 +98,19 @@ void qa_q3_presentation_assets_destroy(qa_q3_presentation_assets *a)
     qa_audio_asset_release(a->options.zero_sound);
     free(a->models); free(a->skins); free(a->sounds); free(a->shaders); free(a->names); free(a);
 }
+bool qa_q3_presentation_materials_rebind_ready(const qa_q3_presentation *p,
+    const qa_material_library *current, const qa_material_library *destination, qa_error *error)
+{
+    const qa_q3_presentation_assets *a = p ? p->options.assets : NULL;
+    if (!p || p->busy || !a || a->busy || a->users != 2 || !current || !destination || a->options.provider.materials != current ||
+        a->options.provider.images != qa_material_library_resource_owner(destination) ||
+        !qa_material_library_order_ready(destination) || a->name_count || a->model_count || a->skin_count ||
+        a->shader_count || a->sound_count)
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 library restore requires an idle empty installed handle registry");
+    return true;
+}
+void qa_q3_presentation_materials_rebind(qa_q3_presentation *p, qa_material_library *destination)
+{ p->options.assets->options.provider.materials = destination; }
 
 bool q3p_shader_get(const qa_q3_presentation_assets *a, int32_t handle, const qa_material **out, qa_error *error)
 {

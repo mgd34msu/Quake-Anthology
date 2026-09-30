@@ -109,6 +109,7 @@ bool q3p_shader_get(const qa_q3_presentation_assets *, int32_t, const qa_materia
 bool q3p_skin_get(const qa_q3_presentation_assets *, int32_t, const qa_model_skin_map **, qa_error *);
 qa_audio_asset *q3p_sound(const qa_q3_presentation_assets *, int32_t);
 void q3p_model_free(q3p_model *);
+char *q3p_movie_path(const char *, qa_error *);
 bool q3p_movie_close(qa_q3_presentation *, uint32_t, qa_cinematic_end, qa_error *);
 bool q3p_picture(qa_q3_presentation *, const qa_material *, qa_scene_rect_f, qa_scene_vec4, qa_error *);
 qa_scene_vec4 q3p_color(const uint8_t[4]);

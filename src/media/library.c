@@ -1,4 +1,5 @@
 #include "cinematic_internal.h"
+#include "qa/media_resource.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -6,6 +7,7 @@
 struct qa_cinematic_asset {
     size_t references;
     qa_cinematic_source source;
+    qa_resource *source_record;
     qa_sha256_digest digest;
     uint32_t width, height;
     char *name;
@@ -50,6 +52,7 @@ void qa_cinematic_asset_release(qa_cinematic_asset *asset) {
         qa_scene_image_release(asset->source.data.image);
         break;
     }
+    qa_resource_release(asset->source_record);
     free(asset->name);
     free(asset);
 }
@@ -218,6 +221,7 @@ bool qa_media_library_load(qa_media_library *library, qa_vfs *view, const char *
     memcpy(asset->name, path, length + 1);
     asset->source.name = asset->name;
     bool ok = load(library, resource, asset, error);
+    if (ok) { qa_resource_retain(resource); asset->source_record = resource; }
     qa_resource_release(resource);
     if (!ok) {
         qa_cinematic_asset_release(asset);
@@ -228,4 +232,9 @@ bool qa_media_library_load(qa_media_library *library, qa_vfs *view, const char *
     qa_cinematic_asset_retain(asset);
     *out = asset;
     return true;
+}
+
+const qa_resource *qa_cinematic_asset_resource(const qa_cinematic_asset *asset)
+{
+    return asset ? asset->source_record : NULL;
 }
