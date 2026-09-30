@@ -4190,7 +4190,12 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
   }
 
   if (strcmp(callback, "guardian_atk1_charge") == 0) {
-    if (!q2m_sound(context, "weapons/hyprbl1a.wav", 1, 1.0f, error))
+    qa_builtin_event loop = {.kind = QA_BUILTIN_SOUND, .family = QA_GAME_Q2,
+        .provider = context->game->options.owner, .actor = context->actor->id,
+        .time_ns = context->game->now_ns, .origin = context->body.origin,
+        .volume = 1.0f, .attenuation = 1.0f, .flags = 1u};
+    if (!qa_builtin_resource(&context->game->services, "weapons/hyprbl1a.wav",
+        &loop.resource, error) || !qa_builtin_emit(&context->game->services, &loop, error))
       return false;
     return !q2m_alive(context) ||
            q2m_sound(context, "weapons/hyprbu1a.wav", 1, 1.0f, error);
@@ -4230,7 +4235,7 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
   if (strcmp(callback, "guardian_laser_fire") == 0)
     return q2m_sound(context, "weapons/laser2.wav", 1, 1.0f, error) &&
            (!q2m_alive(context) ||
-            q2m_attack(context, Q2M_ATTACK_BEAM, 25.0f, error));
+            q2m_guardian_beam(context, error));
 
   if (has(callback, "refire") || has(callback, "reattack"))
     return reattack(context, callback, error);

@@ -379,7 +379,10 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
       (saved->corpse_phase != Q2M_CORPSE_IDLE && !saved->corpse) ||
       saved->initial_power_armor > QA_POWER_SHIELD || saved->max_power_armor < 0 ||
       saved->medic_tries > 2 ||
-      saved->controller_kind > Q2M_CONTROLLER_MAKRON_SPAWN ||
+      saved->controller_kind > Q2M_CONTROLLER_GUARDIAN_BEAM ||
+      (saved->controller_kind == Q2M_CONTROLLER_GUARDIAN_BEAM &&
+       (game->options.edition != QA_Q2_RERELEASE || saved->count < 0 || saved->count > 1 ||
+        !saved->controller_owner.present || saved->controller_damage != 25.0f)) ||
       !valid_name(saved->definition, sizeof(saved->definition), controller) ||
       !valid_name(saved->move, sizeof(saved->move), controller) ||
       !valid_name(saved->next_move, sizeof(saved->next_move), true) ||

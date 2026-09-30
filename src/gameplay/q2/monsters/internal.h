@@ -173,7 +173,8 @@ typedef enum q2m_controller_kind {
   Q2M_CONTROLLER_NONE,
   Q2M_CONTROLLER_BEAM,
   Q2M_CONTROLLER_BOSS_EXPLODER,
-  Q2M_CONTROLLER_MAKRON_SPAWN
+  Q2M_CONTROLLER_MAKRON_SPAWN,
+  Q2M_CONTROLLER_GUARDIAN_BEAM
 } q2m_controller_kind;
 
 typedef struct q2m_frame_action {
@@ -446,5 +447,7 @@ bool q2m_spawn_monster_beam(q2m_context *, qa_actor_id target, qa_vec3 origin,
 bool q2m_spawn_boss_exploder(q2m_context *, qa_error *);
 bool q2m_schedule_makron_spawn(q2m_context *, qa_error *);
 bool q2m_controller_tick(qa_q2_game *, q2_actor *, qa_error *);
+bool q2m_controller_postthink(qa_q2_game *, q2_actor *, qa_error *);
+bool q2m_guardian_beam(q2m_context *, qa_error *);
 
 #endif

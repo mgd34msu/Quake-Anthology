@@ -2387,6 +2387,14 @@ bool q2m_die(q2m_context *context, qa_error *error) {
   bool crushed = monster->last_attack.cause.kind == QA_CAUSE_Q2 &&
                  monster->last_attack.cause.source.q2.means_of_death == 20;
   q2m_species species = monster->definition->species;
+  if (species == Q2M_GUARDIAN) {
+    if (!stop_loop_sound(context, "weapons/hyprbl1a.wav", 0, error)) return false;
+    if (!q2m_alive(context)) return true;
+    monster->dead = true;
+    context->actor->physics.flags |= QA_PHYSICS_DEAD;
+    if (!q2m_damageable(context, true, error)) return false;
+    return !q2m_alive(context) || q2m_set_move(context, "guardian_move_death", true, error);
+  }
   if (species == Q2M_WIDOW || species == Q2M_WIDOW2)
     return widow_death(context, species == Q2M_WIDOW2, error);
   bool scripted_boss =

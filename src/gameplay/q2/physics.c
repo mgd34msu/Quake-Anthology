@@ -159,7 +159,7 @@ static bool recover_step_origin(qa_q2_game *g, qa_actor_id id, qa_vec3 previous,
     return qa_world_body_write(g->services.world, id, &body, e);
 }
 
-bool q2_actor_physics(qa_q2_game *g, q2_actor *a, qa_error *e) {
+static bool actor_physics(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_actor_id id = a->id;
     const qa_actor_record *record = qa_actors_get(qa_session_actors(g->services.session), id);
     bool owned = record && record->owner == g->options.owner;
@@ -202,4 +202,11 @@ bool q2_actor_physics(qa_q2_game *g, q2_actor *a, qa_error *e) {
     a = q2_actor_get(g, id, false, NULL);
     if (a && !q2_actor_think(g, a, e)) return false;
     return !recover || recover_step_origin(g, id, previous.origin, e);
+}
+
+bool q2_actor_physics(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    qa_actor_id id = a->id;
+    if (!actor_physics(g, a, e)) return false;
+    a = q2_actor_get(g, id, false, NULL);
+    return !a || q2m_controller_postthink(g, a, e);
 }

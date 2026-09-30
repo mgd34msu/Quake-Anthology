@@ -154,9 +154,11 @@ static bool beam_fire(qa_q2_game *game, q2_actor *actor, qa_error *error) {
          beam_event(game, actor, body.origin, endpoint, error);
 }
 
-bool q2m_spawn_monster_beam(q2m_context *context, qa_actor_id target,
-                            qa_vec3 origin, qa_vec3 direction, float damage,
-                            bool medic, qa_error *error) {
+static bool spawn_beam(q2m_context *context, qa_actor_id target,
+                        qa_vec3 origin, qa_vec3 direction, float damage,
+                        bool medic, q2m_controller_kind kind, int channel,
+                        q2_actor **out, qa_error *error) {
+  if (out) *out = NULL;
   if (!q2m_alive(context))
     return true;
   qa_actor_definition definition;
@@ -212,7 +214,8 @@ bool q2m_spawn_monster_beam(q2m_context *context, qa_actor_id target,
                  "Unable to allocate Q2 monster beam state");
     return false;
   }
-  beam->controller_kind = Q2M_CONTROLLER_BEAM;
+  beam->controller_kind = kind;
+  beam->count = channel;
   beam->controller_owner = context->actor->id;
   beam->controller_target = target;
   beam->controller_direction = aim;
@@ -226,7 +229,155 @@ bool q2m_spawn_monster_beam(q2m_context *context, qa_actor_id target,
   actor->physics.motion = QA_PHYSICS_STATIONARY;
   actor->physics.solid = QA_PHYSICS_NOT_SOLID;
   actor->physics.clip_mask = 0;
+  if (out) *out = actor;
   return true;
+}
+
+bool q2m_spawn_monster_beam(q2m_context *context, qa_actor_id target,
+                            qa_vec3 origin, qa_vec3 direction, float damage,
+                            bool medic, qa_error *error) {
+  return spawn_beam(context, target, origin, direction, damage, medic,
+                     Q2M_CONTROLLER_BEAM, 0, NULL, error);
+}
+
+static bool guardian_trace(qa_q2_game *game, q2_actor *actor, bool damage,
+                            qa_error *error) {
+  struct qa_q2_monster *beam = actor->monster;
+  qa_body_state body;
+  if (!qa_world_body_read(game->services.world, actor->id, &body, error)) return false;
+  if (!controller_live(game, actor, beam, Q2M_CONTROLLER_GUARDIAN_BEAM)) return true;
+  qa_trace_query query = {.start = body.origin,
+      .end = qa_vec_add(body.origin, qa_vec_scale(beam->controller_direction, 2048.0f)),
+      .pass_actor = actor->id, .policy = qa_collision_default_policy(QA_COLLISION_Q2)};
+  query.policy.contents_mask = UINT32_C(0x46000001);
+  qa_actor_id excluded[16];
+  size_t count = 0;
+  qa_trace_result trace;
+  for (;;) {
+    if (!qa_world_trace_excluding(game->services.world, &query, excluded, count, &trace, error))
+      return false;
+    if (!controller_live(game, actor, beam, Q2M_CONTROLLER_GUARDIAN_BEAM)) return true;
+    if (trace.hit == QA_TRACE_HIT_NONE || trace.fraction == 1.0f) break;
+    qa_builtin_actor_traits traits = {0};
+    if (trace.hit == QA_TRACE_HIT_ACTOR && game->services.actor_traits)
+      game->services.actor_traits(game->services.context, trace.actor, &traits);
+    if (!controller_live(game, actor, beam, Q2M_CONTROLLER_GUARDIAN_BEAM)) return true;
+    if (damage && trace.hit == QA_TRACE_HIT_ACTOR && !traits.laser_immune &&
+        !qa_actor_id_equal(trace.actor, beam->controller_owner)) {
+      qa_combat_state combat;
+      qa_error ignored = {0};
+      bool can_damage = qa_combat_read(game->services.combat, trace.actor, &combat, &ignored) &&
+                        combat.can_take_damage;
+      if (!controller_live(game, actor, beam, Q2M_CONTROLLER_GUARDIAN_BEAM)) return true;
+      if (can_damage && q2_actor_live(game, trace.actor)) {
+        qa_attack attack = {.attacker = beam->controller_owner, .inflictor = actor->id,
+            .combat_provider = game->options.owner,
+            .cause = qa_q2_damage_cause(game->options.edition, game->options.product, 30, 4u)};
+        if (!q2_damage(game, &attack, trace.actor, beam->controller_damage,
+            (float)game->options.skill, beam->controller_direction, trace.end,
+            qa_v3(0, 0, 0), false, error)) return false;
+        if (!controller_live(game, actor, beam, Q2M_CONTROLLER_GUARDIAN_BEAM)) return true;
+      }
+    }
+    if (!traits.monster && !traits.player) {
+      if (damage && !spark_event(game, actor, &trace, error)) return false;
+      break;
+    }
+    if (count == sizeof(excluded) / sizeof(excluded[0])) break;
+    excluded[count++] = trace.actor;
+  }
+  if (!controller_live(game, actor, beam, Q2M_CONTROLLER_GUARDIAN_BEAM)) return true;
+  qa_vec3 end = trace.end;
+  if (trace.contact) end = qa_vec_add(end, trace.contact_plane.normal);
+  return qa_world_link(game->services.world, actor->id, NULL, error) &&
+      (!controller_live(game, actor, beam, Q2M_CONTROLLER_GUARDIAN_BEAM) ||
+       beam_event(game, actor, body.origin, end, error));
+}
+
+static bool guardian_update(qa_q2_game *game, q2_actor *actor, qa_error *error) {
+  struct qa_q2_monster *beam = actor->monster;
+  q2_actor *owner = q2_actor_get(game, beam->controller_owner, false, NULL);
+  if (!owner || !owner->monster || !owner->monster->definition) return true;
+  q2m_context context = {.game = game, .actor = owner, .monster = owner->monster};
+  if (!q2m_refresh(&context, error)) return false;
+  if (!q2m_alive(&context) ||
+      !controller_live(game, actor, beam, Q2M_CONTROLLER_GUARDIAN_BEAM)) return true;
+  qa_actor_id enemy_id = context.monster->enemy;
+  if (!q2_actor_live(game, enemy_id)) return true;
+  qa_body_state enemy;
+  qa_error body_error = {0};
+  bool read = qa_world_body_read(game->services.world, enemy_id, &enemy, &body_error);
+  if (!q2m_alive(&context) ||
+      !controller_live(game, actor, beam, Q2M_CONTROLLER_GUARDIAN_BEAM) ||
+      !q2_actor_live(game, enemy_id) ||
+      !qa_actor_id_equal(context.monster->enemy, enemy_id)) return true;
+  if (!read) { if (error) *error = body_error; return false; }
+  qa_vec3 offset = context.monster->frame & 1 ? qa_v3(125, -70, 60) : qa_v3(112, -62, 60);
+  qa_vec3 origin = q2m_project_offset(&context, offset);
+  qa_vec3 target = qa_vec_add(enemy.origin, enemy.bounds.mins);
+  qa_vec3 size = qa_vec_sub(enemy.bounds.maxs, enemy.bounds.mins);
+  float high = nextafterf(1.0f, 0.0f);
+  target.x += fminf(high, q2_rerelease_float(game, 0, 1)) * size.x;
+  target.y += fminf(high, q2_rerelease_float(game, 0, 1)) * size.y;
+  target.z += fminf(high, q2_rerelease_float(game, 0, 1)) * size.z;
+  qa_vec3 direction = qa_vec_normalize(qa_vec_sub(target, origin));
+  qa_body_state body;
+  if (!qa_world_body_read(game->services.world, actor->id, &body, error)) return false;
+  if (!controller_live(game, actor, beam, Q2M_CONTROLLER_GUARDIAN_BEAM)) return true;
+  body.origin = origin;
+  body.angles = beam_angles(direction);
+  beam->controller_direction = direction;
+  beam->controller_target = context.monster->enemy;
+  return qa_world_body_write(game->services.world, actor->id, &body, error) &&
+      (!controller_live(game, actor, beam, Q2M_CONTROLLER_GUARDIAN_BEAM) ||
+       (qa_world_link(game->services.world, actor->id, NULL, error) &&
+        (!controller_live(game, actor, beam, Q2M_CONTROLLER_GUARDIAN_BEAM) ||
+         guardian_trace(game, actor, false, error))));
+}
+
+bool q2m_guardian_beam(q2m_context *context, qa_error *error) {
+  qa_q2_game *game = context->game;
+  qa_actor_id enemy = context->monster->enemy;
+  if (!q2m_alive(context) || !q2_actor_live(game, enemy)) return true;
+  int channel = context->monster->frame & 1;
+  q2_actor *actor = NULL;
+  bool fresh = false;
+  for (q2_actor *candidate = game->first_actor; candidate; candidate = candidate->live_next)
+    if (candidate->monster && candidate->monster->controller_kind == Q2M_CONTROLLER_GUARDIAN_BEAM &&
+        candidate->monster->count == channel &&
+        qa_actor_id_equal(candidate->monster->controller_owner, context->actor->id)) {
+      actor = candidate;
+      break;
+    }
+  if (!actor) {
+    if (!spawn_beam(context, (qa_actor_id){0}, context->body.origin, qa_v3(1, 0, 0),
+        25.0f, context->monster->medic, Q2M_CONTROLLER_GUARDIAN_BEAM, channel, &actor, error))
+      return false;
+    if (!actor || !q2m_alive(context)) return true;
+    fresh = true;
+    qa_string_id sound;
+    if (!qa_builtin_resource(&game->services, "misc/lasfly.wav", &sound, error)) goto failed;
+    qa_builtin_event event = {.kind = QA_BUILTIN_SOUND, .family = QA_GAME_Q2,
+        .provider = game->options.owner, .actor = actor->id, .resource = sound,
+        .time_ns = game->now_ns, .origin = context->body.origin,
+        .volume = 1.0f, .attenuation = 1.0f, .flags = 1u};
+    if (!qa_builtin_emit(&game->services, &event, error)) goto failed;
+    if (!q2_actor_live(game, actor->id)) return true;
+    if (!q2m_alive(context)) return qa_session_release(game->services.session, actor->id, error);
+  }
+  struct qa_q2_monster *beam = actor->monster;
+  beam->controller_ns = q2_deadline(game->now_ns, 200 * Q2_MS);
+  if (!guardian_update(game, actor, error)) goto failed;
+  if (!controller_live(game, actor, beam, Q2M_CONTROLLER_GUARDIAN_BEAM)) return true;
+  if (fresh && !q2m_alive(context)) return qa_session_release(game->services.session, actor->id, error);
+  if (!q2m_alive(context) || !q2_actor_live(game, enemy) ||
+      !qa_actor_id_equal(context->monster->enemy, enemy)) return true;
+  if (!guardian_trace(game, actor, true, error)) goto failed;
+  return true;
+failed:
+  if (fresh && q2_actor_live(game, actor->id))
+    qa_session_release(game->services.session, actor->id, NULL);
+  return false;
 }
 
 bool q2m_spawn_boss_exploder(q2m_context *context, qa_error *error) {
@@ -427,6 +578,11 @@ bool q2m_controller_tick(qa_q2_game *game, q2_actor *actor,
   if (actor == NULL || actor->monster == NULL || !q2_actor_live(game, actor->id))
     return true;
   struct qa_q2_monster *controller = actor->monster;
+  if (controller->controller_kind == Q2M_CONTROLLER_GUARDIAN_BEAM) {
+    if (game->now_ns >= controller->controller_ns)
+      return qa_session_release(game->services.session, actor->id, error);
+    return true;
+  }
   if (controller->controller_kind == Q2M_CONTROLLER_BOSS_EXPLODER)
     return boss_exploder_tick(game, actor, error);
   if (controller->controller_kind == Q2M_CONTROLLER_MAKRON_SPAWN)
@@ -441,4 +597,9 @@ bool q2m_controller_tick(qa_q2_game *game, q2_actor *actor,
     return beam_fire(game, actor, error);
   }
   return qa_session_release(game->services.session, actor->id, error);
+}
+
+bool q2m_controller_postthink(qa_q2_game *game, q2_actor *actor, qa_error *error) {
+  return !actor->monster || actor->monster->controller_kind != Q2M_CONTROLLER_GUARDIAN_BEAM ||
+      !q2_actor_live(game, actor->id) || guardian_update(game, actor, error);
 }
