@@ -21,6 +21,11 @@ bool qa_fs_identity_equal(const qa_fs_identity *left,
         && memcmp(left->words, right->words, sizeof(left->words)) == 0;
 }
 
+uint64_t qa_fs_identity_size(const qa_fs_identity *identity)
+{
+    return identity != NULL ? identity->words[2] : 0;
+}
+
 uint64_t qa_fs_identity_hash(const qa_fs_identity *identity)
 {
     if (identity == NULL)

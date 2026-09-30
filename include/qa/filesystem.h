@@ -38,6 +38,7 @@ typedef bool (*qa_fs_name_equal_fn)(const char *left, const char *right,
 bool qa_fs_identity_equal(const qa_fs_identity *left,
                           const qa_fs_identity *right);
 uint64_t qa_fs_identity_hash(const qa_fs_identity *identity);
+uint64_t qa_fs_identity_size(const qa_fs_identity *identity);
 
 /* A linked root is admitted and retained by its final directory handle. Child
  * reads may follow links only when the final opened object remains below that
