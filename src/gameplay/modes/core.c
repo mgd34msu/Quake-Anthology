@@ -84,6 +84,9 @@ bool mode_intent(qa_modes *m, mode_instance *v, qa_match_intent_kind kind, qa_ac
         return mode_fail(e, "match transition has no campaign/match coordinator");
     qa_match_intent intent = {
         .kind = kind, .mode = v->id, .actor = actor, .team = team, .map = map};
+    if (v->value.rules.source >= QA_MODE_Q3 && kind == QA_MATCH_RESTART_MAP &&
+        !MODE_CALLBACK(m, qa_builtin_resource(&m->options.services, "map_restart 0\n",
+                                               &intent.source_command, e))) return false;
     return MODE_CALLBACK(m, m->options.hooks.intent(m->options.hooks.context, &intent, e));
 }
 bool mode_alive(qa_modes *m, qa_actor_id actor) {

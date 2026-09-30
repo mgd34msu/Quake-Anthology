@@ -1,6 +1,8 @@
 #include "internal.h"
 #include "qa/console.h"
 #include <ctype.h>
+#include <inttypes.h>
+#include <stdio.h>
 
 static bool named(const char *left, const char *right) {
     while (*left && *right)
@@ -121,6 +123,8 @@ static bool q3_call_vote(qa_modes *m, mode_instance *v, qa_actor_id actor,
     if (strchr(key, ';') || strchr(parameter, ';'))
         return q3_message(m, v, actor, "Invalid vote string.\n", e);
     qa_match_intent intent = {.mode = v->id};
+    bool raw_command = false;
+    int32_t game_type = 0;
     qa_team_id team = 0;
     if (team_vote) {
         if (!qa_modes_team(m, v->id, actor, &team, e)) return false;
@@ -135,7 +139,10 @@ static bool q3_call_vote(qa_modes *m, mode_instance *v, qa_actor_id actor,
         intent.actor = !*parameter ? actor : q3_client(m, v, parameter, numeric, true, numeric ? 0 : team);
         if (!intent.actor.registry)
             return q3_message(m, v, actor, "Invalid player for team vote.\n", e);
-    } else if (named(key, "map_restart")) intent.kind = QA_MATCH_RESTART_MAP;
+    } else if (named(key, "map_restart")) {
+        intent.kind = QA_MATCH_RESTART_MAP;
+        raw_command = true;
+    }
     else if (named(key, "nextmap")) intent.kind = QA_MATCH_NEXT_MAP;
     else if (named(key, "map")) {
         intent.kind = QA_MATCH_SELECTED_MAP;
@@ -149,6 +156,8 @@ static bool q3_call_vote(qa_modes *m, mode_instance *v, qa_actor_id actor,
             return q3_message(m, v, actor, "Invalid gametype.\n", e);
         intent.kind = QA_MATCH_GAME_TYPE;
         intent.game_type = kinds[type];
+        game_type = type;
+        raw_command = true;
     } else if (named(key, "kick") || named(key, "clientkick")) {
         intent.kind = QA_MATCH_KICK_PLAYER;
         intent.actor = q3_client(m, v, parameter,
@@ -157,10 +166,17 @@ static bool q3_call_vote(qa_modes *m, mode_instance *v, qa_actor_id actor,
     } else if (named(key, "g_dowarmup") || named(key, "timelimit") || named(key, "fraglimit")) {
         intent.kind = named(key, "g_dowarmup") ? QA_MATCH_WARMUP
                       : named(key, "timelimit") ? QA_MATCH_TIME_LIMIT : QA_MATCH_FRAG_LIMIT;
-        intent.value = strtof(parameter, NULL);
-        if (!isfinite(intent.value)) return q3_message(m, v, actor, "Invalid vote value.\n", e);
+        raw_command = true;
     } else return q3_message(m, v, actor,
         "Vote commands are: map_restart, nextmap, map <mapname>, g_gametype <n>, kick <player>, clientkick <clientnum>, g_doWarmup, timelimit <time>, fraglimit <frags>.\n", e);
+    if (raw_command) {
+        char script[1024];
+        if (intent.kind == QA_MATCH_GAME_TYPE)
+            snprintf(script, sizeof(script), "%s %" PRId32, key, game_type);
+        else
+            snprintf(script, sizeof(script), "%s \"%s\"", key, parameter);
+        if (!qa_builtin_resource(&m->options.services, script, &intent.source_command, e)) return false;
+    }
     return qa_modes_vote_start(m, v->id, actor, team, &intent, e);
 }
 static bool console_command(qa_modes *m, qa_mode_id id, qa_actor_id actor,

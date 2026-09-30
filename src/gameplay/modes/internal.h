@@ -123,6 +123,8 @@ bool mode_commit_objective(qa_modes *, qa_objective_lease);
 bool mode_set_phase(qa_modes *, mode_instance *, qa_mode_phase, uint64_t, qa_error *);
 bool mode_match_frame(qa_modes *, mode_instance *, uint64_t, qa_error *);
 bool mode_vote_frame(qa_modes *, mode_instance *, qa_error *);
+bool mode_intent_command_valid(const qa_modes *, qa_mode_source,
+                               const qa_match_intent *, bool required);
 bool mode_objects_frame(qa_modes *, mode_instance *, uint64_t, qa_error *);
 bool mode_relic_frame(qa_modes *, mode_instance *, qa_actor_id, mode_member *, qa_error *);
 bool mode_relic_source_current(qa_modes *, mode_instance *, qa_error *);

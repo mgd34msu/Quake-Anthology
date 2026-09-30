@@ -191,6 +191,7 @@ bool qa_q3_destroy_ready(const qa_q3_game *);
 bool qa_q3_pickups_rebind(qa_q3_game *, qa_error *);
 bool qa_q3_inventory_admit(qa_q3_game *, qa_actor_id, qa_error *);
 bool qa_q3_inventory_rebind(qa_q3_game *, qa_error *);
+bool qa_q3_rules_read(const qa_q3_game *, qa_q3_rules *, qa_error *);
 bool qa_q3_set_rules(qa_q3_game *, const qa_q3_rules *, qa_error *);
 bool qa_q3_game_console_command(qa_q3_game *, qa_actor_id, const qa_command_invocation *,
                                 bool *handled, qa_error *);

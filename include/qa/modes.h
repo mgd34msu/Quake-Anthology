@@ -108,8 +108,8 @@ typedef struct qa_match_intent {
     qa_actor_id actor;
     qa_team_id team;
     qa_string_id map;
-    /* Q3 selected-map votes retain their bounded source command at admission,
-     * including the genuine prior nextmap value and source string clipping. */
+    /* Q3 map/restart/config votes retain their bounded source command at
+     * admission. Raw setter text and prior nextmap clipping remain authoritative. */
     qa_string_id source_command;
     qa_mode_kind game_type;
     float value;

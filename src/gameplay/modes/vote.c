@@ -1,6 +1,17 @@
 #include "internal.h"
 
 static bool execute_vote(qa_modes *, mode_instance *, qa_mode_vote *, qa_error *);
+bool mode_intent_command_valid(const qa_modes *m, qa_mode_source source,
+                               const qa_match_intent *intent, bool required) {
+    bool snapshot = source >= QA_MODE_Q3 &&
+        (intent->kind == QA_MATCH_SELECTED_MAP || intent->kind == QA_MATCH_RESTART_MAP ||
+         intent->kind == QA_MATCH_GAME_TYPE || intent->kind == QA_MATCH_WARMUP ||
+         intent->kind == QA_MATCH_TIME_LIMIT || intent->kind == QA_MATCH_FRAG_LIMIT);
+    if (!intent->source_command) return !snapshot || !required;
+    qa_bytes command = qa_strings_text(qa_session_strings(m->options.services.session), intent->source_command);
+    return snapshot && command.data && command.size && command.size < 1024 &&
+        !memchr(command.data, 0, command.size);
+}
 static int vote_slot(mode_instance *v, qa_team_id team) {
     if (!team)
         return 0;
@@ -39,6 +50,8 @@ bool qa_modes_vote_start(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
     if (slot < 0)
         return mode_fail(e, "unknown vote team");
     qa_mode_source source = v->value.rules.source;
+    if (!mode_intent_command_valid(m, source, intent, intent->kind != QA_MATCH_SELECTED_MAP))
+        return mode_fail(e, "vote lacks its actual bounded source command");
     if ((intent->kind == QA_MATCH_SELECTED_MAP ||
          (intent->kind == QA_MATCH_START && intent->map)) &&
         (!intent->map || !m->options.hooks.map_allowed ||
@@ -90,16 +103,15 @@ bool qa_modes_vote_start(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
     if (needed < 1)
         needed = 1;
     qa_match_intent retained = *intent;
-    retained.source_command = QA_STRING_NONE;
     if (source >= QA_MODE_Q3 && intent->kind == QA_MATCH_SELECTED_MAP) {
+        retained.source_command = QA_STRING_NONE;
         if (!m->options.hooks.selected_map_command)
             return mode_fail(e, "selected-map vote has no actual source command snapshot");
         if (!MODE_CALLBACK(m, m->options.hooks.selected_map_command(
             m->options.hooks.context, id, intent->map, &retained.source_command, e))) return false;
         member = mode_member_get(m, v, actor);
         if (!member) return mode_fail(e, "selected-map vote initiator retired during source snapshot");
-        qa_bytes script = qa_strings_text(qa_session_strings(m->options.services.session), retained.source_command);
-        if (!script.data || !script.size || script.size >= 1024 || memchr(script.data, 0, script.size))
+        if (!mode_intent_command_valid(m, source, &retained, true))
             return mode_fail(e, "selected-map vote has an invalid source command snapshot");
     }
     if (source != QA_MODE_LMCTF)

@@ -228,6 +228,12 @@ bool qa_q3_destroy(qa_q3_game *game, qa_error *error) {
     free(game);
     return true;
 }
+bool qa_q3_rules_read(const qa_q3_game *game, qa_q3_rules *out, qa_error *error) {
+    if (!game || !out)
+        return q3_fail(error, "Q3 rules query requires actual game and output");
+    *out = game->options.rules;
+    return true;
+}
 bool qa_q3_set_rules(qa_q3_game *game, const qa_q3_rules *rules, qa_error *error) {
     if (!game || game->observation_depth || !valid_rules(rules))
         return q3_fail(error, "invalid Q3 game rules");
