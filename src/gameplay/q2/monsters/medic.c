@@ -35,19 +35,6 @@ static q2_actor *native_actor(qa_q2_game *g, qa_actor_id id) {
                ? a : NULL;
 }
 
-static bool patient_context(q2m_context *medic, qa_actor_id id,
-                            q2m_context *out, bool *present, qa_error *error) {
-    *present = false;
-    q2_actor *a = native_actor(medic->game, id);
-    if (!a)
-        return true;
-    *out = (q2m_context){.game = medic->game, .actor = a, .monster = a->monster};
-    if (!q2m_refresh(out, error))
-        return !q2m_alive(out) || !q2m_alive(medic);
-    *present = q2m_alive(medic) && q2m_alive(out);
-    return true;
-}
-
 static void enemy(q2m_context *c, qa_actor_id id) {
     c->monster->enemy = id;
     c->actor->physics.enemy = id;
@@ -174,12 +161,11 @@ bool q2m_medic_abort(q2m_context *c, bool change_frame, bool gib, bool mark,
         return true;
     if (!rerelease(c) && change_frame)
         c->monster->next_frame = MEDIC_RETRACT;
-    q2m_context target;
-    bool present;
-    if (!patient_context(c, id, &target, &present, error))
-        return false;
-    if (!q2m_alive(c))
-        return true;
+    id = c->monster->enemy;
+    q2_actor *actor = native_actor(c->game, id);
+    bool present = actor != NULL;
+    q2m_context target = {.game = c->game, .actor = actor,
+                          .monster = actor ? actor->monster : NULL};
     if (present && mark) {
         q2_actor *previous = native_actor(c->game, target.monster->bad_medic[0]);
         unsigned index = previous && medic_species(previous->monster) ? 1 : 0;
@@ -187,6 +173,10 @@ bool q2m_medic_abort(q2m_context *c, bool change_frame, bool gib, bool mark,
     }
     if (present && gib) {
         float amount = target.monster->gib_health == 0 ? 500 : -target.monster->gib_health;
+        if (!qa_world_body_read(c->game->services.world, id, &target.body, error))
+            return !q2m_alive(c) || !q2m_alive(&target);
+        if (!q2m_alive(c) || !q2m_alive(&target))
+            return true;
         qa_attack attack = {.attacker = c->actor->id, .inflictor = c->actor->id,
                             .weapon_provider = c->game->options.owner,
                             .cause = qa_q2_damage_cause(c->game->options.edition,
