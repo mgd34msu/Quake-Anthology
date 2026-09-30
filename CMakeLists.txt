@@ -382,6 +382,7 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/monsters/widow_death.c
     src/gameplay/q2/monsters/widow_power.c
     src/gameplay/q2/nuke.c
+    src/gameplay/q2/physics.c
     src/gameplay/q2/player/admission.c
     src/gameplay/q2/player/checkpoint.c
     src/gameplay/q2/player/commands.c

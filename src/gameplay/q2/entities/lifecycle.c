@@ -212,11 +212,13 @@ bool qa_q2_entity_use(qa_q2_game *g, qa_actor_id id, qa_actor_id other, qa_actor
     entity_use_call call = {.game = g, .other = other, .activator = activator};
     return qa_q2_run_actor(g, id, run_entity_use, &call, e);
 }
+bool q2_entity_prethink(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    return a->projectile.kind != Q2_PROJECTILE_NONE || !a->entity ||
+           q2_scenery_prethink(g, a, e);
+}
 bool q2_entity_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (a->projectile.kind != Q2_PROJECTILE_NONE || !a->entity)
         return true;
-    if (!q2_scenery_prethink(g, a, e))
-        return false;
     if (!q2_actor_live(g, a->id) || a->entity->think == Q2ET_NONE || a->entity->due_ns > g->now_ns)
         return true;
     q2_entity_think think = a->entity->think;
@@ -288,6 +290,18 @@ bool q2_entity_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e
 }
 bool qa_q2_entity_blocked(qa_q2_game *g, qa_actor_id id, qa_actor_id obstacle, qa_error *e) {
     q2_actor *a = q2_ent(g, id);
+    if (a && g->options.edition == QA_Q2_CLASSIC) {
+        qa_actor_id root = a->entity->team_master.registry ? a->entity->team_master : id;
+        size_t count = 0;
+        for (q2_actor *part = q2_ent(g, root); part; part = q2_ent(g, part->entity->team_next)) {
+            if (++count > g->capacity) {
+                qa_error_set(e, QA_ERROR_FORMAT, id.slot, "Cyclic Q2 blocked pusher team");
+                return false;
+            }
+            if (part->entity->due_ns)
+                part->entity->due_ns = q2_deadline(part->entity->due_ns, g->frame_ns);
+        }
+    }
     if (a && (a->entity->kind == Q2E_TURRET_BASE || a->entity->kind == Q2E_TURRET_BREACH))
         return q2_turret_blocked(g, a, obstacle, e);
     return !a || q2_mover_blocked(g, a, obstacle, e);

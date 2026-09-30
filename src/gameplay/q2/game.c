@@ -193,9 +193,9 @@ static bool end_frame(void *context, qa_session *session, const qa_source_frame 
     (void)frame;
     return qa_q2_monsters_end_frame(context, e);
 }
-static bool tick_actor(void *context, qa_actor_id id, qa_error *e) {
-    qa_q2_game *g = context;
-    q2_actor *a = g->actors[id.slot];
+bool q2_actor_think(qa_q2_game *g, q2_actor *a, qa_error *e) {
+    qa_actor_id id = a->id;
+    if (!q2_actor_live(g, id)) return true;
     if ((a->item != NULL || a->powers != NULL) && !q2_item_tick(g, a, e))
         return false;
     if (!q2_actor_live(g, id))
@@ -212,6 +212,11 @@ static bool tick_actor(void *context, qa_actor_id id, qa_error *e) {
         return false;
     return !q2_actor_live(g, id) || a->projectile.kind != Q2_PROJECTILE_NONE ||
            a->monster == NULL || q2_monster_tick(g, a, e);
+}
+static bool tick_actor(void *context, qa_actor_id id, qa_error *e) {
+    qa_q2_game *g = context;
+    q2_actor *a = g->actors[id.slot];
+    return q2_actor_physics(g, a, e);
 }
 bool qa_q2_actor_tick(qa_q2_game *g, qa_actor_id id, uint64_t now, uint64_t elapsed, qa_error *e) {
     if (g == NULL || elapsed == 0) {
