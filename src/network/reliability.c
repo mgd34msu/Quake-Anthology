@@ -1,4 +1,6 @@
 #include "qa/network.h"
+#include "qa/network_reliability_save.h"
+#include "q3/save_fields.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -332,4 +334,111 @@ void qa_net_rate_sent(qa_net_rate *rate, size_t bytes, uint64_t now_ns, bool pau
         if (rate->clear_ns < (double)now_ns) rate->clear_ns = (double)now_ns;
         rate->clear_ns += (double)bytes * 1e9 / rate->bytes_per_second;
     }
+}
+
+static bool toggle_saved_valid(const qa_net_toggle *channel)
+{
+    return channel && channel->capacity && channel->capacity <= SIZE_MAX / 3 &&
+        channel->pending && channel->reliable && channel->output &&
+        channel->pending_size <= channel->capacity && channel->reliable_size <= channel->capacity &&
+        channel->incoming <= INT32_MAX && channel->incoming_ack <= INT32_MAX &&
+        channel->outgoing <= (uint32_t)INT32_MAX + 1 && channel->last_reliable <= channel->outgoing &&
+        (!channel->reliable_size || channel->last_reliable);
+}
+bool qa_net_toggle_checkpoint(const qa_net_toggle *channel, qa_buffer *out, qa_error *error)
+{
+    if (!out || !toggle_saved_valid(channel) || channel->pending_size > SIZE_MAX - 51 ||
+        channel->reliable_size > SIZE_MAX - 51 - channel->pending_size)
+        return invalid(error, "Invalid native toggle reliable continuation");
+    size_t capacity = 51 + channel->pending_size + channel->reliable_size;
+    uint8_t *data = malloc(capacity); if (!data) return exhausted(error);
+    qa_net_writer w; qa_net_writer_init(&w, data, capacity, error);
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x47544151)) && qa_net_write_u32(&w, 1) &&
+        qa_net_write_u64(&w, channel->capacity) && qa_net_write_u64(&w, channel->pending_size) &&
+        qa_net_write_u64(&w, channel->reliable_size) && qa_net_write_u32(&w, channel->incoming) &&
+        qa_net_write_u32(&w, channel->outgoing) && qa_net_write_u32(&w, channel->incoming_ack) &&
+        qa_net_write_u32(&w, channel->last_reliable) && qa_net_write_u8(&w, channel->reliable_sequence) &&
+        qa_net_write_u8(&w, channel->incoming_reliable) && qa_net_write_u8(&w, channel->incoming_reliable_ack) &&
+        qa_net_write_data(&w, channel->pending, channel->pending_size) &&
+        qa_net_write_data(&w, channel->reliable, channel->reliable_size);
+    if (!ok || w.failed) { free(data); return false; }
+    *out = (qa_buffer){data, qa_net_writer_size(&w)}; return true;
+}
+bool qa_net_toggle_restore_checkpoint(qa_bytes bytes, size_t capacity, qa_net_toggle **out, qa_error *error)
+{
+    if (!out || *out || (bytes.size && !bytes.data)) return invalid(error, "Toggle restore requires an empty candidate output");
+    qa_net_reader r; qa_net_reader_init(&r, bytes, error);
+    if (qa_net_read_u32(&r) != UINT32_C(0x47544151) || qa_net_read_u32(&r) != 1 ||
+        qa_net_read_u64(&r) != capacity) return invalid(error, "Toggle continuation schema/capacity differs");
+    uint64_t pending = qa_net_read_u64(&r), reliable = qa_net_read_u64(&r);
+    if (r.failed || pending > capacity || reliable > capacity || pending > qa_net_reader_remaining(&r) ||
+        reliable > qa_net_reader_remaining(&r) - pending) return invalid(error, "Truncated toggle reliable payloads");
+    qa_net_toggle *channel = NULL;
+    if (!qa_net_toggle_create(capacity, 0, &channel, error)) return false;
+    channel->pending_size = (size_t)pending; channel->reliable_size = (size_t)reliable;
+    channel->incoming = qa_net_read_u32(&r); channel->outgoing = qa_net_read_u32(&r);
+    channel->incoming_ack = qa_net_read_u32(&r); channel->last_reliable = qa_net_read_u32(&r);
+    channel->reliable_sequence = q3_save_bool(&r); channel->incoming_reliable = q3_save_bool(&r);
+    channel->incoming_reliable_ack = q3_save_bool(&r);
+    bool ok = qa_net_read_data(&r, channel->pending, channel->pending_size) &&
+        qa_net_read_data(&r, channel->reliable, channel->reliable_size) &&
+        qa_net_reader_finish(&r) && toggle_saved_valid(channel);
+    if (!ok) { qa_net_toggle_destroy(channel); if (!error || !error->code) invalid(error, "Invalid toggle reliable owner state"); return false; }
+    *out = channel; return true;
+}
+bool qa_net_stopwait_limits(const qa_net_stopwait *channel, size_t *capacity, size_t *fragment, uint64_t *retry)
+{
+    if (!channel || !capacity || !fragment || !retry) return false;
+    *capacity = channel->capacity; *fragment = channel->fragment_bytes; *retry = channel->retry_ns; return true;
+}
+static bool stopwait_saved_valid(const qa_net_stopwait *channel)
+{
+    return channel && channel->capacity && channel->capacity <= SIZE_MAX / 2 && channel->send && channel->receive &&
+        channel->fragment_bytes && channel->fragment_bytes <= channel->capacity &&
+        channel->send_size <= channel->capacity && channel->send_offset <= channel->send_size &&
+        channel->receive_size <= channel->capacity && (!channel->sent || channel->sending) &&
+        (!channel->sending || !channel->send_size || (channel->send_offset < channel->send_size &&
+            channel->send_offset % channel->fragment_bytes == 0)) &&
+        (channel->sending || channel->send_offset == channel->send_size);
+}
+bool qa_net_stopwait_checkpoint(const qa_net_stopwait *channel, qa_buffer *out, qa_error *error)
+{
+    if (!out || !stopwait_saved_valid(channel) || channel->send_size > SIZE_MAX - 74 ||
+        channel->receive_size > SIZE_MAX - 74 - channel->send_size)
+        return invalid(error, "Invalid native stop-and-wait continuation");
+    size_t capacity = 74 + channel->send_size + channel->receive_size;
+    uint8_t *data = malloc(capacity); if (!data) return exhausted(error);
+    qa_net_writer w; qa_net_writer_init(&w, data, capacity, error);
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x57534151)) && qa_net_write_u32(&w, 1) &&
+        qa_net_write_u64(&w, channel->capacity) && qa_net_write_u64(&w, channel->fragment_bytes) &&
+        qa_net_write_u64(&w, channel->retry_ns) && qa_net_write_u64(&w, channel->sent_ns) &&
+        qa_net_write_u64(&w, channel->send_size) && qa_net_write_u64(&w, channel->send_offset) &&
+        qa_net_write_u64(&w, channel->receive_size) && qa_net_write_u32(&w, channel->outgoing) &&
+        qa_net_write_u32(&w, channel->incoming) && qa_net_write_u8(&w, channel->sending) &&
+        qa_net_write_u8(&w, channel->sent) && qa_net_write_data(&w, channel->send, channel->send_size) &&
+        qa_net_write_data(&w, channel->receive, channel->receive_size);
+    if (!ok || w.failed) { free(data); return false; }
+    *out = (qa_buffer){data, qa_net_writer_size(&w)}; return true;
+}
+bool qa_net_stopwait_restore_checkpoint(qa_bytes bytes, size_t capacity, size_t fragment,
+    uint64_t retry, qa_net_stopwait **out, qa_error *error)
+{
+    if (!out || *out || (bytes.size && !bytes.data)) return invalid(error, "Stop-and-wait restore requires an empty candidate output");
+    qa_net_reader r; qa_net_reader_init(&r, bytes, error);
+    if (qa_net_read_u32(&r) != UINT32_C(0x57534151) || qa_net_read_u32(&r) != 1 ||
+        qa_net_read_u64(&r) != capacity || qa_net_read_u64(&r) != fragment || qa_net_read_u64(&r) != retry)
+        return invalid(error, "Stop-and-wait continuation schema/policy differs");
+    uint64_t sent_ns = qa_net_read_u64(&r), send_size = qa_net_read_u64(&r), offset = qa_net_read_u64(&r), receive_size = qa_net_read_u64(&r);
+    if (r.failed || send_size > capacity || offset > send_size || receive_size > capacity ||
+        send_size > qa_net_reader_remaining(&r) || receive_size > qa_net_reader_remaining(&r) - send_size)
+        return invalid(error, "Truncated stop-and-wait retained payloads");
+    qa_net_stopwait *channel = NULL;
+    if (!qa_net_stopwait_create(capacity, fragment, retry, &channel, error)) return false;
+    channel->sent_ns = sent_ns; channel->send_size = (size_t)send_size; channel->send_offset = (size_t)offset;
+    channel->receive_size = (size_t)receive_size; channel->outgoing = qa_net_read_u32(&r); channel->incoming = qa_net_read_u32(&r);
+    channel->sending = q3_save_bool(&r); channel->sent = q3_save_bool(&r);
+    bool ok = qa_net_read_data(&r, channel->send, channel->send_size) &&
+        qa_net_read_data(&r, channel->receive, channel->receive_size) && qa_net_reader_finish(&r) && stopwait_saved_valid(channel);
+    if (!ok) { qa_net_stopwait_destroy(channel); if (!error || !error->code) invalid(error, "Invalid stop-and-wait owner state"); return false; }
+    *out = channel; return true;
 }

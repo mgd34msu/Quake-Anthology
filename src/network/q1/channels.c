@@ -1,5 +1,8 @@
 #include "qa/network_q1_channel.h"
+#include "qa/network_q1_save.h"
+#include "qa/network_reliability_save.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -238,4 +241,97 @@ bool qa_q1_peer_receive(qa_q1_peer *peer, const qa_net_address *from, qa_bytes b
         return true;
     }
     return invalid(error, "Unknown Quake peer channel kind");
+}
+
+bool qa_nq_channel_checkpoint(const qa_nq_channel *channel, qa_buffer *out, qa_error *error)
+{
+    size_t message = 0, fragment = 0; uint64_t retry = 0;
+    if (!channel || !out || !channel->wire ||
+        !qa_net_stopwait_limits(channel->reliable, &message, &fragment, &retry) || message != channel->message_bytes ||
+        retry != UINT64_C(1000000000) || fragment > 65527 ||
+        channel->wire_capacity != (message < 65527 ? message : 65527) + 8 ||
+        channel->unreliable_receive > (uint64_t)UINT32_MAX + 1)
+        return invalid(error, "Invalid NetQuake continuation owner policy");
+    qa_buffer reliable = {0};
+    if (!qa_net_stopwait_checkpoint(channel->reliable, &reliable, error)) return false;
+    if (reliable.size > SIZE_MAX - 44) { qa_buffer_free(&reliable); return invalid(error, "NetQuake continuation extent exceeds memory"); }
+    uint8_t *data = malloc(44 + reliable.size);
+    if (!data) { qa_buffer_free(&reliable); qa_error_set(error, QA_ERROR_MEMORY, 0, "Encoding NetQuake continuation"); return false; }
+    qa_net_writer w; qa_net_writer_init(&w, data, 44 + reliable.size, error);
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x434e4151)) && qa_net_write_u32(&w, 1) &&
+        qa_net_write_u64(&w, message) && qa_net_write_u64(&w, fragment) &&
+        qa_net_write_u32(&w, channel->unreliable_send) && qa_net_write_u64(&w, channel->unreliable_receive) &&
+        qa_net_write_u64(&w, reliable.size) && qa_net_write_data(&w, reliable.data, reliable.size);
+    qa_buffer_free(&reliable);
+    if (!ok || w.failed) { free(data); return false; }
+    *out = (qa_buffer){data, qa_net_writer_size(&w)}; return true;
+}
+bool qa_nq_channel_restore_checkpoint(qa_bytes bytes, size_t message, size_t fragment, qa_nq_channel **out, qa_error *error)
+{
+    if (!out || *out || (bytes.size && !bytes.data)) return invalid(error, "NetQuake restore requires an empty candidate output");
+    qa_net_reader r; qa_net_reader_init(&r, bytes, error);
+    if (qa_net_read_u32(&r) != UINT32_C(0x434e4151) || qa_net_read_u32(&r) != 1 ||
+        qa_net_read_u64(&r) != message || qa_net_read_u64(&r) != fragment)
+        return invalid(error, "NetQuake continuation schema/policy differs");
+    uint32_t send = qa_net_read_u32(&r); uint64_t received = qa_net_read_u64(&r), size = qa_net_read_u64(&r);
+    qa_bytes reliable = {0};
+    if (r.failed || received > (uint64_t)UINT32_MAX + 1 || size > SIZE_MAX ||
+        !qa_net_read_bytes(&r, (size_t)size, &reliable) || !qa_net_reader_finish(&r))
+        return invalid(error, "Invalid NetQuake retained continuation extent");
+    qa_nq_channel *channel = NULL; qa_net_stopwait *restored = NULL;
+    if (!qa_nq_channel_create(message, fragment, &channel, error)) return false;
+    if (!qa_net_stopwait_restore_checkpoint(reliable, message, fragment, UINT64_C(1000000000), &restored, error)) {
+        qa_nq_channel_destroy(channel); return false;
+    }
+    qa_net_stopwait_destroy(channel->reliable); channel->reliable = restored;
+    channel->unreliable_send = send; channel->unreliable_receive = received;
+    *out = channel; return true;
+}
+bool qa_qw_channel_checkpoint(const qa_qw_channel *channel, qa_buffer *out, qa_error *error)
+{
+    if (!channel || !out || !channel->wire || !channel->capacity || channel->capacity > 65525 ||
+        (channel->side != QA_Q1_CHANNEL_CLIENT && channel->side != QA_Q1_CHANNEL_SERVER) ||
+        !channel->rate.bytes_per_second || channel->rate.backup_bytes != 200 || !isfinite(channel->rate.clear_ns) ||
+        channel->rate.clear_ns < 0 || !isfinite(channel->frame_latency) || !isfinite(channel->frame_interval_ms))
+        return invalid(error, "Invalid QuakeWorld continuation owner policy");
+    qa_buffer reliable = {0};
+    if (!qa_net_toggle_checkpoint(channel->reliable, &reliable, error)) return false;
+    if (reliable.size > SIZE_MAX - 70) { qa_buffer_free(&reliable); return invalid(error, "QuakeWorld continuation extent exceeds memory"); }
+    uint8_t *data = malloc(70 + reliable.size);
+    if (!data) { qa_buffer_free(&reliable); qa_error_set(error, QA_ERROR_MEMORY, 0, "Encoding QuakeWorld continuation"); return false; }
+    qa_net_writer w; qa_net_writer_init(&w, data, 70 + reliable.size, error);
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x43574151)) && qa_net_write_u32(&w, 1) &&
+        qa_net_write_u32(&w, channel->side) && qa_net_write_u16(&w, channel->qport) &&
+        qa_net_write_u64(&w, channel->capacity) && qa_net_write_f64(&w, channel->rate.clear_ns) &&
+        qa_net_write_u32(&w, channel->rate.bytes_per_second) && qa_net_write_u32(&w, channel->rate.backup_bytes) &&
+        qa_net_write_u64(&w, channel->last_received_ns) && qa_net_write_f64(&w, channel->frame_latency) &&
+        qa_net_write_f64(&w, channel->frame_interval_ms) && qa_net_write_u64(&w, reliable.size) &&
+        qa_net_write_data(&w, reliable.data, reliable.size);
+    qa_buffer_free(&reliable);
+    if (!ok || w.failed) { free(data); return false; }
+    *out = (qa_buffer){data, qa_net_writer_size(&w)}; return true;
+}
+bool qa_qw_channel_restore_checkpoint(qa_bytes bytes, qa_q1_channel_side side, uint16_t qport,
+    size_t message, qa_qw_channel **out, qa_error *error)
+{
+    if (!out || *out || (bytes.size && !bytes.data)) return invalid(error, "QuakeWorld restore requires an empty candidate output");
+    qa_net_reader r; qa_net_reader_init(&r, bytes, error);
+    if (qa_net_read_u32(&r) != UINT32_C(0x43574151) || qa_net_read_u32(&r) != 1 ||
+        qa_net_read_u32(&r) != (uint32_t)side || qa_net_read_u16(&r) != qport || qa_net_read_u64(&r) != message)
+        return invalid(error, "QuakeWorld continuation schema/connection policy differs");
+    qa_net_rate rate; rate.clear_ns = qa_net_read_f64(&r); rate.bytes_per_second = qa_net_read_u32(&r);
+    rate.backup_bytes = qa_net_read_u32(&r); uint64_t received = qa_net_read_u64(&r);
+    double latency = qa_net_read_f64(&r), interval = qa_net_read_f64(&r); uint64_t size = qa_net_read_u64(&r);
+    qa_bytes reliable = {0};
+    if (r.failed || !rate.bytes_per_second || rate.backup_bytes != 200 || !isfinite(rate.clear_ns) || rate.clear_ns < 0 ||
+        !isfinite(latency) || !isfinite(interval) || size > SIZE_MAX ||
+        !qa_net_read_bytes(&r, (size_t)size, &reliable) || !qa_net_reader_finish(&r))
+        return invalid(error, "Invalid QuakeWorld scheduling/reliability continuation");
+    qa_qw_channel *channel = NULL; qa_net_toggle *restored = NULL;
+    if (!qa_qw_channel_create(side, qport, message, rate.bytes_per_second, &channel, error)) return false;
+    if (!qa_net_toggle_restore_checkpoint(reliable, message, &restored, error)) { qa_qw_channel_destroy(channel); return false; }
+    qa_net_toggle_destroy(channel->reliable); channel->reliable = restored;
+    channel->rate = rate; channel->last_received_ns = received;
+    channel->frame_latency = latency; channel->frame_interval_ms = interval;
+    *out = channel; return true;
 }
