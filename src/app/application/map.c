@@ -288,6 +288,25 @@ static bool emit_map_event(application_provider *provider,
     return application_emit(provider->application, &event, error);
 }
 
+static bool q1_fog_player(void *opaque, qa_actor_id player, float density,
+                            qa_vec3 color, float duration, qa_error *error)
+{
+    application_provider *provider = opaque;
+    qa_string_id resource;
+    if (!qa_strings_intern_cstr(qa_session_strings(provider->application->session),
+                                "q1:fog", &resource, error))
+        return false;
+    qa_clock_state clock;
+    if (!qa_session_clock(provider->application->session, provider->owner, &clock))
+        return application_fail(error, QA_ERROR_NOT_FOUND,
+                                "Q1 fog source clock is missing");
+    return application_emit(provider->application,
+        &(qa_builtin_event){.kind = QA_BUILTIN_EFFECT, .family = QA_GAME_Q1,
+            .provider = provider->owner, .time_ns = clock.frame.time_ns,
+            .actor = player, .other = player, .resource = resource,
+            .origin = color, .end = {duration, 0, 0}, .value = density}, error);
+}
+
 static bool q1_static_model(void *opaque, const qa_q1_static_model *model,
                             qa_error *error)
 {
@@ -790,6 +809,7 @@ static bool q1_map_options(application_provider *provider,
         .static_model = q1_static_model,
         .ambient = q1_ambient,
         .lightstyle = q1_lightstyle,
+        .fog_player = q1_fog_player,
         .set_skill = q1_integer_intent,
         .player_exited = q1_player_exited,
         .secret_found = q1_secret,
