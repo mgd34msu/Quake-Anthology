@@ -1331,8 +1331,8 @@ bool native_runner_observer_original(qa_native_entry_observer *binding,
     return runner_finish_response(instance, received, ok, error);
 }
 
-bool native_runner_export(qa_native_instance *instance, const char *name, qa_native_address *out,
-                          qa_error *error) {
+static bool runner_address(qa_native_instance *instance, const char *name, qa_native_address *out,
+                           native_wire_opcode operation, qa_error *error) {
     if (!name || !out)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "native runner export name and output are required");
@@ -1341,7 +1341,7 @@ bool native_runner_export(qa_native_instance *instance, const char *name, qa_nat
     bool received = false;
     bool ok = native_wire_put_string(&request, name, error);
     if (ok)
-        received = runner_request(instance, NATIVE_WIRE_EXPORT,
+        received = runner_request(instance, operation,
                                   (qa_bytes){request.data, request.size}, &response, error);
     if (received) {
         native_wire_reader reader = {.bytes = {response.data, response.size}};
@@ -1352,6 +1352,16 @@ bool native_runner_export(qa_native_instance *instance, const char *name, qa_nat
     native_wire_buffer_free(&request);
     qa_buffer_free(&response);
     return runner_finish_response(instance, received, ok, error);
+}
+
+bool native_runner_export(qa_native_instance *instance, const char *name, qa_native_address *out,
+                          qa_error *error) {
+    return runner_address(instance, name, out, NATIVE_WIRE_EXPORT, error);
+}
+
+bool native_runner_entry_address(qa_native_instance *instance, const char *name,
+                                 qa_native_address *out, qa_error *error) {
+    return runner_address(instance, name, out, NATIVE_WIRE_ENTRY_ADDRESS, error);
 }
 
 bool native_runner_read(qa_native_instance *instance, qa_native_address source, void *out,

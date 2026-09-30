@@ -289,6 +289,12 @@ bool qa_native_ql_shutdown(qa_native_instance *instance, bool restart, qa_error 
  * backend and is never approximated by this direct-call operation. */
 bool qa_native_export(const qa_native_instance *instance, const char *name, qa_native_address *out,
                       qa_error *error);
+/* Reads the admitted profile's actual API callback, including table callbacks
+ * which are not image symbol exports. Does not invoke the source entry. */
+bool qa_native_entry_address(const qa_native_instance *, const char *, qa_native_address *, qa_error *);
+/* Read-only boundary for private restore writes: no active source calls or
+ * installed entry, committed-write, or instruction-region observers. */
+bool qa_native_restore_ready(const qa_native_instance *, qa_error *);
 bool qa_native_rva(const qa_native_instance *instance, uint64_t rva, size_t bytes,
                    qa_native_address *out, qa_error *error);
 bool qa_native_invoke(qa_native_instance *instance, qa_native_address entry,

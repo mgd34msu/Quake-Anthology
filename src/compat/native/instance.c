@@ -422,6 +422,31 @@ bool qa_native_export(const qa_native_instance *instance, const char *name, qa_n
                : native_runner_export((qa_native_instance *)instance, name, out, error);
 }
 
+bool qa_native_entry_address(const qa_native_instance *instance, const char *name,
+                             qa_native_address *out, qa_error *error) {
+    if (!instance || !name || !out || instance->destroying || instance->unloading)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native source entry and live instance are required");
+    if (instance->backend == QA_NATIVE_BACKEND_RUNNER)
+        return native_runner_entry_address((qa_native_instance *)instance, name, out, error);
+    const native_entry_binding *entry = native_entry(instance, name);
+    if (!entry || !entry->address)
+        return native_fail(error, QA_ERROR_NOT_FOUND, 0, "native source API callback is unavailable");
+    *out = entry->address;
+    return true;
+}
+
+bool qa_native_restore_ready(const qa_native_instance *instance, qa_error *error) {
+    if (!instance || instance->lifecycle != QA_NATIVE_INITIALIZED || instance->active_depth ||
+        instance->callback_depth || instance->region_depth || instance->write_depth ||
+        instance->checkpointing || instance->destroying || instance->unloading ||
+        instance->failed || instance->pending_shutdown || instance->entry_observers || instance->write_observers)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native private restore requires idle detached source observers");
+    for (size_t i = 0; i < instance->region_count; ++i)
+        if (instance->regions[i].first)
+            return native_fail(error, QA_ERROR_ARGUMENT, i, "native private restore requires detached source regions");
+    return true;
+}
+
 bool qa_native_rva(const qa_native_instance *instance, uint64_t rva, size_t bytes,
                    qa_native_address *out, qa_error *error) {
     if (!instance || !out || rva > instance->image_bytes || bytes > instance->image_bytes - rva ||

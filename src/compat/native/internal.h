@@ -259,6 +259,7 @@ bool native_runner_invoke(qa_native_instance *instance, qa_native_address addres
                           size_t count, qa_native_value *result, qa_error *error);
 bool native_runner_export(qa_native_instance *instance, const char *name, qa_native_address *out,
                           qa_error *error);
+bool native_runner_entry_address(qa_native_instance *, const char *, qa_native_address *, qa_error *);
 bool native_runner_read(qa_native_instance *instance, qa_native_address source, void *out,
                         size_t bytes, qa_error *error);
 bool native_runner_write(qa_native_instance *instance, qa_native_address destination,

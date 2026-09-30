@@ -551,11 +551,12 @@ static bool child_invoke(native_child_state *state, native_wire_reader *reader,
 }
 
 static bool child_export(native_child_state *state, native_wire_reader *reader,
-                         native_wire_buffer *body, qa_error *error) {
+                         native_wire_buffer *body, bool source_entry, qa_error *error) {
     qa_buffer name = {0};
     qa_native_address address;
     bool ok = native_wire_get_string(reader, &name, error) && native_wire_end(reader, error) &&
-              qa_native_export(state->instance, (const char *)name.data, &address, error) &&
+              (source_entry ? qa_native_entry_address(state->instance, (const char *)name.data, &address, error) :
+               qa_native_export(state->instance, (const char *)name.data, &address, error)) &&
               native_wire_put_u64(body, address, error);
     qa_buffer_free(&name);
     return ok;
@@ -884,7 +885,10 @@ static bool child_handle_request(native_child_state *state, const native_wire_fr
         ok = state->instance && child_observer_control(&reader, &operation_error);
         break;
     case NATIVE_WIRE_EXPORT:
-        ok = state->instance && child_export(state, &reader, &body, &operation_error);
+        ok = state->instance && child_export(state, &reader, &body, false, &operation_error);
+        break;
+    case NATIVE_WIRE_ENTRY_ADDRESS:
+        ok = state->instance && child_export(state, &reader, &body, true, &operation_error);
         break;
     case NATIVE_WIRE_READ:
         ok = state->instance && child_read(state, &reader, &body, &operation_error);

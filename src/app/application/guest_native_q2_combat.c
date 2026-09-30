@@ -827,6 +827,17 @@ bool application_native_q2_combat_capture(struct application_native_q2 *engine, 
         return application_fail(error, QA_ERROR_ARGUMENT, "Native deferred capture requires drained damage frames");
     return application_q2_kex_damage_capture(p ? p->kex : NULL, out, error);
 }
+bool application_native_q2_combat_restore_ready(const struct application_native_q2 *engine, qa_error *error)
+{
+    const struct application_native_q2_combat *p = engine->source_combat;
+    if (!p) return true;
+    if (p->active || p->current || p->incoming || p->retained || p->damage || p->deferred)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native private continuation requires suspended combat observers");
+    for (const combat_record *record = p->records; record; record = record->next)
+        if (record->bound || record->fuel_bound || record->prepared)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Native private continuation precedes combat primary preparation");
+    return true;
+}
 bool application_native_q2_combat_restore_prepare(struct application_native_q2 *engine, qa_bytes bytes,
     struct application_q2_kex_restore **out, qa_error *error)
 {

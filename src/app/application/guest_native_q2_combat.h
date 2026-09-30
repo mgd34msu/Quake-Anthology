@@ -15,6 +15,7 @@ struct application_provider;
 bool application_native_q2_combat_binding(struct application_provider *, qa_actor_id,
     uint64_t saved_serial, qa_combat_binding *, qa_error *);
 bool application_native_q2_combat_finish(struct application_provider *, qa_error *);
+bool application_native_q2_combat_restore_ready(const struct application_native_q2 *, qa_error *);
 bool application_native_q2_combat_deferred(struct application_native_q2 *,
     const qa_damage_request *, const qa_damage_result *, qa_source_reaction_body, void *, qa_error *);
 struct application_q2_kex_restore;
