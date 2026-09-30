@@ -39,4 +39,6 @@ struct qa_input_platform {
     double now;
     bool native_owned;
 };
+bool input_platform_haptic_bindings_ready(const qa_input_platform *);
+void input_platform_route_contexts_rebind(qa_input_platform *);
 #endif

@@ -19,6 +19,11 @@ static bool failed(qa_error *error, const char *operation) {
     qa_error_set(error, QA_ERROR_IO, 0, "%s: %s", operation, SDL_GetError());
     return false;
 }
+static bool native_owner(qa_input_platform *p, qa_error *error) {
+    if (p && p->native_owned) return true;
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Detached platform has no native input ownership");
+    return false;
+}
 static float variable(qa_input_platform *p, const char *name, float fallback) {
     const qa_cvar_view *v = qa_cvars_find(p->options.cvars, name);
     return v ? v->number : fallback;
@@ -254,6 +259,21 @@ static bool haptic_sink(void *user, float low, float high, uint32_t duration, qa
         return low == 0 && high == 0;
     return qa_input_platform_rumble(r->platform, instance, low, high, duration, error);
 }
+bool input_platform_haptic_bindings_ready(const qa_input_platform *p) {
+    if (!p) return false;
+    for (unsigned i = 0; i < 4; ++i)
+        if (p->seats[i].platform != p || p->seats[i].slot != i ||
+            p->seats[i].haptic.output != haptic_sink || p->seats[i].haptic.user != &p->seats[i])
+            return false;
+    return true;
+}
+void input_platform_route_contexts_rebind(qa_input_platform *p) {
+    for (unsigned i = 0; i < 4; ++i) {
+        p->seats[i].platform = p;
+        p->seats[i].slot = i;
+        p->seats[i].haptic.user = &p->seats[i];
+    }
+}
 static bool haptic_device(struct seat_route *r, qa_error *error) {
     int32_t instance = qa_input_platform_controller(r->platform, r->slot);
     if (instance == r->haptic_instance)
@@ -395,6 +415,7 @@ static bool valid_selection(const qa_controller_selection *s) {
 bool qa_input_platform_routes(qa_input_platform *p, qa_input_seat *const seats[4],
                               const qa_controller_selection selections[4], int keyboard,
                               double time, qa_error *error) {
+    if (!native_owner(p, error)) return false;
     if (!p || !seats || !selections || keyboard < -1 || keyboard >= 4 ||
         (keyboard >= 0 && !seats[keyboard]) || !isfinite(time) || time < 0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid local input routes");
@@ -453,6 +474,7 @@ fail:
 }
 bool qa_input_platform_retain(qa_input_platform *p, unsigned mask, int keyboard, double time,
                               qa_error *error) {
+    if (!native_owner(p, error)) return false;
     if (mask > 15 || keyboard < -1 || keyboard >= 4 ||
         (keyboard >= 0 && (!(mask & (1u << (unsigned)keyboard)) || !p->seats[keyboard].seat))) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid retained input seats");
@@ -477,6 +499,7 @@ bool qa_input_platform_retain(qa_input_platform *p, unsigned mask, int keyboard,
     return ok;
 }
 bool qa_input_platform_keyboard(qa_input_platform *p, int slot, double time, qa_error *error) {
+    if (!native_owner(p, error)) return false;
     if (slot < -1 || slot >= 4 || (slot >= 0 && !p->seats[slot].seat)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid keyboard seat");
         return false;
@@ -492,6 +515,7 @@ bool qa_input_platform_keyboard(qa_input_platform *p, int slot, double time, qa_
 }
 bool qa_input_platform_window(qa_input_platform *p, const qa_display *display, double time,
                               qa_error *error) {
+    if (!native_owner(p, error)) return false;
     qa_display_info info = {0};
     if (display && !qa_display_info_get(display, &info, error))
         return false;
@@ -590,6 +614,7 @@ static bool disconnect(qa_input_platform *p, int32_t instance, double time, qa_e
 }
 bool qa_input_platform_event(qa_input_platform *p, const SDL_Event *event, double now,
                              bool *handled, qa_error *error) {
+    if (!native_owner(p, error)) return false;
     if (!p || !event || !isfinite(now) || now < 0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid platform event");
         return false;
@@ -959,6 +984,7 @@ static bool open_midi(qa_input_platform *p, qa_error *error) {
     return true;
 }
 bool qa_input_platform_restart(qa_input_platform *p, double time, qa_error *error) {
+    if (!native_owner(p, error)) return false;
     if (!p || !isfinite(time) || time < 0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid input restart clock");
         return false;
@@ -1043,6 +1069,7 @@ static bool midi_frame(qa_input_platform *p, double time, qa_error *error) {
     return true;
 }
 bool qa_input_platform_frame(qa_input_platform *p, double now, qa_error *error) {
+    if (!native_owner(p, error)) return false;
     if (!p || !isfinite(now) || now < 0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid input frame clock");
         return false;
@@ -1160,6 +1187,7 @@ bool qa_input_platform_frame(qa_input_platform *p, double now, qa_error *error) 
     return midi_frame(p, now, error) && finish_calibration(p, error) && capture(p, error);
 }
 void qa_input_platform_midi_info(qa_input_platform *p) {
+    if (!p || !p->native_owned) return;
     char text[320];
     (void)snprintf(text, sizeof(text),
                    "MIDI control: %s\nport: %d\nchannel: %d\ncurrent device: "
@@ -1197,6 +1225,7 @@ int32_t qa_input_platform_controller(const qa_input_platform *p, unsigned slot) 
     return p->seats[slot].instance == p->joystick_instance ? -1 : p->seats[slot].instance;
 }
 bool qa_input_platform_mapping(qa_input_platform *p, const char *mapping, qa_error *error) {
+    if (!native_owner(p, error)) return false;
     if (!mapping || SDL_GameControllerAddMapping(mapping) < 0)
         return failed(error, "Adding controller mapping");
     for (size_t i = 0; i < p->device_count; ++i)
@@ -1232,6 +1261,7 @@ static bool amplitudes(float low, float high, qa_error *error) {
 }
 bool qa_input_platform_rumble(qa_input_platform *p, int32_t instance, float low, float high,
                               uint32_t duration, qa_error *error) {
+    if (!native_owner(p, error)) return false;
     if (!amplitudes(low, high, error))
         return false;
     if (p->joystick && p->joystick_instance == instance && !device(p, instance)) {
@@ -1260,6 +1290,7 @@ bool qa_input_platform_rumble(qa_input_platform *p, int32_t instance, float low,
 }
 bool qa_input_platform_trigger_rumble(qa_input_platform *p, int32_t instance, float left,
                                       float right, uint32_t duration, qa_error *error) {
+    if (!native_owner(p, error)) return false;
     if (!amplitudes(left, right, error))
         return false;
     struct device *d = required_device(p, instance, error);
@@ -1276,6 +1307,7 @@ bool qa_input_platform_trigger_rumble(qa_input_platform *p, int32_t instance, fl
 }
 bool qa_input_platform_led(qa_input_platform *p, int32_t instance, uint8_t red, uint8_t green,
                            uint8_t blue, qa_error *error) {
+    if (!native_owner(p, error)) return false;
     struct device *d = required_device(p, instance, error);
     if (!d)
         return false;
@@ -1288,6 +1320,7 @@ bool qa_input_platform_led(qa_input_platform *p, int32_t instance, uint8_t red, 
 }
 bool qa_input_platform_sensor(qa_input_platform *p, int32_t instance, SDL_SensorType sensor,
                               bool enabled, qa_error *error) {
+    if (!native_owner(p, error)) return false;
     struct device *d = required_device(p, instance, error);
     if (!d)
         return false;
@@ -1301,6 +1334,7 @@ bool qa_input_platform_sensor(qa_input_platform *p, int32_t instance, SDL_Sensor
            failed(error, "Controller sensor");
 }
 bool qa_input_platform_gyro(qa_input_platform *p, unsigned slot, bool enabled, qa_error *error) {
+    if (!native_owner(p, error)) return false;
     if (slot >= 4 || !p->seats[slot].seat) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Unknown gyro seat");
         return false;
@@ -1315,6 +1349,7 @@ bool qa_input_platform_gyro(qa_input_platform *p, unsigned slot, bool enabled, q
     return true;
 }
 bool qa_input_platform_calibrate(qa_input_platform *p, unsigned slot, qa_error *error) {
+    if (!native_owner(p, error)) return false;
     if (slot >= 4 || !p->seats[slot].seat || !qa_input_seat_focused(p->seats[slot].seat)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Gyro calibration requires a focused local seat");
         return false;
@@ -1330,6 +1365,7 @@ bool qa_input_platform_calibrate(qa_input_platform *p, unsigned slot, qa_error *
 }
 bool qa_input_platform_calibration_cancel(qa_input_platform *p, unsigned slot, bool reset,
                                           qa_error *error) {
+    if (!native_owner(p, error)) return false;
     if (slot >= 4 || !p->seats[slot].seat) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Unknown gyro seat");
         return false;
@@ -1345,6 +1381,7 @@ qa_haptic_player *qa_input_platform_haptics(qa_input_platform *p, unsigned slot)
 }
 bool qa_input_platform_tactile(qa_input_platform *p, unsigned slot, qa_vfs *vfs, const char *sound,
                                double now, qa_error *error) {
+    if (!native_owner(p, error)) return false;
     if (slot >= 4) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Unknown tactile seat");
         return false;
@@ -1365,6 +1402,7 @@ bool qa_input_platform_tactile(qa_input_platform *p, unsigned slot, qa_vfs *vfs,
     return ok;
 }
 void qa_input_platform_tactile_invalidate(qa_input_platform *p) {
+    if (!p || !p->native_owned) return;
     qa_error ignored = {0};
     for (unsigned i = 0; i < 4; ++i)
         (void)qa_haptic_stop(&p->seats[i].haptic, &ignored);

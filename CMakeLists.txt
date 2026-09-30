@@ -698,7 +698,8 @@ add_library(qa_input STATIC
     src/input/save.c
     src/input/settings.c
     src/input/source_devices.c
-    src/platform/input.c)
+    src/platform/input.c
+    src/platform/input_save.c)
 target_link_libraries(qa_input PUBLIC qa_movement qa_console qa_content qa_display qa_persistence SDL2::SDL2)
 
 add_library(qa_settings STATIC
