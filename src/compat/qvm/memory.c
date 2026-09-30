@@ -189,6 +189,10 @@ static bool capture_writes(qa_qvm *vm, uint32_t offset, size_t length, write_del
             cursor += size;
         }
     }
+    if (head && vm->write_sequence == UINT64_MAX) {
+        free_deliveries(head);
+        return qa_qvm_error(error,QA_ERROR_MEMORY,offset,"QVM observed write identity exhausted");
+    }
     *out = head;
     return true;
 }

@@ -1,9 +1,10 @@
 #include "internal.h"
+#include "qa/qvm_save.h"
 
 #include <stdlib.h>
 #include <string.h>
 
-#define CHECKPOINT_HEADER 112u
+#define CHECKPOINT_HEADER 160u
 
 static bool safe_point(const qa_qvm *vm, qa_error *error)
 {
@@ -103,7 +104,7 @@ static void checkpoint_digest(qa_bytes bytes, qa_sha256_digest *out)
     qa_sha256_context hash;
     qa_sha256_init(&hash);
     qa_sha256_update(&hash,(qa_bytes){bytes.data,80});
-    qa_sha256_update(&hash,(qa_bytes){bytes.data + CHECKPOINT_HEADER,bytes.size - CHECKPOINT_HEADER});
+    qa_sha256_update(&hash,(qa_bytes){bytes.data + 112,bytes.size - 112});
     qa_sha256_final(&hash,out);
 }
 
@@ -113,6 +114,9 @@ bool qa_qvm_checkpoint(qa_qvm *vm, qa_buffer *out, qa_error *error)
     if (!safe_point(vm,error)) return false;
     if (vm->options.checkpoint == NULL)
         return qa_qvm_error(error,QA_ERROR_UNSUPPORTED,0,"QVM host has not bound checkpoint services");
+    uint64_t execution[3];
+    qa_qvm_execution_checkpoint(vm,execution);
+    if (!qa_qvm_execution_checkpoint_ready(vm,execution,false,error)) return false;
     qa_buffer host = {0};
     ++vm->lifecycle_depth;
     bool captured = vm->options.checkpoint(vm->options.context,&host,error);
@@ -125,7 +129,7 @@ bool qa_qvm_checkpoint(qa_qvm *vm, qa_buffer *out, qa_error *error)
     qa_buffer state = {calloc(1,CHECKPOINT_HEADER + vm->data_size + host.size),CHECKPOINT_HEADER + vm->data_size + host.size};
     if (state.data == NULL) { qa_buffer_free(&host); return qa_qvm_error(error,QA_ERROR_MEMORY,0,"allocating QVM checkpoint"); }
     memcpy(state.data,"QAVM",4);
-    qa_store_u32le(state.data + 4,1);
+    qa_store_u32le(state.data + 4,2);
     qa_store_u32le(state.data + 8,(uint32_t)vm->options.role);
     qa_store_u32le(state.data + 12,(uint32_t)vm->options.abi);
     qa_store_u32le(state.data + 16,(uint32_t)vm->options.semantics);
@@ -134,6 +138,12 @@ bool qa_qvm_checkpoint(qa_qvm *vm, qa_buffer *out, qa_error *error)
     qa_store_u64le(state.data + 32,(uint64_t)host.size);
     qa_store_u64le(state.data + 40,vm->write_sequence);
     memcpy(state.data + 48,vm->image->digest.bytes,32);
+    qa_store_u64le(state.data + 112,vm->options.instruction_limit);
+    qa_store_u32le(state.data + 120,vm->options.debug);
+    qa_store_u64le(state.data + 128,vm->next_watch);
+    qa_store_u64le(state.data + 136,execution[0]);
+    qa_store_u64le(state.data + 144,execution[1]);
+    qa_store_u64le(state.data + 152,execution[2]);
     memcpy(state.data + CHECKPOINT_HEADER,vm->data,vm->data_size);
     if (host.size > 0) memcpy(state.data + CHECKPOINT_HEADER + vm->data_size,host.data,host.size);
     qa_sha256_digest digest;
@@ -144,37 +154,60 @@ bool qa_qvm_checkpoint(qa_qvm *vm, qa_buffer *out, qa_error *error)
     return true;
 }
 
-bool qa_qvm_restore(qa_qvm *vm, qa_bytes state, qa_error *error)
+static bool restore(qa_qvm *vm, qa_bytes state, bool candidate, qa_error *error)
 {
     if (!safe_point(vm,error)) return false;
     if (vm->options.restore == NULL)
         return qa_qvm_error(error,QA_ERROR_UNSUPPORTED,0,"QVM host has not bound restore services");
     if (state.data == NULL || state.size < CHECKPOINT_HEADER || memcmp(state.data,"QAVM",4) != 0
-        || qa_load_u32le(state.data + 4) != 1 || qa_load_u32le(state.data + 8) != (uint32_t)vm->options.role
+        || qa_load_u32le(state.data + 4) != 2 || qa_load_u32le(state.data + 8) != (uint32_t)vm->options.role
         || qa_load_u32le(state.data + 12) != (uint32_t)vm->options.abi
-        || qa_load_u32le(state.data + 16) != (uint32_t)vm->options.semantics || qa_load_u32le(state.data + 20) != vm->api_version
+        || qa_load_u32le(state.data + 16) != (uint32_t)vm->options.semantics
         || qa_load_u64le(state.data + 24) != vm->data_size
         || vm->data_size > state.size - CHECKPOINT_HEADER
         || qa_load_u64le(state.data + 32) != state.size - CHECKPOINT_HEADER - vm->data_size
-        || memcmp(state.data + 48,vm->image->digest.bytes,32) != 0)
+        || memcmp(state.data + 48,vm->image->digest.bytes,32) != 0
+        || qa_load_u64le(state.data + 112) != vm->options.instruction_limit
+        || qa_load_u32le(state.data + 120) != (uint32_t)vm->options.debug
+        || qa_load_u32le(state.data + 124))
         return qa_qvm_error(error,QA_ERROR_FORMAT,0,"QVM checkpoint artifact, profile, or envelope mismatch");
     qa_sha256_digest digest;
     checkpoint_digest(state,&digest);
     if (memcmp(digest.bytes,state.data + 80,32) != 0)
         return qa_qvm_error(error,QA_ERROR_FORMAT,80,"QVM checkpoint checksum mismatch");
+    uint32_t api = qa_load_u32le(state.data + 20);
+    uint64_t saved_watch = qa_load_u64le(state.data + 128);
+    uint64_t execution[3] = {qa_load_u64le(state.data + 136),
+        qa_load_u64le(state.data + 144),qa_load_u64le(state.data + 152)};
+    bool api_matches = vm->options.role == QA_QVM_UI
+        ? api == 4 || (vm->options.abi == QA_QVM_Q3_MODERN && api == 6)
+        : api == vm->api_version;
+    if (!api_matches || !saved_watch ||
+        (candidate && (vm->write_sequence || saved_watch < vm->next_watch)))
+        return qa_qvm_error(error,QA_ERROR_FORMAT,20,"QVM source API or candidate execution generation differs");
+    if (!qa_qvm_execution_checkpoint_ready(vm,execution,candidate,error)) return false;
     /* Host restoration sees the restored guest RAM, as in the donor. A host
      * restore error leaves the committed RAM visible and must be reported. */
     qa_qvm_memory_close(vm);
     qa_qvm_execution_reset(vm);
     memmove(vm->data,state.data + CHECKPOINT_HEADER,vm->data_size);
     uint64_t saved_sequence = qa_load_u64le(state.data + 40);
-    if (saved_sequence > vm->write_sequence) vm->write_sequence = saved_sequence;
+    if (candidate || saved_sequence > vm->write_sequence) vm->write_sequence = saved_sequence;
+    if (candidate || saved_watch > vm->next_watch) vm->next_watch = saved_watch;
+    vm->api_version = api;
+    qa_qvm_execution_restore(vm,execution,candidate);
     qa_bytes host = {state.data + CHECKPOINT_HEADER + vm->data_size,state.size - CHECKPOINT_HEADER - vm->data_size};
     ++vm->lifecycle_depth;
     bool restored = vm->options.restore(vm->options.context,host,error);
     --vm->lifecycle_depth;
     return restored;
 }
+
+bool qa_qvm_restore(qa_qvm *vm, qa_bytes state, qa_error *error)
+{ return restore(vm,state,false,error); }
+
+bool qa_qvm_restore_candidate(qa_qvm *vm, qa_bytes state, qa_error *error)
+{ return restore(vm,state,true,error); }
 
 const char *qa_qvm_role_name(qa_qvm_role role)
 {

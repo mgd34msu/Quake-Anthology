@@ -292,6 +292,31 @@ void qa_qvm_execution_reset(qa_qvm *vm)
     exec->cancelled = NULL; exec->failed = false; exec->failure = (qa_error){0};
     collect_bindings(exec);
 }
+void qa_qvm_execution_checkpoint(const qa_qvm *vm, uint64_t values[3])
+{
+    const execution *exec = state(vm);
+    values[0] = exec->next_binding;
+    values[1] = exec->breaks;
+    values[2] = exec->instructions;
+}
+bool qa_qvm_execution_checkpoint_ready(const qa_qvm *vm, const uint64_t values[3],
+                                         bool candidate, qa_error *error)
+{
+    const execution *exec = state(vm);
+    if (exec->active || exec->host || exec->counter || exec->program_stack != vm->data_size)
+        return error_at(error, 0, "QVM checkpoint requires an idle original execution stack");
+    if (candidate && (exec->instructions || exec->breaks || exec->failed ||
+        values[0] < exec->next_binding))
+        return error_at(error, 0, "QVM candidate has executed or exceeds its saved binding generation");
+    return true;
+}
+void qa_qvm_execution_restore(qa_qvm *vm, const uint64_t values[3], bool candidate)
+{
+    execution *exec = state(vm);
+    if (candidate || values[0] > exec->next_binding) exec->next_binding = values[0];
+    exec->breaks = values[1];
+    exec->instructions = values[2];
+}
 void qa_qvm_execution_destroy(qa_qvm *vm)
 {
     execution *exec = state(vm); if (exec == NULL) return;
