@@ -2913,7 +2913,8 @@ static bool foundational_species_callback(q2m_context *context,
 
   if (strcmp(callback, "medic_fire_blaster") == 0) {
     bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
-    bool rogue = rerelease || context->game->options.product == QA_Q2_ROGUE;
+    bool rogue = rerelease || context->game->options.product == QA_Q2_ROGUE ||
+                 monster->definition->species == Q2M_MEDIC_COMMANDER;
     bool commander = rogue && context->combat.mass > 400;
     bool blaster = monster->frame == 185 || monster->frame == 188;
     int flash;

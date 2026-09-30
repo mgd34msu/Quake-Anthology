@@ -1856,9 +1856,24 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   return q2m_alive(&context) ? q2m_show(&context, error) : true;
 }
 
+typedef struct monster_spawn_call {
+  qa_q2_game *game;
+  qa_q2_monster_spawn_options options;
+} monster_spawn_call;
+
+static bool spawn_actor(void *opaque, qa_actor_id id, qa_error *error) {
+  monster_spawn_call *call = opaque;
+  return monster_admit(call->game, id, &call->options, NULL, error);
+}
+
 bool qa_q2_monster_spawn(qa_q2_game *game, qa_actor_id id,
                          const qa_q2_monster_spawn_options *options, qa_error *error) {
-  return monster_admit(game, id, options, NULL, error);
+  if (!options) {
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing Q2 monster spawn options");
+    return false;
+  }
+  monster_spawn_call call = {.game = game, .options = *options};
+  return qa_q2_run_actor(game, id, spawn_actor, &call, error);
 }
 
 bool q2m_revive(q2m_context *context, qa_error *error) {

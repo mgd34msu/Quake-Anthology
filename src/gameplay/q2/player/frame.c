@@ -154,7 +154,8 @@ static bool after_movement(void *context, qa_actor_id id, qa_error *e) {
 bool qa_q2_player_after_movement(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     return qa_q2_run_actor(g, id, after_movement, g, e);
 }
-bool qa_q2_player_end_frame(qa_q2_game *g, qa_actor_id id, qa_error *e) {
+static bool end_frame(void *context, qa_actor_id id, qa_error *e) {
+    qa_q2_game *g = context;
     q2_actor *a = q2_client(g, id, e);
     if (!a)
         return false;
@@ -298,6 +299,9 @@ bool q2_client_reaction(qa_q2_game *g, const qa_damage_outcome *outcome, qa_erro
                               e);
     }
     return true;
+}
+bool qa_q2_player_end_frame(qa_q2_game *g, qa_actor_id id, qa_error *e) {
+    return qa_q2_run_actor(g, id, end_frame, g, e);
 }
 bool qa_q2_player_weapon_fired(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     q2_actor *a = q2_client(g, id, e);
