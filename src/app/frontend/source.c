@@ -3,6 +3,7 @@
 #include "qa/q3_key.h"
 #include "qa/audio_save.h"
 #include "source_restore.h"
+#include "qa/persistence_content.h"
 #include <limits.h>
 #include <stdio.h>
 
@@ -18,7 +19,7 @@ struct frontend_source {
     frontend_source_lease *lease_list;
     frontend_source_role_identity *restore_roles;
     size_t restore_role_count;
-    bool constructed;
+    bool constructed, construction_started;
     qa_vfs *mounts;
     const qa_vfs *source_files;
     qa_scene_resources *images;
@@ -258,8 +259,14 @@ static void release_source(void *context)
 static bool construct_source(frontend_source *source, const qa_q3_host_options *host, bool restoring, qa_error *error)
 {
     qa_frontend *frontend = source->frontend;
-    source->source_files = host->mounts;
-    source->mounts = qa_vfs_clone(host->mounts, error);
+    source->construction_started = true;
+    if (restoring) {
+        if (!source->mounts || source->source_files != host->mounts)
+            return frontend_fail(error, QA_ERROR_FORMAT, "source construction changed its preloaded content graph");
+    } else {
+        source->source_files = host->mounts;
+        source->mounts = qa_vfs_clone(host->mounts, error);
+    }
     source->images = source->mounts ? qa_scene_resources_create(source->mounts, error) : NULL;
     source->materials = source->images ? qa_material_library_create(source->images, frontend->order, error) : NULL;
     source->fonts = source->images ? qa_font_library_create(source->mounts, source->images, error) : NULL;
@@ -329,7 +336,7 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
         for (frontend_source_lease *prior = source->lease_list; prior; prior = prior->next)
             if (prior->service_owner == host->service_owner)
                 return frontend_fail(error, QA_ERROR_FORMAT, "duplicate restored source role lease");
-        if (source->source_files && !source->constructed)
+        if (source->construction_started && !source->constructed)
             return frontend_fail(error, QA_ERROR_ARGUMENT, "partially constructed source group must be discarded");
         if (frontend->application != application || (source->application && source->application != application))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "restored source factory changed its application owner");
@@ -543,19 +550,27 @@ bool frontend_source_group_role_read(const qa_frontend *frontend, size_t group, 
 bool frontend_source_prepare_groups(qa_frontend *frontend, uint64_t next_source_id,
     const frontend_source_group_plan *plans, size_t count, qa_error *error)
 {
-    if (!frontend || frontend->stepping || frontend->sources || frontend->source_restoring ||
+    if (!frontend || !frontend->application || frontend->stepping || frontend->sources || frontend->source_restoring ||
         (count && !plans) || next_source_id > UINT64_MAX - QA_FRONTEND_COMMAND_OWNER - 1)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "restored source admission requires an empty idle frontend");
+    qa_application_content_graph *graph = qa_application_content_graph_read(frontend->application);
+    if (!graph) return frontend_fail(error, QA_ERROR_ARGUMENT, "source admission requires its actual restored content graph");
     for (size_t i = 0; i < count; ++i) {
         const frontend_source_group_plan *plan = &plans[i];
         if (!plan->owner || plan->seat >= frontend->options.seats || frontend->options.dedicated ||
             plan->identity <= QA_FRONTEND_COMMAND_OWNER ||
             plan->identity - QA_FRONTEND_COMMAND_OWNER > next_source_id || !plan->roles ||
-            !plan->role_count || plan->role_count > UINT_MAX ||
+            !plan->role_count || plan->role_count > UINT_MAX || !plan->mounts_view || !plan->source_view ||
+            plan->mounts_view == plan->source_view || !qa_application_content_view(graph, plan->mounts_view) ||
+            !qa_application_content_view(graph, plan->source_view) ||
+            qa_vfs_resources(qa_application_content_view(graph, plan->mounts_view)) !=
+                qa_vfs_resources(qa_application_content_view(graph, plan->source_view)) ||
             plan->role_count > SIZE_MAX / sizeof(*plan->roles))
             return frontend_fail(error, QA_ERROR_FORMAT, "invalid restored source group identity");
         for (size_t prior = 0; prior < i; ++prior)
-            if (plans[prior].identity == plan->identity)
+            if (plans[prior].identity == plan->identity || plans[prior].mounts_view == plan->mounts_view ||
+                (plans[prior].owner == plan->owner && plans[prior].seat == plan->seat &&
+                 plans[prior].source_view == plan->source_view))
                 return frontend_fail(error, QA_ERROR_FORMAT, "duplicate restored source group identity");
         for (size_t j = 0; j < plan->role_count; ++j) {
             const frontend_source_role_identity *role = &plan->roles[j];
@@ -580,6 +595,11 @@ bool frontend_source_prepare_groups(qa_frontend *frontend, uint64_t next_source_
         memcpy(source->restore_roles, plans[i].roles, plans[i].role_count * sizeof(*source->restore_roles));
     }
     frontend->sources = head; frontend->next_source_id = next_source_id; frontend->source_restoring = true;
+    frontend_source *source = head;
+    for (size_t i = 0; i < count; ++i, source = source->next) {
+        source->source_files = qa_application_content_view(graph, plans[i].source_view);
+        if (!qa_application_content_claim_view(graph, plans[i].mounts_view, &source->mounts, error)) return false;
+    }
     return true;
 memory:
     while (head) { frontend_source *next = head->next; free(head->restore_roles); free(head); head = next; }
