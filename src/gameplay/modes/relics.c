@@ -389,12 +389,43 @@ bool qa_modes_after_damage(qa_modes *m, qa_mode_id id, const qa_damage_outcome *
                                 fminf(250, state.health + (float)gain), e) &&
            mode_sound(m, v, actor, "brain/brnatck3.wav", 1, e);
 }
+bool mode_relic_source_current(qa_modes *m, mode_instance *v, qa_error *e) {
+    if (v->value.rules.source != QA_MODE_ROGUE || !v->relics_started) return true;
+    if (!m->options.hooks.rogue_runes_read)
+        return mode_fail(e, "saved Rogue rune startup has no actual source-world reader");
+    qa_actor_id world = {0}; bool started = false, okay;
+    MODE_CALLBACK(m, okay = m->options.hooks.rogue_runes_read(
+        m->options.hooks.context, v->id, &world, &started));
+    const qa_physics *physics = m->options.services.physics;
+    if (!okay || !started || !physics || !world.registry ||
+        !qa_actor_id_equal(world, physics->world_actor) || !mode_live(m, world))
+        return mode_fail(e, "saved Rogue rune startup differs from its actual source world");
+    return true;
+}
 bool mode_relic_frame(qa_modes *m, mode_instance *v, qa_actor_id actor, mode_member *p,
                       qa_error *e) {
     if (v->value.rules.source == QA_MODE_ROGUE) {
         if (v->value.rules.rogue_deathmatch && v->value.rules.relics && !v->relics_started) {
-            v->relics_started = true;
-            v->relic_spawn_ns = v->value.time_ns + MODE_SECOND / 10;
+            bool claimed = false, started = false;
+            qa_actor_id world = {0};
+            if (!m->options.hooks.rogue_runes_claim || !m->options.hooks.rogue_runes_read)
+                return mode_fail(e, "Rogue rune startup has no actual source-world claim");
+            bool okay;
+            MODE_CALLBACK(m, okay = m->options.hooks.rogue_runes_claim(
+                m->options.hooks.context, v->id, &claimed, e));
+            if (!okay) return false;
+            MODE_CALLBACK(m, okay = m->options.hooks.rogue_runes_read(
+                m->options.hooks.context, v->id, &world, &started));
+            if (!okay) return mode_fail(e, "Rogue rune startup source retired");
+            p = mode_member_get(m, v, actor);
+            if (!p) return mode_fail(e, "Rogue rune startup player retired");
+            if (started) {
+                if (!world.registry || !mode_live(m, world) || !m->options.services.physics ||
+                    !qa_actor_id_equal(world, m->options.services.physics->world_actor))
+                    return mode_fail(e, "Rogue rune startup source world retired");
+                v->relics_started = true;
+                if (claimed) v->relic_spawn_ns = v->value.time_ns + MODE_SECOND / 10;
+            } else if (claimed) return mode_fail(e, "Rogue rune source claim was not committed");
         }
         if (!qa_modes_has_relic(m, v->id, actor, QA_RELIC_REGENERATION) ||
             p->regen_ns >= v->value.time_ns) return true;

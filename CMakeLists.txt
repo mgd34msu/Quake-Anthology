@@ -901,6 +901,7 @@ add_library(qa_application STATIC
     src/app/application/map_players.c
     src/app/application/map_travel.c
     src/app/application/match.c
+    src/app/application/match_intents.c
     src/app/application/native_commands.c
     src/app/application/native_modes.c
     src/app/application/native_maps.c

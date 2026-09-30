@@ -312,6 +312,9 @@ typedef struct qa_modes_hooks {
     bool (*campaign_restart)(void *, qa_mode_id, uint32_t initial_flags, qa_error *);
     bool (*map_allowed)(void *, qa_mode_id, qa_string_id);
     bool (*next_map_allowed)(void *, qa_mode_id);
+    /* Rogue's startup flag belongs to its actual native source world. */
+    bool (*rogue_runes_claim)(void *, qa_mode_id, bool *newly_claimed, qa_error *);
+    bool (*rogue_runes_read)(void *, qa_mode_id, qa_actor_id *world, bool *started);
     bool (*team_equipment)(void *, qa_actor_id, qa_item_id *weapon, uint64_t *powerups, qa_error *);
     bool (*select_grapple)(void *, qa_actor_id, qa_error *);
     bool (*drop_arsenal)(void *, qa_actor_id, bool weapon, qa_error *);

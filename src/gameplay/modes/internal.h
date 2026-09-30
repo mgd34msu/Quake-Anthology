@@ -125,6 +125,7 @@ bool mode_match_frame(qa_modes *, mode_instance *, uint64_t, qa_error *);
 bool mode_vote_frame(qa_modes *, mode_instance *, qa_error *);
 bool mode_objects_frame(qa_modes *, mode_instance *, uint64_t, qa_error *);
 bool mode_relic_frame(qa_modes *, mode_instance *, qa_actor_id, mode_member *, qa_error *);
+bool mode_relic_source_current(qa_modes *, mode_instance *, qa_error *);
 bool mode_flag_touch(qa_modes *, mode_instance *, mode_object *, qa_actor_id, bool *, qa_error *);
 bool mode_relic_touch(qa_modes *, mode_instance *, mode_object *, qa_actor_id, bool *, qa_error *);
 bool mode_tag_touch(qa_modes *, mode_instance *, mode_object *, qa_actor_id, bool *, qa_error *);

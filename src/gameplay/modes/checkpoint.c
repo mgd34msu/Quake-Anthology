@@ -67,6 +67,8 @@ static qa_mode_object_checkpoint capture_object(const mode_object *o) {
                                        .tag_stage = o->tag_stage};
 }
 static bool checkpoint_capture(qa_modes *m, qa_modes_checkpoint *out, qa_error *e) {
+    for (uint32_t i = 0; i < m->mode_capacity; ++i)
+        if (m->instances[i].active && !mode_relic_source_current(m, &m->instances[i], e)) return false;
     qa_modes_checkpoint saved = {
         .version = 5, .random = m->random, .attack_sequence = m->attack_sequence};
     saved.players = calloc(m->actor_capacity, sizeof(*saved.players));
@@ -527,6 +529,8 @@ static bool checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved,
             return false;
     }
     if (!reconnect) return true;
+    for (uint32_t i = 0; i < m->mode_capacity; ++i)
+        if (m->instances[i].active && !mode_relic_source_current(m, &m->instances[i], e)) return false;
     if (!qa_builtin_players(&m->options.services, &m->players_order, e) ||
         !qa_builtin_observations(&m->options.services, &m->observations, e))
         return false;
@@ -549,6 +553,8 @@ bool qa_modes_reconnect(qa_modes *m, qa_error *e) {
         !qa_world_idle(m->options.services.world) || !qa_combat_idle(m->options.services.combat))
         return mode_fail(e, "mode reconnect requires idle shared owners");
     if (!m->source_restored) return true;
+    for (uint32_t i = 0; i < m->mode_capacity; ++i)
+        if (m->instances[i].active && !mode_relic_source_current(m, &m->instances[i], e)) return false;
     for (size_t i = 0; i < m->restored_objective_count; ++i) {
         const qa_mode_objective_checkpoint *expected = &m->restored_objectives[i];
         bool found = false;

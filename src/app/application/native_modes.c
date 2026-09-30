@@ -54,6 +54,25 @@ bool application_native_mode_emit(void *opaque, qa_mode_id mode,
     return application_emit(app, &projected, error);
 }
 
+bool application_native_mode_rogue_runes_claim(void *opaque, qa_mode_id mode,
+    bool *newly_claimed, qa_error *error) {
+    qa_application *app = opaque;
+    application_provider *p = application_mode_provider(app, mode);
+    qa_mode_view view;
+    if (!p || p->kind != APPLICATION_PROVIDER_Q1 || !qa_modes_read(app->modes, mode, &view, error) ||
+        view.rules.source != QA_MODE_ROGUE)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Rogue rune startup needs its actual native Q1 source");
+    return qa_q1_game_rogue_runes_claim(p->state.q1, newly_claimed, error);
+}
+bool application_native_mode_rogue_runes_read(void *opaque, qa_mode_id mode,
+    qa_actor_id *world, bool *started) {
+    qa_application *app = opaque;
+    application_provider *p = application_mode_provider(app, mode);
+    qa_mode_view view;
+    return p && p->kind == APPLICATION_PROVIDER_Q1 && qa_modes_read(app->modes, mode, &view, NULL) &&
+        view.rules.source == QA_MODE_ROGUE && qa_q1_game_rogue_runes_read(p->state.q1, world, started);
+}
+
 bool application_native_mode_map_allowed(void *opaque, qa_mode_id mode, qa_string_id map) {
     qa_application *app = opaque;
     application_provider *source = application_mode_provider(app, mode);
