@@ -2135,8 +2135,8 @@ static bool conditional_transition(q2m_context *context, const char *callback,
   }
 
   if (strcmp(callback, "guardian_atk1") == 0) {
-    monster->timestamp_ns = q2m_after(context->game->now_ns,
-                                      0.65 + q2m_random(context->game) * 1.5);
+    monster->timestamp_ns = q2_deadline(context->game->now_ns,
+        (UINT64_C(650) + (uint64_t)q2_rerelease_time_ms(context->game, 0, 1500)) * Q2_MS);
     return q2m_set_move(context, "guardian_move_atk1_spin", false, error);
   }
 
@@ -4196,7 +4196,26 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
            q2m_sound(context, "weapons/hyprbu1a.wav", 1, 1.0f, error);
   }
   if (strcmp(callback, "guardian_fire_blaster") == 0) {
-    if (!q2m_attack(context, Q2M_ATTACK_BLASTER, 2.0f, error))
+    qa_body_state enemy;
+    if (!qa_world_body_read(context->game->services.world, monster->enemy, &enemy, error))
+      return false;
+    if (!q2m_alive(context)) return true;
+    qa_vec3 start;
+    float height;
+    if (!q2m_project_flash(context, 227, &start, error)) return false;
+    if (!enemy_view_height(context, &height)) return true;
+    qa_vec3 target = enemy.origin;
+    target.z += height;
+    float low = nextafterf(-1.0f, 0.0f), high = nextafterf(1.0f, 0.0f);
+    target.x += fminf(high, q2_rerelease_float(context->game, low, 1.0f)) * 5.0f;
+    target.y += fminf(high, q2_rerelease_float(context->game, low, 1.0f)) * 5.0f;
+    target.z += fminf(high, q2_rerelease_float(context->game, low, 1.0f)) * 5.0f;
+    q2m_fire_spec spec = q2m_fire_default(context, Q2M_ATTACK_BLASTER, 2.0f, 227,
+        start, qa_vec_normalize(qa_vec_sub(target, start)));
+    spec.speed = 1000.0f;
+    spec.has_projectile_effects = true;
+    spec.projectile_effects = monster->frame % 4 == 0 ? UINT64_C(16) : 0;
+    if (!q2m_fire(context, &spec, error))
       return false;
     if (!q2m_alive(context) || monster->frame != 173 ||
         monster->timestamp_ns <= context->game->now_ns || !enemy_alive(context))

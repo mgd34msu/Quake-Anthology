@@ -237,7 +237,8 @@ bool q2_item_use_duration(qa_q2_game *g, qa_actor_id id, const qa_q2_item_defini
     uint64_t *until = timer(p, d->powerup);
     if (until)
         *until = q2_deadline(*until > g->now_ns ? *until : g->now_ns, duration);
-    const char *sound = d->powerup == QA_Q2_POWER_QUADFIRE       ? "items/quadfire1.wav"
+    const char *sound = d->powerup == QA_Q2_POWER_QUAD           ? "items/damage.wav"
+                        : d->powerup == QA_Q2_POWER_QUADFIRE     ? "items/quadfire1.wav"
                         : d->powerup == QA_Q2_POWER_DOUBLE       ? "misc/ddamage1.wav"
                         : d->powerup == QA_Q2_POWER_IR           ? "misc/ir_start.wav"
                         : d->powerup == QA_Q2_POWER_INVISIBILITY ? "items/protect.wav"
