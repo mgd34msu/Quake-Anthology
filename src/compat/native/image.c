@@ -39,6 +39,50 @@ static bool target_for(qa_native_os os, uint16_t machine, qa_native_target *out,
     return true;
 }
 
+bool qa_native_module_mutable_range(const qa_native_module *module, uint64_t rva,
+                                    uint64_t length, qa_error *error) {
+    if (!module || !length || rva > module->info.image.image_bytes || length > module->info.image.image_bytes - rva)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native mutable source range exceeds its qualified image");
+    const uint8_t *bytes = module->bytes;
+    bool writable = false;
+    if (module->info.image.format == QA_NATIVE_IMAGE_PE32 || module->info.image.format == QA_NATIVE_IMAGE_PE32_PLUS) {
+        uint32_t pe = qa_load_u32le(bytes + 0x3c);
+        const uint8_t *coff = bytes + pe + 4;
+        uint16_t count = qa_load_u16le(coff + 2), optional = qa_load_u16le(coff + 16);
+        const uint8_t *table = bytes + (size_t)pe + 24u + optional;
+        for (uint16_t i = 0; i < count; ++i) {
+            const uint8_t *section = table + (size_t)i * 40;
+            uint64_t start = qa_load_u32le(section + 12), size = qa_load_u32le(section + 8);
+            uint32_t raw = qa_load_u32le(section + 16), flags = qa_load_u32le(section + 36);
+            if (raw > size) size = raw;
+            if (size && rva < start + size && start < rva + length &&
+                (!(flags & UINT32_C(0x80000000)) || (flags & UINT32_C(0x20000000))))
+                return native_fail(error, QA_ERROR_UNSUPPORTED, 0, "native mutable source range overlaps non-mutable PE storage");
+            if ((flags & UINT32_C(0x80000000)) && !(flags & UINT32_C(0x20000000)) &&
+                rva >= start && rva - start <= size && length <= size - (rva - start)) writable = true;
+        }
+    } else {
+        bool elf32 = module->info.image.format == QA_NATIVE_IMAGE_ELF32;
+        uint64_t offset = elf32 ? qa_load_u32le(bytes + 28) : qa_load_u64le(bytes + 32);
+        uint16_t stride = qa_load_u16le(bytes + (elf32 ? 42 : 54)), count = qa_load_u16le(bytes + (elf32 ? 44 : 56));
+        for (uint16_t i = 0; i < count; ++i) {
+            const uint8_t *program = bytes + (size_t)offset + (size_t)i * stride;
+            uint32_t type = qa_load_u32le(program), flags = qa_load_u32le(program + (elf32 ? 24 : 4));
+            uint64_t start = elf32 ? qa_load_u32le(program + 8) : qa_load_u64le(program + 16);
+            uint64_t size = elf32 ? qa_load_u32le(program + 20) : qa_load_u64le(program + 40);
+            if (type == 1 && size && start <= UINT64_MAX - size && rva < start + size && start < rva + length &&
+                (!(flags & 2u) || (flags & 1u)))
+                return native_fail(error, QA_ERROR_UNSUPPORTED, 0, "native mutable source range overlaps non-mutable ELF storage");
+            if (type == 1 && (flags & 2u) && !(flags & 1u) && rva >= start &&
+                rva - start <= size && length <= size - (rva - start)) writable = true;
+            if (type == UINT32_C(0x6474e552) && size && start <= UINT64_MAX - size &&
+                rva < start + size && start < rva + length)
+                return native_fail(error, QA_ERROR_UNSUPPORTED, 0, "native mutable source range overlaps ELF RELRO");
+        }
+    }
+    return writable || native_fail(error, QA_ERROR_UNSUPPORTED, 0, "native private state is not an original mutable image span");
+}
+
 static bool inspect_pe(qa_bytes bytes, qa_native_image_info *out, qa_error *error) {
     if (!span(bytes, 0x3c, 4))
         return native_fail(error, QA_ERROR_FORMAT, bytes.size, "truncated PE DOS header");

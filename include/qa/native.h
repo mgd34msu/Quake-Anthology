@@ -80,6 +80,9 @@ typedef struct qa_native_module_info {
 bool qa_native_module_load(qa_bytes image, const char *source, qa_native_profile profile,
                            const qa_sha256_digest *expected_digest, qa_native_module **out,
                            qa_error *error);
+/* Immutable image metadata must identify one writable, non-executable source
+ * section/load segment; ELF RELRO is excluded. No source code executes. */
+bool qa_native_module_mutable_range(const qa_native_module *, uint64_t rva, uint64_t bytes, qa_error *);
 void qa_native_module_retain(qa_native_module *module);
 void qa_native_module_release(qa_native_module *module);
 qa_native_module_info qa_native_module_describe(const qa_native_module *module);
@@ -312,6 +315,15 @@ bool qa_native_read_string(const qa_native_instance *instance, qa_native_address
                            size_t maximum, qa_buffer *out, qa_error *error);
 bool qa_native_allocate(qa_native_instance *instance, size_t bytes, int32_t tag,
                         qa_native_address *out, qa_error *error);
+typedef struct qa_native_allocation_info {
+    qa_native_address base;
+    uint64_t bytes;
+    int32_t tag;
+} qa_native_allocation_info;
+/* Only original host-tagged allocations qualify; arbitrary process memory is
+ * not treated as an owned source object. Interior addresses retain their base. */
+bool qa_native_allocation_query(const qa_native_instance *, qa_native_address,
+                                qa_native_allocation_info *, qa_error *);
 bool qa_native_free(qa_native_instance *instance, qa_native_address address, qa_error *error);
 void qa_native_free_tag(qa_native_instance *instance, int32_t tag);
 

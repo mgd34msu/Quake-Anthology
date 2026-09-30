@@ -1,6 +1,7 @@
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_continuation.h"
 #include "guest_native_q2_combat.h"
+#include "guest_native_q2_private_state.h"
 #include "qa/source_save.h"
 #include "qa/json.h"
 
@@ -18,6 +19,8 @@ struct application_native_q2_continuation {
     qa_sha256_digest artifact, declaration, launch;
     qa_buffer fields[CONTINUATION_FIELDS];
     size_t count;
+    qa_buffer private_bytes;
+    struct application_q2_private_state *private_state;
     struct { bool present, connected, spawned; qa_actor_id actor; } clients[257];
 };
 static bool number(const qa_json_document *doc, qa_json_id object, const char *name,
@@ -73,6 +76,7 @@ static bool profile_read(struct application_native_q2 *engine, continuation_prof
             !number(doc, field, "count", &count, error) || !count || count > CONTINUATION_BYTES / width)
             return application_fail(error, QA_ERROR_FORMAT, "Native RNG field changes its pointer-free scalar representation");
         out->fields[i].bytes = count * width;
+        if (!qa_native_module_mutable_range(engine->provider->state.native.module, out->fields[i].rva, out->fields[i].bytes, error)) return false;
         if (out->fields[i].rva > UINT64_MAX - out->fields[i].bytes || out->fields[i].bytes > CONTINUATION_BYTES - total)
             return application_fail(error, QA_ERROR_FORMAT, "Native RNG continuation extent overflows");
         total += out->fields[i].bytes;
@@ -180,16 +184,26 @@ static struct application_native_q2 *owner(application_provider *provider, qa_er
     }
     return engine;
 }
+bool application_native_q2_continuation_portable(application_provider *provider, qa_error *error)
+{
+    struct application_native_q2 *engine = provider && provider->kind == APPLICATION_PROVIDER_NATIVE ? provider->state.native.q2_engine : NULL;
+    if (!engine || !provider->launch || !provider->state.native.module || !application_native_q2_idle(provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native full private qualification requires its idle actual source provider");
+    continuation_profile profile = {0};
+    bool ok = profile_read(engine, &profile, error) && application_q2_private_qualified(engine, error);
+    qa_json_destroy(profile.document); return ok;
+}
 void application_native_q2_continuation_abort(struct application_native_q2_continuation *state)
 {
     if (!state) return;
     for (size_t i = 0; i < state->count; ++i) qa_buffer_free(&state->fields[i]);
+    qa_buffer_free(&state->private_bytes); application_q2_private_free(state->private_state);
     free(state);
 }
 static bool fields_io(qa_source_save_io *io, struct application_native_q2_continuation *state)
 {
-    uint32_t version = 1; size_t count = state->count;
-    if (!qa_source_save_u32(io, &version) || version != 1 ||
+    uint32_t version = 2; size_t count = state->count;
+    if (!qa_source_save_u32(io, &version) || version != 2 ||
         !qa_source_save_bytes(io, state->artifact.bytes, 32) ||
         !qa_source_save_bytes(io, state->declaration.bytes, 32) ||
         !qa_source_save_bytes(io, state->launch.bytes, 32) ||
@@ -204,7 +218,13 @@ static bool fields_io(qa_source_save_io *io, struct application_native_q2_contin
             !qa_source_save_bool(io, &state->clients[slot].connected) ||
             !qa_source_save_bool(io, &state->clients[slot].spawned) ||
             !qa_source_save_actor(io, &state->clients[slot].actor)) return false;
-    return true;
+    size_t private_size = state->private_bytes.size;
+    if (!qa_source_save_count(io, &private_size, CONTINUATION_BYTES) || !private_size) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        state->private_bytes = (qa_buffer){.data = malloc(private_size), .size = private_size};
+        if (!state->private_bytes.data) return application_fail(io->error, QA_ERROR_MEMORY, "Retaining native complete private supplement");
+    }
+    return qa_source_save_bytes(io, state->private_bytes.data, private_size);
 }
 static struct application_native_q2_continuation *allocate(const continuation_profile *profile, qa_error *error)
 {
@@ -223,7 +243,7 @@ bool application_native_q2_continuation_capture(application_provider *provider, 
 {
     struct application_native_q2 *engine = owner(provider, error); continuation_profile profile = {0};
     if (!engine || !out) return false;
-    bool ok = profile_read(engine, &profile, error) && identity(engine, snapshot, &profile, error);
+    bool ok = application_native_q2_continuation_portable(provider, error) && profile_read(engine, &profile, error) && identity(engine, snapshot, &profile, error);
     struct application_native_q2_continuation *state = ok ? allocate(&profile, error) : NULL;
     ok = ok && state; qa_native_instance *instance = qa_native_host_instance(provider->state.native.host);
     if (ok) { state->artifact = snapshot->image.digest; state->declaration = snapshot->declaration; state->launch = provider->launch->identity; }
@@ -255,7 +275,8 @@ bool application_native_q2_continuation_capture(application_provider *provider, 
         } else if (ok && engine->clients[slot].connected) ok = false;
     }
     qa_source_save_io io = {0};
-    if (ok) ok = qa_source_save_writer(&io, provider->application->session, error) && fields_io(&io, state) && qa_source_save_finish(&io, out);
+    if (ok) ok = application_q2_private_capture(engine, &state->private_bytes, error) &&
+        qa_source_save_writer(&io, provider->application->session, error) && fields_io(&io, state) && qa_source_save_finish(&io, out);
     if (!ok && error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "Original native private client state differs from its source owner");
     qa_source_save_dispose(&io); application_native_q2_continuation_abort(state); qa_json_destroy(profile.document); return ok;
 }
@@ -265,7 +286,7 @@ bool application_native_q2_continuation_prepare(application_provider *provider, 
     struct application_native_q2 *engine = owner(provider, error); continuation_profile profile = {0};
     if (!engine || !out) return false;
     *out = NULL;
-    bool ok = profile_read(engine, &profile, error) && identity(engine, snapshot, &profile, error);
+    bool ok = application_native_q2_continuation_portable(provider, error) && profile_read(engine, &profile, error) && identity(engine, snapshot, &profile, error);
     struct application_native_q2_continuation *state = ok ? allocate(&profile, error) : NULL;
     ok = ok && state; qa_source_save_io io = {0};
     if (ok) ok = qa_source_save_reader(&io, provider->application->session, bytes, error) && fields_io(&io, state) &&
@@ -276,6 +297,11 @@ bool application_native_q2_continuation_prepare(application_provider *provider, 
         if ((!state->clients[slot].present && (state->clients[slot].connected || state->clients[slot].spawned || state->clients[slot].actor.registry)) ||
             (profile.classic && state->clients[slot].spawned) ||
             (state->clients[slot].connected && !state->clients[slot].actor.registry)) ok = false;
+    if (ok) ok = application_q2_private_prepare(engine,
+        (qa_bytes){state->private_bytes.data, state->private_bytes.size}, &state->private_state, error);
+    for (uint32_t slot = 1; ok && slot < 257; ++slot)
+        ok = application_q2_private_client_matches(state->private_state, slot, state->clients[slot].present,
+            state->clients[slot].connected, state->clients[slot].spawned, error);
     qa_source_save_dispose(&io); qa_json_destroy(profile.document);
     if (!ok) {
         application_native_q2_continuation_abort(state);
@@ -289,7 +315,7 @@ bool application_native_q2_continuation_apply(application_provider *provider,
 {
     struct application_native_q2 *engine = owner(provider, error); continuation_profile profile = {0};
     if (!engine || !state) return false;
-    bool ok = profile_read(engine, &profile, error);
+    bool ok = application_native_q2_continuation_portable(provider, error) && profile_read(engine, &profile, error);
     qa_native_module_info info = qa_native_module_describe(provider->state.native.module);
     const qa_sha256_digest *declaration = qa_resource_digest(provider->launch->declaration);
     if (ok && (state->count != profile.count || !qa_sha256_equal(&state->artifact, &info.image.digest) ||
@@ -316,6 +342,7 @@ bool application_native_q2_continuation_apply(application_provider *provider,
     }
     /* All scalar addresses and canonical identities qualify before the first
      * isolated private write. No source callback or observer runs in this step. */
+    if (ok) ok = application_q2_private_apply(engine, state->private_state, error);
     for (size_t i = 0; ok && i < profile.count; ++i)
         ok = qa_native_write(instance, fields[i], (qa_bytes){state->fields[i].data, state->fields[i].size}, error);
     for (uint32_t slot = 1; ok && slot < 257; ++slot) if (clients[slot]) {

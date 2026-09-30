@@ -117,6 +117,22 @@ bool qa_native_allocate(qa_native_instance *instance, size_t bytes, int32_t tag,
     return true;
 }
 
+bool qa_native_allocation_query(const qa_native_instance *instance, qa_native_address address,
+                                qa_native_allocation_info *out, qa_error *error) {
+    if (!instance || !address || !out || instance->destroying || instance->unloading)
+        return native_fail(error, QA_ERROR_ARGUMENT, 0, "live native allocation and output are required");
+    if (instance->backend == QA_NATIVE_BACKEND_RUNNER)
+        return native_runner_allocation_query((qa_native_instance *)instance, address, out, error);
+    for (const native_allocation *allocation = instance->allocations; allocation; allocation = allocation->next) {
+        qa_native_address base = (qa_native_address)(uintptr_t)allocation->bytes;
+        if (address >= base && address - base < allocation->size) {
+            *out = (qa_native_allocation_info){base, allocation->size, allocation->tag};
+            return true;
+        }
+    }
+    return native_fail(error, QA_ERROR_UNSUPPORTED, 0, "native private pointer is not in an owned tagged allocation");
+}
+
 bool qa_native_free(qa_native_instance *instance, qa_native_address address, qa_error *error) {
     if (!instance || (instance->destroying && !qa_native_unloading_owner(instance)))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,

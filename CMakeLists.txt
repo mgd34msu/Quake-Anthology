@@ -472,6 +472,7 @@ add_library(qa_modes STATIC
     src/gameplay/modes/items.c
     src/gameplay/modes/map.c
     src/gameplay/modes/match.c
+    src/gameplay/modes/q3_settings.c
     src/gameplay/modes/objectives.c
     src/gameplay/modes/objects.c
     src/gameplay/modes/placement.c
@@ -567,7 +568,8 @@ add_library(qa_catalog STATIC
     src/content/catalog/metadata.c
     src/content/catalog/mounts.c
     src/content/catalog/products.c)
-target_link_libraries(qa_catalog PUBLIC qa_content)
+target_sources(qa_catalog PRIVATE src/content/catalog/save.c)
+target_link_libraries(qa_catalog PUBLIC qa_content qa_persistence)
 
 add_library(qa_configuration STATIC
     src/session/configuration/draft.c
@@ -886,6 +888,7 @@ add_library(qa_application STATIC
     src/app/application/guest_native_q2_combat_state.c
     src/app/application/guest_native_q2_hud.c
     src/app/application/guest_native_q2_inventory.c
+    src/app/application/guest_native_q2_private_state.c
     src/app/application/guest_native_q2_save.c
     src/app/application/guest_native_q2_services.c
     src/app/application/guest_projection.c

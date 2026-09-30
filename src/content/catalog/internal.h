@@ -2,6 +2,7 @@
 #define QA_CATALOG_INTERNAL_H
 
 #include "qa/catalog.h"
+#include "qa/catalog_save.h"
 #include "qa/json.h"
 #include <stdlib.h>
 #include <string.h>
@@ -20,7 +21,7 @@ typedef struct catalog_product {
     const char *required[4];
     size_t required_count;
 } catalog_product;
-typedef struct catalog_member { const char *path; size_t ordinal; } catalog_member;
+typedef qa_catalog_member_identity catalog_member;
 typedef struct catalog_physical {
     qa_catalog_mount view;
     qa_sha256_digest digest;
@@ -31,6 +32,7 @@ struct qa_catalog {
     size_t references;
     uint64_t generation;
     qa_strings *strings;
+    qa_strings *restored_literals;
     qa_vfs *mounts;
     qa_resource_pool *resources;
     const char *root, *user;

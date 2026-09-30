@@ -266,6 +266,8 @@ bool native_runner_write(qa_native_instance *instance, qa_native_address destina
                          qa_bytes bytes, qa_error *error);
 bool native_runner_allocate(qa_native_instance *instance, size_t bytes, int32_t tag,
                             qa_native_address *out, qa_error *error);
+bool native_runner_allocation_query(qa_native_instance *, qa_native_address,
+                                    qa_native_allocation_info *, qa_error *);
 bool native_runner_free(qa_native_instance *instance, qa_native_address address, qa_error *error);
 bool native_runner_free_tag(qa_native_instance *instance, int32_t tag, qa_error *error);
 bool native_runner_entity_get(qa_native_instance *instance, qa_native_entity_table *out,

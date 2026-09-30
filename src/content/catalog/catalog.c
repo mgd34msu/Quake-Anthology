@@ -169,8 +169,11 @@ void qa_catalog_release(qa_catalog *catalog)
     for (size_t i = 0; i < catalog->physical_count; ++i) free(catalog->physical[i].members);
     free(catalog->products); free(catalog->physical); free(catalog->mods);
     if (catalog->mounts) qa_resource_pool_trim(catalog->resources);
-    qa_vfs_destroy(catalog->mounts); qa_strings_destroy(catalog->strings); free(catalog);
+    qa_vfs_destroy(catalog->mounts); qa_strings_destroy(catalog->strings);
+    qa_strings_destroy(catalog->restored_literals); free(catalog);
 }
+const qa_vfs *qa_catalog_files(const qa_catalog *catalog) { return catalog ? catalog->mounts : NULL; }
+qa_resource_pool *qa_catalog_resources(const qa_catalog *catalog) { return catalog ? catalog->resources : NULL; }
 uint64_t qa_catalog_generation(const qa_catalog *c) { return c ? c->generation : 0; }
 size_t qa_catalog_count(const qa_catalog *c) { return c ? c->product_count : 0; }
 const qa_product *qa_catalog_at(const qa_catalog *c, size_t i)

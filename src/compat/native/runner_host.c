@@ -1422,6 +1422,28 @@ bool native_runner_write(qa_native_instance *instance, qa_native_address destina
     return runner_finish_response(instance, received, ok, error);
 }
 
+bool native_runner_allocation_query(qa_native_instance *instance, qa_native_address address,
+                                    qa_native_allocation_info *out, qa_error *error) {
+    native_wire_buffer request = {0};
+    qa_buffer response = {0};
+    bool received = false;
+    bool ok = native_wire_put_u64(&request, address, error);
+    if (ok) received = runner_request(instance, NATIVE_WIRE_ALLOCATION_QUERY,
+        (qa_bytes){request.data, request.size}, &response, error);
+    if (received) {
+        native_wire_reader reader = {.bytes = {response.data, response.size}};
+        uint32_t tag;
+        ok = native_wire_get_u64(&reader, &out->base, error) &&
+            native_wire_get_u64(&reader, &out->bytes, error) && native_wire_get_u32(&reader, &tag, error) &&
+            native_wire_end(&reader, error) && out->bytes && address >= out->base && address - out->base < out->bytes;
+        if (ok) out->tag = (int32_t)tag;
+        else if (error && error->code == QA_OK)
+            native_fail(error, QA_ERROR_FORMAT, 0, "native allocation query returned an invalid extent");
+    } else ok = false;
+    native_wire_buffer_free(&request); qa_buffer_free(&response);
+    return runner_finish_response(instance, received, ok, error);
+}
+
 bool native_runner_allocate(qa_native_instance *instance, size_t bytes, int32_t tag,
                             qa_native_address *out, qa_error *error) {
     if (!out)

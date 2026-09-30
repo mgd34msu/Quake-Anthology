@@ -768,6 +768,16 @@ static bool child_allocate(native_child_state *state, native_wire_reader *reader
            native_wire_put_u64(body, address, error);
 }
 
+static bool child_allocation_query(native_child_state *state, native_wire_reader *reader,
+                                   native_wire_buffer *body, qa_error *error) {
+    uint64_t address;
+    qa_native_allocation_info info;
+    return native_wire_get_u64(reader, &address, error) && native_wire_end(reader, error) &&
+        qa_native_allocation_query(state->instance, address, &info, error) &&
+        native_wire_put_u64(body, info.base, error) && native_wire_put_u64(body, info.bytes, error) &&
+        native_wire_put_u32(body, (uint32_t)info.tag, error);
+}
+
 static bool child_free(native_child_state *state, native_wire_reader *reader, qa_error *error) {
     uint64_t address;
     return native_wire_get_u64(reader, &address, error) && native_wire_end(reader, error) &&
@@ -898,6 +908,9 @@ static bool child_handle_request(native_child_state *state, const native_wire_fr
         break;
     case NATIVE_WIRE_ALLOCATE:
         ok = state->instance && child_allocate(state, &reader, &body, &operation_error);
+        break;
+    case NATIVE_WIRE_ALLOCATION_QUERY:
+        ok = state->instance && child_allocation_query(state, &reader, &body, &operation_error);
         break;
     case NATIVE_WIRE_FREE:
         ok = state->instance && child_free(state, &reader, &operation_error);

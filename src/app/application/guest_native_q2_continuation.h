@@ -3,6 +3,8 @@
 #include "qa/native_host.h"
 struct application_provider;
 struct application_native_q2_continuation;
+/* Pure declaration qualification; it executes no original module callback. */
+bool application_native_q2_continuation_portable(struct application_provider *, qa_error *);
 bool application_native_q2_continuation_capture(struct application_provider *,
     const qa_native_checkpoint *, qa_buffer *, qa_error *);
 /* Identity/base qualification precedes original module import. The prepared
