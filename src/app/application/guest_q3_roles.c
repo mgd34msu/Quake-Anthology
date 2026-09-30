@@ -81,11 +81,6 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
     qa_q3_host_options options = {0};
     qa_qvm_compatibility compatibility = {0};
     application_provider *provider = engine->provider;
-    ++engine->calls;
-    bool services_ready = application_q3_guest_services(provider->application, provider, kind, seat, &options, error);
-    --engine->calls;
-    if (!services_ready) goto failed;
-    options.world = engine->world;
     if (!saved_owner && engine->role_sequence == UINT64_MAX) {
         application_fail(error, QA_ERROR_MEMORY, "Q3 role registration sequence exhausted"); goto failed;
     }
@@ -112,6 +107,12 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         if (!qa_strings_intern_cstr(strings, service_name, &role->service_owner, error)) goto failed;
         role->service_sequence = engine->role_sequence;
     }
+    ++engine->calls;
+    bool services_ready = application_q3_guest_services(provider->application, provider, kind, seat,
+        role->service_owner, &options, error);
+    --engine->calls;
+    if (!services_ready) goto failed;
+    options.world = engine->world;
     options.service_owner = role->service_owner;
     if (engine->entity_text)
         options.entity_text = (qa_bytes){(const uint8_t *)engine->entity_text, strlen(engine->entity_text)};

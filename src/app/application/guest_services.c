@@ -158,10 +158,11 @@ static bool guest_load_collision(void *context, const char *path, qa_error *erro
 bool application_q3_guest_services(qa_application *application,
                                     application_provider *provider,
                                     qa_qvm_role role, uint32_t seat,
+                                    uint64_t service_owner,
                                     qa_q3_host_options *out, qa_error *error)
 {
     if (application == NULL || provider == NULL || out == NULL ||
-        provider->application != application || (unsigned)role > QA_QVM_UI)
+        provider->application != application || !service_owner || (unsigned)role > QA_QVM_UI)
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 guest service request");
     const qa_product *product = provider->product;
     const char *directory = product == NULL ? "" : product->directory;
@@ -169,7 +170,7 @@ bool application_q3_guest_services(qa_application *application,
         const char *last = strrchr(directory, '/');
         if (last != NULL) directory = last + 1;
     }
-    qa_q3_host_options services = {.role = role,
+    qa_q3_host_options services = {.role = role, .service_owner = service_owner,
         .session = application->session, .world = application->world,
         .owner = provider->owner, .cvars = application->cvars,
         .console = application->console, .mounts = provider->launch->content,
@@ -196,6 +197,7 @@ bool application_q3_guest_services(qa_application *application,
     if (role != QA_QVM_GAME && application->q3_services == NULL)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 UI/cgame needs a platform/client service owner");
     if (services.session != application->session || services.owner != provider->owner ||
+        services.service_owner != service_owner ||
         services.role != role || services.cvars == NULL || services.console == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 services changed core ownership");
     *out = services;

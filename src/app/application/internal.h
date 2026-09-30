@@ -417,7 +417,7 @@ bool application_q3_guest_role_command(application_provider *, qa_qvm_role,
                                        uint32_t, int32_t, const char *, bool *, qa_error *);
 bool application_guests_idle(const qa_application *);
 bool application_q3_guest_services(qa_application *, application_provider *, qa_qvm_role,
-                                    uint32_t, qa_q3_host_options *, qa_error *);
+                                    uint32_t, uint64_t service_owner, qa_q3_host_options *, qa_error *);
 bool application_q3_guest_native_options(qa_application *, application_provider *,
                                           qa_qvm_role, uint32_t,
                                           qa_native_host_instance_options *, qa_error *);
