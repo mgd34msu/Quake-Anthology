@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "save_private.h"
 #include <stdio.h>
 
 enum { FRONTEND_STYLES = 256 };
@@ -23,6 +24,7 @@ typedef struct frontend_retained_sound {
     qa_audio_loop loop;
     uint64_t static_key;
     qa_audio_mixer *static_mixers[QA_INPUT_LOCAL_SEATS];
+    uint32_t restored_static_seats;
 } frontend_retained_sound;
 typedef struct frontend_retained_light {
     struct frontend_retained_light *next;
@@ -53,6 +55,7 @@ typedef struct frontend_event_view {
     double fog_duration;
     bool fog_received, sky_received;
     const qa_scene_image *sky[6];
+    qa_actor_owner sky_owner;
     qa_vec3 sky_axis;
     float sky_rotation;
     bool sky_auto;
@@ -66,6 +69,7 @@ struct frontend_event_state {
     qa_builtin_random light_random;
     uint32_t step_random[624], step_cursor;
     qa_audio_asset *last_step;
+    qa_actor_owner last_step_owner;
     frontend_event_view views[QA_INPUT_LOCAL_SEATS];
 };
 static qa_audio_family audio_family(qa_game_family family)
@@ -327,6 +331,7 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
                     view->sky[face] = sky[face]; qa_scene_image_retain(sky[face]);
                 }
                 view->sky_received = true;
+                view->sky_owner = source.provider;
                 view->sky_rotation = event->value; view->sky_axis = event->direction;
                 view->sky_auto = event->value != 0 && (event->flags & 1) != 0; break;
             default: break;
@@ -537,7 +542,8 @@ static bool entity_footstep(qa_frontend *frontend, frontend_event_state *state,
         .origin_kind = QA_AUDIO_ACTOR, .origin_actor = actor, .origin = body.origin, .channel = 6,
         .volume = event->code == 2 ? 1 : .5f, .attenuation = event->code == 2 ? 1 : 2};
     if (!qa_audio_engine_play(frontend->audio, &sound, (int32_t)((frontend->time_ns / 1000000) & INT32_MAX), error)) return false;
-    qa_audio_asset_release(state->last_step); state->last_step = qa_audio_asset_retain(asset); return true;
+    qa_audio_asset_release(state->last_step); state->last_step = qa_audio_asset_retain(asset);
+    state->last_step_owner = event->provider; return true;
 }
 bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, qa_error *error)
 {
@@ -671,4 +677,284 @@ bool frontend_event_images(qa_frontend *frontend, qa_actor_owner owner, qa_game_
     frontend_event_resources *entry;
     if (!resources_read(frontend, owner, audio_family(family), &entry, error)) return false;
     *out = entry->images; return true;
+}
+static bool event_signature(qa_source_save_io *io)
+{
+    uint8_t magic[4] = {'Q','A','P','E'}; uint32_t version = 1;
+    return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QAPE", 4) && qa_source_save_u32(io, &version) && version == 1;
+}
+static bool fog_fields(qa_source_save_io *io, qa_q2_fog *fog)
+{
+    float *fields[] = {&fog->density, &fog->sky_factor, &fog->start_distance, &fog->end_distance, &fog->falloff, &fog->height_density};
+    for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); ++i)
+        if (!qa_source_save_f32(io, fields[i]) || !isfinite(*fields[i])) return false;
+    return qa_source_save_vec3(io, &fog->color) && qa_vec_finite(fog->color) &&
+        qa_source_save_vec3(io, &fog->start_color) && qa_vec_finite(fog->start_color) &&
+        qa_source_save_vec3(io, &fog->end_color) && qa_vec_finite(fog->end_color);
+}
+static bool retained_asset(qa_source_save_io *io, qa_frontend *frontend, qa_actor_owner *owner,
+    qa_audio_family *family, qa_audio_asset **asset)
+{
+    uint32_t kind = *family; const char *name = io->direction == QA_SOURCE_SAVE_WRITE ? qa_audio_asset_name(*asset) : NULL;
+    qa_sha256_digest digest = {{0}};
+    if (io->direction == QA_SOURCE_SAVE_WRITE) {
+        const qa_sha256_digest *actual = qa_resource_digest(qa_audio_asset_resource(*asset));
+        if (!actual || !name) return false;
+        digest = *actual;
+    }
+    if (!frontend_save_provider(io, frontend->application, owner) || !*owner ||
+        !qa_source_save_u32(io, &kind) || kind > QA_AUDIO_Q3 || !qa_source_save_text(io, &name) || !name ||
+        !qa_source_save_bytes(io, digest.bytes, sizeof(digest.bytes))) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ) {
+        frontend_event_resources *resources;
+        if (!frontend->audio || !resources_read(frontend, *owner, (qa_audio_family)kind, &resources, io->error) ||
+            !qa_audio_bank_register(resources->sounds, name, (qa_audio_family)kind, asset, io->error) || !*asset) return false;
+        const qa_sha256_digest *actual = qa_resource_digest(qa_audio_asset_resource(*asset));
+        if (!actual || memcmp(actual->bytes, digest.bytes, sizeof(digest.bytes))) return false;
+        *family = (qa_audio_family)kind;
+    }
+    return true;
+}
+static bool sky_image_fields(qa_source_save_io *io, const qa_scene_image *image)
+{
+    if (image->kind == QA_SCENE_DEPTH32F) return false;
+    uint32_t expected[] = {image->kind, image->wrap, image->filter, image->logical_width, image->logical_height};
+    for (size_t i = 0; i < sizeof(expected) / sizeof(expected[0]); ++i) {
+        uint32_t field = expected[i];
+        if (!qa_source_save_u32(io, &field) || field != expected[i]) return false;
+    }
+    float border[] = {image->border.x, image->border.y, image->border.z, image->border.w};
+    for (size_t i = 0; i < 4; ++i) {
+        float field = border[i];
+        if (!qa_source_save_f32(io, &field) || !isfinite(field) || field != border[i]) return false;
+    }
+    size_t levels = image->level_count;
+    if (!qa_source_save_count(io, &levels, image->level_count) || levels != image->level_count) return false;
+    for (size_t i = 0; i < levels; ++i) {
+        const qa_scene_image_level *level = &image->levels[i];
+        uint32_t width = level->width, height = level->height; uint64_t size = level->bytes;
+        qa_sha256_digest actual, saved; qa_sha256_context hash;
+        qa_sha256_init(&hash); qa_sha256_update(&hash, (qa_bytes){level->pixels, level->bytes}); qa_sha256_final(&hash, &actual);
+        saved = actual;
+        if (!qa_source_save_u32(io, &width) || width != level->width ||
+            !qa_source_save_u32(io, &height) || height != level->height ||
+            !qa_source_save_u64(io, &size) || size != level->bytes ||
+            !qa_source_save_bytes(io, saved.bytes, sizeof(saved.bytes)) || memcmp(saved.bytes, actual.bytes, sizeof(saved.bytes))) return false;
+    }
+    return true;
+}
+static bool view_fields(qa_source_save_io *io, qa_frontend *frontend, frontend_event_view *view)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    for (unsigned i = 0; i < FRONTEND_STYLES; ++i)
+        if (!frontend_save_text(io, &view->q1_patterns[i]) || !frontend_save_text(io, &view->q2_patterns[i]) ||
+            !qa_source_save_f32(io, &view->q1_styles[i]) || !isfinite(view->q1_styles[i]) ||
+            !qa_source_save_vec3(io, &view->q2_styles[i]) || !qa_vec_finite(view->q2_styles[i])) return false;
+    if (!fog_fields(io, &view->fog_start) || !fog_fields(io, &view->fog_target) ||
+        !qa_source_save_u64(io, &view->fog_time) || !qa_source_save_f64(io, &view->fog_duration) || !isfinite(view->fog_duration) ||
+        !qa_source_save_bool(io, &view->fog_received) || !qa_source_save_bool(io, &view->sky_received) ||
+        !frontend_save_provider(io, frontend->application, &view->sky_owner) ||
+        !qa_source_save_vec3(io, &view->sky_axis) || !qa_vec_finite(view->sky_axis) ||
+        !qa_source_save_f32(io, &view->sky_rotation) || !isfinite(view->sky_rotation) || !qa_source_save_bool(io, &view->sky_auto)) return false;
+    if (view->sky_received && !view->sky_owner) return false;
+    for (unsigned i = 0; i < 6; ++i) {
+        const char *name = reading ? NULL : view->sky[i] ? view->sky[i]->name : NULL;
+        if (!qa_source_save_text(io, &name) || (view->sky_received && !name)) return false;
+        if (!name) continue;
+        if (reading) {
+            frontend_event_resources *resources;
+            if (!resources_read(frontend, view->sky_owner, QA_AUDIO_Q2, &resources, io->error)) return false;
+            qa_scene_image_options options = {.family = QA_SCENE_Q2, .wrap = QA_SCENE_CLAMP, .filter = QA_SCENE_LINEAR,
+                .usage = QA_IMAGE_USAGE_SKY, .transparent_index = -1};
+            qa_scene_image *image = NULL;
+            if (!qa_scene_image_load(resources->images, name, &options, &image, io->error)) return false;
+            view->sky[i] = image;
+        }
+        if (!sky_image_fields(io, view->sky[i])) return false;
+    }
+    return true;
+}
+static bool sound_fields(qa_source_save_io *io, qa_frontend *frontend, frontend_retained_sound *entry)
+{
+    qa_audio_play *sound = &entry->loop.sound; bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    uint32_t origin_kind = sound->origin_kind;
+    bool is_static = entry->static_key != 0; uint32_t seats = entry->restored_static_seats;
+    if (!reading) for (unsigned i = 0; i < frontend->options.seats; ++i) if (entry->static_mixers[i]) seats |= 1u << i;
+    if (!qa_source_save_actor(io, &entry->actor) ||
+        !retained_asset(io, frontend, &sound->owner, &sound->family, &sound->asset) ||
+        !qa_source_save_bool(io, &is_static) || !qa_source_save_u32(io, &seats) || seats >= (1u << frontend->options.seats) ||
+        !qa_source_save_u32(io, &origin_kind) || (origin_kind != QA_AUDIO_FIXED && origin_kind != QA_AUDIO_ACTOR) ||
+        !qa_source_save_vec3(io, &sound->origin) || !qa_vec_finite(sound->origin) ||
+        !qa_source_save_i32(io, &sound->channel) || !qa_source_save_f32(io, &sound->volume) ||
+        !qa_source_save_f32(io, &sound->attenuation) || !isfinite(sound->volume) || sound->volume < 0 || sound->volume > 1 ||
+        !isfinite(sound->attenuation) || sound->attenuation < 0 || !qa_source_save_vec3(io, &entry->loop.velocity) ||
+        !qa_vec_finite(entry->loop.velocity) || !qa_source_save_i32(io, &entry->loop.frame_number) ||
+        !qa_source_save_bool(io, &entry->loop.persistent)) return false;
+    if (sound->channel < 0 && !(sound->family == QA_AUDIO_Q1 && sound->channel == -1)) return false;
+    if (is_static ? entry->actor.registry != 0 || sound->family != QA_AUDIO_Q1 : !entry->actor.registry || seats != 0) return false;
+    if (reading) {
+        sound->sample = qa_audio_asset_sample(sound->asset); sound->audience = QA_AUDIO_WORLD;
+        sound->actor = frontend_audio_actor(frontend, entry->actor, io->error); sound->origin_actor = sound->actor;
+        if (entry->actor.registry && sound->actor == QA_AUDIO_NO_ACTOR) return false;
+        sound->origin_kind = (qa_audio_origin_kind)origin_kind;
+        if (is_static && (origin_kind != QA_AUDIO_FIXED || sound->sample->loop_start == QA_AUDIO_NO_LOOP)) return false;
+        entry->static_key = is_static ? qa_scene_identity() : 0; entry->restored_static_seats = seats;
+    }
+    return true;
+}
+static bool light_fields(qa_source_save_io *io, frontend_q1_light *entry)
+{
+    qa_scene_light *light = &entry->light;
+    if (!qa_source_save_actor(io, &entry->actor) || !qa_source_save_f64(io, &entry->die) || !isfinite(entry->die) ||
+        !qa_source_save_vec3(io, &light->origin) || !qa_vec_finite(light->origin) ||
+        !qa_source_save_vec3(io, &light->color) || !qa_vec_finite(light->color) ||
+        !qa_source_save_f32(io, &light->radius) || !isfinite(light->radius) || light->radius < 0 ||
+        !qa_source_save_f32(io, &light->minimum) || !isfinite(light->minimum) || light->minimum < 0) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ)
+        light->identity = qa_scene_identity(), light->revision = 1, light->family = QA_SCENE_Q1, light->scale = 1;
+    return true;
+}
+static bool bounds_fields(qa_source_save_io *io, qa_frontend *frontend, frontend_retained_bounds *entry)
+{
+    uint32_t color = entry->color;
+    if (!frontend_save_provider(io, frontend->application, &entry->owner) || !entry->owner ||
+        !qa_source_save_actor(io, &entry->actor) || !qa_source_save_actor(io, &entry->recipient) ||
+        !qa_persistence_bounds(io, &entry->bounds) || !qa_source_save_u64(io, &entry->frame) ||
+        !qa_source_save_u64(io, &entry->deadline) || !qa_source_save_u32(io, &color) || color > 255 ||
+        !qa_source_save_bool(io, &entry->depth)) return false;
+    entry->color = color; return true;
+}
+static bool last_step_fields(qa_source_save_io *io, qa_frontend *frontend, frontend_event_state *state)
+{
+    bool present = state->last_step != NULL;
+    if (!qa_source_save_bool(io, &present) || !present) return !io->failed;
+    qa_audio_family family = QA_AUDIO_Q2;
+    return retained_asset(io, frontend, &state->last_step_owner, &family, &state->last_step) && family == QA_AUDIO_Q2;
+}
+bool frontend_event_checkpoint(qa_frontend *frontend, qa_buffer *out, qa_error *error)
+{
+    qa_source_save_io io = {0};
+    if (!out || !qa_source_save_writer(&io, qa_application_session(frontend->application), error)) return false;
+    bool present = frontend->events != NULL; uint32_t seats = frontend->options.seats;
+    bool ok = event_signature(&io) && qa_source_save_u32(&io, &seats) && qa_source_save_bool(&io, &present);
+    frontend_event_state *state = frontend->events;
+    if (ok && present) {
+        qa_builtin_random random = state->light_random;
+        ok = frontend_save_random(&io, &random);
+        for (unsigned i = 0; ok && i < 624; ++i) { uint32_t word = state->step_random[i]; ok = qa_source_save_u32(&io, &word); }
+        uint32_t cursor = state->step_cursor; ok = ok && qa_source_save_u32(&io, &cursor) && last_step_fields(&io, frontend, state);
+        for (unsigned i = 0; ok && i < seats; ++i) { frontend_event_view copy = state->views[i]; ok = view_fields(&io, frontend, &copy); }
+        for (unsigned i = 0; ok && i < 32; ++i) { frontend_q1_light copy = state->q1_lights[i]; ok = light_fields(&io, &copy); }
+        size_t count = 0;
+        for (frontend_retained_sound *entry = state->sounds; entry; entry = entry->next) ++count;
+        ok = ok && qa_source_save_count(&io, &count, SIZE_MAX);
+        for (frontend_retained_sound *entry = state->sounds; ok && entry; entry = entry->next) {
+            frontend_retained_sound copy = *entry; ok = sound_fields(&io, frontend, &copy);
+        }
+        count = 0; for (frontend_retained_light *entry = state->lights; entry; entry = entry->next) ++count;
+        ok = ok && qa_source_save_count(&io, &count, SIZE_MAX);
+        for (frontend_retained_light *entry = state->lights; ok && entry; entry = entry->next) {
+            frontend_retained_light copy = *entry;
+            ok = frontend_save_provider(&io, frontend->application, &copy.owner) && frontend_save_q2_event(&io, &copy.event) &&
+                qa_source_save_u64(&io, &copy.revision);
+        }
+        count = 0; for (frontend_retained_bounds *entry = state->bounds; entry; entry = entry->next) ++count;
+        ok = ok && qa_source_save_count(&io, &count, SIZE_MAX);
+        for (frontend_retained_bounds *entry = state->bounds; ok && entry; entry = entry->next) {
+            frontend_retained_bounds copy = *entry; ok = bounds_fields(&io, frontend, &copy);
+        }
+    }
+    if (ok) ok = qa_source_save_finish(&io, out);
+    if (!ok && (!error || error->code == QA_OK)) frontend_fail(error, QA_ERROR_FORMAT, "invalid retained builtin presentation");
+    qa_source_save_dispose(&io); return ok;
+}
+bool frontend_event_restore(qa_frontend *frontend, qa_bytes bytes, qa_error *error)
+{
+    if (frontend->events) return frontend_fail(error, QA_ERROR_ARGUMENT, "event restore requires an empty detached candidate");
+    qa_source_save_io io = {0}; bool present = false; uint32_t seats = 0;
+    bool ok = qa_source_save_reader(&io, qa_application_session(frontend->application), bytes, error) && event_signature(&io) &&
+        qa_source_save_u32(&io, &seats) && seats == frontend->options.seats && qa_source_save_bool(&io, &present);
+    frontend_event_state *state = NULL;
+    if (ok && present) {
+        ok = state_read(frontend, &state, error) && frontend_save_random(&io, &state->light_random);
+        uint32_t any = 0;
+        for (unsigned i = 0; ok && i < 624; ++i) { ok = qa_source_save_u32(&io, &state->step_random[i]); any |= state->step_random[i]; }
+        ok = ok && any && qa_source_save_u32(&io, &state->step_cursor) && state->step_cursor <= 624 && last_step_fields(&io, frontend, state);
+        for (unsigned i = 0; ok && i < seats; ++i) ok = view_fields(&io, frontend, &state->views[i]);
+        for (unsigned i = 0; ok && i < 32; ++i) ok = light_fields(&io, &state->q1_lights[i]);
+        size_t count = 0; frontend_retained_sound **sounds = &state->sounds;
+        ok = ok && qa_source_save_count(&io, &count, bytes.size / 8);
+        for (size_t i = 0; ok && i < count; ++i) {
+            *sounds = calloc(1, sizeof(**sounds));
+            if (!*sounds) { ok = frontend_fail(error, QA_ERROR_MEMORY, "restoring builtin sound continuation"); break; }
+            frontend_retained_sound *entry = *sounds;
+            ok = sound_fields(&io, frontend, entry);
+            for (frontend_retained_sound *prior = state->sounds; ok && prior != entry; prior = prior->next)
+                if (!entry->static_key && !prior->static_key && prior->loop.sound.owner == entry->loop.sound.owner &&
+                    prior->loop.sound.family == entry->loop.sound.family && qa_actor_id_equal(prior->actor, entry->actor)) ok = false;
+            sounds = &entry->next;
+        }
+        frontend_retained_light **lights = &state->lights;
+        ok = ok && qa_source_save_count(&io, &count, bytes.size / 8);
+        for (size_t i = 0; ok && i < count; ++i) {
+            *lights = calloc(1, sizeof(**lights));
+            if (!*lights) { ok = frontend_fail(error, QA_ERROR_MEMORY, "restoring authored light continuation"); break; }
+            frontend_retained_light *entry = *lights;
+            ok = frontend_save_provider(&io, frontend->application, &entry->owner) && entry->owner &&
+                frontend_save_q2_event(&io, &entry->event) && entry->event.kind == QA_Q2_MAP_DYNAMIC_LIGHT &&
+                qa_source_save_u64(&io, &entry->revision) && entry->revision;
+            for (frontend_retained_light *prior = state->lights; ok && prior != entry; prior = prior->next)
+                if (prior->owner == entry->owner && qa_actor_id_equal(prior->event.actor, entry->event.actor)) ok = false;
+            entry->identity = qa_scene_identity(); lights = &entry->next;
+        }
+        frontend_retained_bounds **bounds = &state->bounds;
+        ok = ok && qa_source_save_count(&io, &count, bytes.size / 8);
+        for (size_t i = 0; ok && i < count; ++i) {
+            *bounds = calloc(1, sizeof(**bounds));
+            if (!*bounds) { ok = frontend_fail(error, QA_ERROR_MEMORY, "restoring hunter bounds continuation"); break; }
+            frontend_retained_bounds *entry = *bounds;
+            ok = bounds_fields(&io, frontend, entry);
+            bounds = &entry->next;
+        }
+    }
+    if (ok) ok = qa_source_save_finish(&io, NULL);
+    if (!ok) {
+        frontend_event_retire(frontend);
+        if (!error || error->code == QA_OK) frontend_fail(error, QA_ERROR_FORMAT, "invalid saved builtin presentation");
+    }
+    qa_source_save_dispose(&io); return ok;
+}
+bool frontend_event_reconnect_audio(qa_frontend *frontend, qa_error *error)
+{
+    if (!frontend->events) return true;
+    for (frontend_retained_sound *entry = frontend->events->sounds; entry; entry = entry->next) {
+        for (unsigned i = 0; i < frontend->options.seats; ++i) {
+            if (!(entry->restored_static_seats & (1u << i))) continue;
+            entry->static_mixers[i] = qa_audio_engine_seat_mixer(frontend->audio, i);
+            if (!entry->static_mixers[i]) return frontend_fail(error, QA_ERROR_FORMAT, "saved static sound has no restored seat mixer");
+        }
+        entry->restored_static_seats = 0;
+    }
+    return true;
+}
+bool frontend_event_static_index(const qa_frontend *frontend, uint64_t key, uint64_t *out)
+{
+    uint64_t index = 0;
+    if (!key || !out) return false;
+    for (const frontend_retained_sound *entry = frontend->events ? frontend->events->sounds : NULL; entry; entry = entry->next) {
+        if (!entry->static_key) continue;
+        if (entry->static_key == key) { *out = index; return true; }
+        ++index;
+    }
+    return false;
+}
+bool frontend_event_static_key(const qa_frontend *frontend, uint64_t index, uint64_t *out)
+{
+    if (!out) return false;
+    for (const frontend_retained_sound *entry = frontend->events ? frontend->events->sounds : NULL; entry; entry = entry->next) {
+        if (!entry->static_key) continue;
+        if (!index) { *out = entry->static_key; return true; }
+        --index;
+    }
+    return false;
 }
