@@ -34,6 +34,7 @@ static void capture_instance_fields(const mode_instance *v, qa_mode_checkpoint *
                                 .relic_spawn_ns = v->relic_spawn_ns,
                                 .team_location_ns = v->team_location_ns,
                                 .rune_cursor = v->rune_cursor,
+                                .rogue_spawn_spot = v->rogue_spawn_spot,
                                 .relics_started = v->relics_started,
                                 .rune_forward = v->rune_forward,
                                 .next_location = v->next_location};
@@ -67,7 +68,7 @@ static qa_mode_object_checkpoint capture_object(const mode_object *o) {
 }
 static bool checkpoint_capture(qa_modes *m, qa_modes_checkpoint *out, qa_error *e) {
     qa_modes_checkpoint saved = {
-        .version = 3, .random = m->random, .attack_sequence = m->attack_sequence};
+        .version = 4, .random = m->random, .attack_sequence = m->attack_sequence};
     saved.players = calloc(m->actor_capacity, sizeof(*saved.players));
     saved.modes = calloc(m->mode_capacity, sizeof(*saved.modes));
     saved.objects = calloc(m->actor_capacity, sizeof(*saved.objects));
@@ -204,6 +205,9 @@ static bool validate_instance(qa_modes *m, const qa_mode_checkpoint *v, qa_error
         (v->spawn_count && !v->spawns) || v->spawn_count > SIZE_MAX / sizeof(*v->spawns) ||
         (v->item_count && !v->items) || v->item_count > SIZE_MAX / sizeof(*v->items))
         return mode_fail(e, "invalid saved mode instance");
+    if (!reference(m, v->rogue_spawn_spot) ||
+        (v->rogue_spawn_spot.registry && v->value.rules.source != QA_MODE_ROGUE))
+        return mode_fail(e, "invalid saved Rogue rune spawn cursor");
     for (size_t i = 0; i < v->member_count; ++i) {
         const mode_member *p = &v->members[i];
         if (!p->joined || !mode_live(m, p->actor) || !reference(m, p->flag) ||
@@ -214,6 +218,12 @@ static bool validate_instance(qa_modes *m, const qa_mode_checkpoint *v, qa_error
             !isfinite(p->player.ctf_status) || !isfinite(p->player.ctf_access) ||
             (p->external_owner && !m->options.hooks.restore_player_binding))
             return mode_fail(e, "invalid saved mode member");
+        if ((p->rogue_rune && (v->value.rules.source != QA_MODE_ROGUE ||
+                              p->rogue_rune > 8 || (p->rogue_rune & (p->rogue_rune - 1)))) ||
+            (v->value.rules.source != QA_MODE_ROGUE &&
+             (p->rogue_noise_ns[0] || p->rogue_noise_ns[1] || p->rogue_noise_ns[2])) ||
+            (v->value.rules.source == QA_MODE_ROGUE && p->relic.registry))
+            return mode_fail(e, "invalid saved Rogue rune carrier");
         for (int j = 0; j < 4; ++j)
             if (p->ballots[j] < -1 || p->ballots[j] > 1)
                 return mode_fail(e, "invalid saved ballot");
@@ -238,6 +248,15 @@ static bool validate_instance(qa_modes *m, const qa_mode_checkpoint *v, qa_error
     for (size_t i = 0; i < v->spawn_count; ++i)
         if (!qa_vec_finite(v->spawns[i].origin) || !qa_vec_finite(v->spawns[i].angles))
             return mode_fail(e, "invalid saved player spawn");
+    if (v->rogue_spawn_spot.registry) {
+        bool found = false;
+        for (size_t i = 0; i < v->spawn_count; ++i) {
+            const char *name = qa_strings_cstr(strings, v->spawns[i].classname);
+            if (qa_actor_id_equal(v->spawns[i].actor, v->rogue_spawn_spot) &&
+                name && !strcmp(name, "info_player_deathmatch")) found = true;
+        }
+        if (!found) return mode_fail(e, "saved Rogue rune cursor is not a deathmatch spawn");
+    }
     for (size_t i = 0; i < v->ghost_count; ++i) {
         if (v->ghosts[i].code < 10000 || v->ghosts[i].code > 99999)
             return mode_fail(e, "invalid saved ghost code");
@@ -272,6 +291,7 @@ static bool restore_instance(qa_modes *m, const qa_mode_checkpoint *saved, qa_er
                          .relic_spawn_ns = saved->relic_spawn_ns,
                          .team_location_ns = saved->team_location_ns,
                          .rune_cursor = saved->rune_cursor,
+                         .rogue_spawn_spot = saved->rogue_spawn_spot,
                          .relics_started = saved->relics_started,
                          .rune_forward = saved->rune_forward,
                          .next_location = saved->next_location};
@@ -321,7 +341,7 @@ static bool restore_instance(qa_modes *m, const qa_mode_checkpoint *saved, qa_er
 }
 static bool checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved,
                                 bool reconnect, qa_error *e) {
-    if (!m || m->callback_depth || !saved || saved->version != 3 ||
+    if (!m || m->callback_depth || !saved || saved->version != 4 ||
         saved->player_count > m->actor_capacity || saved->mode_count > m->mode_capacity ||
         saved->object_count > m->actor_capacity ||
         saved->external_objective_count > m->objective_capacity ||

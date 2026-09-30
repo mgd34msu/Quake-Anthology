@@ -366,10 +366,12 @@ bool qa_modes_start_relics(qa_modes *m, qa_mode_id id, qa_error *e) {
     if (!v)
         return mode_fail(e, "unknown relic mode");
     if (v->value.rules.source != QA_MODE_THREEWAVE && v->value.rules.source != QA_MODE_Q2_CTF &&
-        v->value.rules.source != QA_MODE_LMCTF)
+        v->value.rules.source != QA_MODE_LMCTF && v->value.rules.source != QA_MODE_ROGUE)
         return true;
     if (!v->value.rules.relics || v->relics_started || v->value.rules.start_map)
         return true;
+    /* Rogue's world flag is committed by its first actual player frame. */
+    if (v->value.rules.source == QA_MODE_ROGUE) return true;
     v->relics_started = true;
     if (v->value.rules.source == QA_MODE_THREEWAVE || v->value.rules.source == QA_MODE_Q2_CTF) {
         v->relic_spawn_ns =
@@ -410,8 +412,10 @@ bool mode_relic_spawn_all(qa_modes *m, mode_instance *v, qa_error *e) {
         if (!qa_modes_spawn_object(m, id, &spec, &actor, e))
             return false;
         mode_object *o = mode_object_get(m, actor);
-        if (o && !mode_relic_place(m, v, o, true, e))
+        if (!o || !mode_relic_place(m, v, o, true, e)) {
+            if (mode_live(m, actor)) qa_session_release(m->options.services.session, actor, NULL);
             return false;
+        }
         if (!qa_builtin_observations(&m->options.services, &m->observations, e))
             return false;
     }

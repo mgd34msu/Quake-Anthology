@@ -116,11 +116,15 @@ static bool give_complete(void *context, const qa_pickup_offer *offer, bool acce
     if (!qa_builtin_resource(&m->options.services, call->row->icon, &icon, e) ||
         !qa_builtin_resource(&m->options.services, call->row->name, &name, e))
         return false;
-    if (!qa_builtin_emit(&m->options.services, &(qa_builtin_event){.kind = QA_BUILTIN_ITEM,
-        .family = QA_GAME_Q2, .provider = m->options.owner, .actor = offer->recipient,
-        .other = offer->pickup, .resource = icon, .text = name, .time_ns = offer->time_ns}, e))
-        return false;
     mode_instance *v = mode_get(m, call->mode);
+    if (!v) return true;
+    qa_builtin_event event = {.kind = QA_BUILTIN_ITEM,
+        .family = QA_GAME_Q2, .provider = m->options.owner, .actor = offer->recipient,
+        .other = offer->pickup, .resource = icon, .text = name, .time_ns = offer->time_ns};
+    if (!MODE_CALLBACK(m, m->options.hooks.emit
+            ? m->options.hooks.emit(m->options.hooks.context, v->id, &event, e)
+            : qa_builtin_emit(&m->options.services, &event, e)))
+        return false;
     return !v || !mode_live(m, offer->recipient) || mode_sound(m, v, offer->recipient,
         call->row->kind == QA_MODE_OBJECT_FLAG ? "misc/am_pkup.wav" : "items/pkup.wav", 1, e);
 }

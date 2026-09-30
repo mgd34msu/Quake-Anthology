@@ -72,7 +72,7 @@ static void rules_write(qa_json_writer *w, const qa_mode_rules *v)
     N(time_limit_minutes); N(obelisk_health); N(obelisk_regen); W(obelisk_regen_ns); W(obelisk_respawn_ns);
     B(enabled); B(friendly_fire); B(force_join); B(match_lock); B(paused); B(auto_lock);
     B(relics); B(single_player_active); B(tournament_restart); B(q2_rerelease); B(start_map);
-    B(force_balance); B(voting_disabled);
+    B(force_balance); B(voting_disabled); B(rogue_deathmatch);
 #undef N
 #undef B
 #undef W
@@ -92,7 +92,7 @@ bool qa_launch_identity_encode(const qa_launch_snapshot *snapshot, const qa_acto
     if (!snapshot || !v || !catalog || !out) return fail(error, "Missing immutable launch identity owner");
     qa_json_writer w = {0}; qa_json_writer_object(&w);
     qa_json_writer_key(&w, "schema"); text(&w, "qa-launch-identity");
-    qa_json_writer_key(&w, "version"); number(&w, 1);
+    qa_json_writer_key(&w, "version"); number(&w, 2);
     qa_json_writer_key(&w, "world"); qa_json_writer_array(&w);
     product(&w, catalog, v->world.preset); product(&w, catalog, v->world.geometry);
     product(&w, catalog, v->world.presentation); text(&w, v->world.map); text(&w, v->world.start_command);
@@ -315,7 +315,7 @@ static qa_mode_rules read_rules(identity_reader *r)
     F(time_limit_minutes); F(obelisk_health); F(obelisk_regen); W(obelisk_regen_ns); W(obelisk_respawn_ns);
     B(enabled); B(friendly_fire); B(force_join); B(match_lock); B(paused); B(auto_lock);
     B(relics); B(single_player_active); B(tournament_restart); B(q2_rerelease); B(start_map);
-    B(force_balance); B(voting_disabled);
+    B(force_balance); B(voting_disabled); B(rogue_deathmatch);
 #undef U
 #undef I
 #undef F
@@ -372,7 +372,7 @@ bool qa_launch_identity_decode(qa_catalog *catalog, const qa_actor_registry *reg
     qa_json_id root = qa_json_root(document); uint64_t version = 0;
     if (qa_json_type(document, root) != QA_JSON_OBJECT || qa_json_size(document, root) != 14 ||
         !qa_json_string_equal(document, qa_json_get(document, root, "schema"), "qa-launch-identity") ||
-        !qa_json_u64(document, qa_json_get(document, root, "version"), &version, error) || version != 1) {
+        !qa_json_u64(document, qa_json_get(document, root, "version"), &version, error) || version != 2) {
         qa_json_destroy(document); return fail(error, "Unsupported explicit launch identity schema");
     }
     qa_arena arena = {0}; qa_launch_draft *draft = NULL;

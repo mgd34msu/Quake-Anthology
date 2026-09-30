@@ -115,33 +115,6 @@ bool application_native_suicide(void *opaque, qa_actor_id actor, qa_error *error
     return application_force_death(application, &request, error);
 }
 
-static const qa_launch_choices *native_mode_choices(qa_application *application)
-{
-    const qa_launch_snapshot *snapshot = application->routing_snapshot;
-    if (!snapshot && application->configuration)
-        snapshot = qa_configuration_current(application->configuration);
-    return qa_launch_snapshot_choices(snapshot);
-}
-
-static application_provider *native_mode_source(qa_application *application, qa_mode_id mode)
-{
-    const qa_launch_choices *choices = native_mode_choices(application);
-    if (!choices || mode.slot >= choices->mode_count)
-        return NULL;
-    const char *name = choices->modes[mode.slot].instance;
-    application_provider **providers = application->routing_providers
-        ? application->routing_providers : application->providers;
-    size_t count = application->routing_providers
-        ? application->routing_provider_count : application->provider_count;
-    for (size_t i = 0; i < count; ++i) {
-        application_provider *provider = providers[i];
-        if (provider && provider->constructed && provider->attached && provider->launch &&
-            name && !strcmp(provider->launch->selection.instance, name))
-            return provider;
-    }
-    return NULL;
-}
-
 static bool native_horde_finish(qa_q1_game_operation *operation, bool okay, qa_error *error)
 {
     if (okay && !qa_q1_game_operation_live(operation))
@@ -155,7 +128,7 @@ bool application_native_horde_spawn_monster(void *opaque, qa_mode_id mode,
     qa_actor_id *out, qa_error *error)
 {
     qa_application *application = opaque;
-    application_provider *provider = native_mode_source(application, mode);
+    application_provider *provider = application_mode_provider(application, mode);
     qa_actor_id manager;
     const char *name = qa_strings_cstr(qa_session_strings(application->session), classname);
     if (!provider || provider->kind != APPLICATION_PROVIDER_Q1 || !name)
@@ -172,7 +145,7 @@ bool application_native_horde_spawn_loot(void *opaque, qa_mode_id mode,
     const qa_mode_loot_spawn *spawn, qa_actor_id *out, qa_error *error)
 {
     qa_application *application = opaque;
-    application_provider *provider = native_mode_source(application, mode);
+    application_provider *provider = application_mode_provider(application, mode);
     const char *name = spawn ? qa_strings_cstr(qa_session_strings(application->session),
                                                spawn->classname) : NULL;
     if (!provider || provider->kind != APPLICATION_PROVIDER_Q1 || !name)
@@ -228,7 +201,7 @@ bool application_native_horde_alpha(void *opaque, qa_actor_id actor,
 
 float application_native_horde_random(void *opaque, qa_mode_id mode)
 {
-    application_provider *provider = native_mode_source(opaque, mode);
+    application_provider *provider = application_mode_provider(opaque, mode);
     return provider && provider->kind == APPLICATION_PROVIDER_Q1
         ? qa_q1_game_random(provider->state.q1) : 0;
 }

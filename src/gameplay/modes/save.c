@@ -66,7 +66,7 @@ static bool rules(qa_source_save_io *io, qa_mode_rules *p) {
     FIELD(bool, p->match_lock); FIELD(bool, p->paused); FIELD(bool, p->auto_lock);
     FIELD(bool, p->relics); FIELD(bool, p->single_player_active); FIELD(bool, p->tournament_restart);
     FIELD(bool, p->q2_rerelease); FIELD(bool, p->start_map); FIELD(bool, p->force_balance);
-    FIELD(bool, p->voting_disabled); return true;
+    FIELD(bool, p->voting_disabled); FIELD(bool, p->rogue_deathmatch); return true;
 }
 static bool statistics(qa_source_save_io *io, qa_mode_statistics *p) {
     FIELD(i32, p->score); FIELD(i32, p->kills); FIELD(i32, p->deaths); FIELD(i32, p->captures);
@@ -90,6 +90,8 @@ static bool member(qa_source_save_io *io, qa_mode_member_state *p) {
     if (!player_state(io, &p->player) || !statistics(io, &p->stats)) return false;
     FIELD(string, p->external_owner); FIELD(actor, p->relic); FIELD(actor, p->flag);
     FIELD(string, p->last_team); FIELD(u64, p->tech_sound_ns); FIELD(u64, p->regen_ns);
+    FIELD(u32, p->rogue_rune);
+    for (size_t i = 0; i < 3; ++i) FIELD(u64, p->rogue_noise_ns[i]);
     FIELD(u64, p->notice_ns); FIELD(u64, p->respawn_ns); FIELD(u64, p->team_switch_ns);
     FIELD(i32, p->regen_frame); FIELD(i32, p->extra_flags); FIELD(i32, p->location);
     FIELD(i32, p->spawn_state); FIELD(i32, p->suicide_count); FIELD(i32, p->introduction_frames);
@@ -188,6 +190,7 @@ static bool instance(qa_source_save_io *io, qa_modes *m, qa_mode_checkpoint *p) 
     for (size_t i = 0; i < 3; ++i) FIELD(actor, p->bases[i]);
     FIELD(actor, p->ball); FIELD(actor, p->tag); FIELD(actor, p->tag_owner); FIELD(actor, p->last_ball_touch);
     for (size_t i = 0; i < 3; ++i) FIELD(actor, p->last_spawns[i]);
+    FIELD(actor, p->rogue_spawn_spot);
     for (size_t i = 0; i < 4; ++i) {
         if (!vote(io, &p->votes[i])) return false;
         FIELD(u64, p->vote_started[i]);
@@ -227,7 +230,7 @@ static bool object(qa_source_save_io *io, qa_mode_object_checkpoint *p) {
 }
 static bool checkpoint(qa_source_save_io *io, qa_modes *m, qa_modes_checkpoint *p) {
     FIELD(u32, p->version);
-    if (p->version != 3) return save_fail(io, "unsupported typed mode checkpoint version");
+    if (p->version != 4) return save_fail(io, "unsupported typed mode checkpoint version");
     FIELD(u64, p->random); FIELD(u64, p->attack_sequence);
     ARRAY(p->mode_generations, p->generation_count, m->mode_capacity);
     if (p->generation_count != m->mode_capacity) return save_fail(io, "mode save capacity changed");
@@ -254,11 +257,11 @@ static bool checkpoint(qa_source_save_io *io, qa_modes *m, qa_modes_checkpoint *
 static bool header(qa_source_save_io *io) {
     static const uint8_t expected[8] = {'Q', 'A', 'M', 'O', 'D', 'E', 'S', 0};
     uint8_t signature[8] = {'Q', 'A', 'M', 'O', 'D', 'E', 'S', 0};
-    uint32_t version = 1;
+    uint32_t version = 2;
     if (!qa_source_save_bytes(io, signature, sizeof(signature)) || memcmp(signature, expected, sizeof(signature)))
         return save_fail(io, "invalid mode save signature");
     FIELD(u32, version);
-    return version == 1 || save_fail(io, "unsupported mode save version");
+    return version == 2 || save_fail(io, "unsupported mode save version");
 }
 static bool boundary(qa_modes *m, qa_error *e) {
     if (!m || m->callback_depth || !qa_session_safe(m->options.services.session) ||

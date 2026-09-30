@@ -1,5 +1,25 @@
 #include "internal.h"
 
+static float rogue_random(qa_modes *m, mode_instance *v) {
+    return m->options.hooks.source_random
+               ? m->options.hooks.source_random(m->options.hooks.context, v->id)
+               : mode_random_float(m);
+}
+static qa_vec3 rogue_velocity(qa_modes *m, mode_instance *v) {
+    float x = -300 + rogue_random(m, v) * 600;
+    float y = -300 + rogue_random(m, v) * 600;
+    return qa_v3(x, y, 300);
+}
+static bool rogue_message(qa_modes *m, mode_instance *v, qa_actor_id actor,
+                            const char *text, qa_error *e) {
+    qa_builtin_event event = {.kind = QA_BUILTIN_CENTERPRINT, .family = QA_GAME_Q1,
+        .provider = m->options.owner, .actor = actor, .time_ns = v->value.time_ns,
+        .flags = 1};
+    return qa_builtin_resource(&m->options.services, text, &event.text, e) &&
+           MODE_CALLBACK(m, m->options.hooks.emit
+               ? m->options.hooks.emit(m->options.hooks.context, v->id, &event, e)
+               : qa_builtin_emit(&m->options.services, &event, e));
+}
 static const char *actor_class(qa_modes *m, qa_actor_id actor) {
     qa_builtin_actor_traits traits = {0};
     if (!m->options.services.actor_traits ||
@@ -76,6 +96,27 @@ static bool relic_spot(qa_modes *m, mode_instance *v, bool initial, qa_vec3 *ori
     qa_string_id classname;
     if (!qa_builtin_resource(&m->options.services, "info_player_deathmatch", &classname, e))
         return false;
+    if (v->value.rules.source == QA_MODE_ROGUE) {
+        size_t previous = SIZE_MAX, first = SIZE_MAX, next = SIZE_MAX;
+        for (size_t i = 0; i < v->spawn_count; ++i) {
+            qa_mode_spawnpoint *point = &v->spawns[i];
+            if (point->classname != classname || !mode_live(m, point->actor)) continue;
+            if (first == SIZE_MAX) first = i;
+            if (previous != SIZE_MAX && next == SIZE_MAX) next = i;
+            if (qa_actor_id_equal(point->actor, v->rogue_spawn_spot)) previous = i;
+        }
+        size_t selected = next == SIZE_MAX ? first : next;
+        if (selected == SIZE_MAX)
+            return mode_fail(e, "Rogue runes require a live deathmatch spawn point");
+        qa_actor_id spot = v->spawns[selected].actor;
+        qa_body_state body;
+        if (!qa_world_body_read(m->options.services.world, spot, &body, e))
+            return false;
+        if (!mode_live(m, spot)) return mode_fail(e, "Rogue rune spawn retired during body read");
+        v->rogue_spawn_spot = spot;
+        *origin = body.origin;
+        return true;
+    }
     size_t count = 0;
     for (size_t i = 0; i < v->spawn_count; ++i)
         if (v->spawns[i].classname == classname)
@@ -101,7 +142,8 @@ static bool relic_spot(qa_modes *m, mode_instance *v, bool initial, qa_vec3 *ori
         }
     return mode_fail(e, "relic spawn traversal changed");
 }
-bool mode_relic_place(qa_modes *m, mode_instance *v, mode_object *o, bool initial, qa_error *e) {
+static bool relic_place(qa_modes *m, mode_instance *v, mode_object *o, bool initial, qa_error *e) {
+    qa_actor_id actor = o->actor;
     qa_vec3 origin;
     qa_error local = {0};
     if (!relic_spot(m, v, initial, &origin, &local)) {
@@ -113,12 +155,20 @@ bool mode_relic_place(qa_modes *m, mode_instance *v, mode_object *o, bool initia
         o->expire_ns = v->value.time_ns + 60 * MODE_SECOND;
         return initial ? mode_object_hide(m, o, true, e) : true;
     }
+    o = mode_object_get(m, actor);
+    if (!o) return mode_fail(e, "rune retired during spawn point query");
     qa_body_state body;
-    if (!qa_world_body_read(m->options.services.world, o->actor, &body, e))
+    if (!qa_world_body_read(m->options.services.world, actor, &body, e))
         return false;
+    o = mode_object_get(m, actor);
+    if (!o) return mode_fail(e, "rune retired during placement body read");
     body.origin = origin;
     body.ground = (qa_actor_id){0};
-    if (v->value.rules.source == QA_MODE_THREEWAVE) {
+    if (v->value.rules.source == QA_MODE_ROGUE) {
+        body.velocity = rogue_velocity(m, v);
+        o = mode_object_get(m, actor);
+        if (!o) return mode_fail(e, "Rogue rune retired during source velocity query");
+    } else if (v->value.rules.source == QA_MODE_THREEWAVE) {
         body.origin.z -= 24;
         body.velocity.x = -500 + mode_random_float(m) * 1000;
         body.velocity.y = -500 + mode_random_float(m) * 1000;
@@ -149,19 +199,30 @@ bool mode_relic_place(qa_modes *m, mode_instance *v, mode_object *o, bool initia
     o->physics.motion = QA_PHYSICS_TOSS;
     o->dropped = false;
     o->value.deadline_ns = 0;
-    o->expire_ns = v->value.time_ns + (v->value.rules.source == QA_MODE_THREEWAVE ? 120
+    o->expire_ns = v->value.time_ns + (v->value.rules.source == QA_MODE_THREEWAVE ||
+                                        v->value.rules.source == QA_MODE_ROGUE ? 120
                                        : v->value.rules.source == QA_MODE_LMCTF   ? 30
                                                                                   : 60) *
                                           MODE_SECOND;
-    return qa_world_body_write(m->options.services.world, o->actor, &body, e) &&
-           mode_object_hide(m, o, false, e);
+    if (!qa_world_body_write(m->options.services.world, actor, &body, e)) return false;
+    o = mode_object_get(m, actor);
+    if (!o) return mode_fail(e, "rune retired during placement body write");
+    if (!mode_object_hide(m, o, false, e)) return false;
+    return mode_object_get(m, actor) != NULL || mode_fail(e, "rune retired during placement link");
+}
+bool mode_relic_place(qa_modes *m, mode_instance *v, mode_object *o, bool initial, qa_error *e) {
+    return MODE_CALLBACK(m, relic_place(m, v, o, initial, e));
 }
 
 bool qa_modes_has_relic(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_relic_kind kind) {
     mode_instance *v = mode_get(m, id);
-    if (!v || !v->value.rules.enabled || !v->value.rules.relics)
+    if (!v || !v->value.rules.enabled ||
+        (!v->value.rules.relics && v->value.rules.source != QA_MODE_ROGUE))
         return false;
     mode_member *p = mode_member_get(m, v, actor);
+    if (v->value.rules.source == QA_MODE_ROGUE)
+        return p && kind >= QA_RELIC_RESISTANCE && kind <= QA_RELIC_REGENERATION &&
+               p->rogue_rune == (UINT32_C(1) << kind);
     mode_object *o = p ? mode_object_get(m, p->relic) : NULL;
     return o && o->spec.kind == QA_MODE_OBJECT_RELIC && o->spec.relic == kind &&
            qa_actor_id_equal(o->value.carrier, actor);
@@ -169,8 +230,25 @@ bool qa_modes_has_relic(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_relic_
 bool mode_relic_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id actor,
                       bool *accepted, qa_error *e) {
     mode_member *p = mode_member_get(m, v, actor);
-    if (!p || !v->value.rules.relics)
+    if (!p || (!v->value.rules.relics && v->value.rules.source != QA_MODE_ROGUE))
         return true;
+    if (v->value.rules.source == QA_MODE_ROGUE) {
+        if (p->rogue_rune) {
+            bool notice = p->notice_ns < v->value.time_ns;
+            p->notice_ns = v->value.time_ns + 5 * MODE_SECOND;
+            return !notice || rogue_message(m, v, actor, "$qc_already_have_rune", e);
+        }
+        if (o->spec.relic > QA_RELIC_REGENERATION) return true;
+        p->rogue_rune = UINT32_C(1) << o->spec.relic;
+        qa_actor_id rune = o->actor;
+        static const char *messages[] = {"$qc_rune_resistance", "$qc_rune_strength",
+                                        "$qc_rune_haste", "$qc_rune_regeneration"};
+        const char *message = messages[o->spec.relic];
+        *accepted = true;
+        if (!mode_sound(m, v, actor, "weapons/pkup.wav", 1, e) ||
+            !rogue_message(m, v, actor, message, e)) return false;
+        return !mode_live(m, rune) || qa_session_release(m->options.services.session, rune, e);
+    }
     if (v->value.rules.source == QA_MODE_Q2_CTF &&
         (v->value.phase == QA_MODE_SETUP || v->value.phase == QA_MODE_COUNTDOWN))
         return true;
@@ -211,6 +289,13 @@ bool qa_modes_tech_sound(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_relic
     if (!handled)
         return mode_fail(e, "missing tech sound result");
     *handled = p && qa_modes_has_relic(m, id, actor, kind);
+    if (v && v->value.rules.source == QA_MODE_ROGUE) {
+        if (!*handled || kind > QA_RELIC_HASTE ||
+            p->rogue_noise_ns[kind] >= v->value.time_ns) return true;
+        p->rogue_noise_ns[kind] = v->value.time_ns + MODE_SECOND;
+        static const char *sounds[] = {"runes/end1.wav", "runes/end2.wav", "runes/end3.wav"};
+        return mode_sound(m, v, actor, sounds[kind], 1, e);
+    }
     if (!*handled || v->value.time_ns < p->tech_sound_ns)
         return true;
     p->tech_sound_ns = v->value.time_ns + MODE_SECOND;
@@ -235,6 +320,7 @@ bool qa_modes_attack_damage(qa_modes *m, qa_mode_id id, qa_actor_id actor, float
     if (!v || !out || !isfinite(amount))
         return mode_fail(e, "invalid rune attack");
     *out = amount;
+    if (v->value.rules.source == QA_MODE_ROGUE && !v->value.rules.rogue_deathmatch) return true;
     if (!qa_modes_has_relic(m, id, actor, QA_RELIC_STRENGTH))
         return true;
     *out = v->value.rules.source == QA_MODE_LMCTF ? truncf(amount * 1.75f) : amount * 2;
@@ -246,6 +332,7 @@ bool qa_modes_resist_damage(qa_modes *m, qa_mode_id id, qa_actor_id actor, float
     if (!v || !out || !isfinite(amount))
         return mode_fail(e, "invalid rune resistance");
     *out = amount;
+    if (v->value.rules.source == QA_MODE_ROGUE && !v->value.rules.rogue_deathmatch) return true;
     if (!qa_modes_has_relic(m, id, actor, QA_RELIC_RESISTANCE))
         return true;
     *out = v->value.rules.source == QA_MODE_LMCTF    ? truncf(amount / 1.75f)
@@ -255,7 +342,7 @@ bool qa_modes_resist_damage(qa_modes *m, qa_mode_id id, qa_actor_id actor, float
         return mode_sound(m, v, actor, "ctf/tech1.wav", 1, e);
     if (v->value.rules.source == QA_MODE_LMCTF)
         return mode_sound(m, v, actor, "ctf/resist.wav", 1, e);
-    if (v->value.rules.source == QA_MODE_THREEWAVE) {
+    if (v->value.rules.source == QA_MODE_THREEWAVE || v->value.rules.source == QA_MODE_ROGUE) {
         bool handled;
         return qa_modes_tech_sound(m, id, actor, QA_RELIC_RESISTANCE, false, false, &handled, e);
     }
@@ -295,6 +382,25 @@ bool qa_modes_after_damage(qa_modes *m, qa_mode_id id, const qa_damage_outcome *
 }
 bool mode_relic_frame(qa_modes *m, mode_instance *v, qa_actor_id actor, mode_member *p,
                       qa_error *e) {
+    if (v->value.rules.source == QA_MODE_ROGUE) {
+        if (v->value.rules.rogue_deathmatch && v->value.rules.relics && !v->relics_started) {
+            v->relics_started = true;
+            v->relic_spawn_ns = v->value.time_ns + MODE_SECOND / 10;
+        }
+        if (!qa_modes_has_relic(m, v->id, actor, QA_RELIC_REGENERATION) ||
+            p->regen_ns >= v->value.time_ns) return true;
+        qa_combat_state state;
+        if (!qa_combat_read(m->options.services.combat, actor, &state, e)) return false;
+        if (state.health >= 100) return true;
+        if (!mode_sound(m, v, actor, "runes/end4.wav", 1, e)) return false;
+        if (!mode_member_get(m, v, actor)) return mode_fail(e, "Rogue rune carrier retired during regeneration");
+        if (!qa_combat_set_health(m->options.services.combat, actor, fminf(100, state.health + 5), e))
+            return false;
+        p = mode_member_get(m, v, actor);
+        if (!p) return mode_fail(e, "Rogue rune carrier retired during regeneration health store");
+        p->regen_ns = v->value.time_ns + MODE_SECOND;
+        return true;
+    }
     if (!qa_modes_has_relic(m, v->id, actor, QA_RELIC_REGENERATION) || !mode_alive(m, actor))
         return true;
     qa_combat_state state;
@@ -356,6 +462,49 @@ bool mode_relic_frame(qa_modes *m, mode_instance *v, qa_actor_id actor, mode_mem
                                    e);
     }
     return true;
+}
+
+bool mode_rogue_relic_drop(qa_modes *m, mode_instance *v, qa_actor_id actor, mode_member *p,
+                            qa_error *e) {
+    qa_body_state carrier;
+    if (!qa_world_body_read(m->options.services.world, actor, &carrier, e)) return false;
+    p = mode_member_get(m, v, actor);
+    if (!p) return mode_fail(e, "Rogue rune carrier retired during drop body read");
+    qa_relic_kind kind = QA_RELIC_RESISTANCE;
+    while ((UINT32_C(1) << kind) != p->rogue_rune && kind < QA_RELIC_REGENERATION) ++kind;
+    qa_mode_object_spec spec = {.kind = QA_MODE_OBJECT_RELIC, .relic = kind,
+                                .origin = carrier.origin, .suspended = true};
+    qa_actor_id rune;
+    if (!qa_modes_spawn_object(m, v->id, &spec, &rune, e)) return false;
+    mode_object *o = mode_object_get(m, rune);
+    qa_body_state body;
+    if (!o || !qa_world_body_read(m->options.services.world, rune, &body, e)) goto rollback;
+    body.velocity = rogue_velocity(m, v);
+    o = mode_object_get(m, rune);
+    if (!o || !mode_member_get(m, v, actor)) {
+        mode_fail(e, "Rogue rune or carrier retired during drop velocity query");
+        goto rollback;
+    }
+    o->physics.motion = QA_PHYSICS_TOSS;
+    o->expire_ns = v->value.time_ns + 120 * MODE_SECOND;
+    if (!qa_world_body_write(m->options.services.world, rune, &body, e)) goto rollback;
+    o = mode_object_get(m, rune);
+    if (!o || !mode_member_get(m, v, actor)) {
+        mode_fail(e, "Rogue rune or carrier retired during drop body write");
+        goto rollback;
+    }
+    if (!mode_object_hide(m, o, false, e)) goto rollback;
+    o = mode_object_get(m, rune);
+    p = mode_member_get(m, v, actor);
+    if (!o || !p) {
+        mode_fail(e, "Rogue rune or carrier retired during drop link");
+        goto rollback;
+    }
+    p->rogue_rune = 0;
+    return true;
+rollback:
+    if (mode_live(m, rune)) qa_session_release(m->options.services.session, rune, NULL);
+    return false;
 }
 bool qa_modes_grapple_allowed(qa_modes *m, qa_mode_id id, qa_actor_id owner, qa_actor_id target,
                               bool pulse) {

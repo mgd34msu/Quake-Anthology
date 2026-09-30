@@ -20,21 +20,36 @@ static bool q2_armor(void *opaque, qa_actor_id actor, qa_error *error) {
     return qa_q2_item_give(opaque, actor, "item_armor_body", 0, &accepted, error);
 }
 
-static application_provider *mode_source(qa_application *app, qa_mode_id mode) {
+application_provider *application_mode_provider(qa_application *app, qa_mode_id mode) {
     qa_mode_view view;
     if (!app->modes || !qa_modes_read(app->modes, mode, &view, NULL)) return NULL;
     const qa_launch_snapshot *snapshot = app->routing_snapshot;
     if (!snapshot && app->configuration) snapshot = qa_configuration_current(app->configuration);
     const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
-    if (!choices || mode.slot >= choices->mode_count) return NULL;
+    size_t index = 0;
+    while (index < app->mode_count &&
+           (app->mode_ids[index].slot != mode.slot ||
+            app->mode_ids[index].generation != mode.generation)) ++index;
+    if (!choices || index >= app->mode_count || index >= choices->mode_count) return NULL;
     application_provider **providers = app->routing_providers ? app->routing_providers : app->providers;
     size_t count = app->routing_providers ? app->routing_provider_count : app->provider_count;
     for (size_t i = 0; i < count; ++i) {
         application_provider *p = providers[i];
         if (p && p->constructed && p->attached && !p->close_pending && p->launch &&
-            !strcmp(p->launch->selection.instance, choices->modes[mode.slot].instance)) return p;
+            !strcmp(p->launch->selection.instance, choices->modes[index].instance)) return p;
     }
     return NULL;
+}
+
+bool application_native_mode_emit(void *opaque, qa_mode_id mode,
+                                    const qa_builtin_event *event, qa_error *error) {
+    qa_application *app = opaque;
+    application_provider *source = application_mode_provider(app, mode);
+    if (!source || !event)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "mode event has no live source content");
+    qa_builtin_event projected = *event;
+    projected.provider = source->owner;
+    return application_emit(app, &projected, error);
 }
 
 bool application_native_mode_select_weapon(void *opaque, qa_actor_id actor,
@@ -99,7 +114,7 @@ bool application_native_mode_character_frame(void *opaque, qa_actor_id actor, in
 bool application_native_mode_body_armor(void *opaque, qa_mode_id mode,
                                           qa_actor_id actor, qa_error *error) {
     qa_application *app = opaque;
-    application_provider *p = mode_source(app, mode);
+    application_provider *p = application_mode_provider(app, mode);
     if (!p || p->kind != APPLICATION_PROVIDER_Q2)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Tag body armor requires its native Q2 source");
     return qa_q2_run_actor(p->state.q2, actor, q2_armor, p->state.q2, error);
@@ -129,7 +144,7 @@ bool application_native_mode_quad(void *opaque, qa_mode_id mode, qa_actor_id act
     if (family != QA_GAME_Q1 && family != QA_GAME_Q2)
         return application_fail(error, QA_ERROR_ARGUMENT, "quad grant has no source timer policy");
     bool stack = family == QA_GAME_Q2;
-    application_provider *source = stack ? mode_source(app, mode) : NULL;
+    application_provider *source = stack ? application_mode_provider(app, mode) : NULL;
     if (stack && (!source || source->kind != APPLICATION_PROVIDER_Q2))
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Tag quad has no native Q2 mode source");
     if (!p || !p->constructed || p->close_pending)

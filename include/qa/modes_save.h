@@ -11,6 +11,8 @@ typedef struct qa_mode_member_state {
     qa_actor_id relic, flag;
     qa_team_id last_team;
     uint64_t tech_sound_ns, regen_ns, notice_ns, respawn_ns, team_switch_ns;
+    uint64_t rogue_noise_ns[3];
+    uint32_t rogue_rune;
     int32_t regen_frame, extra_flags, location, spawn_state, suicide_count, introduction_frames;
     uint32_t ghost_code;
     uint32_t vote_calls[4];
@@ -73,6 +75,7 @@ typedef struct qa_mode_checkpoint {
     size_t item_count;
     qa_actor_id bases[3], ball, tag, tag_owner, last_ball_touch;
     qa_actor_id last_spawns[3];
+    qa_actor_id rogue_spawn_spot;
     qa_mode_vote votes[4];
     uint64_t vote_started[4], ready_since_ns, next_second_ns;
     uint64_t flag_sound_ns[3], attack_sound_ns[3];

@@ -91,19 +91,30 @@ bool mode_alive(qa_modes *m, qa_actor_id actor) {
     return mode_live(m, actor) && qa_combat_read(m->options.services.combat, actor, &state, NULL) &&
            state.health > 0;
 }
-bool mode_sound(qa_modes *m, mode_instance *v, qa_actor_id actor, const char *sound, float volume,
-                qa_error *e) {
+static bool sound_event(qa_modes *m, mode_instance *v, qa_actor_id actor, const char *sound,
+                          float volume, qa_error *e) {
     qa_builtin_event event = {.kind = QA_BUILTIN_SOUND,
                               .provider = m->options.owner,
                               .actor = actor,
                               .time_ns = v->value.time_ns,
                               .volume = volume,
                               .attenuation = 1};
+    qa_body_state body;
+    if (!qa_world_body_read(m->options.services.world, actor, &body, e)) return false;
+    if (!mode_live(m, actor)) return mode_fail(e, "mode sound actor retired during body read");
+    event.origin = body.origin;
+    event.channel = 3;
     event.family = v->value.rules.source <= QA_MODE_Q1_HORDE ? QA_GAME_Q1
                    : v->value.rules.source < QA_MODE_Q3      ? QA_GAME_Q2
                                                              : QA_GAME_Q3;
     return qa_builtin_resource(&m->options.services, sound, &event.resource, e) &&
-           qa_builtin_emit(&m->options.services, &event, e);
+           (m->options.hooks.emit
+               ? m->options.hooks.emit(m->options.hooks.context, v->id, &event, e)
+               : qa_builtin_emit(&m->options.services, &event, e));
+}
+bool mode_sound(qa_modes *m, mode_instance *v, qa_actor_id actor, const char *sound, float volume,
+                qa_error *e) {
+    return MODE_CALLBACK(m, sound_event(m, v, actor, sound, volume, e));
 }
 bool mode_count(qa_modes *m, qa_actor_id actor, qa_item_id item, double *count, qa_error *e) {
     qa_inventory_entry entry;
@@ -858,6 +869,8 @@ bool qa_modes_actor_released(qa_modes *m, qa_actor_record released, qa_error *e)
             v->tag = (qa_actor_id){0};
         if (qa_actor_id_equal(v->tag_owner, released.id))
             v->tag_owner = (qa_actor_id){0};
+        if (qa_actor_id_equal(v->rogue_spawn_spot, released.id))
+            v->rogue_spawn_spot = (qa_actor_id){0};
     }
     mode_player *p = &m->players[released.id.slot];
     if (!p->active || !qa_actor_id_equal(p->value.actor, released.id))

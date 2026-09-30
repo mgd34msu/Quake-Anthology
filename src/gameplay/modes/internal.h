@@ -45,6 +45,7 @@ typedef struct mode_instance {
     qa_actor_id bases[3], ball, tag, tag_owner, last_ball_touch;
     bool base_admitting[3];
     qa_actor_id last_spawns[3];
+    qa_actor_id rogue_spawn_spot;
     qa_mode_vote votes[4];
     uint64_t vote_started[4], ready_since_ns, next_second_ns;
     uint64_t flag_sound_ns[3], attack_sound_ns[3];
@@ -160,6 +161,7 @@ bool mode_object_bind_objective(qa_modes *, mode_object *, qa_error *);
 bool mode_join(qa_modes *, mode_instance *, qa_actor_id, qa_team_id, bool, bool, qa_error *);
 bool mode_relic_place(qa_modes *, mode_instance *, mode_object *, bool initial, qa_error *);
 bool mode_relic_spawn_all(qa_modes *, mode_instance *, qa_error *);
+bool mode_rogue_relic_drop(qa_modes *, mode_instance *, qa_actor_id, mode_member *, qa_error *);
 bool mode_team_info_frame(qa_modes *, mode_instance *, qa_error *);
 bool mode_update_ghosts(qa_modes *, mode_instance *, qa_error *);
 void mode_stat_add(mode_instance *, int32_t *, int32_t);

@@ -327,7 +327,9 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
     if (!o->spec.item && item && !qa_builtin_resource(&m->options.services, item, &o->spec.item, e))
         goto rollback;
     qa_item_id scoped_item;
-    if (o->spec.item && !mode_inventory_item(m, v, o->spec.item, &scoped_item, e))
+    if (o->spec.item && !(v->value.rules.source == QA_MODE_ROGUE &&
+                          spec->kind == QA_MODE_OBJECT_RELIC) &&
+        !mode_inventory_item(m, v, o->spec.item, &scoped_item, e))
         goto rollback;
     if (spec->kind == QA_MODE_OBJECT_FLAG) {
         o->value.skin = team > 0 ? team : 0;
@@ -348,7 +350,8 @@ static bool spawn_object(qa_modes *m, qa_mode_id id, const qa_mode_object_spec *
         }
     }
     if (spec->kind == QA_MODE_OBJECT_RELIC)
-        o->expire_ns = v->value.time_ns + (v->value.rules.source == QA_MODE_THREEWAVE ? 120
+        o->expire_ns = v->value.time_ns + (v->value.rules.source == QA_MODE_THREEWAVE ||
+                                            v->value.rules.source == QA_MODE_ROGUE ? 120
                                            : v->value.rules.source == QA_MODE_LMCTF   ? 30
                                                                                       : 60) *
                                               MODE_SECOND;
@@ -755,6 +758,8 @@ static bool drop(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool death, qa_e
     mode_member *p = mode_member_get(m, v, actor);
     if (!p)
         return true;
+    if (v->value.rules.source == QA_MODE_ROGUE && p->rogue_rune &&
+        !mode_rogue_relic_drop(m, v, actor, p, e)) return false;
     qa_actor_id flag = p->flag, relic = p->relic;
     p->flag = (qa_actor_id){0};
     p->relic = (qa_actor_id){0};

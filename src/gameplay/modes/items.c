@@ -111,6 +111,8 @@ static bool collect_items(qa_modes *m, qa_actor_id actor, bool create,
         mode_instance *v = o->active ? mode_get(m, o->mode) : NULL;
         if (!v || !o->spec.item || !mode_member_get(m, v, actor))
             continue;
+        if (v->value.rules.source == QA_MODE_ROGUE && o->spec.kind == QA_MODE_OBJECT_RELIC)
+            continue;
         qa_item_id item = 0;
         if (create) {
             if (!mode_inventory_item(m, v, o->spec.item, &item, e)) return false;

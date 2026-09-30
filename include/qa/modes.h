@@ -125,6 +125,9 @@ typedef struct qa_mode_rules {
     bool enabled, friendly_fire, force_join, match_lock, paused, auto_lock;
     bool relics, single_player_active, tournament_restart, q2_rerelease, start_map, force_balance,
         voting_disabled;
+    /* Actual Rogue source deathmatch gate for damage effects. relics separately
+     * admits the gamecfg bit-1 startup; carried runes survive that bit changing. */
+    bool rogue_deathmatch;
 } qa_mode_rules;
 typedef struct qa_match_player {
     qa_actor_id actor;
@@ -316,6 +319,9 @@ typedef struct qa_modes_hooks {
     /* Direct source death, bypassing damage admission and armor. Commit shared
      * health then dispatch selected character death and attached cleanup once. */
     bool (*force_death)(void *, const qa_damage_request *, qa_error *);
+    /* Source-authored audiovisual events use this mode's actual content owner.
+     * The synchronous event and message arguments remain borrowed. */
+    bool (*emit)(void *, qa_mode_id, const qa_builtin_event *, qa_error *);
 } qa_modes_hooks;
 typedef struct qa_modes_options {
     qa_actor_owner owner;
@@ -505,6 +511,9 @@ bool qa_modes_damage_effect(qa_modes *, qa_mode_id, qa_damage_effect_stage,
                             const qa_damage_request *, qa_damage_effect *, qa_error *);
 bool qa_modes_haste_weapon(qa_modes *, qa_mode_id, qa_actor_id, qa_item_id weapon,
                            float base_interval, float *interval, float *nail_speed, qa_error *);
+/* Actual firing cooldown producer; observations use haste_weapon above. */
+bool qa_modes_weapon_attack_delay(qa_modes *, qa_mode_id, qa_actor_id, qa_item_id weapon,
+                                  float *delay, qa_error *);
 qa_team_id qa_modes_combat_team(qa_modes *, qa_mode_id, qa_actor_id, qa_team_id fallback);
 bool qa_modes_has_relic(qa_modes *, qa_mode_id, qa_actor_id, qa_relic_kind);
 bool qa_modes_tech_sound(qa_modes *, qa_mode_id, qa_actor_id, qa_relic_kind, bool quad,
