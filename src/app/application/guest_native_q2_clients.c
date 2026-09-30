@@ -187,9 +187,11 @@ bool application_native_q2_client_disconnect(application_provider *provider, uin
     bool ok = true; qa_error first = {0};
     if (client->connected && !client->disconnect_started) {
         client->disconnect_started = true; client->connected = client->begun = false;
-        ++engine->calls;
-        ok = qa_native_host_client_disconnect(provider->state.native.host, slot, &first);
-        --engine->calls;
+        if (!qa_native_terminal(qa_native_host_instance(provider->state.native.host))) {
+            ++engine->calls;
+            ok = qa_native_host_client_disconnect(provider->state.native.host, slot, &first);
+            --engine->calls;
+        }
     }
     qa_error current = {0};
     if (!qa_native_host_detach_actor(provider->state.native.host, slot, actor, &current)) {
