@@ -78,6 +78,31 @@ static void rules_write(qa_json_writer *w, const qa_mode_rules *v)
 #undef W
     qa_json_writer_end(w);
 }
+static void mode_write(qa_json_writer *w, const qa_launch_mode *mode)
+{
+    text(w, mode->instance);
+    rules_write(w, &mode->rules);
+    for (size_t i = 0; i < 3; ++i)
+        text(w, mode->teams[i]);
+    text(w, mode->forced_team);
+    boolean(w, mode->primary_score);
+}
+
+bool qa_launch_mode_identity_encode(const qa_launch_snapshot *snapshot,
+                                    size_t index, qa_buffer *out,
+                                    qa_error *error)
+{
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
+    if (!snapshot || !choices || !out || index >= choices->mode_count)
+        return fail(error, "Missing selected mode identity");
+    qa_json_writer writer = {0};
+    qa_json_writer_array(&writer);
+    mode_write(&writer, &choices->modes[index]);
+    qa_json_writer_end(&writer);
+    bool ok = qa_json_writer_finish(&writer, out, error);
+    qa_json_writer_destroy(&writer);
+    return ok;
+}
 static void resource_write(qa_json_writer *w, qa_catalog *catalog, const qa_launch_resource *v)
 {
     qa_json_writer_array(w); product(w, catalog, v->product); text(w, v->path);
@@ -114,9 +139,7 @@ bool qa_launch_identity_encode(const qa_launch_snapshot *snapshot, const qa_acto
         const qa_launch_mod_selection *p = &v->mods[i]; text(&w, p->instance); text(&w, p->component); boolean(&w, p->enabled);
     END;
     BEGIN("modes", v->mode_count);
-        const qa_launch_mode *p = &v->modes[i]; text(&w, p->instance); rules_write(&w, &p->rules);
-        for (size_t j = 0; j < 3; ++j) text(&w, p->teams[j]);
-        text(&w, p->forced_team); boolean(&w, p->primary_score);
+        mode_write(&w, &v->modes[i]);
     END;
     BEGIN("equipment", v->equipment_count);
         const qa_launch_equipment *p = &v->equipment[i]; scope(&w, registry, p->scope);
