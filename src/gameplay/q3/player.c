@@ -1,6 +1,8 @@
 #include "internal.h"
 
 bool qa_q3_player_notarget(qa_q3_game *game, qa_actor_id actor, bool *enabled, qa_error *error) {
+    if (!game || game->source_restored)
+        return q3_fail(error, "Q3 player source restoration is pending or unavailable");
     q3_actor *source = q3_actor_get(game, actor);
     if (!source || source->kind != Q3_ACTOR_PLAYER || !enabled)
         return q3_fail(error, "Q3 notarget requires an actual player");
@@ -42,7 +44,7 @@ static bool activate_holdable(qa_q3_game *game, qa_actor_id actor, qa_q3_holdabl
 }
 bool qa_q3_activate_holdable(qa_q3_game *game, qa_actor_id actor, qa_q3_holdable expected,
                              bool prediction, qa_error *error) {
-    if (!game || game->observation_depth == SIZE_MAX)
+    if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
         return q3_fail(error, "invalid Q3 holdable action boundary");
     ++game->observation_depth;
     bool okay = activate_holdable(game, actor, expected, prediction, error);
@@ -160,7 +162,7 @@ bool qa_q3_grapple_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_grapple
                                  .fire_held = player->fire_held};
     return true;
 }
-bool qa_q3_release_grapple(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+static bool release_grapple(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
@@ -169,6 +171,14 @@ bool qa_q3_release_grapple(qa_q3_game *game, qa_actor_id actor, qa_error *error)
     entry->state.player.hook = (qa_actor_id){0};
     return !q3_actor_get(game, hook) ||
            qa_session_release(game->options.services.session, hook, error);
+}
+bool qa_q3_release_grapple(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+    if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid Q3 grapple release boundary");
+    ++game->observation_depth;
+    bool okay = release_grapple(game, actor, error);
+    --game->observation_depth;
+    return okay;
 }
 bool qa_q3_player_set_view(qa_q3_game *game, qa_actor_id actor, qa_vec3 angles, float height,
                            qa_error *error) {
@@ -480,8 +490,8 @@ static void torso(qa_q3_player_state *player, int32_t animation) {
     if (!player->dead)
         player->torso_animation = ((player->torso_animation & 128) ^ 128) | animation;
 }
-bool qa_q3_map_ammo_regeneration(qa_q3_game *game, qa_actor_id actor, qa_q3_weapon weapon,
-                                 qa_item_id ammo, qa_error *error) {
+static bool map_ammo_regeneration(qa_q3_game *game, qa_actor_id actor, qa_q3_weapon weapon,
+                                  qa_item_id ammo, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER || weapon <= QA_Q3_W_GAUNTLET ||
         weapon >= QA_Q3_WEAPON_COUNT || weapon == QA_Q3_W_GRAPPLE)
@@ -491,11 +501,23 @@ bool qa_q3_map_ammo_regeneration(qa_q3_game *game, qa_actor_id actor, qa_q3_weap
         if (!qa_inventory_entry_read(game->options.services.inventory, actor, ammo, &selected,
                                      error))
             return false;
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+            return true;
     }
     if (entry->state.player.ammo_regeneration_items[weapon] != ammo)
         entry->state.player.ammo_time_ms[weapon] = 0;
     entry->state.player.ammo_regeneration_items[weapon] = ammo;
     return true;
+}
+bool qa_q3_map_ammo_regeneration(qa_q3_game *game, qa_actor_id actor, qa_q3_weapon weapon,
+                                 qa_item_id ammo, qa_error *error) {
+    if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid Q3 ammunition mapping boundary");
+    ++game->observation_depth;
+    bool okay = map_ammo_regeneration(game, actor, weapon, ammo, error);
+    --game->observation_depth;
+    return okay;
 }
 bool qa_q3_set_weapon_slot(qa_q3_game *game, qa_actor_id actor, bool holster, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);

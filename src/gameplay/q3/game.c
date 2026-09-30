@@ -456,9 +456,7 @@ bool qa_q3_frame(qa_q3_game *game, int32_t previous, int32_t now, qa_error *erro
     game->now_ms = now;
     return q3_map_frame_begin(game, error);
 }
-bool qa_q3_actor_frame(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
-    if (!game || game->source_restored)
-        return q3_fail(error, "Q3 source restoration is pending");
+static bool actor_frame(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     bool handled = false;
     if (!q3_map_actor_frame(game, actor, &handled, error))
         return false;
@@ -507,6 +505,14 @@ bool qa_q3_actor_frame(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     default:
         return true;
     }
+}
+bool qa_q3_actor_frame(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+    if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid Q3 actor frame boundary");
+    ++game->observation_depth;
+    bool okay = actor_frame(game, actor, error);
+    --game->observation_depth;
+    return okay;
 }
 void qa_q3_actor_released(qa_q3_game *game, qa_actor_record record) {
     if (!game || record.id.slot >= game->capacity)

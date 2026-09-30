@@ -4,21 +4,37 @@ bool q3_killbox(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     qa_body_state body;
     if (!qa_world_body_read(game->options.services.world, actor, &body, error))
         return false;
+    if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
+        return true;
     q3_snapshot_frame *frame = q3_bounds_snapshot(
         game, qa_bounds_translate(body.bounds, body.origin), QA_COLLISION_SOLID, error);
     if (!frame)
         return false;
     bool ok = true;
     for (size_t i = 0; i < frame->snapshot.count; ++i) {
+        if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
+            break;
         qa_actor_id candidate = frame->snapshot.ids[i];
         if (qa_actor_id_equal(candidate, actor))
+            continue;
+        qa_linked_body linked;
+        if (!qa_world_linked(game->options.services.world, candidate, &linked))
+            continue;
+        bool player = q3_is_player(game, candidate);
+        if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
+            break;
+        if (!player || !qa_actors_get(qa_session_actors(game->options.services.session), candidate))
             continue;
         qa_combat_state state;
         qa_error ignored = {0};
         if (!qa_combat_read(game->options.services.combat, candidate, &state, &ignored) ||
             !state.can_take_damage)
             continue;
-        if (!q3_damage(game, candidate, actor, actor, QA_Q3_W_NONE, 18, 8, 100000,
+        if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
+            break;
+        if (!qa_actors_get(qa_session_actors(game->options.services.session), candidate))
+            continue;
+        if (!q3_damage(game, candidate, actor, actor, QA_Q3_W_NONE, 18, 12, 100000,
                        qa_v3(0, 0, 0), body.origin, false, NULL, error))
             ok = false;
         if (!ok)
@@ -29,31 +45,47 @@ bool q3_killbox(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     frame->active = false;
     return ok;
 }
-bool qa_q3_teleport(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin, qa_vec3 angles,
-                    qa_error *error) {
+static bool teleport_player(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin, qa_vec3 angles,
+                            qa_error *error) {
     if (!qa_vec_finite(origin) || !qa_vec_finite(angles))
         return q3_fail(error, "invalid Q3 teleport destination");
-    q3_actor *entry = q3_actor_get(game, actor);
-    if (!game || !q3_is_player(game, actor))
+    if (!q3_is_player(game, actor))
         return q3_fail(error, "Q3 teleport requires a live player");
+    if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
+        return true;
     qa_body_state body;
     if (!qa_world_body_read(game->options.services.world, actor, &body, error))
         return false;
+    if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
+        return true;
+    q3_actor *entry = q3_actor_get(game, actor);
     qa_builtin_actor_traits traits = {0};
     bool native = entry && entry->kind == Q3_ACTOR_PLAYER &&
                   (entry->state.player.selections & QA_Q3_CHARACTER);
     if (!native && game->options.services.actor_traits)
         (void)game->options.services.actor_traits(game->options.services.context, actor, &traits);
+    if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
+        return true;
+    entry = q3_actor_get(game, actor);
+    if (native && (!entry || entry->kind != Q3_ACTOR_PLAYER))
+        return true;
     bool spectator = native ? entry->state.player.spectator : traits.spectator;
-    if (!spectator && (!q3_event(game, actor, (qa_actor_id){0}, QA_BUILTIN_TELEPORT, 43, 0,
-                                 body.origin, origin, qa_v3(0, 0, 0), error) ||
-                       !q3_event(game, actor, (qa_actor_id){0}, QA_BUILTIN_TELEPORT, 42, 0, origin,
-                                 body.origin, qa_v3(0, 0, 0), error)))
-        return false;
+    if (!spectator) {
+        if (!q3_event(game, actor, (qa_actor_id){0}, QA_BUILTIN_TELEPORT, 43, 0,
+                      body.origin, origin, qa_v3(0, 0, 0), error))
+            return false;
+        if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
+            return true;
+        if (!q3_event(game, actor, (qa_actor_id){0}, QA_BUILTIN_TELEPORT, 42, 0, origin,
+                      body.origin, qa_v3(0, 0, 0), error))
+            return false;
+    }
     if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
         return true;
     if (!qa_world_unlink(game->options.services.world, actor, error))
         return false;
+    if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
+        return true;
     body.origin = qa_vec_add(origin, qa_v3(0, 0, 1));
     body.angles = angles;
     body.ground = (qa_actor_id){0};
@@ -62,6 +94,8 @@ bool qa_q3_teleport(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin, qa_vec3
     body.velocity = qa_vec_scale(forward, 400);
     if (!qa_world_body_write(game->options.services.world, actor, &body, error))
         return false;
+    if (!qa_actors_get(qa_session_actors(game->options.services.session), actor))
+        return true;
     entry = q3_actor_get(game, actor);
     if (entry && entry->kind == Q3_ACTOR_PLAYER) {
         qa_q3_player_state *player = &entry->state.player;
@@ -87,6 +121,15 @@ bool qa_q3_teleport(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin, qa_vec3
                qa_world_link(game->options.services.world, actor, NULL, error);
     }
     return true;
+}
+bool qa_q3_teleport(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin, qa_vec3 angles,
+                    qa_error *error) {
+    if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid Q3 teleport action boundary");
+    ++game->observation_depth;
+    bool okay = teleport_player(game, actor, origin, angles, error);
+    --game->observation_depth;
+    return okay;
 }
 static bool portal_rollback(qa_q3_game *game, qa_actor_id player, qa_actor_id portal,
                             qa_actor_id previous_portal, qa_actor_id published_portal,
