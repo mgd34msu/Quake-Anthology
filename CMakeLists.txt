@@ -628,6 +628,7 @@ add_library(qa_scene STATIC
     src/render/scene/world/legacy.c
     src/render/scene/world/legacy/geometry.c
     src/render/scene/world/legacy/lighting.c
+    src/render/scene/world/legacy/save.c
     src/render/scene/world/legacy/textures.c
     src/render/scene/world/q3.c
     src/render/scene/world/q3/patch.c

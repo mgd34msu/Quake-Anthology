@@ -1,6 +1,18 @@
 #ifndef QA_SCENE_WORLD_SAVE_H
 #define QA_SCENE_WORLD_SAVE_H
 #include "qa/scene.h"
+typedef struct qa_scene_world_image_refs {
+    void *context;
+    bool (*encode)(void *, const qa_scene_image *, uint64_t *, qa_error *);
+    /* Returns a borrowed immutable version in the world's resource owner. */
+    bool (*decode)(void *, uint64_t, const qa_scene_image **, qa_error *);
+} qa_scene_world_image_refs;
+/* Legacy lighting includes actual retained texture/sky/lightmap versions,
+ * texel buffers and lightstyle caches. The existing candidate world must own
+ * byte-identical BSP/options/static descriptors. Restore does not regenerate
+ * images or lighting, and publishes only after complete validation. */
+bool qa_scene_world_lighting_checkpoint(const qa_scene_world *, const qa_scene_world_image_refs *, qa_buffer *, qa_error *);
+bool qa_scene_world_lighting_restore(qa_scene_world *, qa_bytes, const qa_scene_world_image_refs *, qa_error *);
 uint64_t qa_scene_world_identity(const qa_scene_world *);
 /* Actual submission transactions must return before world owner changes. */
 bool qa_scene_world_idle(const qa_scene_world *);
