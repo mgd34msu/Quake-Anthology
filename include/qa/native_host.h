@@ -252,6 +252,8 @@ bool qa_native_host_create_q3(qa_native_module *, const qa_native_host_q3_option
 bool qa_native_host_destroy(qa_native_host *, qa_error *);
 /* Admitted destruction consumes the host, including a returned cleanup fault. */
 bool qa_native_host_destroy_ready(const qa_native_host *);
+/* Terminal cleanup must retain every still-live source or borrowed actor. */
+bool qa_native_host_terminal_retired(const qa_native_host *);
 
 qa_native_instance *qa_native_host_instance(qa_native_host *);
 qa_native_profile qa_native_host_profile(const qa_native_host *);

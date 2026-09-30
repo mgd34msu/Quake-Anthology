@@ -160,7 +160,7 @@ bool qa_native_destroy(qa_native_instance *instance, qa_error *error) {
                            "active native instance cannot be destroyed");
     bool completed = true;
     qa_error first = {0}, current = {0};
-    if (instance->lifecycle == QA_NATIVE_INITIALIZED && !qa_native_shutdown(instance, &current)) {
+    if (instance->lifecycle == QA_NATIVE_INITIALIZED && !qa_native_terminal(instance) && !qa_native_shutdown(instance, &current)) {
         completed = false; first = current;
     }
     instance->destroying = true;

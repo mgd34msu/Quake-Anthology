@@ -261,6 +261,12 @@ bool qa_native_destroy(qa_native_instance *instance, qa_error *error);
 /* True only when destruction will pass its initial ownership admission.
  * Shutdown or runner cleanup may still fail after admission. */
 bool qa_native_can_destroy(const qa_native_instance *instance);
+/* A poisoned isolated runner cannot execute further source operations. This
+ * does not authorize replacement of a live source primary or lost snapshot. */
+bool qa_native_terminal(const qa_native_instance *instance);
+/* Read-only parent slot ownership check after actual canonical retirement.
+ * Cached bindings are used only for this terminal lifetime qualification. */
+bool qa_native_terminal_retired(const qa_native_instance *, const qa_actor_registry *);
 /* True only on the owning thread during direct or runner loader teardown.
  * Memory/import operations remain valid; exports and new teardown reject. */
 bool qa_native_unloading_owner(const qa_native_instance *instance);

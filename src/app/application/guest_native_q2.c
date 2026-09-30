@@ -328,8 +328,12 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 teardown requires drained callbacks");
     if (!application_native_q2_combat_suspend(engine, error)) return false;
     if (!application_native_q2_inventory_close(engine, error)) return false;
+    bool terminal = provider->state.native.host && qa_native_terminal(qa_native_host_instance(provider->state.native.host));
+    if (terminal && !qa_native_host_terminal_retired(provider->state.native.host))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Terminal native Q2 cleanup requires actual canonical actor retirement");
     qa_error first = {0}; bool ok = true;
     if (provider->state.native.host) {
+        if (terminal) engine->initialized = false;
         if (engine->initialized && !engine->shutting_down) {
             engine->shutting_down = true;
             ++engine->calls;

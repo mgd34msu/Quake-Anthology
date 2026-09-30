@@ -567,8 +567,10 @@ static bool child_observer_entry(void *context, qa_native_instance *instance,
                                  const qa_native_value *arguments, size_t count,
                                  qa_native_value *result, qa_error *error) {
     native_child_state *state = context;
+    /* This bridge runs on the runner application stack. Returning a default
+     * libffi result after rejection would resume the original native caller. */
     if (state->instance != instance)
-        return native_fail(error, QA_ERROR_ARGUMENT, 0, "native entry callback instance changed");
+        _Exit(EXIT_FAILURE);
     native_wire_buffer request = {0};
     qa_buffer response = {0}, storage = {0};
     bool received = false;
@@ -598,7 +600,9 @@ static bool child_observer_entry(void *context, qa_native_instance *instance,
     native_wire_buffer_free(&request);
     qa_buffer_free(&response);
     qa_buffer_free(&storage);
-    return child_finish_response(state, received, ok, error);
+    if (!child_finish_response(state, received, ok, error))
+        _Exit(EXIT_FAILURE);
+    return true;
 }
 
 static qa_native_entry_observer *child_observer_find(native_child_state *state, uint64_t id) {

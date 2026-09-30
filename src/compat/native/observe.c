@@ -98,7 +98,8 @@ bool qa_native_unobserve_entry(qa_native_entry_observer *binding, qa_error *erro
         return false;
     if (binding->active_calls || instance->region_depth || instance->write_depth)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "active native entry cannot be removed");
-    if (!native_runner_observer_entry_remove(binding, error))
+    if ((!qa_native_terminal(instance) || instance->active_depth || instance->callback_depth) &&
+        !native_runner_observer_entry_remove(binding, error))
         return false;
     qa_native_entry_observer **cursor = &instance->entry_observers;
     while (*cursor && *cursor != binding)
@@ -175,7 +176,8 @@ bool qa_native_unobserve_writes(qa_native_write_observer *binding, qa_error *err
     if (binding->active_calls)
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "active native write watch cannot be removed");
     native_hook_control control = {.operation = NATIVE_HOOK_WATCH_REMOVE, .id = binding->id};
-    if (!native_runner_observer_control(instance, control, error))
+    if ((!qa_native_terminal(instance) || instance->active_depth || instance->callback_depth || instance->region_depth || instance->write_depth) &&
+        !native_runner_observer_control(instance, control, error))
         return false;
     qa_native_write_observer **cursor = &instance->write_observers;
     while (*cursor && *cursor != binding)

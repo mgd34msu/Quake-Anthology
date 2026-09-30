@@ -244,9 +244,16 @@ bool qa_native_host_destroy_ready(const qa_native_host *host)
     return host && !host->destroying && !host->callback_depth && qa_native_can_destroy(host->instance);
 }
 
+bool qa_native_host_terminal_retired(const qa_native_host *host)
+{
+    return qa_native_host_destroy_ready(host) && qa_native_terminal_retired(host->instance,
+        host->world.session ? qa_session_actors(host->world.session) : NULL);
+}
+
 bool qa_native_host_destroy(qa_native_host *host, qa_error *error)
 {
-    if (!qa_native_host_destroy_ready(host) || host->reconstruction)
+    if (!qa_native_host_destroy_ready(host) || host->reconstruction ||
+        (qa_native_terminal(host->instance) && !qa_native_host_terminal_retired(host)))
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "live native host adapter is required");
     host->destroying = true;

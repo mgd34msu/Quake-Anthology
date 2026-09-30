@@ -24,6 +24,22 @@ static bool targets_equal(qa_native_target left, qa_native_target right) {
            left.pointer_bytes == right.pointer_bytes;
 }
 
+bool qa_native_terminal(const qa_native_instance *instance) {
+    return instance && instance->backend == QA_NATIVE_BACKEND_RUNNER &&
+           instance->runner && instance->runner->poisoned;
+}
+bool qa_native_terminal_retired(const qa_native_instance *instance, const qa_actor_registry *actors) {
+    if (!qa_native_terminal(instance) || !qa_native_can_destroy(instance))
+        return false;
+    for (uint32_t i = 0; i < instance->slot_capacity; ++i) {
+        const native_slot *slot = instance->slots + i;
+        if (slot->kind != QA_NATIVE_SLOT_FREE && slot->actor.registry &&
+            (!actors || slot->actor.registry != qa_actors_identity(actors) || qa_actors_get(actors, slot->actor)))
+            return false;
+    }
+    return true;
+}
+
 static void command_destroy(native_runner_command *command) {
     for (size_t index = 0; index < command->owned_count; ++index)
         free(command->owned[index]);
@@ -705,7 +721,7 @@ static bool handle_host_restore(qa_native_instance *instance, const native_wire_
 
 static bool handle_region(qa_native_instance *instance, const native_wire_frame *frame,
                           native_wire_reader *reader, qa_error *error) {
-    uint32_t id, phase;
+    uint32_t id = 0, phase = 0;
     qa_error callback_error = {0};
     qa_native_region_event event = {0};
     bool ok = native_wire_get_u32(reader, &id, &callback_error) &&
@@ -730,6 +746,11 @@ static bool handle_region(qa_native_instance *instance, const native_wire_frame 
              native_wire_put_state(&body, &decision.state, &callback_error);
     bool sent = send_reply(instance->runner, frame, &body, ok ? NULL : &callback_error, error);
     native_wire_buffer_free(&body);
+    if (sent && (!ok || decision.action == QA_NATIVE_REGION_FAIL_INSTANCE)) {
+        if (callback_error.code == QA_OK)
+            native_fail(&callback_error, QA_ERROR_ARGUMENT, id, "native region terminated its source instance");
+        native_wire_poison(instance->runner, &callback_error);
+    }
     return sent;
 }
 
@@ -780,6 +801,8 @@ static bool handle_observer_entry(qa_native_instance *instance, const native_wir
     native_wire_buffer_free(&body);
     qa_buffer_free(&result_storage);
     free_values(arguments, storage, count);
+    if (sent && !ok)
+        native_wire_poison(instance->runner, &failure);
     return sent;
 }
 
