@@ -343,13 +343,13 @@ bool q1_map_addon_visual_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return true;
     if (kind == Q1_MAP_CANDLE)
         return q1_map_make_static(g, e, error);
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, id, &body, error))
-        return false;
-    e = visual(g, id);
-    if (!e)
-        return true;
     if (kind == Q1_MAP_ROPE) {
+        qa_body_state body;
+        if (!qa_world_body_read(g->services.world, id, &body, error))
+            return false;
+        e = visual(g, id);
+        if (!e)
+            return true;
         e->map->pending.addon.origin = body.origin;
         e->count = 0;
         e->physics.motion = QA_PHYSICS_STATIONARY;
@@ -369,32 +369,53 @@ bool q1_map_addon_visual_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
         return !visual(g, id) || q1_map_frame_tick_add(g, id, error);
     }
     e->alpha = .6f;
-    qa_string_id model = e->model;
     q1_actor *child;
     if (!q1_create(g, "gas_flame", Q1_MAP, (qa_actor_id){0}, &child, error))
         return false;
     qa_actor_id child_id = child->id;
-    if (!q1_map_allocate(g, child, error)) {
-        qa_session_release(g->services.session, child_id, NULL);
-        return false;
-    }
+    e = visual(g, id);
+    if (!e || !q1_entity(g, child_id))
+        goto retired;
+    if (!q1_map_allocate(g, child, error))
+        goto failure;
     child->map->kind = Q1_MAP_GAS_SEGMENT;
-    child->model = model;
+    child->model = e->model;
     child->frame = 1;
-    child->alpha = .4f;
-    qa_body_state second = {.origin = body.origin};
-    if (!qa_world_body_write(g->services.world, child_id, &second, error)) {
-        qa_session_release(g->services.session, child_id, NULL);
-        return false;
-    }
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, id, &body, error))
+        goto failure;
+    e = visual(g, id);
     child = visual(g, child_id);
-    if (!visual(g, id) && child) {
+    if (!e || !child)
+        goto retired;
+    qa_body_state second;
+    if (!qa_world_body_read(g->services.world, child_id, &second, error))
+        goto failure;
+    if (!visual(g, id) || !visual(g, child_id))
+        goto retired;
+    second.origin = body.origin;
+    if (!qa_world_body_write(g->services.world, child_id, &second, error))
+        goto failure;
+    child = visual(g, child_id);
+    if (!visual(g, id) || !child)
+        goto retired;
+    if (!q1_link(g, child, error))
+        goto failure;
+    child = visual(g, child_id);
+    if (!visual(g, id) || !child)
+        goto retired;
+    child->alpha = .4f;
+    if (!q1_link(g, child, error))
+        goto failure;
+    if (!visual(g, id) || !visual(g, child_id))
+        goto retired;
+    return true;
+failure:
+    if (qa_actors_get(qa_session_actors(g->services.session), child_id))
         qa_session_release(g->services.session, child_id, NULL);
-        return true;
-    }
-    if (child && !q1_link(g, child, error)) {
-        qa_session_release(g->services.session, child_id, NULL);
-        return false;
-    }
+    return false;
+retired:
+    if (qa_actors_get(qa_session_actors(g->services.session), child_id))
+        return qa_session_release(g->services.session, child_id, error);
     return true;
 }

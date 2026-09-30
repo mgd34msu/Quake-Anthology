@@ -151,9 +151,12 @@ static bool lightning(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_erro
         if ((chosen != SIZE_MAX && chosen != i) || !q1_alive(g, target))
             continue;
         qa_body_state own_body, target_body;
-        ok = qa_world_body_read(g->services.world, id, &own_body, error);
+        bool reverse = (flags & 2) != 0;
+        ok = qa_world_body_read(g->services.world, reverse ? target : id,
+                               reverse ? &target_body : &own_body, error);
         if (ok && effect(g, id) && q1_alive(g, target))
-            ok = qa_world_body_read(g->services.world, target, &target_body, error);
+            ok = qa_world_body_read(g->services.world, reverse ? id : target,
+                                   reverse ? &own_body : &target_body, error);
         if (!ok || !effect(g, id) || !q1_alive(g, target))
             continue;
         qa_vec3 start = flags & 2 ? target_body.origin : own_body.origin;
@@ -180,7 +183,8 @@ static bool lightning(qa_q1_game *g, q1_actor *e, qa_actor_id activator, qa_erro
         ok = qa_targets_use(g->maps->options.targets, target, activator, g->time_ns, error);
         if (ok && !(flags & 8) && effect(g, id) && q1_alive(g, target) &&
             qa_targets_read(g->maps->options.targets, target, &fields)) {
-            ok = qa_targets_set_delay(g->maps->options.targets, target, fields.delay_seconds + .2f,
+            ok = qa_targets_set_delay(g->maps->options.targets, target,
+                                        (float)((double)fields.delay_seconds + .2),
                                         error) &&
                  qa_targets_use(g->maps->options.targets, target, activator, g->time_ns, error);
             if (q1_alive(g, target)) {

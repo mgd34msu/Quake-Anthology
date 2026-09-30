@@ -2,6 +2,7 @@
 #include "match_intents.h"
 #include "network_q1_signon.h"
 #include "guest_native_q2_private.h"
+#include "native_q3_console.h"
 
 #include <stdlib.h>
 
@@ -11,6 +12,8 @@ bool application_guests_idle(const qa_application *application)
         return false;
     for (const application_provider *provider = application->live_providers;
          provider != NULL; provider = provider->next_live) {
+        if (!application_native_q3_console_idle(provider))
+            return false;
         for (size_t index = 0;; ++index) {
             qa_console *console;
             if (!application_guest_console_at((application_provider *)provider, index,

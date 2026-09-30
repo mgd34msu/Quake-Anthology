@@ -2,6 +2,7 @@
 #include "network_q1_signon.h"
 #include "guest_native_q2_private.h"
 #include "q1_weapon_rules.h"
+#include "native_q3_console.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -456,7 +457,8 @@ static bool construct_q3(qa_application *application,
                   .award = application_native_q3_award},
         .random_seed = (uint32_t)(provider->owner * UINT32_C(2246822519)),
     };
-    if (!qa_q3_create(&options, &provider->state.q3, error))
+    if (!qa_q3_create(&options, &provider->state.q3, error) ||
+        !application_native_q3_console_create(provider, error))
         return false;
     provider->component = qa_q3_component(provider->state.q3);
     provider->component.clock = provider->launch->selection.clock;
@@ -550,9 +552,16 @@ bool application_provider_deconstruct(application_provider *provider,
             provider->state.q2 = NULL;
         break;
     case APPLICATION_PROVIDER_Q3:
+        if (!application_native_q3_console_idle(provider) ||
+            !qa_q3_destroy_ready(provider->state.q3)) {
+            ok = application_fail(error, QA_ERROR_ARGUMENT, "native Q3 source owners are borrowed");
+            break;
+        }
         ok = qa_q3_destroy(provider->state.q3, error);
-        if (ok)
+        if (ok) {
             provider->state.q3 = NULL;
+            ok = application_native_q3_console_destroy(provider, error);
+        }
         break;
     case APPLICATION_PROVIDER_QC:
         ok = application_qc_deconstruct(provider, error);
