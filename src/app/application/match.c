@@ -112,6 +112,7 @@ static qa_modes_hooks mode_hooks(qa_application *application)
 {
     return (qa_modes_hooks){.context = application,
                             .event = mode_event,
+                            .emit = application_native_mode_emit,
                             .intent = mode_intent,
                             .combat_provider = mode_combat_provider,
                             .force_death = application_force_death,

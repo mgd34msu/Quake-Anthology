@@ -307,6 +307,62 @@ static bool q1_fog_player(void *opaque, qa_actor_id player, float density,
             .origin = color, .end = {duration, 0, 0}, .value = density}, error);
 }
 
+static bool q1_ctf_mode(application_provider *provider, qa_mode_id *out, qa_error *error)
+{
+    qa_application *application = provider->application;
+    bool found = false, ambiguous = false;
+    if (application->modes)
+        for (size_t i = 0; i < application->mode_count; ++i) {
+            qa_mode_id id = application->mode_ids[i];
+            qa_mode_view view;
+            if (!qa_modes_read(application->modes, id, &view, error)) return false;
+            if (!view.rules.enabled || view.rules.source != QA_MODE_THREEWAVE ||
+                application_mode_provider(application, id) != provider) continue;
+            if (application->primary_mode_ready &&
+                id.slot == application->primary_mode.slot &&
+                id.generation == application->primary_mode.generation) {
+                *out = id;
+                return true;
+            }
+            if (found) ambiguous = true;
+            *out = id;
+            found = true;
+        }
+    if (ambiguous)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Q1 map selects ambiguous ThreeWave mode owners");
+    return found || application_fail(error, QA_ERROR_NOT_FOUND,
+                                      "Q1 map has no selected ThreeWave mode owner");
+}
+
+static bool q1_ctf_state(void *opaque, qa_actor_id actor,
+                           qa_q1_ctf_map_state *out, qa_error *error)
+{
+    application_provider *provider = opaque;
+    qa_mode_id id;
+    if (!q1_ctf_mode(provider, &id, error)) return false;
+    if (!actor.registry) {
+        qa_mode_view view;
+        if (!qa_modes_read(provider->application->modes, id, &view, error)) return false;
+        *out = (qa_q1_ctf_map_state){.start_map = view.rules.start_map,
+                                     .pregame_over = view.ctf_pregame_over};
+    } else {
+        qa_mode_ctf_view view;
+        if (!qa_modes_ctf_read(provider->application->modes, id, actor, &view, error)) return false;
+        *out = (qa_q1_ctf_map_state){.start_map = view.start_map,
+            .pregame_over = view.pregame_over, .observer = view.observer};
+    }
+    return true;
+}
+
+static bool q1_ctf_pregame_end(void *opaque, qa_error *error)
+{
+    application_provider *provider = opaque;
+    qa_mode_id id;
+    return q1_ctf_mode(provider, &id, error) &&
+        qa_modes_ctf_pregame_end(provider->application->modes, id, error);
+}
+
 static bool q1_static_model(void *opaque, const qa_q1_static_model *model,
                             qa_error *error)
 {
@@ -816,6 +872,8 @@ static bool q1_map_options(application_provider *provider,
         .path_touch = q1_path_touch,
         .path_read = q1_path_read,
         .path_change = q1_path_change,
+        .ctf_state = q1_ctf_state,
+        .ctf_pregame_end = q1_ctf_pregame_end,
         .control_player = q1_control_player,
         .finale = q1_finale,
         .finale_finished = q1_finale_finished,
