@@ -364,6 +364,9 @@ bool application_guest_console_at(application_provider *, size_t, qa_console **,
                                     qa_cvars **, qa_command_context *);
 bool application_guest_console_scope(application_provider *, const qa_console *,
                                        qa_application_console_scope *);
+bool application_guest_frontend_rebind_ready(application_provider *, const qa_scene_frame *,
+                                               void *, qa_error *);
+void application_guest_frontend_rebind(application_provider *, qa_scene_frame *, void *, void *);
 qa_command_result application_command_fallback(void *, const qa_command_invocation *, qa_error *);
 bool application_command_capture(void *, const qa_command_context *, qa_command_context *, qa_error *);
 bool application_command_active(void *, const qa_command_context *);

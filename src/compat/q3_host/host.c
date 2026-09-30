@@ -295,6 +295,29 @@ bool qa_q3_host_close_map(qa_q3_host *host, qa_error *error)
     return q3_game_close_portals(host, error);
 }
 
+bool qa_q3_host_frontend_rebind_ready(const qa_q3_host *host, const qa_scene_frame *current,
+    const void *current_context, qa_error *error)
+{
+    if (!host || host->retired || host->restore_pending || host->calls ||
+        (host->vm && qa_qvm_active(host->vm)) || (host->native && qa_native_active(host->native)) ||
+        (host->options.world && !qa_world_idle(host->options.world)) ||
+        (host->options.scene_frame && host->options.scene_frame != current) ||
+        (host->options.frontend_lifetime && !current_context))
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 frontend frame exchange requires an idle matching host");
+    if (host->game) for (size_t i = 0; i < 1022; ++i)
+        if (host->game->slots[i].input_motion)
+            return q3_fail(error, QA_ERROR_ARGUMENT, i, "Q3 frontend exchange has an admitted input motion");
+    return true;
+}
+
+void qa_q3_host_frontend_rebind(qa_q3_host *host, qa_scene_frame *destination,
+    const void *current_context, void *destination_context)
+{
+    if (host->options.scene_frame) host->options.scene_frame = destination;
+    if (host->options.client.context && host->options.client.context == current_context)
+        host->options.client.context = destination_context;
+}
+
 bool qa_q3_host_destroy(qa_q3_host *host, qa_error *error)
 {
     if (!host) return true;

@@ -3,6 +3,31 @@
 #include "guest_projection_private.h"
 #include "guest_qc_internal.h"
 
+bool application_guest_frontend_rebind_ready(application_provider *provider,
+    const qa_scene_frame *current_frame, void *current_context, qa_error *error)
+{
+    struct application_q3_guest *engine = q3g_engine(provider);
+    if (!engine) return true;
+    if (engine->calls)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Q3 frontend exchange requires idle source roles");
+    for (q3g_role *role = engine->roles; role; role = role->next)
+        if (!qa_q3_host_frontend_rebind_ready(role->host, current_frame,
+                                             current_context, error))
+            return false;
+    return true;
+}
+
+void application_guest_frontend_rebind(application_provider *provider,
+    qa_scene_frame *destination_frame, void *current_context, void *destination_context)
+{
+    struct application_q3_guest *engine = q3g_engine(provider);
+    if (!engine) return;
+    for (q3g_role *role = engine->roles; role; role = role->next)
+        qa_q3_host_frontend_rebind(role->host, destination_frame,
+                                  current_context, destination_context);
+}
+
 bool application_guest_console_at(application_provider *provider, size_t index,
                                     qa_console **console, qa_cvars **cvars,
                                     qa_command_context *context)

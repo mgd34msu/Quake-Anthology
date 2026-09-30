@@ -143,6 +143,10 @@ bool qa_q3_host_attach_bots(qa_q3_host *, qa_bot_runtime *, uint32_t client_base
 /* Admission only: portal/registry cleanup can still fail without consuming.
  * Executor ownership is checked by the module owner before calling destroy. */
 bool qa_q3_host_destroy_ready(const qa_q3_host *);
+/* Qualify both old and candidate hosts before exchanging frontend containers.
+ * Applying the already-qualified frame binding performs no source callbacks. */
+bool qa_q3_host_frontend_rebind_ready(const qa_q3_host *, const qa_scene_frame *current, const void *current_context, qa_error *);
+void qa_q3_host_frontend_rebind(qa_q3_host *, qa_scene_frame *destination, const void *current_context, void *destination_context);
 /* Close this source's portal contributions before replacing map geometry.
  * Source records/body bindings remain alive until their actors retire. */
 bool qa_q3_host_close_map(qa_q3_host *, qa_error *);

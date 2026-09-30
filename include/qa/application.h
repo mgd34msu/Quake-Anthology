@@ -261,8 +261,8 @@ qa_cvars *qa_application_cvars(qa_application *);
 qa_console *qa_application_console(qa_application *);
 /* Qualify all callback owners before the caller's no-fail publication phase.
  * Applying the new borrowed context invokes no service callback. */
-bool qa_application_guest_context_rebind_ready(const qa_application *, qa_error *);
-void qa_application_guest_context_rebind(qa_application *, void *);
+bool qa_application_guest_context_rebind_ready(const qa_application *, const qa_scene_frame *, qa_error *);
+void qa_application_guest_context_rebind(qa_application *, void *, qa_scene_frame *);
 typedef enum qa_application_console_kind {
     QA_APPLICATION_CONSOLE_ENGINE,
     QA_APPLICATION_CONSOLE_QC,

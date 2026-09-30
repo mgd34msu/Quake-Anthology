@@ -514,6 +514,7 @@ bool qa_application_apply(qa_application *application,
 }
 
 bool qa_application_guest_context_rebind_ready(const qa_application *application,
+                                                const qa_scene_frame *current_frame,
                                                 qa_error *error)
 {
     if (!application || application->operation != APPLICATION_IDLE ||
@@ -533,11 +534,24 @@ bool qa_application_guest_context_rebind_ready(const qa_application *application
          application->state != QA_APPLICATION_RUNNING))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "frontend publication requires idle application callback owners");
+    for (application_provider *provider = application->live_providers;
+         provider; provider = provider->next_live)
+        if (provider->constructed && provider->attached &&
+            !application_guest_frontend_rebind_ready(provider, current_frame,
+                application->guest_context, error))
+            return false;
     return true;
 }
 
-void qa_application_guest_context_rebind(qa_application *application, void *context)
+void qa_application_guest_context_rebind(qa_application *application, void *context,
+                                           qa_scene_frame *destination_frame)
 {
+    void *previous_context = application->guest_context;
+    for (application_provider *provider = application->live_providers;
+         provider; provider = provider->next_live)
+        if (provider->constructed && provider->attached)
+            application_guest_frontend_rebind(provider, destination_frame,
+                previous_context, context);
     application->guest_context = context;
 }
 
