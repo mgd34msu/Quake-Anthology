@@ -1473,6 +1473,9 @@ static bool pain_jorg(q2m_context *context, qa_error *error) {
 
 static bool pain_floater(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
+  bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  if (context->combat.health < monster->max_health * .5f) monster->skin = 1;
+  else if (rerelease) monster->skin = 0;
   if (context->game->now_ns < monster->pain_ns)
     return true;
   if (context->game->options.edition == QA_Q2_RERELEASE &&
@@ -1480,24 +1483,108 @@ static bool pain_floater(q2m_context *context, qa_error *error) {
       (strcmp(monster->move->name, "floater_move_disguise") == 0 ||
        strcmp(monster->move->name, "floater_move_pop") == 0))
     return true;
-  monster->pain_ns = q2m_after(context->game->now_ns, 3.0);
-  if (context->game->options.edition != QA_Q2_RERELEASE &&
-      context->game->options.skill == 3)
-    return true;
-  bool first = context->game->options.edition == QA_Q2_RERELEASE
+  if (!rerelease) {
+    monster->pain_ns = q2m_after(context->game->now_ns, 3.0);
+    if (context->game->options.skill == 3) return true;
+  }
+  bool first = rerelease
                    ? q2_random_bounded(context->game, 3) == 0
-                   : (unsigned)floorf(q2m_random(context->game) * 3.0f) == 2u;
+                   : ((uint64_t)qa_builtin_random_integer(&context->game->random) + 1u) % 3u == 0;
   if (!q2m_sound(context,
                  first ? "floater/fltpain1.wav" : "floater/fltpain2.wav", 2,
                  1.0f, error))
     return false;
-  if (!q2m_alive(context) ||
-      (context->game->options.edition == QA_Q2_RERELEASE &&
-       !reacts_to_pain(context)))
+  if (!q2m_alive(context)) return true;
+  if (rerelease) monster->pain_ns = q2m_after(context->game->now_ns, 3.0);
+  if (rerelease && !reacts_to_pain(context))
     return true;
   return q2m_set_move(context,
                       first ? "floater_move_pain1" : "floater_move_pain2",
                       true, error);
+}
+
+static bool pain_boss2(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  qa_q2_game *g = context->game;
+  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  if (context->combat.health < m->max_health * .5f) m->skin = 1;
+  else if (rerelease) m->skin = 0;
+  if (g->now_ns < m->pain_ns) return true;
+  m->pain_ns = q2m_after(g->now_ns, 3.0);
+  float damage = m->pending_damage;
+  const char *sound = damage < 10 ? "bosshovr/bhvpain3.wav" :
+                      damage < 30 ? "bosshovr/bhvpain1.wav" : "bosshovr/bhvpain2.wav";
+  if (!q2m_sound(context, sound, 2, 0, error)) return false;
+  return !q2m_alive(context) || (rerelease && !reacts_to_pain(context)) ||
+         q2m_set_move(context, damage < 30 ? "boss2_move_pain_light" :
+                                             "boss2_move_pain_heavy", rerelease, error);
+}
+
+static bool pain_classic_parasite(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  qa_q2_game *g = context->game;
+  if (context->combat.health < m->max_health * .5f) m->skin = 1;
+  if (g->now_ns < m->pain_ns) return true;
+  m->pain_ns = q2m_after(g->now_ns, 3.0);
+  if (g->options.skill == 3) return true;
+  if (!q2m_sound(context, q2m_random(g) < .5f ? "parasite/parpain1.wav" :
+                                               "parasite/parpain2.wav", 2, 1, error)) return false;
+  return !q2m_alive(context) || q2m_set_move(context, "parasite_move_pain1", false, error);
+}
+
+static bool pain_gekk(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  qa_q2_game *g = context->game;
+  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  if (rerelease)
+    m->skin = context->combat.health < m->max_health * .25f ? 2 :
+              context->combat.health < m->max_health * .5f ? 1 : 0;
+  if (m->spawnflags & 8u) {
+    m->spawnflags &= ~8u;
+    return true;
+  }
+  if (!rerelease) {
+    if (context->combat.health < m->max_health * .25f) m->skin = 2;
+    else if (context->combat.health < m->max_health * .5f) m->skin = 1;
+  }
+  if (g->now_ns < m->pain_ns) return true;
+  m->pain_ns = q2m_after(g->now_ns, 3.0);
+  if (!q2m_sound(context, "gek/gk_pain1.wav", 2, 1, error)) return false;
+  if (!q2m_alive(context)) return true;
+  bool water = m->water_level >= (rerelease ? 2 : 1);
+  if (rerelease && water && !(context->actor->physics.flags & QA_PHYSICS_SWIMMING)) {
+    context->actor->physics.flags |= QA_PHYSICS_SWIMMING;
+    m->alternate_fly = true;
+  }
+  if (rerelease && !reacts_to_pain(context)) return true;
+  const char *move = "gekk_move_pain";
+  if (!water) {
+    float draw = rerelease ? q2_rerelease_float(g, 0, 1) : q2m_random(g);
+    move = draw > .5f ? "gekk_move_pain1" : "gekk_move_pain2";
+  }
+  return q2m_set_move(context, move, rerelease, error);
+}
+
+static bool pain_insane(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  qa_q2_game *g = context->game;
+  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  if (g->now_ns < m->pain_ns) return true;
+  m->pain_ns = q2m_after(g->now_ns, 3.0);
+  unsigned variant = 1u + (rerelease ? (q2_random_bounded(g, 2) == 0 ? 1u : 0u) :
+                                      qa_builtin_random_integer(&g->random) & 1u);
+  int band = context->combat.health < 25 ? 25 : context->combat.health < 50 ? 50 :
+             context->combat.health < 75 ? 75 : 100;
+  char sound[sizeof("player/male/pain100_2.wav")];
+  snprintf(sound, sizeof(sound), "player/male/pain%d_%u.wav", band, variant);
+  if (!q2m_sound(context, sound, 2, 2, error)) return false;
+  if (!q2m_alive(context) || (!rerelease && g->options.skill == 3)) return true;
+  const char *move = m->spawnflags & 8u ? "insane_move_struggle_cross" :
+                    ((m->frame >= 227 && m->frame <= 235) ||
+                     (m->frame >= 98 && m->frame <= 159) ||
+                     (rerelease && m->frame >= 0 && m->frame <= 39)) ?
+                    "insane_move_crawl_pain" : "insane_move_stand_pain";
+  return q2m_set_move(context, move, rerelease, error);
 }
 
 static bool pain_gladiator(q2m_context *context, qa_error *error) {
@@ -1770,8 +1857,14 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
   if (species == Q2M_SUPERTANK || species == Q2M_BOSS5)
     return pain_supertank(context, error);
   if (species == Q2M_JORG) return pain_jorg(context, error);
+  if (species == Q2M_FLOATER) return pain_floater(context, error);
+  if (species == Q2M_BOSS2) return pain_boss2(context, error);
+  if (species == Q2M_GEKK) return pain_gekk(context, error);
+  if (species == Q2M_INSANE) return pain_insane(context, error);
   if (species == Q2M_MAKRON && context->game->options.edition != QA_Q2_RERELEASE)
     return pain_classic_makron(context, error);
+  if (species == Q2M_PARASITE && context->game->options.edition != QA_Q2_RERELEASE)
+    return pain_classic_parasite(context, error);
   if (species == Q2M_SOLDIER_LIGHT || species == Q2M_SOLDIER ||
       species == Q2M_SOLDIER_SS || species == Q2M_SOLDIER_RIPPER ||
       species == Q2M_SOLDIER_HYPER || species == Q2M_SOLDIER_LASER)
@@ -1782,8 +1875,6 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
   else if (context->game->options.edition == QA_Q2_RERELEASE)
     monster->skin &= ~1;
   switch (species) {
-  case Q2M_FLOATER:
-    return pain_floater(context, error);
   case Q2M_GLADIATOR:
   case Q2M_GLADB:
     return pain_gladiator(context, error);
@@ -1821,14 +1912,8 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
 
   const char *move = monster->definition->pain1_move;
   const char *sound = pain_sound(species);
-  char pain_path[sizeof("player/male/pain100_2.wav")];
   float random = q2m_random(context->game);
   switch (species) {
-  case Q2M_FLOATER:
-    move = random < (1.0f / 3.0f) ? "floater_move_pain1" : "floater_move_pain2";
-    sound = random < (1.0f / 3.0f) ? "floater/fltpain1.wav"
-                                   : "floater/fltpain2.wav";
-    break;
   case Q2M_GLADIATOR:
   case Q2M_GLADB:
     move = context->body.velocity.z > 100.0f ? species == Q2M_GLADB
@@ -1837,16 +1922,6 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
            : species == Q2M_GLADB            ? "gladb_move_pain"
                                              : "gladiator_move_pain";
     sound = random < 0.5f ? "gladiator/pain.wav" : "gladiator/gldpain2.wav";
-    break;
-  case Q2M_PARASITE:
-    move = "parasite_move_pain1";
-    sound = random < 0.5f ? "parasite/parpain1.wav" : "parasite/parpain2.wav";
-    break;
-  case Q2M_BOSS2:
-    move = damage < 30.0f ? "boss2_move_pain_light" : "boss2_move_pain_heavy";
-    sound = damage < 10.0f   ? "bosshovr/bhvpain3.wav"
-            : damage < 30.0f ? "bosshovr/bhvpain1.wav"
-                             : "bosshovr/bhvpain2.wav";
     break;
   case Q2M_CARRIER:
     if (damage < 10.0f) {
@@ -1866,29 +1941,6 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
                              : "fixbot_move_paina";
     sound = "flyer/flypain1.wav";
     break;
-  case Q2M_GEKK:
-    if (monster->water_level > 0)
-      move = "gekk_move_pain";
-    else
-      move = random > 0.5f ? "gekk_move_pain1" : "gekk_move_pain2";
-    sound = "gek/gk_pain1.wav";
-    break;
-  case Q2M_INSANE: {
-    int band = context->combat.health < 25.0f   ? 25
-               : context->combat.health < 50.0f ? 50
-               : context->combat.health < 75.0f ? 75
-                                                : 100;
-    unsigned variant = random < 0.5f ? 1u : 2u;
-    snprintf(pain_path, sizeof(pain_path), "player/male/pain%d_%u.wav", band,
-             variant);
-    sound = pain_path;
-    move = (monster->spawnflags & 8u) != 0 ? "insane_move_struggle_cross"
-           : (monster->frame >= 99 && monster->frame <= 159) ||
-                   (monster->frame >= 227 && monster->frame <= 235)
-               ? "insane_move_crawl_pain"
-               : "insane_move_stand_pain";
-    break;
-  }
   default:
     if (monster->definition->pain3_move != NULL && random > 0.66f)
       move = monster->definition->pain3_move;

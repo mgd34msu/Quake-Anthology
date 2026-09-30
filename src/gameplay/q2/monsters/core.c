@@ -1498,6 +1498,13 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
   }
   if (game->options.edition == QA_Q2_RERELEASE) {
     switch (definition->species) {
+    case Q2M_GEKK:
+      monster->fly_thrusters = false;
+      monster->fly_acceleration = 25.0f;
+      monster->fly_speed = 150.0f;
+      monster->fly_min_distance = 10.0f;
+      monster->fly_max_distance = 10.0f;
+      break;
     case Q2M_PARASITE:
       monster->yaw_speed = 30;
       break;

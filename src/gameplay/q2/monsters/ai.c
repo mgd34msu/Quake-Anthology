@@ -2474,7 +2474,7 @@ static bool alternate_fly(q2m_context *context, bool *handled,
       !monster->alternate_fly)
     return true;
   *handled = true;
-  if (monster->definition->locomotion == Q2M_SWIM && monster->water_level < 3)
+  if ((context->actor->physics.flags & QA_PHYSICS_SWIMMING) && monster->water_level < 3)
     return true;
 
   qa_body_state enemy = {0};
@@ -2656,7 +2656,7 @@ static bool alternate_fly(q2m_context *context, bool *handled,
                                error))
     return false;
   bool water_ahead = ((uint32_t)contents.contents & UINT32_C(32)) != 0;
-  bool swimming = monster->definition->locomotion == Q2M_SWIM;
+  bool swimming = (context->actor->physics.flags & QA_PHYSICS_SWIMMING) != 0;
   bool bad_direction =
       swimming ? !water_ahead : monster->water_level < 3 && water_ahead;
   if (bad_direction) {
@@ -2963,7 +2963,8 @@ bool q2m_move_to_goal(q2m_context *context, float distance, qa_error *error) {
   if (monster->definition->locomotion == Q2M_STATIONARY)
     return true;
   if (monster->definition->locomotion == Q2M_WALK &&
-      context->body.ground.registry == 0)
+      context->body.ground.registry == 0 &&
+      !(context->actor->physics.flags & (QA_PHYSICS_FLYING | QA_PHYSICS_SWIMMING)))
     return true;
   bool handled;
   if (!alternate_fly(context, &handled, error))
