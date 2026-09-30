@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/game_q1_maps.h"
+#include "qa/game_q1_checkpoint.h"
 #include <float.h>
 #include <stdio.h>
 
@@ -1307,8 +1308,20 @@ bool q1_pickup_observe(qa_q1_game *g, q1_actor *e, qa_error *error) {
     return qa_pickups_observe(g->services.pickups, e->id, g->options.provider,
                                &observer, &e->pickup_observation, error);
 }
+bool qa_q1_game_pickup_observer(qa_q1_game *g, qa_actor_id actor, qa_actor_owner owner,
+                                uint64_t serial, qa_pickup_observer *out, qa_error *error) {
+    q1_actor *entity = g ? q1_entity(g, actor) : NULL;
+    if (!g || !out || !g->continuation_pending || owner != g->options.provider || !serial ||
+        !entity || entity->kind != Q1_PICKUP || entity->pickup_observation.serial != serial ||
+        !qa_actor_id_equal(entity->pickup_observation.actor, actor)) {
+        qa_error_set(error, QA_ERROR_FORMAT, actor.slot, "Invalid restored Q1 pickup observer");
+        return false;
+    }
+    *out = (qa_pickup_observer){.context = g, .inspect = pickup_inspect};
+    return true;
+}
 bool qa_q1_game_pickups_rebind(qa_q1_game *g, qa_error *error) {
-    if (!g || g->observation_depth || g->destroy_pending) {
+    if (!g || g->observation_depth || g->destroy_pending || g->continuation_pending) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid Q1 pickup rebinding boundary");
         return false;
     }

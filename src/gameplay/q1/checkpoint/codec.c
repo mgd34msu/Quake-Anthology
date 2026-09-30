@@ -11,6 +11,8 @@ struct qa_q1_restore {
 
 static bool boundary(const qa_q1_game *g, bool empty, qa_error *error) {
     if (!g || g->destroy_pending || g->observation_depth || !qa_session_safe(g->services.session) ||
+        !qa_world_idle(g->services.world) || !qa_combat_idle(g->services.combat) ||
+        (g->services.pickups && !qa_pickups_idle(g->services.pickups)) ||
         g->capacity != qa_actors_capacity(qa_session_actors(g->services.session)) ||
         (g->services.physics && g->services.physics->push_transaction)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 checkpoint requires a session safe point");
@@ -29,6 +31,12 @@ static bool boundary(const qa_q1_game *g, bool empty, qa_error *error) {
                 return false;
             }
     return true;
+}
+static bool same_target(const qa_target_binding *a, const qa_target_binding *b) {
+    return qa_actor_id_equal(a->actor, b->actor) && a->source == b->source &&
+        a->context == b->context && a->read == b->read && a->use == b->use &&
+        a->field == b->field && a->set_target == b->set_target &&
+        a->set_delay == b->set_delay && a->set_targetname == b->set_targetname;
 }
 /* Candidate storage never owns shared services or published bindings. */
 static void storage_free(qa_q1_game *g) {
@@ -164,6 +172,22 @@ static bool actors(q1_save_io *io, qa_q1_game *g, q1_door_group **index, size_t 
             qa_actors_get(qa_session_actors(g->services.session), actor->id);
         if (!shared || (actor->native && shared->owner != g->options.provider))
             return q1_save_fail(io, "Q1 continuation disagrees with shared actor ownership");
+        bool target = false;
+        if (!io->reading && g->maps) {
+            qa_target_binding actual, expected;
+            if (qa_persistence_targets_binding(g->maps->options.targets, actor->id, &actual) &&
+                actual.context == g) {
+                if (!qa_q1_game_target_binding(g, actor->id, &expected, io->error) ||
+                    !same_target(&actual, &expected))
+                    return q1_save_fail(io, "Q1 target has no matching source declaration");
+                target = true;
+            }
+        }
+        Q1_SAVE(io, bool, target);
+        if (target && (!g->maps || !actor->native))
+            return q1_save_fail(io, "Q1 target has no matching native continuation");
+        if (io->reading)
+            actor->restored_target = target;
         if (io->reading) {
             if (actor->id.slot >= g->capacity || g->actors[actor->id.slot])
                 return q1_save_fail(io, "Duplicate Q1 actor continuation");
@@ -245,6 +269,10 @@ static bool payload(q1_save_io *io, qa_q1_game *g) {
 bool qa_q1_game_capture(qa_q1_game *g, qa_buffer *out, qa_error *error) {
     if (!out || !boundary(g, false, error))
         return false;
+    if (g->continuation_pending) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 restored bindings are not connected");
+        return false;
+    }
     q1_save_io body = {.game = g, .error = error};
     q1_save_io file = {.game = g, .error = error};
     bool ok = qa_strings_create(&body.dictionary, error) && payload(&body, g);
@@ -278,6 +306,10 @@ bool qa_q1_game_restore_prepare(qa_q1_game *g, qa_bytes bytes, qa_q1_restore **o
                                 qa_error *error) {
     if (!out || (bytes.size && !bytes.data) || !boundary(g, true, error))
         return false;
+    if (g->continuation_pending) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 restoration is already pending");
+        return false;
+    }
     qa_q1_restore *ticket = calloc(1, sizeof(*ticket));
     if (!ticket) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating Q1 restoration");
@@ -356,6 +388,46 @@ fail:
     free(strings);
     qa_q1_game_restore_abort(ticket);
     return false;
+}
+bool qa_q1_game_restore_prepare_source(qa_q1_game *g, qa_bytes bytes, qa_q1_restore **out,
+                                       qa_error *error) {
+    if (!qa_q1_game_restore_prepare(g, bytes, out, error))
+        return false;
+    (*out)->candidate.continuation_pending = true;
+    return true;
+}
+bool qa_q1_game_restore_finish(qa_q1_game *g, qa_error *error) {
+    if (!boundary(g, false, error))
+        return false;
+    if (!g->continuation_pending) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 has no pending source restoration");
+        return false;
+    }
+    for (uint32_t i = 0; i < g->capacity; ++i) {
+        q1_actor *actor = g->actors[i];
+        if (!actor)
+            continue;
+        if (actor->pickup_observation.serial &&
+            !qa_pickups_observation_current(g->services.pickups, actor->pickup_observation)) {
+            qa_error_set(error, QA_ERROR_FORMAT, i, "Q1 saved pickup observation is missing");
+            return false;
+        }
+        qa_target_binding actual, expected;
+        bool bound = g->maps &&
+            qa_persistence_targets_binding(g->maps->options.targets, actor->id, &actual);
+        if (actor->restored_target) {
+            if (!bound || !qa_q1_game_target_binding(g, actor->id, &expected, error) ||
+                !same_target(&actual, &expected)) {
+                qa_error_set(error, QA_ERROR_FORMAT, i, "Q1 saved target declaration differs");
+                return false;
+            }
+        } else if (bound && actual.context == g) {
+            qa_error_set(error, QA_ERROR_FORMAT, i, "Q1 imported an unsaved target declaration");
+            return false;
+        }
+    }
+    g->continuation_pending = false;
+    return true;
 }
 bool qa_q1_game_restore_validate(const qa_q1_restore *ticket, qa_error *error) {
     if (!ticket || !boundary(ticket->destination, true, error))

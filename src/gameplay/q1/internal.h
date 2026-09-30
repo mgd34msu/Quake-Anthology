@@ -283,6 +283,7 @@ typedef struct q1_actor {
     struct q1_actor *allocation_next, *pool_next;
     q1_map_state *map;
     qa_pickup_lease pickup_observation;
+    bool restored_target;
     qa_actor_id id, owner, activator;
     qa_string_id classname, model, target, targetname, killtarget, message;
     qa_vec3 initial_angles;
@@ -389,6 +390,7 @@ struct qa_q1_game {
     size_t observation_depth;
     size_t retention_depth;
     bool destroy_pending;
+    bool continuation_pending;
     bool run_straight;
     bool component_admitted;
     uint8_t rune_knight_melee, enemy_range;

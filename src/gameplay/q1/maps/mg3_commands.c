@@ -205,7 +205,7 @@ static bool monster_frame(qa_q1_game *g, qa_actor_id player, q1_actor_snapshot *
                                ? (qa_bounds){qa_v3(-16, -16, -16), qa_v3(16, 16, 16)}
                                : body.bounds;
         qa_builtin_event event = {.kind = QA_BUILTIN_EFFECT, .family = QA_GAME_Q1,
-                                  .provider = g->options.provider, .actor = id,
+                                  .provider = g->options.provider, .actor = id, .other = player,
                                   .resource = resource, .time_ns = g->time_ns,
                                   .origin = qa_vec_add(body.origin, bounds.mins),
                                   .end = qa_vec_add(body.origin, bounds.maxs),

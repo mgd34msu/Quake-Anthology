@@ -4,8 +4,9 @@
 #include "../maps/internal.h"
 #include "qa/binary.h"
 #include "qa/game_q1_checkpoint.h"
+#include "qa/persistence_gameplay.h"
 
-enum { Q1_SAVE_VERSION = 3 };
+enum { Q1_SAVE_VERSION = 4 };
 typedef struct q1_save_io {
     qa_q1_game *game;
     qa_strings *dictionary;

@@ -365,7 +365,8 @@ bool qa_q1_game_target_binding(qa_q1_game *g, qa_actor_id actor, qa_target_bindi
         return false;
     }
     q1_actor *entity = q1_entity(g, actor);
-    if (!g->maps || !entity || !entity->native)
+    if (!g->maps || !entity || !entity->native ||
+        (g->continuation_pending && !entity->restored_target))
         return false;
     *out = (qa_target_binding){.actor = entity->id,
                                  .context = g,

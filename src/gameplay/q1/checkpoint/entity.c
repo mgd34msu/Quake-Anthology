@@ -177,6 +177,15 @@ bool q1_save_entity(q1_save_io *io, q1_actor *a) {
     Q1_SAVE(io, bool, a->consumed_corpse);
     Q1_SAVE(io, bool, a->axe_hit);
     Q1_SAVE(io, bool, a->touch_disabled);
+    uint64_t observation = io->reading ? 0 :
+        (qa_pickups_observation_current(io->game->services.pickups, a->pickup_observation)
+             ? a->pickup_observation.serial : 0);
+    Q1_SAVE(io, u64, observation);
+    if (observation && (a->kind != Q1_PICKUP || !a->native ||
+        (!io->reading && !qa_actor_id_equal(a->id, a->pickup_observation.actor))))
+        return q1_save_fail(io, "Q1 pickup lease has no matching native continuation");
+    if (io->reading && observation)
+        a->pickup_observation = (qa_pickup_lease){.actor = a->id, .serial = observation};
     switch (a->kind) {
     case Q1_MONSTER:
         if (!q1_save_monster(io, &a->state.monster))

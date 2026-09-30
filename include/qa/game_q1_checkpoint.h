@@ -14,6 +14,10 @@ bool qa_q1_game_capture(qa_q1_game *, qa_buffer *, qa_error *);
  * actors have been restored. It does not run source callbacks. Interned string
  * additions may survive abort; gameplay state remains unpublished. */
 bool qa_q1_game_restore_prepare(qa_q1_game *, qa_bytes, qa_q1_restore **, qa_error *);
+/* The coordinator publishes private state before importing shared stores.
+ * Source turns remain blocked until finish validates the imported bindings. */
+bool qa_q1_game_restore_prepare_source(qa_q1_game *, qa_bytes, qa_q1_restore **, qa_error *);
+bool qa_q1_game_restore_finish(qa_q1_game *, qa_error *);
 bool qa_q1_game_restore_validate(const qa_q1_restore *, qa_error *);
 bool qa_q1_game_restore_commit(qa_q1_restore *, qa_error *);
 void qa_q1_game_restore_abort(qa_q1_restore *);
@@ -25,5 +29,7 @@ bool qa_q1_game_think_binding(qa_q1_game *, qa_actor_id, uint32_t callback_id, q
  * callback context is this game, which must outlive every published binding.
  * An absent native claim returns false without an error. */
 bool qa_q1_game_target_binding(qa_q1_game *, qa_actor_id, qa_target_binding *, qa_error *);
+bool qa_q1_game_pickup_observer(qa_q1_game *, qa_actor_id, qa_actor_owner,
+                                uint64_t saved_serial, qa_pickup_observer *, qa_error *);
 
 #endif

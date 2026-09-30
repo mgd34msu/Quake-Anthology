@@ -92,6 +92,13 @@ bool qa_q1_game_gravity(const qa_q1_game *g, float *out) {
     *out = g->services.physics ? g->services.physics->gravity : g->options.gravity;
     return true;
 }
+bool qa_q1_game_monster_counts(const qa_q1_game *g, uint32_t *total, uint32_t *killed) {
+    if (!g || g->destroy_pending || !total || !killed)
+        return false;
+    *total = g->total_monsters;
+    *killed = g->killed_monsters;
+    return true;
+}
 bool qa_q1_game_alpha(qa_q1_game *g, qa_actor_id actor, float alpha, qa_error *error) {
     if (!isfinite(alpha) || alpha < 0 || alpha > 1) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Q1 actor alpha");
@@ -325,9 +332,9 @@ static bool begin_frame(void *context, qa_session *session, const qa_source_fram
                         qa_error *error) {
     (void)session;
     qa_q1_game *g = context;
-    if (g->destroy_pending || g->observation_depth) {
+    if (g->destroy_pending || g->observation_depth || g->continuation_pending) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,
-                     "Q1 source frame cannot advance during borrowed work or teardown");
+                     "Q1 source frame cannot advance during restoration, borrowed work or teardown");
         return false;
     }
     q1_map_frame_begin(g);
@@ -453,7 +460,8 @@ memory:
     return false;
 }
 bool qa_q1_game_operation_begin(qa_q1_game *g, qa_q1_game_operation *operation, qa_error *error) {
-    if (!g || !operation || g->destroy_pending || g->observation_depth == SIZE_MAX) {
+    if (!g || !operation || g->destroy_pending || g->continuation_pending ||
+        g->observation_depth == SIZE_MAX) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 native operation is unavailable");
         return false;
     }
