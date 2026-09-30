@@ -83,16 +83,29 @@ bool qa_modes_vote_start(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
         if (t != team)
             return mode_fail(e, "vote initiator is outside the voting team");
     }
-    if (source != QA_MODE_LMCTF)
-        for (uint32_t i = 0; i < m->actor_capacity; ++i)
-            v->members[i].ballots[slot] = 0;
     uint64_t duration = (source == QA_MODE_Q2_CTF ? 20 : 30) * MODE_SECOND;
     int32_t needed = source == QA_MODE_Q2_CTF
                          ? (int32_t)(count * (size_t)v->value.rules.election_percent / 100)
                          : (int32_t)(count / 2 + 1);
     if (needed < 1)
         needed = 1;
-    *vote = (qa_mode_vote){.intent = *intent,
+    qa_match_intent retained = *intent;
+    retained.source_command = QA_STRING_NONE;
+    if (source >= QA_MODE_Q3 && intent->kind == QA_MATCH_SELECTED_MAP) {
+        if (!m->options.hooks.selected_map_command)
+            return mode_fail(e, "selected-map vote has no actual source command snapshot");
+        if (!MODE_CALLBACK(m, m->options.hooks.selected_map_command(
+            m->options.hooks.context, id, intent->map, &retained.source_command, e))) return false;
+        member = mode_member_get(m, v, actor);
+        if (!member) return mode_fail(e, "selected-map vote initiator retired during source snapshot");
+        qa_bytes script = qa_strings_text(qa_session_strings(m->options.services.session), retained.source_command);
+        if (!script.data || !script.size || script.size >= 1024 || memchr(script.data, 0, script.size))
+            return mode_fail(e, "selected-map vote has an invalid source command snapshot");
+    }
+    if (source != QA_MODE_LMCTF)
+        for (uint32_t i = 0; i < m->actor_capacity; ++i)
+            v->members[i].ballots[slot] = 0;
+    *vote = (qa_mode_vote){.intent = retained,
                            .initiator = actor,
                            .team = team,
                            .deadline_ns = v->value.time_ns + duration,

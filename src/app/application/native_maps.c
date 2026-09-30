@@ -2,6 +2,7 @@
 #include "native_maps.h"
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 
 typedef struct map_registry {
@@ -368,12 +369,32 @@ static bool parse_command(map_parser *parser, const qa_command_tokens *tokens, q
     parser->plan.assignments_before_map = parser->plan.assignment_count;
     return true;
 }
-bool application_native_next_map_plan(qa_application *app, qa_mode_id mode,
-                                       application_next_map_plan *out, qa_error *error) {
+static bool map_plan(qa_application *app, qa_mode_id mode, const char *command,
+                       application_next_map_plan *out, qa_error *error) {
     if (!app || !out || out->map || out->assignments || out->assignment_count)
         return application_fail(error, QA_ERROR_ARGUMENT, "nextmap plan requires an empty output");
     map_parser parser = {.application = app};
-    bool ok = source_console(&parser, mode, error) && push_variable(&parser, "nextmap", error);
+    bool ok = source_console(&parser, mode, error);
+    if (ok && command) {
+        size_t length = strlen(command);
+        map_script *script = calloc(1, sizeof(*script));
+        if (!script || length >= parser.buffer_limit) {
+            free(script);
+            ok = application_fail(error, QA_ERROR_MEMORY, "selected-map source command exceeds its buffer");
+        } else {
+            script->name = copy_text("", error);
+            script->text = malloc(length + 2);
+            if (!script->name || !script->text) {
+                free(script->name); free(script->text); free(script);
+                ok = application_fail(error, QA_ERROR_MEMORY, "cannot retain selected-map source command");
+            } else {
+                memcpy(script->text, command, length);
+                script->text[length] = '\n'; script->text[length + 1] = 0;
+                script->length = length + 1;
+                parser.scripts = script; parser.pending = script->length;
+            }
+        }
+    } else if (ok) ok = push_variable(&parser, "nextmap", error);
     while (ok && parser.scripts) {
         map_script *script = parser.scripts;
         if (script->offset == script->length) {
@@ -405,6 +426,44 @@ bool application_native_next_map_plan(qa_application *app, qa_mode_id mode,
     if (ok) { *out = parser.plan; parser.plan = (application_next_map_plan){0}; }
     parser_free(&parser);
     return ok;
+}
+bool application_native_next_map_plan(qa_application *app, qa_mode_id mode,
+    application_next_map_plan *out, qa_error *error) {
+    return map_plan(app, mode, NULL, out, error);
+}
+bool application_native_selected_map_plan(qa_application *app, qa_mode_id mode,
+    qa_string_id command, application_next_map_plan *out, qa_error *error) {
+    qa_bytes bytes = app && app->session ? qa_strings_text(qa_session_strings(app->session), command) : (qa_bytes){0};
+    if (!bytes.data || !bytes.size || bytes.size >= 1024 || memchr(bytes.data, 0, bytes.size))
+        return application_fail(error, QA_ERROR_ARGUMENT, "selected-map intent lacks its actual source command");
+    return map_plan(app, mode, qa_strings_cstr(qa_session_strings(app->session), command), out, error);
+}
+bool application_native_mode_selected_map_command(void *opaque, qa_mode_id mode,
+    qa_string_id map, qa_string_id *command, qa_error *error) {
+    qa_application *app = opaque;
+    if (!app || !app->session || !command)
+        return application_fail(error, QA_ERROR_ARGUMENT, "selected-map snapshot needs actual source owners");
+    const char *name = qa_strings_cstr(qa_session_strings(app->session), map);
+    if (!name || !name[0]) return application_fail(error, QA_ERROR_ARGUMENT, "selected-map snapshot lacks its destination");
+    map_parser parser = {.application = app};
+    bool okay = source_console(&parser, mode, error);
+    if (okay) {
+        qa_cvars *cvars = qa_console_cvar_owner(parser.console, &parser.plan.context, "nextmap");
+        if (!cvars || qa_cvars_dialect(cvars) != QA_CONSOLE_Q3)
+            okay = application_fail(error, QA_ERROR_UNSUPPORTED, "selected-map snapshot has no actual Q3 cvar scope");
+        else {
+            const qa_cvar_view *nextmap = qa_cvars_find(cvars, "nextmap");
+            char text[1024];
+            if (nextmap && nextmap->value[0])
+                snprintf(text, sizeof(text), "map %s; set nextmap \"%.1023s\"", name, nextmap->value);
+            else snprintf(text, sizeof(text), "map %s", name);
+            if (!qa_application_command_context_active(app, &parser.plan.context))
+                okay = application_fail(error, QA_ERROR_ARGUMENT, "selected-map source retired during snapshot");
+            else okay = qa_strings_intern_cstr(qa_session_strings(app->session), text, command, error);
+        }
+    }
+    parser_free(&parser);
+    return okay;
 }
 bool application_native_mode_next_map_allowed(void *opaque, qa_mode_id mode) {
     application_next_map_plan plan = {0};

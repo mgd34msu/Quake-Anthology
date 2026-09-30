@@ -12,6 +12,8 @@ typedef enum match_map_stage {
 } match_map_stage;
 struct application_match_intents {
     match_map_stage stage;
+    qa_match_intent_kind kind;
+    qa_string_id source_command;
     qa_mode_id mode;
     qa_actor_id cause;
     qa_actor_owner owner;
@@ -140,14 +142,20 @@ bool application_match_intents_enqueue(application_match_intents *state, qa_appl
     const qa_match_intent *intent, qa_error *error) {
     if (!state || state->busy || !app || !intent || !app->session)
         return application_fail(error, QA_ERROR_ARGUMENT, "match map enqueue requires live owners");
-    if (intent->kind != QA_MATCH_NEXT_MAP)
+    if (intent->kind != QA_MATCH_NEXT_MAP && intent->kind != QA_MATCH_SELECTED_MAP)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "match map intent lacks its source continuation");
+    qa_bytes command = qa_strings_text(qa_session_strings(app->session), intent->source_command);
+    if ((intent->kind == QA_MATCH_NEXT_MAP && intent->source_command) ||
+        (intent->kind == QA_MATCH_SELECTED_MAP && (!command.data || !command.size ||
+         command.size >= 1024 || memchr(command.data, 0, command.size))))
+        return application_fail(error, QA_ERROR_ARGUMENT, "match map intent has no valid source snapshot");
     if (state->stage != MATCH_MAP_EMPTY)
         return application_fail(error, QA_ERROR_ARGUMENT, "another match map transition is pending");
     application_provider *p = application_mode_provider(app, intent->mode);
     if (!p || !p->product || !p->product->identity)
         return application_fail(error, QA_ERROR_NOT_FOUND, "match map has no actual source provider");
     application_match_intents next = {.stage = MATCH_MAP_UNRESOLVED,
+        .kind = intent->kind, .source_command = intent->source_command,
         .mode = intent->mode, .cause = intent->actor, .owner = p->owner,
         .product = p->product->id, .source_identity = p->launch->identity};
     while (next.selection_index < app->mode_count &&
@@ -195,7 +203,10 @@ static bool prepare_inner(application_match_intents *state, qa_application *app,
         if (qa_application_travel_read(app, &travel))
             return application_fail(error, QA_ERROR_ARGUMENT, "ordinary travel is already pending");
         application_next_map_plan next = {0};
-        if (!application_native_next_map_plan(app, state->mode, &next, error)) return false;
+        bool okay = state->kind == QA_MATCH_NEXT_MAP ?
+            application_native_next_map_plan(app, state->mode, &next, error) :
+            application_native_selected_map_plan(app, state->mode, state->source_command, &next, error);
+        if (!okay) return false;
         state->plan = next; state->stage = MATCH_MAP_BEFORE;
     }
     if (!context_read(state, app, false, error)) return false;
@@ -231,6 +242,11 @@ static bool travel_matches(application_match_intents *state, qa_application *app
         travel.carry_players || travel.complete_campaign || travel.has_landmark ||
         !qa_actor_id_equal(travel.cause, state->cause))
         return application_fail(error, QA_ERROR_ARGUMENT, "match map travel continuation differs");
+    return true;
+}
+bool application_match_intents_waiting(const application_match_intents *state, uint64_t *revision) {
+    if (!state || state->busy || state->stage != MATCH_MAP_WAIT || !revision) return false;
+    *revision = state->revision;
     return true;
 }
 bool application_match_intents_queued(application_match_intents *state, qa_application *app,
@@ -275,12 +291,21 @@ static bool context_fields(qa_source_save_io *io, qa_command_context *context) {
         context->registry && context->generation;
 }
 static bool stream(qa_source_save_io *io, application_match_intents *state) {
-    char magic[4] = {'Q','A','M','I'}; uint32_t version = 1, stage = state->stage;
+    char magic[4] = {'Q','A','M','I'}; uint32_t version = 2, stage = state->stage;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QAMI", 4) ||
-        !qa_source_save_u32(io, &version) || version != 1 ||
+        !qa_source_save_u32(io, &version) || version != 2 ||
         !qa_source_save_u32(io, &stage) || stage > MATCH_MAP_AFTER) return false;
     state->stage = (match_map_stage)stage;
     if (state->stage == MATCH_MAP_EMPTY) return true;
+    uint32_t kind = state->kind;
+    if (!qa_source_save_u32(io, &kind) ||
+        (kind != QA_MATCH_NEXT_MAP && kind != QA_MATCH_SELECTED_MAP) ||
+        !qa_source_save_string(io, &state->source_command)) return false;
+    state->kind = (qa_match_intent_kind)kind;
+    qa_bytes command = qa_strings_text(qa_session_strings(io->session), state->source_command);
+    if ((kind == QA_MATCH_NEXT_MAP && state->source_command) ||
+        (kind == QA_MATCH_SELECTED_MAP && (!command.data || !command.size || command.size >= 1024 ||
+         memchr(command.data, 0, command.size)))) return false;
     size_t maximum = io->direction == QA_SOURCE_SAVE_READ ? io->input.size : SIZE_MAX;
     if (!qa_source_save_u32(io, &state->mode.slot) || !qa_source_save_u64(io, &state->mode.generation) ||
         !qa_source_save_actor(io, &state->cause) || !qa_source_save_string(io, &state->owner) ||

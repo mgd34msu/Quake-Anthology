@@ -6,8 +6,8 @@ typedef struct application_match_intents application_match_intents;
 application_match_intents *application_match_intents_create(qa_error *);
 void application_match_intents_destroy(application_match_intents *);
 bool application_match_intents_idle(const application_match_intents *);
-/* Enqueue retains source identity only. NEXT_MAP is resolved after the source
- * vote delay, at prepare, never at vote admission or inside a mode callback. */
+/* Enqueue retains source identity and SELECTED_MAP's actual admission command.
+ * NEXT_MAP resolves after the source vote delay at prepare. */
 bool application_match_intents_enqueue(application_match_intents *, qa_application *,
     const qa_match_intent *, qa_error *);
 /* Only the frontend's drained idle boundary calls prepare/completed. Prepare
@@ -15,6 +15,7 @@ bool application_match_intents_enqueue(application_match_intents *, qa_applicati
 bool application_match_intents_prepare(application_match_intents *, qa_application *, qa_error *);
 bool application_match_intents_travel_read(const application_match_intents *,
     const application_next_map_plan **, qa_application_travel_request *);
+bool application_match_intents_waiting(const application_match_intents *, uint64_t *revision);
 bool application_match_intents_queued(application_match_intents *, qa_application *,
     uint64_t travel_revision, qa_error *);
 bool application_match_intents_completed(application_match_intents *, qa_application *,

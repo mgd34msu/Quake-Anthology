@@ -29,5 +29,9 @@ bool application_native_next_map_plan(qa_application *, qa_mode_id,
                                        application_next_map_plan *, qa_error *);
 void application_next_map_plan_free(application_next_map_plan *);
 bool application_native_mode_next_map_allowed(void *, qa_mode_id);
+bool application_native_mode_selected_map_command(void *, qa_mode_id, qa_string_id map,
+                                                   qa_string_id *command, qa_error *);
+bool application_native_selected_map_plan(qa_application *, qa_mode_id, qa_string_id command,
+                                           application_next_map_plan *, qa_error *);
 
 #endif

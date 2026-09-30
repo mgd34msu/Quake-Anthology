@@ -108,6 +108,9 @@ typedef struct qa_match_intent {
     qa_actor_id actor;
     qa_team_id team;
     qa_string_id map;
+    /* Q3 selected-map votes retain their bounded source command at admission,
+     * including the genuine prior nextmap value and source string clipping. */
+    qa_string_id source_command;
     qa_mode_kind game_type;
     float value;
 } qa_match_intent;
@@ -312,6 +315,8 @@ typedef struct qa_modes_hooks {
     bool (*campaign_restart)(void *, qa_mode_id, uint32_t initial_flags, qa_error *);
     bool (*map_allowed)(void *, qa_mode_id, qa_string_id);
     bool (*next_map_allowed)(void *, qa_mode_id);
+    bool (*selected_map_command)(void *, qa_mode_id, qa_string_id map,
+                                  qa_string_id *command, qa_error *);
     /* Rogue's startup flag belongs to its actual native source world. */
     bool (*rogue_runes_claim)(void *, qa_mode_id, bool *newly_claimed, qa_error *);
     bool (*rogue_runes_read)(void *, qa_mode_id, qa_actor_id *world, bool *started);

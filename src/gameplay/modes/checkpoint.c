@@ -70,7 +70,7 @@ static bool checkpoint_capture(qa_modes *m, qa_modes_checkpoint *out, qa_error *
     for (uint32_t i = 0; i < m->mode_capacity; ++i)
         if (m->instances[i].active && !mode_relic_source_current(m, &m->instances[i], e)) return false;
     qa_modes_checkpoint saved = {
-        .version = 5, .random = m->random, .attack_sequence = m->attack_sequence};
+        .version = 6, .random = m->random, .attack_sequence = m->attack_sequence};
     saved.players = calloc(m->actor_capacity, sizeof(*saved.players));
     saved.modes = calloc(m->mode_capacity, sizeof(*saved.modes));
     saved.objects = calloc(m->actor_capacity, sizeof(*saved.objects));
@@ -269,11 +269,22 @@ static bool validate_instance(qa_modes *m, const qa_mode_checkpoint *v, qa_error
     }
     if (!reference(m, v->ball) || !reference(m, v->tag) || !reference(m, v->tag_owner))
         return mode_fail(e, "invalid saved mode actor");
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 4; ++i) {
         if (v->votes[i].yes < 0 || v->votes[i].no < 0 ||
             v->votes[i].intent.kind < QA_MATCH_NEXT_MAP ||
             v->votes[i].intent.kind > QA_MATCH_FRAG_LIMIT || !isfinite(v->votes[i].intent.value))
             return mode_fail(e, "invalid saved vote");
+        const qa_mode_vote *vote = &v->votes[i];
+        bool snapshot = v->value.rules.source >= QA_MODE_Q3 &&
+                        vote->intent.kind == QA_MATCH_SELECTED_MAP;
+        if (vote->intent.source_command) {
+            qa_bytes command = qa_strings_text(qa_session_strings(m->options.services.session),
+                                               vote->intent.source_command);
+            if (!snapshot || !command.data || !command.size || command.size >= 1024 ||
+                memchr(command.data, 0, command.size)) return mode_fail(e, "invalid saved selected-map source command");
+        } else if (snapshot && (vote->active || vote->passed))
+            return mode_fail(e, "saved selected-map vote lacks its actual source command");
+    }
     return true;
 }
 static bool restore_instance(qa_modes *m, const qa_mode_checkpoint *saved, qa_error *e) {
@@ -344,7 +355,7 @@ static bool restore_instance(qa_modes *m, const qa_mode_checkpoint *saved, qa_er
 }
 static bool checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved,
                                 bool reconnect, qa_error *e) {
-    if (!m || m->callback_depth || !saved || saved->version != 5 ||
+    if (!m || m->callback_depth || !saved || saved->version != 6 ||
         saved->player_count > m->actor_capacity || saved->mode_count > m->mode_capacity ||
         saved->object_count > m->actor_capacity ||
         saved->external_objective_count > m->objective_capacity ||

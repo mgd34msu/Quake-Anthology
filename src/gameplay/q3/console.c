@@ -207,6 +207,11 @@ static bool dispatch(qa_q3_game *game, qa_actor_id actor, const qa_command_invoc
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
     const char *name = command->argv[0];
+    if (named(name, "stats")) {
+        /* Cmd_Stats_f has an empty body in the actual source. */
+        *handled = true;
+        return true;
+    }
     if (named(name, "where")) {
         *handled = true;
         qa_body_state body;
