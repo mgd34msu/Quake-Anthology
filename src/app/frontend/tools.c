@@ -135,13 +135,14 @@ static bool images_report(qa_frontend *f, diagnostic_text *text, qa_arena *scrat
         /* The CPU backend samples the retained scene images directly. It has
          * no private texture copy or separate GPU residency list. */
         size_t ordinal = 0;
-        for (size_t family = 0; family < 4; ++family) {
+        for (size_t family = 0; family < 5; ++family) {
             for (size_t index = 0;; ++index) {
                 const qa_scene_resources *owner = NULL;
                 if (family == 0 && index < 2) owner = index == 0 ? f->images : f->ui_images;
                 else if (family == 1) owner = frontend_source_images_at(f, index);
                 else if (family == 2) owner = frontend_native_q2_images_at(f, index);
                 else if (family == 3) owner = frontend_visual_images_at(f, index);
+                else if (family == 4) owner = frontend_event_images_at(f, index);
                 if (!owner) { if (family == 0 && index < 2) continue; break; }
                 if (!qa_scene_resources_images(owner, scratch, &images, &count, error)) return false;
                 for (size_t j = 0; j < count; ++j) {

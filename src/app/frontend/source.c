@@ -107,13 +107,15 @@ static bool prepare_view(void *context, const qa_q3_refdef *definition, qa_q3_sc
     }
     options->split_screen = source->frontend->options.seats > 1;
     (void)definition;
-    return frontend_tools_camera(source->frontend, source->seat, options->world.view.clip_enabled, &options->world.view, error);
+    return frontend_tools_camera(source->frontend, source->seat, options->world.view.clip_enabled, &options->world.view, error) &&
+        (options->world.no_world || frontend_event_world(source->frontend, source->seat, &options->world, error));
 }
 static bool submit_view(void *context, const qa_q3_scene_options *options, qa_scene_frame *frame, qa_error *error)
 {
     frontend_source *source = context;
     if (options->world.no_world) return true;
     return frontend_visuals_submit(source->frontend, source->seat, source->owner, &options->world, frame, error) &&
+        frontend_particle_draw(source->frontend, &options->world.view, error) &&
         frontend_tools_debug(source->frontend, &options->world.view, error);
 }
 static void float_word(uint8_t *out, float value)
@@ -164,6 +166,8 @@ static void common_print(void *context, const char *text)
 static uint32_t common_milliseconds(void *context)
 {
     frontend_source_lease *lease = context;
+    if (frontend_network_remote(lease->source->frontend))
+        return (uint32_t)((lease->source->frontend->time_ns / UINT64_C(1000000)) & UINT32_MAX);
     return lease->common.milliseconds ? lease->common.milliseconds(lease->common.context) :
         (uint32_t)((uint64_t)milliseconds(lease->source) & UINT32_MAX);
 }
@@ -181,6 +185,8 @@ static bool common_arguments(void *context, qa_native_host_command_view *out, qa
 static bool common_command(void *context, const char *text, qa_error *error)
 {
     frontend_source_lease *lease = context;
+    if (frontend_network_remote(lease->source->frontend))
+        return frontend_network_client_command(lease->source->frontend, text, error);
     return lease->common.client_command ? lease->common.client_command(lease->common.context, text, error) :
         frontend_fail(error, QA_ERROR_UNSUPPORTED, "source client command route is unavailable");
 }
@@ -276,7 +282,8 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
     if (role == QA_QVM_GAME) return frontend_network_source_services(frontend, host, error);
     if (frontend->options.dedicated || seat >= frontend->options.seats)
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "source client presentation requires an active local seat");
-    if (!frontend_scene_sync(frontend, error)) return false;
+    if (!frontend_scene_sync(frontend, error) ||
+        !frontend_network_client_services(frontend, owner, role, seat, host, error)) return false;
     frontend_source *source = frontend->sources;
     while (source && (source->owner != owner || source->seat != seat || source->source_files != host->mounts)) source = source->next;
     bool created = source == NULL;
@@ -299,7 +306,7 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
         source->fonts, configuration, update_screen};
     host->common = (qa_q3_host_common_services){lease, common_print, common_milliseconds,
         common_calendar, host->common.arguments ? common_arguments : NULL,
-        host->common.client_command ? common_command : NULL, host->common.installed_mods ? common_mods : NULL,
+        (host->common.client_command || frontend_network_remote(frontend)) ? common_command : NULL, host->common.installed_mods ? common_mods : NULL,
         common_clipboard};
     return frontend_source_publish_world(frontend, error) &&
         qa_q3_presentation_frame(source->presentation, &frontend->frame,
@@ -392,6 +399,8 @@ bool frontend_world_retired(void *context, qa_application *application, qa_error
     if (!frontend_shader_retire(frontend, error)) return false;
     frontend_visuals_destroy(frontend);
     if (!frontend_source_retire_world(frontend, error)) return false;
+    frontend_particle_retire(frontend);
+    frontend_event_retire(frontend);
     frontend->audio_id_count = 0;
     frontend->silent_audio_remainder = 0;
     return !frontend->audio || qa_audio_engine_reset_round(frontend->audio, error);

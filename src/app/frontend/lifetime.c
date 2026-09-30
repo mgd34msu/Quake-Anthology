@@ -144,6 +144,8 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     qa_audio_device_close(frontend->device); qa_audio_engine_destroy(frontend->audio);
     qa_scene_frame_destroy(&frontend->frame);
     frontend_visuals_destroy(frontend);
+    frontend_particle_retire(frontend);
+    frontend_event_retire(frontend);
     frontend_shader_destroy(frontend);
     qa_scene_world_destroy(frontend->scene_world);
     qa_resource_release(frontend->map_resource);

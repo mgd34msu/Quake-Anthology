@@ -33,7 +33,8 @@ static bool controls(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error
         }
         /* Read the authority each frame, including forced view angles after
          * teleport/cutscene. Builder angles are not another player store. */
-        if (!qa_input_command_angles(&seat->builder, state.command_angles, error)) return false;
+        if (!frontend_network_remote(frontend) &&
+            !qa_input_command_angles(&seat->builder, state.command_angles, error)) return false;
         qa_seat_input_sample sample;
         qa_input_command_tuning tuning;
         if (!qa_input_seat_sample(seat->input, now, duration, &sample, error) ||
@@ -48,6 +49,7 @@ static bool controls(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error
             .server_time_ms = (int32_t)((frontend->time_ns / 1000000) & INT32_MAX),
             .sensitivity = 1, .attack_allowed = true, .grounded = state.ground.hit != QA_TRACE_HIT_NONE};
         qa_movement_command command;
+        if (!frontend_network_client_input(frontend, &seat->builder, &frame, error)) return false;
         if (!qa_input_command_build(&seat->builder, &tuning, &sample, &frame, duration, &command, error) ||
             !frontend_network_command(frontend, i, actor, &command, error)) return false;
         const qa_actor_record *record = qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), actor);
@@ -92,27 +94,7 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
             }
             fputs(text, stdout);
         }
-        if (!frontend->audio || !frontend->sounds) continue;
-        uint64_t actor = frontend_audio_actor(frontend, event.actor, error);
-        if (event.actor.registry && actor == QA_AUDIO_NO_ACTOR) return false;
-        if (event.kind == QA_BUILTIN_STOP_SOUND) {
-            qa_audio_engine_stop_channel(frontend->audio, actor, event.provider,
-                event.family == QA_GAME_Q3 ? QA_AUDIO_Q3 : event.family == QA_GAME_Q2 ? QA_AUDIO_Q2 : QA_AUDIO_Q1, event.channel);
-        } else if (event.kind == QA_BUILTIN_SOUND) {
-            const char *name = qa_strings_cstr(strings, event.resource);
-            if (!name || !*name) continue;
-            qa_audio_family family = event.family == QA_GAME_Q3 ? QA_AUDIO_Q3 : event.family == QA_GAME_Q2 ? QA_AUDIO_Q2 : QA_AUDIO_Q1;
-            qa_audio_asset *asset = NULL;
-            if (!qa_audio_bank_register(frontend->sounds, name, family, &asset, error)) return false;
-            if (!asset) continue;
-            qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset,
-                .name = name, .family = family, .actor = actor, .owner = event.provider,
-                .audience = QA_AUDIO_WORLD, .origin_kind = QA_AUDIO_FIXED,
-                .origin = event.origin, .channel = event.channel, .volume = event.volume, .attenuation = event.attenuation};
-            bool ok = qa_audio_engine_play(frontend->audio, &sound, (int32_t)((frontend->time_ns / 1000000) & INT32_MAX), error);
-            qa_audio_asset_release(asset);
-            if (!ok) return false;
-        }
+        if (!frontend_event_sound(frontend, &event, error)) return false;
     }
     /* Network, demos and tools also consume application events. Their owner
      * must drain its projections before this shared queue is released. */
@@ -149,6 +131,7 @@ static bool audio_positions(qa_frontend *frontend, qa_error *error)
     for (size_t i = 0; i < frontend->audio_id_count; ++i) {
         frontend_audio_identity identity = frontend->audio_ids[i];
         if (!qa_actors_get(qa_world_actors(world), identity.actor)) continue;
+        if (frontend_network_client_actor(frontend, identity.actor)) continue;
         qa_body_state body; qa_error observed = {0};
         if (!qa_world_body_read(world, identity.actor, &body, &observed)) {
             if (observed.code == QA_ERROR_NOT_FOUND) continue;
@@ -185,12 +168,13 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
             ok = qa_profiler_push(profiler, "controls", error);
             if (ok) ok = phase_end(profiler, controls(frontend, elapsed_ns, error), error);
         }
-        if (ok && qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING) {
+        if (ok && qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING && !frontend_network_remote(frontend)) {
             ok = qa_profiler_push(profiler, "application", error);
             if (ok) ok = phase_end(profiler, qa_application_advance(frontend->application, elapsed_ns, error), error);
         }
         if (ok) ok = frontend_network_publish(frontend, error);
-        if (ok && !frontend->options.dedicated) ok = frontend_player_events(frontend, error);
+        if (ok && !frontend->options.dedicated) ok = frontend_scene_sync(frontend, error) &&
+            frontend_map_events(frontend, error) && frontend_particle_events(frontend, error) && frontend_player_events(frontend, error);
         if (ok && !frontend->options.dedicated) {
             ok = qa_profiler_push(profiler, "presentation", error);
             if (ok) ok = phase_end(profiler, frontend_present(frontend, error), error);
@@ -202,6 +186,7 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
                 frontend_print(frontend, "\n");
             }
         }
+        if (ok) ok = frontend_particle_advance(frontend, error);
         if (ok) ok = frontend_events(frontend, error);
         if (ok && frontend->audio) {
             ok = qa_profiler_push(profiler, "audio", error);
@@ -209,7 +194,7 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
                 const qa_cvar_view *volume = qa_cvars_find(qa_application_cvars(frontend->application), "s_volume");
                 qa_audio_engine_gain(frontend->audio, volume ? fmaxf(0, fminf(1, volume->number)) : .7f);
                 qa_audio_engine_update(frontend->audio, (double)frontend->time_ns / 1000000);
-                ok = audio_positions(frontend, error) && qa_audio_engine_end_loop_frame(frontend->audio, error) &&
+                ok = audio_positions(frontend, error) && frontend_event_audio(frontend, error) && qa_audio_engine_end_loop_frame(frontend->audio, error) &&
                      audio_output(frontend, elapsed_ns, error);
                 ok = phase_end(profiler, ok, error);
             }

@@ -903,17 +903,24 @@ target_link_libraries(qa_persistence PUBLIC qa_session qa_content qa_gameplay qa
 
 add_library(qa_frontend STATIC
     src/app/frontend/audio_identity.c
+    src/app/frontend/bindings_ui.c
     src/app/frontend/commands.c
     src/app/frontend/frame.c
     src/app/frontend/launch.c
     src/app/frontend/lifetime.c
+    src/app/frontend/map_events.c
     src/app/frontend/native_q2.c
     src/app/frontend/network.c
     src/app/frontend/options.c
+    src/app/frontend/particle_events.c
+    src/app/frontend/player_events.c
     src/app/frontend/presentation.c
     src/app/frontend/resources.c
+    src/app/frontend/remaps.c
     src/app/frontend/seats.c
+    src/app/frontend/source.c
     src/app/frontend/tools.c
+    src/app/frontend/visuals.c
     src/app/frontend/wheels.c)
 target_link_libraries(qa_frontend PUBLIC qa_application qa_ui qa_tools qa_display qa_render_cpu qa_render_gl qa_input qa_settings qa_audio qa_q3_presentation qa_network PRIVATE SDL2::SDL2)
 

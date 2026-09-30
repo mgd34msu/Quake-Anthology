@@ -107,7 +107,7 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
         if (live) {
             view.origin = qa_vec_add(camera.origin, camera.view_offset);
             qa_vec3 angles = camera.angles;
-            if (!source.source_hud && !camera.cutscene && seat->q2_view_ready &&
+            if (!source.source_world && !camera.cutscene && seat->q2_view_ready &&
                     qa_actor_id_equal(actor, seat->q2_actor)) {
                 qa_application_visual_view appearance;
                 if (!qa_application_visual_read(frontend->application, actor, &appearance, error)) return false;
@@ -119,7 +119,7 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
             frontend_camera_axes(angles, view.axis);
         }
         else { view.axis[0] = qa_v3(1, 0, 0); view.axis[1] = qa_v3(0, 1, 0); view.axis[2] = qa_v3(0, 0, 1); }
-        float fov_x = live && !source.source_hud && seat->q2_view_ready &&
+        float fov_x = live && !source.source_world && seat->q2_view_ready &&
             qa_actor_id_equal(actor, seat->q2_actor) ? seat->q2_view.fov : 90;
         float fov_y = 2 * atanf(tanf(fov_x * .008726646259971648f) * (float)rect.height / (float)rect.width) * 57.29577951308232f;
         view.projection = qa_scene_projection(fov_x, fov_y, 4, 16384);
@@ -128,16 +128,21 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
         if (!qa_scene_frame_emit(&frontend->frame, &begin, error)) return false;
         if (!frontend_source_frame(frontend, i, rect, error) ||
             !frontend_native_q2_frame(frontend, i, rect, error)) return false;
-        if (live && !ui.fullscreen && !source.source_hud && frontend->scene_world) {
+        if (live && !ui.fullscreen && !source.source_world && frontend->scene_world) {
             qa_scene_world_input world = {.view = view, .seconds = (double)frontend->time_ns / 1e9,
                 .milliseconds = (int64_t)(frontend->time_ns / 1000000), .identity_light = 1, .curve_error = 4};
-            if (!qa_scene_world_submit(frontend->scene_world, &world, &frontend->frame, error) ||
+            if (!frontend_event_world(frontend, i, &world, error) ||
+                !qa_scene_world_submit(frontend->scene_world, &world, &frontend->frame, error) ||
                 !frontend_visuals_submit(frontend, i, 0, &world, &frontend->frame, error) ||
-                !qa_scene_frame_finish(&frontend->frame, &view, &world.fog, error)) return false;
+                !frontend_particle_draw(frontend, &view, error)) return false;
+            world.fog.sky_drawn = qa_scene_world_sky_drawn(frontend->scene_world);
+            if (!qa_scene_frame_finish(&frontend->frame, &view, &world.fog, error)) return false;
         }
-        if (!source.source_hud && !frontend_tools_debug(frontend, &view, error)) return false;
-        if (!qa_application_present(frontend->application, i,
-            (uint32_t)((frontend->time_ns / 1000000) & UINT32_MAX), error)) return false;
+        if (!source.source_world && !frontend_tools_debug(frontend, &view, error)) return false;
+        uint32_t real_milliseconds = (uint32_t)((frontend->time_ns / 1000000) & UINT32_MAX);
+        if (!qa_application_present(frontend->application, i, real_milliseconds,
+                frontend_network_remote(frontend) ? frontend_network_client_time(frontend) :
+                    real_milliseconds, error)) return false;
         if (!frontend_native_q2_world_text(frontend, i, &view, error)) return false;
         if (live && frontend->audio) {
             qa_audio_listener *listener = &listeners[listener_count++];
@@ -147,7 +152,7 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
             memcpy(listener->axis, view.axis, sizeof(view.axis));
             frontend_source_listener(frontend, i, listener);
         }
-        if (live && !ui.fullscreen && !source.source_hud && seat->q2_view_ready &&
+        if (live && !ui.fullscreen && !source.source_world && seat->q2_view_ready &&
                 qa_actor_id_equal(actor, seat->q2_actor) && seat->q2_view.blend.w > 0) {
             qa_q2_blend blend = seat->q2_view.blend;
             if (!qa_scene_frame_picture(&frontend->frame, qa_scene_white(frontend->ui_images), rect, rect,
