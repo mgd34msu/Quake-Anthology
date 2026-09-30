@@ -147,6 +147,13 @@ bool qa_q3_host_destroy_ready(const qa_q3_host *);
  * Applying the already-qualified frame binding performs no source callbacks. */
 bool qa_q3_host_frontend_rebind_ready(const qa_q3_host *, const qa_scene_frame *current, const void *current_context, qa_error *);
 void qa_q3_host_frontend_rebind(qa_q3_host *, qa_scene_frame *destination, const void *current_context, void *destination_context);
+/* Detached restored hosts may receive their actual renderer world before
+ * private continuation activation. The caller qualifies the destination's
+ * saved content and owner graph; these functions qualify and move the borrow. */
+const qa_scene_world *qa_q3_host_scene_world(const qa_q3_host *);
+bool qa_q3_host_scene_world_rebind_ready(const qa_q3_host *, const qa_scene_world *current,
+    const qa_scene_world *destination, qa_error *);
+void qa_q3_host_scene_world_rebind(qa_q3_host *, qa_scene_world *destination);
 /* Close this source's portal contributions before replacing map geometry.
  * Source records/body bindings remain alive until their actors retire. */
 bool qa_q3_host_close_map(qa_q3_host *, qa_error *);

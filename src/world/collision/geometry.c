@@ -539,6 +539,80 @@ static bool visibility_row(const qa_collision_geometry *geometry, size_t index, 
     return true;
 }
 
+size_t qa_collision_q1_pvs_bytes(const qa_collision_geometry *geometry)
+{ return geometry && geometry->family == QA_COLLISION_Q1 ? geometry->visibility_bytes : 0; }
+
+bool qa_collision_q1_fat_pvs(const qa_collision_geometry *geometry, qa_vec3 eye,
+    uint8_t *bytes, size_t capacity, qa_error *error)
+{
+    if (!geometry || geometry->family != QA_COLLISION_Q1 || !qa_vec_finite(eye) ||
+        capacity < geometry->visibility_bytes || (geometry->visibility_bytes && !bytes))
+        return geometry_fail(error, QA_ERROR_ARGUMENT, "Q1 fat-PVS requires its actual geometry and complete row storage");
+    if (geometry->visibility_bytes) memset(bytes, 0, geometry->visibility_bytes);
+    size_t count = 1; geometry->scratch->nodes[0] = geometry->root;
+    while (count) {
+        int32_t child = geometry->scratch->nodes[--count];
+        if (child < 0) {
+            size_t leaf = leaf_index(child);
+            if (geometry->leaves[leaf].contents == -2) continue;
+            qa_bytes row;
+            if (!visibility_row(geometry, leaf, false, &row, error)) return false;
+            for (size_t i = 0; i < geometry->visibility_bytes; ++i) bytes[i] |= row.data[i];
+            continue;
+        }
+        const geometry_node *node = &geometry->nodes[(size_t)child];
+        const qa_collision_plane *plane = &geometry->planes[node->plane];
+        float distance = qa_vec_dot(eye, plane->normal) - plane->distance;
+        if (distance > 8) geometry->scratch->nodes[count++] = node->children[0];
+        else if (distance < -8) geometry->scratch->nodes[count++] = node->children[1];
+        else {
+            geometry->scratch->nodes[count++] = node->children[1];
+            geometry->scratch->nodes[count++] = node->children[0];
+        }
+    }
+    return true;
+}
+
+bool qa_collision_q1_bounds_visible(const qa_collision_geometry *geometry, qa_bytes pvs,
+    qa_bounds bounds, bool *out, qa_error *error)
+{
+    if (!geometry || geometry->family != QA_COLLISION_Q1 || !out ||
+        !qa_collision_bounds_valid(bounds) || pvs.size != geometry->visibility_bytes || (pvs.size && !pvs.data))
+        return geometry_fail(error, QA_ERROR_ARGUMENT, "Q1 entity visibility requires its actual fat-PVS and source bounds");
+    *out = false;
+    size_t count = 1, touched = 0; geometry->scratch->nodes[0] = geometry->root;
+    while (count) {
+        int32_t child = geometry->scratch->nodes[--count];
+        if (child < 0) {
+            size_t leaf = leaf_index(child);
+            if (geometry->leaves[leaf].contents != -2) {
+                if (leaf && bit_test(pvs, leaf - 1)) { *out = true; return true; }
+                if (++touched == 16) return true;
+            }
+            continue;
+        }
+        const geometry_node *node = &geometry->nodes[(size_t)child];
+        const qa_collision_plane *plane = &geometry->planes[node->plane];
+        unsigned side;
+        if (plane->type < 3) {
+            unsigned axis = (unsigned)plane->type;
+            side = plane->distance <= qa_vec_component(bounds.mins, axis) ? 1u :
+                plane->distance >= qa_vec_component(bounds.maxs, axis) ? 2u : 3u;
+        } else {
+            qa_vec3 n = plane->normal;
+            qa_vec3 far = qa_v3(n.x < 0 ? bounds.mins.x : bounds.maxs.x,
+                n.y < 0 ? bounds.mins.y : bounds.maxs.y, n.z < 0 ? bounds.mins.z : bounds.maxs.z);
+            qa_vec3 near = qa_v3(n.x < 0 ? bounds.maxs.x : bounds.mins.x,
+                n.y < 0 ? bounds.maxs.y : bounds.mins.y, n.z < 0 ? bounds.maxs.z : bounds.mins.z);
+            side = (qa_vec_dot(far, n) >= plane->distance ? 1u : 0u) |
+                (qa_vec_dot(near, n) < plane->distance ? 2u : 0u);
+        }
+        if (side & 2u) geometry->scratch->nodes[count++] = node->children[1];
+        if (side & 1u) geometry->scratch->nodes[count++] = node->children[0];
+    }
+    return true;
+}
+
 bool qa_collision_cluster_visible(const qa_collision_geometry *geometry, int32_t from, int32_t to,
                                   bool phs, bool *out, qa_error *error)
 {

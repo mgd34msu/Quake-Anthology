@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_restore.h"
 #include <signal.h>
 #include <stdio.h>
 
@@ -143,6 +144,7 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     if (!frontend_network_destroy(frontend, error) || !frontend_tools_destroy(frontend, error)) return false;
     if (frontend->application && !qa_application_destroy(frontend->application, error)) return false;
     frontend->application = NULL;
+    if (!frontend_source_discard_unbound(frontend, error)) return false;
     if (!frontend_seats_destroy(frontend, error)) return false;
     qa_dedicated_console_destroy(frontend->terminal);
     qa_audio_device_close(frontend->device); qa_audio_engine_destroy(frontend->audio);

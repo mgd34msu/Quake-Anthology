@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/input.h"
 #include "qa/bot_runtime.h"
+#include "qa/scene_world_save.h"
 
 static bool vm_read(void *context, uint64_t address, void *out, size_t size, qa_error *error)
 {
@@ -316,6 +317,28 @@ void qa_q3_host_frontend_rebind(qa_q3_host *host, qa_scene_frame *destination,
     if (host->options.scene_frame) host->options.scene_frame = destination;
     if (host->options.client.context && host->options.client.context == current_context)
         host->options.client.context = destination_context;
+}
+
+const qa_scene_world *qa_q3_host_scene_world(const qa_q3_host *host)
+{
+    return host ? host->options.scene_world : NULL;
+}
+bool qa_q3_host_scene_world_rebind_ready(const qa_q3_host *host, const qa_scene_world *current,
+    const qa_scene_world *destination, qa_error *error)
+{
+    if (!host || host->retired || host->calls ||
+        (host->vm && qa_qvm_active(host->vm)) || (host->native && qa_native_active(host->native)) ||
+        (host->options.world && !qa_world_idle(host->options.world)) || host->options.scene_world != current ||
+        (current && !qa_scene_world_idle(current)) || (destination && !qa_scene_world_idle(destination)))
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 renderer world exchange requires idle qualified borrowed owners");
+    if (host->game) for (size_t i = 0; i < 1022; ++i)
+        if (host->game->slots[i].input_motion)
+            return q3_fail(error, QA_ERROR_ARGUMENT, i, "Q3 renderer world exchange has an admitted input motion");
+    return true;
+}
+void qa_q3_host_scene_world_rebind(qa_q3_host *host, qa_scene_world *destination)
+{
+    host->options.scene_world = destination;
 }
 
 bool qa_q3_host_destroy(qa_q3_host *host, qa_error *error)

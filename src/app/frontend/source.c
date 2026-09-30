@@ -2,6 +2,7 @@
 #include "qa/binary.h"
 #include "qa/q3_key.h"
 #include "qa/audio_save.h"
+#include "source_restore.h"
 #include <limits.h>
 #include <stdio.h>
 
@@ -15,6 +16,9 @@ struct frontend_source {
     uint64_t identity;
     unsigned leases;
     frontend_source_lease *lease_list;
+    frontend_source_role_identity *restore_roles;
+    size_t restore_role_count;
+    bool constructed;
     qa_vfs *mounts;
     const qa_vfs *source_files;
     qa_scene_resources *images;
@@ -33,6 +37,7 @@ struct frontend_source_lease {
     frontend_source_lease *next;
     frontend_source *source;
     qa_qvm_role role;
+    uint64_t service_owner;
     qa_q3_host_common_services common;
     qa_console *console;
     qa_command_context command;
@@ -235,7 +240,7 @@ static void source_free(frontend_source *source)
     qa_audio_bank_destroy(source->sounds);
     qa_material_library_destroy(source->materials);
     qa_scene_resources_destroy(source->images);
-    qa_vfs_destroy(source->mounts); free(source);
+    qa_vfs_destroy(source->mounts); free(source->restore_roles); free(source);
 }
 static void release_source(void *context)
 {
@@ -244,21 +249,15 @@ static void release_source(void *context)
     while (*held && *held!=lease) held=&(*held)->next;
     if (*held) *held=lease->next;
     free(lease);
-    if (--source->leases) return;
+    if (--source->leases || source->frontend->source_restoring) return;
     frontend_source **link = &source->frontend->sources;
     while (*link && *link != source) link = &(*link)->next;
     if (*link) *link = source->next;
     source_free(source);
 }
-static bool create_source(qa_frontend *frontend, qa_application *application, qa_actor_owner owner,
-    uint32_t seat, const qa_q3_host_options *host, frontend_source **out, qa_error *error)
+static bool construct_source(frontend_source *source, const qa_q3_host_options *host, bool restoring, qa_error *error)
 {
-    if (frontend->next_source_id == UINT64_MAX - QA_FRONTEND_COMMAND_OWNER - 1)
-        return frontend_fail(error, QA_ERROR_MEMORY, "source frontend identity exhausted");
-    frontend_source *source = calloc(1, sizeof(*source));
-    if (!source) return frontend_fail(error, QA_ERROR_MEMORY, "allocating source presentation owner");
-    source->frontend = frontend; source->application = application; source->owner = owner; source->seat = seat;
-    source->identity = QA_FRONTEND_COMMAND_OWNER + ++frontend->next_source_id;
+    qa_frontend *frontend = source->frontend;
     source->source_files = host->mounts;
     source->mounts = qa_vfs_clone(host->mounts, error);
     source->images = source->mounts ? qa_scene_resources_create(source->mounts, error) : NULL;
@@ -268,23 +267,35 @@ static bool create_source(qa_frontend *frontend, qa_application *application, qa
     qa_scene_image_options images = {.family = QA_SCENE_Q3, .wrap = QA_SCENE_REPEAT,
         .filter = QA_SCENE_LINEAR_MIPMAP_LINEAR, .mipmap = true, .transparent_index = -1};
     bool ok = source->mounts && source->images && source->materials && source->fonts && source->movies &&
-        qa_material_library_load_scripts(source->materials, source->mounts, &images, error) &&
+        (restoring || qa_material_library_load_scripts(source->materials, source->mounts, &images, error)) &&
         qa_audio_bank_create(source->mounts, &source->sounds, error) &&
         qa_q3_key_create(host->cvars, false, &source->keys, error);
     if (ok && frontend->audio) ok = qa_audio_music_create(48000, QA_AUDIO_Q3, false, &source->music, error);
-    if (ok) ok = frontend_material_remaps(frontend, source->materials, error);
+    if (ok && !restoring) ok = frontend_material_remaps(frontend, source->materials, error);
     qa_q3_presentation_asset_options assets = {.provider = {source->mounts, source->images, source->materials, QA_SCENE_Q3},
         .sounds = source->sounds, .movies = source->movies, .context = source, .print = print_source};
     if (ok) ok = qa_q3_presentation_assets_create(&assets, &source->assets, error);
     qa_q3_presentation_options presentation = {.assets = source->assets, .audio = frontend->audio,
-        .clock = {source, milliseconds}, .seat = seat, .owner = source->identity,
+        .clock = {source, milliseconds}, .seat = source->seat, .owner = source->identity,
         .viewport = {0, 0, frontend->width, frontend->height}, .near_clip = 4, .far_clip = 16384,
         .identity_light = 1, .lod_scale = 5, .rail_core_width = 6, .rail_ring_width = 16, .rail_segment_length = 32,
         .context = source, .audio_actor = source_actor, .listener = listener, .music = music,
         .frame_number = frame_number, .milliseconds = source_milliseconds, .audio_bus = audio_bus,
         .prepare_view = prepare_view, .submit_view = submit_view, .remap = source_remap, .print = print_source};
     if (ok) ok = qa_q3_presentation_create(&presentation, &source->presentation, error);
-    if (!ok) { source_free(source); return false; }
+    source->constructed = ok;
+    return ok;
+}
+static bool create_source(qa_frontend *frontend, qa_application *application, qa_actor_owner owner,
+    uint32_t seat, const qa_q3_host_options *host, frontend_source **out, qa_error *error)
+{
+    if (frontend->next_source_id >= UINT64_MAX - QA_FRONTEND_COMMAND_OWNER - 1)
+        return frontend_fail(error, QA_ERROR_MEMORY, "source frontend identity exhausted");
+    frontend_source *source = calloc(1, sizeof(*source));
+    if (!source) return frontend_fail(error, QA_ERROR_MEMORY, "allocating source presentation owner");
+    source->frontend = frontend; source->application = application; source->owner = owner; source->seat = seat;
+    source->identity = QA_FRONTEND_COMMAND_OWNER + ++frontend->next_source_id;
+    if (!construct_source(source, host, false, error)) { source_free(source); return false; }
     source->next = frontend->sources; frontend->sources = source; *out = source;
     return true;
 }
@@ -295,10 +306,38 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
     if (role == QA_QVM_GAME) return frontend_network_source_services(frontend, host, error);
     if (frontend->options.dedicated || seat >= frontend->options.seats)
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "source client presentation requires an active local seat");
-    if (!frontend_scene_sync(frontend, error) ||
+    if (frontend->source_restoring && (!frontend->seats || !frontend->seats[seat].input || !frontend->seats[seat].console))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "restored source imports require actual stable input and console owners");
+    if ((!frontend->source_restoring && !frontend_scene_sync(frontend, error)) ||
         !frontend_network_client_services(frontend, owner, role, seat, host, error)) return false;
     frontend_source *source = frontend->sources;
-    while (source && (source->owner != owner || source->seat != seat || source->source_files != host->mounts)) source = source->next;
+    if (frontend->source_restoring) {
+        for (; source; source = source->next) {
+            bool found = false;
+            for (size_t i = 0; i < source->restore_role_count; ++i)
+                if (source->restore_roles[i].service_owner == host->service_owner) { found = true; break; }
+            if (found) break;
+        }
+        if (!source || source->owner != owner || source->seat != seat || !host->service_owner)
+            return frontend_fail(error, QA_ERROR_FORMAT, "source factory leaves admitted restored group identity");
+        bool admitted = false;
+        for (size_t i = 0; i < source->restore_role_count; ++i)
+            if (source->restore_roles[i].service_owner == host->service_owner && source->restore_roles[i].role == role)
+                admitted = true;
+        if (!admitted || (source->source_files && source->source_files != host->mounts))
+            return frontend_fail(error, QA_ERROR_FORMAT, "source role or mount view differs from its restored group");
+        for (frontend_source_lease *prior = source->lease_list; prior; prior = prior->next)
+            if (prior->service_owner == host->service_owner)
+                return frontend_fail(error, QA_ERROR_FORMAT, "duplicate restored source role lease");
+        if (source->source_files && !source->constructed)
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "partially constructed source group must be discarded");
+        if (frontend->application != application || (source->application && source->application != application))
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "restored source factory changed its application owner");
+        source->application = application;
+        if (!source->constructed && !construct_source(source, host, true, error)) return false;
+    } else {
+        while (source && (source->owner != owner || source->seat != seat || source->source_files != host->mounts)) source = source->next;
+    }
     bool created = source == NULL;
     if (created && !create_source(frontend, application, owner, seat, host, &source, error)) return false;
     frontend_source_lease *lease = malloc(sizeof(*lease));
@@ -307,8 +346,20 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
         if (created) { frontend->sources = source->next; source_free(source); }
         return frontend_fail(error, QA_ERROR_MEMORY, "retaining source frontend lease");
     }
-    *lease = (frontend_source_lease){.next=source->lease_list,.source = source,.role=role,.common = host->common,
-        .console = host->console, .command = host->command_context}; source->lease_list=lease; ++source->leases;
+    *lease = (frontend_source_lease){.source = source,.role=role,.service_owner=host->service_owner,.common = host->common,
+        .console = host->console, .command = host->command_context};
+    frontend_source_lease **link = &source->lease_list;
+    if (frontend->source_restoring) {
+        size_t rank = 0;
+        while (source->restore_roles[rank].service_owner != lease->service_owner) ++rank;
+        while (*link) {
+            size_t prior = 0;
+            while (source->restore_roles[prior].service_owner != (*link)->service_owner) ++prior;
+            if (prior > rank) break;
+            link = &(*link)->next;
+        }
+    }
+    lease->next = *link; *link = lease; ++source->leases;
     host->frontend_lifetime = lease; host->release_frontend = release_source;
     host->seat = frontend->seats[seat].input;
     host->console_field = qa_seat_console_field(frontend->seats[seat].console, false);
@@ -321,7 +372,7 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
         common_calendar, host->common.arguments ? common_arguments : NULL,
         (host->common.client_command || frontend_network_remote(frontend)) ? common_command : NULL, host->common.installed_mods ? common_mods : NULL,
         common_clipboard};
-    return frontend_source_publish_world(frontend, error) &&
+    return (frontend->source_restoring || frontend_source_publish_world(frontend, error)) &&
         qa_q3_presentation_frame(source->presentation, &frontend->frame,
             (qa_scene_rect){0, 0, frontend->width, frontend->height}, error);
 }
@@ -358,7 +409,7 @@ const qa_scene_resources *frontend_source_images_at(qa_frontend *frontend, size_
 }
 bool frontend_source_rebind_ready(const qa_frontend *owned, const qa_frontend *destination, qa_error *error)
 {
-    if (!owned || !destination || owned->stepping || destination->stepping || !owned->application)
+    if (!owned || !destination || owned->stepping || destination->stepping || !owned->application || owned->source_restoring)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "source lease publication requires idle frontend owners");
     if (!qa_application_guest_context_rebind_ready(owned->application, &owned->frame, error)) return false;
     for (const frontend_source *source = owned->sources; source; source = source->next) {
@@ -461,7 +512,7 @@ bool frontend_source_group_read(const qa_frontend *frontend, size_t index, front
     if (!frontend || !out || frontend->stepping) return false;
     const frontend_source *source=frontend->sources;
     while (source && index--) source=source->next;
-    if (!source || source->frontend!=frontend || source->application!=frontend->application) return false;
+    if (!source || !source->constructed || source->frontend!=frontend || source->application!=frontend->application) return false;
     frontend_source_group_view view={.owner=source->owner,.seat=source->seat,.identity=source->identity,
         .source_files=source->source_files,.mounts=source->mounts,.images=source->images,.materials=source->materials,
         .fonts=source->fonts,.sounds=source->sounds,.movies=source->movies,.keys=source->keys,
@@ -475,4 +526,99 @@ bool frontend_source_group_read(const qa_frontend *frontend, size_t index, front
     if (held!=source->leases) return false;
     view.music=source->music_attached?qa_audio_engine_bus_music(frontend->audio,source->identity):source->music;
     *out=view; return true;
+}
+bool frontend_source_group_role_read(const qa_frontend *frontend, size_t group, size_t index,
+    frontend_source_role_identity *out)
+{
+    if (!frontend || !out || frontend->stepping) return false;
+    const frontend_source *source = frontend->sources;
+    while (source && group--) source = source->next;
+    if (!source || !source->constructed || source->frontend != frontend || source->application != frontend->application)
+        return false;
+    const frontend_source_lease *lease = source->lease_list;
+    while (lease && index--) lease = lease->next;
+    if (!lease || lease->source != source || !lease->service_owner) return false;
+    *out = (frontend_source_role_identity){lease->role, lease->service_owner}; return true;
+}
+bool frontend_source_prepare_groups(qa_frontend *frontend, uint64_t next_source_id,
+    const frontend_source_group_plan *plans, size_t count, qa_error *error)
+{
+    if (!frontend || frontend->stepping || frontend->sources || frontend->source_restoring ||
+        (count && !plans) || next_source_id > UINT64_MAX - QA_FRONTEND_COMMAND_OWNER - 1)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "restored source admission requires an empty idle frontend");
+    for (size_t i = 0; i < count; ++i) {
+        const frontend_source_group_plan *plan = &plans[i];
+        if (!plan->owner || plan->seat >= frontend->options.seats || frontend->options.dedicated ||
+            plan->identity <= QA_FRONTEND_COMMAND_OWNER ||
+            plan->identity - QA_FRONTEND_COMMAND_OWNER > next_source_id || !plan->roles ||
+            !plan->role_count || plan->role_count > UINT_MAX ||
+            plan->role_count > SIZE_MAX / sizeof(*plan->roles))
+            return frontend_fail(error, QA_ERROR_FORMAT, "invalid restored source group identity");
+        for (size_t prior = 0; prior < i; ++prior)
+            if (plans[prior].identity == plan->identity)
+                return frontend_fail(error, QA_ERROR_FORMAT, "duplicate restored source group identity");
+        for (size_t j = 0; j < plan->role_count; ++j) {
+            const frontend_source_role_identity *role = &plan->roles[j];
+            if ((role->role != QA_QVM_CGAME && role->role != QA_QVM_UI) ||
+                !role->service_owner || role->service_owner > UINT32_MAX)
+                return frontend_fail(error, QA_ERROR_FORMAT, "invalid restored source service owner");
+            for (size_t a = 0; a <= i; ++a)
+                for (size_t b = 0; b < (a == i ? j : plans[a].role_count); ++b)
+                    if (plans[a].roles[b].service_owner == role->service_owner)
+                        return frontend_fail(error, QA_ERROR_FORMAT, "duplicate restored source service owner");
+        }
+    }
+    frontend_source *head = NULL, **tail = &head;
+    for (size_t i = 0; i < count; ++i) {
+        frontend_source *source = calloc(1, sizeof(*source));
+        if (!source) goto memory;
+        *tail = source; tail = &source->next;
+        source->frontend = frontend; source->owner = plans[i].owner; source->seat = plans[i].seat;
+        source->identity = plans[i].identity; source->restore_role_count = plans[i].role_count;
+        source->restore_roles = malloc(plans[i].role_count * sizeof(*source->restore_roles));
+        if (!source->restore_roles) goto memory;
+        memcpy(source->restore_roles, plans[i].roles, plans[i].role_count * sizeof(*source->restore_roles));
+    }
+    frontend->sources = head; frontend->next_source_id = next_source_id; frontend->source_restoring = true;
+    return true;
+memory:
+    while (head) { frontend_source *next = head->next; free(head->restore_roles); free(head); head = next; }
+    return frontend_fail(error, QA_ERROR_MEMORY, "retaining restored source group admission");
+}
+bool frontend_source_complete_groups(const qa_frontend *frontend, qa_error *error)
+{
+    if (!frontend || frontend->stepping || !frontend->source_restoring)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "restored source groups require idle admitted construction");
+    for (const frontend_source *source = frontend->sources; source; source = source->next) {
+        if (!source->constructed || source->frontend != frontend || source->application != frontend->application ||
+            !source->source_files || source->leases != source->restore_role_count)
+            return frontend_fail(error, QA_ERROR_FORMAT, "restored source group was not completely constructed");
+        const frontend_source_lease *lease = source->lease_list;
+        for (size_t i = 0; i < source->restore_role_count; ++i, lease = lease->next) {
+            if (!lease || lease->source != source || lease->role != source->restore_roles[i].role ||
+                lease->service_owner != source->restore_roles[i].service_owner)
+                return frontend_fail(error, QA_ERROR_FORMAT, "restored source role ownership differs from admitted plan");
+        }
+        if (lease) return frontend_fail(error, QA_ERROR_FORMAT, "restored source group has excess role ownership");
+    }
+    return true;
+}
+void frontend_source_finish_groups(qa_frontend *frontend)
+{
+    for (frontend_source *source = frontend->sources; source; source = source->next) {
+        free(source->restore_roles); source->restore_roles = NULL; source->restore_role_count = 0;
+    }
+    frontend->source_restoring = false;
+}
+bool frontend_source_discard_unbound(qa_frontend *frontend, qa_error *error)
+{
+    if (!frontend || frontend->stepping)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "source group cleanup requires idle frontend");
+    for (frontend_source *source = frontend->sources; source; source = source->next)
+        if (source->leases)
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "source guest leases must retire before group cleanup");
+    while (frontend->sources) {
+        frontend_source *source = frontend->sources; frontend->sources = source->next; source_free(source);
+    }
+    frontend->source_restoring = false; return true;
 }

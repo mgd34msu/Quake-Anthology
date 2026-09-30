@@ -92,6 +92,7 @@ struct qa_frontend {
     frontend_event_state *events;
     frontend_particle_state *particles;
     uint64_t next_source_id;
+    bool source_restoring;
     frontend_audio_identity *audio_ids;
     size_t audio_id_count, audio_id_capacity;
     uint64_t next_audio_id;
