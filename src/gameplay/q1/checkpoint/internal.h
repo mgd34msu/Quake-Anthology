@@ -6,7 +6,7 @@
 #include "qa/game_q1_checkpoint.h"
 #include "qa/persistence_gameplay.h"
 
-enum { Q1_SAVE_VERSION = 5 };
+enum { Q1_SAVE_VERSION = 6 };
 typedef struct q1_save_io {
     qa_q1_game *game;
     qa_strings *dictionary;

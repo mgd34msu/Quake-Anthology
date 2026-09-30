@@ -27,6 +27,7 @@ static bool options(q1_save_io *io, qa_q1_options *o) {
     Q1_SAVE(io, float, o->aim_threshold);
     Q1_SAVE(io, u32, o->max_clients);
     Q1_SAVE(io, u32, o->random_seed);
+    Q1_SAVE(io, u32, o->gamecfg);
     return o->skill <= 3 || q1_save_fail(io, "Invalid Q1 checkpoint skill");
 }
 bool q1_save_runtime(q1_save_io *io, qa_q1_game *g) {

@@ -112,7 +112,7 @@ typedef struct qa_q1_options {
     uint8_t skill;
     int32_t deathmatch, teamplay, world_type;
     float gravity, aim_threshold;
-    uint32_t max_clients, random_seed;
+    uint32_t max_clients, random_seed, gamecfg;
 } qa_q1_options;
 typedef enum qa_q1_life { QA_Q1_ALIVE, QA_Q1_DYING, QA_Q1_DEAD, QA_Q1_RESPAWNABLE } qa_q1_life;
 typedef enum qa_q1_character_attack {
@@ -422,6 +422,7 @@ bool qa_q1_game_reaction(qa_q1_game *, const qa_damage_outcome *, qa_error *);
 bool qa_q1_game_presentation(const qa_q1_game *, qa_actor_id, qa_q1_presentation *);
 bool qa_q1_game_physics_read(const qa_q1_game *, qa_actor_id, qa_physics_properties *);
 bool qa_q1_game_gravity(const qa_q1_game *, float *out);
+bool qa_q1_game_rules_read(const qa_q1_game *, int32_t *deathmatch, uint32_t *gamecfg);
 bool qa_q1_game_monster_counts(const qa_q1_game *, uint32_t *total, uint32_t *killed);
 bool qa_q1_game_alpha(qa_q1_game *, qa_actor_id, float alpha, qa_error *);
 bool qa_q1_game_physics_write(qa_q1_game *, qa_actor_id, const qa_physics_properties *, qa_error *);

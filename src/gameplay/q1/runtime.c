@@ -92,6 +92,13 @@ bool qa_q1_game_gravity(const qa_q1_game *g, float *out) {
     *out = g->services.physics ? g->services.physics->gravity : g->options.gravity;
     return true;
 }
+bool qa_q1_game_rules_read(const qa_q1_game *g, int32_t *deathmatch, uint32_t *gamecfg) {
+    if (!g || g->destroy_pending || !deathmatch || !gamecfg)
+        return false;
+    *deathmatch = g->options.deathmatch;
+    *gamecfg = g->options.gamecfg;
+    return true;
+}
 bool qa_q1_game_monster_counts(const qa_q1_game *g, uint32_t *total, uint32_t *killed) {
     if (!g || g->destroy_pending || !total || !killed)
         return false;
