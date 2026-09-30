@@ -6,6 +6,13 @@ static q1_actor *brush(qa_q1_game *g, qa_actor_id id) {
     q1_actor *e = q1_entity(g, id);
     return e && e->map && q1_map_is_addon_brush(e->map->kind) ? e : NULL;
 }
+static bool cooldown(q1_actor *e, double value, qa_error *error) {
+    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127)
+        return q1_map_fail(error, "Q1 addon brush cooldown exceeds native range");
+    e->map->cooldown = fabs(value) > FLT_MAX
+                           ? (value < 0 ? -FLT_MAX : FLT_MAX) : (float)value;
+    return true;
+}
 static bool publish(qa_q1_game *g, qa_actor_id id, const qa_body_state *body, qa_error *error) {
     if (!qa_world_body_write(g->services.world, id, body, error))
         return false;
@@ -214,9 +221,7 @@ bool q1_map_addon_brush_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_
     if (!q1_damage(g,other,id,world,amount,QA_Q1_WEAPON_COUNT,error))
         return false;
     e = brush(g,id);
-    if (e)
-        e->map->cooldown = g->time+wait;
-    return true;
+    return !e || cooldown(e, g->time + wait, error);
 }
 bool q1_map_addon_brush_blocked(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *error) {
     if (e->map->kind != Q1_MAP_ADDON_BOB || e->map->cooldown > g->time)
@@ -226,9 +231,7 @@ bool q1_map_addon_brush_blocked(qa_q1_game *g, q1_actor *e, qa_actor_id other, q
     if (!q1_damage(g,other,id,id,damage,QA_Q1_WEAPON_COUNT,error))
         return false;
     e = brush(g,id);
-    if (e)
-        e->map->cooldown = g->time+.5;
-    return true;
+    return !e || cooldown(e, g->time + .5, error);
 }
 bool q1_map_addon_brush_reaction(qa_q1_game *g, q1_actor *e,
                                  const qa_damage_outcome *outcome, qa_error *error) {

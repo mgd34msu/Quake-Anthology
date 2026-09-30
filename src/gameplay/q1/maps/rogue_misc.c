@@ -80,51 +80,55 @@ bool q1_map_rogue_rubble_throw(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (!e)
         return true;
     qa_vec3 direction = qa_vec_normalize(qa_vec_sub(destination.origin, body.origin));
-    int32_t skin = (e->spawnflags & 1) != 0;
     q1_actor *piece;
     if (!q1_create(g, "rubble", Q1_MAP, source, &piece, error))
         return false;
     qa_actor_id id = piece->id;
-    if (!misc_actor(g, source)) {
-        (void)q1_remove(g, piece, NULL);
-        return true;
-    }
+    e = misc_actor(g, source);
+    if (!e)
+        goto retire;
     if (!q1_map_allocate(g, piece, error))
         goto fail;
     piece->map->kind = Q1_MAP_ROGUE_RUBBLE;
     piece->map->touch_enabled = true;
     piece->physics.solid = QA_PHYSICS_BOX;
     piece->physics.motion = QA_PHYSICS_BOUNCE;
-    piece->skin = skin;
+    piece->skin = (e->spawnflags & 1) != 0;
+    if (!q1_model(g, piece, "progs/rubble.mdl", error))
+        goto fail;
+    piece = misc_actor(g, id);
+    if (!piece)
+        goto retire;
+    qa_body_state current;
+    if (!qa_world_body_read(g->services.world, source, &current, error))
+        goto fail;
+    if (!misc_actor(g, source) || !misc_actor(g, id))
+        goto retire;
+    body.origin = current.origin;
     body.bounds = (qa_bounds){{-16, -16, -16}, {16, 16, 16}};
     body.angles = qa_v3(0, 0, 0);
     body.velocity.x = (direction.x + q1_random(g) * .2f - .1f) * 300;
     body.velocity.y = (direction.y + q1_random(g) * .2f - .1f) * 300;
     body.velocity.z = (direction.z + q1_random(g) * .2f - .1f) * 300;
     body.ground = (qa_actor_id){0};
-    if (!q1_model(g, piece, "progs/rubble.mdl", error))
-        goto fail;
-    piece = misc_actor(g, id);
-    if (!piece)
-        return true;
     if (!qa_world_body_write(g->services.world, id, &body, error))
         goto fail;
     piece = misc_actor(g, id);
-    if (!piece)
-        return true;
+    if (!piece || !misc_actor(g, source))
+        goto retire;
     if (!q1_map_schedule(g, piece, 30, Q1_MAP_REMOVE, error) || !q1_link(g, piece, error))
         goto fail;
     e = misc_actor(g, source);
-    if (!e) {
-        piece = misc_actor(g, id);
-        return !piece || q1_remove(g, piece, error);
-    }
+    if (!e)
+        goto retire;
     return q1_map_schedule(g, e, e->delay, Q1_MAP_ROGUE_RUBBLE_THROW, error);
 fail:
-    piece = misc_actor(g, id);
-    if (piece)
-        (void)q1_remove(g, piece, NULL);
+    if (qa_actors_get(qa_session_actors(g->services.session), id))
+        (void)qa_session_release(g->services.session, id, NULL);
     return false;
+retire:
+    return !qa_actors_get(qa_session_actors(g->services.session), id) ||
+           qa_session_release(g->services.session, id, error);
 }
 bool q1_map_rogue_misc_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, qa_error *error) {
     if (e->map->kind != Q1_MAP_ROGUE_RUBBLE)

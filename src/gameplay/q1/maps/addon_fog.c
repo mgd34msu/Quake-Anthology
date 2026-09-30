@@ -1,4 +1,5 @@
 #include "internal.h"
+#include <float.h>
 
 bool qa_q1_game_map_fog_read(const qa_q1_game *g, qa_actor_id player, qa_q1_fog_state *out) {
     if (!g || !out || !g->maps || !g->maps->addon_contacts || player.slot >= g->capacity ||
@@ -19,6 +20,19 @@ typedef struct fog_value {
     qa_vec3 color;
     uint32_t flags;
 } fog_value;
+static bool fog_round(double value, float *out, qa_error *error) {
+    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127)
+        return q1_map_fail(error, "Q1 addon fog result exceeds native range");
+    *out = fabs(value) > FLT_MAX ? (value < 0 ? -FLT_MAX : FLT_MAX) : (float)value;
+    return true;
+}
+static bool fog_blend(float first, float second, double tween, float *out,
+                        qa_error *error) {
+    float left, right;
+    return fog_round((double)first * (1 - tween), &left, error) &&
+           fog_round((double)second * tween, &right, error) &&
+           fog_round((double)left + right, out, error);
+}
 static bool fog_info(qa_q1_game *g, qa_string_id name, fog_value *out) {
     *out = (fog_value){0};
     qa_actor_id id;
@@ -63,8 +77,14 @@ bool q1_map_addon_fog_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (e->map->kind == Q1_MAP_FOG_INFO) {
         if (e->map->fog_density == 0)
             e->map->fog_density = .05f;
-        else if (e->map->fog_color.x > 1 || e->map->fog_color.y > 1 || e->map->fog_color.z > 1)
-            e->map->fog_color = qa_vec_scale(e->map->fog_color, 1.f / 255);
+        else if (e->map->fog_color.x > 1 || e->map->fog_color.y > 1 || e->map->fog_color.z > 1) {
+            qa_vec3 color = e->map->fog_color;
+            const double scale = 1.0 / 255.0;
+            if (!fog_round(color.x * scale, &color.x, error) ||
+                !fog_round(color.y * scale, &color.y, error) ||
+                !fog_round(color.z * scale, &color.z, error)) return false;
+            e->map->fog_color = color;
+        }
         return true;
     }
     if (g->options.coop || g->options.deathmatch != 0)
@@ -103,17 +123,24 @@ bool q1_map_addon_fog_activate(qa_q1_game *g, q1_actor *e, qa_actor_id player,
             return true;
         qa_vec3 size = qa_vec_sub(trigger.bounds.maxs, trigger.bounds.mins);
         qa_vec3 position = qa_vec_sub(body.origin, trigger.bounds.mins);
-        float tween = axis == 0 ? position.x / size.x
-                      : axis == 1 ? position.y / size.y : position.z / size.z;
+        float numerator = axis == 0 ? position.x : axis == 1 ? position.y : position.z;
+        float denominator = axis == 0 ? size.x : axis == 1 ? size.y : size.z;
+        if (denominator == 0 && numerator == 0)
+            return q1_map_fail(error, "Nonfinite Q1 addon fog transition position");
+        double tween = denominator == 0 ? (signbit(numerator) == signbit(denominator) ? 1 : 0)
+                                       : (double)numerator / denominator;
         if (isnan(tween))
             return q1_map_fail(error, "Nonfinite Q1 addon fog transition position");
-        tween = fminf(1, fmaxf(0, tween));
+        tween = fmin(1, fmax(0, tween));
         fog_value first, second;
         (void)fog_info(g, first_name, &first);
         (void)fog_info(g, second_name, &second);
-        fog_value value = {.density = (1 - tween) * first.density + tween * second.density,
-                           .color = qa_vec_add(qa_vec_scale(first.color, 1 - tween),
-                                               qa_vec_scale(second.color, tween))};
+        fog_value value = {0};
+        if (!fog_round((1 - tween) * first.density + tween * second.density,
+                        &value.density, error) ||
+            !fog_blend(first.color.x, second.color.x, tween, &value.color.x, error) ||
+            !fog_blend(first.color.y, second.color.y, tween, &value.color.y, error) ||
+            !fog_blend(first.color.z, second.color.z, tween, &value.color.z, error)) return false;
         return set_fog(g, id, player, value, 0, error);
     }
     if (e->map->kind != Q1_MAP_FOG_TRIGGER)

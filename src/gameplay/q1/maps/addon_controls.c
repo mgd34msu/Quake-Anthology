@@ -1,9 +1,16 @@
 #include "internal.h"
+#include <float.h>
 #include <stdio.h>
 
 static q1_actor *control(qa_q1_game *g, qa_actor_id id) {
     q1_actor *e = q1_entity(g, id);
     return e && e->map && q1_map_is_addon_control(e->map->kind) ? e : NULL;
+}
+static bool source_deadline(double value, double *out, qa_error *error) {
+    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127)
+        return q1_map_fail(error, "Q1 addon trigger deadline exceeds native range");
+    *out = fabs(value) > FLT_MAX ? (value < 0 ? -FLT_MAX : FLT_MAX) : (float)value;
+    return true;
 }
 static bool broadcast(qa_q1_game *g, qa_actor_id source, const char *text, qa_error *error) {
     q1_actor_snapshot *players;
@@ -389,9 +396,7 @@ bool q1_map_addon_control_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, q
             !qa_combat_set_health(g->services.combat, other, fminf(health + damage, traits.max_health), error))
             return false;
         e = control(g, id);
-        if (e)
-            e->map->cooldown = deadline;
-        return true;
+        return !e || source_deadline(deadline, &e->map->cooldown, error);
     }
     if (kind == Q1_MAP_ADDON_QUAD) {
         q1_player *player = q1_player_get(g, other);
@@ -408,7 +413,8 @@ bool q1_map_addon_control_touch(qa_q1_game *g, q1_actor *e, qa_actor_id other, q
             return false;
         if (!control(g, id) || !q1_alive(g, other))
             return true;
-        double until = g->time + .1;
+        double until;
+        if (!source_deadline(g->time + .1, &until, error)) return false;
         if (!q1_map_addon_quad_mark(g, other, error))
             return false;
         if (g->maps->options.grant_quad) {
