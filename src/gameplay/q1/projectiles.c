@@ -3,11 +3,18 @@
 
 bool q1_meat_spray(qa_q1_game *g, q1_actor *owner, qa_vec3 origin, qa_vec3 velocity,
                    qa_error *error) {
+    qa_actor_id owner_id = owner->id;
     q1_actor *spray;
     qa_body_state body;
-    if (!q1_create(g, "meat_spray", Q1_GIB, owner->id, &spray, error) ||
-        !qa_world_body_read(g->services.world, owner->id, &body, error))
+    if (!q1_create(g, "meat_spray", Q1_GIB, owner_id, &spray, error))
         return false;
+    qa_actor_id child = spray->id;
+    bool ok = qa_world_body_read(g->services.world, owner_id, &body, error);
+    if (!ok)
+        goto cleanup;
+    spray = q1_entity(g, child);
+    if (!spray || !q1_alive(g, owner_id))
+        goto cleanup;
     spray->physics.motion = QA_PHYSICS_BOUNCE;
     spray->physics.angular_velocity = qa_v3(3000, 1000, 2000);
     if (g->options.edition == QA_Q1_RERELEASE)
@@ -15,9 +22,26 @@ bool q1_meat_spray(qa_q1_game *g, q1_actor *owner, qa_vec3 origin, qa_vec3 veloc
     qa_builtin_angle_vectors(body.angles, &g->forward, &g->right, &g->up);
     velocity.z += 250 + 50 * q1_random(g);
     body = (qa_body_state){.origin = origin, .velocity = velocity};
-    return q1_model(g, spray, "progs/zom_gib.mdl", error) &&
-           qa_world_body_write(g->services.world, spray->id, &body, error) &&
-           q1_schedule(g, spray, 1, Q1_THINK_REMOVE, error) && q1_link(g, spray, error);
+    ok = q1_model(g, spray, "progs/zom_gib.mdl", error) &&
+         qa_world_body_write(g->services.world, child, &body, error);
+    if (!ok)
+        goto cleanup;
+    spray = q1_entity(g, child);
+    if (!spray || !q1_alive(g, owner_id))
+        goto cleanup;
+    ok = q1_schedule(g, spray, 1, Q1_THINK_REMOVE, error);
+    if (!ok)
+        goto cleanup;
+    spray = q1_entity(g, child);
+    if (!spray || !q1_alive(g, owner_id))
+        goto cleanup;
+    ok = q1_link(g, spray, error);
+    if (ok && q1_entity(g, child) && q1_alive(g, owner_id))
+        return true;
+cleanup:
+    if (qa_actors_get(qa_session_actors(g->services.session), child))
+        (void)qa_session_release(g->services.session, child, NULL);
+    return ok;
 }
 
 bool q1_projectile_spawn(qa_q1_game *g, qa_actor_id owner, qa_q1_weapon weapon,
