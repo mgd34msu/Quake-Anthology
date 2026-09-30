@@ -291,10 +291,19 @@ bool qa_modes_tech_sound(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_relic
     *handled = p && qa_modes_has_relic(m, id, actor, kind);
     if (v && v->value.rules.source == QA_MODE_ROGUE) {
         if (!*handled || kind > QA_RELIC_HASTE ||
-            p->rogue_noise_ns[kind] >= v->value.time_ns) return true;
-        p->rogue_noise_ns[kind] = v->value.time_ns + MODE_SECOND;
+            p->rune_sound_ns[kind] >= v->value.time_ns) return true;
+        p->rune_sound_ns[kind] = v->value.time_ns + MODE_SECOND;
         static const char *sounds[] = {"runes/end1.wav", "runes/end2.wav", "runes/end3.wav"};
         return mode_sound(m, v, actor, sounds[kind], 1, e);
+    }
+    if (v && v->value.rules.source == QA_MODE_THREEWAVE) {
+        if (!*handled || kind > QA_RELIC_REGENERATION ||
+            p->rune_sound_ns[kind] >= v->value.time_ns) return true;
+        p->rune_sound_ns[kind] = v->value.time_ns + MODE_SECOND;
+        const char *sound = kind == QA_RELIC_RESISTANCE ? "rune/rune1.wav"
+            : kind == QA_RELIC_STRENGTH ? (quad ? "rune/rune22.wav" : "rune/rune2.wav")
+            : kind == QA_RELIC_HASTE ? "rune/rune3.wav" : "rune/rune4.wav";
+        return mode_sound_channel(m, v, actor, sound, 4, 1, e);
     }
     if (!*handled || v->value.time_ns < p->tech_sound_ns)
         return true;

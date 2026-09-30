@@ -68,7 +68,7 @@ static qa_mode_object_checkpoint capture_object(const mode_object *o) {
 }
 static bool checkpoint_capture(qa_modes *m, qa_modes_checkpoint *out, qa_error *e) {
     qa_modes_checkpoint saved = {
-        .version = 4, .random = m->random, .attack_sequence = m->attack_sequence};
+        .version = 5, .random = m->random, .attack_sequence = m->attack_sequence};
     saved.players = calloc(m->actor_capacity, sizeof(*saved.players));
     saved.modes = calloc(m->mode_capacity, sizeof(*saved.modes));
     saved.objects = calloc(m->actor_capacity, sizeof(*saved.objects));
@@ -220,8 +220,9 @@ static bool validate_instance(qa_modes *m, const qa_mode_checkpoint *v, qa_error
             return mode_fail(e, "invalid saved mode member");
         if ((p->rogue_rune && (v->value.rules.source != QA_MODE_ROGUE ||
                               p->rogue_rune > 8 || (p->rogue_rune & (p->rogue_rune - 1)))) ||
-            (v->value.rules.source != QA_MODE_ROGUE &&
-             (p->rogue_noise_ns[0] || p->rogue_noise_ns[1] || p->rogue_noise_ns[2])) ||
+            (v->value.rules.source != QA_MODE_ROGUE && v->value.rules.source != QA_MODE_THREEWAVE &&
+             (p->rune_sound_ns[0] || p->rune_sound_ns[1] || p->rune_sound_ns[2] || p->rune_sound_ns[3])) ||
+            (v->value.rules.source == QA_MODE_ROGUE && p->rune_sound_ns[3]) ||
             (v->value.rules.source == QA_MODE_ROGUE && p->relic.registry))
             return mode_fail(e, "invalid saved Rogue rune carrier");
         for (int j = 0; j < 4; ++j)
@@ -341,7 +342,7 @@ static bool restore_instance(qa_modes *m, const qa_mode_checkpoint *saved, qa_er
 }
 static bool checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved,
                                 bool reconnect, qa_error *e) {
-    if (!m || m->callback_depth || !saved || saved->version != 4 ||
+    if (!m || m->callback_depth || !saved || saved->version != 5 ||
         saved->player_count > m->actor_capacity || saved->mode_count > m->mode_capacity ||
         saved->object_count > m->actor_capacity ||
         saved->external_objective_count > m->objective_capacity ||

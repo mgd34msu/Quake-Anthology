@@ -92,7 +92,7 @@ bool mode_alive(qa_modes *m, qa_actor_id actor) {
            state.health > 0;
 }
 static bool sound_event(qa_modes *m, mode_instance *v, qa_actor_id actor, const char *sound,
-                          float volume, qa_error *e) {
+                          int32_t channel, float volume, qa_error *e) {
     qa_builtin_event event = {.kind = QA_BUILTIN_SOUND,
                               .provider = m->options.owner,
                               .actor = actor,
@@ -103,7 +103,7 @@ static bool sound_event(qa_modes *m, mode_instance *v, qa_actor_id actor, const 
     if (!qa_world_body_read(m->options.services.world, actor, &body, e)) return false;
     if (!mode_live(m, actor)) return mode_fail(e, "mode sound actor retired during body read");
     event.origin = body.origin;
-    event.channel = 3;
+    event.channel = channel;
     event.family = v->value.rules.source <= QA_MODE_Q1_HORDE ? QA_GAME_Q1
                    : v->value.rules.source < QA_MODE_Q3      ? QA_GAME_Q2
                                                              : QA_GAME_Q3;
@@ -114,7 +114,11 @@ static bool sound_event(qa_modes *m, mode_instance *v, qa_actor_id actor, const 
 }
 bool mode_sound(qa_modes *m, mode_instance *v, qa_actor_id actor, const char *sound, float volume,
                 qa_error *e) {
-    return MODE_CALLBACK(m, sound_event(m, v, actor, sound, volume, e));
+    return MODE_CALLBACK(m, sound_event(m, v, actor, sound, 3, volume, e));
+}
+bool mode_sound_channel(qa_modes *m, mode_instance *v, qa_actor_id actor, const char *sound,
+                        int32_t channel, float volume, qa_error *e) {
+    return MODE_CALLBACK(m, sound_event(m, v, actor, sound, channel, volume, e));
 }
 bool mode_count(qa_modes *m, qa_actor_id actor, qa_item_id item, double *count, qa_error *e) {
     qa_inventory_entry entry;

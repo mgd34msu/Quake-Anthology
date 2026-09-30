@@ -112,6 +112,8 @@ bool mode_intent(qa_modes *, mode_instance *, qa_match_intent_kind, qa_actor_id,
                  qa_string_id, qa_error *);
 bool mode_alive(qa_modes *, qa_actor_id);
 bool mode_sound(qa_modes *, mode_instance *, qa_actor_id, const char *, float, qa_error *);
+bool mode_sound_channel(qa_modes *, mode_instance *, qa_actor_id, const char *, int32_t,
+                        float, qa_error *);
 bool mode_count(qa_modes *, qa_actor_id, qa_item_id, double *, qa_error *);
 bool mode_set_count(qa_modes *, qa_actor_id, qa_item_id, double, qa_error *);
 bool mode_object_count(qa_modes *, mode_instance *, mode_object *, qa_actor_id, double, qa_error *);
