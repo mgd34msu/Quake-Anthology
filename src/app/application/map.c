@@ -437,6 +437,64 @@ static bool q1_secret(void *opaque, qa_actor_id source, qa_actor_id player,
                           error);
 }
 
+static application_provider *q1_alpha_provider(application_provider *origin,
+                                                qa_actor_id actor,
+                                                qa_error *error)
+{
+    application_provider *selected = application_provider_for(
+        origin->application, actor, QA_ROLE_APPEARANCE, "");
+    if (selected == NULL || !selected->constructed || selected->close_pending) {
+        application_fail(error, QA_ERROR_NOT_FOUND,
+                         "Q1 alpha target has no selected appearance owner");
+        return NULL;
+    }
+    return selected;
+}
+
+static bool q1_alpha_read(void *opaque, qa_actor_id actor, float *out,
+                           qa_error *error)
+{
+    application_provider *selected = q1_alpha_provider(opaque, actor, error);
+    if (selected == NULL)
+        return false;
+    switch (selected->kind) {
+    case APPLICATION_PROVIDER_Q1: {
+        qa_q1_presentation source;
+        if (!qa_q1_game_presentation(selected->state.q1, actor, &source))
+            return application_fail(error, QA_ERROR_NOT_FOUND,
+                                    "Selected Q1 actor has no source alpha owner");
+        *out = source.alpha;
+        return true;
+    }
+    case APPLICATION_PROVIDER_Q2:
+        return qa_q2_alpha_read(selected->state.q2, actor, out, error);
+    case APPLICATION_PROVIDER_Q3:
+        return qa_q3_alpha_read(selected->state.q3, actor, out, error);
+    default:
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+                                "Selected guest appearance has no admitted alpha adapter");
+    }
+}
+
+static bool q1_alpha_write(void *opaque, qa_actor_id actor, float value,
+                            qa_error *error)
+{
+    application_provider *selected = q1_alpha_provider(opaque, actor, error);
+    if (selected == NULL)
+        return false;
+    switch (selected->kind) {
+    case APPLICATION_PROVIDER_Q1:
+        return qa_q1_game_alpha(selected->state.q1, actor, value, error);
+    case APPLICATION_PROVIDER_Q2:
+        return qa_q2_alpha(selected->state.q2, actor, value, error);
+    case APPLICATION_PROVIDER_Q3:
+        return qa_q3_alpha(selected->state.q3, actor, value, error);
+    default:
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+                                "Selected guest appearance has no admitted alpha adapter");
+    }
+}
+
 static application_provider *q1_actor_provider(application_provider *origin,
                                                 qa_actor_id actor)
 {
@@ -869,6 +927,8 @@ static bool q1_map_options(application_provider *provider,
         .set_skill = q1_integer_intent,
         .player_exited = q1_player_exited,
         .secret_found = q1_secret,
+        .alpha_read = q1_alpha_read,
+        .alpha_write = q1_alpha_write,
         .path_touch = q1_path_touch,
         .path_read = q1_path_read,
         .path_change = q1_path_change,

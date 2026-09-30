@@ -33,7 +33,8 @@ static bool state_valid(const qa_q3_game *game, const qa_q3_map_actor_state *sta
         !qa_vec_finite(state->color) ||
         !qa_vec_finite(state->bounds.mins) || !qa_vec_finite(state->bounds.maxs) ||
         !isfinite(state->speed) || !isfinite(state->wait) || !isfinite(state->random) ||
-        !isfinite(state->delay) || !isfinite(state->roll) || !isfinite(state->light))
+        !isfinite(state->delay) || !isfinite(state->roll) || !isfinite(state->light) ||
+        !isfinite(state->alpha))
         return q3_map_fail(error, "invalid Q3 authored actor checkpoint state");
     if (state->damageable && state->kind != QA_Q3_MAP_MOVER_DOOR &&
         state->kind != QA_Q3_MAP_MOVER_BUTTON)
@@ -209,7 +210,7 @@ bool qa_q3_map_checkpoint_capture(const qa_q3_game *game,
         !qa_session_safe(game->options.services.session) ||
         !qa_combat_idle(game->options.services.combat))
         return q3_map_fail(error, "Q3 authored checkpoint requires a session safe point");
-    qa_q3_map_checkpoint saved = {.version = 1,
+    qa_q3_map_checkpoint saved = {.version = 2,
                                   .registered_items = game->map->registered_items,
                                   .gravity = game->physics.gravity,
                                   .world_spawned = game->map->world_spawned,
@@ -240,7 +241,7 @@ bool qa_q3_map_checkpoint_capture(const qa_q3_game *game,
 static bool checkpoint_restore(qa_q3_game *game,
                                 const qa_q3_map_checkpoint *saved,
                                 bool reconnect, qa_error *error) {
-    if (!game || !game->map || !saved || saved->version != 1 ||
+    if (!game || !game->map || !saved || saved->version != 2 ||
         !item_registry_valid(game, saved->registered_items) ||
         !isfinite(saved->gravity) ||
         saved->actor_count > game->map->capacity ||

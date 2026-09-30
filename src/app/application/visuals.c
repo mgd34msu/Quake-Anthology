@@ -59,6 +59,7 @@ static bool native_visual(application_provider *provider, qa_actor_id actor,
         out->torso_animation = source.torso_animation;
         out->source_flags = source.flags;
         out->powerups = source.powerups;
+        out->alpha = source.alpha;
         out->visible = source.kind != QA_Q3_ENTITY_HIDDEN;
         return true;
     }

@@ -10,7 +10,9 @@ bool qa_q3_bind_mover(qa_q3_game *game, qa_actor_id actor, const qa_q3_mover_def
     q3_actor *entry = &game->actors[actor.slot];
     if (entry->kind && (!qa_actor_id_equal(entry->actor, actor) || entry->kind != Q3_ACTOR_MOVER))
         return q3_fail(error, "actor already has Q3 behavior");
-    *entry = (q3_actor){.actor = actor, .kind = Q3_ACTOR_MOVER, .state.mover = *definition};
+    float alpha = entry->kind ? entry->alpha : q3_initial_alpha(game, actor);
+    *entry = (q3_actor){.actor = actor, .kind = Q3_ACTOR_MOVER, .alpha = alpha,
+                       .state.mover = *definition};
     return true;
 }
 static bool mover_read(void *context, qa_actor_id actor, qa_q3_mover_state *out) {

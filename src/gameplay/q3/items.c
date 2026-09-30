@@ -349,6 +349,7 @@ bool q3_item_bind_existing(qa_q3_game *game, qa_actor_id actor,
     *entry = (q3_actor){
         .actor = actor,
         .kind = Q3_ACTOR_ITEM,
+        .alpha = q3_initial_alpha(game, actor),
         .state.item = {.spawn = *input,
                        .bounce = 0.5f,
                        .on_ground = on_ground,

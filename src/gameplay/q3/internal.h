@@ -81,6 +81,7 @@ struct qa_q3_game {
 };
 q3_actor *q3_actor_get(qa_q3_game *, qa_actor_id);
 const q3_actor *q3_actor_const(const qa_q3_game *, qa_actor_id);
+float q3_initial_alpha(const qa_q3_game *, qa_actor_id);
 bool q3_fail(qa_error *, const char *);
 bool q3_rollback_spawn(qa_q3_game *, qa_actor_id, qa_error *);
 q3_snapshot_frame *q3_bounds_snapshot(qa_q3_game *, qa_bounds, qa_collision_role, qa_error *);

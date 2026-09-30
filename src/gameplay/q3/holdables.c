@@ -131,6 +131,7 @@ static bool portal_drop(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     *p = (q3_actor){
         .actor = portal,
         .kind = Q3_ACTOR_PORTAL,
+        .alpha = 1,
         .state.portal = {.owner = actor,
                          .destination = destination,
                          .expire_at = q3_add_time(game->now_ms, source ? 121000 : 120000),
@@ -238,6 +239,7 @@ bool q3_start_kamikaze(qa_q3_game *game, qa_actor_id source, qa_actor_id attacke
     game->actors[explosion.slot] = (q3_actor){
         .actor = explosion,
         .kind = Q3_ACTOR_KAMIKAZE,
+        .alpha = 1,
         .state.kamikaze = {
             .attacker = attacker, .start = game->now_ms, .next = q3_add_time(game->now_ms, 100)}};
     q3_actor *entry = q3_actor_get(game, source);

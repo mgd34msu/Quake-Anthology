@@ -363,6 +363,7 @@ bool qa_q3_item_availability(qa_q3_game *, qa_actor_id, bool available, int32_t 
 typedef struct qa_q3_actor_state {
     qa_actor_id actor;
     qa_q3_actor_kind kind;
+    float alpha;
     union {
         qa_q3_player_state player;
         qa_q3_projectile_state missile;
@@ -449,8 +450,12 @@ typedef struct qa_q3_entity_view {
     int32_t legs_animation, torso_animation, time_ms, expire_ms, source_number;
     qa_string_id loop_sound;
     const char *model, *secondary_model;
+    float alpha;
 } qa_q3_entity_view;
 bool qa_q3_entity_read(const qa_q3_game *, qa_actor_id, qa_q3_entity_view *, qa_error *);
+/* Unified presentation extension; finite authored fade overshoot is retained. */
+bool qa_q3_alpha_read(const qa_q3_game *, qa_actor_id, float *, qa_error *);
+bool qa_q3_alpha(qa_q3_game *, qa_actor_id, float, qa_error *);
 bool qa_q3_frame(qa_q3_game *, int32_t previous_ms, int32_t now_ms, qa_error *);
 bool qa_q3_actor_frame(qa_q3_game *, qa_actor_id, qa_error *);
 void qa_q3_actor_released(qa_q3_game *, qa_actor_record);

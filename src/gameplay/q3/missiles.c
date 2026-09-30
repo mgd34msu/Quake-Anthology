@@ -155,6 +155,7 @@ bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3
     *entry = (q3_actor){
         .actor = actor,
         .kind = Q3_ACTOR_MISSILE,
+        .alpha = 1,
         .state.missile = {
             .weapon = weapon,
             .owner = owner,
@@ -524,7 +525,8 @@ static bool activate_mine(qa_q3_game *game, qa_actor_id actor, qa_error *error) 
     if (!qa_builtin_spawn_actor(&game->options.services, &spawn, &trigger, error))
         return false;
     game->actors[trigger.slot] =
-        (q3_actor){.actor = trigger, .kind = Q3_ACTOR_PROX_TRIGGER, .state.trigger = {actor}};
+        (q3_actor){.actor = trigger, .kind = Q3_ACTOR_PROX_TRIGGER, .alpha = 1,
+                   .state.trigger = {actor}};
     entry = q3_actor_get(game, actor);
     if (!entry)
         return qa_session_release(game->options.services.session, trigger, error);

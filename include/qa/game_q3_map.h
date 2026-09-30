@@ -146,7 +146,7 @@ typedef struct qa_q3_map_actor_state {
     qa_q3_item_spawn item;
     uint32_t spawnflags, inline_model, ordinal;
     int32_t count, health, damage, due_ms, cooldown_ms, sound_frame, sound_random;
-    float speed, wait, random, delay, roll, light;
+    float speed, wait, random, delay, roll, light, alpha;
     bool active, linked, has_inline_model, touchable, usable, team_slave, item_bound;
     bool damageable;
     bool has_delay;

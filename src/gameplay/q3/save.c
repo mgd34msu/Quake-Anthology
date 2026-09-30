@@ -115,6 +115,7 @@ static bool mover(qa_source_save_io *io, qa_q3_mover_definition *p)
 static bool actor_state(qa_source_save_io *io, qa_q3_actor_state *p)
 {
     FIELD(actor, p->actor); ENUM(p->kind, Q3_ACTOR_KAMIKAZE_TIMER);
+    FIELD(f32, p->alpha);
     switch (p->kind) {
     case Q3_ACTOR_PLAYER: return player(io, &p->state.player);
     case Q3_ACTOR_MISSILE: return missile(io, &p->state.missile);
@@ -173,7 +174,7 @@ static bool checkpoint(qa_source_save_io *io, qa_q3_game *game, qa_q3_checkpoint
 {
     FIELD(u32, p->version); FIELD(u32, p->random_state); FIELD(u32, p->death_animation);
     FIELD(u32, p->body_queue_index); ENUM(p->product, QA_Q3_TEAM_ARENA);
-    if (p->version != 3) return save_fail(io, "unsupported Q3 typed continuation");
+    if (p->version != 4) return save_fail(io, "unsupported Q3 typed continuation");
     if (!rules(io, &p->rules)) return false;
     FIELD(i32, p->previous_ms); FIELD(i32, p->now_ms); FIELD(u64, p->attack_sequence);
     FIELD(i32, p->ranking_hit.frame); FIELD(i32, p->ranking_hit.self);
@@ -224,6 +225,7 @@ static bool map_actor(qa_source_save_io *io, qa_q3_map_actor_checkpoint *p)
     FIELD(i32, s->cooldown_ms); FIELD(i32, s->sound_frame); FIELD(i32, s->sound_random);
     FIELD(f32, s->speed); FIELD(f32, s->wait); FIELD(f32, s->random);
     FIELD(f32, s->delay); FIELD(f32, s->roll); FIELD(f32, s->light);
+    FIELD(f32, s->alpha);
     FIELD(bool, s->active); FIELD(bool, s->linked); FIELD(bool, s->has_inline_model);
     FIELD(bool, s->touchable); FIELD(bool, s->usable); FIELD(bool, s->team_slave);
     FIELD(bool, s->item_bound); FIELD(bool, s->damageable); FIELD(bool, s->has_delay);
@@ -235,7 +237,7 @@ static bool map_actor(qa_source_save_io *io, qa_q3_map_actor_checkpoint *p)
 static bool map_checkpoint(qa_source_save_io *io, qa_q3_game *game, qa_q3_map_checkpoint *p)
 {
     FIELD(u32, p->version);
-    if (p->version != 1) return save_fail(io, "unsupported Q3 authored continuation");
+    if (p->version != 2) return save_fail(io, "unsupported Q3 authored continuation");
     FIELD(u64, p->registered_items); FIELD(f32, p->gravity);
     FIELD(bool, p->world_spawned); FIELD(bool, p->post_spawned); FIELD(bool, p->locations_linked);
     if (!qa_source_save_count(io, &p->actor_count, game->capacity)) return false;
@@ -334,9 +336,9 @@ static bool continuation(qa_source_save_io *io, qa_q3_game *game,
     static const uint8_t expected[8] = {'Q', 'A', 'Q', '3', 'S', 'A', 'V', 'E'};
     if (!qa_source_save_bytes(io, signature, sizeof(signature)) ||
         memcmp(signature, expected, sizeof(signature))) return save_fail(io, "invalid Q3 save signature");
-    uint32_t version = 2;
+    uint32_t version = 3;
     FIELD(u32, version);
-    if (version != 2) return save_fail(io, "unsupported Q3 save version");
+    if (version != 3) return save_fail(io, "unsupported Q3 save version");
     if (!checkpoint(io, game, native)) return false;
     bool has_map = game->map != NULL;
     FIELD(bool, has_map);

@@ -17,7 +17,8 @@ static bool trajectory_valid(const qa_trajectory *trajectory, qa_error *error) {
            qa_trajectory_position(trajectory, trajectory->time_ms, 800, &position, error);
 }
 static bool actor_valid(const qa_q3_game *game, const q3_actor *actor, qa_error *error) {
-    if (!qa_actors_get(qa_session_actors(game->options.services.session), actor->actor))
+    if (!isfinite(actor->alpha) ||
+        !qa_actors_get(qa_session_actors(game->options.services.session), actor->actor))
         return q3_fail(error, "stale Q3 checkpoint actor");
     switch (actor->kind) {
     case Q3_ACTOR_PLAYER: {
@@ -100,7 +101,7 @@ bool qa_q3_checkpoint_capture(const qa_q3_game *game, qa_q3_checkpoint *out, qa_
     if (!game || !out || game->observation_depth || !qa_session_safe(game->options.services.session) ||
         !qa_combat_idle(game->options.services.combat))
         return q3_fail(error, "Q3 checkpoint requires a session safe point");
-    qa_q3_checkpoint saved = {.version = 3,
+    qa_q3_checkpoint saved = {.version = 4,
                               .random_state = game->rng,
                               .death_animation = game->death_animation,
                               .body_queue_index = game->body_queue_index,
@@ -149,7 +150,7 @@ static bool checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved,
                                 bool reconnect, qa_error *error) {
     if (!game || !saved || game->observation_depth || !qa_session_safe(game->options.services.session) ||
         !qa_world_idle(game->options.services.world) ||
-        !qa_combat_idle(game->options.services.combat) || saved->version != 3 ||
+        !qa_combat_idle(game->options.services.combat) || saved->version != 4 ||
         (saved->ranking_hit.valid &&
          (saved->ranking_hit.self < 0 || saved->ranking_hit.attacker < 0)) ||
         saved->product != game->options.product || saved->death_animation >= 3 ||

@@ -1,15 +1,33 @@
-#include "internal.h"
+#include "map/internal.h"
 
-bool qa_q3_entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_view *out,
-                       qa_error *error) {
+static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_view *out,
+                         qa_error *error) {
     const q3_actor *entry = q3_actor_const(game, actor);
-    if (!entry || !out)
+    const qa_q3_map_actor_state *map = entry ? NULL : q3_map_const(game, actor);
+    if (!entry && (!map || map->kind < QA_Q3_MAP_MOVER_DOOR ||
+                   map->kind > QA_Q3_MAP_MOVER_PENDULUM ||
+                   (!q3_map_text(game, map->model) && !q3_map_text(game, map->model2))))
         return q3_fail(error, "missing Q3 entity view");
     qa_q3_entity_view view = {.actor = actor, .source_number = q3_entity_number(game, actor)};
     if (!qa_world_body_read(game->options.services.world, actor, &view.body, error))
         return false;
     view.position = (qa_trajectory){.type = QA_TRAJECTORY_STATIONARY, .base = view.body.origin};
     view.angular = (qa_trajectory){.type = QA_TRAJECTORY_STATIONARY, .base = view.body.angles};
+    if (!entry) {
+        map = q3_map_const(game, actor);
+        if (!map || q3_actor_const(game, actor))
+            return q3_fail(error, "Q3 authored presentation owner changed during observation");
+        view.kind = map->linked ? QA_Q3_ENTITY_MOVER : QA_Q3_ENTITY_HIDDEN;
+        view.alpha = map->alpha;
+        q3_map_mover_presentation(game, actor, &view.model, &view.secondary_model,
+                                  &view.constant_light);
+        *out = view;
+        return true;
+    }
+    entry = q3_actor_const(game, actor);
+    if (!entry)
+        return q3_fail(error, "Q3 presentation actor retired during observation");
+    view.alpha = entry->alpha;
     switch (entry->kind) {
     case Q3_ACTOR_PLAYER: {
         const qa_q3_player_state *player = &entry->state.player;
@@ -94,4 +112,15 @@ bool qa_q3_entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_v
     }
     *out = view;
     return true;
+}
+
+bool qa_q3_entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_view *out,
+                       qa_error *error) {
+    if (!game || !out || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid Q3 presentation observation");
+    qa_q3_game *retained = (qa_q3_game *)game;
+    ++retained->observation_depth;
+    bool okay = entity_read(game, actor, out, error);
+    --retained->observation_depth;
+    return okay;
 }

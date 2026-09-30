@@ -429,6 +429,7 @@ static bool allocate_actor(qa_q3_game *game, qa_q3_map_actor_state *source,
     }
     source->actor = actor;
     source->active = true;
+    source->alpha = 1;
     source->linked = link;
     game->map->actors[actor.slot] = *source;
     qa_q3_map_actor_state *state = &game->map->actors[actor.slot];

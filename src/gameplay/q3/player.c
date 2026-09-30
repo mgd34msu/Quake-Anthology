@@ -105,6 +105,7 @@ bool qa_q3_bind_player_commit(qa_q3_game *game, qa_q3_player_binding *binding,
     if (binding->created) {
         *entry = (q3_actor){.actor = binding->actor,
                             .kind = Q3_ACTOR_PLAYER,
+                            .alpha = 1,
                             .state.player = {.weapon = QA_Q3_W_MACHINEGUN,
                                              .requested_weapon = QA_Q3_W_MACHINEGUN,
                                              .max_health = binding->handicap,

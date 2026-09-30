@@ -28,6 +28,7 @@ bool q3_schedule_kamikaze(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin, q
     game->actors[timer.slot] =
         (q3_actor){.actor = timer,
                    .kind = Q3_ACTOR_KAMIKAZE_TIMER,
+                   .alpha = 1,
                    .state.kamikaze = {.attacker = actor, .next = q3_add_time(game->now_ms, 5000)}};
     return true;
 }
@@ -260,6 +261,7 @@ bool q3_copy_corpse(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     game->actors[corpse.slot] = (q3_actor){
         .actor = corpse,
         .kind = Q3_ACTOR_CORPSE,
+        .alpha = 1,
         .state.corpse = {.player = actor,
                          .animation = animation,
                          .timestamp = game->now_ms,

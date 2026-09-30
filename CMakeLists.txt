@@ -411,6 +411,7 @@ add_library(qa_game_q2 STATIC
 target_link_libraries(qa_game_q2 PUBLIC qa_builtin qa_campaign qa_persistence)
 
 add_library(qa_game_q3 STATIC
+    src/gameplay/q3/alpha.c
     src/gameplay/q3/checkpoint.c
     src/gameplay/q3/console.c
     src/gameplay/q3/death.c
