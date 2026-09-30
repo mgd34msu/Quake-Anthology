@@ -446,3 +446,15 @@ bool qa_downloads_restore_checkpoint(qa_bytes bytes, qa_http *http, qa_fs_root *
     }
     *out = owner; return true;
 }
+bool qa_downloads_resources_ready(qa_downloads *owner, const qa_download_checkpoint_refs *refs, qa_error *error)
+{
+    if (!refs || !refs->resource || !download_checkpoint_valid(owner))
+        return fail(error, "Download resource qualification requires idle represented jobs");
+    bool ok = true; owner->callback = true;
+    for (uint32_t i = 0; ok && i < owner->options.jobs; ++i) {
+        const download_job *job = &owner->jobs[i]; if (!job->view.id) continue;
+        ok = refs->resource(refs->context, &job->request, &job->view, job->stage != NULL, error);
+    }
+    owner->callback = false;
+    return ok;
+}

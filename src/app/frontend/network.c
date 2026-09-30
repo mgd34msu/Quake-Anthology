@@ -7,6 +7,7 @@
 #include "qa/network_q3_runtime.h"
 #include "qa/network_save.h"
 #include "qa/network_services_save.h"
+#include "qa/network_downloads_save.h"
 #include "save_private.h"
 #include "../../network/service_save_fields.h"
 #include "qa/archive.h"
@@ -753,11 +754,9 @@ static bool download_permit(void *context, const qa_download_request *request, c
     return kind != QA_ARCHIVE_AUTO || (extension && !strcmp(extension, ".bsp")) ||
         frontend_fail(error, QA_ERROR_UNSUPPORTED, "download inspection supports installed packages and maps");
 }
-static bool download_inspect(void *context, const char *path, qa_fs_stage *stage, uint64_t size, qa_error *error)
+static bool download_inspect_bytes(const char *path, qa_bytes bytes, qa_error *error)
 {
-    (void)context; qa_fs_stage_mapping *mapping = NULL;
-    if (!qa_fs_stage_map(stage, &mapping, error)) return false;
-    qa_bytes bytes = qa_fs_stage_mapping_bytes(mapping); bool ok = bytes.size == size;
+    bool ok = true;
     qa_archive_kind kind = qa_archive_kind_for_path(path);
     if (ok && kind != QA_ARCHIVE_AUTO) {
         qa_archive *archive = NULL; ok = qa_archive_open_memory(bytes, kind, &archive, error);
@@ -774,6 +773,14 @@ static bool download_inspect(void *context, const char *path, qa_fs_stage *stage
     } else if (ok) {
         qa_bsp_view map; ok = qa_bsp_open(bytes, &map, error) && qa_bsp_validate(&map, error);
     }
+    return ok;
+}
+static bool download_inspect(void *context, const char *path, qa_fs_stage *stage, uint64_t size, qa_error *error)
+{
+    (void)context; qa_fs_stage_mapping *mapping = NULL;
+    if (!qa_fs_stage_map(stage, &mapping, error)) return false;
+    qa_bytes bytes = qa_fs_stage_mapping_bytes(mapping);
+    bool ok = bytes.size == size && download_inspect_bytes(path, bytes, error);
     qa_fs_stage_unmap(mapping);
     return ok || (error && error->code ? false : frontend_fail(error, QA_ERROR_FORMAT, "staged inspection size changed"));
 }
@@ -790,14 +797,68 @@ static bool download_remount(void *context, const char *path, const qa_sha256_di
         qa_application_apply(application, rebased, error);
     qa_launch_draft_destroy(rebased); qa_launch_draft_destroy(current); return ok;
 }
+static qa_download_options saved_download_options(qa_frontend_network *n)
+{
+    return (qa_download_options){.jobs = 4, .maximum_pending_bytes = UINT64_C(4294967296),
+        .hooks = {.context = n, .permit = download_permit, .inspect = download_inspect, .remount = download_remount}};
+}
 static bool downloads_ready(qa_frontend_network *n, qa_error *error)
 {
     if (n->downloads) return true;
     if (!n->content && !qa_fs_root_open(n->frontend->options.application.content_root, &n->content, error)) return false;
-    qa_download_options options = {.jobs = 4, .maximum_pending_bytes = UINT64_C(4294967296),
-        .hooks = {.context = n, .permit = download_permit, .inspect = download_inspect, .remount = download_remount}};
+    qa_download_options options = saved_download_options(n);
     return qa_downloads_create(frontend_tools_http(n->frontend), n->content, &options, &n->downloads, error);
 }
+static bool download_saved_resource(void *context, const qa_download_request *request,
+    const qa_download_view *view, bool staged, qa_error *error)
+{
+    qa_frontend_network *n = context;
+    qa_archive_kind archive = qa_archive_kind_for_path(request->path);
+    const char *extension = strrchr(request->path, '.');
+    if (!n->content || !request->exact_identity || request->maximum_bytes > UINT64_C(2147483648) ||
+        (archive == QA_ARCHIVE_AUTO && (!extension || strcmp(extension, ".bsp"))) ||
+        staged != (view->state == QA_DOWNLOAD_RECEIVING))
+        return frontend_fail(error, QA_ERROR_FORMAT, "saved download differs from the actual frontend admission policy");
+    qa_fs_entry_kind kind = QA_FS_MISSING; qa_fs_identity identity;
+    if (!qa_fs_root_status(n->content, request->path, &kind, &identity, error)) return false;
+    if (!view->published)
+        return kind == QA_FS_MISSING || frontend_fail(error, QA_ERROR_FORMAT, "unpublished download target is already installed");
+    if (kind != QA_FS_REGULAR || qa_fs_identity_size(&identity) != view->received)
+        return frontend_fail(error, QA_ERROR_FORMAT, "installed download target differs from its retained size");
+    qa_fs_file *file = NULL; qa_buffer content = {0};
+    bool ok = qa_fs_root_file_open(n->content, request->path, &file, &identity, error) &&
+        qa_fs_identity_size(&identity) == view->received &&
+        qa_fs_file_read_snapshot(file, &identity, &content, error);
+    qa_sha256_digest digest;
+    if (ok) {
+        qa_sha256((qa_bytes){content.data, content.size}, &digest);
+        ok = content.size == view->received && qa_sha256_equal(&digest, &view->digest) &&
+            qa_sha256_equal(&digest, &request->digest) && download_inspect_bytes(request->path, (qa_bytes){content.data, content.size}, error);
+    }
+    bool unchanged = false;
+    if (ok) ok = qa_fs_file_path_unchanged(file, &identity, &unchanged, error) && unchanged;
+    qa_buffer_free(&content); qa_fs_file_close(file);
+    return ok || (error && error->code ? false : frontend_fail(error, QA_ERROR_FORMAT, "installed download content identity changed"));
+}
+static bool download_saved_stage(void *context, const qa_download_request *request,
+    const qa_download_view *view, qa_bytes prefix, qa_fs_stage **out, uint64_t *nonce, qa_error *error)
+{
+    qa_frontend_network *n = context;
+    if (!out || *out || !nonce || *nonce || n->nonce == UINT64_MAX)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "candidate download stage allocation is exhausted");
+    uint64_t fresh = n->nonce + 1;
+    if (fresh == view->stage_nonce) {
+        if (fresh == UINT64_MAX) return frontend_fail(error, QA_ERROR_ARGUMENT, "candidate download stage namespace is exhausted");
+        ++fresh;
+    }
+    qa_fs_stage *stage = NULL; uint64_t initial = 0; size_t written = 0;
+    if (!qa_fs_stage_open(n->content, request->path, fresh, false, &stage, &initial, error)) return false;
+    bool ok = !initial && qa_fs_stage_write(stage, 0, prefix, &written, error) && written == prefix.size;
+    if (!ok) { qa_fs_stage_close(stage, false); return false; }
+    n->nonce = fresh; *nonce = fresh; *out = stage; return true;
+}
+static qa_download_checkpoint_refs saved_download_refs(qa_frontend_network *n)
+{ return (qa_download_checkpoint_refs){n, download_saved_resource, download_saved_stage}; }
 static bool unsigned_text(const char *text, uint64_t *out, qa_error *error)
 {
     uint64_t value = 0;
@@ -985,9 +1046,9 @@ static bool detached_transport(const qa_net_address *address, qa_net_transport *
 }
 static bool network_header(qa_source_save_io *io, bool *installed)
 {
-    uint32_t magic = UINT32_C(0x464e4151), version = 1;
+    uint32_t magic = UINT32_C(0x464e4151), version = 2;
     return qa_source_save_u32(io, &magic) && magic == UINT32_C(0x464e4151) &&
-        qa_source_save_u32(io, &version) && version == 1 && qa_source_save_bool(io, installed);
+        qa_source_save_u32(io, &version) && version == 2 && qa_source_save_bool(io, installed);
 }
 bool frontend_network_prepare_restored(qa_frontend *f, qa_bytes bytes, qa_error *error)
 {
@@ -1073,7 +1134,7 @@ static bool network_frontend_fields(qa_source_save_io *io, qa_frontend_network *
 static bool network_metadata_valid(qa_frontend_network *n, qa_error *error)
 {
     qa_application *app = n->frontend->application;
-    if (n->q3_admission || n->q3_pending_count || n->q3_reconnect || n->downloads || n->content ||
+    if (n->q3_admission || n->q3_pending_count || n->q3_reconnect || (n->downloads && !n->content) ||
         n->q3_client_requested != frontend_network_remote(n->frontend) || !n->registered || n->q3_projection_epoch > 4 ||
         (n->q3_projection_epoch != 0 && n->q3_projection_epoch != 4))
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "installed frontend network service lacks a complete continuation consumer");
@@ -1180,7 +1241,7 @@ bool frontend_network_checkpoint(qa_frontend *f, qa_buffer *connections, qa_buff
         !frontend_network_world_change_ready(f, error)) return false;
     qa_frontend_network *n = f->network; bool installed = n != NULL;
     if (n && !network_runtime_valid(n, true, error)) return false;
-    qa_source_save_io io = {0}, history = {0}; qa_buffer runtime = {0}, browser = {0}, admin = {0}, commands = {0};
+    qa_source_save_io io = {0}, history = {0}; qa_buffer runtime = {0}, browser = {0}, admin = {0}, commands = {0}, jobs = {0};
     bool ok = qa_source_save_writer(&io, qa_application_session(f->application), error) && network_header(&io, &installed) &&
         qa_source_save_writer(&history, qa_application_session(f->application), error) && network_header(&history, &installed);
     if (ok && n) {
@@ -1198,12 +1259,19 @@ bool frontend_network_checkpoint(qa_frontend *f, qa_buffer *connections, qa_buff
         qa_bytes bytes = {runtime.data, runtime.size}; if (ok) ok = network_blob(&io, &bytes);
         bytes = (qa_bytes){browser.data, browser.size}; if (ok) ok = network_blob(&io, &bytes);
         bytes = (qa_bytes){admin.data, admin.size}; if (ok) ok = network_blob(&io, &bytes);
+        bool content = n->content != NULL, downloads = n->downloads != NULL;
+        if (ok) ok = qa_source_save_bool(&io, &content) && qa_source_save_bool(&io, &downloads);
+        if (ok && downloads) {
+            qa_download_checkpoint_refs resources = saved_download_refs(n);
+            ok = qa_downloads_resources_ready(n->downloads, &resources, error) && qa_downloads_checkpoint(n->downloads, &jobs, error);
+            bytes = (qa_bytes){jobs.data, jobs.size}; if (ok) ok = network_blob(&io, &bytes);
+        }
         bytes = (qa_bytes){commands.data, commands.size}; if (ok) ok = network_blob(&history, &bytes);
     }
     qa_buffer complete = {0}, predicted = {0};
     if (ok) ok = qa_source_save_finish(&io, &complete) && qa_source_save_finish(&history, &predicted);
     qa_source_save_dispose(&io); qa_source_save_dispose(&history);
-    qa_buffer_free(&runtime); qa_buffer_free(&browser); qa_buffer_free(&admin); qa_buffer_free(&commands);
+    qa_buffer_free(&runtime); qa_buffer_free(&browser); qa_buffer_free(&admin); qa_buffer_free(&commands); qa_buffer_free(&jobs);
     if (!ok) { qa_buffer_free(&complete); qa_buffer_free(&predicted); return false; }
     *connections = complete; *prediction = predicted; return true;
 }
@@ -1221,17 +1289,20 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
     }
     qa_frontend_network *n = f->network;
     uint32_t previous_cursor = 0; const qa_net_client *previous_client = NULL;
-    if (qa_net_connections_next(qa_network_connections(n->runtime), &previous_cursor, &previous_client) || n->q3_projection.owner) {
+    if (qa_net_connections_next(qa_network_connections(n->runtime), &previous_cursor, &previous_client) || n->q3_projection.owner || n->downloads || n->content) {
         qa_source_save_dispose(&io);
         return frontend_fail(error, QA_ERROR_ARGUMENT, "network continuation may replace only an empty prepared candidate");
     }
     qa_frontend_network *state = calloc(1, sizeof(*state));
     if (!state) { qa_source_save_dispose(&io); return frontend_fail(error, QA_ERROR_MEMORY, "decoding network candidate fields"); }
     state->frontend = f; state->registered = n->registered;
-    qa_net_address local = {0}; qa_bytes runtime = {0}, browser = {0}, admin = {0};
+    qa_net_address local = {0}; qa_bytes runtime = {0}, browser = {0}, admin = {0}, jobs = {0};
+    bool content = false, downloads = false;
     ok = ok && network_address_fields(&io, &local) && service_address_valid(&local) &&
         network_frontend_fields(&io, state) && network_metadata_valid(state, error) &&
-        network_blob(&io, &runtime) && network_blob(&io, &browser) && network_blob(&io, &admin) && qa_source_save_finish(&io, NULL);
+        network_blob(&io, &runtime) && network_blob(&io, &browser) && network_blob(&io, &admin) &&
+        qa_source_save_bool(&io, &content) && qa_source_save_bool(&io, &downloads) && (!downloads || content) &&
+        (!downloads || network_blob(&io, &jobs)) && qa_source_save_finish(&io, NULL);
     if (ok) {
         qa_network_runtime *previous = n->runtime; qa_server_browser *old_browser = n->browser; qa_server_admin *old_admin = n->admin;
         qa_fs_root *preferences = n->preferences;
@@ -1250,6 +1321,12 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
             n->browser = restored_browser; n->admin = restored_admin;
             qa_server_browser_destroy(old_browser); qa_server_admin_destroy(old_admin);
         } else { qa_server_browser_destroy(restored_browser); qa_server_admin_destroy(restored_admin); }
+        if (ok && content) ok = qa_fs_root_open(f->options.application.content_root, &n->content, error);
+        if (ok && downloads) {
+            qa_download_options download_options = saved_download_options(n);
+            qa_download_checkpoint_refs resources = saved_download_refs(n);
+            ok = qa_downloads_restore_checkpoint(jobs, frontend_tools_http(f), n->content, &download_options, &resources, &n->downloads, error);
+        }
         if (ok) ok = network_runtime_valid(n, false, error);
     }
     free(state); qa_source_save_dispose(&io); return ok;
@@ -1296,6 +1373,16 @@ bool frontend_network_rebind_ready(const qa_frontend *candidate, const qa_fronte
         (next->q3_client_requested && !qa_net_address_equal(&next->q3_client_admission.address, &active->q3_client_admission.address, true)) ||
         !network_runtime_valid(next, true, error) || !network_runtime_valid(active, true, error))
         return frontend_fail(error, QA_ERROR_FORMAT, "network publication lacks idle qualified endpoint and candidate source ownership");
+    if ((next->content || active->content) && strcmp(candidate->options.application.content_root, published->options.application.content_root))
+        return frontend_fail(error, QA_ERROR_FORMAT, "download candidate uses another filesystem namespace");
+    if (next->downloads) {
+        qa_download_checkpoint_refs candidate_resources = saved_download_refs(next);
+        if (!qa_downloads_resources_ready(next->downloads, &candidate_resources, error)) return false;
+    }
+    if (active->downloads) {
+        qa_download_checkpoint_refs active_resources = saved_download_refs(active);
+        if (!qa_downloads_resources_ready(active->downloads, &active_resources, error)) return false;
+    }
     /* A live original peer has no checkpoint barrier. Refuse to rewind its
      * wire state after the captured cut; remote coordination is external. */
     uint32_t cursor = 0; const qa_net_client *client = NULL;

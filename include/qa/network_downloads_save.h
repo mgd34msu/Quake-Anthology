@@ -28,4 +28,8 @@ typedef struct qa_download_checkpoint_refs {
 bool qa_downloads_checkpoint(const qa_downloads *, qa_buffer *, qa_error *);
 bool qa_downloads_restore_checkpoint(qa_bytes, qa_http *, qa_fs_root *, const qa_download_options *,
     const qa_download_checkpoint_refs *, qa_downloads **, qa_error *);
+/* Requalify actual job resources before publication. No stage factory, write,
+ * transfer, inspection hook, remount or notification runs. Resolver callbacks
+ * execute under the owner guard and must only observe candidate resources. */
+bool qa_downloads_resources_ready(qa_downloads *, const qa_download_checkpoint_refs *, qa_error *);
 #endif
