@@ -284,6 +284,7 @@ const char *qa_application_provider_instance(const qa_application *, qa_actor_ow
 bool qa_application_provider_owner(const qa_application *, const char *, qa_actor_owner *);
 bool qa_application_provider_gravity(const qa_application *, qa_actor_owner, float *);
 bool qa_application_q1_fog_read(qa_application *, qa_actor_id, qa_q1_fog_state *);
+bool qa_application_q1_fog_owner(qa_application *, qa_actor_owner *);
 bool qa_application_q1_monster_counts(const qa_application *, uint32_t seat,
     uint32_t *total, uint32_t *killed);
 size_t qa_application_console_count(const qa_application *);

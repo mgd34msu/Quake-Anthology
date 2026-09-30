@@ -307,13 +307,24 @@ bool qa_application_provider_gravity(const qa_application *application,
     return false;
 }
 
+bool qa_application_q1_fog_owner(qa_application *application, qa_actor_owner *out)
+{
+    if (!application || !out || application->destroy_requested) return false;
+    application_provider *provider = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    if (!provider || !provider->constructed || !provider->attached || provider->close_pending ||
+        provider->kind != APPLICATION_PROVIDER_Q1) return false;
+    *out = provider->owner;
+    return true;
+}
+
 bool qa_application_q1_fog_read(qa_application *application, qa_actor_id actor,
                                  qa_q1_fog_state *out)
 {
     if (application == NULL || out == NULL || application->destroy_requested)
         return false;
     application_provider *provider = application_world_provider(application, QA_ROLE_ENTITIES, "");
-    return provider != NULL && provider->constructed && provider->kind == APPLICATION_PROVIDER_Q1 &&
+    return provider != NULL && provider->constructed && provider->attached && !provider->close_pending &&
+           provider->kind == APPLICATION_PROVIDER_Q1 &&
            qa_q1_game_map_fog_read(provider->state.q1, actor, out);
 }
 
