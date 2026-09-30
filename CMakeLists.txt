@@ -569,11 +569,12 @@ target_link_libraries(qa_catalog PUBLIC qa_content)
 
 add_library(qa_configuration STATIC
     src/session/configuration/draft.c
+    src/session/configuration/draft_save.c
     src/session/configuration/identity.c
     src/session/configuration/presets.c
     src/session/configuration/transaction.c
     src/session/configuration/validate.c)
-target_link_libraries(qa_configuration PUBLIC qa_catalog qa_modes qa_session)
+target_link_libraries(qa_configuration PUBLIC qa_catalog qa_modes qa_session qa_persistence)
 
 add_library(qa_audio STATIC
     src/audio/bank.c
@@ -761,6 +762,7 @@ add_library(qa_network STATIC
     src/network/reliability.c
     src/network/runtime/commands.c
     src/network/runtime/q3.c
+    src/network/runtime/q1_nq.c
     src/network/runtime/session.c
     src/network/runtime/save.c
     src/network/runtime/prediction_save.c

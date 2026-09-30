@@ -14,4 +14,12 @@ bool qa_configuration_checkpoint_capture(const qa_configuration *, qa_configurat
 bool qa_configuration_prepare_restored(qa_configuration *, const qa_launch_draft *,
     const qa_configuration_checkpoint *, qa_configuration_transaction **, qa_error *);
 bool qa_configuration_commit_restored(qa_configuration_transaction *, qa_error *);
+
+/* Private draft continuation, including incomplete/invalid composition and
+ * original private string order. The caller qualifies the actual catalog
+ * snapshot; valid product IDs map by stable identity, unknown draft IDs remain
+ * unknown in that qualified catalog. Actor references preserve provenance.
+ * Restore constructs an empty private draft without defaults or validation. */
+bool qa_launch_draft_checkpoint(const qa_launch_draft *, const qa_actor_registry *, qa_buffer *, qa_error *);
+bool qa_launch_draft_restore(qa_catalog *, const qa_actor_registry *, qa_bytes, qa_launch_draft **, qa_error *);
 #endif
