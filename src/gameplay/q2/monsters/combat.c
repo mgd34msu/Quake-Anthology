@@ -1118,6 +1118,135 @@ static bool pain_flipper_flyer(q2m_context *context, bool flyer, qa_error *error
                         rerelease, error);
 }
 
+static bool pain_berserk(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  qa_q2_game *g = context->game;
+  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  float damage = m->pending_damage;
+  if (context->combat.health < m->max_health * .5f) m->skin = 1;
+  else if (rerelease) m->skin = 0;
+  if (rerelease && m->move &&
+      (!strcmp(m->move->name, "berserk_move_jump") ||
+       !strcmp(m->move->name, "berserk_move_jump2") ||
+       !strcmp(m->move->name, "berserk_move_attack_strike"))) return true;
+  if (g->now_ns < m->pain_ns) return true;
+  m->pain_ns = q2m_after(g->now_ns, 3.0);
+  if (!q2m_sound(context, "berserk/berpain2.wav", 2, 1, error)) return false;
+  if (!q2m_alive(context) || (rerelease ? !reacts_to_pain(context) : g->options.skill == 3))
+    return true;
+  if (rerelease || g->options.product == QA_Q2_ROGUE) {
+    m->dodging = false;
+    if (rerelease && m->attack_state == Q2M_SLIDING) m->attack_state = Q2M_STRAIGHT;
+  }
+  bool short_pain = rerelease ? damage <= 50 : damage < 20;
+  if (!short_pain)
+    short_pain = (rerelease ? q2_rerelease_float(g, 0, 1) : q2m_random(g)) < .5f;
+  return q2m_set_move(context, short_pain ? "berserk_move_pain1" : "berserk_move_pain2",
+                        false, error);
+}
+
+static bool pain_chick(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  qa_q2_game *g = context->game;
+  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rogue = g->options.product == QA_Q2_ROGUE;
+  float damage = m->pending_damage;
+  if (context->combat.health < m->max_health * .5f) {
+    if (rerelease) m->skin |= 1;
+    else m->skin = 1;
+  } else if (rerelease) m->skin &= ~1;
+  if (rogue || rerelease) {
+    m->dodging = false;
+    if (rerelease && m->attack_state == Q2M_SLIDING) m->attack_state = Q2M_STRAIGHT;
+  }
+  if (g->now_ns < m->pain_ns) return true;
+  m->pain_ns = q2m_after(g->now_ns, 3.0);
+  float choice = rerelease ? q2_rerelease_float(g, 0, 1) : q2m_random(g);
+  const char *sound = choice < .33f ? "chick/chkpain1.wav" :
+                      choice < .66f ? "chick/chkpain2.wav" : "chick/chkpain3.wav";
+  if (!q2m_sound(context, sound, 2, 1, error)) return false;
+  bool xatrix = g->options.product == QA_Q2_XATRIX || m->definition->species == Q2M_CHICK_HEAT;
+  if (!q2m_alive(context) || (rerelease ? !reacts_to_pain(context) :
+                             g->options.skill == 3 && !xatrix)) return true;
+  if (rogue || rerelease) m->manual_steering = false;
+  const char *move = damage <= 10 ? "chick_move_pain1" :
+                     damage <= 25 ? "chick_move_pain2" : "chick_move_pain3";
+  if (!q2m_set_move(context, move, rerelease, error)) return false;
+  return !q2m_alive(context) || (!rogue && !rerelease) || !m->ducked ||
+         q2m_dispatch(context, "monster_duck_up", error);
+}
+
+static bool pain_gunner(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  qa_q2_game *g = context->game;
+  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rogue = g->options.product == QA_Q2_ROGUE;
+  float damage = m->pending_damage;
+  if (context->combat.health < m->max_health * .5f) m->skin = 1;
+  else if (rerelease) m->skin = 0;
+  if (rogue || rerelease) {
+    m->dodging = false;
+    if (rerelease && m->attack_state == Q2M_SLIDING) m->attack_state = Q2M_STRAIGHT;
+  }
+  if (rerelease) {
+    if (m->move && (!strcmp(m->move->name, "gunner_move_jump") ||
+                    !strcmp(m->move->name, "gunner_move_jump2"))) return true;
+  } else if (rogue && !context->body.ground.registry) return true;
+  if (g->now_ns < m->pain_ns) return true;
+  m->pain_ns = q2m_after(g->now_ns, 3.0);
+  bool first = rerelease ? q2_random_bounded(g, 2) == 0 :
+                          (qa_builtin_random_integer(&g->random) & 1u) != 0;
+  if (!q2m_sound(context, first ? "gunner/gunpain2.wav" : "gunner/gunpain1.wav",
+                  2, 1, error)) return false;
+  if (!q2m_alive(context) || (rerelease ? !reacts_to_pain(context) : g->options.skill == 3))
+    return true;
+  const char *move = damage <= 10 ? "gunner_move_pain3" :
+                     damage <= 25 ? "gunner_move_pain2" : "gunner_move_pain1";
+  if (!q2m_set_move(context, move, false, error)) return false;
+  if (rogue || rerelease) m->manual_steering = false;
+  return !q2m_alive(context) || (!rogue && !rerelease) || !m->ducked ||
+         q2m_dispatch(context, "monster_duck_up", error);
+}
+
+static bool pain_hover(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  qa_q2_game *g = context->game;
+  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rogue = g->options.product == QA_Q2_ROGUE || m->definition->species == Q2M_DAEDALUS;
+  float damage = m->pending_damage;
+  if (context->combat.health < m->max_health * .5f) {
+    if (rogue || rerelease) m->skin |= 1;
+    else m->skin = 1;
+  } else if (rerelease) m->skin &= ~1;
+  if (g->now_ns < m->pain_ns) return true;
+  m->pain_ns = q2m_after(g->now_ns, 3.0);
+  if (!rerelease && g->options.skill == 3) return true;
+  bool first;
+  const char *move;
+  if (rerelease) {
+    first = q2_rerelease_float(g, 0, 1) < .5f;
+    const char *sound = context->combat.mass < 225 ?
+        (first ? "hover/hovpain1.wav" : "hover/hovpain2.wav") :
+        (first ? "daedalus/daedpain1.wav" : "daedalus/daedpain2.wav");
+    if (!q2m_sound(context, sound, 2, 1, error)) return false;
+    if (!q2m_alive(context) || !reacts_to_pain(context)) return true;
+    float choice = q2_rerelease_float(g, 0, 1);
+    move = damage <= 25 ? (choice < .5f ? "hover_move_pain3" : "hover_move_pain2") :
+                         (choice < .3f ? "hover_move_pain1" : "hover_move_pain2");
+  } else {
+    first = damage <= 25 ? q2m_random(g) < .5f :
+            !rogue || q2m_random(g) < .45f - .1f * (float)g->options.skill;
+    move = first ? (damage <= 25 ? "hover_move_pain3" : "hover_move_pain1") :
+                   "hover_move_pain2";
+    const char *sound = !rogue || context->combat.mass < 225 ?
+        (first ? "hover/hovpain1.wav" : "hover/hovpain2.wav") :
+        (first ? "daedalus/daedpain1.wav" : "daedalus/daedpain2.wav");
+    if (!q2m_sound(context, sound, 2, 1, error)) return false;
+    if (!q2m_alive(context)) return true;
+  }
+  return q2m_set_move(context, move, rerelease, error);
+}
+
 static bool pain_floater(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   if (context->game->now_ns < monster->pain_ns)
@@ -1408,6 +1537,10 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
     return pain_brain_mutant(context, species == Q2M_BRAIN, error);
   if (species == Q2M_FLIPPER || species == Q2M_FLYER)
     return pain_flipper_flyer(context, species == Q2M_FLYER, error);
+  if (species == Q2M_BERSERK) return pain_berserk(context, error);
+  if (species == Q2M_CHICK || species == Q2M_CHICK_HEAT) return pain_chick(context, error);
+  if (species == Q2M_GUNNER) return pain_gunner(context, error);
+  if (species == Q2M_HOVER || species == Q2M_DAEDALUS) return pain_hover(context, error);
   float damage = monster->pending_damage;
   if (context->combat.health < monster->base_health * 0.5f)
     monster->skin |= 1;
@@ -1459,12 +1592,6 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
   if (species == Q2M_JORG && damage <= 40.0f &&
       q2m_random(context->game) <= 0.6f)
     return true;
-  if (species == Q2M_BERSERK && monster->move != NULL &&
-      (strcmp(monster->move->name, "berserk_move_jump") == 0 ||
-       strcmp(monster->move->name, "berserk_move_jump2") == 0 ||
-       strcmp(monster->move->name, "berserk_move_attack_strike") == 0))
-    return true;
-
   double delay = species == Q2M_CARRIER ? 5.0 : 3.0;
   monster->pain_ns = q2m_after(context->game->now_ns, delay);
 
@@ -1473,19 +1600,6 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
   char pain_path[sizeof("player/male/pain100_2.wav")];
   float random = q2m_random(context->game);
   switch (species) {
-  case Q2M_BERSERK:
-    move = damage < 20.0f || random < 0.5f ? "berserk_move_pain1"
-                                           : "berserk_move_pain2";
-    break;
-  case Q2M_CHICK:
-  case Q2M_CHICK_HEAT:
-    move = damage <= 10.0f   ? "chick_move_pain1"
-           : damage <= 25.0f ? "chick_move_pain2"
-                             : "chick_move_pain3";
-    sound = random < 0.33f   ? "chick/chkpain1.wav"
-            : random < 0.66f ? "chick/chkpain2.wav"
-                             : "chick/chkpain3.wav";
-    break;
   case Q2M_FLOATER:
     move = random < (1.0f / 3.0f) ? "floater_move_pain1" : "floater_move_pain2";
     sound = random < (1.0f / 3.0f) ? "floater/fltpain1.wav"
@@ -1499,25 +1613,6 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
            : species == Q2M_GLADB            ? "gladb_move_pain"
                                              : "gladiator_move_pain";
     sound = random < 0.5f ? "gladiator/pain.wav" : "gladiator/gldpain2.wav";
-    break;
-  case Q2M_GUNNER:
-    move = damage <= 10.0f   ? "gunner_move_pain3"
-           : damage <= 25.0f ? "gunner_move_pain2"
-                             : "gunner_move_pain1";
-    sound = random < 0.5f ? "gunner/gunpain2.wav" : "gunner/gunpain1.wav";
-    break;
-  case Q2M_HOVER:
-  case Q2M_DAEDALUS:
-    if (damage > 25.0f) {
-      move = "hover_move_pain1";
-      sound = "hover/hovpain1.wav";
-    } else if (random < 0.5f) {
-      move = "hover_move_pain3";
-      sound = "hover/hovpain1.wav";
-    } else {
-      move = "hover_move_pain2";
-      sound = "hover/hovpain2.wav";
-    }
     break;
   case Q2M_JORG:
     if (damage > 100.0f && random > 0.3f)
