@@ -243,7 +243,7 @@ bool qa_q3_rules_read(const qa_q3_game *game, qa_q3_rules *out, qa_error *error)
     return true;
 }
 bool qa_q3_set_rules(qa_q3_game *game, const qa_q3_rules *rules, qa_error *error) {
-    if (!game || game->observation_depth || !valid_rules(rules))
+    if (!game || game->source_restored || game->observation_depth || !valid_rules(rules))
         return q3_fail(error, "invalid Q3 game rules");
     game->options.rules = *rules;
     return true;

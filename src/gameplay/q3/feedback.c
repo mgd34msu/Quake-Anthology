@@ -1,6 +1,6 @@
 #include "internal.h"
 
-bool qa_q3_before_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, qa_error *error) {
+static bool before_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, qa_error *error) {
     if (!game || !outcome)
         return q3_fail(error, "invalid Q3 damage feedback");
     q3_actor *entry = q3_actor_get(game, outcome->request.target);
@@ -31,7 +31,16 @@ bool qa_q3_before_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, q
         return q3_player_event(game, entry->actor, 62, 0, error);
     return true;
 }
-bool qa_q3_player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_level,
+bool qa_q3_before_reaction(qa_q3_game *game, const qa_damage_outcome *outcome, qa_error *error) {
+    if (!game || !outcome || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid Q3 damage feedback boundary");
+    qa_damage_outcome captured = *outcome;
+    ++game->observation_depth;
+    bool result = before_reaction(game, &captured, error);
+    --game->observation_depth;
+    return result;
+}
+static bool player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_level,
                             int32_t water_type, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
@@ -77,6 +86,10 @@ bool qa_q3_player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_l
         qa_combat_state combat;
         if (!qa_combat_read(game->options.services.combat, actor, &combat, error))
             return false;
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+            return true;
+        player = &entry->state.player;
         if (game->now_ms > player->pain_after && !combat.invulnerable) {
             player->pain_after = q3_add_time(game->now_ms, 700);
             if (!q3_player_event(game, actor, 56, (int32_t)combat.health, error))
@@ -105,4 +118,13 @@ bool qa_q3_player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_l
     else if (!qa_builtin_resource(&game->options.services, loop, &player->loop_sound, error))
         return false;
     return true;
+}
+bool qa_q3_player_end_frame(qa_q3_game *game, qa_actor_id actor, int32_t water_level,
+                            int32_t water_type, qa_error *error) {
+    if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid Q3 client end-frame boundary");
+    ++game->observation_depth;
+    bool result = player_end_frame(game, actor, water_level, water_type, error);
+    --game->observation_depth;
+    return result;
 }

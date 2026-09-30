@@ -12,13 +12,21 @@ bool q3_cancel_kamikaze_timers(qa_q3_game *game, qa_actor_id actor, qa_error *er
     }
     return true;
 }
-bool qa_q3_cancel_death_effects(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+static bool cancel_death_effects(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     if (!game)
         return q3_fail(error, "missing Q3 death effect provider");
     q3_actor *entry = q3_actor_get(game, actor);
     if (entry && entry->kind == Q3_ACTOR_PLAYER)
         entry->state.player.flags &= ~0x200u;
     return q3_cancel_kamikaze_timers(game, actor, error);
+}
+bool qa_q3_cancel_death_effects(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+    if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid Q3 death-effect cancellation boundary");
+    ++game->observation_depth;
+    bool result = cancel_death_effects(game, actor, error);
+    --game->observation_depth;
+    return result;
 }
 bool q3_schedule_kamikaze(qa_q3_game *game, qa_actor_id actor, qa_vec3 origin, qa_error *error) {
     qa_builtin_spawn spawn = {.owner = game->options.owner, .body = {.origin = origin}};
@@ -174,7 +182,7 @@ bool q3_drop_player_items(qa_q3_game *game, qa_actor_id actor, bool no_drop, qa_
     }
     return true;
 }
-bool qa_q3_player_death_cleanup(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+static bool player_death_cleanup(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER || entry->state.player.death_cleanup_done)
         return true;
@@ -183,6 +191,9 @@ bool qa_q3_player_death_cleanup(qa_q3_game *game, qa_actor_id actor, qa_error *e
     if (q3_actor_get(game, hook) &&
         !qa_session_release(game->options.services.session, hook, error))
         return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
     if (q3_actor_get(game, mine) &&
         !qa_session_release(game->options.services.session, mine, error))
         return false;
@@ -191,11 +202,18 @@ bool qa_q3_player_death_cleanup(qa_q3_game *game, qa_actor_id actor, qa_error *e
     qa_body_state body;
     if (!qa_world_body_read(game->options.services.world, actor, &body, error))
         return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
     qa_point_query query = {.point = body.origin,
                             .policy = qa_collision_default_policy(QA_COLLISION_Q3)};
     qa_point_contents contents;
-    if (!qa_world_point_contents(game->options.services.world, &query, &contents, error) ||
-        !q3_drop_player_items(game, actor, (contents.contents & INT32_MIN) != 0, error))
+    if (!qa_world_point_contents(game->options.services.world, &query, &contents, error))
+        return false;
+    entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+        return true;
+    if (!q3_drop_player_items(game, actor, (contents.contents & INT32_MIN) != 0, error))
         return false;
     entry = q3_actor_get(game, actor);
     if (!entry)
@@ -211,14 +229,28 @@ bool qa_q3_player_death_cleanup(qa_q3_game *game, qa_actor_id actor, qa_error *e
         qa_builtin_actor_traits traits = {.gib_health = -40};
         if (!qa_combat_read(game->options.services.combat, actor, &combat, error))
             return false;
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+            return true;
         if (game->options.services.actor_traits)
             (void)game->options.services.actor_traits(game->options.services.context, actor,
                                                       &traits);
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+            return true;
         if (combat.health > traits.gib_health &&
             !q3_schedule_kamikaze(game, actor, body.origin, error))
             return false;
     }
     return true;
+}
+bool qa_q3_player_death_cleanup(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+    if (!game || game->source_restored || game->observation_depth == SIZE_MAX)
+        return q3_fail(error, "invalid Q3 player death-cleanup boundary");
+    ++game->observation_depth;
+    bool result = player_death_cleanup(game, actor, error);
+    --game->observation_depth;
+    return result;
 }
 bool q3_copy_corpse(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
