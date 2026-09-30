@@ -855,6 +855,29 @@ static q1_map_kind classify(const char *name) {
 bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, bool *handled,
                   qa_error *error) {
     q1_map_kind kind = classify(spawn->classname);
+    if (g->options.program == QA_Q1_CTF) {
+        static const char *removed[] = {
+            "monster_army", "monster_dog", "monster_ogre", "monster_ogre_marksman",
+            "monster_knight", "monster_hell_knight", "monster_wizard", "monster_demon1",
+            "monster_shambler", "monster_zombie", "monster_tarbaby", "monster_fish",
+            "monster_enforcer", "monster_shalrath", "monster_boss", "monster_oldone"};
+        for (size_t i = 0; i < sizeof(removed) / sizeof(*removed); ++i)
+            if (!strcmp(spawn->classname, removed[i])) {
+                *handled = true;
+                return q1_remove(g, entity, error);
+            }
+        if (!strcmp(spawn->classname, "trigger_voteexit"))
+            kind = Q1_MAP_CTF_VOTE_EXIT;
+        else if (!strcmp(spawn->classname, "trigger_changelevel"))
+            kind = Q1_MAP_CTF_CHANGELEVEL;
+        else if (!strcmp(spawn->classname, "info_vote_destination"))
+            kind = Q1_MAP_DESTINATION;
+        else if (!strcmp(spawn->classname, "func_ctf_wall"))
+            kind = Q1_MAP_WALL;
+        else if (!strcmp(spawn->classname, "info_player_team1") ||
+                 !strcmp(spawn->classname, "info_player_team2"))
+            kind = Q1_MAP_POINT;
+    }
     if (g->options.program == QA_Q1_ROGUE && !strcmp(spawn->classname, "trigger_explosion"))
         kind = Q1_MAP_ROGUE_EXPLOSION_TRIGGER;
     if (g->options.program == QA_Q1_ROGUE && !strcmp(spawn->classname, "light_candle"))
@@ -920,6 +943,8 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
     if (!*handled)
         return true;
     entity->kind = Q1_MAP;
+    if (q1_map_is_ctf(kind))
+        return q1_map_ctf_spawn(g, entity, error);
     if (q1_map_is_rogue_misc(kind))
         return q1_map_rogue_misc_spawn(g, entity, error);
     if (q1_map_is_fog(kind))
@@ -1014,7 +1039,7 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
         entity->physics.motion = QA_PHYSICS_PUSH;
         entity->physics.solid = QA_PHYSICS_BRUSH;
         body.angles = qa_v3(0, 0, 0);
-        state->use_enabled = true;
+        state->use_enabled = !q1_classnamed(g, entity->id, "func_ctf_wall");
         break;
     case Q1_MAP_POINT:
         break;
@@ -1022,6 +1047,9 @@ bool q1_map_spawn(qa_q1_game *g, q1_actor *entity, const qa_q1_spawn *spawn, boo
         if (!q1_map_text(g, entity->targetname))
             return q1_map_fail(error, "Q1 teleport destination has no targetname");
         state->mangle = body.angles;
+        if (g->options.program == QA_Q1_CTF &&
+            q1_classnamed(g, entity->id, "info_vote_destination"))
+            entity->model = QA_STRING_NONE;
         body.angles = qa_v3(0, 0, 0);
         body.origin.z += 27;
         break;
@@ -1169,6 +1197,9 @@ bool q1_map_use(qa_q1_game *g, q1_actor *entity, qa_actor_id other, qa_actor_id 
 }
 bool q1_map_touch(qa_q1_game *g, q1_actor *entity, const qa_touch_contact *contact,
                   qa_error *error) {
+    if (entity->map && q1_map_is_ctf(entity->map->kind))
+        return !entity->map->touch_enabled ||
+               q1_map_ctf_touch(g, entity, contact->other, error);
     if (entity->map && q1_map_is_rogue_misc(entity->map->kind))
         return !entity->map->touch_enabled ||
                q1_map_rogue_misc_touch(g, entity, contact->other, error);
@@ -1282,6 +1313,8 @@ bool q1_map_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     q1_map_state *state = entity->map;
     q1_map_action action = state->action;
     state->action = Q1_MAP_IDLE;
+    if (action == Q1_MAP_CTF_NEXTLEVEL)
+        return q1_map_ctf_nextlevel_think(g, entity, error);
     if (action == Q1_MAP_FOREIGN_REMOVE) {
         if (state->kind != Q1_MAP_DELAY || !g->maps->options.retire_actor)
             return q1_map_fail(error, "invalid Q1 foreign removal continuation owner");

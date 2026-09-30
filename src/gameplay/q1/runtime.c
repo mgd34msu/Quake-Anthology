@@ -356,7 +356,7 @@ static bool begin_frame(void *context, qa_session *session, const qa_source_fram
     qa_q1_game_operation operation = {0};
     if (!qa_q1_game_operation_begin(g, &operation, error))
         return false;
-    bool ok = q1_map_addon_frame(g, error);
+    bool ok = q1_map_addon_frame(g, error) && q1_map_ctf_frame(g, error);
     return operation_finish(&operation, ok, error);
 }
 static bool actor_frame_inner(void *context, qa_session *session, qa_actor_id actor,

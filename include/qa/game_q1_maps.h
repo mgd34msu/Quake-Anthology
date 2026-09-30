@@ -7,6 +7,10 @@
 
 /* Authored values are borrowed only during spawn. The map provider interns
  * strings and retains typed fields beside the native actor continuation. */
+typedef struct qa_q1_ctf_map_state {
+    bool start_map, pregame_over, observer;
+} qa_q1_ctf_map_state;
+
 typedef struct qa_q1_map_fields {
     const char *model, *map, *noise, *noise1, *noise2, *noise3;
     const char *endtext, *intermissiontext, *netname, *event;
@@ -111,6 +115,10 @@ typedef struct qa_q1_map_options {
      * handled candidate ends nearby traversal even when passage is blocked. */
     bool (*observer_passage)(void *, qa_actor_id observer, qa_actor_id candidate,
                               bool *handled, qa_error *);
+    /* Zero actor reads world state; a live player also reads its observer state.
+     * The selected ThreeWave mode owns these values. */
+    bool (*ctf_state)(void *, qa_actor_id, qa_q1_ctf_map_state *, qa_error *);
+    bool (*ctf_pregame_end)(void *, qa_error *);
     bool (*egg_mover)(void *, qa_actor_id, qa_error *);
     bool (*grant_quad)(void *, qa_actor_id, double source_expiry, qa_error *);
     bool (*horde_control)(void *, qa_actor_id, bool check_wave, qa_error *);
@@ -182,6 +190,9 @@ bool qa_q1_game_map_coordinates_enabled(const qa_q1_game *);
 /* Dispatches authored world controls without entering the selected arsenal.
  * A consumed or source-gated command sets handled; unrelated impulses do not. */
 bool qa_q1_game_map_impulse(qa_q1_game *, qa_actor_id, uint8_t impulse, bool *handled, qa_error *);
+/* Shared ThreeWave match limits supply the chosen map; a native helper begins
+ * the actual source campaign transition after .1 seconds. */
+bool qa_q1_game_map_ctf_nextlevel(qa_q1_game *, qa_string_id map, qa_error *);
 /* Rogue player order is earthquake, selected team/rune frame, then after_physics. */
 bool qa_q1_game_rogue_earthquake(qa_q1_game *, qa_actor_id, qa_error *);
 bool qa_q1_game_time_machine_crash(qa_q1_game *, qa_error *);

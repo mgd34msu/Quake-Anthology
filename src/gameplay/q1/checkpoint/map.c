@@ -38,7 +38,7 @@ static bool movement(q1_save_io *io, q1_map_movement *m, q1_door_group **groups,
         return q1_save_fail(io, "Invalid Q1 door group identity");
     if (io->reading)
         m->group = group ? groups[group - 1] : NULL;
-    Q1_SAVE_ENUM(io, m->done, Q1_MAP_FOREIGN_REMOVE);
+    Q1_SAVE_ENUM(io, m->done, Q1_MAP_CTF_NEXTLEVEL);
     Q1_SAVE_ENUM(io, m->position, Q1_MAP_DOWN);
     Q1_SAVE(io, actor, m->goal);
     Q1_SAVE(io, float, m->next_speed);
@@ -55,8 +55,8 @@ static bool movement(q1_save_io *io, q1_map_movement *m, q1_door_group **groups,
     return true;
 }
 bool q1_save_map(q1_save_io *io, q1_map_state *m, q1_door_group **groups, size_t count) {
-    Q1_SAVE_ENUM(io, m->kind, Q1_MAP_ROGUE_LAMP);
-    Q1_SAVE_ENUM(io, m->action, Q1_MAP_FOREIGN_REMOVE);
+    Q1_SAVE_ENUM(io, m->kind, Q1_MAP_CTF_CHANGELEVEL);
+    Q1_SAVE_ENUM(io, m->action, Q1_MAP_CTF_NEXTLEVEL);
     Q1_SAVE(io, string, m->original_model);
     Q1_SAVE(io, string, m->map);
     for (size_t i = 0; i < 4; ++i)
@@ -131,6 +131,9 @@ bool q1_save_map(q1_save_io *io, q1_map_state *m, q1_door_group **groups, size_t
         return q1_save_fail(io, "Q1 delayed callback belongs to a different map continuation");
     if (m->action == Q1_MAP_ROGUE_RUBBLE_THROW && m->kind != Q1_MAP_ROGUE_RUBBLE_SOURCE)
         return q1_save_fail(io, "Rogue rubble callback belongs to a different map continuation");
+    if (m->action == Q1_MAP_CTF_NEXTLEVEL && m->kind != Q1_MAP_DELAY &&
+        m->kind != Q1_MAP_CTF_CHANGELEVEL)
+        return q1_save_fail(io, "ThreeWave nextlevel callback belongs to a different continuation");
     if (m->action >= Q1_MAP_MINE_FIRST && m->action <= Q1_MAP_GRAVITY_PULL &&
         !q1_map_is_hip_hazard(m->kind))
         return q1_save_fail(io, "Hipnotic hazard callback belongs to a different map continuation");
@@ -294,6 +297,8 @@ bool q1_save_map_runtime(q1_save_io *io, q1_map_runtime *m) {
     Q1_SAVE(io, double, m->earthquake_end);
     Q1_SAVE(io, bool, m->quake_active);
     Q1_SAVE(io, bool, m->dump_coordinates);
+    Q1_SAVE(io, actor, m->ctf_vote_leader);
+    Q1_SAVE(io, double, m->ctf_vote_exit_time);
     Q1_SAVE(io, bool, m->final_new_game_travel);
     Q1_SAVE(io, bool, m->rogue_cutscene);
     Q1_SAVE(io, bool, m->rogue_ending_started);
@@ -387,6 +392,7 @@ bool q1_save_map_runtime(q1_save_io *io, q1_map_runtime *m) {
         Q1_SAVE(io, float, row->fog_density);
         Q1_SAVE(io, double, row->fly_sound);
         Q1_SAVE(io, double, row->lore_active);
+        Q1_SAVE(io, double, row->voted);
         Q1_SAVE(io, float, row->hunger_time);
         Q1_SAVE(io, float, row->super_time);
         Q1_SAVE(io, bool, row->has_hunger);

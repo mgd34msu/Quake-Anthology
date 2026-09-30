@@ -413,6 +413,7 @@ void q1_map_addon_clone(qa_q1_game *, qa_actor_id, qa_actor_id);
 void q1_map_destroy(qa_q1_game *);
 void q1_map_frame_begin(qa_q1_game *);
 bool q1_map_addon_frame(qa_q1_game *, qa_error *);
+bool q1_map_ctf_frame(qa_q1_game *, qa_error *);
 bool q1_map_collision(const q1_actor *, qa_actor_collision *);
 bool q1_map_bind_target(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_spawn_template(qa_q1_game *, const qa_q1_spawn *, const qa_body_state *, qa_actor_id *,

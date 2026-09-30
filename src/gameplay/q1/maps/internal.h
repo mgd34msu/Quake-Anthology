@@ -177,7 +177,9 @@ typedef enum q1_map_kind {
     Q1_MAP_ROGUE_RUBBLE_SOURCE,
     Q1_MAP_ROGUE_RUBBLE,
     Q1_MAP_ROGUE_EXPLOSION_TRIGGER,
-    Q1_MAP_ROGUE_LAMP
+    Q1_MAP_ROGUE_LAMP,
+    Q1_MAP_CTF_VOTE_EXIT,
+    Q1_MAP_CTF_CHANGELEVEL
 } q1_map_kind;
 typedef enum q1_map_action {
     Q1_MAP_IDLE,
@@ -290,7 +292,8 @@ typedef enum q1_map_action {
     Q1_MAP_ADDON_FADE_TICK,
     Q1_MAP_ADDON_PARTICLE_TICK,
     Q1_MAP_ROGUE_RUBBLE_THROW,
-    Q1_MAP_FOREIGN_REMOVE
+    Q1_MAP_FOREIGN_REMOVE,
+    Q1_MAP_CTF_NEXTLEVEL
 } q1_map_action;
 typedef enum q1_map_position { Q1_MAP_BOTTOM, Q1_MAP_UP, Q1_MAP_TOP, Q1_MAP_DOWN } q1_map_position;
 typedef enum q1_time_reaction { Q1_TIME_NO_REACTION, Q1_TIME_PAIN, Q1_TIME_CRASH } q1_time_reaction;
@@ -336,7 +339,7 @@ typedef struct q1_addon_contact {
     qa_actor_id secret_marker, exit_marker;
     qa_vec3 fog_color;
     float fog_density;
-    double fly_sound, lore_active;
+    double fly_sound, lore_active, voted;
     float hunger_time, super_time;
     bool sheltered, has_hunger;
     bool secret_hunter, exit_hunter, monster_hunter, buddha;
@@ -433,6 +436,8 @@ struct q1_map_runtime {
     double earthquake_end;
     bool quake_active;
     bool dump_coordinates;
+    qa_actor_id ctf_vote_leader;
+    double ctf_vote_exit_time;
     bool final_new_game_travel;
     bool rogue_cutscene, rogue_ending_started;
     bool rogue_quake_active;
@@ -457,6 +462,13 @@ bool q1_map_lightstyle(qa_q1_game *, q1_actor *, const char *, qa_error *);
 bool q1_map_trigger_init(qa_q1_game *, q1_actor *, bool zero_direction, qa_error *);
 qa_vec3 q1_map_direction(qa_vec3 angles);
 bool q1_map_trigger_spawn(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_map_ctf_spawn(qa_q1_game *, q1_actor *, qa_error *);
+bool q1_map_ctf_touch(qa_q1_game *, q1_actor *, qa_actor_id, qa_error *);
+bool q1_map_ctf_frame(qa_q1_game *, qa_error *);
+bool q1_map_ctf_nextlevel_think(qa_q1_game *, q1_actor *, qa_error *);
+static inline bool q1_map_is_ctf(q1_map_kind kind) {
+    return kind == Q1_MAP_CTF_VOTE_EXIT || kind == Q1_MAP_CTF_CHANGELEVEL;
+}
 static inline bool q1_map_is_rogue_misc(q1_map_kind kind) {
     return kind >= Q1_MAP_ROGUE_RUBBLE_SOURCE && kind <= Q1_MAP_ROGUE_LAMP;
 }
