@@ -278,12 +278,18 @@ static bool text_field(qa_source_save_io *io, char **text) {
 static bool context_fields(qa_source_save_io *io, qa_command_context *context) {
     uint32_t dialect = context->dialect, origin = context->origin;
     qa_string_id owner = (qa_string_id)context->owner;
+    uint64_t registry = 1;
+    if (io->direction == QA_SOURCE_SAVE_WRITE &&
+        context->registry != qa_actors_identity(qa_session_actors(io->session))) return false;
     if (!qa_source_save_u64(io, &context->session) || !qa_source_save_string(io, &owner) ||
         !qa_source_save_u64(io, &context->client) || !qa_source_save_u32(io, &context->seat) ||
         !qa_source_save_u32(io, &dialect) || !qa_source_save_u32(io, &origin) ||
         !qa_source_save_bool(io, &context->direct) || !qa_source_save_bool(io, &context->console_text) ||
-        !qa_source_save_u64(io, &context->registry) || !qa_source_save_u64(io, &context->generation) ||
+        !qa_source_save_u64(io, &registry) || registry != 1 ||
+        !qa_source_save_u64(io, &context->generation) ||
         !qa_source_save_actor(io, &context->actor)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ)
+        context->registry = qa_actors_identity(qa_session_actors(io->session));
     context->owner = owner; context->dialect = (qa_console_dialect)dialect;
     context->origin = (qa_command_origin)origin;
     return owner && dialect == QA_CONSOLE_Q3 && origin == QA_COMMAND_SERVER &&
@@ -291,9 +297,9 @@ static bool context_fields(qa_source_save_io *io, qa_command_context *context) {
         context->registry && context->generation;
 }
 static bool stream(qa_source_save_io *io, application_match_intents *state) {
-    char magic[4] = {'Q','A','M','I'}; uint32_t version = 2, stage = state->stage;
+    char magic[4] = {'Q','A','M','I'}; uint32_t version = 3, stage = state->stage;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QAMI", 4) ||
-        !qa_source_save_u32(io, &version) || version != 2 ||
+        !qa_source_save_u32(io, &version) || version != 3 ||
         !qa_source_save_u32(io, &stage) || stage > MATCH_MAP_AFTER) return false;
     state->stage = (match_map_stage)stage;
     if (state->stage == MATCH_MAP_EMPTY) return true;
@@ -390,9 +396,6 @@ bool application_match_intents_restore(application_match_intents *state, qa_appl
         clear(&next);
         if (error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "invalid saved match map continuation");
         return false;
-    }
-    if (next.stage != MATCH_MAP_EMPTY && next.stage != MATCH_MAP_UNRESOLVED) {
-        next.plan.context.registry = qa_actors_identity(qa_session_actors(app->session));
     }
     clear(state); *state = next; return true;
 }
