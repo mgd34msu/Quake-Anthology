@@ -61,13 +61,18 @@ bool q3g_role_destroy(q3g_role *role, qa_error *error)
     return true;
 }
 
-bool q3g_role_create(struct application_q3_guest *engine, qa_qvm_role kind,
-                      uint32_t seat, const char *path, bool primary,
-                      q3g_role **out, qa_error *error)
+static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
+                          uint32_t seat, const char *path, bool primary,
+                          uint64_t saved_sequence, qa_string_id saved_owner,
+                          q3g_role **out, qa_error *error)
 {
-    if (!engine || !path || !*path || !out || kind > QA_QVM_UI)
+    if (!engine || !path || !*path || !out || (unsigned)kind > QA_QVM_UI)
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 role artifact");
     *out = NULL;
+    if (saved_owner)
+        for (q3g_role *prior = engine->roles; prior; prior = prior->next)
+            if (prior->service_owner == saved_owner || prior->service_sequence == saved_sequence)
+                return application_fail(error, QA_ERROR_FORMAT, "Duplicate restored Q3 role lifetime identity");
     q3g_role *role = calloc(1, sizeof(*role));
     if (!role) return application_fail(error, QA_ERROR_MEMORY, "allocating Q3 role");
     role->engine = engine; role->kind = kind; role->seat = seat; role->primary = primary;
@@ -81,17 +86,33 @@ bool q3g_role_create(struct application_q3_guest *engine, qa_qvm_role kind,
     --engine->calls;
     if (!services_ready) goto failed;
     options.world = engine->world;
-    if (engine->role_sequence == UINT64_MAX) {
+    if (!saved_owner && engine->role_sequence == UINT64_MAX) {
         application_fail(error, QA_ERROR_MEMORY, "Q3 role registration sequence exhausted"); goto failed;
+    }
+    if (saved_owner && (!saved_sequence || saved_sequence > engine->role_sequence ||
+        provider->application->operation != APPLICATION_PERSISTING)) {
+        application_fail(error, QA_ERROR_FORMAT, "Restored Q3 role leaves its actual source registration generation");
+        goto failed;
     }
     char identity[65], service_name[160];
     qa_sha256_hex(&provider->launch->identity, identity);
     snprintf(service_name, sizeof(service_name), "q3-service:%u:%s:%llu",
-        provider->owner, identity, (unsigned long long)++engine->role_sequence);
-    qa_string_id service_owner;
-    if (!qa_strings_intern_cstr(qa_session_strings(provider->application->session),
-                                service_name, &service_owner, error)) goto failed;
-    options.service_owner = service_owner;
+        provider->owner, identity, (unsigned long long)(saved_owner ? saved_sequence : ++engine->role_sequence));
+    qa_strings *strings = qa_session_strings(provider->application->session);
+    if (saved_owner) {
+        qa_string_id admitted = qa_strings_find(strings,
+            (qa_bytes){(const uint8_t *)service_name, strlen(service_name)});
+        if (admitted != saved_owner) {
+            application_fail(error, QA_ERROR_FORMAT, "Restored Q3 service owner differs from its qualified source role");
+            goto failed;
+        }
+        role->service_sequence = saved_sequence;
+        role->service_owner = saved_owner;
+    } else {
+        if (!qa_strings_intern_cstr(strings, service_name, &role->service_owner, error)) goto failed;
+        role->service_sequence = engine->role_sequence;
+    }
+    options.service_owner = role->service_owner;
     if (engine->entity_text)
         options.entity_text = (qa_bytes){(const uint8_t *)engine->entity_text, strlen(engine->entity_text)};
     bool use_qvm = primary ? provider->kind == APPLICATION_PROVIDER_QVM : qvm_path(path);
@@ -201,6 +222,23 @@ failed:
     /* Keep a failed cleanup reachable by the provider's retirement path. */
     if (!q3g_role_destroy(role, NULL)) { role->next = engine->roles; engine->roles = role; }
     return false;
+}
+
+bool q3g_role_create(struct application_q3_guest *engine, qa_qvm_role kind,
+                      uint32_t seat, const char *path, bool primary,
+                      q3g_role **out, qa_error *error)
+{
+    return role_create(engine, kind, seat, path, primary, 0, QA_STRING_NONE, out, error);
+}
+
+bool q3g_role_create_restored(struct application_q3_guest *engine, qa_qvm_role kind,
+                               uint32_t seat, const char *path, bool primary,
+                               uint64_t service_sequence, qa_string_id service_owner,
+                               q3g_role **out, qa_error *error)
+{
+    if (!service_owner || !service_sequence)
+        return application_fail(error, QA_ERROR_FORMAT, "Restored Q3 role requires its saved source owner");
+    return role_create(engine, kind, seat, path, primary, service_sequence, service_owner, out, error);
 }
 
 bool q3g_role_activate(q3g_role *role, qa_error *error)

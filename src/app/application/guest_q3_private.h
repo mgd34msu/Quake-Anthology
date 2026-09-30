@@ -52,6 +52,8 @@ typedef struct q3g_role {
     qa_qvm_role kind;
     qa_qvm_abi abi;
     uint32_t seat, client;
+    uint64_t service_sequence;
+    qa_string_id service_owner;
     qa_q3_host *host;
     qa_qvm_image *image;
     qa_qvm *vm;
@@ -93,6 +95,9 @@ struct application_q3_guest *q3g_engine(application_provider *);
 bool q3g_call(q3g_role *, int32_t command, const int32_t *, size_t, int32_t *, qa_error *);
 bool q3g_role_create(struct application_q3_guest *, qa_qvm_role, uint32_t seat,
                       const char *path, bool primary, q3g_role **, qa_error *);
+bool q3g_role_create_restored(struct application_q3_guest *, qa_qvm_role, uint32_t seat,
+                               const char *path, bool primary, uint64_t service_sequence,
+                               qa_string_id service_owner, q3g_role **, qa_error *);
 bool q3g_role_destroy(q3g_role *, qa_error *);
 bool q3g_role_activate(q3g_role *, qa_error *);
 bool q3g_role_shutdown(q3g_role *, qa_error *);
