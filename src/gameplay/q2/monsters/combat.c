@@ -1734,39 +1734,52 @@ static bool pain_gun_commander(q2m_context *context, qa_error *error) {
 
 static bool pain_carrier(q2m_context *context, float damage, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
-  if (context->game->options.skill == 3 ||
+  const bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  const bool chainfist = last_attack_chainfist(monster);
+  if (context->combat.health < monster->base_health * .5f)
+    monster->skin = 1;
+  else if (rerelease)
+    monster->skin = 0;
+  if ((!rerelease && context->game->options.skill == 3) ||
       context->game->now_ns < monster->pain_ns)
     return true;
   monster->pain_ns = q2m_after(context->game->now_ns, 5.0);
-  const char *sound;
-  const char *move = NULL;
-  if (damage < 10.0f) {
-    sound = "carrier/pain_sm.wav";
-  } else if (damage < 30.0f) {
-    sound = "carrier/pain_md.wav";
-    if (q2m_random(context->game) < 0.5f)
-      move = "carrier_move_pain_light";
-  } else {
-    sound = "carrier/pain_lg.wav";
-    move = "carrier_move_pain_heavy";
-  }
-  if (!q2m_sound(context, sound, 2, 1.0f, error))
+  const char *sound = damage < 10 ? "carrier/pain_sm.wav"
+                      : damage < 30 ? "carrier/pain_md.wav"
+                                    : "carrier/pain_lg.wav";
+  if (!q2m_sound(context, sound, 2, 0, error))
     return false;
-  if (!q2m_alive(context) || move == NULL)
+  if (!q2m_alive(context) ||
+      (rerelease && !reacts_to_pain_cause(context, chainfist)))
     return true;
+  if (rerelease) monster->weapon_sound = 0;
+  if (damage < 10 ||
+      (damage < 30 && !(rerelease && chainfist) &&
+       q2m_random(context->game) >= .5f))
+    return true;
+  if (!q2m_set_move(context, damage < 30 ? "carrier_move_pain_light"
+                                        : "carrier_move_pain_heavy",
+                     true, error))
+    return false;
   monster->hold_frame = false;
   monster->manual_steering = false;
   monster->yaw_speed = 15.0f;
-  return q2m_set_move(context, move, true, error);
+  return true;
 }
 
 static bool pain_widow(q2m_context *context, float damage, bool sequel,
                        qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
+  const bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+  const bool chainfist = last_attack_chainfist(monster);
   const int skill = context->game->options.skill;
-  if (skill == 3 || context->game->now_ns < monster->pain_ns)
+  if (context->combat.health < monster->base_health * .5f)
+    monster->skin = 1;
+  else if (rerelease)
+    monster->skin = 0;
+  if ((!rerelease && skill == 3) || context->game->now_ns < monster->pain_ns)
     return true;
-  if (!sequel && monster->pause_ns == UINT64_MAX)
+  if (!rerelease && !sequel && monster->pause_ns == UINT64_MAX)
     monster->pause_ns = 0;
   monster->pain_ns = q2m_after(context->game->now_ns, 5.0);
   const char *sound = sequel
@@ -1776,25 +1789,30 @@ static bool pain_widow(q2m_context *context, float damage, bool sequel,
                           : damage < 15.0f   ? "widow/bw1pain1.wav"
                             : damage < 75.0f ? "widow/bw1pain2.wav"
                                              : "widow/bw1pain3.wav";
-  if (sequel && !q2m_sound(context, sound, 2, 1.0f, error))
+  if ((rerelease || sequel) && !q2m_sound(context, sound, 2, 0, error))
     return false;
   if (!q2m_alive(context))
     return true;
-  if (damage >= 15.0f) {
+  if (rerelease) {
+    if (!reacts_to_pain_cause(context, chainfist)) return true;
+    if (!sequel) monster->pause_ns = 0;
+  }
+  if (damage >= 15.0f && skill < 3) {
     float chance = damage < 75.0f ? 0.6f - 0.2f * (float)skill
                                   : 0.75f - 0.1f * (float)skill;
     if (q2m_random(context->game) < chance) {
-      monster->manual_steering = false;
+      if (sequel) monster->manual_steering = false;
       const char *move = sequel ? "widow2_move_pain"
                                 : damage < 75.0f
                                       ? "widow_move_pain_light"
                                       : "widow_move_pain_heavy";
       if (!q2m_set_move(context, move, true, error))
         return false;
+      if (!sequel) monster->manual_steering = false;
     }
   }
-  return sequel || !q2m_alive(context) ||
-         q2m_sound(context, sound, 2, 1.0f, error);
+  return rerelease || sequel || !q2m_alive(context) ||
+         q2m_sound(context, sound, 2, 0, error);
 }
 
 static bool pain_guardian(q2m_context *context, float damage, qa_error *error) {
@@ -1966,6 +1984,9 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
   if (species == Q2M_BOSS2) return pain_boss2(context, error);
   if (species == Q2M_GEKK) return pain_gekk(context, error);
   if (species == Q2M_INSANE) return pain_insane(context, error);
+  if (species == Q2M_CARRIER) return pain_carrier(context, monster->pending_damage, error);
+  if (species == Q2M_WIDOW || species == Q2M_WIDOW2)
+    return pain_widow(context, monster->pending_damage, species == Q2M_WIDOW2, error);
   if (species == Q2M_MAKRON && context->game->options.edition != QA_Q2_RERELEASE)
     return pain_classic_makron(context, error);
   if (species == Q2M_PARASITE && context->game->options.edition != QA_Q2_RERELEASE)
@@ -1985,12 +2006,6 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
     return pain_gladiator(context, error);
   case Q2M_FIXBOT:
     return pain_fixbot(context, damage, error);
-  case Q2M_CARRIER:
-    return pain_carrier(context, damage, error);
-  case Q2M_WIDOW:
-    return pain_widow(context, damage, false, error);
-  case Q2M_WIDOW2:
-    return pain_widow(context, damage, true, error);
   case Q2M_GUARDIAN:
     return pain_guardian(context, damage, error);
   case Q2M_STALKER:
