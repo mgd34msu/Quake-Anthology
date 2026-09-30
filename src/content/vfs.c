@@ -1,4 +1,4 @@
-#include "qa/vfs.h"
+#include "vfs_private.h"
 #include "qa/binary.h"
 #include "qa/filesystem.h"
 
@@ -6,86 +6,6 @@
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
-
-typedef struct package {
-    struct package *next;
-    size_t references;
-    qa_fs_identity identity;
-    qa_sha256_digest digest;
-    qa_buffer storage;
-    qa_archive *archive;
-    /* Weak pointers; each live resource retains this package. */
-    qa_resource **members;
-} package;
-
-struct qa_resource {
-    qa_resource *next;
-    qa_resource *identity_next;
-    size_t references;
-    uint64_t id;
-    char *path;
-    package *archive;
-    size_t ordinal;
-    qa_fs_identity identity;
-    qa_sha256_digest digest;
-    qa_archive_data data;
-};
-
-struct qa_resource_pool {
-    size_t references;
-    uint64_t next_resource;
-    package *packages;
-    qa_resource *resources;
-    qa_resource **loose_buckets;
-    size_t loose_bucket_count;
-    size_t loose_count;
-};
-
-typedef struct mount {
-    qa_mount_id id;
-    char *path;
-    qa_archive_comparison comparison;
-    package *archive;
-    qa_fs_file *archive_file;
-    qa_fs_root *root;
-    qa_fs_identity identity;
-    bool writable;
-    bool user_overlay;
-    bool referenced;
-} mount;
-
-typedef struct resource_link {
-    struct resource_link *next;
-    char *source;
-    char *target;
-    qa_mount_id mount;
-} resource_link;
-
-typedef struct prefix_order {
-    struct prefix_order *next;
-    char *prefix;
-    qa_mount_id *order;
-} prefix_order;
-
-struct qa_vfs {
-    qa_resource_pool *pool;
-    mount **mounts;
-    size_t count;
-    qa_mount_id next_mount;
-    uint64_t next_temporary;
-    prefix_order *prefixes;
-    resource_link *links;
-    qa_sha256_digest *pure;
-    size_t pure_count;
-    bool q3_demo;
-};
-
-struct qa_vfs_file {
-    qa_fs_stream *stream;
-    char *path;
-    qa_vfs_write_mode mode;
-    uint64_t position;
-};
 
 static bool demo_package_allowed(const package *archive, qa_error *error);
 static void prioritize_mounts(const qa_vfs *vfs, mount **order);
@@ -204,7 +124,7 @@ char *qa_vfs_normalize_path(const char *path, qa_error *error)
     return qa_archive_normalize_path(path, error);
 }
 
-static void package_release(package *archive)
+void vfs_package_release(package *archive)
 {
     if (archive != NULL && --archive->references == 0) {
         qa_archive_close(archive->archive);
@@ -225,7 +145,7 @@ void qa_resource_release(qa_resource *resource)
         if (resource->archive != NULL && resource->archive->members[resource->ordinal] == resource)
             resource->archive->members[resource->ordinal] = NULL;
         qa_archive_data_free(&resource->data);
-        package_release(resource->archive);
+    vfs_package_release(resource->archive);
         free(resource->path);
         free(resource);
     }
@@ -284,7 +204,7 @@ void qa_resource_pool_destroy(qa_resource_pool *pool)
     package *archive = pool->packages;
     while (archive != NULL) {
         package *next = archive->next;
-        package_release(archive);
+        vfs_package_release(archive);
         archive = next;
     }
     free(pool->loose_buckets);
@@ -308,7 +228,7 @@ void qa_resource_pool_trim(qa_resource_pool *pool)
         if ((*archive)->references == 1) {
             package *removed = *archive;
             *archive = removed->next;
-            package_release(removed);
+            vfs_package_release(removed);
         } else archive = &(*archive)->next;
     }
 }
@@ -431,9 +351,9 @@ memory_failure:
     return NULL;
 }
 
-static void mount_free(mount *source)
+void vfs_mount_free(mount *source)
 {
-    if (source->archive != NULL) package_release(source->archive);
+    if (source->archive != NULL) vfs_package_release(source->archive);
     qa_fs_file_close(source->archive_file);
     qa_fs_root_close(source->root);
     free(source->path);
@@ -443,7 +363,7 @@ static void mount_free(mount *source)
 void qa_vfs_destroy(qa_vfs *vfs)
 {
     if (vfs == NULL) return;
-    for (size_t i = 0; i < vfs->count; i++) mount_free(vfs->mounts[i]);
+    for (size_t i = 0; i < vfs->count; i++) vfs_mount_free(vfs->mounts[i]);
     free(vfs->mounts);
     prefix_order *prefix = vfs->prefixes;
     while (prefix != NULL) {
@@ -498,7 +418,7 @@ static package *package_open(qa_resource_pool *pool, const char *path,
     archive->references = 1;
     if (!qa_fs_file_read_snapshot(file, &identity, &archive->storage, error)) {
         qa_fs_file_close(file);
-        package_release(archive);
+        vfs_package_release(archive);
         return NULL;
     }
     if (kind == QA_ARCHIVE_AUTO) {
@@ -511,7 +431,7 @@ static package *package_open(qa_resource_pool *pool, const char *path,
             previous->storage.size == archive->storage.size &&
             qa_sha256_equal(&previous->digest, &archive->digest) &&
             memcmp(previous->storage.data, archive->storage.data, archive->storage.size) == 0) {
-            package_release(archive);
+            vfs_package_release(archive);
             previous->references++;
             *out_file = file;
             *out_identity = identity;
@@ -521,21 +441,21 @@ static package *package_open(qa_resource_pool *pool, const char *path,
     if (!qa_archive_open_memory((qa_bytes){archive->storage.data, archive->storage.size},
                                 kind, &archive->archive, error)) {
         qa_fs_file_close(file);
-        package_release(archive);
+        vfs_package_release(archive);
         return NULL;
     }
     size_t member_count = qa_archive_count(archive->archive);
     if (member_count > SIZE_MAX / sizeof(*archive->members)) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "archive resource index overflow");
         qa_fs_file_close(file);
-        package_release(archive);
+        vfs_package_release(archive);
         return NULL;
     }
     if (member_count != 0) archive->members = calloc(member_count, sizeof(*archive->members));
     if (member_count != 0 && archive->members == NULL) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate archive resource index");
         qa_fs_file_close(file);
-        package_release(archive);
+        vfs_package_release(archive);
         return NULL;
     }
     archive->next = pool->packages;
@@ -605,14 +525,14 @@ bool qa_vfs_mount_archive(qa_vfs *vfs, const char *path, qa_archive_kind kind,
     source->path = copy_string(path);
     if (!source->path) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain mount path");
-        mount_free(source); return false;
+        vfs_mount_free(source); return false;
     }
     if (vfs->q3_demo && !demo_package_allowed(source->archive, error)) {
-        mount_free(source);
+        vfs_mount_free(source);
         return false;
     }
     if (!add_mount(vfs, source, out, error)) {
-        mount_free(source);
+        vfs_mount_free(source);
         return false;
     }
     return true;
@@ -639,12 +559,12 @@ bool qa_vfs_mount_directory(qa_vfs *vfs, const char *path,
     source->path = copy_string(path);
     if (!source->path) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain mount path");
-        mount_free(source); return false;
+        vfs_mount_free(source); return false;
     }
     source->comparison = comparison;
     source->writable = writable;
     if (!add_mount(vfs, source, out, error)) {
-        mount_free(source);
+        vfs_mount_free(source);
         return false;
     }
     return true;
@@ -840,7 +760,7 @@ bool qa_vfs_unmount(qa_vfs *vfs, qa_mount_id id, qa_error *error)
                 }
             }
         }
-        mount_free(vfs->mounts[i]);
+        vfs_mount_free(vfs->mounts[i]);
         memmove(vfs->mounts + i, vfs->mounts + i + 1, (vfs->count - i - 1) * sizeof(*vfs->mounts));
         for (prefix_order *prefix = vfs->prefixes; prefix != NULL; prefix = prefix->next) {
             for (size_t j = 0; j < vfs->count; j++) {
