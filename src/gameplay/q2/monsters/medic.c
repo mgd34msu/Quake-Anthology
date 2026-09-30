@@ -106,17 +106,21 @@ bool q2m_medic_cleanup_patient(q2m_context *c, qa_actor_id id, qa_error *error) 
         traits.can_take_damage = true;
         return qa_combat_set_traits(c->game->services.combat, id, &traits, error);
     }
-    q2m_context target;
-    bool present;
-    if (!patient_context(c, id, &target, &present, error))
-        return false;
-    if (!present)
-        return true;
+    q2m_context target = {.game = c->game, .actor = actor, .monster = actor->monster};
     target.monster->healer = (qa_actor_id){0};
+    qa_combat_state traits;
+    if (!qa_combat_read_traits(c->game->services.combat, id, &traits, error))
+        return !q2m_alive(c) || !q2m_alive(&target);
+    if (!q2m_alive(c) || !q2m_alive(&target))
+        return true;
+    traits.can_take_damage = true;
+    if (!qa_combat_set_traits(c->game->services.combat, id, &traits, error))
+        return !q2m_alive(c) || !q2m_alive(&target);
+    if (!q2m_alive(c) || !q2m_alive(&target))
+        return true;
+    target.monster->can_take_damage = true;
     target.monster->resurrecting = false;
-    if (!q2m_damageable(&target, true, error))
-        return false;
-    return !q2m_alive(c) || !q2m_alive(&target) || heal_effects(&target, error);
+    return heal_effects(&target, error);
 }
 
 static bool restore_enemy(q2m_context *c, bool *restored, qa_error *error) {
