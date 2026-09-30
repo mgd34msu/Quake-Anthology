@@ -597,9 +597,16 @@ static bool handle_import(qa_native_instance *instance, const native_wire_frame 
             --instance->callback_depth;
         }
     }
+    if (ok && (result.type != spec->signature.result.kind ||
+               (result.type == QA_NATIVE_BYTES && result.as.bytes.size != result_bytes)))
+        ok = native_fail(&callback_error, QA_ERROR_FORMAT, slot,
+                         "native import result differs from its actual source ABI extent or type");
     if (ok)
         ok = native_wire_put_value(&body, &result, &callback_error);
+    if (!ok && callback_error.code == QA_OK)
+        native_fail(&callback_error, QA_ERROR_ARGUMENT, 0, "native import callback failed");
     bool sent = send_reply(instance->runner, frame, &body, ok ? NULL : &callback_error, error);
+    if (sent && !ok) native_wire_poison(instance->runner, &callback_error);
     native_wire_buffer_free(&body);
     qa_buffer_free(&result_storage);
     free_values(arguments, argument_storage, count);
@@ -642,7 +649,10 @@ static bool handle_describe(qa_native_instance *instance, const native_wire_fram
             ok = native_wire_put_u32(&body, (uint32_t)types[index], &callback_error);
         }
     }
+    if (!ok && callback_error.code == QA_OK)
+        native_fail(&callback_error, QA_ERROR_ARGUMENT, 0, "native syscall description failed");
     bool sent = send_reply(instance->runner, frame, &body, ok ? NULL : &callback_error, error);
+    if (sent && !ok) native_wire_poison(instance->runner, &callback_error);
     native_wire_buffer_free(&body);
     return sent;
 }
@@ -672,7 +682,10 @@ static bool handle_syscall(qa_native_instance *instance, const native_wire_frame
     }
     if (ok)
         ok = native_wire_put_u64(&body, (uint64_t)(intptr_t)result, &callback_error);
+    if (!ok && callback_error.code == QA_OK)
+        native_fail(&callback_error, QA_ERROR_ARGUMENT, 0, "native syscall callback failed");
     bool sent = send_reply(instance->runner, frame, &body, ok ? NULL : &callback_error, error);
+    if (sent && !ok) native_wire_poison(instance->runner, &callback_error);
     native_wire_buffer_free(&body);
     free_values(arguments, storage, count);
     return sent;
@@ -854,6 +867,17 @@ static bool handle_callback(qa_native_instance *instance, const native_wire_fram
         return handle_describe(instance, frame, &reader, error);
     case NATIVE_WIRE_SYSCALL:
         return handle_syscall(instance, frame, &reader, error);
+    case NATIVE_WIRE_SOURCE_FAILURE: {
+        qa_error failure = {0};
+        bool success = false;
+        bool decoded = native_wire_get_error(&reader, &success, &failure);
+        if ((!decoded && failure.code == QA_OK) ||
+            (decoded && (success || !native_wire_end(&reader, NULL))))
+            native_fail(&failure, QA_ERROR_FORMAT, 0, "native source failure packet is invalid");
+        bool sent = send_reply(instance->runner, frame, NULL, &failure, error);
+        if (sent) native_wire_poison(instance->runner, &failure);
+        return sent;
+    }
     case NATIVE_WIRE_HOST_CHECKPOINT:
         return handle_host_checkpoint(instance, frame, &reader, error);
     case NATIVE_WIRE_HOST_RESTORE:

@@ -35,7 +35,8 @@ typedef enum native_wire_opcode {
     NATIVE_WIRE_REGION,
     NATIVE_WIRE_OBSERVER_ENTRY,
     NATIVE_WIRE_OBSERVER_WRITE,
-    NATIVE_WIRE_REGION_APP
+    NATIVE_WIRE_REGION_APP,
+    NATIVE_WIRE_SOURCE_FAILURE
 } native_wire_opcode;
 
 #endif

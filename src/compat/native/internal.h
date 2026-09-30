@@ -308,6 +308,9 @@ bool native_dispatch_import(qa_native_instance *instance, const native_signature
                             const qa_native_value *arguments, size_t count,
                             qa_native_value *result);
 void native_latch_error(qa_native_instance *instance, const qa_error *error);
+/* Returns for ordinary direct owners; an actual runner child never resumes a
+ * rejected original source callback. */
+void native_runner_child_failure(qa_native_instance *instance, const qa_error *error);
 bool native_dispatch_formatted(qa_native_instance *instance, uint32_t slot, const char *name,
                                const qa_native_value *prefix, size_t prefix_count,
                                const char *format, va_list values, qa_error *error);

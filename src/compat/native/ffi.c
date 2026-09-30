@@ -374,13 +374,16 @@ bool native_ffi_call(qa_native_instance *instance, qa_native_address address,
 }
 
 void native_latch_error(qa_native_instance *instance, const qa_error *error) {
-    if (instance->failed)
+    if (instance->failed) {
+        native_runner_child_failure(instance, &instance->failure);
         return;
+    }
     instance->failed = true;
     instance->failure = error ? *error : (qa_error){.code = QA_ERROR_ARGUMENT};
     if (!instance->failure.message[0])
         snprintf(instance->failure.message, sizeof(instance->failure.message),
                  "native import callback failed");
+    native_runner_child_failure(instance, &instance->failure);
 }
 
 static qa_native_value decode_value(qa_native_value_type type, const ffi_type *ffi,
@@ -470,6 +473,11 @@ static bool encode_result(qa_native_value value, qa_native_value_type expected, 
         *(double *)result = value.as.f64;
         return true;
     case QA_NATIVE_ADDRESS:
+#if UINTPTR_MAX < UINT64_MAX
+        if (value.as.address > (uint64_t)UINTPTR_MAX)
+            return native_fail(error, QA_ERROR_ARGUMENT, 0,
+                               "native import pointer result exceeds its actual ABI width");
+#endif
         *(void **)result = (void *)(uintptr_t)value.as.address;
         return true;
     case QA_NATIVE_BYTES:
@@ -578,14 +586,17 @@ void native_import_dispatch(ffi_cif *cif, void *result, void **arguments, void *
     if (output.type == QA_NATIVE_BYTES)
         output.as.bytes = (qa_native_memory){result, result_size};
     if (!instance || native_active_instance != instance) {
-        /* A module-created thread has no active host call and cannot safely mutate
-         * the instance's failure latch. The zeroed ABI result rejects the callback
-         * without introducing a data race with the owning simulation thread. */
+        /* A module-created thread cannot mutate the owner-thread latch or
+         * transport. Actual runner children terminate; direct owners retain
+         * their existing zero-result rejection without touching that latch. */
+        native_runner_child_failure(instance, NULL);
         return;
     }
     size_t count = binding->spec.signature.parameter_count;
-    if (count > NATIVE_MAX_ARGUMENTS)
+    if (count > NATIVE_MAX_ARGUMENTS) {
+        native_runner_child_failure(instance, NULL);
         return;
+    }
     for (size_t index = 0; index < count; ++index)
         values[index] = decode_value(binding->spec.signature.parameters[index].kind,
                                      cif->arg_types[index], arguments[index]);

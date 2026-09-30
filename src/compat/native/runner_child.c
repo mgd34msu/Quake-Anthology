@@ -239,7 +239,7 @@ static bool child_import(void *context, qa_native_instance *instance,
     native_child_state *state = context;
     qa_native_instance *previous;
     if (!child_attach_callback(state, instance, &previous, error))
-        return false;
+        _Exit(EXIT_FAILURE);
     native_wire_buffer request = {0};
     qa_buffer response = {0}, storage = {0};
     size_t result_bytes = child_import_result_bytes(state, call->slot);
@@ -258,9 +258,9 @@ static bool child_import(void *context, qa_native_instance *instance,
              native_wire_end(&reader, error) && decoded.type == call->signature->result.kind;
         if (ok && decoded.type == QA_NATIVE_BYTES) {
             if (result->type != QA_NATIVE_BYTES || !result->as.bytes.data ||
-                result->as.bytes.size < storage.size)
+                result->as.bytes.size != result_bytes || storage.size != result_bytes)
                 ok = native_fail(error, QA_ERROR_FORMAT, storage.size,
-                                 "native runner import aggregate result is too large");
+                                 "native runner import aggregate result differs from its actual ABI extent");
             else {
                 memcpy(result->as.bytes.data, storage.data, storage.size);
                 result->as.bytes.size = storage.size;
@@ -276,7 +276,8 @@ static bool child_import(void *context, qa_native_instance *instance,
     qa_buffer_free(&storage);
     bool completed = child_finish_response(state, received, ok, error);
     state->instance = previous;
-    return completed;
+    if (!completed) _Exit(EXIT_FAILURE);
+    return true;
 }
 
 static bool child_describe_syscall(void *context, int32_t service,
@@ -285,7 +286,7 @@ static bool child_describe_syscall(void *context, int32_t service,
     native_child_state *state = context;
     qa_native_instance *previous;
     if (!child_attach_callback(state, native_active_instance, &previous, error))
-        return false;
+        _Exit(EXIT_FAILURE);
     native_wire_buffer request = {0};
     qa_buffer response = {0};
     bool received = false;
@@ -315,7 +316,7 @@ static bool child_describe_syscall(void *context, int32_t service,
     bool completed = child_finish_response(state, received, ok, error);
     state->instance = previous;
     if (!completed)
-        return false;
+        _Exit(EXIT_FAILURE);
     state->syscall_type_count = (size_t)encoded_count;
     *types = state->syscall_types;
     *count = state->syscall_type_count;
@@ -328,7 +329,7 @@ static bool child_syscall(void *context, qa_native_instance *instance, int32_t s
     native_child_state *state = context;
     qa_native_instance *previous;
     if (!child_attach_callback(state, instance, &previous, error))
-        return false;
+        _Exit(EXIT_FAILURE);
     native_wire_buffer request = {0};
     qa_buffer response = {0};
     bool received = false;
@@ -352,7 +353,34 @@ static bool child_syscall(void *context, qa_native_instance *instance, int32_t s
         *result = (intptr_t)encoded;
         return true;
     }
-    return false;
+    _Exit(EXIT_FAILURE);
+}
+
+void native_runner_child_failure(qa_native_instance *instance, const qa_error *error) {
+    native_child_state *state = region_child;
+    if (!state || !instance || instance->options.context != state ||
+        instance->options.import != child_import || instance->module != state->module)
+        return;
+    /* No transport or owner-thread failure latch is accessed by a foreign
+     * source thread. Its callback cannot return a default result into C. */
+    if (native_active_instance != instance ||
+        (state->instance && state->instance != instance)) _Exit(EXIT_FAILURE);
+    qa_error failure = error ? *error : (qa_error){0};
+    if (failure.code == QA_OK) failure.code = QA_ERROR_ARGUMENT;
+    if (!failure.message[0])
+        snprintf(failure.message, sizeof(failure.message), "native source callback failed");
+    qa_native_instance *previous = state->instance;
+    state->instance = instance;
+    native_wire_buffer request = {0};
+    qa_buffer response = {0};
+    qa_error transport = {0};
+    if (native_wire_put_error(&request, &failure, &transport))
+        (void)child_request(state, NATIVE_WIRE_SOURCE_FAILURE,
+            (qa_bytes){request.data, request.size}, &response, &transport);
+    native_wire_buffer_free(&request);
+    qa_buffer_free(&response);
+    state->instance = previous;
+    _Exit(EXIT_FAILURE);
 }
 
 static bool child_checkpoint(void *context, qa_buffer *out, qa_error *error) {
