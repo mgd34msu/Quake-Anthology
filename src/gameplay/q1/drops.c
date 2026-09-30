@@ -1,4 +1,5 @@
 #include "internal.h"
+#include <float.h>
 #include <stdio.h>
 
 typedef struct drop_weapon {
@@ -297,8 +298,8 @@ bool q1_rogue_toss(qa_q1_game *g, q1_player *player, bool weapon, qa_error *erro
     return launch_body(g, player->id, input.view_angles, &body, error) &&
            q1_toss_backpack(g, player->id, body.origin, body.velocity, cargo, &pack, error);
 }
-bool qa_q1_drop_backpack(qa_q1_game *g, qa_actor_id actor, qa_item_id selected, qa_actor_id *out,
-                         qa_error *error) {
+static bool drop_backpack(qa_q1_game *g, qa_actor_id actor, qa_item_id selected,
+                           qa_actor_id *out, qa_error *error) {
     if (!g || !out || !q1_alive(g, actor)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
                      "Q1 backpack drop requires a live actor");
@@ -318,12 +319,20 @@ bool qa_q1_drop_backpack(qa_q1_game *g, qa_actor_id actor, qa_item_id selected, 
                 weapon = (qa_q1_weapon)i;
                 break;
             }
-    float cargo[QA_Q1_AMMO_COUNT] = {0}, total = 0;
+    float cargo[QA_Q1_AMMO_COUNT] = {0};
+    double total = 0;
     unsigned count = rogue ? QA_Q1_AMMO_COUNT : 4;
     for (unsigned i = 0; i < count; ++i) {
         double amount;
         if (!count_item(g, actor, g->ammo[i], &amount, error))
             return false;
+        if (!q1_alive(g, actor))
+            return true;
+        if (!isfinite(amount) || fabs(amount) > FLT_MAX) {
+            qa_error_set(error, QA_ERROR_FORMAT, actor.slot,
+                         "Q1 backpack cargo exceeds finite native storage");
+            return false;
+        }
         cargo[i] = (float)amount;
         if (i != QA_Q1_PLASMA_CELLS)
             total += cargo[i];
@@ -341,14 +350,28 @@ bool qa_q1_drop_backpack(qa_q1_game *g, qa_actor_id actor, qa_item_id selected, 
         cargo[QA_Q1_CELLS] = fmaxf(15, cargo[QA_Q1_CELLS]);
     qa_body_state body;
     q1_actor *pack;
-    if (!qa_world_body_read(g->services.world, actor, &body, error) ||
-        !q1_spawn_backpack(g, body.origin, weapon, cargo, &pack, error))
+    if (!qa_world_body_read(g->services.world, actor, &body, error))
         return false;
+    if (!q1_alive(g, actor))
+        return true;
+    if (!q1_spawn_backpack(g, actor, body.origin, weapon, cargo, &pack, error))
+        return false;
+    if (!pack)
+        return true;
     pack->state.pickup.backpack_rank = hip;
     pack->state.pickup.avoid_underwater_lightning = hip || g->options.edition == QA_Q1_RERELEASE;
     pack->state.pickup.owner_delay = rogue ? 1 : 0;
     *out = pack->id;
     return true;
+}
+bool qa_q1_drop_backpack(qa_q1_game *g, qa_actor_id actor, qa_item_id selected,
+                         qa_actor_id *out, qa_error *error) {
+    qa_q1_game_operation operation;
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    bool okay = drop_backpack(g, actor, selected, out, error);
+    qa_q1_game_operation_end(&operation);
+    return okay;
 }
 static bool touch_live(qa_q1_game *g, q1_actor *item, qa_actor_id actor) {
     return q1_alive(g, item->id) && q1_alive(g, actor);

@@ -1027,9 +1027,11 @@ bool q1_drop_backpack(qa_q1_game *g, q1_actor *source, qa_q1_weapon weapon,
     if (!any)
         return true;
     qa_body_state from;
+    qa_actor_id source_id = source->id;
     if (!qa_world_body_read(g->services.world, source->id, &from, error))
         return false;
-    return q1_spawn_backpack(g, from.origin, weapon, ammo, NULL, error);
+    return !q1_alive(g, source_id) ||
+           q1_spawn_backpack(g, source_id, from.origin, weapon, ammo, NULL, error);
 }
 bool q1_backpack_definition(qa_q1_game *g, q1_actor *pack, qa_error *error) {
     q1_pickup *item = &pack->state.pickup;
@@ -1044,59 +1046,97 @@ bool q1_backpack_definition(qa_q1_game *g, q1_actor *pack, qa_error *error) {
     item->original_model = pack->model;
     return true;
 }
-bool q1_spawn_backpack(qa_q1_game *g, qa_vec3 origin, qa_q1_weapon weapon,
-                       const float ammo[QA_Q1_AMMO_COUNT], q1_actor **out, qa_error *error) {
+static bool construct_backpack(qa_q1_game *g, qa_actor_id source, qa_actor_id owner,
+                                qa_vec3 origin, const qa_vec3 *velocity, qa_q1_weapon weapon,
+                                const float ammo[QA_Q1_AMMO_COUNT], q1_actor **out,
+                                qa_error *error) {
+    if (out)
+        *out = NULL;
+    double total = ammo[0];
+    for (unsigned i = 1; i < 4; ++i)
+        total += ammo[i];
+    double extra = 0;
+    for (unsigned i = 4; i < QA_Q1_AMMO_COUNT; ++i)
+        extra += ammo[i];
+    total += extra;
+    if (total == 0 || (source.registry && !q1_alive(g, source)))
+        return true;
     q1_actor *pack;
-    if (!q1_create(g, "item_backpack", Q1_PICKUP, (qa_actor_id){0}, &pack, error))
+    if (!q1_create(g, "item_backpack", Q1_PICKUP, owner, &pack, error))
         return false;
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, pack->id, &body, error))
-        return false;
-    body.origin = qa_vec_add(origin, qa_v3(0, 0, -24));
-    if (!qa_world_body_write(g->services.world, pack->id, &body, error) ||
-        !q1_pickup_spawn(g, pack, error))
-        return false;
+    qa_actor_id child = pack->id;
+    if (!q1_entity(g, child) || (source.registry && !q1_alive(g, source)))
+        goto cancelled;
+    pack->touch_disabled = true;
+    if (!q1_backpack_definition(g, pack, error))
+        goto failed;
+    pack->physics.solid = QA_PHYSICS_TRIGGER;
+    pack->physics.motion = velocity ? QA_PHYSICS_BOUNCE : QA_PHYSICS_TOSS;
+    pack->physics.flags = 0;
     pack->state.pickup.weapon = weapon;
-    pack->state.pickup.avoid_underwater_lightning = g->options.edition == QA_Q1_RERELEASE;
+    pack->state.pickup.owner_delay = velocity ? 1 : 0;
     memcpy(pack->state.pickup.ammo, ammo, sizeof(pack->state.pickup.ammo));
+    for (unsigned i = 0; i < 4; ++i)
+        pack->state.pickup.ammo[i] = fmaxf(ammo[i], 0);
     if (g->options.edition == QA_Q1_RERELEASE && weapon < QA_Q1_WEAPON_COUNT) {
-        int kind = q1_weapon_ammo(weapon);
+        int kind = weapon == QA_Q1_SHOTGUN || weapon == QA_Q1_SUPER_SHOTGUN ? 0
+                 : weapon == QA_Q1_NAILGUN || weapon == QA_Q1_SUPER_NAILGUN ? 1
+                 : weapon == QA_Q1_ROCKET || weapon == QA_Q1_GRENADE ? 2
+                 : weapon == QA_Q1_LIGHTNING ? 3 : -1;
         static const float minimum[] = {5, 20, 5, 15};
         if (kind >= 0 && kind < 4)
             pack->state.pickup.ammo[kind] = fmaxf(ammo[kind], minimum[kind]);
     }
-    if (!q1_schedule(g, pack, 120, Q1_THINK_REMOVE, error))
-        return false;
+    qa_vec3 launch;
+    if (velocity)
+        launch = *velocity;
+    else {
+        origin = qa_v3(origin.x + 0.0f, origin.y + 0.0f,
+                       (float)((double)origin.z - 24.0));
+        float x = (float)(-100.0 + (double)q1_random(g) * 200.0);
+        float y = (float)(-100.0 + (double)q1_random(g) * 200.0);
+        launch = qa_v3(x, y, 300);
+    }
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, child, &body, error))
+        goto failed;
+    pack = q1_entity(g, child);
+    if (!pack || (source.registry && !q1_alive(g, source)))
+        goto cancelled;
+    body.origin = origin;
+    body.velocity = launch;
+    body.bounds = (qa_bounds){{-16, -16, 0}, {16, 16, 56}};
+    if (!qa_world_body_write(g->services.world, child, &body, error))
+        goto failed;
+    pack = q1_entity(g, child);
+    if (!pack || (source.registry && !q1_alive(g, source)))
+        goto cancelled;
+    pack->touch_disabled = false;
+    if (!q1_schedule(g, pack, 120, Q1_THINK_REMOVE, error) || !q1_link(g, pack, error))
+        goto failed;
+    pack = q1_entity(g, child);
+    if (!pack || (source.registry && !q1_alive(g, source)))
+        goto cancelled;
     if (out)
         *out = pack;
     return true;
+cancelled:
+    if (qa_actors_get(qa_session_actors(g->services.session), child))
+        (void)qa_session_release(g->services.session, child, NULL);
+    return true;
+failed:
+    if (qa_actors_get(qa_session_actors(g->services.session), child))
+        (void)qa_session_release(g->services.session, child, NULL);
+    return false;
+}
+bool q1_spawn_backpack(qa_q1_game *g, qa_actor_id source, qa_vec3 origin, qa_q1_weapon weapon,
+                       const float ammo[QA_Q1_AMMO_COUNT], q1_actor **out, qa_error *error) {
+    return construct_backpack(g, source, (qa_actor_id){0}, origin, NULL, weapon, ammo, out, error);
 }
 bool q1_toss_backpack(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin, qa_vec3 velocity,
                       const float ammo[QA_Q1_AMMO_COUNT], q1_actor **out, qa_error *error) {
-    q1_actor *pack;
-    if (!q1_create(g, "item_backpack", Q1_PICKUP, owner, &pack, error))
-        return false;
-    if (!define_item(g, pack, error))
-        goto fail;
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, pack->id, &body, error))
-        goto fail;
-    body.origin = origin;
-    body.velocity = velocity;
-    pack->state.pickup.owner_delay = 1;
-    pack->state.pickup.avoid_underwater_lightning = g->options.edition == QA_Q1_RERELEASE;
-    memcpy(pack->state.pickup.ammo, ammo, sizeof(pack->state.pickup.ammo));
-    pack->physics.solid = QA_PHYSICS_TRIGGER;
-    pack->physics.motion = QA_PHYSICS_BOUNCE;
-    if (!qa_world_body_write(g->services.world, pack->id, &body, error) ||
-        !q1_schedule(g, pack, 120, Q1_THINK_REMOVE, error) || !q1_link(g, pack, error))
-        goto fail;
-    *out = pack;
-    return true;
-fail:
-    if (q1_alive(g, pack->id))
-        q1_remove(g, pack, NULL);
-    return false;
+    return construct_backpack(g, owner, owner, origin, &velocity, QA_Q1_WEAPON_COUNT,
+                                ammo, out, error);
 }
 
 static float protection_value(qa_regular_armor armor) {

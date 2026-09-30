@@ -657,7 +657,7 @@ bool q1_pickup_use(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_pickup_think(qa_q1_game *, q1_actor *, qa_error *);
 bool q1_drop_backpack(qa_q1_game *, q1_actor *, qa_q1_weapon, const float ammo[QA_Q1_AMMO_COUNT],
                       qa_error *);
-bool q1_spawn_backpack(qa_q1_game *, qa_vec3, qa_q1_weapon, const float ammo[QA_Q1_AMMO_COUNT],
+bool q1_spawn_backpack(qa_q1_game *, qa_actor_id, qa_vec3, qa_q1_weapon, const float ammo[QA_Q1_AMMO_COUNT],
                        q1_actor **, qa_error *);
 bool q1_backpack_definition(qa_q1_game *, q1_actor *, qa_error *);
 qa_q1_weapon q1_best_weapon(qa_q1_game *, q1_player *);
