@@ -93,26 +93,38 @@ bool q1_map_sacrifice_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
 }
 
 bool q1_map_sacrifice_gib(qa_q1_game *g, q1_actor *entity, qa_error *error) {
+    qa_actor_id id = entity->id;
     qa_body_state body;
-    if (!qa_world_body_read(g->services.world, entity->id, &body, error))
+    if (!qa_world_body_read(g->services.world, id, &body, error))
         return false;
-    body.origin.z -= 32;
-    if (!qa_world_body_write(g->services.world, entity->id, &body, error))
+    if (!sacrifice(g, id)) return true;
+    qa_vec3 origin = body.origin;
+    origin.x += 0;
+    origin.y += 0;
+    if (!sacrifice_float((double)origin.z - 32, &origin.z, error)) return false;
+    if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
+    if (!sacrifice(g, id)) return true;
+    body.origin = origin;
+    if (!qa_world_body_write(g->services.world, id, &body, error))
         return false;
+    if (!sacrifice(g, id)) return true;
     static const char *const models[] = {"gib1", "gib2", "gib3"};
     for (size_t i = 0; i < sizeof(models) / sizeof(*models); ++i) {
-        if (!q1_gib_at(g, entity->id, body.origin, -10, models[i], error))
+        if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
+        if (!sacrifice(g, id)) return true;
+        if (!q1_gib_at(g, id, body.origin, -10, models[i], error))
             return false;
-        if (!q1_alive(g, entity->id))
+        if (!sacrifice(g, id))
             return true;
     }
-    if (!q1_sound(g, entity->id, q1_random(g) < .5f ? "player/gib.wav" : "player/udeath.wav", 2, 0,
+    if (!q1_sound(g, id, q1_random(g) < .5f ? "player/gib.wav" : "player/udeath.wav", 2, 0,
                   error))
         return false;
-    if (!q1_alive(g, entity->id))
-        return true;
-    return q1_map_targets(g, entity, entity->activator, error) &&
-           (!q1_alive(g, entity->id) || q1_remove(g, entity, error));
+    entity = sacrifice(g, id);
+    if (!entity) return true;
+    if (!q1_map_targets(g, entity, entity->activator, error)) return false;
+    entity = sacrifice(g, id);
+    return !entity || q1_remove(g, entity, error);
 }
 
 bool q1_map_sacrifice_think(qa_q1_game *g, q1_actor *entity, q1_map_action action,
