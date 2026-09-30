@@ -13,7 +13,7 @@ static bool attack_geometry(qa_q3_game *game, qa_actor_id actor, q3_attack_geome
     if (!qa_world_body_read(game->options.services.world, actor, &body, error))
         return false;
     qa_q3_player_state *player = &entry->state.player;
-    qa_builtin_angle_vectors(player->view_angles, &out->forward, &out->right, &out->up);
+    q3_source_angle_vectors(player->view_angles, &out->forward, &out->right, &out->up);
     out->muzzle = qa_vec_add(body.origin, qa_v3(0, 0, player->view_height));
     out->muzzle = qa_physics_q3_snap(qa_vec_add(out->muzzle, qa_vec_scale(out->forward, 14)));
     out->factor = q3_damage_factor(game, player);

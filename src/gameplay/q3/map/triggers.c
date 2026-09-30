@@ -175,6 +175,25 @@ bool q3_map_trigger_use(qa_q3_game *game, qa_q3_map_actor_state *state,
     }
 }
 
+static double jump_pad_pitch(qa_vec3 velocity) {
+    float pitch;
+    if (velocity.x == 0 && velocity.y == 0)
+        pitch = velocity.z > 0 ? 90.0f : 270.0f;
+    else {
+        float squared = q3_source_float_add(
+            q3_source_float_multiply(velocity.x, velocity.x),
+            q3_source_float_multiply(velocity.y, velocity.y));
+        float horizontal = (float)sqrt((double)squared);
+        float radians = (float)atan2((double)velocity.z, (double)horizontal);
+        pitch = q3_source_float_multiply(radians, 180.0f) / Q3_PI;
+        if (pitch < 0)
+            pitch = q3_source_float_add(pitch, 360.0f);
+    }
+    int32_t turns = isfinite(pitch) ? (int32_t)(-(double)pitch * (65536.0 / 360.0)) : 0;
+    double normalized = (360.0 / 65536.0) * ((uint32_t)turns & 65535u);
+    return fabs(normalized > 180 ? normalized - 360 : normalized);
+}
+
 static bool jump_pad(qa_q3_game *game, qa_q3_map_actor_state *state,
                      qa_actor_id actor, qa_error *error) {
     qa_actor_id source = state->actor;
@@ -186,8 +205,7 @@ static bool jump_pad(qa_q3_game *game, qa_q3_map_actor_state *state,
     if (!q3_map_get(game, source))
         return true;
     if (!player || player->state.player.jumppad_entity != number) {
-        float horizontal = sqrtf(velocity.x * velocity.x + velocity.y * velocity.y);
-        float pitch = fabsf(atan2f(velocity.z, horizontal) * (180.0f / Q3_PI));
+        double pitch = jump_pad_pitch(velocity);
         if (!q3_player_event(game, actor, 13, pitch < 45 ? 0 : 1, error))
             return false;
         if (!q3_map_get(game, source))

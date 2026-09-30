@@ -50,7 +50,8 @@ bool q3_map_spawn_misc(qa_q3_game *game, qa_q3_map_actor_state *state,
         state->angles = qa_v3(0, 0, 0);
         if (state->random == 0)
             state->random = 1;
-        state->random = sinf(Q3_PI * state->random / 180.0f);
+        float radians = q3_source_float_divide(q3_source_float_multiply(Q3_PI, state->random), 180.0f);
+        state->random = (float)sin((double)radians);
     } else
         return q3_map_fail(error, "unsupported Q3 misc classname");
     if (!q3_map_allocate(game, state, NULL, true, error))
@@ -82,17 +83,23 @@ bool q3_map_spawn_misc(qa_q3_game *game, qa_q3_map_actor_state *state,
     return true;
 }
 
+static qa_vec3 shooter_normalize(qa_vec3 value) {
+    float length = (float)sqrt((double)qa_vec_dot(value, value));
+    return length == 0 ? value : qa_vec_scale(value, q3_source_float_divide(1, length));
+}
 static qa_vec3 perpendicular(qa_vec3 direction) {
-    qa_vec3 axis;
-    float ax = fabsf(direction.x), ay = fabsf(direction.y), az = fabsf(direction.z);
-    if (ax <= ay && ax <= az)
-        axis = qa_v3(1, 0, 0);
-    else if (ay <= az)
+    qa_vec3 axis = qa_v3(1, 0, 0);
+    float minimum = 1;
+    if (fabsf(direction.x) < minimum) minimum = fabsf(direction.x);
+    if (fabsf(direction.y) < minimum) {
+        minimum = fabsf(direction.y);
         axis = qa_v3(0, 1, 0);
-    else
-        axis = qa_v3(0, 0, 1);
-    return qa_vec_normalize(qa_vec_sub(axis, qa_vec_scale(direction,
-                                                          qa_vec_dot(axis, direction))));
+    }
+    if (fabsf(direction.z) < minimum) axis = qa_v3(0, 0, 1);
+    float inverse = q3_source_float_divide(1, qa_vec_dot(direction, direction));
+    float distance = q3_source_float_multiply(qa_vec_dot(axis, direction), inverse);
+    qa_vec3 normal = qa_vec_scale(direction, inverse);
+    return shooter_normalize(qa_vec_sub(axis, qa_vec_scale(normal, distance)));
 }
 
 static bool use_shooter(qa_q3_game *game, qa_q3_map_actor_state *state,
@@ -106,7 +113,7 @@ static bool use_shooter(qa_q3_game *game, qa_q3_map_actor_state *state,
         qa_body_state enemy;
         qa_error local = {0};
         if (qa_world_body_read(game->options.services.world, state->enemy, &enemy, &local))
-            direction = qa_vec_normalize(qa_vec_sub(enemy.origin, origin));
+            direction = shooter_normalize(qa_vec_sub(enemy.origin, origin));
         else if (local.code != QA_ERROR_NOT_FOUND) {
             if (error)
                 *error = local;
@@ -117,9 +124,9 @@ static bool use_shooter(qa_q3_game *game, qa_q3_map_actor_state *state,
     }
     qa_vec3 up = perpendicular(direction);
     qa_vec3 right = qa_vec_cross(up, direction);
-    direction = qa_vec_add(direction, qa_vec_scale(up, q3_crandom(game) * spread));
-    direction = qa_vec_normalize(
-        qa_vec_add(direction, qa_vec_scale(right, q3_crandom(game) * spread)));
+    direction = qa_vec_add(direction, qa_vec_scale(up, q3_source_float_multiply(q3_crandom(game), spread)));
+    direction = shooter_normalize(
+        qa_vec_add(direction, qa_vec_scale(right, q3_source_float_multiply(q3_crandom(game), spread))));
     if (!q3_launch(game, actor, weapon, origin, direction, right, up, 1, NULL, error))
         return false;
     return !q3_map_get(game, actor) ||

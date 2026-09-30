@@ -106,7 +106,7 @@ static bool drop_item(qa_q3_game *game, qa_actor_id player, uint32_t index, floa
     if (!qa_world_body_read(game->options.services.world, player, &body, error))
         return false;
     qa_vec3 forward;
-    qa_builtin_angle_vectors(qa_v3(0, body.angles.y + yaw, body.angles.z), &forward, NULL, NULL);
+    q3_source_angle_vectors(qa_v3(0, body.angles.y + yaw, body.angles.z), &forward, NULL, NULL);
     qa_vec3 velocity = qa_vec_scale(forward, 150);
     velocity.z += 200 + q3_crandom(game) * 50;
     qa_q3_item_spawn spawn = {.item_index = index,

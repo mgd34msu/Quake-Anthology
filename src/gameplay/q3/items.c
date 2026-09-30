@@ -266,7 +266,7 @@ static bool denied_powerup(qa_q3_game *game, qa_actor_id pickup, qa_actor_id rec
         qa_vec3 delta = qa_vec_sub(origin, body.origin), forward;
         if (qa_vec_length(delta) > 192)
             continue;
-        qa_builtin_angle_vectors(candidate->state.player.view_angles, &forward, NULL, NULL);
+        q3_source_angle_vectors(candidate->state.player.view_angles, &forward, NULL, NULL);
         if (qa_vec_dot(qa_vec_normalize(delta), forward) < 0.4f)
             continue;
         qa_trace_result trace;

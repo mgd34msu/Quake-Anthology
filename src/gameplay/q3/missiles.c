@@ -67,6 +67,11 @@ bool q3_radius(qa_q3_game *game, qa_actor_id inflictor, qa_actor_id attacker, qa
         *accuracy = context.accuracy;
     return ok;
 }
+static qa_vec3 nail_direction(qa_vec3 value) {
+    float length = (float)sqrt((double)qa_vec_dot(value, value));
+    return length == 0 ? value : qa_vec_scale(value, q3_source_float_divide(1.0f, length));
+}
+
 bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3 start,
                qa_vec3 direction, qa_vec3 right, qa_vec3 up, float factor, qa_actor_id *out,
                qa_error *error) {
@@ -129,16 +134,27 @@ bool q3_launch(qa_q3_game *game, qa_actor_id owner, qa_q3_weapon weapon, qa_vec3
     default:
         return q3_fail(error, "Q3 weapon has no projectile");
     }
-    direction = qa_vec_normalize(direction);
+    if (weapon != QA_Q3_W_NAIL)
+        direction = qa_vec_normalize(direction);
     qa_vec3 velocity = qa_vec_scale(direction, speed);
     if (weapon == QA_Q3_W_NAIL) {
-        float angle = q3_random(game) * Q3_PI * 2;
-        float vertical = sinf(angle) * q3_crandom(game) * 500 * 16;
-        float horizontal = cosf(angle) * q3_crandom(game) * 500 * 16;
-        qa_vec3 end =
-            qa_vec_add(qa_vec_add(qa_vec_scale(direction, 131072), qa_vec_scale(right, horizontal)),
-                       qa_vec_scale(up, vertical));
-        velocity = qa_vec_scale(qa_vec_normalize(end), 555 + q3_random(game) * 1800);
+        float angle = q3_source_float_multiply(
+            q3_source_float_multiply(q3_random(game), Q3_PI), 2.0f);
+        float vertical = q3_source_float_multiply(
+            q3_source_float_multiply(
+                q3_source_float_multiply((float)sin((double)angle), q3_crandom(game)), 500.0f),
+            16.0f);
+        float horizontal = q3_source_float_multiply(
+            q3_source_float_multiply(
+                q3_source_float_multiply((float)cos((double)angle), q3_crandom(game)), 500.0f),
+            16.0f);
+        qa_vec3 end = qa_vec_add(
+            qa_vec_add(qa_vec_add(start, qa_vec_scale(direction, 131072.0f)),
+                       qa_vec_scale(right, horizontal)),
+            qa_vec_scale(up, vertical));
+        float nail_speed = q3_source_float_add(555.0f,
+            q3_source_float_multiply(q3_random(game), 1800.0f));
+        velocity = qa_vec_scale(nail_direction(qa_vec_sub(end, start)), nail_speed);
     }
     velocity = qa_physics_q3_snap(velocity);
     qa_actor_collision collision = {.family = QA_COLLISION_Q3,

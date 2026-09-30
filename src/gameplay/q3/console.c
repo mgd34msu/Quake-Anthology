@@ -51,7 +51,8 @@ static bool count_write(qa_q3_game *game, qa_actor_id actor, qa_item_id item,
     return qa_inventory_configure(game->options.services.inventory, actor, &entry, NULL, NULL, error);
 }
 bool qa_q3_game_grant_arsenal(qa_q3_game *game, qa_actor_id actor, bool ammo, qa_error *error) {
-    if (!game || !q3_actor_get(game, actor) || game->observation_depth == SIZE_MAX)
+    if (!game || game->source_restored || !q3_actor_get(game, actor) ||
+        game->observation_depth == SIZE_MAX)
         return q3_fail(error, "Q3 arsenal grant requires a native actor");
     ++game->observation_depth;
     bool okay = true;
@@ -170,7 +171,8 @@ static bool give(qa_q3_game *game, qa_actor_id actor, const qa_command_invocatio
 }
 bool qa_q3_game_give_item(qa_q3_game *game, qa_actor_id actor, size_t count,
                           const char *const *args, bool *handled, qa_error *error) {
-    if (!game || !handled || (count && !args) || count >= SIZE_MAX / sizeof(*args) ||
+    if (!game || game->source_restored || !handled || (count && !args) ||
+        count >= SIZE_MAX / sizeof(*args) ||
         game->observation_depth == SIZE_MAX)
         return q3_fail(error, "invalid Q3 source item grant");
     *handled = false;
@@ -331,8 +333,8 @@ static bool dispatch(qa_q3_game *game, qa_actor_id actor, const qa_command_invoc
 bool qa_q3_game_console_command(qa_q3_game *game, qa_actor_id actor,
                                  const qa_command_invocation *command, bool *handled,
                                  qa_error *error) {
-    if (!game || !command || !handled || !command->argc || !command->argv ||
-        game->observation_depth == SIZE_MAX)
+    if (!game || game->source_restored || !command || !handled || !command->argc ||
+        !command->argv || game->observation_depth == SIZE_MAX)
         return q3_fail(error, "invalid Q3 console invocation");
     *handled = false;
     for (size_t i = 0; i < command->argc; ++i)

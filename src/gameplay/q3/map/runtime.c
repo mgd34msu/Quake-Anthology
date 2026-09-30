@@ -322,7 +322,7 @@ qa_vec3 q3_map_direction(qa_vec3 angles) {
     if (angles.x == 0 && angles.z == 0 && angles.y == -2)
         return qa_v3(0, 0, -1);
     qa_vec3 forward;
-    qa_builtin_angle_vectors(angles, &forward, NULL, NULL);
+    q3_source_angle_vectors(angles, &forward, NULL, NULL);
     return forward;
 }
 
