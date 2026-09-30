@@ -264,3 +264,28 @@ and population record. They do not yet encode chat, goals, movement, BSP,
 observations, shared asset cache identity or runtime handle tables. Source-only
 checks cover field declarations, ownership on every failure path and scoped
 whitespace; builds and executable checks remain deferred at the baseline gate.
+
+The subsequent bot movement record captures every physical movement slot and
+its complete source state, all avoid spots and saved walk progress. Its cached
+variable bindings are qualified against the original fixed source role names;
+an admitted variable from another role cannot replace gravity or a weapon
+index. Legal absent bindings from incomplete setup remain absent. Actual
+candidate navigation qualifies saved walk edges, and query scratch is
+invalidated after complete decode. The observation record retains complete
+physical entity fields and retired actor provenance, native numeric order, and
+module insertion/hash/free topology. Goal snapshot arrays are derived at the
+next source read rather than serialized as uninitialized scratch.
+
+`QABREQS` stores actual constructor capacities and options for isolated runtime
+and optional population construction. Owned decoded include/date/time strings
+must survive the runtime's lifetime. Source BSP tables now have an explicit
+codec preserving raw-source digest/size, exact record and property capacities,
+duplicate epairs, quoted source spans and actual partial parse outcomes. It
+does not invoke a lexer during restoration.
+
+The remaining goal-owner codec needs the actual allocated level pool extent.
+The private owner now records `level_capacity` at allocation, transfers it with
+staged map publication and clears it with pool destruction. A reconfiguration
+changes the next-map option while preserving the current pool, so that option
+cannot certify the current allocation extent. This field follows the existing
+allocation directly and adds no gameplay admission or callback.

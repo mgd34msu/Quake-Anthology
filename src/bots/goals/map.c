@@ -18,6 +18,7 @@ void bot_goal_map_clear(qa_bot_goals *g) {
     for (size_t i = 0; i < g->source_count; ++i) free(g->source[i].name);
     free(g->source); free(g->level); free(g->locations); free(g->camps);
     g->source = NULL; g->level = NULL; g->locations = g->camps = NULL;
+    g->level_capacity = 0;
     g->source_count = g->source_capacity = g->location_count = g->camp_count = 0;
     g->level_head = g->free_head = 0;
     g->initial_count = 0;
@@ -145,6 +146,7 @@ static bool load_items(qa_bot_goals *g, qa_bot_navigation *n, qa_error *e) {
         qa_error_set(e, QA_ERROR_MEMORY, count, "allocating retained level items");
         return false;
     }
+    g->level_capacity = count;
     for (uint32_t i = 1; i < g->options.maximum_level_items; ++i) g->level[i].next = i + 1;
     g->free_head = 1;
     if (!g->configured) return true;
@@ -241,6 +243,7 @@ bool qa_bot_goals_load_map(qa_bot_goals *g, const qa_entities *entities,
         bot_goal_map_clear(g);
         g->entities = entities;
         g->level = staged.level;
+        g->level_capacity = staged.level_capacity;
         g->level_head = staged.level_head;
         g->free_head = staged.free_head;
         g->initial_count = staged.initial_count;

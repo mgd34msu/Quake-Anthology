@@ -49,6 +49,7 @@ struct qa_bot_goals {
     bool busy, configured;
     const qa_entities *entities;
     bot_level_item *level;
+    size_t level_capacity;
     uint32_t level_head, free_head;
     int32_t initial_count, next_source;
     bot_map_goal *locations, *camps;
