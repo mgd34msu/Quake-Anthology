@@ -943,6 +943,7 @@ add_library(qa_application STATIC
     src/app/application/save.c
     src/app/application/save_content.c
     src/app/application/save_physics.c
+    src/app/application/save_progression.c
     src/app/application/save_native_q2.c
     src/app/application/save_native_q2_record.c
     src/app/application/save_resolvers.c

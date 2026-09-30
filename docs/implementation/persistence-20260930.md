@@ -542,3 +542,25 @@ there is no second private progression store to fabricate. Root aggregate
 construction, QA_SAVE_PROGRESSION registration, backend ownership transfer and
 final whole-owner recapture remain separate integration requirements. These
 owner codecs received source-only checks; no builds or executable tests ran.
+
+The concrete application progression owner now wraps those actual owners in
+`QAPR` version 1. Its fixed inventory contains rankings once and progress only
+when the real profile root is installed. Enclosing presence, extent and trailing
+byte checks finish before any nested owner changes. Early preparation checks
+saved configured-backend/profile presence against the actual restored options;
+configured embeddings require both complete readonly backend refs and a real
+final ownership handoff. Root constructs the genuine pending owners before
+external consumers and imports their full private records under its candidate
+lease. Final validation re-captures and compares the entire original record.
+
+The backend handoff is the last fallible operation after all candidate owners
+validate. Both rankings lifecycles are fenced during that external callback,
+which must preserve backend ownership on failure. Its explicit success result
+distinguishes an active match transferred into the candidate from an unrelated
+old match; only a genuinely transferred old continuation is relinquished.
+Ordinary old teardown still closes unrelated matches. Publication then ungates
+the candidate rankings/progress owners with no source callbacks or allocation.
+Actual application registration, constructor calls and final pointer exchange
+remain root-owned integration work. The progress file itself remains the real
+qualified profile backend: preserved `reload_required` causes its next ordinary
+durable recovery to read that backend, without candidate-side file replay.

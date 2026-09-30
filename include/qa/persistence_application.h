@@ -4,6 +4,8 @@
 #include "qa/application.h"
 #include "qa/save.h"
 #include "qa/persistence_content.h"
+#include "qa/rankings_save.h"
+#include "qa/player_progress_save.h"
 
 /* Services outside the application's concrete codecs supply their actual
  * producer here. Every shared owner and selected provider must be represented;
@@ -33,6 +35,20 @@ typedef struct qa_application_persistence_ops {
      * is restored before any candidate content/provider factory is admitted. */
     qa_application_content_visit_fn visit_content;
     const qa_vfs_checkpoint_refs *content_files;
+    /* Actual optional backend/native profile qualifications. Default rankings
+     * are unconfigured; installed external providers require both readonly
+     * binding/continuation refs and the final transactional handoff below. */
+    const qa_rankings_checkpoint_refs *rankings;
+    const qa_player_progress_checkpoint_refs *progress;
+    /* Last fallible step, after complete candidate validation. Failure must
+     * leave both backend ownerships unchanged. Success qualifies and transfers
+     * the genuine candidate backend continuation; relinquish_active is true
+     * only if that transfer consumed the old lifecycle's match ownership.
+     * An independently owned candidate must leave it false so displaced close
+     * still logs out/finishes its unrelated backend. No application/source
+     * mutation, file write, login/report replay or candidate revalidation may
+     * follow a successful handoff; pointer publication must then be nofail. */
+    qa_rankings_handoff_fn rankings_handoff;
     /* Optional detached services before content/provider construction. Install
      * actual routing, handlers and empty consumers without source callbacks or
      * active-service aliases. Resources referenced by a candidate must survive

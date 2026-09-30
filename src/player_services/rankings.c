@@ -116,6 +116,9 @@ bool qa_rankings_create_restored(const qa_ranking_provider *provider,
     (*out)->restore_pending = true;
     return true;
 }
+bool qa_rankings_provider_configured(const qa_rankings *rankings) {
+    return rankings && rankings->configured;
+}
 bool qa_rankings_begin(qa_rankings *rankings, bool enabled, bool single, const char *key,
                        qa_error *error) {
     if (!enter(rankings, error))
@@ -528,8 +531,24 @@ bool qa_rankings_restore(qa_rankings *owner, const qa_rankings_checkpoint_refs *
     return ok;
 }
 void qa_rankings_publish_restored(qa_rankings *rankings) {
-    if (rankings) rankings->restore_pending = false;
+    if (rankings && !rankings->busy) rankings->restore_pending = false;
 }
 void qa_rankings_relinquish_continuation(qa_rankings *rankings) {
-    if (rankings) rankings->restore_pending = true;
+    if (rankings && !rankings->busy) rankings->restore_pending = true;
+}
+bool qa_rankings_handoff(qa_rankings *active, qa_rankings *candidate,
+                         qa_rankings_handoff_fn callback, void *context,
+                         bool *relinquish_active, qa_error *error) {
+    if (!active || !candidate || active == candidate || active->busy || candidate->busy ||
+        active->restore_pending || !candidate->restore_pending || !candidate->restore_loaded ||
+        !relinquish_active || (candidate->configured && !callback))
+        return fail(error, "Ranking handoff requires actual idle source and restored candidate owners");
+    bool relinquish = false;
+    active->busy = candidate->busy = true;
+    bool ok = !candidate->configured || callback(context, active, candidate, &relinquish, error);
+    active->busy = candidate->busy = false;
+    if (ok) *relinquish_active = relinquish;
+    else if (error && error->code == QA_OK)
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Ranking backend ownership handoff failed");
+    return ok;
 }
