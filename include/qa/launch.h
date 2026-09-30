@@ -100,6 +100,10 @@ typedef struct qa_launch_world {
     const char *map;
     /* Preserves authored cinematic/spawn-point/unit transition syntax. */
     const char *start_command;
+    /* Typed map loads retain their spawn selection independently of path
+     * bytes. Presets without this selection use their authored start command. */
+    const char *spawn_point;
+    bool explicit_spawn_point;
     bool explicit_presentation, doppler, campaign;
     qa_launch_environment environment;
     qa_product_id environment_product;

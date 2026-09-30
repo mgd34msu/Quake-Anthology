@@ -83,8 +83,9 @@ bool qa_launch_set_world(qa_launch_draft *d, const qa_launch_world *input, qa_er
     qa_launch_world v = *input;
     v.map = launch_text(d, input->map, error);
     v.start_command = launch_text(d, input->start_command, error);
+    v.spawn_point = launch_text(d, input->explicit_spawn_point ? input->spawn_point : "", error);
     v.environment_path = launch_text(d, input->environment_path, error);
-    if (!v.map || !v.start_command || !v.environment_path) return false;
+    if (!v.map || !v.start_command || !v.spawn_point || !v.environment_path) return false;
     d->choices.world = v; return true;
 }
 bool qa_launch_set_provider(qa_launch_draft *d, const qa_launch_provider *input, qa_error *error)

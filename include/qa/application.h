@@ -357,6 +357,9 @@ bool qa_application_apply(qa_application *, const qa_launch_draft *, qa_error *)
  * A caller completes non-map targets after presentation or playback ends. */
 bool qa_application_load_map(qa_application *, const qa_application_map_request *, qa_error *);
 bool qa_application_queue_travel(qa_application *, const qa_application_travel_request *, qa_error *);
+/* Queue one literal map path in request.expression. Q2 route separators and
+ * unit/spawn markers are ordinary path bytes in this typed map operation. */
+bool qa_application_queue_map_travel(qa_application *, const qa_application_travel_request *, qa_error *);
 bool qa_application_travel_read(const qa_application *, qa_application_travel_view *);
 bool qa_application_commit_travel(qa_application *, uint64_t revision, qa_error *);
 bool qa_application_complete_travel(qa_application *, uint64_t revision, qa_error *);

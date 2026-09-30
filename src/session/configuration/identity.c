@@ -117,13 +117,15 @@ bool qa_launch_identity_encode(const qa_launch_snapshot *snapshot, const qa_acto
     if (!snapshot || !v || !catalog || !out) return fail(error, "Missing immutable launch identity owner");
     qa_json_writer w = {0}; qa_json_writer_object(&w);
     qa_json_writer_key(&w, "schema"); text(&w, "qa-launch-identity");
-    qa_json_writer_key(&w, "version"); number(&w, 2);
+    qa_json_writer_key(&w, "version"); number(&w, 3);
     qa_json_writer_key(&w, "world"); qa_json_writer_array(&w);
     product(&w, catalog, v->world.preset); product(&w, catalog, v->world.geometry);
     product(&w, catalog, v->world.presentation); text(&w, v->world.map); text(&w, v->world.start_command);
     boolean(&w, v->world.explicit_presentation); boolean(&w, v->world.doppler); boolean(&w, v->world.campaign);
     number(&w, v->world.environment); product(&w, catalog, v->world.environment_product);
-    text(&w, v->world.environment_path); number(&w, v->world.skill); qa_json_writer_end(&w);
+    text(&w, v->world.environment_path); number(&w, v->world.skill);
+    boolean(&w, v->world.explicit_spawn_point); text(&w, v->world.spawn_point);
+    qa_json_writer_end(&w);
 #define BEGIN(name, count) qa_json_writer_key(&w, name); qa_json_writer_array(&w); for (size_t i = 0; i < (count); ++i) { qa_json_writer_array(&w)
 #define END qa_json_writer_end(&w); } qa_json_writer_end(&w)
     BEGIN("providers", v->provider_count);
@@ -395,17 +397,18 @@ bool qa_launch_identity_decode(qa_catalog *catalog, const qa_actor_registry *reg
     qa_json_id root = qa_json_root(document); uint64_t version = 0;
     if (qa_json_type(document, root) != QA_JSON_OBJECT || qa_json_size(document, root) != 14 ||
         !qa_json_string_equal(document, qa_json_get(document, root, "schema"), "qa-launch-identity") ||
-        !qa_json_u64(document, qa_json_get(document, root, "version"), &version, error) || version != 2) {
+        !qa_json_u64(document, qa_json_get(document, root, "version"), &version, error) || version != 3) {
         qa_json_destroy(document); return fail(error, "Unsupported explicit launch identity schema");
     }
     qa_arena arena = {0}; qa_launch_draft *draft = NULL;
     identity_reader r = {.document = document, .catalog = catalog, .registry = registry, .arena = &arena, .error = error};
-    bool ok = qa_launch_draft_create_empty(catalog, &draft, error) && record(&r, qa_json_get(document, root, "world"), 12);
+    bool ok = qa_launch_draft_create_empty(catalog, &draft, error) && record(&r, qa_json_get(document, root, "world"), 14);
     if (ok) {
         qa_launch_world v = {0}; v.preset = read_product(&r); v.geometry = read_product(&r); v.presentation = read_product(&r);
         v.map = read_text(&r); v.start_command = read_text(&r); v.explicit_presentation = read_bool(&r);
         v.doppler = read_bool(&r); v.campaign = read_bool(&r); v.environment = read_unsigned(&r);
         v.environment_product = read_product(&r); v.environment_path = read_text(&r); v.skill = read_signed(&r);
+        v.explicit_spawn_point = read_bool(&r); v.spawn_point = read_text(&r);
         ok = !r.failed && qa_launch_set_world(draft, &v, error);
     }
 #define EACH(name, fields) do { qa_json_id array = qa_json_get(document, root, name); \

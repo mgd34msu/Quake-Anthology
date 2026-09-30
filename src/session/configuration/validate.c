@@ -89,6 +89,12 @@ bool qa_launch_validate(const qa_launch_draft *d, qa_error *error)
         !selected_product(d, v->world.presentation, error) || !path_valid(v->world.map, error)) return false;
     if ((unsigned)v->world.environment > QA_ENVIRONMENT_SELECTED || v->world.skill < 0)
         return fail(error, "invalid launch environment or skill");
+    if (v->world.explicit_spawn_point) {
+        const char *point = v->world.spawn_point;
+        if (point == NULL ||
+            strspn(point, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") != strlen(point))
+            return fail(error, "invalid explicit map spawn point");
+    }
     if (v->world.environment == QA_ENVIRONMENT_SELECTED &&
         (!selected_product(d, v->world.environment_product, error) || !path_valid(v->world.environment_path, error))) return false;
     for (size_t i = 0; i < v->provider_count; ++i) {

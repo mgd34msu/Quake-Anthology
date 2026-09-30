@@ -156,6 +156,8 @@ static bool same_map_configuration(const qa_launch_snapshot *previous,
         left->world.campaign != right->world.campaign ||
         left->world.skill != right->world.skill ||
         !same_text(left->world.start_command, right->world.start_command) ||
+        left->world.explicit_spawn_point != right->world.explicit_spawn_point ||
+        !same_text(left->world.spawn_point, right->world.spawn_point) ||
         !same_world_entities(left, right) ||
         left->mode_count != right->mode_count ||
         left->equipment_count != right->equipment_count ||

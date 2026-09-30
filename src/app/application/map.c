@@ -1856,6 +1856,13 @@ bool application_map_spawn_point(qa_application *application,
                            qa_string_id *out, qa_error *error)
 {
     *out = QA_STRING_NONE;
+    if (choices->world.explicit_spawn_point) {
+        const char *point = choices->world.spawn_point;
+        if (point == NULL || point[0] == '\0')
+            return true;
+        return qa_strings_intern_cstr(qa_session_strings(application->session),
+                                       point, out, error);
+    }
     const char *command = choices->world.start_command;
     if (command == NULL)
         return true;

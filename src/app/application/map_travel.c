@@ -134,6 +134,8 @@ bool qa_application_load_map(qa_application *application,
         qa_launch_world world = qa_launch_draft_choices(draft)->world;
         world.map = path;
         world.start_command = start;
+        world.spawn_point = request->spawn_point != NULL ? request->spawn_point : "";
+        world.explicit_spawn_point = true;
         if (request->geometry != 0) world.geometry = request->geometry;
         if (request->presentation != 0) world.presentation = request->presentation;
         ok = qa_launch_set_world(draft, &world, error);
@@ -162,9 +164,9 @@ bool qa_application_load_map(qa_application *application,
     return ok;
 }
 
-bool qa_application_queue_travel(qa_application *application,
-                                  const qa_application_travel_request *request,
-                                  qa_error *error)
+static bool queue_travel(qa_application *application,
+                         const qa_application_travel_request *request,
+                         bool literal_map, qa_error *error)
 {
     if (application == NULL || request == NULL || request->expression == NULL ||
         application->state == QA_APPLICATION_FAULTED ||
@@ -183,7 +185,21 @@ bool qa_application_queue_travel(qa_application *application,
         return application_fail(error, QA_ERROR_MEMORY,
                                 "travel continuation identity is exhausted");
     qa_travel_route route = {0};
-    if (!qa_q2_travel_parse(request->expression, &route, error))
+    if (literal_map) {
+        route.storage = map_path(request->expression, error);
+        if (route.storage == NULL)
+            return false;
+        route.targets = calloc(1, sizeof(*route.targets));
+        if (route.targets == NULL) {
+            qa_travel_route_free(&route);
+            return application_fail(error, QA_ERROR_MEMORY,
+                                    "cannot retain single-map travel target");
+        }
+        route.count = 1;
+        route.targets[0] = (qa_travel_target){.kind = QA_TRAVEL_MAP,
+                                             .name = route.storage,
+                                             .spawn_point = ""};
+    } else if (!qa_q2_travel_parse(request->expression, &route, error))
         return false;
     route.targets[0].new_unit |= request->new_unit;
     if (state->pending) {
@@ -233,6 +249,20 @@ bool qa_application_queue_travel(qa_application *application,
     state->pending = true;
     ++state->revision;
     return true;
+}
+
+bool qa_application_queue_travel(qa_application *application,
+                                  const qa_application_travel_request *request,
+                                  qa_error *error)
+{
+    return queue_travel(application, request, false, error);
+}
+
+bool qa_application_queue_map_travel(qa_application *application,
+                                      const qa_application_travel_request *request,
+                                      qa_error *error)
+{
+    return queue_travel(application, request, true, error);
 }
 
 bool qa_application_travel_read(const qa_application *application,

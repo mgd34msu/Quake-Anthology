@@ -1,7 +1,7 @@
 #ifndef QA_LAUNCH_IDENTITY_H
 #define QA_LAUNCH_IDENTITY_H
 #include "qa/launch.h"
-/* Portable native launch identity, version 1. Every choice is explicit; actor
+/* Portable native launch identity, version 3. Every choice is explicit; actor
  * references are saved slot/generation pairs relative to the supplied registry.
  * It is distinct from original game wire schemas. Outputs transfer on success.
  * The canonical encoding preserves choice order and arbitrary option bytes. */
