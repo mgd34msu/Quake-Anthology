@@ -153,11 +153,6 @@ static bool repeat_explosion(qa_q1_game *g, q1_actor *e, qa_error *error) {
     e = control(g, id);
     if (!e)
         return true;
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, id, &body, error))
-        return false;
-    if (!control(g, id))
-        return true;
     q1_actor *child;
     if (!q1_create(g, "spawned_explosion", Q1_MAP, id, &child, error))
         return false;
@@ -171,31 +166,32 @@ static bool repeat_explosion(qa_q1_game *g, q1_actor *e, qa_error *error) {
     if (!e)
         goto retire;
     e->map->pending.addon.chain = child_id;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, id, &body, error))
+        goto fail;
+    if (!control(g, id) || !q1_entity(g, child_id))
+        goto retire;
     if (!qa_world_body_write(g->services.world, child_id, &(qa_body_state){.origin = body.origin}, error))
         goto fail;
+    if (!control(g, id))
+        goto retire;
     child = q1_entity(g, child_id);
     if (child && !q1_map_addon_trigger_use(g, child, (qa_actor_id){0}, error))
         goto fail;
     e = control(g, id);
     if (!e)
-        return true;
-    e->map->pending.addon.chain = (qa_actor_id){0};
+        goto retire;
     if ((e->spawnflags & 4) && --e->count == 0)
         return q1_remove(g, e, error);
     return q1_map_schedule(g, e, e->wait + (double)q1_random(g) * e->map->pause_time,
                            Q1_MAP_ADDON_EXPLOSION_REPEAT, error);
-fail: {
-        qa_error saved = error ? *error : (qa_error){0};
-        child = q1_entity(g, child_id);
-        if (child)
-            (void)q1_remove(g, child, NULL);
-        if (error)
-            *error = saved;
-        return false;
-    }
+fail:
+    if (qa_actors_get(qa_session_actors(g->services.session), child_id))
+        (void)qa_session_release(g->services.session, child_id, NULL);
+    return false;
 retire:
-    child = q1_entity(g, child_id);
-    return !child || q1_remove(g, child, error);
+    return !qa_actors_get(qa_session_actors(g->services.session), child_id) ||
+           qa_session_release(g->services.session, child_id, error);
 }
 bool q1_map_addon_control_spawn(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_actor_id id = e->id;

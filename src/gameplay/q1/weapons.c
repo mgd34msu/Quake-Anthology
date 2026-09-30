@@ -671,13 +671,15 @@ static bool lightning(qa_q1_game *g, q1_player *player, qa_error *error) {
 }
 
 static bool parameters_valid(qa_q1_game *g, qa_actor_id actor,
-                              const qa_q1_weapon_parameters *parameters, qa_error *error) {
+                              const qa_q1_weapon_parameters *parameters, bool zero_interval,
+                              qa_error *error) {
     if (!q1_alive(g, actor)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
                      "Q1 weapon policy retired the source actor");
         return false;
     }
-    if (!isfinite(parameters->interval) || parameters->interval <= 0 ||
+    if (!isfinite(parameters->interval) || parameters->interval < 0 ||
+        (!zero_interval && parameters->interval == 0) ||
         !isfinite(parameters->nail_speed) || parameters->nail_speed <= 0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
                      "invalid selected Q1 weapon timing or projectile speed");
@@ -691,7 +693,7 @@ bool q1_weapon_parameters(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon,
     if (g->host.weapon_parameters &&
         !g->host.weapon_parameters(g->host.context, actor, weapon, parameters, error))
         return false;
-    return parameters_valid(g, actor, parameters, error);
+    return parameters_valid(g, actor, parameters, false, error);
 }
 
 bool q1_weapon_attack_delay(qa_q1_game *g, q1_player *player, float *delay, qa_error *error) {
@@ -771,7 +773,7 @@ static bool weapon_observe(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon
     if (g->host.weapon_observation &&
         !g->host.weapon_observation(g->host.context, actor, weapon, &parameters, error))
         return false;
-    if (!parameters_valid(g, actor, &parameters, error))
+    if (!parameters_valid(g, actor, &parameters, weapon == QA_Q1_ROGUE_GRAPPLE, error))
         return false;
     player = q1_player_get(g, actor);
     if (!player || !player->arsenal)

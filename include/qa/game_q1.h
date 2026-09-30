@@ -428,6 +428,7 @@ bool qa_q1_game_physics_read(const qa_q1_game *, qa_actor_id, qa_physics_propert
 bool qa_q1_game_gravity(const qa_q1_game *, float *out);
 bool qa_q1_game_rules_read(const qa_q1_game *, int32_t *deathmatch, uint32_t *gamecfg);
 bool qa_q1_game_monster_counts(const qa_q1_game *, uint32_t *total, uint32_t *killed);
+/* Source alpha retains finite authored fade overshoot before retirement. */
 bool qa_q1_game_alpha(qa_q1_game *, qa_actor_id, float alpha, qa_error *);
 bool qa_q1_game_physics_write(qa_q1_game *, qa_actor_id, const qa_physics_properties *, qa_error *);
 /* Native STEP after think, and surviving TOSS collisions. Character movement

@@ -107,7 +107,7 @@ bool qa_q1_game_monster_counts(const qa_q1_game *g, uint32_t *total, uint32_t *k
     return true;
 }
 bool qa_q1_game_alpha(qa_q1_game *g, qa_actor_id actor, float alpha, qa_error *error) {
-    if (!isfinite(alpha) || alpha < 0 || alpha > 1) {
+    if (!isfinite(alpha)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid Q1 actor alpha");
         return false;
     }

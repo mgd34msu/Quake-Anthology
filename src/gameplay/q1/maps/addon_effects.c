@@ -351,16 +351,23 @@ bool q1_map_addon_effect_use(qa_q1_game *g, q1_actor *e, qa_actor_id activator, 
         return false;
     }
     case Q1_MAP_ADDON_FREEZE: {
-        if (!g->maps->options.freeze_actor)
-            return q1_map_fail(error, "Q1 freeze requires selected continuation owner");
         qa_actor_id source = e->id;
         q1_actor_snapshot *targets;
         if (!q1_snapshot_targets(g, g->maps->options.targets, e->target, &targets, error))
             return false;
         bool ok = true;
-        for (size_t i = 0; ok && i < targets->count && effect(g, source); ++i)
-            if (q1_alive(g, targets->actors[i]))
-                ok = g->maps->options.freeze_actor(g->maps->options.context, targets->actors[i], error);
+        for (size_t i = 0; ok && i < targets->count && effect(g, source); ++i) {
+            qa_actor_id target = targets->actors[i];
+            if (!q1_alive(g, target))
+                continue;
+            bool handled;
+            ok = qa_q1_game_freeze(g, target, &handled, error);
+            if (!ok || handled || !effect(g, source) || !q1_alive(g, target))
+                continue;
+            ok = g->maps->options.freeze_actor
+                ? g->maps->options.freeze_actor(g->maps->options.context, target, error)
+                : q1_map_fail(error, "Q1 freeze requires selected foreign continuation owner");
+        }
         targets->borrowed = false;
         return ok;
     }
