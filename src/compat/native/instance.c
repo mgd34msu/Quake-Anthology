@@ -461,7 +461,9 @@ bool qa_native_invoke(qa_native_instance *instance, qa_native_address entry,
                       const qa_native_signature *signature, const qa_native_value *arguments,
                       size_t argument_count, qa_native_value *result, qa_error *error) {
     if (!instance || !entry || !signature || instance->lifecycle != QA_NATIVE_INITIALIZED ||
-        instance->checkpointing || instance->destroying || instance->region_depth ||
+        instance->checkpointing || instance->destroying ||
+        (instance->region_depth && (instance->backend != QA_NATIVE_BACKEND_RUNNER ||
+                                   instance->region_service_depth != instance->region_depth)) ||
         instance->write_depth)
         return native_fail(error, QA_ERROR_ARGUMENT, 0,
                            "initialized native instance and declared entry are required");

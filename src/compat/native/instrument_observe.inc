@@ -62,6 +62,8 @@ static bool observer_control(native_hook_control *control) {
         call_depth = (uint32_t)control->size;
         return true;
     }
+    if (control->operation == NATIVE_HOOK_REGION_SERVICE)
+        return region_service_qualified(control);
     if (control->operation == NATIVE_HOOK_ENTRY_ADD) {
         app_pc address = (app_pc)(ptr_uint_t)control->address;
         app_pc replacement = (app_pc)(ptr_uint_t)control->replacement;
@@ -279,6 +281,12 @@ static void observer_instruction_clean(ptr_uint_t encoded_pc, ptr_uint_t encoded
     if (dr_get_thread_id(drcontext) != owner_thread)
         dr_abort();
     observer_flush();
+    /* A CONTINUE redirects to the exact interrupted PC. Its entry observers
+     * already ran before the region service; do not intercept them twice. */
+    if (region_bypass_pc == pc) {
+        proc_restore_fpstate(fp_state);
+        return;
+    }
     dr_mcontext_t context = {.size = sizeof(context), .flags = DR_MC_ALL};
     if (!dr_get_mcontext(drcontext, &context))
         dr_abort();

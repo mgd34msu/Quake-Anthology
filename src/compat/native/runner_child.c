@@ -1,4 +1,5 @@
 #include "protocol.h"
+#include "region_service.h"
 
 #if defined(_WIN32)
 #include <fcntl.h>
@@ -16,6 +17,8 @@ typedef struct native_child_state {
     size_t syscall_type_count;
     bool stop;
 } native_child_state;
+
+static native_child_state *region_child;
 
 static bool child_handle_request(native_child_state *state, const native_wire_frame *frame,
                                  qa_error *transport_error);
@@ -145,6 +148,66 @@ static bool child_finish_response(native_child_state *state, bool received, bool
         native_wire_poison(&state->connection, failure);
     }
     return received && decoded;
+}
+
+#if defined(_WIN32)
+__declspec(dllexport) __declspec(noinline)
+#else
+__attribute__((visibility("default"), noinline))
+#endif
+void qa_native_runner_region_resume(native_region_service *packet) {
+    /* The DR resume clean call replaces this body. Uninstrumented execution
+     * must never return into the source instruction through an ordinary ret. */
+    volatile uint64_t magic = packet->magic;
+    (void)magic;
+    _Exit(EXIT_FAILURE);
+}
+
+#if defined(_WIN32)
+__declspec(dllexport) __declspec(noinline)
+#else
+__attribute__((visibility("default"), noinline))
+#endif
+void qa_native_runner_region_service(native_region_service *packet) {
+    _Static_assert(sizeof(native_region_state) == sizeof(qa_native_processor_state),
+                   "region processor packet must match its explicit state fields");
+    native_child_state *state = region_child;
+    if (!state || !state->instance || native_active_instance != state->instance ||
+        state->connection.poisoned || packet->magic != NATIVE_REGION_SERVICE_MAGIC ||
+        !packet->cookie || packet->depth != state->connection.depth || packet->phase > 1u ||
+        packet->completed)
+        _Exit(EXIT_FAILURE);
+    native_hook_control control = {.operation = NATIVE_HOOK_REGION_SERVICE,
+        .address = (uint64_t)(uintptr_t)packet, .id = packet->cookie, .size = packet->depth};
+    if (!native_hooks_control(&control)) _Exit(EXIT_FAILURE);
+    native_wire_buffer request = {0};
+    qa_buffer response = {0};
+    qa_error error = {0};
+    qa_native_processor_state before;
+    memcpy(&before, &packet->before, sizeof(before));
+    bool encoded = native_wire_put_u32(&request, packet->id, &error) &&
+        native_wire_put_u32(&request, packet->phase, &error) &&
+        native_wire_put_state(&request, &before, &error);
+    bool received = encoded && child_request(state, NATIVE_WIRE_REGION_APP,
+        (qa_bytes){request.data, request.size}, &response, &error);
+    native_wire_reader reader = {.bytes = {response.data, response.size}};
+    uint32_t action = 0; uint8_t replace = 0; qa_native_processor_state after = {0};
+    bool decoded = received && native_wire_get_u32(&reader, &action, &error) &&
+        native_wire_get_u8(&reader, &replace, &error) && replace <= 1u &&
+        native_wire_get_state(&reader, &after, &error) && native_wire_end(&reader, &error) &&
+        action <= QA_NATIVE_REGION_FAIL_INSTANCE;
+    bool ok = child_finish_response(state, received, decoded, &error);
+    native_wire_buffer_free(&request);
+    qa_buffer_free(&response);
+    if (!ok || action == QA_NATIVE_REGION_FAIL_INSTANCE ||
+        state->connection.depth != packet->depth || native_active_instance != state->instance)
+        _Exit(EXIT_FAILURE);
+    packet->action = action;
+    packet->replace_state = replace;
+    memcpy(&packet->after, &after, sizeof(after));
+    packet->completed = 1;
+    qa_native_runner_region_resume(packet);
+    _Exit(EXIT_FAILURE);
 }
 
 static size_t child_import_result_bytes(native_child_state *state, uint32_t slot) {
@@ -953,6 +1016,7 @@ static bool child_handle_request(native_child_state *state, const native_wire_fr
 
 int qa_native_runner_main(void) {
     native_child_state state = {0};
+    region_child = &state;
 #if defined(_WIN32)
     _setmode(_fileno(stdin), _O_BINARY);
     _setmode(_fileno(stdout), _O_BINARY);
@@ -983,5 +1047,6 @@ int qa_native_runner_main(void) {
         qa_native_destroy(state.instance, &ignored);
     }
     qa_native_module_release(state.module);
+    region_child = NULL;
     return state.stop && !state.connection.poisoned ? 0 : 1;
 }

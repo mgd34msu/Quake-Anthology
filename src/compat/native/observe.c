@@ -117,7 +117,9 @@ bool qa_native_invoke_original(qa_native_entry_observer *binding,
     if (!binding || !observer_boundary(binding->instance, error))
         return false;
     qa_native_instance *instance = binding->instance;
-    if (instance->region_depth || instance->write_depth ||
+    if ((instance->region_depth && (instance->backend != QA_NATIVE_BACKEND_RUNNER ||
+                                   instance->region_service_depth != instance->region_depth)) ||
+        instance->write_depth ||
         instance->lifecycle != QA_NATIVE_INITIALIZED ||
         count != binding->signature.parameter_count || (count && !arguments))
         return native_fail(error, QA_ERROR_ARGUMENT, 0,

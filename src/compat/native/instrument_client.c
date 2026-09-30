@@ -4,13 +4,13 @@
 #include "drmgr.h"
 #include "drutil.h"
 #include "hook_control.h"
+#include "region_service.h"
 #include "wire_constants.h"
 
 #include <stdint.h>
 #include <string.h>
 
 #define QA_HOOK_MAX_FRAME (256u * 1024u * 1024u)
-#define QA_HOOK_STATE_BYTES (16u * 8u + 16u * 16u + 16u)
 #ifdef X64
 #define QA_HOOK_SIMD_COUNT 16u
 #else
@@ -26,12 +26,7 @@ typedef struct hook_region {
     uint32_t frame_exit;
 } hook_region;
 
-typedef struct hook_state {
-    uint64_t registers[16];
-    uint8_t simd[16][16];
-    uint64_t flags;
-    uint64_t instruction;
-} hook_state;
+typedef native_region_state hook_state;
 
 typedef struct hook_frame {
     uint16_t opcode;
@@ -244,93 +239,6 @@ static bool service_memory_request(const hook_frame *frame) {
                                 "operation is unavailable while an inline region is suspended");
 }
 
-static void encode_state(uint8_t *bytes, const hook_state *state) {
-    size_t offset = 0;
-    for (size_t index = 0; index < 16u; ++index, offset += 8u)
-        store_u64(bytes + offset, state->registers[index]);
-    memcpy(bytes + offset, state->simd, sizeof(state->simd));
-    offset += sizeof(state->simd);
-    store_u64(bytes + offset, state->flags);
-    store_u64(bytes + offset + 8u, state->instruction);
-}
-
-static bool decode_state(const uint8_t *bytes, size_t size, hook_state *state) {
-    if (size < QA_HOOK_STATE_BYTES)
-        return false;
-    size_t offset = 0;
-    for (size_t index = 0; index < 16u; ++index, offset += 8u)
-        state->registers[index] = load_u64(bytes + offset);
-    memcpy(state->simd, bytes + offset, sizeof(state->simd));
-    offset += sizeof(state->simd);
-    state->flags = load_u64(bytes + offset);
-    state->instruction = load_u64(bytes + offset + 8u);
-    return true;
-}
-
-static bool region_request(uint32_t id, uint32_t phase, const hook_state *state, uint32_t *action,
-                           bool *replace_state, hook_state *replacement) {
-    uint8_t payload[8u + QA_HOOK_STATE_BYTES];
-    store_u32(payload, id);
-    store_u32(payload + 4u, phase);
-    encode_state(payload + 8u, state);
-    if (call_depth == UINT32_MAX)
-        return false;
-    ++call_depth;
-    uint64_t request_sequence;
-    if (!send_frame(NATIVE_WIRE_REGION, 0, payload, sizeof(payload), &request_sequence)) {
-        --call_depth;
-        return false;
-    }
-    for (;;) {
-        hook_frame frame = {0};
-        if (!receive_frame(&frame)) {
-            --call_depth;
-            return false;
-        }
-        bool reply =
-            frame.opcode == (NATIVE_WIRE_REGION | NATIVE_WIRE_REPLY) && frame.reply_to == request_sequence;
-        bool request = !(frame.opcode & NATIVE_WIRE_REPLY) && !frame.reply_to;
-        if ((reply && frame.depth != call_depth) ||
-            (request && (call_depth == UINT32_MAX || frame.depth != call_depth + 1u))) {
-            free_frame(&frame);
-            --call_depth;
-            return false;
-        }
-        if (reply) {
-            if (frame.payload_size < 20u) {
-                free_frame(&frame);
-                --call_depth;
-                return false;
-            }
-            uint32_t status = load_u32(frame.payload);
-            uint64_t message_size = load_u64(frame.payload + 12u);
-            size_t offset = 20u;
-            if (message_size > frame.payload_size - offset) {
-                free_frame(&frame);
-                --call_depth;
-                return false;
-            }
-            offset += (size_t)message_size;
-            bool ok = status == 0u && frame.payload_size - offset == 5u + QA_HOOK_STATE_BYTES;
-            if (ok) {
-                *action = load_u32(frame.payload + offset);
-                *replace_state = frame.payload[offset + 4u] != 0;
-                ok = *action <= 3u && decode_state(frame.payload + offset + 5u,
-                                                   frame.payload_size - offset - 5u, replacement);
-            }
-            free_frame(&frame);
-            --call_depth;
-            return ok;
-        }
-        bool serviced = request && service_memory_request(&frame);
-        free_frame(&frame);
-        if (!serviced) {
-            --call_depth;
-            return false;
-        }
-    }
-}
-
 static void state_from_context(const dr_mcontext_t *context, hook_state *state) {
     state->registers[0] = context->xax;
     state->registers[1] = context->xcx;
@@ -382,52 +290,7 @@ static void state_to_context(const hook_state *state, dr_mcontext_t *context) {
     context->xflags = (reg_t)state->flags;
 }
 
-static void region_clean_call(ptr_uint_t encoded_id, ptr_uint_t encoded_phase) {
-    byte fp_raw[DR_FPSTATE_BUF_SIZE + DR_FPSTATE_ALIGN];
-    byte *fp_state = (byte *)(((ptr_uint_t)fp_raw + DR_FPSTATE_ALIGN - 1u) &
-                              ~((ptr_uint_t)DR_FPSTATE_ALIGN - 1u));
-    if (!proc_save_fpstate(fp_state))
-        dr_abort();
-    uint32_t id = (uint32_t)encoded_id;
-    uint32_t phase = (uint32_t)encoded_phase;
-    if (!module_base || id >= region_count || phase > 1u)
-        dr_abort();
-    void *drcontext = dr_get_current_drcontext();
-    if (dr_get_thread_id(drcontext) != owner_thread)
-        dr_abort();
-    dr_mcontext_t context = {.size = sizeof(context), .flags = DR_MC_ALL};
-    if (!dr_get_mcontext(drcontext, &context))
-        dr_abort();
-    hook_state before = {0}, replacement = {0};
-    state_from_context(&context, &before);
-    before.instruction =
-        (uint64_t)(ptr_uint_t)(module_base + (phase == 0u ? regions[id].entry : regions[id].join));
-    uint32_t action;
-    bool replace;
-    if (!region_request(id, phase, &before, &action, &replace, &replacement))
-        dr_abort();
-    if (replace)
-        state_to_context(&replacement, &context);
-    app_pc redirect = NULL;
-    if (action == 1u && phase == 0u)
-        redirect = module_base + regions[id].join;
-    else if (action == 2u && regions[id].has_frame)
-        redirect = module_base + regions[id].frame_exit;
-    else if (action == 3u)
-        dr_abort();
-    else if (action != 0u)
-        dr_abort();
-    if (redirect) {
-        context.xip = redirect;
-        proc_restore_fpstate(fp_state);
-        if (!dr_redirect_execution(&context))
-            dr_abort();
-    } else {
-        if (replace && !dr_set_mcontext(drcontext, &context))
-            dr_abort();
-        proc_restore_fpstate(fp_state);
-    }
-}
+#include "instrument_region.inc"
 
 #include "instrument_observe.inc"
 
@@ -443,6 +306,11 @@ static dr_emit_flags_t instrument_instruction(void *drcontext, void *tag, instrl
     if (!fetch && !operands)
         return DR_EMIT_DEFAULT;
     app_pc pc = instr_get_app_pc(fetch ? fetch : operands);
+    if (pc == region_resume_entry) {
+        dr_insert_clean_call_ex(drcontext, list, instruction, (void *)region_resume_clean,
+                                DR_CLEANCALL_READS_APP_CONTEXT | DR_CLEANCALL_WRITES_APP_CONTEXT, 0);
+        return DR_EMIT_DEFAULT;
+    }
     hook_instruction *write = operands && instr_writes_memory(operands)
                                   ? observer_instruction(drcontext, operands, pc) : NULL;
     dr_insert_clean_call_ex(drcontext, list, instruction, (void *)observer_instruction_clean,
@@ -506,6 +374,19 @@ static void module_load(void *drcontext, const module_data_t *module, bool loade
 #endif
         if (candidate) {
             control_entry = candidate;
+            region_service_entry = (app_pc)dr_get_proc_address(module->handle,
+                                                               "qa_native_runner_region_service");
+            region_resume_entry = (app_pc)dr_get_proc_address(module->handle,
+                                                              "qa_native_runner_region_resume");
+#if defined(WINDOWS) && !defined(X64)
+            if (!region_service_entry)
+                region_service_entry = (app_pc)dr_get_proc_address(module->handle,
+                                                                  "_qa_native_runner_region_service");
+            if (!region_resume_entry)
+                region_resume_entry = (app_pc)dr_get_proc_address(module->handle,
+                                                                 "_qa_native_runner_region_resume");
+#endif
+            if (!region_service_entry || !region_resume_entry) dr_abort();
             owner_thread = dr_get_thread_id(drcontext);
         }
     }
@@ -536,8 +417,10 @@ static void module_load(void *drcontext, const module_data_t *module, bool loade
 
 static void module_unload(void *drcontext, const module_data_t *module) {
     (void)drcontext;
-    if (module->start == module_base)
+    if (module->start == module_base) {
+        if (region_frames || region_bypass_pc) dr_abort();
         observer_module_unload();
+    }
 }
 
 static bool read_descriptor(const char *path) {
@@ -606,6 +489,7 @@ static void client_exit(void) {
     drmgr_unregister_exception_event(observer_exception);
 #endif
     observer_destroy();
+    region_frames_destroy();
     drmgr_unregister_bb_app2app_event(observer_app2app);
     drmgr_unregister_bb_insertion_event(instrument_instruction);
     drmgr_unregister_module_load_event(module_load);

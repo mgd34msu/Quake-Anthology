@@ -127,7 +127,7 @@ struct qa_native_instance {
     qa_native_entry_observer *entry_observers;
     qa_native_write_observer *write_observers;
     uint64_t next_observer_id;
-    uint32_t active_depth, callback_depth, region_depth, write_depth;
+    uint32_t active_depth, callback_depth, region_depth, region_service_depth, write_depth;
     bool checkpointing, destroying, unloading, pending_shutdown, failed;
     qa_error failure;
 };

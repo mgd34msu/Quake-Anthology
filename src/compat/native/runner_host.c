@@ -736,7 +736,10 @@ static bool handle_region(qa_native_instance *instance, const native_wire_frame 
         event.region = instance->regions[id].definition;
         event.phase = (qa_native_region_phase)phase;
         ++instance->region_depth;
+        bool application_service = frame->opcode == NATIVE_WIRE_REGION_APP;
+        if (application_service) ++instance->region_service_depth;
         ok = native_runner_region_event(instance, &event, &decision, &callback_error);
+        if (application_service) --instance->region_service_depth;
         --instance->region_depth;
     }
     native_wire_buffer body = {0};
@@ -856,6 +859,7 @@ static bool handle_callback(qa_native_instance *instance, const native_wire_fram
     case NATIVE_WIRE_HOST_RESTORE:
         return handle_host_restore(instance, frame, &reader, error);
     case NATIVE_WIRE_REGION:
+    case NATIVE_WIRE_REGION_APP:
         return handle_region(instance, frame, &reader, error);
     case NATIVE_WIRE_OBSERVER_ENTRY:
         return handle_observer_entry(instance, frame, &reader, error);
