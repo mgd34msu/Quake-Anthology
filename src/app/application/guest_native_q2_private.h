@@ -19,6 +19,7 @@ typedef struct application_native_q2_client {
 } application_native_q2_client;
 
 struct application_native_q2 {
+    struct application_native_q2_baseline *baseline;
     application_provider *provider;
     qa_world *world;
     qa_native_profile profile;

@@ -66,6 +66,8 @@ bool application_native_q2_restore_finish(application_provider *provider, qa_err
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     if (!engine || !application_native_q2_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 private restore finish requires an idle source owner");
+    if (engine->profile != QA_NATIVE_Q2_CGAME_API2023 && engine->map_ready &&
+        !qa_native_host_world_actor_bind(provider->state.native.host, engine->world_actor, error)) return false;
     if (!application_native_q2_attack_activate(engine, error)) return false;
     if (!application_native_q2_combat_activate(engine, error)) return false;
     if (!application_native_q2_combat_finish(provider, error)) return false;

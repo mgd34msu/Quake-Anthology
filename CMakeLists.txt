@@ -607,12 +607,14 @@ add_library(qa_media STATIC
     src/media/cinematic_scene.c
     src/media/cinematic_presentation_save.c
     src/media/library.c
+    src/media/library_save.c
     src/media/material_movies.c)
 target_link_libraries(qa_media PUBLIC qa_content qa_audio qa_scene qa_persistence
     PRIVATE PkgConfig::OGG PkgConfig::THEORADEC)
 
 add_library(qa_scene STATIC
     src/render/scene/frame.c
+    src/render/scene/frame_save.c
     src/render/scene/math.c
     src/render/scene/resources.c
     src/render/scene/geometry_save.c
@@ -790,6 +792,7 @@ add_library(qa_native_host STATIC
     src/compat/native_host/message.c
     src/compat/native_host/movement.c
     src/compat/native_host/player.c
+    src/compat/native_host/reconstruction.c
     src/compat/native_host/q2.c
     src/compat/native_host/q3.c
     src/compat/native_host/world.c)
@@ -869,6 +872,7 @@ add_library(qa_application STATIC
     src/app/application/guest_input_profile.c
     src/app/application/guest_native_q2.c
     src/app/application/guest_native_q2_attack.c
+    src/app/application/guest_native_q2_baseline.c
     src/app/application/guest_native_q2_calls.c
     src/app/application/guest_native_q2_clients.c
     src/app/application/guest_native_q2_combat.c

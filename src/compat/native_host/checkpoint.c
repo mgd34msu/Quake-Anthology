@@ -71,7 +71,7 @@ static void free_saved_cvars(saved_cvar *cvars, size_t count)
 
 static bool capture_checkpoint(qa_native_host *host, qa_buffer *out, qa_error *error)
 {
-    if (!host || !host->instance || !out || host->destroying || host->restoring ||
+    if (!host || !host->instance || !out || host->destroying || host->restoring || host->reconstruction ||
         host->message_failed)
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "idle native host and checkpoint output are required");
@@ -226,7 +226,7 @@ static bool span(const uint8_t *cursor, const uint8_t *end, size_t size)
 
 static bool restore_checkpoint(qa_native_host *host, qa_bytes state, qa_error *error)
 {
-    if (!host || !host->instance || host->destroying || host->restoring ||
+    if (!host || !host->instance || host->destroying || host->restoring || host->reconstruction ||
         !state.data || state.size < HOST_CHECKPOINT_HEADER)
         return native_host_fail(error, QA_ERROR_ARGUMENT, state.size,
                                 "native host checkpoint is truncated or host is busy");

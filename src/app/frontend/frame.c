@@ -147,6 +147,9 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
     if (!frontend || frontend->stepping || elapsed_ns > UINT64_MAX - frontend->time_ns)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid frontend frame duration or reentry");
     frontend->stepping = true;
+    qa_application_travel_view pending;
+    bool retiring_map = qa_application_travel_read(frontend->application, &pending) &&
+        pending.target.kind == QA_TRAVEL_MAP;
     uint64_t adjusted;
     bool ok = frontend_tools_capture_clock(frontend, elapsed_ns, &adjusted, error);
     if (ok && adjusted > UINT64_MAX - frontend->time_ns) ok = frontend_fail(error, QA_ERROR_ARGUMENT, "capture duration overflow");
@@ -164,11 +167,11 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         frontend_tools_sync(frontend, error) && frontend_network_pump(frontend, error);
     qa_profiler *profiler = qa_tools_profiler(frontend_tools_owner(frontend));
     if (ok && !qa_application_should_stop(frontend->application)) {
-        if (!frontend->options.dedicated) {
+        if (!retiring_map && !frontend->options.dedicated) {
             ok = qa_profiler_push(profiler, "controls", error);
             if (ok) ok = phase_end(profiler, controls(frontend, elapsed_ns, error), error);
         }
-        if (ok && qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING && !frontend_network_remote(frontend)) {
+        if (ok && !retiring_map && qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING && !frontend_network_remote(frontend)) {
             ok = qa_profiler_push(profiler, "application", error);
             if (ok) ok = phase_end(profiler, qa_application_advance(frontend->application, elapsed_ns, error), error);
         }

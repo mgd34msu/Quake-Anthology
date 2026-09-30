@@ -246,7 +246,7 @@ bool qa_native_host_destroy_ready(const qa_native_host *host)
 
 bool qa_native_host_destroy(qa_native_host *host, qa_error *error)
 {
-    if (!qa_native_host_destroy_ready(host))
+    if (!qa_native_host_destroy_ready(host) || host->reconstruction)
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "live native host adapter is required");
     host->destroying = true;

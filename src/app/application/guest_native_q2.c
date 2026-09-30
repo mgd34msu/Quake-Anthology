@@ -5,7 +5,7 @@
 bool application_native_q2_idle(const application_provider *provider)
 {
     const struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
-    return !engine || (!engine->calls && qa_world_idle(engine->world) &&
+    return !engine || (!engine->baseline && !engine->calls && qa_world_idle(engine->world) &&
         (!engine->console || qa_console_idle(engine->console)) &&
         (!provider->state.native.host || qa_native_host_destroy_ready(provider->state.native.host)));
 }

@@ -1,22 +1,8 @@
-#include "cinematic_internal.h"
+#include "library_internal.h"
 #include "qa/media_resource.h"
 
 #include <stdlib.h>
 #include <string.h>
-
-struct qa_cinematic_asset {
-    size_t references;
-    qa_cinematic_source source;
-    qa_resource *source_record;
-    qa_sha256_digest digest;
-    uint32_t width, height;
-    char *name;
-    struct qa_cinematic_asset *next;
-};
-struct qa_media_library {
-    qa_scene_resources *resources;
-    qa_cinematic_asset *assets;
-};
 
 qa_media_library *qa_media_library_create(qa_scene_resources *resources, qa_error *error) {
     if (!resources) {
@@ -89,7 +75,7 @@ void qa_cinematic_asset_dimensions(const qa_cinematic_asset *asset, uint32_t *wi
     *width = asset->width;
     *height = asset->height;
 }
-static bool format(const char *path, qa_cinematic_format *out, qa_error *error) {
+bool qa_media_asset_format(const char *path, qa_cinematic_format *out, qa_error *error) {
     const char *extension = strrchr(path, '.');
     if (!extension || strlen(extension) != 4)
         return cinematic_fail(error, "Movie requires a CIN, RoQ, OGV, or PCX extension");
@@ -129,7 +115,7 @@ static bool roq_info(qa_cinematic_asset *asset, qa_error *error) {
     qa_roq_decoder_destroy(decoder);
     return ok;
 }
-static bool load(qa_media_library *library, qa_resource *resource, qa_cinematic_asset *asset,
+bool qa_media_asset_load(qa_media_library *library, qa_resource *resource, qa_cinematic_asset *asset,
                  qa_error *error) {
     qa_media_input *input;
     if (!qa_media_input_resource(resource, &input, error))
@@ -187,7 +173,7 @@ bool qa_media_library_load(qa_media_library *library, qa_vfs *view, const char *
     if (!library || !view || !path || !out)
         return cinematic_fail(error, "Invalid media library request");
     qa_cinematic_format kind;
-    if (!format(path, &kind, error))
+    if (!qa_media_asset_format(path, &kind, error))
         return false;
     qa_resource *resource;
     if (!qa_vfs_acquire(view, path, &resource, NULL, error))
@@ -220,7 +206,7 @@ bool qa_media_library_load(qa_media_library *library, qa_vfs *view, const char *
     }
     memcpy(asset->name, path, length + 1);
     asset->source.name = asset->name;
-    bool ok = load(library, resource, asset, error);
+    bool ok = qa_media_asset_load(library, resource, asset, error);
     if (ok) { qa_resource_retain(resource); asset->source_record = resource; }
     qa_resource_release(resource);
     if (!ok) {

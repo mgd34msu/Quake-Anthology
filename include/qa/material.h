@@ -9,6 +9,8 @@ qa_material_order *qa_material_order_create(qa_error *);
 void qa_material_order_destroy(qa_material_order *);
 bool qa_material_order_prepare(qa_material_order *, qa_error *);
 bool qa_material_order_rank(const qa_material_order *, const qa_material *, uint32_t *, qa_error *);
+/* Physical membership, including an unpublished record; never prepares sort. */
+bool qa_material_order_has_record(const qa_material_order *, const qa_material *);
 /* Published renderer-wide registrations; array lives in scratch, materials
  * borrow until library/order mutation. Observation does not prepare queues. */
 bool qa_material_order_snapshot(const qa_material_order *, bool sorted, qa_arena *,

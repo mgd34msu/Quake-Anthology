@@ -334,6 +334,18 @@ bool qa_native_host_q3_bot_frame(qa_native_host *, int32_t level_time, qa_error 
 /* Explicit host continuation used by qa_native_options checkpoint callbacks. */
 bool qa_native_host_checkpoint(qa_native_host *, qa_buffer *, qa_error *);
 bool qa_native_host_restore(qa_native_host *, qa_bytes, qa_error *);
+typedef struct qa_native_host_reconstruction qa_native_host_reconstruction;
+/* Borrow a complete, distinct baseline host's real services while executing
+ * original source map reconstruction. Both owners must outlive the phase.
+ * End clears temporary source-slot identities and restores the original
+ * service graph. A rejected end retains the phase and its borrowed owner. */
+bool qa_native_host_reconstruction_begin(qa_native_host *, qa_native_host *,
+    qa_native_host_reconstruction **, qa_error *);
+bool qa_native_host_reconstruction_end(qa_native_host_reconstruction *, qa_error *);
+/* After source Shutdown, destroy consumes the target once its normal destroy
+ * admission passes, including backend destruction faults. Rejection retains
+ * the phase. The baseline host itself is never destroyed by this operation. */
+bool qa_native_host_reconstruction_destroy(qa_native_host_reconstruction *, bool *consumed, qa_error *);
 
 /* Application-side content adapter. Portable helpers link qa_native_module_load
  * and do not need the VFS implementation. */

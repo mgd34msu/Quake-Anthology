@@ -201,7 +201,7 @@ bool native_host_actor_for_address(qa_native_host *host, qa_native_address addre
     if (!qa_session_allocate(host->world.session, host->world.owner, host->world.definition,
                              true, slot, &actor, error))
         return false;
-    if (host->world.bind_actor &&
+    if (host->world.bind_actor && !host->reconstruction &&
         !host->world.bind_actor(host->world.binding_context, host, slot, actor, error)) {
         qa_error ignored = {0};
         qa_session_release(host->world.session, actor, &ignored);

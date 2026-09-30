@@ -94,6 +94,7 @@ struct qa_native_host {
     size_t maximum_string_bytes;
     unsigned callback_depth, filter_depth;
     bool restoring, destroying;
+    qa_native_host_reconstruction *reconstruction;
 };
 
 enum {
