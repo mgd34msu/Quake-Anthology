@@ -145,7 +145,8 @@ bool qa_q3_checkpoint_capture(const qa_q3_game *game, qa_q3_checkpoint *out, qa_
     *out = saved;
     return true;
 }
-bool qa_q3_checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved, qa_error *error) {
+static bool checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved,
+                                bool reconnect, qa_error *error) {
     if (!game || !saved || game->observation_depth || !qa_session_safe(game->options.services.session) ||
         !qa_world_idle(game->options.services.world) ||
         !qa_combat_idle(game->options.services.combat) || saved->version != 3 ||
@@ -192,10 +193,12 @@ bool qa_q3_checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved, q
              !qa_actor_id_equal(actors[body.slot].actor, body)))
             goto invalid;
     }
-    if(!q3_item_observations_prepare(game,actors,&observations,error)) goto invalid;
+    if(reconnect && !q3_item_observations_prepare(game,actors,&observations,error)) goto invalid;
     if (!qa_q3_set_rules(game, &saved->rules, error))
         goto invalid;
-    q3_item_observations_commit(game,observations);observations=NULL;
+    if (reconnect) {
+        q3_item_observations_commit(game,observations);observations=NULL;
+    }
     free(game->actors);
     free(game->kamikaze_cooldowns);
     game->actors = actors;
@@ -218,6 +221,13 @@ invalid:
     free(actors);
     free(cooldowns);
     return q3_fail(error, "invalid Q3 checkpoint state or references");
+}
+bool qa_q3_checkpoint_restore(qa_q3_game *game, const qa_q3_checkpoint *saved, qa_error *error) {
+    return checkpoint_restore(game, saved, true, error);
+}
+bool q3_checkpoint_restore_source(qa_q3_game *game, const qa_q3_checkpoint *saved,
+                                  qa_error *error) {
+    return checkpoint_restore(game, saved, false, error);
 }
 bool qa_q3_projectile_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_projectile_state *out) {
     const q3_actor *entry = q3_actor_const(game, actor);

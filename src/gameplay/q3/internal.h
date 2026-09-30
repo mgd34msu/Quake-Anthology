@@ -44,6 +44,7 @@ typedef qa_q3_item_state q3_item_state;
 typedef qa_q3_actor_state q3_actor;
 typedef qa_q3_kamikaze_cooldown q3_kamikaze_cooldown;
 typedef struct q3_map_runtime q3_map_runtime;
+bool q3_checkpoint_restore_source(qa_q3_game *, const qa_q3_checkpoint *, qa_error *);
 typedef struct q3_inventory_owner {
     qa_q3_game *game;
     qa_actor_id actor;

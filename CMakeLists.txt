@@ -300,7 +300,7 @@ add_library(qa_game_q1 STATIC
     src/gameplay/q1/teleport.c
     src/gameplay/q1/weapons.c
     src/gameplay/q1/wrath.c)
-target_link_libraries(qa_game_q1 PUBLIC qa_builtin qa_campaign)
+target_link_libraries(qa_game_q1 PUBLIC qa_builtin qa_campaign qa_persistence)
 
 add_library(qa_game_q2 STATIC
     src/gameplay/q2/console.c
@@ -393,11 +393,13 @@ target_link_libraries(qa_game_q2 PUBLIC qa_builtin qa_campaign)
 
 add_library(qa_game_q3 STATIC
     src/gameplay/q3/checkpoint.c
+    src/gameplay/q3/console.c
     src/gameplay/q3/death.c
     src/gameplay/q3/feedback.c
     src/gameplay/q3/game.c
     src/gameplay/q3/holdables.c
     src/gameplay/q3/items.c
+    src/gameplay/q3/inventory.c
     src/gameplay/q3/map/checkpoint.c
     src/gameplay/q3/map/items.c
     src/gameplay/q3/map/misc.c
@@ -410,9 +412,10 @@ add_library(qa_game_q3 STATIC
     src/gameplay/q3/movers.c
     src/gameplay/q3/player.c
     src/gameplay/q3/rankings.c
+    src/gameplay/q3/save.c
     src/gameplay/q3/view.c
     src/gameplay/q3/weapons.c)
-target_link_libraries(qa_game_q3 PUBLIC qa_builtin)
+target_link_libraries(qa_game_q3 PUBLIC qa_builtin qa_persistence)
 
 add_library(qa_player_services STATIC
     src/player_services/arena_progress.c
@@ -878,6 +881,7 @@ add_library(qa_persistence STATIC
     src/persistence/image.c
     src/persistence/recovery.c
     src/persistence/session.c
+    src/persistence/source_io.c
     src/persistence/strings.c
     src/persistence/world.c)
 target_link_libraries(qa_persistence PUBLIC qa_session qa_content qa_gameplay qa_movement qa_network)

@@ -48,6 +48,8 @@ bool q3_map_allocate(qa_q3_game *, qa_q3_map_actor_state *, const qa_actor_colli
 bool q3_map_allocate_generated(qa_q3_game *, qa_q3_map_actor_state *,
                                const qa_actor_collision *, bool link, qa_error *);
 bool q3_map_bind_target(qa_q3_game *, qa_q3_map_actor_state *, qa_error *);
+bool q3_map_target_binding(qa_q3_game *, qa_actor_id, qa_target_binding *);
+bool q3_map_checkpoint_restore_source(qa_q3_game *, const qa_q3_map_checkpoint *, qa_error *);
 bool q3_map_register_item(qa_q3_game *, uint32_t, qa_error *);
 bool q3_map_use_targets(qa_q3_game *, qa_q3_map_actor_state *, qa_actor_id, qa_error *);
 bool q3_map_schedule(qa_q3_game *, qa_q3_map_actor_state *, int32_t delay_ms,

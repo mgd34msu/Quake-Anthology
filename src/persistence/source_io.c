@@ -1,5 +1,6 @@
 #include "qa/source_save.h"
 #include "qa/binary.h"
+#include "qa/persistence_fields.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -199,4 +200,105 @@ bool qa_source_save_actor(qa_source_save_io *io, qa_actor_id *value)
         } else if (!qa_actors_reference_saved(qa_session_actors(io->session), saved, true, value, io->error)) { io->failed = true; return false; }
     }
     return true;
+}
+
+bool qa_persistence_physics(qa_source_save_io *io, qa_physics_properties *value)
+{
+    if (!io || !value) return io_fail(io, QA_ERROR_ARGUMENT, "missing physics continuation field");
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    uint32_t family = reading ? 0 : (uint32_t)value->family;
+    uint32_t motion = reading ? 0 : (uint32_t)value->motion;
+    uint32_t solid = reading ? 0 : (uint32_t)value->solid;
+    if (!qa_source_save_u32(io, &family) || !qa_source_save_u32(io, &motion) ||
+        !qa_source_save_u32(io, &solid)) return false;
+    if (family < QA_COLLISION_Q1 || family > QA_COLLISION_Q3 ||
+        motion > QA_PHYSICS_STEP || solid > QA_PHYSICS_CORPSE)
+        return io_fail(io, QA_ERROR_FORMAT, "invalid physics continuation enum");
+    if (reading) {
+        value->family = (qa_collision_family)family; value->motion = (qa_physics_motion)motion;
+        value->solid = (qa_physics_solid)solid;
+    }
+    return qa_source_save_bool(io, &value->q2_rerelease) &&
+        qa_source_save_u32(io, &value->flags) && qa_source_save_u32(io, &value->clip_mask) &&
+        qa_source_save_vec3(io, &value->angular_velocity) && qa_source_save_vec3(io, &value->gravity_direction) &&
+        qa_source_save_f32(io, &value->gravity_scale) && qa_source_save_f32(io, &value->delta_yaw) &&
+        qa_source_save_f32(io, &value->ideal_yaw) && qa_source_save_f32(io, &value->yaw_speed) &&
+        qa_source_save_i32(io, &value->water_level) && qa_source_save_i32(io, &value->water_type) &&
+        qa_source_save_actor(io, &value->enemy) && qa_source_save_actor(io, &value->goal) &&
+        qa_source_save_i64(io, &value->local_time_ns) && qa_source_save_i64(io, &value->next_think_ns);
+}
+
+bool qa_persistence_collision(qa_source_save_io *io, qa_actor_collision *value)
+{
+    if (!io || !value) return io_fail(io, QA_ERROR_ARGUMENT, "missing collision continuation field");
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    uint32_t family = reading ? 0 : (uint32_t)value->family;
+    uint32_t shape = reading ? 0 : (uint32_t)value->shape;
+    uint32_t role = reading ? 0 : (uint32_t)value->role;
+    if (!qa_source_save_u32(io, &family) || !qa_source_save_u32(io, &shape) ||
+        !qa_source_save_u32(io, &role)) return false;
+    if (family < QA_COLLISION_Q1 || family > QA_COLLISION_Q3 ||
+        shape > QA_SHAPE_CAPSULE || role > QA_COLLISION_BOTH)
+        return io_fail(io, QA_ERROR_FORMAT, "invalid collision continuation enum");
+    if (reading) {
+        value->family = (qa_collision_family)family; value->shape = (qa_shape_kind)shape;
+        value->role = (qa_collision_role)role;
+    }
+    return qa_source_save_bool(io, &value->inline_model) && qa_source_save_u32(io, &value->model) &&
+        qa_source_save_i32(io, &value->contents) && qa_source_save_actor(io, &value->owner) &&
+        qa_source_save_bool(io, &value->monster) && qa_source_save_bool(io, &value->dead_monster) &&
+        qa_source_save_bool(io, &value->q1_corpse) && qa_source_save_bool(io, &value->has_q3_owner) &&
+        qa_source_save_i32(io, &value->q3_entity_number) && qa_source_save_i32(io, &value->q3_owner_number);
+}
+
+static bool persistence_cause(qa_source_save_io *io, qa_damage_cause *value)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    uint32_t kind = reading ? 0 : (uint32_t)value->kind;
+    if (!qa_source_save_u32(io, &kind)) return false;
+    if (kind > QA_CAUSE_ENVIRONMENT) return io_fail(io, QA_ERROR_FORMAT, "invalid damage cause kind");
+    if (reading) { *value = (qa_damage_cause){0}; value->kind = (qa_cause_kind)kind; }
+    switch (value->kind) {
+    case QA_CAUSE_Q1: {
+        uint32_t armor = reading ? 0 : (uint32_t)value->source.q1.armor;
+        if (!qa_source_save_u32(io, &value->source.q1.death_type) || !qa_source_save_u32(io, &armor)) return false;
+        if (armor > QA_Q1_ARMOR_HALF) return io_fail(io, QA_ERROR_FORMAT, "invalid Q1 damage armor policy");
+        if (reading) value->source.q1.armor = (qa_q1_armor_effect)armor;
+        return true;
+    }
+    case QA_CAUSE_Q2: {
+        uint32_t edition = reading ? 0 : (uint32_t)value->source.q2.native;
+        if (!qa_source_save_i32(io, &value->source.q2.means_of_death) ||
+            !qa_source_save_u32(io, &value->source.q2.flags) || !qa_source_save_u32(io, &edition)) return false;
+        if (edition > QA_Q2_CAUSE_RERELEASE) return io_fail(io, QA_ERROR_FORMAT, "invalid Q2 damage edition");
+        if (reading) value->source.q2.native = (qa_q2_native_edition)edition;
+        return qa_source_save_i32(io, &value->source.q2.native_value) &&
+            qa_source_save_u32(io, &value->source.q2.classic_product) &&
+            qa_source_save_bool(io, &value->source.q2.friendly_fire) &&
+            qa_source_save_bool(io, &value->source.q2.no_point_loss);
+    }
+    case QA_CAUSE_Q3:
+        return qa_source_save_i32(io, &value->source.q3.means_of_death) &&
+            qa_source_save_u32(io, &value->source.q3.flags);
+    case QA_CAUSE_ENVIRONMENT: {
+        uint32_t hazard = reading ? 0 : (uint32_t)value->source.hazard;
+        if (!qa_source_save_u32(io, &hazard)) return false;
+        if (hazard > QA_HAZARD_TRIGGER) return io_fail(io, QA_ERROR_FORMAT, "invalid environment damage cause");
+        if (reading) value->source.hazard = (qa_hazard)hazard;
+        return true;
+    }
+    }
+    return io_fail(io, QA_ERROR_FORMAT, "invalid damage cause");
+}
+
+bool qa_persistence_attack(qa_source_save_io *io, qa_attack *value)
+{
+    if (!io || !value) return io_fail(io, QA_ERROR_ARGUMENT, "missing attack continuation field");
+    return qa_source_save_u64(io, &value->sequence) && qa_source_save_u64(io, &value->time_ns) &&
+        qa_source_save_actor(io, &value->attacker) && qa_source_save_actor(io, &value->inflictor) &&
+        qa_source_save_actor(io, &value->projectile) && qa_source_save_u32(io, &value->weapon) &&
+        qa_source_save_u32(io, &value->weapon_provider) && qa_source_save_u32(io, &value->combat_provider) &&
+        qa_source_save_u32(io, &value->inventory_provider) && qa_source_save_u32(io, &value->movement_provider) &&
+        qa_source_save_bool(io, &value->powerup_applied) && qa_source_save_u32(io, &value->powerup_owner) &&
+        persistence_cause(io, &value->cause);
 }

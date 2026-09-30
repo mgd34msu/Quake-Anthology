@@ -291,8 +291,10 @@ static bool target_field(void *context, qa_actor_id actor, const char *key,
     return false;
 }
 
-bool q3_map_bind_target(qa_q3_game *game, qa_q3_map_actor_state *state, qa_error *error) {
-    qa_target_binding binding = {.actor = state->actor,
+bool q3_map_target_binding(qa_q3_game *game, qa_actor_id actor, qa_target_binding *out) {
+    if (!out || !q3_map_get(game, actor))
+        return false;
+    *out = (qa_target_binding){.actor = actor,
                                  .source = QA_CLOCK_Q3,
                                  .context = game,
                                  .read = target_read,
@@ -300,7 +302,12 @@ bool q3_map_bind_target(qa_q3_game *game, qa_q3_map_actor_state *state, qa_error
                                  .set_targetname = target_set_targetname,
                                  .set_target = target_set_target,
                                  .field = target_field};
-    return qa_targets_bind(game->map->options.targets, &binding, error);
+    return true;
+}
+bool q3_map_bind_target(qa_q3_game *game, qa_q3_map_actor_state *state, qa_error *error) {
+    qa_target_binding binding;
+    return q3_map_target_binding(game, state->actor, &binding) &&
+           qa_targets_bind(game->map->options.targets, &binding, error);
 }
 
 bool q3_map_use_targets(qa_q3_game *game, qa_q3_map_actor_state *state,

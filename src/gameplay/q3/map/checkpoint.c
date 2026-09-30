@@ -237,9 +237,9 @@ bool qa_q3_map_checkpoint_capture(const qa_q3_game *game,
     return true;
 }
 
-bool qa_q3_map_checkpoint_restore(qa_q3_game *game,
-                                  const qa_q3_map_checkpoint *saved,
-                                  qa_error *error) {
+static bool checkpoint_restore(qa_q3_game *game,
+                                const qa_q3_map_checkpoint *saved,
+                                bool reconnect, qa_error *error) {
     if (!game || !game->map || !saved || saved->version != 1 ||
         !item_registry_valid(game, saved->registered_items) ||
         !isfinite(saved->gravity) ||
@@ -263,6 +263,25 @@ bool qa_q3_map_checkpoint_restore(qa_q3_game *game,
             return q3_map_fail(error, "invalid or duplicate Q3 authored checkpoint actor");
         }
         candidate[state.actor.slot] = state;
+    }
+    if (!reconnect) {
+        for (uint32_t i = 0; i < game->map->capacity; ++i) {
+            qa_q3_map_actor_state *state = &candidate[i];
+            if (state->active && state->kind >= QA_Q3_MAP_MOVER_DOOR &&
+                state->kind <= QA_Q3_MAP_MOVER_PENDULUM &&
+                !q3_map_mover_sync_state(game, state, error)) {
+                free(candidate);
+                return false;
+            }
+        }
+        free(game->map->actors);
+        game->map->actors = candidate;
+        game->map->registered_items = saved->registered_items;
+        game->physics.gravity = saved->gravity;
+        game->map->world_spawned = saved->world_spawned;
+        game->map->post_spawned = saved->post_spawned;
+        game->map->locations_linked = saved->locations_linked;
+        return true;
     }
     qa_q3_map_actor_state *prior = game->map->actors;
     uint32_t cleared = 0;
@@ -332,4 +351,12 @@ bool qa_q3_map_checkpoint_restore(qa_q3_game *game,
     game->map->post_spawned = saved->post_spawned;
     game->map->locations_linked = saved->locations_linked;
     return true;
+}
+bool qa_q3_map_checkpoint_restore(qa_q3_game *game,
+                                  const qa_q3_map_checkpoint *saved, qa_error *error) {
+    return checkpoint_restore(game, saved, true, error);
+}
+bool q3_map_checkpoint_restore_source(qa_q3_game *game,
+                                      const qa_q3_map_checkpoint *saved, qa_error *error) {
+    return checkpoint_restore(game, saved, false, error);
 }
