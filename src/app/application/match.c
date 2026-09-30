@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "native_maps.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -114,6 +115,7 @@ static qa_modes_hooks mode_hooks(qa_application *application)
                             .event = mode_event,
                             .emit = application_native_mode_emit,
                             .map_allowed = application_native_mode_map_allowed,
+                            .next_map_allowed = application_native_mode_next_map_allowed,
                             .intent = mode_intent,
                             .combat_provider = mode_combat_provider,
                             .force_death = application_force_death,

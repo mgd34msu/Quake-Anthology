@@ -266,6 +266,7 @@ qa_combat_hooks application_combat_hooks(qa_application *);
 bool application_force_death(void *, const qa_damage_request *, qa_error *);
 bool application_native_cheats_enabled(void *);
 bool application_native_console_motion(void *, qa_actor_id, bool, qa_error *);
+bool application_native_q3_console_print(void *, const char *, qa_error *);
 bool application_native_grant_arsenal(void *, qa_actor_id, bool, bool *, qa_error *);
 bool application_native_give_item(void *, qa_actor_id, size_t, const char *const *,
                                   bool *, qa_error *);
