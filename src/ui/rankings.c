@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "qa/ui_account_save.h"
+#include "qa/source_save.h"
 #include <stdio.h>
 
 struct qa_ui_rankings {
@@ -157,5 +159,54 @@ bool qa_ui_rankings_destroy(qa_ui_rankings *menu, double time, qa_error *error) 
     if (menu->busy || menu->ui->handling) return ui_fail(error, "ranking account callback is active");
     if (!qa_ui_unregister(menu->ui, menu->menu, time, error)) return false;
     credentials_clear(menu); free(menu);
+    return true;
+}
+static bool checkpoint_fields(qa_source_save_io *io, qa_ui_rankings *saved,
+                               const qa_ui_rankings *qualified) {
+    uint8_t magic[4] = {'Q','R','U','I'};
+    uint32_t schema = 1, seat = qualified->ui->options.seat;
+    uint64_t menu = qualified->menu;
+    if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QRUI", sizeof(magic)) ||
+        !qa_source_save_u32(io, &schema) || schema != 1 ||
+        !qa_source_save_u32(io, &seat) || seat != qualified->ui->options.seat ||
+        !qa_source_save_u64(io, &menu) || menu != qualified->menu ||
+        !qa_source_save_i32(io, &saved->slot) || saved->slot < -1 ||
+        !qa_source_save_bool(io, &saved->create)) return false;
+    char *strings[] = {saved->username, saved->password, saved->email, saved->status, saved->display};
+    const size_t sizes[] = {sizeof(saved->username), sizeof(saved->password), sizeof(saved->email),
+        sizeof(saved->status), sizeof(saved->display)};
+    for (size_t i = 0; i < sizeof(sizes) / sizeof(*sizes); ++i)
+        if (!qa_source_save_bytes(io, strings[i], sizes[i]) || !memchr(strings[i], 0, sizes[i])) return false;
+    return true;
+}
+bool qa_ui_rankings_checkpoint(const qa_ui_rankings *menu, qa_buffer *out, qa_error *error) {
+    if (!menu || !out || out->data || out->size || menu->busy || menu->ui->handling || menu->ui->drawing)
+        return ui_fail(error, "ranking menu capture requires idle actual owners and empty output");
+    qa_ui_rankings saved = *menu;
+    qa_source_save_io io = {0};
+    bool success = qa_source_save_writer(&io, NULL, error) && checkpoint_fields(&io, &saved, menu) &&
+        qa_source_save_finish(&io, out);
+    qa_source_save_dispose(&io);
+    credentials_clear(&saved);
+    if (!success && error && error->code == QA_OK)
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "invalid ranking menu continuation");
+    return success;
+}
+bool qa_ui_rankings_restore(qa_ui_rankings *menu, qa_bytes bytes, qa_error *error) {
+    if (!menu || menu->busy || menu->ui->handling || menu->ui->drawing)
+        return ui_fail(error, "ranking menu restore requires idle actual owners");
+    qa_ui_rankings saved = {.ui = menu->ui, .application = menu->application, .menu = menu->menu};
+    qa_source_save_io io = {0};
+    bool success = qa_source_save_reader(&io, NULL, bytes, error) && checkpoint_fields(&io, &saved, menu) &&
+        qa_source_save_finish(&io, NULL);
+    qa_source_save_dispose(&io);
+    if (!success) {
+        credentials_clear(&saved);
+        if (error && error->code == QA_OK) qa_error_set(error, QA_ERROR_FORMAT, 0, "invalid ranking menu continuation");
+        return false;
+    }
+    qa_ui_rankings displaced = *menu;
+    *menu = saved;
+    credentials_clear(&displaced); credentials_clear(&saved);
     return true;
 }
