@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "save_private.h"
+#include "audio_inventory.h"
 #include <stdio.h>
 
 enum { FRONTEND_STYLES = 256 };
@@ -81,6 +82,49 @@ struct frontend_event_state {
     qa_actor_owner last_step_owner;
     frontend_event_view views[QA_INPUT_LOCAL_SEATS];
 };
+size_t frontend_event_audio_owner_count(const qa_frontend *frontend)
+{
+    size_t count = 0;
+    if (frontend && frontend->events)
+        for (const frontend_event_resources *entry = frontend->events->resources; entry; entry = entry->next) ++count;
+    return count;
+}
+bool frontend_event_audio_owner_read(const qa_frontend *frontend, size_t index,
+    frontend_event_audio_owner_view *out)
+{
+    if (!frontend || !frontend->application || frontend->stepping || !out) return false;
+    const frontend_event_resources *entry = frontend->events ? frontend->events->resources : NULL;
+    while (entry && index--) entry = entry->next;
+    if (!entry || !entry->files || !entry->images) return false;
+    *out = (frontend_event_audio_owner_view){entry->owner, entry->family, entry->files, entry->sounds};
+    return true;
+}
+static bool append_asset(qa_audio_asset ***assets, size_t *count, qa_audio_asset *asset, qa_error *error)
+{
+    if (!asset) return true;
+    if (*count == SIZE_MAX / sizeof(**assets)) return frontend_fail(error, QA_ERROR_MEMORY, "Event sound inventory overflows");
+    qa_audio_asset **grown = realloc(*assets, (*count + 1) * sizeof(*grown));
+    if (!grown) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating borrowed event sound inventory");
+    *assets = grown; grown[(*count)++] = asset; return true;
+}
+bool frontend_event_audio_assets_read(const qa_frontend *frontend, qa_audio_asset ***out,
+    size_t *out_count, qa_error *error)
+{
+    if (!frontend || !frontend->application || frontend->stepping || !out || *out || !out_count)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Event sound inventory requires an idle frontend and empty output");
+    qa_audio_asset **assets = NULL; size_t count = 0; bool ok = true;
+    const frontend_event_state *state = frontend->events;
+    for (const frontend_event_resources *entry = state ? state->resources : NULL; ok && entry; entry = entry->next)
+        for (const frontend_footsteps *steps = entry->footsteps; ok && steps; steps = steps->next) {
+            if (steps->count > 16) { ok = frontend_fail(error, QA_ERROR_FORMAT, "Footstep holder inventory exceeds its actual slots"); break; }
+            for (uint32_t i = 0; ok && i < steps->count; ++i) ok = append_asset(&assets, &count, steps->assets[i], error);
+        }
+    for (const frontend_retained_sound *sound = state ? state->sounds : NULL; ok && sound; sound = sound->next)
+        ok = append_asset(&assets, &count, sound->loop.sound.asset, error);
+    if (ok && state) ok = append_asset(&assets, &count, state->last_step, error);
+    if (!ok) { free(assets); return false; }
+    *out = assets; *out_count = count; return true;
+}
 static qa_audio_family audio_family(qa_game_family family)
 {
     return family == QA_GAME_Q3 ? QA_AUDIO_Q3 : family == QA_GAME_Q2 ? QA_AUDIO_Q2 : QA_AUDIO_Q1;

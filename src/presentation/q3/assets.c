@@ -98,6 +98,19 @@ void qa_q3_presentation_assets_destroy(qa_q3_presentation_assets *a)
     qa_audio_asset_release(a->options.zero_sound);
     free(a->models); free(a->skins); free(a->sounds); free(a->shaders); free(a->names); free(a);
 }
+bool qa_q3_presentation_audio_assets_read(const qa_q3_presentation_assets *a,
+    qa_audio_asset ***out, size_t *count, qa_error *error)
+{
+    if (!a || a->busy || !out || *out || !count || a->sound_count > a->sound_capacity ||
+        (a->sound_capacity && !a->sounds) || a->sound_count >= SIZE_MAX / sizeof(qa_audio_asset *))
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 sound holder inventory requires an idle registry and empty output");
+    size_t size = a->sound_count + 1;
+    qa_audio_asset **assets = malloc(size * sizeof(*assets));
+    if (!assets) return q3p_fail(error, QA_ERROR_MEMORY, "Allocating borrowed Q3 sound holder inventory");
+    assets[0] = a->options.zero_sound;
+    if (a->sound_count) memcpy(assets + 1, a->sounds, a->sound_count * sizeof(*assets));
+    *out = assets; *count = size; return true;
+}
 bool qa_q3_presentation_materials_rebind_ready(const qa_q3_presentation *p,
     const qa_material_library *current, const qa_material_library *destination, qa_error *error)
 {

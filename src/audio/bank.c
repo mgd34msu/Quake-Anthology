@@ -46,6 +46,9 @@ const char *qa_audio_asset_name(const qa_audio_asset *asset) {
 qa_audio_family qa_audio_asset_family(const qa_audio_asset *asset) {
     return asset != NULL ? asset->family : QA_AUDIO_Q3;
 }
+const qa_vfs *qa_audio_bank_files(const qa_audio_bank *bank) {
+    return bank ? bank->view : NULL;
+}
 
 bool qa_audio_bank_create(qa_vfs *view, qa_audio_bank **out, qa_error *error) {
     if (view == NULL || out == NULL) {

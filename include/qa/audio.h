@@ -85,6 +85,7 @@ typedef struct qa_audio_asset qa_audio_asset;
  * reference; a missing optional asset succeeds with *out == NULL. Calls are
  * serialized; final asset/stream release follows the VFS owner-thread contract. */
 bool qa_audio_bank_create(qa_vfs *view, qa_audio_bank **out, qa_error *error);
+const qa_vfs *qa_audio_bank_files(const qa_audio_bank *bank);
 void qa_audio_bank_destroy(qa_audio_bank *bank);
 void qa_audio_bank_begin(qa_audio_bank *bank);
 void qa_audio_bank_end(qa_audio_bank *bank);

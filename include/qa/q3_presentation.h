@@ -30,6 +30,11 @@ typedef struct qa_q3_presentation_asset_options {
 bool qa_q3_presentation_assets_create(const qa_q3_presentation_asset_options *,
                                        qa_q3_presentation_assets **, qa_error *);
 void qa_q3_presentation_assets_destroy(qa_q3_presentation_assets *);
+/* Actual owned fallback and numeric sound references, in that order. Array
+ * entries borrow assets at the idle cut; NULL entries own no reference. Caller
+ * frees only the returned array. No registration or reference change runs. */
+bool qa_q3_presentation_audio_assets_read(const qa_q3_presentation_assets *,
+    qa_audio_asset ***, size_t *, qa_error *);
 /* Isolated restore replaces the library before source handles are decoded.
  * The existing heap registry remains the installed service context. */
 bool qa_q3_presentation_materials_rebind_ready(const qa_q3_presentation *,
