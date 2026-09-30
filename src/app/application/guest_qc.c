@@ -251,6 +251,9 @@ static bool actor_frame(void *opaque, qa_session *session, qa_actor_id actor,
     if (session != engine->services.session || !qa_session_execution(session, actor, &execution) ||
         execution != engine->provider->owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC actor execution owner differs");
+    for (uint32_t slot = 1; slot <= engine->max_clients; ++slot)
+        if (engine->clients[slot].connected && !engine->clients[slot].spawned &&
+            qa_actor_id_equal(engine->clients[slot].actor, actor)) return true;
     int32_t reference;
     if (!application_qc_reference(engine, actor, &reference, error)) return false;
     const qa_qc_definition *retouch = qa_qc_program_find_global(engine->provider->state.qc.program, "force_retouch");

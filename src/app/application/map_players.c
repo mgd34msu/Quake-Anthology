@@ -1,6 +1,7 @@
 #include "map_players_private.h"
 #include "guest_projection_private.h"
 #include "guest_native_q2_private.h"
+#include "guest_qc_internal.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -1066,10 +1067,12 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                 continued |= carry->guests[k].owner == provider->owner &&
                     qa_sha256_equal(&carry->guests[k].identity, &provider->launch->identity);
             if (provider->kind == APPLICATION_PROVIDER_QC) {
-                if (!application_qc_bind_player(provider, record->client_slot + 1, seat->id, actor,
+                if (!(defer_source_begin ? application_qc_reserve_player : application_qc_bind_player)
+                    (provider, record->client_slot + 1, seat->id, actor,
                                                 seat->name, seat->spectator, !continued,
                                                 provider == character, error))
                     return false;
+                if (defer_source_begin) record->source_begin_pending = true;
             } else if (provider->component.clock.kind == QA_CLOCK_Q3) {
                 char userinfo[1024];
                 snprintf(userinfo, sizeof(userinfo), "\\name\\%.900s\\model\\sarge\\team\\%s",
@@ -1154,6 +1157,7 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         qa_actor_collision collision = {.family = family, .shape = QA_SHAPE_BOX,
             .contents = family == QA_COLLISION_Q3 ? 0x2000000 : family == QA_COLLISION_Q2 ? 0x2000000 : -2,
             .role = QA_COLLISION_SOLID};
+        if (record->source_begin_pending && character->kind == APPLICATION_PROVIDER_QC) found = false;
         if (!qa_world_body_write(application->world, actor, &body, error) ||
             !qa_world_set_collision(application->world, actor,
                                     seat->spectator || !found ? NULL : &collision, error))
@@ -1982,13 +1986,14 @@ bool qa_application_remote_player_begin(qa_application *application, qa_net_clie
     bool ok = true;
     for (size_t i = 0; ok && i < application->provider_count; ++i) {
         application_provider *provider = application->providers[i];
-        if (provider->kind <= APPLICATION_PROVIDER_Q3 ||
-            provider->kind == APPLICATION_PROVIDER_QC) continue;
+        if (provider->kind <= APPLICATION_PROVIDER_Q3) continue;
         bool selected = false;
         for (size_t j = 0; j < sizeof(player_roles) / sizeof(player_roles[0]); ++j)
             selected |= application_provider_for(application, actor, player_roles[j], "") == provider;
         if (selected) {
-            if (provider->kind == APPLICATION_PROVIDER_NATIVE &&
+            if (provider->kind == APPLICATION_PROVIDER_QC)
+                ok = application_qc_begin_player(provider, actor, error);
+            else if (provider->kind == APPLICATION_PROVIDER_NATIVE &&
                 provider->state.native.q2_engine != NULL)
                 ok = application_native_q2_client_begin(provider, record->client_slot + 1, error);
             else if (provider->component.clock.kind == QA_CLOCK_Q3)
@@ -2004,6 +2009,19 @@ bool qa_application_remote_player_begin(qa_application *application, qa_net_clie
             qa_builtin_motion_change change = {.body = body, .view_angles = body.angles,
                                                 .reason = QA_BUILTIN_MOTION_RESET};
             ok = application_control_motion_changed(application, actor, &change, error);
+            if (ok && record->character->kind == APPLICATION_PROVIDER_QC) {
+                qa_builtin_actor_traits source_traits; qa_combat_state traits;
+                ok = application_qc_actor_traits(record->character, actor, &source_traits) &&
+                    qa_combat_read_traits(application->combat, actor, &traits, error);
+                if (ok) {
+                    traits.can_take_damage = !record->spectator && source_traits.damageable_target;
+                    ok = qa_combat_set_traits(application->combat, actor, &traits, error);
+                } else if (error && error->code == QA_OK)
+                    ok = application_fail(error, QA_ERROR_FORMAT, "QC source begin lacks its actual damage traits");
+                if (ok) ok = application_control_player_mode(application, actor,
+                    record->spectator ? QA_MOVEMENT_MODE_NOCLIP : QA_MOVEMENT_MODE_NORMAL,
+                    record->spectator, error) && qa_world_link(application->world, actor, NULL, error);
+            }
         }
     }
     application->operation = APPLICATION_IDLE;

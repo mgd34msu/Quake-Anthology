@@ -81,15 +81,17 @@ static bool parms(struct application_qc_state *engine, application_qc_client *cl
     }
     return true;
 }
-bool application_qc_bind_player(application_provider *provider, uint32_t slot, uint32_t seat,
+static bool bind_player(application_provider *provider, uint32_t slot, uint32_t seat,
                                  qa_actor_id actor, const char *name, bool spectator,
-                                 bool new_player, bool primary_character, qa_error *error)
+                                 bool new_player, bool primary_character, bool reserve, qa_error *error)
 {
     struct application_qc_state *engine = provider->state.qc.engine;
     const struct application_qc_profile *qualified = provider->state.qc.qualified;
     if (engine == NULL || slot == 0 || (!qualified && slot > engine->max_clients) || name == NULL ||
         qa_actors_get(qa_session_actors(engine->services.session), actor) == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT, "Invalid QuakeC client admission");
+    if (reserve && qualified)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "QC component requires its own deferred source admission contract");
     bool source_map_owned = application_provider_for(provider->application, actor, QA_ROLE_ENTITIES, "") == provider;
     if (!application_qc_player_map_ready(provider, primary_character, source_map_owned, error)) return false;
     if (qualified) {
@@ -136,8 +138,10 @@ bool application_qc_bind_player(application_provider *provider, uint32_t slot, u
     int32_t string;
     if (netname == NULL || !application_qc_reference(engine, actor, &reference, error) ||
         !qa_qc_string_allocate(vm, name, &string, error) || !qa_qc_set_entity_int(vm, reference, netname->offset, string, error)) return false;
-    if ((new_player || !client->has_parms) && (!application_qc_named(engine, "SetNewParms", (qa_actor_id){0}, error) || !parms(engine, client, true, error))) return false;
+    if (((!reserve && new_player) || !client->has_parms) &&
+        (!application_qc_named(engine, "SetNewParms", (qa_actor_id){0}, error) || !parms(engine, client, true, error))) return false;
     client->has_parms = true;
+    if (reserve) return true;
     if (!parms(engine, client, false, error) || !(spectator ?
         application_qc_spectator_callback(engine, connect, actor, error) : application_qc_named(engine, connect, actor, error))) return false;
     if (!spectator && !application_qc_named(engine, "PutClientInServer", actor, error)) return false;
@@ -150,6 +154,37 @@ bool application_qc_bind_player(application_provider *provider, uint32_t slot, u
      * admitted from the committed source spawn. */
     application_control_record *control;
     return application_control_ensure(provider->application, actor, body.angles, &control, error);
+}
+bool application_qc_bind_player(application_provider *provider, uint32_t slot, uint32_t seat,
+    qa_actor_id actor, const char *name, bool spectator, bool new_player, bool primary_character, qa_error *error)
+{ return bind_player(provider, slot, seat, actor, name, spectator, new_player, primary_character, false, error); }
+bool application_qc_reserve_player(application_provider *provider, uint32_t slot, uint32_t seat,
+    qa_actor_id actor, const char *name, bool spectator, bool new_player, bool primary_character, qa_error *error)
+{ return bind_player(provider, slot, seat, actor, name, spectator, new_player, primary_character, true, error); }
+bool application_qc_begin_player(application_provider *provider, qa_actor_id actor, qa_error *error)
+{
+    struct application_qc_state *engine = provider && provider->kind == APPLICATION_PROVIDER_QC ? provider->state.qc.engine : NULL;
+    if (!engine || provider->state.qc.qualified ||
+        !qa_qc_idle(provider->state.qc.instance) || !application_qc_input_idle(provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC source begin requires its idle reserved classic client");
+    for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
+        application_qc_client *client = &engine->clients[slot];
+        if (!client->connected || !qa_actor_id_equal(client->actor, actor)) continue;
+        if (client->spawned) return true;
+        if (!client->has_parms || !qa_actors_get(qa_session_actors(engine->services.session), actor))
+            return application_fail(error, QA_ERROR_ARGUMENT, "QC source begin lacks its retained actor or spawn parameters");
+        if (!parms(engine, client, false, error) || !(client->spectator ?
+            application_qc_spectator_callback(engine, "SpectatorConnect", actor, error) :
+            application_qc_named(engine, "ClientConnect", actor, error))) return false;
+        if (!client->spectator && !application_qc_named(engine, "PutClientInServer", actor, error)) return false;
+        if (!qa_actors_get(qa_session_actors(engine->services.session), actor))
+            return application_fail(error, QA_ERROR_NOT_FOUND, "QC source removed its reserved client during begin");
+        client->spawned = true;
+        qa_body_state body; application_control_record *control;
+        return qa_world_body_read(engine->world, actor, &body, error) &&
+            application_control_ensure(provider->application, actor, body.angles, &control, error);
+    }
+    return application_fail(error, QA_ERROR_NOT_FOUND, "QC source begin has no reserved connected client");
 }
 bool application_qc_change_parms(application_provider *provider, qa_error *error)
 {

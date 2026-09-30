@@ -93,5 +93,8 @@ bool application_qc_console_command(application_provider *, qa_actor_id, const c
 bool application_qc_think_binding(application_provider *,qa_actor_id,uint32_t,
                                   qa_think_fn *,void **,qa_error *);
 bool application_qc_input_abort(application_provider *, qa_actor_id, bool, qa_error *);
+bool application_qc_reserve_player(application_provider *, uint32_t slot, uint32_t seat,
+    qa_actor_id, const char *name, bool spectator, bool new_player, bool primary_character, qa_error *);
+bool application_qc_begin_player(application_provider *, qa_actor_id, qa_error *);
 bool application_qc_project_body_store(struct application_qc_state *, qa_qc_instance *, const qa_qc_store_event *, qa_error *);
 #endif
