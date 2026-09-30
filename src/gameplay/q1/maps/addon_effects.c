@@ -29,44 +29,73 @@ static bool effect_float(double value, float *out, qa_error *error) {
 static bool particle_step(qa_q1_game *g, q1_actor *e, qa_error *error) {
     qa_actor_id id = e->id;
     q1_map_kind kind = e->map->kind;
-    float wait = e->wait, delay = e->delay, distance = e->map->distance;
-    qa_vec3 size = e->map->particle_size;
     qa_body_state body;
-    if (!qa_world_body_read(g->services.world, id, &body, error))
-        return false;
-    if (!effect(g, id))
-        return true;
-    qa_vec3 origin = body.origin, direction;
+    qa_vec3 origin, direction;
     int32_t color, count;
     if (kind == Q1_MAP_ADDON_EMBERS || kind == Q1_MAP_ADDON_EMBERS_TALL) {
+        if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
+        e = effect(g, id);
+        if (!e) return true;
+        qa_vec3 velocity = body.velocity, size = e->map->particle_size;
+        if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
+        if (!effect(g, id)) return true;
+        origin = body.origin;
         float up = q1_random(g) * 2 + 2;
         float x = signed_random(g), y = signed_random(g);
-        direction = qa_v3(x * body.velocity.x, y * body.velocity.y, up * body.velocity.z);
-        x = signed_random(g);
-        y = signed_random(g);
-        if (!effect_float((double)origin.x + (double)size.x * x, &origin.x, error) ||
-            !effect_float((double)origin.y + (double)size.y * y, &origin.y, error))
+        float origin_x = signed_random(g), origin_y = signed_random(g);
+        if (!effect_float((double)x * velocity.x, &direction.x, error) ||
+            !effect_float((double)y * velocity.y, &direction.y, error) ||
+            !effect_float((double)up * velocity.z, &direction.z, error)) return false;
+        if (!effect_float((double)origin.x + (double)size.x * origin_x, &origin.x, error) ||
+            !effect_float((double)origin.y + (double)size.y * origin_y, &origin.y, error))
             return false;
         color = 234;
         count = 2;
     } else if (kind == Q1_MAP_ADDON_PARTICLE_TELE) {
-        float x = signed_random(g), y = signed_random(g), z = signed_random(g);
-        direction = qa_vec_normalize(qa_v3(x * 10, y * 10, z * 5));
-        distance = g->options.program == QA_Q1_MG3 ? distance : 64;
-        origin = qa_vec_add(origin, qa_vec_scale(direction, distance));
-        direction = qa_vec_scale(direction, distance * -.125f);
+        double x = (double)signed_random(g) * 10;
+        double y = (double)signed_random(g) * 10;
+        double z = (double)signed_random(g) * 5;
+        float x_squared = (float)(x * x), y_squared = (float)(y * y),
+              z_squared = (float)(z * z);
+        float xy_squared = x_squared + y_squared;
+        float squared = xy_squared + z_squared;
+        float magnitude = (float)sqrt((double)squared);
+        double inverse = magnitude == 0 ? 0 : 1.0 / magnitude;
+        direction = qa_v3((float)(x * inverse), (float)(y * inverse), (float)(z * inverse));
+        float distance = g->options.program == QA_Q1_MG3 ? e->map->distance : 64;
+        if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
+        if (!effect(g, id)) return true;
+        qa_vec3 offset;
+        if (!effect_float((double)direction.x * distance, &offset.x, error) ||
+            !effect_float((double)direction.y * distance, &offset.y, error) ||
+            !effect_float((double)direction.z * distance, &offset.z, error) ||
+            !effect_float((double)body.origin.x + offset.x, &origin.x, error) ||
+            !effect_float((double)body.origin.y + offset.y, &origin.y, error) ||
+            !effect_float((double)body.origin.z + offset.z, &origin.z, error)) return false;
+        double speed = (double)distance * -.125;
+        if (!effect_float((double)direction.x * speed, &direction.x, error) ||
+            !effect_float((double)direction.y * speed, &direction.y, error) ||
+            !effect_float((double)direction.z * speed, &direction.z, error)) return false;
         color = 3;
         count = 3;
     } else {
+        if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
+        if (!effect(g, id)) return true;
+        qa_vec3 velocity = body.velocity;
+        if (!qa_world_body_read(g->services.world, id, &body, error)) return false;
+        if (!effect(g, id)) return true;
+        origin = body.origin;
         float x = signed_random(g), y = signed_random(g);
-        direction = qa_v3(x * body.velocity.x, y * body.velocity.y, body.velocity.z);
+        if (!effect_float((double)x * velocity.x, &direction.x, error) ||
+            !effect_float((double)y * velocity.y, &direction.y, error)) return false;
+        direction.z = velocity.z;
         color = 13;
         count = 2;
     }
     if (!particles(g, id, origin, direction, color, count, error))
         return false;
     e = effect(g, id);
-    return !e || q1_map_schedule(g, e, (double)wait + (double)delay * q1_random(g),
+    return !e || q1_map_schedule(g, e, (double)e->wait + (double)e->delay * q1_random(g),
                                   Q1_MAP_ADDON_PARTICLE_TICK, error);
 }
 static bool shake_step(qa_q1_game *g, q1_actor *e, qa_error *error) {

@@ -1,4 +1,5 @@
 #include "boss_internal.h"
+#include <float.h>
 #include <stdio.h>
 
 bool q1_meat_spray(qa_q1_game *g, q1_actor *owner, qa_vec3 origin, qa_vec3 velocity,
@@ -344,25 +345,6 @@ bool q1_projectile_think(qa_q1_game *g, q1_actor *entity, qa_error *error) {
     return false;
 }
 
-static bool gib_head_motion(qa_q1_game *g, q1_actor *gib, qa_body_state *body, float health,
-                            const char *model, qa_error *error) {
-    float x = 100 * (q1_random(g) * 2 - 1), y = 100 * (q1_random(g) * 2 - 1),
-          z = 200 + 100 * q1_random(g);
-    body->velocity = qa_vec_scale(qa_v3(x, y, z), health > -50 ? 0.7f : health > -200 ? 2 : 10);
-    body->ground = (qa_actor_id){0};
-    gib->physics.motion = QA_PHYSICS_BOUNCE;
-    gib->physics.solid = QA_PHYSICS_NOT_SOLID;
-    gib->frame = 0;
-    gib->physics.angular_velocity = qa_v3(0, (q1_random(g) * 2 - 1) * 600, 0);
-    char path[128];
-    int length = snprintf(path, sizeof(path), "progs/%s.mdl", model);
-    if (length < 0 || (size_t)length >= sizeof(path)) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 gib model name too long");
-        return false;
-    }
-    return q1_model(g, gib, path, error) &&
-           qa_world_body_write(g->services.world, gib->id, body, error) && q1_link(g, gib, error);
-}
 bool q1_gib_at(qa_q1_game *g, qa_actor_id owner, qa_vec3 origin, float health, const char *model,
                qa_error *error) {
     q1_actor *gib;
@@ -425,20 +407,67 @@ bool q1_gib(qa_q1_game *g, q1_actor *source, const char *model, bool head, qa_er
 }
 bool q1_gib_head(qa_q1_game *g, q1_actor *source, const char *model, float health,
                  qa_error *error) {
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, source->id, &body, error))
-        return false;
-    qa_scheduler_cancel(qa_session_scheduler(g->services.session), source->id);
+    qa_actor_id id = source->id;
+    source = q1_entity(g, id);
+    if (!source)
+        return true;
+    qa_scheduler_cancel(qa_session_scheduler(g->services.session), id);
     source->kind = Q1_GIB;
     source->think = Q1_THINK_NONE;
     source->next_think = 0;
+    char path[128];
+    int length = snprintf(path, sizeof(path), "progs/%s.mdl", model);
+    if (length < 0 || (size_t)length >= sizeof(path)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 gib model name too long");
+        return false;
+    }
+    if (!q1_model(g, source, path, error))
+        return false;
+    source->frame = 0;
+    source->physics.motion = QA_PHYSICS_BOUNCE;
     qa_combat_state state;
-    if (!qa_combat_read_traits(g->services.combat, source->id, &state, error))
+    if (!qa_combat_read_traits(g->services.combat, id, &state, error))
         return false;
+    source = q1_entity(g, id);
+    if (!source)
+        return true;
     state.can_take_damage = false;
-    if (!qa_combat_set_traits(g->services.combat, source->id, &state, error))
+    if (!qa_combat_set_traits(g->services.combat, id, &state, error))
         return false;
-    body.origin.z -= 24;
+    source = q1_entity(g, id);
+    if (!source)
+        return true;
+    source->physics.solid = QA_PHYSICS_NOT_SOLID;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, id, &body, error))
+        return false;
+    if (!q1_entity(g, id))
+        return true;
+    qa_vec3 origin = qa_v3(body.origin.x + 0.0f, body.origin.y + 0.0f, 0);
+    double shifted_z = (double)body.origin.z - 24;
+    if (!isfinite(shifted_z) || fabs(shifted_z) >= 0x1.ffffffp127) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 head origin exceeds finite float range");
+        return false;
+    }
+    origin.z = fabs(shifted_z) > FLT_MAX ? -FLT_MAX : (float)shifted_z;
+    double scale = health > -50 ? .7 : health > -200 ? 2 : 10;
+    double x = 100 * ((double)q1_random(g) * 2 - 1);
+    double y = 100 * ((double)q1_random(g) * 2 - 1);
+    double z = 200 + 100 * (double)q1_random(g);
+    qa_vec3 velocity = qa_v3((float)(x * scale), (float)(y * scale), (float)(z * scale));
+    if (!qa_world_body_read(g->services.world, id, &body, error))
+        return false;
+    if (!q1_entity(g, id))
+        return true;
+    body.origin = origin;
+    body.velocity = velocity;
     body.bounds = (qa_bounds){{-16, -16, 0}, {16, 16, 56}};
-    return gib_head_motion(g, source, &body, health, model, error);
+    body.ground = (qa_actor_id){0};
+    if (!qa_world_body_write(g->services.world, id, &body, error))
+        return false;
+    source = q1_entity(g, id);
+    if (!source)
+        return true;
+    source->physics.angular_velocity = qa_v3(0, (float)(((double)q1_random(g) * 2 - 1) * 600), 0);
+    return q1_link(g, source, error);
 }
