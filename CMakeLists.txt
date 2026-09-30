@@ -510,6 +510,7 @@ add_library(qa_bots STATIC
     src/bots/library/core.c
     src/bots/library/genetic.c
     src/bots/library/items.c
+    src/bots/library/assets_save.c
     src/bots/library/structure.c
     src/bots/library/variables.c
     src/bots/library/weapons.c
@@ -541,7 +542,7 @@ add_library(qa_bots STATIC
     src/bots/runtime/setup.c
     src/bots/runtime/variables.c
     src/bots/source.c)
-target_link_libraries(qa_bots PUBLIC qa_builtin qa_navigation qa_script qa_content)
+target_link_libraries(qa_bots PUBLIC qa_builtin qa_navigation qa_script qa_content qa_persistence)
 
 add_library(qa_catalog STATIC
     src/content/catalog/behaviors.c
@@ -587,11 +588,11 @@ add_library(qa_media STATIC
     src/media/roq_playback.c
     src/media/ogg.c
     src/media/ogv.c
+    src/media/save.c
     src/media/cinematic.c
     src/media/cinematic_scene.c
     src/media/library.c
     src/media/material_movies.c)
-target_sources(qa_media PRIVATE src/media/save.c)
 target_link_libraries(qa_media PUBLIC qa_content qa_audio qa_scene qa_persistence
     PRIVATE PkgConfig::OGG PkgConfig::THEORADEC)
 

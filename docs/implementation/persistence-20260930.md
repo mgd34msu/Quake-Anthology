@@ -215,3 +215,19 @@ rows with their actual error; memory or enumeration failure preserves the
 caller's output. A missing directory yields an empty listing. The caller supplies
 the real user save directory. Reserved transition names, child links and invalid
 slot paths are excluded, and results sort by exact contained path.
+
+The navigation byte codec preserves the existing typed owner's map identity,
+generation/world revision, area overrides, blocked edges and admission durations.
+It bounds decoded tables by the candidate graph, consumes the complete stream,
+then uses the owner's atomic node/edge validation and cache invalidation path.
+Application construction must still admit the exact provider/profile graph.
+
+The first bot asset packet explicitly encodes fuzzy-weight topology, names and
+learned values, and each character's skill and active tagged characteristics.
+Private resource strings remain owned asset text and do not change the canonical
+string table. Exact floating bits retain the IEEE results allowed by the actual
+character and weight owners. Decode checks complete extents and topology before
+publishing ordinary reference-counted objects; failure reaches every partial
+string/table allocation. This packet supplies real asset codecs for the later
+runtime handle and private AI owner. It does not claim that the existing
+same-binding bot checkpoint is a portable continuation.
