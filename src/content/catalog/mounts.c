@@ -16,15 +16,20 @@ bool catalog_view(const qa_catalog *c, const qa_mount_id *ids, size_t count,
         const qa_catalog_mount *source = catalog_mount(c, ids[i]);
         qa_mount_id mounted;
         if (!source) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "unknown catalog mount"); goto fail; }
-        if (source->format == QA_ARCHIVE_AUTO) {
-            if (!qa_vfs_mount_directory(view, source->path, QA_ARCHIVE_CASE_INSENSITIVE,
-                source->writable, &mounted, error)) goto fail;
-        } else {
-            if (!qa_vfs_mount_archive(view, source->path, source->format, QA_ARCHIVE_CASE_INSENSITIVE, &mounted, error)) goto fail;
-            if (!qa_sha256_equal(source->digest, qa_vfs_archive_digest(view, mounted))) {
-                qa_error_set(error, QA_ERROR_FORMAT, 0, "package changed since catalog discovery: %s", source->path); goto fail;
-            }
+        qa_vfs_mount_info retained = {0}; bool found = false;
+        for (size_t j = 0; j < qa_vfs_mount_count(c->mounts); ++j)
+            if (qa_vfs_mount_at(c->mounts, j, &retained) && retained.id == ids[i]) { found = true; break; }
+        const char *path = found ? qa_vfs_mount_path(c->mounts, ids[i]) : NULL;
+        if (!path || strcmp(path, source->path) || retained.format != source->format ||
+            retained.is_archive != (source->format != QA_ARCHIVE_AUTO) ||
+            retained.writable != source->writable ||
+            (retained.is_archive && (!retained.digest || !source->digest ||
+                !qa_sha256_equal(retained.digest, source->digest)))) {
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "catalog mount disagrees with retained authority: %s", source->path);
+            goto fail;
         }
+        if (!qa_vfs_mount_retained(view, c->mounts, ids[i], QA_ARCHIVE_CASE_INSENSITIVE,
+            source->writable, &mounted, error)) goto fail;
     }
     *out = view; return true;
 fail:

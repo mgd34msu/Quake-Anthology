@@ -71,6 +71,11 @@ bool qa_vfs_mount_archive(qa_vfs *vfs, const char *path, qa_archive_kind kind,
 bool qa_vfs_mount_directory(qa_vfs *vfs, const char *path,
                             qa_archive_comparison comparison, bool writable,
                             qa_mount_id *out, qa_error *error);
+/* Build a normal new scoped mount from retained native authority in the same
+ * pool. Archive bytes must still match their complete immutable snapshot.
+ * Logical path labels remain unchanged; no source path is reopened. */
+bool qa_vfs_mount_retained(qa_vfs *, const qa_vfs *, qa_mount_id,
+    qa_archive_comparison, bool writable, qa_mount_id *, qa_error *);
 bool qa_vfs_unmount(qa_vfs *vfs, qa_mount_id mount, qa_error *error);
 /* Orders include every current mount exactly once, highest priority first.
  * A prefix is a relative directory without its trailing separator. The first

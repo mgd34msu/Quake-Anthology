@@ -505,6 +505,52 @@ static bool add_mount(qa_vfs *vfs, mount *source, qa_mount_id *out, qa_error *er
     return true;
 }
 
+bool qa_vfs_mount_retained(qa_vfs *vfs, const qa_vfs *retained, qa_mount_id id,
+    qa_archive_comparison comparison, bool writable, qa_mount_id *out, qa_error *error)
+{
+    if (!vfs || !retained || !out || vfs->pool != retained->pool || !valid_comparison(comparison)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid retained mount authority");
+        return false;
+    }
+    const mount *source = NULL;
+    for (size_t i = 0; i < retained->count; ++i)
+        if (retained->mounts[i]->id == id) { source = retained->mounts[i]; break; }
+    if (!source || (writable && (!source->writable || source->archive))) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Retained mount does not admit the requested authority");
+        return false;
+    }
+    if (source->archive) {
+        bool unchanged = false;
+        qa_buffer bytes = {0};
+        bool valid = qa_fs_file_path_unchanged(source->archive_file, &source->identity, &unchanged, error) &&
+            unchanged && qa_fs_file_read_snapshot(source->archive_file, &source->identity, &bytes, error);
+        if (valid) valid = bytes.size == source->archive->storage.size &&
+            !memcmp(bytes.data, source->archive->storage.data, bytes.size);
+        qa_buffer_free(&bytes);
+        if (!valid) {
+            if (!error || error->code == QA_OK)
+                qa_error_set(error, QA_ERROR_IO, 0, "Retained archive changed: %s", source->path);
+            return false;
+        }
+        if (vfs->q3_demo && !demo_package_allowed(source->archive, error)) return false;
+    }
+    mount *copy = malloc(sizeof(*copy));
+    char *path = copy_string(source->path);
+    if (!copy || !path) {
+        free(copy); free(path);
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Cannot retain scoped mount authority");
+        return false;
+    }
+    *copy = *source;
+    copy->path = path; copy->comparison = comparison;
+    copy->writable = writable; copy->user_overlay = false; copy->referenced = false;
+    qa_fs_file_retain(copy->archive_file);
+    qa_fs_root_retain(copy->root);
+    if (copy->archive) ++copy->archive->references;
+    if (!add_mount(vfs, copy, out, error)) { vfs_mount_free(copy); return false; }
+    return true;
+}
+
 bool qa_vfs_mount_archive(qa_vfs *vfs, const char *path, qa_archive_kind kind,
                           qa_archive_comparison comparison, qa_mount_id *out,
                           qa_error *error)
