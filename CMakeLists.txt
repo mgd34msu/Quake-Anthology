@@ -511,6 +511,7 @@ add_library(qa_bots STATIC
     src/bots/library/genetic.c
     src/bots/library/items.c
     src/bots/library/assets_save.c
+    src/bots/library/equipment_save.c
     src/bots/library/structure.c
     src/bots/library/variables.c
     src/bots/library/weapons.c

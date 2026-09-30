@@ -63,7 +63,7 @@ struct qa_bots {
     float time, regular_update_time;
     uint64_t command_sequence;
     int32_t inventory_scratch[QA_BOT_INVENTORY_SIZE];
-    bool busy, checking_spawn;
+    bool busy, checking_spawn, restore_pending;
 };
 bool bot_ai_fail(qa_error *, const char *);
 bot_ai_state *bot_ai_actor(const qa_bots *, qa_actor_id);

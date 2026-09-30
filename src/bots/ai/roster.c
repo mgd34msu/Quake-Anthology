@@ -14,21 +14,22 @@ bot_ai_state *bot_ai_actor(const qa_bots *b, qa_actor_id actor) {
     return state && qa_actor_id_equal(state->view.actor, actor) ? state : NULL;
 }
 bool bot_ai_mutable(qa_bots *b, qa_error *e) {
-    return b && !b->busy && !qa_bot_runtime_closed(b->runtime) ? true :
-        bot_ai_fail(e, "bot population is absent, closed or executing a callback");
+    return b && !b->busy && !b->restore_pending && !qa_bot_runtime_closed(b->runtime) ? true :
+        bot_ai_fail(e, "bot population is absent, closed, restoring or executing a callback");
 }
-bool qa_bots_create(qa_bot_runtime *runtime, const qa_bot_services *services,
-                      qa_bots **out, qa_error *e) {
+static bool create(qa_bot_runtime *runtime, const qa_bot_services *services,
+                    uint32_t client_capacity, qa_bots **out, qa_error *e) {
     if (!runtime || !services || !out || !services->shared.session ||
         !services->shared.world || !services->shared.combat || !services->shared.player_info || !services->player ||
-        !services->entity || !services->arsenal || !services->arsenal_end || !services->submit ||
-        !qa_bot_runtime_initialized(runtime))
+        !services->entity || !services->arsenal || !services->arsenal_end || !services->submit)
         return bot_ai_fail(e, "native bot population requires live shared gameplay and botlib services");
+    if (client_capacity > INT32_MAX || (uint64_t)client_capacity > SIZE_MAX / sizeof(bot_ai_state *))
+        return bot_ai_fail(e, "native bot client capacity exceeds its source memory extent");
     qa_bots *b = calloc(1, sizeof(*b));
     if (!b) { qa_error_set(e, QA_ERROR_MEMORY, 0, "allocating native bot population"); return false; }
     b->runtime = runtime;
     b->services = *services;
-    b->client_capacity = qa_bot_actions_capacity(qa_bot_runtime_actions(runtime));
+    b->client_capacity = client_capacity;
     b->actor_capacity = qa_actors_capacity(qa_session_actors(services->shared.session));
     b->clients = calloc(b->client_capacity, sizeof(*b->clients));
     b->actor_clients = calloc(b->actor_capacity, sizeof(*b->actor_clients));
@@ -41,6 +42,21 @@ bool qa_bots_create(qa_bot_runtime *runtime, const qa_bot_services *services,
     b->scheduled_think_ms = 100;
     b->time = qa_bot_runtime_time(runtime);
     *out = b;
+    return true;
+}
+bool qa_bots_create(qa_bot_runtime *runtime, const qa_bot_services *services,
+                      qa_bots **out, qa_error *e) {
+    if (!runtime || !qa_bot_runtime_initialized(runtime))
+        return bot_ai_fail(e, "native bot population requires live shared gameplay and botlib services");
+    return create(runtime, services, qa_bot_actions_capacity(qa_bot_runtime_actions(runtime)), out, e);
+}
+bool qa_bots_create_restored(qa_bot_runtime *runtime, const qa_bot_services *services,
+                            uint32_t client_capacity, qa_bots **out, qa_error *e) {
+    if (!runtime || !out || *out || !qa_bot_runtime_can_destroy(runtime))
+        return bot_ai_fail(e, "restored native bot population requires idle detached owners and an empty output");
+    if (!create(runtime, services, client_capacity, out, e))
+        return false;
+    (*out)->restore_pending = true;
     return true;
 }
 bool bot_ai_cleanup(qa_bots *b, bot_ai_state *s, qa_error *e) {
@@ -204,7 +220,7 @@ bool qa_bots_actor_released(qa_bots *b, const qa_actor_record *released, qa_erro
     if (!b || !released) return bot_ai_fail(e, "missing bot retirement record");
     bot_ai_state *s = bot_ai_actor(b, released->id);
     if (!s) return true;
-    if (b->busy) { s->retired = true; return true; }
+    if (b->busy || b->restore_pending) { s->retired = true; return true; }
     return qa_bots_release(b, released->id, e);
 }
 bool qa_bots_read(const qa_bots *b, qa_actor_id actor, qa_bot_view *out, qa_error *e) {

@@ -102,6 +102,11 @@ typedef struct qa_bot_services {
 /* The runtime is borrowed and shared with botlib hosts. Actor allocation and
  * connection membership are supplied by the existing session/mode owners. */
 bool qa_bots_create(qa_bot_runtime *, const qa_bot_services *, qa_bots **, qa_error *);
+/* Construct an empty isolated population with the actual saved client capacity.
+ * The runtime address remains stable; source setup/admission/frame callbacks do
+ * not run. Its private continuation must restore before ordinary bot use. */
+bool qa_bots_create_restored(qa_bot_runtime *, const qa_bot_services *, uint32_t client_capacity,
+                            qa_bots **, qa_error *);
 /* Retains the population when one of its synchronous callbacks is active. */
 bool qa_bots_destroy(qa_bots *, qa_error *);
 bool qa_bots_can_destroy(const qa_bots *);

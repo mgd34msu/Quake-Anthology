@@ -57,5 +57,7 @@ static inline bool bot_save_text(qa_source_save_io *io, const char **text)
 
 bool bot_save_weights_fields(qa_source_save_io *, const qa_bot_weights *, qa_bot_weights **);
 bool bot_save_character_fields(qa_source_save_io *, const qa_bot_character *, qa_bot_character **);
+bool bot_save_weapons_fields(qa_source_save_io *, const qa_bot_weapons *, qa_bot_weapons **);
+bool bot_save_items_fields(qa_source_save_io *, const qa_bot_items *, qa_bot_items **);
 
 #endif

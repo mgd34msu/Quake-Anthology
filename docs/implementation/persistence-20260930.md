@@ -231,3 +231,12 @@ publishing ordinary reference-counted objects; failure reaches every partial
 string/table allocation. This packet supplies real asset codecs for the later
 runtime handle and private AI owner. It does not claim that the existing
 same-binding bot checkpoint is a portable continuation.
+
+The next bot asset packet covers actual weapon/projectile and item declarations,
+including sparse physical weapon slots, source capacities/counts, named projectile
+binding, inventory indices, timing/ballistics, bounding vectors and item respawn
+metadata. Fixed source strings are counted values with their original bounds.
+Table byte extents precede allocations, and the real immutable asset restorers
+validate declared fields and rebuild selectors without source callbacks. Restored
+weapon counts and projectile indices must agree with the saved declarations.
+These resources support the later exact runtime handle/cache admission owner.
