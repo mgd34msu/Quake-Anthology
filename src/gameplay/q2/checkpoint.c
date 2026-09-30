@@ -280,7 +280,8 @@ bool qa_q2_actor_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_actor_checkp
     if (s->hand_grenade_bound) {
         qa_inventory_entry ammo;
         if (!q2_hand_validate(&s->hand_grenade, e) ||
-            !qa_inventory_entry_read(g->services.inventory, id, g->ammo[QA_Q2_GRENADES], &ammo, e))
+            (!g->restoring_continuation &&
+             !qa_inventory_entry_read(g->services.inventory, id, g->ammo[QA_Q2_GRENADES], &ammo, e)))
             return false;
     }
     q2_actor *a = q2_actor_get(g, id, true, e);

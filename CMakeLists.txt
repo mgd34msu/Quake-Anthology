@@ -312,6 +312,13 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/console.c
     src/gameplay/q2/ballistics.c
     src/gameplay/q2/checkpoint.c
+    src/gameplay/q2/save/io.c
+    src/gameplay/q2/save/common.c
+    src/gameplay/q2/save/items.c
+    src/gameplay/q2/save/player.c
+    src/gameplay/q2/save/entities.c
+    src/gameplay/q2/save/monsters.c
+    src/gameplay/q2/save/game.c
     src/gameplay/q2/definitions.c
     src/gameplay/q2/entities/brushes.c
     src/gameplay/q2/entities/checkpoint.c
@@ -395,7 +402,7 @@ add_library(qa_game_q2 STATIC
     src/gameplay/q2/weapon_presentation.c
     src/gameplay/q2/weapon_state.c
     src/gameplay/q2/weapon_throw.c)
-target_link_libraries(qa_game_q2 PUBLIC qa_builtin qa_campaign)
+target_link_libraries(qa_game_q2 PUBLIC qa_builtin qa_campaign qa_persistence)
 
 add_library(qa_game_q3 STATIC
     src/gameplay/q3/checkpoint.c

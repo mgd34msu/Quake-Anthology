@@ -8,7 +8,8 @@ qa_actor_id qa_q2_current_actor(const qa_q2_game *g) {
 }
 bool qa_q2_run_actor(qa_q2_game *g, qa_actor_id id, qa_q2_actor_fn callback, void *context,
                      qa_error *e) {
-    if (g == NULL || callback == NULL || !q2_actor_live(g, id)) {
+    if (g == NULL || callback == NULL || g->continuation_pending || g->continuation_failed ||
+        !q2_actor_live(g, id)) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid Q2 source actor invocation");
         return false;
     }

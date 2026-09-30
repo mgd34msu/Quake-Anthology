@@ -56,6 +56,7 @@ typedef struct q2_items {
     qa_q2_item_definition *definitions;
     size_t count;
     qa_item_definition *actions;
+    qa_item_admission *admissions;
     size_t action_count;
     qa_q2_item_options options;
     uint32_t cubes;

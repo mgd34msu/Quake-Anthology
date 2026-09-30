@@ -15,6 +15,7 @@ bool q2_items_init(qa_q2_game *g, qa_error *e) {
 void q2_items_close(qa_q2_game *g) {
     if (g->item_runtime) {
         free(g->item_runtime->actions);
+        free(g->item_runtime->admissions);
         free(g->item_runtime->definitions);
         free(g->item_runtime);
         g->item_runtime = NULL;

@@ -204,7 +204,7 @@ bool qa_q2_entity_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_entity_chec
         goto fail;
     q2_entity_state *previous = a->entity;
     a->entity = s;
-    if (!q2_entity_bind(g, a, e)) {
+    if (!g->restoring_continuation && !q2_entity_bind(g, a, e)) {
         a->entity = previous;
         goto fail;
     }

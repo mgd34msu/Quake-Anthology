@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_q2_checkpoint.h"
 #include "qa/text.h"
 #include "qa/game_q2_monsters.h"
 #include <float.h>
@@ -189,25 +190,33 @@ static bool set_delay(void *context, qa_actor_id id, double value, qa_error *e) 
         a->entity->delay = (float)value;
     return true;
 }
+bool qa_q2_game_target_binding(qa_q2_game *g, qa_actor_id id, qa_target_binding *out, qa_error *e) {
+    q2_actor *a = g ? q2_actor_get(g, id, false, NULL) : NULL;
+    if (!out || !a || (!a->entity && !a->item)) {
+        qa_error_set(e, QA_ERROR_FORMAT, id.slot, "Q2 target actor has no authored state");
+        return false;
+    }
+    *out = (qa_target_binding){.actor = id,
+                               .source = g->options.edition == QA_Q2_CLASSIC
+                                             ? QA_CLOCK_Q2_CLASSIC : QA_CLOCK_Q2_RERELEASE,
+                               .context = g,
+                               .read = authored,
+                               .use = use,
+                               .field = field,
+                               .set_targetname = set_targetname,
+                               .set_target = set_target,
+                               .set_delay = set_delay};
+    return true;
+}
 bool q2_entity_bind(qa_q2_game *g, q2_actor *a, qa_error *e) {
     qa_targets *targets = g->entity_runtime->services.targets;
+    qa_target_binding binding;
     if (!targets) {
         qa_error_set(e, QA_ERROR_UNSUPPORTED, 0, "Q2 entities require shared target registry");
         return false;
     }
-    if (!qa_targets_bind(targets,
-                         &(qa_target_binding){.actor = a->id,
-                                              .source = g->options.edition == QA_Q2_CLASSIC
-                                                            ? QA_CLOCK_Q2_CLASSIC
-                                                            : QA_CLOCK_Q2_RERELEASE,
-                                              .context = g,
-                                              .read = authored,
-                                              .use = use,
-                                              .field = field,
-                                              .set_targetname = set_targetname,
-                                              .set_target = set_target,
-                                              .set_delay = set_delay},
-                         e))
+    if (!qa_q2_game_target_binding(g, a->id, &binding, e) ||
+        !qa_targets_bind(targets, &binding, e))
         return false;
     a->entity_game = g;
     a->entity_targets = targets;

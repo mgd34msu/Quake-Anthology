@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_q2_checkpoint.h"
 
 q2_power_state *q2_powers(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     q2_actor *a = q2_actor_get(g, id, true, e);
@@ -52,6 +53,38 @@ static bool item_action(void *context, qa_item_id item, qa_item_action action, q
     qa_actor_id dropped;
     return qa_q2_item_drop(p->game, p->actor, item, &(qa_q2_drop_options){0}, &dropped, &accepted,
                            e);
+}
+bool qa_q2_game_inventory_group(qa_q2_game *g, qa_actor_id id, uint64_t saved_serial,
+                                 const qa_inventory_source_group *saved,
+                                 qa_inventory_items *out, qa_error *e) {
+    q2_actor *a = g ? q2_actor_get(g, id, false, NULL) : NULL;
+    if (!out || !a || !a->powers || !saved || !saved_serial ||
+        saved->owner != g->options.owner || !saved->definitions_only ||
+        saved->count != g->item_runtime->action_count || (saved->count && !saved->items) ||
+        !qa_actor_id_equal(a->powers->definitions.actor, id) ||
+        a->powers->definitions.serial != saved_serial) {
+        qa_error_set(e, QA_ERROR_FORMAT, id.slot, "Q2 inventory source declaration has no owner");
+        return false;
+    }
+    for (size_t i = 0; i < saved->count; ++i) {
+        const qa_item_admission *native = &g->item_runtime->admissions[i];
+        const qa_item_admission *entry = &saved->items[i];
+        const qa_item_definition *a = &native->definition, *b = &entry->definition;
+        if (native->replace_primary != entry->replace_primary || a->item != b->item ||
+            a->ammo != b->ammo || a->owner != b->owner || a->weapon != b->weapon ||
+            a->actions != b->actions || (!!a->label != !!b->label) ||
+            (a->label && strcmp(a->label, b->label))) {
+            qa_error_set(e, QA_ERROR_FORMAT, id.slot, "Q2 saved inventory catalog differs from source");
+            return false;
+        }
+    }
+    a->powers->definitions = (qa_inventory_lease){.actor = id, .serial = saved_serial};
+    *out = (qa_inventory_items){.owner = saved->owner,
+                                .items = g->item_runtime->admissions,
+                                .count = g->item_runtime->action_count,
+                                .action_context = a->powers,
+                                .invoke = item_action};
+    return true;
 }
 bool q2_item_ensure(qa_q2_game *g, qa_actor_id id, const qa_q2_item_definition *d, qa_error *e) {
     if (!qa_inventory_has(g->services.inventory, id) &&

@@ -202,21 +202,23 @@ bool qa_q2_item_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_item_checkpoi
                               .power_cubes = s->power_cubes};
         if (!q2_resolve_reference(g, s->sphere, &p->sphere, e))
             goto fail;
-        if (s->definitions_bound && !q2_item_bind_actions(g, id, p, e))
+        if (!g->restoring_continuation && s->definitions_bound && !q2_item_bind_actions(g, id, p, e))
             goto fail;
-        if (s->power_inventory_bound &&
+        if (!g->restoring_continuation && s->power_inventory_bound &&
             !qa_combat_bind_power_inventory(g->services.combat, id, g->services.inventory, p->cells,
                                             e))
             goto fail;
     }
     a->item = candidate.item;
     a->powers = candidate.powers;
-    if (a->item && !a->entity_targets && !q2_entity_bind(g, a, e)) {
+    a->restore_definitions = g->restoring_continuation && s->definitions_bound;
+    a->restore_power_inventory = g->restoring_continuation && s->power_inventory_bound;
+    if (!g->restoring_continuation && a->item && !a->entity_targets && !q2_entity_bind(g, a, e)) {
         a->item = NULL;
         a->powers = NULL;
         goto fail;
     }
-    if (a->item && !q2_item_observe(g, a, e)) {
+    if (!g->restoring_continuation && a->item && !q2_item_observe(g, a, e)) {
         a->item = NULL;
         a->powers = NULL;
         goto fail;

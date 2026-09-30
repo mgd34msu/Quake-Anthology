@@ -105,6 +105,8 @@ typedef struct q2_actor {
     struct qa_q2_entity_state *entity;
     qa_q2_game *entity_game;
     struct qa_targets *entity_targets;
+    bool restore_definitions, restore_power_inventory, restore_targets;
+    qa_inventory_entry restore_hand_ammo;
 } q2_actor;
 typedef struct q2_trace_frame {
     struct q2_trace_frame *next;
@@ -123,6 +125,7 @@ struct qa_q2_game {
     qa_q2_grapple_options grapple_options;
     qa_error release_error;
     bool release_failed;
+    bool restoring_continuation, continuation_pending, continuation_failed;
     unsigned hand_steps;
     bool lmctf_plasma_quad;
     uint8_t widow_damage_multiplier;

@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_q2_checkpoint.h"
 #include <float.h>
 
 typedef struct item_inspection {
@@ -177,6 +178,21 @@ bool q2_item_observe(qa_q2_game *g, q2_actor *actor, qa_error *error)
     if (!qa_pickups_observe(g->services.pickups, actor->id, g->options.owner,
                             &observer, &actor->item->observation, error)) return false;
     actor->item->observations = g->services.pickups;
+    return true;
+}
+bool qa_q2_game_pickup_observer(qa_q2_game *g, qa_actor_id id, qa_actor_owner owner,
+                                 uint64_t saved_serial, qa_pickup_observer *out, qa_error *error)
+{
+    q2_actor *a = g ? q2_actor_get(g, id, false, NULL) : NULL;
+    if (!out || !a || !a->item || !a->item->definition || a->item->companion ||
+        owner != g->options.owner || !saved_serial ||
+        !qa_actor_id_equal(a->item->observation.actor, id) ||
+        a->item->observation.serial != saved_serial) {
+        qa_error_set(error, QA_ERROR_FORMAT, id.slot, "Q2 pickup observer has no native offer owner");
+        return false;
+    }
+    a->item->observation = (qa_pickup_lease){.actor = id, .serial = saved_serial};
+    *out = (qa_pickup_observer){.context = g, .inspect = inspect};
     return true;
 }
 

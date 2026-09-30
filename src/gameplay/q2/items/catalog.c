@@ -339,5 +339,12 @@ bool q2_item_catalog(qa_q2_game *g, qa_error *e) {
             .weapon = d->weapon != QA_Q2_WEAPON_NONE,
             .actions = (use ? QA_ITEM_USE : 0) | (d->droppable ? QA_ITEM_DROP : 0)};
     }
+    r->admissions = r->action_count ? calloc(r->action_count, sizeof(*r->admissions)) : NULL;
+    if (r->action_count && !r->admissions) {
+        qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating Q2 source item declarations");
+        return false;
+    }
+    for (size_t i = 0; i < r->action_count; ++i)
+        r->admissions[i].definition = r->actions[i];
     return true;
 }
