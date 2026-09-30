@@ -148,6 +148,10 @@ typedef struct qa_q3_presentation_options {
  * callbacks queue owner destruction rather than destroying an active call. */
 bool qa_q3_presentation_create(const qa_q3_presentation_options *, qa_q3_presentation **, qa_error *);
 bool qa_q3_presentation_destroy(qa_q3_presentation *, qa_error *);
+bool qa_q3_presentation_frontend_rebind_ready(const qa_q3_presentation *, const qa_scene_frame *,
+                                               qa_audio_engine *, uint64_t bus, qa_error *);
+void qa_q3_presentation_frontend_rebind(qa_q3_presentation *, const qa_scene_frame *current,
+                                         qa_scene_frame *destination, qa_audio_engine *, uint64_t bus);
 qa_q3_presentation_assets *qa_q3_presentation_resources(qa_q3_presentation *);
 bool qa_q3_presentation_frame(qa_q3_presentation *, qa_scene_frame *, qa_scene_rect, qa_error *);
 bool qa_q3_presentation_world(qa_q3_presentation *, qa_scene_world *, qa_collision_geometry *,

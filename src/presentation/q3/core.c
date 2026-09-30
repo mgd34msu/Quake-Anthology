@@ -27,6 +27,33 @@ bool q3p_begin(qa_q3_presentation *p, qa_error *error)
 
 bool q3p_end(qa_q3_presentation *p, bool ok) { --p->busy; return ok; }
 
+bool qa_q3_presentation_frontend_rebind_ready(const qa_q3_presentation *p, const qa_scene_frame *current,
+    qa_audio_engine *audio, uint64_t bus, qa_error *error)
+{
+    if (!p || p->busy || p->options.assets->busy || (p->frame && p->frame != current) ||
+        (p->options.audio != NULL) != (audio != NULL))
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 presentation exchange requires idle matching frame/audio owners");
+    for (size_t i = 0; i < 16; ++i) {
+        if (p->movies[i].kind != Q3P_MOVIE_LOCAL) continue;
+        qa_cinematic *movie = p->movies[i].local;
+        if (!qa_cinematic_frame_rebind_ready(movie, current, error) ||
+            !qa_cinematic_audio_rebind_ready(movie, audio, bus, error)) return false;
+    }
+    return true;
+}
+
+void qa_q3_presentation_frontend_rebind(qa_q3_presentation *p, const qa_scene_frame *current,
+    qa_scene_frame *destination, qa_audio_engine *audio, uint64_t bus)
+{
+    if (p->frame) p->frame = destination;
+    p->options.audio = audio;
+    for (size_t i = 0; i < 16; ++i) {
+        if (p->movies[i].kind != Q3P_MOVIE_LOCAL) continue;
+        qa_cinematic_frame_rebind(p->movies[i].local, current, destination);
+        qa_cinematic_audio_rebind(p->movies[i].local, audio, bus);
+    }
+}
+
 bool qa_q3_presentation_create(const qa_q3_presentation_options *options,
                                 qa_q3_presentation **out, qa_error *error)
 {
