@@ -686,8 +686,17 @@ bool application_save_prepare_content(qa_application *candidate,
     return ok;
 }
 
+static bool terminal_native_q2(const application_provider *provider)
+{
+    return provider->constructed &&
+           provider->kind == APPLICATION_PROVIDER_NATIVE &&
+           provider->state.native.q2_engine != NULL &&
+           provider->state.native.host != NULL &&
+           qa_native_terminal(qa_native_host_instance(provider->state.native.host));
+}
+
 static bool retire_map_services(qa_application *application, bool carry,
-                                 qa_error *error)
+                                bool terminal_world, qa_error *error)
 {
     if (!application_guests_idle(application) ||
         !application_bots_can_destroy(application))
@@ -698,7 +707,8 @@ static bool retire_map_services(qa_application *application, bool carry,
         return false;
     for (size_t index = 0; index < application->provider_count; ++index) {
         application_provider *provider = application->providers[index];
-        if (!provider->constructed)
+        if (!provider->constructed ||
+            (terminal_world && terminal_native_q2(provider)))
             continue;
         if (carry && provider->kind == APPLICATION_PROVIDER_QC &&
             provider->map_bound && !application_qc_change_parms(provider, error))
@@ -709,6 +719,19 @@ static bool retire_map_services(qa_application *application, bool carry,
             : application_q3_guest_retire_map(provider, error);
         if (!retired)
             return false;
+    }
+    if (terminal_world) {
+        /* Healthy source callbacks run with live actors. Terminal Q2 primary
+         * claims can disappear only through actual canonical retirement. */
+        if (application->world != NULL &&
+            !qa_session_retire_world(application->session, error))
+            return false;
+        for (size_t index = 0; index < application->provider_count; ++index) {
+            application_provider *provider = application->providers[index];
+            if (terminal_native_q2(provider) &&
+                !application_native_q2_retire_map(provider, error))
+                return false;
+        }
     }
     if (!application_bots_destroy(application, error))
         return false;
@@ -726,7 +749,7 @@ static bool publish_travel(qa_application *application,
     bool geometry_published = application->world == NULL;
     qa_error first = {0};
     qa_error current = {0};
-    if (!retire_map_services(application, true, error))
+    if (!retire_map_services(application, true, false, error))
         return false;
     application_q1_signon_reset(application);
     application->map_view_ready = false;
@@ -819,10 +842,14 @@ static bool publish_travel(qa_application *application,
 bool application_publication_retire(qa_application *application,
                                     qa_error *error)
 {
-    if (!retire_map_services(application, false, error))
+    bool terminal_world = false;
+    for (size_t index = 0; index < application->provider_count; ++index)
+        if (terminal_native_q2(application->providers[index]))
+            terminal_world = true;
+    if (!retire_map_services(application, false, terminal_world, error))
         return false;
     application->map_view_ready = false;
-    if (application->world != NULL &&
+    if (!terminal_world && application->world != NULL &&
         !qa_session_retire_world(application->session, error))
         return false;
     application_publication publication = {
