@@ -1688,6 +1688,15 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
     monster->commander = previous->commander;
     monster->monster_slots = previous->monster_slots;
     monster->monster_used = previous->monster_used;
+    if (game->options.edition == QA_Q2_RERELEASE) {
+      monster->summons = previous->summons;
+      previous->summons = NULL;
+      if (monster->summons) {
+        monster->summons->chosen_count = 0;
+        monster->summons->classic_strength = 0;
+        memset(monster->summons->chosen, 0, sizeof(monster->summons->chosen));
+      }
+    }
     q2m_retire_monster(game, previous);
   }
   actor->monster = monster;

@@ -1,7 +1,7 @@
 #include "internal.h"
 
 #define Q2_SAVE_MAGIC UINT32_C(0x32514151)
-#define Q2_SAVE_VERSION UINT32_C(3)
+#define Q2_SAVE_VERSION UINT32_C(4)
 
 typedef struct actor_save {
     qa_q2_saved_reference id;
@@ -19,6 +19,7 @@ static void actor_free(actor_save *s) {
     qa_q2_item_checkpoint_free(&s->item);
     qa_q2_entity_checkpoint_free(&s->entity);
     qa_q2_player_checkpoint_free(&s->player);
+    qa_q2_monster_checkpoint_free(&s->monster);
 }
 static bool actor_fields(q2_save_io *io, actor_save *s) {
     if (!q2_save_ref(io, &s->id) || !s->id.present ||

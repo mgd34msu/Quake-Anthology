@@ -49,6 +49,11 @@ bool q2m_summon_initialize(q2m_context *context, qa_error *error) {
     if (!source_medic)
         return true;
     context->monster->ignore_shots = true;
+    if (context->monster->summons) {
+        if (context->combat.mass > 400)
+            context->monster->skin = 2;
+        return true;
+    }
     context->monster->summons = calloc(1, sizeof(*context->monster->summons));
     if (!context->monster->summons) {
         qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating medic reinforcement choices");
@@ -68,14 +73,14 @@ void q2m_summon_clear(q2m_summon_state *state) {
 }
 
 static bool configure(q2m_context *context, q2m_summon_state *state, qa_error *error) {
+    if (state->configured)
+        return true;
     qa_q2_game *game = context->game;
     qa_string_id authored =
         context->actor->entity ? q2_field_id(game, context->actor->entity, "reinforcements") : 0;
-    if (state->configured && state->authored == authored)
-        return true;
     const char *text =
         authored ? qa_strings_cstr(qa_session_strings(game->services.session), authored) : NULL;
-    size_t count = 0;
+    size_t count = authored ? 0 : sizeof(medic_defaults) / sizeof(*medic_defaults);
     if (text && *text) {
         count = 1;
         for (const char *p = text; *p; ++p)
@@ -92,6 +97,13 @@ static bool configure(q2m_context *context, q2m_summon_state *state, qa_error *e
     }
     const char *cursor = text;
     for (size_t i = 0; i < count; ++i) {
+        if (!authored) {
+            const q2m_definition *definition =
+                q2m_definition_for(game, medic_defaults[i].classname);
+            entries[i] = (q2m_reinforcement){definition, medic_defaults[i].strength,
+                                            definition->bounds};
+            continue;
+        }
         const char *end = strchr(cursor, ';');
         if (!end)
             end = cursor + strlen(cursor);
@@ -131,14 +143,11 @@ invalid:
 }
 
 static size_t entry_count(const q2m_summon_state *state) {
-    return state->authored ? state->entry_count : sizeof(medic_defaults) / sizeof(*medic_defaults);
+    return state->entry_count;
 }
 
-static q2m_reinforcement entry_at(qa_q2_game *game, const q2m_summon_state *state, size_t index) {
-    if (state->authored)
-        return state->entries[index];
-    const q2m_definition *definition = q2m_definition_for(game, medic_defaults[index].classname);
-    return (q2m_reinforcement){definition, medic_defaults[index].strength, definition->bounds};
+static q2m_reinforcement entry_at(const q2m_summon_state *state, size_t index) {
+    return state->entries[index];
 }
 
 bool q2m_medic_summon_initialize(q2m_context *context, q2m_summon_state *state, qa_error *error) {
@@ -204,12 +213,12 @@ static bool choose_squad(q2m_context *context, q2m_summon_state *state, qa_error
     for (int n = 0; n < count && remaining; ++n) {
         uint32_t available = 0;
         for (size_t i = 0; i < entries; ++i)
-            available += entry_at(game, state, i).strength <= remaining;
+            available += entry_at(state, i).strength <= remaining;
         if (!available)
             break;
         uint32_t selected = q2_random_bounded(game, available);
         for (size_t i = 0; i < entries; ++i) {
-            q2m_reinforcement entry = entry_at(game, state, i);
+            q2m_reinforcement entry = entry_at(state, i);
             if (entry.strength > remaining)
                 continue;
             if (selected) {

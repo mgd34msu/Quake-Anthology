@@ -38,6 +38,18 @@ bool q2_save_monster(q2_save_io *io, qa_q2_monster_checkpoint *s) {
     for (size_t i = 0; i < s->summon_count; ++i) {
         if (!q2_save_text(io, s->summons[i].classname, sizeof(s->summons[i].classname))) return false;
         Q2I(summons[i].strength);
+        Q2V(summons[i].bounds.mins); Q2V(summons[i].bounds.maxs);
+    }
+    Q2N(reinforcement_source); Q2B(reinforcements_configured);
+    void *reinforcements = s->reinforcements;
+    if (!q2_save_count(io, &s->reinforcement_count, 32,
+                       sizeof(*s->reinforcements), &reinforcements)) return false;
+    s->reinforcements = reinforcements;
+    for (size_t i = 0; i < s->reinforcement_count; ++i) {
+        if (!q2_save_text(io, s->reinforcements[i].classname,
+                           sizeof(s->reinforcements[i].classname))) return false;
+        Q2I(reinforcements[i].strength);
+        Q2V(reinforcements[i].bounds.mins); Q2V(reinforcements[i].bounds.maxs);
     }
     Q2T(last_link_count); Q2B(has_saved_goal); Q2B(good_guy); Q2B(target_anger);
     Q2B(ignore_shots); Q2B(do_not_count); Q2B(source_blocked); Q2B(brutal); Q2B(medic);

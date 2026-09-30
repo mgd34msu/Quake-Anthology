@@ -10,6 +10,7 @@
 typedef struct qa_q2_reinforcement_checkpoint {
   char classname[QA_Q2_MONSTER_NAME_CAPACITY];
   int strength;
+  qa_bounds bounds;
 } qa_q2_reinforcement_checkpoint;
 
 typedef enum qa_q2_monster_count {
@@ -132,6 +133,10 @@ typedef struct qa_q2_monster_checkpoint {
   int summon_strength;
   uint32_t summon_count;
   qa_q2_reinforcement_checkpoint summons[5];
+  qa_string_id reinforcement_source;
+  bool reinforcements_configured;
+  qa_q2_reinforcement_checkpoint *reinforcements;
+  size_t reinforcement_count;
   uint64_t last_link_count;
   bool has_saved_goal, good_guy, target_anger, ignore_shots, do_not_count, source_blocked;
   bool brutal, medic, resurrecting, can_take_damage, dead, corpse, gibbed;
@@ -152,10 +157,12 @@ bool qa_q2_monster_turret_admit(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_monster_turret_aim(qa_q2_game *, qa_actor_id, qa_actor_id *enemy,
                               bool *fire_ready, qa_error *);
 bool qa_q2_monster_turret_release(qa_q2_game *, qa_actor_id, qa_error *);
+/* Capture owns reinforcement storage; release it with checkpoint_free. */
 bool qa_q2_monster_capture(qa_q2_game *, qa_actor_id,
                            qa_q2_monster_checkpoint *, qa_error *);
 bool qa_q2_monster_restore(qa_q2_game *, qa_actor_id,
                            const qa_q2_monster_checkpoint *, qa_error *);
+void qa_q2_monster_checkpoint_free(qa_q2_monster_checkpoint *);
 bool qa_q2_monsters_capture(qa_q2_game *, qa_q2_monsters_checkpoint *,
                             qa_error *);
 bool qa_q2_monsters_restore(qa_q2_game *, const qa_q2_monsters_checkpoint *,

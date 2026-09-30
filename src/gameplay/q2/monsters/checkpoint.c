@@ -48,6 +48,37 @@ static bool valid_name(const char *value, size_t capacity, bool allow_empty) {
   return end != NULL && (allow_empty || end != value);
 }
 
+static bool reinforcement_bounds(qa_bounds bounds) {
+  return qa_vec_finite(bounds.mins) && qa_vec_finite(bounds.maxs) &&
+         bounds.mins.x <= bounds.maxs.x && bounds.mins.y <= bounds.maxs.y &&
+         bounds.mins.z <= bounds.maxs.z;
+}
+
+static bool save_reinforcement(const q2m_reinforcement *entry,
+                               qa_q2_reinforcement_checkpoint *out,
+                               qa_error *error) {
+  if (!copy_name(out->classname, sizeof(out->classname),
+                  entry->definition->classname, error))
+    return false;
+  out->strength = entry->strength;
+  out->bounds = entry->bounds;
+  return true;
+}
+
+static bool restore_reinforcement(qa_q2_game *game,
+                                  const qa_q2_reinforcement_checkpoint *saved,
+                                  q2m_reinforcement *out, qa_error *error) {
+  const q2m_definition *definition =
+      valid_name(saved->classname, sizeof(saved->classname), false)
+          ? q2m_definition_for(game, saved->classname) : NULL;
+  if (!definition || !reinforcement_bounds(saved->bounds)) {
+    qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid saved medic reinforcement");
+    return false;
+  }
+  *out = (q2m_reinforcement){definition, saved->strength, saved->bounds};
+  return true;
+}
+
 static bool finite_checkpoint(const qa_q2_monster_checkpoint *state) {
   const float *values[] = {
       &state->entity_scale,     &state->animation_scale,
@@ -131,7 +162,7 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
   }
   const struct qa_q2_monster *monster = actor->monster;
   qa_q2_monster_checkpoint saved = {
-      .version = 10,
+      .version = 11,
       .start_phase = (uint32_t)monster->start_phase,
       .combat_target = monster->combat_target,
       .weapon_sound = monster->weapon_sound,
@@ -287,11 +318,11 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
     saved.has_summons = true;
     saved.summon_strength = summons->classic_strength;
     saved.summon_count = (uint32_t)summons->chosen_count;
+    saved.reinforcement_source = summons->authored;
+    saved.reinforcements_configured = summons->configured;
     for (size_t i = 0; i < summons->chosen_count; ++i) {
-      if (!copy_name(saved.summons[i].classname, sizeof(saved.summons[i].classname),
-                      summons->chosen[i].definition->classname, error))
+      if (!save_reinforcement(summons->chosen + i, saved.summons + i, error))
         return false;
-      saved.summons[i].strength = summons->chosen[i].strength;
     }
   }
   if (!save_reference(game, monster->enemy, &saved.enemy, error) ||
@@ -323,8 +354,34 @@ bool qa_q2_monster_capture(qa_q2_game *game, qa_actor_id id,
   saved.last_attack.attacker = (qa_actor_id){0};
   saved.last_attack.inflictor = (qa_actor_id){0};
   saved.last_attack.projectile = (qa_actor_id){0};
+  if (monster->summons && monster->summons->entry_count) {
+    const q2m_summon_state *summons = monster->summons;
+    if (summons->entry_count > UINT32_MAX ||
+        summons->entry_count > SIZE_MAX / sizeof(*saved.reinforcements)) {
+      qa_error_set(error, QA_ERROR_MEMORY, 0, "Medic reinforcement catalog is too large");
+      return false;
+    }
+    saved.reinforcements = calloc(summons->entry_count, sizeof(*saved.reinforcements));
+    if (!saved.reinforcements) {
+      qa_error_set(error, QA_ERROR_MEMORY, 0, "Capturing medic reinforcement catalog");
+      return false;
+    }
+    saved.reinforcement_count = summons->entry_count;
+    for (size_t i = 0; i < summons->entry_count; ++i)
+      if (!save_reinforcement(summons->entries + i, saved.reinforcements + i, error)) {
+        qa_q2_monster_checkpoint_free(&saved);
+        return false;
+      }
+  }
   *out = saved;
   return true;
+}
+
+void qa_q2_monster_checkpoint_free(qa_q2_monster_checkpoint *state) {
+  if (state) {
+    free(state->reinforcements);
+    *state = (qa_q2_monster_checkpoint){0};
+  }
 }
 
 static bool resolve_all(qa_q2_game *game, const qa_q2_monster_checkpoint *saved,
@@ -375,7 +432,18 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
   if (!callback_boundary(game, error))
     return false;
   bool controller = saved->controller_kind != Q2M_CONTROLLER_NONE;
-  if (saved->version != 10 || saved->start_phase > Q2M_START_MANUAL ||
+  if (saved->version != 11 || saved->start_phase > Q2M_START_MANUAL ||
+      saved->reinforcement_count > UINT32_MAX ||
+      saved->reinforcement_count > SIZE_MAX / sizeof(q2m_reinforcement) ||
+      (saved->reinforcement_count && !saved->reinforcements) ||
+      (saved->reinforcement_source &&
+       !qa_strings_cstr(qa_session_strings(game->services.session),
+                         saved->reinforcement_source)) ||
+      ((!saved->has_summons || !saved->reinforcements_configured) &&
+       (saved->reinforcement_source || saved->reinforcement_count)) ||
+      (!saved->has_summons && saved->reinforcements_configured) ||
+      (game->options.edition == QA_Q2_CLASSIC &&
+       (saved->reinforcements_configured || saved->reinforcement_count)) ||
       (saved->weapon_sound && !qa_strings_text(qa_session_strings(game->services.session),
                                                saved->weapon_sound).size) ||
       (controller && saved->weapon_sound) ||
@@ -649,20 +717,30 @@ bool qa_q2_monster_restore(qa_q2_game *game, qa_actor_id id,
     }
     monster->summons->classic_strength = saved->summon_strength;
     monster->summons->chosen_count = saved->summon_count;
-    for (size_t i = 0; i < saved->summon_count; ++i) {
-      const qa_q2_reinforcement_checkpoint *choice = &saved->summons[i];
-      const q2m_definition *reinforcement =
-          valid_name(choice->classname, sizeof(choice->classname), false)
-              ? q2m_definition_for(game, choice->classname) : NULL;
-      if (!reinforcement) {
+    monster->summons->authored = saved->reinforcement_source;
+    monster->summons->configured = saved->reinforcements_configured;
+    if (saved->reinforcement_count) {
+      monster->summons->entries =
+          calloc(saved->reinforcement_count, sizeof(*monster->summons->entries));
+      if (!monster->summons->entries) {
         q2m_free_monster(monster);
-        qa_error_set(error, QA_ERROR_FORMAT, 0, "Unknown saved medic reinforcement");
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring medic reinforcement catalog");
         return false;
       }
-      qa_bounds bounds = game->options.edition == QA_Q2_RERELEASE ? reinforcement->bounds
-          : reinforcement->species == Q2M_GLADIATOR ? (qa_bounds){{-32,-32,-24},{32,32,64}}
-                                                     : (qa_bounds){{-16,-16,-24},{16,16,32}};
-      monster->summons->chosen[i] = (q2m_reinforcement){reinforcement, choice->strength, bounds};
+      monster->summons->entry_count = saved->reinforcement_count;
+      for (size_t i = 0; i < saved->reinforcement_count; ++i)
+        if (!restore_reinforcement(game, saved->reinforcements + i,
+                                    monster->summons->entries + i, error)) {
+          q2m_free_monster(monster);
+          return false;
+        }
+    }
+    for (size_t i = 0; i < saved->summon_count; ++i) {
+      const qa_q2_reinforcement_checkpoint *choice = &saved->summons[i];
+      if (!restore_reinforcement(game, choice, monster->summons->chosen + i, error)) {
+        q2m_free_monster(monster);
+        return false;
+      }
     }
   }
   if (!resolve_all(game, saved, monster, error) ||
