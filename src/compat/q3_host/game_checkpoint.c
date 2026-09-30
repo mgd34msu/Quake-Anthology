@@ -1,6 +1,15 @@
 #include "internal.h"
 
-enum { GAME_HEADER = 56, ACTOR_BYTES = 104, PORTAL_BYTES = 12 };
+enum { GAME_HEADER = 64, ACTOR_BYTES = 104, PORTAL_BYTES = 12 };
+
+static bool portal_extent(size_t count, size_t capacity)
+{
+    size_t maximum = 8;
+    while (maximum <= count && maximum <= SIZE_MAX / 2) maximum *= 2;
+    return count <= capacity && (!capacity ? !count :
+        capacity >= 8 && !(capacity & (capacity - 1)) && capacity <= maximum) &&
+        capacity <= SIZE_MAX / sizeof(q3_portal_reference);
+}
 
 void q3_game_checkpoint_free(q3_game_data *game)
 {
@@ -13,6 +22,8 @@ bool q3_game_checkpoint_capture(qa_q3_host *host, qa_buffer *out, qa_error *erro
 {
     if (!host->game) { *out = (qa_buffer){0}; return true; }
     q3_game_data *game = host->game;
+    if (!portal_extent(game->portal_count, game->portal_capacity))
+        return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 portal allocation differs from its original growth policy");
     uint32_t actors = 0;
     for (size_t i = 0; i < 1022; ++i) {
         q3_entity_slot *slot = game->slots + i;
@@ -27,13 +38,14 @@ bool q3_game_checkpoint_capture(qa_q3_host *host, qa_buffer *out, qa_error *erro
     qa_buffer bytes = {.data = calloc(1, size), .size = size};
     if (!bytes.data) return q3_fail(error, QA_ERROR_MEMORY, 0, "Capturing Q3 game host");
     uint8_t *header = bytes.data;
-    memcpy(header, "Q3GD", 4); qa_store_u32le(header + 4, 1);
+    memcpy(header, "Q3GD", 4); qa_store_u32le(header + 4, 2);
     qa_store_u32le(header + 8, game->entity_count); qa_store_u32le(header + 12, game->entity_stride);
     qa_store_u32le(header + 16, game->client_stride);
     qa_store_u32le(header + 20, host->options.server.maximum_clients);
     qa_store_u64le(header + 24, game->entities); qa_store_u64le(header + 32, game->clients);
     qa_store_u64le(header + 40, qa_collision_map_identity(qa_world_geometry(host->options.world)));
     qa_store_u32le(header + 48, actors); qa_store_u32le(header + 52, (uint32_t)game->portal_count);
+    qa_store_u64le(header + 56, game->portal_capacity);
     uint8_t *row = header + GAME_HEADER;
     for (uint32_t i = 0; i < 1022; ++i) {
         q3_entity_slot *slot = game->slots + i;
@@ -48,7 +60,7 @@ bool q3_game_checkpoint_capture(qa_q3_host *host, qa_buffer *out, qa_error *erro
             qa_store_u32le(row + 20, slot->cluster_count);
             qa_store_u32le(row + 24, (uint32_t)slot->area); qa_store_u32le(row + 28, (uint32_t)slot->area2);
             qa_store_u32le(row + 32, (uint32_t)slot->last_cluster);
-            for (uint32_t j = 0; j < slot->cluster_count; ++j) qa_store_u32le(row + 40 + j * 4, (uint32_t)slot->clusters[j]);
+            for (uint32_t j = 0; j < 16; ++j) qa_store_u32le(row + 40 + j * 4, (uint32_t)slot->clusters[j]);
         }
         row += ACTOR_BYTES;
     }
@@ -80,11 +92,14 @@ bool q3_game_checkpoint_decode(qa_q3_host *host, qa_bytes bytes, q3_game_data **
         if (bytes.size) return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 client host checkpoint contains server records");
         *out = NULL; return true;
     }
-    if (bytes.size < GAME_HEADER || memcmp(bytes.data, "Q3GD", 4) || qa_load_u32le(bytes.data + 4) != 1 ||
+    if (bytes.size < GAME_HEADER || memcmp(bytes.data, "Q3GD", 4) || qa_load_u32le(bytes.data + 4) != 2 ||
         qa_load_u32le(bytes.data + 20) != host->options.server.maximum_clients ||
         qa_load_u64le(bytes.data + 40) != qa_collision_map_identity(qa_world_geometry(host->options.world)))
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 game checkpoint map or source identity mismatch");
     uint32_t actors = qa_load_u32le(bytes.data + 48), portals = qa_load_u32le(bytes.data + 52);
+    uint64_t portal_capacity = qa_load_u64le(bytes.data + 56);
+    if (portal_capacity > SIZE_MAX || !portal_extent(portals, (size_t)portal_capacity))
+        return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 checkpoint portal allocation is invalid");
     size_t remaining = bytes.size - GAME_HEADER;
     if (actors > 1022 || actors > remaining / ACTOR_BYTES)
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 game checkpoint actor table is invalid");
@@ -141,12 +156,10 @@ bool q3_game_checkpoint_decode(qa_q3_host *host, qa_bytes bytes, q3_game_data **
             !qa_actor_id_equal(game->slots[actor->source_slot].actor, actor->id))
             ok = q3_fail(error, QA_ERROR_FORMAT, cursor, "Q3 checkpoint omits an owned actor");
     }
-    if (ok && portals) {
-        if ((size_t)portals > SIZE_MAX / sizeof(*game->portals)) ok = q3_fail(error, QA_ERROR_MEMORY, 0, "Q3 portal table is too large");
-        else {
-            game->portals = calloc(portals, sizeof(*game->portals)); game->portal_capacity = portals;
-            if (!game->portals) ok = q3_fail(error, QA_ERROR_MEMORY, 0, "Restoring Q3 portal ownership");
-        }
+    if (ok && portal_capacity) {
+        game->portals = calloc((size_t)portal_capacity, sizeof(*game->portals));
+        game->portal_capacity = (size_t)portal_capacity;
+        if (!game->portals) ok = q3_fail(error, QA_ERROR_MEMORY, 0, "Restoring Q3 portal ownership");
     }
     for (uint32_t i = 0; ok && i < portals; ++i, row += PORTAL_BYTES) {
         uint32_t first = qa_load_u32le(row), second = qa_load_u32le(row + 4), count = qa_load_u32le(row + 8);

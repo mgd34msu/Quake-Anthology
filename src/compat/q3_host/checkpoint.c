@@ -1,7 +1,97 @@
 #include "internal.h"
+#include "qa/q3_host_save.h"
+#include "qa/source_save.h"
 
 typedef struct checkpoint_writer { qa_buffer bytes; size_t capacity; } checkpoint_writer;
 typedef struct checkpoint_reader { qa_bytes bytes; size_t offset; } checkpoint_reader;
+
+bool qa_q3_host_checkpoint_portable_ready(const qa_q3_host *host, qa_error *error)
+{
+    if (!host || host->retired || host->native || !host->vm || host->calls)
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Portable Q3 host requires an idle original QVM owner");
+    if (host->options.script_globals)
+        return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 shared script defines require their real detached owner");
+    for (size_t i = 1; i < 64; ++i)
+        if (host->files[i].kind == Q3_FILE_WRITE)
+            return q3_fail(error, QA_ERROR_UNSUPPORTED, i, "Q3 writable stream requires a detached file continuation owner");
+    return true;
+}
+
+static bool service_text(qa_source_save_io *io, const char *text)
+{
+    bool present = text != NULL;
+    size_t length = present ? strlen(text) + 1 : 0;
+    return qa_source_save_bool(io, &present) && (!present ||
+        (qa_source_save_count(io, &length, SIZE_MAX) &&
+         qa_source_save_bytes(io, (void *)text, length)));
+}
+
+bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_error *error)
+{
+    if (!out || !qa_q3_host_checkpoint_portable_ready(host, error)) return false;
+    const qa_q3_host_options *o = &host->options;
+    const qa_command_context *c = &o->command_context;
+    if (c->session || c->client || c->registry || c->generation || c->actor.registry ||
+        c->actor.generation || c->actor.slot || c->owner != o->owner)
+        return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 retained command context requires its qualified source registry owner");
+    qa_source_save_io io = {0};
+    uint8_t magic[8] = {'Q','A','G','3','S','V',0,0};
+    uint32_t version = 1, role = o->role, abi = o->abi, owner = o->owner;
+    uint64_t service_owner = o->service_owner, input_owner = o->input_owner;
+    uint32_t client_base = o->bot_client_base, entity_base = o->bot_entity_base;
+    uint32_t maximum_clients = o->server.maximum_clients, command_seat = c->seat;
+    uint32_t dialect = c->dialect, origin = c->origin;
+    uint64_t maximum_string = o->maximum_string_bytes, writable = UINT64_MAX;
+    size_t mount_count = o->mounts ? qa_vfs_mount_count(o->mounts) : 0;
+    for (size_t i = 0; i < mount_count; ++i) {
+        qa_vfs_mount_info mount;
+        if (!qa_vfs_mount_at(o->mounts, i, &mount))
+            return q3_fail(error, QA_ERROR_FORMAT, i, "Q3 source mount inventory changed during qualification");
+        if (mount.id == o->writable_mount) writable = i;
+    }
+    if (o->writable_mount && writable == UINT64_MAX)
+        return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 writable mount is outside its actual source inventory");
+    bool shared = o->shared_bot_lifetime, direct = c->direct, console_text = c->console_text;
+    bool ok = qa_source_save_writer(&io, NULL, error) &&
+        qa_source_save_bytes(&io, magic, sizeof(magic)) && qa_source_save_u32(&io, &version) &&
+        qa_source_save_u32(&io, &role) && qa_source_save_u32(&io, &abi) && qa_source_save_u32(&io, &owner) &&
+        qa_source_save_u64(&io, &service_owner) && qa_source_save_u64(&io, &input_owner) &&
+        qa_source_save_u32(&io, &client_base) && qa_source_save_u32(&io, &entity_base) &&
+        qa_source_save_u32(&io, &maximum_clients) && qa_source_save_u64(&io, &maximum_string) &&
+        qa_source_save_count(&io, &mount_count, SIZE_MAX) && qa_source_save_u64(&io, &writable) &&
+        qa_source_save_bool(&io, &shared) && qa_source_save_u32(&io, &command_seat) &&
+        qa_source_save_u32(&io, &dialect) && qa_source_save_u32(&io, &origin) &&
+        qa_source_save_bool(&io, &direct) && qa_source_save_bool(&io, &console_text) &&
+        service_text(&io, c->script) && service_text(&io, o->game_directory) &&
+        service_text(&io, o->script_date) && service_text(&io, o->script_time);
+    const bool installed[] = {
+        o->session != NULL, o->world != NULL, o->cvars != NULL, o->console != NULL, o->mounts != NULL,
+        o->scene_resources != NULL, o->scene_world != NULL, o->scene_frame != NULL,
+        o->sound_bank != NULL, o->sound_mixer != NULL, o->seat != NULL, o->console_field != NULL,
+        o->keys != NULL, o->bots != NULL, o->frontend_lifetime != NULL, o->release_frontend != NULL,
+        o->common.print != NULL, o->common.milliseconds != NULL, o->common.calendar != NULL,
+        o->common.arguments != NULL, o->common.client_command != NULL, o->common.installed_mods != NULL,
+        o->common.clipboard != NULL, o->server.configstring != NULL, o->server.set_configstring != NULL,
+        o->server.userinfo != NULL, o->server.set_userinfo != NULL, o->server.user_command != NULL,
+        o->server.drop_client != NULL, o->server.send_command != NULL, o->server.allocate_bot != NULL,
+        o->server.free_bot != NULL, o->server.bot_snapshot_entity != NULL,
+        o->server.bot_console_message != NULL, o->server.bot_user_command != NULL,
+        o->server.admit_actor != NULL, o->server.player_velocity != NULL, o->server.world_actor != NULL,
+        o->client.gamestate != NULL, o->client.current_snapshot != NULL, o->client.snapshot != NULL,
+        o->client.server_command != NULL, o->client.current_command != NULL, o->client.user_command != NULL,
+        o->client.command_values != NULL, o->client.source_actor != NULL,
+        o->collision.geometry != NULL, o->collision.load_map != NULL,
+        o->presentation.seat != NULL, o->presentation.fonts != NULL,
+        o->presentation.configuration != NULL, o->presentation.update_screen != NULL
+    };
+    for (size_t i = 0; ok && i < sizeof(installed) / sizeof(*installed); ++i) {
+        bool present = installed[i];
+        ok = qa_source_save_bool(&io, &present);
+    }
+    if (ok) ok = qa_source_save_finish(&io, out);
+    qa_source_save_dispose(&io);
+    return ok;
+}
 
 static void store_vector(uint8_t *out, qa_vec3 value)
 {
@@ -43,6 +133,46 @@ static bool take(checkpoint_reader *reader, size_t size, qa_bytes *out, qa_error
         return q3_fail(error, QA_ERROR_FORMAT, reader->offset, "truncated Q3 host checkpoint");
     *out = (qa_bytes){reader->bytes.data + reader->offset, size};
     reader->offset += size; return true;
+}
+
+bool qa_q3_host_checkpoint_portable_state(qa_bytes input, qa_error *error)
+{
+    if (!input.data || input.size < 56 || memcmp(input.data, "Q3HC", 4) ||
+        qa_load_u32le(input.data + 4) != 4 || qa_load_u32le(input.data + 16) >= 64 ||
+        qa_load_u32le(input.data + 20) >= 64)
+        return q3_fail(error, QA_ERROR_FORMAT, 0, "Invalid portable Q3 host stream");
+    checkpoint_reader reader = {input, 56};
+    qa_bytes bytes, entity;
+    if (!take(&reader, 48, &bytes, error) || !take(&reader, 32, &entity, error)) return false;
+    uint64_t source = qa_load_u64le(entity.data), game = qa_load_u64le(input.data + 24);
+    if (source > SIZE_MAX || game > SIZE_MAX)
+        return q3_fail(error, QA_ERROR_FORMAT, reader.offset, "Portable Q3 source extent exceeds native address space");
+    if (!take(&reader, (size_t)source, &bytes, error) ||
+        !take(&reader, qa_load_u32le(entity.data + 16), &bytes, error) ||
+        !take(&reader, qa_load_u32le(entity.data + 20), &bytes, error) ||
+        !take(&reader, (size_t)game, &bytes, error)) return false;
+    for (uint32_t i = 0; i < qa_load_u32le(input.data + 16); ++i) {
+        qa_bytes row;
+        if (!take(&reader, 80, &row, error)) return false;
+        uint64_t length = qa_load_u64le(row.data + 24);
+        if (qa_load_u32le(row.data + 4) != Q3_FILE_READ)
+            return q3_fail(error, QA_ERROR_UNSUPPORTED, reader.offset,
+                           "Portable Q3 host stream contains an unqualified writable file owner");
+        if (length > SIZE_MAX)
+            return q3_fail(error, QA_ERROR_FORMAT, reader.offset, "Portable Q3 file extent exceeds native address space");
+        if (!take(&reader, qa_load_u32le(row.data + 32), &bytes, error) ||
+            !take(&reader, (size_t)length, &bytes, error)) return false;
+    }
+    for (uint32_t i = 0; i < qa_load_u32le(input.data + 20); ++i) {
+        qa_bytes row;
+        if (!take(&reader, 16, &row, error)) return false;
+        uint64_t length = qa_load_u64le(row.data + 8);
+        if (length > SIZE_MAX)
+            return q3_fail(error, QA_ERROR_FORMAT, reader.offset, "Portable Q3 script extent exceeds native address space");
+        if (!take(&reader, (size_t)length, &bytes, error)) return false;
+    }
+    return reader.offset == input.size ||
+        q3_fail(error, QA_ERROR_FORMAT, reader.offset, "Trailing portable Q3 host stream bytes");
 }
 
 static bool idle(qa_q3_host *host, qa_error *error)
