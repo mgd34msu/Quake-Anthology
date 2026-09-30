@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_q3_save.h"
 
 static bool invoke_source(void *opaque, qa_item_id item, qa_item_action action, qa_error *error) {
     q3_inventory_owner *owner = opaque;
@@ -181,5 +182,60 @@ bool qa_q3_inventory_rebind(qa_q3_game *game, qa_error *error) {
             q3_actor_get(game, game->actors[i].actor) &&
             !qa_q3_inventory_admit(game, game->actors[i].actor, error))
             return false;
+    return true;
+}
+
+static bool saved_definition(const qa_item_definition *expected,
+                              const qa_item_definition *saved) {
+    return expected->item == saved->item && expected->ammo == saved->ammo &&
+        expected->owner == saved->owner && expected->weapon == saved->weapon &&
+        expected->actions == saved->actions && expected->label && saved->label &&
+        !strcmp(expected->label, saved->label);
+}
+bool qa_q3_game_inventory_group(qa_q3_game *game, qa_actor_id actor, uint64_t serial,
+    const qa_inventory_source_group *saved, qa_inventory_items *out, qa_error *error) {
+    q3_actor *entry = game ? q3_actor_get(game, actor) : NULL;
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER || !saved || !out || !serial ||
+        saved->owner != game->options.owner || (saved->count && !saved->items) ||
+        game->observation_depth || game->player_binding_tokens[actor.slot])
+        return q3_fail(error, "invalid Q3 saved inventory group");
+    uint32_t selection = saved->definitions_only ? QA_Q3_ARSENAL : QA_Q3_EQUIPMENT;
+    if (!(entry->state.player.selections & selection))
+        return q3_fail(error, "Q3 saved inventory role is not selected");
+    q3_inventory_owner *owner = &game->inventory_owners[actor.slot];
+    if (owner->actor.registry && !qa_actor_id_equal(owner->actor, actor))
+        return q3_fail(error, "Q3 saved inventory owner generation changed");
+    size_t count, used = 0;
+    const qa_q3_item *items = qa_q3_items(game->options.product, &count);
+    for (size_t i = 1; i < count; ++i) {
+        bool weapon = items[i].kind == QA_Q3_ITEM_WEAPON;
+        if (saved->definitions_only ? !weapon : items[i].kind != QA_Q3_ITEM_HOLDABLE)
+            continue;
+        if (used == QA_Q3_WEAPON_COUNT || used >= saved->count)
+            return q3_fail(error, "Q3 saved inventory definition count differs");
+        qa_item_admission definition = {.definition = {
+            .item = game->item_ids[i], .owner = game->options.owner,
+            .ammo = weapon ? game->ammo_items[items[i].tag] : 0,
+            .label = items[i].name, .weapon = weapon, .actions = QA_ITEM_USE},
+            .replace_primary = saved->items[used].replace_primary};
+        if ((saved->definitions_only && definition.replace_primary) ||
+            !saved_definition(&definition.definition, &saved->items[used].definition))
+            return q3_fail(error, "Q3 saved inventory declarations differ from source");
+        ++used;
+    }
+    if (used != saved->count || (!saved->definitions_only && used > 5))
+        return q3_fail(error, "Q3 saved inventory definition count differs");
+    qa_inventory_lease prior = saved->definitions_only ? owner->weapons : owner->holdables;
+    if (prior.serial && prior.serial != serial)
+        return q3_fail(error, "duplicate Q3 saved inventory role");
+    owner->game = game; owner->actor = actor; owner->selections = entry->state.player.selections;
+    qa_inventory_lease lease = {.actor = actor, .serial = serial};
+    if (saved->definitions_only) owner->weapons = lease;
+    else owner->holdables = lease;
+    *out = (qa_inventory_items){.owner = game->options.owner, .items = saved->items,
+        .count = used, .action_context = owner, .invoke = invoke};
+    if (!saved->definitions_only)
+        out->state = (qa_inventory_binding){.context = owner, .count = holdable_count,
+                                            .at = holdable_read, .write = holdable_write};
     return true;
 }

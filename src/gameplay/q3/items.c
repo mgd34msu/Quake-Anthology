@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_q3_save.h"
 
 #define ITEM(c, n, m, s, i, a, k, t, q) {c, n, m, s, i, a, k, t, q}
 #define WEAPON(c, n, m, i, t, q)                                                                   \
@@ -483,6 +484,18 @@ done:
 bool q3_item_observation_bind(qa_q3_game *game,qa_actor_id actor,qa_pickup_lease *out,qa_error *error) {
     qa_pickup_observer observer={.context=game,.inspect=item_observation};
     return qa_pickups_observe(game->options.services.pickups,actor,game->options.owner,&observer,out,error);
+}
+bool qa_q3_game_pickup_observer(qa_q3_game *game, qa_actor_id actor, uint64_t serial,
+                                qa_pickup_observer *out, qa_error *error) {
+    q3_actor *entry = game ? q3_actor_get(game, actor) : NULL;
+    if (!entry || entry->kind != Q3_ACTOR_ITEM || !serial || !out || game->observation_depth)
+        return q3_fail(error, "invalid Q3 saved pickup observer");
+    qa_pickup_lease *prior = &game->item_observations[actor.slot];
+    if (prior->serial && (!qa_actor_id_equal(prior->actor, actor) || prior->serial != serial))
+        return q3_fail(error, "duplicate Q3 saved pickup observer");
+    *prior = (qa_pickup_lease){.actor = actor, .serial = serial};
+    *out = (qa_pickup_observer){.context = game, .inspect = item_observation};
+    return true;
 }
 void q3_item_observations_abort(qa_q3_game *game,qa_pickup_lease *candidate) {
     if(!candidate) return;

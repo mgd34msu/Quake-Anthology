@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "qa/game_q3_save.h"
+#include "qa/persistence_gameplay.h"
 
 static float component(qa_vec3 value, unsigned axis) {
     return axis == 0 ? value.x : axis == 1 ? value.y : value.z;
@@ -103,8 +105,22 @@ bool q3_map_mover_sync_admission(qa_q3_game *game,
     if (!state->damageable)
         return true;
     qa_combat_admission admission = {.context = game, .admit = mover_damage_admit};
+    qa_combat_admission existing;
+    if (qa_persistence_combat_admission(game->options.services.combat, state->actor, &existing) &&
+        existing.context == admission.context && existing.admit == admission.admit)
+        return true;
     return qa_combat_set_admission(game->options.services.combat, state->actor,
                                    &admission, error);
+}
+bool qa_q3_game_damage_admission(qa_q3_game *game, qa_actor_id actor,
+                                 qa_combat_admission *out, qa_error *error) {
+    qa_q3_map_actor_state *state = game ? q3_map_get(game, actor) : NULL;
+    q3_actor *native = game ? q3_actor_get(game, actor) : NULL;
+    if (!state || !state->damageable || !native || native->kind != Q3_ACTOR_MOVER || !out ||
+        (state->kind != QA_Q3_MAP_MOVER_DOOR && state->kind != QA_Q3_MAP_MOVER_BUTTON))
+        return q3_map_fail(error, "Q3 saved damage admission has no authored mover");
+    *out = (qa_combat_admission){.context = game, .admit = mover_damage_admit};
+    return true;
 }
 
 static bool ensure_damageable(qa_q3_game *game, qa_q3_map_actor_state *state,

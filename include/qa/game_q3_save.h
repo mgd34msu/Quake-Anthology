@@ -13,5 +13,12 @@ bool qa_q3_game_restore(qa_q3_game *, qa_bytes, qa_error *);
  * Target resolution itself borrows the already restored authored owner. */
 bool qa_q3_game_reconnect(qa_q3_game *, qa_error *);
 bool qa_q3_game_target_binding(qa_q3_game *, qa_actor_id, qa_target_binding *, qa_error *);
+/* Candidate binding reconstruction validates the decoded shared declarations
+ * and adopts only private lease metadata. It never registers shared stores. */
+bool qa_q3_game_inventory_group(qa_q3_game *, qa_actor_id, uint64_t saved_serial,
+    const qa_inventory_source_group *, qa_inventory_items *, qa_error *);
+bool qa_q3_game_pickup_observer(qa_q3_game *, qa_actor_id, uint64_t saved_serial,
+    qa_pickup_observer *, qa_error *);
+bool qa_q3_game_damage_admission(qa_q3_game *, qa_actor_id, qa_combat_admission *, qa_error *);
 
 #endif
