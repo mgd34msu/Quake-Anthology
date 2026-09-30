@@ -935,6 +935,7 @@ add_library(qa_application STATIC
     src/app/application/native_q3_console.c
     src/app/application/native_modes.c
     src/app/application/native_maps.c
+    src/app/application/q3_restart.c
     src/app/application/network.c
     src/app/application/network_q1_signon.c
     src/app/application/owner.c

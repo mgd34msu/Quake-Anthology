@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "match_intents.h"
+#include "q3_restart.h"
 #include "qa/launch_identity.h"
 #include "qa/source_save.h"
 
@@ -11,6 +12,7 @@ typedef enum match_map_stage {
     MATCH_MAP_WAIT, MATCH_MAP_AFTER
 } match_map_stage;
 struct application_match_intents {
+    application_q3_restart *restart;
     match_map_stage stage;
     qa_match_intent_kind kind;
     qa_string_id source_command;
@@ -36,22 +38,46 @@ static char *copy_text(const char *text, qa_error *error) {
     return copy;
 }
 static void clear(application_match_intents *state) {
+    application_q3_restart *restart = state->restart;
     if (!state->plan.assignments) state->plan.assignment_count = 0;
     application_next_map_plan_free(&state->plan);
     qa_buffer_free(&state->selection_identity);
     free(state->product_identity);
     memset(state, 0, sizeof(*state));
+    state->restart = restart;
 }
 application_match_intents *application_match_intents_create(qa_error *error) {
     application_match_intents *state = calloc(1, sizeof(*state));
     if (!state) application_fail(error, QA_ERROR_MEMORY, "cannot retain match map continuation");
+    else if (!(state->restart = application_q3_restart_create(error))) { free(state); return NULL; }
     return state;
 }
 void application_match_intents_destroy(application_match_intents *state) {
-    if (state) { clear(state); free(state); }
+    if (state) { clear(state); application_q3_restart_destroy(state->restart); free(state); }
 }
 bool application_match_intents_idle(const application_match_intents *state) {
-    return !state || !state->busy;
+    return !state || (!state->busy && application_q3_restart_idle(state->restart));
+}
+static bool restart_owned_by_travel(application_match_intents *state, qa_application *app) {
+    qa_application_travel_view travel;
+    if ((state->stage == MATCH_MAP_WAIT && state->revision) ||
+        (app && qa_application_travel_read(app, &travel))) {
+        application_q3_restart_cancel(state->restart);
+        return true;
+    }
+    return false;
+}
+bool application_match_intents_request_restart(application_match_intents *state, qa_application *app,
+    qa_mode_id mode, const qa_command_invocation *command, qa_error *error) {
+    if (!state) return application_fail(error, QA_ERROR_ARGUMENT, "restart requires match continuation owner");
+    if (restart_owned_by_travel(state, app)) return true;
+    return application_q3_restart_request(state->restart, app, mode, command, error);
+}
+void application_match_intents_cancel_restart(application_match_intents *state) {
+    if (state) application_q3_restart_cancel(state->restart);
+}
+void application_match_intents_restart_mutated(application_match_intents *state, const qa_application *app) {
+    if (state) application_q3_restart_mutated(state->restart, app);
 }
 static const qa_launch_snapshot *snapshot(qa_application *app) {
     return app->routing_snapshot ? app->routing_snapshot :
@@ -144,6 +170,10 @@ static bool config_intent(qa_match_intent_kind kind) {
 }
 bool application_match_intents_enqueue(application_match_intents *state, qa_application *app,
     const qa_match_intent *intent, qa_error *error) {
+    if (state && intent && intent->kind == QA_MATCH_RESTART_MAP) {
+        if (restart_owned_by_travel(state, app)) return true;
+        return application_q3_restart_enqueue(state->restart, app, intent, error);
+    }
     if (!state || state->busy || !app || !intent || !app->session)
         return application_fail(error, QA_ERROR_ARGUMENT, "match map enqueue requires live owners");
     if (intent->kind != QA_MATCH_NEXT_MAP && intent->kind != QA_MATCH_SELECTED_MAP && !config_intent(intent->kind))
@@ -158,7 +188,7 @@ bool application_match_intents_enqueue(application_match_intents *state, qa_appl
     application_provider *p = application_mode_provider(app, intent->mode);
     if (!p || !p->product || !p->product->identity)
         return application_fail(error, QA_ERROR_NOT_FOUND, "match map has no actual source provider");
-    application_match_intents next = {.stage = MATCH_MAP_UNRESOLVED,
+    application_match_intents next = {.restart = state->restart, .stage = MATCH_MAP_UNRESOLVED,
         .kind = intent->kind, .source_command = intent->source_command,
         .mode = intent->mode, .cause = intent->actor, .owner = p->owner,
         .product = p->product->id, .source_identity = p->launch->identity};
@@ -233,6 +263,8 @@ bool application_match_intents_prepare(application_match_intents *state, qa_appl
     state->busy = true;
     bool okay = prepare_inner(state, app, consumed, error);
     state->busy = false;
+    if (okay && !*consumed && state->stage == MATCH_MAP_EMPTY)
+        okay = application_q3_restart_prepare(state->restart, app, consumed, error);
     return okay;
 }
 bool application_match_intents_travel_read(const application_match_intents *state,
@@ -266,7 +298,9 @@ bool application_match_intents_queued(application_match_intents *state, qa_appli
     if (!state || state->busy || state->stage != MATCH_MAP_WAIT ||
         (state->revision && state->revision != revision) || !context_read(state, app, false, error) ||
         !travel_matches(state, app, revision, error)) return false;
-    state->revision = revision; return true;
+    state->revision = revision;
+    application_q3_restart_cancel(state->restart);
+    return true;
 }
 bool application_match_intents_completed(application_match_intents *state, qa_application *app,
     uint64_t revision, qa_error *error) {
@@ -321,9 +355,10 @@ static bool context_fields(qa_source_save_io *io, qa_command_context *context) {
         context->registry && context->generation;
 }
 static bool stream(qa_source_save_io *io, application_match_intents *state) {
-    char magic[4] = {'Q','A','M','I'}; uint32_t version = 4, stage = state->stage;
+    char magic[4] = {'Q','A','M','I'}; uint32_t version = 5, stage = state->stage;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QAMI", 4) ||
-        !qa_source_save_u32(io, &version) || version != 4 ||
+        !qa_source_save_u32(io, &version) || version != 5 ||
+        !application_q3_restart_stream(io, state->restart) ||
         !qa_source_save_u32(io, &stage) || stage > MATCH_MAP_AFTER) return false;
     state->stage = (match_map_stage)stage;
     if (state->stage == MATCH_MAP_EMPTY) return true;
@@ -359,7 +394,8 @@ static bool stream(qa_source_save_io *io, application_match_intents *state) {
         !qa_source_save_count(io, &plan->assignment_count, maximum) ||
         !qa_source_save_count(io, &plan->assignments_before_map, plan->assignment_count) ||
         !qa_source_save_count(io, &state->cursor, plan->assignment_count) ||
-        !qa_source_save_u64(io, &state->revision)) return false;
+        !qa_source_save_u64(io, &state->revision) ||
+        (state->revision && application_q3_restart_pending(state->restart))) return false;
     plan->mode = state->mode; plan->scope.kind = (qa_application_console_kind)scope_kind;
     bool config = config_intent(state->kind);
     if (plan->owner != state->owner || plan->context.owner != state->owner ||
@@ -387,6 +423,7 @@ static bool stream(qa_source_save_io *io, application_match_intents *state) {
 }
 bool application_match_intents_reconnect(application_match_intents *state, qa_application *app, qa_error *error) {
     if (!state || state->busy) return application_fail(error, QA_ERROR_ARGUMENT, "match map reconnect cannot reenter");
+    if (!application_q3_restart_reconnect(state->restart, app, error)) return false;
     if (state->stage == MATCH_MAP_EMPTY) return true;
     bool after = state->stage == MATCH_MAP_AFTER;
     if (!qualify(state, app, !after, error)) return false;
@@ -431,14 +468,17 @@ bool application_match_intents_capture(application_match_intents *state, qa_appl
 bool application_match_intents_restore(application_match_intents *state, qa_application *app,
     qa_bytes bytes, qa_error *error) {
     if (!state || state->busy || !app || !app->session) return application_fail(error, QA_ERROR_ARGUMENT, "match map restore requires candidate owners");
-    application_match_intents next = {0}; qa_source_save_io io = {0};
+    application_match_intents next = {.restart = application_q3_restart_create(error)};
+    if (!next.restart) return false;
+    qa_source_save_io io = {0};
     bool okay = qa_source_save_reader(&io, app->session, bytes, error) && stream(&io, &next) &&
         qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
     if (!okay) {
         clear(&next);
+        application_q3_restart_destroy(next.restart);
         if (error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "invalid saved match map continuation");
         return false;
     }
-    clear(state); *state = next; return true;
+    clear(state); application_q3_restart_destroy(state->restart); *state = next; return true;
 }

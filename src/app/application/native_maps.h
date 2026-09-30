@@ -39,5 +39,10 @@ bool application_native_config_plan(qa_application *, qa_mode_id, qa_match_inten
                                      qa_string_id command, application_next_map_plan *, qa_error *);
 bool application_native_config_command_allowed(qa_application *, const application_next_map_plan *,
                                                 const char *name, qa_error *);
+/* Retain the actual GAME console scope and parse the original map_restart
+ * integer argument. The round owner supplies the source time and publishes
+ * CS_WARMUP; this readonly plan performs neither action. */
+bool application_native_restart_plan(qa_application *, qa_mode_id, qa_string_id command,
+    application_next_map_plan *, int32_t *delay_seconds, bool *warmup_enabled, qa_error *);
 
 #endif

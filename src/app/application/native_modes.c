@@ -1,6 +1,8 @@
 #include "internal.h"
 #include "native_maps.h"
 #include "native_q3_console.h"
+#include "q3_restart.h"
+#include "qa/game_q3_configstrings.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -73,13 +75,10 @@ static bool q3_settings_values(application_provider *p, qa_mode_q3_settings *out
 bool application_native_mode_q3_clock(void *opaque, qa_mode_id mode, int32_t *out, qa_error *e) {
     qa_application *app = opaque;
     application_provider *p = application_mode_provider(app, mode);
-    qa_clock_state clock;
-    if (!p || p->kind != APPLICATION_PROVIDER_Q3 || !out || !native_q3_mode(p, mode) ||
-        !qa_session_clock(app->session, p->owner, &clock))
+    if (!p || p->kind != APPLICATION_PROVIDER_Q3 || !p->state.q3 || !out ||
+        !native_q3_mode(p, mode))
         return application_fail(e, QA_ERROR_NOT_FOUND, "Q3 mode has no actual native source clock");
-    uint32_t bits = (uint32_t)(clock.frame.time_ns / UINT64_C(1000000));
-    memcpy(out, &bits, sizeof(bits));
-    return true;
+    return qa_q3_source_clock(p->state.q3, out, e);
 }
 
 bool application_native_mode_q3_warmup_restart(void *opaque, qa_mode_id mode, qa_error *e) {
@@ -92,6 +91,21 @@ bool application_native_mode_q3_warmup_restart(void *opaque, qa_mode_id mode, qa
     if (!application_native_q3_console_borrow(p, e)) return false;
     bool okay = qa_cvars_set(cvars, "g_restarted", "1", true, e);
     application_native_q3_console_release(p);
+    return okay;
+}
+
+bool application_native_q3_restart_configstring(application_provider *provider,
+    uint32_t index, const char *text, qa_error *error) {
+    qa_application *app = provider ? provider->application : NULL;
+    if (!app || !text || provider->kind != APPLICATION_PROVIDER_Q3 || !provider->state.q3 ||
+        !provider->constructed || !provider->attached || provider->close_pending ||
+        app->destroy_requested ||
+        (app->operation != APPLICATION_IDLE && app->operation != APPLICATION_CONFIGURING) ||
+        !qa_q3_destroy_ready(provider->state.q3))
+        return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 configstring has no idle source owner");
+    if (!application_native_q3_console_borrow(provider, error)) return false;
+    bool okay = qa_q3_configstring_write(provider->state.q3, index, text, error);
+    application_native_q3_console_release(provider);
     return okay;
 }
 
@@ -178,7 +192,7 @@ bool application_native_q3_settings_register(application_provider *p, qa_error *
     qa_mode_rules rules = {0};
     bool found;
     if (!qa_q3_rules_read(p->state.q3, &native, e) || !q3_initial_rules(p, &rules, &found, e)) return false;
-    char values[7][64];
+    char values[9][64];
     snprintf(values[0], sizeof(values[0]), "%d", native.game_type);
     snprintf(values[1], sizeof(values[1]), "%d", found ? rules.frag_limit : 20);
     snprintf(values[2], sizeof(values[2]), "%.9g", found ? (double)rules.time_limit_minutes : 0.0);
@@ -186,15 +200,17 @@ bool application_native_q3_settings_register(application_provider *p, qa_error *
     snprintf(values[4], sizeof(values[4]), "%d", found && rules.warmup_seconds ? rules.warmup_seconds : 20);
     snprintf(values[5], sizeof(values[5]), "%d", found && rules.warmup_seconds != 0);
     strcpy(values[6], "0");
+    strcpy(values[7], "0");
+    strcpy(values[8], "0");
     static const char *names[] = {"g_gametype", "fraglimit", "timelimit", "capturelimit",
-        "g_warmup", "g_doWarmup", "g_restarted"};
+        "g_warmup", "g_doWarmup", "g_restarted", "sv_enableRankings", "sv_rankingsActive"};
     static const uint32_t flags[] = {QA_CVAR_SERVERINFO | QA_CVAR_USERINFO | QA_CVAR_LATCH,
         QA_CVAR_SERVERINFO | QA_CVAR_ARCHIVE | QA_CVAR_NO_RESTART,
         QA_CVAR_SERVERINFO | QA_CVAR_ARCHIVE | QA_CVAR_NO_RESTART,
         QA_CVAR_SERVERINFO | QA_CVAR_ARCHIVE | QA_CVAR_NO_RESTART,
-        QA_CVAR_ARCHIVE, 0, QA_CVAR_READONLY};
+        QA_CVAR_ARCHIVE, 0, QA_CVAR_READONLY, 0, QA_CVAR_READONLY};
     qa_cvars *cvars = application_native_q3_console_registry(p);
-    for (size_t i = 0; i < 7; ++i)
+    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (!qa_cvars_register(cvars, names[i], values[i], flags[i], p->owner, NULL, e)) return false;
     qa_cvar_binding binding = {.owner = p->owner, .user = p,
         .validate = q3_settings_validate, .changed = q3_settings_changed};

@@ -160,9 +160,14 @@ bool application_native_q3_console_at(application_provider *provider, qa_console
 
 bool application_native_q3_console_create(application_provider *provider, qa_error *error)
 {
-    if (!provider || provider->kind != APPLICATION_PROVIDER_Q3 || !provider->state.q3 ||
-        !provider->application || provider->native_q3_console)
-        return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 console requires its actual game owner");
+    if (!provider || provider->kind != APPLICATION_PROVIDER_Q3 || !provider->owner ||
+        !provider->application || !provider->application->session || !provider->launch ||
+        !provider->product || provider->product->family != QA_GAME_Q3 ||
+        provider->close_pending || provider->native_q3_console)
+        return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 console requires its actual source owner");
+    const qa_cvar_view *capacity = qa_cvars_find(provider->application->cvars, "sv_maxclients");
+    if (capacity && capacity->owner && capacity->owner != provider->owner)
+        return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 startup capacity belongs to another source");
     struct application_native_q3_console *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "allocating native Q3 source console");
     owner->provider = provider;
@@ -175,7 +180,16 @@ bool application_native_q3_console_create(application_provider *provider, qa_err
         .capture_context = capture, .context_active = active, .read_script = read_script,
         .release_script = release_script, .source_command = command};
     if (owner->cvars) owner->console = qa_console_create(&options, error);
-    if (!owner->console) { qa_cvars_destroy(owner->cvars); free(owner); return false; }
+    if (!owner->console ||
+        !qa_cvars_register(owner->cvars, "sv_maxclients", "8",
+            QA_CVAR_SERVERINFO | QA_CVAR_LATCH | QA_CVAR_ARCHIVE, provider->owner, NULL, error) ||
+        (capacity && !qa_cvars_set(owner->cvars, "sv_maxclients",
+            capacity->latched_value ? capacity->latched_value : capacity->value, true, error))) {
+        qa_console_destroy(owner->console);
+        qa_cvars_destroy(owner->cvars);
+        free(owner);
+        return false;
+    }
     provider->native_q3_console = owner;
     return true;
 }

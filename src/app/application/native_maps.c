@@ -559,3 +559,67 @@ bool application_native_mode_next_map_allowed(void *opaque, qa_mode_id mode) {
     application_next_map_plan_free(&plan);
     return allowed;
 }
+
+static int32_t restart_integer(const char *text) {
+    while (*text == ' ' || (*text >= '\t' && *text <= '\r')) ++text;
+    bool negative = *text == '-';
+    if (*text == '-' || *text == '+') ++text;
+    uint32_t bits = 0, limit = negative ? UINT32_C(2147483648) : UINT32_C(2147483647);
+    while (*text >= '0' && *text <= '9') {
+        uint32_t digit = (unsigned char)*text++ - '0';
+        bits = bits > (limit - digit) / 10 ? limit : bits * 10 + digit;
+    }
+    if (negative) bits = 0 - bits;
+    int32_t value;
+    memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+bool application_native_restart_plan(qa_application *app, qa_mode_id mode,
+    qa_string_id command, application_next_map_plan *out, int32_t *delay_seconds,
+    bool *warmup_enabled, qa_error *error) {
+    qa_bytes bytes = app && app->session ?
+        qa_strings_text(qa_session_strings(app->session), command) : (qa_bytes){0};
+    if (!out || out->map || out->assignments || !delay_seconds || !warmup_enabled ||
+        !bytes.data || !bytes.size || bytes.size >= 1024 || memchr(bytes.data, 0, bytes.size))
+        return application_fail(error, QA_ERROR_ARGUMENT, "restart has no actual source command");
+    map_parser parser = {.application = app};
+    bool okay = source_console(&parser, mode, error);
+    qa_command_tokens tokens = {0};
+    if (okay) {
+        size_t length = qa_command_separator((const char *)bytes.data, bytes.size, QA_CONSOLE_Q3);
+        size_t copied = length < parser.command_limit ? length : parser.command_limit - 1;
+        char *line = malloc(copied + 1);
+        if (!line) okay = application_fail(error, QA_ERROR_MEMORY, "cannot inspect source restart command");
+        else {
+            memcpy(line, bytes.data, copied); line[copied] = 0;
+            okay = qa_command_tokenize(line, QA_CONSOLE_Q3, false, &tokens, error);
+            free(line);
+        }
+        /* Enqueued source intents retain one actual engine command. Subsequent
+         * script commands belong to their original console buffer. */
+        if (okay && length < bytes.size)
+            for (size_t i = length + 1; i < bytes.size; ++i)
+                if (((const unsigned char *)bytes.data)[i] > 32) {
+                    okay = application_fail(error, QA_ERROR_ARGUMENT, "restart continuation contains another command");
+                    break;
+                }
+    }
+    if (okay && (!tokens.count || !equal_name(tokens.values[0], "map_restart")))
+        okay = application_fail(error, QA_ERROR_ARGUMENT, "restart continuation differs from its source command");
+    qa_cvars *cvars = okay ? qa_console_cvar_owner(parser.console, &parser.plan.context, "g_doWarmup") : NULL;
+    const qa_cvar_view *warmup = qa_cvars_find(cvars, "g_doWarmup");
+    if (okay && (!cvars || qa_cvars_dialect(cvars) != QA_CONSOLE_Q3 || !warmup))
+        okay = application_fail(error, QA_ERROR_NOT_FOUND, "restart has no actual source warmup cvar");
+    if (okay && !qa_application_command_context_active(app, &parser.plan.context))
+        okay = application_fail(error, QA_ERROR_ARGUMENT, "restart source retired during admission");
+    if (okay) {
+        *delay_seconds = tokens.count > 1 ? restart_integer(tokens.values[1]) : 5;
+        *warmup_enabled = warmup->number != 0;
+        *out = parser.plan;
+        parser.plan = (application_next_map_plan){0};
+    }
+    qa_command_tokens_free(&tokens);
+    parser_free(&parser);
+    return okay;
+}

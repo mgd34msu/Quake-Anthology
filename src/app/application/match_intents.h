@@ -10,9 +10,14 @@ bool application_match_intents_idle(const application_match_intents *);
  * NEXT_MAP resolves after the source vote delay at prepare. */
 bool application_match_intents_enqueue(application_match_intents *, qa_application *,
     const qa_match_intent *, qa_error *);
+bool application_match_intents_request_restart(application_match_intents *, qa_application *,
+    qa_mode_id, const qa_command_invocation *, qa_error *);
+void application_match_intents_cancel_restart(application_match_intents *);
+void application_match_intents_restart_mutated(application_match_intents *, const qa_application *);
 /* Only the frontend's drained idle boundary calls prepare/completed. Prepare
  * applies scoped setters; consumed is true when a config intent finished
- * without a map transition. It neither loads a map nor calls a travel parser. */
+ * without a map transition. A due Q3 restart uses the genuine round executor;
+ * map intents retain their existing travel parser and publication boundary. */
 bool application_match_intents_prepare(application_match_intents *, qa_application *,
                                         bool *consumed, qa_error *);
 bool application_match_intents_travel_read(const application_match_intents *,
