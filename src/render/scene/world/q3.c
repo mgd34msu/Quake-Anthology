@@ -1,5 +1,4 @@
-#include "internal.h"
-#include "q3/patch.h"
+#include "q3/internal.h"
 #include "qa/scene_effects.h"
 
 #include <ctype.h>
@@ -10,24 +9,6 @@
 
 enum { Q3_LIGHTMAP_EDGE = 128, Q3_LIGHTMAP_BYTES = 128 * 128 * 3,
        Q3_LIGHTMAP_PIXELS = 128 * 128, Q3_LIGHTMAP_IMAGE_BYTES = 128 * 128 * 4 };
-
-typedef struct q3_fog {
-    qa_scene_fog fog;
-    qa_bounds bounds;
-    qa_scene_plane surface;
-    float tc_scale;
-    bool active, has_surface;
-} q3_fog;
-
-typedef struct q3_data {
-    qa_scene_image **lightmaps;
-    size_t lightmap_count;
-    q3_fog *fogs;
-    size_t fog_count;
-    qa_bsp_grid_point *grid;
-    size_t grid_count, grid_bounds[3];
-    qa_vec3 grid_origin, grid_inverse;
-} q3_data;
 
 static void shift_color(const uint8_t input[3], uint32_t shift, uint8_t output[3]) {
     uint32_t r = (uint32_t)input[0] << shift, g = (uint32_t)input[1] << shift;

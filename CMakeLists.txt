@@ -626,6 +626,7 @@ add_library(qa_scene STATIC
     src/render/scene/models/sprites.c
     src/render/scene/models/topology.c
     src/render/scene/world.c
+    src/render/scene/world/save.c
     src/render/scene/world/legacy.c
     src/render/scene/world/legacy/geometry.c
     src/render/scene/world/legacy/lighting.c

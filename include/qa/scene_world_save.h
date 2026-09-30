@@ -13,6 +13,26 @@ typedef struct qa_scene_world_image_refs {
  * images or lighting, and publishes only after complete validation. */
 bool qa_scene_world_lighting_checkpoint(const qa_scene_world *, const qa_scene_world_image_refs *, qa_buffer *, qa_error *);
 bool qa_scene_world_lighting_restore(qa_scene_world *, qa_bytes, const qa_scene_world_image_refs *, qa_error *);
+typedef struct qa_scene_world_checkpoint_refs {
+    qa_scene_world_image_refs images;
+    void *context;
+    bool (*material_encode)(void *, const qa_material *, uint64_t *, qa_error *);
+    bool (*material_decode)(void *, uint64_t, const qa_material **, qa_error *);
+    bool (*frame_encode)(void *, const qa_scene_frame *, uint64_t *, qa_error *);
+    bool (*frame_decode)(void *, uint64_t, const qa_scene_frame **, qa_error *);
+} qa_scene_world_checkpoint_refs;
+/* The candidate is the actual already admitted world. Its immutable source,
+ * topology, mesh/patch data and constructor policy must match exactly. Its
+ * resource inventory, renderer order and material owner are restored first.
+ * Process-local world/model/mesh identities stay attached to that qualified
+ * geometry and are mapped by the enclosing frame/content dictionary. */
+bool qa_scene_world_checkpoint(const qa_scene_world *, const qa_scene_world_checkpoint_refs *, qa_buffer *, qa_error *);
+bool qa_scene_world_restore(qa_scene_world *, qa_bytes, const qa_scene_world_checkpoint_refs *, qa_error *);
+const qa_scene_mesh *qa_scene_world_mesh_at(const qa_scene_world *, size_t);
+size_t qa_scene_world_model_count(const qa_scene_world *);
+uint64_t qa_scene_world_model_identity_at(const qa_scene_world *, size_t);
+qa_scene_resources *qa_scene_world_resource_owner(const qa_scene_world *);
+qa_material_library *qa_scene_world_material_owner(const qa_scene_world *);
 uint64_t qa_scene_world_identity(const qa_scene_world *);
 /* Actual submission transactions must return before world owner changes. */
 bool qa_scene_world_idle(const qa_scene_world *);
