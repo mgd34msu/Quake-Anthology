@@ -207,6 +207,22 @@ static bool dispatch(qa_q3_game *game, qa_actor_id actor, const qa_command_invoc
     if (!entry || entry->kind != Q3_ACTOR_PLAYER)
         return true;
     const char *name = command->argv[0];
+    if (named(name, "setviewpos")) {
+        *handled = true;
+        if (!game->options.hooks.cheats_enabled ||
+            !game->options.hooks.cheats_enabled(game->options.hooks.context))
+            return print(game, actor, "Cheats are not enabled on this server.\n", error);
+        if (!q3_actor_get(game, actor)) return true;
+        if (command->argc != 5)
+            return print(game, actor, "usage: setviewpos x y z yaw\n", error);
+        float coordinates[4];
+        for (size_t i = 0; i < 4; ++i) {
+            const char *argument = command->argv[i + 1];
+            coordinates[i] = q3_source_atof((qa_bytes){(const uint8_t *)argument, strlen(argument)});
+        }
+        return qa_q3_teleport(game, actor, qa_v3(coordinates[0], coordinates[1], coordinates[2]),
+                              qa_v3(0, coordinates[3], 0), error);
+    }
     if (named(name, "kill")) {
         *handled = true;
         qa_combat_state combat;

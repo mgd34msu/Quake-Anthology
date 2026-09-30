@@ -131,7 +131,7 @@ static float source_float(q3_source_number *input, bool scan) {
     return q3_source_float_multiply(value, (float)sign);
 }
 
-static float source_scalar(qa_bytes text) {
+float q3_source_atof(qa_bytes text) {
     q3_source_number input = {.text = text};
     return source_float(&input, false);
 }
@@ -163,7 +163,7 @@ bool q3_map_number(const qa_q3_map_fields *fields, const char *key, double fallb
         *out = fallback;
         return true;
     }
-    *out = source_scalar(text);
+    *out = q3_source_atof(text);
     (void)error;
     return true;
 }
@@ -240,7 +240,7 @@ static bool parse_generic(qa_q3_game *game, qa_bytes key, qa_bytes value,
                 state->damage = integer;
             return true;
         }
-        number = source_scalar(value);
+        number = q3_source_atof(value);
         if (!isfinite(number))
             return q3_map_fail(error, "invalid Q3 authored numeric field");
         if (bytes_equal(key, "speed"))
@@ -404,7 +404,7 @@ static bool worldspawn(qa_q3_game *game, const qa_q3_map_fields *fields, qa_erro
     if (!q3_map_intern(game, value, &gravity_text, error))
         return false;
     double gravity;
-    gravity = source_scalar(value);
+    gravity = q3_source_atof(value);
     if (!isfinite(gravity) || gravity < -FLT_MAX || gravity > FLT_MAX)
         return q3_map_fail(error, "invalid Q3 world gravity");
     if (!q3_map_property(fields, "enableDust", &value))

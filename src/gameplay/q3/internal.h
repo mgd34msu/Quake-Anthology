@@ -95,6 +95,7 @@ uint32_t q3_rand(qa_q3_game *);
 float q3_random(qa_q3_game *);
 float q3_crandom(qa_q3_game *);
 int32_t q3_add_time(int32_t, int32_t);
+float q3_source_atof(qa_bytes);
 int32_t q3_sub_time(int32_t, int32_t);
 bool q3_event(qa_q3_game *, qa_actor_id, qa_actor_id, qa_builtin_event_kind, int32_t event,
               int32_t parameter, qa_vec3 origin, qa_vec3 end, qa_vec3 normal, qa_error *);
