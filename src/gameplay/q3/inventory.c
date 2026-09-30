@@ -121,7 +121,7 @@ static bool holdable_write(void *opaque, const qa_inventory_entry *entry, qa_err
 }
 bool qa_q3_inventory_admit(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
-    if (!entry || entry->kind != Q3_ACTOR_PLAYER)
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER || game->source_restored)
         return q3_fail(error, "Q3 inventory admission needs an actual player owner");
     qa_inventory *inventory = game->options.services.inventory;
     if (!qa_inventory_has(inventory, actor) &&
@@ -175,7 +175,7 @@ bool qa_q3_inventory_admit(qa_q3_game *game, qa_actor_id actor, qa_error *error)
     return true;
 }
 bool qa_q3_inventory_rebind(qa_q3_game *game, qa_error *error) {
-    if (!game || game->observation_depth || !qa_session_safe(game->options.services.session))
+    if (!game || game->source_restored || game->observation_depth || !qa_session_safe(game->options.services.session))
         return q3_fail(error, "Q3 inventory rebind requires a safe source boundary");
     for (uint32_t i = 0; i < game->capacity; ++i)
         if (game->actors[i].kind == Q3_ACTOR_PLAYER &&
@@ -203,7 +203,7 @@ bool qa_q3_game_inventory_group(qa_q3_game *game, qa_actor_id actor, uint64_t se
     if (!(entry->state.player.selections & selection))
         return q3_fail(error, "Q3 saved inventory role is not selected");
     q3_inventory_owner *owner = &game->inventory_owners[actor.slot];
-    if (owner->actor.registry && !qa_actor_id_equal(owner->actor, actor))
+    if (!qa_actor_id_equal(owner->actor, actor))
         return q3_fail(error, "Q3 saved inventory owner generation changed");
     size_t count, used = 0;
     const qa_q3_item *items = qa_q3_items(game->options.product, &count);
@@ -226,12 +226,8 @@ bool qa_q3_game_inventory_group(qa_q3_game *game, qa_actor_id actor, uint64_t se
     if (used != saved->count || (!saved->definitions_only && used > 5))
         return q3_fail(error, "Q3 saved inventory definition count differs");
     qa_inventory_lease prior = saved->definitions_only ? owner->weapons : owner->holdables;
-    if (prior.serial && prior.serial != serial)
-        return q3_fail(error, "duplicate Q3 saved inventory role");
-    owner->game = game; owner->actor = actor; owner->selections = entry->state.player.selections;
-    qa_inventory_lease lease = {.actor = actor, .serial = serial};
-    if (saved->definitions_only) owner->weapons = lease;
-    else owner->holdables = lease;
+    if (!qa_actor_id_equal(prior.actor, actor) || prior.serial != serial)
+        return q3_fail(error, "Q3 saved inventory role has no captured private lease");
     *out = (qa_inventory_items){.owner = game->options.owner, .items = saved->items,
         .count = used, .action_context = owner, .invoke = invoke};
     if (!saved->definitions_only)

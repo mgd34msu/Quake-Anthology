@@ -9,8 +9,9 @@
  * restore invalidates that candidate; the save coordinator must discard it. */
 bool qa_q3_game_capture(qa_q3_game *, qa_buffer *, qa_error *);
 bool qa_q3_game_restore(qa_q3_game *, qa_bytes, qa_error *);
-/* Reconnect after shared world/combat/inventory/pickups/targets restoration.
- * Target resolution itself borrows the already restored authored owner. */
+/* Finish after exact shared-store import. Validates captured private lease
+ * presence and actual authored bindings without registering shared state.
+ * Source frames remain blocked until finish succeeds. */
 bool qa_q3_game_reconnect(qa_q3_game *, qa_error *);
 bool qa_q3_game_target_binding(qa_q3_game *, qa_actor_id, qa_target_binding *, qa_error *);
 /* Candidate binding reconstruction validates the decoded shared declarations

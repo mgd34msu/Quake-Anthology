@@ -491,9 +491,8 @@ bool qa_q3_game_pickup_observer(qa_q3_game *game, qa_actor_id actor, uint64_t se
     if (!entry || entry->kind != Q3_ACTOR_ITEM || !serial || !out || game->observation_depth)
         return q3_fail(error, "invalid Q3 saved pickup observer");
     qa_pickup_lease *prior = &game->item_observations[actor.slot];
-    if (prior->serial && (!qa_actor_id_equal(prior->actor, actor) || prior->serial != serial))
-        return q3_fail(error, "duplicate Q3 saved pickup observer");
-    *prior = (qa_pickup_lease){.actor = actor, .serial = serial};
+    if (!qa_actor_id_equal(prior->actor, actor) || prior->serial != serial)
+        return q3_fail(error, "Q3 saved pickup observer has no captured private lease");
     *out = (qa_pickup_observer){.context = game, .inspect = item_observation};
     return true;
 }
@@ -525,7 +524,7 @@ void q3_item_observations_commit(qa_q3_game *game,qa_pickup_lease *candidate) {
     free(game->item_observations);game->item_observations=candidate;
 }
 bool qa_q3_pickups_rebind(qa_q3_game *game,qa_error *error) {
-    if(!game || game->observation_depth) return q3_fail(error,"Q3 item bindings are borrowed");
+    if(!game || game->source_restored || game->observation_depth) return q3_fail(error,"Q3 item bindings are borrowed");
     qa_pickup_lease *candidate;
     if(!q3_item_observations_prepare(game,game->actors,&candidate,error)) return false;
     q3_item_observations_commit(game,candidate);return true;

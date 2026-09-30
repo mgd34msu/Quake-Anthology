@@ -66,6 +66,7 @@ struct qa_q3_game {
     qa_pickup_lease *item_observations;
     q3_inventory_owner *inventory_owners;
     size_t observation_depth;
+    bool source_restored;
     uint32_t capacity, rng, death_animation;
     qa_item_id weapon_items[QA_Q3_WEAPON_COUNT], ammo_items[QA_Q3_WEAPON_COUNT];
     qa_item_id item_ids[52];

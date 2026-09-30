@@ -444,13 +444,15 @@ float q3_damage_factor(qa_q3_game *game, const qa_q3_player_state *player) {
     return factor;
 }
 bool qa_q3_frame(qa_q3_game *game, int32_t previous, int32_t now, qa_error *error) {
-    if (!game)
-        return q3_fail(error, "missing Q3 game");
+    if (!game || game->source_restored)
+        return q3_fail(error, "Q3 source restoration is pending or unavailable");
     game->previous_ms = previous;
     game->now_ms = now;
     return q3_map_frame_begin(game, error);
 }
 bool qa_q3_actor_frame(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+    if (!game || game->source_restored)
+        return q3_fail(error, "Q3 source restoration is pending");
     bool handled = false;
     if (!q3_map_actor_frame(game, actor, &handled, error))
         return false;

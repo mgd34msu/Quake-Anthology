@@ -1,6 +1,13 @@
 #include "map/internal.h"
 #include "qa/game_q3_save.h"
 #include "qa/source_save.h"
+#include "qa/persistence_gameplay.h"
+
+typedef struct q3_saved_leases {
+    uint64_t weapons, holdables, observation;
+    uint32_t selections;
+    bool inventory;
+} q3_saved_leases;
 
 #define FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
 #define ENUM(value, maximum) do { \
@@ -240,60 +247,170 @@ static bool map_checkpoint(qa_source_save_io *io, qa_q3_game *game, qa_q3_map_ch
     return true;
 }
 
+static bool private_leases(qa_source_save_io *io, qa_q3_game *game,
+                            const qa_q3_checkpoint *native, q3_saved_leases *leases)
+{
+    for (size_t i = 0; i < native->actor_count; ++i) {
+        const q3_actor *actor = &native->actors[i];
+        if (actor->actor.slot >= game->capacity)
+            return save_fail(io, "Q3 private lease actor is outside the candidate");
+        q3_saved_leases *saved = &leases[actor->actor.slot];
+        if (io->direction == QA_SOURCE_SAVE_WRITE) {
+            const q3_inventory_owner *owner = &game->inventory_owners[actor->actor.slot];
+            const qa_pickup_lease *observation = &game->item_observations[actor->actor.slot];
+            *saved = (q3_saved_leases){.inventory = owner->actor.registry != 0,
+                .selections = owner->selections, .weapons = owner->weapons.serial,
+                .holdables = owner->holdables.serial, .observation = observation->serial};
+        }
+        FIELD(bool, saved->inventory); FIELD(u32, saved->selections);
+        FIELD(u64, saved->weapons); FIELD(u64, saved->holdables); FIELD(u64, saved->observation);
+        if ((!saved->inventory && (saved->selections || saved->weapons || saved->holdables)) ||
+            (saved->inventory && (actor->kind != Q3_ACTOR_PLAYER ||
+                (saved->selections & ~actor->state.player.selections))) ||
+            (saved->weapons && !(saved->selections & QA_Q3_ARSENAL)) ||
+            (saved->holdables && !(saved->selections & QA_Q3_EQUIPMENT)) ||
+            (saved->weapons && saved->weapons == saved->holdables) ||
+            ((actor->kind == Q3_ACTOR_ITEM) != (saved->observation != 0)))
+            return save_fail(io, "Q3 private leases differ from native continuation roles");
+    }
+    return true;
+}
+
+static bool bindings_current(qa_q3_game *game, qa_error *error)
+{
+    for (uint32_t i = 0; i < game->capacity; ++i) {
+        const q3_actor *actor = q3_actor_const(game, game->actors[i].actor);
+        const q3_inventory_owner *owner = &game->inventory_owners[i];
+        const qa_pickup_lease *observation = &game->item_observations[i];
+        if (owner->actor.registry || owner->weapons.serial || owner->holdables.serial) {
+            if (!actor || actor->kind != Q3_ACTOR_PLAYER || owner->game != game ||
+                !qa_actor_id_equal(owner->actor, actor->actor) ||
+                (owner->selections & ~actor->state.player.selections) ||
+                (owner->weapons.serial && (!(owner->selections & QA_Q3_ARSENAL) ||
+                    !qa_actor_id_equal(owner->weapons.actor, actor->actor) ||
+                    !qa_inventory_lease_current(game->options.services.inventory, owner->weapons))) ||
+                (owner->holdables.serial && (!(owner->selections & QA_Q3_EQUIPMENT) ||
+                    !qa_actor_id_equal(owner->holdables.actor, actor->actor) ||
+                    !qa_inventory_lease_current(game->options.services.inventory, owner->holdables))))
+                return q3_fail(error, "Q3 native inventory private lease is not current");
+        }
+        if (observation->serial || (actor && actor->kind == Q3_ACTOR_ITEM)) {
+            if (!actor || actor->kind != Q3_ACTOR_ITEM || !observation->serial ||
+                !qa_actor_id_equal(observation->actor, actor->actor) ||
+                !qa_pickups_observation_current(game->options.services.pickups, *observation))
+                return q3_fail(error, "Q3 native item private observation is not current");
+        }
+    }
+    if (game->map)
+        for (uint32_t i = 0; i < game->map->capacity; ++i) {
+            qa_q3_map_actor_state *state = &game->map->actors[i];
+            if (!state->active) continue;
+            qa_target_binding expected_target, actual_target;
+            if (!q3_map_target_binding(game, state->actor, &expected_target) ||
+                !qa_persistence_targets_binding(game->map->options.targets, state->actor, &actual_target) ||
+                actual_target.source != expected_target.source ||
+                actual_target.context != expected_target.context ||
+                actual_target.read != expected_target.read || actual_target.use != expected_target.use ||
+                actual_target.field != expected_target.field ||
+                actual_target.set_targetname != expected_target.set_targetname ||
+                actual_target.set_target != expected_target.set_target ||
+                actual_target.set_delay != expected_target.set_delay)
+                return q3_fail(error, "Q3 authored target binding is not current");
+            if (!state->damageable) continue;
+            qa_combat_admission expected, actual;
+            if (!qa_q3_game_damage_admission(game, state->actor, &expected, error) ||
+                !qa_persistence_combat_admission(game->options.services.combat, state->actor, &actual) ||
+                actual.context != expected.context || actual.admit != expected.admit)
+                return q3_fail(error, "Q3 authored mover damage admission is not current");
+        }
+    return true;
+}
+
 static bool continuation(qa_source_save_io *io, qa_q3_game *game,
-                          qa_q3_checkpoint *native, qa_q3_map_checkpoint *map)
+                          qa_q3_checkpoint *native, qa_q3_map_checkpoint *map,
+                          q3_saved_leases *leases)
 {
     uint8_t signature[8] = {'Q', 'A', 'Q', '3', 'S', 'A', 'V', 'E'};
     static const uint8_t expected[8] = {'Q', 'A', 'Q', '3', 'S', 'A', 'V', 'E'};
     if (!qa_source_save_bytes(io, signature, sizeof(signature)) ||
         memcmp(signature, expected, sizeof(signature))) return save_fail(io, "invalid Q3 save signature");
-    uint32_t version = 1;
+    uint32_t version = 2;
     FIELD(u32, version);
-    if (version != 1) return save_fail(io, "unsupported Q3 save version");
+    if (version != 2) return save_fail(io, "unsupported Q3 save version");
     if (!checkpoint(io, game, native)) return false;
     bool has_map = game->map != NULL;
     FIELD(bool, has_map);
     if (has_map != (game->map != NULL)) return save_fail(io, "Q3 authored map owner differs");
-    return !has_map || map_checkpoint(io, game, map);
+    return (!has_map || map_checkpoint(io, game, map)) && private_leases(io, game, native, leases);
 }
 
 bool qa_q3_game_capture(qa_q3_game *game, qa_buffer *out, qa_error *error)
 {
-    if (!game || !out || !qa_world_idle(game->options.services.world))
+    if (!game || !out || game->source_restored || !qa_world_idle(game->options.services.world))
         return q3_fail(error, "Q3 portable capture requires an idle world");
     for (uint32_t i = 0; i < game->capacity; ++i)
         if (game->player_binding_tokens[i])
             return q3_fail(error, "Q3 portable capture conflicts with player admission");
+    q3_saved_leases *leases = calloc(game->capacity, sizeof(*leases));
+    if (!leases) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q3 private lease capture");
+        return false;
+    }
     qa_q3_checkpoint native = {0};
     qa_q3_map_checkpoint map = {0};
     qa_source_save_io io = {0};
-    bool okay = qa_q3_checkpoint_capture(game, &native, error) &&
+    bool okay = bindings_current(game, error) && qa_q3_checkpoint_capture(game, &native, error) &&
         (!game->map || qa_q3_map_checkpoint_capture(game, &map, error)) &&
         qa_source_save_writer(&io, game->options.services.session, error) &&
-        continuation(&io, game, &native, &map) && qa_source_save_finish(&io, out);
+        continuation(&io, game, &native, &map, leases) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
     qa_q3_checkpoint_free(&native); qa_q3_map_checkpoint_free(&map);
+    free(leases);
     return okay;
 }
 
 bool qa_q3_game_restore(qa_q3_game *game, qa_bytes input, qa_error *error)
 {
-    if (!game || game->observation_depth || !qa_session_safe(game->options.services.session) ||
+    if (!game || game->source_restored || game->observation_depth || !qa_session_safe(game->options.services.session) ||
         !qa_world_idle(game->options.services.world) || !qa_combat_idle(game->options.services.combat))
         return q3_fail(error, "Q3 portable restore requires an idle candidate");
     for (uint32_t i = 0; i < game->capacity; ++i)
         if (game->actors[i].kind != Q3_ACTOR_NONE || game->player_binding_tokens[i] ||
+            game->inventory_owners[i].actor.registry || game->item_observations[i].serial ||
             (game->map && game->map->actors[i].active))
             return q3_fail(error, "Q3 portable restore requires an empty native candidate");
+    q3_saved_leases *leases = calloc(game->capacity, sizeof(*leases));
+    if (!leases) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q3 private lease restore");
+        return false;
+    }
     qa_q3_checkpoint native = {0};
     qa_q3_map_checkpoint map = {0};
     qa_source_save_io io = {0};
     bool okay = qa_source_save_reader(&io, game->options.services.session, input, error) &&
-        continuation(&io, game, &native, &map) && qa_source_save_finish(&io, NULL) &&
-        q3_checkpoint_restore_source(game, &native, error) &&
-        (!game->map || q3_map_checkpoint_restore_source(game, &map, error));
+        continuation(&io, game, &native, &map, leases) && qa_source_save_finish(&io, NULL) &&
+        q3_checkpoint_restore_source(game, &native, error);
+    if (okay) {
+        game->source_restored = true;
+        okay = !game->map || q3_map_checkpoint_restore_source(game, &map, error);
+    }
+    if (okay) {
+        for (size_t i = 0; i < native.actor_count; ++i) {
+            qa_actor_id actor = native.actors[i].actor;
+            const q3_saved_leases *saved = &leases[actor.slot];
+            if (saved->inventory)
+                game->inventory_owners[actor.slot] = (q3_inventory_owner){.game = game,
+                    .actor = actor, .selections = saved->selections,
+                    .weapons = {.actor = actor, .serial = saved->weapons},
+                    .holdables = {.actor = actor, .serial = saved->holdables}};
+            if (saved->observation)
+                game->item_observations[actor.slot] = (qa_pickup_lease){.actor = actor,
+                    .serial = saved->observation};
+        }
+    }
     qa_source_save_dispose(&io);
     qa_q3_checkpoint_free(&native); qa_q3_map_checkpoint_free(&map);
+    free(leases);
     return okay;
 }
 
@@ -302,15 +419,8 @@ bool qa_q3_game_reconnect(qa_q3_game *game, qa_error *error)
     if (!game || game->observation_depth || !qa_session_safe(game->options.services.session) ||
         !qa_world_idle(game->options.services.world) || !qa_combat_idle(game->options.services.combat))
         return q3_fail(error, "Q3 reconnect requires an idle restored candidate");
-    if (!qa_q3_pickups_rebind(game, error) || !qa_q3_inventory_rebind(game, error))
-        return false;
-    if (game->map)
-        for (uint32_t i = 0; i < game->map->capacity; ++i) {
-            qa_q3_map_actor_state *state = &game->map->actors[i];
-            if (state->active && state->damageable &&
-                !q3_map_mover_sync_admission(game, state, error))
-                return false;
-        }
+    if (!bindings_current(game, error)) return false;
+    game->source_restored = false;
     return true;
 }
 
