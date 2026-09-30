@@ -152,7 +152,7 @@ bool qa_ui_mods_checkpoint(const qa_ui_mods *mods, const qa_ui_menu_checkpoint_r
         mods->ui->handling || mods->ui->drawing || !mods->draft || !mods->catalog ||
         qa_launch_draft_catalog(mods->draft) != mods->catalog)
         return ui_fail(error, "Mod menu capture requires idle actual draft and catalog owners");
-    qa_ui_mods saved = *mods; qa_source_save_io io;
+    qa_ui_mods saved = *mods; qa_source_save_io io = {0};
     bool ok = qa_source_save_writer(&io, NULL, error) && fields(&io, &saved, mods, refs) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
     if (!ok && error && error->code == QA_OK)
@@ -164,7 +164,7 @@ bool qa_ui_mods_restore(qa_ui_mods *mods, const qa_ui_menu_checkpoint_refs *refs
     if (!mods || !refs || !refs->catalog_decode || mods->ui->handling || mods->ui->drawing)
         return ui_fail(error, "Mod menu restore requires idle actual controller and catalog resolver");
     qa_ui_mods saved = {.ui = mods->ui, .application = mods->application, .menu = mods->menu};
-    qa_source_save_io io;
+    qa_source_save_io io = {0};
     bool ok = qa_source_save_reader(&io, NULL, bytes, error) && fields(&io, &saved, mods, refs) && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
     if (!ok) {

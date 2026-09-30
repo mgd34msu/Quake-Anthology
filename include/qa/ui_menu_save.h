@@ -15,4 +15,8 @@ const qa_catalog *qa_ui_mods_catalog(const qa_ui_mods *);
 bool qa_ui_mods_create_restored(qa_ui *, qa_application *, qa_ui_id, qa_ui_mods **, qa_error *);
 bool qa_ui_mods_checkpoint(const qa_ui_mods *, const qa_ui_menu_checkpoint_refs *, qa_buffer *, qa_error *);
 bool qa_ui_mods_restore(qa_ui_mods *, const qa_ui_menu_checkpoint_refs *, qa_bytes, qa_error *);
+const qa_catalog *qa_ui_library_catalog(const qa_ui_library *);
+bool qa_ui_library_create_restored(qa_ui *, qa_application *, qa_ui_id, qa_ui_library **, qa_error *);
+bool qa_ui_library_checkpoint(const qa_ui_library *, const qa_ui_menu_checkpoint_refs *, qa_buffer *, qa_error *);
+bool qa_ui_library_restore(qa_ui_library *, const qa_ui_menu_checkpoint_refs *, qa_bytes, qa_error *);
 #endif

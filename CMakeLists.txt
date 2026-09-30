@@ -74,6 +74,8 @@ target_link_libraries(qa_script PUBLIC qa_core)
 add_library(qa_content STATIC
     src/content/archive.c
     src/content/vfs.c
+    src/content/resource_pool_save.c
+    src/content/vfs_view_save.c
     src/formats/bsp.c
     src/formats/image/image.c
     src/formats/image/indexed.c
@@ -684,6 +686,7 @@ add_library(qa_input STATIC
     src/input/buttons.c
     src/input/client_commands.c
     src/input/commands.c
+    src/input/command_save.c
     src/input/gamepad.c
     src/input/haptics.c
     src/input/keys.c
@@ -946,6 +949,7 @@ add_library(qa_ui STATIC
     src/ui/hud.c
     src/ui/input.c
     src/ui/library.c
+    src/ui/library_save.c
     src/ui/llm.c
     src/ui/mods.c
     src/ui/mods_save.c

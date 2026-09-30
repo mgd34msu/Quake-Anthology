@@ -1,30 +1,6 @@
-#include "internal.h"
+#include "library_internal.h"
+#include "qa/ui_menu_save.h"
 #include <stdio.h>
-
-typedef struct library_profile {
-    qa_launch_seat seat;
-    char *name, *team;
-} library_profile;
-struct qa_ui_library {
-    qa_ui *ui;
-    qa_application *application;
-    qa_ui_id menu;
-    qa_catalog *catalog;
-    qa_product_id product;
-    qa_ui_row *products, *maps;
-    qa_product_id *product_ids;
-    size_t *map_indices;
-    size_t product_count, product_capacity, id_capacity, map_count, map_capacity, index_capacity;
-    size_t selected_product, selected_map;
-    int32_t skill;
-    bool starts, dirty;
-    uint64_t revision;
-    char query[321], status[256];
-    qa_buffer query_lower;
-    qa_ui_control controls[8];
-    library_profile *local_players;
-    size_t local_player_count;
-};
 enum { LIB_SEARCH = 1, LIB_PRODUCTS, LIB_MAPS, LIB_STARTS, LIB_SKILL, LIB_LAUNCH, LIB_REFRESH, LIB_STATUS };
 static void select_product(qa_ui_library *menu, qa_product_id product) {
     menu->product = product;
@@ -205,6 +181,24 @@ static void release_profiles(qa_ui_library *menu) {
     }
     free(menu->local_players);
 }
+void ui_library_clear(qa_ui_library *menu) {
+    qa_catalog_release(menu->catalog); qa_buffer_free(&menu->query_lower);
+    release_profiles(menu);
+    free(menu->products); free(menu->product_ids); free(menu->maps); free(menu->map_indices);
+}
+const qa_catalog *qa_ui_library_catalog(const qa_ui_library *menu) { return menu ? menu->catalog : NULL; }
+bool qa_ui_library_create_restored(qa_ui *ui, qa_application *application, qa_ui_id id,
+                                   qa_ui_library **out, qa_error *error) {
+    if (!ui || !application || !id || !out || *out || ui->handling || ui->drawing)
+        return ui_fail(error, "library restore requires an idle controller and empty output");
+    qa_ui_library *menu = calloc(1, sizeof(*menu));
+    if (!menu) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating restored game library"); return false; }
+    menu->ui = ui; menu->application = application; menu->menu = id;
+    if (!qa_ui_register(ui, &(qa_ui_menu_registration){.id = id, .context = menu, .factory = factory}, error)) {
+        free(menu); return false;
+    }
+    *out = menu; return true;
+}
 bool qa_ui_library_create(qa_ui *ui, qa_application *application, qa_ui_id id,
                           const qa_launch_seat *local_players, size_t local_player_count,
                           qa_ui_library **out, qa_error *error) {
@@ -264,8 +258,6 @@ bool qa_ui_library_destroy(qa_ui_library *menu, double time, qa_error *error) {
     if (!menu) return true;
     if (menu->ui->handling) return ui_fail(error, "game library callback is active");
     if (!qa_ui_unregister(menu->ui, menu->menu, time, error)) return false;
-    qa_catalog_release(menu->catalog); qa_buffer_free(&menu->query_lower);
-    release_profiles(menu);
-    free(menu->products); free(menu->product_ids); free(menu->maps); free(menu->map_indices); free(menu);
+    ui_library_clear(menu); free(menu);
     return true;
 }
