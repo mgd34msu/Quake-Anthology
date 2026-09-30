@@ -42,6 +42,10 @@ const qa_q3_server_peer *qa_network_q3_server_view(qa_network_runtime *, qa_net_
  * retains channel/reliable/pure/last-usercmd and shared command epoch/history.
  * Makes the next source snapshot full and immediately due. */
 bool qa_network_q3_round_activate(qa_network_runtime *, qa_net_client_id, qa_error *);
+/* Native retained-frame disconnect delivery at the runtime safe point.
+ * Does not remove the shared client or execute source disconnect callbacks. */
+bool qa_network_q3_disconnect(qa_network_runtime *, qa_net_client_id,
+    const qa_q3_server_rate *, uint8_t server_flags, const char *reason, qa_error *);
 /* Only after source admission authenticates reconnect and shared endpoint
  * rebinding succeeds. Recreates wire sequence/XOR state, retaining the shared
  * client and seat. Caller must restart/signon before admitting commands. */

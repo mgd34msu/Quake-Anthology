@@ -257,6 +257,18 @@ bool qa_network_q3_round_activate(qa_network_runtime *runtime, qa_net_client_id 
     state->next_snapshot_time = current.time;
     return true;
 }
+bool qa_network_q3_disconnect(qa_network_runtime *runtime, qa_net_client_id id,
+    const qa_q3_server_rate *rate, uint8_t flags, const char *reason, qa_error *error)
+{
+    if (!runtime || !qa_network_callbacks_idle(runtime))
+        return qa_network_fail(error, "Q3 native disconnect requires its idle runtime");
+    q3_runtime_peer *p = get(runtime, id, error);
+    if (!p) return false;
+    runtime->callback = true;
+    bool ok = qa_q3_server_peer_disconnect(p->source, rate, flags, reason, error);
+    runtime->callback = false;
+    return ok;
+}
 bool qa_network_q3_reconnect_channel(qa_network_runtime *runtime, qa_net_client_id id,
     int32_t challenge, uint16_t qport, qa_error *error)
 {
