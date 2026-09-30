@@ -49,7 +49,7 @@ bool q1_map_sacrifice_spawn(qa_q1_game *g, q1_actor *entity, qa_error *error) {
         entity->physics.angular_velocity = qa_v3(0, 36, 0);
         entity->map->pending.mover.destination = body.origin;
     } else {
-        entity->count = 5 + floorf(q1_random(g) * 65 + .5f);
+        entity->count = (float)(5 + floor((double)q1_random(g) * 65 + .5));
         entity->frame = (int32_t)entity->count;
     }
     body.bounds = (qa_bounds){{-16, -16, -56}, {16, 16, 0}};
