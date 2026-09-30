@@ -1,13 +1,12 @@
 #include "qa/rankings.h"
+#include "qa/rankings_save.h"
+#include "save_io.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-typedef struct ranked_player {
-    int32_t slot;
-    qa_ranking_player state;
-} ranked_player;
+typedef qa_rankings_checkpoint_player ranked_player;
 struct qa_rankings {
     qa_ranking_provider provider;
     qa_ranking_observers observers;
@@ -15,7 +14,7 @@ struct qa_rankings {
     ranked_player *players;
     size_t count, capacity;
     uint64_t match;
-    bool configured, has_match, busy;
+    bool configured, has_match, busy, restore_pending, restore_loaded;
 };
 static bool fail(qa_error *error, const char *message) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message);
@@ -35,7 +34,7 @@ static void state(qa_rankings *rankings, qa_ranking_service_kind kind, const cha
         rankings->observers.service(rankings->observers.context, &rankings->state);
 }
 static bool enter(qa_rankings *rankings, qa_error *error) {
-    if (!rankings || rankings->busy)
+    if (!rankings || rankings->busy || rankings->restore_pending)
         return fail(error, "Ranking owner is absent or already in an operation");
     rankings->busy = true;
     return true;
@@ -107,6 +106,14 @@ bool qa_rankings_create(const qa_ranking_provider *provider, const qa_ranking_ob
     if (observers)
         rankings->observers = *observers;
     *out = rankings;
+    return true;
+}
+bool qa_rankings_create_restored(const qa_ranking_provider *provider,
+                                 const qa_ranking_observers *observers,
+                                 qa_rankings **out, qa_error *error) {
+    if (!out || *out) return fail(error, "Restored rankings require an empty output");
+    if (!qa_rankings_create(provider, observers, out, error)) return false;
+    (*out)->restore_pending = true;
     return true;
 }
 bool qa_rankings_begin(qa_rankings *rankings, bool enabled, bool single, const char *key,
@@ -326,8 +333,203 @@ bool qa_rankings_close(qa_rankings *rankings, qa_error *error) {
         return true;
     if (rankings->busy)
         return fail(error, "Cannot close active ranking operation");
-    bool ok = qa_rankings_end(rankings, error);
+    bool ok = rankings->restore_pending || qa_rankings_end(rankings, error);
     free(rankings->players);
     free(rankings);
     return ok;
+}
+
+static const uint8_t rankings_magic[8] = {'Q','A','R','K',1,0,0,0};
+static bool zero_bytes(const void *bytes, size_t count) {
+    const uint8_t *p = bytes;
+    for (size_t i = 0; i < count; ++i) if (p[i]) return false;
+    return true;
+}
+static bool rankings_ready(const qa_rankings *r, qa_error *error) {
+    bool ok = r->count <= r->capacity &&
+              (!r->capacity || (r->players && r->capacity >= 16 &&
+                                !(r->capacity & (r->capacity - 1)))) &&
+              r->capacity <= SIZE_MAX / sizeof(*r->players) &&
+              (!r->has_match || r->configured) && (r->has_match || !r->count) &&
+              (r->configured || !r->match) &&
+              (r->state.kind == QA_RANKING_DISABLED || r->state.kind == QA_RANKING_UNAVAILABLE ||
+               r->state.kind == QA_RANKING_ACTIVE) &&
+              (r->state.kind != QA_RANKING_ACTIVE || (r->has_match && r->state.game_id == r->match)) &&
+              (r->state.kind == QA_RANKING_ACTIVE || r->state.game_id == 0) &&
+              (r->state.kind != QA_RANKING_DISABLED || !r->has_match) &&
+              memchr(r->state.reason, 0, sizeof(r->state.reason)) &&
+              (r->state.kind == QA_RANKING_UNAVAILABLE ||
+               zero_bytes(r->state.reason, sizeof(r->state.reason)));
+    if (ok) {
+        size_t used = strlen(r->state.reason) + 1;
+        ok = zero_bytes(r->state.reason + used, sizeof(r->state.reason) - used);
+    }
+    for (size_t i = 0; ok && i < r->count; ++i) {
+        const ranked_player *p = r->players + i;
+        ok = p->slot >= 0 &&
+             (p->state.kind == QA_RANKING_NEW_PLAYER || p->state.kind == QA_RANKING_SPECTATOR ||
+              p->state.kind == QA_RANKING_ACTIVE_PLAYER || p->state.kind == QA_RANKING_DENIED_PLAYER) &&
+             memchr(p->state.reason, 0, sizeof(p->state.reason));
+        if (p->state.kind != QA_RANKING_DENIED_PLAYER)
+            ok = ok && zero_bytes(p->state.reason, sizeof(p->state.reason));
+        if (p->state.kind == QA_RANKING_NEW_PLAYER || p->state.kind == QA_RANKING_SPECTATOR)
+            ok = ok && p->state.account.player_id == 0 && p->state.account.rank == 0 &&
+                 !signbit(p->state.account.rank);
+        if (p->state.kind == QA_RANKING_ACTIVE_PLAYER) ok = ok && isfinite(p->state.account.rank);
+        for (size_t j = 0; ok && j < i; ++j)
+            if (r->players[j].slot == p->slot ||
+                (p->state.kind == QA_RANKING_ACTIVE_PLAYER &&
+                 r->players[j].state.kind == QA_RANKING_ACTIVE_PLAYER &&
+                 r->players[j].state.account.player_id == p->state.account.player_id)) ok = false;
+    }
+    if (!ok) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid private rankings continuation");
+    return ok;
+}
+static bool rankings_fields(qa_source_save_io *io, qa_rankings *r) {
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    uint32_t state_kind = r->state.kind;
+    if (!qa_source_save_u32(io, &state_kind) || state_kind > QA_RANKING_ENDING ||
+        !qa_source_save_u64(io, &r->state.game_id) ||
+        !qa_source_save_bytes(io, r->state.reason, sizeof(r->state.reason)) ||
+        !qa_source_save_u64(io, &r->match) || !qa_source_save_bool(io, &r->has_match) ||
+        !ps_count(io, &r->capacity, 1, sizeof(*r->players)) ||
+        !qa_source_save_count(io, &r->count, r->capacity)) return false;
+    r->state.kind = (qa_ranking_service_kind)state_kind;
+    if (reading && r->capacity) {
+        r->players = calloc(r->capacity, sizeof(*r->players));
+        if (!r->players) return ps_fail(io, QA_ERROR_MEMORY, "Allocating ranked player continuation");
+    }
+    for (size_t i = 0; i < r->capacity; ++i) {
+        bool occupied = i < r->count;
+        if (!qa_source_save_bool(io, &occupied) || occupied != (i < r->count))
+            return ps_fail(io, QA_ERROR_FORMAT, "Invalid rankings physical row partition");
+        if (!occupied) continue;
+        ranked_player copy = reading ? (ranked_player){0} : r->players[i];
+        uint32_t kind = copy.state.kind;
+        if (!qa_source_save_i32(io, &copy.slot) || !qa_source_save_u32(io, &kind) ||
+            kind > QA_RANKING_DENIED_PLAYER ||
+            !qa_source_save_u64(io, &copy.state.account.player_id) ||
+            !qa_source_save_f64(io, &copy.state.account.rank) ||
+            !qa_source_save_bytes(io, copy.state.reason, sizeof(copy.state.reason))) return false;
+        copy.state.kind = (qa_ranking_player_kind)kind;
+        if (reading) r->players[i] = copy;
+    }
+    return rankings_ready(r, io->error);
+}
+static bool provider_same(const qa_ranking_provider *a, const qa_ranking_provider *b) {
+    return a->context == b->context && a->begin == b->begin && a->login == b->login &&
+           a->join == b->join && a->report == b->report && a->poll == b->poll &&
+           a->logout == b->logout && a->finish == b->finish &&
+           ((!a->endpoint && !b->endpoint) ||
+            (a->endpoint && b->endpoint && !strcmp(a->endpoint, b->endpoint)));
+}
+static bool observers_same(const qa_ranking_observers *a, const qa_ranking_observers *b) {
+    return a->context == b->context && a->player == b->player && a->service == b->service;
+}
+static bool continuation_ready(const qa_rankings *r, const qa_rankings_checkpoint_refs *refs,
+                                qa_error *error) {
+    if (!r->configured) return true;
+    qa_rankings_continuation view = {r->state, r->match, r->has_match, r->players,
+                                     r->count, r->capacity};
+    if (!refs || !refs->continuation_ready)
+        return fail(error, "Configured rankings need actual backend continuation qualification");
+    return refs->continuation_ready(refs->context, &r->provider, &view, error);
+}
+bool qa_rankings_checkpoint(const qa_rankings *source, const qa_rankings_checkpoint_refs *refs,
+                            qa_buffer *out, qa_error *error) {
+    if (!source || source->busy || !out || out->data || out->size)
+        return fail(error, "Rankings checkpoint requires an idle owner and empty output");
+    qa_rankings *owner = (qa_rankings *)source;
+    qa_rankings copy = *source;
+    owner->busy = true;
+    qa_buffer provider_key = {0}, observer_key = {0};
+    bool observers = copy.observers.context || copy.observers.player || copy.observers.service;
+    bool context = copy.provider.context != NULL;
+    bool player_hook = copy.observers.player != NULL, service_hook = copy.observers.service != NULL;
+    bool observer_context = copy.observers.context != NULL;
+    char *endpoint = (char *)copy.provider.endpoint;
+    bool ok = rankings_ready(&copy, error);
+    if (ok && copy.configured)
+        ok = refs && refs->provider_capture &&
+             refs->provider_capture(refs->context, &copy.provider, &provider_key, error);
+    if (ok && observers)
+        ok = refs && refs->observers_capture &&
+             refs->observers_capture(refs->context, &copy.observers, &observer_key, error);
+    if (ok) ok = continuation_ready(&copy, refs, error);
+    qa_source_save_io io = {0};
+    if (ok) ok = qa_source_save_writer(&io, NULL, error) && ps_magic(&io, rankings_magic) &&
+                 qa_source_save_bool(&io, &copy.configured) && ps_text(&io, &endpoint) &&
+                 qa_source_save_bool(&io, &context) && ps_blob(&io, &provider_key) &&
+                 qa_source_save_bool(&io, &observers) && qa_source_save_bool(&io, &observer_context) &&
+                 qa_source_save_bool(&io, &player_hook) && qa_source_save_bool(&io, &service_hook) &&
+                 ps_blob(&io, &observer_key) && rankings_fields(&io, &copy) &&
+                 qa_source_save_finish(&io, out);
+    if (!ok && error && error->code == QA_OK)
+        qa_error_set(error, QA_ERROR_FORMAT, io.offset, "Unqualified rankings checkpoint binding");
+    qa_source_save_dispose(&io);
+    qa_buffer_free(&provider_key); qa_buffer_free(&observer_key);
+    owner->busy = false;
+    return ok;
+}
+bool qa_rankings_restore(qa_rankings *owner, const qa_rankings_checkpoint_refs *refs,
+                         qa_bytes bytes, qa_error *error) {
+    if (!owner || owner->busy || !owner->restore_pending || owner->restore_loaded ||
+        owner->players || owner->capacity ||
+        owner->count || owner->has_match || owner->match ||
+        owner->state.kind != QA_RANKING_DISABLED)
+        return fail(error, "Rankings import requires its stable restored empty owner");
+    owner->busy = true;
+    qa_rankings scratch = {0};
+    qa_buffer provider_key = {0}, observer_key = {0};
+    char *endpoint = NULL;
+    bool context = false, observers = false, observer_context = false;
+    bool player_hook = false, service_hook = false;
+    qa_source_save_io io = {0};
+    bool ok = qa_source_save_reader(&io, NULL, bytes, error) && ps_magic(&io, rankings_magic) &&
+              qa_source_save_bool(&io, &scratch.configured) && ps_text(&io, &endpoint) &&
+              qa_source_save_bool(&io, &context) && ps_blob(&io, &provider_key) &&
+              qa_source_save_bool(&io, &observers) && qa_source_save_bool(&io, &observer_context) &&
+              qa_source_save_bool(&io, &player_hook) && qa_source_save_bool(&io, &service_hook) &&
+              ps_blob(&io, &observer_key) && rankings_fields(&io, &scratch) &&
+              qa_source_save_finish(&io, NULL);
+    if (ok) ok = scratch.configured == owner->configured &&
+                 (observers == (observer_context || player_hook || service_hook));
+    if (ok && scratch.configured) {
+        ok = refs && refs->provider_resolve &&
+             refs->provider_resolve(refs->context, (qa_bytes){provider_key.data, provider_key.size},
+                                     &scratch.provider, error) &&
+             provider_same(&scratch.provider, &owner->provider) &&
+             context == (scratch.provider.context != NULL) &&
+             ((!endpoint && !scratch.provider.endpoint) ||
+              (endpoint && scratch.provider.endpoint && !strcmp(endpoint, scratch.provider.endpoint)));
+    } else if (ok) ok = !endpoint && !context && !provider_key.size;
+    if (ok && observers) {
+        ok = refs && refs->observers_resolve &&
+             refs->observers_resolve(refs->context, (qa_bytes){observer_key.data, observer_key.size},
+                                     &scratch.observers, error) &&
+             observers_same(&scratch.observers, &owner->observers) &&
+             observer_context == (scratch.observers.context != NULL) &&
+             player_hook == (scratch.observers.player != NULL) &&
+             service_hook == (scratch.observers.service != NULL);
+    } else if (ok) ok = !observer_key.size &&
+        observers_same(&scratch.observers, &owner->observers);
+    if (ok) ok = continuation_ready(&scratch, refs, error);
+    if (ok) {
+        owner->state = scratch.state; owner->match = scratch.match; owner->has_match = scratch.has_match;
+        owner->players = scratch.players; scratch.players = NULL;
+        owner->count = scratch.count; owner->capacity = scratch.capacity;
+        owner->restore_loaded = true;
+    } else if (error && error->code == QA_OK)
+        qa_error_set(error, QA_ERROR_FORMAT, io.offset, "Unqualified rankings continuation binding");
+    qa_source_save_dispose(&io);
+    qa_buffer_free(&provider_key); qa_buffer_free(&observer_key);
+    free(endpoint); free(scratch.players);
+    owner->busy = false;
+    return ok;
+}
+void qa_rankings_publish_restored(qa_rankings *rankings) {
+    if (rankings) rankings->restore_pending = false;
+}
+void qa_rankings_relinquish_continuation(qa_rankings *rankings) {
+    if (rankings) rankings->restore_pending = true;
 }

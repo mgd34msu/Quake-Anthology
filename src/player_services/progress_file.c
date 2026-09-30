@@ -1,6 +1,7 @@
 #include "progress_internal.h"
 #include "qa/json.h"
 #include "qa/json_writer.h"
+#include "qa/player_progress_save.h"
 
 static bool string_field(const qa_json_document *document, qa_json_id object, const char *key,
                          qa_buffer *out, qa_error *error) {
@@ -130,7 +131,7 @@ bool progress_encode(const progress_data *data, const progress_row *extra, qa_bu
     return ok;
 }
 bool qa_player_progress_reload(qa_player_progress *store, qa_error *error) {
-    if (!store) {
+    if (!store || store->restore_pending) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing player progress store");
         return false;
     }
@@ -158,9 +159,9 @@ bool qa_player_progress_reload(qa_player_progress *store, qa_error *error) {
     store->reload_required = false;
     return true;
 }
-bool qa_player_progress_open(qa_fs_root *root, const char *relative, qa_player_progress **out,
-                             qa_error *error) {
-    if (!root || !relative || !*relative || !out) {
+static bool create_store(qa_fs_root *root, const char *relative, bool restoring,
+                         qa_player_progress **out, qa_error *error) {
+    if (!root || !relative || !*relative || !out || (restoring && *out)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid player progress file location");
         return false;
     }
@@ -179,12 +180,22 @@ bool qa_player_progress_open(qa_fs_root *root, const char *relative, qa_player_p
     memcpy(store->relative, relative, size);
     store->root = root;
     qa_fs_root_retain(root);
-    if (!qa_player_progress_reload(store, error)) {
+    if (!(restoring ? qa_strings_create(&store->data.strings, error)
+                    : qa_player_progress_reload(store, error))) {
         qa_player_progress_close(store);
         return false;
     }
+    store->restore_pending = restoring;
     *out = store;
     return true;
+}
+bool qa_player_progress_open(qa_fs_root *root, const char *relative, qa_player_progress **out,
+                             qa_error *error) {
+    return create_store(root, relative, false, out, error);
+}
+bool qa_player_progress_create_restored(qa_fs_root *root, const char *relative,
+                                        qa_player_progress **out, qa_error *error) {
+    return create_store(root, relative, true, out, error);
 }
 void qa_player_progress_close(qa_player_progress *store) {
     if (!store)
@@ -192,5 +203,6 @@ void qa_player_progress_close(qa_player_progress *store) {
     progress_data_free(&store->data);
     qa_fs_root_close(store->root);
     free(store->relative);
+    free(store->saved_root); free(store->admitted_root);
     free(store);
 }

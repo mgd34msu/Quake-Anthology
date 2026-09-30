@@ -497,3 +497,48 @@ path. The coupled guest preflight still rejects saved writable descriptors.
 
 This packet changes no host or executor schema. Source-only ownership, cursor,
 digest and re-capture paths were reviewed; no executable checks were run.
+
+## Rankings and durable player progress
+
+`QARK` version 1 preserves the actual idle rankings lifecycle: configured
+provider and observer identities, endpoint/context/hook presence, service state,
+match value and ownership flag, ordered player slots and complete account/reason
+fields, and retained allocation capacity. Every occupied slot is explicit;
+unused allocation extent is represented by false partition tags rather than
+reading uninitialized realloc tails. Denied accounts retain source IEEE values,
+including a nonfinite rank rejected by the original provider admission. Active
+accounts require their original finite rank and unique account identity.
+
+Configured providers and observers require readonly logical binding callbacks
+to real candidate services. A provider must qualify its genuine backend against
+the entire saved match/account continuation. Restore does not begin, log in,
+join, poll, report, log out or finish a match. The real empty restored constructor
+gates ordinary lifecycle operations; failed candidate destruction performs no
+backend or observer callbacks. Publication ungates the candidate, and a replaced
+source can relinquish its continuation after a successful external backend
+ownership handoff so later teardown cannot finish the continued match. The
+actual default application has an unconfigured backend and no observers.
+
+`QAPP` version 1 preserves the actual progress store's private string dictionary
+and IDs (including unused strings retained after a failed admission), ordered
+rows, retained row allocation extent, complete physical hash table, durable
+replacement nonce and reload-required flag. Hash topology is checked with the
+same source hash/probe helpers, without replaying records. Counted UTF-8 strings
+retain embedded NUL bytes. Progress restore creates its stable empty owner and
+private dictionary without opening, reloading or writing the progress file.
+
+The real retained destination root is qualified against the saved profile root
+by native directory identity or an explicit readonly mapping resolver. Pending
+captures first recheck its actual admitted path and identity, then emit the
+saved portable root fields; publication discards that admission metadata.
+The exact relative path stays with the owner. Record and reload remain gated
+until whole-candidate publication. Every framing/row/hash check completes
+before stable private ownership exchange. Optional progress presence belongs
+to the application's genuine installed inventory, not an empty fallback.
+
+Arena progression has no installed application facade in current production
+callers. Its existing scores, awards and videos are actual archived cvars;
+there is no second private progression store to fabricate. Root aggregate
+construction, QA_SAVE_PROGRESSION registration, backend ownership transfer and
+final whole-owner recapture remain separate integration requirements. These
+owner codecs received source-only checks; no builds or executable tests ran.

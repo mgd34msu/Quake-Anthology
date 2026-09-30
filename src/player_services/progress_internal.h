@@ -23,6 +23,9 @@ struct qa_player_progress {
     char *relative;
     uint64_t nonce;
     bool reload_required;
+    bool restore_pending;
+    char *saved_root, *admitted_root;
+    qa_fs_identity saved_root_identity, admitted_root_identity;
     progress_data data;
 };
 
@@ -33,5 +36,6 @@ void progress_append(progress_data *, const progress_row *);
 void progress_view(const progress_data *, const progress_row *, qa_progress_event *);
 bool progress_decode(qa_bytes, progress_data *, qa_error *);
 bool progress_encode(const progress_data *, const progress_row *, qa_buffer *, qa_error *);
+bool progress_checkpoint_data_ready(const progress_data *, qa_error *);
 
 #endif

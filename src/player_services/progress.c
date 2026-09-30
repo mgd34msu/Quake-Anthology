@@ -114,6 +114,60 @@ void progress_view(const progress_data *data, const progress_row *row, qa_progre
         out->value.match.score = row->score;
     }
 }
+bool progress_checkpoint_data_ready(const progress_data *data, qa_error *error) {
+    if (!data || !data->strings || data->count > data->capacity ||
+        (data->capacity && (!data->rows || data->capacity < 32 ||
+                           (data->capacity & (data->capacity - 1)))) ||
+        (data->capacity > 32 && data->count < data->capacity / 2) ||
+        (data->index_capacity && (!data->index || data->index_capacity < 64 ||
+                                 (data->index_capacity & (data->index_capacity - 1)))) ||
+        data->count > data->index_capacity / 2 ||
+        (data->index_capacity > 64 && data->count < data->index_capacity / 4) ||
+        data->index_capacity > SIZE_MAX / sizeof(*data->index)) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid player progress allocation topology");
+        return false;
+    }
+    size_t *index = data->index_capacity ? calloc(data->index_capacity, sizeof(*index)) : NULL;
+    if (data->index_capacity && !index) {
+        qa_error_set(error, QA_ERROR_MEMORY, data->index_capacity, "Qualifying progress index");
+        return false;
+    }
+    progress_data expected = *data;
+    expected.index = index;
+    bool ok = true;
+    for (size_t i = 0; ok && i < qa_strings_count(data->strings); ++i) {
+        if (!nonempty_utf8(qa_strings_text(data->strings, (qa_string_id)(i + 1)))) {
+            qa_error_set(error, QA_ERROR_FORMAT, i, "Invalid private progress dictionary value");
+            ok = false;
+        }
+    }
+    for (size_t i = 0; ok && i < data->count; ++i) {
+        const progress_row *row = data->rows + i;
+        qa_progress_event event;
+        qa_bytes subject;
+        progress_view(data, row, &event);
+        ok = event_subject(&event, &subject, error);
+        if (ok && row->kind != QA_PROGRESS_MATCH_COMPLETED &&
+            (row->score != 0 || signbit(row->score))) {
+            qa_error_set(error, QA_ERROR_FORMAT, i, "Non-match progress row retains a score");
+            ok = false;
+        }
+        if (ok) {
+            size_t slot = index_slot(&expected, row);
+            if (index[slot]) {
+                qa_error_set(error, QA_ERROR_FORMAT, i, "Duplicate private progress row");
+                ok = false;
+            } else index[slot] = i + 1;
+        }
+    }
+    if (ok && data->index_capacity &&
+        memcmp(index, data->index, data->index_capacity * sizeof(*index))) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "Progress index differs from its source rows");
+        ok = false;
+    }
+    free(index);
+    return ok;
+}
 size_t qa_player_progress_count(const qa_player_progress *store) {
     return store ? store->data.count : 0;
 }
@@ -175,7 +229,7 @@ static bool recover_record(qa_player_progress *store, const qa_progress_event *e
 }
 bool qa_player_progress_record(qa_player_progress *store, const qa_progress_event *event,
                                bool *inserted, qa_error *error) {
-    if (!store || !inserted) {
+    if (!store || !inserted || store->restore_pending) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing player progress store/output");
         return false;
     }

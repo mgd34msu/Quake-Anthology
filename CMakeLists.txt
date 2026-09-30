@@ -448,8 +448,9 @@ add_library(qa_player_services STATIC
     src/player_services/lobby_session.c
     src/player_services/rankings.c
     src/player_services/progress.c
+    src/player_services/progress_save.c
     src/player_services/progress_file.c)
-target_link_libraries(qa_player_services PUBLIC qa_core qa_console qa_network)
+target_link_libraries(qa_player_services PUBLIC qa_core qa_console qa_network qa_persistence)
 
 add_library(qa_campaign STATIC
     src/campaign/travel.c
