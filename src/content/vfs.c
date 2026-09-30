@@ -313,6 +313,14 @@ void qa_resource_pool_trim(qa_resource_pool *pool)
     }
 }
 
+const qa_resource *qa_resource_pool_find(const qa_resource_pool *pool, uint64_t id)
+{
+    if (pool == NULL || id == 0) return NULL;
+    for (const qa_resource *resource = pool->resources; resource != NULL; resource = resource->next)
+        if (resource->id == id) return resource;
+    return NULL;
+}
+
 qa_vfs *qa_vfs_create(qa_resource_pool *pool, qa_error *error)
 {
     if (pool == NULL) {
