@@ -1332,6 +1332,145 @@ static bool pain_tank(q2m_context *context, qa_error *error) {
   return q2m_set_move(context, move, rerelease, error);
 }
 
+static bool infantry_pain_dodge(q2m_context *context, qa_error *error) {
+  if (q2_rerelease_float(context->game, 0, 1) >= .33f)
+    return true;
+  return q2_monster_dodge(context->game, context->actor->id,
+                          context->monster->last_attack.attacker,
+                          context->elapsed, NULL, false, error);
+}
+
+static bool pain_infantry(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  qa_q2_game *g = context->game;
+  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool rogue = g->options.product == QA_Q2_ROGUE;
+  bool ordinary_think = !m->turret_attached;
+  if (context->combat.health < m->max_health * .5f) m->skin = 1;
+  else if (rerelease) m->skin = 0;
+  if (rerelease && ordinary_think && m->move &&
+      (!strcmp(m->move->name, "infantry_move_jump") ||
+       !strcmp(m->move->name, "infantry_move_jump2"))) return true;
+  if (!rerelease && rogue && !context->body.ground.registry) return true;
+  if (rerelease || rogue) {
+    m->dodging = false;
+    if (rerelease && m->attack_state == Q2M_SLIDING) m->attack_state = Q2M_STRAIGHT;
+  }
+  if (g->now_ns < m->pain_ns)
+    return !rerelease || !ordinary_think || infantry_pain_dodge(context, error);
+  m->pain_ns = q2m_after(g->now_ns, 3.0);
+  if (!rerelease && g->options.skill == 3) return true;
+  unsigned index = rerelease ? (q2_random_bounded(g, 2) == 0 ? 1u : 0u)
+                             : qa_builtin_random_integer(&g->random) % 2u;
+  const char *move = index ? "infantry_move_pain2" : "infantry_move_pain1";
+  if (!rerelease && !q2m_set_move(context, move, false, error)) return false;
+  if (!q2m_sound(context, index ? "infantry/infpain2.wav" : "infantry/infpain1.wav",
+                   2, 1, error)) return false;
+  if (!q2m_alive(context) || (rerelease && !ordinary_think)) return true;
+  if (rerelease) {
+    if (!reacts_to_pain(context)) return infantry_pain_dodge(context, error);
+    if (!q2m_set_move(context, move, false, error)) return false;
+  }
+  return !q2m_alive(context) || !(rerelease || rogue) || !m->ducked ||
+         q2m_dispatch(context, "monster_duck_up", error);
+}
+
+static bool pain_supertank(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  qa_q2_game *g = context->game;
+  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  bool boss5 = m->definition->species == Q2M_BOSS5;
+  float damage = m->pending_damage;
+  if (context->combat.health < m->max_health * .5f) {
+    if (rerelease) m->skin |= 1;
+    else m->skin = 1;
+  } else if (rerelease) m->skin &= ~1;
+  if (g->now_ns < m->pain_ns) return true;
+  if (!(rerelease && last_attack_chainfist(m))) {
+    if (damage <= 25 && (rerelease ? q2_rerelease_float(g, 0, 1) : q2m_random(g)) < .2f)
+      return true;
+    if ((rerelease || g->options.skill >= 2) && m->frame >= 20 && m->frame <= 33)
+      return true;
+  }
+  if (!rerelease) {
+    m->pain_ns = q2m_after(g->now_ns, 3.0);
+    if (!boss5 && g->options.skill == 3) return true;
+  }
+  const char *sound = damage <= 10 ? "bosstank/btkpain1.wav" :
+                      damage <= 25 ? "bosstank/btkpain3.wav" : "bosstank/btkpain2.wav";
+  if (!q2m_sound(context, sound, 2, 1, error)) return false;
+  if (!q2m_alive(context)) return true;
+  if (rerelease) {
+    m->pain_ns = q2m_after(g->now_ns, 3.0);
+    if (!reacts_to_pain(context)) return true;
+  }
+  const char *move = boss5 ? (damage <= 10 ? "boss5_move_pain1" :
+                               damage <= 25 ? "boss5_move_pain2" : "boss5_move_pain3") :
+                            (damage <= 10 ? "supertank_move_pain1" :
+                               damage <= 25 ? "supertank_move_pain2" : "supertank_move_pain3");
+  return q2m_set_move(context, move, rerelease, error);
+}
+
+static bool pain_classic_makron(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  qa_q2_game *g = context->game;
+  float damage = m->pending_damage;
+  if (context->combat.health < m->max_health * .5f) m->skin = 1;
+  if (g->now_ns < m->pain_ns || (damage <= 25 && q2m_random(g) < .2f)) return true;
+  m->pain_ns = q2m_after(g->now_ns, 3.0);
+  if (g->options.skill == 3) return true;
+  const char *move, *sound;
+  if (damage <= 40) {
+    move = "makron_move_pain4"; sound = "makron/pain3.wav";
+  } else if (damage <= 110) {
+    move = "makron_move_pain5"; sound = "makron/pain2.wav";
+  } else {
+    if (q2m_random(g) > (damage <= 150 ? .45f : .35f)) return true;
+    move = "makron_move_pain6"; sound = "makron/pain1.wav";
+  }
+  if (!q2m_sound(context, sound, 2, 0, error)) return false;
+  return !q2m_alive(context) || q2m_set_move(context, move, false, error);
+}
+
+static bool pain_jorg(q2m_context *context, qa_error *error) {
+  struct qa_q2_monster *m = context->monster;
+  qa_q2_game *g = context->game;
+  bool rerelease = g->options.edition == QA_Q2_RERELEASE;
+  float damage = m->pending_damage;
+  if (context->combat.health < m->max_health * .5f) m->skin = 1;
+  else if (rerelease) m->skin = 0;
+  if (!rerelease && !q2m_weapon_sound(context, NULL, error)) return false;
+  if (!q2m_alive(context) || g->now_ns < m->pain_ns) return true;
+  if (!(rerelease && last_attack_chainfist(m))) {
+    if (damage <= 40 && (rerelease ? q2_rerelease_float(g, 0, 1) : q2m_random(g)) <= .6f)
+      return true;
+    if (m->frame >= 0 && m->frame <= 7 &&
+        (rerelease ? q2_rerelease_float(g, 0, 1) : q2m_random(g)) <= .005f) return true;
+    if (m->frame >= 8 && m->frame <= 13 &&
+        (rerelease ? q2_rerelease_float(g, 0, 1) : q2m_random(g)) <= .00005f) return true;
+    if (m->frame >= 18 && m->frame <= 25 &&
+        (rerelease ? q2_rerelease_float(g, 0, 1) : q2m_random(g)) <= .005f) return true;
+  }
+  m->pain_ns = q2m_after(g->now_ns, 3.0);
+  if (!rerelease && g->options.skill == 3) return true;
+  const char *move = NULL, *sound = NULL;
+  if (damage <= 50) {
+    move = "jorg_move_pain1";
+    if (!rerelease) sound = "boss3/bs3pain1.wav";
+  } else if (damage <= 100) {
+    move = "jorg_move_pain2"; sound = "boss3/bs3pain2.wav";
+  } else if ((rerelease ? q2_rerelease_float(g, 0, 1) : q2m_random(g)) <= .3f) {
+    move = "jorg_move_pain3"; sound = "boss3/bs3pain3.wav";
+  }
+  if (sound && !q2m_sound(context, sound, 2, 1, error)) return false;
+  if (!q2m_alive(context)) return true;
+  if (rerelease) {
+    if (!reacts_to_pain(context)) return true;
+    if (!q2m_jorg_sound_end(context, error)) return false;
+  }
+  return !q2m_alive(context) || !move || q2m_set_move(context, move, rerelease, error);
+}
+
 static bool pain_floater(q2m_context *context, qa_error *error) {
   struct qa_q2_monster *monster = context->monster;
   if (context->game->now_ns < monster->pain_ns)
@@ -1626,6 +1765,13 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
   if (species == Q2M_GUNNER) return pain_gunner(context, error);
   if (species == Q2M_HOVER || species == Q2M_DAEDALUS) return pain_hover(context, error);
   if (species == Q2M_TANK || species == Q2M_TANK_COMMANDER) return pain_tank(context, error);
+  if (species == Q2M_INFANTRY || species == Q2M_TURRET_DRIVER)
+    return pain_infantry(context, error);
+  if (species == Q2M_SUPERTANK || species == Q2M_BOSS5)
+    return pain_supertank(context, error);
+  if (species == Q2M_JORG) return pain_jorg(context, error);
+  if (species == Q2M_MAKRON && context->game->options.edition != QA_Q2_RERELEASE)
+    return pain_classic_makron(context, error);
   if (species == Q2M_SOLDIER_LIGHT || species == Q2M_SOLDIER ||
       species == Q2M_SOLDIER_SS || species == Q2M_SOLDIER_RIPPER ||
       species == Q2M_SOLDIER_HYPER || species == Q2M_SOLDIER_LASER)
@@ -1670,13 +1816,6 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
   if (species == Q2M_CARRIER && context->game->options.skill == 3)
     return true;
 
-  if ((species == Q2M_SUPERTANK || species == Q2M_BOSS5 ||
-       species == Q2M_MAKRON) &&
-      damage <= 25.0f && q2m_random(context->game) < 0.2f)
-    return true;
-  if (species == Q2M_JORG && damage <= 40.0f &&
-      q2m_random(context->game) <= 0.6f)
-    return true;
   double delay = species == Q2M_CARRIER ? 5.0 : 3.0;
   monster->pain_ns = q2m_after(context->game->now_ns, delay);
 
@@ -1699,46 +1838,9 @@ bool q2m_pain(q2m_context *context, qa_error *error) {
                                              : "gladiator_move_pain";
     sound = random < 0.5f ? "gladiator/pain.wav" : "gladiator/gldpain2.wav";
     break;
-  case Q2M_JORG:
-    if (damage > 100.0f && random > 0.3f)
-      return true;
-    move = damage <= 50.0f    ? "jorg_move_pain1"
-           : damage <= 100.0f ? "jorg_move_pain2"
-                              : "jorg_move_pain3";
-    sound = damage <= 50.0f    ? "boss3/bs3pain1.wav"
-            : damage <= 100.0f ? "boss3/bs3pain2.wav"
-                               : "boss3/bs3pain3.wav";
-    break;
-  case Q2M_MAKRON:
-    if (damage <= 40.0f) {
-      move = "makron_move_pain4";
-      sound = "makron/pain3.wav";
-    } else if (damage <= 110.0f) {
-      move = "makron_move_pain5";
-      sound = "makron/pain2.wav";
-    } else {
-      if (damage > 150.0f ||
-          (random > 0.45f && q2m_random(context->game) > 0.35f))
-        return true;
-      move = "makron_move_pain6";
-      sound = "makron/pain1.wav";
-    }
-    break;
   case Q2M_PARASITE:
     move = "parasite_move_pain1";
     sound = random < 0.5f ? "parasite/parpain1.wav" : "parasite/parpain2.wav";
-    break;
-  case Q2M_SUPERTANK:
-  case Q2M_BOSS5:
-    move = damage <= 10.0f   ? species == Q2M_BOSS5 ? "boss5_move_pain1"
-                                                    : "supertank_move_pain1"
-           : damage <= 25.0f ? species == Q2M_BOSS5 ? "boss5_move_pain2"
-                                                    : "supertank_move_pain2"
-           : species == Q2M_BOSS5 ? "boss5_move_pain3"
-                                  : "supertank_move_pain3";
-    sound = damage <= 10.0f   ? "bosstank/btkpain1.wav"
-            : damage <= 25.0f ? "bosstank/btkpain3.wav"
-                              : "bosstank/btkpain2.wav";
     break;
   case Q2M_BOSS2:
     move = damage < 30.0f ? "boss2_move_pain_light" : "boss2_move_pain_heavy";
@@ -2570,6 +2672,10 @@ bool q2m_die(q2m_context *context, qa_error *error) {
   bool crushed = monster->last_attack.cause.kind == QA_CAUSE_Q2 &&
                  monster->last_attack.cause.source.q2.means_of_death == 20;
   q2m_species species = monster->definition->species;
+  if (species == Q2M_JORG) {
+    if (!q2m_jorg_sound_end(context, error)) return false;
+    if (!q2m_alive(context)) return true;
+  }
   if (species == Q2M_GUARDIAN) {
     if (!stop_loop_sound(context, "weapons/hyprbl1a.wav", 0, error)) return false;
     if (!q2m_alive(context)) return true;

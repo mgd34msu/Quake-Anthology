@@ -363,6 +363,13 @@ bool q2m_weapon_sound(q2m_context *context, const char *path, qa_error *error) {
   return qa_builtin_emit(&context->game->services, &event, error);
 }
 
+bool q2m_jorg_sound_end(q2m_context *context, qa_error *error) {
+  if (!q2m_alive(context) || !context->monster->weapon_sound) return true;
+  if (context->game->options.edition == QA_Q2_RERELEASE &&
+      !q2m_sound(context, "boss3/bs3atck1_end.wav", 1, 1, error)) return false;
+  return !q2m_alive(context) || q2m_weapon_sound(context, NULL, error);
+}
+
 bool q2m_soldier_sound_end(q2m_context *context, qa_error *error) {
   if (context->game->options.edition != QA_Q2_RERELEASE ||
       !context->monster->weapon_sound)
@@ -2306,11 +2313,16 @@ static bool conditional_transition(q2m_context *context, const char *callback,
     bool visible;
     if (!q2m_visible(context, monster->enemy, &visible, error))
       return false;
-    if (visible && q2m_random(context->game) < 0.9f)
-      return q2m_set_move(context, "jorg_move_attack1", false, error);
-    if (!stop_loop_sound(context, "boss3/w_loop.wav", error))
+    if (!q2m_alive(context)) return true;
+    bool rerelease = context->game->options.edition == QA_Q2_RERELEASE;
+    if (visible && (rerelease ? q2_rerelease_float(context->game, 0, 1) :
+                              q2m_random(context->game)) < 0.9f)
+      return q2m_set_move(context, "jorg_move_attack1", rerelease, error);
+    if (rerelease && !q2m_set_move(context, "jorg_move_end_attack1", true, error))
       return false;
-    return !q2m_alive(context) ||
+    if (!q2m_jorg_sound_end(context, error))
+      return false;
+    return !q2m_alive(context) || rerelease ||
            q2m_set_move(context, "jorg_move_end_attack1", false, error);
   }
 
@@ -2449,6 +2461,14 @@ static bool reattack(q2m_context *context, const char *callback,
 
 static bool end_transition(q2m_context *context, const char *callback,
                            bool *handled, qa_error *error) {
+  if (context->game->options.edition == QA_Q2_RERELEASE &&
+      (!strcmp(callback, "jorg_stand") || !strcmp(callback, "jorg_run"))) {
+    *handled = true;
+    bool stand = !strcmp(callback, "jorg_stand") || context->monster->stand_ground;
+    if (!q2m_set_move(context, stand ? "jorg_move_stand" : "jorg_move_run", true, error))
+      return false;
+    return q2m_jorg_sound_end(context, error);
+  }
   if (context->game->options.edition == QA_Q2_RERELEASE &&
       (strcmp(callback, "soldier_stand") == 0 ||
        strcmp(callback, "soldier_run") == 0)) {

@@ -2143,9 +2143,14 @@ static bool select_species_attack(q2m_context *context, const char **move,
                 : "hover_move_start_attack";
     break;
   case Q2M_JORG:
-    if (q2m_random(context->game) <= 0.75f) {
-      if (!q2m_sound(context, "boss3/bs3atck1.wav", 2, 1.0f, error))
+    if ((context->game->options.edition == QA_Q2_RERELEASE
+             ? q2_rerelease_float(context->game, 0, 1) : q2m_random(context->game)) <= 0.75f) {
+      if (!q2m_sound(context, "boss3/bs3atck1.wav",
+                       context->game->options.edition == QA_Q2_RERELEASE ? 1 : 2,
+                       1.0f, error))
         return false;
+      if (!q2m_alive(context)) return true;
+      if (!q2m_weapon_sound(context, "boss3/w_loop.wav", error)) return false;
       *move = "jorg_move_start_attack1";
     } else {
       if (!q2m_sound(context, "boss3/bs3atck2.wav", 2, 1.0f, error))
@@ -2361,7 +2366,9 @@ bool q2m_source_attack(q2m_context *context, bool melee, qa_error *error) {
   const char *move;
   if (!select_species_attack(context, &move, error))
     return false;
-  return !q2m_alive(context) || move == NULL || q2m_set_move(context, move, false, error);
+  bool immediate = context->game->options.edition == QA_Q2_RERELEASE &&
+                   context->monster->definition->species == Q2M_JORG;
+  return !q2m_alive(context) || move == NULL || q2m_set_move(context, move, immediate, error);
 }
 
 static bool attack_selected(q2m_context *context, qa_error *error) {
@@ -2389,7 +2396,9 @@ static bool attack_selected(q2m_context *context, qa_error *error) {
     return true;
   if (move == NULL)
     return true;
-  if (!q2m_set_move(context, move, false, error))
+  bool immediate = context->game->options.edition == QA_Q2_RERELEASE &&
+                   monster->definition->species == Q2M_JORG;
+  if (!q2m_set_move(context, move, immediate, error))
     return false;
   if (!q2m_alive(context))
     return true;
