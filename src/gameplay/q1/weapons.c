@@ -670,11 +670,8 @@ static bool lightning(qa_q1_game *g, q1_player *player, qa_error *error) {
                              qa_v3(0, 0, 0), 0, QA_Q1_LIGHTNING, NULL, error);
 }
 
-bool q1_weapon_parameters(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon,
-                          qa_q1_weapon_parameters *parameters, qa_error *error) {
-    if (g->host.weapon_parameters &&
-        !g->host.weapon_parameters(g->host.context, actor, weapon, parameters, error))
-        return false;
+static bool parameters_valid(qa_q1_game *g, qa_actor_id actor,
+                              const qa_q1_weapon_parameters *parameters, qa_error *error) {
     if (!q1_alive(g, actor)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
                      "Q1 weapon policy retired the source actor");
@@ -687,6 +684,14 @@ bool q1_weapon_parameters(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon,
         return false;
     }
     return true;
+}
+
+bool q1_weapon_parameters(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon,
+                          qa_q1_weapon_parameters *parameters, qa_error *error) {
+    if (g->host.weapon_parameters &&
+        !g->host.weapon_parameters(g->host.context, actor, weapon, parameters, error))
+        return false;
+    return parameters_valid(g, actor, parameters, error);
 }
 
 bool q1_weapon_attack_delay(qa_q1_game *g, q1_player *player, float *delay, qa_error *error) {
@@ -762,6 +767,14 @@ static bool weapon_observe(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon
             return false;
     }
     if (!q1_alive(g, actor))
+        return true;
+    if (g->host.weapon_observation &&
+        !g->host.weapon_observation(g->host.context, actor, weapon, &parameters, error))
+        return false;
+    if (!parameters_valid(g, actor, &parameters, error))
+        return false;
+    player = q1_player_get(g, actor);
+    if (!player || !player->arsenal)
         return true;
     view.ammo_count = ammo < 0 ? 0 : q1_ammo_count(g, actor, (qa_q1_ammo)ammo);
     view.owned = owns(g, actor, weapon);

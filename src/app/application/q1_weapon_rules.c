@@ -91,6 +91,29 @@ bool application_q1_weapon_parameters(void *opaque, qa_actor_id actor, qa_q1_wea
     return finish(source, actor, &operation, okay, error);
 }
 
+bool application_q1_weapon_observation(void *opaque, qa_actor_id actor, qa_q1_weapon weapon,
+                                       qa_q1_weapon_parameters *parameters, qa_error *error) {
+    application_provider *source = opaque;
+    qa_q1_game_operation operation = {0};
+    if (!parameters)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 weapon observation is missing");
+    if (!begin(source, actor, weapon, &operation, error)) return false;
+    qa_application *app = source->application;
+    qa_item_id item = qa_q1_weapon_item(source->state.q1, weapon);
+    float nail_speed = parameters->nail_speed;
+    bool okay = true;
+    for (size_t i = 0; okay && app->modes && i < app->mode_count; ++i) {
+        qa_mode_id id;
+        qa_mode_source mode;
+        bool selected;
+        okay = rule_read(app, i, &id, &mode, &selected, error);
+        if (okay && selected)
+            okay = qa_modes_haste_weapon(app->modes, id, actor, item, parameters->interval,
+                                         &parameters->interval, &nail_speed, error);
+    }
+    return finish(source, actor, &operation, okay, error);
+}
+
 bool application_q1_before_fire(void *opaque, qa_actor_id actor, qa_q1_weapon weapon,
                                 qa_error *error) {
     application_provider *source = opaque;

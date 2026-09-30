@@ -311,31 +311,55 @@ bool q1_map_hip_misc_think(qa_q1_game *g, q1_actor *entity, q1_map_action action
                            Q1_MAP_SOUND_REPEAT, error) &&
            play_sound(g, entity, error);
 }
-bool qa_q1_game_map_after_physics(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+static bool after_physics(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     if (!g || !g->maps || !q1_alive(g, g->maps->world_actor) || !q1_alive(g, actor))
         return true;
     if (g->options.program == QA_Q1_ROGUE)
         return q1_map_rogue_ending(g, actor, error);
+    qa_actor_id world = g->maps->world_actor;
+    if (!qa_world_body_storage_serial(g->services.world, actor))
+        return true;
+    qa_body_state body;
+    if (!qa_world_body_read(g->services.world, actor, &body, error))
+        return false;
+    if (!q1_alive(g, world) || !q1_alive(g, actor))
+        return true;
     if (g->maps->earthquake_end <= g->time) {
         if (!g->maps->quake_active)
             return true;
         if (!q1_sound(g, actor, "misc/quakeend.wav", 2, 0, error))
             return false;
+        if (!q1_alive(g, world) || !q1_alive(g, actor))
+            return true;
         g->maps->quake_active = false;
         return true;
     }
     if (!g->maps->quake_active) {
         if (!q1_sound(g, actor, "misc/quake.wav", 2, 0, error))
             return false;
+        if (!q1_alive(g, world) || !q1_alive(g, actor))
+            return true;
         g->maps->quake_active = true;
     }
-    if (!q1_alive(g, actor))
-        return true;
-    qa_body_state body;
-    if (!qa_world_body_read(g->services.world, actor, &body, error))
-        return false;
     if (!body.ground.registry)
         return true;
     body.velocity.z += q1_random(g) * 150;
     return qa_world_body_write(g->services.world, actor, &body, error);
+}
+
+bool qa_q1_game_map_after_physics(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+    if (!g || !g->maps)
+        return true;
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    bool ok = after_physics(g, actor, error);
+    if (!qa_q1_game_operation_live(&operation)) {
+        if (ok || (error && error->code == QA_OK))
+            qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+                         "Q1 source retired during map after-physics");
+        ok = false;
+    }
+    qa_q1_game_operation_end(&operation);
+    return ok;
 }

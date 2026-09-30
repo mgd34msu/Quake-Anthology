@@ -8,15 +8,27 @@ bool qa_q1_game_rogue_earthquake(qa_q1_game *g, qa_actor_id actor, qa_error *err
     if (!g || !g->maps || g->options.program != QA_Q1_ROGUE || !q1_alive(g, g->maps->world_actor) ||
         !g->maps->rogue_quake_active)
         return true;
-    return q1_map_rogue_shake(g, actor, g->maps->rogue_quake_intensity, error);
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    bool ok = q1_map_rogue_shake(g, actor, g->maps->rogue_quake_intensity, error);
+    if (!qa_q1_game_operation_live(&operation)) {
+        if (ok || (error && error->code == QA_OK))
+            qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+                         "Q1 source retired during Rogue earthquake");
+        ok = false;
+    }
+    qa_q1_game_operation_end(&operation);
+    return ok;
 }
 bool q1_map_rogue_shake(qa_q1_game *g, qa_actor_id actor, float intensity, qa_error *error) {
     if (!q1_alive(g, actor) || !qa_world_body_storage_serial(g->services.world, actor))
         return true;
+    qa_actor_id world = g->maps->world_actor;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, actor, &body, error))
         return false;
-    if (!q1_alive(g, actor) || !body.ground.registry)
+    if (!q1_alive(g, world) || !q1_alive(g, actor) || !body.ground.registry)
         return true;
     float x = q1_random(g) * intensity * 2 - intensity;
     float y = q1_random(g) * intensity * 2 - intensity;
