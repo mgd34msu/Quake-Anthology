@@ -961,6 +961,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/bindings_ui.c
     src/app/frontend/commands.c
     src/app/frontend/frame.c
+    src/app/frontend/travel.c
     src/app/frontend/launch.c
     src/app/frontend/lifetime.c
     src/app/frontend/map_events.c

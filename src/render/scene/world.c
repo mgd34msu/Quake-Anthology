@@ -1,5 +1,6 @@
 #include "world/internal.h"
 #include "qa/scene_effects.h"
+#include "qa/scene_world_save.h"
 #include "qa/binary.h"
 
 #include <float.h>
@@ -12,6 +13,10 @@ static bool world_error(qa_error *error, qa_status status, const char *message)
     qa_error_set(error, status, 0, "%s", message);
     return false;
 }
+uint64_t qa_scene_world_identity(const qa_scene_world *world)
+{ return world ? world->identity : 0; }
+bool qa_scene_world_idle(const qa_scene_world *world)
+{ return world && !world->transaction_depth && !world->admission_change_count; }
 
 static void *world_array(size_t count, size_t stride, qa_error *error)
 {

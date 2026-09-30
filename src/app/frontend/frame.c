@@ -202,5 +202,5 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
     }
     if (ok) ++frontend->frame_number;
     frontend->stepping = false;
-    return ok;
+    return ok && frontend_travel(frontend, error);
 }
