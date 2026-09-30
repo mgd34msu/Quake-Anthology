@@ -897,6 +897,7 @@ add_library(qa_application STATIC
     src/app/application/match.c
     src/app/application/native_commands.c
     src/app/application/native_modes.c
+    src/app/application/native_maps.c
     src/app/application/network.c
     src/app/application/owner.c
     src/app/application/providers.c

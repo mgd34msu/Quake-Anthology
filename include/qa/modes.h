@@ -311,6 +311,7 @@ typedef struct qa_modes_hooks {
                           qa_actor_id *activator, qa_error *);
     bool (*campaign_restart)(void *, qa_mode_id, uint32_t initial_flags, qa_error *);
     bool (*map_allowed)(void *, qa_mode_id, qa_string_id);
+    bool (*next_map_allowed)(void *, qa_mode_id);
     bool (*team_equipment)(void *, qa_actor_id, qa_item_id *weapon, uint64_t *powerups, qa_error *);
     bool (*select_grapple)(void *, qa_actor_id, qa_error *);
     bool (*drop_arsenal)(void *, qa_actor_id, bool weapon, qa_error *);

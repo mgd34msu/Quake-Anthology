@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "native_maps.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -53,42 +54,15 @@ bool application_native_mode_emit(void *opaque, qa_mode_id mode,
     return application_emit(app, &projected, error);
 }
 
-static bool source_map_allowed(application_provider *source, const char *name) {
-    if (!source || !source->product || !source->launch || !source->launch->content ||
-        !name || !*name) return false;
-    char *normalized = qa_vfs_normalize_path(name, NULL);
-    if (!normalized) return false;
-    size_t length = strlen(normalized);
-    bool prefix = !strncmp(normalized, "maps/", 5);
-    bool suffix = length >= 4 && !strcmp(normalized + length - 4, ".bsp");
-    if (length > SIZE_MAX - 10) { free(normalized); return false; }
-    char *path = malloc(length + (prefix ? 0 : 5) + (suffix ? 0 : 4) + 1);
-    if (!path) { free(normalized); return false; }
-    size_t used = 0;
-    if (!prefix) { memcpy(path, "maps/", 5); used = 5; }
-    memcpy(path + used, normalized, length);
-    used += length;
-    if (!suffix) { memcpy(path + used, ".bsp", 4); used += 4; }
-    path[used] = 0;
-    free(normalized);
-    qa_resource *resource = NULL;
-    bool allowed = qa_vfs_acquire(source->launch->content, path, &resource, NULL, NULL);
-    free(path);
-    qa_bsp_view map;
-    if (allowed) {
-        allowed = qa_bsp_open(qa_resource_bytes(resource), &map, NULL) &&
-                  ((source->product->family == QA_GAME_Q1 && map.family == QA_BSP_Q1) ||
-                   (source->product->family == QA_GAME_Q2 && map.family == QA_BSP_Q2) ||
-                   (source->product->family == QA_GAME_Q3 && map.format == QA_BSP_IBSP46)) &&
-                  qa_bsp_validate(&map, NULL);
-    }
-    qa_resource_release(resource);
-    return allowed;
-}
 bool application_native_mode_map_allowed(void *opaque, qa_mode_id mode, qa_string_id map) {
     qa_application *app = opaque;
     application_provider *source = application_mode_provider(app, mode);
-    return source_map_allowed(source, qa_strings_cstr(qa_session_strings(app->session), map));
+    char *path = NULL;
+    bool allowed = application_source_map_path(source,
+        app && app->session ? qa_strings_cstr(qa_session_strings(app->session), map) : NULL,
+        &path, NULL);
+    free(path);
+    return allowed;
 }
 
 bool application_native_mode_select_weapon(void *opaque, qa_actor_id actor,

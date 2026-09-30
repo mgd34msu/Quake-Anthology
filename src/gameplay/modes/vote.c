@@ -42,8 +42,14 @@ bool qa_modes_vote_start(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
     if ((intent->kind == QA_MATCH_SELECTED_MAP ||
          (intent->kind == QA_MATCH_START && intent->map)) &&
         (!intent->map || !m->options.hooks.map_allowed ||
-         !m->options.hooks.map_allowed(m->options.hooks.context, id, intent->map)))
+         !MODE_CALLBACK(m, m->options.hooks.map_allowed(m->options.hooks.context, id, intent->map))))
         return mode_fail(e, "vote map is not admitted");
+    if (source >= QA_MODE_Q3 && intent->kind == QA_MATCH_NEXT_MAP &&
+        (!m->options.hooks.next_map_allowed ||
+         !MODE_CALLBACK(m, m->options.hooks.next_map_allowed(m->options.hooks.context, id))))
+        return mode_fail(e, "nextmap is not admitted by its source");
+    member = mode_member_get(m, v, actor);
+    if (!member) return mode_fail(e, "vote initiator retired during map admission");
     mode_player *initiator = mode_player_get(m, actor);
     if (v->value.rules.voting_disabled || !initiator || !initiator->value.connected ||
         (source >= QA_MODE_Q3 &&
