@@ -329,6 +329,10 @@ bool qa_modes_remove(qa_modes *m, qa_mode_id id, qa_error *e) {
         o->value.carrier = (qa_actor_id){0};
     }
     v->active = false;
+    if (!MODE_CALLBACK(m, mode_horde_reconcile_keys(m, v, e))) {
+        v->active = true;
+        return false;
+    }
     for (uint32_t i = 0; i < m->objective_capacity; ++i) {
         mode_objective *objective = &m->objectives[i];
         if (objective->active && objective->binding.mode.slot == id.slot &&
@@ -356,10 +360,20 @@ bool qa_modes_remove(qa_modes *m, qa_mode_id id, qa_error *e) {
             return false;
     return true;
 }
+bool qa_modes_idle(const qa_modes *m) {
+    if (!m || m->callback_depth || m->source_restored)
+        return false;
+    for (uint32_t i = 0; i < m->objective_capacity; ++i)
+        if (m->objectives[i].reserved)
+            return false;
+    return true;
+}
 bool qa_modes_configure(qa_modes *m, qa_mode_id id, const qa_mode_rules *rules, qa_error *e) {
     mode_instance *v = mode_get(m, id);
     if (!v || !mode_rules_valid(rules))
         return mode_fail(e, "invalid mode configuration");
+    if (m->callback_depth)
+        return mode_fail(e, "cannot configure a mode during a synchronous callback");
     if (rules->source != v->value.rules.source || rules->kind != v->value.rules.kind)
         return mode_fail(e, "source and mode kind require a new mode instance");
     bool warmup = rules->warmup_seconds != v->value.rules.warmup_seconds;
@@ -374,7 +388,12 @@ bool qa_modes_configure(qa_modes *m, qa_mode_id id, const qa_mode_rules *rules, 
             delta < 0 ? (amount > v->value.deadline_ns ? 0 : v->value.deadline_ns - amount)
                       : v->value.deadline_ns + amount;
     }
+    bool enabled_changed = v->value.rules.enabled != rules->enabled;
     v->value.rules = *rules;
+    if (enabled_changed && !MODE_CALLBACK(m, mode_horde_reconcile_keys(m, v, e))) {
+        v->value.rules.enabled = !rules->enabled;
+        return false;
+    }
     for (uint32_t i = 0; i < m->actor_capacity; ++i) {
         mode_object *o = &m->objects[i];
         if (o->active && o->mode.slot == id.slot && o->mode.generation == id.generation &&

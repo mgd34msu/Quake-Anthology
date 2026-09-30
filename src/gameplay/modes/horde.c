@@ -701,6 +701,25 @@ static bool key_player(qa_modes *m, qa_actor_id manager, qa_actor_id actor) {
     }
     return false;
 }
+bool mode_horde_reconcile_keys(qa_modes *m, mode_instance *changed, qa_error *e) {
+    horde_state *h = changed->horde;
+    if (!h) return true;
+    qa_actor_id manager = h->options.manager;
+    for (unsigned gold = 0; gold < 2; ++gold) {
+        bool present = key_present(m, manager, gold != 0);
+        qa_item_id item;
+        if (!qa_builtin_resource(&m->options.services, gold ? "q1:key/gold" : "q1:key/silver", &item, e))
+            return false;
+        for (size_t i = 0; i < m->players_order.count; ++i) {
+            qa_actor_id actor = m->players_order.ids[i];
+            if (!mode_player_get(m, actor)) continue;
+            bool participating = key_player(m, manager, actor);
+            if (!participating && !mode_member_get(m, changed, actor)) continue;
+            if (!mode_set_count(m, actor, item, participating && present ? 1 : 0, e)) return false;
+        }
+    }
+    return true;
+}
 static bool change_keys(qa_modes *m, qa_mode_id id, bool gold, int change, qa_error *e) {
     mode_instance *v = mode_get(m, id);
     horde_state *h = v ? v->horde : NULL;

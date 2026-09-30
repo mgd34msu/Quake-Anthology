@@ -146,6 +146,7 @@ bool mode_obelisk_touch(qa_modes *, mode_instance *, mode_object *, qa_actor_id,
 bool mode_horde_frame(qa_modes *, mode_instance *, uint64_t, qa_error *);
 void mode_horde_free(mode_instance *);
 bool mode_horde_retire(qa_modes *, mode_instance *, qa_error *);
+bool mode_horde_reconcile_keys(qa_modes *, mode_instance *, qa_error *);
 bool mode_horde_death(qa_modes *, mode_instance *, const qa_damage_outcome *, qa_error *);
 bool mode_horde_respawn(qa_modes *, mode_instance *, qa_actor_id, qa_error *);
 bool mode_near(qa_modes *, qa_actor_id, qa_actor_id, float);

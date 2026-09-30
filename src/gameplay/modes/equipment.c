@@ -13,7 +13,16 @@ struct qa_equipment {
     qa_equipment_options options;
     equipment_actor *actors;
     uint32_t capacity;
+    size_t operation_depth;
 };
+bool qa_equipment_idle(const qa_equipment *g) {
+    if (!g || g->operation_depth)
+        return false;
+    for (uint32_t i = 0; i < g->capacity; ++i)
+        if (g->actors[i].configuring)
+            return false;
+    return true;
+}
 static equipment_actor *equipment_get(qa_equipment *g, qa_actor_id actor) {
     if (!g || actor.slot >= g->capacity ||
         !qa_actors_get(qa_session_actors(g->options.services.session), actor))
@@ -114,7 +123,7 @@ void qa_equipment_destroy(qa_equipment *g) {
     free(g->actors);
     free(g);
 }
-bool qa_equipment_release_grapple(qa_equipment *g, qa_actor_id actor, qa_error *e) {
+static bool equipment_release_grapple(qa_equipment *g, qa_actor_id actor, qa_error *e) {
     equipment_actor *p = equipment_get(g, actor);
     if (!p)
         return true;
@@ -135,7 +144,7 @@ bool qa_equipment_release_grapple(qa_equipment *g, qa_actor_id actor, qa_error *
     }
     return mode_fail(e, "invalid grapple mechanic");
 }
-bool qa_equipment_admit(qa_equipment *g, qa_actor_id actor, const qa_equipment_selection *selection,
+static bool equipment_admit(qa_equipment *g, qa_actor_id actor, const qa_equipment_selection *selection,
                         qa_error *e) {
     if (!g || !selection_valid(g, selection) || actor.slot >= g->capacity ||
         !qa_actors_get(qa_session_actors(g->options.services.session), actor) ||
@@ -165,7 +174,7 @@ bool qa_equipment_admit(qa_equipment *g, qa_actor_id actor, const qa_equipment_s
     }
     return ok;
 }
-bool qa_equipment_configure(qa_equipment *g, qa_actor_id actor,
+static bool equipment_configure(qa_equipment *g, qa_actor_id actor,
                             const qa_equipment_selection *selection, qa_error *e) {
     equipment_actor *p = equipment_get(g, actor);
     if (!p || p->configuring || !selection_valid(g, selection))
@@ -211,7 +220,7 @@ finished: {
         return ok;
     }
 }
-bool qa_equipment_input(qa_equipment *g, qa_actor_id actor, const qa_equipment_controls *input,
+static bool equipment_input(qa_equipment *g, qa_actor_id actor, const qa_equipment_controls *input,
                         qa_error *e) {
     equipment_actor *p = equipment_get(g, actor);
     if (!p || !input || !qa_vec_finite(input->view_angles) ||
@@ -239,7 +248,7 @@ bool qa_equipment_input(qa_equipment *g, qa_actor_id actor, const qa_equipment_c
     s->controls = *input;
     return true;
 }
-bool qa_equipment_select_grapple(qa_equipment *g, qa_actor_id actor, bool selected, qa_error *e) {
+static bool equipment_select_grapple(qa_equipment *g, qa_actor_id actor, bool selected, qa_error *e) {
     equipment_actor *p = equipment_get(g, actor);
     if (!p)
         return mode_fail(e, "unknown equipment player");
@@ -290,7 +299,7 @@ static qa_q2_weapon_input q2_input(const qa_equipment_state *s) {
                                 .no_stack_double = c->no_stack_double,
                                 .animate_player = s->slot_active};
 }
-bool qa_equipment_step(qa_equipment *g, qa_actor_id actor, uint64_t now, uint64_t elapsed,
+static bool equipment_step(qa_equipment *g, qa_actor_id actor, uint64_t now, uint64_t elapsed,
                        qa_q2_hand_lifecycle lifecycle, qa_error *e) {
     equipment_actor *p = equipment_get(g, actor);
     if (!p)
@@ -411,7 +420,7 @@ bool qa_equipment_step(qa_equipment *g, qa_actor_id actor, uint64_t now, uint64_
     }
     return mode_fail(e, "invalid grapple mechanic");
 }
-bool qa_equipment_after_movement(qa_equipment *g, qa_actor_id actor, bool pulse, uint64_t now,
+static bool equipment_after_movement(qa_equipment *g, qa_actor_id actor, bool pulse, uint64_t now,
                                  uint64_t elapsed, qa_error *e) {
     equipment_actor *p = equipment_get(g, actor);
     if (!p)
@@ -420,7 +429,7 @@ bool qa_equipment_after_movement(qa_equipment *g, qa_actor_id actor, bool pulse,
     return (kind != QA_GRAPPLE_Q2_CTF && kind != QA_GRAPPLE_LMCTF) ||
            qa_q2_grapple_after_movement(g->options.q2, actor, pulse, now, elapsed, e);
 }
-bool qa_equipment_lmctf_command(qa_equipment *g, qa_modes *m, qa_mode_id id, qa_actor_id actor,
+static bool equipment_lmctf_command(qa_equipment *g, qa_modes *m, qa_mode_id id, qa_actor_id actor,
                                 bool native_slot, bool pressed, qa_error *e) {
     equipment_actor *p = equipment_get(g, actor);
     mode_instance *v = mode_get(m, id);
@@ -476,7 +485,7 @@ bool qa_equipment_lmctf_command(qa_equipment *g, qa_modes *m, qa_mode_id id, qa_
                           QA_Q2_LMCTF_HOOK, e);
     return qa_q2_grapple_offhand(g->options.q2, actor, QA_Q2_LMCTF_GRAPPLE, true, e);
 }
-bool qa_equipment_q3_pull(qa_equipment *g, qa_actor_id actor, qa_vec3 *velocity, bool *apply,
+static bool equipment_q3_pull(qa_equipment *g, qa_actor_id actor, qa_vec3 *velocity, bool *apply,
                           qa_error *e) {
     if (!velocity || !apply)
         return mode_fail(e, "invalid grapple movement output");
@@ -505,7 +514,8 @@ float qa_equipment_gravity_scale(qa_equipment *g, qa_actor_id actor) {
                ? qa_q2_grapple_gravity_scale(g->options.q2, actor)
                : 1;
 }
-static bool q3_item_action(void *context, qa_item_id item, qa_item_action action, qa_error *e) {
+static bool q3_item_action(void *, qa_item_id, qa_item_action, qa_error *);
+static bool equipment_item_action(void *context, qa_item_id item, qa_item_action action, qa_error *e) {
     equipment_actor *p = context;
     qa_equipment *g = p->equipment;
     if (!equipment_get(g, p->state.actor) || action != QA_ITEM_USE)
@@ -555,7 +565,7 @@ static bool q3_definitions(qa_equipment *g, qa_item_definition *definitions, siz
     *out = used;
     return true;
 }
-bool qa_equipment_publish_q3_items(qa_equipment *g, qa_actor_id actor, qa_error *e) {
+static bool equipment_publish_q3_items(qa_equipment *g, qa_actor_id actor, qa_error *e) {
     equipment_actor *p = equipment_get(g, actor);
     if (!p || !g->options.q3 || !g->options.q3_owner)
         return mode_fail(e, "Q3 inventory publication needs admitted equipment and provider");
@@ -681,7 +691,7 @@ static bool save_header(qa_source_save_io *io) {
     return version == 1 || mode_fail(io->error, "unsupported equipment save version");
 }
 static bool save_boundary(qa_equipment *g, bool empty, qa_error *e) {
-    if (!g || !qa_session_safe(g->options.services.session) || !qa_world_idle(g->options.services.world))
+    if (!qa_equipment_idle(g) || !qa_session_safe(g->options.services.session) || !qa_world_idle(g->options.services.world))
         return mode_fail(e, "equipment save requires an idle service");
     for (uint32_t i = 0; i < g->capacity; ++i)
         if (g->actors[i].configuring || (empty && g->actors[i].active))
@@ -774,3 +784,56 @@ bool qa_equipment_restore_bytes(qa_equipment *g, qa_bytes input, qa_error *e) {
 
 #undef EQUIP_FIELD
 #undef EQUIP_ENUM
+
+#define EQUIPMENT_CALL(call) do { \
+    if (!g) return (call); \
+    if (g->operation_depth == SIZE_MAX) return mode_fail(e, "equipment operation depth exhausted"); \
+    ++g->operation_depth; \
+    bool result = (call); \
+    --g->operation_depth; \
+    return result; \
+} while (0)
+
+bool qa_equipment_release_grapple(qa_equipment *g, qa_actor_id actor, qa_error *e) {
+    EQUIPMENT_CALL(equipment_release_grapple(g, actor, e));
+}
+bool qa_equipment_admit(qa_equipment *g, qa_actor_id actor,
+                        const qa_equipment_selection *selection, qa_error *e) {
+    EQUIPMENT_CALL(equipment_admit(g, actor, selection, e));
+}
+bool qa_equipment_configure(qa_equipment *g, qa_actor_id actor,
+                            const qa_equipment_selection *selection, qa_error *e) {
+    EQUIPMENT_CALL(equipment_configure(g, actor, selection, e));
+}
+bool qa_equipment_input(qa_equipment *g, qa_actor_id actor,
+                        const qa_equipment_controls *input, qa_error *e) {
+    EQUIPMENT_CALL(equipment_input(g, actor, input, e));
+}
+bool qa_equipment_select_grapple(qa_equipment *g, qa_actor_id actor, bool selected, qa_error *e) {
+    EQUIPMENT_CALL(equipment_select_grapple(g, actor, selected, e));
+}
+bool qa_equipment_step(qa_equipment *g, qa_actor_id actor, uint64_t now, uint64_t elapsed,
+                       qa_q2_hand_lifecycle lifecycle, qa_error *e) {
+    EQUIPMENT_CALL(equipment_step(g, actor, now, elapsed, lifecycle, e));
+}
+bool qa_equipment_after_movement(qa_equipment *g, qa_actor_id actor, bool pulse,
+                                 uint64_t now, uint64_t elapsed, qa_error *e) {
+    EQUIPMENT_CALL(equipment_after_movement(g, actor, pulse, now, elapsed, e));
+}
+bool qa_equipment_lmctf_command(qa_equipment *g, qa_modes *m, qa_mode_id id, qa_actor_id actor,
+                                bool native_slot, bool pressed, qa_error *e) {
+    EQUIPMENT_CALL(equipment_lmctf_command(g, m, id, actor, native_slot, pressed, e));
+}
+bool qa_equipment_q3_pull(qa_equipment *g, qa_actor_id actor, qa_vec3 *velocity, bool *apply,
+                          qa_error *e) {
+    EQUIPMENT_CALL(equipment_q3_pull(g, actor, velocity, apply, e));
+}
+bool qa_equipment_publish_q3_items(qa_equipment *g, qa_actor_id actor, qa_error *e) {
+    EQUIPMENT_CALL(equipment_publish_q3_items(g, actor, e));
+}
+static bool q3_item_action(void *context, qa_item_id item, qa_item_action action, qa_error *e) {
+    equipment_actor *p = context;
+    qa_equipment *g = p->equipment;
+    EQUIPMENT_CALL(equipment_item_action(context, item, action, e));
+}
+#undef EQUIPMENT_CALL

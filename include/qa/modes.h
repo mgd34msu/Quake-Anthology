@@ -327,6 +327,7 @@ bool qa_modes_create(const qa_modes_options *, qa_modes **, qa_error *);
 /* Single session thread. Read callbacks do not mutate their exposed state.
  * Destruction and removal occur outside synchronous mode/provider calls. */
 void qa_modes_destroy(qa_modes *);
+bool qa_modes_idle(const qa_modes *);
 bool qa_modes_add(qa_modes *, const qa_mode_rules *, qa_mode_id *, qa_error *);
 bool qa_modes_remove(qa_modes *, qa_mode_id, qa_error *);
 bool qa_modes_configure(qa_modes *, qa_mode_id, const qa_mode_rules *, qa_error *);

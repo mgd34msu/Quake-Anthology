@@ -64,6 +64,7 @@ typedef struct qa_equipment_options {
 
 bool qa_equipment_create(const qa_equipment_options *, qa_equipment **, qa_error *);
 void qa_equipment_destroy(qa_equipment *);
+bool qa_equipment_idle(const qa_equipment *);
 bool qa_equipment_admit(qa_equipment *, qa_actor_id, const qa_equipment_selection *, qa_error *);
 bool qa_equipment_configure(qa_equipment *, qa_actor_id, const qa_equipment_selection *,
                             qa_error *);
