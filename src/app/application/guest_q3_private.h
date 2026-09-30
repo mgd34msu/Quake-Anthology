@@ -85,6 +85,7 @@ struct application_q3_guest {
     uint32_t seats[64];
     qa_command_tokens arguments;
     char *entity_text;
+    struct q3g_restore *restoration;
     int32_t milliseconds;
     unsigned calls;
     uint64_t role_sequence;
@@ -92,6 +93,7 @@ struct application_q3_guest {
 };
 
 struct application_q3_guest *q3g_engine(application_provider *);
+qa_qvm_role q3g_primary_role(const char *);
 bool q3g_call(q3g_role *, int32_t command, const int32_t *, size_t, int32_t *, qa_error *);
 bool q3g_role_create(struct application_q3_guest *, qa_qvm_role, uint32_t seat,
                       const char *path, bool primary, q3g_role **, qa_error *);
@@ -110,6 +112,7 @@ char *q3g_copy_text(const char *, qa_error *);
 void q3g_clients_clear(struct application_q3_guest *);
 bool application_guest_q3_create_empty(qa_application *, application_provider *, qa_world *,
     const qa_product *, const qa_launch_choices *, bool restoring, qa_error *);
+void application_guest_q3_save_clear(struct application_q3_guest *);
 bool q3g_client_effect(q3g_role *, qa_application_q3_client_effect,
                         const char *, qa_error *);
 

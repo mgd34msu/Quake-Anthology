@@ -27,7 +27,7 @@ bool q3g_call(q3g_role *role, int32_t command, const int32_t *arguments, size_t 
     return ok;
 }
 
-static qa_qvm_role primary_role(const char *path)
+qa_qvm_role q3g_primary_role(const char *path)
 {
     const char *name = strrchr(path, '/'); name = name ? name + 1 : path;
     if (!strncmp(name, "cgame", 5)) return QA_QVM_CGAME;
@@ -99,7 +99,7 @@ bool application_construct_q3_guest(qa_application *application, application_pro
         return false;
     struct application_q3_guest *engine = q3g_engine(provider);
     const char *path = provider->launch->selection.artifact;
-    qa_qvm_role kind = primary_role(path);
+    qa_qvm_role kind = q3g_primary_role(path);
     uint32_t seat = choices->seat_count ? choices->seats[0].id : UINT32_MAX;
     q3g_role *role = NULL;
     if (!q3g_role_create(engine, kind, seat, path, true, &role, error)) return false;
@@ -220,6 +220,7 @@ bool application_q3_guest_deconstruct(application_provider *provider, qa_error *
         qa_native_declaration_destroy(artifact->declaration); qa_buffer_free(&artifact->primary);
         free(artifact->path); free(artifact);
     }
+    application_guest_q3_save_clear(engine);
     free(engine->entity_text); free(engine);
     if (!ok && error) *error = first;
     return ok;

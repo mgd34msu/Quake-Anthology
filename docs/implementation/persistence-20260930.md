@@ -373,3 +373,79 @@ packet passed independent source review, frozen hash checks and scoped whitespac
 checks; the root application factory and coordinator integration also passed
 independent source review. These checks remain separate from runtime acceptance.
 B30 and B34 remain open until their complete acceptance gates are met.
+
+Q3 host checkpoints now use internal wire version 4. They retain the actual
+file allocator counter, every live file's unique lifetime serial, the script
+generation and bot shutdown state. Exhausted counters stay exhausted after
+restore. File/script allocations remain staged and reachable through ordinary
+failure cleanup. Independent source review accepted this bounded repair. New
+public Q3 field functions reuse the existing network serializers; private client
+and server checkpoint callers keep their existing schemas.
+
+The nested application `QAG3ST` version 1 owner retains all 64 physical Q3
+client rows, their seat mappings, source actor provenance, complete reliable
+character arrays, current and retained user commands, server/client gamestates,
+snapshot histories and their retained entity allocation extents. It preserves
+all source-conditioned IEEE bits through the actual modern Q3 ABI field table;
+these are explicit field streams, with no C structure padding or process
+pointers. Pending retirement, bot admission, disconnect, system information and
+continued configstring fields survive. Token arrays restore into private owned
+storage and retain their exact joined argument text. A complete stream is
+required before exchanging candidate client state. Prepared immutable entity
+text remains at its existing allocation because role hosts borrow it.
+
+Saved role construction now accepts the actual captured service generation and
+already restored foundation owner identity. It validates the exact provider
+identity/generation string, rejects duplicate role lifetime identities, and
+creates the existing empty host/executor against stable borrowed services.
+Restoration neither increments the role allocator nor interns a replacement
+owner. Ordinary role creation still allocates its own generation and retains
+that exact identity on the role descriptor.
+
+The coupled `QAG3PV` version 1 body now implements `qa.q3.qvm` version 1 with
+backend `qvm` inside the original `QAGC` and application `QAPV` envelopes. It
+retains the actual ordered immutable artifact cache, source manifest digests,
+physical role inventory, service-owner generations, lifecycle flags, role
+arguments and keys, original `QAVM` executor/host records, and projection actor
+contexts with exact private inventory lease serials. A dedicated constructor
+owns a copy of the complete record, validates the enclosing stream and nested
+application state before creating services, and pins the actual selected and
+companion artifacts against their saved digests. It preserves source entity
+text at a stable allocation and checks it against the real immutable map.
+Saved registration order creates genuine empty hosts and executors against
+prepared frontend heaps; physical role and artifact list order is restored
+independently. No original init, spawn, command, frame or admission runs.
+
+Source import installs the original VM continuation and host source bindings
+before shared store restoration. The host needs the actual immutable geometry
+and actor registry at this point, then reconstructs external body/collision
+callbacks without reading or writing the source. Late WORLD restoration checks
+those callbacks and restores the saved body/link/portal state. `Q3GD` version 3
+also retains idle source input-retirement admission for pending disconnects;
+active motion remains outside the save boundary. Lease contexts import as
+prepared claims, with no shared registration or replacement serial. The
+existing exact primary-lease finish promotes them after shared inventory import.
+
+Late provider finish checks the actual roster/client/source-slot relationships,
+local or remote service admission, and every bound private lease. It requires
+the application's real collective portal-owner validator, after WORLD/session,
+roster/control/modes/bots and frontend owners have restored. It then captures
+the complete source body and compares it byte for byte before enabling source
+entry and releasing the owned record. Every partial owner remains attached to
+the isolated provider until its ordinary, fallible teardown succeeds. Candidate
+frontend heap addresses stay stable; frontend codecs restore numeric source
+handle tables and rebind the immutable renderer world before final agreement.
+The host font syscall exports glyph/image handle records, not font heap pointers.
+
+The application schema/factory/late finish and final post-consumer provider
+recapture require root integration and independent source review. Artifact and
+manifest versions must match qualified candidate content. Foreign callback
+contexts require their actual external service owner; the host inventory records
+values and presence, never process addresses. Installed writable host streams,
+shared script defines and retained nonzero foreign command contexts remain
+explicitly ineligible until detached owners exist. Incoming host preflight
+rejects writable file records before executor import can reach a file callback.
+Native Q3 private data remains separate: its existing checkpoint is host-only,
+and requires an actual module data/pointer relocation schema before admission.
+No builds, execution checks, runtime qualification or whole B30/B34 completion
+are claimed by this source packet.

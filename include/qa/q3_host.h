@@ -219,9 +219,11 @@ typedef struct qa_q3_host_portal_claim {
 size_t qa_q3_host_portal_claim_count(const qa_q3_host *);
 bool qa_q3_host_portal_claim_at(const qa_q3_host *, size_t, qa_q3_host_portal_claim *);
 bool qa_q3_host_checkpoint(qa_q3_host *, qa_buffer *, qa_error *);
-/* Restore requires an attached executor and a fresh candidate whose shared
- * registry, bodies/links and portal counts have already been restored. Failed
- * binding installation retains its contexts until candidate actors retire. */
+/* Restore requires an attached executor, restored actor registry and qualified
+ * immutable world geometry. It reconstructs source body/collision callbacks;
+ * the WORLD owner must then restore and validate body fields, links and portal
+ * counts before finish. Failed binding installation retains its contexts until
+ * candidate actors retire. */
 bool qa_q3_host_restore(qa_q3_host *, qa_bytes, qa_error *);
 /* After aggregate portal-claim and whole-candidate validation, publish this
  * host's restored continuation. No allocation or external callbacks occur. */

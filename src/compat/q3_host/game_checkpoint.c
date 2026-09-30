@@ -1,6 +1,16 @@
 #include "internal.h"
+#include "qa/q3_host_save.h"
 
 enum { GAME_HEADER = 64, ACTOR_BYTES = 104, PORTAL_BYTES = 12 };
+
+bool qa_q3_host_checkpoint_input_retired(const qa_q3_host *host, uint32_t slot, bool *out, qa_error *error)
+{
+    if (!host || host->retired || host->calls || !host->game || !out ||
+        slot >= host->options.server.maximum_clients || slot >= 1022)
+        return q3_fail(error, QA_ERROR_ARGUMENT, slot, "Q3 input admission requires its actual idle client owner");
+    *out = host->game->slots[slot].input_retired;
+    return true;
+}
 
 static bool portal_extent(size_t count, size_t capacity)
 {
@@ -27,7 +37,7 @@ bool q3_game_checkpoint_capture(qa_q3_host *host, qa_buffer *out, qa_error *erro
     uint32_t actors = 0;
     for (size_t i = 0; i < 1022; ++i) {
         q3_entity_slot *slot = game->slots + i;
-        if (slot->input_retired || slot->input_motion)
+        if (slot->input_motion || (slot->input_retired && !slot->actor.registry))
             return q3_fail(error, QA_ERROR_ARGUMENT, i, "Q3 input must finish before checkpointing");
         actors += slot->actor.registry != 0;
     }
@@ -38,7 +48,7 @@ bool q3_game_checkpoint_capture(qa_q3_host *host, qa_buffer *out, qa_error *erro
     qa_buffer bytes = {.data = calloc(1, size), .size = size};
     if (!bytes.data) return q3_fail(error, QA_ERROR_MEMORY, 0, "Capturing Q3 game host");
     uint8_t *header = bytes.data;
-    memcpy(header, "Q3GD", 4); qa_store_u32le(header + 4, 2);
+    memcpy(header, "Q3GD", 4); qa_store_u32le(header + 4, 3);
     qa_store_u32le(header + 8, game->entity_count); qa_store_u32le(header + 12, game->entity_stride);
     qa_store_u32le(header + 16, game->client_stride);
     qa_store_u32le(header + 20, host->options.server.maximum_clients);
@@ -54,7 +64,8 @@ bool q3_game_checkpoint_capture(qa_q3_host *host, qa_buffer *out, qa_error *erro
         if (!qa_actors_save_reference(qa_session_actors(host->options.session), slot->actor, &saved, error)) {
             qa_buffer_free(&bytes); return false;
         }
-        qa_store_u32le(row, i); qa_store_u32le(row + 4, (slot->borrowed ? 1u : 0u) | (slot->has_visibility ? 2u : 0u));
+        qa_store_u32le(row, i); qa_store_u32le(row + 4, (slot->borrowed ? 1u : 0u) |
+            (slot->has_visibility ? 2u : 0u) | (slot->input_retired ? 4u : 0u));
         qa_store_u64le(row + 8, saved.generation); qa_store_u32le(row + 16, saved.slot);
         if (slot->has_visibility) {
             qa_store_u32le(row + 20, slot->cluster_count);
@@ -92,7 +103,7 @@ bool q3_game_checkpoint_decode(qa_q3_host *host, qa_bytes bytes, q3_game_data **
         if (bytes.size) return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 client host checkpoint contains server records");
         *out = NULL; return true;
     }
-    if (bytes.size < GAME_HEADER || memcmp(bytes.data, "Q3GD", 4) || qa_load_u32le(bytes.data + 4) != 2 ||
+    if (bytes.size < GAME_HEADER || memcmp(bytes.data, "Q3GD", 4) || qa_load_u32le(bytes.data + 4) != 3 ||
         qa_load_u32le(bytes.data + 20) != host->options.server.maximum_clients ||
         qa_load_u64le(bytes.data + 40) != qa_collision_map_identity(qa_world_geometry(host->options.world)))
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 game checkpoint map or source identity mismatch");
@@ -118,7 +129,8 @@ bool q3_game_checkpoint_decode(qa_q3_host *host, qa_bytes bytes, q3_game_data **
         uint32_t number = qa_load_u32le(row), flags = qa_load_u32le(row + 4), clusters = qa_load_u32le(row + 20);
         qa_saved_actor_id saved = {qa_load_u64le(row + 8), qa_load_u32le(row + 16)};
         const qa_actor_record *actor = qa_actors_resolve_saved(qa_session_actors(host->options.session), saved);
-        if (number >= 1022 || number >= game->entity_count || flags > 3 || clusters > 16 ||
+        if (number >= 1022 || number >= game->entity_count || flags > 7 || clusters > 16 ||
+            ((flags & 4u) && number >= host->options.server.maximum_clients) ||
             qa_load_u32le(row + 36) || !actor || game->slots[number].actor.registry ||
             (!(flags & 1u) && (actor->owner != host->options.owner || !actor->has_source || actor->source_slot != number))) {
             ok = q3_fail(error, QA_ERROR_FORMAT, i, "Q3 checkpoint actor ownership or source slot is invalid"); break;
@@ -129,6 +141,7 @@ bool q3_game_checkpoint_decode(qa_q3_host *host, qa_bytes bytes, q3_game_data **
         if (!ok) break;
         q3_entity_slot *slot = game->slots + number;
         slot->actor = actor->id; slot->borrowed = (flags & 1u) != 0; slot->has_visibility = (flags & 2u) != 0;
+        slot->input_retired = (flags & 4u) != 0;
         if (!slot->borrowed && number < host->options.server.maximum_clients) {
             uint64_t displacement = (uint64_t)number * game->client_stride;
             qa_bytes admitted;
