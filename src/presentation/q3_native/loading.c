@@ -5,11 +5,29 @@ bool q3nl_fail(qa_error *e,qa_status status,const char *text)
 { qa_error_set(e,status,0,"%s",text); return false; }
 bool q3nl_basis(const q3n_loading_options *o,qa_q3_product *product,qa_error *e)
 {
+    if(o && o->remote_client) {
+        qa_native_q3_remote_client_basis client; q3n_remote_source_view source;
+        qa_q3_presentation_binding backend; q3n_loading_media media;
+        if(!product || !o->application || o->client || o->reader || !o->remote_source || !o->assets ||
+           !o->presentation || !o->media || !o->ui || !o->update_screen ||
+           !qa_native_q3_remote_client_basis_read(o->remote_client,&client,e) ||
+           !q3n_remote_source_read(o->remote_source,&source,e) ||
+           !qa_q3_presentation_binding_read(o->presentation,&backend,e) ||
+           !q3n_media_loading_read(o->media,&media,e))return false;
+        if(client.application!=o->application || client.client.seat!=o->seat ||
+           source.basis.client.service_owner!=client.client.service_owner ||
+           source.basis.client.frontend_lifetime!=client.client.frontend_lifetime ||
+           !qa_net_client_id_equal(source.basis.connection,client.connection) ||
+           backend.options.assets!=o->assets || backend.options.seat!=o->presentation_seat ||
+           media.assets!=o->assets || media.product!=client.product || media.remote_source!=o->remote_source)
+            return q3nl_fail(e,QA_ERROR_ARGUMENT,"Remote loading requires its actual CLIENT, reached source and physical renderer seat");
+        *product=client.product; return true;
+    }
     qa_native_q3_client_basis client; qa_native_q3_wire_basis wire;
     qa_q3_presentation_binding backend;
     q3n_loading_media media;
     const qa_native_q3_client_services *services=o?qa_native_q3_client_services_read(o->client):NULL;
-    if(!o || !o->application || !o->client || !o->reader || !o->assets || !o->presentation || !o->media ||
+    if(!o || o->remote_source || !o->application || !o->client || !o->reader || !o->assets || !o->presentation || !o->media ||
        !o->ui || !o->update_screen || !services || services->wire_reader!=o->reader ||
        !qa_native_q3_client_basis_read(o->client,&client,e) ||
        !qa_native_q3_wire_reader_basis(o->reader,&wire,e) ||
@@ -34,13 +52,34 @@ bool q3n_loading_create_restored(const q3n_loading_options *options,q3n_loading 
     o->options=*options; o->product=product; *out=o; return true;
 }
 bool q3n_loading_create(const q3n_loading_options *options,q3n_loading **out,qa_error *e)
-{ return q3n_loading_create_restored(options,out,e); }
+{
+    return options && !options->remote_client ? q3n_loading_create_restored(options,out,e) :
+        q3nl_fail(e,QA_ERROR_ARGUMENT,"Local loading requires its actual local CLIENT services");
+}
+bool q3n_loading_create_remote(const q3n_loading_options *options,q3n_loading **out,qa_error *e)
+{
+    return options && options->remote_client ? q3n_loading_create_restored(options,out,e) :
+        q3nl_fail(e,QA_ERROR_ARGUMENT,"Remote loading requires its actual remote CLIENT services");
+}
 bool q3n_loading_idle(const q3n_loading *o) { return o && !o->busy && !o->painting; }
 void q3n_loading_destroy(q3n_loading *o) { if(q3n_loading_idle(o))free(o); }
 static bool current(q3n_loading *o,const q3n_frame *f,qa_error *e)
 {
+    if(o && o->options.remote_client) {
+        qa_q3_product product; qa_native_q3_remote_client_basis basis; q3n_remote_source_view source;
+        if(!f || !f->remote || !q3nl_basis(&o->options,&product,e) || product!=o->product ||
+           !qa_native_q3_remote_client_basis_read(o->options.remote_client,&basis,e) ||
+           !q3n_remote_source_read(o->options.remote_source,&source,e))return false;
+        return f->application==o->options.application && !f->reader && !f->client_service &&
+            f->remote->client==o->options.remote_client && f->remote->source.owner==o->options.remote_source &&
+            f->assets==o->options.assets && f->presentation==o->options.presentation && f->media==o->options.media &&
+            f->seat==o->options.seat && f->physical_presentation_seat==o->options.presentation_seat &&
+            f->viewing_client==basis.physical_client && qa_actor_id_equal(f->viewing_actor,f->remote->source.publication.viewer) &&
+            (!o->busy || (o->active_frame==f && o->active_sequence==source.reached_command)) && q3n_frame_current(f) ? true :
+            q3nl_fail(e,QA_ERROR_ARGUMENT,"Remote loading left its actual constructor cut or reached gamestate");
+    }
     qa_q3_product product; qa_native_q3_client_basis basis; qa_native_q3_wire_publication publication;
-    if(!o || !f || !q3nl_basis(&o->options,&product,e) || product!=o->product ||
+    if(!o || !f || f->remote || !q3nl_basis(&o->options,&product,e) || product!=o->product ||
        !qa_native_q3_client_basis_read(o->options.client,&basis,e) ||
        !qa_native_q3_wire_reader_publication(o->options.reader,&publication,e))return false;
     return f->application==o->options.application && f->client_service==o->options.client &&
@@ -60,9 +99,16 @@ static bool current(q3n_loading *o,const q3n_frame *f,qa_error *e)
 static bool begin(q3n_loading *o,const q3n_frame *f,qa_error *e)
 {
     qa_native_q3_wire_publication publication;
-    if(!q3n_loading_idle(o) || !current(o,f,e) ||
-       !qa_native_q3_wire_reader_publication(o->options.reader,&publication,e))return false;
-    o->active_frame=f; o->active_sequence=publication.reached_command_sequence;
+    if(!q3n_loading_idle(o) || !current(o,f,e))return false;
+    if(f->remote) {
+        q3n_remote_source_view source;
+        if(!q3n_remote_source_read(o->options.remote_source,&source,e))return false;
+        o->active_sequence=source.reached_command;
+    } else {
+        if(!qa_native_q3_wire_reader_publication(o->options.reader,&publication,e))return false;
+        o->active_sequence=publication.reached_command_sequence;
+    }
+    o->active_frame=f;
     o->busy=true; o->painted=false; return true;
 }
 static bool end(q3n_loading *o,bool ok)
@@ -70,7 +116,7 @@ static bool end(q3n_loading *o,bool ok)
 static bool config(q3n_loading *o,const q3n_frame *f,uint32_t index,const char **text,qa_error *e)
 {
     uint64_t revision;
-    return current(o,f,e) && qa_native_q3_wire_reader_configstring(o->options.reader,index,text,&revision,e);
+    return current(o,f,e) && q3n_frame_configstring(f,index,text,&revision,e);
 }
 static bool shader(q3n_loading *o,const q3n_frame *f,const char *name,bool mipmap,int32_t *out,qa_error *e)
 { return current(o,f,e) && qa_q3_register_shader(o->options.assets,name,mipmap,out,e) && current(o,f,e); }
@@ -283,7 +329,9 @@ static bool draw_information(loading_draw *d)
     else snprintf(loading,sizeof(loading),"Awaiting snapshot...");
     if(!text(d,96,loading))return false;
     const qa_native_q3_client_services *services=qa_native_q3_client_services_read(o->options.client);
-    const qa_cvar_view *running=services?qa_cvars_find(services->client.cvars,"sv_running"):NULL;
+    const qa_native_q3_remote_client_services *remote=qa_native_q3_remote_client_services_read(o->options.remote_client);
+    qa_cvars *cvars=remote?remote->basis.client.cvars:services?services->client.cvars:NULL;
+    const qa_cvar_view *running=cvars?qa_cvars_find(cvars,"sv_running"):NULL;
     int32_t y=148; char running_text[1024]; snprintf(running_text,sizeof(running_text),"%s",running?running->value:"");
     if(integer(running_text)==0) {
         if(!info_text(info,"sv_hostname",buffer,sizeof(buffer),d->error))return false;

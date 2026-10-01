@@ -8,6 +8,9 @@ typedef struct frontend_input_shutdown frontend_input_shutdown;
  * retains its genuine all-input release; failure may return a retained owner. */
 bool frontend_input_shutdown_prepare(qa_frontend *,double now_ms,
     frontend_input_shutdown **,qa_error *);
+/* Pure actual all-scope lease association for enclosing ENGINE detach. This
+ * admits only the retained physical owner, not source history consumption. */
+bool frontend_input_shutdown_ready(const frontend_input_shutdown *,const qa_frontend *,qa_error *);
 /* Execute only at a returned live-source boundary. Waits report complete=false;
  * a failed entered programme remains retained and is never replayed. */
 bool frontend_input_shutdown_advance(frontend_input_shutdown *,bool *complete,qa_error *);

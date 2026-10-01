@@ -43,6 +43,29 @@ bool frontend_input_settings_current(const frontend_input_settings *owner,
     return parents_returned(owner,frontend,error) &&
         (!frontend->stepping || fail(error,"Input settings require a returned frontend driver"));
 }
+bool frontend_input_settings_shutdown_ready(const frontend_input_settings *owner,
+    const qa_frontend *frontend,qa_error *error)
+{
+    if (!frontend_input_settings_current(owner,frontend,error) || frontend->preparing ||
+        frontend->input_settings!=owner)
+        return fail(error,"Input shutdown has no installed actual settings owner");
+    if (owner->native && !owner->terminal) {
+        if (!qa_input_platform_settings_retained(owner->platform,owner->native,error)) return false;
+    } else if (!qa_input_platform_settings_idle(owner->platform))
+        return fail(error,"Input shutdown has an unrelated retained native ticket");
+    for (unsigned slot=0;slot<QA_INPUT_LOCAL_SEATS;++slot) {
+        if (!owner->release[slot]) {
+            if (slot<owner->seat_count && !qa_input_release_idle(owner->physical[slot]))
+                return fail(error,"Input shutdown has an unrelated physical release history");
+            continue;
+        }
+        int keys[528]; qa_input_release_scope scope;
+        if (!owner->native || slot>=owner->seat_count ||
+            !qa_input_platform_settings_release_scope(owner->native,slot,&scope,keys,528,error) ||
+            !qa_input_release_scope_owned(owner->release[slot],owner->physical[slot],&scope,error)) return false;
+    }
+    return true;
+}
 static frontend_input_settings *create(qa_frontend *frontend,double now,
     frontend_input_settings **out,qa_error *error)
 {

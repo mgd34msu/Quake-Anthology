@@ -38,6 +38,11 @@ bool qa_input_release_advance(qa_input_release *, qa_input_release_outcome *, qa
  * lease, and coverage of the requested physical inputs. */
 bool qa_input_release_ready(const qa_input_release *, const qa_input_seat *,
     const qa_input_release_scope *, qa_error *);
+/* Pure retained-owner association for enclosing shutdown admission. Checks
+ * the exact physical lease, held snapshot and scope coverage at a returned
+ * console boundary. It proves neither completion nor retirement authority. */
+bool qa_input_release_scope_owned(const qa_input_release *, const qa_input_seat *,
+    const qa_input_release_scope *, qa_error *);
 /* Publication consumes only a successfully admitted ticket. Native output
  * and decoder ownership remains with the native platform publication. */
 void qa_input_release_publish(qa_input_release *);

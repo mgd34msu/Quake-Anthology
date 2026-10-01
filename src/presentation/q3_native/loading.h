@@ -9,6 +9,8 @@ typedef struct q3n_loading_options {
     qa_application *application;
     qa_native_q3_client_service *client;
     qa_native_q3_wire_reader *reader;
+    qa_native_q3_remote_client_service *remote_client;
+    q3n_remote_source *remote_source;
     qa_q3_presentation_assets *assets;
     qa_q3_presentation *presentation;
     q3n_media *media;
@@ -22,6 +24,7 @@ typedef struct q3n_loading_options {
 } q3n_loading_options;
 
 bool q3n_loading_create(const q3n_loading_options *, q3n_loading **, qa_error *);
+bool q3n_loading_create_remote(const q3n_loading_options *, q3n_loading **, qa_error *);
 /* Pure installed-basis constructor; does not register assets or paint. */
 bool q3n_loading_create_restored(const q3n_loading_options *, q3n_loading **, qa_error *);
 bool q3n_loading_idle(const q3n_loading *);

@@ -122,9 +122,40 @@ static bool holder_fields(qa_source_save_io *io, q3n_clients *owner,
 static bool fields(qa_source_save_io *io, q3n_clients *owner, const q3n_client_refs *refs)
 {
     uint8_t magic[4] = {'Q', '3', 'C', 'I'}; uint32_t schema = 1, product = owner->options.product;
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "Q3CI", 4) ||
+    const char *expected = owner->options.remote_source ? "Q3CR" : "Q3CI";
+    memcpy(magic, expected, 4);
+    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, expected, 4) ||
         !qa_source_save_u32(io, &schema) || schema != 1 || !qa_source_save_u32(io, &product) ||
-        product != (uint32_t)owner->options.product || !qa_source_save_u64(io, &owner->next_media_revision) ||
+        product != (uint32_t)owner->options.product) return false;
+    if (owner->options.remote_source) {
+        q3n_remote_source_view view;
+        if (!q3n_remote_source_read(owner->options.remote_source, &view, io->error) ||
+            view.basis.content != owner->options.content || view.basis.product != owner->options.product) return false;
+        const qa_native_q3_remote_client_basis *b = &view.basis;
+        uint64_t connection = b->connection.owner, generation = b->connection.generation;
+        uint64_t epoch = b->epoch, restart = b->restart_generation;
+        uint64_t publication = b->publication_generation, configuration = b->configuration_generation;
+        uint64_t receiver = b->client.receiver, service = b->client.service_owner;
+        uint32_t slot = b->connection.slot, physical = b->physical_client, seat = b->client.seat;
+        int32_t message = b->initial_message, command = b->initial_command;
+        qa_actor_id actor = b->client.source_actor;
+        if (!qa_source_save_u64(io, &connection) || connection != b->connection.owner ||
+            !qa_source_save_u64(io, &generation) || generation != b->connection.generation ||
+            !qa_source_save_u32(io, &slot) || slot != b->connection.slot ||
+            !qa_source_save_u64(io, &epoch) || epoch != b->epoch ||
+            !qa_source_save_u64(io, &restart) || restart != b->restart_generation ||
+            !qa_source_save_u64(io, &publication) || publication != b->publication_generation ||
+            !qa_source_save_u64(io, &configuration) || configuration != b->configuration_generation ||
+            !qa_source_save_u64(io, &receiver) || receiver != b->client.receiver ||
+            !qa_source_save_u64(io, &service) || service != b->client.service_owner ||
+            !qa_source_save_u32(io, &seat) || seat != b->client.seat ||
+            !qa_source_save_u32(io, &physical) || physical != b->physical_client ||
+            !qa_source_save_i32(io, &message) || message != b->initial_message ||
+            !qa_source_save_i32(io, &command) || command != b->initial_command ||
+            !qa_source_save_actor(io, &actor) || !qa_actor_id_equal(actor, b->client.source_actor) ||
+            !q3n_remote_source_current(&view)) return false;
+    }
+    if (!qa_source_save_u64(io, &owner->next_media_revision) ||
         !parser_fields(io, &owner->animation_parser)) return false;
     for (uint32_t i = 0; i < 64; ++i) {
         q3n_client_info *ci = &owner->clients[i]; q3n_animation_holder *holder = &owner->holders[i];

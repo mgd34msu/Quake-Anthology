@@ -99,6 +99,10 @@ bool qa_input_platform_reconnect_prepare(qa_input_platform *, double now_ms,
 /* Native capture, lifetime changes and ordinary input dispatch require the
  * returned owner to have no retained settings preparation. */
 bool qa_input_platform_settings_idle(const qa_input_platform *);
+/* Pure actual lease/route association, including failed partial preparation.
+ * This does not admit native publication, cleanup or source consumption. */
+bool qa_input_platform_settings_retained(const qa_input_platform *,
+    const qa_input_platform_settings_ticket *, qa_error *);
 bool qa_input_platform_settings_requirements_read(const qa_input_platform_settings_ticket *,
     qa_input_platform_settings_requirements *, qa_error *);
 const qa_input_platform *qa_input_platform_settings_owner(const qa_input_platform_settings_ticket *);

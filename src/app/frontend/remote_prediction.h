@@ -105,6 +105,14 @@ bool frontend_remote_prediction_replay(frontend_remote_prediction *,
     frontend_remote_prediction_view *, bool *present, qa_error *);
 bool frontend_remote_prediction_read(const frontend_remote_prediction *, const frontend_remote_prediction_source *,
     frontend_remote_prediction_view *);
+/* Feedback from the real CGAME presentation owner requires the same completed
+ * prediction receipt. It never changes decoded snapshot PS or source clocks. */
+bool frontend_remote_prediction_error_clear(frontend_remote_prediction *,
+    const frontend_remote_prediction_source *, qa_error *);
+/* Packet conversion supplies the working CG PS cursor before/after its actual
+ * BG_PlayerStateToEntityState call. Only that one conversion may be published. */
+bool frontend_remote_prediction_entity_event_publish(frontend_remote_prediction *,
+    const frontend_remote_prediction_source *, int32_t before, int32_t after, qa_error *);
 /* Presentation reads private item effects against the exact retained row.
  * Authoritative source ES and collision rows remain unchanged. */
 bool frontend_remote_prediction_item_read(const frontend_remote_prediction *,

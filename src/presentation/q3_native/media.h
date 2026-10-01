@@ -7,6 +7,8 @@
 #include "qa/application_selected_effects.h"
 
 typedef struct q3n_media q3n_media;
+typedef struct q3n_remote_source_view q3n_remote_source_view;
+typedef struct q3n_remote_source q3n_remote_source;
 typedef enum q3n_missile_trail {
     Q3N_TRAIL_NONE, Q3N_TRAIL_ROCKET, Q3N_TRAIL_GRENADE,
     Q3N_TRAIL_GRAPPLE, Q3N_TRAIL_PLASMA, Q3N_TRAIL_NAIL
@@ -112,10 +114,12 @@ typedef struct q3n_media_view {
 typedef struct q3n_media_options {
     qa_q3_product product;
     qa_q3_presentation_assets *assets;
+    q3n_remote_source *remote_source;
 } q3n_media_options;
 typedef struct q3n_loading_media {
     qa_q3_product product;
     qa_q3_presentation_assets *assets;
+    const q3n_remote_source *remote_source;
     int32_t proportional;
     bool initialized;
 } q3n_loading_media;
@@ -125,6 +129,8 @@ typedef struct q3n_media_load {
     qa_application *application;
     const qa_application_native_q3_presentation *source;
     qa_native_q3_wire_reader *reader;
+    /* Actual remote CLIENT receipt, mutually exclusive with GAME/reader. */
+    const q3n_remote_source_view *remote;
     void *context;
     bool (*loading)(void *, const char *, int32_t item_or_minus_one, qa_error *);
     int32_t game_type;
@@ -136,6 +142,7 @@ void q3n_media_destroy(q3n_media *);
 bool q3n_media_idle(const q3n_media *);
 const q3n_media_view *q3n_media_read(const q3n_media *);
 qa_q3_presentation_assets *q3n_media_assets(const q3n_media *);
+bool q3n_media_remote_current(const q3n_media *, const q3n_remote_source_view *, qa_error *);
 /* Pure observation is valid inside an authored loading callback while the
  * media owner is busy. It performs no registration or renderer work. */
 bool q3n_media_loading_read(const q3n_media *, q3n_loading_media *, qa_error *);
@@ -154,6 +161,8 @@ bool q3n_media_register_weapon(q3n_media *, uint32_t, qa_error *);
 /* CL_GetServerCommand has already reached this exact cs row. Registration is
  * performed for this command even when its text repeats the previous value. */
 bool q3n_media_configstring_changed(q3n_media *, qa_native_q3_wire_reader *,
+    uint32_t index, qa_error *);
+bool q3n_media_remote_configstring_changed(q3n_media *, const q3n_remote_source_view *,
     uint32_t index, qa_error *);
 /* Aggregate imports the actual backend registry first. These pure codecs
  * require its capture lease and retain only real numeric holder references. */

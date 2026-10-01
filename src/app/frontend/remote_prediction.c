@@ -1126,6 +1126,36 @@ bool frontend_remote_prediction_read(const frontend_remote_prediction *owner, co
     *out = owner->state.predicted.view;
     return true;
 }
+bool frontend_remote_prediction_error_clear(frontend_remote_prediction *owner,
+    const frontend_remote_prediction_source *source, qa_error *error)
+{
+    if (!owner || owner->busy || !owner->state.initialized || !source ||
+        !owner->options.source_current(owner->options.context, source) || !same_receipt(&owner->state, source))
+        return fail(error, QA_ERROR_ARGUMENT, "Prediction error feedback requires its completed current receipt");
+    owner->state.prediction_error_time = 0;
+    owner->state.predicted.view.prediction_error_time = 0;
+    return true;
+}
+bool frontend_remote_prediction_entity_event_publish(frontend_remote_prediction *owner,
+    const frontend_remote_prediction_source *source, int32_t before, int32_t after, qa_error *error)
+{
+    if (!owner || owner->busy || !owner->state.initialized || !source ||
+        !owner->options.source_current(owner->options.context, source) || !same_receipt(&owner->state, source))
+        return fail(error, QA_ERROR_ARGUMENT, "Prediction event feedback requires its completed current receipt");
+    qa_q3_player *player = &owner->state.predicted.view.player;
+    if (before != player->entityEventSequence)
+        return fail(error, QA_ERROR_ARGUMENT, "Packet conversion changed its predicted player cursor");
+    int32_t converted = before;
+    if (!player->externalEvent && converted < player->eventSequence) {
+        int32_t oldest = subtract_word(player->eventSequence, 2);
+        if (converted < oldest) converted = oldest;
+        converted = add_word(converted, 1);
+    }
+    if (after != converted)
+        return fail(error, QA_ERROR_ARGUMENT, "Packet event cursor differs from its actual BG conversion");
+    player->entityEventSequence = after;
+    return true;
+}
 bool frontend_remote_prediction_item_read(const frontend_remote_prediction *owner,
     const frontend_remote_prediction_source *source, const qa_q3_prediction_scene_entity_view *row,
     int32_t *flags, int32_t *misc_time, qa_error *error)

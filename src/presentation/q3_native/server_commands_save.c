@@ -6,6 +6,21 @@ static bool text(qa_source_save_io *io, char *value, size_t capacity)
 { return qa_source_save_bytes(io, value, capacity) && memchr(value, 0, capacity) != NULL; }
 static bool reader_bound(const q3n_server_command_options *options, qa_error *e)
 {
+    if (options->remote_client) {
+        qa_native_q3_remote_client_basis basis; q3n_remote_source_view source;
+        return !options->client && !options->reader && options->remote_source &&
+            qa_native_q3_remote_client_basis_read(options->remote_client, &basis, e) &&
+            q3n_remote_source_read(options->remote_source, &source, e) &&
+            basis.application == options->application && basis.content == options->content &&
+            basis.product == options->product && basis.client.receiver == options->recipient.receiver &&
+            basis.client.service_owner == options->recipient.service_owner &&
+            basis.client.frontend_lifetime == options->recipient.frontend_lifetime &&
+            basis.client.cvars == options->recipient.cvars && basis.client.console == options->recipient.console &&
+            basis.client.seat == options->recipient.seat && basis.client.source_client == options->recipient.source_client &&
+            qa_actor_id_equal(basis.client.source_actor, options->recipient.source_actor) &&
+            qa_net_client_id_equal(source.basis.connection, basis.connection) &&
+            source.basis.client.service_owner == basis.client.service_owner;
+    }
     qa_native_q3_wire_basis basis;
     const qa_application_q3_client_context *client = &options->recipient;
     const qa_native_q3_client_services *services = qa_native_q3_client_services_read(options->client);
@@ -21,6 +36,12 @@ static bool reader_bound(const q3n_server_command_options *options, qa_error *e)
 }
 static bool reached(const q3n_server_commands *o, qa_error *e)
 {
+    if (o->options.remote_source) {
+        q3n_remote_source_view source;
+        return !o->initialized || o->closed ||
+            (q3n_remote_source_read(o->options.remote_source, &source, e) &&
+                source.reached_command == o->state.server_command_sequence);
+    }
     qa_native_q3_wire_publication publication;
     return !o->initialized || o->closed ||
         (qa_native_q3_wire_reader_publication(o->options.reader, &publication, e) && publication.has_gamestate &&
@@ -28,6 +49,32 @@ static bool reached(const q3n_server_commands *o, qa_error *e)
 }
 static bool identity(qa_source_save_io *io, const q3n_server_command_options *options)
 {
+    if (options->remote_source) {
+        q3n_remote_source_view source;
+        if (!q3n_remote_source_read(options->remote_source, &source, io->error)) return false;
+        const qa_native_q3_remote_client_basis *b = &source.basis;
+        uint64_t connection = b->connection.owner, generation = b->connection.generation;
+        uint64_t epoch = b->epoch, restart = b->restart_generation;
+        uint64_t publication = b->publication_generation, configuration = b->configuration_generation;
+        uint64_t receiver = b->client.receiver, service = b->client.service_owner;
+        uint32_t slot = b->connection.slot, seat = b->client.seat, client = b->physical_client;
+        int32_t message = b->initial_message, command = b->initial_command;
+        qa_actor_id actor = b->client.source_actor;
+        return qa_source_save_u64(io, &connection) && connection == b->connection.owner &&
+            qa_source_save_u64(io, &generation) && generation == b->connection.generation &&
+            qa_source_save_u32(io, &slot) && slot == b->connection.slot &&
+            qa_source_save_u64(io, &epoch) && epoch == b->epoch &&
+            qa_source_save_u64(io, &restart) && restart == b->restart_generation &&
+            qa_source_save_u64(io, &publication) && publication == b->publication_generation &&
+            qa_source_save_u64(io, &configuration) && configuration == b->configuration_generation &&
+            qa_source_save_u64(io, &receiver) && receiver == b->client.receiver &&
+            qa_source_save_u64(io, &service) && service == b->client.service_owner &&
+            qa_source_save_u32(io, &seat) && seat == b->client.seat &&
+            qa_source_save_u32(io, &client) && client == b->physical_client &&
+            qa_source_save_actor(io, &actor) && qa_actor_id_equal(actor, b->client.source_actor) &&
+            qa_source_save_i32(io, &message) && message == b->initial_message &&
+            qa_source_save_i32(io, &command) && command == b->initial_command && q3n_remote_source_current(&source);
+    }
     const qa_application_q3_client_context *actual = &options->recipient;
     uint64_t receiver = actual->receiver, source = actual->source_owner, service = actual->service_owner;
     uint64_t publication = options->publication_generation, map = options->map_revision;
@@ -57,7 +104,9 @@ static bool fields(qa_source_save_io *io, q3n_server_commands *o)
 {
     uint8_t magic[4] = {'Q', '3', 'S', 'C'}; uint32_t version = 1, product = o->options.product;
     q3n_command_state *s = &o->state;
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "Q3SC", 4) ||
+    const char *expected = o->options.remote_source ? "Q3SR" : "Q3SC";
+    memcpy(magic, expected, 4);
+    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, expected, 4) ||
         !qa_source_save_u32(io, &version) || version != 1 ||
         !qa_source_save_u32(io, &product) || product != (uint32_t)o->options.product ||
         !identity(io, &o->options) || !qa_source_save_bool(io, &o->initialized) || !qa_source_save_bool(io, &o->closed) ||

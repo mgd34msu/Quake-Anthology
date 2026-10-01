@@ -37,6 +37,7 @@ typedef struct q3n_command_state {
 typedef struct q3n_server_command_receipt {
     /* The frontend adds its fresh recipient context to this real wire claim. */
     qa_native_q3_wire_receipt wire;
+    q3n_remote_command remote;
     qa_application_q3_client_context recipient;
     uint64_t publication_generation, map_revision;
     int32_t sequence;
@@ -70,6 +71,8 @@ typedef struct q3n_server_command_options {
     qa_native_q3_client_service *client;
     /* Same borrowed local reader retained by client services and client-info. */
     qa_native_q3_wire_reader *reader;
+    qa_native_q3_remote_client_service *remote_client;
+    q3n_remote_source *remote_source;
     qa_application_q3_client_context recipient;
     uint64_t publication_generation, map_revision;
     qa_q3_product product;
@@ -100,6 +103,7 @@ typedef struct q3n_server_command_options {
     int32_t (*memory_remaining)(void *);
 } q3n_server_command_options;
 bool q3n_server_commands_create(const q3n_server_command_options *, q3n_server_commands **, qa_error *);
+bool q3n_server_commands_create_remote(const q3n_server_command_options *, q3n_server_commands **, qa_error *);
 void q3n_server_commands_destroy(q3n_server_commands *);
 bool q3n_server_commands_idle(const q3n_server_commands *);
 const q3n_command_state *q3n_server_commands_state(const q3n_server_commands *);
@@ -109,6 +113,10 @@ bool q3n_server_commands_initialize(q3n_server_commands *, const q3n_frame *,
     int32_t initial_server_command_sequence, qa_error *);
 bool q3n_server_commands_execute(q3n_server_commands *, const q3n_frame *,
     int32_t latest_sequence, qa_error *);
+/* Dispatch the actual Network receipt already adopted by the snapshot owner.
+ * This advances CGAME's distinct command sequence and never reexecutes it. */
+bool q3n_server_commands_remote_dispatch(q3n_server_commands *, const q3n_frame *,
+    const q3n_server_command_receipt *, qa_error *);
 bool q3n_server_commands_voice(q3n_server_commands *, const q3n_frame *, int32_t mode,
     bool voice_only, int32_t client, int32_t color, const char *command, qa_error *);
 bool q3n_server_commands_finish(q3n_server_commands *, const q3n_frame *, qa_error *);

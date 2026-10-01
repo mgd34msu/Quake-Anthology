@@ -22,6 +22,9 @@ bool frontend_input_settings_prepare(qa_frontend *,const qa_input_platform_setti
 bool frontend_input_settings_reconnect_prepare(qa_frontend *,double now_ms,
     frontend_input_settings **,qa_error *);
 bool frontend_input_settings_current(const frontend_input_settings *,const qa_frontend *,qa_error *);
+/* Exact retained native/physical release associations for final detach
+ * admission. No completed-source or retirement proof is substituted here. */
+bool frontend_input_settings_shutdown_ready(const frontend_input_settings *,const qa_frontend *,qa_error *);
 bool frontend_input_settings_read(const frontend_input_settings *,frontend_input_settings_view *,qa_error *);
 /* Advance at a returned callback boundary before ordinary input, capture or
  * owner-idle admission. A wait is successful with complete=false. Failed

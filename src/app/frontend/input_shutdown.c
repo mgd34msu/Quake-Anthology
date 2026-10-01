@@ -29,6 +29,20 @@ static bool returned(const frontend_input_shutdown *owner,qa_error *error)
             return fail(error,"Input shutdown lost its retained physical seat");
     return true;
 }
+bool frontend_input_shutdown_ready(const frontend_input_shutdown *owner,
+    const qa_frontend *frontend,qa_error *error)
+{
+    if (!owner || !frontend || owner->frontend!=frontend || frontend->input_shutdown!=owner || !returned(owner,error))
+        return fail(error,"Final input shutdown has no installed physical owner");
+    for (unsigned slot=0;slot<owner->count;++slot) {
+        if (owner->release[slot]) {
+            if (!qa_input_release_scope_owned(owner->release[slot],owner->physical[slot],&all,error) ||
+                qa_input_release_console(owner->release[slot])!=owner->console) return false;
+        } else if (!qa_input_release_idle(owner->physical[slot]))
+            return fail(error,"Final input shutdown has an unrelated retained release");
+    }
+    return true;
+}
 bool frontend_input_shutdown_prepare(qa_frontend *f,double now,
     frontend_input_shutdown **out,qa_error *error)
 {

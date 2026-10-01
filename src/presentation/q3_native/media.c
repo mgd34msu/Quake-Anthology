@@ -1,4 +1,5 @@
 #include "media.h"
+#include "remote_frame.h"
 #include "../q3/internal.h"
 #include "qa/q3_assets_save.h"
 #include "qa/source_save.h"
@@ -26,12 +27,20 @@ const q3n_media_view *q3n_media_read(const q3n_media *m)
 { return q3n_media_idle(m) ? &m->view : NULL; }
 qa_q3_presentation_assets *q3n_media_assets(const q3n_media *m)
 { return m ? m->options.assets : NULL; }
+bool q3n_media_remote_current(const q3n_media *m,const q3n_remote_source_view *source,qa_error *e)
+{
+    return q3n_media_idle(m) && source && m->options.remote_source==source->owner &&
+        m->options.product==source->basis.product && m->sounds_loaded && m->graphics_loaded &&
+        q3n_remote_source_current(source) ? true :
+        q3p_fail(e,QA_ERROR_ARGUMENT,"Remote media requires its fully registered actual reached CLIENT owner");
+}
 bool q3n_media_effects_ready(const q3n_media *m)
 { return q3n_media_idle(m) && m->effects_loaded; }
 bool q3n_media_loading_read(const q3n_media *m,q3n_loading_media *out,qa_error *e)
 {
     if (!m || !out) return q3p_fail(e,QA_ERROR_ARGUMENT,"Native loading observation requires its actual media owner");
     *out=(q3n_loading_media){.product=m->options.product,.assets=m->options.assets,
+        .remote_source=m->options.remote_source,
         .proportional=m->view.graphics[Q3N_G_CHARSET_PROP],.initialized=m->loading_graphics};
     return true;
 }
@@ -40,6 +49,11 @@ bool q3n_media_create(const q3n_media_options *options, q3n_media **out, qa_erro
     if (!options || !options->assets || !out ||
         (options->product != QA_Q3_ARENA && options->product != QA_Q3_TEAM_ARENA))
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Native Q3 media needs its actual product and registry");
+    if (options->remote_source) {
+        q3n_remote_source_view source;
+        if (!q3n_remote_source_read(options->remote_source,&source,error) || source.basis.product!=options->product)
+            return q3p_fail(error,QA_ERROR_ARGUMENT,"Remote media constructor has another actual source product");
+    }
     q3n_media *m = calloc(1, sizeof(*m));
     if (!m) return q3p_fail(error, QA_ERROR_MEMORY, "Allocating native Q3 media");
     m->options = *options;
@@ -315,8 +329,16 @@ SOUND_GROUP(last_item_sounds, S(REGEN,"sound/items/regen.wav",false), S(PROTECT,
 static bool source_string(q3n_media *m, const q3n_media_load *load, uint32_t number,
     const char **text, uint64_t *revision, qa_error *e)
 {
+    if (load && load->remote) {
+        const q3n_remote_source_view *remote = load->remote;
+        if (load->source || load->reader || m->options.remote_source!=remote->owner ||
+            load->application != remote->basis.application ||
+            remote->basis.product != m->options.product || !q3n_remote_source_current(remote))
+            return q3p_fail(e, QA_ERROR_ARGUMENT, "Remote media requires its actual reached CLIENT receipt");
+        return q3n_remote_source_configstring(remote->owner, number, text, revision, e);
+    }
     qa_native_q3_wire_basis basis;
-    if (!load || !load->application || !load->source || load->source->product != m->options.product ||
+    if (m->options.remote_source || !load || !load->application || !load->source || load->source->product != m->options.product ||
         !qa_native_q3_wire_reader_basis(load->reader, &basis, e) ||
         basis.application != load->application || basis.product != m->options.product ||
         basis.source_game != load->source->source_game || basis.source_owner != load->source->source_owner ||
@@ -327,8 +349,9 @@ static bool source_string(q3n_media *m, const q3n_media_load *load, uint32_t num
 }
 static bool load_valid(q3n_media *m,const q3n_media_load *load,qa_error *e)
 {
-    if (!load || !load->application || !load->source || !load->loading ||
-        !qa_application_native_q3_presentation_current(load->application,load->source))
+    if (!load || !load->application || !load->loading ||
+        !(load->remote ? q3n_remote_source_current(load->remote) :
+            (load->source && qa_application_native_q3_presentation_current(load->application,load->source))))
         return q3p_fail(e,QA_ERROR_ARGUMENT,"Native media loading requires the actual source and loading producer");
     const char *text; uint64_t revision; char value[8192];
     if (!source_string(m,load,0,&text,&revision,e) ||
@@ -719,7 +742,7 @@ bool q3n_media_configstring_changed(q3n_media *m,qa_native_q3_wire_reader *reade
     qa_native_q3_wire_basis basis;
     qa_native_q3_wire_publication reached;
     const char *text; uint64_t revision;
-    bool okay=index>=32 && index<544 && qa_native_q3_wire_reader_basis(reader,&basis,e) &&
+    bool okay=!m->options.remote_source && index>=32 && index<544 && qa_native_q3_wire_reader_basis(reader,&basis,e) &&
         basis.product==m->options.product && qa_native_q3_wire_reader_publication(reader,&reached,e) &&
         qa_native_q3_wire_reader_configstring(reader,index,&text,&revision,e);
     if (!okay) return leave(m,q3p_fail(e,QA_ERROR_ARGUMENT,"Native media change requires its exact reached model/sound row"));
@@ -738,6 +761,36 @@ bool q3n_media_configstring_changed(q3n_media *m,qa_native_q3_wire_reader *reade
             qa_native_q3_wire_reader_publication(reader,&after,e) &&
             after.reached_command_sequence==reached.reached_command_sequence;
         if (!okay && (!e || e->code==QA_OK)) q3p_fail(e,QA_ERROR_ARGUMENT,"Native media row changed during registration");
+    }
+    if (okay) {
+        if (index<288) { m->model_observed[slot]=true; m->model_revision[slot]=revision; }
+        else { m->sound_observed[slot]=true; m->sound_revision[slot]=revision; }
+    }
+    free(retained);
+    return leave(m,okay);
+}
+bool q3n_media_remote_configstring_changed(q3n_media *m,const q3n_remote_source_view *source,
+    uint32_t index,qa_error *e)
+{
+    if (!enter(m,e)) return false;
+    const char *text; uint64_t revision;
+    bool okay=source && m->options.remote_source==source->owner && index>=32 && index<544 && source->basis.product==m->options.product &&
+        q3n_remote_source_current(source) &&
+        q3n_remote_source_configstring(source->owner,index,&text,&revision,e);
+    if (!okay) return leave(m,q3p_fail(e,QA_ERROR_ARGUMENT,"Remote media change requires its exact reached model/sound row"));
+    size_t length=strlen(text);
+    char *retained=malloc(length+1);
+    if (!retained) return leave(m,q3p_fail(e,QA_ERROR_MEMORY,"Retaining reached remote media text"));
+    memcpy(retained,text,length+1);
+    uint32_t slot=index<288?index-32:index-288;
+    if (index<288) okay=model(m,retained,&m->view.game_models[slot],e);
+    else if (*retained!='*') okay=sound(m,retained,false,&m->view.game_sounds[slot],e);
+    if (okay) {
+        const char *actual; uint64_t current;
+        okay=q3n_remote_source_current(source) &&
+            q3n_remote_source_configstring(source->owner,index,&actual,&current,e) &&
+            current==revision && !strcmp(actual,retained);
+        if (!okay && (!e || e->code==QA_OK)) q3p_fail(e,QA_ERROR_ARGUMENT,"Remote media row changed during registration");
     }
     if (okay) {
         if (index<288) { m->model_observed[slot]=true; m->model_revision[slot]=revision; }
@@ -809,8 +862,31 @@ static bool weapon_fields(qa_source_save_io *io,q3n_media *m,q3n_weapon_media *w
 static bool media_fields(qa_source_save_io *io,q3n_media *m)
 {
     uint8_t magic[4]={'Q','3','M','D'}; uint32_t schema=3,product=m->options.product;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3MD",4) || !qa_source_save_u32(io,&schema) || schema!=3 ||
-        !qa_source_save_u32(io,&product) || product!=(uint32_t)m->options.product ||
+    const char *expected=m->options.remote_source?"Q3MR":"Q3MD";
+    memcpy(magic,expected,4);
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,expected,4) || !qa_source_save_u32(io,&schema) || schema!=3 ||
+        !qa_source_save_u32(io,&product) || product!=(uint32_t)m->options.product) return false;
+    if (m->options.remote_source) {
+        q3n_remote_source_view source;
+        if (!q3n_remote_source_read(m->options.remote_source,&source,io->error)) return false;
+        const qa_native_q3_remote_client_basis *b=&source.basis;
+        uint64_t owner=b->connection.owner,generation=b->connection.generation,epoch=b->epoch;
+        uint64_t restart=b->restart_generation,publication=b->publication_generation,configuration=b->configuration_generation;
+        uint32_t slot=b->connection.slot,physical=b->physical_client;
+        int32_t message=b->initial_message,command=b->initial_command;
+        if (!qa_source_save_u64(io,&owner) || owner!=b->connection.owner ||
+            !qa_source_save_u64(io,&generation) || generation!=b->connection.generation ||
+            !qa_source_save_u32(io,&slot) || slot!=b->connection.slot ||
+            !qa_source_save_u64(io,&epoch) || epoch!=b->epoch ||
+            !qa_source_save_u64(io,&restart) || restart!=b->restart_generation ||
+            !qa_source_save_u64(io,&publication) || publication!=b->publication_generation ||
+            !qa_source_save_u64(io,&configuration) || configuration!=b->configuration_generation ||
+            !qa_source_save_u32(io,&physical) || physical!=b->physical_client ||
+            !qa_source_save_i32(io,&message) || message!=b->initial_message ||
+            !qa_source_save_i32(io,&command) || command!=b->initial_command ||
+            !q3n_remote_source_current(&source)) return false;
+    }
+    if (
         !qa_source_save_bool(io,&m->loading_graphics) || !qa_source_save_bool(io,&m->sounds_loaded) || !qa_source_save_bool(io,&m->graphics_loaded) ||
         !qa_source_save_bool(io,&m->effects_loaded)) return false;
     for (size_t i=0;i<m->view.item_count;++i) {

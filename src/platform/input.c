@@ -1499,6 +1499,24 @@ bool qa_input_platform_settings_requirements_read(const qa_input_platform_settin
 bool qa_input_platform_settings_idle(const qa_input_platform *p) {
     return p && !p->settings_ticket;
 }
+bool qa_input_platform_settings_retained(const qa_input_platform *p,
+    const qa_input_platform_settings_ticket *t, qa_error *error) {
+    if (!p || !t || t->platform != p || t->terminal || p->settings_ticket != t ||
+        !p->native_owned || p->native_initializing || p->keyboard != t->keyboard) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings have no actual retained platform lease");
+        return false;
+    }
+    for (unsigned slot = 0; slot < 4; ++slot)
+        if (p->seats[slot].seat != t->routes[slot].seat || p->seats[slot].instance != t->routes[slot].instance ||
+            p->seats[slot].selection.kind != t->routes[slot].selection.kind ||
+            p->seats[slot].selection.ordinal != t->routes[slot].selection.ordinal ||
+            memcmp(p->seats[slot].selection.guid, t->routes[slot].selection.guid, sizeof(t->routes[slot].selection.guid)) ||
+            p->seats[slot].selection.serial != t->routes[slot].selection.serial) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings lost their actual retained physical routes");
+            return false;
+        }
+    return true;
+}
 const qa_input_platform *qa_input_platform_settings_owner(const qa_input_platform_settings_ticket *t) {
     return t && t->prepared && !t->terminal ? t->platform : NULL;
 }

@@ -200,6 +200,12 @@ bool qa_input_release_ready(const qa_input_release *owner,const qa_input_seat *s
             !qa_console_release_ready(owner->records[i].program,seat->options.console,error)) return false;
     return qa_input_seat_context_ready(seat,&seat->options.context,error);
 }
+bool qa_input_release_scope_owned(const qa_input_release *owner,const qa_input_seat *seat,
+    const qa_input_release_scope *required,qa_error *error)
+{
+    return physical_ready(owner,seat,required,error) &&
+        (qa_console_idle(seat->options.console) || fail(error,"retained input source callback has not returned"));
+}
 bool qa_input_release_retirement_scope_ready(const qa_input_release *owner,const qa_input_seat *seat,
     const qa_input_release_scope *required,qa_console_release_disposition disposition,
     qa_console_release_retirement_fn qualify,void *context,qa_error *error)

@@ -6,6 +6,8 @@
 #include "qa/q3_presentation.h"
 
 typedef struct q3n_clients q3n_clients;
+typedef struct q3n_remote_source q3n_remote_source;
+typedef struct q3n_remote_source_view q3n_remote_source_view;
 typedef struct q3n_client_settings {
     bool force_model, defer_players, build_script, loading;
     char model[64], head_model[64], red_team_name[64], blue_team_name[64];
@@ -32,12 +34,16 @@ typedef struct q3n_client_options {
     qa_q3_presentation_assets *assets;
     qa_q3_product product;
     qa_native_q3_wire_reader *reader;
+    q3n_remote_source *remote_source;
     void *context;
     void (*print)(void *, const char *);
 } q3n_client_options;
 bool q3n_clients_create(const q3n_client_options *, q3n_clients **, qa_error *);
+bool q3n_clients_create_remote(const q3n_client_options *, q3n_clients **, qa_error *);
 void q3n_clients_destroy(q3n_clients *);
 bool q3n_clients_idle(const q3n_clients *);
+qa_q3_presentation_assets *q3n_clients_assets(const q3n_clients *);
+bool q3n_clients_remote_current(const q3n_clients *, const q3n_remote_source_view *, qa_error *);
 const q3n_client_info *q3n_clients_get(const q3n_clients *, uint32_t physical_client);
 /* Reads CS_PLAYERS through the borrowed wire client's reached gamestate.
  * The physical GAME observer still qualifies source and actor lifetime.
@@ -67,6 +73,22 @@ bool q3n_clients_custom_sound(q3n_clients *, int32_t physical_client,
 bool q3n_clients_dynamic_write(q3n_clients *, qa_application *,
     const qa_application_native_q3_presentation *, uint32_t physical_client,
     uint64_t configstring_revision, uint64_t media_revision, const q3n_client_dynamic *, qa_error *);
+/* The held receipt qualifies the actual received CLIENT source and reached
+ * rows through every media callback. Initialization uses its decoded viewer. */
+bool q3n_clients_remote_register_one(q3n_clients *, const q3n_remote_source_view *,
+    const q3n_client_settings *, uint32_t physical_client, qa_error *);
+bool q3n_clients_remote_sync(q3n_clients *, const q3n_remote_source_view *,
+    const q3n_client_settings *, qa_error *);
+bool q3n_clients_remote_initialize(q3n_clients *, const q3n_remote_source_view *,
+    const q3n_client_settings *, qa_error *);
+bool q3n_clients_remote_reload(q3n_clients *, const q3n_remote_source_view *,
+    const q3n_client_settings *, qa_error *);
+bool q3n_clients_remote_reset(q3n_clients *, const q3n_remote_source_view *, qa_error *);
+bool q3n_clients_remote_load_deferred(q3n_clients *, const q3n_remote_source_view *,
+    const q3n_client_settings *, qa_error *);
+bool q3n_clients_remote_dynamic_write(q3n_clients *, const q3n_remote_source_view *,
+    uint32_t physical_client, uint64_t configstring_revision, uint64_t media_revision,
+    const q3n_client_dynamic *, qa_error *);
 
 /* The aggregate holds the backend registry through these codecs. Resource
  * resolution returns genuine imported immutable holders, without acquisition. */

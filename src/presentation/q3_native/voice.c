@@ -179,8 +179,10 @@ static bool play(q3n_server_commands *o, const q3n_frame *f, q3n_buffered_voice 
     if (!q3nc_cvar(o, "cg_noVoiceChats", &chats, e)) return false;
     if (!chats.integer) {
         if (!q3nc_sound(o, f, v->sound, 3, e)) return false;
-        if (!f->has_local_player) return q3nc_fail(e, QA_ERROR_ARGUMENT, "Voice playback requires the actual current local source player");
-        if (v->client != f->local_player.clientNum) {
+        const qa_q3_player *player = f->remote ? q3n_frame_snapshot_player(f) :
+            f->has_local_player ? &f->local_player : NULL;
+        if (!player) return q3nc_fail(e, QA_ERROR_ARGUMENT, "Voice playback requires the actual current source player");
+        if (v->client != player->clientNum) {
             int32_t task = order(v->command);
             if (task > 0) {
                 o->state.accept_order_time = q3nc_add(f->time, 5000);
