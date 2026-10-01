@@ -114,7 +114,7 @@ bool frontend_shared_ui_ready(const frontend_shared_ui *owner,qa_error *e)
     }
     return true;
 }
-void frontend_shared_ui_publish(frontend_shared_ui *owner)
+static void publish(frontend_shared_ui *owner,bool consume)
 {
     for (unsigned i=0;i<owner->count;++i) {
         prepared_seat *seat=owner->seat+i;
@@ -123,10 +123,31 @@ void frontend_shared_ui_publish(frontend_shared_ui *owner)
         owner->seats[i].fonts=seat->fonts;
         state->language=seat->language; state->localization=seat->catalog;
         seat->language=seat->previous_language; seat->catalog=seat->previous_catalog;
-        qa_sound_caption_language_publish(seat->sound);
-        if (seat->cinematic) frontend_ui_cinematic_language_publish(seat->cinematic);
+        if (consume) {
+            qa_sound_caption_language_commit(seat->sound); seat->sound=NULL;
+            if (seat->cinematic) {
+                frontend_ui_cinematic_language_commit(seat->cinematic); seat->cinematic=NULL;
+            }
+        } else {
+            qa_sound_caption_language_publish(seat->sound);
+            if (seat->cinematic) frontend_ui_cinematic_language_publish(seat->cinematic);
+        }
     }
     owner->published=true;
+}
+void frontend_shared_ui_publish(frontend_shared_ui *owner)
+{ publish(owner,false); }
+void frontend_shared_ui_consume(frontend_shared_ui **in)
+{
+    frontend_shared_ui *owner=*in;
+    publish(owner,true);
+    for (unsigned i=0;i<owner->count;++i) {
+        prepared_seat *seat=owner->seat+i;
+        qa_localization_release(seat->catalog);
+        free(seat->language);
+    }
+    qa_vfs_destroy(owner->view); owner->features->shared_ui=NULL;
+    free(owner); *in=NULL;
 }
 static bool dispose(frontend_shared_ui **in,bool published,qa_error *e)
 {

@@ -12,6 +12,9 @@ bool frontend_ui_cinematic_language_prepare(qa_frontend *,uint32_t,const char *,
     frontend_cinematic_language **,qa_error *);
 bool frontend_ui_cinematic_language_ready(const frontend_cinematic_language *,qa_error *);
 void frontend_ui_cinematic_language_publish(frontend_cinematic_language *);
+/* Successful ready at the same held boundary permits publication plus idle
+ * compiled-owner disposal without allocation, callbacks or device setters. */
+void frontend_ui_cinematic_language_commit(frontend_cinematic_language *);
 bool frontend_ui_cinematic_language_finish(frontend_cinematic_language **,qa_error *);
 bool frontend_ui_cinematic_language_abort(frontend_cinematic_language **,qa_error *);
 bool frontend_ui_cinematic_init(qa_frontend *,qa_error *);

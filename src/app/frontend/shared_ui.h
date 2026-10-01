@@ -10,6 +10,10 @@ bool frontend_shared_ui_prepare(qa_frontend *,const qa_cvars_edit *,
     frontend_shared_ui **,qa_error *);
 bool frontend_shared_ui_ready(const frontend_shared_ui *,qa_error *);
 void frontend_shared_ui_publish(frontend_shared_ui *);
+/* After final successful ready, publish and consume every UI/caption lease
+ * before source retirement or Init. The held boundary must not change between
+ * ready and this nofail, allocation-free handoff. Consumes *owner. */
+void frontend_shared_ui_consume(frontend_shared_ui **);
 bool frontend_shared_ui_finish(frontend_shared_ui **,qa_error *);
 bool frontend_shared_ui_abort(frontend_shared_ui **,qa_error *);
 #endif

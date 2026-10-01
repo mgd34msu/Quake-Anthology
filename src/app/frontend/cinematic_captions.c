@@ -160,6 +160,13 @@ void frontend_ui_cinematic_language_publish(frontend_cinematic_language *ticket)
     *state=ticket->candidate; state->language_ticket=ticket;
     ticket->candidate=ticket->original; ticket->published=true;
 }
+void frontend_ui_cinematic_language_commit(frontend_cinematic_language *ticket)
+{
+    frontend_ui_cinematic_language_publish(ticket);
+    language_candidate_free(&ticket->candidate);
+    ticket->owner->seats[ticket->seat].language_ticket=NULL;
+    free(ticket);
+}
 static bool language_dispose(frontend_cinematic_language **in,bool published,qa_error *error)
 {
     if (!in || !*in) return true;

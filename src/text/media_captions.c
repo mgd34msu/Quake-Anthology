@@ -604,6 +604,13 @@ void qa_sound_caption_language_publish(qa_sound_caption_language *ticket)
     ticket->owner->voices=ticket->candidate->voices; ticket->owner->catalogs=ticket->candidate->catalogs;
     ticket->candidate->voices=voices; ticket->candidate->catalogs=catalogs; ticket->published=true;
 }
+void qa_sound_caption_language_commit(qa_sound_caption_language *ticket)
+{
+    qa_sound_caption_language_publish(ticket);
+    qa_sound_captions_destroy(ticket->candidate);
+    ticket->owner->language_ticket=NULL;
+    free(ticket);
+}
 static bool language_dispose(qa_sound_caption_language **in,bool published,qa_error *e)
 {
     if (!in || !*in) return true;

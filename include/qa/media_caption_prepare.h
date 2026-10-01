@@ -12,6 +12,10 @@ bool qa_sound_caption_language_ready(const qa_sound_caption_language *,qa_error 
 /* The admitted pointer transfer invokes no callbacks and keeps both old and
  * new owners alive until finish. Finish releases the old continuation. */
 void qa_sound_caption_language_publish(qa_sound_caption_language *);
+/* After successful ready at the same held boundary, publish and consume the
+ * ticket together. Releases only the already idle old compiled continuation;
+ * no allocation, resource acquisition, device setters or callbacks occur. */
+void qa_sound_caption_language_commit(qa_sound_caption_language *);
 bool qa_sound_caption_language_finish(qa_sound_caption_language **,qa_error *);
 bool qa_sound_caption_language_abort(qa_sound_caption_language **,qa_error *);
 #endif
