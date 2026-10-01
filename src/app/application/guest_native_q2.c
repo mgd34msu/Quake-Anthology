@@ -190,6 +190,14 @@ static bool prepare_owner(qa_application *app, application_provider *provider,
         .source_command = console_command, .capture_context = capture_context, .context_active = context_active};
     engine->console = qa_console_create(&console, error);
     if (!engine->console) return false;
+    if (!cgame && app->operation != APPLICATION_PERSISTING) {
+        qa_application_startup_source source = {.descriptor = provider->launch,
+            .scope = {.provider = provider->owner, .kind = QA_APPLICATION_CONSOLE_NATIVE_Q2},
+            .console = engine->console, .cvars = engine->cvars,
+            .command = engine->command_context, .declaration_owner = provider->owner};
+        bool carried = false;
+        if (!application_startup_source_carry(provider, &source, &carried, error)) return false;
+    }
     uint32_t clients = choices->seat_count ? (uint32_t)choices->seat_count : 1;
     char maximum[16], skill[32];
     snprintf(maximum, sizeof(maximum), "%u", clients);

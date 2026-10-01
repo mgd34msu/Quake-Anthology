@@ -4,6 +4,7 @@
 #include "source_inventory.h"
 #include "source_alias.h"
 #include "source_player.h"
+#include "source_view.h"
 
 static int32_t signed_word(uint32_t bits) {
     int32_t value;
@@ -69,27 +70,29 @@ static bool delta_angles(qa_bots *b,bot_ai_state *s,int32_t out[3],qa_error *e) 
     return true;
 }
 bool bot_ai_input(qa_bots *b, bot_ai_state *s, int32_t time, int32_t elapsed, qa_error *e) {
+    int32_t delta[3];
+    if(!delta_angles(b,s,delta,e)) return false;
+    bot_ai_view_delta(s,delta,true);
+    bot_ai_view_prepare(s);
     float factor = .05f, maximum = 360;
     if (s->view.enemy.registry &&
         (!bot_ai_character_float(b, s, BOT_C_VIEW_FACTOR, .01f, 1, &factor, e) ||
          !bot_ai_character_float(b, s, BOT_C_VIEW_MAX, 1, 1800, &maximum, e))) return false;
-    int32_t delta[3];
-    if(!delta_angles(b,s,delta,e)) return false;
-    qa_bot_view_delta(&s->angles, delta, true);
-    qa_bot_change_view(&s->angles, factor, maximum, (float)elapsed / 1000, b->controls.challenge);
+    bot_ai_view_change(s,factor,maximum,(float)elapsed/1000,b->controls.challenge);
     qa_bot_actions *actions = qa_bot_runtime_actions(b->runtime);
     qa_bot_input input;
     qa_movement_command command;
-    bool ok = qa_bot_actions_view(actions, s->view.client, s->angles.angles, e) &&
+    bool ok = qa_bot_actions_view(actions, s->view.client, bot_ai_view_angles(s), e) &&
         qa_bot_actions_input(actions, s->view.client, (float)time / 1000, &input, e);
     if (ok) ok = bot_ai_source_command_read(b, s, &command, e);
     if (ok && (input.action_flags & QA_BOT_RESPAWN) && (command.buttons & 1))
         input.action_flags &= ~(QA_BOT_RESPAWN | QA_BOT_ATTACK);
     if (ok) ok = delta_angles(b,s,delta,e) && qa_bot_input_q3_command(&input, delta, time, &command, e) &&
         bot_ai_source_command_write(b, s, &command, e);
+    if(!ok) return false;
     if(!delta_angles(b,s,delta,e)) return false;
-    qa_bot_view_delta(&s->angles, delta, false);
-    return ok && submit(b, s, &input, &command, e);
+    bot_ai_view_delta(s,delta,false);
+    return submit(b, s, &input, &command, e);
 }
 bool bot_ai_point_area(qa_bots *b, bot_ai_state *s, qa_vec3 origin, uint32_t *area, qa_error *e) {
     qa_bot_navigation *navigation = qa_bot_runtime_navigation(b->runtime, (int32_t)s->view.client);
@@ -112,7 +115,7 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
     if (s->retired || !bot_ai_live(b, s->view.actor)) return true;
     int32_t delta[3];
     if(!delta_angles(b,s,delta,e)) return false;
-    qa_bot_view_delta(&s->angles, delta, true);
+    bot_ai_view_delta(s,delta,true);
     s->local_time += elapsed;
     s->view.think_time = elapsed;
     int32_t height;
@@ -180,9 +183,10 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
 finished:
     if (ok && !s->retired && bot_ai_live(b,s->view.actor))
         ok = qa_bot_actions_weapon(actions, s->view.client, s->view.weapon, e);
+    if(!ok) return false;
     if(!delta_angles(b,s,delta,e)) return false;
-    qa_bot_view_delta(&s->angles, delta, false);
-    return ok;
+    bot_ai_view_delta(s,delta,false);
+    return true;
 }
 static bool observations(qa_bots *b, qa_error *e) {
     uint32_t extent;
@@ -229,7 +233,7 @@ static bool frame(qa_bots *b, int32_t time, qa_error *e) {
             qa_movement_command command;
             if (!bot_ai_source_command_pause(b, s, time, e) ||
                 !bot_ai_source_command_read(b, s, &command, e)) return false;
-            qa_bot_input input = {.view_angles = s->angles.angles, .weapon = command.weapon};
+            qa_bot_input input = {.view_angles = bot_ai_view_angles(s), .weapon = command.weapon};
             command.angles = input.view_angles;
             if (!submit(b, s, &input, &command, e)) return false;
         }

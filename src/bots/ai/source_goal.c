@@ -8,6 +8,7 @@
 #include "source_team_policy.h"
 #include "source_events.h"
 #include "source_storage.h"
+#include "source_view.h"
 
 enum { SOURCE_DEFAULT_TRAVEL=0x011c0fbe, SOURCE_LIQUID=8|16|32, SOURCE_FOG=64 };
 
@@ -77,8 +78,8 @@ static bool travel_time(qa_bots *b,bot_ai_state *s,const qa_bot_goal *goal,uint3
     *time=route.travel_time;return true;
 }
 static void look_at(bot_ai_state *s,qa_vec3 target) {
-    s->angles.ideal=bot_ai_angles(qa_vec_sub(target,s->player.origin));
-    s->angles.ideal.z*=.5f;
+    qa_vec3 ideal=bot_ai_angles(qa_vec_sub(target,s->player.origin));ideal.z*=.5f;
+    bot_ai_view_ideal_set(s,ideal);
 }
 static bool crouch(qa_bots *b,bot_ai_state *s,qa_error *e) {
     if(s->attack_crouch_time<b->time-5.0f) {

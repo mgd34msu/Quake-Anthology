@@ -1,5 +1,6 @@
 #include "guest_qc_factory.h"
 #include "guest_qc_profile.h"
+#include "startup_flow.h"
 #include <stdio.h>
 
 bool application_qc_console_prepare(qa_application *app, application_provider *provider,
@@ -40,20 +41,19 @@ bool application_qc_console_prepare(qa_application *app, application_provider *p
         !profile && program.api == QA_QC_API_QUAKEWORLD ? 32 :
         choices->seat_count ? (uint32_t)choices->seat_count : 1;
     engine->actor_capacity = qa_actors_capacity(qa_session_actors(app->session));
-    if (engine->max_clients == UINT32_MAX || engine->max_clients + 1 >= engine->actor_capacity)
-        return application_fail(error, QA_ERROR_FORMAT, "QC reserved clients exceed the actual source entity capacity");
-    if (!application_qc_player_roster_ready(provider, choices, error)) return false;
-    engine->clients = calloc((size_t)engine->max_clients + 1, sizeof(*engine->clients));
-    engine->actors = calloc(engine->actor_capacity, sizeof(*engine->actors));
-    if (!engine->clients || !engine->actors)
-        return application_fail(error, QA_ERROR_MEMORY, "Allocating prepared QC physical client and actor rows");
-    qa_builtin_random_seed(&engine->random, (uint32_t)(provider->owner * UINT32_C(2654435761)));
     qa_console_dialect dialect = selected == QA_QC_QUAKEWORLD ? QA_CONSOLE_QW : QA_CONSOLE_Q1;
     qa_cvar_options options = {.dialect = dialect};
     engine->cvars = qa_cvars_create(&options, error);
     engine->command_context = (qa_command_context){.owner = provider->owner, .dialect = dialect, .origin = QA_COMMAND_SERVER};
     if (!engine->cvars ||
         !(engine->console = application_qc_create_console(engine, engine->cvars, error))) return false;
+    qa_application_startup_source source = {.descriptor = provider->launch,
+        .scope = {.provider = provider->owner, .kind = QA_APPLICATION_CONSOLE_QC},
+        .console = engine->console, .cvars = engine->cvars,
+        .command = engine->command_context, .declaration_owner = provider->owner};
+    bool carried = false;
+    if (app->operation != APPLICATION_PERSISTING &&
+        !application_startup_source_carry(provider, &source, &carried, error)) return false;
     char maximum[16]; snprintf(maximum, sizeof(maximum), "%u", engine->max_clients);
     static const char *const names[] = {"skill", "deathmatch", "coop", "teamplay", "sv_gravity", "sv_aim", "sv_maxspeed",
         "maxclients", "registered", "developer", "sv_cheats", "samelevel", "timelimit", "fraglimit", "gamecfg"};
@@ -74,8 +74,8 @@ bool application_qc_console_prepare(qa_application *app, application_provider *p
             if (!qa_cvars_register(engine->cvars, policy_names[i], policy_values[i],
                 i == 3 ? QA_CVAR_SERVERINFO : 0, provider->owner, NULL, error)) return false;
     }
-    if (!qa_cvars_set_number(engine->cvars, "skill", (float)choices->world.skill, error)) return false;
-    if (choices->mode_count) {
+    if (!carried && !qa_cvars_set_number(engine->cvars, "skill", (float)choices->world.skill, error)) return false;
+    if (!carried && choices->mode_count) {
         size_t selected_mode = 0;
         for (size_t i = 0; i < choices->mode_count; ++i)
             if (choices->modes[i].primary_score) { selected_mode = i; break; }
@@ -88,9 +88,17 @@ bool application_qc_console_prepare(qa_application *app, application_provider *p
     for (size_t i = 0; profile && i < profile->cvar_count; ++i) {
         const application_qc_cvar *entry = &profile->cvars[i];
         if (qa_cvars_find(engine->cvars, entry->name)) {
-            if (!qa_cvars_set(engine->cvars, entry->name, entry->value, true, error)) return false;
+            if (!carried && !qa_cvars_set(engine->cvars, entry->name, entry->value, true, error)) return false;
         } else if (!qa_cvars_register(engine->cvars, entry->name, entry->value, 0, provider->owner, NULL, error)) return false;
     }
+    if (engine->max_clients == UINT32_MAX || engine->max_clients + 1 >= engine->actor_capacity)
+        return application_fail(error, QA_ERROR_FORMAT, "QC reserved clients exceed the actual source entity capacity");
+    if (!application_qc_player_roster_ready(provider, choices, error)) return false;
+    engine->clients = calloc((size_t)engine->max_clients + 1, sizeof(*engine->clients));
+    engine->actors = calloc(engine->actor_capacity, sizeof(*engine->actors));
+    if (!engine->clients || !engine->actors)
+        return application_fail(error, QA_ERROR_MEMORY, "Allocating prepared QC physical client and actor rows");
+    qa_builtin_random_seed(&engine->random, (uint32_t)(provider->owner * UINT32_C(2654435761)));
     engine->console_prepared = true;
     *console = engine->console; *cvars = engine->cvars; *command = engine->command_context;
     return true;

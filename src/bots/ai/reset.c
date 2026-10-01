@@ -9,7 +9,7 @@ bool qa_bots_source_begin(qa_bots *b,qa_actor_id actor,qa_vec3 angles,int32_t we
     if(!bot_ai_storage_vec3(b,state,QA_BOT_SOURCE_VIEW_ANGLES,&angles,true,e) ||
        !bot_ai_storage_vec3(b,state,QA_BOT_SOURCE_IDEAL_VIEW_ANGLES,&angles,true,e) ||
        !bot_ai_storage_i32(b,state,QA_BOT_SOURCE_WEAPON_NUMBER,&weapon,true,e)) return false;
-    state->angles.angles=angles;state->angles.ideal=angles;state->view.weapon=weapon;return true;
+    state->view.weapon=weapon;return true;
 }
 
 bool bot_ai_reset(qa_bots *b, bot_ai_state *s, qa_error *e) {

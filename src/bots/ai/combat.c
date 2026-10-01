@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "source_inventory.h"
 #include "source_player.h"
+#include "source_view.h"
 
 enum { BOT_SOLID=1, BOT_LIQUID=8|16|32, BOT_FOG=64, BOT_PLAYERCLIP=0x10000,
        BOT_SHOT=1|0x2000000|0x4000000, BOT_FIRE_RELEASED=1, BOT_RADIAL=2 };
@@ -218,7 +219,7 @@ bool bot_ai_find_enemy(qa_bots *b, bot_ai_state *s, bool *found, qa_error *e) {
              qa_vec_dot(teleport_delta,teleport_delta)<70*70)) continue;
         float fov = !s->view.enemy.registry && !hurt && !player.firing ?
             180-(90-fminf(distance,810*810)/(810*9)) : 360;
-        if (!in_view(s->angles.angles,d,fov)) continue;
+        if (!in_view(bot_ai_view_angles(s),d,fov)) continue;
         float visible;
         if (!bot_ai_enemy_visible(b,s,actor,&visible,e)) return false;
         if (!visible) continue;
@@ -252,7 +253,7 @@ bool bot_ai_move_setup(qa_bots *b, bot_ai_state *s, qa_error *e) {
     qa_bot_move_input input = {.origin=s->player.origin,.velocity=s->player.velocity,
         .view_offset=qa_vec_sub(s->player.eye,s->player.origin),.entity=s->view.entity,
         .client=(int32_t)s->view.client,.think_time=s->view.think_time,.presence=s->player.presence,
-        .view_angles=s->angles.angles,.flags=flags};
+        .view_angles=bot_ai_view_angles(s),.flags=flags};
     return qa_bot_moves_initialize(qa_bot_runtime_moves(b->runtime),s->movement,&input,e);
 }
 bool bot_ai_attack_move(qa_bots *b, bot_ai_state *s, qa_error *e) {
@@ -368,7 +369,7 @@ bool bot_ai_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
     }
     qa_trace_result hit;
     qa_bounds shot_bounds={qa_v3(-4,-4,-4),qa_v3(4,4,4)};
-    qa_vec3 muzzle=selected.muzzle_count?weapon_muzzle(&selected,&s->player,s->angles.angles):
+    qa_vec3 muzzle=selected.muzzle_count?weapon_muzzle(&selected,&s->player,bot_ai_view_angles(s)):
         qa_vec_add(s->player.eye,qa_v3(0,0,selected.weapon.offset.z));
     if(!trace(b,s,muzzle,aim,&shot_bounds,s->view.actor,BOT_SHOT,&hit,e)) return false;
     if(hit.fraction<1 && !qa_actor_id_equal(hit.actor,enemy)) aim.z+=16;
@@ -402,12 +403,17 @@ bool bot_ai_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
         if(!bot_ai_random(b,&random,e)) return false;
         direction.z+=.3f*(random*2-1)*(1-accuracy);
     }
-    s->angles.ideal=bot_ai_angles(direction);
+    qa_vec3 ideal=bot_ai_angles(direction);
     if(!bot_ai_random(b,&random,e)) return false;
-    s->angles.ideal.x=qa_builtin_angle_mod(s->angles.ideal.x+6*selected.weapon.vertical_spread*(random*2-1)*(1-accuracy));
+    ideal.x=qa_builtin_angle_mod(ideal.x+6*selected.weapon.vertical_spread*(random*2-1)*(1-accuracy));
     if(!bot_ai_random(b,&random,e)) return false;
-    s->angles.ideal.y=qa_builtin_angle_mod(s->angles.ideal.y+6*selected.weapon.horizontal_spread*(random*2-1)*(1-accuracy));
-    if(b->controls.challenge && accuracy>.9f && s->enemy_sight_time<b->time-1) s->angles.angles=s->angles.ideal;
+    ideal.y=qa_builtin_angle_mod(ideal.y+6*selected.weapon.horizontal_spread*(random*2-1)*(1-accuracy));
+    bot_ai_view_ideal_set(s,ideal);
+    if(b->controls.challenge && accuracy>.9f && s->enemy_sight_time<b->time-1) {
+        bot_ai_view_prepare(s);
+        bot_ai_view_angles_set(s,bot_ai_view_ideal(s));
+        if(!qa_bot_actions_view(qa_bot_runtime_actions(b->runtime),s->view.client,bot_ai_view_angles(s),e)) return false;
+    }
     if(s->enemy_sight_time>b->time-reaction || s->teleport_time>b->time-reaction ||
        s->weapon_change_time>b->time-.1f || s->fire_wait_time>b->time) return true;
     if(s->fire_until<b->time) {
@@ -417,12 +423,12 @@ bool bot_ai_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
     }
     qa_vec3 to_enemy=qa_vec_sub(target.origin,s->player.origin);
     if(tactics.ranged_limit && qa_vec_dot(to_enemy,to_enemy)>tactics.maximum_range*tactics.maximum_range) return true;
-    if(!in_view(s->angles.angles,qa_vec_sub(s->aim_target,s->player.eye),distance<100?120:50)) return true;
+    if(!in_view(bot_ai_view_angles(s),qa_vec_sub(s->aim_target,s->player.eye),distance<100?120:50)) return true;
     if(!trace(b,s,s->player.eye,s->aim_target,NULL,s->view.actor,BOT_SOLID|BOT_PLAYERCLIP,&hit,e)) return false;
     if(hit.fraction<1 && !qa_actor_id_equal(hit.actor,enemy)) return true;
     qa_vec3 forward;
-    qa_builtin_angle_vectors(s->angles.angles,&forward,NULL,NULL);
-    muzzle=weapon_muzzle(&selected,&s->player,s->angles.angles);
+    qa_builtin_angle_vectors(bot_ai_view_angles(s),&forward,NULL,NULL);
+    muzzle=weapon_muzzle(&selected,&s->player,bot_ai_view_angles(s));
     qa_vec3 end=qa_vec_add(muzzle,qa_vec_scale(forward,1000));
     muzzle=qa_vec_add(muzzle,qa_vec_scale(forward,-12));
     shot_bounds=(qa_bounds){qa_v3(-8,-8,-8),qa_v3(8,8,8)};

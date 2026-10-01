@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "source_inventory.h"
 #include "source_player.h"
+#include "source_view.h"
 
 enum { BOT_AIR_GOAL=128, BOT_DEFAULT_TRAVEL=0x011c0fbe, BOT_LIQUID=8|16|32 };
 static qa_bot_goals *goals(qa_bots *b) { return qa_bot_runtime_goals(b->runtime); }
@@ -197,13 +198,13 @@ static bool move_goal(qa_bots *b, bot_ai_state *s, const qa_bot_goal *goal,
         }
     } else {s->blocked_time=0;s->not_blocked_time=b->time;}
     if(result->flags&(QA_BOT_MOVE_VIEW|QA_BOT_MOVE_SWIM_VIEW|QA_BOT_MOVE_VIEW_SET))
-        s->angles.ideal=result->ideal_view_angles;
+        bot_ai_view_ideal_set(s,result->ideal_view_angles);
     else {
         qa_vec3 target;bool found;
         if(!qa_bot_moves_view_target(moves(b),s->movement,goal,s->travel_flags,300,&target,&found,e)) return false;
-        if(found) s->angles.ideal=bot_ai_angles(qa_vec_sub(target,s->player.eye));
-        else if(qa_vec_length(result->direction)>0) s->angles.ideal=bot_ai_angles(result->direction);
-        s->angles.ideal.z*=.5f;
+        if(found) bot_ai_view_ideal_set(s,bot_ai_angles(qa_vec_sub(target,s->player.eye)));
+        else if(qa_vec_length(result->direction)>0) bot_ai_view_ideal_set(s,bot_ai_angles(result->direction));
+        qa_vec3 ideal=bot_ai_view_ideal(s);bot_ai_view_ideal_axis_set(s,2,ideal.z*.5f);
     }
     if(result->flags&QA_BOT_MOVE_WEAPON) s->view.weapon=result->weapon;
     return true;
@@ -377,12 +378,13 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                     if(s->retired || !bot_ai_live(b,s->view.actor) ||
                        !bot_ai_live(b,activation.target) || !bot_ai_live(b,activation.blocker)) return true;
                     if(weapon<0) {s->activations[index].until=0;continue;}
-                    s->view.weapon=weapon;s->angles.ideal=bot_ai_angles(qa_vec_sub(activation.aim,s->player.eye));
+                    s->view.weapon=weapon;bot_ai_view_ideal_set(s,bot_ai_angles(qa_vec_sub(activation.aim,s->player.eye)));
                     qa_trace_result shot;
                     if(!qa_bot_navigation_trace(navigation(b,s),s->player.eye,activation.aim,NULL,s->view.actor,0x6000001,&shot,e)) return false;
                     if(s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_live(b,activation.target)) return true;
-                    float pitch=fabsf(qa_bot_angle_difference(s->angles.angles.x,s->angles.ideal.x));
-                    float yaw=fabsf(qa_bot_angle_difference(s->angles.angles.y,s->angles.ideal.y));
+                    qa_vec3 angles=bot_ai_view_angles(s),ideal=bot_ai_view_ideal(s);
+                    float pitch=fabsf(qa_bot_angle_difference(angles.x,ideal.x));
+                    float yaw=fabsf(qa_bot_angle_difference(angles.y,ideal.y));
                     if(shot.fraction==1 || qa_actor_id_equal(shot.actor,activation.target))
                         return pitch>=10 || yaw>=10 ||
                             qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,QA_BOT_ATTACK,e);
