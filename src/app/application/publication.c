@@ -14,6 +14,7 @@
 #include "q3_campaign_launch.h"
 #include "startup_flow.h"
 #include "native_q2_checkpoint.h"
+#include "native_q3_checkpoint.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -357,6 +358,14 @@ static bool construct_and_reserve(qa_application *application,
             const qa_save_record *record = qa_save_image_find(image, QA_SAVE_PROVIDER,
                 provider->launch->selection.instance);
             if (!application_native_q2_checkpoint_prepare(provider, record, error)) {
+                okay = false;
+                break;
+            }
+        }
+        if (image != NULL && provider->kind == APPLICATION_PROVIDER_Q3) {
+            const qa_save_record *record = qa_save_image_find(image, QA_SAVE_PROVIDER,
+                provider->launch->selection.instance);
+            if (!application_native_q3_checkpoint_prepare(provider, record, error)) {
                 okay = false;
                 break;
             }

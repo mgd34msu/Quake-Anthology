@@ -2,6 +2,8 @@
 #include "native_q3_console.h"
 #include "native_q1_console.h"
 #include "guest_q3_console.h"
+#include "guest_q3_private.h"
+#include "guest_q3_client_console.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -132,8 +134,10 @@ static int32_t guest_calendar(void *context, qa_q3_host_calendar *out)
 
 static qa_collision_geometry *guest_geometry(void *context)
 {
-    qa_application *application = context;
-    return application->world == NULL ? NULL : qa_world_geometry(application->world);
+    application_provider *provider = context;
+    struct application_q3_guest *engine = q3g_engine(provider);
+    qa_world *world = engine ? engine->world : provider->application->world;
+    return world ? qa_world_geometry(world) : NULL;
 }
 
 static qa_actor_id guest_world_actor(void *context)
@@ -152,9 +156,15 @@ static bool guest_player_velocity(void *context, qa_actor_id actor,
 
 static bool guest_load_collision(void *context, const char *path, qa_error *error)
 {
-    qa_application *application = context;
-    const char *map = qa_strings_cstr(qa_session_strings(application->session), application->current_map);
-    if (path == NULL || map == NULL || application->world == NULL)
+    application_provider *provider = context;
+    qa_application *application = provider->application;
+    struct application_q3_guest *engine = q3g_engine(provider);
+    qa_cvars *cvars = application_guest_q3_console_registry(provider);
+    const qa_cvar_view *selected = cvars ? qa_cvars_find(cvars, "mapname") : NULL;
+    const char *map = selected ? selected->value :
+        qa_strings_cstr(qa_session_strings(application->session), application->current_map);
+    qa_world *world = engine ? engine->world : application->world;
+    if (path == NULL || map == NULL || world == NULL || !qa_world_geometry(world))
         return application_fail(error, QA_ERROR_NOT_FOUND, "guest collision map is not published");
     if (!strncmp(path, "maps/", 5)) path += 5;
     size_t path_length = strlen(path), map_length = strlen(map);
@@ -183,19 +193,20 @@ bool application_q3_guest_services_descriptor(qa_application *application,
         const char *last = strrchr(directory, '/');
         if (last != NULL) directory = last + 1;
     }
+    struct application_q3_guest *engine = q3g_engine(provider);
     qa_q3_host_options services = {.role = role, .service_owner = service_owner,
-        .session = application->session, .world = application->world,
+        .session = application->session, .world = engine ? engine->world : application->world,
         .owner = provider->owner, .cvars = application->cvars,
         .console = application->console, .mounts = descriptor->content,
         .game_directory = directory,
-        .command_context = {.owner = provider->owner, .seat = seat,
+        .command_context = {.owner = provider->owner, .seat = role == QA_QVM_GAME ? 0 : seat,
             .dialect = QA_CONSOLE_Q3,
             .origin = role == QA_QVM_GAME ? QA_COMMAND_SERVER : QA_COMMAND_SEAT},
         .common = {.context = provider, .print = guest_print,
             .milliseconds = guest_milliseconds, .calendar = guest_calendar},
         .server = {.context = provider, .player_velocity = guest_player_velocity,
             .world_actor = guest_world_actor},
-        .collision = {.context = application, .geometry = guest_geometry,
+        .collision = {.context = provider, .geometry = guest_geometry,
             .load_map = guest_load_collision}};
     if (role == QA_QVM_GAME) {
         services.cvars = application_guest_q3_console_registry(provider);
@@ -203,6 +214,8 @@ bool application_q3_guest_services_descriptor(qa_application *application,
         services.engine_cvars = application->cvars;
         if (!services.cvars || !services.console)
             return application_fail(error, QA_ERROR_ARGUMENT, "Original GAME has no private console owner");
+    } else if (!application_guest_q3_client_console_at(engine, seat, &services.console, &services.cvars)) {
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original CLIENT has no retained private seat console");
     }
     for (size_t i = 0; i < qa_vfs_mount_count(services.mounts); ++i) {
         qa_vfs_mount_info mount;
@@ -211,9 +224,13 @@ bool application_q3_guest_services_descriptor(qa_application *application,
             break;
         }
     }
-    if (application->q3_services != NULL &&
-        !application->q3_services(application->guest_context, application,
-            provider->owner, role, seat, &services, error)) return false;
+    if (application->q3_services != NULL) {
+        if (engine) engine->constructing_services = &services;
+        bool prepared = application->q3_services(application->guest_context, application,
+            provider->owner, role, seat, &services, error);
+        if (engine) engine->constructing_services = NULL;
+        if (!prepared) return false;
+    }
     if (role != QA_QVM_GAME && application->q3_services == NULL)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 UI/cgame needs a platform/client service owner");
     if (role != QA_QVM_GAME && descriptor != provider->launch &&

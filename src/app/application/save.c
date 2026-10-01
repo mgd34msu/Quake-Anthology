@@ -27,12 +27,15 @@
 #include "events_save.h"
 #include "native_q3_console.h"
 #include "native_q1_console.h"
+#include "native_q1_wire.h"
 #include "native_q2_checkpoint.h"
 #include "native_q3_ipfilters.h"
 #include "native_q3_settings.h"
 #include "native_q3_team_status.h"
 #include "native_q3_votes.h"
 #include "native_q3_wire_state.h"
+#include "native_q3_checkpoint.h"
+#include "native_q3_remote_role_save.h"
 #include "q3_product.h"
 
 #include <string.h>
@@ -913,7 +916,8 @@ static bool application_restore(qa_application *app, qa_bytes bytes, qa_error *e
 }
 
 typedef struct native_q3_record {
-    qa_bytes game, wire, settings, ipfilters, votes;
+    qa_bytes game, wire, settings, ipfilters, votes, clients;
+    bool game_present;
     bool console_present, wire_present, settings_bound;
     bool settings_present, settings_initialized;
     bool ipfilters_present, ipfilters_initialized;
@@ -922,37 +926,37 @@ typedef struct native_q3_record {
 
 static bool native_q3_record_read(qa_bytes bytes, native_q3_record *out, qa_error *error)
 {
-    if (!bytes.data || bytes.size<56 || memcmp(bytes.data,"QAN3",4) ||
-        qa_load_u32le(bytes.data+4)!=2 || qa_load_u32le(bytes.data+8)>1023 ||
+    if (!bytes.data || bytes.size<64 || memcmp(bytes.data,"QAN3",4) ||
+        qa_load_u32le(bytes.data+4)!=3 || qa_load_u32le(bytes.data+8)>2047 ||
         qa_load_u32le(bytes.data+12))
         return application_fail(error,QA_ERROR_FORMAT,"Invalid native Q3 owner bundle");
     uint32_t flags=qa_load_u32le(bytes.data+8);
-    uint64_t game=qa_load_u64le(bytes.data+16), wire=qa_load_u64le(bytes.data+24);
-    uint64_t settings=qa_load_u64le(bytes.data+32);
-    uint64_t ipfilters=qa_load_u64le(bytes.data+40);
-    uint64_t votes=qa_load_u64le(bytes.data+48);
-    if (!game || game>bytes.size-56 || wire>bytes.size-56-(size_t)game ||
-        settings>bytes.size-56-(size_t)game-(size_t)wire ||
-        ipfilters>bytes.size-56-(size_t)game-(size_t)wire-(size_t)settings ||
-        votes!=bytes.size-56-(size_t)game-(size_t)wire-(size_t)settings-(size_t)ipfilters ||
-        ((flags&2u)!=0)!=(wire!=0) || ((flags&16u)!=0)!=(settings!=0) ||
-        ((flags&32u)!=0)!=(ipfilters!=0) || ((flags&32u)!=0 && !(flags&1u)) ||
+    native_q3_record value={0};
+    qa_bytes *parts[]={&value.game,&value.wire,&value.settings,&value.ipfilters,&value.votes,&value.clients};
+    size_t offset=64;
+    for (size_t i=0;i<6;++i) {
+        uint64_t length=qa_load_u64le(bytes.data+16+i*8);
+        if (length>bytes.size-offset)
+            return application_fail(error,QA_ERROR_FORMAT,"Native Q3 owner extent exceeds its actual record");
+        *parts[i]=(qa_bytes){length ? bytes.data+offset : NULL,(size_t)length}; offset+=(size_t)length;
+    }
+    if (offset!=bytes.size || !value.clients.size ||
+        ((flags&1024u)!=0)!=(value.game.size!=0) || (!(flags&1024u) && (flags&1023u)) ||
+        ((flags&2u)!=0)!=(value.wire.size!=0) || ((flags&16u)!=0)!=(value.settings.size!=0) ||
+        ((flags&32u)!=0)!=(value.ipfilters.size!=0) || ((flags&32u)!=0 && !(flags&1u)) ||
         ((flags&64u)!=0 && (flags&48u)!=48u) ||
-        ((flags&128u)!=0)!=(votes!=0) || ((flags&128u)!=0 && !(flags&1u)) ||
+        ((flags&128u)!=0)!=(value.votes.size!=0) || ((flags&128u)!=0 && !(flags&1u)) ||
         ((flags&256u)!=0 && !(flags&1u)) || ((flags&512u)!=0 && (flags&260u)!=260u) ||
         ((flags&8u)!=0 && !(flags&1u)) ||
         ((flags&16u)!=0 && (flags&9u)!=9u) || ((flags&4u)!=0 && !(flags&16u)))
         return application_fail(error,QA_ERROR_FORMAT,"Native Q3 source owner extent or presence differs");
-    *out=(native_q3_record){.game={bytes.data+56,(size_t)game},
-        .wire={wire ? bytes.data+56+(size_t)game : NULL,(size_t)wire},
-        .settings={settings ? bytes.data+56+(size_t)game+(size_t)wire : NULL,(size_t)settings},
-        .ipfilters={ipfilters ? bytes.data+56+(size_t)game+(size_t)wire+(size_t)settings : NULL,(size_t)ipfilters},
-        .votes={votes ? bytes.data+56+(size_t)game+(size_t)wire+(size_t)settings+(size_t)ipfilters : NULL,(size_t)votes},
-        .console_present=(flags&1u)!=0,.wire_present=(flags&2u)!=0,
-        .settings_bound=(flags&4u)!=0,.settings_present=(flags&8u)!=0,
-        .settings_initialized=(flags&16u)!=0,.ipfilters_present=(flags&32u)!=0,
-        .ipfilters_initialized=(flags&64u)!=0,.votes_present=(flags&128u)!=0,
-        .team_present=(flags&256u)!=0,.team_bound=(flags&512u)!=0};
+    value.game_present=(flags&1024u)!=0;
+    value.console_present=(flags&1u)!=0; value.wire_present=(flags&2u)!=0;
+    value.settings_bound=(flags&4u)!=0; value.settings_present=(flags&8u)!=0;
+    value.settings_initialized=(flags&16u)!=0; value.ipfilters_present=(flags&32u)!=0;
+    value.ipfilters_initialized=(flags&64u)!=0; value.votes_present=(flags&128u)!=0;
+    value.team_present=(flags&256u)!=0; value.team_bound=(flags&512u)!=0;
+    *out=value;
     return true;
 }
 
@@ -962,16 +966,41 @@ static bool native_q3_saved_record(application_provider *provider,
     const qa_save_record *saved=qa_save_image_find(image,QA_SAVE_PROVIDER,
         provider->launch->selection.instance);
     qa_bytes bytes=saved ? saved->payload : (qa_bytes){0};
-    if (!bytes.data || bytes.size<32 || memcmp(bytes.data,"QAPV",4) ||
+    if (!saved || strcmp(saved->owner.schema,"qa.q3.native") || saved->owner.schema_version!=4 ||
+        saved->owner.backend[0] || !qa_sha256_equal(&saved->owner.content,&provider->launch->identity) ||
+        !bytes.data || bytes.size<32 || memcmp(bytes.data,"QAPV",4) ||
         qa_load_u32le(bytes.data+4)!=1 || qa_load_u32le(bytes.data+8)!=APPLICATION_PROVIDER_Q3 ||
         qa_load_u64le(bytes.data+24)!=bytes.size-32)
         return application_fail(error,QA_ERROR_FORMAT,"Missing actual native Q3 provider record");
     return native_q3_record_read((qa_bytes){bytes.data+32,bytes.size-32},out,error);
 }
 
+bool application_native_q3_checkpoint_prepare(application_provider *provider,
+    const qa_save_record *saved, qa_error *error)
+{
+    qa_bytes bytes=saved ? saved->payload : (qa_bytes){0};
+    if (!provider || provider->kind!=APPLICATION_PROVIDER_Q3 || !provider->launch ||
+        !provider->constructed || provider->attached || !provider->application ||
+        provider->application->operation!=APPLICATION_PERSISTING || !saved ||
+        saved->owner.kind!=QA_SAVE_PROVIDER || !saved->owner.instance ||
+        strcmp(saved->owner.instance,provider->launch->selection.instance) ||
+        strcmp(saved->owner.schema,"qa.q3.native") || saved->owner.schema_version!=4 ||
+        saved->owner.backend[0] || !qa_sha256_equal(&saved->owner.content,&provider->launch->identity) ||
+        !bytes.data || bytes.size<32 || memcmp(bytes.data,"QAPV",4) ||
+        qa_load_u32le(bytes.data+4)!=1 || qa_load_u32le(bytes.data+8)!=APPLICATION_PROVIDER_Q3 ||
+        qa_load_u32le(bytes.data+12)>1 || qa_load_u64le(bytes.data+24)!=bytes.size-32)
+        return application_fail(error,QA_ERROR_FORMAT,"Missing actual native Q3 physical CLIENT prefix");
+    native_q3_record record={0};
+    if (!native_q3_record_read((qa_bytes){bytes.data+32,bytes.size-32},&record,error)) return false;
+    if (record.game_present!=(provider->state.q3!=NULL))
+        return application_fail(error,QA_ERROR_FORMAT,"Saved Q3 GAME presence differs from its selected compiled roles");
+    return application_native_q3_remote_roles_restore_prepare(provider,record.clients,error);
+}
+
 static bool native_q3_capture(application_provider *provider, qa_buffer *out, qa_error *error)
 {
-    qa_buffer game={0}, wire={0}, settings={0}, ipfilters={0}, votes={0};
+    qa_buffer game={0}, wire={0}, settings={0}, ipfilters={0}, votes={0}, clients={0};
+    bool game_present=provider->state.q3!=NULL;
     bool present=provider->native_q3_wire!=NULL;
     bool console=provider->native_q3_console!=NULL;
     bool bound=application_native_q3_console_settings_bound(provider);
@@ -987,42 +1016,49 @@ static bool native_q3_capture(application_provider *provider, qa_buffer *out, qa
         application_native_q3_ipfilters_idle(provider) &&
         application_native_q3_votes_idle(provider) &&
         application_native_q3_team_status_idle(provider) &&
-        qa_q3_game_capture(provider->state.q3,&game,error);
+        application_native_q3_remote_roles_capture(provider,&clients,error);
+    if (ok && game_present) ok=qa_q3_game_capture(provider->state.q3,&game,error);
     if (ok && present) ok=application_native_q3_wire_capture(provider,&wire,error) && wire.size;
     if (ok && initialized) ok=application_native_q3_settings_capture(provider,&settings,error) && settings.size;
     if (ok && filters) ok=application_native_q3_ipfilters_capture(provider,&ipfilters,error) && ipfilters.size;
     if (ok && voting) ok=application_native_q3_votes_capture(provider,&votes,error) && votes.size;
-    if (ok && (!game.size || (cached && !console) || (filters && !console) ||
+    if (ok && ((game_present && !game.size) || !clients.size ||
+        (!game_present && (console || present || bound || cached || initialized || filters || voting || team)) ||
+        (cached && !console) || (filters && !console) ||
         (voting && !console) || (team && !console) || (team_bound && (!team || !bound)) ||
         (bound && !initialized) || (initialized && !cached) ||
         (filters_initialized && (!filters || !initialized)) ||
-        game.size>SIZE_MAX-56 || wire.size>SIZE_MAX-56-game.size ||
-        settings.size>SIZE_MAX-56-game.size-wire.size ||
-        ipfilters.size>SIZE_MAX-56-game.size-wire.size-settings.size ||
-        votes.size>SIZE_MAX-56-game.size-wire.size-settings.size-ipfilters.size))
+        game.size>SIZE_MAX-64 || wire.size>SIZE_MAX-64-game.size ||
+        settings.size>SIZE_MAX-64-game.size-wire.size ||
+        ipfilters.size>SIZE_MAX-64-game.size-wire.size-settings.size ||
+        votes.size>SIZE_MAX-64-game.size-wire.size-settings.size-ipfilters.size ||
+        clients.size>SIZE_MAX-64-game.size-wire.size-settings.size-ipfilters.size-votes.size))
         ok=application_fail(error,QA_ERROR_FORMAT,"Unqualified native Q3 source, settings and wire owners");
     if (ok) {
-        out->size=56+game.size+wire.size+settings.size+ipfilters.size+votes.size;
+        out->size=64+game.size+wire.size+settings.size+ipfilters.size+votes.size+clients.size;
         out->data=calloc(1,out->size);
         if (!out->data) { out->size=0; ok=application_fail(error,QA_ERROR_MEMORY,"Retaining native Q3 owner bundle"); }
     }
     if (ok) {
-        memcpy(out->data,"QAN3",4); qa_store_u32le(out->data+4,2);
+        memcpy(out->data,"QAN3",4); qa_store_u32le(out->data+4,3);
         qa_store_u32le(out->data+8,(console ? 1u : 0u)|(present ? 2u : 0u)|(bound ? 4u : 0u)|
             (cached ? 8u : 0u)|(initialized ? 16u : 0u)|(filters ? 32u : 0u)|
             (filters_initialized ? 64u : 0u)|(voting ? 128u : 0u)|
-            (team ? 256u : 0u)|(team_bound ? 512u : 0u));
+            (team ? 256u : 0u)|(team_bound ? 512u : 0u)|(game_present ? 1024u : 0u));
         qa_store_u64le(out->data+16,game.size); qa_store_u64le(out->data+24,wire.size);
         qa_store_u64le(out->data+32,settings.size);
         qa_store_u64le(out->data+40,ipfilters.size);
         qa_store_u64le(out->data+48,votes.size);
-        memcpy(out->data+56,game.data,game.size);
-        if (wire.size) memcpy(out->data+56+game.size,wire.data,wire.size);
-        if (settings.size) memcpy(out->data+56+game.size+wire.size,settings.data,settings.size);
-        if (ipfilters.size) memcpy(out->data+56+game.size+wire.size+settings.size,ipfilters.data,ipfilters.size);
-        if (votes.size) memcpy(out->data+56+game.size+wire.size+settings.size+ipfilters.size,votes.data,votes.size);
+        qa_store_u64le(out->data+56,clients.size);
+        size_t offset=64;
+        qa_buffer *parts[]={&game,&wire,&settings,&ipfilters,&votes,&clients};
+        for (size_t i=0;i<6;++i) {
+            if (parts[i]->size) memcpy(out->data+offset,parts[i]->data,parts[i]->size);
+            offset+=parts[i]->size;
+        }
     }
     qa_buffer_free(&game); qa_buffer_free(&wire); qa_buffer_free(&settings); qa_buffer_free(&ipfilters); qa_buffer_free(&votes);
+    qa_buffer_free(&clients);
     if (!ok && error && error->code==QA_OK)
         application_fail(error,QA_ERROR_ARGUMENT,"Native Q3 owner bundle is borrowed or incomplete");
     return ok;
@@ -1032,7 +1068,8 @@ static bool native_q3_restore(application_provider *provider, qa_bytes bytes, qa
 {
     native_q3_record record={0};
     if (!native_q3_record_read(bytes,&record,error)) return false;
-    if (record.console_present!=(provider->native_q3_console!=NULL) ||
+    if (record.game_present!=(provider->state.q3!=NULL) ||
+        record.console_present!=(provider->native_q3_console!=NULL) ||
         record.wire_present!=(provider->native_q3_wire!=NULL) ||
         record.settings_present!=(provider->native_q3_settings!=NULL) ||
         record.ipfilters_present!=(provider->native_q3_ipfilters!=NULL) ||
@@ -1043,7 +1080,8 @@ static bool native_q3_restore(application_provider *provider, qa_bytes bytes, qa
         application_native_q3_ipfilters_initialized(provider) ||
         application_native_q3_team_status_bound(provider))
         return application_fail(error,QA_ERROR_FORMAT,"Native Q3 bundle differs from its actual empty candidate services");
-    bool ok=qa_q3_game_restore(provider->state.q3,record.game,error) &&
+    bool ok=application_native_q3_remote_roles_restore_match(provider,record.clients,error) &&
+        (!record.game_present || qa_q3_game_restore(provider->state.q3,record.game,error)) &&
         (!record.settings_initialized || application_native_q3_settings_restore(provider,record.settings,error)) &&
         (!record.ipfilters_present || application_native_q3_ipfilters_restore(provider,record.ipfilters,error)) &&
         (!record.votes_present || application_native_q3_votes_restore(provider,record.votes,error)) &&
@@ -1196,9 +1234,9 @@ static bool persistence_inventory(application_persistence *operation, qa_applica
             owner->schema = schema;
             owner->schema_version = owner->kind == QA_SAVE_APPLICATION ? 6 :
                                     (owner->kind == QA_SAVE_PROVIDER &&
-                                     provider->kind == APPLICATION_PROVIDER_Q3) ? 3 :
+                                     provider->kind == APPLICATION_PROVIDER_Q3) ? 4 :
                                     owner->kind == QA_SAVE_CONTROLS ? 7 :
-                                    owner->kind == QA_SAVE_PROGRESSION || owner->kind == QA_SAVE_TARGETS ||
+                                    owner->kind == QA_SAVE_EQUIPMENT || owner->kind == QA_SAVE_PROGRESSION || owner->kind == QA_SAVE_TARGETS ||
                                     owner->kind == QA_SAVE_EVENTS ? 2 : 1;
             if (!owner->backend) owner->backend = "";
         } else {
@@ -1599,7 +1637,7 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
         operation->ops->reconnect(operation->ops->context, candidate, image, error);
     for (size_t i = 0; ok && i < candidate->provider_count; ++i) {
         application_provider *provider = candidate->providers[i];
-        if (provider->kind == APPLICATION_PROVIDER_Q3)
+        if (provider->kind == APPLICATION_PROVIDER_Q3 && provider->state.q3)
             ok = qa_q3_game_reconnect(provider->state.q3, error);
         else if (provider->kind == APPLICATION_PROVIDER_Q2)
             ok = qa_q2_game_restore_finish(provider->state.q2, error);
@@ -1614,6 +1652,7 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
     if (ok) ok = application_save_foundation_decode(image, &foundation, error) &&
         application_save_foundation_finish(candidate, &foundation, error);
     application_save_foundation_free(&foundation);
+    if (ok) ok = application_native_q1_wire_reconnect(candidate, error);
     if (ok) ok = application_portals_validate(candidate, error);
     if (ok) ok = application_bots_save_finish(candidate, error);
     if (ok && candidate->match_intents)

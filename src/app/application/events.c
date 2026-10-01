@@ -1,5 +1,8 @@
 #include "internal.h"
 #include "network_q1_signon.h"
+#include "native_q1_wire.h"
+#include "equipment_events.h"
+#include "equipment_runtime.h"
 
 #include <inttypes.h>
 #include <math.h>
@@ -344,6 +347,7 @@ bool application_emit(void *opaque, const qa_builtin_event *event,
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "gameplay event has no live application owner");
     if (!valid_event(application, event, error) ||
+        !application_native_q1_wire_emit(application, event, error) ||
         !reserve_event(application, error))
         return false;
 
@@ -482,7 +486,8 @@ bool application_emit_protocol(application_provider *provider,
     qa_application_protocol_event copied = *event;
     copied.provider = provider->owner;
     copied.dialect = provider->launch->selection.clock.kind;
-    copied.time_ns = qa_session_elapsed(application->session);
+    if (provider->kind != APPLICATION_PROVIDER_Q1)
+        copied.time_ns = qa_session_elapsed(application->session);
     copied.payload = (qa_bytes){payload, event->payload.size};
     copied.references = references;
     if (copied.signon &&
@@ -581,6 +586,11 @@ bool qa_application_clear_events(qa_application *application, qa_error *error)
     if (application->protocol_events_generation == UINT64_MAX)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "protocol event generation is exhausted");
+    if ((application->equipment && !qa_equipment_idle(application->equipment)) ||
+        !application_equipment_runtime_idle(application->equipment_runtime))
+        return application_fail(error, QA_ERROR_ARGUMENT, "gear event consumption retains a source operation");
+    application_equipment_events *gear = application_equipment_runtime_events(application->equipment_runtime);
+    if (!application_equipment_events_clear_ready(gear, error)) return false;
     ++application->protocol_events_generation;
     application->event_count = 0;
     application->q2_map_event_count = 0;
@@ -588,5 +598,6 @@ bool qa_application_clear_events(qa_application *application, qa_error *error)
     application->q2_player_event_count = 0;
     application->protocol_event_count = 0;
     qa_arena_reset(&application->event_arena);
+    application_equipment_events_clear(gear);
     return true;
 }
