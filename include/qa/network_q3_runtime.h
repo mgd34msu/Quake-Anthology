@@ -7,14 +7,27 @@
  * runtime remains the only transport receiver. Borrowed views expire on the
  * next receive, history mutation or detach. Source cgame consumes complete
  * snapshots and source usercmd history for its own prediction replay. */
+typedef struct qa_network_q3_client_policy {
+    void *context;
+    /* Runtime supplies its actual connection and clock. The admitted source
+     * supplies client cvars and initialization/download readiness. */
+    bool (*settings)(void *, const qa_net_client *, qa_q3_client_readiness *,
+        qa_q3_client_send *, qa_error *);
+} qa_network_q3_client_policy;
 bool qa_network_attach_q3_client(qa_network_runtime *, const qa_net_connect *,
     qa_q3_product, int32_t challenge, uint16_t qport, const qa_q3_client_hooks *,
-    uint64_t now_ns, qa_net_client_id *, qa_error *);
+    const qa_network_q3_client_policy *, uint64_t now_ns, qa_net_client_id *, qa_error *);
 const qa_q3_client_peer *qa_network_q3_client_view(qa_network_runtime *, qa_net_client_id);
 bool qa_network_q3_client_command(qa_network_runtime *, qa_net_client_id, const char *, qa_error *);
 bool qa_network_q3_client_usercmd(qa_network_runtime *, qa_net_client_id, const qa_q3_usercmd *, qa_error *);
 bool qa_network_q3_client_execute(qa_network_runtime *, qa_net_client_id, int32_t, qa_error *);
+/* Explicit source send, including EOF acknowledgements. Uses the same actual
+ * client policy and native sequence/channel owner as scheduled sends. */
+bool qa_network_q3_client_send(qa_network_runtime *, qa_net_client_id, int32_t real_time, qa_error *);
 bool qa_network_q3_client_disconnect(qa_network_runtime *, qa_net_client_id, int32_t real_time, qa_error *);
+/* Authenticated server closure latches native retirement; safe source/seat
+ * cleanup belongs to the enclosing frontend after receive callbacks return. */
+bool qa_network_q3_client_retire(qa_network_runtime *, qa_net_client_id, qa_error *);
 
 /* Source callbacks borrow their application owner. The adapter binds the
  * original channel/reliable/snapshot owner to the shared client and seat.

@@ -406,12 +406,13 @@ const qa_q3_admission_slot *qa_q3_route(const qa_net_address *from, qa_bytes pac
     return NULL;
 }
 bool qa_q3_authorize_server_packet(const qa_q3_challenge *c, const char *game, const char *strict, qa_buffer *out, qa_error *e) {
-    if (!c || !c->present || c->address.kind != QA_NET_IPV4 || !game || !strict || strlen(game) >= 1024
-        || strpbrk(game, "\r\n ") || strpbrk(strict, "\r\n ") || strlen(strict) >= 128)
+    if (!c || !c->present || c->address.kind != QA_NET_IPV4 || !game || !strict || strlen(game) >= 1024)
         return fail(e, QA_ERROR_ARGUMENT, "Invalid Q3 IP authorization request");
-    char text[1280]; const uint8_t *v = c->address.host.ipv4;
-    snprintf(text, sizeof(text), "getIpAuthorize %d %u.%u.%u.%u %s 0 %s", c->challenge,
+    char text[QA_Q3_MESSAGE_BYTES]; const uint8_t *v = c->address.host.ipv4;
+    int count = snprintf(text, sizeof(text), "getIpAuthorize %d %u.%u.%u.%u %s 0 %s", c->challenge,
         v[0], v[1], v[2], v[3], *game ? game : "baseq3", strict);
+    if (count < 0 || (size_t)count > QA_Q3_MESSAGE_BYTES - 5)
+        return fail(e, QA_ERROR_FORMAT, "Q3 authorization request exceeds actual connectionless message capacity");
     return qa_q3_connectionless_encode(text, out, e);
 }
 bool qa_q3_authorize_client_packet(const char *key, bool demo, int32_t anonymous, qa_buffer *out, qa_error *e) {

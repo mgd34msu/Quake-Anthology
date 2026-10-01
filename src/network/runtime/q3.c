@@ -8,11 +8,25 @@
 
 typedef struct q3_runtime_client {
     qa_q3_client_peer *source;
+    qa_network_q3_client_policy policy;
 } q3_runtime_client;
+static bool client_settings(q3_runtime_client *p, const qa_net_client *client, int32_t time,
+    qa_q3_client_readiness *ready, qa_q3_client_send *send, qa_error *error)
+{
+    if (!client || !p->policy.settings) return qa_network_fail(error, "Q3 client lost its admitted send policy");
+    *ready = (qa_q3_client_readiness){.real_time = time,
+        .local = client->endpoint.kind == QA_NET_LOOPBACK, .lan = qa_q3_is_lan(&client->endpoint)};
+    *send = (qa_q3_client_send){.real_time = time};
+    if (!p->policy.settings(p->policy.context, client, ready, send, error)) return false;
+    return (ready->real_time == time && send->real_time == time &&
+        ready->local == (client->endpoint.kind == QA_NET_LOOPBACK) && ready->lan == qa_q3_is_lan(&client->endpoint)) ||
+        qa_network_fail(error, "Q3 source send policy changed its actual transport clock or endpoint");
+}
 static bool client_receive(void *context, qa_network_runtime *runtime, qa_net_client_id id,
     const qa_net_datagram *packet, qa_error *error)
 {
     q3_runtime_client *p = context; qa_q3_receive_kind kind;
+    if (p->source->disconnected || p->source->disconnect_started) return true;
     if (!qa_q3_client_peer_receive(p->source, packet->payload,
         (int32_t)((packet->received_ns / UINT64_C(1000000)) & INT32_MAX), &kind, error)) return false;
     if (kind == QA_Q3_PACKET_STALE) return true;
@@ -27,13 +41,12 @@ static bool client_flush(void *context, qa_network_runtime *runtime, qa_net_clie
     uint64_t now, qa_error *error)
 {
     q3_runtime_client *p = context;
+    if (p->source->disconnected || p->source->disconnect_started) return true;
     const qa_net_client *client = qa_net_connections_get(qa_network_connections(runtime), id);
     int32_t time = (int32_t)((now / UINT64_C(1000000)) & INT32_MAX);
-    qa_q3_client_readiness ready = {.real_time = time, .maximum_packets = 30,
-        .active = client->phase == QA_NET_ACTIVE, .primed = client->phase == QA_NET_PRIMED,
-        .local = client->endpoint.kind == QA_NET_LOOPBACK, .lan = qa_q3_is_lan(&client->endpoint)};
-    return !qa_q3_client_peer_ready(p->source, &ready) ||
-        qa_q3_client_peer_send(p->source, &(qa_q3_client_send){.real_time = time}, error);
+    qa_q3_client_readiness ready; qa_q3_client_send send;
+    return client_settings(p, client, time, &ready, &send, error) &&
+        (!qa_q3_client_peer_ready(p->source, &ready) || qa_q3_client_peer_send(p->source, &send, error));
 }
 static bool client_command(void *context, const qa_network_command *command, qa_error *error)
 {
@@ -74,12 +87,13 @@ static q3_runtime_client *client_get(qa_network_runtime *runtime, qa_net_client_
 }
 bool qa_network_attach_q3_client(qa_network_runtime *runtime, const qa_net_connect *request,
     qa_q3_product product, int32_t challenge, uint16_t qport, const qa_q3_client_hooks *hooks,
-    uint64_t now, qa_net_client_id *out, qa_error *error)
+    const qa_network_q3_client_policy *policy, uint64_t now, qa_net_client_id *out, qa_error *error)
 {
-    if (!request || request->protocol.kind != QA_NET_Q3_68 || request->seat_count != 1 || !hooks || !out)
+    if (!request || request->protocol.kind != QA_NET_Q3_68 || request->seat_count != 1 || !hooks || !policy || !policy->settings || !out)
         return qa_network_fail(error, "Q3 client attachment requires its original single-seat admission");
     q3_runtime_client *p = calloc(1, sizeof(*p));
     if (!p) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating Q3 runtime client"); return false; }
+    p->policy = *policy;
     qa_net_client_id id;
     if (!qa_network_attach(runtime, request, &client_ops, p, now, &id, error)) { free(p); return false; }
     if (!qa_q3_client_peer_create((qa_q3_identity){id, true, request->seats[0].seat}, product,
@@ -96,8 +110,25 @@ bool qa_network_q3_client_usercmd(qa_network_runtime *runtime, qa_net_client_id 
 { q3_runtime_client *p = client_get(runtime, id, error); return p && qa_q3_client_peer_usercmd(p->source, command, error); }
 bool qa_network_q3_client_execute(qa_network_runtime *runtime, qa_net_client_id id, int32_t sequence, qa_error *error)
 { q3_runtime_client *p = client_get(runtime, id, error); return p && qa_q3_client_peer_execute(p->source, sequence, false, error); }
+bool qa_network_q3_client_send(qa_network_runtime *runtime, qa_net_client_id id, int32_t now, qa_error *error)
+{
+    q3_runtime_client *p = client_get(runtime, id, error); qa_q3_client_readiness ready; qa_q3_client_send send;
+    return p && client_settings(p, qa_net_connections_get(qa_network_connections(runtime), id), now, &ready, &send, error) &&
+        qa_q3_client_peer_send(p->source, &send, error);
+}
 bool qa_network_q3_client_disconnect(qa_network_runtime *runtime, qa_net_client_id id, int32_t now, qa_error *error)
-{ q3_runtime_client *p = client_get(runtime, id, error); return p && qa_q3_client_peer_disconnect(p->source, &(qa_q3_client_send){.real_time = now}, error); }
+{
+    q3_runtime_client *p = client_get(runtime, id, error); qa_q3_client_readiness ready; qa_q3_client_send send;
+    if (p && p->source->disconnected) return true;
+    return p && client_settings(p, qa_net_connections_get(qa_network_connections(runtime), id), now, &ready, &send, error) &&
+        qa_q3_client_peer_disconnect(p->source, &send, error);
+}
+bool qa_network_q3_client_retire(qa_network_runtime *runtime, qa_net_client_id id, qa_error *error)
+{
+    q3_runtime_client *p = client_get(runtime, id, error);
+    if (!p) return false;
+    p->source->disconnected = true; return true;
+}
 
 typedef struct q3_runtime_peer {
     qa_network_runtime *runtime;
@@ -342,6 +373,11 @@ bool qa_network_q3_restore_peer(qa_network_runtime *runtime, const qa_net_client
     if (kind == QA_NETWORK_SOURCE_Q3_CLIENT) {
         q3_runtime_client *p = calloc(1, sizeof(*p));
         if (!p) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring Q3 runtime client"); return false; }
+        if (!refs->client_q3_policy) {
+            free(p); return qa_network_fail(error, "Restored Q3 client lacks its actual source send policy");
+        }
+        if (!refs->client_q3_policy(refs->context, client, &p->policy, error)) { free(p); return false; }
+        if (!p->policy.settings) { free(p); return qa_network_fail(error, "Restored Q3 client policy has no actual producer"); }
         if (!qa_q3_client_peer_restore(bytes, identity, &client_hooks, &p->source, error)) { free(p); return false; }
         if (p->source->demo || !qa_net_address_equal(&p->source->remote, &client->endpoint, true)) {
             client_close(p); return qa_network_fail(error, "Restored Q3 client endpoint or live mode differs");

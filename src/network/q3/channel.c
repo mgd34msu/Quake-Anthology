@@ -35,6 +35,28 @@ uint32_t qa_q3_channel_outgoing(const qa_q3_channel *c) { return c->outgoing; }
 uint32_t qa_q3_channel_incoming(const qa_q3_channel *c) { return c->incoming; }
 qa_q3_role qa_q3_channel_role(const qa_q3_channel *c) { return c->role; }
 uint16_t qa_q3_channel_qport(const qa_q3_channel *c) { return c->qport; }
+bool qa_q3_channel_transmit_matches(const qa_q3_channel *c, qa_bytes packet, qa_error *error)
+{
+    if (!c || c->role != QA_Q3_CLIENT || !packet.data || packet.size < 6 ||
+        packet.size > sizeof(c->packet) || (!c->pending && !c->outgoing))
+        return fail(error, QA_ERROR_FORMAT, "Q3 retained datagram lacks its actual client channel");
+    uint32_t wire = get32(packet.data), sequence = c->outgoing - (c->pending ? 0u : 1u);
+    if ((wire & UINT32_C(0x7fffffff)) != sequence ||
+        ((wire & UINT32_C(0x80000000)) != 0) != c->fragmented || get16(packet.data + 4) != c->qport)
+        return fail(error, QA_ERROR_FORMAT, "Q3 retained datagram differs from its produced channel identity");
+    size_t start = 0, length = c->send_size, header = 6;
+    if (c->fragmented) {
+        if (packet.size < 10) return fail(error, QA_ERROR_FORMAT, "Q3 retained fragment header is truncated");
+        start = get16(packet.data + 6); length = get16(packet.data + 8); header = 10;
+        if (start > c->send_size || start % QA_Q3_FRAGMENT_BYTES || length > QA_Q3_FRAGMENT_BYTES ||
+            length != (c->send_size - start > QA_Q3_FRAGMENT_BYTES ? QA_Q3_FRAGMENT_BYTES : c->send_size - start) ||
+            c->pending != (length == QA_Q3_FRAGMENT_BYTES))
+            return fail(error, QA_ERROR_FORMAT, "Q3 retained fragment differs from its true produced source span");
+    } else if (c->pending) return fail(error, QA_ERROR_FORMAT, "Q3 produced whole datagram retains an unadvanced channel");
+    return (start + length == c->send_offset && packet.size == header + length &&
+        (!length || !memcmp(packet.data + header, c->send + start, length))) ||
+        fail(error, QA_ERROR_FORMAT, "Q3 retained datagram bytes differ from their advanced source channel");
+}
 bool qa_q3_channel_checkpoint(const qa_q3_channel *c, qa_net_writer *writer)
 {
     if (!c || !writer) return writer && qa_net_writer_fail(writer, "Missing Q3 channel checkpoint owner");
@@ -61,7 +83,7 @@ bool qa_q3_channel_restore(qa_net_reader *reader, qa_q3_channel **out)
         outgoing > UINT32_C(0x80000000) || fragment > UINT32_C(0x7fffffff) || pending > 1 || fragmented > 1 ||
         send_size > QA_Q3_MESSAGE_BYTES || receive_size > QA_Q3_MESSAGE_BYTES || send_offset > send_size ||
         (pending && outgoing > UINT32_C(0x7fffffff)) ||
-        (pending && fragmented != (send_size >= QA_Q3_FRAGMENT_BYTES)) ||
+        (fragmented != (send_size >= QA_Q3_FRAGMENT_BYTES)) ||
         (pending && (!fragmented ? send_offset != 0 : send_offset % QA_Q3_FRAGMENT_BYTES != 0)) ||
         (!pending && send_offset != send_size) || receive_size % QA_Q3_FRAGMENT_BYTES != 0)
         return qa_net_reader_fail(reader, "Invalid Q3 channel continuation fields");

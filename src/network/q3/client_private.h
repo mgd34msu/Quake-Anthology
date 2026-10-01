@@ -16,6 +16,10 @@ struct qa_q3_client_peer {
     int32_t server_message_sequence, server_command_sequence, last_executed_server_command;
     int32_t server_id, last_packet_sent_time, receive_time;
     bool demo_waiting, disconnected, demo;
+    bool disconnect_started;
+    uint8_t disconnect_packets;
+    uint16_t transmit_size;
+    uint8_t transmit_packet[QA_Q3_FRAGMENT_BYTES + 10];
     qa_q3_gamestate gamestate;
     qa_q3_snapshot_slot history[QA_Q3_PACKET_BACKUP];
     int32_t latest_snapshot;

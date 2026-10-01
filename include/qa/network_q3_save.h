@@ -9,6 +9,9 @@ bool qa_q3_channel_checkpoint(const qa_q3_channel *, qa_net_writer *);
 bool qa_q3_channel_restore(qa_net_reader *, qa_q3_channel **);
 qa_q3_role qa_q3_channel_role(const qa_q3_channel *);
 uint16_t qa_q3_channel_qport(const qa_q3_channel *);
+/* Qualifies the last produced datagram against genuine already-advanced
+ * channel source bytes. It does not advance or regenerate transmission. */
+bool qa_q3_channel_transmit_matches(const qa_q3_channel *, qa_bytes, qa_error *);
 
 /* Capture at a drained runtime boundary. The complete source command/player/
  * entity history and reliable/fragment state survive; parser output scratch
