@@ -667,6 +667,7 @@ void qa_q1_game_destroy(qa_q1_game *g) {
     }
     while (g->allocated_players) {
         q1_player *next = g->allocated_players->allocation_next;
+        q1_inventory_close(g, g->allocated_players);
         q1_source_client_clear(g->allocated_players);
         free(g->allocated_players);
         g->allocated_players = next;
@@ -727,6 +728,7 @@ void qa_q1_game_actor_released(qa_q1_game *g, qa_actor_record actor) {
     }
     q1_player *player = g->players[actor.id.slot];
     if (player && qa_actor_id_equal(player->id, actor.id)) {
+        q1_inventory_close(g, player);
         g->players[actor.id.slot] = NULL;
         q1_source_client_clear(player);
         player->active = false;

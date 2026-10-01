@@ -166,7 +166,7 @@ typedef struct qa_q1_host {
     bool (*find_targets)(void *, qa_string_id, qa_actor_id *, size_t capacity, size_t *count,
                          qa_error *);
     qa_actor_owner (*combat_provider)(void *, qa_actor_id);
-    qa_supply *(*supply)(void *, qa_actor_id recipient);
+    bool (*supply)(void *, qa_actor_id recipient, qa_supply **, qa_error *);
     bool (*count_monster_kill)(void *, qa_actor_id);
     bool (*monster_killed)(void *, qa_actor_id, qa_actor_id killer, bool count_kill, qa_error *);
     bool (*monster_found)(void *, qa_actor_id, qa_actor_id enemy, qa_error *);
@@ -468,6 +468,11 @@ bool qa_q1_game_water_transition(qa_q1_game *, qa_actor_id, qa_error *);
 void qa_q1_game_actor_released(qa_q1_game *, qa_actor_record);
 qa_item_id qa_q1_weapon_item(const qa_q1_game *, qa_q1_weapon);
 const char *qa_q1_weapon_identity(qa_q1_weapon);
+typedef struct qa_q1_weapon_profile {
+    const char *item, *label;
+} qa_q1_weapon_profile;
+/* Borrowed native source identities; no game or inventory admission occurs. */
+bool qa_q1_weapon_profile_identity(qa_q1_program, qa_q1_weapon, qa_q1_weapon_profile *);
 bool qa_q1_weapon_source(qa_q1_program, uint32_t source_value, qa_q1_weapon *);
 qa_item_id qa_q1_ammo_item(const qa_q1_game *, qa_q1_ammo);
 

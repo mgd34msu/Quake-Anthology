@@ -6,6 +6,7 @@
 #include "qa/application_network.h"
 #include "qa/frontend.h"
 #include "qa/game_q1_checkpoint.h"
+#include "qa/game_q1_inventory.h"
 #include "qa/game_q2_checkpoint.h"
 #include "qa/game_q3_save.h"
 #include "qa/modes_save.h"
@@ -76,6 +77,8 @@ static bool inventory_group(void *opaque, qa_actor_id actor, uint64_t serial,
         return qa_modes_inventory_group(app->modes, actor, serial, saved, out, error);
     application_provider *provider = source_owner(app, saved->owner);
     if (provider) {
+        if (provider->kind == APPLICATION_PROVIDER_Q1)
+            return qa_q1_game_inventory_group(provider->state.q1, actor, serial, saved, out, error);
         if (provider->kind == APPLICATION_PROVIDER_Q2)
             return qa_q2_game_inventory_group(provider->state.q2, actor, serial, saved, out, error);
         if (provider->kind == APPLICATION_PROVIDER_Q3)

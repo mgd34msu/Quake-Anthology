@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../wire_internal.h"
 
 static const uint8_t signature[8] = {'Q', 'A', 'Q', '1', 'S', 'A', 'V', 'E'};
 
@@ -6,12 +7,13 @@ struct qa_q1_restore {
     qa_q1_game *destination;
     qa_q1_game before, candidate;
     q1_map_runtime map_before;
-    uint64_t registry_revision;
+    uint64_t registry_revision, wire_revision, wire_generation;
 };
 
 static bool boundary(const qa_q1_game *g, bool empty, qa_error *error) {
     if (!g || g->destroy_pending || g->observation_depth || !qa_session_safe(g->services.session) ||
         !qa_world_idle(g->services.world) || !qa_combat_idle(g->services.combat) ||
+        !qa_inventory_idle(g->services.inventory) ||
         (g->services.pickups && !qa_pickups_idle(g->services.pickups)) ||
         g->capacity != qa_actors_capacity(qa_session_actors(g->services.session)) ||
         (g->services.physics && g->services.physics->push_transaction)) {
@@ -41,6 +43,7 @@ static bool same_target(const qa_target_binding *a, const qa_target_binding *b) 
 }
 /* Candidate storage never owns shared services or published bindings. */
 static void storage_free(qa_q1_game *g) {
+    q1_wire_destroy(g);
     while (g->allocated_actors) {
         q1_actor *next = g->allocated_actors->allocation_next;
         free(g->allocated_actors);
@@ -259,7 +262,7 @@ static bool players(q1_save_io *io, qa_q1_game *g) {
     return true;
 }
 static bool payload(q1_save_io *io, qa_q1_game *g) {
-    if (!q1_save_runtime(io, g))
+    if (!q1_save_runtime(io, g) || !q1_save_wire(io, g))
         return false;
     bool map = g->maps != NULL;
     Q1_SAVE(io, bool, map);
@@ -271,7 +274,7 @@ static bool payload(q1_save_io *io, qa_q1_game *g) {
     size_t count;
     if (!groups(io, g, &index, &count))
         return false;
-    bool ok = actors(io, g, index, count) && players(io, g);
+    bool ok = actors(io, g, index, count) && players(io, g) && q1_save_wire_validate(io, g);
     free(index);
     return ok;
 }
@@ -327,6 +330,8 @@ bool qa_q1_game_restore_prepare(qa_q1_game *g, qa_bytes bytes, qa_q1_restore **o
     ticket->destination = g;
     memcpy(&ticket->before, g, sizeof(*g));
     ticket->registry_revision = qa_actors_revision(qa_session_actors(g->services.session));
+    ticket->wire_revision = g->wire ? g->wire->revision : 0;
+    ticket->wire_generation = g->wire ? g->wire->generation : 0;
     if (g->maps)
         memcpy(&ticket->map_before, g->maps, sizeof(*g->maps));
     qa_q1_game *candidate = &ticket->candidate;
@@ -336,6 +341,7 @@ bool qa_q1_game_restore_prepare(qa_q1_game *g, qa_bytes bytes, qa_q1_restore **o
     candidate->allocated_actors = candidate->spare_actors = candidate->retired_actors = NULL;
     candidate->allocated_players = candidate->spare_players = candidate->retired_players = NULL;
     candidate->maps = NULL;
+    candidate->wire = NULL;
     q1_save_io io = {.game = candidate, .input = bytes, .error = error, .reading = true};
     qa_string_id *strings = NULL;
     candidate->actors = allocate(&io, g->capacity, sizeof(*g->actors));
@@ -413,6 +419,15 @@ bool qa_q1_game_restore_finish(qa_q1_game *g, qa_error *error) {
         return false;
     }
     for (uint32_t i = 0; i < g->capacity; ++i) {
+        q1_player *player = g->players[i];
+        if (player && player->weapon_definitions.serial &&
+            (player->inventory_game != g ||
+             !qa_inventory_lease_current(g->services.inventory, player->weapon_definitions))) {
+            qa_error_set(error, QA_ERROR_FORMAT, i, "Q1 saved weapon definitions are missing");
+            return false;
+        }
+    }
+    for (uint32_t i = 0; i < g->capacity; ++i) {
         q1_actor *actor = g->actors[i];
         if (!actor)
             continue;
@@ -444,7 +459,9 @@ bool qa_q1_game_restore_validate(const qa_q1_restore *ticket, qa_error *error) {
     const qa_q1_game *g = ticket->destination;
     if (memcmp(g, &ticket->before, sizeof(*g)) ||
         (g->maps && memcmp(g->maps, &ticket->map_before, sizeof(*g->maps))) ||
-        qa_actors_revision(qa_session_actors(g->services.session)) != ticket->registry_revision) {
+        qa_actors_revision(qa_session_actors(g->services.session)) != ticket->registry_revision ||
+        (g->wire && (g->wire->generation != ticket->wire_generation ||
+                    g->wire->revision == UINT64_MAX || g->wire->revision != ticket->wire_revision))) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 restoration candidate is stale");
         return false;
     }
@@ -456,6 +473,9 @@ bool qa_q1_game_restore_commit(qa_q1_restore *ticket, qa_error *error) {
     qa_q1_game *g = ticket->destination;
     storage_free(g);
     *g = ticket->candidate;
+    for (uint32_t i = 0; i < g->capacity; ++i)
+        if (g->players[i] && g->players[i]->weapon_definitions.serial)
+            g->players[i]->inventory_game = g;
     free(ticket);
     return true;
 }

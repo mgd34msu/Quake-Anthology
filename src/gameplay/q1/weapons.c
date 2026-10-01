@@ -131,8 +131,7 @@ int q1_weapon_ammo(qa_q1_weapon weapon) {
 qa_q1_weapon q1_best_weapon(qa_q1_game *g, q1_player *player) {
     return q1_best_weapon_before(g, player, NULL, 0);
 }
-qa_q1_weapon q1_best_weapon_before(qa_q1_game *g, q1_player *player,
-                                   const qa_pickup_receipt *receipts, size_t count) {
+static const qa_q1_weapon *best_weapon_order(const qa_q1_game *g, size_t *count) {
     static const qa_q1_weapon base[] = {QA_Q1_LIGHTNING, QA_Q1_SUPER_NAILGUN, QA_Q1_SUPER_SHOTGUN,
                                         QA_Q1_NAILGUN,   QA_Q1_SHOTGUN,       QA_Q1_AXE};
     static const qa_q1_weapon hipnotic[] = {QA_Q1_LIGHTNING,     QA_Q1_LASER,   QA_Q1_SUPER_NAILGUN,
@@ -158,6 +157,13 @@ qa_q1_weapon q1_best_weapon_before(qa_q1_game *g, q1_player *player,
         order = mg3;
         length = sizeof(mg3) / sizeof(*mg3);
     }
+    *count = length;
+    return order;
+}
+qa_q1_weapon q1_best_weapon_before(qa_q1_game *g, q1_player *player,
+                                   const qa_pickup_receipt *receipts, size_t count) {
+    size_t length;
+    const qa_q1_weapon *order = best_weapon_order(g, &length);
     for (size_t i = 0; i < length; ++i) {
         qa_q1_weapon weapon = order[i];
         int ammo = q1_weapon_ammo(weapon);
@@ -179,6 +185,46 @@ qa_q1_weapon q1_best_weapon_before(qa_q1_game *g, q1_player *player,
             return weapon;
     }
     return QA_Q1_AXE;
+}
+static bool best_player_current(qa_q1_game *g, qa_actor_id actor,
+    const q1_player *player, qa_error *error) {
+    if (player && q1_player_get(g, actor) == player && player->arsenal) return true;
+    qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 best-weapon read lost its selected arsenal player");
+    return false;
+}
+bool q1_best_weapon_before_read(qa_q1_game *g, qa_actor_id actor, q1_player *player,
+    const qa_pickup_receipt *receipts, size_t count, qa_q1_weapon *out, qa_error *error) {
+    if (!out || (count && !receipts) || !best_player_current(g, actor, player, error)) return false;
+    size_t length;
+    const qa_q1_weapon *order = best_weapon_order(g, &length);
+    qa_q1_weapon selected = QA_Q1_AXE;
+    for (size_t i = 0; i < length; ++i) {
+        qa_q1_weapon weapon = order[i];
+        qa_inventory_entry owned;
+        if (!qa_inventory_entry_read(g->services.inventory, actor, g->weapons[weapon], &owned, error) ||
+            !best_player_current(g, actor, player, error)) return false;
+        if (owned.count <= 0 || (weapon == QA_Q1_LIGHTNING && player->input.water_level > 1)) continue;
+        int ammo = q1_weapon_ammo(weapon);
+        double available = 1;
+        if (ammo >= 0) {
+            bool found = false;
+            for (size_t j = 0; j < count; ++j)
+                if (receipts[j].item == g->ammo[ammo]) {
+                    available = receipts[j].before; found = true; break;
+                }
+            if (!found) {
+                qa_inventory_entry entry;
+                if (!qa_inventory_entry_read(g->services.inventory, actor, g->ammo[ammo], &entry, error) ||
+                    !best_player_current(g, actor, player, error)) return false;
+                available = entry.count;
+            }
+        }
+        double needed = weapon == QA_Q1_SUPER_NAILGUN || weapon == QA_Q1_SUPER_SHOTGUN ||
+            weapon == QA_Q1_LAVA_SUPER_NAILGUN ? 2 : 1;
+        if (available >= needed) { selected = weapon; break; }
+    }
+    *out = selected;
+    return true;
 }
 static qa_string_id weapon_model(const qa_q1_game *g, const q1_player *player) {
     if (player->weapon == QA_Q1_MG3_MJOLNIR && player->mg3_hammer_glow &&
@@ -258,26 +304,45 @@ bool qa_q1_player_inventory_reset(qa_q1_game *g, qa_actor_id actor, qa_error *er
 }
 bool qa_q1_player_attach(qa_q1_game *g, qa_actor_id actor, bool initial_inventory,
                          qa_error *error) {
-    if (!g || !q1_alive(g, actor)) {
-        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 arsenal needs a live shared player");
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
         return false;
+    bool result = false;
+    q1_player *player = NULL;
+    if (!q1_alive(g, actor)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q1 arsenal needs a live shared player");
+        goto finish;
     }
     q1_player *existing = q1_player_get(g, actor);
-    if (existing && existing->arsenal)
-        return true;
+    if (existing && existing->arsenal) {
+        player = existing;
+        result = q1_inventory_bind(g, player, error);
+        goto finish;
+    }
     if (initial_inventory && !reset_inventory(g, actor, error))
-        return false;
-    q1_player *player = q1_player_allocate(g, actor, error);
+        goto finish;
+    player = q1_player_allocate(g, actor, error);
     if (!player)
-        return false;
+        goto finish;
     player->arsenal = true;
     if (initial_inventory && g->options.program == QA_Q1_MG3 &&
         !q1_mg3_capacities(g, player, error))
-        return false;
+        goto finish;
+    if (!q1_inventory_bind(g, player, error))
+        goto finish;
     qa_body_state body;
     if (qa_world_body_read(g->services.world, actor, &body, NULL))
         player->input.view_angles = body.angles;
-    return q1_weapon_event(g, player, 0, 0, error);
+    result = q1_weapon_event(g, player, 0, 0, error);
+finish:
+    if (result && (!qa_q1_game_operation_live(&operation) ||
+                   q1_player_get(g, actor) != player)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+                     "Q1 arsenal source retired during player admission");
+        result = false;
+    }
+    qa_q1_game_operation_end(&operation);
+    return result;
 }
 bool qa_q1_player_source_input(qa_q1_game *g, qa_actor_id actor, const qa_q1_input *input,
                                qa_error *error) {
@@ -327,6 +392,27 @@ bool qa_q1_player_select(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon, 
     player->continuous = false;
     player->animation_at = -1;
     return q1_weapon_event(g, player, 0, 0, error);
+}
+bool q1_player_select_read(qa_q1_game *g, qa_actor_id actor, q1_player *player,
+    qa_q1_weapon weapon, qa_error *error) {
+    if (weapon < QA_Q1_AXE || weapon >= QA_Q1_WEAPON_COUNT) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Invalid selected Q1 weapon");
+        return false;
+    }
+    qa_inventory_entry owned;
+    if (!best_player_current(g, actor, player, error) ||
+        !qa_inventory_entry_read(g->services.inventory, actor, g->weapons[weapon], &owned, error) ||
+        !best_player_current(g, actor, player, error)) return false;
+    if (owned.count <= 0) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Selected Q1 weapon is not owned");
+        return false;
+    }
+    player->weapon = weapon;
+    player->weapon_frame = 0;
+    player->continuous = false;
+    player->animation_at = -1;
+    return q1_weapon_event(g, player, 0, 0, error) &&
+        best_player_current(g, actor, player, error);
 }
 bool qa_q1_player_read(const qa_q1_game *g, qa_actor_id actor, qa_q1_player_view *out) {
     if (!g || !out || actor.slot >= g->capacity ||
@@ -546,8 +632,15 @@ bool qa_q1_player_prethink(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
 }
 bool q1_environment_damage(qa_q1_game *g, qa_actor_id actor, float amount, qa_hazard hazard,
                            qa_error *error) {
+    qa_actor_id world = g && g->services.physics ? g->services.physics->world_actor : (qa_actor_id){0};
+    qa_body_state body;
+    if (!world.registry || !qa_actors_get(qa_session_actors(g->services.session), world) ||
+        !qa_world_body_read(g->services.world, world, &body, error)) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Q1 environmental damage requires its installed source world body");
+        return false;
+    }
     qa_damage_request request = {.attack =
-                                     q1_attack(g, (qa_actor_id){0}, actor, QA_Q1_WEAPON_COUNT),
+                                     q1_attack(g, world, world, QA_Q1_WEAPON_COUNT),
                                  .target = actor,
                                  .amount = amount};
     request.attack.cause = (qa_damage_cause){.kind = QA_CAUSE_ENVIRONMENT, .source.hazard = hazard};

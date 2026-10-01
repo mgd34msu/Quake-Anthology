@@ -123,6 +123,18 @@ bool q1_save_player(q1_save_io *io, q1_player *player) {
     Q1_SAVE(io, vector, player->punch);
     Q1_SAVE(io, bool, player->continuous);
     Q1_SAVE(io, bool, player->arsenal);
+    Q1_SAVE(io, u64, player->weapon_definitions.serial);
+    if (player->weapon_definitions.serial) {
+        if (!player->arsenal)
+            return q1_save_fail(io, "Q1 weapon definitions have no admitted arsenal");
+        if (io->reading) {
+            player->weapon_definitions.actor = player->id;
+            player->inventory_game = io->game;
+        } else if (player->inventory_game != io->game ||
+            !qa_actor_id_equal(player->weapon_definitions.actor, player->id) ||
+            !qa_inventory_lease_current(io->game->services.inventory, player->weapon_definitions))
+            return q1_save_fail(io, "Q1 weapon definition lease is no longer current");
+    }
     Q1_SAVE(io, bool, player->character);
     Q1_SAVE(io, bool, player->source_client);
     Q1_SAVE(io, u32, player->client_slot);

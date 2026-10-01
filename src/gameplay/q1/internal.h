@@ -362,6 +362,8 @@ typedef struct q1_player {
     qa_vec3 punch;
     uint32_t client_slot;
     bool active, continuous, arsenal, character, source_client;
+    qa_q1_game *inventory_game;
+    qa_inventory_lease weapon_definitions;
     q1_source_info *source_info;
     size_t source_info_count;
     float source_frags,source_team;
@@ -503,6 +505,8 @@ q1_actor *q1_entity(qa_q1_game *, qa_actor_id);
 const q1_actor *q1_entity_const(const qa_q1_game *, qa_actor_id);
 q1_player *q1_player_get(qa_q1_game *, qa_actor_id);
 q1_player *q1_player_allocate(qa_q1_game *, qa_actor_id, qa_error *);
+bool q1_inventory_bind(qa_q1_game *, q1_player *, qa_error *);
+void q1_inventory_close(qa_q1_game *, q1_player *);
 bool q1_alive(qa_q1_game *, qa_actor_id);
 float q1_random(qa_q1_game *);
 float q1_health(qa_q1_game *, qa_actor_id);
@@ -717,5 +721,6 @@ qa_q1_weapon q1_combo_weapon(qa_q1_game *, q1_player *, qa_q1_weapon);
 qa_q1_weapon q1_best_weapon_before(qa_q1_game *, q1_player *, const qa_pickup_receipt *, size_t);
 bool q1_best_weapon_before_read(qa_q1_game *, qa_actor_id, q1_player *,
     const qa_pickup_receipt *, size_t, qa_q1_weapon *, qa_error *);
+bool q1_player_select_read(qa_q1_game *, qa_actor_id, q1_player *, qa_q1_weapon, qa_error *);
 
 #endif

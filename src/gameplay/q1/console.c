@@ -75,16 +75,42 @@ bool qa_q1_game_console_operation(const qa_q1_game *g, const qa_command_invocati
     }
     return true;
 }
-static bool supported(const qa_q1_game *g, qa_q1_weapon weapon) {
+static bool program_weapon(qa_q1_program program, qa_q1_weapon weapon) {
+    if ((unsigned)program > QA_Q1_CTF || (unsigned)weapon >= QA_Q1_WEAPON_COUNT)
+        return false;
     if (weapon <= QA_Q1_LIGHTNING)
         return true;
     if (weapon >= QA_Q1_LASER && weapon <= QA_Q1_PROXIMITY)
-        return g->options.program == QA_Q1_HIPNOTIC;
+        return program == QA_Q1_HIPNOTIC;
     if (weapon >= QA_Q1_LAVA_NAILGUN && weapon <= QA_Q1_ROGUE_GRAPPLE)
-        return g->options.program == QA_Q1_ROGUE;
+        return program == QA_Q1_ROGUE;
     if (weapon == QA_Q1_MG3_LASER || weapon == QA_Q1_MG3_MJOLNIR)
-        return g->options.program == QA_Q1_MG3;
-    return weapon == QA_Q1_CTF_GRAPPLE && g->options.program == QA_Q1_CTF;
+        return program == QA_Q1_MG3;
+    return weapon == QA_Q1_CTF_GRAPPLE && program == QA_Q1_CTF;
+}
+static const struct { const char *console, *display; } weapon_labels[QA_Q1_WEAPON_COUNT] = {
+    {"Axe", "Axe"}, {"Shotgun", "Shotgun"},
+    {"Super Shotgun", "Double-barrelled Shotgun"}, {"Nailgun", "Nailgun"},
+    {"Super Nailgun", "Super Nailgun"}, {"Grenade Launcher", "Grenade Launcher"},
+    {"Rocket Launcher", "Rocket Launcher"}, {"Lightning Gun", "Thunderbolt"},
+    {"Laser Cannon", "Laser Cannon"}, {"Mjolnir", "Mjolnir"},
+    {"Proximity Gun", "Proximity Gun"}, {"Lava Nailgun", "Lava Nailgun"},
+    {"Lava Super Nailgun", "Lava Supernailgun"}, {"Multi Grenade", "Multi Grenade"},
+    {"Multi Rocket", "Multi Rocket"}, {"Plasma Gun", "Plasma"},
+    {"Grapple", "Grapple"}, {"Laser Cannon", "Laser"},
+    {"Mjolnir", "Mjolnir"}, {"Grapple", "Grapple"}};
+bool qa_q1_weapon_profile_identity(qa_q1_program program, qa_q1_weapon weapon,
+    qa_q1_weapon_profile *out) {
+    if (!out)
+        return false;
+    *out = (qa_q1_weapon_profile){0};
+    if (!program_weapon(program, weapon))
+        return false;
+    *out = (qa_q1_weapon_profile){qa_q1_weapon_identity(weapon), weapon_labels[weapon].display};
+    return true;
+}
+static bool supported(const qa_q1_game *g, qa_q1_weapon weapon) {
+    return program_weapon(g->options.program, weapon);
 }
 static bool grant_finish(qa_q1_game_operation *operation, bool ok, qa_error *error) {
     if (ok && !qa_q1_game_operation_live(operation)) {
@@ -119,15 +145,10 @@ static qa_q1_weapon named_weapon(const qa_q1_game *g, const char *name, bool num
         if (name[0] >= '2' && name[0] <= '8' && !name[1])
             return (qa_q1_weapon)(name[0] - '1');
     }
-    static const char *const labels[QA_Q1_WEAPON_COUNT] = {
-        "Axe", "Shotgun", "Super Shotgun", "Nailgun", "Super Nailgun", "Grenade Launcher",
-        "Rocket Launcher", "Lightning Gun", "Laser Cannon", "Mjolnir", "Proximity Gun",
-        "Lava Nailgun", "Lava Super Nailgun", "Multi Grenade", "Multi Rocket", "Plasma Gun",
-        "Grapple", "Laser Cannon", "Mjolnir", "Grapple"};
     for (unsigned i = 0; i < QA_Q1_WEAPON_COUNT; ++i) {
         if (!supported(g, (qa_q1_weapon)i))
             continue;
-        if (normalized(name, labels[i]))
+        if (normalized(name, weapon_labels[i].console))
             return (qa_q1_weapon)i;
         const char *item = qa_strings_cstr(qa_session_strings(g->services.session), g->weapons[i]);
         const char *short_name = item ? strchr(item, '/') : NULL;
@@ -184,7 +205,8 @@ static bool native_grant(qa_q1_game *g, qa_actor_id actor, bool ammo, qa_error *
 }
 static bool ammo_set(qa_q1_game *g, qa_actor_id actor, qa_item_id item, double amount,
                        qa_error *error) {
-    qa_supply *supply = g->host.supply ? g->host.supply(g->host.context, actor) : NULL;
+    qa_supply *supply = NULL;
+    if (g->host.supply && !g->host.supply(g->host.context, actor, &supply, error)) return false;
     if (!q1_alive(g, actor))
         return true;
     if (!supply)
@@ -330,7 +352,8 @@ static bool give_inner(qa_q1_game *g, qa_actor_id actor, const qa_command_invoca
         return false;
     qa_q1_weapon weapon = named_weapon(g, name, true);
     if (weapon != QA_Q1_WEAPON_COUNT) {
-        qa_supply *supply = g->host.supply ? g->host.supply(g->host.context, actor) : NULL;
+        qa_supply *supply = NULL;
+        if (g->host.supply && !g->host.supply(g->host.context, actor, &supply, error)) return false;
         if (!q1_alive(g, actor))
             return true;
         if (!supply)
