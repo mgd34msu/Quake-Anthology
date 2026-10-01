@@ -1,9 +1,14 @@
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L
+#endif
 #include "protocol.h"
 
 #if defined(_WIN32)
 #include <windows.h>
 #else
 #include <errno.h>
+#include <pthread.h>
+#include <signal.h>
 #include <unistd.h>
 #endif
 
@@ -515,6 +520,24 @@ static bool wire_os_error(qa_error *error, const char *operation) {
 static bool wire_write_exact(intptr_t output, const void *source, size_t size, qa_error *error) {
     const uint8_t *bytes = source;
     size_t offset = 0;
+#if !defined(_WIN32)
+    if (!size)
+        return true;
+    sigset_t blocked, previous, pending;
+    sigemptyset(&blocked);
+    sigaddset(&blocked, SIGPIPE);
+    int mask_error = pthread_sigmask(SIG_BLOCK, &blocked, &previous);
+    if (mask_error) {
+        errno = mask_error;
+        return wire_os_error(error, "blocking native runner pipe signal");
+    }
+    int write_error = 0;
+    bool already_pending = false;
+    if (sigpending(&pending))
+        write_error = errno;
+    else
+        already_pending = sigismember(&pending, SIGPIPE) == 1;
+#endif
     while (offset < size) {
 #if defined(_WIN32)
         DWORD amount = size - offset > UINT32_MAX ? UINT32_MAX : (DWORD)(size - offset);
@@ -522,14 +545,36 @@ static bool wire_write_exact(intptr_t output, const void *source, size_t size, q
         if (!WriteFile((HANDLE)output, bytes + offset, amount, &written, NULL) || !written)
             return wire_os_error(error, "writing native runner pipe");
 #else
+        if (write_error)
+            break;
         ssize_t written = write((int)output, bytes + offset, size - offset);
         if (written < 0 && errno == EINTR)
             continue;
-        if (written <= 0)
-            return wire_os_error(error, "writing native runner pipe");
+        if (written <= 0) {
+            write_error = written < 0 ? errno : EIO;
+            break;
+        }
 #endif
         offset += (size_t)written;
     }
+#if !defined(_WIN32)
+    /* A broken pipe generates a signal for this thread. Consume only a new
+     * pending SIGPIPE before restoring the caller's original signal mask. */
+    if (write_error == EPIPE && !already_pending && !sigpending(&pending) &&
+        sigismember(&pending, SIGPIPE) == 1) {
+        int received, wait_error;
+        do {
+            wait_error = sigwait(&blocked, &received);
+        } while (wait_error == EINTR);
+    }
+    mask_error = pthread_sigmask(SIG_SETMASK, &previous, NULL);
+    if (mask_error && !write_error)
+        write_error = mask_error;
+    if (write_error) {
+        errno = write_error;
+        return wire_os_error(error, "writing native runner pipe");
+    }
+#endif
     return true;
 }
 
