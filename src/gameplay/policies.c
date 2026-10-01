@@ -262,12 +262,13 @@ static bool q2_damage(qa_combat *combat, const qa_combat_policy *policy,
         same_team(&target, has_attacker ? &attacker : NULL) && !source.friendly_fire &&
         !source.nuke)
         damage = 0;
-    if (source.easy_skill && !source.deathmatch && source.player) {
+    if (source.easy_skill && !source.deathmatch && source.player &&
+        (!source.rerelease || damage != 0)) {
         damage /= 2;
         if (damage < 1)
             damage = 1;
     }
-    if (source.defender_sphere && source.player) {
+    if (source.defender_sphere && source.player && damage != 0) {
         damage /= 2;
         if (damage < 1)
             damage = 1;

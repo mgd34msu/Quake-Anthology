@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_q2_combat.h"
 
 static bool widow(const struct qa_q2_monster *monster) {
     return monster && monster->definition &&
@@ -66,7 +67,8 @@ static bool armor(q2m_context *context, qa_error *error) {
     if (!q2m_alive(context))
         return true;
     float cells = 250.0f * game->options.skill;
-    combat.armor.powered = (qa_power_armor){.kind = QA_POWER_SHIELD, .cells = cells};
+    combat.armor.powered = (qa_powered_armor){.kind = QA_POWER_SHIELD, .cells = cells};
+    qa_q2_combat_power_armor_source(game, &combat.armor.powered);
     if (!qa_combat_set_armor(game->services.combat, id, &combat.armor, error))
         return false;
     return !q2m_alive(context) || q2m_set_power_cells(context, QA_POWER_SHIELD, cells, error);

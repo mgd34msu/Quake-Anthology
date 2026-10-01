@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "reinforcements.h"
 #include "medic.h"
+#include "qa/game_q2_combat.h"
 
 static bool actor_current(const q2m_context *context) {
   qa_actor_id id = context->actor->id;
@@ -1443,12 +1444,13 @@ static bool initialize_combat(qa_q2_game *game, q2_actor *actor,
   }
   if (monster->definition->species == Q2M_WIDOW ||
       monster->definition->species == Q2M_WIDOW2) {
-    combat.armor.powered = (qa_power_armor){0};
+    combat.armor.powered = (qa_powered_armor){0};
     if (game->options.skill == 3)
-      combat.armor.powered = (qa_power_armor){
+      combat.armor.powered = (qa_powered_armor){
           .kind = QA_POWER_SHIELD,
           .cells = monster->definition->species == Q2M_WIDOW ? 500.0f : 750.0f};
   }
+  qa_q2_combat_power_armor_source(game, &combat.armor.powered);
   if (qa_combat_storage_serial(game->services.combat, actor->id)) {
     if (!qa_combat_set_health(game->services.combat, actor->id, combat.health, error))
       return false;
@@ -1826,6 +1828,7 @@ static bool monster_admit(qa_q2_game *game, qa_actor_id id,
     monster->max_power_armor = previous->max_power_armor;
     qa_armor armor = {.powered = {.kind = monster->initial_power_armor,
                                   .cells = monster->max_power_armor}};
+    qa_q2_combat_power_armor_source(game, &armor.powered);
     if (!qa_combat_set_health(game->services.combat, id, monster->max_health, error) ||
         !q2m_alive(&context))
       return !q2m_alive(&context);

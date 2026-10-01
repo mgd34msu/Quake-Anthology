@@ -12,6 +12,8 @@ static bool carry(q2_save_io *io, qa_q2_player_carry *s) {
     default: return q2_save_fail(io, "Invalid Q2 carry armor kind");
     }
     Q2U(armor.powered.kind); Q2F(armor.powered.cells);
+    Q2N(armor.powered.source_owner); Q2U(armor.powered.source_edition);
+    if (!qa_armor_validate(&s->armor, io->error)) return false;
     if (!q2_save_inventory(io, &s->inventory, &s->count)) return false;
     Q2U(weapon); Q2N(selected_item); Q2I(score); Q2U(flags); Q2U(power_cubes); return true;
 }

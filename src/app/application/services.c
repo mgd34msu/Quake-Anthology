@@ -382,6 +382,12 @@ static bool before_reaction(void *opaque, const qa_damage_outcome *outcome,
         application, outcome->request.target, QA_ROLE_EFFECTS, "");
     application_provider *character = application_provider_for(
         application, outcome->request.target, QA_ROLE_CHARACTER, "");
+    if (outcome->result.reaction == QA_REACTION_NONE && outcome->result.has_feedback &&
+        character != NULL &&
+        character->kind == APPLICATION_PROVIDER_Q2 && character->constructed &&
+        character->attached && !character->close_pending &&
+        !qa_q2_damage_reaction(character->state.q2, outcome, error))
+        return false;
     if (effects != NULL && effects->kind == APPLICATION_PROVIDER_Q3 &&
         !qa_q3_before_reaction(effects->state.q3, outcome, error))
         return false;

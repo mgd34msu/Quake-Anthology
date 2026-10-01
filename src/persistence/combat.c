@@ -18,7 +18,8 @@ bool qa_persistence_combat_admission(const qa_combat *combat, qa_actor_id actor,
 
 static bool armor(qa_source_save_io *io, qa_armor *value)
 {
-    uint32_t regular = value->regular.kind, powered = value->powered.kind;
+    uint32_t regular = value->regular.kind, powered = value->powered.kind,
+        edition = value->powered.source_edition;
     if (!qa_source_save_u32(io, &regular) || regular > QA_ARMOR_SOURCE ||
         !qa_source_save_f32(io, &value->regular.points) ||
         !qa_source_save_string(io, &value->regular.item)) return false;
@@ -37,8 +38,11 @@ static bool armor(qa_source_save_io *io, qa_armor *value)
     default: break;
     }
     if (!qa_source_save_u32(io, &powered) || powered > QA_POWER_SHIELD ||
-        !qa_source_save_f32(io, &value->powered.cells)) return false;
+        !qa_source_save_f32(io, &value->powered.cells) ||
+        !qa_source_save_string(io, &value->powered.source_owner) ||
+        !qa_source_save_u32(io, &edition)) return false;
     value->powered.kind = (qa_power_kind)powered;
+    value->powered.source_edition = (qa_q2_power_armor_edition)edition;
     return qa_armor_validate(value, io->error);
 }
 
@@ -88,9 +92,9 @@ static bool signature(qa_source_save_io *io)
 {
     unsigned char actual[8] = {'Q','A','C','O','M','B','A','T'};
     static const unsigned char expected[8] = {'Q','A','C','O','M','B','A','T'};
-    uint32_t version = 1;
+    uint32_t version = 2;
     return qa_source_save_bytes(io, actual, sizeof(actual)) && !memcmp(actual, expected, sizeof(actual)) &&
-        qa_source_save_u32(io, &version) && version == 1;
+        qa_source_save_u32(io, &version) && version == 2;
 }
 
 static bool policies(qa_source_save_io *io, qa_combat *combat)
@@ -172,7 +176,7 @@ static bool record(qa_source_save_io *io, qa_combat *combat, qa_inventory *inven
                 protection_mask(&slot->binding) != callbacks || callbacks != 15u ||
                 !source_protection(combat, &slot->binding, &observed, io->error) ||
                 (channel == QA_PROTECTION_REGULAR ? !qa_regular_armor_equal(reservoir.regular, observed.regular) :
-                    reservoir.powered.kind != observed.powered.kind || reservoir.powered.cells != observed.powered.cells))
+                    !qa_powered_armor_equal(reservoir.powered, observed.powered)))
                 return fail(io->error, "Restored protection reservoir differs from saved source authority");
         }
     }

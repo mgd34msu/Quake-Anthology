@@ -2,6 +2,7 @@
 #include "reinforcements.h"
 #include "medic.h"
 #include "qa/game_q2_entities.h"
+#include "qa/game_q2_combat.h"
 
 typedef struct q2m_transition {
   const char *callback;
@@ -2651,6 +2652,7 @@ static bool foundational_species_callback(q2m_context *context,
     else
       monster->spawnflags &= ~UINT32_C(65536);
     context->combat.armor.powered.kind = QA_POWER_NONE;
+    qa_q2_combat_power_armor_source(context->game, &context->combat.armor.powered);
     if (!qa_combat_set_armor(context->game->services.combat, context->actor->id,
                              &context->combat.armor, error))
       return false;
@@ -2659,6 +2661,7 @@ static bool foundational_species_callback(q2m_context *context,
   }
   if (strcmp(callback, "brain_chest_closed") == 0) {
     context->combat.armor.powered.kind = QA_POWER_SCREEN;
+    qa_q2_combat_power_armor_source(context->game, &context->combat.armor.powered);
     if (!qa_combat_set_armor(context->game->services.combat, context->actor->id,
                              &context->combat.armor, error))
       return false;
@@ -4102,6 +4105,7 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
   }
   if (strcmp(callback, "brain_chest_open") == 0) {
     context->combat.armor.powered.kind = QA_POWER_NONE;
+    qa_q2_combat_power_armor_source(context->game, &context->combat.armor.powered);
     return qa_combat_set_armor(context->game->services.combat,
                                context->actor->id, &context->combat.armor,
                                error);
@@ -4110,6 +4114,7 @@ bool q2m_dispatch(q2m_context *context, const char *callback, qa_error *error) {
     context->combat.armor.powered.kind = QA_POWER_SCREEN;
     if (context->combat.armor.powered.cells <= 0.0f)
       context->combat.armor.powered.cells = 100.0f;
+    qa_q2_combat_power_armor_source(context->game, &context->combat.armor.powered);
     return qa_combat_set_armor(context->game->services.combat,
                                context->actor->id, &context->combat.armor,
                                error);

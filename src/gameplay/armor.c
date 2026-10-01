@@ -14,9 +14,13 @@ bool qa_regular_armor_equal(qa_regular_armor a, qa_regular_armor b) {
     return false;
 }
 
+bool qa_powered_armor_equal(qa_powered_armor a, qa_powered_armor b) {
+    return a.kind == b.kind && a.source_owner == b.source_owner &&
+        a.source_edition == b.source_edition && (a.kind == QA_POWER_NONE || a.cells == b.cells);
+}
+
 bool qa_armor_equal(qa_armor a, qa_armor b) {
-    return qa_regular_armor_equal(a.regular, b.regular) && a.powered.kind == b.powered.kind &&
-        (a.powered.kind == QA_POWER_NONE || a.powered.cells == b.powered.cells);
+    return qa_regular_armor_equal(a.regular, b.regular) && qa_powered_armor_equal(a.powered, b.powered);
 }
 
 bool qa_armor_validate(const qa_armor *armor, qa_error *error) {
@@ -24,6 +28,11 @@ bool qa_armor_validate(const qa_armor *armor, qa_error *error) {
         armor->powered.kind < QA_POWER_NONE || armor->powered.kind > QA_POWER_SHIELD) goto invalid;
     if (armor->regular.kind != QA_ARMOR_NONE && !isfinite(armor->regular.points)) goto invalid;
     if (armor->powered.kind != QA_POWER_NONE && !isfinite(armor->powered.cells)) goto invalid;
+    if (armor->powered.source_edition < QA_Q2_POWER_ARMOR_NONE ||
+        armor->powered.source_edition > QA_Q2_POWER_ARMOR_RERELEASE ||
+        (armor->powered.kind == QA_POWER_NONE ?
+            armor->powered.source_owner != 0 || armor->powered.source_edition != QA_Q2_POWER_ARMOR_NONE :
+            !armor->powered.source_owner || armor->powered.source_edition == QA_Q2_POWER_ARMOR_NONE)) goto invalid;
     switch (armor->regular.kind) {
     case QA_ARMOR_Q1: if (!isfinite(armor->regular.protection.q1_absorption)) goto invalid; break;
     case QA_ARMOR_Q2: if (!isfinite(armor->regular.protection.q2.normal) || !isfinite(armor->regular.protection.q2.energy)) goto invalid; break;

@@ -63,7 +63,15 @@ typedef struct qa_regular_armor {
     union { float q1_absorption; struct { float normal, energy; } q2; float q3_protection; } protection;
 } qa_regular_armor;
 typedef enum qa_power_kind { QA_POWER_NONE, QA_POWER_SCREEN, QA_POWER_SHIELD } qa_power_kind;
-typedef struct qa_powered_armor { qa_power_kind kind; float cells; } qa_powered_armor;
+typedef enum qa_q2_power_armor_edition {
+    QA_Q2_POWER_ARMOR_NONE, QA_Q2_POWER_ARMOR_CLASSIC, QA_Q2_POWER_ARMOR_RERELEASE
+} qa_q2_power_armor_edition;
+typedef struct qa_powered_armor {
+    qa_power_kind kind;
+    float cells;
+    qa_actor_owner source_owner;
+    qa_q2_power_armor_edition source_edition;
+} qa_powered_armor;
 typedef struct qa_armor { qa_regular_armor regular; qa_powered_armor powered; } qa_armor;
 typedef enum qa_protection_channel { QA_PROTECTION_REGULAR, QA_PROTECTION_POWERED } qa_protection_channel;
 typedef struct qa_damage_flags {
@@ -76,6 +84,7 @@ typedef struct qa_armor_result { qa_armor armor; float power_saved, regular_save
 qa_damage_flags qa_attack_flags(const qa_attack *);
 bool qa_armor_validate(const qa_armor *, qa_error *);
 bool qa_regular_armor_equal(qa_regular_armor, qa_regular_armor);
+bool qa_powered_armor_equal(qa_powered_armor, qa_powered_armor);
 bool qa_armor_equal(qa_armor, qa_armor);
 bool qa_armor_absorb(const qa_armor *, float damage, qa_damage_flags,
                      const qa_armor_context *, const qa_protection_channel *stage,
@@ -199,7 +208,7 @@ typedef struct qa_protection_binding {
 
 typedef struct qa_q1_combat_context { bool quad, walk, has_momentum_direction, skip_base_team_health; int32_t teamplay; qa_vec3 momentum_direction; } qa_q1_combat_context;
 typedef struct qa_q2_combat_context {
-    bool player, monster, attacker_player, has_enemy, easy_skill, deathmatch;
+    bool player, monster, attacker_player, has_enemy, easy_skill, deathmatch, rerelease;
     bool defender_sphere, team_damage_enabled, friendly_fire, nuke, no_knockback;
     bool movable, reject_team_damage, suppress_pain;
 } qa_q2_combat_context;

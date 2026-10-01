@@ -387,6 +387,10 @@ bool application_q2_combat_armor_read(application_q2_combat_actor *a, qa_armor *
         out->powered.kind = shield > 0 ? QA_POWER_SHIELD : screen > 0 ? QA_POWER_SCREEN : QA_POWER_NONE;
         if (out->powered.kind != QA_POWER_NONE && !count(p, client, p->cells, &out->powered.cells, error)) return false;
     }
+    if (out->powered.kind != QA_POWER_NONE) {
+        out->powered.source_owner = p->engine->provider->owner;
+        out->powered.source_edition = p->kex ? QA_Q2_POWER_ARMOR_RERELEASE : QA_Q2_POWER_ARMOR_CLASSIC;
+    }
     return qa_armor_validate(out, error);
 }
 bool application_q2_combat_armor_validate(void *opaque, const qa_armor *armor, qa_error *error)
@@ -394,7 +398,9 @@ bool application_q2_combat_armor_validate(void *opaque, const qa_armor *armor, q
     application_q2_combat_actor *a = opaque; qa_armor actual;
     if (!armor || !qa_armor_validate(armor, error) || !application_q2_combat_armor_read(a, &actual, error)) return false;
     if ((armor->regular.kind != QA_ARMOR_NONE && armor->regular.kind != QA_ARMOR_Q2) ||
-        armor->powered.kind != actual.powered.kind)
+        armor->powered.kind != actual.powered.kind ||
+        armor->powered.source_owner != actual.powered.source_owner ||
+        armor->powered.source_edition != actual.powered.source_edition)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Native armor requires its original tier and equipment activation");
     if (armor->regular.kind == QA_ARMOR_Q2) {
         bool found = false;
@@ -451,7 +457,7 @@ bool application_q2_combat_normalize_armor(void *opaque, const qa_armor *input,
     if (actual.regular.kind == QA_ARMOR_NONE && input->regular.kind == QA_ARMOR_Q2 &&
         input->regular.points == 0 && input->regular.protection.q2.normal == 0 &&
         input->regular.protection.q2.energy == 0 && input->powered.kind != QA_POWER_NONE &&
-        input->powered.kind == actual.powered.kind && input->powered.cells == actual.powered.cells) {
+        qa_powered_armor_equal(input->powered, actual.powered)) {
         const char *name = qa_strings_cstr(qa_session_strings(((application_q2_combat_actor *)opaque)->profile->engine->provider->application->session), input->regular.item);
         if (name && !strcmp(name, "q2:none")) out->regular = (qa_regular_armor){0};
     }

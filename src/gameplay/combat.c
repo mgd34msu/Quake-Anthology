@@ -457,8 +457,8 @@ bool qa_combat_set_armor(qa_combat *combat, qa_actor_id actor, const qa_armor *a
     }
     qa_combat_cursor *cursor = cursor_for(combat, actor);
     if (cursor && !cursor->reaction_seen && !journal_reserve(cursor, error)) return false;
-    bool changed[2] = {!qa_regular_armor_equal(effective.armor.regular, selected.regular), effective.armor.powered.kind != selected.powered.kind ||
-        (selected.powered.kind != QA_POWER_NONE && effective.armor.powered.cells != selected.powered.cells)};
+    bool changed[2] = {!qa_regular_armor_equal(effective.armor.regular, selected.regular),
+        !qa_powered_armor_equal(effective.armor.powered, selected.powered)};
     for (unsigned channel = 0; channel != 2; ++channel) if (owners[channel] && changed[channel]) {
         qa_protection_binding binding = entry->protection[channel].binding;
         ++combat->active_calls; ok = binding.write(binding.context, &selected, error); --combat->active_calls;
@@ -466,8 +466,7 @@ bool qa_combat_set_armor(qa_combat *combat, qa_actor_id actor, const qa_armor *a
         if (channel == QA_PROTECTION_REGULAR && changed[QA_PROTECTION_POWERED]) {
             qa_combat_state intermediate;
             if (!read_state(combat, entry, &intermediate, error)) return false;
-            if (intermediate.armor.powered.kind != effective.armor.powered.kind ||
-                (effective.armor.powered.kind != QA_POWER_NONE && intermediate.armor.powered.cells != effective.armor.powered.cells))
+            if (!qa_powered_armor_equal(intermediate.armor.powered, effective.armor.powered))
                 return qa_combat_argument(error, "powered protection changed during regular armor store");
         }
     }
@@ -705,8 +704,7 @@ static bool pickup_store_current(qa_combat *combat, qa_actor_id actor, qa_actor_
     qa_combat_state actual;
     if (!read_state(combat, entry, &actual, error)) return false;
     if ((change->regular && !qa_regular_armor_equal(change->after.regular, actual.armor.regular)) ||
-        (change->powered && (change->after.powered.kind != actual.armor.powered.kind ||
-        (actual.armor.powered.kind != QA_POWER_NONE && change->after.powered.cells != actual.armor.powered.cells))))
+        (change->powered && !qa_powered_armor_equal(change->after.powered, actual.armor.powered)))
         return qa_combat_argument(error, "reported protection store differs from source state");
     qa_combat_cursor *cursor = cursor_for(combat, actor);
     if (!cursor) return true;

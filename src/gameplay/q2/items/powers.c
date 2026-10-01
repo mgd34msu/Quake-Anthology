@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/game_q2_checkpoint.h"
+#include "qa/game_q2_combat.h"
 
 q2_power_state *q2_powers(qa_q2_game *g, qa_actor_id id, qa_error *e) {
     q2_actor *a = q2_actor_get(g, id, true, e);
@@ -204,6 +205,7 @@ static bool item_use_duration(void *context, qa_actor_id id, qa_error *e) {
             return true;
         qa_powered_armor armor = {.kind = active ? QA_POWER_NONE : d->powered_armor,
                                   .cells = (float)cells};
+        qa_q2_combat_power_armor_source(g, &armor);
         if (!qa_combat_set_powered_armor(g->services.combat, id, &armor, e))
             return false;
         *used = true;
