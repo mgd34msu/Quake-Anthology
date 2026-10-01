@@ -2,6 +2,13 @@
 #define QA_BOT_AI_INTERNAL_H
 
 #include "qa/bots.h"
+#include "source_orders.h"
+#include "source_team_policy.h"
+#include "source_events.h"
+#include "source_goal.h"
+#include "source_chat.h"
+#include "source_setup.h"
+#include "source_match.h"
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -10,17 +17,28 @@
 enum {
     BOT_C_GENDER=1, BOT_C_ATTACK=2, BOT_C_WEAPON_WEIGHTS=3, BOT_C_VIEW_FACTOR=4,
     BOT_C_VIEW_MAX=5, BOT_C_REACTION=6, BOT_C_ACCURACY=7, BOT_C_AIM_SKILL=16,
-    BOT_C_CHAT_FILE=21, BOT_C_CHAT_NAME=22, BOT_C_CHAT_CPM=23,
+    BOT_C_CHAT_FILE=21, BOT_C_CHAT_NAME=22, BOT_C_CHAT_CPM=23, BOT_C_CHAT_ENTER_EXIT=27,
     BOT_C_CROUCHER=36, BOT_C_JUMPER=37, BOT_C_WEAPON_JUMP=38, BOT_C_GRAPPLE=39,
     BOT_C_ITEM_WEIGHTS=40, BOT_C_AGGRESSION=41, BOT_C_SELF_PRESERVATION=42,
     BOT_C_VENGEFUL=43, BOT_C_CAMPER=44, BOT_C_EASY_FRAGGER=45, BOT_C_ALERTNESS=46,
     BOT_C_FIRE_THROTTLE=47, BOT_C_WALKER=48, BOT_C_CHAT_REPLY=35
 };
-typedef enum bot_team_task {
-    BOT_TEAM_NONE, BOT_TEAM_OFFENSE, BOT_TEAM_DEFENSE, BOT_TEAM_RETURN,
-    BOT_TEAM_ESCORT, BOT_TEAM_CAMP
-} bot_team_task;
+typedef enum bot_long_term_goal {
+    BOT_LTG_NONE, BOT_LTG_TEAM_HELP, BOT_LTG_TEAM_ACCOMPANY, BOT_LTG_DEFEND,
+    BOT_LTG_GET_FLAG, BOT_LTG_RUSH_BASE, BOT_LTG_RETURN_FLAG, BOT_LTG_CAMP,
+    BOT_LTG_CAMP_ORDER, BOT_LTG_PATROL, BOT_LTG_GET_ITEM, BOT_LTG_KILL,
+    BOT_LTG_HARVEST, BOT_LTG_ATTACK_BASE, BOT_LTG_MAKELOVE_UNDER, BOT_LTG_MAKELOVE_ONTOP
+} bot_long_term_goal;
+typedef enum bot_shutdown_phase {
+    BOT_SHUTDOWN_RUNNING, BOT_SHUTDOWN_SESSION, BOT_SHUTDOWN_CHAT,
+    BOT_SHUTDOWN_SEND, BOT_SHUTDOWN_DONE, BOT_SHUTDOWN_FAILED
+} bot_shutdown_phase;
+typedef struct bot_source_goals {
+    qa_bot_goal red_flag, blue_flag, neutral_flag, red_obelisk, blue_obelisk, neutral_obelisk;
+    int32_t game_type, max_clients, max_bsp_model_index;
+} bot_source_goals;
 typedef struct bot_ai_state {
+    uint32_t acquired_source_client;
     qa_bot_view view;
     qa_bot_player player;
     qa_bot_view_state angles;
@@ -35,11 +53,10 @@ typedef struct bot_ai_state {
     float check_time, attack_crouch_time, attack_jump_time, attack_strafe_time, fire_wait_time;
     float fire_until, weapon_change_time, enemy_death_time, state_time, chase_until;
     float teleport_time;
-    uint64_t teleport_sequence;
     float last_air_time, last_chat_time, blocked_time, not_blocked_time;
     qa_vec3 enemy_origin, enemy_velocity, last_enemy_origin, aim_target;
     uint32_t last_enemy_area;
-    bool respawn_wait, suicidal, strafe_right, team_arena, retired, attacked, chat_pending;
+    bool respawn_wait, suicidal, strafe_right, team_arena, retired, attacked;
     uint64_t command_sequence;
     uint32_t activation_count;
     struct {
@@ -47,16 +64,32 @@ typedef struct bot_ai_state {
         qa_bot_decision resume;
         float until;
     } activations[8];
-    bot_team_task team_task;
-    qa_actor_id team_requester, team_leader;
-    float team_task_until;
-    qa_vec3 camp_origin;
+    char team_leader_name[32];
+    int32_t decisionmaker, long_term_goal, teammate;
+    int32_t last_goal_decisionmaker, last_goal_type, last_goal_teammate;
+    qa_bot_goal team_goal, last_goal_team_goal;
+    bool ordered;
+    float order_time, team_message_time, team_goal_time, teammate_visible_time;
+    float formation_distance, arrive_time, defend_away_time, harvest_away_time;
+    float attack_away_time, rush_base_away_time, lead_time;
+    bot_source_order_state source_order;
+    bot_source_team_policy_state source_team_policy;
+    bot_source_events_state source_events;
+    bot_source_goal_state source_goal;
+    bot_source_chat_state source_chat;
+    bot_source_setup_state source_setup;
+    bool inuse, counted;
+    int32_t source_enemy;
+    bot_shutdown_phase shutdown_phase;
+    bool shutdown_restart, shutdown_chat_pending;
     char name[128];
 } bot_ai_state;
 struct qa_bots {
     qa_bot_runtime *runtime;
     qa_bot_services services;
     bot_ai_state **clients;
+    bot_ai_state *source_cells[64];
+    uint32_t source_clients[64];
     uint32_t client_capacity, count;
     uint32_t *actor_clients;
     uint32_t actor_capacity;
@@ -65,17 +98,31 @@ struct qa_bots {
     int32_t local_time_ms, library_residual_ms, scheduled_think_ms;
     float time, regular_update_time;
     uint64_t command_sequence;
+    struct {char name[36];int32_t preference;} team_preferences[64];
+    bool not_leader[64];
+    bot_source_goals source_goals;
+    bot_source_orders_state source_orders;
+    bot_source_team_policy_globals source_team_policy;
+    bot_source_events_globals source_event_globals;
+    bot_source_chat_globals source_chat;
+    bot_source_match_globals source_match;
+    size_t source_match_exit_depth;
     int32_t inventory_scratch[QA_BOT_INVENTORY_SIZE];
-    bool busy, checking_spawn, restore_pending;
+    bool busy, checking_spawn, restore_pending, shutting_down, shutdown_restart;
+    qa_actor_id shutdown_actor;
 };
 bool bot_ai_fail(qa_error *, const char *);
 bot_ai_state *bot_ai_actor(const qa_bots *, qa_actor_id);
 bool bot_ai_live(const qa_bots *, qa_actor_id);
 bool bot_ai_mutable(qa_bots *, qa_error *);
 bool bot_ai_cleanup(qa_bots *, bot_ai_state *, qa_error *);
+bool bot_ai_source_shutdown_client(qa_bots *, bot_ai_state *, bool, qa_error *);
+void bot_ai_source_cell_clear(qa_bots *,bot_ai_state *);
 void bot_ai_schedule(qa_bots *);
 bool bot_ai_reset(qa_bots *, bot_ai_state *, qa_error *);
 bool bot_ai_think(qa_bots *, bot_ai_state *, float, qa_error *);
+bool bot_ai_source_intermission(qa_bots *,bot_ai_state *,bool *,qa_error *);
+bool bot_ai_source_observer(qa_bots *,bot_ai_state *,bool *,qa_error *);
 bool bot_ai_input(qa_bots *, bot_ai_state *, int32_t time, int32_t elapsed, qa_error *);
 bool bot_ai_character_float(qa_bots *, bot_ai_state *, uint32_t, float, float, float *, qa_error *);
 bool bot_ai_choose_weapon(qa_bots *, bot_ai_state *, qa_error *);
@@ -90,12 +137,20 @@ bool bot_ai_attack_move(qa_bots *, bot_ai_state *, qa_error *);
 bool bot_ai_console(qa_bots *, bot_ai_state *, qa_error *);
 bool bot_ai_messages(qa_bots *, bot_ai_state *, qa_error *);
 bool bot_ai_voice(qa_bots *, bot_ai_state *, int32_t channel, const char *, qa_error *);
-bool bot_ai_team_goal(qa_bots *, bot_ai_state *, qa_bot_goal *, bool *, qa_error *);
 bool bot_ai_carrying(qa_bots *,bot_ai_state *,bool *,qa_error *);
+void bot_ai_remember_order(bot_ai_state *);
+bool bot_ai_team_status(qa_bots *,bot_ai_state *,qa_error *);
+bool bot_ai_source_goals_load(qa_bots *,qa_error *);
+bool bot_ai_session_read(qa_bots *,bot_ai_state *,qa_error *);
+bool bot_ai_session_write(qa_bots *,bot_ai_state *,qa_error *);
+bool bot_ai_source_client(qa_bots *,bot_ai_state *,int32_t *,qa_error *);
+qa_actor_id bot_ai_source_actor(qa_bots *,int32_t);
+bool bot_ai_client_name(qa_bots *,int32_t,char *,size_t,bool,qa_error *);
+bool bot_ai_easy_name(qa_bots *,int32_t,char *,size_t,qa_error *);
 bool bot_ai_decide(qa_bots *, bot_ai_state *, qa_error *);
 bool bot_ai_order_active(const bot_ai_state *);
 bool bot_ai_order_goal(qa_bots *, bot_ai_state *, qa_bot_goal *, bool *, qa_error *);
 bool bot_ai_point_area(qa_bots *, bot_ai_state *, qa_vec3, uint32_t *, qa_error *);
-float bot_ai_random(qa_bots *);
+bool bot_ai_random(qa_bots *, float *, qa_error *);
 qa_vec3 bot_ai_angles(qa_vec3);
 #endif

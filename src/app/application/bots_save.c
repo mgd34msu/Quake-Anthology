@@ -17,9 +17,9 @@ static const uint8_t bots_magic[8]={'Q','A','B','A','P','P',0,0};
 static const uint8_t nav_magic[8]={'Q','A','N','A','P','P',0,0};
 
 static bool app_signature(qa_source_save_io *io) {
-    uint8_t magic[8];memcpy(magic,bots_magic,sizeof(magic));uint32_t version=2;
+    uint8_t magic[8];memcpy(magic,bots_magic,sizeof(magic));uint32_t version=4;
     return qa_source_save_bytes(io,magic,sizeof(magic)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(magic,bots_magic,sizeof(magic)) && version==2?true:
+        (!memcmp(magic,bots_magic,sizeof(magic)) && version==4?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported application bot continuation schema"));
 }
 
@@ -165,7 +165,7 @@ static bool snapshot_field(qa_source_save_io *io,application_bots *bots) {
 }
 static bool fields(qa_source_save_io *io,application_bots *bots,bot_app_record *record) {
     qa_application *app=bots->application;
-    if(!map_field(io,bots) || !files_field(io,bots) || !qa_source_save_u32(io,&bots->capacity) ||
+    if(!provider_field(io,app,&bots->source,true) || !map_field(io,bots) || !files_field(io,bots) || !qa_source_save_u32(io,&bots->capacity) ||
         bots->capacity>INT32_MAX || bots->capacity>SIZE_MAX/sizeof(*bots->seats) ||
         !qa_source_save_u32(io,&bots->metadata_weapon) || !controls_field(io,&bots->controls)) return false;
     if(io->direction==QA_SOURCE_SAVE_READ && bots->capacity) {
@@ -205,7 +205,7 @@ static bool fields(qa_source_save_io *io,application_bots *bots,bot_app_record *
 bool application_bots_save_capture(qa_application *app,qa_buffer *out,qa_error *error) {
     if(!app || !out || !application_bots_can_destroy(app) || (app->bots &&
        (app->bots->restoring || app->bots->round_phase!=APPLICATION_BOT_ROUND_ACTIVE ||
-        app->bots->round || app->bots->producing)))
+        app->bots->round || app->bots->original || app->bots->producing)))
         return application_fail(error,QA_ERROR_ARGUMENT,"Application bots are borrowed or restoring");
     qa_buffer requirements={0},runtime={0},population={0};application_bots *bots=app->bots;
     bool present=bots!=NULL,ok=true;
@@ -359,7 +359,7 @@ static bool navigation_fields(qa_source_save_io *io,application_bots *bots,bool 
 bool application_navigation_save_capture(qa_application *app,qa_buffer *out,qa_error *error) {
     if(!app || !out || !application_bots_can_destroy(app) || (app->bots &&
        (app->bots->restoring || app->bots->round_phase!=APPLICATION_BOT_ROUND_ACTIVE ||
-        app->bots->round || app->bots->producing)))
+        app->bots->round || app->bots->original || app->bots->producing)))
         return application_fail(error,QA_ERROR_ARGUMENT,"Application navigation is borrowed or restoring");
     bool present=app->bots!=NULL;qa_source_save_io io={0};
     bool ok=qa_source_save_writer(&io,app->session,error) && bot_save_signature(&io,nav_magic) &&
@@ -457,12 +457,13 @@ static bool agreement(application_bots *bots,qa_error *error) {
     if(guests>UINT32_MAX/64 || bots->saved_requirements.runtime.minimum_clients<guests*64)
         return application_fail(error,QA_ERROR_FORMAT,"Application guest bot namespace capacity differs");
     uint32_t base=bots->saved_requirements.runtime.minimum_clients-(uint32_t)guests*64;
+    uint32_t entity_base=base>1024u?base:1024u;
     if(base>qa_actors_capacity(qa_session_actors(app->session)))
         return application_fail(error,QA_ERROR_FORMAT,"Application guest bot namespace origin exceeds restored actor extent");
     for(application_bot_guest *g=bots->guests;g;g=g->next) {
         if(!guest_selected(g->provider) || g->client_base<base || (g->client_base-base)%64 ||
             (g->client_base-base)/64>=guests ||
-            (uint64_t)base+(uint64_t)((g->client_base-base)/64)*1024!=g->entity_base)
+            (uint64_t)entity_base+(uint64_t)((g->client_base-base)/64)*1024!=g->entity_base)
             return application_fail(error,QA_ERROR_FORMAT,"Application guest bot namespace differs from its source owner");
     }
     application_provider **table=app->routing_providers?app->routing_providers:app->providers;

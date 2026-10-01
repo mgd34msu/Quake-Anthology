@@ -31,4 +31,18 @@ bool qa_application_q3_client_context_read(qa_application *, qa_actor_owner rece
 bool qa_application_q3_client_context_current(qa_application *,
     const qa_application_q3_client_context *);
 
+/* After synchronous effects unwind, retire this exact initialized local CGAME
+ * role at an idle boundary. GAME and its physical client remain admitted.
+ * Failed physical cleanup retains the retired role for enclosing owner cleanup. */
+bool qa_application_q3_client_retire(qa_application *,
+    const qa_application_q3_client_context *, qa_error *);
+
+/* Borrows the actual seat-zero CGAME host with external client services.
+ * GAME/source fields are absent; the network owner supplies and qualifies its
+ * actual remote connection, physical client ordinal and presentation clock. */
+bool qa_application_q3_remote_context_read(qa_application *, qa_actor_owner receiver,
+    uint32_t seat, qa_application_q3_client_context *, qa_error *);
+bool qa_application_q3_remote_context_current(qa_application *,
+    const qa_application_q3_client_context *);
+
 #endif

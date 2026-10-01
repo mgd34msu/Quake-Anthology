@@ -230,6 +230,93 @@ bool qa_application_q3_client_context_current(qa_application *app,
         actual.native_source == retained->native_source;
 }
 
+bool qa_application_q3_client_retire(qa_application *app,
+    const qa_application_q3_client_context *retained, qa_error *error)
+{
+    if (!app || !retained || app->operation != APPLICATION_IDLE ||
+        app->frame_preparing || app->q3_round_active || app->q3_world_restart ||
+        !qa_session_safe(app->session) || qa_session_faulted(app->session) ||
+        !qa_world_idle(app->world) || !qa_application_q3_client_context_current(app, retained))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Q3 client retirement requires its exact receiver after source callbacks unwind");
+    application_provider **providers = app->routing_providers ? app->routing_providers : app->providers;
+    size_t count = app->routing_providers ? app->routing_provider_count : app->provider_count;
+    application_provider *provider = NULL;
+    for (size_t i = 0; i < count; ++i)
+        if (providers[i] && providers[i]->owner == retained->receiver) provider = providers[i];
+    struct application_q3_guest *engine = q3g_engine(provider);
+    if (!engine || engine->calls || engine->draining_clients || !application_q3_guest_idle(provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client retirement has an active source owner");
+    q3g_role **position = &engine->roles;
+    while (*position && ((*position)->kind != QA_QVM_CGAME || (*position)->seat != retained->seat))
+        position = &(*position)->next;
+    q3g_role *role = *position;
+    if (!role || !role->initialized || role->retired || role->service_owner != retained->service_owner)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client retirement lost its initialized CGAME role");
+    q3g_role *next = role->next;
+    app->operation = APPLICATION_CONFIGURING;
+    bool ok = q3g_role_shutdown(role, false, error);
+    if (ok) ok = q3g_role_destroy(role, error);
+    if (ok) *position = next;
+    app->operation = APPLICATION_IDLE;
+    return ok;
+}
+
+bool qa_application_q3_remote_context_read(qa_application *app, qa_actor_owner receiver,
+    uint32_t seat, qa_application_q3_client_context *out, qa_error *error)
+{
+    if (!app || !out || !receiver || seat || app->destroy_requested)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 context requires its live seat-zero receiver");
+    application_provider **providers = app->routing_providers ? app->routing_providers : app->providers;
+    size_t count = app->routing_providers ? app->routing_provider_count : app->provider_count;
+    application_provider *provider = NULL;
+    for (size_t i = 0; i < count; ++i)
+        if (providers[i] && providers[i]->owner == receiver) {
+            if (provider)
+                return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 context has ambiguous receiver ownership");
+            provider = providers[i];
+        }
+    struct application_q3_guest *engine = q3g_engine(provider);
+    if (!provider || provider->application != app || !provider->constructed || !provider->attached ||
+        provider->close_pending || !engine || engine->restore_pending || engine->round.phase != Q3G_ROUND_NONE)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Remote Q3 context has no admitted receiver");
+    q3g_role *role = NULL;
+    for (q3g_role *current = engine->roles; current; current = current->next)
+        if (current->kind == QA_QVM_CGAME && current->seat == seat && current->ready &&
+            !current->retired && current->host) {
+            if (role)
+                return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 context has ambiguous CGAME hosts");
+            role = current;
+        }
+    qa_q3_host_client_context host;
+    if (!role || role->local_client || role->native_client || !role->client_services.gamestate ||
+        !qa_q3_host_client_context_read(role->host, &host) || host.role != QA_QVM_CGAME ||
+        host.session != app->session || host.owner != receiver || host.service_owner != role->service_owner ||
+        host.command_context.owner != receiver || host.command_context.seat != seat ||
+        host.command_context.dialect != QA_CONSOLE_Q3)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 context differs from its actual external-service host");
+    *out = (qa_application_q3_client_context){.session = host.session, .receiver = receiver,
+        .seat = seat, .source_client = UINT32_MAX, .service_owner = host.service_owner,
+        .frontend_lifetime = host.frontend_lifetime, .console = host.console, .cvars = host.cvars,
+        .client_time_cvars = host.client_time_cvars, .client_time_owner = host.client_time_owner,
+        .command_context = host.command_context, .initialized = role->initialized};
+    return true;
+}
+
+bool qa_application_q3_remote_context_current(qa_application *app,
+    const qa_application_q3_client_context *retained)
+{
+    qa_application_q3_client_context actual;
+    return retained && qa_application_q3_remote_context_read(app, retained->receiver,
+        retained->seat, &actual, NULL) && actual.session == retained->session &&
+        actual.service_owner == retained->service_owner && actual.frontend_lifetime == retained->frontend_lifetime &&
+        actual.console == retained->console && actual.cvars == retained->cvars &&
+        actual.client_time_cvars == retained->client_time_cvars && actual.client_time_owner == retained->client_time_owner &&
+        actual.command_context.owner == retained->command_context.owner &&
+        actual.command_context.seat == retained->command_context.seat &&
+        actual.command_context.dialect == retained->command_context.dialect;
+}
+
 bool application_q3_guest_role_add(application_provider *provider, qa_qvm_role kind,
                                      uint32_t seat, const char *path, qa_error *error)
 {

@@ -47,12 +47,14 @@ typedef struct application_bot_guest {
 } application_bot_guest;
 typedef struct application_bots {
     qa_application *application;
+    application_provider *source;
     qa_bot_runtime *runtime;
     qa_bots *population;
     qa_vfs *files;
     bool files_launch;
     qa_string_id files_product;
     qa_resource *map_resource;
+    qa_resource *source_map_resource;
     qa_bsp_view geometry;
     qa_entities entities;
     application_bot_graph *graphs;
@@ -76,12 +78,15 @@ typedef struct application_bots {
     size_t saved_file_reference_count;
     application_bot_round_phase round_phase;
     struct application_bots_round *round;
+    struct application_bots_original *original;
     qa_source_frame producer_frame;
     uint64_t producer_host_ns;
     bool producing;
 } application_bots;
 
 bool application_bot_player(void *,qa_actor_id,qa_bot_player *,qa_error *);
+bool application_bot_inventory_update(void *,qa_actor_id,const qa_bot_player *,int32_t *,qa_error *);
+bool application_bot_source_weapon(application_bots *,qa_actor_id,int32_t *,int32_t *,qa_error *);
 bool application_bot_entity(void *,qa_actor_id,qa_bot_entity *,qa_error *);
 bool application_bot_arsenal(void *,qa_actor_id,const qa_bot_weapon_knowledge **,size_t *,void **,qa_error *);
 void application_bot_arsenal_end(void *,void *);
@@ -94,7 +99,13 @@ bool application_bot_navigation_restore_binding(application_bots *,qa_navigation
                                                  qa_bot_navigation **,qa_error *);
 bool application_bots_construct_restored(application_bots *,qa_error *);
 qa_bot_services application_bots_services(application_bots *);
+application_provider *application_bot_source(application_bots *);
+bool application_bot_entity_number(application_bots *, qa_actor_id, int32_t *, qa_error *);
 bool application_bots_frame_at(qa_application *,const qa_source_frame *,size_t,uint64_t,qa_error *);
+bool application_native_q3_match_bots_end(application_provider *,qa_error *);
+bool application_bots_test_aas(application_provider *,qa_vec3,qa_error *);
+bool application_bots_native_q3_initialize(application_provider *,qa_error *);
+bool application_bots_native_q3_connect(application_provider *,qa_actor_id,bool,bool *,qa_error *);
 bool application_bots_prepare(qa_application *,const qa_launch_choices *,const qa_bsp_view *,const qa_entities *,qa_error *);
 qa_bot_runtime *application_bots_runtime(qa_application *);
 bool application_bots_guest_admit(qa_application *,qa_actor_id,qa_error *);

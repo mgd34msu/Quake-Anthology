@@ -5,6 +5,25 @@ static int32_t signed_word(uint32_t bits) {
     memcpy(&value, &bits, sizeof(value));
     return value;
 }
+bool bot_ai_source_intermission(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
+    *out=false;
+    if(!s->player.source_state_available || !b->services.source_intermission)
+        return bot_ai_fail(e,"bot intermission requires its actual source clock and retained player state");
+    if(!b->services.source_intermission(b->services.context,out,e)) return false;
+    if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
+    *out=*out || s->player.source_state.pmType==4 || s->player.source_state.pmType==5;
+    return true;
+}
+bool bot_ai_source_observer(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
+    *out=false;
+    if(!s->player.source_state_available)
+        return bot_ai_fail(e,"bot observer test requires its retained source player state");
+    if(s->player.source_state.pmType==2) {*out=true;return true;}
+    int32_t client,team;
+    if(!bot_ai_source_client(b,s,&client,e) || !bot_ai_source_team(b,client,&team,e)) return false;
+    if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
+    *out=team==3;return true;
+}
 static bool ready(qa_bots *b, bot_ai_state *s) {
     if (s->retired || !bot_ai_live(b, s->view.actor)) return false;
     qa_bot_navigation *navigation = qa_bot_runtime_navigation(b->runtime, (int32_t)s->view.client);
@@ -17,9 +36,6 @@ static bool player(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if (!b->services.player(b->services.context, s->view.actor, &s->player, e)) return false;
     if (!bot_ai_live(b,s->view.actor)) {s->retired=true;return true;}
     if (!bot_ai_carrying(b,s,&s->player.carrying_objective,e)) return false;
-    if(s->player.teleport_sequence && s->player.teleport_sequence!=s->teleport_sequence) {
-        s->teleport_sequence=s->player.teleport_sequence;s->teleport_time=b->time;
-    }
     if (!bot_ai_live(b, s->view.actor)) s->retired = true;
     return true;
 }
@@ -65,41 +81,78 @@ bool bot_ai_point_area(qa_bots *b, bot_ai_state *s, qa_vec3 origin, uint32_t *ar
 }
 bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
     qa_bot_actions *actions = qa_bot_runtime_actions(b->runtime);
+    int32_t old_inventory[QA_BOT_INVENTORY_SIZE];
+    memcpy(old_inventory,s->player.inventory,sizeof(old_inventory));
     if (!qa_bot_actions_reset(actions, s->view.client, e) || !player(b, s, e)) return false;
     if (s->retired) return true;
+    memcpy(s->player.inventory,old_inventory,sizeof(old_inventory));
     if (!bot_ai_console(b, s, e)) return false;
     if (s->retired || !bot_ai_live(b, s->view.actor)) return true;
     qa_bot_view_delta(&s->angles, s->player.delta_angles, true);
     s->local_time += elapsed;
     s->view.think_time = elapsed;
     bool ok = bot_ai_point_area(b, s, s->player.origin, &s->area, e);
-    if (ok && s->setup_count) {
-        --s->setup_count;
-        if (!s->setup_count) {
-            s->last_health = s->player.inventory[QA_BOT_INV_HEALTH];
-            qa_bot_chat_set_name(qa_bot_runtime_chat(b->runtime, s->chat), s->name, (int32_t)s->view.client);
-        }
-    }
+    bool setup_ready=true;
+    if(ok) ok=bot_ai_source_setup_frame(b,s,&setup_ready,e);
+    if(ok && (!setup_ready || s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
     if (ok && !s->setup_count) {
-        if (!s->player.intermission) {
+        bool intermission,observer;
+        ok=bot_ai_source_intermission(b,s,&intermission,e);
+        if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
+        if (ok && !intermission) {
+            ok=bot_ai_source_set_teleport_time(b,s,e) &&
+                b->services.inventory(b->services.context,s->view.actor,&s->player,s->player.inventory,e);
+            if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
+            if(ok) ok=bot_ai_source_task_preference(b,s,old_inventory,e);
+            if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
+            if(ok) ok=bot_ai_source_check_snapshot(b,s,e);
+            if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
             qa_bot_navigation *navigation = qa_bot_runtime_navigation(b->runtime, (int32_t)s->view.client);
             int32_t contents;
-            ok = navigation && qa_bot_navigation_contents(navigation, s->player.eye, &contents, e);
+            if(ok) ok = navigation && qa_bot_navigation_contents(navigation, s->player.eye, &contents, e);
             if (ok && (s->player.inventory[QA_BOT_INV_ENVIRO] > 0 || !(contents & (8 | 16 | 32))))
                 s->last_air_time = b->time;
         }
         if (ok) ok = bot_ai_messages(b, s, e);
+        if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
+        if(ok) ok=bot_ai_source_intermission(b,s,&intermission,e);
+        if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
+        if(ok && !intermission) ok=bot_ai_source_observer(b,s,&observer,e);
+        if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
+        if(ok && !intermission && !observer) ok=bot_ai_source_team_policy(b,s,e);
+        if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
+        if(ok && !s->source_chat.enter_game_chat && s->view.enter_time>b->time-8) {
+            bool chat;
+            ok=bot_ai_source_chat_enter_game(b,s,&chat,e);
+            if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
+            if(ok && chat) {
+                float duration;ok=bot_ai_source_chat_time(b,s,&duration,e);
+                if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
+                if(ok) {
+                    s->stand_until=b->time+duration;s->stand_enemy_time=b->time+1;
+                    s->view.decision=QA_BOT_STANDING;s->state_time=b->time;
+                }
+            }
+            if(ok) s->source_chat.enter_game_chat=true;
+        }
         if (ok) ok = bot_ai_decide(b, s, e);
-        s->last_health = s->player.inventory[QA_BOT_INV_HEALTH];
+        if(ok && !s->retired && bot_ai_live(b,s->view.actor)) {
+            s->source_chat.last_frame_health=s->player.inventory[QA_BOT_INV_HEALTH];
+            if(!s->player.source_state_available) ok=bot_ai_fail(e,"bot frame lacks its retained source player state");
+            else s->source_chat.last_hit_count=s->player.source_state.persistant[1];
+        }
     }
-    if (ok && !s->retired) ok = qa_bot_actions_weapon(actions, s->view.client, s->view.weapon, e);
+finished:
+    if (ok && !s->retired && bot_ai_live(b,s->view.actor))
+        ok = qa_bot_actions_weapon(actions, s->view.client, s->view.weapon, e);
     qa_bot_view_delta(&s->angles, s->player.delta_angles, false);
     return ok;
 }
 static bool observations(qa_bots *b, qa_error *e) {
-    if (!qa_bot_runtime_invalidate_entity_range(b->runtime,0,
-            qa_actors_capacity(qa_session_actors(b->services.shared.session)),e) ||
-        !qa_builtin_observations(&b->services.shared, &b->entities, e) ||
+    uint32_t extent;
+    if (!b->services.entity_extent(b->services.context,&extent,e) ||
+        !qa_bot_runtime_invalidate_entity_range(b->runtime,0,extent,e) ||
+        !b->services.entity_list(b->services.context,&b->entities,e) ||
         !qa_builtin_players(&b->services.shared, &b->players, e)) return false;
     for (size_t i = 0; i < b->entities.count; ++i) {
         qa_actor_id actor = b->entities.ids[i];
@@ -121,10 +174,7 @@ static bool retire_pending(qa_bots *b, qa_error *e) {
         if (!s || (!s->retired && bot_ai_live(b, s->view.actor))) continue;
         qa_error local = {0};
         if (!bot_ai_cleanup(b, s, &local)) {if(!first.code) first=local;continue;}
-        b->clients[i] = NULL;
-        b->actor_clients[s->view.actor.slot] = 0;
-        --b->count;
-        free(s);
+        bot_ai_source_cell_clear(b,s);
     }
     if (first.code && e) *e = first;
     return !first.code;
@@ -132,8 +182,8 @@ static bool retire_pending(qa_bots *b, qa_error *e) {
 static bool frame(qa_bots *b, int32_t time, qa_error *e) {
     if (b->services.controls && !b->services.controls(b->services.context, &b->controls, e)) return false;
     if (b->controls.paused) {
-        for (uint32_t i = 0; i < b->client_capacity; ++i) {
-            bot_ai_state *s = b->clients[i];
+        for (uint32_t i = 0; i < 64; ++i) {
+            bot_ai_state *s = b->source_clients[i]?b->clients[b->source_clients[i]-1]:NULL;
             if (!s || !connected(b, s)) continue;
             s->last_command.forward_move = s->last_command.side_move = s->last_command.up_move = 0;
             s->last_command.buttons = 0;
@@ -143,11 +193,11 @@ static bool frame(qa_bots *b, int32_t time, qa_error *e) {
         }
         return true;
     }
+    if(!bot_ai_source_interbreeding(b,e)) return false;
     int32_t period = b->controls.think_time_ms;
     if(period<1) return bot_ai_fail(e,"bot think interval must advance time");
     if (period > 200 && b->services.set_think_time &&
         !b->services.set_think_time(b->services.context, 200, e)) return false;
-    if(period>200) {period=200;b->controls.think_time_ms=200;}
     if (period != b->scheduled_think_ms) { b->scheduled_think_ms = period; bot_ai_schedule(b); }
     int32_t elapsed = signed_word((uint32_t)time - (uint32_t)b->local_time_ms);
     b->local_time_ms = time;
@@ -163,8 +213,8 @@ static bool frame(qa_bots *b, int32_t time, qa_error *e) {
         }
     }
     b->time = qa_bot_runtime_time(b->runtime);
-    for (uint32_t i = 0; i < b->client_capacity; ++i) {
-        bot_ai_state *s = b->clients[i];
+    for (uint32_t i = 0; i < 64; ++i) {
+        bot_ai_state *s = b->source_clients[i]?b->clients[b->source_clients[i]-1]:NULL;
         if (!s || s->retired) continue;
         s->residual_ms = signed_word((uint32_t)s->residual_ms + (uint32_t)elapsed);
         if (s->residual_ms < think) continue;
@@ -172,8 +222,8 @@ static bool frame(qa_bots *b, int32_t time, qa_error *e) {
         if (!ready(b, s)) continue;
         if (connected(b, s) && !bot_ai_think(b, s, (float)think / 1000, e)) return false;
     }
-    for (uint32_t i = 0; i < b->client_capacity; ++i) {
-        bot_ai_state *s = b->clients[i];
+    for (uint32_t i = 0; i < 64; ++i) {
+        bot_ai_state *s = b->source_clients[i]?b->clients[b->source_clients[i]-1]:NULL;
         if (!s || s->retired) continue;
         if (connected(b, s) && !bot_ai_input(b, s, time, elapsed, e)) return false;
     }

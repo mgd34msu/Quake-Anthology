@@ -4,6 +4,8 @@
 #include "qa/bot_knowledge.h"
 #include "qa/bot_perception.h"
 #include "qa/modes.h"
+#include "qa/console.h"
+#include "qa/network_q3.h"
 
 typedef struct qa_bots qa_bots;
 typedef enum qa_bot_decision {
@@ -38,6 +40,8 @@ typedef struct qa_bot_player {
     float air_time, teleport_time;
     uint64_t spawn_sequence;
     uint64_t teleport_sequence;
+    qa_q3_player source_state;
+    bool source_state_available;
 } qa_bot_player;
 typedef struct qa_bot_entity {
     qa_bot_entity_update observation;
@@ -58,28 +62,47 @@ typedef struct qa_bot_admission {
     qa_actor_id actor;
     uint32_t client;
     int32_t entity;
-    const char *character_file, *name;
+    const char *character_file, *name, *team;
     float skill;
     /* Objectives/orders select this explicit independent mode. Canonical
      * connection, body and inventory remain the ordinary shared owners. */
     qa_mode_id mode;
     bool team_arena;
+    bool restart;
 } qa_bot_admission;
 typedef struct qa_bot_view {
     qa_actor_id actor, enemy;
     uint32_t client;
+    int32_t source_client;
     int32_t entity, weapon;
     qa_mode_id mode;
     qa_bot_decision decision;
     qa_bot_order order;
     float enter_time, think_time;
 } qa_bot_view;
+typedef struct qa_bot_source_player {
+    bool present, bot;
+    qa_vec3 origin;
+} qa_bot_source_player;
+typedef struct qa_bot_source_player_state {
+    bool present, has_player;
+    int32_t pm_type, score, last_hurt_client, last_hurt_mod;
+} qa_bot_source_player_state;
+typedef struct qa_bot_source_row {
+    qa_q3_entity state;
+    qa_string_id classname;
+    bool present;
+} qa_bot_source_row;
 typedef struct qa_bot_services {
     void *context;
+    bool team_arena;
     qa_builtin_services shared;
     qa_modes *modes;
     bool (*player)(void *, qa_actor_id, qa_bot_player *, qa_error *);
+    bool (*inventory)(void *, qa_actor_id, const qa_bot_player *, int32_t *, qa_error *);
     bool (*entity)(void *, qa_actor_id, qa_bot_entity *, qa_error *);
+    bool (*entity_extent)(void *, uint32_t *, qa_error *);
+    bool (*entity_list)(void *, qa_builtin_actor_snapshot *, qa_error *);
     bool (*arsenal)(void *, qa_actor_id, const qa_bot_weapon_knowledge **, size_t *,
                      void **lease, qa_error *);
     void (*arsenal_end)(void *, void *lease);
@@ -88,6 +111,30 @@ typedef struct qa_bot_services {
      * its exact byte/angle semantics; foreign providers use semantic input. */
     bool (*submit)(void *, qa_actor_id, const qa_bot_input *, const qa_movement_command *, qa_error *);
     bool (*console)(void *, qa_actor_id, char *text, size_t, bool *found, qa_error *);
+    /* Source service identities differ from the shared library namespace. */
+    bool (*source_client)(void *, qa_actor_id, int32_t *, qa_error *);
+    qa_actor_id (*source_actor)(void *, int32_t);
+    qa_cvars *(*configuration)(void *);
+    bool (*register_cvar)(void *, const char *, const char *, uint32_t, qa_error *);
+    bool (*configstring)(void *, uint32_t, char *, size_t, qa_error *);
+    bool (*source_generic1)(void *, int32_t, int32_t *, qa_error *);
+    bool (*source_player)(void *, int32_t, qa_bot_source_player *, qa_error *);
+    bool (*source_player_state)(void *, int32_t, qa_bot_source_player_state *, qa_error *);
+    bool (*source_intermission)(void *, bool *, qa_error *);
+    bool (*source_row_count)(void *, uint32_t *, qa_error *);
+    bool (*source_row)(void *, int32_t, qa_bot_source_row *, qa_error *);
+    bool (*snapshot_entity)(void *, qa_actor_id, int32_t, int32_t *, bool *, qa_error *);
+    bool (*source_entity)(void *, int32_t, qa_q3_entity *, bool *, qa_error *);
+    bool (*source_event_time)(void *, int32_t, int32_t *, qa_error *);
+    bool (*print)(void *, const char *, qa_error *);
+    bool (*userinfo)(void *, qa_actor_id, const char *, const char *, qa_error *);
+    bool (*get_userinfo)(void *, qa_actor_id, char *, size_t, qa_error *);
+    bool (*set_userinfo)(void *, qa_actor_id, const char *, qa_error *);
+    bool (*source_game_type)(void *, int32_t *, qa_error *);
+    bool (*exit_level)(void *, qa_error *);
+    bool (*insert_console_command)(void *, const char *, qa_error *);
+    /* GAME owns this draw and its checkpoint. Botlib has a separate RNG. */
+    bool (*random)(void *, float *, qa_error *);
     bool (*controls)(void *, qa_bot_controls *, qa_error *);
     bool (*set_think_time)(void *, int32_t milliseconds, qa_error *);
     bool (*check_spawn)(void *, qa_error *);
@@ -114,11 +161,20 @@ bool qa_bots_create_restored(qa_bot_runtime *, const qa_bot_services *, uint32_t
                             qa_bots **, qa_error *);
 /* Retains the population when one of its synchronous callbacks is active. */
 bool qa_bots_destroy(qa_bots *, qa_error *);
+/* Source shutdown runs while the actual clients can still receive commands.
+ * Pure destruction also serves failed admission/restore owners and has no
+ * source session/chat effects. */
+bool qa_bots_shutdown(qa_bots *, bool restart, qa_error *);
+bool qa_bots_shutdown_client(qa_bots *, qa_actor_id, bool restart, qa_error *);
 bool qa_bots_can_destroy(const qa_bots *);
 bool qa_bots_admit(qa_bots *, const qa_bot_admission *, qa_error *);
+bool qa_bots_setup_failed(const qa_bots *,qa_actor_id);
 bool qa_bots_release(qa_bots *, qa_actor_id, qa_error *);
 bool qa_bots_actor_released(qa_bots *, const qa_actor_record *, qa_error *);
 bool qa_bots_frame(qa_bots *, int32_t source_time_ms, qa_error *);
+bool qa_bots_interbreed_end_admitted(const qa_bots *);
+bool qa_bots_interbreed_end_match(qa_bots *, qa_error *);
+bool qa_bots_test_aas(qa_bots *, qa_vec3, qa_error *);
 bool qa_bots_level_reset(qa_bots *, qa_error *);
 bool qa_bots_read(const qa_bots *, qa_actor_id, qa_bot_view *, qa_error *);
 bool qa_bots_move_to(qa_bots *, qa_actor_id, qa_vec3, qa_bot_order_status *, qa_error *);
