@@ -88,6 +88,9 @@ static bool read_script(void *opaque, const qa_command_context *context, const c
     struct application_native_q2 *engine = opaque;
     if (application_startup_source_active(engine->provider))
         return application_startup_script_read(engine->provider, context, path, out, lease, error);
+    if (application_startup_source_scripts(engine->provider))
+        return application_startup_source_script_read(engine->provider, engine->console,
+            context, path, out, lease, error);
     qa_resource *resource = NULL;
     if (!qa_vfs_acquire(engine->provider->launch->content, path, &resource, NULL, error)) return false;
     *out = qa_resource_bytes(resource); *lease = resource;
@@ -98,6 +101,10 @@ static void release_script(void *opaque, void *lease)
     struct application_native_q2 *engine = opaque;
     if (application_startup_source_active(engine->provider)) {
         application_startup_script_release(engine->provider, lease);
+        return;
+    }
+    if (application_startup_source_scripts(engine->provider)) {
+        application_startup_source_script_release(engine->provider, engine->console, lease);
         return;
     }
     qa_resource_release(lease);
@@ -360,7 +367,7 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
     free(engine->entity_text); engine->entity_text = copy;
     engine->map_name = name; engine->spawn_point = spawn;
     if (!application_native_q2_activate(engine, error)) return false;
-    if (engine->initialized && !qa_native_host_world_actor_bind(provider->state.native.host, engine->world_actor, error)) return false;
+    if (!qa_native_host_world_actor_bind(provider->state.native.host, engine->world_actor, error)) return false;
     for (uint32_t i = 0; i < engine->configstring_count; ++i) {
         free(engine->configstrings[i]); engine->configstrings[i] = NULL;
     }

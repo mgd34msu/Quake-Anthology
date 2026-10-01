@@ -141,6 +141,7 @@ bool qa_native_host_world_actor_bind(qa_native_host *host, qa_actor_id actor, qa
     if (record->owner != host->world.owner || !record->has_source || record->source_slot)
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "Native world actor differs from its owner/source world slot");
     host->world.world_actor = actor;
+    if (qa_native_get_lifecycle(host->instance) == QA_NATIVE_LOADED) return true;
     return bind_world(host, 0, error);
 }
 
