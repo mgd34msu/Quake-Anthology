@@ -101,7 +101,16 @@ bool application_qc_resource_lookup(void *opaque, qa_qc_resource_kind kind,
             ok = application_fail(error, QA_ERROR_FORMAT, "Invalid QuakeC inline model number");
         if (ok) ok = qa_collision_model_bounds(qa_world_geometry(engine->world), (uint32_t)model, &entry.value.bounds, error);
     } else {
-        ok = qa_vfs_acquire(engine->provider->launch->content, name, &entry.source, NULL, error);
+        char *sound_path=NULL;
+        if (kind==QA_QC_RESOURCE_SOUND) {
+            size_t length=strlen(name);
+            if (length>SIZE_MAX-7 || !(sound_path=malloc(length+7)))
+                ok=application_fail(error,QA_ERROR_MEMORY,"Allocating source sound asset path");
+            else { memcpy(sound_path,"sound/",6); memcpy(sound_path+6,name,length+1); }
+        }
+        if (ok) ok = qa_vfs_acquire_receipt(engine->provider->launch->content, sound_path?sound_path:name,
+            &entry.source,&entry.acquisition,error);
+        free(sound_path);
         if (ok && kind == QA_QC_RESOURCE_MODEL) {
             qa_bytes bytes = qa_resource_bytes(entry.source);
             if (bytes.size >= 4 && (qa_load_u32le(bytes.data) == 29 ||
@@ -114,7 +123,8 @@ bool application_qc_resource_lookup(void *opaque, qa_qc_resource_kind kind,
             } else {
                 qa_model model = {0};
                 ok = qa_model_load(bytes, &model, error);
-                if (ok) entry.value.bounds = (qa_bounds){
+                if (ok) entry.value.bounds = model.format==QA_MODEL_MDL?
+                    (qa_bounds){qa_v3(-16,-16,-16),qa_v3(16,16,16)}:(qa_bounds){
                     qa_v3(model.bounds.min[0], model.bounds.min[1], model.bounds.min[2]),
                     qa_v3(model.bounds.max[0], model.bounds.max[1], model.bounds.max[2])};
                 qa_model_free(&model);
@@ -131,7 +141,9 @@ bool application_qc_resource_lookup(void *opaque, qa_qc_resource_kind kind,
             else { engine->resources = entries; engine->resource_capacity = capacity; }
         }
     }
-    if (!ok) { qa_resource_release(entry.source); free(entry.name); return false; }
+    if (!ok) {
+        qa_vfs_acquisition_dispose(&entry.acquisition); qa_resource_release(entry.source); free(entry.name); return false;
+    }
     engine->resources[engine->resource_count++] = entry;
     *out = entry.value;
     return true;
@@ -930,7 +942,8 @@ static bool actor_frame(void *opaque, qa_session *session, qa_actor_id actor,
         }
         if (!application_qc_float(engine, reference, "movetype", &motion, error)) return false;
         if (motion != 0 && motion != 4 && motion != 5 && motion != 6 && motion != 7 &&
-            motion != 8 && motion != 9 && motion != 10)
+            motion != 8 && motion != 9 && motion != 10 &&
+            !(motion==11 && engine->profile==QA_QC_RERELEASE))
             return application_fail(error, QA_ERROR_UNSUPPORTED, "Unsupported nonclient QuakeC movetype");
     }
     qa_physics_result result;
@@ -1165,6 +1178,7 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
         engine->loading = true; engine->check_slot = 0; engine->check_time = 0; engine->check_cluster = -1;
         qa_cvars_set_server_active(engine->cvars, false);
         for (size_t i = 0; i < engine->resource_count; ++i) {
+            qa_vfs_acquisition_dispose(&engine->resources[i].acquisition);
             free(engine->resources[i].name); qa_resource_release(engine->resources[i].source);
         }
         engine->resource_count = 0;
@@ -1192,20 +1206,20 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
         if (engine->resources == NULL) return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC world precache");
         engine->resource_capacity = 32;
     }
-    char *world_name = copy_text(map, error);
+    const qa_launch_snapshot *snapshot=provider->application->routing_snapshot?
+        provider->application->routing_snapshot:qa_application_launch(provider->application);
+    const qa_launch_choices *choices=snapshot?qa_launch_snapshot_choices(snapshot):NULL;
+    const char *world_path=choices?choices->world.map:NULL;
+    if (!world_path || !*world_path)
+        return application_fail(error,QA_ERROR_FORMAT,"Source world model lacks its actual requested map path");
+    char *world_name = copy_text(world_path, error);
     if (world_name == NULL) return false;
     engine->resources[engine->resource_count++] = (application_qc_resource){.name = world_name,
         .kind = QA_QC_RESOURCE_MODEL, .world_model = true, .value = {.index = 1, .bounds = {world_model.bounds.min, world_model.bounds.max}}};
     const qa_qc_definition *mapname = qa_qc_program_find_global(provider->state.qc.program, "mapname");
-    const char *base = strncmp(map, "maps/", 5) == 0 ? map + 5 : map;
-    char *short_name = copy_text(base, error);
-    if (short_name == NULL) return false;
-    size_t length = strlen(short_name);
-    if (length >= 4 && strcmp(short_name + length - 4, ".bsp") == 0) short_name[length - 4] = 0;
     int32_t name;
-    bool ok = mapname != NULL && mapname->type == QA_QC_STRING && qa_qc_string_allocate(vm, short_name, &name, error) &&
+    bool ok = mapname != NULL && mapname->type == QA_QC_STRING && qa_qc_string_allocate(vm, map, &name, error) &&
               qa_qc_set_global_int(vm, mapname->offset, name, error);
-    free(short_name);
     if (!ok) return application_fail(error, QA_ERROR_FORMAT, "QuakeC mapname global is unavailable");
     static const char *globals[] = {"skill", "deathmatch", "coop", "teamplay"};
     for (size_t i = 0; i < sizeof(globals) / sizeof(globals[0]); ++i) {
@@ -1217,7 +1231,7 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
     if (serverflags != NULL && (serverflags->type != QA_QC_FLOAT ||
         !qa_qc_set_global_float(vm, serverflags->offset, engine->serverflags, error))) return false;
     const qa_qc_definition *model = application_qc_field(engine, "model", QA_QC_STRING, error);
-    if (model == NULL || !qa_qc_string_allocate(vm, map, &name, error) ||
+    if (model == NULL || !qa_qc_string_allocate(vm, world_path, &name, error) ||
         !qa_qc_set_entity_int(vm, 0, model->offset, name, error) ||
         !application_qc_set_float(engine, 0, "modelindex", 1, error) ||
         !application_qc_set_float(engine, 0, "solid", 4, error) ||
@@ -1267,6 +1281,7 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
     engine->output_channels = 0;
     qa_console_destroy(engine->console); qa_cvars_destroy(engine->cvars);
     for (size_t i = 0; i < engine->resource_count; ++i) {
+        qa_vfs_acquisition_dispose(&engine->resources[i].acquisition);
         free(engine->resources[i].name); qa_resource_release(engine->resources[i].source);
     }
     for (size_t i = 0; i < engine->message_count; ++i) {

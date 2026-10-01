@@ -14,6 +14,7 @@
 typedef struct application_qc_resource {
     char *name;
     qa_resource *source;
+    qa_vfs_acquisition acquisition;
     qa_qc_game_resource value;
     qa_qc_resource_kind kind;
     bool world_model;
