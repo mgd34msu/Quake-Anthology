@@ -7,7 +7,8 @@
  * uses qa_rankings_create_restored and, only for a real profile root,
  * qa_player_progress_create_restored before any consumer can borrow them. */
 bool application_save_progression_prepare(const qa_application_options *,
-    const qa_application_persistence_ops *, qa_bytes, qa_error *);
+    const qa_application_persistence_ops *, qa_bytes,
+    qa_application_options *construction, qa_error *);
 bool application_save_progression_capture(qa_application *,
     const qa_application_persistence_ops *, qa_buffer *empty, qa_error *);
 bool application_save_progression_restore(qa_application *,

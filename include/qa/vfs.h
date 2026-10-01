@@ -41,6 +41,7 @@ typedef struct qa_vfs_mount_info {
     bool user_overlay;
     bool referenced;
     const qa_sha256_digest *digest;
+    bool q3_demo;
 } qa_vfs_mount_info;
 size_t qa_vfs_mount_count(const qa_vfs *vfs);
 /* Info follows default search order. Its digest is borrowed until unmount. */
@@ -114,6 +115,10 @@ bool qa_vfs_set_user_overlay(qa_vfs *vfs, qa_mount_id mount, bool enabled,
  * restricts loose assets. User overlays remain available in both modes. */
 bool qa_vfs_set_restrictions(qa_vfs *vfs, const qa_sha256_digest *archives,
                               size_t count, bool q3_demo, qa_error *error);
+/* Demo admission belongs to this genuine Q3 mount in a mixed-family view.
+ * Archives require the source PK3 checksum; loose media follows files.c's
+ * configuration exceptions. Retained mounts and clones preserve the flag. */
+bool qa_vfs_set_mount_q3_demo(qa_vfs *, qa_mount_id, bool, qa_error *);
 const qa_sha256_digest *qa_vfs_archive_digest(const qa_vfs *vfs, qa_mount_id mount);
 /* Borrow the already decoded archive for complete source entry enumeration.
  * Null for loose or missing mounts; valid until that mount is removed. */

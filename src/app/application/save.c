@@ -26,11 +26,13 @@
 #include "rankings.h"
 #include "events_save.h"
 #include "native_q3_console.h"
+#include "native_q1_console.h"
 #include "native_q3_ipfilters.h"
 #include "native_q3_settings.h"
 #include "native_q3_team_status.h"
 #include "native_q3_votes.h"
 #include "native_q3_wire_state.h"
+#include "q3_product.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -87,10 +89,11 @@ static bool commands_scope(qa_source_save_io *io, qa_application_console_scope *
 {
     uint32_t kind = scope->kind;
     if (!qa_source_save_string(io, &scope->provider) || !qa_source_save_u32(io, &kind) ||
-        kind > QA_APPLICATION_CONSOLE_Q3_UI || !qa_source_save_u32(io, &scope->seat)) return false;
+        kind > QA_APPLICATION_CONSOLE_Q1_GAME || !qa_source_save_u32(io, &scope->seat)) return false;
     scope->kind = (qa_application_console_kind)kind;
     return scope->kind == QA_APPLICATION_CONSOLE_ENGINE ? !scope->provider && !scope->seat :
-        scope->provider && (scope->kind >= QA_APPLICATION_CONSOLE_Q3_CGAME || !scope->seat);
+        scope->provider && ((scope->kind >= QA_APPLICATION_CONSOLE_Q3_CGAME &&
+                             scope->kind <= QA_APPLICATION_CONSOLE_Q3_UI) || !scope->seat);
 }
 
 static bool application_commands_capture(qa_application *app, qa_buffer *out, qa_error *error)
@@ -762,7 +765,7 @@ static bool configuration_capture(qa_application *app, qa_buffer *out, qa_error 
 
 static bool application_capture(qa_application *app, qa_buffer *out, qa_error *error)
 {
-    enum { PART_COUNT = 6, HEADER_SIZE = 56 };
+    enum { PART_COUNT = 8, HEADER_SIZE = 72 };
     qa_buffer parts[PART_COUNT] = {0};
     application_match_intents *empty = NULL;
     application_match_intents *intents = app->match_intents;
@@ -775,6 +778,19 @@ static bool application_capture(qa_application *app, qa_buffer *out, qa_error *e
         application_match_intents_capture(intents, app, parts + 3, error) &&
         application_q1_signon_capture(app, parts + 4, error) &&
         application_portals_capture(app, parts + 5, error);
+    qa_source_save_io policy_io;
+    if (ok) {
+        ok = qa_source_save_writer(&policy_io, NULL, error) &&
+            application_q3_product_fields(&policy_io, &app->q3_product) &&
+            qa_source_save_finish(&policy_io, parts + 6);
+        qa_source_save_dispose(&policy_io);
+    }
+    if (ok) {
+        ok = qa_source_save_writer(&policy_io, NULL, error) &&
+            application_startup_fields(&policy_io, app) &&
+            qa_source_save_finish(&policy_io, parts + 7);
+        qa_source_save_dispose(&policy_io);
+    }
     size_t size = HEADER_SIZE;
     for (size_t i = 0; ok && i < PART_COUNT; ++i) {
         if (!parts[i].size || parts[i].size > SIZE_MAX - size)
@@ -788,7 +804,7 @@ static bool application_capture(qa_application *app, qa_buffer *out, qa_error *e
         if (!bytes.data) ok = application_fail(error, QA_ERROR_MEMORY, "allocating application continuation");
     }
     if (ok) {
-        memcpy(bytes.data, "QAAO", 4); qa_store_u32le(bytes.data + 4, 3);
+        memcpy(bytes.data, "QAAO", 4); qa_store_u32le(bytes.data + 4, 5);
         size_t offset = HEADER_SIZE;
         for (size_t i = 0; i < PART_COUNT; ++i) {
             qa_store_u64le(bytes.data + 8 + i * 8, parts[i].size);
@@ -803,11 +819,11 @@ static bool application_capture(qa_application *app, qa_buffer *out, qa_error *e
     return ok;
 }
 
-static bool application_parts(qa_bytes bytes, qa_bytes parts[6], qa_error *error)
+static bool application_parts(qa_bytes bytes, qa_bytes parts[8], qa_error *error)
 {
-    enum { PART_COUNT = 6, HEADER_SIZE = 56 };
+    enum { PART_COUNT = 8, HEADER_SIZE = 72 };
     if (!bytes.data || bytes.size < HEADER_SIZE || memcmp(bytes.data, "QAAO", 4) ||
-        qa_load_u32le(bytes.data + 4) != 3)
+        qa_load_u32le(bytes.data + 4) != 5)
         return application_fail(error, QA_ERROR_FORMAT, "invalid application continuation header");
     size_t offset = HEADER_SIZE;
     for (size_t i = 0; i < PART_COUNT; ++i) {
@@ -822,14 +838,49 @@ static bool application_parts(qa_bytes bytes, qa_bytes parts[6], qa_error *error
     return true;
 }
 
+static bool q3_product_decode(qa_bytes bytes, qa_q3_product_policy *policy, qa_error *error)
+{
+    qa_source_save_io io;
+    bool okay = qa_source_save_reader(&io, NULL, bytes, error) &&
+        application_q3_product_fields(&io, policy) && qa_source_save_finish(&io, NULL);
+    qa_source_save_dispose(&io);
+    return okay;
+}
+
+bool application_save_q3_product_decode(const qa_save_image *image,
+    qa_q3_product_policy *policy, qa_error *error)
+{
+    const qa_save_record *record = qa_save_image_find(image, QA_SAVE_APPLICATION, "");
+    qa_bytes parts[8];
+    if (!record || strcmp(record->owner.schema, "qa.application") ||
+        record->owner.schema_version != 5 || record->owner.backend[0] ||
+        !application_parts(record->payload, parts, error))
+        return application_fail(error, QA_ERROR_FORMAT, "Saved Q3 product policy has no qualified application owner");
+    return q3_product_decode(parts[6], policy, error);
+}
+
+bool application_save_startup_decode(const qa_save_image *image,
+    qa_application *app, qa_error *error)
+{
+    const qa_save_record *record = qa_save_image_find(image, QA_SAVE_APPLICATION, "");
+    qa_bytes parts[8];
+    if (!record || record->owner.schema_version != 5 ||
+        !application_parts(record->payload, parts, error)) return false;
+    qa_source_save_io io;
+    bool okay = qa_source_save_reader(&io, NULL, parts[7], error) &&
+        application_startup_fields(&io, app) && qa_source_save_finish(&io, NULL);
+    qa_source_save_dispose(&io);
+    return okay;
+}
+
 static bool application_metadata_prepare(qa_application *app,
                                            const qa_save_image *image,
                                            qa_error *error)
 {
     const qa_save_record *record = qa_save_image_find(image, QA_SAVE_APPLICATION, "");
-    qa_bytes parts[6];
+    qa_bytes parts[8];
     if (!record || strcmp(record->owner.schema, "qa.application") ||
-        record->owner.schema_version != 3 || record->owner.backend[0] ||
+        record->owner.schema_version != 5 || record->owner.backend[0] ||
         !application_parts(record->payload, parts, error))
         return application_fail(error, QA_ERROR_FORMAT, "Saved application metadata has no qualified owner");
     return application_save_metadata_restore(app, parts[0], error);
@@ -837,11 +888,19 @@ static bool application_metadata_prepare(qa_application *app,
 
 static bool application_restore(qa_application *app, qa_bytes bytes, qa_error *error)
 {
-    qa_bytes parts[6];
+    qa_bytes parts[8];
     if (app->match_intents != NULL)
         return application_fail(error, QA_ERROR_ARGUMENT, "Application continuation already installed");
     if (!application_parts(bytes, parts, error))
         return false;
+    qa_q3_product_policy policy = {0};
+    if (!q3_product_decode(parts[6], &policy, error)) return false;
+    if (policy.prerelease_demo != app->q3_product.prerelease_demo ||
+        policy.prerelease_team_arena_demo != app->q3_product.prerelease_team_arena_demo ||
+        policy.fs_restrict != app->q3_product.fs_restrict ||
+        policy.restriction_resolved != app->q3_product.restriction_resolved ||
+        policy.filesystem_restricted != app->q3_product.filesystem_restricted)
+        return application_fail(error, QA_ERROR_FORMAT, "Saved application changed its imported initial Q3 policy");
     app->match_intents = application_match_intents_create(error);
     return app->match_intents != NULL &&
         application_save_metadata_restore(app, parts[0], error) &&
@@ -993,13 +1052,58 @@ static bool native_q3_restore(application_provider *provider, qa_bytes bytes, qa
     return ok;
 }
 
+static bool native_q1_capture(application_provider *provider, qa_buffer *out, qa_error *error)
+{
+    qa_buffer game = {0}, cvars = {0};
+    bool ok = qa_q1_game_capture(provider->state.q1, &game, error) &&
+        application_native_q1_console_capture(provider, &cvars, error);
+    if (ok && (!game.size || !cvars.size || game.size > SIZE_MAX - 24 ||
+        cvars.size > SIZE_MAX - 24 - game.size))
+        ok = application_fail(error, QA_ERROR_FORMAT, "Invalid native Q1 source owner extent");
+    if (ok) {
+        out->size = 24 + game.size + cvars.size;
+        out->data = malloc(out->size);
+        if (!out->data) {
+            out->size = 0;
+            ok = application_fail(error, QA_ERROR_MEMORY, "Retaining native Q1 source owners");
+        }
+    }
+    if (ok) {
+        memcpy(out->data, "QAN1", 4); qa_store_u32le(out->data + 4, 1);
+        qa_store_u64le(out->data + 8, game.size); qa_store_u64le(out->data + 16, cvars.size);
+        memcpy(out->data + 24, game.data, game.size);
+        memcpy(out->data + 24 + game.size, cvars.data, cvars.size);
+    }
+    qa_buffer_free(&game); qa_buffer_free(&cvars);
+    return ok;
+}
+
+static bool native_q1_restore(application_provider *provider, qa_bytes bytes, qa_error *error)
+{
+    if (!bytes.data || bytes.size < 24 || memcmp(bytes.data, "QAN1", 4) ||
+        qa_load_u32le(bytes.data + 4) != 1)
+        return application_fail(error, QA_ERROR_FORMAT, "Invalid native Q1 source owner bundle");
+    uint64_t game_size = qa_load_u64le(bytes.data + 8), cvars_size = qa_load_u64le(bytes.data + 16);
+    if (!game_size || game_size > bytes.size - 24 ||
+        !cvars_size || cvars_size != bytes.size - 24 - (size_t)game_size)
+        return application_fail(error, QA_ERROR_FORMAT, "Invalid native Q1 source owner lengths");
+    qa_q1_restore *ticket = NULL;
+    bool ok = application_native_q1_console_restore(provider,
+        (qa_bytes){bytes.data + 24 + (size_t)game_size, (size_t)cvars_size}, error) &&
+        qa_q1_game_restore_prepare_source(provider->state.q1,
+            (qa_bytes){bytes.data + 24, (size_t)game_size}, &ticket, error) &&
+        qa_q1_game_restore_commit(ticket, error);
+    if (!ok) qa_q1_game_restore_abort(ticket);
+    return ok;
+}
+
 static bool provider_capture(application_provider *provider, qa_save_purpose purpose,
                               qa_buffer *out, qa_error *error)
 {
     qa_buffer state = {0};
     bool ok;
     if (provider->kind == APPLICATION_PROVIDER_Q1)
-        ok = qa_q1_game_capture(provider->state.q1, &state, error);
+        ok = native_q1_capture(provider, &state, error);
     else if (provider->kind == APPLICATION_PROVIDER_Q2)
         ok = qa_q2_game_capture(provider->state.q2, &state, error);
     else if (provider->kind == APPLICATION_PROVIDER_Q3)
@@ -1041,10 +1145,7 @@ static bool provider_restore(application_persistence *operation,
     qa_bytes state = {bytes.data + 32, bytes.size - 32};
     bool ok;
     if (provider->kind == APPLICATION_PROVIDER_Q1) {
-        qa_q1_restore *ticket = NULL;
-        ok = qa_q1_game_restore_prepare_source(provider->state.q1, state, &ticket, error) &&
-            qa_q1_game_restore_commit(ticket, error);
-        if (!ok) qa_q1_game_restore_abort(ticket);
+        ok = native_q1_restore(provider, state, error);
     } else if (provider->kind == APPLICATION_PROVIDER_Q2)
         ok = qa_q2_game_restore(provider->state.q2, state, error);
     else if (provider->kind == APPLICATION_PROVIDER_Q3)
@@ -1092,7 +1193,7 @@ static bool persistence_inventory(application_persistence *operation, qa_applica
         }
         if (schema) {
             owner->schema = schema;
-            owner->schema_version = owner->kind == QA_SAVE_APPLICATION ||
+            owner->schema_version = owner->kind == QA_SAVE_APPLICATION ? 5 :
                                     (owner->kind == QA_SAVE_PROVIDER &&
                                      provider->kind == APPLICATION_PROVIDER_Q3) ? 3 :
                                     owner->kind == QA_SAVE_CONTROLS ? 6 :
@@ -1298,14 +1399,15 @@ static bool persistence_create(void *opaque, const qa_save_image *image, void **
         return application_fail(error, QA_ERROR_FORMAT, "configuration continuation disagrees with save envelope");
     const qa_save_record *progression = foundation_record(image,
         QA_SAVE_PROGRESSION, "qa.progression.application", error);
+    qa_application_options construction;
     if (!progression || !application_save_progression_prepare(operation->options,
-        operation->ops, progression->payload, error)) return false;
+        operation->ops, progression->payload, &construction, error)) return false;
     qa_application *candidate = NULL;
     qa_application_content_graph *graph = NULL;
     const qa_save_record *resources = foundation_record(image, QA_SAVE_RESOURCES, "qa.content-graph", error);
     bool created = resources && application_save_content_prepare(resources->payload,
         operation->ops->content_files, &graph, error) &&
-        application_create_restored(operation->options, image, &graph, &candidate, error);
+        application_create_restored(&construction, image, &graph, &candidate, error);
     application_save_content_destroy(graph);
     if (!created) return false;
     candidate->operation = APPLICATION_PERSISTING;
@@ -1319,11 +1421,13 @@ static bool persistence_create(void *opaque, const qa_save_image *image, void **
         .mounts = content_mounts, .instance = content_instance, .resource = content_resource,
         .resource_count = application_save_content_launch_resource_count(candidate->content_graph)};
     bool ok = application_save_configuration_decode(candidate, identity, &draft, error) &&
+        application_q3_product_validate_draft(&candidate->q3_product, draft, error) &&
         qa_configuration_prepare_restored(candidate->configuration, draft, &checkpoint, &content, &transaction, error);
     qa_launch_draft_destroy(draft);
     if (ok) {
         const qa_launch_snapshot *snapshot = qa_configuration_candidate(transaction);
         ok = qa_launch_identity_match(snapshot, qa_session_actors(candidate->session), identity, error) &&
+            application_q3_product_validate_snapshot(&candidate->q3_product, snapshot, error) &&
             application_save_prepare_content(candidate, snapshot, image, error) &&
             application_metadata_prepare(candidate, image, error);
         for (size_t i = 0; ok && i < candidate->provider_count; ++i) {

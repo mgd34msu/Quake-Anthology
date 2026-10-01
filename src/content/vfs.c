@@ -7,7 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-static bool demo_package_allowed(const package *archive, qa_error *error);
 static void prioritize_mounts(const qa_vfs *vfs, mount **order);
 static void prioritize_ids(qa_vfs *vfs, qa_mount_id *order);
 
@@ -277,7 +276,7 @@ bool qa_vfs_mount_at(const qa_vfs *vfs, size_t index, qa_vfs_mount_info *out)
         source->id, source->archive != NULL,
         source->archive == NULL ? QA_ARCHIVE_AUTO : qa_archive_get_kind(source->archive->archive),
         source->comparison, source->writable, source->user_overlay, source->referenced,
-        source->archive == NULL ? NULL : &source->archive->digest
+        source->archive == NULL ? NULL : &source->archive->digest, source->q3_demo
     };
     return true;
 }
@@ -609,7 +608,7 @@ bool qa_vfs_mount_retained(qa_vfs *vfs, const qa_vfs *retained, qa_mount_id id,
                 qa_error_set(error, QA_ERROR_IO, 0, "Retained archive changed: %s", source->path);
             return false;
         }
-        if (vfs->q3_demo && !demo_package_allowed(source->archive, error)) return false;
+        if ((vfs->q3_demo || source->q3_demo) && !vfs_demo_package_allowed(source->archive, error)) return false;
     }
     mount *copy = malloc(sizeof(*copy));
     char *path = copy_string(source->path);
@@ -655,7 +654,7 @@ bool qa_vfs_mount_archive(qa_vfs *vfs, const char *path, qa_archive_kind kind,
         qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain mount path");
         vfs_mount_free(source); return false;
     }
-    if (vfs->q3_demo && !demo_package_allowed(source->archive, error)) {
+    if (vfs->q3_demo && !vfs_demo_package_allowed(source->archive, error)) {
         vfs_mount_free(source);
         return false;
     }
@@ -770,7 +769,7 @@ bool qa_vfs_archive_checksums(qa_vfs *vfs, qa_mount_id id, uint32_t feed,
     return archive_checksums(source->archive, feed, checksum, pure_checksum, error);
 }
 
-static bool demo_package_allowed(const package *archive, qa_error *error)
+bool vfs_demo_package_allowed(const package *archive, qa_error *error)
 {
     uint32_t checksum;
     if (qa_archive_get_kind(archive->archive) != QA_ARCHIVE_PK3) {
@@ -838,7 +837,7 @@ bool qa_vfs_set_restrictions(qa_vfs *vfs, const qa_sha256_digest *archives,
     if (q3_demo) {
         for (size_t i = 0; i < vfs->count; i++) {
             package *archive = vfs->mounts[i]->archive;
-            if (archive != NULL && !demo_package_allowed(archive, error)) return false;
+            if (archive != NULL && !vfs_demo_package_allowed(archive, error)) return false;
         }
     }
     qa_sha256_digest *copy = count == 0 ? NULL : malloc(count * sizeof(*copy));
@@ -857,6 +856,18 @@ bool qa_vfs_set_restrictions(qa_vfs *vfs, const qa_sha256_digest *archives,
     return true;
 }
 
+bool qa_vfs_set_mount_q3_demo(qa_vfs *vfs, qa_mount_id id, bool enabled, qa_error *error)
+{
+    mount *source = find_mount(vfs, id);
+    if (!source) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Q3 demo admission requires its actual mount");
+        return false;
+    }
+    if (enabled && source->archive && !vfs_demo_package_allowed(source->archive, error)) return false;
+    source->q3_demo = enabled;
+    return true;
+}
+
 static bool source_allowed(const qa_vfs *vfs, const mount *source, const char *path)
 {
     if (source->user_overlay) return true;
@@ -866,7 +877,7 @@ static bool source_allowed(const qa_vfs *vfs, const mount *source, const char *p
             if (qa_sha256_equal(&source->archive->digest, &vfs->pure[i])) return true;
         return false;
     }
-    if (vfs->pure_count == 0 && !vfs->q3_demo) return true;
+    if (vfs->pure_count == 0 && !vfs->q3_demo && !source->q3_demo) return true;
     const char *extension = strrchr(path, '.');
     if (extension == NULL) return false;
     static const char *const allowed[] = {".cfg", ".menu", ".game", ".dm_68", ".dat"};
@@ -1693,7 +1704,7 @@ bool qa_vfs_list(qa_vfs *vfs, const char *path, const char *extension,
                 if (!listing_add(&listing, &capacity, name + (length == 0 ? 0 : length + 1), error)) goto fail;
             }
         } else {
-            if (!source->user_overlay && (vfs->pure_count != 0 || vfs->q3_demo)) continue;
+            if (!source->user_overlay && (vfs->pure_count != 0 || vfs->q3_demo || source->q3_demo)) continue;
             qa_error local = {0};
             char *resolved = resolve_spelling(source, directory, &local);
             if (resolved == NULL) {

@@ -1,4 +1,5 @@
 #include "native_q3_console.h"
+#include "q3_product.h"
 
 #include <stdlib.h>
 #include <ctype.h>
@@ -210,7 +211,7 @@ static bool register_engine_cvars(struct application_native_q3_console *owner,
 {
     const char *name = !strncmp(map_path, "maps/", 5) ? map_path + 5 : map_path;
     size_t length = strlen(name);
-    if (length >= 4 && !strcmp(name + length - 4, ".bsp")) length -= 4;
+    if (length > 4 && !strcmp(name + length - 4, ".bsp")) length -= 4;
     if (!length)
         return application_fail(error, QA_ERROR_FORMAT,
                                 "native Q3 startup map has no source identity");
@@ -264,7 +265,9 @@ bool application_native_q3_console_create(application_provider *provider,
         .capture_context = capture, .context_active = active, .read_script = read_script,
         .release_script = release_script, .source_command = command};
     if (owner->cvars) owner->console = qa_console_create(&options, error);
-    if (!owner->console || !register_engine_cvars(owner, map_path, error)) {
+    if (!owner->console || !application_startup_seed_source(provider, owner->cvars, error) ||
+        !application_q3_product_register_source(application_q3_product_source_policy(provider->application),
+            owner->cvars, provider->owner, error) || !register_engine_cvars(owner, map_path, error)) {
         qa_console_destroy(owner->console);
         qa_cvars_destroy(owner->cvars);
         free(owner);

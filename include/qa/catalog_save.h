@@ -13,6 +13,9 @@ typedef struct qa_catalog_checkpoint_refs {
 } qa_catalog_checkpoint_refs;
 const qa_vfs *qa_catalog_files(const qa_catalog *);
 qa_resource_pool *qa_catalog_resources(const qa_catalog *);
+/* Independent metadata/strings and VFS policy; retain the actual native mount
+ * authority without rediscovery or acquisition. */
+bool qa_catalog_clone(const qa_catalog *, qa_catalog **, qa_error *);
 bool qa_catalog_checkpoint(const qa_catalog *, const qa_catalog_checkpoint_refs *, qa_buffer *, qa_error *);
 /* Restores the complete retained snapshot, including original private string
  * IDs, product IDs and physical order. No scans or metadata/source replay run.

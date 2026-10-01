@@ -45,6 +45,7 @@ typedef enum application_provider_kind {
 } application_provider_kind;
 
 typedef struct application_provider {
+    struct application_native_q1_console *native_q1_console;
     struct application_native_q3_console *native_q3_console;
     struct application_native_q3_settings *native_q3_settings;
     struct application_native_q3_ipfilters *native_q3_ipfilters;
@@ -185,12 +186,16 @@ typedef struct application_publication {
 } application_publication;
 
 struct qa_application {
+    struct application_startup *startup;
+    qa_q3_product_policy q3_product;
+    const qa_q3_product_policy *q3_product_preparing;
     qa_cvars *cvars;
     qa_console *console;
     const qa_native_runner_config *native_runner;
     void *guest_context;
     qa_application_q3_services_fn q3_services;
     qa_application_q3_client_effect_fn q3_client_effect;
+    qa_application_q3_campaign_command_fn q3_campaign_command;
     const struct qa_application_q3_round_services *q3_round_services;
     qa_application_ranking_effect_fn ranking_effect;
     char *ranking_game_key;
@@ -205,6 +210,8 @@ struct qa_application {
     struct application_bots *bots;
     struct application_match_intents *match_intents;
     struct application_q3_world_restart *q3_world_restart;
+    struct application_q1_original_save *q1_original_save;
+    struct application_q3_campaign_launch *q3_campaign_launch;
     bool frame_preparing;
     bool source_shutdown_admitted;
     struct application_q1_signon *q1_signon;

@@ -30,6 +30,12 @@ bool catalog_view(const qa_catalog *c, const qa_mount_id *ids, size_t count,
         }
         if (!qa_vfs_mount_retained(view, c->mounts, ids[i], QA_ARCHIVE_CASE_INSENSITIVE,
             source->writable, &mounted, error)) goto fail;
+        if (c->q3_demo_restricted) {
+            const qa_product *demo = qa_catalog_find(c, "q3-demota");
+            const catalog_product *media = demo ? &c->products[demo->id - 1] : NULL;
+            if (media && contains(media->mounts, media->mount_count, ids[i]) &&
+                !qa_vfs_set_mount_q3_demo(view, mounted, true, error)) goto fail;
+        }
     }
     *out = view; return true;
 fail:

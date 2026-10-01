@@ -44,6 +44,7 @@ typedef struct mount {
     bool writable;
     bool user_overlay;
     bool referenced;
+    bool q3_demo;
 } mount;
 typedef struct resource_link {
     struct resource_link *next;
@@ -83,4 +84,5 @@ void vfs_package_release(package *);
 void vfs_mount_free(mount *);
 bool vfs_read_record(qa_vfs *, mount *, qa_resource *, const char *, const char *, const char *, const char *, qa_error *);
 bool vfs_read_valid(const qa_vfs *, const qa_vfs_read_reference *, qa_error *);
+bool vfs_demo_package_allowed(const package *, qa_error *);
 #endif

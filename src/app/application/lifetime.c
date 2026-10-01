@@ -2,9 +2,19 @@
 #include "match_intents.h"
 #include "network_q1_signon.h"
 #include "guest_native_q2_private.h"
+#include "guest_qc_original_save.h"
 #include "native_q3_console.h"
+#include "native_q1_console.h"
+#include "native_q3_ipfilters.h"
+#include "native_q3_settings.h"
+#include "native_q3_team_status.h"
+#include "native_q3_votes.h"
+#include "native_q3_wire_state.h"
 #include "portals.h"
 #include "save_content.h"
+#include "control_frame.h"
+#include "rankings.h"
+#include "q3_product.h"
 
 #include <stdlib.h>
 
@@ -12,9 +22,16 @@ bool application_guests_idle(const qa_application *application)
 {
     if (application == NULL)
         return false;
+    if (!application_control_frames_idle(application) || !application_rankings_idle(application)) return false;
     for (const application_provider *provider = application->live_providers;
          provider != NULL; provider = provider->next_live) {
-        if (!application_native_q3_console_idle(provider))
+        if (!application_native_q1_console_idle(provider) ||
+            !application_native_q3_console_idle(provider) ||
+            !application_native_q3_ipfilters_idle(provider) ||
+            !application_native_q3_settings_idle(provider) ||
+            !application_native_q3_team_status_idle(provider) ||
+            !application_native_q3_votes_idle(provider) ||
+            !application_native_q3_wire_idle(provider))
             return false;
         for (size_t index = 0;; ++index) {
             qa_console *console;
@@ -108,6 +125,22 @@ static void queue_close(qa_application *application,
     application->pending_close = provider;
 }
 
+static application_provider **next_close(qa_application *application)
+{
+    /* External CGAME/UI executors retain native GAME imports until their
+     * physical teardown completes. Release those role owners first. */
+    for (application_provider **position = &application->pending_close;
+         *position != NULL; position = &(*position)->next_close) {
+        application_provider *provider = *position;
+        if ((provider->kind == APPLICATION_PROVIDER_QVM &&
+             provider->state.qvm.engine != NULL) ||
+            (provider->kind == APPLICATION_PROVIDER_NATIVE &&
+             provider->state.native.engine != NULL))
+            return position;
+    }
+    return &application->pending_close;
+}
+
 void application_provider_release(qa_application *application,
                                   application_provider *provider)
 {
@@ -115,6 +148,7 @@ void application_provider_release(qa_application *application,
         return;
     if (application->operation == APPLICATION_ADVANCING ||
         application->operation == APPLICATION_PERSISTING ||
+        application->q3_round_active || application->frame_preparing ||
         application->session == NULL ||
         !qa_session_safe(application->session)) {
         queue_close(application, provider);
@@ -146,8 +180,9 @@ bool application_drain_provider_closes(qa_application *application,
                                 "provider close drain requires a session safe point");
 
     while (application->pending_close != NULL) {
-        application_provider *provider = application->pending_close;
-        application->pending_close = provider->next_close;
+        application_provider **position = next_close(application);
+        application_provider *provider = *position;
+        *position = provider->next_close;
         provider->next_close = NULL;
         provider->close_pending = false;
         if (!application_provider_close(application, provider, error)) {
@@ -163,6 +198,7 @@ bool application_finalize(qa_application *application, qa_error *error)
     if (application == NULL)
         return true;
     if (!application->destroy_requested || application->finalizing ||
+        application->q3_round_active || application->frame_preparing ||
         application->configuration != NULL || application->provider_states != 0 ||
         application->pending_close != NULL || application->live_providers != NULL)
         return application_fail(error, QA_ERROR_ARGUMENT,
@@ -183,6 +219,9 @@ bool application_finalize(qa_application *application, qa_error *error)
     qa_error current = {0};
     bool ok = true;
 
+    application_rankings_dispose(application);
+    free(application->ranking_game_key);
+    application->ranking_game_key = NULL;
     bool rankings_closed = qa_rankings_close(application->rankings, &current);
     application->rankings = NULL;
     remember(rankings_closed, &current, "ranking cleanup failed", &ok, &first);
@@ -227,6 +266,8 @@ bool application_finalize(qa_application *application, qa_error *error)
                                 "application session acquired a teardown admission");
     }
     current = (qa_error){0};
+    application_control_frames_free(application->control_frames);
+    application->control_frames = NULL;
     remember(qa_session_destroy(application->session, &current), &current,
              "session destruction failed", &ok, &first);
     /* The readiness check established that destruction consumes this owner,
@@ -268,6 +309,8 @@ bool application_finalize(qa_application *application, qa_error *error)
     application_save_content_destroy(application->content_graph);
     free(application->content_root);
     free(application->user_root);
+    application_q1_original_dispose(application);
+    application_startup_dispose(application);
     free(application);
     return true;
 }

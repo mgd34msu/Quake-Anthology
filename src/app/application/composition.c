@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "q3_product.h"
 
 #include <stdlib.h>
 
@@ -118,20 +119,28 @@ bool application_composition_destroy(qa_application *application,
 bool application_apply(qa_application *application,
                        const qa_launch_draft *draft, qa_error *error)
 {
-    qa_configuration_transaction *transaction = NULL;
-    if (!qa_configuration_prepare(application->configuration, draft,
-                                  &transaction, error))
+    application_q3_product_preparation prepared = {0};
+    if (!application_q3_product_prepare_draft(application, draft, &prepared, error))
         return false;
+    qa_configuration_transaction *transaction = NULL;
+    if (!qa_configuration_prepare(application->configuration, prepared.draft,
+                                  &transaction, error)) {
+        application_q3_product_finish(application, &prepared, false);
+        return false;
+    }
     if (!qa_configuration_validate(transaction, error)) {
         qa_error ignored = {0};
         (void)qa_configuration_abort(transaction, &ignored);
+        application_q3_product_finish(application, &prepared, false);
         return false;
     }
     if (!qa_configuration_commit(transaction, error)) {
         qa_error ignored = {0};
         (void)qa_configuration_abort(transaction, &ignored);
+        application_q3_product_finish(application, &prepared, false);
         return false;
     }
+    application_q3_product_finish(application, &prepared, true);
     if (application->state == QA_APPLICATION_FAULTED) {
         if (error != NULL)
             *error = application->publication_error;

@@ -3,6 +3,11 @@
 #include "save_native_q2.h"
 #include "save_content.h"
 #include "control_frame.h"
+#include "bots_round.h"
+#include "rankings.h"
+#include "native_q3_clients.h"
+#include "native_q3_wire.h"
+#include "q3_product.h"
 #include "qa/rankings_save.h"
 #include "qa/player_progress_save.h"
 #include "qa/catalog_save.h"
@@ -103,18 +108,35 @@ static bool create_application(const qa_application_options *options,
     application->guest_context = options->guest_context;
     application->q3_services = options->q3_services;
     application->q3_client_effect = options->q3_client_effect;
+    application->q3_campaign_command = options->q3_campaign_command;
+    application->q3_round_services = options->q3_round_services;
+    application->ranking_effect = options->ranking_effect;
     application->native_q2_services = options->native_q2_services;
     application->world_change_ready = options->world_change_ready;
     application->before_world_change = options->before_world_change;
     application->world_retired = options->world_retired;
     application->console_print = options->console_print;
     if (!application_console_create(application, error)) goto fail;
+    if (!restore && !baseline_strings && !application_startup_create(application,
+        options->startup_commands, options->startup_command_count, error)) goto fail;
+    if (restore) {
+        qa_q3_product_policy saved = {0};
+        if (!application_save_q3_product_decode(restore, &saved, error) ||
+            !application_q3_product_import(application->cvars, &saved, &application->q3_product, error)) goto fail;
+        if (!application_save_startup_decode(restore, application, error)) goto fail;
+    } else if (baseline_strings) {
+        if (!options->q3_product_policy || !application_q3_product_import(application->cvars,
+            options->q3_product_policy, &application->q3_product, error)) goto fail;
+    } else if (!application_q3_product_initial(application->cvars, options->startup_commands,
+        options->startup_command_count, &application->q3_product, error)) goto fail;
     qa_builtin_random_seed(&application->random,
                            (uint32_t)options->catalog_generation ^ UINT32_C(0x71616e74));
     application->content_root = copy_text(options->content_root, error);
     application->user_root = copy_text(options->user_root, error);
+    application->ranking_game_key = copy_text(options->ranking_game_key, error);
     if (application->content_root == NULL ||
-        (options->user_root != NULL && application->user_root == NULL))
+        (options->user_root != NULL && application->user_root == NULL) ||
+        (options->ranking_game_key != NULL && application->ranking_game_key == NULL))
         goto fail;
 
     if (restore) {
@@ -141,21 +163,41 @@ static bool create_application(const qa_application_options *options,
         : qa_rankings_create(ranking_provider, NULL, &application->rankings, error);
     if (!rankings_created)
         goto fail;
-    if (application->user_root != NULL &&
-        (!qa_fs_root_open(application->user_root, &application->user_files,
-                          error) ||
-         !(restored_owners
+    if (options->player_profile_root != NULL) {
+        application->user_files = options->player_profile_root;
+        qa_fs_root_retain(application->user_files);
+        if (!(restored_owners
             ? qa_player_progress_create_restored(application->user_files,
                 "player-progress.json", &application->progress, error)
             : qa_player_progress_open(application->user_files,
-                "player-progress.json", &application->progress, error))))
-        goto fail;
+                "player-progress.json", &application->progress, error)))
+            goto fail;
+    }
     application->catalog_generation = (restore || baseline_catalog)
         ? qa_catalog_generation(application->catalog) : options->catalog_generation;
     application->discover_mods = options->discover_mods;
     if (!restore && !baseline_catalog && !discover(application, options->discover_mods,
                   application->catalog_generation, &application->catalog, error))
         goto fail;
+    if (restore || baseline_catalog) {
+        if (qa_catalog_q3_restricted(application->catalog) &&
+            (!application->q3_product.restriction_resolved || !application->q3_product.filesystem_restricted)) {
+            application_fail(error, QA_ERROR_FORMAT, "Saved application catalog differs from its retained Q3 media policy");
+            goto fail;
+        }
+    } else if (options->initial_product_key) {
+        const qa_product *selected = qa_catalog_find(application->catalog, options->initial_product_key);
+        if (!selected && !strcmp(options->initial_product_key, "q3"))
+            for (size_t i = 0; i < qa_catalog_count(application->catalog); ++i) {
+                const qa_product *product = qa_catalog_at(application->catalog, i);
+                if (product->family == QA_GAME_Q3 && product->edition == QA_EDITION_CLASSIC && product->builtin) {
+                    selected = product;
+                    break;
+                }
+            }
+        if (selected && (!application_q3_product_prepare(application->catalog, selected->id,
+            &application->q3_product, error) || !application_startup_seed_engine(application, selected->id, error))) goto fail;
+    }
 
     qa_session_options session = {
         .actor_capacity = options->actor_capacity,
@@ -203,6 +245,7 @@ static bool create_application(const qa_application_options *options,
     if (!application_control_frames_create(application, error))
         goto fail;
 
+    application->source_shutdown_admitted = !restored_owners;
     *out = application;
     return true;
 
@@ -238,11 +281,14 @@ fail:
     qa_catalog_release(application->catalog);
     qa_player_progress_close(application->progress);
     (void)qa_rankings_close(application->rankings, NULL);
+    application_rankings_dispose(application);
     qa_fs_root_close(application->user_files);
     qa_resource_pool_destroy(application->resources);
     application_save_content_destroy(application->content_graph);
     free(application->content_root);
     free(application->user_root);
+    free(application->ranking_game_key);
+    application_startup_dispose(application);
     free(application);
     return false;
 }
@@ -556,7 +602,8 @@ bool qa_application_q2_visual_read(const qa_application *application,
 bool qa_application_rediscover(qa_application *application, bool discover_mods,
                                qa_error *error)
 {
-    if (application == NULL || application->operation != APPLICATION_IDLE ||
+    if (application == NULL || application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
+        !application_rankings_idle(application) ||
         application->state == QA_APPLICATION_FAULTED ||
         application->state == QA_APPLICATION_STOPPING)
         return application_fail(error, QA_ERROR_ARGUMENT,
@@ -568,6 +615,8 @@ bool qa_application_rediscover(qa_application *application, bool discover_mods,
     qa_catalog *candidate = NULL;
     uint64_t generation = application->catalog_generation + 1;
     bool ok = discover(application, discover_mods, generation, &candidate, error);
+    if (ok && application->q3_product.restriction_resolved && application->q3_product.filesystem_restricted)
+        ok = qa_catalog_q3_restrict(candidate, error);
     if (ok) {
         qa_catalog *previous = application->catalog;
         application->catalog = candidate;
@@ -575,6 +624,7 @@ bool qa_application_rediscover(qa_application *application, bool discover_mods,
         application->discover_mods = discover_mods;
         qa_catalog_release(previous);
     }
+    if (!ok) qa_catalog_release(candidate);
     application->operation = APPLICATION_IDLE;
     return ok;
 }
@@ -583,8 +633,8 @@ bool qa_application_apply(qa_application *application,
                           const qa_launch_draft *draft, qa_error *error)
 {
     if (application == NULL || draft == NULL ||
-        application->operation != APPLICATION_IDLE ||
-        !application_guests_idle(application) ||
+        application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
+        !application_guests_idle(application) || !application_rankings_idle(application) ||
         !application_bots_can_destroy(application) ||
         application->state == QA_APPLICATION_FAULTED ||
         application->state == QA_APPLICATION_STOPPING)
@@ -602,12 +652,13 @@ bool qa_application_guest_context_rebind_ready(const qa_application *application
                                                 const qa_scene_frame *current_frame,
                                                 qa_error *error)
 {
-    if (!application || application->operation != APPLICATION_IDLE ||
+    if (!application || application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
         !application->session || !application->world || !application->console ||
         !qa_session_safe(application->session) ||
         !qa_session_destroy_ready(application->session) ||
         !qa_world_idle(application->world) || !qa_combat_idle(application->combat) ||
         !qa_console_idle(application->console) || !application_guests_idle(application) ||
+        !application_rankings_idle(application) ||
         !application_bots_can_destroy(application) ||
         (application->modes && !qa_modes_idle(application->modes)) ||
         (application->equipment && !qa_equipment_idle(application->equipment)) ||
@@ -631,6 +682,8 @@ bool qa_application_guest_context_rebind_ready(const qa_application *application
 void qa_application_guest_context_rebind(qa_application *application, void *context,
                                            qa_scene_frame *destination_frame)
 {
+    if (!application || application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
+        !application_rankings_idle(application)) return;
     void *previous_context = application->guest_context;
     for (application_provider *provider = application->live_providers;
          provider; provider = provider->next_live)
@@ -648,12 +701,12 @@ uint64_t application_frame_revision(const qa_application *application)
 
 bool qa_application_complete_frame(qa_application *application, qa_error *error)
 {
-    if (!application || application->operation != APPLICATION_IDLE ||
+    if (!application || application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
         application->publication_started || application->destroy_requested ||
         application->finalizing || application->pending_close ||
         (application->state != QA_APPLICATION_READY &&
          application->state != QA_APPLICATION_RUNNING) ||
-        !application_guests_idle(application) || !qa_session_safe(application->session) ||
+        !application_guests_idle(application) || !application_rankings_idle(application) || !qa_session_safe(application->session) ||
         (application->world && !qa_world_idle(application->world)))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "completed frame requires its actual idle driver boundary");
@@ -666,8 +719,9 @@ bool qa_application_complete_frame(qa_application *application, qa_error *error)
 bool application_q1_pause_set(qa_application *application, application_provider *provider,
     bool paused, qa_error *error)
 {
-    if (!application || application->operation != APPLICATION_IDLE ||
+    if (!application || application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
         application->state != QA_APPLICATION_RUNNING || !application_guests_idle(application) ||
+        !application_rankings_idle(application) ||
         !qa_session_safe(application->session) || !qa_world_idle(application->world) ||
         !provider || !provider->constructed || !provider->attached ||
         provider != application_world_provider(application, QA_ROLE_ENTITIES, "") ||
@@ -681,8 +735,8 @@ bool application_q1_pause_set(qa_application *application, application_provider 
 bool qa_application_advance(qa_application *application, uint64_t elapsed_ns,
                             qa_error *error)
 {
-    if (application == NULL || application->operation != APPLICATION_IDLE ||
-        !application_guests_idle(application) ||
+    if (application == NULL || application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
+        !application_guests_idle(application) || !application_rankings_idle(application) ||
         application->state != QA_APPLICATION_RUNNING)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "frame advance requires an idle running application");
@@ -697,14 +751,24 @@ bool qa_application_advance(qa_application *application, uint64_t elapsed_ns,
         ok = application_players_advance(application, error);
     if (ok && application->modes != NULL) {
         uint64_t now = qa_session_elapsed(application->session);
-        for (size_t index = 0; index < application->mode_count; ++index)
+        for (size_t index = 0; index < application->mode_count; ++index) {
+            if (application_native_q3_mode_frame_owned(application,
+                                                        application->mode_ids[index]))
+                continue;
             if (!qa_modes_frame(application->modes,
                                 application->mode_ids[index], now, elapsed_ns,
                                 error)) {
                 ok = false;
                 break;
             }
+        }
     }
+    if (ok)
+        ok = application_rankings_frame_ordinary(application, error);
+    if (ok)
+        ok = application_native_q3_clients_drain(application, error);
+    if (ok)
+        ok = application_q3_publish_local_snapshots(application, error);
     application->operation = APPLICATION_IDLE;
     qa_error close_error = {0};
     if (!application_drain_provider_closes(application, &close_error)) {
@@ -721,12 +785,22 @@ bool qa_application_advance(qa_application *application, uint64_t elapsed_ns,
     return ok;
 }
 
+static bool shutdown_admitted_bots(qa_application *application, qa_error *error)
+{
+    if (!application->source_shutdown_admitted)
+        return true;
+    if (!application_bots_shutdown(application, false, error))
+        return false;
+    application->source_shutdown_admitted = false;
+    return true;
+}
+
 bool qa_application_retire_sources(qa_application *application, qa_error *error)
 {
     if (application == NULL)
         return true;
-    if (application->operation != APPLICATION_IDLE || application->destroy_requested ||
-        !application_guests_idle(application) ||
+    if (application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing || application->destroy_requested ||
+        !application_guests_idle(application) || !application_rankings_idle(application) ||
         !application_bots_can_destroy(application) ||
         (application->world != NULL && !qa_world_idle(application->world)) ||
         (application->session != NULL && !qa_session_destroy_ready(application->session)))
@@ -737,7 +811,9 @@ bool qa_application_retire_sources(qa_application *application, qa_error *error)
         return false;
     application->operation = APPLICATION_DESTROYING;
     application->state = QA_APPLICATION_STOPPING;
-    bool ok = application_composition_destroy(application, error) &&
+    bool ok = application_rankings_close(application, error) &&
+        shutdown_admitted_bots(application, error) &&
+        application_composition_destroy(application, error) &&
         (application->session == NULL || application_drain_provider_closes(application, error));
     application->operation = APPLICATION_IDLE;
     if (!ok)
@@ -752,11 +828,11 @@ bool qa_application_destroy(qa_application *application, qa_error *error)
 {
     if (application == NULL)
         return true;
-    if (application->operation == APPLICATION_IDLE &&
+    if (application->operation == APPLICATION_IDLE && !application->q3_round_active && !application->frame_preparing &&
         !application_native_q2_baselines_destroy(application, error))
         return false;
-    if (application->operation != APPLICATION_IDLE ||
-        !application_guests_idle(application) ||
+    if (application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
+        !application_guests_idle(application) || !application_rankings_idle(application) ||
         !application_bots_can_destroy(application) ||
         !qa_rankings_close_ready(application->rankings) ||
         (application->world != NULL && !qa_world_idle(application->world)) ||
@@ -765,7 +841,9 @@ bool qa_application_destroy(qa_application *application, qa_error *error)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "application destruction requires a safe point");
     application->operation = APPLICATION_DESTROYING;
-    if (!application_composition_destroy(application, error) ||
+    if (!application_rankings_close(application, error) ||
+        !shutdown_admitted_bots(application, error) ||
+        !application_composition_destroy(application, error) ||
         (application->session != NULL &&
          !application_drain_provider_closes(application, error))) {
         application->operation = APPLICATION_IDLE;

@@ -31,6 +31,7 @@ typedef struct catalog_physical {
 struct qa_catalog {
     size_t references;
     uint64_t generation;
+    bool q3_demo_restricted;
     qa_strings *strings;
     qa_strings *restored_literals;
     qa_vfs *mounts;
@@ -57,6 +58,7 @@ bool catalog_stock(qa_catalog *, qa_error *);
 bool catalog_add_product(qa_catalog *, const qa_product *, catalog_product **, qa_error *);
 bool catalog_scan(qa_catalog *, bool mods, qa_error *);
 bool catalog_index_product(qa_catalog *, catalog_product *, qa_error *);
+bool catalog_index_maps(qa_catalog *, catalog_product *, bool archives_only, qa_error *);
 bool catalog_read_mods(qa_catalog *, catalog_product *, qa_error *);
 bool catalog_read_starts(qa_catalog *, catalog_product *, qa_error *);
 bool catalog_read_behaviors(qa_catalog *, catalog_product *, qa_error *);
@@ -67,5 +69,6 @@ bool catalog_path(qa_catalog *, const char *root, const char *relative,
                    const char **out, qa_error *);
 bool catalog_has_path(qa_catalog *, const catalog_product *, const char *, bool own,
                        bool *, qa_error *);
+bool catalog_q3_restriction_valid(const qa_catalog *, qa_error *);
 
 #endif

@@ -16,6 +16,7 @@
 #include "qa/rankings.h"
 #include "qa/application_rankings.h"
 #include "qa/targets.h"
+#include "qa/q3_product_policy.h"
 
 typedef struct qa_application qa_application;
 struct qa_application_q3_round_services;
@@ -38,11 +39,18 @@ typedef struct qa_application_visual_view {
     qa_game_family family;
     qa_body_state body;
     const char *models[4], *skin_path;
+    const qa_resource *model_resources[4];
+    int32_t colormap;
+    uint8_t player_colors;
+    bool has_player_colors;
     int32_t frame, old_frame, skin, legs_animation, torso_animation;
     uint64_t effects;
     uint32_t render_flags, source_flags, powerups, inline_model, q1_effects;
     float alpha, scale;
     bool visible, has_inline_model;
+    qa_q3_entity source_entity;
+    int32_t source_number, source_client;
+    bool has_source_entity;
 } qa_application_visual_view;
 typedef struct qa_application_presentation_view {
     qa_actor_owner hud, menu;
@@ -173,6 +181,8 @@ typedef bool (*qa_application_q3_client_effect_fn)(void *, qa_application *,
                                                    qa_application_q3_client_effect,
                                                    const char *, qa_error *);
 typedef bool (*qa_application_world_hook_fn)(void *, qa_application *, qa_error *);
+typedef bool (*qa_application_q3_campaign_command_fn)(void *, qa_application *,
+    const qa_command_invocation *, bool *handled, qa_error *);
 /* The platform fills a separate, zeroed presentation service view. Core
  * wrappers retain canonical world ownership and call decorators with this
  * view's context. A returned frontend lease is owned by the guest engine. */
@@ -181,8 +191,16 @@ typedef bool (*qa_application_native_q2_services_fn)(void *, qa_application *,
     qa_native_host_q2_application_fn *, void **application_context, qa_error *);
 
 typedef struct qa_application_options {
+    const char *const *startup_commands;
+    size_t startup_command_count;
+    const char *initial_product_key;
+    /* Pure isolated baseline construction imports this retained owner. */
+    const qa_q3_product_policy *q3_product_policy;
     const char *content_root;
     const char *user_root;
+    /* Actual input configuration directory, independent of content roots and
+     * GAME selection. The application retains this native directory owner. */
+    qa_fs_root *player_profile_root;
     uint64_t catalog_generation;
     uint32_t actor_capacity;
     uint32_t component_capacity;
@@ -195,6 +213,7 @@ typedef struct qa_application_options {
     void *guest_context;
     qa_application_q3_services_fn q3_services;
     qa_application_q3_client_effect_fn q3_client_effect;
+    qa_application_q3_campaign_command_fn q3_campaign_command;
     const struct qa_application_q3_round_services *q3_round_services;
     qa_application_native_q2_services_fn native_q2_services;
     qa_application_world_hook_fn world_change_ready;
@@ -208,6 +227,12 @@ typedef struct qa_application_options {
 void qa_application_options_default(qa_application_options *);
 bool qa_application_create(const qa_application_options *, qa_application **,
                            qa_error *);
+/* Original startup ordinal, consumed by its actual published early source. */
+bool qa_application_startup_command_seeded(const qa_application *, size_t ordinal);
+size_t qa_application_startup_command_count(const qa_application *);
+const char *qa_application_startup_command(const qa_application *, size_t ordinal);
+bool qa_application_startup_command_pending(const qa_application *, size_t ordinal);
+bool qa_application_startup_command_complete(qa_application *, size_t ordinal, qa_error *);
 /* Destruction requires an idle application. Success consumes the public
  * handle. Retained launch snapshots may keep detached provider state and its
  * borrowed application services alive until their final release; callers must
@@ -284,7 +309,8 @@ typedef enum qa_application_console_kind {
     QA_APPLICATION_CONSOLE_NATIVE_Q2,
     QA_APPLICATION_CONSOLE_Q3_GAME,
     QA_APPLICATION_CONSOLE_Q3_CGAME,
-    QA_APPLICATION_CONSOLE_Q3_UI
+    QA_APPLICATION_CONSOLE_Q3_UI,
+    QA_APPLICATION_CONSOLE_Q1_GAME
 } qa_application_console_kind;
 typedef struct qa_application_console_scope {
     qa_actor_owner provider;

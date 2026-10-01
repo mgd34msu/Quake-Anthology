@@ -119,6 +119,13 @@ bool qa_catalog_mod_key(const char *key);
 /* A scoped view includes only this product and its base, with native search
  * precedence. It retains pool resources independently of the catalog. */
 bool qa_catalog_open(const qa_catalog *, qa_product_id, qa_vfs **, qa_error *);
+/* Initial files.c identity lookup uses actual discovered Q3 mounts even when
+ * the selected retail package lacks other required files. */
+bool qa_catalog_q3_identification_open(const qa_catalog *, qa_product_id, qa_vfs **, qa_error *);
+/* Before drafts retain a fresh catalog, replace every Q3 product's media with
+ * genuine demota while preserving its selected gameplay/product identity. */
+bool qa_catalog_q3_restrict(qa_catalog *, qa_error *);
+bool qa_catalog_q3_restricted(const qa_catalog *);
 typedef struct qa_catalog_mount_selection {
     qa_product_id assets, geometry, combat;
     bool explicit_presentation;

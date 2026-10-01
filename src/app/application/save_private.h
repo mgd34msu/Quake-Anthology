@@ -39,6 +39,8 @@ bool application_save_foundation_finish(qa_application *candidate,
 
 bool application_save_metadata_capture(qa_application *, qa_buffer *, qa_error *);
 bool application_save_metadata_restore(qa_application *candidate, qa_bytes, qa_error *);
+bool application_save_q3_product_decode(const qa_save_image *, qa_q3_product_policy *, qa_error *);
+bool application_save_startup_decode(const qa_save_image *, qa_application *, qa_error *);
 bool application_physics_capture(qa_application *, qa_buffer *, qa_error *);
 bool application_physics_restore(qa_application *, qa_bytes, qa_error *);
 

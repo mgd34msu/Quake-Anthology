@@ -2,7 +2,7 @@
 #include "vfs_private.h"
 #include "vfs_save_io.h"
 
-static const uint8_t view_magic[8] = {'Q','A','V','F',2,0,0,0};
+static const uint8_t view_magic[8] = {'Q','A','V','F',3,0,0,0};
 typedef struct mount_binding {
     char *root_path;
     qa_fs_identity root_identity;
@@ -53,7 +53,7 @@ static bool normalized_prefix(vfs_save_io *io, const char *text,
 static bool mounts(vfs_save_io *io, qa_vfs *vfs, mount_binding **bindings_out)
 {
     size_t count = vfs->count;
-    if (!vfs_save_count(io, &count, 91, sizeof(mount *)) ||
+    if (!vfs_save_count(io, &count, 92, sizeof(mount *)) ||
         count > SIZE_MAX / sizeof(mount_binding)) return false;
     mount_binding *bindings = count ? calloc(count, sizeof(*bindings)) : NULL;
     if (count && !bindings) return vfs_save_fail(io, QA_ERROR_MEMORY, "allocating VFS native bindings");
@@ -78,7 +78,8 @@ static bool mounts(vfs_save_io *io, qa_vfs *vfs, mount_binding **bindings_out)
             !vfs_save_text(io, &m->path) || !m->path[0] ||
             !vfs_save_u64(io, &comparison) || comparison > QA_ARCHIVE_CASE_INSENSITIVE ||
             !vfs_save_bool(io, &m->writable) || !vfs_save_bool(io, &m->user_overlay) ||
-            !vfs_save_bool(io, &m->referenced) || !vfs_save_identity(io, &m->identity) ||
+            !vfs_save_bool(io, &m->referenced) || !vfs_save_bool(io, &m->q3_demo) ||
+            !vfs_save_identity(io, &m->identity) ||
             !vfs_save_u64(io, &origin)) return false;
         m->comparison = (qa_archive_comparison)comparison;
         for (size_t j = 0; j < i; ++j)
@@ -180,22 +181,6 @@ static bool links(vfs_save_io *io, qa_vfs *vfs)
     return true;
 }
 
-static bool demo_package(const package *p)
-{
-    if (qa_archive_get_kind(p->archive) != QA_ARCHIVE_PK3) return false;
-    qa_md4_context hash;
-    qa_md4_init(&hash);
-    for (size_t i = 0; i < qa_archive_count(p->archive); ++i) {
-        const qa_archive_entry *entry = qa_archive_entry_at(p->archive, i);
-        if (!entry->size) continue;
-        uint8_t word[4];
-        qa_store_u32le(word, entry->crc32);
-        qa_md4_update(&hash, (qa_bytes){word, sizeof(word)});
-    }
-    qa_md4_digest digest;
-    qa_md4_final(&hash, &digest);
-    return qa_md4_fold(&digest) == UINT32_C(437558517);
-}
 static bool priority_matches(const qa_vfs *vfs, const qa_mount_id *order)
 {
     size_t first = 0;
@@ -229,10 +214,10 @@ static bool restrictions(vfs_save_io *io, qa_vfs *vfs)
         if (!found) return vfs_save_fail(io, QA_ERROR_FORMAT, "VFS required archive is missing");
     }
     if (!vfs_save_bool(io, &vfs->q3_demo)) return false;
-    if (vfs->q3_demo)
-        for (size_t i = 0; i < vfs->count; ++i)
-            if (vfs->mounts[i]->archive && !demo_package(vfs->mounts[i]->archive))
-                return vfs_save_fail(io, QA_ERROR_FORMAT, "VFS demo archive policy differs");
+    for (size_t i = 0; i < vfs->count; ++i)
+        if ((vfs->q3_demo || vfs->mounts[i]->q3_demo) && vfs->mounts[i]->archive &&
+            !vfs_demo_package_allowed(vfs->mounts[i]->archive, io->error))
+            return vfs_save_fail(io, QA_ERROR_FORMAT, "VFS demo archive policy differs");
     if (!priority_matches(vfs, NULL))
         return vfs_save_fail(io, QA_ERROR_FORMAT, "VFS pure mount priority differs");
     for (prefix_order *p = vfs->prefixes; p; p = p->next)

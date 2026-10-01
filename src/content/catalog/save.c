@@ -232,10 +232,11 @@ static bool behaviors(qa_source_save_io *io, qa_catalog *catalog)
 }
 static bool fields(qa_source_save_io *io, qa_catalog *catalog, qa_buffer *files)
 {
-    uint8_t magic[4] = {'Q','C','A','T'}; uint32_t schema = 1;
+    uint8_t magic[4] = {'Q','C','A','T'}; uint32_t schema = 2;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QCAT", 4) ||
-        !qa_source_save_u32(io, &schema) || schema != 1) return false;
+        !qa_source_save_u32(io, &schema) || schema != 2) return false;
     FIELD(u64, catalog, generation);
+    FIELD(bool, catalog, q3_demo_restricted);
     qa_buffer dictionary = {0};
     bool ok = io->direction == QA_SOURCE_SAVE_READ || qa_save_strings_encode(catalog->strings, &dictionary, io->error);
     if (ok) ok = blob(io, &dictionary);
@@ -250,6 +251,7 @@ bool qa_catalog_checkpoint(const qa_catalog *catalog, const qa_catalog_checkpoin
 {
     if (!catalog || !catalog->references || !refs || !refs->files_encode || !out || out->data || out->size)
         return fail(error, QA_ERROR_ARGUMENT, "Catalog capture requires its actual retained immutable snapshot");
+    if (!catalog_q3_restriction_valid(catalog, error)) return false;
     qa_buffer files = {0};
     if (!refs->files_encode(refs->context, catalog->mounts, &files, error)) { qa_buffer_free(&files); return false; }
     qa_source_save_io io;
@@ -274,6 +276,7 @@ bool qa_catalog_restore(qa_resource_pool *resources, const qa_catalog_checkpoint
         ok = refs->physical_ready(refs->context, &catalog->physical[i].view,
             catalog->physical[i].members, catalog->physical[i].member_count, error);
     if (ok) ok = refs->files_decode(refs->context, resources, (qa_bytes){files.data, files.size}, &catalog->mounts, error) && catalog->mounts;
+    if (ok) ok = catalog_q3_restriction_valid(catalog, error);
     qa_buffer_free(&files);
     if (!ok) {
         qa_catalog_release(catalog);
