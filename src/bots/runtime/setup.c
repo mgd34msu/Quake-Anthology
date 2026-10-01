@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/bots_log_consumers.h"
 
 static bool command(void *context, int32_t client, const char *text, qa_error *e) {
     qa_bot_runtime *r = context;
@@ -158,6 +159,7 @@ bool bot_runtime_owners_create(qa_bot_runtime *r, qa_error *e) {
     qa_bot_chat_services chat = {.context = r, .command = command, .diagnostic = diagnostic,
         .test_initial = test_initial, .test_reply = test_reply, .random = r->services.random};
     if (!qa_bot_chat_system_create(&chat, &options, &r->chat_system, e)) return false;
+    if (!qa_bot_chat_system_log_bind(r->chat_system, r->log, e)) return false;
     qa_bot_items_view empty = {.path = ""};
     qa_bot_items *items;
     if (!qa_bot_items_restore(&empty, &items, e)) return false;
@@ -285,6 +287,7 @@ static bool setup_chat(qa_bot_runtime *r, qa_error *e) {
             .diagnostic = diagnostic, .random = r->services.random};
         ok = r->chat_system ? qa_bot_chat_system_configure(r->chat_system, &options, e) :
             qa_bot_chat_system_create(&services, &options, &r->chat_system, e);
+        if (ok) ok = qa_bot_chat_system_log_bind(r->chat_system, r->log, e);
         const qa_bot_variable *developer=qa_bot_library_variable(r->library,"bot_developer");
         if (ok && assets[3] && developer && developer->value!=0)
             ok=qa_bot_chat_check_integrity(r->chat_system,assets[3],e);

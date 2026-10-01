@@ -1,4 +1,5 @@
 #include "internal.h"
+#include <stdio.h>
 
 bool qa_bot_chat_check_integrity(qa_bot_chat_system *system, qa_bot_chat_asset *asset,
                                  qa_error *e) {
@@ -44,6 +45,15 @@ bool qa_bot_chat_check_integrity(qa_bot_chat_system *system, qa_bot_chat_asset *
                 }
             if (seen)
                 continue;
+            if (system->log) {
+                char line[544];
+                (void)snprintf(line, sizeof(line), "%s = {\"%s\"} //MISSING RANDOM\r\n", key, key);
+                if (!qa_bot_log_write(system->log, line, e)) {
+                    ok = false;
+                    break;
+                }
+                if (system->retired || system->revision != revision) break;
+            }
             if (!bot_grow((void **)&missing, &capacity, count + 1, sizeof(*missing), e)) {
                 ok = false;
                 break;

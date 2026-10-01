@@ -2,6 +2,7 @@
 #define QA_BOTS_CHAT_INTERNAL_H
 #include "../library/internal.h"
 #include "qa/bot_chat.h"
+#include "qa/bot_log.h"
 
 struct qa_bot_chat_asset {
     atomic_uint references;
@@ -27,6 +28,7 @@ typedef struct chat_console_cell {
 struct qa_bot_chat_system {
     qa_bot_chat_services services;
     qa_bot_chat_options options;
+    qa_bot_log *log;
     chat_console_cell *console;
     uint32_t free_console;
     size_t console_count, console_capacity;
