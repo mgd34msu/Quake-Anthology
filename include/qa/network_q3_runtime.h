@@ -18,6 +18,15 @@ bool qa_network_attach_q3_client(qa_network_runtime *, const qa_net_connect *,
     qa_q3_product, int32_t challenge, uint16_t qport, const qa_q3_client_hooks *,
     const qa_network_q3_client_policy *, uint64_t now_ns, qa_net_client_id *, qa_error *);
 const qa_q3_client_peer *qa_network_q3_client_view(qa_network_runtime *, qa_net_client_id);
+/* Genuine decoded connection counters for external CGAME Init. The executed
+ * reliable cursor is independent of the gamestate's received-command cursor. */
+typedef struct qa_network_q3_client_init {
+    int32_t server_message, last_executed_server_command, client_number;
+} qa_network_q3_client_init;
+bool qa_network_q3_client_init_read(qa_network_runtime *, qa_net_client_id,
+    qa_network_q3_client_init *, qa_error *);
+bool qa_network_q3_client_init_current(qa_network_runtime *, qa_net_client_id,
+    const qa_network_q3_client_init *);
 bool qa_network_q3_client_command(qa_network_runtime *, qa_net_client_id, const char *, qa_error *);
 bool qa_network_q3_client_usercmd(qa_network_runtime *, qa_net_client_id, const qa_q3_usercmd *, qa_error *);
 bool qa_network_q3_client_execute(qa_network_runtime *, qa_net_client_id, int32_t, qa_error *);

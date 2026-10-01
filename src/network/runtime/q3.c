@@ -104,6 +104,27 @@ bool qa_network_attach_q3_client(qa_network_runtime *runtime, const qa_net_conne
 }
 const qa_q3_client_peer *qa_network_q3_client_view(qa_network_runtime *runtime, qa_net_client_id id)
 { q3_runtime_client *p = client_get(runtime, id, NULL); return p ? p->source : NULL; }
+bool qa_network_q3_client_init_read(qa_network_runtime *runtime, qa_net_client_id id,
+    qa_network_q3_client_init *out, qa_error *error)
+{
+    q3_runtime_client *p = client_get(runtime, id, error);
+    if (!p) return false;
+    if (!out || p->source->disconnected || p->source->disconnect_started ||
+        p->source->gamestate.string_bytes <= 1)
+        return qa_network_fail(error, "Q3 Init requires the actual live decoded gamestate");
+    *out = (qa_network_q3_client_init){p->source->server_message_sequence,
+        p->source->last_executed_server_command, p->source->gamestate.client_number};
+    return true;
+}
+bool qa_network_q3_client_init_current(qa_network_runtime *runtime, qa_net_client_id id,
+    const qa_network_q3_client_init *retained)
+{
+    qa_network_q3_client_init actual;
+    return retained && qa_network_q3_client_init_read(runtime, id, &actual, NULL) &&
+        actual.server_message == retained->server_message &&
+        actual.last_executed_server_command == retained->last_executed_server_command &&
+        actual.client_number == retained->client_number;
+}
 bool qa_network_q3_client_command(qa_network_runtime *runtime, qa_net_client_id id, const char *text, qa_error *error)
 { q3_runtime_client *p = client_get(runtime, id, error); return p && qa_q3_client_peer_command(p->source, text, error); }
 bool qa_network_q3_client_usercmd(qa_network_runtime *runtime, qa_net_client_id id, const qa_q3_usercmd *command, qa_error *error)
