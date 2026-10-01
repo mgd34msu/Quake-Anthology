@@ -255,13 +255,10 @@ static bool restore_raw(struct application_qc_state *engine,const qa_q1_save_dat
     engine->source_time_ns=app->q1_original_save->initial_ns;
     if (!qa_qc_game_set_time(engine->provider->state.qc.game,save->time,0,error)) return false;
     for (size_t i=0;i<16;++i) {
-        if (!isfinite(save->spawn_parameters[i]) || fabs(save->spawn_parameters[i])>FLT_MAX)
-            return application_fail(error,QA_ERROR_FORMAT,"Saved spawn parameter exceeds source float");
         engine->clients[1].parms[i]=(float)save->spawn_parameters[i];
     }
     engine->clients[1].has_parms=true;
     for (size_t i=0;i<64;++i) {
-        if (!save->lightstyles[i]) return application_fail(error,QA_ERROR_FORMAT,"Saved lightstyle is absent");
         char *style=duplicate(save->lightstyles[i],error);
         if (!style) return false;
         qa_builtin_event event={.kind=QA_BUILTIN_LIGHT,.family=QA_GAME_Q1,.provider=engine->provider->owner,
@@ -300,13 +297,15 @@ static bool restore_raw(struct application_qc_state *engine,const qa_q1_save_dat
     return (qa_session_safe(app->session) && qa_world_idle(app->world) && application_guests_idle(app)) ||
         application_fail(error,QA_ERROR_ARGUMENT,"Original import did not finish at its actual idle source boundary");
 }
-bool qa_application_q1_save_import(qa_application *app,const qa_q1_save_data *save,const char *key,qa_error *error)
+bool application_q1_original_admit(const qa_application *app,const qa_q1_save_data *save,
+    const char *key,application_q1_original_admission *out,qa_error *error)
 {
-    if (!app || !key || !*key || app->operation!=APPLICATION_IDLE || app->state!=QA_APPLICATION_READY ||
-        app->q1_original_save || qa_application_launch(app) || app->world || app->provider_count ||
-        !qa_session_safe(app->session) || !qa_q1_save_singleplayer(save,error) || !save->entities[1].count ||
+    if (!app || !app->catalog || !app->session || !key || !*key || !out)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Original admission requires its actual application and selected product");
+    if (!qa_q1_save_singleplayer(save,error)) return false;
+    if ((save->version!=5 && save->version!=6) || !save->entities[1].count ||
         (save->extension.size && (!save->extension.data || memchr(save->extension.data,0,save->extension.size))))
-        return application_fail(error,QA_ERROR_ARGUMENT,"Original import requires a fresh isolated candidate and physical player");
+        return application_fail(error,QA_ERROR_FORMAT,"Original import requires a v5/v6 source record and physical player");
     const qa_product *product=qa_catalog_find(app->catalog,key);
     if (!product || product->family!=QA_GAME_Q1 || product->availability!=QA_CONTENT_INSTALLED ||
         product->edition==QA_EDITION_QUAKEWORLD || save->entity_count>qa_actors_capacity(qa_session_actors(app->session)))
@@ -314,9 +313,32 @@ bool qa_application_q1_save_import(qa_application *app,const qa_q1_save_data *sa
     long double nanoseconds=(long double)save->time*1000000000.0L;
     if (!isfinite(nanoseconds) || nanoseconds<0 || nanoseconds>=(long double)UINT64_MAX)
         return application_fail(error,QA_ERROR_FORMAT,"Original saved time exceeds the actual source clock");
+    for (size_t i=0;i<16;++i)
+        if (!isfinite(save->spawn_parameters[i]) || fabs(save->spawn_parameters[i])>FLT_MAX)
+            return application_fail(error,QA_ERROR_FORMAT,"Saved spawn parameter exceeds source float");
+    for (size_t i=0;i<64;++i)
+        if (!save->lightstyles[i]) return application_fail(error,QA_ERROR_FORMAT,"Saved lightstyle is absent");
+    *out=(application_q1_original_admission){product,(uint64_t)nanoseconds};
+    return true;
+}
+bool qa_application_q1_save_import_ready(const qa_application *app,const qa_q1_save_data *save,
+    const char *key,qa_error *error)
+{
+    application_q1_original_admission admission;
+    return application_q1_original_admit(app,save,key,&admission,error);
+}
+bool qa_application_q1_save_import(qa_application *app,const qa_q1_save_data *save,const char *key,qa_error *error)
+{
+    if (!app || app->operation!=APPLICATION_IDLE || app->state!=QA_APPLICATION_READY ||
+        app->q1_original_save || qa_application_launch(app) || app->world || app->provider_count ||
+        !qa_session_safe(app->session))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Original import requires a fresh isolated candidate");
+    application_q1_original_admission admission;
+    if (!application_q1_original_admit(app,save,key,&admission,error)) return false;
+    const qa_product *product=admission.product;
     struct application_q1_original_save *stage=calloc(1,sizeof(*stage));
     if (!stage) return application_fail(error,QA_ERROR_MEMORY,"Retaining original source construction stage");
-    *stage=(struct application_q1_original_save){save,product->id,(uint64_t)nanoseconds};
+    *stage=(struct application_q1_original_save){save,product->id,admission.initial_ns};
     qa_launch_draft *draft=NULL;
     size_t length=strlen(save->map); char *map=length<=SIZE_MAX-10?malloc(length+10):NULL;
     bool ok=map!=NULL;

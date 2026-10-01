@@ -65,6 +65,8 @@ static bool original_create(qa_frontend *active,const qa_q1_save_data *save,cons
     f->options.network_host=NULL; f->options.network_connect=NULL; f->options.network_port=0;
     f->options.network_protocol=(qa_net_protocol_id){QA_NET_NQ15,0,0};
     f->options.application.player_profile_root=NULL;
+    f->options.application.actor_capacity=qa_actors_capacity(
+        qa_session_actors(qa_application_session(active->application)));
     if (active->default_user_root) {
         f->default_user_root=SDL_strdup(active->default_user_root);
         if (!f->default_user_root) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining original frontend user directory");

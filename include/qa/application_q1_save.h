@@ -6,6 +6,11 @@
  * in physical client row1, completed source/canonical callback boundary. */
 bool qa_application_q1_save_capture(qa_application *,uint32_t version,
     const char *comment,qa_q1_save_data **,qa_error *);
+/* Pure shared header/product/capacity admission against the actual application
+ * catalog and actor owner. No VM construction, source callback or file access.
+ * The fresh importer uses these same guards before preparing any world. */
+bool qa_application_q1_save_import_ready(const qa_application *,const qa_q1_save_data *,
+    const char *product,qa_error *);
 /* Construct only in a fresh isolated application. Product names an installed
  * actual catalog owner selected by qa_q1_save_select_product. This stages the
  * saved source epoch before normal progs/map/player construction, then applies
