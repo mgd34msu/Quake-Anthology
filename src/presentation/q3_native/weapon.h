@@ -2,6 +2,7 @@
 #define QA_Q3_NATIVE_WEAPON_H
 
 #include "frame.h"
+#include "qa/source_save.h"
 
 typedef struct q3n_weapon_settings {
     int32_t brass_time, fov, gun_frame;
@@ -31,6 +32,56 @@ typedef struct q3n_weapon_view {
     float xy_speed, bob_fraction_sin, land_change;
     bool test_gun;
 } q3n_weapon_view;
+/* The selected equipment owner retains these actual resources and animation
+ * bytes. Handles belong to assets, independently of the primary CGAME. */
+typedef struct q3n_selected_weapon_media {
+    qa_q3_presentation_assets *assets;
+    int32_t gun, hands, barrel, flash, invisibility, battle_weapon, quad_weapon;
+} q3n_selected_weapon_media;
+typedef struct q3n_selected_weapon_barrel {
+    int32_t time;
+    float angle;
+    bool spinning;
+} q3n_selected_weapon_barrel;
+typedef struct q3n_selected_weapon_state {
+    q3n_lerp_frame torso;
+    q3n_selected_weapon_barrel view_barrel, world_barrel;
+    uint32_t random_seed;
+} q3n_selected_weapon_state;
+typedef struct q3n_selected_weapon_draw {
+    const qa_q3_player *player;
+    int32_t time, last_fire;
+    bool firing, has_last_fire, reduced_flashes;
+    void *context;
+    bool (*current)(void *);
+    bool (*submit)(void *, qa_q3_presentation_assets *, const qa_q3_ref_entity *, qa_error *);
+} q3n_selected_weapon_draw;
+typedef struct q3n_selected_weapon_view {
+    const qa_player_animation_config *animations;
+    qa_vec3 origin, angles;
+    double horizontal_speed;
+    int32_t bob_cycle;
+    bool draw_gun;
+} q3n_selected_weapon_view;
+typedef struct q3n_selected_weapon_held {
+    qa_q3_presentation_assets *parent_assets;
+    const qa_q3_ref_entity *torso;
+    qa_vec3 lighting_origin;
+    int32_t powerups;
+    bool personal_model;
+} q3n_selected_weapon_held;
+/* Zero initialization is the real presenter constructor. The outer owner
+ * qualifies seat, provider, full actor, immutable animation and registry before
+ * this primitive codec. No source PS/S or borrowed pointer is serialized. */
+bool q3n_selected_weapon_state_fields(qa_source_save_io *, q3n_selected_weapon_state *);
+/* Suppression requires success AND submitted. These entry points do not invoke
+ * primary view/held replacement callbacks or manufacture a primary frame. */
+bool q3n_weapons_selected_view(q3n_weapons *, const q3n_selected_weapon_media *,
+    q3n_selected_weapon_state *, const q3n_selected_weapon_draw *,
+    const q3n_selected_weapon_view *, bool *submitted, qa_error *);
+bool q3n_weapons_selected_held(q3n_weapons *, const q3n_selected_weapon_media *,
+    q3n_selected_weapon_state *, const q3n_selected_weapon_draw *,
+    const q3n_selected_weapon_held *, bool *submitted, qa_error *);
 typedef enum q3n_impact_sound { Q3N_IMPACT_DEFAULT, Q3N_IMPACT_METAL, Q3N_IMPACT_FLESH } q3n_impact_sound;
 typedef struct q3n_weapon_drawing {
     void *context;

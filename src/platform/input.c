@@ -1306,6 +1306,12 @@ int32_t qa_input_platform_controller(const qa_input_platform *p, unsigned slot) 
         return p->joystick_instance;
     return p->seats[slot].instance == p->joystick_instance ? -1 : p->seats[slot].instance;
 }
+bool qa_input_platform_selection(const qa_input_platform *p, unsigned slot, qa_controller_selection *out) {
+    if (!p || !out || slot >= QA_INPUT_LOCAL_SEATS || !p->seats[slot].seat)
+        return false;
+    *out = p->seats[slot].selection;
+    return true;
+}
 bool qa_input_platform_mapping(qa_input_platform *p, const char *mapping, qa_error *error) {
     if (!native_owner(p, error)) return false;
     if (!mapping || SDL_GameControllerAddMapping(mapping) < 0)

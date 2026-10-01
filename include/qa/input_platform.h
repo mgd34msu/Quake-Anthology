@@ -68,6 +68,9 @@ typedef struct qa_controller_snapshot {
 bool qa_input_platform_snapshot(qa_input_platform *, int32_t instance, qa_controller_snapshot *,
                                 qa_error *);
 int32_t qa_input_platform_controller(const qa_input_platform *, unsigned slot);
+/* Actual configured selection, independent of the currently assigned device.
+ * The serial is borrowed until route replacement or owner destruction. */
+bool qa_input_platform_selection(const qa_input_platform *, unsigned slot, qa_controller_selection *);
 bool qa_input_platform_mapping(qa_input_platform *, const char *mapping, qa_error *);
 bool qa_input_platform_rumble(qa_input_platform *, int32_t, float low, float high,
                               uint32_t duration_ms, qa_error *);

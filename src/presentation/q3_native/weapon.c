@@ -30,8 +30,7 @@ static qa_vec3 from(const float value[3]) { return qa_v3(value[0],value[1],value
 static void identity(qa_vec3 axis[3]) { axis[0]=qa_v3(1,0,0); axis[1]=qa_v3(0,1,0); axis[2]=qa_v3(0,0,1); }
 static qa_q3_ref_entity reference(qa_q3_ref_kind kind,int32_t model)
 {
-    qa_q3_ref_entity ref={.kind=kind,.model=model,.color={255,255,255,255}};
-    identity(ref.axis); return ref;
+    return (qa_q3_ref_entity){.kind=kind,.model=model};
 }
 static bool frame_valid(const q3n_frame *f,qa_error *e)
 {
@@ -239,7 +238,7 @@ bool q3n_weapons_player(const q3n_frame *f,const qa_q3_ref_entity *parent,const 
     if (ps && f->has_local_player && f->local_player.weapon==7 && f->local_player.weaponState==3) {
         uint8_t color=(uint8_t)((uint32_t)integer(mul(255,add(1,-divide((float)f->local_player.weaponTime,1500))))&255u);
         gun.color[0]=gun.color[2]=color; gun.color[1]=gun.color[3]=0;
-    }
+    } else if (ps) memset(gun.color,255,sizeof(gun.color));
     if (!ps && f->weapons->options.held_replacement) {
         bool suppressed=false;
         if (!f->weapons->options.held_replacement(f->weapons->options.context,f,state,parent,&suppressed,e)) return false;
@@ -292,11 +291,11 @@ bool q3n_weapons_player(const q3n_frame *f,const qa_q3_ref_entity *parent,const 
     }
     return true;
 }
-static bool torso_frame(const q3n_client_info *ci,int32_t frame,int32_t *out,qa_error *e)
+static bool torso_frame(const qa_player_animation_config *config,int32_t frame,int32_t *out,qa_error *e)
 {
     const size_t indices[3]={9,7,8};
     for (size_t i=0;i<3;++i) {
-        const qa_player_animation *animation=&ci->animations.animations[indices[i]];
+        const qa_player_animation *animation=&config->animations[indices[i]];
         if (!animation->present) return q3p_fail(e,QA_ERROR_FORMAT,"Missing weapon torso animation");
         if (frame>=animation->first_frame && (int64_t)frame<(int64_t)animation->first_frame+(i?6:9)) {
             *out=frame-animation->first_frame+(i?1:6); return true;
@@ -338,7 +337,7 @@ bool q3n_weapons_view(const q3n_frame *f,const q3n_weapon_view *view,qa_error *e
         const q3n_client_info *ci=number>=0 && number<64?q3n_clients_get(f->clients,(uint32_t)number):NULL;
         if (!ci) return q3p_fail(e,QA_ERROR_FORMAT,"View weapon requires its actual client-info row");
         const q3n_lerp_frame *torso=&view->predicted_entity->player.torso.animation;
-        if (!torso_frame(ci,torso->frame,&hands.frame,e) || !torso_frame(ci,torso->old_frame,&hands.old_frame,e)) return false;
+        if (!torso_frame(&ci->animations,torso->frame,&hands.frame,e) || !torso_frame(&ci->animations,torso->old_frame,&hands.old_frame,e)) return false;
         hands.back_lerp=torso->back_lerp;
     }
     hands.flags=8|4|1;
@@ -360,6 +359,182 @@ static qa_vec3 perpendicular(qa_vec3 direction)
     if (fabsf(direction.z)<minimum) axis=qa_v3(0,0,1);
     float inverse=divide(1,dot(direction,direction)),distance=mul(dot(direction,axis),inverse);
     return normalized(minus(axis,scale(scale(direction,inverse),distance)));
+}
+static float selected_spin(q3n_selected_weapon_barrel *barrel,int32_t time,bool firing)
+{
+    int32_t delta=difference(time,barrel->time); float angle;
+    if (barrel->spinning) angle=add(barrel->angle,mul((float)delta,.9f));
+    else {
+        if (delta>1000) delta=1000;
+        float speed=mul(.5f,add(.9f,divide((float)difference(1000,delta),1000)));
+        angle=add(barrel->angle,mul((float)delta,speed));
+    }
+    if (barrel->spinning!=firing) {
+        barrel->time=time;
+        barrel->angle=mul((float)((uint32_t)integer(mul(angle,65536.0f/360.0f))&65535u),360.0f/65536.0f);
+        barrel->spinning=firing;
+    }
+    return angle;
+}
+static float selected_random(q3n_selected_weapon_state *state)
+{
+    state->random_seed=69069u*state->random_seed+1u;
+    return mul(2,add(divide((float)(state->random_seed&32767u),32767),-.5f));
+}
+static bool selected_current(const q3n_selected_weapon_draw *draw,qa_error *e)
+{ return draw->current(draw->context) || q3p_fail(e,QA_ERROR_ARGUMENT,"Selected Q3 weapon source changed during presentation"); }
+static bool selected_begin(q3n_weapons *owner,const q3n_selected_weapon_media *media,
+    q3n_selected_weapon_state *state,const q3n_selected_weapon_draw *draw,bool *submitted,qa_error *e)
+{
+    if (submitted) *submitted=false;
+    if (!q3n_weapons_idle(owner) || !media || !state || !draw || !submitted ||
+        !draw->player || !draw->current || !draw->submit || media->assets!=owner->options.assets ||
+        draw->player->product!=owner->options.product || draw->player->weapon<1 || draw->player->weapon>=16 ||
+        !qa_q3_assets_idle(media->assets))
+        return q3p_fail(e,QA_ERROR_ARGUMENT,"Selected Q3 weapon needs its actual source and retained resource owner");
+    const q3p_model *model; const qa_material *shader;
+    const int32_t models[4]={media->gun,media->hands,media->barrel,media->flash};
+    const int32_t shaders[3]={media->invisibility,media->battle_weapon,media->quad_weapon};
+    for (size_t i=0;i<4;++i) if (!q3p_model_get(media->assets,models[i],&model,e)) return false;
+    for (size_t i=0;i<3;++i) if (!q3p_shader_get(media->assets,shaders[i],&shader,e)) return false;
+    if (!selected_current(draw,e)) return false;
+    owner->busy=true; return true;
+}
+static bool selected_end(q3n_weapons *owner,bool okay)
+{ owner->busy=false; return okay; }
+static bool selected_emit(const q3n_selected_weapon_media *media,const q3n_selected_weapon_draw *draw,
+    const qa_q3_ref_entity *ref,bool *submitted,qa_error *e)
+{
+    if (!selected_current(draw,e) || !draw->submit(draw->context,media->assets,ref,e)) return false;
+    *submitted=true; return selected_current(draw,e);
+}
+/* Scene attachment composition retains each child's own pose. Missing optional
+ * gun tags omit that attachment; selected hands require tag_weapon. */
+static bool selected_attach(qa_q3_presentation_assets *assets,qa_q3_ref_entity *child,
+    const qa_q3_ref_entity *parent,const char *name,bool required,bool *found,qa_error *e)
+{
+    qa_model_tag tag; float fraction=add(1,-parent->back_lerp);
+    if (!qa_q3_presentation_tag(assets,parent->model,name,parent->old_frame,parent->frame,fraction,&tag,found,e)) return false;
+    if (!*found) return !required || q3p_fail(e,QA_ERROR_FORMAT,"Selected Q3 hands model has no required weapon tag");
+    qa_vec3 tag_axes[3],axes[3];
+    for (size_t i=0;i<3;++i)
+        tag_axes[i]=transform(qa_v3(tag.axes[i][0],tag.axes[i][1],tag.axes[i][2]),parent->axis);
+    child->origin=plus(parent->origin,transform(qa_v3(tag.origin[0],tag.origin[1],tag.origin[2]),parent->axis));
+    child->old_origin=child->origin;
+    for (size_t i=0;i<3;++i) axes[i]=transform(child->axis[i],tag_axes);
+    memcpy(child->axis,axes,sizeof(axes)); child->lighting_origin=parent->lighting_origin;
+    return true;
+}
+static qa_q3_ref_entity selected_part(int32_t model,int32_t flags,qa_vec3 lighting)
+{
+    qa_q3_ref_entity ref=reference(QA_Q3_REF_MODEL,model);
+    memset(ref.color,255,sizeof(ref.color)); identity(ref.axis);
+    ref.flags=flags; ref.lighting_origin=lighting; return ref;
+}
+static bool selected_flash(const q3n_selected_weapon_draw *draw)
+{
+    int32_t weapon=draw->player->weapon;
+    return (draw->firing && (weapon==1 || weapon==6 || weapon==10)) ||
+        (draw->has_last_fire && (int64_t)draw->time-(int64_t)draw->last_fire<=20);
+}
+static bool selected_parts(const q3n_selected_weapon_media *media,const q3n_selected_weapon_draw *draw,
+    qa_q3_ref_entity *gun,qa_q3_ref_entity *barrel,bool have_barrel,int32_t shader,bool *submitted,qa_error *e)
+{
+    gun->custom_shader=shader;
+    if (!selected_emit(media,draw,gun,submitted,e)) return false;
+    if (!have_barrel) return true;
+    barrel->custom_shader=shader; return selected_emit(media,draw,barrel,submitted,e);
+}
+bool q3n_weapons_selected_held(q3n_weapons *owner,const q3n_selected_weapon_media *media,
+    q3n_selected_weapon_state *state,const q3n_selected_weapon_draw *draw,
+    const q3n_selected_weapon_held *held,bool *submitted,qa_error *e)
+{
+    if (!held || !held->parent_assets || !held->torso || !qa_vec_finite(held->lighting_origin))
+        return q3p_fail(e,QA_ERROR_ARGUMENT,"Selected held Q3 weapon requires the actual authored torso");
+    if (!selected_begin(owner,media,state,draw,submitted,e)) return false;
+    if (!media->gun) return selected_end(owner,true);
+    int32_t flags=128|(held->personal_model?2:0); bool gun_found,have_barrel=false,have_flash=false;
+    qa_q3_ref_entity gun=selected_part(media->gun,flags,held->lighting_origin);
+    if (!selected_attach(held->parent_assets,&gun,held->torso,"tag_weapon",false,&gun_found,e)) return selected_end(owner,false);
+    float spin_angle=selected_spin(&state->world_barrel,draw->time,draw->firing);
+    qa_q3_ref_entity barrel=selected_part(media->barrel,flags,held->lighting_origin);
+    q3n_angles_axis(qa_v3(0,0,spin_angle),barrel.axis);
+    if (media->barrel && !selected_attach(media->assets,&barrel,&gun,"tag_barrel",false,&have_barrel,e)) return selected_end(owner,false);
+    qa_q3_ref_entity flash=selected_part(media->flash,flags,held->lighting_origin);
+    if (media->flash && selected_flash(draw)) {
+        if (!selected_attach(media->assets,&flash,&gun,"tag_flash",false,&have_flash,e)) return selected_end(owner,false);
+        if (have_flash) {
+            q3n_angles_axis(qa_v3(0,0,mul(selected_random(state),10)),flash.axis);
+            if (!selected_attach(media->assets,&flash,&gun,"tag_flash",false,&have_flash,e)) return selected_end(owner,false);
+        }
+    }
+    bool okay=true;
+    if (gun_found) {
+        if (held->powerups&16) okay=selected_parts(media,draw,&gun,&barrel,have_barrel,media->invisibility,submitted,e);
+        else {
+            okay=selected_parts(media,draw,&gun,&barrel,have_barrel,0,submitted,e);
+            if (okay && (held->powerups&4)) okay=selected_parts(media,draw,&gun,&barrel,have_barrel,media->battle_weapon,submitted,e);
+            if (okay && (held->powerups&2)) okay=selected_parts(media,draw,&gun,&barrel,have_barrel,media->quad_weapon,submitted,e);
+        }
+        if (okay && have_flash && !draw->reduced_flashes) okay=selected_emit(media,draw,&flash,submitted,e);
+    }
+    return selected_end(owner,okay);
+}
+bool q3n_weapons_selected_view(q3n_weapons *owner,const q3n_selected_weapon_media *media,
+    q3n_selected_weapon_state *state,const q3n_selected_weapon_draw *draw,
+    const q3n_selected_weapon_view *view,bool *submitted,qa_error *e)
+{
+    if (!view || !view->animations || !qa_vec_finite(view->origin) || !qa_vec_finite(view->angles) ||
+        !isfinite(view->horizontal_speed) || view->horizontal_speed<0)
+        return q3p_fail(e,QA_ERROR_ARGUMENT,"Selected Q3 view weapon requires its actual camera and animation owner");
+    if (!selected_begin(owner,media,state,draw,submitted,e)) return false;
+    if (!view->draw_gun || !media->gun) return selected_end(owner,true);
+    if (!media->hands) return selected_end(owner,q3p_fail(e,QA_ERROR_FORMAT,"Selected Q3 weapon has no hands model or fallback"));
+    if (!q3n_lerp_run(view->animations,&state->torso,draw->player->torsoAnim,draw->time,1,false,e)) return selected_end(owner,false);
+    double bob=fabs(sin((double)(view->bob_cycle&127)/127*3.14159265358979323846));
+    double roll_scale=(view->bob_cycle&128)?-view->horizontal_speed:view->horizontal_speed;
+    qa_vec3 angles=plus(view->angles,qa_v3(mul((float)(view->horizontal_speed*bob),.005f),
+        mul((float)(roll_scale*bob),.01f),mul((float)(roll_scale*bob),.005f)));
+    float drift=mul(mul((float)(view->horizontal_speed+40),(float)sin((double)mul((float)draw->time,.001f))),.01f);
+    angles=plus(angles,qa_v3(drift,drift,drift));
+    qa_q3_ref_entity hands=selected_part(media->hands,1|4|8,view->origin);
+    hands.origin=hands.old_origin=view->origin; q3n_angles_axis(angles,hands.axis);
+    if (!torso_frame(view->animations,state->torso.frame,&hands.frame,e) ||
+        !torso_frame(view->animations,state->torso.old_frame,&hands.old_frame,e)) return selected_end(owner,false);
+    hands.back_lerp=state->torso.back_lerp;
+    qa_q3_ref_entity gun=selected_part(media->gun,1|4|8,view->origin); bool found;
+    if (!selected_attach(media->assets,&gun,&hands,"tag_weapon",true,&found,e)) return selected_end(owner,false);
+    float spin_angle=selected_spin(&state->view_barrel,draw->time,draw->firing);
+    qa_q3_ref_entity barrel=selected_part(media->barrel,1|4|8,view->origin); bool have_barrel=false;
+    q3n_angles_axis(qa_v3(0,0,spin_angle),barrel.axis);
+    if (media->barrel && !selected_attach(media->assets,&barrel,&gun,"tag_barrel",false,&have_barrel,e)) return selected_end(owner,false);
+    qa_q3_ref_entity flash=selected_part(media->flash,1|4|8,view->origin); bool have_flash=false;
+    if (media->flash && selected_flash(draw)) {
+        q3n_angles_axis(qa_v3(0,0,mul(selected_random(state),10)),flash.axis);
+        if (!selected_attach(media->assets,&flash,&gun,"tag_flash",false,&have_flash,e)) return selected_end(owner,false);
+    }
+    bool okay=selected_parts(media,draw,&gun,&barrel,have_barrel,0,submitted,e);
+    if (okay && have_flash && !draw->reduced_flashes) okay=selected_emit(media,draw,&flash,submitted,e);
+    return selected_end(owner,okay);
+}
+bool q3n_selected_weapon_state_fields(qa_source_save_io *io,q3n_selected_weapon_state *state)
+{
+    if (!io || !state) return false;
+    q3n_lerp_frame *torso=&state->torso;
+    if (!qa_source_save_i32(io,&torso->old_frame) || !qa_source_save_i32(io,&torso->old_frame_time) ||
+        !qa_source_save_i32(io,&torso->frame) || !qa_source_save_i32(io,&torso->frame_time) ||
+        !qa_source_save_f32(io,&torso->back_lerp) || !qa_source_save_i32(io,&torso->animation_number) ||
+        !qa_source_save_i32(io,&torso->animation_time) || !qa_source_save_bool(io,&torso->selected) ||
+        !qa_source_save_u32(io,&state->random_seed)) return false;
+    q3n_selected_weapon_barrel *barrels[2]={&state->view_barrel,&state->world_barrel};
+    for (size_t i=0;i<2;++i)
+        if (!qa_source_save_i32(io,&barrels[i]->time) || !qa_source_save_f32(io,&barrels[i]->angle) ||
+            !qa_source_save_bool(io,&barrels[i]->spinning)) return false;
+    if (!isfinite(torso->back_lerp) || !isfinite(state->view_barrel.angle) || !isfinite(state->world_barrel.angle) ||
+        (torso->selected && ((torso->animation_number&~128)<0 || (torso->animation_number&~128)>=QA_PLAYER_ANIMATION_COUNT))) {
+        io->failed=true; return q3p_fail(io->error,QA_ERROR_FORMAT,"Invalid selected Q3 weapon continuation");
+    }
+    return true;
 }
 static void matrix_multiply(const qa_vec3 a[3],const qa_vec3 b[3],qa_vec3 out[3])
 {
@@ -453,6 +628,7 @@ bool q3n_weapons_trail(const q3n_frame *f,q3n_entity *cent,const qa_q3_entity *s
         qa_vec3 start=ma(plus(client->lerp_origin,qa_v3(0,0,26)),-6,axis[2]);
         if (length(minus(start,origin))<64) return true;
         qa_q3_ref_entity beam=reference(QA_Q3_REF_LIGHTNING,0);
+        memset(beam.color,255,sizeof(beam.color)); identity(beam.axis);
         beam.origin=start; beam.old_origin=origin; beam.custom_shader=q3n_media_read(f->media)->graphics[Q3N_G_LIGHTNING_SHADER];
         return emit(f,&beam,e);
     }
