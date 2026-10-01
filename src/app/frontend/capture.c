@@ -2,6 +2,8 @@
 #include "visual_restore.h"
 #include "native_q2_save.h"
 #include "save_commands.h"
+#include "qc_rerelease_events.h"
+#include "campaign_cinematic.h"
 #include "qa/scene_resource_save.h"
 #include "qa/material_library_save.h"
 #include "qa/material_save.h"
@@ -48,7 +50,7 @@ bool frontend_seat_callbacks_idle(const qa_frontend *f)
 }
 bool frontend_owners_idle(const qa_frontend *f)
 {
-    if (!f || f->capture || !frontend_native_q2_children_idle(f) || !frontend_sources_idle(f) ||
+    if (!f || f->capture || !frontend_cinematic_idle(f) || !frontend_qc_rerelease_idle(f) || !frontend_native_q2_children_idle(f) || !frontend_sources_idle(f) ||
         !resources_idle(f->images) || !resources_idle(f->ui_images) || !library_idle(f->materials) ||
         !fonts_idle(f->fonts) || (f->order && !qa_material_order_idle(f->order)) ||
         (f->scene_world && !qa_scene_world_idle(f->scene_world)) || !frontend_visuals_idle(f) ||
@@ -152,7 +154,7 @@ bool frontend_capture_begin(qa_frontend *f, frontend_capture **out, qa_error *er
 {
     if (!f || !out || *out || f->stepping || f->preparing || f->round || f->source_restoring ||
         !f->application || !frontend_owners_idle(f) || !frontend_seat_callbacks_idle(f) ||
-        !frontend_save_commands_capture_ready(f))
+        !frontend_save_commands_capture_ready(f) || !frontend_cinematic_capture_ready(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend capture requires idle actual owners and an empty lease");
     frontend_capture *capture=calloc(1,sizeof(*capture));
     if (!capture) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining the frontend capture lease");

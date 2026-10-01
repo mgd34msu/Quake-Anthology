@@ -5,6 +5,7 @@
 #include "input_profile.h"
 #include "save_commands.h"
 #include "ui_features.h"
+#include "campaign_cinematic.h"
 #include "qa/application_q1_save.h"
 #include <SDL.h>
 
@@ -34,8 +35,7 @@ static bool graphics_create(qa_frontend *f,qa_frontend *active,
         renderer.display=f->display; renderer.owner=QA_FRONTEND_COMMAND_OWNER;
         if (!qa_gl_create_detached(&renderer,f->options.gamma,active->gl,&f->gl,&native->gl,error)) return false;
     }
-    if (!frontend_resources(f,error) || !frontend_seats_create(f,error) ||
-        !frontend_ui_features_prepare(f,error)) return false;
+    if (!frontend_resources(f,error) || !frontend_seats_create(f,error)) return false;
     qa_audio_engine_options audio; frontend_audio_engine_options(f,&audio);
     if (!qa_audio_engine_create(&audio,&f->audio,error) ||
         (active->device && !qa_audio_device_create_detached(active->device,f->audio,&f->device,&native->device,error))) return false;
@@ -97,7 +97,8 @@ bool qa_frontend_q1_save_restore(qa_frontend **slot,const qa_application_persist
         !displaced || *displaced || !retained_source || *retained_source || !retained_candidate || *retained_candidate ||
         displaced==retained_source || displaced==retained_candidate || retained_source==retained_candidate ||
         displaced==slot || retained_source==slot || retained_candidate==slot || (*slot)->stepping ||
-        (*slot)->preparing || (*slot)->round || !frontend_owners_idle(*slot) || !frontend_seat_callbacks_idle(*slot))
+        (*slot)->preparing || (*slot)->round || !frontend_owners_idle(*slot) || !frontend_seat_callbacks_idle(*slot) ||
+        !frontend_cinematic_capture_ready(*slot))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Original frontend import needs an idle driver and distinct empty owner outputs");
     qa_frontend *source=NULL; frontend_persistence_native native={0}; qa_save_image *image=NULL;
     bool ok=original_create(*slot,save,product,&source,&native,error) &&
