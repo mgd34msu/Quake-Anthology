@@ -103,6 +103,10 @@ bool qa_world_link(qa_world *, qa_actor_id, const qa_vec3 *origin_override, qa_e
 /* Publish provider-computed broadphase bounds with current authoritative body,
  * normal link count and notifications. Bypasses the global bounds hook only. */
 bool qa_world_link_bounds(qa_world *, qa_actor_id, const qa_bounds *, qa_error *);
+/* Explicit absolute bounds with an optional link-only origin override. Neither
+ * changes the authoritative body; link count and notifications are normal. */
+bool qa_world_link_bounds_at(qa_world *, qa_actor_id, const qa_bounds *absolute_bounds,
+                             const qa_vec3 *origin_override, qa_error *);
 bool qa_world_unlink(qa_world *, qa_actor_id, qa_error *);
 /* Remove collision membership without changing the linked snapshot/count or
  * invoking unlink hooks. A subsequent normal link publishes collision again. */

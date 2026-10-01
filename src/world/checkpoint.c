@@ -262,13 +262,15 @@ bool qa_world_checkpoint_restore(qa_world *world, const qa_world_checkpoint *val
         for (size_t j = 0; j < value->body_count; ++j)
             if (value->bodies[j].actor.slot == saved->actor.slot &&
                 value->bodies[j].actor.generation == saved->actor.generation) { record = value->bodies + j; break; }
-        if (!body || !body->linked || !record || !record->effective_collision) {
-            ok = checkpoint_fail(error, QA_ERROR_FORMAT, "Saved spatial membership has no linked collision body"); break;
+        if (!body || !body->linked || !record) {
+            ok = checkpoint_fail(error, QA_ERROR_FORMAT, "Saved spatial membership has no linked body"); break;
         }
         qa_actor_collision retained = record->retained_collision;
         if (!restore_ref(world, record->has_retained_collision_owner, record->retained_collision_owner,
                          &retained.owner, error)) { ok = false; break; }
-        if(!qa_world_collision_validate(world,&retained,error)) { ok=false; break; }
+        qa_actor_collision empty = {.family = qa_collision_geometry_family(world->geometry)};
+        bool empty_link = collision_equal(retained, empty);
+        if(!empty_link && !qa_world_collision_validate(world,&retained,error)) { ok=false; break; }
         members[i] = calloc(1, sizeof(*members[i]));
         if (!members[i]) { ok = checkpoint_fail(error, QA_ERROR_MEMORY, "Allocating restored spatial member"); break; }
         members[i]->actor = (qa_spatial_actor){body->link, retained};

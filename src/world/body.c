@@ -266,7 +266,7 @@ static bool valid_collision(qa_world *world,const qa_actor_collision *collision,
 {
     if(collision!=NULL && (collision->family<QA_COLLISION_Q1 || collision->family>QA_COLLISION_Q3
         || (!collision->inline_model && (collision->shape<QA_SHAPE_BOX || collision->shape>QA_SHAPE_CAPSULE))
-        || collision->role<QA_COLLISION_SOLID || collision->role>QA_COLLISION_TRIGGER))
+        || collision->role<QA_COLLISION_SOLID || collision->role>QA_COLLISION_BOTH))
         return fail(error,code,"Invalid actor collision policy");
     if(collision!=NULL && collision->inline_model && collision->model>=qa_collision_model_count(world->geometry))
         return fail(error,code,"Actor inline model is unavailable");
@@ -460,9 +460,13 @@ bool qa_world_link(qa_world *world,qa_actor_id actor,const qa_vec3 *origin_overr
 { return link_body(world,actor,origin_override,NULL,error); }
 
 bool qa_world_link_bounds(qa_world *world,qa_actor_id actor,const qa_bounds *bounds,qa_error *error)
+{ return qa_world_link_bounds_at(world,actor,bounds,NULL,error); }
+
+bool qa_world_link_bounds_at(qa_world *world,qa_actor_id actor,const qa_bounds *bounds,
+                             const qa_vec3 *origin_override,qa_error *error)
 {
     if(bounds==NULL) return fail(error,QA_ERROR_ARGUMENT,"Missing explicit body bounds");
-    return link_body(world,actor,NULL,bounds,error);
+    return link_body(world,actor,origin_override,bounds,error);
 }
 
 bool qa_world_unlink(qa_world *world,qa_actor_id actor,qa_error *error)

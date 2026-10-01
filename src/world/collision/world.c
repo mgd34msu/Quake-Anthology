@@ -93,7 +93,7 @@ bool qa_world_trace_excluding(qa_world *world,const qa_trace_query *query,const 
             if(local.code!=QA_OK) { if(error!=NULL) *error=local; ok=false; break; }
             continue;
         }
-        if(collision.role!=QA_COLLISION_SOLID) continue;
+        if(collision.role!=QA_COLLISION_SOLID && collision.role!=QA_COLLISION_BOTH) continue;
         bool skip=false;
         for(size_t j=0;j<exclude_count;++j) if(qa_actor_id_equal(excluded[j],id)) { skip=true; break; }
         if(skip || skip_owner(world,query,&collision,id,pass)) continue;
@@ -149,7 +149,8 @@ bool qa_world_point_contents(qa_world *world,const qa_point_query *query,qa_poin
             if(refresh_error.code!=QA_OK) { if(error!=NULL) *error=refresh_error; ok=false; break; }
             continue;
         }
-        if(!query->q3_server_entities && actor.collision.role!=QA_COLLISION_SOLID) continue;
+        if(!query->q3_server_entities && actor.collision.role!=QA_COLLISION_SOLID
+            && actor.collision.role!=QA_COLLISION_BOTH) continue;
         int32_t added;
         if(actor.collision.inline_model) {
             qa_point_query local=*query;

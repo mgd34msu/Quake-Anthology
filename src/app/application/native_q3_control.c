@@ -224,7 +224,7 @@ static bool touch_triggers(application_provider *provider, qa_actor_id actor, qa
             if (!qa_q3_source_actor_slot(game, candidate, &source_slot, error) ||
                 !qa_q3_wire_entity_read(game, source_slot, &entity, &visibility, error)) return false;
             if (!(collision.contents & INT32_C(0x40000000))) continue;
-        } else if (collision.role != QA_COLLISION_TRIGGER) continue;
+        } else if (collision.role != QA_COLLISION_TRIGGER && collision.role != QA_COLLISION_BOTH) continue;
         qa_q3_client_session session;
         if (!qa_q3_client_session_read(game, actor, &session, error)) return false;
         if (session.team == 3 && (!native || (entity.eType != 9 && !door))) continue;

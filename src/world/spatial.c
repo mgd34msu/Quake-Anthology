@@ -155,7 +155,8 @@ static qa_spatial_visit visit_current(void *opaque,const qa_spatial_actor *linke
         if(error.code!=QA_OK) { context->error=error; context->failed=true; return QA_SPATIAL_STOP; }
         return QA_SPATIAL_CONTINUE;
     }
-    if(context->role!=QA_COLLISION_BOTH && actor.collision.role!=context->role) return QA_SPATIAL_CONTINUE;
+    if(context->role!=QA_COLLISION_BOTH && actor.collision.role!=context->role
+        && actor.collision.role!=QA_COLLISION_BOTH) return QA_SPATIAL_CONTINUE;
     ++context->world->callback_depth;
     qa_spatial_visit result=context->visit(context->context,&actor);
     --context->world->callback_depth; return result;
@@ -207,7 +208,7 @@ static void touch_candidate(trigger_context *context,qa_actor_id candidate)
         context->failed=context->error.code!=QA_OK;
         return;
     }
-    if(collision.role!=QA_COLLISION_TRIGGER
+    if((collision.role!=QA_COLLISION_TRIGGER && collision.role!=QA_COLLISION_BOTH)
         || !qa_world_linked(context->world,context->actor,&moving)
         || !qa_world_linked(context->world,candidate,&trigger)
         || !qa_bounds_overlap(trigger.absolute_bounds,moving.absolute_bounds)) return;
