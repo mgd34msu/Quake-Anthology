@@ -16,6 +16,7 @@ typedef struct qa_bot_library_options {
     bool reload_characters;
 } qa_bot_library_options;
 typedef struct qa_bot_library qa_bot_library;
+typedef struct qa_bot_log qa_bot_log;
 /* This owner is confined to the source session thread. File/diagnostic/RNG
  * callbacks must keep their owners alive until the enclosing operation returns.
  * Retained resource references survive library destruction. */
@@ -24,6 +25,10 @@ void qa_bot_library_destroy(qa_bot_library *);
 void qa_bot_library_reload(qa_bot_library *, bool);
 const qa_script_defines *qa_bot_library_global_defines(const qa_bot_library *);
 bool qa_bot_library_global_define(qa_bot_library *, const char *definition, qa_error *);
+/* The runtime owns this logger and disposes it after the library. Binding and
+ * importing resource data perform no file operations. */
+bool qa_bot_library_log_bind(qa_bot_library *, qa_bot_log *, qa_error *);
+qa_bot_log *qa_bot_library_log(const qa_bot_library *);
 typedef struct qa_bot_variable {
     const char *name, *string;
     int32_t flags;

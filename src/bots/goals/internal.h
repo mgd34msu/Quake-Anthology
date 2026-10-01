@@ -67,10 +67,10 @@ float bot_goal_default_avoid(const qa_bot_item_info *);
 qa_bot_goal bot_goal_item(const qa_bot_goals *, const bot_level_item *);
 bot_level_item *bot_goal_find(const qa_bot_goals *, int32_t);
 void bot_goal_map_clear(qa_bot_goals *);
-bool bot_goal_push(qa_bot_goals *, bot_goal_slot *, const qa_bot_goal *, bool *);
+bool bot_goal_push(qa_bot_goals *, bot_goal_slot *, const qa_bot_goal *, bool *, qa_error *);
 bool bot_goal_dump_stack(qa_bot_goals *, const bot_goal_slot *, qa_error *);
 void bot_goal_report(qa_bot_goals *, qa_script_severity, const char *);
-void bot_goal_log(qa_bot_goals *, const char *);
+bool bot_goal_log(qa_bot_goals *, const char *, qa_error *);
 bool bot_goal_position_report(qa_bot_goals *, const char *prefix, qa_vec3,
                                 const char *suffix, qa_error *);
 bool bot_goal_source_status(qa_bot_goals *, int32_t, const qa_bot_goal *,

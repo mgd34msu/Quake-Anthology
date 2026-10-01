@@ -2,8 +2,8 @@
 #include "qa/text.h"
 #include <stdio.h>
 
-void bot_goal_log(qa_bot_goals *g, const char *text) {
-    if (g->services.log) g->services.log(g->services.context, text);
+bool bot_goal_log(qa_bot_goals *g, const char *text, qa_error *error) {
+    return !g->services.log || g->services.log(g->services.context, text, error);
 }
 void bot_goal_report(qa_bot_goals *g, qa_script_severity severity, const char *text) {
     if (g->services.report) g->services.report(g->services.context, severity, text);
@@ -20,12 +20,11 @@ bool bot_goal_position_report(qa_bot_goals *g, const char *prefix, qa_vec3 point
     return true;
 }
 bool bot_goal_dump_stack(qa_bot_goals *g, const bot_goal_slot *s, qa_error *e) {
-    (void)e;
     for (uint32_t i = 1; i <= s->state.stack_top; ++i) {
         char line[64];
         const char *name = qa_bot_goals_name(g, s->state.stack[i].number);
         (void)snprintf(line, sizeof(line), "%u: %.31s", i, name ? name : "");
-        bot_goal_log(g, line);
+        if (!bot_goal_log(g, line, e)) return false;
     }
     return true;
 }
@@ -53,7 +52,7 @@ bool qa_bot_goals_dump_avoid(qa_bot_goals *g, uint32_t id, qa_error *e) {
         if (!ok) break;
         (void)snprintf(line, sizeof(line), "avoid goal %.31s, number %d for %s seconds",
                        name ? name : "", goal->number, remaining);
-        bot_goal_log(g, line);
+        ok = bot_goal_log(g, line, e);
     }
     g->busy = false;
     return ok;
@@ -91,7 +90,7 @@ bool qa_bot_goals_load_weights(qa_bot_goals *g, uint32_t id, qa_bot_library *lib
             char line[256];
             (void)snprintf(line, sizeof(line), "item info %zu \"%s\" has no fuzzy weight\r\n",
                            i, items->items[i].classname);
-            bot_goal_log(g, line);
+            if (!bot_goal_log(g, line, e)) { g->busy = false; return false; }
         }
     *result = 0;
     g->busy = false;

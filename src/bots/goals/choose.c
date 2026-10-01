@@ -177,7 +177,7 @@ static bool choose(goal_choice *c, qa_error *e) {
     if (c->found) {
         if (c->native) bot_goal_avoid(g, c->state, c->best.number, c->avoid_duration);
         bool pushed;
-        bot_goal_push(g, c->state, &c->best, &pushed);
+        if (!bot_goal_push(g, c->state, &c->best, &pushed, e)) return false;
     }
     return true;
 }

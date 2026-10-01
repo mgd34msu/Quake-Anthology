@@ -283,11 +283,14 @@ static void severity(void *context, qa_script_severity kind, const char *message
     else if (r->services.diagnostic) r->services.diagnostic(r->services.context, kind, message);
     r->busy = previous;
 }
-static void log_text(void *context, const char *message) {
+static bool log_text(void *context, const char *message, qa_error *error) {
     qa_bot_runtime *r = context;
     bool previous = r->busy; r->busy = true;
-    if (r->services.goals.log) r->services.goals.log(r->services.goals.context, message);
+    bool okay = r->services.goals.log ?
+        r->services.goals.log(r->services.goals.context, message, error) :
+        qa_bot_log_write(r->log, message, error);
     r->busy = previous;
+    return okay;
 }
 static bool developer(void *context) {
     qa_bot_runtime *r = context;

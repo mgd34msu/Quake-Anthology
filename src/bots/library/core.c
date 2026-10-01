@@ -135,6 +135,17 @@ bool qa_bot_library_create(const qa_bot_library_options *options, qa_bot_library
 const qa_script_defines *qa_bot_library_global_defines(const qa_bot_library *library) {
     return library ? library->options.preprocessor.globals : NULL;
 }
+bool qa_bot_library_log_bind(qa_bot_library *library, qa_bot_log *log, qa_error *error) {
+    if (!library) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Bot log binding requires its actual library owner");
+        return false;
+    }
+    library->log = log;
+    return true;
+}
+qa_bot_log *qa_bot_library_log(const qa_bot_library *library) {
+    return library ? library->log : NULL;
+}
 bool qa_bot_library_global_define(qa_bot_library *library, const char *definition, qa_error *e) {
     if (!library) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Bot global definition needs its actual library owner");

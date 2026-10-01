@@ -232,8 +232,8 @@ static bool push(qa_bot_goals *g, bot_goal_slot *s, const qa_bot_goal *goal,
     }
     return true;
 }
-bool bot_goal_push(qa_bot_goals *g, bot_goal_slot *s, const qa_bot_goal *goal, bool *out) {
-    return push(g, s, goal, NULL, NULL, out, NULL);
+bool bot_goal_push(qa_bot_goals *g, bot_goal_slot *s, const qa_bot_goal *goal, bool *out, qa_error *e) {
+    return push(g, s, goal, NULL, NULL, out, e);
 }
 bool qa_bot_goals_push(qa_bot_goals *g, uint32_t id, const qa_bot_goal *goal, bool *out, qa_error *e) {
     if (!bot_goal_mutable(g, e)) return false;

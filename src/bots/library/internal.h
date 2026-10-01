@@ -64,6 +64,7 @@ struct qa_bot_weapon_selector {
 };
 struct qa_bot_library {
     qa_bot_library_options options;
+    qa_bot_log *log;
     qa_arena arena;
     qa_bot_weights *weights;
     qa_bot_character *characters, *last_character;

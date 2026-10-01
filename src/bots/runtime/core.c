@@ -104,6 +104,9 @@ bool qa_bot_runtime_create(const qa_bot_runtime_options *options,
     if(!qa_bot_log_create(&log,&r->log,e)) {
         (void)qa_bot_runtime_destroy(r,NULL);return false;
     }
+    if (!qa_bot_library_log_bind(r->library, r->log, e)) {
+        (void)qa_bot_runtime_destroy(r, NULL); return false;
+    }
     if (!bot_runtime_owners_create(r, e)) {
         (void)qa_bot_runtime_destroy(r, NULL);
         return false;
@@ -238,23 +241,17 @@ bool qa_bot_runtime_load_map(qa_bot_runtime *r, const char *name, qa_error *e) {
         ok = qa_bot_bsp_load(r->map.source_entities, &options, &bsp, e);
     }
     const qa_entities *entities = bsp ? qa_bot_bsp_entities(bsp) : r->map.entities;
-    if (ok && module) {
+    if (ok) {
         qa_bot_bsp_close(r->bsp);
         r->bsp = bsp;
         bsp = NULL;
         r->bsp_loaded = true;
         bot_runtime_observations_clear(r);
-        if (r->closed || !r->library_initialized)
+        if (module && (r->closed || !r->library_initialized))
             ok = bot_runtime_fail(e, "bot library is closed or not initialized");
     }
     if (ok) ok = qa_bot_goals_load_map(r->goals, entities, r->map.navigation, e);
     if (ok) {
-        if (!module) {
-            qa_bot_bsp_close(r->bsp);
-            r->bsp = bsp;
-            r->bsp_loaded = true;
-            bot_runtime_observations_clear(r);
-        }
         r->loaded = true;
     } else qa_bot_bsp_close(bsp);
     r->busy = false;

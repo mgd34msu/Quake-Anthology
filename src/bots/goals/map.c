@@ -143,13 +143,11 @@ static bool load_info(qa_bot_goals *g, qa_bot_navigation *n, qa_error *e) {
 }
 static bool unknown_item(qa_bot_goals *g, qa_bytes name, qa_error *e) {
     static const char prefix[] = "entity ", suffix[] = " unknown item\r\n";
-    (void)e;
     char line[sizeof(prefix) + 127 + sizeof(suffix)];
     memcpy(line, prefix, sizeof(prefix) - 1);
     memcpy(line + sizeof(prefix) - 1, name.data, name.size);
     memcpy(line + sizeof(prefix) - 1 + name.size, suffix, sizeof(suffix));
-    bot_goal_log(g, line);
-    return true;
+    return bot_goal_log(g, line, e);
 }
 static bool load_items(qa_bot_goals *g, qa_bot_navigation *n, qa_error *e) {
     size_t count = (size_t)g->options.maximum_level_items + 1;
@@ -168,7 +166,7 @@ static bool load_items(qa_bot_goals *g, qa_bot_navigation *n, qa_error *e) {
     for (size_t i = 0; i < items->count; ++i)
         if (!items->items[i].model_index) {
             (void)snprintf(line, sizeof(line), "item %s has modelindex 0", items->items[i].classname);
-            bot_goal_log(g, line);
+            if (!bot_goal_log(g, line, e)) return false;
         }
     for (int32_t entity = qa_bot_bsp_next(g->entities, 0); entity; entity = qa_bot_bsp_next(g->entities, entity)) {
         qa_bytes classname;
@@ -202,7 +200,7 @@ static bool load_items(qa_bot_goals *g, qa_bot_navigation *n, qa_error *e) {
                 if (trace.fraction >= 1) {
                     if (!qa_bot_navigation_jump_pad(n, origin, bounds, &area, e)) return false;
                     (void)snprintf(line, sizeof(line), "item %s reachable from jumppad area %u\r\n", info->classname, area);
-                    bot_goal_log(g, line);
+                    if (!bot_goal_log(g, line, e)) return false;
                     if (!area) continue;
                 }
             }
@@ -248,23 +246,26 @@ bool qa_bot_goals_load_map(qa_bot_goals *g, const qa_entities *entities,
     if (!bot_goal_mutable(g, e)) return false;
     if (!entities || !navigation || entities->count > INT32_MAX)
         return bot_goal_fail(e, "invalid goal map/navigation");
-    qa_bot_goals staged = {.items = g->items, .services = g->services, .options = g->options,
-                           .entities = entities, .configured = g->configured};
     g->busy = true;
-    bool ok = load_info(&staged, navigation, e) && load_items(&staged, navigation, e);
+    g->entities = entities;
+    for (size_t i = 0; i < g->source_count; ++i) free(g->source[i].name);
+    free(g->source);
+    g->source = NULL;
+    g->source_count = g->source_capacity = 0;
+    memset(g->source_buckets, 0, sizeof(g->source_buckets));
+    free(g->locations);
+    free(g->camps);
+    g->locations = g->camps = NULL;
+    g->location_count = g->camp_count = 0;
+    bool ok = load_info(g, navigation, e);
     if (ok) {
-        bot_goal_map_clear(g);
-        g->entities = entities;
-        g->level = staged.level;
-        g->level_capacity = staged.level_capacity;
-        g->level_head = staged.level_head;
-        g->free_head = staged.free_head;
-        g->initial_count = staged.initial_count;
-        g->locations = staged.locations;
-        g->location_count = staged.location_count;
-        g->camps = staged.camps;
-        g->camp_count = staged.camp_count;
-    } else bot_goal_map_clear(&staged);
+        free(g->level);
+        g->level = NULL;
+        g->level_capacity = 0;
+        g->level_head = g->free_head = 0;
+        g->initial_count = 0;
+        ok = load_items(g, navigation, e);
+    }
     g->busy = false;
     return ok;
 }
@@ -317,7 +318,7 @@ static bool update(qa_bot_goals *g, qa_bot_navigation *n, const qa_bot_goal_enti
                 char line[160];
                 (void)snprintf(line, sizeof(line), "linked item %s to an entity",
                                items->items[g->level[linked].info].classname);
-                bot_goal_log(g, line);
+                if (!bot_goal_log(g, line, e)) return false;
             }
             continue;
         }
