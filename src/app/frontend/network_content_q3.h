@@ -2,9 +2,12 @@
 #define QA_FRONTEND_NETWORK_CONTENT_Q3_H
 
 #include "qa/application_q3_factory.h"
+#include "qa/application_native_q3_remote_client.h"
 #include "qa/network_q3.h"
 
 typedef struct frontend_q3_content frontend_q3_content;
+typedef struct frontend_q3_content_role_receipt frontend_q3_content_role_receipt;
+typedef struct frontend_q3_content_native_receipt frontend_q3_content_native_receipt;
 typedef enum frontend_q3_content_phase {
     FRONTEND_Q3_CONTENT_CATALOG, FRONTEND_Q3_CONTENT_PREPARED,
     FRONTEND_Q3_CONTENT_PUBLISHED, FRONTEND_Q3_CONTENT_MEDIA_READY
@@ -21,6 +24,10 @@ typedef struct frontend_q3_content_request {
     const qa_q3_gamestate *gamestate;
     void *connection;
     bool (*connection_current)(void *, uint64_t connection_epoch, qa_error *);
+    /* Resolves actual imported compiled CGAME and source UI owners. Capture
+     * and restore only qualify their retained media; they never collect again. */
+    bool (*native_media_read)(void *, frontend_q3_content_native_receipt *,
+        frontend_q3_content_role_receipt *, qa_error *);
 } frontend_q3_content_request;
 
 typedef struct frontend_q3_content_view {
@@ -55,7 +62,7 @@ typedef struct frontend_q3_content_publication {
 /* A role factory produces this only from the qualified loaded artifact and
  * successful source Init. Media views are the actual private presentation
  * views used by that role, rather than probes or temporary canonical reads. */
-typedef struct frontend_q3_content_role_receipt {
+struct frontend_q3_content_role_receipt {
     qa_qvm_role role;
     qa_actor_owner receiver;
     uint32_t seat;
@@ -70,7 +77,18 @@ typedef struct frontend_q3_content_role_receipt {
      * completed Init. A stale or merely opened artifact cannot satisfy it. */
     void *producer;
     bool (*current)(void *, const struct frontend_q3_content_role_receipt *, qa_error *);
-} frontend_q3_content_role_receipt;
+};
+
+/* Compiled CGAME has no opened program artifact. Its actual service proves
+ * successful Init; the frontend predicate additionally qualifies its finished
+ * native media/core and the actual private view they used. Source UI retains
+ * its separate real artifact receipt, independently of visible MENU. */
+struct frontend_q3_content_native_receipt {
+    const qa_native_q3_remote_client_service *client;
+    qa_vfs *media_view;
+    void *producer;
+    bool (*current)(void *, const frontend_q3_content_native_receipt *, qa_error *);
+};
 
 bool frontend_q3_content_create(const frontend_q3_content_request *,
     frontend_q3_content **empty, qa_error *);
@@ -86,6 +104,9 @@ bool frontend_q3_content_publish(frontend_q3_content *,
  * caller obtains receipts from the application artifact/Init producer. */
 bool frontend_q3_content_media_ready(frontend_q3_content *,
     const frontend_q3_content_role_receipt *cgame,
+    const frontend_q3_content_role_receipt *ui, qa_error *);
+bool frontend_q3_content_native_media_ready(frontend_q3_content *,
+    const frontend_q3_content_native_receipt *cgame,
     const frontend_q3_content_role_receipt *ui, qa_error *);
 bool frontend_q3_content_pure_command(frontend_q3_content *,
     char *, size_t capacity, qa_error *);
@@ -105,6 +126,14 @@ bool frontend_q3_content_checkpoint(const frontend_q3_content *,
  * source Init or media journal collection is replayed. */
 bool frontend_q3_content_restore(const frontend_q3_content_request *binding,
     qa_application_content_graph *, qa_bytes, frontend_q3_content **empty, qa_error *);
+/* Native service/core import follows CONNECTIONS content import. This holds
+ * the literal saved completion cut privately until finish qualifies both real
+ * initialized owners. Ordinary read, CP and capture reject that pending cut. */
+bool frontend_q3_content_restore_native_staged(const frontend_q3_content_request *,
+    qa_application_content_graph *, qa_bytes, frontend_q3_content **empty, qa_error *);
+bool frontend_q3_content_native_restore_read(const frontend_q3_content *,
+    frontend_q3_content_view *, qa_error *);
+bool frontend_q3_content_native_restore_finish(frontend_q3_content *, qa_error *);
 bool frontend_q3_content_rebind(frontend_q3_content *,
     const frontend_q3_content_request *binding, qa_error *);
 

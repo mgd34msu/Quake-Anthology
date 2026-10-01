@@ -10,7 +10,7 @@ struct q3n_media {
     q3n_inline_media *inline_models;
     uint64_t model_revision[256], sound_revision[256];
     bool model_observed[256], sound_observed[256];
-    bool loading_graphics, sounds_loaded, graphics_loaded, busy;
+    bool loading_graphics, sounds_loaded, graphics_loaded, effects_loaded, busy;
 };
 
 static bool enter(q3n_media *m, qa_error *error)
@@ -26,6 +26,8 @@ const q3n_media_view *q3n_media_read(const q3n_media *m)
 { return q3n_media_idle(m) ? &m->view : NULL; }
 qa_q3_presentation_assets *q3n_media_assets(const q3n_media *m)
 { return m ? m->options.assets : NULL; }
+bool q3n_media_effects_ready(const q3n_media *m)
+{ return q3n_media_idle(m) && m->effects_loaded; }
 bool q3n_media_loading_read(const q3n_media *m,q3n_loading_media *out,qa_error *e)
 {
     if (!m || !out) return q3p_fail(e,QA_ERROR_ARGUMENT,"Native loading observation requires its actual media owner");
@@ -526,6 +528,105 @@ GRAPHIC_GROUP(mission_ui,G(PATROL,"ui/assets/statusbar/patrol.tga",NO_MIP),G(ASS
     G(CURSOR,"menu/art/3_cursor2",NO_MIP),G(SIZE_CURSOR,"ui/assets/sizecursor.tga",NO_MIP),G(SELECT_CURSOR,"ui/assets/selectcursor.tga",NO_MIP));
 static bool graphic_one(q3n_media *m,q3n_graphic field,const char *path,graphic_kind kind,qa_error *e)
 { graphic_request request={field,path,kind}; return graphics(m,&request,1,e); }
+
+static bool effect_source_current(q3n_media *m, qa_application *app,
+    const qa_application_selected_effects *source, const qa_application_effect_event *event, qa_error *e)
+{
+    if (!app || !source || source->kind != QA_APPLICATION_EFFECTS_Q3 ||
+        source->q3_product != m->options.product ||
+        !qa_vfs_lookup_equal(m->options.assets->options.provider.mounts, source->content) ||
+        m->options.assets->options.provider.family != QA_SCENE_Q3 ||
+        (event ? source != &event->source || !qa_application_effect_event_current(app, event) :
+            !qa_application_selected_effects_current(app, source)))
+        return q3p_fail(e, QA_ERROR_ARGUMENT, "Selected effect media lost its actual source, content or clock");
+    return true;
+}
+
+bool q3n_media_effects_current(const q3n_media *m, qa_application *app,
+    const qa_application_selected_effects *source, const qa_application_effect_event *event, qa_error *e)
+{
+    return q3n_media_effects_ready(m) && effect_source_current((q3n_media *)m, app, source, event, e);
+}
+
+bool q3n_media_load_effects(q3n_media *m, qa_application *app,
+    const qa_application_selected_effects *source, const qa_application_effect_event *event, qa_error *e)
+{
+    if (!enter(m, e)) return false;
+    bool okay = effect_source_current(m, app, source, event, e);
+    if (okay && m->effects_loaded) return leave(m, true);
+    static const graphic_request common[] = {
+        G(WATER_BUBBLE,"waterBubble",SHADER), G(SMOKE_RAGEPRO,"smokePuffRagePro",SHADER),
+        G(BLOOD_EXPLOSION,"bloodExplosion",SHADER),
+        G(GIB_SKULL,"models/gibs/skull.md3",MODEL), G(GIB_BRAIN,"models/gibs/brain.md3",MODEL),
+        G(GIB_ABDOMEN,"models/gibs/abdomen.md3",MODEL), G(GIB_ARM,"models/gibs/arm.md3",MODEL),
+        G(GIB_CHEST,"models/gibs/chest.md3",MODEL), G(GIB_FIST,"models/gibs/fist.md3",MODEL),
+        G(GIB_FOOT,"models/gibs/foot.md3",MODEL), G(GIB_FOREARM,"models/gibs/forearm.md3",MODEL),
+        G(GIB_INTESTINE,"models/gibs/intestine.md3",MODEL), G(GIB_LEG,"models/gibs/leg.md3",MODEL),
+        G(SMOKE2,"models/weapons2/shells/s_shell.md3",MODEL),
+        G(SMOKE_PUFF,"smokePuff",SHADER), G(BLOOD_TRAIL,"bloodTrail",SHADER),
+        G(BLOOD_MARK,"bloodMark",SHADER), G(BURN_MARK,"burnMark",SHADER)
+    };
+    /* Keep registration order from ApplicationEffects' real ClientEffects
+     * and LocalEntitySystem construction, including the product branch. */
+    for (size_t i = 0; okay && i < 3; ++i)
+        okay = graphics(m, &common[i], 1, e) && effect_source_current(m, app, source, event, e);
+    if (okay) okay = graphic_one(m, Q3N_G_TELEPORT_MODEL,
+        m->options.product == QA_Q3_ARENA ? "models/misc/telep.md3" : "models/powerups/pop.md3",
+        GRAPHIC_MODEL, e) && effect_source_current(m, app, source, event, e);
+    for (size_t i = 3; okay && i < 14; ++i)
+        okay = graphics(m, &common[i], 1, e) && effect_source_current(m, app, source, event, e);
+    if (okay && m->options.product == QA_Q3_ARENA)
+        okay = graphic_one(m, Q3N_G_TELEPORT_SHADER, "teleportEffect", GRAPHIC_SHADER, e) &&
+            effect_source_current(m, app, source, event, e);
+    if (okay && m->options.product == QA_Q3_TEAM_ARENA) {
+        static const graphic_request mission[] = {
+            G(LIGHTNING_SHADER,"lightningBolt",SHADER), G(KAMIKAZE_EFFECT,"models/weaphits/kamboom2.md3",MODEL),
+            G(DISH_FLASH,"models/weaphits/boom01.md3",MODEL), G(ROCKET_EXPLOSION,"rocketExplosion",SHADER),
+            G(INVULNERABILITY_IMPACT,"models/powerups/shield/impact.md3",MODEL),
+            G(INVULNERABILITY_JUICED,"models/powerups/shield/juicer.md3",MODEL)
+        };
+        static const sound_request hits[] = {
+            S(OBELISK_HIT1,"sound/items/obelisk_hit_01.wav",false), S(OBELISK_HIT2,"sound/items/obelisk_hit_02.wav",false),
+            S(OBELISK_HIT3,"sound/items/obelisk_hit_03.wav",false),
+            S(INVULNERABILITY_IMPACT1,"sound/items/invul_impact_01.wav",false),
+            S(INVULNERABILITY_IMPACT2,"sound/items/invul_impact_02.wav",false),
+            S(INVULNERABILITY_IMPACT3,"sound/items/invul_impact_03.wav",false),
+            S(INVULNERABILITY_JUICED,"sound/items/invul_juiced.wav",false)
+        };
+        for (size_t i = 0; okay && i < 4; ++i)
+            okay = graphics(m, &mission[i], 1, e) && effect_source_current(m, app, source, event, e);
+        for (size_t i = 0; okay && i < 3; ++i)
+            okay = sounds(m, &hits[i], 1, e) && effect_source_current(m, app, source, event, e);
+        if (okay) okay = graphics(m, &mission[4], 1, e) && effect_source_current(m, app, source, event, e);
+        for (size_t i = 3; okay && i < 6; ++i)
+            okay = sounds(m, &hits[i], 1, e) && effect_source_current(m, app, source, event, e);
+        if (okay) okay = graphics(m, &mission[5], 1, e) && effect_source_current(m, app, source, event, e);
+        if (okay) okay = sounds(m, &hits[6], 1, e) && effect_source_current(m, app, source, event, e);
+    }
+    for (size_t i = 14; okay && i < sizeof(common) / sizeof(common[0]); ++i)
+        okay = graphics(m, &common[i], 1, e) && effect_source_current(m, app, source, event, e);
+    const char *const numbers[] = {"zero","one","two","three","four","five","six","seven","eight","nine","minus"};
+    for (size_t i = 0; okay && i < sizeof(numbers) / sizeof(numbers[0]); ++i) {
+        char path[64]; snprintf(path, sizeof(path), "gfx/2d/numbers/%s_32b", numbers[i]);
+        okay = shader(m, path, true, &m->view.number_shaders[i], e) && effect_source_current(m, app, source, event, e);
+    }
+    static const sound_request bounce[] = {
+        S(GIB_BOUNCE1,"sound/player/gibimp1.wav",false), S(GIB_BOUNCE2,"sound/player/gibimp2.wav",false),
+        S(GIB_BOUNCE3,"sound/player/gibimp3.wav",false)
+    };
+    for (size_t i = 0; okay && i < sizeof(bounce) / sizeof(bounce[0]); ++i)
+        okay = sounds(m, &bounce[i], 1, e) && effect_source_current(m, app, source, event, e);
+    if (okay && m->options.product == QA_Q3_TEAM_ARENA) {
+        okay = graphic_one(m, Q3N_G_KAMIKAZE_SHOCKWAVE, "models/weaphits/kamwave.md3", GRAPHIC_MODEL, e) &&
+            effect_source_current(m, app, source, event, e);
+        const sound_request kamikaze[] = {S(KAMIKAZE_EXPLODE,"sound/items/kam_explode.wav",false),
+            S(KAMIKAZE_IMPLODE,"sound/items/kam_implode.wav",false)};
+        for (size_t i = 0; okay && i < sizeof(kamikaze) / sizeof(kamikaze[0]); ++i)
+            okay = sounds(m, &kamikaze[i], 1, e) && effect_source_current(m, app, source, event, e);
+    }
+    if (okay) m->effects_loaded = true;
+    return leave(m, okay);
+}
 static bool load_graphics_now(q3n_media *m,const q3n_media_load *load,qa_error *e)
 {
     if (!load_valid(m,load,e)) return false;
@@ -707,10 +808,11 @@ static bool weapon_fields(qa_source_save_io *io,q3n_media *m,q3n_weapon_media *w
 }
 static bool media_fields(qa_source_save_io *io,q3n_media *m)
 {
-    uint8_t magic[4]={'Q','3','M','D'}; uint32_t schema=2,product=m->options.product;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3MD",4) || !qa_source_save_u32(io,&schema) || schema!=2 ||
+    uint8_t magic[4]={'Q','3','M','D'}; uint32_t schema=3,product=m->options.product;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3MD",4) || !qa_source_save_u32(io,&schema) || schema!=3 ||
         !qa_source_save_u32(io,&product) || product!=(uint32_t)m->options.product ||
-        !qa_source_save_bool(io,&m->loading_graphics) || !qa_source_save_bool(io,&m->sounds_loaded) || !qa_source_save_bool(io,&m->graphics_loaded)) return false;
+        !qa_source_save_bool(io,&m->loading_graphics) || !qa_source_save_bool(io,&m->sounds_loaded) || !qa_source_save_bool(io,&m->graphics_loaded) ||
+        !qa_source_save_bool(io,&m->effects_loaded)) return false;
     for (size_t i=0;i<m->view.item_count;++i) {
         q3n_item_media *item=&m->view.items[i];
         if (!handle_field(io,m,&item->models[0],Q3P_MODEL) || !handle_field(io,m,&item->models[1],Q3P_MODEL) ||

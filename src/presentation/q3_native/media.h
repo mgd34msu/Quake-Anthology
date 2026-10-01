@@ -4,6 +4,7 @@
 #include "qa/application_native_q3_presentation.h"
 #include "qa/q3_presentation.h"
 #include "qa/application_native_q3_wire.h"
+#include "qa/application_selected_effects.h"
 
 typedef struct q3n_media q3n_media;
 typedef enum q3n_missile_trail {
@@ -141,6 +142,13 @@ bool q3n_media_loading_read(const q3n_media *, q3n_loading_media *, qa_error *);
 bool q3n_media_loading_graphics(q3n_media *, qa_error *);
 bool q3n_media_load_sounds(q3n_media *, const q3n_media_load *, qa_error *);
 bool q3n_media_load_graphics(q3n_media *, const q3n_media_load *, qa_error *);
+/* The standalone effect/local-entity bundle follows the actual selected
+ * source product and content. It never initializes GAME/configstring media. */
+bool q3n_media_load_effects(q3n_media *, qa_application *,
+    const qa_application_selected_effects *, const qa_application_effect_event *, qa_error *);
+bool q3n_media_effects_ready(const q3n_media *);
+bool q3n_media_effects_current(const q3n_media *, qa_application *,
+    const qa_application_selected_effects *, const qa_application_effect_event *, qa_error *);
 bool q3n_media_register_item(q3n_media *, uint32_t, qa_error *);
 bool q3n_media_register_weapon(q3n_media *, uint32_t, qa_error *);
 /* CL_GetServerCommand has already reached this exact cs row. Registration is

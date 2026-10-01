@@ -1,6 +1,7 @@
 /* id Software cg_event.c and CG_PlayBufferedSounds; GPL-2.0-or-later. */
 #include "events_internal.h"
 #include "weapon.h"
+#include "../q3/internal.h"
 #include "qa/application_native_q3_wire.h"
 
 bool q3n_events_create(const q3n_event_options *options, q3n_events **out, qa_error *error)
@@ -14,6 +15,18 @@ bool q3n_events_create(const q3n_event_options *options, q3n_events **out, qa_er
     q3n_events *o=calloc(1,sizeof(*o));
     if(!o)return q3ne_fail(error,QA_ERROR_MEMORY,"Allocating native Q3 event continuation");
     o->options=*options; o->smoke_seed=0x92; q3ne_local_reset(o); *out=o; return true;
+}
+bool q3n_events_create_effects(const q3n_event_options *options, q3n_events **out, qa_error *error)
+{
+    if (!options || !out || !options->assets || !options->trace || !options->point_contents ||
+        !options->mark_fragments || options->event_replacement || options->weapon_event ||
+        options->print || options->center_print || options->voice_chat ||
+        (options->product != QA_Q3_ARENA && options->product != QA_Q3_TEAM_ARENA))
+        return q3ne_fail(error, QA_ERROR_ARGUMENT, "Standalone Q3 effects require only their genuine world services");
+    q3n_events *owner = calloc(1, sizeof(*owner));
+    if (!owner) return q3ne_fail(error, QA_ERROR_MEMORY, "Allocating standalone Q3 effects continuation");
+    owner->options = *options; owner->standalone_effects = true;
+    owner->smoke_seed = 0x92; q3ne_local_reset(owner); *out = owner; return true;
 }
 void q3n_events_destroy(q3n_events *o) { if(o && !o->busy)free(o); }
 bool q3n_events_idle(const q3n_events *o) { return !o || !o->busy; }
@@ -54,7 +67,26 @@ qa_vec3 q3ne_rotate(qa_vec3 forward, qa_vec3 point, float degrees)
 bool q3ne_current(const q3n_frame *f, qa_error *error)
 {
     const q3n_media_view *media=f && f->media?q3n_media_read(f->media):NULL;
+    if (f && f->effects_source) {
+        const qa_application_selected_effects *source = f->effects_source;
+        bool clock = f->time == source->sample_time_ms;
+        if (f->effect_event) {
+            const qa_builtin_event *event = f->effect_event->event;
+            clock = event && event->family == QA_GAME_Q3 && event->time_ns % UINT64_C(1000000) == 0 &&
+                event->time_ns / UINT64_C(1000000) <= UINT32_MAX &&
+                f->time == q3ne_word((uint32_t)(event->time_ns / UINT64_C(1000000))) &&
+                f->effect_pose_current && f->effect_pose_current(f->effect_output_context);
+        }
+        if (!f->events || !f->events->standalone_effects || !f->event_settings || !f->presentation ||
+            !media || f->events->options.assets != f->assets ||
+            f->events->options.product != source->q3_product || media->product != source->q3_product ||
+            f->clients || f->has_local_player || !clock ||
+            !q3n_media_effects_current(f->media, f->application, source, f->effect_event, error))
+            return q3ne_fail(error, QA_ERROR_ARGUMENT, "Standalone Q3 effects lost their actual producer, registry or clock");
+        return true;
+    }
     if(!f || !f->events || !f->event_settings || !f->presentation || !f->clients || !f->media ||
+       f->events->standalone_effects || f->effect_event ||
        f->events->options.assets!=f->assets || f->events->options.product!=f->source.product ||
        !media || media->product!=f->source.product ||
        !qa_application_native_q3_presentation_current(f->application,&f->source))
@@ -63,7 +95,17 @@ bool q3ne_current(const q3n_frame *f, qa_error *error)
 }
 bool q3ne_sound(const q3n_frame *f, int32_t sound, const qa_vec3 *origin, int32_t number, int32_t channel, bool local, qa_error *error)
 {
-    return q3ne_current(f,error) && qa_q3_presentation_sound(f->presentation,sound,origin,number,channel,local,error) && q3ne_current(f,error);
+    if (!q3ne_current(f, error)) return false;
+    if (f->effects_source) {
+        if (sound < 0 || (size_t)sound > f->assets->sound_count) return true;
+        qa_audio_asset *asset = q3p_sound(f->assets, sound);
+        if (!asset) return true;
+        if (local || !origin || !f->effect_sound_output)
+            return q3ne_fail(error, QA_ERROR_ARGUMENT, "Standalone Q3 effect sound requires its actual fixed world origin");
+        return f->effect_sound_output(f->effect_output_context, f, asset, origin, channel, error) &&
+            q3ne_current(f, error);
+    }
+    return qa_q3_presentation_sound(f->presentation,sound,origin,number,channel,local,error) && q3ne_current(f,error);
 }
 bool q3n_events_trace(const q3n_frame *f, qa_vec3 start, qa_vec3 end, qa_bounds bounds, int32_t skip, uint32_t mask, qa_trace_result *out, qa_error *error)
 {

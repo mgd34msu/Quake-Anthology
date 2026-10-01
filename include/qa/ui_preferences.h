@@ -3,6 +3,8 @@
 #include "qa/ui.h"
 #include "qa/input_platform.h"
 
+struct qa_cvars_edit;
+
 typedef enum qa_ui_typeface { QA_UI_TYPEFACE_STANDARD, QA_UI_TYPEFACE_BOLD } qa_ui_typeface;
 typedef struct qa_ui_preferences {
     float hud_scale, text_scale, menu_scale, crosshair_size;
@@ -35,5 +37,9 @@ const qa_ui_preference_description *qa_ui_preference_describe(qa_ui_preference);
 bool qa_ui_preferences_register(qa_cvars *, uint64_t owner, qa_error *);
 bool qa_ui_preference_name(uint32_t seat, qa_ui_preference, char out[64], qa_error *);
 bool qa_ui_preferences_read(const qa_cvars *, uint32_t seat, qa_ui_preferences *, qa_error *);
+/* Reads the same actual proposed scalar records from a retained canonical
+ * publication ticket. Language borrows that ticket until publish or abort. */
+bool qa_ui_preferences_edit_read(const struct qa_cvars_edit *, uint32_t seat,
+    qa_ui_preferences *, qa_error *);
 bool qa_ui_preference_set(qa_cvars *, uint32_t seat, qa_ui_preference, const char *, qa_error *);
 #endif

@@ -1,5 +1,6 @@
 #include "qa/ui_preferences.h"
 #include "qa/ui_language.h"
+#include "qa/console_cvars_prepare.h"
 #include "qa/text.h"
 #include <math.h>
 #include <stdio.h>
@@ -86,14 +87,15 @@ bool qa_ui_preference_set(qa_cvars *cvars, uint32_t seat, qa_ui_preference prefe
         validate((void *)qa_ui_preference_describe(preference), value, error) &&
         qa_cvars_set_console(cvars, name, value, error);
 }
-bool qa_ui_preferences_read(const qa_cvars *cvars, uint32_t seat, qa_ui_preferences *out, qa_error *error)
+static bool preferences_read(const qa_cvars *cvars, const qa_cvars_edit *edit,
+    uint32_t seat, qa_ui_preferences *out, qa_error *error)
 {
     if (!cvars || !out || seat >= QA_INPUT_LOCAL_SEATS) return fail(error, "UI preferences require their actual physical seat");
     const qa_cvar_view *values[QA_UI_PREF_COUNT];
     for (unsigned key = 0; key < QA_UI_PREF_COUNT; ++key) {
         char name[64];
         if (!qa_ui_preference_name(seat, (qa_ui_preference)key, name, error)) return false;
-        values[key] = qa_cvars_find(cvars, name);
+        values[key] = edit ? qa_cvars_edit_find(edit, name) : qa_cvars_find(cvars, name);
         if (!values[key]) return fail(error, "UI preference is not registered on this candidate");
     }
     *out = (qa_ui_preferences){.hud_scale = values[QA_UI_PREF_HUD_SCALE]->number,
@@ -108,3 +110,8 @@ bool qa_ui_preferences_read(const qa_cvars *cvars, uint32_t seat, qa_ui_preferen
         .language = values[QA_UI_PREF_LANGUAGE]->value};
     return true;
 }
+bool qa_ui_preferences_read(const qa_cvars *cvars, uint32_t seat, qa_ui_preferences *out, qa_error *error)
+{ return preferences_read(cvars, NULL, seat, out, error); }
+bool qa_ui_preferences_edit_read(const qa_cvars_edit *edit, uint32_t seat,
+    qa_ui_preferences *out, qa_error *error)
+{ return preferences_read(qa_cvars_edit_registry(edit), edit, seat, out, error); }

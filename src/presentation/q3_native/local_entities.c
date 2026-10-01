@@ -26,7 +26,20 @@ q3n_local_entity *q3n_local_allocate(q3n_events *o, q3n_local_type type, qa_q3_r
     o->local_head=i; ++o->local_count; return &s->value;
 }
 static bool entity(const q3n_frame *f, const qa_q3_ref_entity *ref, qa_error *error)
-{ return qa_q3_presentation_entity(f->presentation,ref,error) && q3ne_current(f,error); }
+{
+    if (f->effects_source && f->effect_entity_output) {
+        float radius = 0;
+        /* ApplicationEffects captures the exact activeLocal.ref identity.
+         * Stack-generated shockwaves and copied refs have no pool radius. */
+        for (int32_t i = f->events->local_head; i != -1; i = f->events->locals[i].next)
+            if (&f->events->locals[i].value.ref == ref) {
+                radius = f->events->locals[i].value.radius; break;
+            }
+        if (!f->effect_entity_output(f->effect_output_context, ref, radius, error) || !q3ne_current(f, error))
+            return false;
+    }
+    return qa_q3_presentation_entity(f->presentation,ref,error) && q3ne_current(f,error);
+}
 static bool light(const q3n_frame *f, const q3n_local_entity *v, qa_error *error)
 {
     if(!v->light || f->preferences.reduced_flashes)return true;

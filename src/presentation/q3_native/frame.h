@@ -4,6 +4,7 @@
 #include "entity.h"
 #include "media.h"
 #include "qa/ui_preferences.h"
+#include "qa/application_selected_effects.h"
 
 typedef struct q3n_weapons q3n_weapons;
 typedef struct q3n_events q3n_events;
@@ -21,6 +22,15 @@ typedef struct qa_native_q3_client_service qa_native_q3_client_service;
 typedef struct q3n_frame {
     qa_application *application;
     qa_application_native_q3_presentation source;
+    /* A standalone selected effect borrows its independent native producer.
+     * It has no primary GAME snapshot, physical client or invented player S. */
+    const qa_application_selected_effects *effects_source;
+    const qa_application_effect_event *effect_event;
+    void *effect_output_context;
+    bool (*effect_entity_output)(void *, const qa_q3_ref_entity *, float cull_radius, qa_error *);
+    bool (*effect_sound_output)(void *, const struct q3n_frame *, qa_audio_asset *,
+        const qa_vec3 *fixed_origin, int32_t channel, qa_error *);
+    bool (*effect_pose_current)(void *);
     qa_q3_presentation *presentation;
     qa_q3_presentation_assets *assets;
     q3n_clients *clients;

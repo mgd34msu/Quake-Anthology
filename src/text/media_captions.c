@@ -1,5 +1,6 @@
 #include "qa/media_captions.h"
 #include "qa/media_captions_save.h"
+#include "qa/media_caption_prepare.h"
 #include "save_private.h"
 
 #include <math.h>
@@ -34,7 +35,12 @@ struct qa_sound_captions {
     char *platform;
     caption_voice *voices;
     sound_catalog *catalogs;
+    qa_sound_caption_language *language_ticket;
     bool visiting;
+};
+struct qa_sound_caption_language {
+    qa_sound_captions *owner,*candidate;
+    bool published;
 };
 static bool fail(qa_error *e, qa_status code, const char *message) {
     qa_error_set(e, code, 0, "%s", message);
@@ -183,7 +189,7 @@ static void voice_free(caption_voice *voice) {
     free(voice);
 }
 void qa_sound_captions_clear(qa_sound_captions *captions) {
-    if (!captions || captions->visiting)
+    if (!captions || captions->visiting || captions->language_ticket)
         return;
     while (captions->voices) {
         caption_voice *next = captions->voices->next;
@@ -200,7 +206,7 @@ void qa_sound_captions_clear(qa_sound_captions *captions) {
     }
 }
 void qa_sound_captions_destroy(qa_sound_captions *captions) {
-    if (!captions || captions->visiting)
+    if (!captions || captions->visiting || captions->language_ticket)
         return;
     qa_sound_captions_clear(captions);
     qa_localization_release(captions->options.captions.override_catalog);
@@ -209,7 +215,7 @@ void qa_sound_captions_destroy(qa_sound_captions *captions) {
 }
 bool qa_sound_captions_event(qa_sound_captions *captions, const qa_audio_voice_event *event,
                              qa_error *e) {
-    if (!captions || captions->visiting || !event)
+    if (!captions || captions->visiting || captions->language_ticket || !event)
         return fail(e, QA_ERROR_ARGUMENT, "Invalid caption voice event");
     if (event->seat != captions->options.captions.seat)
         return true;
@@ -268,7 +274,7 @@ bool qa_sound_captions_event(qa_sound_captions *captions, const qa_audio_voice_e
 }
 bool qa_sound_captions_prepare(qa_sound_captions *captions, const char *language, int64_t frame,
                                qa_error *e) {
-    if (!captions || captions->visiting || !language)
+    if (!captions || captions->visiting || captions->language_ticket || !language)
         return fail(e, QA_ERROR_ARGUMENT, "Invalid sound caption preparation");
     /* Prevent resource/diagnostic callbacks from changing this list mid-prepare.
      */
@@ -302,7 +308,7 @@ bool qa_sound_captions_visit(qa_sound_captions *captions, int64_t frame,
                              qa_caption_preferences prefs,
                              void (*visit)(void *, const qa_active_caption *), void *context,
                              qa_error *e) {
-    if (!captions || captions->visiting || !visit)
+    if (!captions || captions->visiting || captions->language_ticket || !visit)
         return fail(e, QA_ERROR_ARGUMENT, "Invalid sound caption query");
     captions->visiting = true;
     bool ok = true;
@@ -321,7 +327,7 @@ bool qa_sound_captions_visit(qa_sound_captions *captions, int64_t frame,
     return ok;
 }
 bool qa_sound_captions_idle(const qa_sound_captions *captions)
-{ return captions && !captions->visiting; }
+{ return captions && !captions->visiting && !captions->language_ticket; }
 bool qa_sound_captions_assets_read(const qa_sound_captions *captions,
     qa_audio_asset ***out, size_t *count, qa_error *e)
 {
@@ -532,3 +538,83 @@ bool qa_sound_captions_restore(qa_sound_captions *owner, const qa_sound_caption_
     if (!ok && (!e || e->code == QA_OK)) fail(e, QA_ERROR_FORMAT, "Invalid sound caption continuation");
     return ok;
 }
+
+static bool sound_clone(const qa_sound_captions *source,qa_sound_captions *candidate,qa_error *e)
+{
+    sound_catalog **link=&candidate->catalogs;
+    for (const sound_catalog *row=source->catalogs;row;row=row->next) {
+        if (!row->view || !row->asset || !row->captions ||
+            (row->captions->view && row->captions->view!=row->view))
+            return fail(e,QA_ERROR_FORMAT,"Caption catalog lost its actual prepared content view");
+        sound_catalog *copy=calloc(1,sizeof(*copy));
+        if (!copy) return fail(e,QA_ERROR_MEMORY,"Copying retained caption catalog");
+        *link=copy; link=&copy->next;
+        copy->asset=qa_audio_asset_retain(row->asset);
+        copy->view=qa_vfs_clone(row->view,e);
+        copy->captions=qa_media_captions_create(&candidate->options.captions,e);
+        if (!copy->view || !copy->captions) return false;
+        qa_buffer saved={0};
+        bool ok=qa_media_captions_checkpoint(row->captions,row->captions->view,row->captions->source,&saved,e) &&
+            qa_media_captions_restore(copy->captions,row->captions->view?copy->view:NULL,
+                row->captions->source,(qa_bytes){saved.data,saved.size},e);
+        qa_buffer_free(&saved); if (!ok) return false;
+    }
+    caption_voice **voice_link=&candidate->voices;
+    for (const caption_voice *voice=source->voices;voice;voice=voice->next) {
+        caption_voice *copy=calloc(1,sizeof(*copy));
+        if (!copy) return fail(e,QA_ERROR_MEMORY,"Copying actual caption voice clock");
+        *copy=*voice; copy->next=NULL; copy->asset=qa_audio_asset_retain(voice->asset); copy->catalog=NULL;
+        *voice_link=copy; voice_link=&copy->next;
+        const sound_catalog *old=source->catalogs;
+        sound_catalog *replacement=candidate->catalogs;
+        while (old && old!=voice->catalog) { old=old->next; replacement=replacement->next; }
+        if (!old || !replacement || replacement->asset!=copy->asset)
+            return fail(e,QA_ERROR_FORMAT,"Caption voice lost its retained source catalog");
+        copy->catalog=replacement;
+    }
+    return true;
+}
+bool qa_sound_caption_language_prepare(qa_sound_captions *owner,const char *language,
+    int64_t frame,qa_sound_caption_language **out,qa_error *e)
+{
+    if (!qa_sound_captions_idle(owner) || !language || !out || *out)
+        return fail(e,QA_ERROR_ARGUMENT,"Caption language requires its idle actual owner");
+    qa_sound_caption_language *ticket=calloc(1,sizeof(*ticket));
+    if (!ticket) return fail(e,QA_ERROR_MEMORY,"Retaining sound caption language preparation");
+    ticket->owner=owner; owner->language_ticket=ticket;
+    ticket->candidate=qa_sound_captions_create(&owner->options,e);
+    bool ok=ticket->candidate && sound_clone(owner,ticket->candidate,e) &&
+        qa_sound_captions_prepare(ticket->candidate,language,frame,e);
+    if (!ok) {
+        owner->language_ticket=NULL; qa_sound_captions_destroy(ticket->candidate); free(ticket); return false;
+    }
+    *out=ticket; return true;
+}
+bool qa_sound_caption_language_ready(const qa_sound_caption_language *ticket,qa_error *e)
+{
+    return (ticket && !ticket->published && ticket->owner && ticket->candidate &&
+        ticket->owner->language_ticket==ticket && !ticket->owner->visiting &&
+        qa_sound_captions_idle(ticket->candidate)) ||
+        fail(e,QA_ERROR_ARGUMENT,"Caption language lost its actual retained publication lease");
+}
+void qa_sound_caption_language_publish(qa_sound_caption_language *ticket)
+{
+    caption_voice *voices=ticket->owner->voices;
+    sound_catalog *catalogs=ticket->owner->catalogs;
+    ticket->owner->voices=ticket->candidate->voices; ticket->owner->catalogs=ticket->candidate->catalogs;
+    ticket->candidate->voices=voices; ticket->candidate->catalogs=catalogs; ticket->published=true;
+}
+static bool language_dispose(qa_sound_caption_language **in,bool published,qa_error *e)
+{
+    if (!in || !*in) return true;
+    qa_sound_caption_language *ticket=*in;
+    if (ticket->published!=published || !ticket->owner || ticket->owner->language_ticket!=ticket ||
+        ticket->owner->visiting || !qa_sound_captions_idle(ticket->candidate))
+        return fail(e,QA_ERROR_ARGUMENT,"Caption language disposal requires its retained returned parents");
+    qa_sound_captions_destroy(ticket->candidate); ticket->owner->language_ticket=NULL;
+    free(ticket); *in=NULL; return true;
+}
+bool qa_sound_caption_language_finish(qa_sound_caption_language **in,qa_error *e)
+{ return language_dispose(in,true,e); }
+bool qa_sound_caption_language_abort(qa_sound_caption_language **in,qa_error *e)
+{ return language_dispose(in,false,e); }

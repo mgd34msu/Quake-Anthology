@@ -40,6 +40,9 @@ typedef struct q3n_event_options {
         const qa_q3_entity *scratch, int32_t event, qa_vec3 position, qa_error *);
 } q3n_event_options;
 bool q3n_events_create(const q3n_event_options *, q3n_events **, qa_error *);
+/* Standalone ClientEffects/LocalEntitySystem owns genuine world collision and
+ * mark projection services, with no client event dispatcher or UI callbacks. */
+bool q3n_events_create_effects(const q3n_event_options *, q3n_events **, qa_error *);
 void q3n_events_destroy(q3n_events *);
 bool q3n_events_idle(const q3n_events *);
 const q3n_event_state *q3n_events_state(const q3n_events *);

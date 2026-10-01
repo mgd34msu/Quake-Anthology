@@ -92,9 +92,11 @@ static bool mark(qa_source_save_io *io, q3n_events *o, q3n_stored_mark *m)
 }
 bool q3ne_codec_fields(qa_source_save_io *io, q3n_events *o)
 {
-    uint8_t magic[4]={'Q','3','E','V'}; uint32_t schema=1,product=(uint32_t)o->options.product;
-    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3EV",4) || !qa_source_save_u32(io,&schema) || schema!=1 ||
+    uint8_t magic[4]={'Q','3','E','V'}; uint32_t schema=2,product=(uint32_t)o->options.product;
+    bool standalone = o->standalone_effects;
+    if(!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3EV",4) || !qa_source_save_u32(io,&schema) || schema!=2 ||
        !qa_source_save_u32(io,&product) || product!=(uint32_t)o->options.product ||
+       !qa_source_save_bool(io,&standalone) || standalone != o->standalone_effects ||
        !qa_source_save_u32(io,&o->seed) || !qa_source_save_u32(io,&o->smoke_seed) || !vector(io,&o->last_score_position))return false;
     q3n_event_state *g=&o->state;
     if(!finite_value(io,&g->land_change) || !finite_value(io,&g->step_change) ||
@@ -142,7 +144,7 @@ bool q3n_events_restore(q3n_events *o, qa_bytes bytes, qa_error *error)
     if(!ready(o,error))return false;
     o->busy=true; q3n_events *candidate=calloc(1,sizeof(*candidate));
     if(!candidate) { o->busy=false; return q3ne_fail(error,QA_ERROR_MEMORY,"Allocating native Q3 event restore candidate"); }
-    candidate->options=o->options; qa_source_save_io io={0};
+    candidate->options=o->options; candidate->standalone_effects=o->standalone_effects; qa_source_save_io io={0};
     bool ok=qa_source_save_reader(&io,NULL,bytes,error) && q3ne_codec_fields(&io,candidate) && qa_source_save_finish(&io,NULL);
     if(ok) { *o=*candidate; o->busy=true; }
     else if(error && error->code==QA_OK)q3ne_fail(error,QA_ERROR_FORMAT,"Saved native Q3 event continuation is inconsistent");
