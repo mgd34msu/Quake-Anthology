@@ -1,4 +1,6 @@
 #include "guest_qc_rerelease.h"
+#include "map_players_private.h"
+#include "qa/network_q1_qw.h"
 #include "qa/source_save.h"
 
 typedef struct qc_finale_held { qa_actor_id actor; bool held; } qc_finale_held;
@@ -96,6 +98,42 @@ static bool set_color(struct application_qc_state *engine,qa_qc_instance *vm,qa_
         .reliable=!engine->loading,.signon=engine->loading};
     if (!application_emit_protocol(engine->provider,&event,error)) return false;
     client->colors=colors; return true;
+}
+static bool check_player_flags(struct application_qc_state *engine,qa_qc_instance *vm,qa_error *error)
+{
+    int32_t reference; uint32_t slot;
+    if (!qa_qc_arg_int(vm,0,&reference,error)) return false;
+    qa_error local={0};
+    if (!target(engine,vm,reference,false,&slot,&local)) {
+        if (local.code!=QA_ERROR_ARGUMENT) { if (error) *error=local; return false; }
+        return qa_qc_return_float(vm,0,error);
+    }
+    const application_qc_client *client=engine->clients+slot;
+    const char *raw="";
+    if (client->connected) {
+        const struct application_player_roster *roster=engine->provider->application->players;
+        const application_player_record *actual=NULL;
+        for (size_t i=0;roster && i<roster->count;++i)
+            if (qa_actor_id_equal(roster->records[i].actor,client->actor)) {
+                if (actual) return application_fail(error,QA_ERROR_FORMAT,"QC preference has duplicate canonical player owners");
+                actual=roster->records+i;
+            }
+        if (!actual) return application_fail(error,QA_ERROR_NOT_FOUND,"QC preference has no actual canonical player owner");
+        if (actual->userinfo) raw=actual->userinfo;
+    }
+    qa_qw_info info={0};
+    if (!qa_qw_info_parse(raw,&info,error)) return false;
+    const char *value=qa_qw_info_get(&info,"w_switch");
+    if (!value || !*value) value=qa_qw_info_get(&info,"b_switch");
+    const unsigned char *p=(const unsigned char *)(value?value:"");
+    while (*p==' ' || (*p>='\t' && *p<='\r')) ++p;
+    bool negative=*p=='-';
+    if (*p=='+' || *p=='-') ++p;
+    uint32_t number=0;
+    while (*p>='0' && *p<='9') number=number*10u+(uint32_t)(*p++-'0');
+    if (negative) number=0u-number;
+    qa_qw_info_free(&info);
+    return qa_qc_return_float(vm,!number?1:number==1?2:0,error);
 }
 static bool formatted_print(struct application_qc_state *engine,qa_qc_instance *vm,qa_qc_builtin builtin,qa_error *error)
 {
@@ -360,6 +398,7 @@ bool application_qc_rerelease_import(struct application_qc_state *engine,qa_qc_i
         return formatted_print(engine,vm,builtin,error);
     case QA_QC_BUILTIN_EX_LOCALSOUND: return local_sound(engine,vm,error);
     case QA_QC_BUILTIN_EX_FINALE_FINISHED: return finale(engine,vm,error);
+    case QA_QC_BUILTIN_EX_CHECK_PLAYER_FLAGS: return check_player_flags(engine,vm,error);
     case QA_QC_BUILTIN_EX_PROMPT: case QA_QC_BUILTIN_EX_PROMPTCHOICE: case QA_QC_BUILTIN_EX_CLEARPROMPT:
         return prompt_import(engine,vm,builtin,error);
     default: return application_fail(error,QA_ERROR_UNSUPPORTED,"Rerelease import has no installed concrete capability");
