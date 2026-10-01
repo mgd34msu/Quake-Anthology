@@ -8,6 +8,8 @@
 
 typedef struct frontend_config_store frontend_config_store;
 typedef struct frontend_config_source frontend_config_source;
+typedef struct frontend_remote_config frontend_remote_config;
+typedef struct frontend_authored_bindings frontend_authored_bindings;
 
 /* The manager retains actual source ConfigStores and isolated logical input
  * during preparation. Its hooks and context outlive the application. */
@@ -16,9 +18,20 @@ bool frontend_config_store_destroy(frontend_config_store *,qa_error *);
 bool frontend_config_store_retired_ready(const frontend_config_store *,qa_error *);
 const qa_application_startup_hooks *frontend_config_store_hooks(frontend_config_store *);
 frontend_config_source *frontend_config_store_source(const frontend_config_store *,const qa_console *);
+frontend_remote_config *frontend_config_store_client(const frontend_config_store *,const qa_console *);
+/* Qualifies the actual retained pending tuple without executing commands or
+ * borrowing a published owner as an isolated configuration source. */
+bool frontend_config_store_source_pending(const frontend_config_store *,qa_application *,const qa_launch_snapshot *,
+    const qa_application_startup_source *);
+frontend_config_source *frontend_config_store_named_source(const frontend_config_store *,const char *);
+bool frontend_config_source_clone_bindings(const frontend_config_source *,uint32_t,frontend_authored_bindings **,qa_error *);
+qa_settings_store frontend_config_store_input_store(const frontend_config_store *);
+bool frontend_config_store_same_profile(const qa_launch_instance *,const qa_launch_instance *);
 frontend_config_files *frontend_config_source_files(const frontend_config_source *);
 frontend_key_profile *frontend_config_source_keys(const frontend_config_source *);
 qa_cvars *frontend_config_source_cvars(const frontend_config_source *);
+qa_console *frontend_config_source_console(const frontend_config_source *);
+qa_application_console_scope frontend_config_source_scope(const frontend_config_source *);
 /* Seat arguments are authored launch IDs. The owner resolves the actual
  * physical frontend ordinal; published input always borrows its stable seat. */
 qa_input_seat *frontend_config_source_input(const frontend_config_source *,uint32_t);
@@ -29,6 +42,16 @@ qa_cvars *frontend_config_source_mouse_cvars(const frontend_config_source *,uint
 /* Borrows the installed WORLD ENTITIES source's actual authored seat mouse
  * owner and selected movement kind. Absent source/seat returns NULL. */
 qa_cvars *frontend_config_store_primary_mouse_cvars(const frontend_config_store *,uint32_t,qa_movement_kind *);
+bool frontend_config_store_select_bindings(frontend_config_store *,uint32_t authored_seat,
+    qa_strings *,const qa_item_definition *,size_t,int32_t controller,qa_error *);
+bool frontend_config_store_reset_bindings(frontend_config_store *,uint32_t authored_seat,int32_t controller,qa_error *);
+/* Only isolated input from this exact pending primary source is exposed. */
+qa_input_seat *frontend_config_store_candidate_input(const frontend_config_store *,qa_application *,
+    const qa_launch_snapshot *,unsigned physical_ordinal);
+/* Borrows the one genuine pending graphical dictionary, including CLIENT
+ * preparation when the actual primary GAME is physically reused. */
+qa_input_seat *frontend_config_store_prepared_input(const frontend_config_store *,qa_application *,
+    const qa_launch_snapshot *,unsigned physical_ordinal);
 /* The actual source factory calls before destination options/capacity/Init.
  * A different physical program/profile returns carried=false. The supplied
  * tuple identifies that fresh factory's real console, registry, GAME scope
@@ -80,4 +103,8 @@ bool frontend_config_source_restore_seat_cvars(frontend_config_source *,uint32_t
 bool frontend_config_source_restore_seat_registry(frontend_config_source *,uint32_t,
     frontend_client_registry *,const frontend_keys_cvar_refs *,qa_error *);
 bool frontend_config_store_finish_restore(frontend_config_store *,qa_error *);
+/* Genuine primary CLIENT slots bind the decoded roster before services copy
+ * their canonical heap. Supplemental GAME-owned roles use the GAME binder. */
+bool frontend_config_store_restore_client(frontend_config_store *,qa_application *,const qa_launch_snapshot *,
+    const qa_application_startup_source *,qa_error *);
 #endif

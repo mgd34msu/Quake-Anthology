@@ -20,6 +20,8 @@ bool application_native_q3_remote_role_context(application_provider *, uint32_t,
 bool application_native_q3_remote_role_current(application_provider *, const qa_application_q3_client_context *);
 bool application_native_q3_remote_role_attach(application_provider *, uint32_t,
     qa_native_q3_remote_client_service *, qa_error *);
+bool application_native_q3_remote_role_service_read(application_provider *, uint32_t,
+    qa_native_q3_remote_client_service **, qa_error *);
 bool application_native_q3_remote_role_initialized(application_provider *, uint32_t,
     qa_native_q3_remote_client_service *, qa_error *);
 bool application_native_q3_remote_role_detach(application_provider *, uint32_t,

@@ -1,0 +1,63 @@
+#ifndef QA_FRONTEND_REMOTE_SNAPSHOTS_H
+#define QA_FRONTEND_REMOTE_SNAPSHOTS_H
+
+#include "network_presentation.h"
+#include "../../presentation/q3_native/entity.h"
+
+typedef struct frontend_remote_snapshots frontend_remote_snapshots;
+typedef struct frontend_remote_centity {
+    qa_q3_entity current, next;
+    q3n_entity *presentation;
+    int32_t publication_message;
+    bool published, interpolate;
+} frontend_remote_centity;
+typedef struct frontend_remote_snapshot_settings {
+    bool demo_playback, no_predict, synchronous_clients;
+} frontend_remote_snapshot_settings;
+typedef struct frontend_remote_snapshots_options {
+    qa_frontend *frontend;
+    qa_q3_product product;
+    void *context;
+    bool (*command)(void *, const frontend_network_presentation_command *, qa_error *);
+    bool (*respawn)(void *, const frontend_network_presentation_source *, qa_error *);
+    bool (*reset_player)(void *, const frontend_network_presentation_source *,
+        frontend_remote_centity *, qa_error *);
+    bool (*event)(void *, const frontend_network_presentation_source *,
+        frontend_remote_centity *, const qa_q3_entity *, qa_vec3 position, int32_t time, qa_error *);
+    bool (*transition_player)(void *, const frontend_network_presentation_source *,
+        const qa_q3_player *, const qa_q3_player *, qa_error *);
+    bool (*lagometer)(void *, const qa_q3_snapshot *, int32_t ping, qa_error *);
+    bool (*warning)(void *, const char *, qa_error *);
+} frontend_remote_snapshots_options;
+typedef struct frontend_remote_snapshots_view {
+    const frontend_remote_snapshots *owner;
+    frontend_network_presentation_source source;
+    const qa_q3_snapshot *snapshot, *next_snapshot;
+    int32_t time, processed_message, command_sequence;
+    uint64_t revision;
+    bool this_frame_teleport, next_frame_teleport;
+} frontend_remote_snapshots_view;
+
+/* The enclosing native remote row retains the receiver, map and callbacks.
+ * Construction uses the actual CG_Init tuple, before consuming its history. */
+bool frontend_remote_snapshots_create(const frontend_remote_snapshots_options *,
+    const frontend_network_presentation_source *, frontend_remote_snapshots **, qa_error *);
+bool frontend_remote_snapshots_destroy(frontend_remote_snapshots *, qa_error *);
+bool frontend_remote_snapshots_idle(const frontend_remote_snapshots *);
+/* Actual contiguous native cache. The enclosing row retains this owner through
+ * construction and every entered frame; borrowing storage admits no frame. */
+q3n_entity *frontend_remote_snapshots_storage(frontend_remote_snapshots *);
+bool frontend_remote_snapshots_process(frontend_remote_snapshots *,
+    const frontend_remote_snapshot_settings *, qa_error *);
+bool frontend_remote_snapshots_read(const frontend_remote_snapshots *, frontend_remote_snapshots_view *);
+bool frontend_remote_snapshots_current(const frontend_remote_snapshots *, const frontend_remote_snapshots_view *);
+bool frontend_remote_snapshots_entity(const frontend_remote_snapshots *, const frontend_remote_snapshots_view *,
+    uint32_t number, const frontend_remote_centity **, qa_error *);
+bool frontend_remote_snapshots_misc_time_read(const frontend_remote_snapshots *,
+    const frontend_network_prediction_source *, const qa_q3_prediction_scene_entity_view *, int32_t *, qa_error *);
+bool frontend_remote_snapshots_consume_teleport(frontend_remote_snapshots *, qa_error *);
+bool frontend_remote_snapshots_checkpoint(const frontend_remote_snapshots *, qa_buffer *, qa_error *);
+bool frontend_remote_snapshots_restore(const frontend_remote_snapshots_options *,
+    const frontend_network_presentation_source *, qa_bytes, frontend_remote_snapshots **, qa_error *);
+
+#endif

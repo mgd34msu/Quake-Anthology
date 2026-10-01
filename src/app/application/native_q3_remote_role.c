@@ -1,24 +1,8 @@
-#include "native_q3_remote_role.h"
+#include "native_q3_remote_role_private.h"
 #include "startup_flow.h"
+#include "engine_shutdown.h"
 #include "qa/application_native_q3_remote_client.h"
 #include "qa/application_character_selection.h"
-
-struct application_native_q3_remote_role {
-    struct application_native_q3_remote_role *next;
-    application_provider *provider;
-    uint32_t seat;
-    qa_console *console;
-    qa_cvars *cvars;
-    qa_string_id service_owner;
-    qa_launch_instance_lease *descriptor;
-    uint64_t connection_epoch, configuration_generation;
-    qa_native_q3_remote_client_service *service;
-    qa_command_tokens arguments;
-    char *system_info;
-    uint64_t argument_revision;
-    size_t calls;
-    bool owns_cvars, initialized, retiring;
-};
 
 static struct application_native_q3_remote_role *find(application_provider *provider, uint32_t seat)
 {
@@ -51,7 +35,7 @@ static qa_cvars *visible(void *context, const qa_command_context *command, size_
     if (row->retiring) return NULL;
     qa_cvars *routed = NULL;
     if (application_startup_visible_cvars(row->provider, row->console, command, index, &routed)) return routed;
-    return index == 0 ? row->cvars : index == 1 ? row->provider->application->cvars : NULL;
+    return index == 0 ? row->cvars : index == 1 ? application_engine_shutdown_cvars(row->provider) : NULL;
 }
 static bool capture(void *context, const qa_command_context *source, qa_command_context *out, qa_error *error)
 {
@@ -307,6 +291,14 @@ bool application_native_q3_remote_role_attach(application_provider *provider, ui
     if (!replace_ready(row) || !service)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native remote service attachment requires its prepared physical CLIENT");
     row->service = service; return true;
+}
+bool application_native_q3_remote_role_service_read(application_provider *provider, uint32_t seat,
+    qa_native_q3_remote_client_service **out, qa_error *error)
+{
+    struct application_native_q3_remote_role *row = find(provider, seat);
+    if (!row || row->retiring || !out)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT attachment lost its physical receiver");
+    *out = row->service; return true;
 }
 bool application_native_q3_remote_role_initialized(application_provider *provider, uint32_t seat,
     qa_native_q3_remote_client_service *service, qa_error *error)

@@ -1,7 +1,7 @@
 #include "native_q3_client.h"
 #include "native_q3_settings.h"
 #include "qa/game_q3_configstrings.h"
-#include "../frontend/frame_time.h"
+#include "qa/source_frame_time.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -216,7 +216,7 @@ bool qa_native_q3_client_frame_time(qa_native_q3_client_service *service,double 
         return native_client_fail(error,QA_ERROR_ARGUMENT,"Native CGAME FrameTime lacks its actual client context");
     qa_cvars *owner=service->services.client.client_time_cvars;
     if (!owner) { *out=supplied; return true; }
-    return frontend_frame_time_sample(owner,supplied,false,true,out,error);
+    return qa_source_frame_time_sample(owner,supplied,false,true,out,error);
 }
 bool native_client_time_fields(qa_source_save_io *io,qa_native_q3_client_service *service)
 {

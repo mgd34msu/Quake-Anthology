@@ -1,4 +1,4 @@
-#include "frame_time.h"
+#include "qa/source_frame_time.h"
 
 #include <math.h>
 #include <float.h>
@@ -29,7 +29,7 @@ static bool register_control(qa_cvars *cvars, const char *name, const char *valu
     return qa_cvars_register(cvars, name, value, flags, owner, "Source frame timing", error);
 }
 
-bool frontend_frame_time_register(qa_cvars *cvars, uint64_t owner, qa_error *error)
+bool qa_source_frame_time_register(qa_cvars *cvars, uint64_t owner, qa_error *error)
 {
     if (!cvars || !known_dialect(qa_cvars_dialect(cvars)))
         return frame_time_fail(error, QA_ERROR_ARGUMENT, "frame time requires an actual source registry");
@@ -42,12 +42,12 @@ bool frontend_frame_time_register(qa_cvars *cvars, uint64_t owner, qa_error *err
         (dialect != QA_CONSOLE_Q3 || register_control(cvars, "com_cameraMode", "0", cheat, owner, error));
 }
 
-bool frontend_frame_time_controls_read(const qa_cvars *cvars,
-    frontend_frame_time_controls *out, qa_error *error)
+bool qa_source_frame_time_controls_read(const qa_cvars *cvars,
+    qa_source_frame_time_controls *out, qa_error *error)
 {
     if (!cvars || !out || !known_dialect(qa_cvars_dialect(cvars)))
         return frame_time_fail(error, QA_ERROR_ARGUMENT, "frame controls require an actual source registry and output");
-    frontend_frame_time_controls controls = {.timescale = 1};
+    qa_source_frame_time_controls controls = {.timescale = 1};
     const qa_cvar_view *view;
     if ((view = qa_cvars_find(cvars, "timescale"))) controls.timescale = view->number;
     if ((view = qa_cvars_find(cvars, "fixedtime")))
@@ -58,8 +58,8 @@ bool frontend_frame_time_controls_read(const qa_cvars *cvars,
     return true;
 }
 
-bool frontend_frame_time_transform(qa_console_dialect dialect, double supplied_milliseconds,
-    const frontend_frame_time_controls *controls, bool dedicated, bool local_server,
+bool qa_source_frame_time_transform(qa_console_dialect dialect, double supplied_milliseconds,
+    const qa_source_frame_time_controls *controls, bool dedicated, bool local_server,
     double *out, qa_error *error)
 {
     if (!controls || !out || !known_dialect(dialect) || !isfinite(supplied_milliseconds) ||
@@ -104,11 +104,11 @@ bool frontend_frame_time_transform(qa_console_dialect dialect, double supplied_m
     return true;
 }
 
-bool frontend_frame_time_sample(const qa_cvars *cvars, double supplied_milliseconds,
+bool qa_source_frame_time_sample(const qa_cvars *cvars, double supplied_milliseconds,
     bool dedicated, bool local_server, double *out, qa_error *error)
 {
-    frontend_frame_time_controls controls;
-    return frontend_frame_time_controls_read(cvars, &controls, error) &&
-        frontend_frame_time_transform(qa_cvars_dialect(cvars), supplied_milliseconds,
+    qa_source_frame_time_controls controls;
+    return qa_source_frame_time_controls_read(cvars, &controls, error) &&
+        qa_source_frame_time_transform(qa_cvars_dialect(cvars), supplied_milliseconds,
             &controls, dedicated, local_server, out, error);
 }

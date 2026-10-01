@@ -163,7 +163,8 @@ bool frontend_key_profile_scope(frontend_key_profile *profile,qa_application_con
     const qa_cvars *cvars,qa_error *error)
 {
     if (!profile || profile->busy || profile->imported_state || profile->detached || profile->cvars!=cvars ||
-        !scope.provider || (scope.kind!=QA_APPLICATION_CONSOLE_Q3_GAME && scope.kind!=QA_APPLICATION_CONSOLE_Q3_CGAME) ||
+        !scope.provider || (scope.kind!=QA_APPLICATION_CONSOLE_Q3_GAME && scope.kind!=QA_APPLICATION_CONSOLE_Q3_CGAME &&
+            scope.kind!=QA_APPLICATION_CONSOLE_Q3_UI) ||
         (scope.kind==QA_APPLICATION_CONSOLE_Q3_GAME && scope.seat))
         return fail(error,QA_ERROR_ARGUMENT,"Q3 profile scope requires its actual live GAME or remote CGAME registry");
     profile->registry=scope; return true;
@@ -220,9 +221,19 @@ bool frontend_key_profile_detach(frontend_key_profile *profile,const qa_cvars *c
 bool frontend_keys_authorization(const frontend_keys *owner,uint8_t out[33],bool *demo,qa_error *error)
 {
     const frontend_key_profile *profile=owner?owner->active:NULL;
-    if (!profile || owner->restoring || !profile->state || profile->imported_state || profile->busy || !profile->cvars || !out || !demo)
+    return frontend_key_profile_authorization(profile,out,demo,error);
+}
+bool frontend_key_profile_authorization(const frontend_key_profile *profile,uint8_t out[33],bool *demo,qa_error *error)
+{
+    if (!profile || profile->owner->restoring || !profile->state || profile->imported_state || profile->busy || !profile->cvars || !out || !demo)
         return fail(error,QA_ERROR_ARGUMENT,"Q3 authorization has no actual published source key profile");
     qa_q3_key_authorization(profile->state,out); *demo=profile->demo; return true;
+}
+bool frontend_key_profile_read(const frontend_key_profile *profile,frontend_key_profile_view *out)
+{
+    if (!profile || !profile->state || profile->imported_state || profile->busy || !profile->cvars || !out) return false;
+    *out=(frontend_key_profile_view){profile,profile->state,profile->cvars,profile->id,
+        frontend_config_files_product(profile->files),profile->demo}; return true;
 }
 bool frontend_keys_current(const frontend_keys *owner,frontend_key_profile_view *out)
 {
@@ -242,6 +253,13 @@ bool frontend_keys_save(frontend_keys *owner,qa_error *error)
     frontend_key_profile *profile=owner?owner->active:NULL;
     if (!owner || owner->restoring) return fail(error,QA_ERROR_ARGUMENT,"Q3 key save requires its published profile owner");
     if (!profile) return true;
+    return frontend_key_profile_save(profile,error);
+}
+bool frontend_key_profile_save(frontend_key_profile *profile,qa_error *error)
+{
+    if (!profile || !profile->owner || profile->owner->restoring || profile->imported_state ||
+        profile->detached || !profile->cvars || !profile->state)
+        return fail(error,QA_ERROR_ARGUMENT,"Q3 key save requires its bound completed source profile");
     return stored(profile,QA_Q3_KEY_BASE,error) &&
         (!*frontend_config_files_game_directory(profile->files) || stored(profile,QA_Q3_KEY_EXPANSION,error));
 }
@@ -289,7 +307,7 @@ static bool row(qa_source_save_io *io,const frontend_keys_cvar_refs *refs,fronte
         if (io->direction==QA_SOURCE_SAVE_WRITE) profile->saved_instance=(char *)refs->instance(refs->context,profile->registry.provider);
         ok=source_name(io,&profile->saved_instance) &&
         qa_source_save_u32(io,&kind) &&
-        (kind==QA_APPLICATION_CONSOLE_Q3_GAME || kind==QA_APPLICATION_CONSOLE_Q3_CGAME) &&
+        (kind==QA_APPLICATION_CONSOLE_Q3_GAME || kind==QA_APPLICATION_CONSOLE_Q3_CGAME || kind==QA_APPLICATION_CONSOLE_Q3_UI) &&
         qa_source_save_u32(io,&profile->registry.seat) &&
         (kind!=QA_APPLICATION_CONSOLE_Q3_GAME || !profile->registry.seat);
     }

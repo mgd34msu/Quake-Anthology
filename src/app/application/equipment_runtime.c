@@ -24,6 +24,7 @@ struct application_equipment_runtime {
     application_equipment_runtime_options options;
     equipment_source *sources;
     size_t count;
+    application_equipment_events *events;
     bool restoring, retired, closing, destroying;
 };
 
@@ -129,7 +130,7 @@ static bool damage(void *context, const application_q3_gear_damage *hit, qa_erro
     qa_application *app = runtime->options.application;
     if (!source_current(source)) return application_fail(error, QA_ERROR_ARGUMENT, "Gear damage source retired");
     qa_item_id weapon;
-    if (!qa_builtin_resource(&runtime->options.services, "q3:weapon_grapplinghook", &weapon, error)) return false;
+    if (!qa_builtin_resource(&runtime->options.services, "q3:weapon/grapple", &weapon, error)) return false;
     qa_attack attack = {.time_ns = (uint64_t)source->milliseconds*1000000,
         .attacker = hit->attacker, .inflictor = hit->inflictor, .weapon = weapon,
         .weapon_provider = source->view.selected_owner,
@@ -174,9 +175,25 @@ static bool event(equipment_source *source, application_equipment_source_event_k
 {
     application_equipment_runtime *runtime = source->runtime;
     application_equipment_source_event value = {.kind = kind, .provider = source->view.gear_owner,
+        .selected_provider = source->view.selected_owner, .service_owner = source->view.service_owner,
         .time_ns = (uint64_t)source->milliseconds*1000000, .index = index, .text = text};
     if (!source_current(source)) return application_fail(error, QA_ERROR_ARGUMENT, "Gear event source retired");
-    if (!runtime->options.event(runtime->options.event_context, &value, error)) return false;
+    if (kind == APPLICATION_EQUIPMENT_SERVER_COMMAND && index >= 0) {
+        application_q3_gear *gear = source->view.gear;
+        if (!gear || index >= 64)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Gear command has no actual physical client");
+        for (uint32_t i = 0; i < gear->capacity; ++i) {
+            q3gear_binding *binding = &gear->bindings[i]; uint32_t slot;
+            if (!binding->actor.registry || !binding->player || binding->retired) continue;
+            if (!q3gear_slot(gear, binding->pointer, &slot, error)) return false;
+            if (slot == (uint32_t)index) {
+                if (!qa_actors_get(qa_session_actors(runtime->options.services.session), binding->actor))
+                    return application_fail(error, QA_ERROR_ARGUMENT, "Gear command recipient retired during emission");
+                value.recipient = binding->actor; break;
+            }
+        }
+    }
+    if (!application_equipment_events_publish(runtime->events, &value, error)) return false;
     return source_current(source) || application_fail(error, QA_ERROR_ARGUMENT, "Gear event source retired during publication");
 }
 static bool configstring(void *context, uint32_t index, const char *text, qa_error *error)
@@ -338,6 +355,22 @@ bool application_equipment_runtime_actor_released(application_equipment_runtime 
     if (!okay && error) *error = first; return okay;
 }
 
+application_equipment_events *application_equipment_runtime_events(const application_equipment_runtime *runtime)
+{ return runtime ? runtime->events : NULL; }
+bool application_equipment_runtime_event_current(const application_equipment_runtime *runtime,
+    const qa_application_equipment_event *event)
+{
+    if (!runtime || runtime->closing || !event) return false;
+    for (size_t i = 0; i < runtime->count; ++i) {
+        equipment_source *source = &runtime->sources[i];
+        if (source->view.gear && source_current(source) &&
+            event->provider == source->view.gear_owner && event->selected_provider == source->view.selected_owner &&
+            event->service_owner == source->view.service_owner && source->milliseconds >= 0 &&
+            event->time_ns <= (uint64_t)source->milliseconds*1000000) return true;
+    }
+    return false;
+}
+
 bool application_equipment_runtime_destroy(application_equipment_runtime *runtime, qa_error *error)
 {
     if (!runtime) return true;
@@ -362,14 +395,15 @@ bool application_equipment_runtime_destroy(application_equipment_runtime *runtim
         qa_launch_instance_lease_release(source->descriptor); source->descriptor = NULL;
     }
     runtime->retired = true;
+    application_equipment_events_destroy(runtime->events);
     qa_launch_snapshot_release(runtime->options.snapshot); free(runtime->sources); free(runtime); return true;
 }
 
 static bool runtime_header(qa_source_save_io *io)
 {
-    uint8_t magic[4] = {'Q','E','R','T'}; uint32_t version = 1;
+    uint8_t magic[4] = {'Q','E','R','T'}; uint32_t version = 2;
     return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QERT", sizeof(magic)) &&
-        qa_source_save_u32(io, &version) && version == 1;
+        qa_source_save_u32(io, &version) && version == 2;
 }
 static bool saved_blob(qa_source_save_io *io, qa_bytes *bytes)
 {
@@ -404,7 +438,7 @@ static bool source_fields(qa_source_save_io *io, saved_source *saved)
         saved_blob(io, &saved->entities) && saved_blob(io, &saved->executor) && saved->executor.size;
 }
 static bool decode_roster(application_equipment_runtime *runtime, qa_bytes bytes,
-    saved_source **out, qa_error *error)
+    saved_source **out, qa_bytes *events, qa_error *error)
 {
     saved_source *rows = calloc(runtime->count ? runtime->count : 1, sizeof(*rows));
     if (!rows) return application_fail(error, QA_ERROR_MEMORY, "Decoding retained equipment source roster");
@@ -419,10 +453,24 @@ static bool decode_roster(application_equipment_runtime *runtime, qa_bytes bytes
             if (rows[i].selected == rows[j].selected || (rows[i].gear && rows[j].gear &&
                 (rows[i].owner == rows[j].owner || rows[i].service_owner == rows[j].service_owner))) okay = false;
     }
-    if (okay) okay = qa_source_save_finish(&io, NULL);
+    if (okay) okay = saved_blob(&io, events) && events->size && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
     if (!okay) { free(rows); return application_fail(error, QA_ERROR_FORMAT, "Equipment source roster differs from its selected descriptors"); }
     *out = rows; return true;
+}
+static bool saved_events_match(application_equipment_runtime *runtime,
+    const saved_source *saved, qa_error *error)
+{
+    for (size_t i = 0; i < application_equipment_events_count(runtime->events); ++i) {
+        qa_application_equipment_event event; bool found = false;
+        if (!application_equipment_events_at(runtime->events, i, &event)) return false;
+        for (size_t j = 0; j < runtime->count; ++j)
+            if (saved[j].gear && event.provider == saved[j].owner &&
+                event.selected_provider == saved[j].selected && event.service_owner == saved[j].service_owner &&
+                event.time_ns <= (uint64_t)saved[j].milliseconds*1000000) { found = true; break; }
+        if (!found) return application_fail(error, QA_ERROR_FORMAT, "Saved gear event leaves its actual source namespace or clock");
+    }
+    return true;
 }
 
 bool application_equipment_runtime_saved(qa_session *session, const qa_save_image *image,
@@ -573,7 +621,16 @@ static bool source_capture(void *context, qa_buffer *out, qa_error *error)
         if (okay) okay = source_fields(&io, &saved);
         qa_buffer_free(&executor);
     }
-    if (okay) okay = qa_source_save_finish(&io, out);
+    qa_buffer events = {0};
+    for (size_t i = 0; okay && i < application_equipment_events_count(runtime->events); ++i) {
+        qa_application_equipment_event event;
+        okay = application_equipment_events_at(runtime->events, i, &event) &&
+            application_equipment_runtime_event_current(runtime, &event);
+    }
+    if (okay) okay = application_equipment_events_capture(runtime->events, &events, error);
+    qa_bytes event_bytes = {events.data, events.size};
+    if (okay) okay = saved_blob(&io, &event_bytes) && qa_source_save_finish(&io, out);
+    qa_buffer_free(&events);
     qa_source_save_dispose(&io);
     if (!okay && (!error || error->code == QA_OK))
         application_fail(error, QA_ERROR_FORMAT, "Equipment source capture lost its actual participant");
@@ -602,10 +659,14 @@ static bool console_context(void *context, uint64_t captured_registry,
 }
 static bool source_restore(void *context, qa_bytes bytes, qa_error *error)
 {
-    application_equipment_runtime *runtime = context; saved_source *saved = NULL;
+    application_equipment_runtime *runtime = context; saved_source *saved = NULL; qa_bytes events = {0};
     if (!runtime || !runtime->restoring || runtime->closing || !application_equipment_runtime_idle(runtime) ||
-        !decode_roster(runtime, bytes, &saved, error)) return false;
-    bool okay = true;
+        !decode_roster(runtime, bytes, &saved, &events, error)) return false;
+    qa_buffer current_events = {0};
+    bool okay = application_equipment_events_capture(runtime->events, &current_events, error) &&
+        current_events.size == events.size && (!events.size || !memcmp(current_events.data, events.data, events.size)) &&
+        saved_events_match(runtime, saved, error);
+    qa_buffer_free(&current_events);
     for (size_t i = 0; i < runtime->count && okay; ++i) {
         equipment_source *source = &runtime->sources[i]; application_q3_gear *gear = source->view.gear;
         okay = saved[i].gear == (gear != NULL);
@@ -700,7 +761,8 @@ bool application_equipment_runtime_create(const application_equipment_runtime_op
     runtime->options = *options; runtime->options.providers = NULL; runtime->options.provider_count = 0;
     runtime->restoring = saved_roster.size != 0; qa_launch_snapshot_retain(options->snapshot);
     const qa_launch_choices *choices = qa_launch_snapshot_choices(options->snapshot);
-    bool okay = qualify_roster(runtime, options, choices, error);
+    bool okay = application_equipment_events_create(options->services.session, &runtime->events, error) &&
+        qualify_roster(runtime, options, choices, error);
     for (size_t i = 0; okay && i < options->provider_count; ++i) {
         application_provider *provider = options->providers[i]; bool grapple;
         if (provider && provider->launch && wanted_source(choices, provider->launch->selection.instance, &grapple)) ++runtime->count;
@@ -730,15 +792,15 @@ bool application_equipment_runtime_create(const application_equipment_runtime_op
             }
         }
     }
-    saved_source *saved = NULL;
-    if (okay && runtime->restoring) okay = decode_roster(runtime, saved_roster, &saved, error);
+    saved_source *saved = NULL; qa_bytes events = {0};
+    if (okay && runtime->restoring) okay = decode_roster(runtime, saved_roster, &saved, &events, error) &&
+        application_equipment_events_restore(runtime->events, events, error) && saved_events_match(runtime, saved, error);
     for (size_t i = 0; okay && i < runtime->count; ++i) {
         equipment_source *source = &runtime->sources[i]; bool grapple;
         wanted_source(choices, source->view.descriptor->selection.instance, &grapple);
         bool needs_gear = grapple && !source->source.q3;
         if (runtime->restoring && saved[i].gear != needs_gear) { okay = false; break; }
         if (!needs_gear) continue;
-        if (!options->event) { okay = application_fail(error, QA_ERROR_ARGUMENT, "Original gear requires its real source event producer"); break; }
         okay = create_gear(source, runtime->restoring ? &saved[i] : NULL, error);
     }
     free(saved);

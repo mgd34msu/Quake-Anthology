@@ -4,6 +4,7 @@
 #include "internal.h"
 #include "guest_q3_gear.h"
 #include "qa/save.h"
+#include "equipment_events.h"
 
 typedef struct application_equipment_runtime application_equipment_runtime;
 typedef enum application_equipment_source_event_kind {
@@ -12,13 +13,13 @@ typedef enum application_equipment_source_event_kind {
 } application_equipment_source_event_kind;
 typedef struct application_equipment_source_event {
     application_equipment_source_event_kind kind;
-    qa_actor_owner provider;
+    qa_actor_owner provider, selected_provider;
+    qa_string_id service_owner;
+    qa_actor_id recipient;
     uint64_t time_ns;
     int32_t index;
     const char *text;
 } application_equipment_source_event;
-typedef bool (*application_equipment_source_event_fn)(void *,
-    const application_equipment_source_event *, qa_error *);
 typedef struct application_equipment_runtime_options {
     qa_application *application;
     const qa_launch_snapshot *snapshot;
@@ -27,8 +28,6 @@ typedef struct application_equipment_runtime_options {
     application_provider *world_source;
     qa_builtin_services services;
     qa_bytes entity_text;
-    application_equipment_source_event_fn event;
-    void *event_context;
 } application_equipment_runtime_options;
 typedef struct application_equipment_runtime_source {
     qa_actor_owner selected_owner, gear_owner;
@@ -68,5 +67,8 @@ bool application_equipment_runtime_source_at(const application_equipment_runtime
     application_equipment_runtime_source *, qa_error *);
 bool application_equipment_runtime_actor_released(application_equipment_runtime *,
     qa_actor_record, qa_error *);
+application_equipment_events *application_equipment_runtime_events(const application_equipment_runtime *);
+bool application_equipment_runtime_event_current(const application_equipment_runtime *,
+    const qa_application_equipment_event *);
 
 #endif

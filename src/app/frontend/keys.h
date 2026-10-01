@@ -66,6 +66,9 @@ void frontend_keys_publication_publish(frontend_keys_publication *);
 void frontend_keys_publication_discard(frontend_keys_publication *);
 bool frontend_keys_publish(frontend_keys *,frontend_key_profile *,qa_cvars *,qa_error *);
 bool frontend_keys_authorization(const frontend_keys *,uint8_t out[33],bool *demo,qa_error *);
+bool frontend_key_profile_read(const frontend_key_profile *,frontend_key_profile_view *);
+bool frontend_key_profile_authorization(const frontend_key_profile *,uint8_t out[33],bool *demo,qa_error *);
+bool frontend_key_profile_save(frontend_key_profile *,qa_error *);
 /* Pure identity observation for capture, restore admission and native client
  * connections. The enclosing source owner qualifies registry liveness. */
 bool frontend_keys_current(const frontend_keys *,frontend_key_profile_view *);

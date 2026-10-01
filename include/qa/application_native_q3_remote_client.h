@@ -1,6 +1,7 @@
 #ifndef QA_APPLICATION_NATIVE_Q3_REMOTE_CLIENT_H
 #define QA_APPLICATION_NATIVE_Q3_REMOTE_CLIENT_H
 #include "qa/application_native_q3_client.h"
+#include "qa/application_q3_factory.h"
 #include "qa/network.h"
 #include "qa/q3_host.h"
 
@@ -48,6 +49,12 @@ typedef struct qa_native_q3_remote_client_cache {
     float error_decay;
 } qa_native_q3_remote_client_cache;
 
+bool qa_native_q3_remote_client_publication_read(qa_application *,
+    const qa_application_q3_remote_source *, uint64_t *, qa_error *);
+/* A borrowed physical attachment; NULL before the actual frontend constructs
+ * the service. Its own current/initialized predicates qualify media use. */
+bool qa_native_q3_remote_client_service_read(qa_application *,
+    const qa_application_q3_remote_source *, qa_native_q3_remote_client_service **, qa_error *);
 bool qa_native_q3_remote_client_create(qa_native_q3_remote_client_services *,
     qa_native_q3_character_selection *, qa_native_q3_remote_client_service **, qa_error *);
 bool qa_native_q3_remote_client_destroy(qa_native_q3_remote_client_service *, qa_error *);

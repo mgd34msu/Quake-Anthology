@@ -292,6 +292,77 @@ finished: {
         return ok;
     }
 }
+static bool equipment_respawn(qa_equipment *g, qa_actor_id actor, qa_error *e) {
+    equipment_actor *p = equipment_get(g, actor);
+    if (!p || p->configuring) return mode_fail(e, "equipment respawn requires its admitted actor");
+    qa_equipment_selection wanted = p->state.configuration_pending ? p->state.pending_selection : p->state.selection;
+    qa_equipment_source_selection sources = p->state.configuration_pending ? p->state.pending_sources : p->state.sources;
+    bool resume = p->state.slot_requested || p->state.slot_active || p->state.slot_holstering || p->state.slot_lowering;
+    if (resume && !g->options.primary_resume) return mode_fail(e, "equipment respawn has no primary slot owner");
+    p->configuring = true;
+    bool okay = release_grapple(g, actor, true, e);
+    p = equipment_get(g, actor);
+    if (okay && p && resume) okay = g->options.primary_resume(g->options.context, actor, e);
+    p = equipment_get(g, actor);
+    if (!p) return okay;
+    p->configuring = false;
+    if (!okay) return false;
+    p->state.slot_requested = p->state.slot_active = p->state.slot_holstering = p->state.slot_lowering = false;
+    if (!equipment_configure(g, actor, &wanted, &sources, e)) return false;
+    p = equipment_get(g, actor);
+    if (!p) return true;
+    p->configuring = true;
+    if (p->state.selection.binding == QA_EQUIPMENT_WEAPON_SLOT) {
+        if (p->state.selection.grapple == QA_GRAPPLE_THREEWAVE)
+            okay = qa_q1_grapple_weapon_holster(p->grapple.q1, actor, e);
+        else if (p->state.selection.grapple == QA_GRAPPLE_Q2_CTF || p->state.selection.grapple == QA_GRAPPLE_LMCTF)
+            okay = qa_q2_grapple_equipment_reset(p->grapple.q2, actor,
+                p->state.selection.grapple == QA_GRAPPLE_Q2_CTF ? QA_Q2_CTF_GRAPPLE : QA_Q2_LMCTF_GRAPPLE, e);
+    }
+    p = equipment_get(g, actor);
+    if (!p) return okay;
+    if (okay && p->grenades.q2) {
+        qa_q2_game *game = p->grenades.q2;
+        qa_q2_hand_grenade_state grenade; bool bound = false;
+        okay = qa_q2_hand_grenade_read(game, actor, &grenade, &bound, e);
+        if (okay && !bound) okay = mode_fail(e, "equipment respawn lost its admitted grenade source");
+        if (okay && grenade.options.enabled) {
+            qa_q2_hand_grenade_admission admission = {0};
+            okay = qa_q2_hand_grenade_prepare(game, actor, &grenade.options, &admission, e);
+            qa_item_id ammo = admission.initial_ammo.item;
+            qa_q2_hand_grenade_abort(&admission);
+            qa_inventory_entry entry;
+            if (okay) okay = qa_inventory_entry_read(g->options.services.inventory, actor, ammo, &entry, e);
+            p = equipment_get(g, actor);
+            if (okay && p) {
+                entry.count = fmax(entry.count, grenade.options.initial_ammo);
+                entry.capacity = fmax(entry.capacity, grenade.options.capacity);
+                okay = qa_inventory_configure(g->options.services.inventory, actor, &entry, NULL, NULL, e);
+            }
+        }
+        p = equipment_get(g, actor);
+        if (okay && p) {
+            okay = qa_q2_hand_grenade_read(game, actor, &grenade, &bound, e);
+            if (okay && !bound) okay = mode_fail(e, "equipment respawn lost its reached grenade source");
+            if (okay) {
+                grenade.action = (qa_q2_hand_action){.kind = QA_Q2_HAND_IDLE};
+                okay = qa_q2_hand_grenade_restore(game, actor, &grenade, e);
+            }
+        }
+    }
+    p = equipment_get(g, actor);
+    if (p) {
+        if (okay) {
+            p->state.controls = (qa_equipment_controls){0};
+            p->state.grapple_pressed = p->state.grapple_released = false;
+            p->state.grenade_pressed = p->state.grenade_released = false;
+            p->state.previous_jump = p->state.teleport_seen = false;
+            p->state.teleport_sequence = 0;
+        }
+        p->configuring = false;
+    }
+    return okay;
+}
 static bool equipment_input(qa_equipment *g, qa_actor_id actor, const qa_equipment_controls *input,
                         qa_error *e) {
     equipment_actor *p = equipment_get(g, actor);
@@ -983,6 +1054,9 @@ bool qa_equipment_configure(qa_equipment *g, qa_actor_id actor,
 bool qa_equipment_configure_sources(qa_equipment *g, qa_actor_id actor,
     const qa_equipment_selection *selection, const qa_equipment_source_selection *sources, qa_error *e) {
     EQUIPMENT_CALL(equipment_configure(g, actor, selection, sources, e));
+}
+bool qa_equipment_respawn(qa_equipment *g, qa_actor_id actor, qa_error *e) {
+    EQUIPMENT_CALL(equipment_respawn(g, actor, e));
 }
 bool qa_equipment_input(qa_equipment *g, qa_actor_id actor,
                         const qa_equipment_controls *input, qa_error *e) {

@@ -2,6 +2,7 @@
 #include "source_inventory.h"
 #include "source_player.h"
 #include "source_view.h"
+#include "source_combat_vectors.h"
 
 enum { BOT_SOLID=1, BOT_LIQUID=8|16|32, BOT_FOG=64, BOT_PLAYERCLIP=0x10000,
        BOT_SHOT=1|0x2000000|0x4000000, BOT_FIRE_RELEASED=1, BOT_RADIAL=2 };
@@ -236,7 +237,7 @@ bool bot_ai_find_enemy(qa_bots *b, bot_ai_state *s, bool *found, qa_error *e) {
         s->source_enemy=source_enemy.number;s->source_events.enemy_suicide=false;
         s->view.enemy = actor; s->enemy_sight_time = b->time-(previous ? 2 : 0);
         s->enemy_visible_time = b->time; s->enemy_death_time = 0;
-        s->enemy_origin = player.origin; s->enemy_velocity = player.velocity;
+        bot_ai_enemy_origin_set(s,player.origin);bot_ai_enemy_velocity_set(s,player.velocity);
         *found = true;
         return true;
     }
@@ -263,7 +264,7 @@ bool bot_ai_attack_move(qa_bots *b, bot_ai_state *s, qa_error *e) {
         !bot_ai_character_float(b,s,BOT_C_CROUCHER,0,1,&croucher,e)) return false;
     if (skill < .2f) return true;
     if (!bot_ai_move_setup(b,s,e)) return false;
-    qa_vec3 toward=qa_vec_sub(s->enemy_origin,s->player.origin);
+    qa_vec3 toward=qa_vec_sub(bot_ai_enemy_origin(s),s->player.origin);
     float distance=qa_vec_length(toward);
     qa_vec3 forward=qa_vec_normalize(toward),backward=qa_vec_scale(forward,-1);
     uint32_t type=QA_BOT_DIRECTION_WALK;
@@ -324,7 +325,7 @@ bool bot_ai_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
     qa_bot_player target;bool present;
     if(!bot_ai_target(b,s,enemy,&target,&present,e)) return false;
     if(!present || s->retired || !bot_ai_live(b,s->view.actor) || !bot_ai_live(b,enemy) || target.dead) return true;
-    s->enemy_origin=target.origin;s->enemy_velocity=target.velocity;
+    bot_ai_enemy_origin_set(s,target.origin);bot_ai_enemy_velocity_set(s,target.velocity);
     qa_vec3 displacement=qa_vec_sub(target.origin,s->player.origin);
     bot_source_inventory inventory={b,s};
     if(!bot_ai_source_inventory_write(&inventory,QA_BOT_INV_ENEMY_HEIGHT,
@@ -391,7 +392,7 @@ bool bot_ai_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
     if(!bot_ai_random(b,&random,e)) return false;
     aim.z+=10*(random*2-1)*(1-accuracy);
     if(!trace(b,s,s->player.eye,aim,NULL,s->view.actor,BOT_SHOT,&hit,e)) return false;
-    s->aim_target=hit.end;
+    bot_ai_aim_target_set(s,hit.end);
     qa_vec3 direction=qa_vec_sub(aim,selected.muzzle_count?muzzle:s->player.eye);
     if(!tactics.melee && selected.weapon.speed==0) accuracy=accuracy*.6f+fminf(distance,150)/150*.4f;
     if(accuracy<.8f) {
@@ -423,8 +424,8 @@ bool bot_ai_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
     }
     qa_vec3 to_enemy=qa_vec_sub(target.origin,s->player.origin);
     if(tactics.ranged_limit && qa_vec_dot(to_enemy,to_enemy)>tactics.maximum_range*tactics.maximum_range) return true;
-    if(!in_view(bot_ai_view_angles(s),qa_vec_sub(s->aim_target,s->player.eye),distance<100?120:50)) return true;
-    if(!trace(b,s,s->player.eye,s->aim_target,NULL,s->view.actor,BOT_SOLID|BOT_PLAYERCLIP,&hit,e)) return false;
+    if(!in_view(bot_ai_view_angles(s),qa_vec_sub(bot_ai_aim_target(s),s->player.eye),distance<100?120:50)) return true;
+    if(!trace(b,s,s->player.eye,bot_ai_aim_target(s),NULL,s->view.actor,BOT_SOLID|BOT_PLAYERCLIP,&hit,e)) return false;
     if(hit.fraction<1 && !qa_actor_id_equal(hit.actor,enemy)) return true;
     qa_vec3 forward;
     qa_builtin_angle_vectors(bot_ai_view_angles(s),&forward,NULL,NULL);

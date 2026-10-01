@@ -1,5 +1,5 @@
 #include "native_q3_remote_client.h"
-#include "../frontend/frame_time.h"
+#include "qa/source_frame_time.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,6 +13,24 @@ static application_provider *receiver(qa_application *app, qa_actor_owner owner)
             found = app->providers[i];
         }
     return found;
+}
+bool qa_native_q3_remote_client_publication_read(qa_application *app,
+    const qa_application_q3_remote_source *source, uint64_t *out, qa_error *error)
+{
+    application_provider *provider = source ? receiver(app, source->receiver.receiver) : NULL;
+    if (!out || !provider || provider->kind != APPLICATION_PROVIDER_Q3 ||
+        !provider->constructed || !provider->attached || provider->close_pending ||
+        !qa_application_q3_remote_source_current(app, source))
+        return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote native publication lost its actual selected CLIENT source");
+    *out = app->publication_generation; return true;
+}
+bool qa_native_q3_remote_client_service_read(qa_application *app,
+    const qa_application_q3_remote_source *source, qa_native_q3_remote_client_service **out, qa_error *error)
+{
+    uint64_t publication;
+    if (!qa_native_q3_remote_client_publication_read(app, source, &publication, error)) return false;
+    return application_native_q3_remote_role_service_read(receiver(app, source->receiver.receiver),
+        source->receiver.seat, out, error);
 }
 static bool basis_current(const qa_native_q3_remote_client_services *services)
 {
@@ -227,5 +245,5 @@ bool qa_native_q3_remote_client_frame_time(qa_native_q3_remote_client_service *s
 {
     if (!out || !qa_native_q3_remote_client_current(service))
         return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote elapsed time lost its real CLIENT registry");
-    return frontend_frame_time_sample(service->services.basis.client.cvars, supplied, false, false, out, error);
+    return qa_source_frame_time_sample(service->services.basis.client.cvars, supplied, false, false, out, error);
 }

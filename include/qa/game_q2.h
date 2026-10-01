@@ -422,6 +422,7 @@ bool qa_q2_grapple_reset(qa_q2_game *, qa_actor_id, qa_q2_grapple_kind, qa_error
 bool qa_q2_grapple_offhand(qa_q2_game *, qa_actor_id, qa_q2_grapple_kind, bool pressed, qa_error *);
 bool qa_q2_grapple_hold(qa_q2_game *, qa_actor_id, bool pressed, qa_error *);
 /* Independent equipment slots reuse the native weapon frame interpreter. */
+bool qa_q2_grapple_equipment_reset(qa_q2_game *, qa_actor_id, qa_q2_grapple_kind, qa_error *);
 bool qa_q2_grapple_equipment_resume(qa_q2_game *, qa_actor_id, qa_q2_grapple_kind, qa_error *);
 bool qa_q2_grapple_equipment_holster(qa_q2_game *, qa_actor_id, qa_q2_grapple_kind, qa_error *);
 bool qa_q2_grapple_equipment_tick(qa_q2_game *, qa_actor_id, qa_q2_grapple_kind,

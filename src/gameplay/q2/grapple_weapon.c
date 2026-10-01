@@ -55,6 +55,11 @@ bool q2_grapple_weapon(q2_weapon_call *c, qa_error *e) {
     }
     return true;
 }
+static qa_q2_weapon_state equipment_initial(qa_q2_grapple_kind kind) {
+    return (qa_q2_weapon_state){.weapon = kind == QA_Q2_LMCTF_GRAPPLE ? QA_Q2_LMCTF_HOOK : QA_Q2_GRAPPLE,
+        .phase = QA_Q2_ACTIVATING, .handoff = QA_Q2_PRIMARY_HOLSTERED,
+        .gun_rate = 10, .kick_seconds = 0.2f};
+}
 static q2_actor *equipment_actor(qa_q2_game *g, qa_actor_id id, qa_q2_grapple_kind kind,
                                  bool create, qa_error *e) {
     if (g == NULL || (unsigned)kind > QA_Q2_LMCTF_GRAPPLE || g->services.physics == NULL) {
@@ -71,14 +76,16 @@ static q2_actor *equipment_actor(qa_q2_game *g, qa_actor_id id, qa_q2_grapple_ki
             return NULL;
         }
         s->equipment_bound = true;
-        s->equipment = (qa_q2_weapon_state){.weapon = kind == QA_Q2_LMCTF_GRAPPLE ? QA_Q2_LMCTF_HOOK
-                                                                                  : QA_Q2_GRAPPLE,
-                                            .phase = QA_Q2_ACTIVATING,
-                                            .handoff = QA_Q2_PRIMARY_HOLSTERED,
-                                            .gun_rate = 10,
-                                            .kick_seconds = 0.2f};
+        s->equipment = equipment_initial(kind);
     }
     return a;
+}
+bool qa_q2_grapple_equipment_reset(qa_q2_game *g, qa_actor_id id, qa_q2_grapple_kind kind,
+                                   qa_error *e) {
+    q2_actor *a = equipment_actor(g, id, kind, true, e);
+    if (!a) return false;
+    a->grapples[kind].equipment = equipment_initial(kind);
+    return true;
 }
 bool qa_q2_grapple_equipment_resume(qa_q2_game *g, qa_actor_id id, qa_q2_grapple_kind kind,
                                     qa_error *e) {

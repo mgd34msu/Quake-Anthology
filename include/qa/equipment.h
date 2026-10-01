@@ -103,6 +103,9 @@ bool qa_equipment_configure(qa_equipment *, qa_actor_id, const qa_equipment_sele
                             qa_error *);
 bool qa_equipment_configure_sources(qa_equipment *, qa_actor_id, const qa_equipment_selection *,
     const qa_equipment_source_selection *, qa_error *);
+/* After real source/body spawn: release the tether, reset slot/input state,
+ * grant the selected grenade allowance and return its action to idle. */
+bool qa_equipment_respawn(qa_equipment *, qa_actor_id, qa_error *);
 bool qa_equipment_input(qa_equipment *, qa_actor_id, const qa_equipment_controls *, qa_error *);
 bool qa_equipment_select_grapple(qa_equipment *, qa_actor_id, bool selected, qa_error *);
 bool qa_equipment_step(qa_equipment *, qa_actor_id, uint64_t now_ns, uint64_t elapsed_ns,

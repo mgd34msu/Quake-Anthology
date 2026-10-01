@@ -2,6 +2,7 @@
 #include "source_inventory.h"
 #include "source_player.h"
 #include "source_view.h"
+#include "source_combat_vectors.h"
 
 enum { BOT_AIR_GOAL=128, BOT_DEFAULT_TRAVEL=0x011c0fbe, BOT_LIQUID=8|16|32 };
 static qa_bot_goals *goals(qa_bots *b) { return qa_bot_runtime_goals(b->runtime); }
@@ -221,11 +222,11 @@ static bool enemy_state(qa_bots *b, bot_ai_state *s, bool *alive, bool *visible,
     if(!bot_ai_enemy_visible(b,s,s->view.enemy,&visibility,e)) return false;
     *visible=visibility>0;
     if(*visible) {
-        s->enemy_visible_time=b->time;s->enemy_origin=enemy.origin;s->enemy_velocity=enemy.velocity;
+        s->enemy_visible_time=b->time;bot_ai_enemy_origin_set(s,enemy.origin);bot_ai_enemy_velocity_set(s,enemy.velocity);
         uint32_t area;
         if(!bot_ai_point_area(b,s,enemy.origin,&area,e)) return false;
         if(area && qa_bot_navigation_area(navigation(b,s),area).reach_count) {
-            s->last_enemy_area=area;s->last_enemy_origin=enemy.origin;
+            s->last_enemy_area=area;bot_ai_last_enemy_origin_set(s,enemy.origin);
         }
     }
     return true;
@@ -526,7 +527,7 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
             qa_bot_goal goal={0};bool goal_found=true;
             if(node==QA_BOT_CHASING) {
                 if(!s->last_enemy_area || s->chase_until<b->time) {enter(b,s,QA_BOT_SEEK_LONG_TERM);continue;}
-                goal=(qa_bot_goal){.origin=s->last_enemy_origin,.area=(int32_t)s->last_enemy_area,
+                goal=(qa_bot_goal){.origin=bot_ai_last_enemy_origin(s),.area=(int32_t)s->last_enemy_area,
                     .mins=qa_v3(-8,-8,-8),.maxs=qa_v3(8,8,8),.entity=-1};
                 if(qa_bot_goal_touching(s->player.origin,&goal)) {enter(b,s,QA_BOT_SEEK_LONG_TERM);continue;}
             } else if(node==QA_BOT_BATTLE_NEARBY) {

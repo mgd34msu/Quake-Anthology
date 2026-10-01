@@ -3,6 +3,11 @@
 #include "config_userinfo.h"
 #include "config_bindings.h"
 #include "client_registry.h"
+#include "authored_bindings.h"
+#include "config_weapon_defaults.h"
+#include "remote_config.h"
+#include "qa/source_frame_time.h"
+#include "network_config.h"
 #include "native_q3_client.h"
 #include "save_private.h"
 #include "qa/cvars_save.h"
@@ -18,6 +23,7 @@ typedef struct config_seat {
     char *registry_instance;
     qa_cvars *cvars,*mouse;
     frontend_client_registry *registry;
+    frontend_authored_bindings *authored;
     qa_seat_settings settings;
     qa_cvar_archive client_archive,mouse_archive;
     bool found,cvars_transferred,registry_bound;
@@ -38,6 +44,8 @@ struct frontend_config_source {
     qa_input_console *bindings;
     frontend_config_bindings *dedicated_bindings;
     qa_command_context command;
+    qa_application_console_scope scope;
+    uint64_t declaration_owner;
     qa_cvar_archive source_archive,movement_archive,fallback_archive;
     config_seat seats[QA_INPUT_LOCAL_SEATS];
     size_t seat_count,seat_index,registry_references;
@@ -45,6 +53,7 @@ struct frontend_config_source {
     bool primary,published,configured,released,running,write_registered,dump_registered,has_mod;
     bool imported;
     bool profile_carried,variables_carried;
+    qa_error observation_failure;
 };
 typedef struct config_variable_carry {
     struct config_variable_carry *next;
@@ -58,6 +67,7 @@ struct frontend_config_store {
     qa_frontend *frontend;
     qa_application_startup_hooks hooks;
     frontend_config_source *sources;
+    frontend_remote_configs *clients;
     config_variable_carry *variable_carries;
     frontend_config_source *prepared_primary;
     const qa_launch_snapshot *prepared;
@@ -78,6 +88,16 @@ static bool equal(const char *left,const char *right)
 }
 static const qa_launch_instance *instance(const frontend_config_source *source)
 { return qa_launch_instance_lease_view(source->metadata); }
+static bool game_scope(qa_application_console_scope scope)
+{
+    return !scope.seat && (scope.kind==QA_APPLICATION_CONSOLE_QC ||
+        scope.kind==QA_APPLICATION_CONSOLE_NATIVE_Q2 || scope.kind==QA_APPLICATION_CONSOLE_Q3_GAME ||
+        scope.kind==QA_APPLICATION_CONSOLE_Q1_GAME || scope.kind==QA_APPLICATION_CONSOLE_Q2_GAME);
+}
+static bool same_scope(qa_application_console_scope a,qa_application_console_scope b)
+{ return a.provider==b.provider && a.kind==b.kind && a.seat==b.seat; }
+static bool client_scope(qa_application_console_scope scope)
+{ return scope.kind==QA_APPLICATION_CONSOLE_Q3_CGAME || scope.kind==QA_APPLICATION_CONSOLE_Q3_UI; }
 static qa_settings_store input_store(frontend_config_source *source)
 {
     qa_vfs *files=source->manager->frontend->input_config;
@@ -154,9 +174,50 @@ frontend_config_source *frontend_config_store_source(const frontend_config_store
         if (source->console==console) return source;
     return NULL;
 }
+frontend_remote_config *frontend_config_store_client(const frontend_config_store *owner,const qa_console *console)
+{ return owner?frontend_remote_config_find(owner->clients,console):NULL; }
+bool frontend_config_store_source_pending(const frontend_config_store *owner,qa_application *application,
+    const qa_launch_snapshot *candidate,const qa_application_startup_source *authority)
+{
+    if (!owner || !authority) return false;
+    frontend_remote_config *client=frontend_config_store_client(owner,authority->console);
+    if (client) return frontend_remote_config_pending(client,application,candidate,authority);
+    frontend_config_source *source=frontend_config_store_source(owner,authority->console);
+    const qa_launch_instance *held=source?instance(source):NULL;
+    return source && authority->descriptor && held && !source->published && !source->imported &&
+        source->application==application && source->candidate==candidate && source->cvars==authority->cvars &&
+        same_scope(source->scope,authority->scope) && held->storage==authority->descriptor->storage;
+}
+frontend_config_source *frontend_config_store_named_source(const frontend_config_store *owner,const char *name)
+{
+    for (frontend_config_source *source=owner?owner->sources:NULL;source;source=source->next) {
+        const qa_launch_instance *selected=instance(source);
+        if (selected && name && !strcmp(selected->selection.instance,name) && !source->imported) return source;
+    }
+    return NULL;
+}
+bool frontend_config_source_clone_bindings(const frontend_config_source *source,uint32_t logical,
+    frontend_authored_bindings **out,qa_error *error)
+{
+    size_t index=source?seat_index(source,logical):0;
+    return source && index<source->seat_count &&
+        frontend_authored_bindings_clone(source->seats[index].authored,out,error);
+}
+qa_settings_store frontend_config_store_input_store(const frontend_config_store *owner)
+{
+    qa_vfs *files=owner && owner->frontend?owner->frontend->input_config:NULL;
+    for (size_t i=0;files && i<qa_vfs_mount_count(files);++i) {
+        qa_vfs_mount_info mount;
+        if (qa_vfs_mount_at(files,i,&mount) && mount.writable) return (qa_settings_store){files,mount.id};
+    }
+    return (qa_settings_store){0};
+}
 frontend_config_files *frontend_config_source_files(const frontend_config_source *source) { return source?source->files:NULL; }
 frontend_key_profile *frontend_config_source_keys(const frontend_config_source *source) { return source?source->keys:NULL; }
 qa_cvars *frontend_config_source_cvars(const frontend_config_source *source) { return source?source->cvars:NULL; }
+qa_console *frontend_config_source_console(const frontend_config_source *source) { return source?source->console:NULL; }
+qa_application_console_scope frontend_config_source_scope(const frontend_config_source *source)
+{ return source?source->scope:(qa_application_console_scope){0}; }
 bool frontend_config_source_primary(const frontend_config_source *source) { return source && source->primary; }
 bool frontend_config_source_published(const frontend_config_source *source) { return source && source->published; }
 qa_input_seat *frontend_config_source_input(const frontend_config_source *source,uint32_t seat)
@@ -235,6 +296,74 @@ qa_cvars *frontend_config_store_primary_mouse_cvars(const frontend_config_store 
     }
     return NULL;
 }
+static frontend_config_source *published_primary(const frontend_config_store *manager,qa_application *application)
+{
+    const qa_launch_snapshot *published=qa_application_launch(application);
+    const qa_launch_binding *entities=qa_launch_binding_for(qa_launch_snapshot_choices(published),
+        (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
+    const qa_launch_instance *selected=entities?qa_launch_snapshot_find(published,entities->instance):NULL;
+    if (!selected) return NULL;
+    for (frontend_config_source *source=manager->sources;source;source=source->next) {
+        const qa_launch_instance *retained=instance(source);
+        if (source->application==application && source->published && source->primary && !source->imported &&
+            retained && retained->storage==selected->storage && retained->state==selected->state) return source;
+    }
+    return NULL;
+}
+bool frontend_config_store_select_bindings(frontend_config_store *manager,uint32_t logical,
+    qa_strings *strings,const qa_item_definition *items,size_t count,int32_t controller,qa_error *error)
+{
+    qa_application *application=manager && manager->frontend?manager->frontend->application:NULL;
+    frontend_config_source *source=application?published_primary(manager,application):NULL;
+    size_t ordinal=source?seat_index(source,logical):0;
+    qa_input_seat *input=source?frontend_config_source_input(source,logical):NULL;
+    if (!source || ordinal>=source->seat_count || !input || source->running || !source->configured || !source->released)
+        return fail(error,QA_ERROR_ARGUMENT,"Selected bindings lost their actual published authored seat");
+    return frontend_authored_bindings_select(source->seats[ordinal].authored,input,
+        source->seats[ordinal].movement_dialect,strings,items,count,controller<0?0:controller,error);
+}
+bool frontend_config_store_reset_bindings(frontend_config_store *manager,uint32_t logical,
+    int32_t controller,qa_error *error)
+{
+    if (manager && frontend_network_remote(manager->frontend)) {
+        frontend_remote_config_view view;
+        if (!frontend_network_client_configuration(manager->frontend,logical,&view,error)) return false;
+        frontend_remote_config *client=frontend_config_store_client(manager,view.console);
+        return client && frontend_remote_config_current(client,&view) &&
+            frontend_remote_config_reset_bindings(client,controller,error);
+    }
+    qa_application *application=manager && manager->frontend?manager->frontend->application:NULL;
+    frontend_config_source *source=application?published_primary(manager,application):NULL;
+    size_t ordinal=source?seat_index(source,logical):0;
+    qa_input_seat *input=source?frontend_config_source_input(source,logical):NULL;
+    if (!source || ordinal>=source->seat_count || !input || source->running || !source->configured || !source->released)
+        return fail(error,QA_ERROR_ARGUMENT,"Binding Reset lost its actual published authored seat");
+    return frontend_authored_bindings_reset(source->seats[ordinal].authored,input,controller<0?0:controller,error);
+}
+qa_input_seat *frontend_config_store_candidate_input(const frontend_config_store *manager,qa_application *application,
+    const qa_launch_snapshot *candidate,unsigned ordinal)
+{
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(candidate);
+    const qa_launch_binding *entities=qa_launch_binding_for(choices,(qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
+    const qa_launch_instance *selected=entities?qa_launch_snapshot_find(candidate,entities->instance):NULL;
+    if (!manager || !application || !selected || ordinal>=manager->frontend->options.seats ||
+        !choices || ordinal>=choices->seat_count) return NULL;
+    for (frontend_config_source *source=manager->sources;source;source=source->next) {
+        const qa_launch_instance *retained=instance(source);
+        if (source->application!=application || source->published || !source->primary ||
+            source->candidate!=candidate || !retained || retained->storage!=selected->storage ||
+            retained->state!=selected->state || ordinal>=source->seat_count ||
+            source->seats[ordinal].logical!=choices->seats[ordinal].id) continue;
+        return source->seats[ordinal].input;
+    }
+    return NULL;
+}
+qa_input_seat *frontend_config_store_prepared_input(const frontend_config_store *manager,qa_application *application,
+    const qa_launch_snapshot *candidate,unsigned ordinal)
+{
+    qa_input_seat *input=frontend_config_store_candidate_input(manager,application,candidate,ordinal);
+    return input?input:manager?frontend_remote_configs_candidate_input(manager->clients,application,candidate,ordinal):NULL;
+}
 static qa_input_seat *binding_seat(void *context,const qa_command_context *command)
 {
     frontend_config_source *source=context;
@@ -251,6 +380,8 @@ qa_cvars *frontend_config_store_cvar_owner(const frontend_config_store *manager,
     const qa_command_context *command,const char *name)
 {
     frontend_config_source *source=frontend_config_store_source(manager,console);
+    frontend_remote_config *client=frontend_config_store_client(manager,console);
+    if (client) return frontend_remote_config_cvar_owner(client,command,name);
     if (!source_context(source,command) || !name) return NULL;
     if (command->dialect==QA_CONSOLE_Q3 && equal(name,"sv_cheats")) return NULL;
     if (qa_cvars_find(source->cvars,name)) return source->cvars;
@@ -269,6 +400,8 @@ qa_cvars *frontend_config_store_visible_cvars(const frontend_config_store *manag
     const qa_command_context *command,size_t ordinal)
 {
     frontend_config_source *source=frontend_config_store_source(manager,console);
+    frontend_remote_config *client=frontend_config_store_client(manager,console);
+    if (client) return frontend_remote_config_visible(client,command,ordinal);
     if (!source_context(source,command)) return NULL;
     qa_cvars *rows[5]={0}; size_t count=0;
     size_t seat=command->origin==QA_COMMAND_SEAT?seat_index(source,command->seat):0;
@@ -291,7 +424,19 @@ static bool defaults(void *context,qa_error *error)
 {
     frontend_config_source *source=context;
     if (!source->seat_count) return true;
-    return qa_input_default_bindings(source->seats[source->seat_index].input,0,error);
+    config_seat *seat=source->seats+source->seat_index;
+    return frontend_authored_bindings_ready(seat->authored) ||
+        frontend_authored_bindings_defaults(seat->authored,seat->input,seat->movement_dialect,error);
+}
+static bool selected_defaults(frontend_config_source *source,config_seat *seat,bool seed,qa_error *error)
+{
+    qa_strings *strings=qa_session_strings(qa_application_session(source->application));
+    frontend_config_weapon_catalog catalog;
+    if (!frontend_config_weapon_defaults(source->application,source->candidate,
+        (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=seat->logical},strings,&catalog,error)) return false;
+    return seed?frontend_authored_bindings_seed(seat->authored,seat->movement_dialect,strings,
+        catalog.items,catalog.count,error):frontend_authored_bindings_select(seat->authored,seat->input,
+        seat->movement_dialect,strings,catalog.items,catalog.count,0,error);
 }
 static bool archive(void *context,qa_error *error)
 {
@@ -304,12 +449,28 @@ static bool archive(void *context,qa_error *error)
     config_seat *seat=source->seats+source->seat_index;
     if (!qa_cvar_archive_apply(seat->cvars,&seat->client_archive,error) ||
         !qa_cvar_archive_apply(seat->mouse,&seat->mouse_archive,error)) return false;
-    if (!seat->found) return true;
-    if (!qa_input_seat_replace_bindings(seat->input,seat->settings.bindings,seat->settings.binding_count,error) ||
-        !qa_input_mouse_settings_write(seat->mouse,&seat->settings.mouse,error)) return false;
-    *qa_input_seat_gamepad_tuning(seat->input)=seat->settings.gamepad;
-    return !seat->settings.has_always_run || qa_cvars_set_flags(seat->mouse,"cl_run",
-        seat->settings.always_run?"1":"0",QA_CVAR_ARCHIVE,error);
+    if (seat->found) {
+        if (!qa_input_seat_replace_bindings(seat->input,seat->settings.bindings,seat->settings.binding_count,error) ||
+            !qa_input_mouse_settings_write(seat->mouse,&seat->settings.mouse,error)) return false;
+        frontend_authored_bindings_profile(seat->authored);
+        *qa_input_seat_gamepad_tuning(seat->input)=seat->settings.gamepad;
+        if (seat->settings.has_always_run && !qa_cvars_set_flags(seat->mouse,"cl_run",
+            seat->settings.always_run?"1":"0",QA_CVAR_ARCHIVE,error)) return false;
+    }
+    frontend_config_source *previous=published_primary(source->manager,source->application);
+    size_t old=previous?seat_index(previous,seat->logical):0;
+    if (previous && source!=previous && old<previous->seat_count && old==source->seat_index) {
+        qa_input_seat *live=frontend_config_source_input(previous,seat->logical);
+        qa_input_command_tuning tuning;
+        if (!live || !frontend_authored_bindings_restore_previous(seat->authored,
+            previous->seats[old].authored,live,seat->input,error) ||
+            !qa_input_settings_read(previous->seats[old].mouse,
+                (qa_movement_kind)previous->seats[old].movement_dialect,&tuning,error) ||
+            !qa_input_mouse_settings_write(seat->mouse,&tuning.mouse,error)) return false;
+        const qa_cvar_view *run=qa_cvars_find(previous->seats[old].mouse,"cl_run");
+        if (run && !qa_cvars_set_flags(seat->mouse,"cl_run",run->value,QA_CVAR_ARCHIVE,error)) return false;
+    }
+    return true;
 }
 static bool launch(void *context,qa_error *error)
 {
@@ -439,6 +600,7 @@ static bool source_destroy(frontend_config_source *source,qa_error *error)
     for (size_t i=0;i<source->seat_count;++i) {
         config_seat *seat=source->seats+i;
         qa_input_seat_destroy(seat->input);
+        frontend_authored_bindings_destroy(seat->authored);
         if (!seat->cvars_transferred) qa_cvars_destroy(seat->cvars);
         qa_cvars_destroy(seat->mouse);
         qa_seat_settings_free(&seat->settings); qa_cvar_archive_free(&seat->client_archive); qa_cvar_archive_free(&seat->mouse_archive);
@@ -563,6 +725,8 @@ static bool same_profile(const qa_launch_instance *previous,const qa_launch_inst
     }
     return true;
 }
+bool frontend_config_store_same_profile(const qa_launch_instance *previous,const qa_launch_instance *selected)
+{ return previous && selected && same_profile(previous,selected); }
 static frontend_config_source *previous_source(frontend_config_store *manager,qa_application *application,
     const qa_launch_snapshot *candidate,const qa_launch_instance *selected)
 {
@@ -620,11 +784,7 @@ bool frontend_config_store_carry_variables(frontend_config_store *manager,qa_app
     const qa_launch_instance *selected=authority?authority->descriptor:NULL;
     qa_cvars *cvars=authority?authority->cvars:NULL;
     uint64_t cvar_owner=authority?authority->declaration_owner:0;
-    bool game=authority && (authority->scope.kind==QA_APPLICATION_CONSOLE_QC ||
-        authority->scope.kind==QA_APPLICATION_CONSOLE_NATIVE_Q2 ||
-        authority->scope.kind==QA_APPLICATION_CONSOLE_Q3_GAME ||
-        authority->scope.kind==QA_APPLICATION_CONSOLE_Q1_GAME ||
-        authority->scope.kind==QA_APPLICATION_CONSOLE_Q2_GAME);
+    bool game=authority && game_scope(authority->scope);
     if (!manager || !application || !candidate || !selected || !cvars ||
         !game || authority->scope.seat || !authority->scope.provider ||
         authority->scope.provider!=authority->command.owner || !authority->console ||
@@ -689,6 +849,32 @@ bool frontend_config_store_carry_variables(frontend_config_store *manager,qa_app
 static bool carry_variables(void *context,qa_application *application,const qa_launch_snapshot *candidate,
     const qa_application_startup_source *source,bool *carried,qa_error *error)
 { return frontend_config_store_carry_variables(context,application,candidate,source,carried,error); }
+static bool program_source(void *context,qa_application *application,const qa_launch_snapshot *candidate,
+    const qa_application_startup_source *fresh,qa_application_startup_source *out,bool *found,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    if (!manager || !application || !candidate || !fresh || !fresh->descriptor || !out || !found ||
+        (!game_scope(fresh->scope) && !client_scope(fresh->scope)) || !fresh->console || !fresh->cvars ||
+        qa_launch_snapshot_find(candidate,fresh->descriptor->selection.instance)!=fresh->descriptor)
+        return fail(error,QA_ERROR_ARGUMENT,"Program continuation requires its actual fresh source tuple");
+    *found=false;
+    if (client_scope(fresh->scope))
+        return frontend_remote_config_program_source(manager->clients,application,candidate,fresh,out,found,error);
+    frontend_config_source *previous=previous_source(manager,application,candidate,fresh->descriptor);
+    if (!previous) return true;
+    qa_application_console_scope scope;
+    if (!qa_application_console_scope_read(application,previous->console,&scope) ||
+        !same_scope(scope,fresh->scope) || !same_scope(scope,previous->scope) ||
+        !previous->cvars || qa_console_cvars(previous->console)!=previous->cvars ||
+        !qa_console_idle(previous->console) || !qa_cvars_observer_idle(previous->cvars))
+        return fail(error,QA_ERROR_ARGUMENT,"Program continuation lost its true published physical source");
+    qa_command_context command=previous->command;
+    command.registry=command.generation=0; command.actor=(qa_actor_id){0};
+    *out=(qa_application_startup_source){.descriptor=instance(previous),.scope=scope,
+        .console=previous->console,.cvars=previous->cvars,.command=command,
+        .declaration_owner=previous->declaration_owner};
+    *found=true; return true;
+}
 static bool configuration_store(void *context,qa_application *application,
     const qa_application_startup_source *authority,qa_settings_store *out,qa_error *error)
 {
@@ -708,9 +894,12 @@ static bool configuration_store(void *context,qa_application *application,
     *out=store; return true;
 }
 static bool carry(frontend_config_store *manager,qa_application *application,
-    const qa_launch_snapshot *candidate,const qa_launch_instance *selected,qa_console *console,
-    qa_cvars *cvars,const qa_command_context *command,frontend_config_source **out,qa_error *error)
+    const qa_launch_snapshot *candidate,const qa_application_startup_source *authority,
+    frontend_config_source **out,qa_error *error)
 {
+    const qa_launch_instance *selected=authority->descriptor;
+    qa_console *console=authority->console; qa_cvars *cvars=authority->cvars;
+    const qa_command_context *command=&authority->command;
     frontend_config_source *previous=previous_source(manager,application,candidate,selected);
     if (!previous || !previous->cvars || qa_cvars_dialect(previous->cvars)!=qa_cvars_dialect(cvars) ||
         !qa_cvars_observer_idle(previous->cvars) || !qa_console_idle(previous->console))
@@ -719,6 +908,7 @@ static bool carry(frontend_config_store *manager,qa_application *application,
     if (!source) return fail(error,QA_ERROR_MEMORY,"Retaining carried source configuration");
     source->manager=manager; source->application=application; source->candidate=candidate;
     source->console=console; source->cvars=cvars; source->command=*command;
+    source->scope=authority->scope; source->declaration_owner=authority->declaration_owner;
     source->primary=previous->primary; source->configured=source->released=true;
     source->profile_carried=true;
     source->variables_carried=variables_carried(manager,application,candidate,selected,console,cvars);
@@ -745,7 +935,8 @@ static bool carry(frontend_config_store *manager,qa_application *application,
         if (!seat_movement(candidate,seat->logical,&next_movement,error) || next_movement!=seat->movement_dialect) {
             ok=fail(error,QA_ERROR_ARGUMENT,"Direct source carry changed its selected seat movement profile"); break;
         }
-        ok=registry_carry(source,old_seat->cvars,&seat->cvars,error) && registry_carry(source,old_seat->mouse,&seat->mouse,error);
+        ok=registry_carry(source,old_seat->cvars,&seat->cvars,error) && registry_carry(source,old_seat->mouse,&seat->mouse,error) &&
+            frontend_authored_bindings_clone(old_seat->authored,&seat->authored,error);
         qa_input_seat *active=frontend_config_source_input(previous,seat->logical);
         qa_command_context seat_command=*command; seat_command.origin=QA_COMMAND_SEAT; seat_command.seat=seat->logical;
         ok=ok && active && qa_application_capture_command_context(application,&seat_command,&seat_command,error);
@@ -771,29 +962,36 @@ static bool carry(frontend_config_store *manager,qa_application *application,
     source->next=manager->sources; manager->sources=source; *out=source; return true;
 }
 static bool prepare(void *context,qa_application *application,const qa_launch_snapshot *candidate,
-    const qa_launch_instance *selected,qa_console *console,qa_cvars *cvars,const qa_command_context *command,
-    void **phase,qa_error *error)
+    const qa_application_startup_source *authority,void **phase,qa_error *error)
 {
+    const qa_launch_instance *selected=authority?authority->descriptor:NULL;
+    qa_console *console=authority?authority->console:NULL; qa_cvars *cvars=authority?authority->cvars:NULL;
+    const qa_command_context *command=authority?&authority->command:NULL;
     frontend_config_store *manager=context; qa_frontend *f=manager->frontend;
-    if (!phase || *phase || !selected || !console || !cvars || !command || frontend_config_store_source(manager,console))
+    if (authority && client_scope(authority->scope))
+        return frontend_remote_config_prepare(manager->clients,application,candidate,authority,phase,error);
+    if (!phase || *phase || !selected || !console || !cvars || !command || !game_scope(authority->scope) ||
+        authority->scope.provider!=command->owner || frontend_config_store_source(manager,console))
         return fail(error,QA_ERROR_ARGUMENT,"Source configuration requires its fresh actual console and registry");
     if (previous_source(manager,application,candidate,selected)) {
         frontend_config_source *carried=NULL;
-        if (!carry(manager,application,candidate,selected,console,cvars,command,&carried,error)) return false;
+        if (!carry(manager,application,candidate,authority,&carried,error)) return false;
         *phase=carried; return true;
     }
     frontend_config_source *source=calloc(1,sizeof(*source));
     if (!source) return fail(error,QA_ERROR_MEMORY,"Retaining source configuration");
     source->manager=manager; source->application=application; source->candidate=candidate;
     source->console=console; source->cvars=cvars; source->command=*command;
+    source->scope=authority->scope; source->declaration_owner=authority->declaration_owner;
     const qa_launch_choices *choices=qa_launch_snapshot_choices(candidate);
     const qa_launch_binding *entities=qa_launch_binding_for(choices,(qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
     source->primary=entities && !strcmp(entities->instance,selected->selection.instance);
-    qa_catalog *catalog=qa_launch_snapshot_catalog(candidate);
+    qa_catalog *catalog=qa_launch_instance_catalog(selected);
     const qa_product *product=qa_catalog_product(catalog,selected->selection.product);
     const qa_product *base=product && product->base?qa_catalog_product(catalog,product->base):product;
     source->has_mod=product && base && strcmp(product->directory,base->directory)!=0;
-    bool ok=product && qa_launch_instance_retain_metadata(selected,&source->metadata,error);
+    bool ok=product && qa_source_frame_time_register(cvars,authority->declaration_owner,error) &&
+        qa_launch_instance_retain_metadata(selected,&source->metadata,error);
     if (ok) source->files=frontend_config_files_create(catalog,product->id,f->options.application.user_root,
         f->options.application.content_root,error);
     ok=ok && source->files;
@@ -828,7 +1026,10 @@ static bool prepare(void *context,qa_application *application,const qa_launch_sn
         if (i>=choices->seat_count) { ok=fail(error,QA_ERROR_ARGUMENT,"Configuration source lacks its actual authored local seat"); break; }
         config_seat *seat=source->seats+source->seat_count++;
         seat->logical=choices->seats[i].id;
+        seat->authored=frontend_authored_bindings_create(error);
+        if (!seat->authored) { ok=false; break; }
         if (!seat_movement(candidate,seat->logical,&seat->movement_dialect,error)) { ok=false; break; }
+        if (!selected_defaults(source,seat,true,error)) { ok=false; break; }
         seat->cvars=registry(source,command->dialect,error); seat->mouse=registry(source,command->dialect,error);
         if (seat->cvars && command->dialect==QA_CONSOLE_Q3) {
             qa_q3_product_policy policy;
@@ -871,6 +1072,9 @@ static bool prepare(void *context,qa_application *application,const qa_launch_sn
 }
 static bool advance(void *context,void *phase,qa_console *console,bool *complete,qa_error *error)
 {
+    frontend_config_store *manager=context;
+    if (frontend_remote_config_phase(manager->clients,phase))
+        return frontend_remote_config_advance(phase,console,complete,error);
     frontend_config_source *source=phase;
     if (!source || source->manager!=context || source->console!=console || source->running || !complete)
         return fail(error,QA_ERROR_ARGUMENT,"Configuration frame has another actual source owner");
@@ -884,11 +1088,19 @@ static bool advance(void *context,void *phase,qa_console *console,bool *complete
     source->running=true; bool done=false;
     bool ok=frontend_startup_config_advance(source->phase,console,&done,error);
     source->running=false;
+    if (source->observation_failure.code!=QA_OK) {
+        if (error) *error=source->observation_failure; return false;
+    }
     if (!ok || !done) return ok;
+    if (source->seat_count) frontend_authored_bindings_finish(source->seats[source->seat_index].authored);
     if (source->seat_count && source->seat_index+1<source->seat_count) {
         if (!frontend_startup_config_destroy(source->phase,error)) return false;
         source->phase=NULL; ++source->seat_index; source->configured=false;
-        if (!defaults(source,error) || !phase_create(source,error)) return false;
+        config_seat *seat=source->seats+source->seat_index;
+        if (!frontend_authored_bindings_secondary(seat->authored,source->seats[0].authored,
+            seat->input,seat->movement_dialect,error)) return false;
+        if (published_primary(manager,source->application) && !selected_defaults(source,seat,false,error)) return false;
+        if (!phase_create(source,error)) return false;
         return true;
     }
     *complete=true; return true;
@@ -896,6 +1108,9 @@ static bool advance(void *context,void *phase,qa_console *console,bool *complete
 static bool phase_read(void *context,void *phase,const qa_command_context *command,const char *name,
     qa_bytes *bytes,void **lease,qa_error *error)
 {
+    frontend_config_store *manager=context;
+    if (frontend_remote_config_phase(manager->clients,phase))
+        return frontend_remote_config_script_read(phase,command,name,bytes,lease,error);
     frontend_config_source *source=phase;
     if (!source || source->manager!=context) return fail(error,QA_ERROR_ARGUMENT,"Script read has another configuration owner");
     return source->phase?frontend_startup_config_read(source->phase,command,name,bytes,lease,error):
@@ -903,6 +1118,8 @@ static bool phase_read(void *context,void *phase,const qa_command_context *comma
 }
 static void phase_release(void *context,void *phase,void *lease)
 {
+    frontend_config_store *manager=context;
+    if (frontend_remote_config_phase(manager->clients,phase)) { frontend_remote_config_script_release(phase,lease); return; }
     frontend_config_source *source=phase;
     if (source && source->manager==context) {
         if (source->phase) frontend_startup_config_release(source->phase,lease); else release(source,lease);
@@ -910,14 +1127,26 @@ static void phase_release(void *context,void *phase,void *lease)
 }
 static void phase_complete(void *context,void *phase,const qa_command_context *command,const char *name,bool success)
 {
+    frontend_config_store *manager=context;
+    if (frontend_remote_config_phase(manager->clients,phase)) {
+        frontend_remote_config_script_complete(phase,command,name,success); return;
+    }
     frontend_config_source *source=phase;
     if (source && source->manager==context && source->phase)
         frontend_startup_config_script_complete(source->phase,command,name,success);
 }
 static bool allow(void *context,void *phase,const qa_command_invocation *command)
 {
+    frontend_config_store *manager=context;
+    if (frontend_remote_config_phase(manager->clients,phase)) return frontend_remote_config_allow(phase,command);
     frontend_config_source *source=phase;
     if (!source || source->manager!=context || !source_context(source,&command->context)) return false;
+    if (source->observation_failure.code!=QA_OK) return false;
+    if (source->seat_count && command->argc) {
+        size_t ordinal=command->context.origin==QA_COMMAND_SEAT?seat_index(source,command->context.seat):source->seat_index;
+        if (ordinal<source->seat_count && !frontend_authored_bindings_observe(source->seats[ordinal].authored,
+            command,&source->observation_failure)) return false;
+    }
     if (!source->phase || !frontend_startup_config_restrict_shared(source->phase) || !command->argc) return true;
     const char *name=command->argv[0];
     if (equal(name,"cvar_restart")) { print(source,"Ignoring shared cvar restart in saved secondary-seat configuration.\n"); return false; }
@@ -935,6 +1164,8 @@ static bool allow(void *context,void *phase,const qa_command_invocation *command
 }
 static bool phase_destroy(void *context,void *phase,qa_error *error)
 {
+    frontend_config_store *manager=context;
+    if (frontend_remote_config_phase(manager->clients,phase)) return frontend_remote_config_release_phase(phase,error);
     frontend_config_source *source=phase;
     if (!source || source->manager!=context || source->running) return fail(error,QA_ERROR_ARGUMENT,"Configuration phase is still executing");
     if (!frontend_startup_config_destroy(source->phase,error)) return false;
@@ -945,9 +1176,21 @@ static bool prepare_candidate(void *context,qa_application *application,const qa
     frontend_config_store *manager=context; qa_frontend *f=manager->frontend;
     if (manager->prepared || manager->running || !candidate)
         return fail(error,QA_ERROR_ARGUMENT,"Configuration publication already has another actual candidate");
+    if (!frontend_remote_configs_ready(manager->clients,application,candidate,error)) return false;
+    for (frontend_config_source *source=manager->sources;source;source=source->next) {
+        if (source->application!=application || source->published || source->candidate!=candidate) continue;
+        if (!source->configured || source->running || !qa_console_idle(source->console) ||
+            source->observation_failure.code!=QA_OK || qa_console_pending(source->console) || !frontend_config_files_idle(source->files))
+            return fail(error,QA_ERROR_ARGUMENT,"Configuration publication requires all returned actual source phases");
+    }
     const qa_launch_binding *entities=qa_launch_binding_for(qa_launch_snapshot_choices(candidate),
         (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
     const qa_launch_instance *selected=entities?qa_launch_snapshot_find(candidate,entities->instance):NULL;
+    if (!entities) {
+        if (f->keys && !frontend_keys_publication_ready(f->keys,NULL,NULL,&manager->key_publication,error)) return false;
+        manager->prepared=candidate; manager->prepared_primary=NULL;
+        return true;
+    }
     qa_console *primary_console=NULL; qa_cvars *primary_cvars=NULL; qa_command_context primary_command;
     if (!selected || !qa_application_startup_source_read(application,candidate,selected,
         &primary_console,&primary_cvars,&primary_command,error)) return false;
@@ -955,12 +1198,6 @@ static bool prepare_candidate(void *context,qa_application *application,const qa
     if (!primary || primary->application!=application || primary->cvars!=primary_cvars ||
         !source_context(primary,&primary_command))
         return fail(error,QA_ERROR_ARGUMENT,"Configuration publication lost its exact physical primary source");
-    for (frontend_config_source *source=manager->sources;source;source=source->next) {
-        if (source->application!=application || source->published || source->candidate!=candidate) continue;
-        if (!source->configured || source->running || !qa_console_idle(source->console) ||
-            qa_console_pending(source->console) || !frontend_config_files_idle(source->files))
-            return fail(error,QA_ERROR_ARGUMENT,"Configuration publication requires all returned actual source phases");
-    }
     for (size_t i=0;!primary->published && i<primary->seat_count;++i) {
         config_seat *seat=primary->seats+i;
         qa_input_seat *active=f->seats && i<f->options.seats?f->seats[i].input:NULL;
@@ -984,45 +1221,61 @@ static bool prepare_candidate(void *context,qa_application *application,const qa
     manager->prepared=candidate; manager->prepared_primary=primary; return true;
 }
 static bool preinit(void *context,qa_application *application,const qa_launch_snapshot *candidate,
-    const qa_launch_instance *selected,qa_console *console,qa_cvars *cvars,
-    const qa_command_context *command,qa_error *error)
+    const qa_application_startup_source *authority,qa_error *error)
 {
+    frontend_config_store *manager=context;
+    if (authority && client_scope(authority->scope))
+        return frontend_remote_config_preinit(manager->clients,application,candidate,authority,error);
+    const qa_launch_instance *selected=authority?authority->descriptor:NULL;
+    qa_console *console=authority?authority->console:NULL; qa_cvars *cvars=authority?authority->cvars:NULL;
+    const qa_command_context *command=authority?&authority->command:NULL;
+    if (!authority || !game_scope(authority->scope))
+        return fail(error,QA_ERROR_ARGUMENT,"Source Init has no configured actual GAME scope");
     frontend_config_source *source=frontend_config_store_source(context,console);
     if (!source && selected && command &&
-        !carry(context,application,candidate,selected,console,cvars,command,&source,error)) return false;
+        !carry(context,application,candidate,authority,&source,error)) return false;
     const qa_launch_instance *retained=source?instance(source):NULL;
     if (!source || source->application!=application || source->candidate!=candidate ||
         source->cvars!=cvars || !selected || !retained ||
         strcmp(retained->selection.instance,selected->selection.instance) ||
-        !source->configured || !source->released || source->running ||
+        !same_scope(source->scope,authority->scope) || !source->configured || !source->released || source->running ||
         !source_context(source,command))
         return fail(error,QA_ERROR_ARGUMENT,"Source Init requires its completed genuine configuration phase");
+    source->declaration_owner=authority->declaration_owner;
     return true;
 }
-static bool retire(void *context,qa_application *application,const qa_launch_instance *selected,
-    qa_console *console,qa_cvars *cvars,qa_error *error)
+static bool retire(void *context,qa_application *application,
+    const qa_application_startup_source *authority,qa_error *error)
 {
+    frontend_config_store *manager=context;
+    if (authority && client_scope(authority->scope))
+        return frontend_remote_config_retire(manager->clients,application,authority,error);
+    const qa_launch_instance *selected=authority?authority->descriptor:NULL;
+    qa_console *console=authority?authority->console:NULL; qa_cvars *cvars=authority?authority->cvars:NULL;
     frontend_config_source *source=frontend_config_store_source(context,console);
     if (!source) { variable_carries_discard(context,application,NULL,console); return true; }
     const qa_launch_instance *retained=instance(source);
     if (source->application!=application || source->cvars!=cvars || !selected || !retained ||
-        retained->storage!=selected->storage)
+        retained->storage!=selected->storage || !same_scope(source->scope,authority->scope))
         return fail(error,QA_ERROR_ARGUMENT,"Configuration retirement names another actual source owner");
     qa_frontend *frontend=source->manager->frontend;
     if (frontend_native_q3_count(frontend) &&
         !frontend_native_q3_retire_source(frontend,source->command.owner,selected,error)) return false;
     return frontend_config_store_retire(context,console,error);
 }
-static bool begin_retire(void *context,qa_application *application,const qa_launch_instance *selected,
-    qa_actor_owner owner,qa_console *console,qa_cvars *cvars,qa_error *error)
+static bool begin_retire(void *context,qa_application *application,
+    const qa_application_startup_source *authority,qa_error *error)
 {
+    const qa_launch_instance *selected=authority?authority->descriptor:NULL;
+    qa_actor_owner owner=authority?authority->scope.provider:0;
+    qa_console *console=authority?authority->console:NULL; qa_cvars *cvars=authority?authority->cvars:NULL;
     frontend_config_store *manager=context;
     if (!manager || !application || !selected || !selected->storage || !owner)
         return fail(error,QA_ERROR_ARGUMENT,"Client lease retirement needs its actual entered source owner");
     frontend_config_source *source=frontend_config_store_source(manager,console);
     const qa_launch_instance *retained=source?instance(source):NULL;
     if (source && (source->application!=application || source->cvars!=cvars || !retained ||
-        retained->storage!=selected->storage || source->command.owner!=owner))
+        retained->storage!=selected->storage || source->command.owner!=owner || !same_scope(source->scope,authority->scope)))
         return fail(error,QA_ERROR_ARGUMENT,"Client lease retirement names another physical configuration source");
     /* A failed constructor can have no manager row. The native owner still
      * qualifies the exact metadata storage and never retires a same-name
@@ -1033,6 +1286,9 @@ static bool begin_retire(void *context,qa_application *application,const qa_laun
 static qa_cvars *cvar_owner(void *context,qa_application *application,qa_console *console,
     const qa_command_context *command,const char *name)
 {
+    frontend_config_store *manager=context;
+    if (frontend_config_store_client(manager,console))
+        return frontend_config_store_cvar_owner(manager,console,command,name);
     frontend_config_source *source=frontend_config_store_source(context,console);
     return source && source->application==application?
         frontend_config_store_cvar_owner(context,console,command,name):NULL;
@@ -1040,6 +1296,9 @@ static qa_cvars *cvar_owner(void *context,qa_application *application,qa_console
 static bool visible_cvars(void *context,qa_application *application,qa_console *console,
     const qa_command_context *command,size_t index,qa_cvars **out)
 {
+    frontend_config_store *manager=context;
+    frontend_remote_config *client=frontend_config_store_client(manager,console);
+    if (client && out) { *out=frontend_remote_config_visible(client,command,index); return true; }
     frontend_config_source *source=frontend_config_store_source(context,console);
     if (!out || !source || source->application!=application || !source_context(source,command)) return false;
     *out=frontend_config_store_visible_cvars(context,console,command,index); return true;
@@ -1047,6 +1306,9 @@ static bool visible_cvars(void *context,qa_application *application,qa_console *
 static bool source_read(void *context,qa_application *application,qa_console *console,
     const qa_command_context *command,const char *name,qa_bytes *bytes,void **lease,qa_error *error)
 {
+    frontend_config_store *manager=context;
+    frontend_remote_config *client=frontend_config_store_client(manager,console);
+    if (client) return frontend_remote_config_script_read(client,command,name,bytes,lease,error);
     frontend_config_source *source=frontend_config_store_source(context,console);
     if (!source || source->application!=application)
         return fail(error,QA_ERROR_ARGUMENT,"Script read names another actual persistent source owner");
@@ -1054,12 +1316,16 @@ static bool source_read(void *context,qa_application *application,qa_console *co
 }
 static void source_release(void *context,qa_application *application,qa_console *console,void *lease)
 {
+    frontend_config_store *manager=context;
+    frontend_remote_config *client=frontend_config_store_client(manager,console);
+    if (client) { frontend_remote_config_script_release(client,lease); return; }
     frontend_config_source *source=frontend_config_store_source(context,console);
     if (source && source->application==application) frontend_config_store_release(context,console,lease);
 }
 static void finish(void *context,qa_application *application,const qa_launch_snapshot *candidate,bool published)
 {
     frontend_config_store *manager=context;
+    frontend_remote_configs_finish(manager->clients,application,published?manager->prepared:candidate,published);
     variable_carries_discard(manager,application,published?manager->prepared:candidate,NULL);
     if (published) {
         for (frontend_config_source *source=manager->sources;source;source=source->next) {
@@ -1091,20 +1357,59 @@ static void finish(void *context,qa_application *application,const qa_launch_sna
     }
     manager->prepared=NULL; manager->prepared_primary=NULL;
 }
-static bool restore_source(void *,qa_application *,const qa_launch_snapshot *,const qa_launch_instance *,
-    qa_console *,qa_cvars *,const qa_command_context *,qa_error *);
+static bool restore_source(void *,qa_application *,const qa_launch_snapshot *,
+    const qa_application_startup_source *,qa_error *);
+static bool startup_source(void *context,qa_application *application,const qa_launch_snapshot *snapshot,
+    const qa_application_startup_source *source,bool *primary,qa_error *error)
+{
+    frontend_config_store *manager=context;
+    const qa_launch_instance *selected=source && source->descriptor && snapshot?
+        qa_launch_snapshot_find(snapshot,source->descriptor->selection.instance):NULL;
+    if (!manager || !application || !source || !primary || !selected ||
+        selected->storage!=source->descriptor->storage || !source->scope.provider ||
+        !source->console || !source->cvars || qa_console_cvars(source->console)!=source->cvars)
+        return fail(error,QA_ERROR_ARGUMENT,"Startup route lost its actual physical configuration source");
+    *primary=false;
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(snapshot);
+    const qa_launch_binding *binding=NULL;
+    if (frontend_network_remote(manager->frontend)) {
+        if (!choices || !choices->seat_count || choices->seats[0].bot ||
+            source->scope.kind!=QA_APPLICATION_CONSOLE_Q3_CGAME ||
+            source->scope.seat!=choices->seats[0].id) return true;
+        const qa_launch_seat *seat=choices->seats;
+        if (seat->actor.generation) for (size_t i=0;i<choices->binding_count;++i) {
+            const qa_launch_binding *candidate=choices->bindings+i;
+            if (candidate->role==QA_ROLE_HUD && candidate->scope.kind==QA_SCOPE_ACTOR &&
+                qa_actor_id_equal(candidate->scope.actor,seat->actor) && !*candidate->selector) {
+                binding=candidate; break;
+            }
+        }
+        if (!binding) binding=qa_launch_binding_for(choices,
+            (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=seat->id},QA_ROLE_HUD,"");
+        if (!binding) binding=qa_launch_binding_for(choices,
+            (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_HUD,"");
+    } else {
+        if (!game_scope(source->scope)) return true;
+        binding=qa_launch_binding_for(choices,(qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
+    }
+    *primary=binding && !strcmp(binding->instance,selected->selection.instance);
+    return true;
+}
 frontend_config_store *frontend_config_store_create(qa_frontend *frontend,qa_error *error)
 {
     if (!frontend) return fail(error,QA_ERROR_ARGUMENT,"Configuration manager needs its actual frontend owner"),NULL;
     frontend_config_store *manager=calloc(1,sizeof(*manager));
     if (!manager) return fail(error,QA_ERROR_MEMORY,"Retaining frontend configuration manager"),NULL;
     manager->frontend=frontend;
+    manager->clients=frontend_remote_configs_create(frontend,manager,error);
+    if (!manager->clients) { free(manager); return NULL; }
     manager->hooks=(qa_application_startup_hooks){.context=manager,.prepare_source=prepare,.advance_source=advance,
         .read_script=phase_read,.release_script=phase_release,.script_complete=phase_complete,
         .allow_command=allow,.prepare_candidate=prepare_candidate,.release_source=phase_destroy,.finish_candidate=finish,
         .preinit_source=preinit,.restore_source=restore_source,.retire_source=retire,.cvar_owner=cvar_owner,.visible_cvars=visible_cvars,
         .read_source_script=source_read,.release_source_script=source_release,.begin_retire_source=begin_retire,
-        .carry_source_variables=carry_variables,.configuration_store=configuration_store};
+        .carry_source_variables=carry_variables,.configuration_store=configuration_store,.program_source=program_source,
+        .startup_source=startup_source};
     return manager;
 }
 const qa_application_startup_hooks *frontend_config_store_hooks(frontend_config_store *manager)
@@ -1112,7 +1417,7 @@ const qa_application_startup_hooks *frontend_config_store_hooks(frontend_config_
 bool frontend_config_store_retired_ready(const frontend_config_store *manager,qa_error *error)
 {
     return manager && !manager->running && !manager->prepared && !manager->key_publication.owner &&
-        !manager->sources && !manager->variable_carries ||
+        !manager->sources && !manager->variable_carries && frontend_remote_configs_empty(manager->clients) ||
         fail(error,QA_ERROR_ARGUMENT,"Application callback context still retains actual configuration source owners");
 }
 bool frontend_config_store_destroy(frontend_config_store *manager,qa_error *error)
@@ -1120,6 +1425,8 @@ bool frontend_config_store_destroy(frontend_config_store *manager,qa_error *erro
     if (!manager) return true;
     if (manager->running || manager->prepared || manager->key_publication.owner)
         return fail(error,QA_ERROR_ARGUMENT,"Configuration manager retains an executing or prepared candidate");
+    if (!frontend_remote_configs_destroy(manager->clients,error)) return false;
+    manager->clients=NULL;
     while (manager->sources) {
         frontend_config_source *source=manager->sources; frontend_config_source *next=source->next;
         if (!source_destroy(source,error)) return false;
@@ -1198,7 +1505,7 @@ bool frontend_config_store_save(frontend_config_store *manager,qa_error *error)
             free(lines); free(bindings); if (!ok) return false;
         }
     }
-    return true;
+    return frontend_remote_configs_save(manager->clients,manager->frontend->application,error);
 }
 bool frontend_config_store_retire(frontend_config_store *manager,const qa_console *console,qa_error *error)
 {
@@ -1212,7 +1519,7 @@ bool frontend_config_store_retire(frontend_config_store *manager,const qa_consol
     *at=next; return true;
 }
 void frontend_config_store_rebind(frontend_config_store *manager,qa_frontend *frontend)
-{ if (manager && !manager->running) manager->frontend=frontend; }
+{ if (manager && !manager->running) { manager->frontend=frontend; frontend_remote_configs_rebind(manager->clients,frontend,manager); } }
 
 static bool config_blob(qa_source_save_io *io,qa_bytes *bytes)
 {
@@ -1261,13 +1568,13 @@ bool frontend_config_store_visit(const frontend_config_store *manager,
             !selected->content || !visitor->pool(visitor->context,qa_vfs_resources(selected->content),error) ||
             !visitor->view(visitor->context,selected->content,error)) return false;
     }
-    return true;
+    return frontend_remote_configs_visit(manager->clients,visitor,error);
 }
 static bool config_header(qa_source_save_io *io,size_t *count)
 {
-    uint8_t magic[4]={'Q','F','C','S'}; uint32_t version=3;
+    uint8_t magic[4]={'Q','F','C','S'}; uint32_t version=8;
     return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFCS",4) &&
-        qa_source_save_u32(io,&version) && version==3 && qa_source_save_count(io,count,
+        qa_source_save_u32(io,&version) && version==8 && qa_source_save_count(io,count,
             io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX);
 }
 static bool config_row(frontend_config_source *source,qa_source_save_io *io,
@@ -1278,15 +1585,20 @@ static bool config_row(frontend_config_source *source,qa_source_save_io *io,
     char *name=writing?(char *)instance(source)->selection.instance:NULL;
     qa_sha256_digest identity=writing?instance(source)->identity:(qa_sha256_digest){0};
     uint32_t dialect=source->command.dialect,movement=source->movement_dialect;
+    uint32_t scope=source->scope.kind;
     uint64_t key=frontend_key_profile_id(source->keys);
     bool same=source->fallback==source->movement;
     bool ok=frontend_save_text(io,&name) && name && *name &&
         qa_source_save_bytes(io,&identity,sizeof(identity)) && qa_source_save_u32(io,&dialect) && dialect<=QA_CONSOLE_Q3 &&
+        qa_source_save_u32(io,&scope) && scope<=QA_APPLICATION_CONSOLE_Q2_GAME &&
+        qa_source_save_u32(io,&source->scope.seat) &&
         qa_source_save_u32(io,&movement) && movement<=QA_CONSOLE_Q3 &&
         qa_source_save_bool(io,&source->primary) && qa_source_save_bool(io,&source->has_mod) &&
         qa_source_save_u64(io,&key);
     if (!writing) { source->saved_instance=name; source->saved_identity=identity;
-        source->command.dialect=(qa_console_dialect)dialect; source->movement_dialect=(qa_console_dialect)movement; }
+        source->command.dialect=(qa_console_dialect)dialect; source->movement_dialect=(qa_console_dialect)movement;
+        source->scope.kind=(qa_application_console_kind)scope; }
+    if (ok && !game_scope(source->scope)) ok=fail(io->error,QA_ERROR_FORMAT,"Saved configuration has no actual GAME scope");
     qa_buffer captured={0}; qa_bytes bytes={0};
     if (ok && key) {
         if (!writing) {
@@ -1317,6 +1629,8 @@ static bool config_row(frontend_config_source *source,qa_source_save_io *io,
         ok=qa_source_save_u32(io,&seat->logical) && qa_source_save_u32(io,&seat_movement) &&
             seat_movement<=QA_CONSOLE_Q3 && qa_source_save_bool(io,&seat->cvars_transferred);
         if (!writing) seat->movement_dialect=(qa_console_dialect)seat_movement;
+        if (ok && !writing) { seat->authored=frontend_authored_bindings_create(io->error); ok=seat->authored!=NULL; }
+        if (ok) ok=frontend_authored_bindings_fields(seat->authored,io) && frontend_authored_bindings_completed(seat->authored);
         for (size_t previous=0;ok && previous<i;++previous) ok=source->seats[previous].logical!=seat->logical;
         if (ok && seat->cvars_transferred) {
             char *receiver=NULL;
@@ -1368,6 +1682,11 @@ bool frontend_config_store_checkpoint(const frontend_config_store *manager,
     qa_source_save_io io={0}; bool ok=qa_source_save_writer(&io,NULL,error) && config_header(&io,&count);
     for (frontend_config_source *source=manager->sources;ok && source;source=source->next)
         ok=config_row(source,&io,(qa_application_content_graph *)graph,NULL,refs);
+    qa_buffer clients={0}; qa_bytes bytes={0};
+    if (ok) { ok=frontend_remote_configs_checkpoint(manager->clients,graph,&clients,error);
+        bytes=(qa_bytes){clients.data,clients.size}; }
+    if (ok) ok=config_blob(&io,&bytes);
+    qa_buffer_free(&clients);
     if (ok) ok=qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); return ok;
 }
@@ -1395,6 +1714,9 @@ bool frontend_config_store_restore(qa_frontend *frontend,qa_application *applica
         if (!ok) { source_destroy(source,NULL); break; }
         *tail=source; tail=&source->next;
     }
+    qa_bytes clients={0};
+    if (ok) ok=config_blob(&io,&clients) && clients.size &&
+        frontend_remote_configs_restore(manager->clients,application,graph,keys,clients,error);
     if (ok) ok=qa_source_save_finish(&io,NULL);
     qa_source_save_dispose(&io);
     if (!ok) { frontend_config_store_destroy(manager,NULL); return false; }
@@ -1404,11 +1726,15 @@ bool frontend_config_store_restore_into(frontend_config_store *manager,qa_applic
     qa_application_content_graph *graph,frontend_keys *keys,const frontend_keys_cvar_refs *refs,
     qa_bytes bytes,qa_error *error)
 {
-    if (!manager || manager->sources || manager->variable_carries || manager->restoring || manager->running || manager->prepared)
+    if (!manager || manager->sources || !frontend_remote_configs_empty(manager->clients) ||
+        manager->variable_carries || manager->restoring || manager->running || manager->prepared)
         return fail(error,QA_ERROR_ARGUMENT,"Pure import needs the constructor's empty stable configuration manager");
     frontend_config_store *decoded=NULL;
     if (!frontend_config_store_restore(manager->frontend,application,graph,keys,refs,bytes,&decoded,error)) return false;
     manager->sources=decoded->sources; manager->restoring=true; manager->restore_refs=*refs;
+    frontend_remote_configs_destroy(manager->clients,NULL);
+    manager->clients=decoded->clients; decoded->clients=NULL;
+    frontend_remote_configs_rebind(manager->clients,manager->frontend,manager);
     for (frontend_config_source *source=manager->sources;source;source=source->next) source->manager=manager;
     decoded->sources=NULL; free(decoded); return true;
 }
@@ -1449,23 +1775,29 @@ static bool restored_qualify(void *context,const qa_application_console_scope *r
         fail(error,QA_ERROR_FORMAT,"Restored key registry differs from its canonical decoded GAME owner");
 }
 static bool restore_source(void *context,qa_application *application,const qa_launch_snapshot *candidate,
-    const qa_launch_instance *selected,qa_console *console,qa_cvars *cvars,
-    const qa_command_context *command,qa_error *error)
+    const qa_application_startup_source *authority,qa_error *error)
 {
+    const qa_launch_instance *selected=authority?authority->descriptor:NULL;
+    qa_console *console=authority?authority->console:NULL; qa_cvars *cvars=authority?authority->cvars:NULL;
+    const qa_command_context *command=authority?&authority->command:NULL;
     frontend_config_store *manager=context;
+    if (authority && client_scope(authority->scope))
+        return frontend_config_store_restore_client(manager,application,candidate,authority,error);
     if (!manager->restoring || !selected || !console || !cvars || !command ||
         !qa_application_command_context_active(application,command) || !command->owner ||
-        qa_cvars_dialect(cvars)!=command->dialect || frontend_config_store_source(manager,console))
+        qa_cvars_dialect(cvars)!=command->dialect || !game_scope(authority->scope) ||
+        frontend_config_store_source(manager,console))
         return fail(error,QA_ERROR_ARGUMENT,"Configuration import needs its exact decoded source constructor tuple");
     frontend_config_source *source=manager->sources;
     while (source && (!source->saved_instance || strcmp(source->saved_instance,selected->selection.instance))) source=source->next;
     if (!source || !source->imported || source->application!=application ||
         !qa_sha256_equal(&source->saved_identity,&selected->identity) || source->command.dialect!=command->dialect ||
-        !qa_launch_snapshot_find(candidate,selected->selection.instance))
+        !qa_launch_snapshot_find(candidate,selected->selection.instance) || source->scope.kind!=authority->scope.kind ||
+        source->scope.seat!=authority->scope.seat)
         return fail(error,QA_ERROR_FORMAT,"Decoded source configuration differs from its actual retained implementation");
     const qa_product *prepared=qa_catalog_product(frontend_config_files_catalog(source->files),
         frontend_config_files_product(source->files));
-    const qa_product *actual=qa_catalog_product(qa_launch_snapshot_catalog(candidate),selected->selection.product);
+    const qa_product *actual=qa_catalog_product(qa_launch_instance_catalog(selected),selected->selection.product);
     const qa_launch_binding *entities=qa_launch_binding_for(qa_launch_snapshot_choices(candidate),
         (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
     if (!prepared || !actual || strcmp(prepared->key,actual->key) ||
@@ -1486,6 +1818,7 @@ static bool restore_source(void *context,qa_application *application,const qa_la
     }
     if (!qa_launch_instance_retain_metadata(selected,&source->metadata,error)) return false;
     source->console=console; source->cvars=cvars; source->command=*command;
+    source->scope=authority->scope; source->declaration_owner=authority->declaration_owner;
     if (source->keys) {
         restored_source_scope authority={selected,command,cvars};
         frontend_keys_cvar_refs refs={.context=&authority,.resolve=restored_resolve,.qualify=restored_qualify};
@@ -1535,5 +1868,18 @@ bool frontend_config_store_finish_restore(frontend_config_store *manager,qa_erro
             (source->seats[i].cvars_transferred && !source->seats[i].registry_bound))
             return fail(error,QA_ERROR_FORMAT,"Decoded configuration client lacks its canonical registry binding");
     }
+    if (!frontend_remote_configs_finish_restore(manager->clients,error)) return false;
     manager->restoring=false; return true;
+}
+bool frontend_config_store_restore_client(frontend_config_store *manager,qa_application *application,
+    const qa_launch_snapshot *candidate,const qa_application_startup_source *source,qa_error *error)
+{
+    if (!manager || !manager->restoring || !source || !client_scope(source->scope))
+        return fail(error,QA_ERROR_ARGUMENT,"CLIENT factory bind requires its decoded configuration roster");
+    qa_application_startup_source actual;
+    if (!qa_application_q3_client_configuration_read(application,source->scope.provider,source->scope.seat,&actual,error) ||
+        actual.console!=source->console || actual.cvars!=source->cvars || !same_scope(actual.scope,source->scope) ||
+        !source->descriptor || actual.descriptor->storage!=source->descriptor->storage)
+        return fail(error,QA_ERROR_FORMAT,"CLIENT factory bind differs from its actual retained console slot");
+    return frontend_remote_config_bind_restored(manager->clients,application,candidate,source,error);
 }

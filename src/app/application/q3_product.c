@@ -2,6 +2,7 @@
 #include "internal.h"
 #include "qa/catalog_save.h"
 #include "qa/application_startup_prepare.h"
+#include "qa/application_q3_factory.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -164,7 +165,9 @@ bool application_startup_seed_source(application_provider *provider, qa_cvars *a
     if (provider->product->family == QA_GAME_Q2 && qa_cvars_dialect(actual) != QA_CONSOLE_Q2 &&
         qa_cvars_dialect(actual) != QA_CONSOLE_Q2_RERELEASE)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q2 startup registry has another source dialect");
-    bool primary=startup_primary(provider);
+    /* Capacity seeding precedes the complete physical console router. With a
+     * retained phase owner, only that eventual routed source consumes rows. */
+    bool primary=!app->startup_hooks && startup_primary(provider);
     for (size_t i = 0; i < app->startup->count; ++i) {
         application_startup_row *row = &app->startup->rows[i];
         if (!row->name) continue;
@@ -180,20 +183,58 @@ bool application_startup_seed_source(application_provider *provider, qa_cvars *a
     }
     return true;
 }
-bool application_startup_seed_console(application_provider *provider,qa_console *console,
+bool application_startup_seed_console(application_provider *provider,const qa_application_startup_source *source,
     const qa_command_context *command,qa_error *error)
 {
     qa_application *app=provider?provider->application:NULL;
+    qa_console *console=source?source->console:NULL;
     if (!app || !provider->product || !console || !command || command->owner!=provider->owner ||
-        !qa_application_command_context_active(app,command))
+        !source->descriptor || source->scope.provider!=provider->owner ||
+        qa_console_cvars(console)!=source->cvars || !qa_application_command_context_active(app,command))
         return application_fail(error,QA_ERROR_ARGUMENT,"Startup replay requires its actual routed source console");
-    if (!app->startup || app->operation==APPLICATION_PERSISTING || provider->product->family==QA_GAME_Q1) return true;
-    bool primary=startup_primary(provider);
+    bool client=source->scope.kind==QA_APPLICATION_CONSOLE_Q3_CGAME || source->scope.kind==QA_APPLICATION_CONSOLE_Q3_UI;
+    bool game=source->scope.kind==QA_APPLICATION_CONSOLE_QC || source->scope.kind==QA_APPLICATION_CONSOLE_NATIVE_Q2 ||
+        source->scope.kind==QA_APPLICATION_CONSOLE_Q1_GAME || source->scope.kind==QA_APPLICATION_CONSOLE_Q2_GAME ||
+        source->scope.kind==QA_APPLICATION_CONSOLE_Q3_GAME;
+    if (!client && !game)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Startup replay has no physical GAME or CLIENT scope");
+    if (client) {
+        qa_application_startup_source actual;
+        if (command->origin!=QA_COMMAND_SEAT || command->dialect!=QA_CONSOLE_Q3 || command->seat!=source->scope.seat ||
+            !qa_application_q3_client_configuration_read(app,source->scope.provider,source->scope.seat,&actual,error) ||
+            actual.console!=console || actual.cvars!=source->cvars || actual.scope.kind!=source->scope.kind ||
+            actual.descriptor->storage!=source->descriptor->storage)
+            return application_fail(error,QA_ERROR_ARGUMENT,"Startup CLIENT replay lost its actual physical configuration slot");
+    }
+    if (!app->startup || app->operation==APPLICATION_PERSISTING || (!client && provider->product->family==QA_GAME_Q1)) return true;
+    bool primary=!client && startup_primary(provider);
+    if (app->startup_hooks && app->startup_hooks->startup_source) {
+        const qa_launch_snapshot *snapshot=app->routing_snapshot?app->routing_snapshot:qa_application_launch(app);
+        if (!app->startup_hooks->startup_source(app->startup_hooks->context,app,snapshot,source,&primary,error)) return false;
+    }
     for (size_t i=0;i<app->startup->count;++i) {
         application_startup_row *row=app->startup->rows+i;
         if (!row->name) continue;
-        bool shared=provider->product->family==QA_GAME_Q3 && ascii_equal(row->name,"sv_cheats");
-        if (!shared && !qa_console_cvar_startup_set(console,command,row->name,row->value,error)) return false;
+        bool shared=(client || provider->product->family==QA_GAME_Q3) && ascii_equal(row->name,"sv_cheats");
+        if (!shared) {
+            const qa_command_context *recipient=command;
+            qa_command_context game_command;
+            if (!client) {
+                const qa_cvar_view *declared=NULL;
+                if (!qa_console_cvar_read(console,command,row->name,&declared,error)) return false;
+                /* External GAME declarations arrive at module Init. An
+                 * undeclared startup row belongs to that physical GAME;
+                 * declared client/input rows keep the phase's seat route. */
+                if (!declared) {
+                    if (source->command.origin!=QA_COMMAND_SERVER || source->command.owner!=provider->owner ||
+                        !qa_application_capture_command_context(app,&source->command,&game_command,error) ||
+                        qa_console_cvar_owner(console,&game_command,row->name)!=source->cvars)
+                        return application_fail(error,QA_ERROR_ARGUMENT,"Undeclared startup variable lost its actual GAME recipient");
+                    recipient=&game_command;
+                }
+            }
+            if (!qa_console_cvar_startup_set(console,recipient,row->name,row->value,error)) return false;
+        }
         if (primary && (!shared || row->shared_seeded)) {
             if (app->q3_product_preparing) row->pending=true; else row->consumed=true;
         }
@@ -215,10 +256,26 @@ bool qa_application_startup_q3_safe_mode(qa_application *app,const qa_launch_ins
         (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
     const qa_product *product=selected?qa_catalog_product(qa_launch_instance_catalog(selected),selected->selection.product):NULL;
     qa_console *actual_console=NULL; qa_cvars *actual_cvars=NULL; qa_command_context command;
-    if (!app || !selected || !console || !safe || !entities ||
-        strcmp(entities->instance,selected->selection.instance) || !product || product->family!=QA_GAME_Q3 ||
-        !qa_application_startup_source_read(app,snapshot,selected,&actual_console,&actual_cvars,&command,error) ||
-        actual_console!=console || qa_cvars_dialect(actual_cvars)!=QA_CONSOLE_Q3)
+    bool qualified=false;
+    if (app && selected && console && safe && product && product->family==QA_GAME_Q3) {
+        const qa_launch_choices *choices=qa_launch_snapshot_choices(snapshot);
+        for (size_t i=0;choices && i<choices->seat_count && !qualified;++i) {
+            qa_application_startup_source client;
+            qa_actor_owner owner=0;
+            application_provider *const *providers=app->routing_providers?app->routing_providers:app->providers;
+            size_t count=app->routing_providers?app->routing_provider_count:app->provider_count;
+            for (size_t p=0;p<count;++p) if (providers[p] && selected->state==providers[p] &&
+                providers[p]->launch && providers[p]->launch->storage==selected->storage) owner=providers[p]->owner;
+            qa_error local={0};
+            if (owner && qa_application_q3_client_configuration_read(app,owner,choices->seats[i].id,&client,&local) &&
+                client.console==console && client.descriptor->storage==selected->storage &&
+                qa_cvars_dialect(client.cvars)==QA_CONSOLE_Q3) qualified=true;
+        }
+        if (!qualified && entities && !strcmp(entities->instance,selected->selection.instance))
+            qualified=qa_application_startup_source_read(app,snapshot,selected,&actual_console,&actual_cvars,&command,error) &&
+                actual_console==console && qa_cvars_dialect(actual_cvars)==QA_CONSOLE_Q3;
+    }
+    if (!qualified)
         return application_fail(error,QA_ERROR_ARGUMENT,"Safe mode requires its actual selected Q3 source console");
     *safe=false;
     for (size_t i=0;app->startup && i<app->startup->count;++i) {
@@ -328,6 +385,40 @@ bool qa_application_startup_console_queued(const qa_application *app, const qa_c
             !strcmp(instance, row->queued_instance)) return true;
     }
     return false;
+}
+bool application_startup_program_queue_ready(qa_application *app,const qa_application_startup_source *previous,
+    const qa_application_startup_source *target,uint64_t generation,qa_error *error)
+{
+    if (!app || !previous || !target || !previous->descriptor || !target->descriptor || !target->console ||
+        previous->scope.kind!=target->scope.kind || previous->scope.seat!=target->scope.seat ||
+        strcmp(previous->descriptor->selection.instance,target->descriptor->selection.instance))
+        return application_fail(error,QA_ERROR_ARGUMENT,"Startup ordinal adoption requires its actual compatible source pair");
+    const qa_launch_snapshot *published=qa_application_launch(app);
+    const qa_launch_instance *selected=qa_launch_snapshot_find(published,target->descriptor->selection.instance);
+    qa_application_console_scope scope;
+    if (!selected || selected->storage!=target->descriptor->storage || selected->state!=target->descriptor->state ||
+        !qa_application_console_scope_read(app,target->console,&scope) || scope.provider!=target->scope.provider ||
+        scope.kind!=target->scope.kind || scope.seat!=target->scope.seat)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Startup ordinal target has not actually published");
+    for (size_t i=0;app->startup && i<app->startup->count;++i) {
+        const application_startup_row *row=app->startup->rows+i;
+        if (row->queued_instance && row->queued_kind==(uint32_t)previous->scope.kind &&
+            row->queued_seat==previous->scope.seat && !strcmp(row->queued_instance,previous->descriptor->selection.instance) &&
+            row->queued_generation!=generation)
+            return application_fail(error,QA_ERROR_FORMAT,"Startup ordinal lost its retained source program generation");
+    }
+    return true;
+}
+void application_startup_program_queue_publish(qa_application *app,const qa_application_startup_source *previous,
+    const qa_application_startup_source *target,uint64_t generation)
+{
+    (void)target;
+    for (size_t i=0;app->startup && i<app->startup->count;++i) {
+        application_startup_row *row=app->startup->rows+i;
+        if (row->queued_instance && row->queued_generation==generation &&
+            row->queued_kind==(uint32_t)previous->scope.kind && row->queued_seat==previous->scope.seat &&
+            !strcmp(row->queued_instance,previous->descriptor->selection.instance)) row->queued_generation=app->command_generation;
+    }
 }
 
 bool application_startup_fields(qa_source_save_io *io, qa_application *app)

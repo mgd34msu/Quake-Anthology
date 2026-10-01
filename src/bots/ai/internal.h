@@ -55,7 +55,6 @@ typedef struct bot_ai_state {
     float fire_until, weapon_change_time, enemy_death_time, state_time, chase_until;
     float teleport_time;
     float last_air_time, last_chat_time, blocked_time, not_blocked_time;
-    qa_vec3 enemy_origin, enemy_velocity, last_enemy_origin, aim_target;
     uint32_t last_enemy_area;
     bool respawn_wait, suicidal, strafe_right, team_arena, retired, attacked;
     uint64_t command_sequence;
