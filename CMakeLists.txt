@@ -1014,6 +1014,8 @@ add_library(qa_application STATIC
     src/app/application/native_q1_console.c
     src/app/application/native_q1_respawn.c
     src/app/application/native_q1_wire.c
+    src/app/application/native_q2_presentation.c
+    src/app/application/native_q2_presentation_local.c
     src/app/application/profile.c
     src/app/application/arsenal.c
     src/app/application/arsenal_guest.c
@@ -1114,6 +1116,7 @@ add_library(qa_application STATIC
     src/app/application/native_q3_clients.c
     src/app/application/native_q3_client.c
     src/app/application/native_q3_remote_role.c
+    src/app/application/native_q3_remote_lifecycle.c
     src/app/application/native_q3_remote_role_save.c
     src/app/application/native_q3_remote_character.c
     src/app/application/native_q3_remote_content.c
@@ -1319,6 +1322,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/equipment_events.c
     src/app/frontend/equipment_gear.c
     src/app/frontend/equipment_gear_output.c
+    src/app/frontend/equipment_gear_world_output.c
     src/app/frontend/equipment_gear_save.c
     src/app/frontend/equipment_held_output.c
     src/app/frontend/network_content_q3.c

@@ -43,6 +43,14 @@ bool frontend_input_settings_release_all_ready(const frontend_input_settings *,q
  * completes. Both native windows remain retained through checked cleanup. */
 bool frontend_input_settings_window_stage(frontend_input_settings *,qa_display_surface_ticket *,qa_error *);
 bool frontend_input_settings_read(const frontend_input_settings *,frontend_input_settings_view *,qa_error *);
+/* Complete genuine source programmes without entering native endpoint changes.
+ * This gives the enclosing canonical owner a returned boundary to read their
+ * final scalar effects and qualify its prepared resource targets. Waits retain
+ * all history. An aborting owner advances through the ordinary abort API. */
+bool frontend_input_settings_release_advance(frontend_input_settings *,bool *complete,qa_error *);
+/* Enter native work only after those actual programmes complete and the
+ * enclosing owner has qualified their final canonical targets. */
+bool frontend_input_settings_enter(frontend_input_settings *,qa_error *);
 /* Advance at a returned callback boundary before ordinary input, capture or
  * owner-idle admission. A wait is successful with complete=false. Failed
  * entered history remains owned; subsequent advance never replays dispatch.

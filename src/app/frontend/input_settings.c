@@ -216,7 +216,7 @@ bool frontend_input_settings_window_stage(frontend_input_settings *owner,
     if (!ok) retain_failure(owner,error);
     return ok;
 }
-bool frontend_input_settings_advance(frontend_input_settings *owner,bool *complete,qa_error *error)
+static bool advance_releases(frontend_input_settings *owner,bool *complete,qa_error *error)
 {
     if (!complete || !owner || !owner->prepared || owner->terminal ||
         !frontend_input_settings_current(owner,owner->frontend,error))
@@ -233,16 +233,37 @@ bool frontend_input_settings_advance(frontend_input_settings *owner,bool *comple
         if (!ok) { retain_failure(owner,&fault); if (error && error->code==QA_OK) *error=fault; return false; }
         waiting|=owner->source[slot]!=QA_INPUT_RELEASE_COMPLETED;
     }
-    if (waiting) return true;
-    if (owner->aborting) {
-        bool ok=frontend_input_settings_abort(owner,error);
-        *complete=owner->terminal; return ok;
-    }
+    *complete=!waiting;
+    return true;
+}
+bool frontend_input_settings_release_advance(frontend_input_settings *owner,bool *complete,qa_error *error)
+{
+    if (!owner || owner->aborting)
+        return fail(error,"Release-only advancement requires its actual publication candidate");
+    return advance_releases(owner,complete,error);
+}
+bool frontend_input_settings_enter(frontend_input_settings *owner,qa_error *error)
+{
+    if (!owner || !owner->prepared || owner->terminal || owner->aborting ||
+        owner->failure.code!=QA_OK || !frontend_input_settings_current(owner,owner->frontend,error))
+        return fail(error,"Native settings entry requires its retained returned publication owner");
     const qa_input_release *release[QA_INPUT_LOCAL_SEATS]; proofs(owner,release);
     qa_input_platform_settings_outcome result;
     bool ok=qa_input_platform_settings_enter(owner->native,release,&result,error) &&
         qa_input_platform_settings_ready(owner->native,release,error);
     if (!ok) retain_failure(owner,error);
+    return ok;
+}
+bool frontend_input_settings_advance(frontend_input_settings *owner,bool *complete,qa_error *error)
+{
+    if (!advance_releases(owner,complete,error)) return false;
+    if (!*complete) return true;
+    *complete=false;
+    if (owner->aborting) {
+        bool ok=frontend_input_settings_abort(owner,error);
+        *complete=owner->terminal; return ok;
+    }
+    bool ok=frontend_input_settings_enter(owner,error);
     *complete=ok; return ok;
 }
 bool frontend_input_settings_ready(const frontend_input_settings *owner,qa_error *error)
