@@ -48,6 +48,9 @@ bool application_native_q1_wire_inflictor_center(qa_application *, const qa_dama
     double [3], bool *, qa_error *);
 bool application_native_q1_wire_observe(qa_application *, qa_error *);
 bool application_native_q1_wire_client_publish(void *, const qa_q1_source_client_view *, qa_error *);
+/* Admit source userinfo before MODE and selected player callbacks. The final
+ * admission performs only the source spawned reset after actual placement. */
+bool application_native_q1_wire_client_userinfo(application_provider *, qa_actor_id, qa_error *);
 bool application_native_q1_wire_client_admit(application_provider *, qa_actor_id, qa_error *);
 bool application_native_q1_wire_client_observer(void *, qa_actor_id, bool, qa_error *);
 bool application_native_q1_wire_create(application_provider *, qa_error *);

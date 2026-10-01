@@ -964,7 +964,7 @@ bool application_native_q1_wire_observe(qa_application *app, qa_error *error) {
     }
     application_native_q1_wire_end(&source); return okay;
 }
-bool application_native_q1_wire_client_admit(application_provider *p, qa_actor_id actor,
+bool application_native_q1_wire_client_userinfo(application_provider *p, qa_actor_id actor,
     qa_error *error) {
     uint32_t slot;
     const application_player_record *record = p ? roster(p->application, actor) : NULL;
@@ -988,8 +988,16 @@ bool application_native_q1_wire_client_admit(application_provider *p, qa_actor_i
         record = actual;
     }
     return qa_q1_source_client_userinfo_named(p->state.q1, actor,
-        record->userinfo ? record->userinfo : "", record->name, error) &&
-        qa_q1_source_client_spawned(p->state.q1, actor, error);
+        record->userinfo ? record->userinfo : "", record->name, error);
+}
+bool application_native_q1_wire_client_admit(application_provider *p, qa_actor_id actor,
+    qa_error *error) {
+    uint32_t slot;
+    const application_player_record *record = p ? roster(p->application, actor) : NULL;
+    if (!p || p->kind != APPLICATION_PROVIDER_Q1 || !record ||
+        !qa_q1_native_client_slot(p->state.q1, actor, &slot, error) || slot != record->client_slot)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 source spawned admission lost its actual connection");
+    return qa_q1_source_client_spawned(p->state.q1, actor, error);
 }
 bool application_native_q1_wire_client_publish(void *opaque,
     const qa_q1_source_client_view *view, qa_error *error) {
