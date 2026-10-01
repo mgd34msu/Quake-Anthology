@@ -70,6 +70,8 @@ enum qa_q2_cvar_flags {
 };
 
 typedef struct qa_cvars qa_cvars;
+struct qa_cvars_edit;
+struct qa_cvars_edit_command;
 typedef struct qa_console_documentation {
     const char *usage;
     const char *const *examples;
@@ -233,6 +235,11 @@ typedef struct qa_console_options {
     void (*print)(void *user, const qa_command_context *context, const char *text);
     qa_cvars *(*cvar_owner)(void *user, const qa_command_context *context, const char *name);
     qa_cvars *(*visible_cvars)(void *user, const qa_command_context *context, size_t index);
+    /* Resolves a prepared scalar view of this exact canonical registry for
+     * the actual command context. A successful NULL result uses live values;
+     * rejection must not fall back to an unrelated or live owner. */
+    bool (*cvar_edit)(void *user, const qa_command_context *context, qa_cvars *registry,
+                      struct qa_cvars_edit **out, qa_error *error);
     /* Supply immutable script bytes through the content service. The release
      * callback, when present, runs once after the console has copied them. */
     bool (*read_script)(void *user, const qa_command_context *context, const char *path,
@@ -296,6 +303,17 @@ qa_cvars *qa_console_visible_cvars(qa_console *, const qa_command_context *, siz
 bool qa_console_limits(qa_console *, const qa_command_context *,
                         size_t *maximum_command, size_t *maximum_buffer, qa_error *);
 qa_cvars *qa_console_cvar_owner(qa_console *, const qa_command_context *, const char *name);
+/* Structured routed reads/writes use the same qualified scalar view as
+ * builtins and macros. Missing reads succeed with NULL; writes require an
+ * actual registry. Contexts are already captured by the owning caller. */
+bool qa_console_cvar_read(qa_console *, const qa_command_context *, const char *,
+                          const qa_cvar_view **out, qa_error *);
+bool qa_console_cvar_apply(qa_console *, const qa_command_context *,
+                           const struct qa_cvars_edit_command *, qa_error *);
+/* Actual startup forced publication, empty Q3 registration retaining its
+ * physical owner, then USER_CREATED flag promotion. */
+bool qa_console_cvar_startup_set(qa_console *, const qa_command_context *,
+                                 const char *name, const char *value, qa_error *);
 const qa_console_entry *qa_console_entry_at(const qa_console *console, size_t ordinal);
 const qa_console_entry *qa_console_context_entry_at(const qa_console *, const qa_command_context *, size_t ordinal);
 const qa_console_entry *qa_console_find(const qa_console *console,

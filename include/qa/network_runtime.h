@@ -3,6 +3,7 @@
 
 #include "qa/network_unified.h"
 #include "qa/network_q3.h"
+#include "qa/network_q1.h"
 
 #define QA_NETWORK_COMMAND_BACKUP 128u
 #define QA_NETWORK_MAX_SEATS 4u
@@ -38,6 +39,18 @@ typedef struct qa_network_q3_source_command {
     qa_movement_kind movement;
     qa_q3_usercmd command;
 } qa_network_q3_source_command;
+/* Literal NetQuake words and physical source identity are independent of the
+ * selected movement kind used to authenticate the canonical controlled seat. */
+typedef struct qa_network_nq_source_command {
+    qa_net_client_id client;
+    qa_net_seat_id seat;
+    qa_actor_id actor;
+    uint64_t epoch, sequence;
+    qa_actor_owner source_owner;
+    uint32_t source_slot;
+    qa_movement_kind movement;
+    qa_q1_command command;
+} qa_network_nq_source_command;
 /* A snapshot borrows the admitted producer's complete owner checkpoint. The
  * runtime stores command history only, never another actor world/inventory. */
 typedef struct qa_network_snapshot {
@@ -63,6 +76,7 @@ typedef struct qa_network_hooks {
     bool (*reconnect)(void *, const qa_net_client *, const qa_net_address *, qa_bytes proof, qa_error *);
     bool (*commands)(void *, const qa_network_command_group *, qa_error *);
     bool (*q3_source_command)(void *, const qa_network_q3_source_command *, qa_error *);
+    bool (*nq_source_command)(void *, const qa_network_nq_source_command *, qa_error *);
 } qa_network_hooks;
 /* One adapter per connection. Source adapters own dialect histories, not
  * seats/world/clocks. receive must authenticate packets before invoking runtime
@@ -115,6 +129,8 @@ bool qa_network_accept(qa_network_runtime *, const qa_network_command *, qa_erro
 bool qa_network_accept_commands(qa_network_runtime *, const qa_network_command_group *, qa_error *);
 bool qa_network_accept_q3_source_command(qa_network_runtime *,
     const qa_network_q3_source_command *, qa_error *);
+bool qa_network_accept_nq_source_command(qa_network_runtime *,
+    const qa_network_nq_source_command *, qa_error *);
 bool qa_network_snapshot_apply(qa_network_runtime *, qa_net_client_id,
                                 const qa_network_snapshot *, qa_error *);
 bool qa_network_restart(qa_network_runtime *, qa_net_client_id,

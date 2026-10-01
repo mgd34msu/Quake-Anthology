@@ -33,6 +33,11 @@ bool qa_network_q3_client_init_read(qa_network_runtime *, qa_net_client_id,
     qa_network_q3_client_init *, qa_error *);
 bool qa_network_q3_client_init_current(qa_network_runtime *, qa_net_client_id,
     const qa_network_q3_client_init *);
+/* Matches the chosen, genuinely retained snapshot's commandTime against the
+ * actual owned usercmd ring. Unmatched history never invents an acknowledgement. */
+bool qa_network_q3_client_acknowledged_usercmd(qa_network_runtime *, qa_net_client_id,
+    const qa_q3_snapshot *, bool *has_sequence, uint64_t *sequence,
+    bool *history_unavailable, qa_error *);
 bool qa_network_q3_client_command(qa_network_runtime *, qa_net_client_id, const char *, qa_error *);
 bool qa_network_q3_client_usercmd(qa_network_runtime *, qa_net_client_id, const qa_q3_usercmd *, qa_error *);
 bool qa_network_q3_client_execute(qa_network_runtime *, qa_net_client_id, int32_t, qa_error *);

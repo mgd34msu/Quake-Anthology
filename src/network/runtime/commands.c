@@ -125,6 +125,27 @@ bool qa_network_accept_q3_source_command(qa_network_runtime *runtime,
     if (ok) { seat->accepted = command->sequence; seat->has_accepted = true; }
     return ok;
 }
+bool qa_network_accept_nq_source_command(qa_network_runtime *runtime,
+    const qa_network_nq_source_command *command, qa_error *error)
+{
+    if (!runtime || !command || !command->sequence || !command->source_owner ||
+        (unsigned)command->movement > QA_MOVEMENT_Q3 || !runtime->options.hooks.nq_source_command ||
+        !isfinite(command->command.time) || !isfinite(command->command.angles[0]) ||
+        !isfinite(command->command.angles[1]) || !isfinite(command->command.angles[2]))
+        return qa_network_fail(error, "NetQuake source command requires its genuine raw command consumer");
+    const qa_net_client *client = qa_net_connections_get(runtime->connections, command->client);
+    if (!client || client->protocol.kind != QA_NET_NQ15 || client->protocol.flags || client->protocol.revision)
+        return qa_network_fail(error, "NetQuake source command changes its admitted source dialect");
+    qa_network_peer *peer; qa_network_seat *seat;
+    if (!authority_identity(runtime, command->client, command->seat, command->actor,
+        command->epoch, command->movement, (qa_bytes){0}, &peer, &seat, error)) return false;
+    if (seat->has_accepted && command->sequence <= seat->accepted) return true;
+    bool previous = runtime->callback; runtime->callback = true; seat->applying = true;
+    bool ok = runtime->options.hooks.nq_source_command(runtime->options.hooks.context, command, error);
+    seat->applying = false; runtime->callback = previous;
+    if (ok) { seat->accepted = command->sequence; seat->has_accepted = true; }
+    return ok;
+}
 bool qa_network_submit(qa_network_runtime *runtime, const qa_network_command *command, qa_error *error) {
     qa_network_peer *peer; qa_network_seat *seat;
     if (!authority(runtime, command, &peer, &seat, error)) return false;

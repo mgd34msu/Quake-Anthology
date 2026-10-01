@@ -156,6 +156,29 @@ bool qa_network_q3_client_init_current(qa_network_runtime *runtime, qa_net_clien
         actual.last_executed_server_command == retained->last_executed_server_command &&
         actual.client_number == retained->client_number;
 }
+bool qa_network_q3_client_acknowledged_usercmd(qa_network_runtime *runtime, qa_net_client_id id,
+    const qa_q3_snapshot *snapshot, bool *has_sequence, uint64_t *sequence,
+    bool *history_unavailable, qa_error *error)
+{
+    q3_runtime_client *p = client_get(runtime, id, error);
+    if (!p) return false;
+    if (!snapshot || !has_sequence || !sequence || !history_unavailable ||
+        p->source->disconnected || p->source->disconnect_started ||
+        qa_q3_client_peer_snapshot_at(p->source, snapshot->message_number) != snapshot)
+        return qa_network_fail(error, "Prediction acknowledgement needs its actual live retained snapshot");
+    uint64_t latest = qa_q3_client_peer_usercmd_number(p->source);
+    bool matched = latest == 0; uint64_t acknowledged = 0;
+    uint64_t count = latest < 64 ? latest : 64;
+    for (uint64_t offset = 0; offset < count; ++offset) {
+        uint64_t number = latest - offset;
+        const qa_q3_usercmd *command = qa_q3_client_peer_usercmd_at(p->source, number);
+        if (command && command->serverTime == snapshot->player.commandTime) {
+            matched = true; acknowledged = number; break;
+        }
+    }
+    *has_sequence = matched; *sequence = acknowledged; *history_unavailable = !matched;
+    return true;
+}
 bool qa_network_q3_client_command(qa_network_runtime *runtime, qa_net_client_id id, const char *text, qa_error *error)
 { q3_runtime_client *p = client_get(runtime, id, error); return p && qa_q3_client_peer_command(p->source, text, error); }
 bool qa_network_q3_client_usercmd(qa_network_runtime *runtime, qa_net_client_id id, const qa_q3_usercmd *command, qa_error *error)
