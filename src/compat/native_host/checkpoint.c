@@ -224,7 +224,21 @@ static bool span(const uint8_t *cursor, const uint8_t *end, size_t size)
     return size <= (size_t)(end - cursor);
 }
 
-static bool restore_checkpoint(qa_native_host *host, qa_bytes state, qa_error *error)
+static bool apply_saved_cvars(qa_native_host *host, const saved_cvar *cvars,
+                              uint32_t count, qa_error *error)
+{
+    for (uint32_t index = 0; index < count; ++index) {
+        const qa_cvar_view *existing = qa_cvars_find(host->cvars, cvars[index].name);
+        if (!existing && !qa_cvars_register(host->cvars, cvars[index].name, cvars[index].value,
+            cvars[index].flags, host->world.owner, NULL, error)) return false;
+        if (!qa_cvars_full_set(host->cvars, cvars[index].name, cvars[index].value,
+            cvars[index].flags, error)) return false;
+    }
+    return native_host_refresh_cvars(host, error);
+}
+
+static bool restore_checkpoint(qa_native_host *host, qa_bytes state, bool cvars_only,
+                                qa_error *error)
 {
     if (!host || !host->instance || host->destroying || host->restoring || host->reconstruction ||
         !state.data || state.size < HOST_CHECKPOINT_HEADER)
@@ -253,10 +267,10 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, qa_error *e
         return native_host_fail(error, QA_ERROR_FORMAT, 0,
                                 "native host checkpoint identity or sizes are invalid");
     qa_native_entity_table table = {0};
-    if ((slot_count || retained_count) &&
+    if (!cvars_only && (slot_count || retained_count) &&
         !qa_native_entity_table_get(host->instance, &table, error))
         return false;
-    if (slot_count > table.capacity || retained_count > table.capacity ||
+    if ((!cvars_only && (slot_count > table.capacity || retained_count > table.capacity)) ||
         slot_count > (size_t)(end - cursor) / HOST_CHECKPOINT_SLOT)
         return native_host_fail(error, QA_ERROR_FORMAT, 0,
                                 "native host checkpoint slot table is invalid");
@@ -274,7 +288,7 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, qa_error *e
         slots[index].actor.generation = take_u64(&cursor);
         if (slots[index].kind == QA_NATIVE_SLOT_FREE ||
             slots[index].kind > QA_NATIVE_SLOT_BORROWED ||
-            slots[index].slot >= table.capacity) {
+            (!cvars_only && slots[index].slot >= table.capacity)) {
             free(slots);
             return native_host_fail(error, QA_ERROR_FORMAT, index,
                                     "native host checkpoint contains an invalid slot");
@@ -293,7 +307,7 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, qa_error *e
     }
     for (uint32_t index = 0; index < retained_count; ++index) {
         retained[index] = take_u32(&cursor);
-        if (retained[index] >= table.capacity) {
+        if (!cvars_only && retained[index] >= table.capacity) {
             free(slots);
             free(retained);
             return native_host_fail(error, QA_ERROR_FORMAT, index,
@@ -320,7 +334,8 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, qa_error *e
         cvars[index].flags = take_u32(&cursor);
         size_t remaining = (size_t)(end - cursor);
         if (!name || name > remaining || value > remaining - name ||
-            (size_t)name == SIZE_MAX || (size_t)value == SIZE_MAX)
+            (size_t)name == SIZE_MAX || (size_t)value == SIZE_MAX ||
+            memchr(cursor, 0, name) || memchr(cursor + name, 0, value))
             goto truncated;
         cvars[index].name = malloc((size_t)name + 1u);
         cvars[index].value = malloc((size_t)value + 1u);
@@ -353,6 +368,14 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, qa_error *e
     cursor += engine.size;
     qa_bytes bridge = {cursor, (size_t)bridge_size};
     host->restoring = true;
+    if (cvars_only) {
+        bool ok = apply_saved_cvars(host, cvars, cvar_count, error);
+        host->restoring = false;
+        free(slots);
+        free(retained);
+        free_saved_cvars(cvars, cvar_count);
+        return ok;
+    }
     bool ok = true;
     const qa_actor_registry *actors = host->world.session
                                          ? qa_session_actors(host->world.session)
@@ -388,17 +411,7 @@ static bool restore_checkpoint(qa_native_host *host, qa_bytes state, qa_error *e
             host->retained_capacity = table.capacity;
         }
     }
-    for (uint32_t index = 0; ok && index < cvar_count; ++index) {
-        const qa_cvar_view *existing = qa_cvars_find(host->cvars, cvars[index].name);
-        if (!existing)
-            ok = qa_cvars_register(host->cvars, cvars[index].name, cvars[index].value,
-                                   cvars[index].flags, host->world.owner, NULL, error);
-        if (ok)
-            ok = qa_cvars_full_set(host->cvars, cvars[index].name, cvars[index].value,
-                                   cvars[index].flags, error);
-    }
-    if (ok && !native_host_refresh_cvars(host, error))
-        ok = false;
+    if (ok) ok = apply_saved_cvars(host, cvars, cvar_count, error);
     if (ok) {
         memcpy(host->message, message.data, message.size);
         host->message_size = message.size;
@@ -437,7 +450,20 @@ bool qa_native_host_restore(qa_native_host *host, qa_bytes state, qa_error *erro
     if (!host || host->callback_depth)
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0, "native host restore requires an idle callback owner");
     ++host->callback_depth;
-    bool ok = restore_checkpoint(host, state, error);
+    bool ok = restore_checkpoint(host, state, false, error);
+    --host->callback_depth;
+    return ok;
+}
+
+bool qa_native_host_restore_cvars(qa_native_host *host, qa_bytes state, qa_error *error)
+{
+    if (!host || host->callback_depth || host->kind != NATIVE_HOST_Q2_GAME ||
+        !host->cvars || !host->instance ||
+        qa_native_get_lifecycle(host->instance) != QA_NATIVE_LOADED)
+        return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
+            "native cvar import requires its idle loaded original Q2 GAME owner");
+    ++host->callback_depth;
+    bool ok = restore_checkpoint(host, state, true, error);
     --host->callback_depth;
     return ok;
 }

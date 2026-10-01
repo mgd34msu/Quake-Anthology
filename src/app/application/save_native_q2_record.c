@@ -2,6 +2,7 @@
 #include "save_native_q2.h"
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_continuation.h"
+#include "startup_flow.h"
 #include "qa/binary.h"
 
 #include <stdlib.h>
@@ -173,6 +174,10 @@ bool application_native_q2_save_restore(application_provider *provider, qa_bytes
         ok = application_native_q2_activate(engine, error) &&
             application_native_q2_prepare_restore(provider, error);
     }
+    if (ok)
+        ok = qa_native_host_restore_cvars(provider->state.native.host, snapshot.host, error) &&
+            application_startup_source_restore(provider, engine->console, engine->cvars,
+                &engine->command_context, error);
     if (ok) {
         ++engine->calls;
         ok = qa_native_host_initialize(provider->state.native.host, 0, 0, false, error);
