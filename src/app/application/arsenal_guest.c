@@ -149,7 +149,11 @@ static bool weapon_branch(void *context, const qa_qvm_call *call, bool original,
         *taken = original; return cancel_client(call, scope->call, error);
     }
     qa_application *app = input->role->engine->provider->application;
-    if (application_provider_for(app, scope->actor, QA_ROLE_ARSENAL, "") == input->role->engine->provider) {
+    qa_equipment_state equipment;
+    bool primary_selected = !app->equipment || !qa_equipment_read(app->equipment, scope->actor, &equipment) ||
+        (!equipment.slot_active && !equipment.slot_holstering && !equipment.slot_lowering);
+    if (primary_selected &&
+        application_provider_for(app, scope->actor, QA_ROLE_ARSENAL, "") == input->role->engine->provider) {
         *taken = original; return true;
     }
     (void)call;
@@ -809,6 +813,45 @@ static bool is_guest(const application_provider *provider)
 {
     return provider && (provider->kind == APPLICATION_PROVIDER_QVM ||
         (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->component.clock.kind == QA_CLOCK_Q3));
+}
+
+bool application_arsenal_guest_equipment_handoff_ready(application_provider *provider,
+    qa_actor_id actor, qa_error *error)
+{
+    if (!provider || provider->kind != APPLICATION_PROVIDER_QVM || !provider->application ||
+        !provider->constructed || !provider->attached || provider->close_pending ||
+        !qa_actors_get(qa_session_actors(provider->application->session), actor) ||
+        application_provider_for(provider->application, actor, QA_ROLE_ARSENAL, "") != provider)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Original Q3 equipment handoff requires its live selected arsenal owner");
+    struct application_q3_guest *engine = q3g_engine(provider);
+    q3g_role *role = engine ? engine->game : NULL;
+    application_guest_input *input = role ? role->input : NULL;
+    if (!engine || engine->provider != provider || engine->restore_pending || !role ||
+        role->engine != engine || role->kind != QA_QVM_GAME || !role->initialized || !role->ready ||
+        !role->committed || role->retired || role->source_cleared || !role->vm || !role->image || !role->host ||
+        !input || input->role != role || !input->profile.input_present || !input->profile.has_weapons ||
+        !input->profile.weapon_branch_count || !input->profile.weapon_branches ||
+        !input->weapon_bindings || !input->weapon_contexts || input->binding_count != 6)
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Original Q3 equipment handoff requires its retained GAME weapon profile");
+    for (size_t i = 0; i < input->binding_count; ++i)
+        if (!input->bindings[i])
+            return application_fail(error, QA_ERROR_UNSUPPORTED,
+                "Original Q3 equipment handoff lost its GAME callback owner");
+    uint32_t slot, bound_slot;
+    if (!application_q3_guest_actor_client(provider, actor, &slot) ||
+        !qa_q3_host_actor_slot(role->host, actor, &bound_slot, error) || bound_slot != slot)
+        return application_fail(error, QA_ERROR_NOT_FOUND,
+            "Original Q3 equipment handoff lost its physical source client");
+    guest_client_scope scope = {0};
+    bool present;
+    if (!slot_player(input, slot, &scope, &present, error)) return false;
+    if (!present || !qa_actor_id_equal(scope.actor, actor) || !record_current(input, &scope))
+        return application_fail(error, QA_ERROR_NOT_FOUND,
+            "Original Q3 equipment handoff lost its located source player");
+    qa_q3_player player;
+    return qa_qvm_read_player(role->vm, (int32_t)scope.player, true, &player, error);
 }
 
 bool application_arsenal_guest_output_admit(application_provider *provider, uint8_t channels,

@@ -4,6 +4,8 @@
 #include "native_q3_clients.h"
 #include "native_q3_objectives.h"
 #include "map_travel_private.h"
+#include "equipment_runtime.h"
+#include "guest_input_private.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -26,12 +28,17 @@ static bool mode_event(void *opaque, const qa_mode_event *event,
                        qa_error *error)
 {
     qa_application *application = opaque;
+    application_provider *source = application_mode_provider(application, event->mode);
+    if (source == NULL)
+        return application_fail(error, QA_ERROR_NOT_FOUND,
+                                "mode event lost its selected source content owner");
     return application_emit(
         application,
         &(qa_builtin_event){.kind = event->kind == QA_MODE_MESSAGE
                                         ? QA_BUILTIN_MESSAGE
                                         : QA_BUILTIN_EFFECT,
                             .family = mode_family(application, event->mode),
+                            .provider = source->owner,
                             .actor = event->actor,
                             .other = event->other,
                             .time_ns = event->time_ns,
@@ -189,41 +196,6 @@ static application_provider *named(application_publication *publication,
     return NULL;
 }
 
-static bool assign_equipment_source(application_provider *provider,
-                                    qa_equipment_options *options,
-                                    qa_error *error)
-{
-    if (provider == NULL)
-        return true;
-    switch (provider->kind) {
-    case APPLICATION_PROVIDER_Q1:
-        if (options->q1 != NULL && options->q1 != provider->state.q1)
-            return application_fail(error, QA_ERROR_UNSUPPORTED,
-                                    "one equipment scope selects multiple Q1 instances");
-        options->q1 = provider->state.q1;
-        return true;
-    case APPLICATION_PROVIDER_Q2:
-        if (options->q2 != NULL && options->q2 != provider->state.q2)
-            return application_fail(error, QA_ERROR_UNSUPPORTED,
-                                    "one equipment scope selects multiple Q2 instances");
-        options->q2 = provider->state.q2;
-        return true;
-    case APPLICATION_PROVIDER_Q3:
-        if (options->q3 != NULL && options->q3 != provider->state.q3)
-            return application_fail(error, QA_ERROR_UNSUPPORTED,
-                                    "one equipment scope selects multiple Q3 instances");
-        options->q3 = provider->state.q3;
-        options->q3_owner = provider->owner;
-        return true;
-    case APPLICATION_PROVIDER_QC:
-    case APPLICATION_PROVIDER_QVM:
-    case APPLICATION_PROVIDER_NATIVE:
-        return application_fail(error, QA_ERROR_UNSUPPORTED,
-                                "external equipment projection is not installed");
-    }
-    return false;
-}
-
 static application_provider *arsenal_provider(qa_application *application,
                                               qa_actor_id actor)
 {
@@ -243,6 +215,8 @@ static bool equipment_holster(void *opaque, qa_actor_id actor,
         return qa_q2_weapon_holster(provider->state.q2, actor, error);
     if (provider->kind == APPLICATION_PROVIDER_Q3)
         return qa_q3_set_weapon_slot(provider->state.q3, actor, true, error);
+    if (provider->kind == APPLICATION_PROVIDER_QVM)
+        return application_arsenal_guest_equipment_handoff_ready(provider, actor, error);
     return application_fail(error, QA_ERROR_UNSUPPORTED,
                             "selected arsenal has no equipment holster adapter");
 }
@@ -267,6 +241,12 @@ static bool equipment_holstered(void *opaque, qa_actor_id actor)
         return qa_q3_player_read(provider->state.q3, actor, &state) &&
                state.external_slot == QA_Q3_SLOT_HOLSTERED;
     }
+    if (provider->kind == APPLICATION_PROVIDER_QVM) {
+        qa_equipment_state state;
+        qa_application *application = opaque;
+        return application_arsenal_guest_equipment_handoff_ready(provider, actor, NULL) &&
+            qa_equipment_read(application->equipment, actor, &state) && state.slot_holstering;
+    }
     return false;
 }
 
@@ -288,6 +268,8 @@ static bool equipment_resume(void *opaque, qa_actor_id actor, qa_error *error)
     }
     if (provider->kind == APPLICATION_PROVIDER_Q3)
         return qa_q3_set_weapon_slot(provider->state.q3, actor, false, error);
+    if (provider->kind == APPLICATION_PROVIDER_QVM)
+        return application_arsenal_guest_equipment_handoff_ready(provider, actor, error);
     return application_fail(error, QA_ERROR_UNSUPPORTED,
                             "selected arsenal has no equipment resume adapter");
 }
@@ -373,8 +355,8 @@ bool application_match_prepare_equipment(qa_application *application,
                                          application_publication *publication,
                                          qa_error *error)
 {
-    const qa_launch_choices *choices =
-        qa_launch_snapshot_choices(publication->candidate);
+    if (!publication || publication->equipment || publication->equipment_runtime)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Equipment publication already owns its controller or source roster");
     qa_equipment_options equipment = {
         .services = application_builtin_services(
             application,
@@ -387,37 +369,13 @@ bool application_match_prepare_equipment(qa_application *application,
         .primary_holstered = equipment_holstered,
         .primary_resume = equipment_resume,
     };
-    for (size_t index = 0; index < choices->equipment_count; ++index) {
-        const qa_launch_equipment *selection = &choices->equipment[index];
-        if (!assign_equipment_source(named(publication, selection->instance),
-                                     &equipment, error) ||
-            !assign_equipment_source(named(publication,
-                                           selection->grapple_source),
-                                     &equipment, error) ||
-            !assign_equipment_source(named(publication,
-                                           selection->grenade_source),
-                                     &equipment, error))
-            return false;
-    }
-    if (equipment.q3 != NULL) {
-        application_provider *provider = NULL;
-        for (size_t index = 0; index < publication->next_count; ++index)
-            if (publication->next[index]->kind == APPLICATION_PROVIDER_Q3 &&
-                publication->next[index]->state.q3 == equipment.q3) {
-                provider = publication->next[index];
-                break;
-            }
-        const qa_product *product =
-            provider == NULL
-                ? NULL
-                : qa_catalog_product(qa_launch_snapshot_catalog(
-                                         publication->candidate),
-                                     provider->launch->selection.product);
-        equipment.q3_product =
-            product != NULL && strcmp(product->campaign, "missionpack") == 0
-                ? QA_Q3_TEAM_ARENA
-                : QA_Q3_ARENA;
-    }
+    application_equipment_runtime_options runtime = {.application = application,
+        .snapshot = publication->candidate, .providers = publication->next,
+        .provider_count = publication->next_count, .world_source = publication->map_provider,
+        .services = equipment.services, .entity_text = publication->map.lumps[QA_BSP_ENTITIES].bytes};
+    if (!application_equipment_runtime_create(&runtime, publication->equipment_runtime_saved,
+        &publication->equipment_runtime, error)) return false;
+    application_equipment_runtime_bind(publication->equipment_runtime, &equipment);
     return qa_equipment_create(&equipment, &publication->equipment, error);
 }
 
@@ -434,6 +392,7 @@ bool qa_application_prepare_match_travel(qa_application *application,
 {
     if (application == NULL || application->operation != APPLICATION_IDLE ||
         application->destroy_requested || application->finalizing ||
+        application->startup_flow ||
         application->state == QA_APPLICATION_FAULTED ||
         application->state == QA_APPLICATION_STOPPING ||
         !qa_session_destroy_ready(application->session) ||
@@ -471,12 +430,18 @@ bool qa_application_finish_match_travel(qa_application *application,
         application->state == QA_APPLICATION_STOPPING)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "match completion requires a live idle application");
+    uint64_t published_revision = 0;
+    if (!qa_application_travel_publication_read(application, &published_revision) || published_revision != revision)
+        return application_fail(error, QA_ERROR_ARGUMENT, "match completion requires its actual travel publication");
     if (application->match_intents == NULL)
         return true;
     uint64_t pending_revision = 0;
     if (!application_match_intents_waiting(application->match_intents,
-                                           &pending_revision))
-        return true;
+                                           &pending_revision)) {
+        bool consumed = false;
+        return application_match_intents_prepare(application->match_intents,
+                                                    application, &consumed, error);
+    }
     if (pending_revision != revision)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "match completion differs from its queued travel");

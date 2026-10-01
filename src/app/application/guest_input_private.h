@@ -57,6 +57,9 @@ bool application_arsenal_guest_stage_move(qa_application *, qa_actor_id,
     const qa_movement_command *, const struct application_control_external_stage *, bool *, qa_error *);
 bool application_guest_input_applying(const qa_application *, qa_actor_id);
 bool application_guest_input_actor_idle(const qa_application *, qa_actor_id);
+/* Immediate handoff borrows the controller's saved slot state and validates
+ * this actual GAME's retained weapon hooks and located full-actor player. */
+bool application_arsenal_guest_equipment_handoff_ready(application_provider *, qa_actor_id, qa_error *);
 bool application_control_guest_complete(qa_application *, qa_actor_id,
                                          const qa_movement_command *, const qa_q3_player *,
                                          qa_error *);
