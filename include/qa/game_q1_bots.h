@@ -51,4 +51,9 @@ bool qa_q1_source_client_set_score(qa_q1_game *,qa_actor_id,float score,qa_error
 bool qa_q1_source_client_observer(qa_q1_game *,qa_actor_id,bool,qa_error *);
 bool qa_q1_source_client_spawned(qa_q1_game *,qa_actor_id,qa_error *);
 bool qa_q1_bot_exit_level(qa_q1_game *,double seconds,bool same_level,qa_error *);
+/* The caller frees genuine supply receipts with qa_supply_preview_free.
+ * found qualifies a source weapon/ammo offer; eligible also requires its
+ * current source touch lifecycle and recipient admission. */
+bool qa_q1_bot_supply_preview(qa_q1_game *,qa_actor_id pickup,qa_actor_id recipient,
+                              qa_supply_preview_result *,bool *eligible,bool *found,qa_error *);
 #endif

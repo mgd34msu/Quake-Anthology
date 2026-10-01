@@ -26,4 +26,7 @@ bool qa_q2_bot_clock_read(const qa_q2_game *,uint64_t *,bool *,uint64_t *,qa_err
 bool qa_q2_bot_max_clients(const qa_q2_game *,uint32_t *,qa_error *);
 bool qa_q2_bot_activate(qa_q2_game *,qa_actor_id,qa_error *);
 qa_actor_id qa_q2_bot_world_actor(const qa_q2_game *);
+/* The caller frees genuine supply receipts with qa_supply_preview_free. */
+bool qa_q2_bot_supply_preview(qa_q2_game *,qa_actor_id pickup,qa_actor_id recipient,
+                              qa_supply_preview_result *,bool *eligible,bool *found,qa_error *);
 #endif

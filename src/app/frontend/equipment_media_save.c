@@ -110,13 +110,14 @@ static bool row_fields(qa_source_save_io *io, qa_application_content_graph *grap
     frontend_equipment_media *row)
 {
     uint32_t family = row->family;
-    if (!owner_fields(io, &row->provider) || !qa_source_save_u32(io, &family) || family > QA_GAME_Q2 ||
+    if (!owner_fields(io, &row->provider) || !qa_source_save_u32(io, &family) || family > QA_GAME_Q3 ||
         !qa_source_save_string(io, &row->item) || !frontend_save_text(io, &row->view_path) ||
         !row->view_path || !*row->view_path ||
-        !qa_source_save_count(io, &row->saved_owner, SIZE_MAX) ||
-        !qa_source_save_count(io, &row->saved_view, SIZE_MAX) ||
-        !resource_fields(io, graph, &row->view.resource) || !row->view.resource ||
-        !declaration_fields(io, graph, &row->declaration)) return false;
+        !qa_source_save_count(io, &row->saved_owner, SIZE_MAX)) return false;
+    if (family != QA_GAME_Q3 && (!qa_source_save_count(io, &row->saved_view, SIZE_MAX) ||
+        !resource_fields(io, graph, &row->view.resource) || !row->view.resource)) return false;
+    if (!declaration_fields(io, graph, &row->declaration) ||
+        (family == QA_GAME_Q3 && !row->declaration.source)) return false;
     row->family = (qa_game_family)family;
     if (row->declaration.none) return true;
     return qa_source_save_count(io, &row->saved_parent, SIZE_MAX) &&
@@ -133,7 +134,8 @@ static bool physical_refs(const qa_frontend *frontend, frontend_equipment_media 
         if (!frontend_visual_owner_read(frontend, i, &owner)) return false;
         if (owner.owner != row->provider || owner.mounts != row->owner.mounts ||
             owner.images != row->owner.images || owner.materials != row->owner.materials) continue;
-        bool view = false, parent = row->declaration.none;
+        bool view = row->family == QA_GAME_Q3, parent = row->declaration.none;
+        if (view && (row->view.resource || row->view.model || row->view.scene)) return false;
         for (size_t j = 0; j < frontend_visual_model_count(frontend, i); ++j) {
             frontend_visual_model_view model;
             if (!frontend_visual_model_read(frontend, i, j, &model)) return false;
@@ -159,7 +161,7 @@ bool frontend_equipment_topology_checkpoint(const qa_frontend *frontend, qa_buff
     qa_application_content_graph *graph = qa_application_content_graph_read(frontend->application);
     if (!graph) return frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment capture requires the leased actual content graph");
     qa_source_save_io io = {0}; size_t count = frontend_equipment_media_count(frontend);
-    uint8_t magic[4] = {'Q','F','E','T'}; uint32_t schema = 1;
+    uint8_t magic[4] = {'Q','F','E','T'}; uint32_t schema = 2;
     bool ok = qa_source_save_writer(&io, qa_application_session(frontend->application), error) &&
         qa_source_save_bytes(&io, magic, sizeof(magic)) && qa_source_save_u32(&io, &schema) &&
         qa_source_save_count(&io, &count, SIZE_MAX);
@@ -188,7 +190,7 @@ bool frontend_equipment_prepare_restored(qa_frontend *frontend, qa_bytes bytes, 
     qa_source_save_io io = {0}; size_t count = 0; uint8_t magic[4]; uint32_t schema = 0;
     bool ok = qa_source_save_reader(&io, qa_application_session(frontend->application), bytes, error) &&
         qa_source_save_bytes(&io, magic, sizeof(magic)) && !memcmp(magic, "QFET", sizeof(magic)) &&
-        qa_source_save_u32(&io, &schema) && schema == 1 && qa_source_save_count(&io, &count, bytes.size / 64);
+        qa_source_save_u32(&io, &schema) && schema == 2 && qa_source_save_count(&io, &count, bytes.size / 32);
     for (size_t i = 0; ok && i < count; ++i) {
         frontend_equipment_media *row = calloc(1, sizeof(*row));
         if (!row) { ok = frontend_fail(error, QA_ERROR_MEMORY, "Preparing restored physical equipment media row"); break; }
@@ -197,8 +199,9 @@ bool frontend_equipment_prepare_restored(qa_frontend *frontend, qa_bytes bytes, 
         ok = row_fields(&io, graph, row);
         if (ok) ok = frontend_visual_owner_read(frontend, row->saved_owner, &row->owner) &&
             row->owner.owner == row->provider && row->owner.family ==
-                (row->family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q1) &&
-            qa_resource_pool_find(qa_vfs_resources(row->owner.mounts), qa_resource_id(row->view.resource)) == row->view.resource &&
+                (row->family == QA_GAME_Q3 ? QA_SCENE_Q3 : row->family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q1) &&
+            (row->family == QA_GAME_Q3 || qa_resource_pool_find(qa_vfs_resources(row->owner.mounts),
+                qa_resource_id(row->view.resource)) == row->view.resource) &&
             (!row->declaration.source || qa_resource_pool_find(qa_vfs_resources(row->owner.mounts),
                 qa_resource_id(row->declaration.source)) == row->declaration.source) &&
             (row->declaration.none || qa_resource_pool_find(qa_vfs_resources(row->owner.mounts),
@@ -225,8 +228,8 @@ bool frontend_equipment_prepare_restored(qa_frontend *frontend, qa_bytes bytes, 
 static bool restored_refs(const qa_frontend *frontend, const frontend_equipment_media *row,
     frontend_visual_model_view *view, frontend_visual_model_view *parent)
 {
-    if (!frontend_visual_model_read(frontend, row->saved_owner, row->saved_view, view) ||
-        view->resource != row->view.resource || strcmp(view->path, row->view_path)) return false;
+    if (row->family != QA_GAME_Q3 && (!frontend_visual_model_read(frontend, row->saved_owner, row->saved_view, view) ||
+        view->resource != row->view.resource || strcmp(view->path, row->view_path))) return false;
     if (row->declaration.none) return true;
     if (!frontend_visual_model_read(frontend, row->saved_owner, row->saved_parent, parent) ||
         parent->resource != row->held_parent.resource || strcmp(parent->path, row->saved_parent_path) ||
@@ -266,11 +269,25 @@ static bool subset_matches(const frontend_equipment_media *row, const qa_model *
     const qa_model *parent = row->held_parent.model;
     if (model == parent || model->format != QA_MODEL_MDL || model->mesh_count != 1 ||
         model->frame_count != parent->frame_count || model->skin_count != parent->skin_count ||
-        !model->meshes || !parent->meshes) return false;
+        !model->meshes || !parent->meshes || model->meshes == parent->meshes ||
+        model->frames != parent->frames || model->frame_groups != parent->frame_groups ||
+        model->skin_groups != parent->skin_groups || model->skins != parent->skins ||
+        model->tags != parent->tags || model->sprites != parent->sprites ||
+        model->lods != parent->lods || model->bones != parent->bones ||
+        model->bone_matrices != parent->bone_matrices || model->bind_pose != parent->bind_pose ||
+        model->gl_commands != parent->gl_commands ||
+        model->command_line.data != parent->command_line.data ||
+        model->command_line.size != parent->command_line.size ||
+        model->source.data != parent->source.data || model->source.size != parent->source.size) return false;
     const qa_model_mesh *actual = model->meshes, *source = parent->meshes;
     if (actual->vertex_count != source->vertex_count || actual->texcoord_count != source->texcoord_count ||
         actual->frame_count != source->frame_count || actual->shader_count != source->shader_count ||
-        !actual->triangle_count || !actual->triangles || !source->triangles) return false;
+        actual->weight_count != source->weight_count || actual->bone_reference_count != source->bone_reference_count ||
+        actual->vertices != source->vertices || actual->texcoords != source->texcoords ||
+        actual->shaders != source->shaders || actual->weights != source->weights ||
+        actual->vertex_weights != source->vertex_weights || actual->bone_references != source->bone_references ||
+        !actual->triangle_count || !actual->triangles || !source->triangles ||
+        actual->triangles == source->triangles) return false;
     size_t at = 0;
     for (uint32_t i = 0; i < source->triangle_count; ++i) {
         const qa_model_triangle *triangle = source->triangles + i;
@@ -309,7 +326,8 @@ bool frontend_equipment_media_attach_restored(qa_frontend *frontend, size_t ordi
     frontend_model_lease *lease = NULL; frontend_model_source source = {0};
     if (!frontend_model_retain(models, model, &lease, error)) return false;
     if (!frontend_model_lease_source(lease, &source) || source.resource != row->held_parent.resource ||
-        source.files != row->owner.mounts) {
+        source.files != row->owner.mounts || source.parent !=
+            (row->declaration.part_digest_count ? row->held_parent.model : NULL)) {
         frontend_model_release(lease);
         return frontend_fail(error, QA_ERROR_FORMAT, "Equipment parsed holder leaves its actual retained resource provenance");
     }
@@ -324,7 +342,9 @@ bool frontend_equipment_topology_ready(const qa_frontend *frontend, qa_error *er
     for (const frontend_equipment_media *row = frontend->equipment ? frontend->equipment->media : NULL;
             row; row = row->next) {
         if (!row->bound || !qa_application_provider_instance(frontend->application, row->provider) ||
-            !row->view.model || !row->view.scene || (!row->declaration.none &&
+            (row->family != QA_GAME_Q3 && (!row->view.model || !row->view.scene)) ||
+            (row->family == QA_GAME_Q3 && (!row->declaration.source || row->view.resource ||
+                row->view.model || row->view.scene)) || (!row->declaration.none &&
                 (!row->held.model || !row->held_scene || (row->restoring && !row->held_lease))))
             return frontend_fail(error, QA_ERROR_FORMAT, "Equipment topology omits an actual source cache or held root");
     }

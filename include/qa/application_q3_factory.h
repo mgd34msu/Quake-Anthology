@@ -69,6 +69,18 @@ bool qa_application_q3_preconstruction_source_read(qa_application *, qa_actor_ow
  * registry and metadata remain retained, ready for content replacement. */
 bool qa_application_q3_remote_clear(qa_application *,
     const qa_application_q3_remote_source *, qa_application_q3_remote_source *, qa_error *);
+typedef struct qa_application_q3_remote_binding {
+    qa_application_q3_remote_source previous;
+    uint64_t new_epoch;
+    void *connection;
+    /* Pure proof that the retained old transport is absent and the fresh
+     * generation-bearing transport owns this actual receiver and seat. */
+    bool (*current)(void *, uint64_t old_epoch, uint64_t new_epoch, qa_error *);
+} qa_application_q3_remote_binding;
+/* Rebind only already cleared roles at the idle new-admission boundary.
+ * Their actual hosts, registry, descriptor and content generation survive. */
+bool qa_application_q3_remote_rebind(qa_application *,
+    const qa_application_q3_remote_binding *, qa_application_q3_remote_source *, qa_error *);
 /* Builds CGAME/UI hosts from independently cloned prepared content. No GAME,
  * actor, session clock or world configuration is constructed or changed.
  * Source Init remains a separate operation after decoded gamestate is ready. */

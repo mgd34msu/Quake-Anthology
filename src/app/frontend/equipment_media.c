@@ -95,11 +95,12 @@ static bool held_model(qa_frontend *frontend, frontend_equipment_media *row, qa_
         options, &row->held_scene, error);
 }
 
-bool frontend_equipment_media_prepare(qa_frontend *frontend, const qa_application_equipment_view *view,
-    frontend_equipment_media **out, qa_error *error)
+static bool prepare_media(qa_frontend *frontend, const qa_application_equipment_view *view,
+    frontend_held_declaration *authored, frontend_equipment_media **out, qa_error *error)
 {
     if (!frontend || !view || !out || !view->selected || !view->view_model || !view->view_model[0] ||
-        view->family == QA_GAME_Q3 || !qa_application_equipment_current(frontend->application, view) ||
+        (view->family == QA_GAME_Q3 && (!authored || !authored->source)) ||
+        !qa_application_equipment_current(frontend->application, view) ||
         (frontend->equipment && frontend->equipment->admitting))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Foreign equipment media requires its actual selected source observation");
     for (const frontend_equipment_media *row = frontend->equipment ? frontend->equipment->media : NULL;
@@ -112,7 +113,8 @@ bool frontend_equipment_media_prepare(qa_frontend *frontend, const qa_applicatio
     }
     for (frontend_equipment_media *row = frontend->equipment->media; row; row = row->next)
         if (row->provider == view->provider && row->family == view->family && row->item == view->item &&
-            !strcmp(row->view_path, view->view_model) && (!view->view_source || row->view.resource == view->view_source)) {
+            !strcmp(row->view_path, view->view_model) && (view->family == QA_GAME_Q3 ||
+                !view->view_source || row->view.resource == view->view_source)) {
             *out = row; return true;
         }
     frontend_equipment_media *row = calloc(1, sizeof(*row));
@@ -123,12 +125,15 @@ bool frontend_equipment_media_prepare(qa_frontend *frontend, const qa_applicatio
     if (!row->view_path) { frontend_equipment_media_dispose(row); return frontend_fail(error, QA_ERROR_MEMORY, "Retaining selected model identity"); }
     memcpy(row->view_path, view->view_model, length);
     frontend->equipment->admitting = true;
-    bool ok = frontend_visual_media_acquire(frontend, view->provider, view->family, &row->owner, error) &&
-        frontend_visual_model_acquire(frontend, view->provider, view->family, view->view_model,
+    bool ok = frontend_visual_media_acquire(frontend, view->provider, view->family, &row->owner, error);
+    if (ok && view->family != QA_GAME_Q3)
+        ok = frontend_visual_model_acquire(frontend, view->provider, view->family, view->view_model,
             view->view_source, &row->view, error);
     if (ok) {
         qa_resource_retain((qa_resource *)row->view.resource);
-        ok = held_declaration(frontend, view, row, error) && held_model(frontend, row, error);
+        if (authored) { row->declaration = *authored; *authored = (frontend_held_declaration){0}; }
+        else ok = held_declaration(frontend, view, row, error);
+        if (ok) ok = held_model(frontend, row, error);
     }
     if (ok && !qa_application_equipment_current(frontend->application, view))
         ok = frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment admission lost its actual selected source owner");
@@ -140,6 +145,56 @@ bool frontend_equipment_media_prepare(qa_frontend *frontend, const qa_applicatio
     frontend->equipment->tail = row;
     *out = row;
     return true;
+}
+
+bool frontend_equipment_media_prepare(qa_frontend *frontend, const qa_application_equipment_view *view,
+    frontend_equipment_media **out, qa_error *error)
+{ return prepare_media(frontend, view, NULL, out, error); }
+
+bool frontend_equipment_media_prepare_q3_held(qa_frontend *frontend,
+    const qa_application_equipment_view *view, frontend_equipment_media **out,
+    bool *authored, qa_error *error)
+{
+    if (!frontend || !view || !out || *out || !authored || view->family != QA_GAME_Q3 ||
+        !view->selected || !view->view_model || !view->view_model[0] ||
+        !qa_application_equipment_current(frontend->application, view) ||
+        (frontend->equipment && frontend->equipment->admitting))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 held admission requires its actual selected source and empty output");
+    *authored = false;
+    for (const frontend_equipment_media *row = frontend->equipment ? frontend->equipment->media : NULL;
+            row; row = row->next)
+        if (row->held_scene && !qa_scene_model_idle(row->held_scene))
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 held admission requires idle physical scenes");
+    for (frontend_equipment_media *row = frontend->equipment ? frontend->equipment->media : NULL;
+            row; row = row->next) {
+        if (row->provider == view->provider && row->family == view->family && row->item == view->item &&
+            !strcmp(row->view_path, view->view_model)) {
+            if (!row->bound || !row->declaration.source)
+                return frontend_fail(error, QA_ERROR_FORMAT, "Q3 held media lost its retained authored declaration");
+            *out = row; *authored = true; return true;
+        }
+    }
+    frontend_visual_owner_view owner;
+    if (!frontend_visual_media_acquire(frontend, view->provider, view->family, &owner, error)) return false;
+    size_t length = strlen(view->view_model);
+    if (length > SIZE_MAX - sizeof(".held.json"))
+        return frontend_fail(error, QA_ERROR_MEMORY, "Q3 held declaration path exceeds address space");
+    char *path = malloc(length + sizeof(".held.json"));
+    if (!path) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining Q3 held declaration path");
+    memcpy(path, view->view_model, length);
+    memcpy(path + length, ".held.json", sizeof(".held.json"));
+    bool found = false;
+    bool okay = qa_vfs_probe(owner.mounts, path, &found, NULL, error);
+    qa_resource *resource = NULL; frontend_held_declaration declaration = {0};
+    if (okay && found) okay = qa_vfs_acquire(owner.mounts, path, &resource, NULL, error) &&
+        frontend_held_declaration_read(resource, &declaration, error);
+    free(path); qa_resource_release(resource);
+    if (okay && found) okay = prepare_media(frontend, view, &declaration, out, error);
+    frontend_held_declaration_free(&declaration);
+    if (okay && !qa_application_equipment_current(frontend->application, view))
+        okay = frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 held probe retired its actual selected source");
+    if (okay) *authored = found;
+    return okay;
 }
 
 bool frontend_equipment_media_read(const frontend_equipment_media *row,

@@ -38,10 +38,11 @@ void frontend_equipment_source_rebind(frontend_equipment_source *, qa_frontend *
 bool frontend_equipment_source_weapon(const frontend_equipment_source *,
     qa_application_equipment_view *, bool *requested, qa_error *);
 /* Native CGAME supplies the real physical actor, authored torso and source
- * powerups. Suppression requires an admitted selected Q3 output. */
+ * powerups. Authored=true routes through the held-pass services; otherwise
+ * suppression requires submitted=true from the native selected Q3 kernel. */
 bool frontend_equipment_source_native_held(frontend_equipment_source *,
     qa_actor_id, const qa_q3_ref_entity *, int32_t powerups, bool personal_model,
-    bool *submitted, qa_error *);
+    bool *authored, bool *submitted, qa_error *);
 /* Own selected view output is prepared before the primary kernel. An actual
  * selected hidden request is consumed without constructing a source parent. */
 bool frontend_equipment_source_native_view(frontend_equipment_source *, bool *consumed, qa_error *);

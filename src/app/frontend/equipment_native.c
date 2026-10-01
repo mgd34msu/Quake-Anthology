@@ -95,9 +95,12 @@ static bool held(void *context, const q3n_frame *frame, const qa_q3_entity *stat
     qa_application_equipment_view source;
     if (!qa_application_equipment_read(frame->application, actual.binding.actor, &source, error)) return false;
     if (!source.selected) return true;
-    if (source.family == QA_GAME_Q3)
-        return frontend_equipment_source_native_held(owner->source, actual.binding.actor, parent,
-            state->powerups, (parent->flags & 2) != 0, suppressed, error);
+    if (source.family == QA_GAME_Q3) {
+        bool authored = false;
+        if (!frontend_equipment_source_native_held(owner->source, actual.binding.actor, parent,
+                state->powerups, (parent->flags & 2) != 0, &authored, suppressed, error)) return false;
+        if (!authored) return true;
+    }
     void *token = NULL; bool admitted = false;
     if (!owner->services.held_begin(owner->services.context, actual.binding.actor, parent,
             &token, &admitted, error)) return false;

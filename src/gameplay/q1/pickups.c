@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/game_q1_maps.h"
 #include "qa/game_q1_checkpoint.h"
+#include "qa/game_q1_bots.h"
 #include <float.h>
 #include <stdio.h>
 
@@ -1144,6 +1145,47 @@ static float protection_value(qa_regular_armor armor) {
         : armor.kind == QA_ARMOR_Q2 ? armor.protection.q2.normal
         : armor.kind == QA_ARMOR_Q3 ? armor.protection.q3_protection : 0;
     return armor.points * absorption;
+}
+bool qa_q1_bot_supply_preview(qa_q1_game *g,qa_actor_id pickup,qa_actor_id recipient,
+    qa_supply_preview_result *out,bool *eligible,bool *found,qa_error *error) {
+    if(!g || !out || !eligible || !found) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q1 supply preview requires its source owner and outputs");
+        return false;
+    }
+    *out=(qa_supply_preview_result){0};*eligible=false;*found=false;
+    qa_q1_game_operation operation={0};
+    if(!qa_q1_game_operation_begin(g,&operation,error)) return false;
+    bool ok=true;
+    q1_actor *entity=q1_entity(g,pickup);
+    if(!entity || entity->kind!=Q1_PICKUP || entity->touch_disabled) goto done;
+    q1_pickup item=entity->state.pickup;
+    if(item.external || item.mission || item.drop!=Q1_DROP_NONE ||
+       (item.kind!=Q1_ITEM_WEAPON && item.kind!=Q1_ITEM_AMMO)) goto done;
+    *found=true;
+    if(!item.hidden && entity->physics.solid==QA_PHYSICS_TRIGGER &&
+       q1_health(g,recipient)>0 && q1_player_get(g,recipient)) {
+        *eligible=true;
+        if(item.kind==Q1_ITEM_WEAPON && weapon_leave(g)) {
+            bool owned;
+            ok=qa_supply_owns(supply(g,recipient),recipient,item.item,&owned,error);
+            if(!ok) goto done;
+            *eligible=!owned;
+        }
+    }
+    if(!q1_alive(g,pickup) || !q1_alive(g,recipient) || g->destroy_pending) {
+        *eligible=false;*found=false;goto done;
+    }
+    int ammo=item.kind==Q1_ITEM_WEAPON?q1_weapon_ammo(item.weapon):-1;
+    qa_pickup_grant grant={.item=item.kind==Q1_ITEM_AMMO?item.item:ammo>=0?g->ammo[ammo]:0,
+                           .amount=item.count};
+    qa_supply_offer offer={.kind=item.kind==Q1_ITEM_WEAPON?QA_SUPPLY_WEAPON:QA_SUPPLY_AMMO,
+        .item=item.item,.ammo=&grant,.ammo_count=item.kind==Q1_ITEM_AMMO || ammo>=0?1:0};
+    ok=qa_supply_preview(supply(g,recipient),recipient,&offer,false,out,error);
+    if(!ok || !q1_alive(g,pickup) || !q1_alive(g,recipient) || g->destroy_pending) {
+        qa_supply_preview_free(out);*eligible=false;*found=false;
+    }
+done:
+    qa_q1_game_operation_end(&operation);return ok;
 }
 static bool inventory_benefit(qa_q1_game *g, qa_actor_id actor, qa_item_id item, double amount,
                                double missing_capacity, float *utility, qa_error *error) {

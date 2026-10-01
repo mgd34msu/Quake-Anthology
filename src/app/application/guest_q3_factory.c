@@ -248,6 +248,48 @@ bool qa_application_q3_remote_clear(qa_application *app,
         previous->receiver.seat, previous->connection_epoch, out, error);
 }
 
+bool qa_application_q3_remote_rebind(qa_application *app,
+    const qa_application_q3_remote_binding *request, qa_application_q3_remote_source *out, qa_error *error)
+{
+    if (!app || !request || !out || !request->current || !request->connection ||
+        app->operation != APPLICATION_IDLE || app->frame_preparing || app->destroy_requested ||
+        app->q3_round_active || app->q3_world_restart || !qa_session_safe(app->session) ||
+        qa_session_faulted(app->session) || !qa_world_idle(app->world) ||
+        request->new_epoch <= request->previous.connection_epoch ||
+        !qa_application_q3_remote_source_current(app, &request->previous) ||
+        !request->current(request->connection, request->previous.connection_epoch, request->new_epoch, error))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Remote rebind requires its actual closed transport and fresh admission");
+    application_provider *provider = receiver_provider(app, request->previous.receiver.receiver);
+    struct application_q3_guest *engine = q3g_engine(provider);
+    if (!engine || engine->calls || engine->initializing_role || engine->client_candidate ||
+        engine->restore_pending || !application_q3_guest_idle(provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Remote rebind has an unfinished source lifecycle");
+    bool cgame = false, ui = false;
+    for (q3g_role *role = engine->roles; role; role = role->next)
+        if (role->kind != QA_QVM_GAME && role->seat == request->previous.receiver.seat) {
+            if (!role->ready || role->retired || role->local_client || !role->source_cleared ||
+                role->initialized || role->init_succeeded ||
+                !same_descriptor(role->descriptor, request->previous.descriptor))
+                return application_fail(error, QA_ERROR_ARGUMENT, "Remote rebind requires its retained cleared source roles");
+            if (role->kind == QA_QVM_CGAME) {
+                if (cgame) return application_fail(error, QA_ERROR_ARGUMENT, "Ambiguous retained reconnect CGAME");
+                cgame = true;
+            }
+            if (role->kind == QA_QVM_UI) {
+                if (ui) return application_fail(error, QA_ERROR_ARGUMENT, "Ambiguous retained reconnect UI");
+                ui = true;
+            }
+        }
+    if (!cgame || !ui || !qa_application_q3_remote_source_current(app, &request->previous) ||
+        !request->current(request->connection, request->previous.connection_epoch, request->new_epoch, error))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Remote rebind lost its actual admission proof");
+    qa_application_q3_remote_source rebound = request->previous;
+    rebound.connection_epoch = request->new_epoch;
+    engine->connection_epoch = request->new_epoch;
+    *out = rebound;
+    return true;
+}
+
 bool qa_application_q3_remote_replace(qa_application *app,
     const qa_application_q3_remote_replacement *request, qa_application_q3_remote_source *out, qa_error *error)
 {
