@@ -407,6 +407,13 @@ bool qa_input_seat_action(qa_input_seat *, qa_input_action, uint64_t physical_so
 bool qa_input_seat_sample(qa_input_seat *, double now_ms, double frame_ms, qa_seat_input_sample *,
                           qa_error *);
 bool qa_input_seat_impulse(qa_input_seat *, const char *, qa_error *);
+/* Mouse, pitch drift and cl_run belong to the seat's mouse owner. Movement
+ * speeds and angle/move multipliers belong to the selected view owner. These
+ * may alias for a composed registry; no other registry is consulted. */
+bool qa_input_mouse_settings_register(qa_cvars *, qa_movement_kind selected, qa_error *);
+bool qa_input_movement_settings_register(qa_cvars *, qa_movement_kind, qa_error *);
+bool qa_input_settings_read_routed(const qa_cvars *mouse, const qa_cvars *movement,
+                                   qa_movement_kind, qa_input_command_tuning *, qa_error *);
 bool qa_input_settings_register(qa_cvars *, qa_movement_kind, qa_error *);
 bool qa_input_settings_read(const qa_cvars *, qa_movement_kind, qa_input_command_tuning *,
                             qa_error *);

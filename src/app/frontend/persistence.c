@@ -590,10 +590,10 @@ static bool capture_engine(frontend_persistence *operation, qa_buffer *out, qa_e
 {
     qa_frontend *f=operation->candidate?operation->candidate:operation->active;
     qa_audio_checkpoint_refs refs=audio_refs(operation); qa_buffer state={0};
-    bool ok=!f->audio || (qa_audio_engine_observer_is(f->audio,frontend_ui_audio_event,f) &&
+    bool ok=!f->audio || (frontend_audio_engine_options_ready(f) &&
         qa_audio_engine_checkpoint(f->audio,&refs,&state,error));
     if (!ok && error && error->code==QA_OK)
-        frontend_fail(error,QA_ERROR_ARGUMENT,"Audio observer differs from its actual frontend feature owner");
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Audio observer or allocation clock differs from its actual frontend owner");
     ok=ok && optional_encode("QFAE",f->audio!=NULL,(qa_bytes){state.data,state.size},out,error);
     qa_buffer_free(&state); return ok;
 }
@@ -1019,7 +1019,7 @@ static bool discard_services(void *context,qa_application *candidate,qa_error *e
     frontend_qc_rerelease_destroy(f);
     for (unsigned i=0;i<f->options.seats;++i)
         if (f->seats[i].input && !qa_input_seat_release(f->seats[i].input,
-            (double)f->time_ns/1000000.0,error)) return false;
+            (double)f->wall_time_ns/1000000.0,error)) return false;
     qa_input_platform_destroy(f->input); f->input=NULL;
     qa_input_console_destroy(f->input_commands); f->input_commands=NULL;
     for (unsigned i=0;i<f->options.seats;++i) {
@@ -1072,6 +1072,8 @@ static void publish(void *context,qa_application *active,qa_application *candida
     if (operation->gl_guard) qa_gl_handoff(operation->gl_guard);
     if (operation->device_guard) qa_audio_device_handoff(operation->device_guard);
     frontend_campaign_publish_restored(f);
+    operation->active->archive_enabled=false;
+    f->archive_enabled=true; f->archive_saved=false;
     f->sdl_subsystems=operation->active->sdl_subsystems; operation->active->sdl_subsystems=0;
     *operation->slot=f;
 }

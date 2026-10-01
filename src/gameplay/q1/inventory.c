@@ -15,7 +15,7 @@ static size_t definitions(const qa_q1_game *game, qa_item_definition *out) {
         qa_q1_weapon_profile identity;
         if (!qa_q1_weapon_profile_identity(game->options.program, (qa_q1_weapon)i, &identity))
             continue;
-        int ammo = i == QA_Q1_MG3_MJOLNIR ? QA_Q1_CELLS : q1_weapon_ammo((qa_q1_weapon)i);
+        int ammo = q1_weapon_declared_ammo((qa_q1_weapon)i);
         out[count++] = (qa_item_definition){.item = game->weapons[i],
             .ammo = ammo < 0 ? 0 : game->ammo[ammo], .owner = game->options.provider,
             .label = identity.label, .weapon = true, .actions = QA_ITEM_USE};
@@ -123,6 +123,38 @@ bool qa_q1_game_weapon_item_read(qa_q1_game *game, qa_actor_id actor, qa_item_id
             qa_q1_game_operation_end(&operation);
             return result;
         }
+    }
+    return true;
+}
+bool qa_q1_game_weapon_item_available(qa_q1_game *game, qa_actor_id actor, qa_item_id item,
+    bool *out, bool *found, qa_error *error) {
+    if (!game || !out || !found)
+        return fail(error, actor, "Q1 weapon availability needs its source and output");
+    *out = false;
+    *found = false;
+    if (!qa_q1_game_weapon_definitions_current(game, actor))
+        return true;
+    for (unsigned i = 0; i < QA_Q1_WEAPON_COUNT; ++i) {
+        qa_q1_weapon_profile profile;
+        if (game->weapons[i] != item ||
+            !qa_q1_weapon_profile_identity(game->options.program, (qa_q1_weapon)i, &profile))
+            continue;
+        qa_inventory_lease lease = q1_player_get(game, actor)->weapon_definitions;
+        qa_q1_game_operation operation = {0};
+        if (!qa_q1_game_operation_begin(game, &operation, error))
+            return false;
+        bool result = q1_weapon_ui_available_read(game, actor, (qa_q1_weapon)i, out, error);
+        q1_player *player = q1_player_get(game, actor);
+        if (result && (!qa_q1_game_operation_live(&operation) || !player ||
+            player->weapon_definitions.serial != lease.serial ||
+            !qa_q1_game_weapon_definitions_current(game, actor)))
+            result = fail(error, actor, "Q1 weapon availability retired its declaration");
+        if (result)
+            *found = true;
+        else
+            *out = false;
+        qa_q1_game_operation_end(&operation);
+        return result;
     }
     return true;
 }

@@ -10,6 +10,10 @@ bool qa_q1_game_weapon_definitions_current(qa_q1_game *, qa_actor_id);
 bool qa_q1_game_weapon_item_read(qa_q1_game *, qa_actor_id, qa_item_id,
     qa_q1_weapon_view *, bool *found, qa_error *);
 
+/* Source UI availability uses the registered weapon's best-selection rules. */
+bool qa_q1_game_weapon_item_available(qa_q1_game *, qa_actor_id, qa_item_id,
+    bool *available, bool *found, qa_error *);
+
 /* Pure callback reconstruction from the actual restored player declaration
  * and its captured definition lease; no admission or weapon selection. */
 bool qa_q1_game_inventory_group(qa_q1_game *, qa_actor_id, uint64_t serial,

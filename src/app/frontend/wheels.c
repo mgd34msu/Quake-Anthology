@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "wheels_save.h"
+#include "qa/application_weapon_availability.h"
 
 static bool items(void *context, uint32_t id, qa_hud_wheel_mode mode,
                   const qa_hud_wheel_item **out, size_t *count, qa_error *error)
@@ -45,19 +46,25 @@ static bool items(void *context, uint32_t id, qa_hud_wheel_mode mode,
     for (size_t i = 0; i < total; ++i) {
         qa_item_definition definition = seat->wheel_definitions[i];
         if (definition.weapon != (mode == QA_HUD_WHEEL_WEAPONS) || !(definition.actions & QA_ITEM_USE)) continue;
-        qa_inventory_entry entry;
-        if (!qa_inventory_entry_read(inventory, actor, definition.item, &entry, error)) return false;
-        bool ammunition = entry.count > 0;
-        double amount = entry.count;
+        double owned;
+        if (!qa_inventory_count_read(inventory, actor, definition.item, &owned, error)) return false;
+        bool ammunition = owned > 0;
+        double amount = owned;
         if (definition.ammo) {
-            qa_inventory_entry ammo;
-            if (!qa_inventory_entry_read(inventory, actor, definition.ammo, &ammo, error)) return false;
-            ammunition = ammo.count > 0; amount = ammo.count;
+            double ammo;
+            if (!qa_inventory_count_read(inventory, actor, definition.ammo, &ammo, error)) return false;
+            ammunition = ammo > 0; amount = ammo;
+        }
+        if (definition.weapon) {
+            bool available, found;
+            if (!qa_application_weapon_availability_read(seat->frontend->application,actor,
+                &definition,&available,&found,error)) return false;
+            if (found) ammunition=available;
         }
         seat->wheel_items[(*count)++] = (qa_hud_wheel_item){
             .identity = {.key = definition.item, .item = definition.item, .source_ordinal = (int32_t)i},
             .sort_order = (int32_t)i, .label = definition.label,
-            .owned = entry.count > 0, .has_ammunition = ammunition, .has_count = true, .count = amount};
+            .owned = owned > 0, .has_ammunition = ammunition, .has_count = true, .count = amount};
     }
     *out = seat->wheel_items;
     return true;

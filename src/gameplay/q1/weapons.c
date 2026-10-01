@@ -128,6 +128,15 @@ int q1_weapon_ammo(qa_q1_weapon weapon) {
                                                        -1};
     return ammunition[weapon];
 }
+int q1_weapon_declared_ammo(qa_q1_weapon weapon) {
+    return weapon == QA_Q1_MG3_MJOLNIR ? QA_Q1_CELLS : q1_weapon_ammo(weapon);
+}
+static double best_ammunition_needed(qa_q1_weapon weapon) {
+    if (weapon == QA_Q1_MG3_MJOLNIR)
+        return 0;
+    return weapon == QA_Q1_SUPER_NAILGUN || weapon == QA_Q1_SUPER_SHOTGUN ||
+        weapon == QA_Q1_LAVA_SUPER_NAILGUN ? 2 : 1;
+}
 qa_q1_weapon q1_best_weapon(qa_q1_game *g, q1_player *player) {
     return q1_best_weapon_before(g, player, NULL, 0);
 }
@@ -170,10 +179,7 @@ qa_q1_weapon q1_best_weapon_before(qa_q1_game *g, q1_player *player,
         if (!owns(g, player->id, weapon) ||
             (weapon == QA_Q1_LIGHTNING && player->input.water_level > 1))
             continue;
-        float needed = weapon == QA_Q1_SUPER_NAILGUN || weapon == QA_Q1_SUPER_SHOTGUN ||
-                               weapon == QA_Q1_LAVA_SUPER_NAILGUN
-                           ? 2
-                           : 1;
+        double needed = best_ammunition_needed(weapon);
         double available = ammo < 0 ? 1 : q1_ammo_count(g, player->id, (qa_q1_ammo)ammo);
         if (ammo >= 0)
             for (size_t j = 0; j < count; ++j)
@@ -219,11 +225,31 @@ bool q1_best_weapon_before_read(qa_q1_game *g, qa_actor_id actor, q1_player *pla
                 available = entry.count;
             }
         }
-        double needed = weapon == QA_Q1_SUPER_NAILGUN || weapon == QA_Q1_SUPER_SHOTGUN ||
-            weapon == QA_Q1_LAVA_SUPER_NAILGUN ? 2 : 1;
+        double needed = best_ammunition_needed(weapon);
         if (available >= needed) { selected = weapon; break; }
     }
     *out = selected;
+    return true;
+}
+bool q1_weapon_ui_available_read(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon,
+    bool *out, qa_error *error) {
+    q1_player *player = q1_player_get(g, actor);
+    if (!out || !best_player_current(g, actor, player, error))
+        return false;
+    *out = false;
+    double owned;
+    if (!qa_inventory_count_read(g->services.inventory, actor, g->weapons[weapon],
+        &owned, error) || !best_player_current(g, actor, player, error))
+        return false;
+    if (owned == 0 || weapon == QA_Q1_CTF_GRAPPLE ||
+        (weapon == QA_Q1_LIGHTNING && player->input.water_level > 1))
+        return true;
+    int ammo = q1_weapon_declared_ammo(weapon);
+    double available = 1;
+    if (ammo >= 0 && (!qa_inventory_count_read(g->services.inventory, actor, g->ammo[ammo],
+        &available, error) || !best_player_current(g, actor, player, error)))
+        return false;
+    *out = ammo < 0 || available >= best_ammunition_needed(weapon);
     return true;
 }
 static qa_string_id weapon_model(const qa_q1_game *g, const q1_player *player) {

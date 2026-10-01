@@ -843,7 +843,7 @@ static bool warning(frontend_remote_prediction *owner, const frontend_remote_pre
             fail(error, QA_ERROR_NOT_FOUND, "Prediction diagnostic retired its genuine source owner"));
 }
 static bool clamp_pmove_msec(frontend_remote_prediction *owner,
-    frontend_remote_prediction_source *source, qa_error *error)
+    const frontend_remote_prediction_source *source, qa_error *error)
 {
     int32_t value = source->settings.pmove_msec;
     int32_t clamped = value < 8 ? 8 : value > 33 ? 33 : value;
@@ -851,9 +851,8 @@ static bool clamp_pmove_msec(frontend_remote_prediction *owner,
     if (!owner->options.source_current(owner->options.context, source))
         return fail(error, QA_ERROR_NOT_FOUND, "Prediction movement clamp lost its actual CLIENT registry");
     if (!owner->options.set_pmove_msec(owner->options.context, source, clamped, error)) return false;
-    /* The real registry now contains the clamp. The caller retains the prior
-     * frame scalar, just as CGAME's settings/vmCvar snapshot does. */
-    source->settings.pmove_msec = clamped;
+    /* Publication changes the real registry, not the retained CGAME cache.
+     * Its actual update owner advances that scalar at the next source boundary. */
     return owner->options.source_current(owner->options.context, source) ||
         fail(error, QA_ERROR_NOT_FOUND, "Prediction movement clamp changed its source receipt");
 }

@@ -55,7 +55,8 @@ typedef struct frontend_remote_prediction_options {
     bool (*item_misc_time)(void *, const frontend_remote_prediction_source *,
         const qa_q3_prediction_scene_entity_view *, int32_t *, qa_error *);
     /* Active prediction clamps the actual CLIENT registry after interpolation
-     * and history guards. Its already captured frame scalar remains in use. */
+     * and history guards. The setter qualifies the actual publication; the
+     * cached CGAME frame scalar stays unchanged until its genuine update. */
     bool (*set_pmove_msec)(void *, const frontend_remote_prediction_source *, int32_t, qa_error *);
     bool (*warning)(void *, const frontend_remote_prediction_source *, const char *, qa_error *);
 } frontend_remote_prediction_options;

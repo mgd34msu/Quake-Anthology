@@ -13,6 +13,9 @@ typedef struct frontend_remote_input_source {
     /* Actual private input/mouse registry admitted for this source and seat;
      * it may be distinct from the CGAME module registry. */
     const qa_cvars *input_settings;
+    /* Actual Q3-view speed registry. Foreign selected movement may have a
+     * distinct view owner while both builders share this same mouse owner. */
+    const qa_cvars *movement_settings;
     qa_input_command_frame frame;
     qa_vec3 initial_angles;
     bool has_initial_angles;

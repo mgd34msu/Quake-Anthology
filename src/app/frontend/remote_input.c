@@ -38,7 +38,7 @@ static bool source_valid(const frontend_remote_input_source *source)
     const qa_application_q3_client_context *receiver = &source->receiver;
     return source->connection.owner && source->connection.generation && source->epoch &&
         receiver->session && receiver->receiver && receiver->service_owner && receiver->frontend_lifetime &&
-        receiver->console && receiver->cvars && source->input_settings &&
+        receiver->console && receiver->cvars && source->input_settings && source->movement_settings &&
         receiver->initialized && receiver->source_client < 64 &&
         !receiver->source_owner && !receiver->source_actor.registry && !receiver->native_source &&
         receiver->command_context.owner == receiver->receiver &&
@@ -65,7 +65,7 @@ bool frontend_remote_input_build(frontend_remote_input *input, const qa_seat_inp
     }
     qa_input_command_tuning tuning;
     qa_movement_command command;
-    if (!qa_input_settings_read(source.input_settings, QA_MOVEMENT_Q3, &tuning, error) ||
+    if (!qa_input_settings_read_routed(source.input_settings, source.movement_settings, QA_MOVEMENT_Q3, &tuning, error) ||
         !qa_input_command_build(&next, &tuning, sample, &source.frame, source_frame_ms, &command, error)) return false;
     if (!input->options.source_current(input->options.context, &source))
         return fail(error, QA_ERROR_ARGUMENT, "Remote Q3 receiver retired while building physical input");

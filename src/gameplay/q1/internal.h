@@ -541,6 +541,8 @@ bool q1_radius_typed(qa_q1_game *, qa_actor_id, qa_actor_id, float, qa_actor_id,
                      const char *, qa_error *);
 bool q1_can_damage(qa_q1_game *, qa_actor_id target, qa_actor_id from, bool *, qa_error *);
 double q1_ammo_count(qa_q1_game *, qa_actor_id, qa_q1_ammo);
+int q1_weapon_declared_ammo(qa_q1_weapon);
+bool q1_weapon_ui_available_read(qa_q1_game *, qa_actor_id, qa_q1_weapon, bool *, qa_error *);
 bool q1_consume(qa_q1_game *, qa_actor_id, qa_q1_ammo, float, qa_error *);
 bool q1_fire(qa_q1_game *, q1_player *, qa_error *);
 bool q1_weapon_parameters(qa_q1_game *, qa_actor_id, qa_q1_weapon, qa_q1_weapon_parameters *,

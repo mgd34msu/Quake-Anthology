@@ -269,9 +269,10 @@ mandatory QFCT topology, prepared after real visual heaps and before dictionary
 import. QFCP private import runs under the same registry's genuine capture lease
 after asset restoration. Publication refresh retires stale declarations before
 capture opens any lease; failed-candidate cleanup destroys native compositions
-before retiring these global registries. This follow-on still awaits a complete
-independent source review. The complete native composition factory and selected
-EFFECTS remain separate producer and integration work.
+before retiring these global registries. The complete eight-file follow-on
+passed independent source review and was committed in `d8cf60b`. The complete
+native composition factory and selected EFFECTS remain separate producer and
+integration work.
 
 Native input settings and per-seat source release histories fence capture and
 retirement. The callback-returned predicate separately qualifies actual UI,
@@ -279,12 +280,14 @@ HUD and wheel callbacks so the retained Settings coordinator can advance a
 waiting release. Strict seat-idle admission also requires each source release
 to be retired. QFTP4 preserves the exact raw wall clock alongside transformed
 frontend time. The native-ticket guard and raw clock passed independent source
-review and were pushed in `e4d305f`; the per-seat follow-on awaits its own review.
+review and were pushed in `e4d305f`; the per-seat follow-on passed the separate
+CHARACTER aggregate source review and was committed in `d8cf60b`.
 
 The native module-cache QANM1 codec preserves actual immutable artifact ABI,
 profile, digest and opening name without native loading or source execution.
-It is a separate frozen source unit awaiting independent review. A native DLL
-executor's mutable globals, CRT allocations and TLS continuation remain an
+Its separate two-file unit passed independent source review and was committed
+in `d8cf60b`. Production cache-codec callers remain outside that acceptance. A
+native DLL executor's mutable globals, CRT allocations and TLS continuation remain an
 unimplemented source owner; neither this cache nor host-only checkpoints close
 that requirement.
 
