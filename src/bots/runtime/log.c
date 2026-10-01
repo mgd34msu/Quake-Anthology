@@ -45,6 +45,14 @@ bool qa_bot_log_create(const qa_bot_log_services *services,qa_bot_log **out,qa_e
 bool qa_bot_log_can_destroy(const qa_bot_log *log)
 {return !log || !log->busy;}
 
+bool qa_bot_log_print(qa_bot_log *log,qa_script_severity severity,const char *text,qa_error *error)
+{
+    if(!idle(log,error) || !text) return bot_log_fail(error,"Bot Print requires its retained owner and source text");
+    log->busy=true;
+    bool ok=!log->services.print || log->services.print(log->services.context,severity,text,error);
+    log->busy=false;return ok;
+}
+
 void qa_bot_log_destroy(qa_bot_log *log)
 {
     if(!log) return;

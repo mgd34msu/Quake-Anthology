@@ -26,6 +26,8 @@ bool qa_bot_log_close(qa_bot_log *,bool *succeeded,qa_error *);
 bool qa_bot_log_write(qa_bot_log *,const char *,qa_error *);
 bool qa_bot_log_write_timestamped(qa_bot_log *,float,const char *,qa_error *);
 bool qa_bot_log_flush(qa_bot_log *,qa_error *);
+/* Print uses the retained source service independently of the FILE state. */
+bool qa_bot_log_print(qa_bot_log *,qa_script_severity,const char *,qa_error *);
 qa_bot_log_file *qa_bot_log_file_pointer(qa_bot_log *);
 bool qa_bot_log_file_write(qa_bot_log_file *,const char *,int64_t *written,qa_error *);
 bool qa_bot_log_capture(const qa_bot_log *,qa_buffer *,qa_error *);
