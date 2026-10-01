@@ -6,6 +6,7 @@
 typedef struct qa_application_q3_client_context {
     qa_session *session;
     qa_actor_owner receiver, source_owner;
+    qa_actor_id source_actor;
     uint32_t seat, source_client;
     uint64_t service_owner;
     void *frontend_lifetime;
@@ -24,5 +25,10 @@ typedef struct qa_application_q3_client_context {
  * lease and invokes no source program. UI uses its separate frontend clock. */
 bool qa_application_q3_client_context_read(qa_application *, qa_actor_owner receiver,
     uint32_t seat, qa_application_q3_client_context *, qa_error *);
+
+/* Pure retained identity check, including the full physical source actor.
+ * Does not read source clocks; valid during GAME cvar observer callbacks. */
+bool qa_application_q3_client_context_current(qa_application *,
+    const qa_application_q3_client_context *);
 
 #endif

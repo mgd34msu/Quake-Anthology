@@ -6,6 +6,7 @@
 #include "native_q3_wire.h"
 #include "native_q3_wire_state.h"
 #include "qa/application_q3_client.h"
+#include "qa/game_q3_source.h"
 
 bool application_guest_frontend_rebind_ready(application_provider *provider,
     const qa_scene_frame *current_frame, void *current_context, qa_error *error)
@@ -121,8 +122,8 @@ static q3g_role *find_role(application_provider *provider, qa_qvm_role kind,
     return NULL;
 }
 
-bool qa_application_q3_client_context_read(qa_application *app, qa_actor_owner receiver,
-    uint32_t seat, qa_application_q3_client_context *out, qa_error *error)
+static bool client_context_read(qa_application *app, qa_actor_owner receiver,
+    uint32_t seat, bool read_clock, qa_application_q3_client_context *out, qa_error *error)
 {
     if (!app || !out || !receiver || app->destroy_requested)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client context requires its live receiver owner");
@@ -170,10 +171,13 @@ bool qa_application_q3_client_context_read(qa_application *app, qa_actor_owner r
             !topology.source->attached || topology.source->close_pending)
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client context lost its actual native GAME lease");
         view.source_owner = topology.source_owner;
+        qa_q3_source_binding binding;
+        if (!qa_q3_source_binding_read(topology.source->state.q3, topology.source_slot, &binding, error)) return false;
+        view.source_actor = binding.actor;
         view.source_cvars = application_native_q3_console_registry(topology.source);
         if (!view.source_cvars)
             return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 client context lacks its native GAME registry");
-        if (!application_native_q3_wire_client_time(role->native_client, &view.source_milliseconds, error)) return false;
+        if (read_clock && !application_native_q3_wire_client_time(role->native_client, &view.source_milliseconds, error)) return false;
     } else {
         q3g_role *game = engine->game;
         q3g_client *client = &engine->clients[role->client];
@@ -185,23 +189,45 @@ bool qa_application_q3_client_context_read(qa_application *app, qa_actor_owner r
             !qa_q3_host_actor_slot(game->host, client->actor, &source_slot, error) || source_slot != role->client)
             return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 client context lost its original GAME client binding");
         view.source_owner = provider->owner;
+        view.source_actor = client->actor;
         if (!qa_q3_host_console(game->host, &view.source_cvars, NULL) || !view.source_cvars)
             return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 client context lacks its original GAME registry");
-        if (!application_q3_wire_time(provider, &view.source_milliseconds, error)) return false;
+        if (read_clock && !application_q3_wire_time(provider, &view.source_milliseconds, error)) return false;
     }
     if (!role->client_services.gamestate || !role->client_services.gamestate(role->client_services.context))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 client context requires its source gamestate after Begin");
     if (view.client_time_cvars && (view.client_time_cvars != view.source_cvars ||
         view.client_time_owner != view.source_owner))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 local client timing authority differs from its actual GAME source");
-    qa_clock_state clock;
-    if (!qa_session_clock(app->session, view.source_owner, &clock) ||
-        clock.frame.provider != view.source_owner || clock.frame.kind != QA_CLOCK_Q3 ||
-        (clock.frame.number && clock.frame.phase != QA_FRAME_EXIT))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client context lost its actual GAME clock");
-    view.source_frame = clock.frame;
+    if (read_clock) {
+        qa_clock_state clock;
+        if (!qa_session_clock(app->session, view.source_owner, &clock) ||
+            clock.frame.provider != view.source_owner || clock.frame.kind != QA_CLOCK_Q3 ||
+            (clock.frame.number && clock.frame.phase != QA_FRAME_EXIT))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client context lost its actual GAME clock");
+        view.source_frame = clock.frame;
+    }
     *out = view;
     return true;
+}
+
+bool qa_application_q3_client_context_read(qa_application *app, qa_actor_owner receiver,
+    uint32_t seat, qa_application_q3_client_context *out, qa_error *error)
+{
+    return client_context_read(app, receiver, seat, true, out, error);
+}
+
+bool qa_application_q3_client_context_current(qa_application *app,
+    const qa_application_q3_client_context *retained)
+{
+    qa_application_q3_client_context actual;
+    return retained && client_context_read(app, retained->receiver, retained->seat, false, &actual, NULL) &&
+        actual.session == retained->session && actual.source_owner == retained->source_owner &&
+        actual.source_client == retained->source_client && qa_actor_id_equal(actual.source_actor, retained->source_actor) &&
+        actual.service_owner == retained->service_owner && actual.frontend_lifetime == retained->frontend_lifetime &&
+        actual.console == retained->console && actual.cvars == retained->cvars && actual.source_cvars == retained->source_cvars &&
+        actual.client_time_cvars == retained->client_time_cvars && actual.client_time_owner == retained->client_time_owner &&
+        actual.native_source == retained->native_source;
 }
 
 bool application_q3_guest_role_add(application_provider *provider, qa_qvm_role kind,

@@ -110,7 +110,8 @@ static void list_free(cvar *entry)
 
 bool qa_cvars_save_capture(const qa_cvars *registry, qa_buffer *out, qa_error *error)
 {
-    if (!registry || !out) return qac_fail(error, QA_ERROR_ARGUMENT, "cvar capture requires its registry and output");
+    if (!qa_cvars_observer_idle(registry) || !out)
+        return qac_fail(error, QA_ERROR_ARGUMENT, "cvar capture requires a complete publication drain and output");
     *out = (qa_buffer){0};
     uint64_t revision = registry->mutation_revision;
     qa_cvars_restore state = {.count = registry->count, .next_handle = registry->next_handle,
@@ -152,7 +153,8 @@ static bool valid_entry(const qa_cvars_restore *state, const cvar *entry, qa_err
 
 bool qa_cvars_save_prepare(qa_cvars *registry, qa_bytes bytes, qa_cvars_restore **out, qa_error *error)
 {
-    if (!registry || !out) return qac_fail(error, QA_ERROR_ARGUMENT, "cvar restore requires its candidate registry");
+    if (!qa_cvars_observer_idle(registry) || !out)
+        return qac_fail(error, QA_ERROR_ARGUMENT, "cvar restore requires a fully drained candidate registry");
     *out = NULL;
     qa_cvars_restore *state = calloc(1, sizeof(*state));
     if (!state) return qac_fail(error, QA_ERROR_MEMORY, "allocating cvar restore ticket");
@@ -179,9 +181,11 @@ bool qa_cvars_save_prepare(qa_cvars *registry, qa_bytes bytes, qa_cvars_restore 
         if (entry->bound) {
             entry->binding = existing->binding;
             if (entry->binding.validate) {
+                ++registry->notifying;
                 ok = entry->binding.validate(entry->binding.user, entry->view.value, error) &&
                      entry->binding.validate(entry->binding.user, entry->view.reset_value, error) &&
                      (!entry->view.latched_value || entry->binding.validate(entry->binding.user, entry->view.latched_value, error));
+                --registry->notifying;
             }
         }
     }
@@ -199,7 +203,8 @@ bool qa_cvars_save_prepare(qa_cvars *registry, qa_bytes bytes, qa_cvars_restore 
 
 bool qa_cvars_save_validate(const qa_cvars_restore *state, qa_error *error)
 {
-    if (!state || state->registry->mutation_revision != state->revision || state->revision == UINT64_MAX)
+    if (!state || !qa_cvars_observer_idle(state->registry) ||
+        state->registry->mutation_revision != state->revision || state->revision == UINT64_MAX)
         return qac_fail(error, QA_ERROR_ARGUMENT, "cvar restore ticket is stale");
     return true;
 }
