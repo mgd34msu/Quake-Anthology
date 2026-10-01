@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "capture.h"
 #include <stdio.h>
 
 static qa_console_dialect dialect(qa_movement_kind kind)
@@ -28,6 +29,7 @@ static bool controls(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error
         qa_console_dialect profile = dialect(kind);
         bool changed = !qa_actor_id_equal(seat->actor, actor) || seat->builder.kind != kind;
         if (changed) {
+            if (!qa_ui_rankings_reset_binding(seat->rankings, error)) return false;
             if (!qa_input_seat_release(seat->input, now, error) || !qa_input_seat_profile(seat->input, profile, error)) return false;
             qa_input_command_clear(&seat->builder); seat->builder.kind = kind; seat->actor = actor;
         }
@@ -52,8 +54,10 @@ static bool controls(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error
         if (!frontend_network_client_input(frontend, &seat->builder, &frame, error)) return false;
         if (!qa_input_command_build(&seat->builder, &tuning, &sample, &frame, duration, &command, error) ||
             !frontend_network_command(frontend, i, actor, &command, error)) return false;
-        const qa_actor_record *record = qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), actor);
-        if (!qa_ui_rankings_set_slot(seat->rankings, record && record->has_source && record->source_slot <= INT32_MAX ? (int32_t)record->source_slot : -1, error)) return false;
+        uint32_t source_slot;
+        if (!qa_ui_rankings_set_slot(seat->rankings,
+            qa_application_rankings_client_slot(frontend->application, actor, &source_slot) && source_slot <= INT32_MAX ?
+                (int32_t)source_slot : -1, error)) return false;
     }
     return true;
 }
@@ -82,6 +86,7 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
     for (size_t i = 0; i < qa_application_event_count(frontend->application); ++i) {
         qa_builtin_event event;
         if (!qa_application_event_at(frontend->application, i, &event)) return frontend_fail(error, QA_ERROR_ARGUMENT, "event queue changed during consumption");
+        if (event.kind == QA_BUILTIN_LOG) continue;
         const char *text = qa_strings_cstr(strings, event.text);
         if ((event.kind == QA_BUILTIN_MESSAGE || event.kind == QA_BUILTIN_CENTERPRINT) && text) {
             for (unsigned seat = 0; seat < frontend->options.seats && !frontend->options.dedicated; ++seat) {
@@ -130,6 +135,7 @@ static bool audio_positions(qa_frontend *frontend, qa_error *error)
     qa_world *world = qa_application_world(frontend->application);
     for (size_t i = 0; i < frontend->audio_id_count; ++i) {
         frontend_audio_identity identity = frontend->audio_ids[i];
+        if (identity.retired) continue;
         if (!qa_actors_get(qa_world_actors(world), identity.actor)) continue;
         if (frontend_network_client_actor(frontend, identity.actor)) continue;
         qa_body_state body; qa_error observed = {0};
@@ -144,9 +150,16 @@ static bool audio_positions(qa_frontend *frontend, qa_error *error)
 }
 bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error)
 {
-    if (!frontend || frontend->stepping || frontend->frame_number == UINT64_MAX ||
+    if (!frontend || frontend->stepping || frontend->preparing || frontend->round ||
+        !frontend_owners_idle(frontend) || !frontend_seat_callbacks_idle(frontend) || frontend->frame_number == UINT64_MAX ||
         elapsed_ns > UINT64_MAX - frontend->time_ns)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid frontend frame duration or reentry");
+    if (!qa_application_should_stop(frontend->application)) {
+        frontend->preparing = true;
+        bool prepared = qa_application_prepare_frame(frontend->application, error);
+        frontend->preparing = false;
+        if (!prepared) return false;
+    }
     frontend->stepping = true;
     qa_application_travel_view pending;
     bool retiring_map = qa_application_travel_read(frontend->application, &pending) &&
@@ -177,7 +190,7 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
                 qa_profiler_push(profiler, "application", error);
             if (ok) ok = phase_end(profiler, qa_application_advance(frontend->application, elapsed_ns, error), error);
         }
-        if (ok) ok = frontend_network_publish(frontend, error);
+        if (ok) ok = frontend_network_publish(frontend, error) && frontend_source_times_sync(frontend, false, error);
         if (ok && !frontend->options.dedicated) ok = frontend_scene_sync(frontend, error) &&
             frontend_map_events(frontend, error) && frontend_particle_events(frontend, error) && frontend_player_events(frontend, error);
         if (ok && !frontend->options.dedicated) {
@@ -208,6 +221,7 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
     frontend->stepping = false;
     if (ok && !qa_application_should_stop(frontend->application))
         ok = qa_application_complete_frame(frontend->application, error);
+    if (ok) ok = frontend_source_drain(frontend, error);
     if (ok) ++frontend->frame_number;
     return ok && frontend_travel(frontend, error);
 }

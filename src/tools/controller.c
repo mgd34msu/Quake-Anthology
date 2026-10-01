@@ -188,8 +188,8 @@ static void saved_private_free(qa_tools *tools) {
     reset_camera(tools); (void)qa_profiler_destroy(tools->profiler, NULL); qa_debug_store_destroy(tools->debug);
 }
 static bool saved_tools_fields(qa_source_save_io *io, qa_tools *tools, const qa_tools *installed, const qa_tools_checkpoint_refs *refs) {
-    uint32_t version = 1; uint64_t services = 0;
-    if (!qa_source_save_u32(io, &version) || version != 1) return tool_save_fail(io, "unsupported tools continuation version");
+    uint32_t version = 2; uint64_t services = 0;
+    if (!qa_source_save_u32(io, &version) || version != 2) return tool_save_fail(io, "unsupported tools continuation version");
     if (io->direction == QA_SOURCE_SAVE_WRITE && !refs->services_encode(refs->context, &tools->options, &services, io->error)) return false;
     if (!qa_source_save_u64(io, &services)) return false;
     if (io->direction == QA_SOURCE_SAVE_READ && (!refs->services_decode(refs->context, services, &tools->options, io->error) ||
@@ -238,7 +238,9 @@ static bool saved_tools_fields(qa_source_save_io *io, qa_tools *tools, const qa_
             qualified.script = request->script; request->source = qualified;
         }
         if (!tool_save_text(io, &request->name) || !qa_source_save_u32(io, &format) || format > QA_CAPTURE_JPEG ||
-            !qa_source_save_bool(io, &request->levelshot) || !qa_source_save_bool(io, &request->silent)) return tool_save_fail(io, "invalid capture continuation");
+            !qa_source_save_bool(io, &request->levelshot) || !qa_source_save_bool(io, &request->silent) ||
+            !qa_source_save_u32(io, &request->presented_delays) || request->presented_delays > 5 ||
+            (request->presented_delays && !request->levelshot)) return tool_save_fail(io, "invalid capture continuation");
         request->format = (qa_capture_format)format;
         if (request->levelshot && !request->name) return tool_save_fail(io, "saved levelshot lacks its admitted map name");
         if (io->direction == QA_SOURCE_SAVE_WRITE) request = request->next;
@@ -353,6 +355,19 @@ bool qa_tools_capture_frame(qa_tools *tools, const qa_command_context *source, q
     if (!tools || tools->busy || tools->pending_restore || !output_ready(&tools->options)) return tools_fail(error, "capture admission requires restored idle output services");
     ++tools->busy; bool success = capture_queue(tools, source, QA_CAPTURE_TGA, NULL, false, false, error); --tools->busy; return success;
 }
+bool qa_tools_capture_levelshot(qa_tools *tools, const qa_command_context *source, qa_error *error) {
+    if (!tools || tools->busy || tools->pending_restore || !output_ready(&tools->options))
+        return tools_fail(error, "levelshot admission requires restored idle output services");
+    ++tools->busy;
+    const char *map = tools->options.map_name(tools->options.context);
+    tools_capture **queued = tools->capture_tail;
+    bool success = map ? capture_queue(tools, source, QA_CAPTURE_TGA, map, true, false, error) :
+        tools_fail(error, "no active map for levelshot");
+    /* The source callback runs after this frame's console drain. Skip this
+     * initial presentation, then the donor's four command-wait boundaries. */
+    if (success) (*queued)->presented_delays = 5;
+    --tools->busy; return success;
+}
 bool qa_tools_pending_capture(const qa_tools *tools) { return tools && tools->captures; }
 qa_profiler *qa_tools_profiler(qa_tools *tools) { return tools ? tools->profiler : NULL; }
 qa_debug_store *qa_tools_debug(qa_tools *tools) { return tools ? tools->debug : NULL; }
@@ -360,12 +375,20 @@ bool qa_tools_after_present(qa_tools *tools, qa_error *error) {
     if (!tools || tools->busy || tools->pending_restore) return tools_fail(error, "capture presentation requires restored continuation and returned callbacks");
     if (!tools->captures) return true;
     ++tools->busy; qa_image image = {0}; qa_error read_error = {0};
-    bool success = tools->options.read_frame(tools->options.context, &image, &read_error);
+    bool ready = false;
+    for (tools_capture *request = tools->captures; request; request = request->next)
+        if (!request->presented_delays && tools->options.context_active(tools->options.context, &request->source)) ready = true;
+    bool success = !ready || tools->options.read_frame(tools->options.context, &image, &read_error);
     if (!success && read_error.code == QA_OK) qa_error_set(&read_error, QA_ERROR_IO, 0, "presented frame readback failed");
     qa_error first_error = read_error;
-    while (tools->captures) {
-        tools_capture *request = tools->captures; tools->captures = request->next;
-        if (!tools->options.context_active(tools->options.context, &request->source)) { capture_free(request); continue; }
+    tools_capture **position = &tools->captures;
+    while (*position) {
+        tools_capture *request = *position;
+        if (!tools->options.context_active(tools->options.context, &request->source)) {
+            *position = request->next; capture_free(request); continue;
+        }
+        if (request->presented_delays) { --request->presented_delays; position = &request->next; continue; }
+        *position = request->next;
         qa_capture_result result = {0}; qa_error local = read_error;
         qa_vfs *files; qa_mount_id mount;
         bool written = success && tools_files(tools, &request->source, &files, &mount, &local) && (request->levelshot ?
@@ -380,7 +403,7 @@ bool qa_tools_after_present(qa_tools *tools, qa_error *error) {
         }
         qa_capture_result_free(&result); capture_free(request);
     }
-    tools->capture_tail = &tools->captures; qa_image_free(&image); --tools->busy;
+    tools->capture_tail = position; qa_image_free(&image); --tools->busy;
     if (first_error.code != QA_OK) { if (error) *error = first_error; return false; }
     return success;
 }

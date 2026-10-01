@@ -1,11 +1,27 @@
 #include "internal.h"
 #include "source_restore.h"
 #include "native_q2_save.h"
+#include "round.h"
+#include "rankings.h"
+#include "capture.h"
 #include <signal.h>
 #include <stdio.h>
 
 static volatile sig_atomic_t interrupted;
 static void stop_signal(int signal_number) { (void)signal_number; interrupted = 1; }
+void frontend_application_options(qa_frontend *frontend, qa_application_options *application)
+{
+    application->guest_context = frontend;
+    application->console_print = frontend_console_print;
+    application->q3_services = frontend_source_services;
+    application->q3_client_effect = frontend_source_effect;
+    application->q3_round_services = frontend_q3_round_services();
+    application->ranking_effect = frontend_ranking_effect;
+    application->native_q2_services = frontend_native_q2_services;
+    application->world_change_ready = frontend_world_change_ready;
+    application->before_world_change = frontend_before_world_change;
+    application->world_retired = frontend_world_retired;
+}
 qa_application *qa_frontend_application(qa_frontend *frontend) { return frontend ? frontend->application : NULL; }
 void frontend_print(void *context, const char *message)
 {
@@ -47,13 +63,7 @@ bool qa_frontend_create(const qa_frontend_options *options, qa_frontend **out, q
     }
     qa_scene_frame_init(&frontend->frame, QA_FRONTEND_COMMAND_OWNER);
     qa_application_options application = options->application;
-    application.guest_context = frontend;
-    application.console_print = frontend_console_print;
-    application.q3_services = frontend_source_services;
-    application.native_q2_services = frontend_native_q2_services;
-    application.world_change_ready = frontend_world_change_ready;
-    application.before_world_change = frontend_before_world_change;
-    application.world_retired = frontend_world_retired;
+    frontend_application_options(frontend, &application);
     if (!qa_application_create(&application, &frontend->application, error)) goto fail;
     frontend->sdl_subsystems = SDL_INIT_TIMER | SDL_INIT_EVENTS;
     if (!options->dedicated) frontend->sdl_subsystems |= SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_HAPTIC;
@@ -112,6 +122,7 @@ bool qa_frontend_create(const qa_frontend_options *options, qa_frontend **out, q
     if (!options->dedicated) for (unsigned i = 0; i < options->seats; ++i)
         if (!qa_ui_llm_create(frontend->seats[i].ui, frontend_tools_llm(frontend),
             FRONTEND_ASSISTANCE, &frontend->seats[i].assistance, error)) goto fail;
+    if (!qa_application_rankings_start(frontend->application, error)) goto fail;
     for (size_t i = 0; i < options->startup_count; ++i)
         if (!qa_console_execute_now(qa_application_console(frontend->application),
             &(qa_command_context){.origin = QA_COMMAND_LOCAL, .dialect = QA_CONSOLE_Q1}, options->startup[i], error)) goto fail;
@@ -127,7 +138,9 @@ fail: {
 bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
 {
     if (!frontend) return true;
-    if (frontend->stepping) return frontend_fail(error, QA_ERROR_ARGUMENT, "frontend frame callback is active");
+    if (frontend->stepping || frontend->preparing || frontend->round || !frontend_owners_idle(frontend) ||
+        !frontend_seat_callbacks_idle(frontend))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "frontend frame, round or retained child owner is active");
     /* Application guests borrow frontend services. Retire them before releasing
      * their seats, scene registry, device or SDL handles. */
     for (unsigned i = 0; i < frontend->options.seats; ++i)

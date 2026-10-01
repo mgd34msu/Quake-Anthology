@@ -8,6 +8,7 @@ typedef struct tools_capture {
     qa_command_context source;
     char *script, *name;
     qa_capture_format format;
+    uint32_t presented_delays;
     bool levelshot, silent;
 } tools_capture;
 struct qa_tools {

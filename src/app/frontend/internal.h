@@ -13,6 +13,7 @@
 #include "qa/render_gl.h"
 #include "qa/q3_presentation.h"
 #include "qa/q3_key.h"
+#include "qa/application_q3_client.h"
 #include "qa/tools.h"
 #include "qa/http.h"
 #include "qa/llm.h"
@@ -31,7 +32,9 @@ bool frontend_native_q2_callbacks_idle(const qa_frontend *);
 void frontend_native_q2_rebind(qa_frontend *, qa_frontend *);
 typedef struct frontend_event_state frontend_event_state;
 typedef struct frontend_particle_state frontend_particle_state;
-typedef struct frontend_audio_identity { qa_actor_id actor; uint64_t id; } frontend_audio_identity;
+typedef struct frontend_capture frontend_capture;
+typedef struct qa_application_q3_round_cut qa_application_q3_round_cut;
+typedef struct frontend_audio_identity { qa_actor_id actor; uint64_t id; bool retired; } frontend_audio_identity;
 typedef struct frontend_seat {
     struct qa_frontend *frontend;
     uint32_t id;
@@ -91,6 +94,8 @@ struct qa_frontend {
     frontend_native_q2 *native_q2;
     frontend_event_state *events;
     frontend_particle_state *particles;
+    qa_application_q3_round_cut *round;
+    frontend_capture *capture;
     uint64_t next_source_id;
     bool source_restoring;
     frontend_audio_identity *audio_ids;
@@ -122,7 +127,7 @@ struct qa_frontend {
     char *map_name;
     unsigned sdl_subsystems;
     uint32_t width, height;
-    bool stepping;
+    bool stepping, preparing;
     void *native_output_context;
     void (*native_print)(void *, const qa_native_host_print *);
     bool (*native_clipboard)(void *, const char *, qa_error *);
@@ -239,6 +244,14 @@ typedef struct frontend_source_group_view {
 } frontend_source_group_view;
 size_t frontend_source_group_count(const qa_frontend *);
 bool frontend_source_group_read(const qa_frontend *, size_t, frontend_source_group_view *);
+bool frontend_source_group_q3_ready(const qa_frontend *, size_t,
+    const qa_q3_presentation_options *, const qa_q3_presentation_asset_options *, qa_error *);
+bool frontend_source_system_info(qa_frontend *, const qa_application_q3_client_context *, const char *, qa_error *);
+bool frontend_source_times_sync(qa_frontend *, bool restoring, qa_error *);
+bool frontend_source_effect(void *, qa_application *, qa_actor_owner, uint32_t,
+    qa_application_q3_client_effect, const char *, qa_error *);
+bool frontend_source_drain(qa_frontend *, qa_error *);
+void frontend_application_options(qa_frontend *, qa_application_options *);
 bool frontend_source_services(void *, qa_application *, qa_actor_owner, qa_qvm_role, uint32_t, qa_q3_host_options *, qa_error *);
 bool frontend_source_frame(qa_frontend *, uint32_t, qa_scene_rect, qa_error *);
 bool frontend_source_retire_world(qa_frontend *, qa_error *);

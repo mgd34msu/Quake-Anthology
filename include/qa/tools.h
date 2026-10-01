@@ -125,6 +125,10 @@ bool qa_tools_stop_camera(qa_tools *, qa_error *);
 bool qa_tools_apply_camera(qa_tools *, const qa_scene_view *, bool portal,
                             qa_arena *, qa_scene_view *, qa_error *);
 bool qa_tools_capture_frame(qa_tools *, const qa_command_context *, qa_error *);
+/* The source callback queues the actual current map's levelshot after four
+ * command-wait boundaries, retaining the admitted source context and each
+ * request's remaining presented-frame delay through ordinary save/delivery. */
+bool qa_tools_capture_levelshot(qa_tools *, const qa_command_context *, qa_error *);
 bool qa_tools_pending_capture(const qa_tools *);
 /* Call after backend presentation and before travel. Each queued request saves
  * the same immutable presented frame, with ordinary context generation checks. */
