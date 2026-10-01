@@ -23,7 +23,8 @@ typedef struct frontend_key_profile_view {
 typedef struct frontend_keys_cvar_refs {
     void *context;
     bool (*encode)(void *,const qa_cvars *,qa_application_console_scope *,qa_error *);
-    bool (*provider)(void *,qa_source_save_io *,qa_actor_owner *);
+    const char *(*instance)(void *,qa_actor_owner);
+    bool (*resolve)(void *,const char *,qa_actor_owner *,qa_error *);
     /* Qualifies the actual registry at source construction, before installing
      * the shared key pointer in UI imports. */
     bool (*qualify)(void *,const qa_application_console_scope *,const qa_cvars *,qa_error *);
@@ -35,13 +36,19 @@ bool frontend_keys_destroy(frontend_keys *,qa_error *);
  * and CHARACTER assets. Failure leaves files with the caller. */
 bool frontend_keys_prepare(frontend_keys *,frontend_config_files *,qa_cvars *,
                            const qa_q3_product_policy *,bool dedicated,frontend_key_profile **,qa_error *);
+bool frontend_keys_carry(frontend_keys *,const frontend_key_profile *,frontend_config_files *,
+                         qa_cvars *,frontend_key_profile **,qa_error *);
 bool frontend_key_profile_retain(frontend_key_profile *,qa_error *);
 bool frontend_key_profile_release(frontend_key_profile *,qa_error *);
 qa_q3_key *frontend_key_profile_state(const frontend_key_profile *);
+qa_cvars *frontend_key_profile_registry(const frontend_key_profile *);
 frontend_config_files *frontend_key_profile_files(const frontend_key_profile *);
 uint64_t frontend_key_profile_id(const frontend_key_profile *);
 const char *frontend_key_profile_game_directory(const frontend_key_profile *);
 frontend_key_profile *frontend_keys_profile(const frontend_keys *,uint64_t);
+/* Pure decoded source reference, available before physical providers exist. */
+const char *frontend_key_profile_saved_instance(const frontend_key_profile *);
+qa_application_console_scope frontend_key_profile_saved_scope(const frontend_key_profile *);
 /* Rebinds only the genuine profile registry. No key file is read. Restored
  * profiles qualify their saved registry identity before creating imports. */
 bool frontend_key_profile_bind(frontend_key_profile *,qa_cvars *,const frontend_keys_cvar_refs *,qa_error *);

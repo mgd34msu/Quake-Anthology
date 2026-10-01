@@ -11,6 +11,8 @@ typedef struct frontend_config_files frontend_config_files;
 frontend_config_files *frontend_config_files_create(qa_catalog *, qa_product_id,
                                                    const char *user_root, const char *content_root, qa_error *);
 bool frontend_config_files_destroy(frontend_config_files *, qa_error *);
+/* Carry actual retained root authorities; never reopen paths or read scripts. */
+bool frontend_config_files_clone(const frontend_config_files *,frontend_config_files **,qa_error *);
 bool frontend_config_files_idle(const frontend_config_files *);
 qa_product_id frontend_config_files_product(const frontend_config_files *);
 qa_catalog *frontend_config_files_catalog(const frontend_config_files *);

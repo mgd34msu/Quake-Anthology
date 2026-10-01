@@ -97,6 +97,22 @@ bool frontend_config_files_destroy(frontend_config_files *owner,qa_error *error)
     if (owner->base_files!=owner->selected) qa_vfs_destroy(owner->base_files);
     qa_vfs_destroy(owner->selected); qa_vfs_destroy(owner->console); qa_catalog_release(owner->catalog); free(owner); return true;
 }
+bool frontend_config_files_clone(const frontend_config_files *source,frontend_config_files **out,qa_error *error)
+{
+    if (!source || source->reads || source->writing || !out || *out)
+        return fail(error,QA_ERROR_ARGUMENT,"Configuration carry requires its returned actual file authorities");
+    frontend_config_files *owner=malloc(sizeof(*owner));
+    if (!owner) return fail(error,QA_ERROR_MEMORY,"Retaining carried source configuration roots");
+    *owner=*source; owner->selected=owner->base_files=owner->console=NULL;
+    qa_catalog_retain(owner->catalog);
+    owner->selected=qa_vfs_clone(source->selected,error);
+    bool ok=owner->selected!=NULL;
+    if (ok && source->base_files==source->selected) owner->base_files=owner->selected;
+    else if (ok) { owner->base_files=qa_vfs_clone(source->base_files,error); ok=owner->base_files!=NULL; }
+    if (ok) { owner->console=qa_vfs_clone(source->console,error); ok=owner->console!=NULL; }
+    if (!ok) { frontend_config_files_destroy(owner,NULL); return false; }
+    *out=owner; return true;
+}
 bool frontend_config_files_idle(const frontend_config_files *owner)
 { return owner && !owner->reads && !owner->writing; }
 qa_product_id frontend_config_files_product(const frontend_config_files *owner) { return owner?owner->product:0; }
