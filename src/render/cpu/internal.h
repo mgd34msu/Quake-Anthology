@@ -29,6 +29,8 @@ struct qa_cpu_renderer {
   qa_scene_rect opacity_viewport;
   bool opacity_active, opacity_skip, gamma_enabled, overdraw;
   bool executing, presenting, capturing;
+  qa_cpu_surface_ticket *surface_ticket;
+  bool destroy_pending;
   float opacity_value;
   uint32_t stencil_maximum;
   uint8_t gamma[256], *output;

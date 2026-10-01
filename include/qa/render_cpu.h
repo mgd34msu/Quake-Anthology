@@ -3,6 +3,7 @@
 #include "qa/scene.h"
 
 typedef struct qa_cpu_renderer qa_cpu_renderer;
+typedef struct qa_cpu_surface_ticket qa_cpu_surface_ticket;
 /* Present receives borrowed RGBA8 rows from top to bottom. The callback must
  * consume them before returning and must not reenter the renderer. */
 typedef bool (*qa_cpu_present)(void *context, qa_bytes rgba, uint32_t width,
@@ -16,6 +17,7 @@ typedef struct qa_cpu_options {
 } qa_cpu_options;
 void qa_cpu_options_default(qa_cpu_options *options);
 qa_cpu_renderer *qa_cpu_create(const qa_cpu_options *options, qa_error *error);
+/* A retained surface ticket defers destruction until checked close. */
 void qa_cpu_destroy(qa_cpu_renderer *renderer);
 bool qa_cpu_resize(qa_cpu_renderer *renderer, uint32_t width, uint32_t height,
                    qa_error *error);
@@ -36,4 +38,15 @@ bool qa_cpu_set_overdraw(qa_cpu_renderer *renderer, bool enabled,
                          qa_error *error);
 bool qa_cpu_read_overdraw(const qa_cpu_renderer *renderer, uint8_t *destination,
                           size_t bytes, qa_error *error);
+/* Allocate before publication, preserving the renderer's retained targets and
+ * images. Partial failures retain a ticket; source save/render/mutation are
+ * excluded until abort or checked retirement. */
+bool qa_cpu_surface_prepare(qa_cpu_renderer *, uint32_t, uint32_t, float gamma,
+                            qa_cpu_present, void *, qa_cpu_surface_ticket **, qa_error *);
+bool qa_cpu_surface_ready(const qa_cpu_surface_ticket *, qa_error *);
+/* Publish only after the complete surface/child bundle is ready; this does
+ * only private ownership transfers. Retire the retained ticket afterward. */
+void qa_cpu_surface_publish(qa_cpu_surface_ticket *);
+bool qa_cpu_surface_abort(qa_cpu_surface_ticket **, qa_error *);
+bool qa_cpu_surface_retire(qa_cpu_surface_ticket **, qa_error *);
 #endif

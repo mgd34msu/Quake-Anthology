@@ -2,8 +2,29 @@
 #include "../save_fields.h"
 #include "qa/render_gl_save.h"
 
+#include <SDL_video.h>
+#include <SDL_loadso.h>
 #include <limits.h>
 #include <stdio.h>
+
+struct qa_gl_surface_ticket {
+    qa_gl_renderer *renderer;
+    qa_gl_renderer targets;
+    qa_display *original_display,*candidate_display;
+    gl_presentation_snapshot *native;
+    SDL_GLContext context;
+    GLuint reader;
+    uint32_t original_width,original_height,width,height,window_id;
+    float gamma;
+    bool captured,attempted,replace_output,replace_opacity,prepared,published,native_restored;
+};
+
+static bool gl_surface_idle(const qa_gl_renderer *renderer,qa_error *error)
+{
+    if (renderer && !renderer->surface_ticket) return true;
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL renderer is absent or retains a surface settings ticket");
+    return false;
+}
 
 static bool finite3(qa_vec3 value)
 {
@@ -21,6 +42,105 @@ static void copy_gl_string(char *destination, size_t capacity,
 {
     snprintf(destination, capacity, "%s",
              value == NULL ? "unknown" : (const char *)value);
+}
+
+static bool gl_extension(const char *extensions,const char *name)
+{
+    if (!extensions) return false;
+    size_t length=strlen(name);
+    for (const char *at=extensions;(at=strstr(at,name))!=NULL;at+=length)
+        if ((at==extensions || at[-1]==' ') && (!at[length] || at[length]==' ')) return true;
+    return false;
+}
+
+#ifdef _WIN32
+static bool gl_wgl_native_depth(bool *floating,qa_error *error)
+{
+    typedef void *(APIENTRY *current_dc_fn)(void);
+    typedef const char *(APIENTRY *extensions_fn)(void);
+    typedef int (APIENTRY *pixel_attribute_fn)(void *,int,int,unsigned,const int *,int *);
+    typedef int (APIENTRY *pixel_format_fn)(void *);
+    current_dc_fn current_dc=NULL; extensions_fn extensions_string=NULL;
+    pixel_attribute_fn attribute=NULL; pixel_format_fn pixel_format=NULL;
+    _Static_assert(sizeof(current_dc)==sizeof(void *) && sizeof(extensions_string)==sizeof(void *) &&
+        sizeof(attribute)==sizeof(void *) && sizeof(pixel_format)==sizeof(void *),"WGL procedure pointers must fit in void pointers");
+    void *address=SDL_GL_GetProcAddress("wglGetCurrentDC"); memcpy(&current_dc,&address,sizeof(current_dc));
+    if (!current_dc || (uintptr_t)address<=3 || (uintptr_t)address==UINTPTR_MAX) {
+        qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Legacy native depth has no current WGL device witness"); return false;
+    }
+    void *dc=current_dc();
+    if (!dc) { qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Legacy native depth has no current WGL drawable"); return false; }
+    address=SDL_GL_GetProcAddress("wglGetExtensionsStringEXT");
+    if ((uintptr_t)address>3 && (uintptr_t)address!=UINTPTR_MAX) memcpy(&extensions_string,&address,sizeof(extensions_string));
+    /* WGL_EXT_depth_float requires this exact extension-string query. */
+    if (!extensions_string) {
+        *floating=false; return true;
+    }
+    const char *extensions=extensions_string();
+    if (!extensions) { qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Reading actual current WGL depth extensions"); return false; }
+    if (!gl_extension(extensions,"WGL_EXT_depth_float")) { *floating=false; return true; }
+    address=SDL_GL_GetProcAddress("wglGetPixelFormatAttribivEXT");
+    if ((uintptr_t)address>3 && (uintptr_t)address!=UINTPTR_MAX) memcpy(&attribute,&address,sizeof(attribute));
+    if (!attribute) { qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Native WGL floating depth has no pixel-format query"); return false; }
+    void *library=SDL_LoadObject("gdi32.dll");
+    if (!library) { qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Loading the actual native WGL pixel-format getter: %s",SDL_GetError()); return false; }
+    address=SDL_LoadFunction(library,"GetPixelFormat"); memcpy(&pixel_format,&address,sizeof(pixel_format));
+    int format=pixel_format?pixel_format(dc):0,value=-1;
+    const int depth_float=0x2040; /* WGL_DEPTH_FLOAT_EXT */
+    bool ok=format>0 && attribute(dc,format,0,1,&depth_float,&value) && (value==0 || value==1);
+    SDL_UnloadObject(library);
+    if (!ok) { qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Reading the actual native WGL depth representation"); return false; }
+    *floating=value!=0; return true;
+}
+#endif
+
+static bool gl_native_depth(qa_gl_renderer *renderer,bool *floating,qa_error *error)
+{
+    gl_api *gl=&renderer->gl;
+    const char *version=(const char *)gl->GetString(GL_VERSION);
+    unsigned major=0;
+    if (!version || *version<'1' || *version>'9') {
+        qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Native depth requires an actual desktop OpenGL version"); return false;
+    }
+    for (;*version>='0' && *version<='9';++version) {
+        if (major>(UINT_MAX-(unsigned)(*version-'0'))/10) {
+            qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Actual OpenGL version exceeds native depth discovery"); return false;
+        }
+        major=major*10+(unsigned)(*version-'0');
+    }
+    if (*version!='.') { qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Actual desktop OpenGL version is malformed"); return false; }
+    const char *extensions=major>=3?NULL:(const char *)gl->GetString(GL_EXTENSIONS);
+    if (major<3 && !extensions) { qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Reading actual legacy OpenGL extensions"); return false; }
+    bool standard_fbo=major>=3 || gl_extension(extensions,"GL_ARB_framebuffer_object");
+    GLint draw=0,read=0,value=-1;
+    gl->GetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING,&draw); gl->GetIntegerv(GL_READ_FRAMEBUFFER_BINDING,&read);
+    if (!gl_check(renderer,"Reading bindings for native depth discovery",error)) return false;
+    gl->BindFramebuffer(GL_FRAMEBUFFER,0);
+    bool ok=true;
+    if (standard_fbo) {
+        gl->GetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER,GL_DEPTH,GL_FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE,&value);
+        if (value!=GL_FLOAT && value!=GL_UNSIGNED_NORMALIZED) {
+            qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Actual native depth component type is unsupported"); ok=false;
+        } else *floating=value==GL_FLOAT;
+    } else if (gl_extension(extensions,"GL_NV_depth_buffer_float")) {
+        gl->GetIntegerv(0x8DAF,&value); /* DEPTH_BUFFER_FLOAT_MODE_NV */
+        if (value!=0 && value!=1) { qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Actual NV native depth mode is invalid"); ok=false; }
+        else *floating=value!=0;
+    } else {
+#ifdef _WIN32
+        ok=gl_wgl_native_depth(floating,error);
+#else
+        /* Legacy desktop GL specifies unsigned fixed-point default depth.
+         * NV supplies its mode query; WGL separately extends native visuals. */
+        *floating=false;
+#endif
+    }
+    gl->BindFramebuffer(GL_DRAW_FRAMEBUFFER,(GLuint)draw); gl->BindFramebuffer(GL_READ_FRAMEBUFFER,(GLuint)read);
+    if (!gl_check(renderer,"Discovering actual native depth and restoring bindings",error)) return false;
+    if (ok && *floating && major<3 && !gl_extension(extensions,"GL_ARB_depth_buffer_float")) {
+        qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Actual native floating depth lacks the renderer's standard retained formats"); return false;
+    }
+    return ok;
 }
 
 void qa_gl_options_default(qa_gl_options *options)
@@ -52,10 +172,8 @@ static bool capabilities(qa_gl_renderer *renderer, qa_error *error)
     gl->GetIntegerv(GL_MAX_TEXTURE_IMAGE_UNITS, &units);
     gl->GetIntegerv(GL_MAX_VERTEX_ATTRIBS, &attributes);
     gl->GetIntegerv(GL_STEREO, &stereo);
-    GLint depth_component = 0;
-    gl->GetFramebufferAttachmentParameteriv(
-        GL_FRAMEBUFFER, GL_DEPTH, GL_FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE,
-        &depth_component);
+    bool floating_depth=false;
+    if (!gl_native_depth(renderer,&floating_depth,error)) return false;
     if (red < 0 || green < 0 || blue < 0 || alpha < 0 || depth < 1 ||
         stencil < 0 || maximum < 1 || units < 3 || attributes < 5) {
         qa_error_set(error, QA_ERROR_UNSUPPORTED, 0,
@@ -70,7 +188,7 @@ static bool capabilities(qa_gl_renderer *renderer, qa_error *error)
     caps->texture_units = (uint32_t)units;
     caps->vertex_attributes = (uint32_t)attributes;
     caps->stereo = stereo != 0;
-    caps->floating_depth = depth_component == GL_FLOAT;
+    caps->floating_depth = floating_depth;
     return gl_check(renderer, "OpenGL capability query", error);
 }
 
@@ -138,6 +256,7 @@ qa_gl_renderer *qa_gl_create(const qa_gl_options *input, qa_error *error)
 void qa_gl_destroy(qa_gl_renderer *renderer)
 {
     if (renderer == NULL || renderer->closed) return;
+    if (renderer->surface_ticket) { renderer->destroy_pending=true; return; }
     renderer->closed = true;
     qa_error ignored = {0};
     if (!renderer->gl.DeleteTextures || !qa_display_make_current(renderer->options.display, &ignored)) {
@@ -624,6 +743,7 @@ static bool gl_execute(qa_gl_renderer *renderer, const qa_scene_frame *frame,
 }
 bool qa_gl_execute(qa_gl_renderer *renderer,const qa_scene_frame *frame,qa_error *error)
 {
+    if (!gl_surface_idle(renderer,error)) return false;
     if (!renderer || renderer->detached || renderer->executing || renderer->capturing || renderer->preparing) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL renderer is absent or executing"); return false;
     }
@@ -632,6 +752,7 @@ bool qa_gl_execute(qa_gl_renderer *renderer,const qa_scene_frame *frame,qa_error
 }
 bool qa_gl_checkpoint_resources(const qa_gl_renderer *renderer,qa_render_resource_visit_fn visit,void *context,qa_error *error)
 {
+    if (!gl_surface_idle(renderer,error)) return false;
     if (!renderer || !visit || renderer->closed || renderer->executing || renderer->capturing || renderer->preparing || renderer->opacity.active) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL resource observation requires its idle actual renderer owner"); return false;
     }
@@ -649,6 +770,7 @@ bool qa_gl_checkpoint_resources(const qa_gl_renderer *renderer,qa_render_resourc
 }
 bool qa_gl_checkpoint_meshes(const qa_gl_renderer *renderer,qa_gl_mesh_visit_fn visit,void *context,qa_error *error)
 {
+    if (!gl_surface_idle(renderer,error)) return false;
     if (!renderer || !visit || renderer->closed || renderer->executing || renderer->capturing || renderer->preparing || renderer->opacity.active) {
         qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL mesh observation requires its idle actual cache owner"); return false;
     }
@@ -663,6 +785,7 @@ bool qa_gl_checkpoint_meshes(const qa_gl_renderer *renderer,qa_gl_mesh_visit_fn 
 
 bool qa_gl_finish(qa_gl_renderer *renderer, qa_error *error)
 {
+    if (!gl_surface_idle(renderer,error)) return false;
     if (renderer == NULL || renderer->closed || renderer->detached ||
         !qa_display_make_current(renderer->options.display, error) ||
         !gl_output_resolve(renderer, error)) {
@@ -677,6 +800,7 @@ bool qa_gl_finish(qa_gl_renderer *renderer, qa_error *error)
 
 bool qa_gl_set_gamma(qa_gl_renderer *renderer, float gamma, qa_error *error)
 {
+    if (!gl_surface_idle(renderer,error)) return false;
     if (renderer == NULL || renderer->closed || renderer->detached ||
         !qa_display_make_current(renderer->options.display, error)) {
         if (renderer == NULL || renderer->closed)
@@ -702,6 +826,7 @@ static bool pack_state(qa_gl_renderer *renderer, GLint alignment,
 static bool capture(qa_gl_renderer *renderer, bool presented, qa_buffer *out,
                      uint32_t *out_width, uint32_t *out_height, qa_error *error)
 {
+    if (!gl_surface_idle(renderer,error)) return false;
     if (renderer == NULL || renderer->closed || renderer->detached || out == NULL ||
         renderer->opacity.active || renderer->target != NULL ||
         !qa_display_make_current(renderer->options.display, error) ||
@@ -771,6 +896,7 @@ bool qa_gl_capture_presented(qa_gl_renderer *renderer, qa_buffer *out,
 bool qa_gl_read_depth(qa_gl_renderer *renderer, uint32_t x, uint32_t y,
                       float *out, qa_error *error)
 {
+    if (!gl_surface_idle(renderer,error)) return false;
     uint32_t width = 0, height = 0;
     if (renderer == NULL || renderer->closed || renderer->detached || out == NULL ||
         renderer->target != NULL || renderer->opacity.active ||
@@ -797,6 +923,7 @@ bool qa_gl_capture_depth_image(qa_gl_renderer *renderer,
                                uint32_t *out_width, uint32_t *out_height,
                                qa_error *error)
 {
+    if (!gl_surface_idle(renderer,error)) return false;
     if (renderer == NULL || renderer->closed || renderer->detached || image == NULL || out == NULL ||
         image->kind != QA_SCENE_DEPTH32F ||
         !qa_display_make_current(renderer->options.display, error)) {
@@ -839,6 +966,7 @@ bool qa_gl_capture_depth_image(qa_gl_renderer *renderer,
 bool qa_gl_set_overdraw(qa_gl_renderer *renderer, bool enabled,
                         qa_error *error)
 {
+    if (!gl_surface_idle(renderer,error)) return false;
     if (renderer == NULL || renderer->closed || renderer->detached ||
         (enabled && renderer->capabilities.stencil_bits == 0)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0,
@@ -852,6 +980,7 @@ bool qa_gl_set_overdraw(qa_gl_renderer *renderer, bool enabled,
 bool qa_gl_read_overdraw(qa_gl_renderer *renderer, uint8_t *destination,
                          size_t bytes, qa_error *error)
 {
+    if (!gl_surface_idle(renderer,error)) return false;
     uint32_t width, height;
     if (renderer == NULL || renderer->closed || renderer->detached || destination == NULL ||
         renderer->capabilities.stencil_bits == 0 || renderer->target != NULL ||
@@ -884,6 +1013,7 @@ bool qa_gl_restart(qa_gl_renderer **renderer, qa_display **display,
                    const qa_display_options *display_options,
                    const qa_gl_options *renderer_options, qa_error *error)
 {
+    if (renderer && !gl_surface_idle(*renderer,error)) return false;
     if (renderer == NULL || display == NULL || *renderer == NULL ||
         *display == NULL || (*renderer)->options.display != *display ||
         (*renderer)->opacity.active || (*renderer)->target != NULL) {
@@ -939,4 +1069,166 @@ bool qa_gl_restart(qa_gl_renderer **renderer, qa_display **display,
     qa_error ignored = {0};
     (void)qa_display_make_current(replacement_display, &ignored);
     return true;
+}
+
+bool qa_gl_surface_begin(qa_gl_renderer *renderer,qa_gl_surface_ticket **out,qa_error *error)
+{
+    if (!out || *out || !gl_surface_idle(renderer,error) || renderer->closed || renderer->detached ||
+        renderer->destroy_pending || renderer->executing || renderer->capturing || renderer->preparing ||
+        renderer->opacity.active || renderer->target || !qa_display_make_current(renderer->options.display,error)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Surface capture requires its actual completed OpenGL display renderer");
+        return false;
+    }
+    qa_display_info info={0};
+    if (!qa_display_info_get(renderer->options.display,&info,error) || info.backend!=QA_DISPLAY_OPENGL ||
+        !info.drawable_width || !info.drawable_height || !SDL_GL_GetCurrentContext()) return false;
+    if (info.drawable_width>renderer->capabilities.maximum_texture_size ||
+        info.drawable_height>renderer->capabilities.maximum_texture_size) {
+        qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Actual drawable exceeds retained native texture limits"); return false;
+    }
+    qa_gl_surface_ticket *ticket=calloc(1,sizeof(*ticket));
+    if (!ticket) { qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining OpenGL surface settings ticket"); return false; }
+    ticket->renderer=renderer; ticket->original_display=renderer->options.display;
+    ticket->context=SDL_GL_GetCurrentContext(); ticket->original_width=info.drawable_width;
+    ticket->original_height=info.drawable_height; ticket->targets.gl=renderer->gl;
+    renderer->surface_ticket=ticket; *out=ticket;
+    ticket->captured=gl_presentation_capture(renderer,&ticket->native,error);
+    renderer->preparing=true;
+    return ticket->captured;
+}
+
+bool qa_gl_surface_prepare(qa_gl_surface_ticket *ticket,qa_display *display,float gamma,qa_error *error)
+{
+    qa_gl_renderer *renderer=ticket?ticket->renderer:NULL;
+    if (!renderer || renderer->surface_ticket!=ticket || renderer->destroy_pending || !renderer->preparing ||
+        !ticket->captured || ticket->attempted || ticket->published || !display || display==ticket->original_display ||
+        renderer->options.display!=ticket->original_display || !isfinite(gamma) || gamma<0.5f || gamma>3 ||
+        SDL_GL_GetCurrentContext()!=ticket->context) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL surface preparation requires its entered compatible native candidate"); return false;
+    }
+    qa_display_info info={0}; SDL_Window *window=SDL_GL_GetCurrentWindow();
+    if (!qa_display_info_get(display,&info,error) || info.backend!=QA_DISPLAY_OPENGL || !window ||
+        SDL_GetWindowID(window)!=info.window_id || !info.drawable_width || !info.drawable_height ||
+        info.drawable_width>INT_MAX || info.drawable_height>INT_MAX) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL candidate is not the current native drawable"); return false;
+    }
+    ticket->attempted=true; ticket->candidate_display=display; ticket->window_id=info.window_id;
+    ticket->width=info.drawable_width; ticket->height=info.drawable_height; ticket->gamma=gamma;
+    bool resized=ticket->width!=ticket->original_width || ticket->height!=ticket->original_height;
+    ticket->replace_output=resized || gamma!=renderer->gamma;
+    ticket->replace_opacity=resized && renderer->opacity.allocated;
+    ticket->targets=*renderer; ticket->targets.options.display=display;
+    ticket->targets.surface_ticket=NULL; ticket->targets.destroy_pending=false; ticket->targets.preparing=false;
+    if (ticket->replace_output) ticket->targets.output=(gl_output_target){0};
+    if (ticket->replace_opacity) {
+        memset(ticket->targets.opacity.framebuffer,0,sizeof(ticket->targets.opacity.framebuffer));
+        memset(ticket->targets.opacity.color,0,sizeof(ticket->targets.opacity.color));
+        ticket->targets.opacity.depth_stencil=0; ticket->targets.opacity.width=0; ticket->targets.opacity.height=0;
+        ticket->targets.opacity.allocated=false;
+    }
+    bool floating_depth=false;
+    if (!gl_native_depth(&ticket->targets,&floating_depth,error) || floating_depth!=renderer->capabilities.floating_depth) {
+        if (error && error->code==QA_OK) qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Candidate native depth representation differs from the retained visual");
+        return false;
+    }
+    if (!gl_check(renderer,"Beginning compatible surface target preparation",error) ||
+        !gl_presentation_copy(renderer,ticket->native,ticket->width,ticket->height,error) ||
+        !gl_surface_targets_prepare(&ticket->targets,renderer,gamma,ticket->replace_output,
+            ticket->replace_opacity,&ticket->reader,error) ||
+        !gl_presentation_restore_bindings(renderer,ticket->native,error)) return false;
+    if (ticket->replace_output && !gl_bind_destination(&ticket->targets,error)) return false;
+    if (!gl_check(renderer,"Completing compatible surface target preparation",error)) return false;
+    ticket->prepared=true;
+    return qa_gl_surface_ready(ticket,error);
+}
+
+bool qa_gl_surface_ready(const qa_gl_surface_ticket *ticket,qa_error *error)
+{
+    const qa_gl_renderer *renderer=ticket?ticket->renderer:NULL;
+    qa_display_info info={0}; SDL_Window *window=SDL_GL_GetCurrentWindow();
+    if (!renderer || renderer->surface_ticket!=ticket || renderer->closed || renderer->destroy_pending ||
+        !renderer->preparing || renderer->executing || renderer->capturing || renderer->opacity.active || renderer->target ||
+        !ticket->prepared || ticket->published || renderer->options.display!=ticket->original_display ||
+        SDL_GL_GetCurrentContext()!=ticket->context || !window || SDL_GetWindowID(window)!=ticket->window_id ||
+        !qa_display_info_get(ticket->candidate_display,&info,error) ||
+        info.drawable_width!=ticket->width || info.drawable_height!=ticket->height ||
+        (ticket->targets.output.enabled && (!ticket->targets.output.table || !ticket->targets.output.framebuffer ||
+            !ticket->targets.output.color_ready[gl_draw_buffer_index(renderer->draw_buffer)])) ||
+        (ticket->replace_opacity && !ticket->targets.opacity.allocated)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL surface ticket is not prepared at the current actual drawable"); return false;
+    }
+    return true;
+}
+
+void qa_gl_surface_publish(qa_gl_surface_ticket *ticket)
+{
+    if (!ticket || !ticket->prepared || ticket->published) return;
+    qa_gl_renderer *renderer=ticket->renderer;
+    if (ticket->replace_output) {
+        gl_output_target retired=renderer->output; renderer->output=ticket->targets.output; ticket->targets.output=retired;
+    }
+    if (ticket->replace_opacity) {
+        gl_opacity_target retired=renderer->opacity; renderer->opacity=ticket->targets.opacity; ticket->targets.opacity=retired;
+    }
+    renderer->options.display=ticket->candidate_display; renderer->gamma=ticket->gamma;
+    if (ticket->width!=ticket->original_width || ticket->height!=ticket->original_height || ticket->replace_output)
+        renderer->presented=false;
+    ticket->published=true;
+}
+
+static bool gl_surface_objects_release(qa_gl_surface_ticket *ticket,qa_error *error)
+{
+    qa_gl_renderer *renderer=ticket->renderer;
+    if (!gl_surface_targets_delete(&ticket->targets,ticket->replace_output,ticket->replace_opacity,error)) return false;
+    if (ticket->reader) {
+        if (!gl_check(renderer,"Preparing retained surface reader retirement",error)) return false;
+        renderer->gl.DeleteFramebuffers(1,&ticket->reader);
+        if (!gl_check(renderer,"Retiring retained surface reader",error)) return false;
+        ticket->reader=0;
+    }
+    return gl_presentation_dispose(renderer,&ticket->native,error);
+}
+
+static void gl_surface_release(qa_gl_surface_ticket **out)
+{
+    qa_gl_surface_ticket *ticket=*out; qa_gl_renderer *renderer=ticket->renderer;
+    renderer->surface_ticket=NULL; renderer->preparing=false; free(ticket); *out=NULL;
+    if (renderer->destroy_pending) qa_gl_destroy(renderer);
+}
+
+bool qa_gl_surface_abort(qa_gl_surface_ticket **out,qa_error *error)
+{
+    if (!out) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid retained OpenGL surface abort"); return false; }
+    qa_gl_surface_ticket *ticket=*out;
+    if (!ticket) return true;
+    qa_gl_renderer *renderer=ticket->renderer; qa_display_info info={0};
+    if (renderer->surface_ticket!=ticket || ticket->published || renderer->options.display!=ticket->original_display ||
+        !qa_display_make_current(ticket->original_display,error) || SDL_GL_GetCurrentContext()!=ticket->context ||
+        !qa_display_info_get(ticket->original_display,&info,error) || info.drawable_width!=ticket->original_width ||
+        info.drawable_height!=ticket->original_height) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL surface abort requires its restored original native endpoint"); return false;
+    }
+    if (!ticket->native_restored) {
+        if ((ticket->captured && !gl_presentation_copy(renderer,ticket->native,ticket->original_width,ticket->original_height,error)) ||
+            !gl_presentation_restore_bindings(renderer,ticket->native,error)) return false;
+        ticket->native_restored=true;
+    }
+    if (!gl_surface_objects_release(ticket,error)) return false;
+    gl_surface_release(out); return true;
+}
+
+bool qa_gl_surface_retire(qa_gl_surface_ticket **out,qa_error *error)
+{
+    if (!out) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Invalid retained OpenGL surface retirement"); return false; }
+    qa_gl_surface_ticket *ticket=*out;
+    if (!ticket) return true;
+    qa_gl_renderer *renderer=ticket->renderer; qa_display_info info={0};
+    if (renderer->surface_ticket!=ticket || !ticket->published || renderer->options.display!=ticket->candidate_display ||
+        !qa_display_make_current(ticket->candidate_display,error) || SDL_GL_GetCurrentContext()!=ticket->context ||
+        !qa_display_info_get(ticket->candidate_display,&info,error) || info.drawable_width!=ticket->width ||
+        info.drawable_height!=ticket->height) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL surface retirement requires its published actual native endpoint"); return false;
+    }
+    if (!gl_surface_objects_release(ticket,error)) return false;
+    gl_surface_release(out); return true;
 }

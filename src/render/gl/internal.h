@@ -213,6 +213,8 @@ struct qa_gl_renderer {
     uint64_t sequence;
     uint32_t presented_width, presented_height;
     bool overdraw, closed, presented, executing, capturing, preparing, detached;
+    qa_gl_surface_ticket *surface_ticket;
+    bool destroy_pending;
     gl_restore_storage *restore;
 };
 void gl_restore_storage_destroy(qa_gl_renderer *);
@@ -261,5 +263,13 @@ GLenum gl_draw_buffer_name(qa_scene_draw_buffer buffer);
 unsigned gl_draw_buffer_index(qa_scene_draw_buffer buffer);
 bool gl_check(qa_gl_renderer *renderer, const char *operation,
               qa_error *error);
+
+typedef struct gl_presentation_snapshot gl_presentation_snapshot;
+bool gl_presentation_capture(qa_gl_renderer *, gl_presentation_snapshot **, qa_error *);
+bool gl_presentation_copy(qa_gl_renderer *, gl_presentation_snapshot *, uint32_t, uint32_t, qa_error *);
+bool gl_presentation_restore_bindings(qa_gl_renderer *, const gl_presentation_snapshot *, qa_error *);
+bool gl_presentation_dispose(qa_gl_renderer *, gl_presentation_snapshot **, qa_error *);
+bool gl_surface_targets_prepare(qa_gl_renderer *, const qa_gl_renderer *, float, bool, bool, GLuint *, qa_error *);
+bool gl_surface_targets_delete(qa_gl_renderer *, bool, bool, qa_error *);
 
 #endif

@@ -763,3 +763,144 @@ bool gl_depth_fog(qa_gl_renderer *renderer, const qa_scene_fog *fog,
     gl->UseProgram(0);
     return gl_check(renderer, "OpenGL Q2 fog pass", error);
 }
+
+static bool surface_name(qa_gl_renderer *renderer,GLuint *name,unsigned kind,qa_error *error)
+{
+    gl_api *gl=&renderer->gl;
+    if (!*name) {
+        if (!kind) gl->GenFramebuffers(1,name);
+        else if (kind==1) gl->GenTextures(1,name);
+        else gl->GenRenderbuffers(1,name);
+    }
+    if (!gl_check(renderer,"Allocating retained surface target storage",error)) return false;
+    if (*name) return true;
+    qa_error_set(error,QA_ERROR_MEMORY,0,"OpenGL could not allocate retained surface target storage");
+    return false;
+}
+
+static bool surface_color(qa_gl_renderer *renderer,unsigned slot,uint32_t width,uint32_t height,qa_error *error)
+{
+    gl_output_target *output=&renderer->output;
+    gl_api *gl=&renderer->gl;
+    if (!output->color_ready[slot]) {
+        if (!surface_name(renderer,output->color+slot,1,error)) return false;
+        GLint color=renderer->capabilities.alpha_bits?GL_RGBA8:renderer->capabilities.color_bits<=16?GL_RGB5:GL_RGB8;
+        texture_storage(renderer,output->color[slot],color,width,height,GL_RGBA,GL_UNSIGNED_BYTE);
+        if (!gl_check(renderer,"Allocating candidate output color samples",error)) return false;
+    }
+    gl->BindFramebuffer(GL_FRAMEBUFFER,output->framebuffer);
+    gl->FramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,output->color[slot],0);
+    attach_depth(renderer,output->framebuffer,output->depth_stencil);
+    gl->DrawBuffer(GL_COLOR_ATTACHMENT0); gl->ReadBuffer(GL_COLOR_ATTACHMENT0);
+    if (!framebuffer_complete(renderer,"Candidate output framebuffer",error) ||
+        !gl_check(renderer,"Preparing candidate output attachment",error)) return false;
+    output->color_ready[slot]=true; output->dirty[slot]=true;
+    return true;
+}
+
+/* Source attachments remain untouched: the ticket owns its separate reader. */
+bool gl_surface_targets_prepare(qa_gl_renderer *renderer,const qa_gl_renderer *source,float gamma,
+    bool replace_output,bool replace_opacity,GLuint *reader,qa_error *error)
+{
+    uint32_t width=0,height=0;
+    if (!reader || !gl_dimensions(renderer,&width,&height,error)) return false;
+    if (width>renderer->capabilities.maximum_texture_size || height>renderer->capabilities.maximum_texture_size) {
+        qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Candidate surface targets exceed actual texture limits"); return false;
+    }
+    gl_api *gl=&renderer->gl;
+    gl->Disable(GL_SCISSOR_TEST);
+    if (replace_opacity && source->opacity.allocated) {
+        gl_opacity_target *opacity=&renderer->opacity;
+        for (size_t i=0;i<2;++i)
+            if (!surface_name(renderer,opacity->framebuffer+i,0,error) ||
+                !surface_name(renderer,opacity->color+i,1,error)) return false;
+        if (!surface_name(renderer,&opacity->depth_stencil,2,error)) return false;
+        opacity->allocated=true;
+        if (!opacity_allocate(renderer,width,height,error)) return false;
+    }
+    if (!replace_output) return true;
+    gl_output_target *output=&renderer->output;
+    output->enabled=gamma!=1; renderer->gamma=gamma;
+    if (output->enabled) {
+        if (!surface_name(renderer,&output->framebuffer,0,error) ||
+            !surface_name(renderer,&output->depth_stencil,2,error) ||
+            !surface_name(renderer,&output->table,1,error)) return false;
+        gl->BindRenderbuffer(GL_RENDERBUFFER,output->depth_stencil);
+        gl->RenderbufferStorage(GL_RENDERBUFFER,depth_internal(renderer),(GLsizei)width,(GLsizei)height);
+        output->width=width; output->height=height;
+        uint8_t table[256]; gl_gamma_table(gamma,table);
+        gl->ActiveTexture(GL_TEXTURE1); gl->BindTexture(GL_TEXTURE_2D,output->table);
+        gl->BindBuffer(GL_PIXEL_UNPACK_BUFFER,0);
+        gl->PixelStorei(GL_UNPACK_ALIGNMENT,1); gl->PixelStorei(GL_UNPACK_ROW_LENGTH,0);
+        gl->PixelStorei(GL_UNPACK_SKIP_ROWS,0); gl->PixelStorei(GL_UNPACK_SKIP_PIXELS,0);
+        gl->TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);
+        gl->TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
+        gl->TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+        gl->TexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+        gl->TexImage2D(GL_TEXTURE_2D,0,GL_LUMINANCE8,256,1,0,GL_LUMINANCE,GL_UNSIGNED_BYTE,table);
+        if (!gl_check(renderer,"Preparing candidate gamma and depth storage",error)) return false;
+    }
+    for (unsigned slot=0;slot<GL_DRAW_BUFFER_COUNT_QA;++slot) {
+        bool raw=source->output.enabled && source->output.color_ready[slot];
+        if (!raw && (!output->enabled || slot!=gl_draw_buffer_index(source->draw_buffer))) continue;
+        qa_scene_draw_buffer buffer=slot==0?QA_DRAW_FRONT:slot==1?QA_DRAW_BACK:
+            slot==2?QA_DRAW_BACK_LEFT:QA_DRAW_BACK_RIGHT;
+        if (output->enabled && !surface_color(renderer,slot,width,height,error)) return false;
+        if (raw) {
+            if (!surface_name(renderer,reader,0,error)) return false;
+            gl->BindFramebuffer(GL_READ_FRAMEBUFFER,*reader);
+            gl->FramebufferTexture2D(GL_READ_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,source->output.color[slot],0);
+            gl->FramebufferRenderbuffer(GL_READ_FRAMEBUFFER,GL_DEPTH_ATTACHMENT,GL_RENDERBUFFER,source->output.depth_stencil);
+            if (source->capabilities.stencil_bits)
+                gl->FramebufferRenderbuffer(GL_READ_FRAMEBUFFER,GL_STENCIL_ATTACHMENT,GL_RENDERBUFFER,source->output.depth_stencil);
+            gl->ReadBuffer(GL_COLOR_ATTACHMENT0);
+            if (gl->CheckFramebufferStatus(GL_READ_FRAMEBUFFER)!=GL_FRAMEBUFFER_COMPLETE) {
+                qa_error_set(error,QA_ERROR_UNSUPPORTED,0,"Retained raw output reader is incomplete"); return false;
+            }
+        } else {
+            gl->BindFramebuffer(GL_READ_FRAMEBUFFER,0); gl->ReadBuffer(gl_draw_buffer_name(buffer));
+        }
+        gl->BindFramebuffer(GL_DRAW_FRAMEBUFFER,output->enabled?output->framebuffer:0);
+        gl->DrawBuffer(output->enabled?GL_COLOR_ATTACHMENT0:gl_draw_buffer_name(buffer));
+        uint32_t source_width=raw?source->output.width:width,source_height=raw?source->output.height:height;
+        gl->BlitFramebuffer(0,0,(GLint)source_width,(GLint)source_height,0,0,(GLint)width,(GLint)height,GL_COLOR_BUFFER_BIT,GL_NEAREST);
+        uint32_t overlap_width=width<source_width?width:source_width,overlap_height=height<source_height?height:source_height;
+        gl->BlitFramebuffer(0,0,(GLint)overlap_width,(GLint)overlap_height,0,0,(GLint)overlap_width,(GLint)overlap_height,
+            depth_mask(renderer),GL_NEAREST);
+        if (!gl_check(renderer,"Preparing retained linear output samples",error)) return false;
+    }
+    return !output->enabled || gl_output_resolve(renderer,error);
+}
+
+static bool surface_delete(qa_gl_renderer *renderer,GLuint *name,unsigned kind,qa_error *error)
+{
+    if (!*name) return true;
+    if (!gl_check(renderer,"Preparing checked surface target retirement",error)) return false;
+    if (!kind) renderer->gl.DeleteFramebuffers(1,name);
+    else if (kind==1) renderer->gl.DeleteTextures(1,name);
+    else renderer->gl.DeleteRenderbuffers(1,name);
+    if (!gl_check(renderer,"Retiring retained surface target storage",error)) return false;
+    *name=0; return true;
+}
+
+bool gl_surface_targets_delete(qa_gl_renderer *renderer,bool output,bool opacity,qa_error *error)
+{
+    if (output) {
+        gl_output_target *target=&renderer->output;
+        for (size_t i=0;i<GL_DRAW_BUFFER_COUNT_QA;++i)
+            if (!surface_delete(renderer,target->color+i,1,error)) return false;
+        if (!surface_delete(renderer,&target->table,1,error) ||
+            !surface_delete(renderer,&target->depth_stencil,2,error) ||
+            !surface_delete(renderer,&target->framebuffer,0,error)) return false;
+        memset(target,0,sizeof(*target));
+    }
+    if (opacity) {
+        gl_opacity_target *target=&renderer->opacity;
+        for (size_t i=0;i<2;++i)
+            if (!surface_delete(renderer,target->color+i,1,error) ||
+                !surface_delete(renderer,target->framebuffer+i,0,error)) return false;
+        if (!surface_delete(renderer,&target->depth_stencil,2,error)) return false;
+        memset(target,0,sizeof(*target));
+    }
+    return true;
+}

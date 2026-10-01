@@ -1145,6 +1145,12 @@ bool qa_display_surface_prepare(qa_display *active, const qa_display_settings *s
     if (!surface_owner(ticket, error) || !qa_display_info_get(active, &ticket->original, error)) {
         free(ticket); return false;
     }
+    if (active->backend == QA_DISPLAY_CPU && active->native.cpu.has_frame &&
+        (active->native.cpu.width != ticket->original.drawable_width ||
+         active->native.cpu.height != ticket->original.drawable_height)) {
+        free(ticket); return display_save_error(error, QA_ERROR_ARGUMENT,
+            "CPU native presentation does not match the completed drawable");
+    }
     SDL_GetWindowPosition(active->window, &ticket->x, &ticket->y);
     if (SDL_GetWindowDisplayMode(active->window, &ticket->original_mode) < 0) {
         free(ticket); return display_error(error, QA_ERROR_IO, "Reading prior native window display mode");
@@ -1302,6 +1308,13 @@ bool qa_display_surface_rollback(qa_display_surface_ticket *ticket, qa_error *er
         (SDL_GL_GetCurrentWindow() != ticket->previous_window ||
          SDL_GL_GetCurrentContext() != ticket->previous_context) &&
         !surface_restore_context(ticket, error)) return false;
+    if (!ticket->native_restored && ticket->active->backend == QA_DISPLAY_CPU &&
+        ticket->active->native.cpu.has_frame) {
+        if (SDL_RenderCopy(ticket->active->native.cpu.renderer,
+                            ticket->active->native.cpu.texture, NULL, NULL) < 0)
+            return display_error(error, QA_ERROR_IO, "Restoring original native CPU presentation");
+        SDL_RenderPresent(ticket->active->native.cpu.renderer);
+    }
     ticket->native_restored = true;
     ticket->staged_valid = false;
     return true;

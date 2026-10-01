@@ -5,6 +5,7 @@
 #include "qa/scene.h"
 
 typedef struct qa_gl_renderer qa_gl_renderer;
+typedef struct qa_gl_surface_ticket qa_gl_surface_ticket;
 
 typedef struct qa_gl_options {
     qa_display *display;
@@ -20,7 +21,8 @@ typedef struct qa_gl_capabilities {
 
 void qa_gl_options_default(qa_gl_options *options);
 qa_gl_renderer *qa_gl_create(const qa_gl_options *options, qa_error *error);
-/* The display must outlive its renderer. */
+/* The display must outlive its renderer. A retained surface ticket defers
+ * destruction until its checked abort or retirement closes the ticket. */
 void qa_gl_destroy(qa_gl_renderer *renderer);
 const qa_gl_capabilities *qa_gl_capabilities_get(const qa_gl_renderer *renderer);
 /* Current GPU residency. Array in scratch; images borrow until backend
@@ -59,5 +61,19 @@ bool qa_gl_read_overdraw(qa_gl_renderer *renderer, uint8_t *destination,
 bool qa_gl_restart(qa_gl_renderer **renderer, qa_display **display,
                    const qa_display_options *display_options,
                    const qa_gl_options *renderer_options, qa_error *error);
+
+/* Capture the actual completed native presentation before display staging.
+ * Partial failures retain a ticket for checked abort. Active tickets exclude
+ * rendering, save and mutation until abort or checked retirement. Destruction
+ * is deferred; keep both displays alive until the ticket has closed. */
+bool qa_gl_surface_begin(qa_gl_renderer *, qa_gl_surface_ticket **, qa_error *);
+/* Candidate must already be current on the SAME actual captured context. */
+bool qa_gl_surface_prepare(qa_gl_surface_ticket *, qa_display *, float gamma, qa_error *);
+bool qa_gl_surface_ready(const qa_gl_surface_ticket *, qa_error *);
+/* Only private ownership transfers; retire afterward at a checked boundary. */
+void qa_gl_surface_publish(qa_gl_surface_ticket *);
+/* Abort follows display native rollback, before releasing either display. */
+bool qa_gl_surface_abort(qa_gl_surface_ticket **, qa_error *);
+bool qa_gl_surface_retire(qa_gl_surface_ticket **, qa_error *);
 
 #endif

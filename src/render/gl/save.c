@@ -2,6 +2,7 @@
 #include "../save_fields.h"
 #include "qa/render_gl_save.h"
 #include "qa/scene_save.h"
+#include <SDL_video.h>
 #include <limits.h>
 
 typedef struct gl_saved_level {
@@ -508,7 +509,8 @@ static bool gl_saved_write(qa_gl_renderer *renderer,gl_restore_storage *saved,
 }
 bool qa_gl_checkpoint(qa_gl_renderer *renderer,const qa_render_checkpoint_refs *refs,qa_buffer *out,qa_error *error)
 {
-    if (!out || out->data || out->size) return gl_save_error(error,QA_ERROR_ARGUMENT,"GPU checkpoint requires empty owned output");
+    if (!out || out->data || out->size || !renderer || renderer->surface_ticket)
+        return gl_save_error(error,QA_ERROR_ARGUMENT,"GPU checkpoint requires empty output and an owner without retained surface settings");
     gl_restore_storage *saved=calloc(1,sizeof(*saved));
     if (!saved) return gl_save_error(error,QA_ERROR_MEMORY,"Retaining completed GPU owner continuation");
     bool ok=gl_gpu_capture(renderer,saved,true,error) && gl_saved_write(renderer,saved,refs,out,error);
@@ -523,7 +525,7 @@ static bool gl_saved_copy_pixels(qa_buffer *out,const qa_buffer *source,qa_error
 bool qa_gl_create_detached(const qa_gl_options *options,float gamma,qa_gl_renderer *active,
     qa_gl_renderer **out,qa_gl_restore_guard **guard_out,qa_error *error)
 {
-    if (!out || !guard_out || !options || !options->display || !active || !isfinite(gamma) || gamma<0.5f || gamma>3)
+    if (!out || !guard_out || !options || !options->display || !active || active->surface_ticket || !isfinite(gamma) || gamma<0.5f || gamma>3)
         return gl_save_error(error,QA_ERROR_ARGUMENT,"Fresh GPU owner requires a real display, renderer cut, and supported gamma");
     *out=NULL; *guard_out=NULL;
     qa_display_info info={0};
@@ -574,7 +576,7 @@ bool qa_gl_restore(qa_bytes bytes,const qa_gl_options *options,const qa_render_c
     const qa_gl_renderer *active,qa_gl_renderer **out,qa_gl_restore_guard **guard_out,qa_error *error)
 {
     if (!out || !guard_out || !options || !options->display || !active || active->closed || active->detached ||
-        active->executing || active->capturing || active->preparing || active->opacity.active)
+        active->executing || active->capturing || active->preparing || active->surface_ticket || active->opacity.active)
         return gl_save_error(error,QA_ERROR_ARGUMENT,"GPU restore requires its actual idle enclosing renderer/display");
     *out=NULL; *guard_out=NULL;
     qa_gl_renderer *candidate=calloc(1,sizeof(*candidate));
@@ -853,3 +855,146 @@ void qa_gl_handoff(qa_gl_restore_guard *guard)
 }
 void qa_gl_restore_guard_destroy(qa_gl_restore_guard *guard)
 { free(guard); }
+
+struct gl_presentation_snapshot {
+    gl_restore_storage *saved;
+    gl_native_cut cut;
+    GLint native_read,native_draw,depth_mask,color_mask[4],polygon[2],attributes[5];
+    bool enabled[5],uploaded[4],cut_valid,captured;
+};
+static const GLenum gl_presentation_enables[5]={GL_DEPTH_TEST,GL_STENCIL_TEST,GL_CULL_FACE,
+    GL_BLEND,GL_POLYGON_OFFSET_FILL};
+
+bool gl_presentation_capture(qa_gl_renderer *renderer,gl_presentation_snapshot **out,qa_error *error)
+{
+    if (!out || *out || !renderer || renderer->closed || renderer->detached || renderer->executing ||
+        renderer->capturing || renderer->preparing || renderer->opacity.active || renderer->target ||
+        (renderer->capabilities.stencil_bits && renderer->capabilities.stencil_bits!=8) ||
+        !qa_display_make_current(renderer->options.display,error))
+        return gl_save_error(error,QA_ERROR_ARGUMENT,"Native presentation capture requires a completed exact renderer");
+    if (renderer->capabilities.stencil_bits &&
+        renderer->capabilities.depth_bits!=(renderer->capabilities.floating_depth?32u:24u))
+        return gl_save_error(error,QA_ERROR_UNSUPPORTED,"Native packed depth/stencil visual has no exact retained upload format");
+    gl_presentation_snapshot *snapshot=calloc(1,sizeof(*snapshot));
+    gl_restore_storage *saved=calloc(1,sizeof(*saved));
+    if (!snapshot || !saved) { free(snapshot); free(saved); return gl_save_error(error,QA_ERROR_MEMORY,"Retaining actual native presentation"); }
+    snapshot->saved=saved; *out=snapshot;
+    typedef void (APIENTRY *get_attribute_fn)(GLuint,GLenum,GLint *);
+    get_attribute_fn get_attribute=NULL;
+    _Static_assert(sizeof(get_attribute)==sizeof(void *),"SDL GL procedure pointers must fit in void pointers");
+    void *address=SDL_GL_GetProcAddress("glGetVertexAttribiv");
+    if (!address) address=SDL_GL_GetProcAddress("glGetVertexAttribivARB");
+    memcpy(&get_attribute,&address,sizeof(get_attribute));
+    if (!get_attribute) return gl_save_error(error,QA_ERROR_UNSUPPORTED,"Reading retained GL vertex attribute state");
+    gl_api *gl=&renderer->gl;
+    if (!gl_check(renderer,"Beginning actual native presentation capture",error)) return false;
+    gl_cut_read(renderer,&snapshot->cut);
+    gl->GetIntegerv(GL_DEPTH_WRITEMASK,&snapshot->depth_mask);
+    gl->GetIntegerv(GL_COLOR_WRITEMASK,snapshot->color_mask);
+    gl->GetIntegerv(GL_POLYGON_MODE,snapshot->polygon);
+    for (size_t i=0;i<5;++i) {
+        snapshot->enabled[i]=gl->IsEnabled(gl_presentation_enables[i])!=GL_FALSE;
+        get_attribute((GLuint)i,GL_VERTEX_ATTRIB_ARRAY_ENABLED,snapshot->attributes+i);
+    }
+    if (!gl_check(renderer,"Reading actual native presentation state",error)) return false;
+    gl->BindFramebuffer(GL_FRAMEBUFFER,0);
+    GLint samples=0;
+    gl->GetIntegerv(GL_SAMPLES,&samples);
+    gl->GetIntegerv(GL_READ_BUFFER,&snapshot->native_read);
+    gl->GetIntegerv(GL_DRAW_BUFFER,&snapshot->native_draw);
+    gl_cut_restore(renderer,&snapshot->cut);
+    snapshot->cut_valid=true;
+    if (!gl_check(renderer,"Restoring bindings before presentation capture",error)) return false;
+    if (samples)
+        return gl_save_error(error,QA_ERROR_UNSUPPORTED,"Native multisample presentation cannot be retained as exact single-sample surfaces");
+    snapshot->captured=gl_gpu_capture(renderer,saved,false,error);
+    bool ok=snapshot->captured;
+    for (size_t i=0;ok && i<saved->native_count;++i) {
+        ok=gl_saved_surface_upload(renderer,saved->native+i,true,error);
+        snapshot->uploaded[i]=ok;
+    }
+    qa_error restore_error={0};
+    if (!gl_presentation_restore_bindings(renderer,snapshot,&restore_error)) {
+        if (error) *error=restore_error;
+        return false;
+    }
+    return ok;
+}
+
+bool gl_presentation_restore_bindings(qa_gl_renderer *renderer,const gl_presentation_snapshot *snapshot,qa_error *error)
+{
+    if (!snapshot || !snapshot->cut_valid) return true;
+    gl_api *gl=&renderer->gl;
+    gl->BindFramebuffer(GL_FRAMEBUFFER,0);
+    gl->ReadBuffer((GLenum)snapshot->native_read); gl->DrawBuffer((GLenum)snapshot->native_draw);
+    gl_cut_restore(renderer,&snapshot->cut);
+    gl->DepthMask(snapshot->depth_mask?GL_TRUE:GL_FALSE);
+    gl->ColorMask(snapshot->color_mask[0]?GL_TRUE:GL_FALSE,snapshot->color_mask[1]?GL_TRUE:GL_FALSE,
+        snapshot->color_mask[2]?GL_TRUE:GL_FALSE,snapshot->color_mask[3]?GL_TRUE:GL_FALSE);
+    gl->PolygonMode(GL_FRONT,(GLenum)snapshot->polygon[0]);
+    gl->PolygonMode(GL_BACK,(GLenum)snapshot->polygon[1]);
+    for (size_t i=0;i<5;++i) {
+        if (snapshot->enabled[i]) gl->Enable(gl_presentation_enables[i]);
+        else gl->Disable(gl_presentation_enables[i]);
+        if (snapshot->attributes[i]) gl->EnableVertexAttribArray((GLuint)i);
+        else gl->DisableVertexAttribArray((GLuint)i);
+    }
+    return gl_check(renderer,"Restoring complete retained presentation bindings",error);
+}
+
+static bool gl_presentation_surface_delete(qa_gl_renderer *renderer,gl_saved_surface *surface,qa_error *error)
+{
+    gl_api *gl=&renderer->gl;
+    GLuint *names[3]={&surface->framebuffer,&surface->color_texture,&surface->depth_texture};
+    for (size_t j=0;j<3;++j) if (*names[j]) {
+        if (!gl_check(renderer,"Preparing checked native presentation retirement",error)) return false;
+        if (!j) gl->DeleteFramebuffers(1,names[j]); else gl->DeleteTextures(1,names[j]);
+        if (!gl_check(renderer,"Retiring native presentation storage",error)) return false;
+        *names[j]=0;
+    }
+    return true;
+}
+
+bool gl_presentation_copy(qa_gl_renderer *renderer,gl_presentation_snapshot *snapshot,
+    uint32_t width,uint32_t height,qa_error *error)
+{
+    if (!snapshot || !snapshot->captured) return true;
+    gl_restore_storage *saved=snapshot->saved;
+    gl_api *gl=&renderer->gl;
+    gl_tight_pixels(renderer); gl->Disable(GL_SCISSOR_TEST);
+    for (size_t i=0;i<saved->native_count;++i) {
+        gl_saved_surface *surface=saved->native+i;
+        if (!snapshot->uploaded[i]) {
+            /* A rejected upload can retain partial objects. Retire those with
+             * proof before retrying; the captured CPU samples remain owned. */
+            if (!gl_presentation_surface_delete(renderer,surface,error) ||
+                !gl_saved_surface_upload(renderer,surface,true,error)) return false;
+            snapshot->uploaded[i]=true;
+        }
+        if (!surface->color_texture || (i==0 && !surface->depth_texture))
+            return gl_save_error(error,QA_ERROR_ARGUMENT,"Native presentation upload is incomplete");
+        gl->BindFramebuffer(GL_READ_FRAMEBUFFER,surface->framebuffer); gl->ReadBuffer(GL_COLOR_ATTACHMENT0);
+        gl->BindFramebuffer(GL_DRAW_FRAMEBUFFER,0); gl->DrawBuffer(gl_native_buffer(renderer->capabilities.stereo,i));
+        gl->BlitFramebuffer(0,0,(GLint)saved->width,(GLint)saved->height,0,0,(GLint)width,(GLint)height,
+            GL_COLOR_BUFFER_BIT,GL_NEAREST);
+        if (i==0) {
+            uint32_t overlap_width=width<saved->width?width:saved->width;
+            uint32_t overlap_height=height<saved->height?height:saved->height;
+            gl->BlitFramebuffer(0,0,(GLint)overlap_width,(GLint)overlap_height,
+                0,0,(GLint)overlap_width,(GLint)overlap_height,
+                GL_DEPTH_BUFFER_BIT|(surface->stencil.size?GL_STENCIL_BUFFER_BIT:0),GL_NEAREST);
+        }
+        if (!gl_check(renderer,"Copying actual retained native presentation",error)) return false;
+    }
+    return true;
+}
+
+bool gl_presentation_dispose(qa_gl_renderer *renderer,gl_presentation_snapshot **out,qa_error *error)
+{
+    if (!out) return gl_save_error(error,QA_ERROR_ARGUMENT,"Invalid native presentation disposal");
+    gl_presentation_snapshot *snapshot=*out;
+    if (!snapshot) return true;
+    for (size_t i=0;i<4;++i)
+        if (!gl_presentation_surface_delete(renderer,snapshot->saved->native+i,error)) return false;
+    gl_saved_dispose(snapshot->saved,NULL); free(snapshot); *out=NULL; return true;
+}
