@@ -1,6 +1,8 @@
 #include "protocol.h"
 #include "region_service.h"
 
+#include <stdatomic.h>
+
 #if defined(_WIN32)
 #include <fcntl.h>
 #include <io.h>
@@ -18,7 +20,7 @@ typedef struct native_child_state {
     bool stop;
 } native_child_state;
 
-static native_child_state *region_child;
+static _Atomic(native_child_state *) region_child;
 
 static bool child_handle_request(native_child_state *state, const native_wire_frame *frame,
                                  qa_error *transport_error);
@@ -356,6 +358,11 @@ static bool child_syscall(void *context, qa_native_instance *instance, int32_t s
     _Exit(EXIT_FAILURE);
 }
 
+void native_runner_child_reject_unbound_callback(void) {
+    if (atomic_load_explicit(&region_child, memory_order_acquire))
+        _Exit(EXIT_FAILURE);
+}
+
 void native_runner_child_failure(qa_native_instance *instance, const qa_error *error) {
     native_child_state *state = region_child;
     if (!state || !instance || instance->options.context != state ||
@@ -437,7 +444,7 @@ static bool child_load(native_child_state *state, native_wire_reader *reader,
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native runner already loaded a module");
     uint32_t profile, os, arch, abi, pointer_bytes, tick_rate, frame_bits, frame_milliseconds,
         q3_role;
-    uint8_t has_declaration;
+    uint8_t has_declaration, instrumented;
     const uint8_t *digest_bytes;
     qa_buffer source = {0};
     qa_bytes image;
@@ -450,13 +457,14 @@ static bool child_load(native_child_state *state, native_wire_reader *reader,
         !native_wire_get_u32(reader, &frame_milliseconds, error) ||
         !native_wire_get_u32(reader, &q3_role, error) ||
         !native_wire_get_u8(reader, &has_declaration, error) ||
+        !native_wire_get_u8(reader, &instrumented, error) ||
         !native_wire_get_raw(reader, 64u, &digest_bytes, error) ||
         !native_wire_get_string(reader, &source, error) ||
         !native_wire_get_bytes(reader, &image, error) ||
         !native_wire_get_u64(reader, &dependency_count, error) ||
         profile > QA_NATIVE_QUAKE_LIVE_GAME_API10 || os > QA_NATIVE_OS_MACOS ||
         arch > QA_NATIVE_ARCH_AARCH64 || abi > QA_NATIVE_ABI_AAPCS64 ||
-        (pointer_bytes != 4u && pointer_bytes != 8u) || has_declaration > 1u ||
+        (pointer_bytes != 4u && pointer_bytes != 8u) || has_declaration > 1u || instrumented > 1u ||
         dependency_count > 4096u || q3_role > QA_QVM_UI) {
         qa_buffer_free(&source);
         return native_fail(error, QA_ERROR_FORMAT, reader->offset,
@@ -517,6 +525,17 @@ static bool child_load(native_child_state *state, native_wire_reader *reader,
     memcpy(&options.frame_seconds, &frame_bits, sizeof(frame_bits));
     if (ok)
         ok = qa_native_create_direct(state->module, &options, &state->instance, error);
+    if (ok) {
+        state->instance->instrumented_child = instrumented != 0;
+        if (instrumented) {
+            native_hook_control admitted_image = {.operation = NATIVE_HOOK_IMAGE};
+            if (!native_hooks_control(&admitted_image) ||
+                admitted_image.address != state->instance->image_base ||
+                admitted_image.size != state->instance->image_bytes || !admitted_image.id)
+                ok = native_fail(error, QA_ERROR_ARGUMENT, 0,
+                    "instrumented runner did not admit its actual original native image");
+        }
+    }
     child_dependencies_free(dependencies, (size_t)dependency_count);
     qa_buffer_free(&source);
     if (!ok) {
@@ -953,12 +972,20 @@ static bool child_destroy(native_child_state *state, native_wire_reader *reader,
         return false;
     if (state->instance && !qa_native_can_destroy(state->instance))
         return native_fail(error, QA_ERROR_ARGUMENT, 0, "native child destruction requires idle ownership");
-    bool ok = !state->instance || qa_native_destroy(state->instance, error);
-    state->instance = NULL;
+    bool ok = !state->instance || qa_native_destroy_owned(&state->instance, error);
+    if (state->instance) return false;
     qa_native_module_release(state->module);
     state->module = NULL;
     state->stop = true;
     return ok;
+}
+
+static bool child_restart_original(native_child_state *state, native_wire_reader *reader,
+    native_wire_buffer *body, qa_error *error) {
+    if (!native_wire_end(reader, error) || !qa_native_restart_original(state->instance, error)) return false;
+    return native_wire_put_u64(body, state->instance->image_base, error) &&
+        native_wire_put_u64(body, state->instance->image_bytes, error) &&
+        native_wire_put_u32(body, (uint32_t)qa_native_get_lifecycle(state->instance), error);
 }
 
 static bool child_handle_request(native_child_state *state, const native_wire_frame *frame,
@@ -973,6 +1000,9 @@ static bool child_handle_request(native_child_state *state, const native_wire_fr
         break;
     case NATIVE_WIRE_CALL:
         ok = state->instance && child_call(state, &reader, &body, &operation_error);
+        break;
+    case NATIVE_WIRE_RESTART_ORIGINAL:
+        ok = state->instance && child_restart_original(state, &reader, &body, &operation_error);
         break;
     case NATIVE_WIRE_INVOKE:
         ok = state->instance && child_invoke(state, &reader, &body, &operation_error);
@@ -1044,7 +1074,7 @@ static bool child_handle_request(native_child_state *state, const native_wire_fr
 
 int qa_native_runner_main(void) {
     native_child_state state = {0};
-    region_child = &state;
+    atomic_store_explicit(&region_child, &state, memory_order_release);
 #if defined(_WIN32)
     _setmode(_fileno(stdin), _O_BINARY);
     _setmode(_fileno(stdout), _O_BINARY);
@@ -1072,9 +1102,10 @@ int qa_native_runner_main(void) {
     }
     if (state.instance) {
         qa_error ignored = {0};
-        qa_native_destroy(state.instance, &ignored);
+        qa_native_destroy_owned(&state.instance, &ignored);
+        if (state.instance) _Exit(EXIT_FAILURE);
     }
     qa_native_module_release(state.module);
-    region_child = NULL;
+    atomic_store_explicit(&region_child, NULL, memory_order_release);
     return state.stop && !state.connection.poisoned ? 0 : 1;
 }

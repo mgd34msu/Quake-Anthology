@@ -108,6 +108,9 @@ struct qa_native_instance {
     void *loader_handle;
     char *materialized_directory;
     char *materialized_path;
+    qa_native_dependency *original_dependencies;
+    char **original_dependency_sonames;
+    size_t original_dependency_count;
     qa_native_address image_base;
     uint64_t image_bytes;
     void *import_table;
@@ -128,7 +131,8 @@ struct qa_native_instance {
     qa_native_write_observer *write_observers;
     uint64_t next_observer_id;
     uint32_t active_depth, callback_depth, region_depth, region_service_depth, write_depth;
-    bool checkpointing, destroying, unloading, pending_shutdown, failed;
+    bool checkpointing, destroying, unloading, pending_shutdown, pending_restart,
+        pending_initialize, restart_original_ready, shutdown_entry, instrumented_child, failed;
     qa_error failure;
 };
 
@@ -185,12 +189,20 @@ struct qa_native_declaration {
 };
 
 extern _Thread_local qa_native_instance *native_active_instance;
+bool native_image_soname(qa_bytes, qa_bytes *, qa_error *);
 
 /* Set only at a validated source-call or encoded runner handoff boundary. */
 static inline void native_call_started(qa_native_instance *instance) {
     if (instance && instance->pending_shutdown) {
         instance->pending_shutdown = false;
         instance->lifecycle = QA_NATIVE_SHUT_DOWN;
+        instance->shutdown_entry = true;
+        instance->restart_original_ready = false;
+        instance->pending_restart = false;
+    }
+    if (instance && instance->pending_initialize) {
+        instance->pending_initialize = false;
+        instance->lifecycle = QA_NATIVE_INITIALIZED;
     }
 }
 
@@ -241,6 +253,7 @@ void native_import_dispatch(ffi_cif *cif, void *result, void **arguments, void *
 void native_observer_dispatch(ffi_cif *cif, void *result, void **arguments, void *context);
 
 bool native_direct_open(qa_native_instance *instance, qa_error *error);
+bool native_direct_unload(qa_native_instance *instance, qa_error *error);
 void native_direct_close(qa_native_instance *instance);
 bool native_direct_export(const qa_native_instance *instance, const char *name,
                           qa_native_address *out, qa_error *error);
@@ -251,6 +264,7 @@ bool native_direct_write(qa_native_address address, const void *bytes, size_t si
 bool native_runner_open(qa_native_instance *instance, const qa_native_runner_config *config,
                         qa_error *error);
 bool native_runner_close(qa_native_instance *instance, qa_error *error);
+bool native_runner_restart_original(qa_native_instance *, qa_error *);
 bool native_runner_call(qa_native_instance *instance, const char *entry,
                         const qa_native_value *arguments, size_t count, qa_native_value *result,
                         qa_error *error);
@@ -300,6 +314,7 @@ void native_regions_destroy(qa_native_instance *instance);
 bool native_regions_descriptor(const qa_native_instance *instance, qa_buffer *out, qa_error *error);
 bool native_instance_setup_identity(qa_native_instance *instance, const qa_native_options *options,
                                     qa_error *error);
+void native_original_dependencies_destroy(qa_native_instance *);
 
 bool native_call_binding(qa_native_instance *instance, const native_entry_binding *binding,
                          const qa_native_value *arguments, size_t count, qa_native_value *result,
@@ -311,6 +326,9 @@ void native_latch_error(qa_native_instance *instance, const qa_error *error);
 /* Returns for ordinary direct owners; an actual runner child never resumes a
  * rejected original source callback. */
 void native_runner_child_failure(qa_native_instance *instance, const qa_error *error);
+/* Static variadic thunks have no per-instance closure on an unbound thread.
+ * Only a published actual runner child can reject them without resuming C. */
+void native_runner_child_reject_unbound_callback(void);
 bool native_dispatch_formatted(qa_native_instance *instance, uint32_t slot, const char *name,
                                const qa_native_value *prefix, size_t prefix_count,
                                const char *format, va_list values, qa_error *error);

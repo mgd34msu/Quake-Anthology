@@ -63,8 +63,15 @@ bool native_dispatch_formatted(qa_native_instance *instance, uint32_t slot, cons
     return ok;
 }
 
-static void q2_bprintf(int32_t level, const char *format, ...) {
+static qa_native_instance *variadic_instance(void) {
     qa_native_instance *instance = native_active_instance;
+    if (!instance)
+        native_runner_child_reject_unbound_callback();
+    return instance;
+}
+
+static void q2_bprintf(int32_t level, const char *format, ...) {
+    qa_native_instance *instance = variadic_instance();
     qa_native_value prefix = {.type = QA_NATIVE_I32, .as.i32 = level};
     qa_error error = {0};
     va_list values;
@@ -76,7 +83,7 @@ static void q2_bprintf(int32_t level, const char *format, ...) {
 }
 
 static void q2_dprintf(const char *format, ...) {
-    qa_native_instance *instance = native_active_instance;
+    qa_native_instance *instance = variadic_instance();
     qa_error error = {0};
     va_list values;
     va_start(values, format);
@@ -87,7 +94,7 @@ static void q2_dprintf(const char *format, ...) {
 }
 
 static void q2_cprintf(void *entity, int32_t level, const char *format, ...) {
-    qa_native_instance *instance = native_active_instance;
+    qa_native_instance *instance = variadic_instance();
     qa_native_value prefix[] = {
         {.type = QA_NATIVE_ADDRESS, .as.address = (qa_native_address)(uintptr_t)entity},
         {.type = QA_NATIVE_I32, .as.i32 = level}};
@@ -101,7 +108,7 @@ static void q2_cprintf(void *entity, int32_t level, const char *format, ...) {
 }
 
 static void q2_centerprintf(void *entity, const char *format, ...) {
-    qa_native_instance *instance = native_active_instance;
+    qa_native_instance *instance = variadic_instance();
     qa_native_value prefix = {.type = QA_NATIVE_ADDRESS,
                               .as.address = (qa_native_address)(uintptr_t)entity};
     qa_error error = {0};
@@ -115,7 +122,7 @@ static void q2_centerprintf(void *entity, const char *format, ...) {
 }
 
 static void q2_error(const char *format, ...) {
-    qa_native_instance *instance = native_active_instance;
+    qa_native_instance *instance = variadic_instance();
     qa_error error = {0};
     va_list values;
     va_start(values, format);
@@ -205,7 +212,7 @@ static qa_native_value variadic_value(qa_native_value_type type, va_list *values
 }
 
 intptr_t native_q3_syscall(int32_t service, ...) {
-    qa_native_instance *instance = native_active_instance;
+    qa_native_instance *instance = variadic_instance();
     if (!instance)
         return 0;
     qa_error error = {0};

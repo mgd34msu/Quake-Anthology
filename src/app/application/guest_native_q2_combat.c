@@ -290,7 +290,7 @@ static bool reaction_entry(void *opaque, qa_native_instance *instance, qa_native
         .applied_damage = (float)fields[APPLICATION_Q2_AMOUNT].as.i32};
     const qa_damage_request *request = synchronous ? frame->request : deferred->request;
     float kick = request->knockback; qa_vec3 point = request->point;
-    if (hook->operation == APPLICATION_Q2_PAIN) kick = fields[APPLICATION_Q2_KNOCKBACK].as.f32;
+    if (hook->operation == APPLICATION_Q2_PAIN) kick = fields[APPLICATION_Q2_KICK].as.f32;
     else if (!vector_read(p, fields[APPLICATION_Q2_POINT].as.address, &point, error)) return false;
     original_reaction original = {binding, arguments, count, result};
     *result = (qa_native_value){.type = QA_NATIVE_VOID};
