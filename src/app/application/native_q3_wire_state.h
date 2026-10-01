@@ -16,6 +16,8 @@ bool application_native_q3_wire_connect(application_provider *, uint32_t source_
     qa_actor_id, uint32_t seat_or_none, const char *userinfo, bool bot, qa_error *);
 bool application_native_q3_wire_begin(application_provider *, uint32_t source_slot, qa_error *);
 bool application_native_q3_wire_disconnect(application_provider *, uint32_t source_slot, qa_error *);
+/* Raw engine userinfo can precede Connect, but requires the current full actor
+ * binding for that original fixed client. It never creates engine admission. */
 bool application_native_q3_wire_userinfo(application_provider *, uint32_t source_slot,
     const char *, qa_error *);
 bool application_native_q3_wire_userinfo_read(application_provider *, uint32_t source_slot,

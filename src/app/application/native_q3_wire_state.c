@@ -133,6 +133,29 @@ static native_q3_wire_client *wire_client(application_provider *provider, uint32
     return &(*owner)->clients[slot];
 }
 
+static native_q3_wire_client *userinfo_client(application_provider *provider, uint32_t slot,
+    struct application_native_q3_wire **owner, qa_error *error)
+{
+    *owner = wire_owner(provider, error);
+    if (!*owner) return NULL;
+    qa_q3_source_binding binding;
+    if (slot >= (*owner)->max_clients ||
+        !qa_q3_source_binding_read(provider->state.q3, slot, &binding, error) ||
+        binding.client_slot != (int32_t)slot ||
+        !source_binding(*owner, slot, binding.actor, error)) {
+        application_fail(error, QA_ERROR_ARGUMENT,
+                         "Native Q3 raw userinfo has no current fixed source client binding");
+        return NULL;
+    }
+    native_q3_wire_client *client = &(*owner)->clients[slot];
+    if (client->admitted && (!client->userinfo || !qa_actor_id_equal(client->actor, binding.actor))) {
+        application_fail(error, QA_ERROR_ARGUMENT,
+                         "Native Q3 raw userinfo differs from its connected source actor");
+        return NULL;
+    }
+    return client;
+}
+
 static char *copy_text(const char *text, qa_error *error)
 {
     if (!text) {
@@ -357,7 +380,7 @@ bool application_native_q3_wire_userinfo(application_provider *provider, uint32_
     const char *text, qa_error *error)
 {
     struct application_native_q3_wire *wire;
-    native_q3_wire_client *client = wire_client(provider, slot, &wire, error);
+    native_q3_wire_client *client = userinfo_client(provider, slot, &wire, error);
     if (!client) return false;
     char *copy = copy_text(text, error);
     if (!copy) return false;
@@ -370,10 +393,10 @@ bool application_native_q3_wire_userinfo_read(application_provider *provider, ui
     const char **out, qa_error *error)
 {
     struct application_native_q3_wire *wire;
-    native_q3_wire_client *client = wire_client(provider, slot, &wire, error);
+    native_q3_wire_client *client = userinfo_client(provider, slot, &wire, error);
     if (!client || !out)
         return client ? application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 userinfo output is absent") : false;
-    *out = client->userinfo;
+    *out = client->userinfo ? client->userinfo : "";
     return true;
 }
 

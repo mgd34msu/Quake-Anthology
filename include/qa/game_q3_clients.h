@@ -92,6 +92,8 @@ bool qa_q3_client_initial_spawn(qa_q3_game *, qa_actor_id, qa_error *);
 bool qa_q3_client_team_switch_time(qa_q3_game *, qa_actor_id, int32_t, qa_error *);
 bool qa_q3_client_server_flags(const qa_q3_game *, uint32_t, uint32_t *, qa_error *);
 bool qa_q3_client_set_server_flags(qa_q3_game *, qa_actor_id, uint32_t, qa_error *);
+/* G_AddBot activates the real fixed source row before raw userinfo/Connect. */
+bool qa_q3_client_activate_bot(qa_q3_game *, qa_actor_id, qa_error *);
 typedef struct qa_q3_client_taunt {
     qa_actor_id enemy;
     uint32_t enemy_source_slot;

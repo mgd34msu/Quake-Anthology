@@ -414,6 +414,17 @@ bool qa_q3_client_set_server_flags(qa_q3_game *game, qa_actor_id actor,
     return true;
 }
 
+bool qa_q3_client_activate_bot(qa_q3_game *game, qa_actor_id actor, qa_error *error) {
+    uint32_t slot;
+    if (!q3_client_actor(game, actor, error) || !q3_client_slot(game, actor, &slot)) return false;
+    qa_q3_source_binding *binding = &game->source_entities[slot];
+    if (binding->client_slot != (int32_t)slot)
+        return q3_fail(error, "Q3 bot activation lost its original fixed client pointer");
+    binding->server_flags |= 8u;
+    binding->in_use = true;
+    return true;
+}
+
 bool qa_q3_client_taunt_read(const qa_q3_game *game, uint32_t slot,
     qa_q3_client_taunt *out, qa_error *error) {
     if (!game || !out || slot >= QA_Q3_NATIVE_CLIENTS)
