@@ -1853,6 +1853,10 @@ void qa_vfs_file_close(qa_vfs_file *file)
 const char *qa_vfs_mount_path(const qa_vfs *vfs, qa_mount_id id) {
     const mount *source = find_mount(vfs, id); return source ? source->path : NULL;
 }
+qa_fs_root *qa_vfs_mount_root(const qa_vfs *vfs, qa_mount_id id) {
+    const mount *source = vfs ? find_mount(vfs, id) : NULL;
+    return source && !source->archive ? source->root : NULL;
+}
 size_t qa_vfs_prefix_count(const qa_vfs *vfs) {
     size_t count = 0;
     if (vfs) for (const prefix_order *rule = vfs->prefixes; rule; rule = rule->next) ++count;

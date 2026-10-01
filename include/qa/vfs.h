@@ -50,6 +50,10 @@ bool qa_vfs_mount_at(const qa_vfs *vfs, size_t index, qa_vfs_mount_info *out);
  * resource before keeping it across mutations. Includes cached resources with
  * zero external readers, and resources shared with other views of this pool. */
 const char *qa_vfs_mount_path(const qa_vfs *, qa_mount_id);
+/* Borrow the actual retained directory authority for a loose mount. Archives
+ * and absent mount IDs return NULL. The view retains it until unmount/destroy;
+ * consumers that outlive that association must retain the root themselves. */
+qa_fs_root *qa_vfs_mount_root(const qa_vfs *, qa_mount_id);
 size_t qa_vfs_prefix_count(const qa_vfs *);
 bool qa_vfs_prefix_at(const qa_vfs *, size_t index, const char **prefix,
                        const qa_mount_id **order, size_t *count);
