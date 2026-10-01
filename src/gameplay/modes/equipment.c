@@ -95,11 +95,31 @@ static bool admission_prepare(qa_equipment *g, qa_actor_id actor,
         return mode_fail(e, "invalid scope-selected equipment providers");
     if (selection->grapple == QA_GRAPPLE_Q3 && a->grapple.admit &&
         !a->grapple.admit(a->grapple.context, actor, e)) return false;
-    if (selection->grapple == QA_GRAPPLE_Q3 && a->grapple.admit &&
-        selection->binding == QA_EQUIPMENT_WEAPON_SLOT) {
-        if (!a->grapple.weapon_item) return mode_fail(e, "external gear slot has no canonical weapon identity");
+    if (selection->grapple != QA_GRAPPLE_DISABLED && selection->binding == QA_EQUIPMENT_WEAPON_SLOT) {
+        qa_item_id weapon = a->grapple.weapon_item;
+        switch (selection->grapple) {
+        case QA_GRAPPLE_THREEWAVE: case QA_GRAPPLE_ROGUE:
+            weapon = qa_q1_weapon_item(a->grapple.q1, selection->grapple == QA_GRAPPLE_THREEWAVE ?
+                QA_Q1_CTF_GRAPPLE : QA_Q1_ROGUE_GRAPPLE);
+            break;
+        case QA_GRAPPLE_Q2_CTF: case QA_GRAPPLE_LMCTF: {
+            const qa_q2_weapon_definition *definition = qa_q2_weapon_definition_at(a->grapple.q2,
+                selection->grapple == QA_GRAPPLE_Q2_CTF ? QA_Q2_GRAPPLE : QA_Q2_LMCTF_HOOK);
+            if (!definition) return mode_fail(e, "gear slot has no actual native Q2 weapon declaration");
+            if (!qa_builtin_resource(&g->options.services, definition->item, &weapon, e)) return false;
+            break;
+        }
+        case QA_GRAPPLE_Q3:
+            if (a->grapple.q3) weapon = qa_q3_weapon_item(a->grapple.q3, QA_Q3_W_GRAPPLE, false);
+            break;
+        case QA_GRAPPLE_DISABLED: break;
+        }
+        if (!weapon) return mode_fail(e, "gear slot has no canonical weapon identity");
+        if (!qa_actors_get(qa_session_actors(g->options.services.session), actor) ||
+            (a->grapple.current && !a->grapple.current(a->grapple.context)))
+            return mode_fail(e, "gear slot identity retired its actor or selected source");
         qa_inventory *inventory = g->options.services.inventory;
-        qa_inventory_entry entry = {.item = a->grapple.weapon_item, .count = 1,
+        qa_inventory_entry entry = {.item = weapon, .count = 1,
             .capacity = 1, .policy = QA_COUNT_STACK};
         qa_inventory_admission *grant = NULL;
         bool okay = qa_inventory_has(inventory, actor) ||
@@ -116,7 +136,7 @@ static bool admission_prepare(qa_equipment *g, qa_actor_id actor,
         if (okay) okay = qa_inventory_configure(inventory, actor, &entry, NULL, NULL, e);
         if (!okay) return false;
         if (!qa_actors_get(qa_session_actors(g->options.services.session), actor) ||
-            !a->grapple.current(a->grapple.context))
+            (a->grapple.current && !a->grapple.current(a->grapple.context)))
             return mode_fail(e, "gear slot allowance retired its actor or selected source");
     }
     if (selection->grapple == QA_GRAPPLE_Q3 && a->grapple.q3 &&

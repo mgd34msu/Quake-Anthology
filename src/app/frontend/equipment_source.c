@@ -2,6 +2,7 @@
 #include "equipment_held_output.h"
 #include "equipment_q3.h"
 #include "equipment_gear_output.h"
+#include "equipment_gear_world_output.h"
 #include "qa/ui_preferences.h"
 #include "save_private.h"
 
@@ -12,6 +13,11 @@ typedef struct equipment_packet {
     frontend_equipment_gear_output *gear_output;
     bool committed;
 } equipment_packet;
+
+typedef struct equipment_world_packet {
+    struct equipment_world_packet *next;
+    frontend_equipment_gear_world_output *output;
+} equipment_world_packet;
 
 struct frontend_equipment_source {
     frontend_equipment_source_options options;
@@ -26,11 +32,12 @@ struct frontend_equipment_source {
     frontend_equipment_gear_presenter *gear_presenter;
     frontend_equipment_gear_output *gear_view;
     equipment_packet *active, *packets, *tail;
+    equipment_world_packet *world_packets;
     qa_model_transform view_transform;
     qa_q3_ref_entity view_entity;
     qa_vec3 view_offset;
     uint32_t first_order, reserved;
-    bool borrowed, drawing, view_ready, submitting;
+    bool borrowed, drawing, view_ready, world_ready, submitting;
 };
 
 static bool current_owner(const frontend_equipment_source *owner)
@@ -61,6 +68,17 @@ static bool requests(const frontend_equipment_source *owner, bool *hud, bool *vi
             owner->options.receiver, owner->options.seat, hud, view, error);
 }
 
+static void clear_world(frontend_equipment_source *owner)
+{
+    equipment_world_packet *row = owner->world_packets;
+    while (row) {
+        equipment_world_packet *next = row->next;
+        frontend_equipment_gear_world_destroy(row->output);
+        free(row); row = next;
+    }
+    owner->world_packets = NULL; owner->world_ready = false;
+}
+
 void frontend_equipment_source_clear(frontend_equipment_source *owner)
 {
     if (!owner) return;
@@ -73,6 +91,7 @@ void frontend_equipment_source_clear(frontend_equipment_source *owner)
         free(row); row = next;
     }
     owner->packets = owner->tail = NULL;
+    clear_world(owner);
     frontend_equipment_q3_output_destroy(owner->q3_view); owner->q3_view = NULL;
     frontend_equipment_gear_output_destroy(owner->gear_view); owner->gear_view = NULL;
     owner->reserved = 0; owner->view_ready = false;
@@ -375,7 +394,7 @@ void frontend_equipment_source_services(frontend_equipment_source *owner,
 bool frontend_equipment_source_idle(const frontend_equipment_source *owner)
 {
     return !owner || (!owner->borrowed && !owner->drawing && !owner->active &&
-        !owner->packets && !owner->submitting && !owner->view_media &&
+        !owner->packets && !owner->world_packets && !owner->submitting && !owner->view_media &&
         !owner->q3_presenter && !owner->q3_view && !owner->gear_presenter && !owner->gear_view);
 }
 
@@ -497,6 +516,37 @@ bool frontend_equipment_source_native_view(frontend_equipment_source *owner, flo
     return true;
 }
 
+static bool build_world(frontend_equipment_source *owner, qa_error *error)
+{
+    if (owner->world_ready) return true;
+    qa_application *application = owner->options.frontend->application;
+    const qa_actor_registry *actors = qa_session_actors(owner->client.session);
+    uint64_t revision = qa_actors_revision(actors);
+    equipment_world_packet **tail = &owner->world_packets;
+    uint32_t cursor = 0; const qa_actor_record *record;
+    bool okay = true;
+    while (okay && qa_actors_next(actors, &cursor, &record)) {
+        qa_actor_id actor = record->id;
+        application_equipment_gear_world_view source; bool visible = false;
+        okay = application_equipment_gear_world_read(application, actor, &source, &visible, error);
+        if (okay && visible) {
+            equipment_world_packet *row = calloc(1, sizeof(*row));
+            if (!row) okay = frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual world gear output roster");
+            else {
+                okay = frontend_equipment_gear_world_prepare(owner->options.frontend, &source,
+                    owner->client.source_actor, owner, current_preparation, &row->output, error);
+                if (okay) { *tail = row; tail = &row->next; }
+                else free(row);
+            }
+        }
+        if (okay && (!current_owner(owner) || qa_actors_revision(actors) != revision))
+            okay = frontend_fail(error, QA_ERROR_ARGUMENT, "World gear preparation changed its actual actor roster or recipient");
+    }
+    if (!okay) { clear_world(owner); return false; }
+    owner->world_ready = true;
+    return true;
+}
+
 bool frontend_equipment_source_prepare_view(frontend_equipment_source *owner,
     const qa_q3_refdef *definition, qa_q3_scene_options *options, qa_error *error)
 {
@@ -507,6 +557,7 @@ bool frontend_equipment_source_prepare_view(frontend_equipment_source *owner,
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment view lost its active client lease");
     bool hud, requested;
     if (!requests(owner, &hud, &requested, error)) return false;
+    if (!options->world.no_world && !build_world(owner, error)) return false;
     owner->view_ready = false;
     if (!options->world.no_world && owner->draw.selected && requested &&
         owner->selection.visible && (owner->view_media || owner->q3_presenter || owner->gear_presenter)) {
@@ -523,7 +574,7 @@ bool frontend_equipment_source_prepare_view(frontend_equipment_source *owner,
             return frontend_fail(error, QA_ERROR_FORMAT, "Equipment scene exceeds its actual source ordering extent");
         count += extent;
     }
-    if (options->first_entity >= 1022 || count > 1021 - options->first_entity)
+    if (count && (options->first_entity >= 1022 || count > 1021 - options->first_entity))
         return frontend_fail(error, QA_ERROR_FORMAT, "Equipment cannot reserve its physical source scene orders");
     owner->first_order = options->first_entity; owner->reserved = (uint32_t)count;
     options->first_entity += (uint32_t)count;
@@ -563,7 +614,7 @@ bool frontend_equipment_source_submit(frontend_equipment_source *owner,
         order += owner->gear_view ? (uint32_t)frontend_equipment_gear_output_count(owner->gear_view) :
             owner->q3_view ? (uint32_t)frontend_equipment_q3_output_count(owner->q3_view) : 1;
     }
-    if (!options->world.no_world)
+    if (!options->world.no_world) {
         for (equipment_packet *row = owner->packets; ok && row; row = row->next) {
             ok = row->gear_output ? frontend_equipment_gear_output_submit(row->gear_output,
                 owner->options.presentation, qa_v3(0, 0, 0), options, order, frame, error) :
@@ -575,6 +626,10 @@ bool frontend_equipment_source_submit(frontend_equipment_source *owner,
                 row->q3_output ? frontend_equipment_q3_output_count(row->q3_output) :
                 frontend_equipment_held_output_count(row->output));
         }
+        for (equipment_world_packet *row = owner->world_packets; ok && row; row = row->next)
+            ok = frontend_equipment_gear_world_submit(row->output, owner->options.presentation,
+                options, frame, error);
+    }
     owner->submitting = false;
     return ok;
 }
