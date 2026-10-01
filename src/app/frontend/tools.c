@@ -308,6 +308,89 @@ bool frontend_tools_service_options(const qa_frontend *frontend, qa_tools_option
         .open_browser = open_browser, .context_active = context_active, .print = source_print, .capture_context = capture_context};
     *tools = options; *language = llm; return true;
 }
+static bool tools_services_encode(void *context,const qa_tools_options *value,uint64_t *key,qa_error *error)
+{
+    qa_tools_options actual; qa_llm_options language;
+    if (!value || !key || !frontend_tools_service_options(context,&actual,&language) ||
+        value->files!=actual.files || value->output_mount!=actual.output_mount || value->owner!=actual.owner ||
+        value->context!=actual.context || value->milliseconds!=actual.milliseconds ||
+        value->profiler_milliseconds!=actual.profiler_milliseconds || value->read_frame!=actual.read_frame ||
+        value->context_active!=actual.context_active || value->map_name!=actual.map_name || value->print!=actual.print ||
+        value->forward!=actual.forward || value->diagnostic!=actual.diagnostic ||
+        value->files_for_context!=actual.files_for_context || value->capture_context!=actual.capture_context)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Tools binding differs from its genuine installed frontend services");
+    *key=1; return true;
+}
+static bool tools_services_decode(void *context,uint64_t key,qa_tools_options *out,qa_error *error)
+{
+    qa_llm_options language;
+    return (key==1 && out && frontend_tools_service_options(context,out,&language)) ||
+        frontend_fail(error,QA_ERROR_FORMAT,"Saved tools binding has no genuine frontend service owner");
+}
+static bool llm_services_encode(void *context,const qa_llm_options *value,uint64_t *key,qa_error *error)
+{
+    qa_tools_options tools; qa_llm_options actual;
+    if (!value || !key || !frontend_tools_service_options(context,&tools,&actual) ||
+        value->http!=actual.http || value->settings!=actual.settings || value->private_mount!=actual.private_mount ||
+        value->owner!=actual.owner || value->context!=actual.context || value->wall_milliseconds!=actual.wall_milliseconds ||
+        value->open_browser!=actual.open_browser || value->context_active!=actual.context_active ||
+        value->print!=actual.print || value->capture_context!=actual.capture_context)
+        return frontend_fail(error,QA_ERROR_FORMAT,"LLM binding differs from its genuine installed frontend services");
+    *key=1; return true;
+}
+static bool llm_services_decode(void *context,uint64_t key,qa_llm_options *out,qa_error *error)
+{
+    qa_tools_options tools;
+    return (key==1 && out && frontend_tools_service_options(context,&tools,out)) ||
+        frontend_fail(error,QA_ERROR_FORMAT,"Saved LLM binding has no genuine frontend service owner");
+}
+static bool tools_console_encode(void *context,const qa_console *console,uint64_t *key,qa_error *error)
+{
+    qa_frontend *f=context;
+    if (f && f->application && console && key) {
+        for (size_t i=0;i<qa_application_console_count(f->application);++i)
+            if (qa_application_console_at(f->application,i,NULL)==console) { *key=i+1; return true; }
+    }
+    return frontend_fail(error,QA_ERROR_FORMAT,"Tools console leaves the actual application console roster");
+}
+static bool tools_console_decode(void *context,uint64_t key,qa_console **console,qa_error *error)
+{
+    qa_frontend *f=context;
+    if (f && f->application && console && key && key<=qa_application_console_count(f->application)) {
+        *console=qa_application_console_at(f->application,(size_t)key-1,NULL);
+        if (*console) return true;
+    }
+    return frontend_fail(error,QA_ERROR_FORMAT,"Saved tools console has no actual candidate console owner");
+}
+static bool tools_command_context(void *context,const qa_command_context *source,qa_command_context *out,qa_error *error)
+{
+    qa_frontend *f=context;
+    return (f && f->application && qa_application_capture_command_context(f->application,source,out,error)) ||
+        frontend_fail(error,QA_ERROR_FORMAT,"Deferred tools context has no actual candidate source lifetime");
+}
+static bool llm_observer_encode(void *context,const qa_llm_observer *observer,uint64_t *key,qa_error *error)
+{
+    (void)context; (void)observer; (void)key;
+    return frontend_fail(error,QA_ERROR_UNSUPPORTED,"Frontend installs no external non-console LLM observer owner");
+}
+static bool llm_observer_decode(void *context,uint64_t key,qa_llm_observer *observer,qa_error *error)
+{
+    (void)context; (void)key; (void)observer;
+    return frontend_fail(error,QA_ERROR_FORMAT,"Saved LLM observer has no installed frontend observer owner");
+}
+bool frontend_tools_checkpoint_resolvers(qa_frontend *f,qa_tools_checkpoint_refs *tools,
+    qa_llm_checkpoint_refs *language,qa_error *error)
+{
+    qa_tools_options actual; qa_llm_options llm;
+    if (!f || !tools || !language || !frontend_tools_service_options(f,&actual,&llm))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Tools continuation requires the actual installed wrapper services");
+    *tools=(qa_tools_checkpoint_refs){.context=f,.services_encode=tools_services_encode,.services_decode=tools_services_decode,
+        .console_encode=tools_console_encode,.console_decode=tools_console_decode,.command_context=tools_command_context};
+    *language=(qa_llm_checkpoint_refs){.context=f,.services_encode=llm_services_encode,.services_decode=llm_services_decode,
+        .console_encode=tools_console_encode,.console_decode=tools_console_decode,.command_context=tools_command_context,
+        .observer_encode=llm_observer_encode,.observer_decode=llm_observer_decode};
+    return true;
+}
 bool frontend_tools_create(qa_frontend *f, qa_error *error) {
     if (!f || f->tools) return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid frontend tools admission");
     qa_frontend_tools *services = calloc(1, sizeof *services);

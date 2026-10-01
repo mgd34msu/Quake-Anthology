@@ -1,4 +1,6 @@
 #include "qa/audio.h"
+#include "qa/audio_device_save.h"
+#include "qa/source_save.h"
 
 #include <SDL.h>
 #include <limits.h>
@@ -34,7 +36,7 @@ struct qa_audio_device {
     uint64_t previous_pump_frame;
     size_t pump_intervals[8], pump_interval_count, pump_interval_next;
     bool playing, paused, resume_on_attach;
-    bool have_pump_engine, have_previous_pump, output_started, handoff_pending, pumping;
+    bool have_pump_engine, have_previous_pump, output_started, handoff_pending, pumping, capturing;
 };
 
 static bool device_error(qa_error *error, qa_status code, const char *message) {
@@ -412,7 +414,7 @@ void qa_audio_device_clear(qa_audio_device *device) {
 }
 
 bool qa_audio_device_round_ready(const qa_audio_device *device, qa_error *error) {
-    if (!device || !device->conversion || device->pumping || device->handoff_pending)
+    if (!device || !device->conversion || device->pumping || device->capturing || device->handoff_pending)
         return device_error(error, QA_ERROR_ARGUMENT, "Audio round requires its idle published device owner");
     return true;
 }
@@ -778,7 +780,7 @@ static bool pump_device(qa_audio_device *device, qa_audio_engine *engine, size_t
 bool qa_audio_device_pump(qa_audio_device *device, qa_audio_engine *engine, size_t target_frames,
                           qa_error *error) {
     size_t mixed_frames;
-    if (!device || device->pumping)
+    if (!device || device->pumping || device->capturing)
         return device_error(error, QA_ERROR_ARGUMENT, "Audio device pump is absent or executing");
     device->pumping = true;
     bool ok = pump_device(device, engine, target_frames, false, 0, &mixed_frames, error);
@@ -792,9 +794,237 @@ bool qa_audio_device_pump_auto(qa_audio_device *device, qa_audio_engine *engine,
     *mixed_frames = 0;
     if (!isfinite(measured_work_ms) || measured_work_ms < 0)
         return device_error(error, QA_ERROR_ARGUMENT, "Invalid measured audio pump work duration");
-    if (!device || device->pumping)
+    if (!device || device->pumping || device->capturing)
         return device_error(error, QA_ERROR_ARGUMENT, "Audio device pump is absent or executing");
     device->pumping = true;
     bool ok = pump_device(device, engine, 0, true, measured_work_ms, mixed_frames, error);
     device->pumping = false; return ok;
 }
+
+struct qa_audio_device_restore_guard {
+    qa_audio_device *active, *candidate;
+    SDL_AudioDeviceID endpoint;
+    size_t saved_submitted;
+    const qa_audio_engine *candidate_engine;
+    bool saved_attached, saved_playing, prepared, transferred;
+};
+static bool saved_name(qa_source_save_io *io,char **name)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ,present=!reading && *name;
+    if (!qa_source_save_bool(io,&present)) return false;
+    size_t size=present && !reading?strlen(*name):0;
+    if (present && (!qa_source_save_count(io,&size,reading?io->input.size-io->offset:SIZE_MAX-1) || size==SIZE_MAX)) return false;
+    if (!reading) return !present || qa_source_save_bytes(io,*name,size);
+    if (!present) { *name=NULL; return true; }
+    char *copy=malloc(size+1);
+    if (!copy) return device_error(io->error,QA_ERROR_MEMORY,"Restoring the actual audio device selection name");
+    if (!qa_source_save_bytes(io,copy,size) || memchr(copy,0,size)) { free(copy); return false; }
+    copy[size]=0; *name=copy; return true;
+}
+static bool saved_blob(qa_source_save_io *io,qa_bytes *bytes)
+{
+    size_t size=bytes->size;
+    if (!qa_source_save_count(io,&size,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX)) return false;
+    if (io->direction==QA_SOURCE_SAVE_WRITE) return qa_source_save_bytes(io,(void *)bytes->data,size);
+    if (!size || size>io->input.size-io->offset) return false;
+    *bytes=(qa_bytes){io->input.data+io->offset,size}; io->offset+=size; return true;
+}
+static bool saved_samples(qa_source_save_io *io,int16_t *samples,size_t count)
+{
+    for (size_t i=0;i<count;++i) {
+        uint16_t bits=0;
+        if (io->direction==QA_SOURCE_SAVE_WRITE) memcpy(&bits,samples+i,sizeof(bits));
+        if (!qa_source_save_u16(io,&bits)) return false;
+        if (io->direction==QA_SOURCE_SAVE_READ) memcpy(samples+i,&bits,sizeof(bits));
+    }
+    return true;
+}
+static bool saved_device_fields(qa_source_save_io *io,qa_audio_device *device,
+    bool *attached,bool *current_engine,qa_bytes *conversion)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    uint8_t magic[4]={'Q','A','D','V'}; uint32_t version=1,channels=device->options.format.channels,
+        bits=device->options.format.sample_bits,buffer=device->options.buffer_frames;
+    if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QADV",4) ||
+        !qa_source_save_u32(io,&version) || version!=1 || !qa_source_save_bool(io,attached) ||
+        !qa_source_save_u32(io,&device->options.format.sample_rate) || !qa_source_save_u32(io,&channels) ||
+        !qa_source_save_u32(io,&bits) || !qa_source_save_u32(io,&buffer) ||
+        !qa_source_save_count(io,&device->options.maximum_queued_frames,SIZE_MAX) || !saved_name(io,&device->name)) return false;
+    if (channels>UINT_MAX || bits>UINT_MAX || buffer>UINT_MAX) return false;
+    device->options.format.channels=(unsigned)channels; device->options.format.sample_bits=(unsigned)bits;
+    device->options.buffer_frames=(unsigned)buffer; device->options.name=device->name;
+    qa_audio_device_options requested=device->options,qualified;
+    requested.buffer_frames=1;
+    if (!buffer || buffer>UINT16_MAX || !device_options(&requested,&qualified,io->error) ||
+        qualified.maximum_queued_frames!=device->options.maximum_queued_frames) return false;
+    if (!qa_source_save_count(io,&device->pcm.capacity,SIZE_MAX/(2*sizeof(int16_t))) ||
+        !qa_source_save_count(io,&device->pcm.head,device->pcm.capacity) ||
+        !qa_source_save_count(io,&device->pcm.count,device->options.maximum_queued_frames) ||
+        !qa_source_save_count(io,&device->submitted,device->pcm.count) || device->pcm.count>device->pcm.capacity ||
+        (device->pcm.capacity?device->pcm.head>=device->pcm.capacity:device->pcm.head || device->pcm.count) ||
+        (!*attached && device->submitted)) return false;
+    if (reading && device->pcm.capacity) {
+        device->pcm.samples=calloc(device->pcm.capacity,2*sizeof(int16_t));
+        if (!device->pcm.samples) return device_error(io->error,QA_ERROR_MEMORY,"Restoring retained audio device PCM storage");
+    }
+    if (device->pcm.count && !device->pcm.samples) return false;
+    for (size_t i=0;i<device->pcm.count;++i)
+        if (!saved_samples(io,device->pcm.samples+pcm_index(&device->pcm,i)*2,2)) return false;
+    if (!qa_source_save_count(io,&device->encoded_capacity,UINT32_MAX) ||
+        !qa_source_save_u32(io,&device->source_rate) || !qa_source_save_u64(io,&device->source_next) ||
+        !qa_source_save_u64(io,&device->staged_start) ||
+        !qa_source_save_count(io,&device->staged_frames,DEVICE_MIX_FRAMES) ||
+        (device->source_rate && (device->source_rate<8000 || device->source_rate>192000)) ||
+        (device->staged_frames && (!device->source_rate || device->staged_frames>UINT64_MAX-device->staged_start ||
+            device->staged_start+device->staged_frames>device->source_next)) ||
+        !saved_samples(io,device->source,device->staged_frames*2) || !saved_blob(io,conversion) ||
+        !qa_source_save_u64(io,&device->frequency) || !device->frequency ||
+        !qa_source_save_u64(io,&device->elapsed_ticks) || !qa_source_save_u64(io,&device->previous_pump_frame) ||
+        !qa_source_save_count(io,&device->pump_interval_count,8) ||
+        !qa_source_save_count(io,&device->pump_interval_next,7)) return false;
+    for (size_t i=0;i<8;++i)
+        if (!qa_source_save_count(io,device->pump_intervals+i,SIZE_MAX)) return false;
+    if (!qa_source_save_bool(io,&device->playing) || !qa_source_save_bool(io,&device->paused) ||
+        !qa_source_save_bool(io,&device->resume_on_attach) || !qa_source_save_bool(io,&device->have_pump_engine) ||
+        !qa_source_save_bool(io,current_engine) || (*current_engine && !device->have_pump_engine) ||
+        !qa_source_save_bool(io,&device->have_previous_pump) || !qa_source_save_bool(io,&device->output_started) ||
+        !qa_source_save_bool(io,&device->handoff_pending) || (device->playing && (!*attached || device->paused))) return false;
+    if (!device->have_pump_engine && device->have_previous_pump) return false;
+    return true;
+}
+bool qa_audio_device_checkpoint(qa_audio_device *device,const qa_audio_engine *engine,qa_buffer *out,qa_error *error)
+{
+    if (!device || !engine || !out || out->data || out->size || !device->conversion || device->pumping || device->capturing)
+        return device_error(error,QA_ERROR_ARGUMENT,"Audio device capture requires its genuine idle engine/endpoint owner");
+    device->capturing=true;
+    if (device->id) SDL_PauseAudioDevice(device->id,1);
+    sync_consumed(device);
+    qa_audio_device state=*device; state.elapsed_ticks=playing_ticks(&state);
+    qa_buffer raw={0}; qa_source_save_io io={0}; bool attached=device->id!=0;
+    bool current_engine=device->have_pump_engine && device->pump_engine_identity==(uintptr_t)engine;
+    bool ok=qa_audio_raw_checkpoint(device->conversion,&raw,error);
+    qa_bytes conversion={raw.data,raw.size};
+    if (ok) ok=qa_source_save_writer(&io,NULL,error) && saved_device_fields(&io,&state,&attached,&current_engine,&conversion) &&
+        qa_source_save_finish(&io,out);
+    qa_source_save_dispose(&io); qa_buffer_free(&raw);
+    /* The actual endpoint was paused only for this capture. Preserve its
+     * unpaused playback coordinate while excluding time spent in the cut. */
+    device->elapsed_ticks=state.elapsed_ticks;
+    if (device->playing) device->playing_since=SDL_GetPerformanceCounter();
+    if (device->id) SDL_PauseAudioDevice(device->id,device->playing?0:1);
+    device->capturing=false;
+    if (!ok && (!error || error->code==QA_OK)) device_error(error,QA_ERROR_FORMAT,"Invalid genuine audio device continuation");
+    return ok;
+}
+static bool same_device_options(const qa_audio_device *a,const qa_audio_device *b)
+{
+    return a->options.format.sample_rate==b->options.format.sample_rate && a->options.format.channels==b->options.format.channels &&
+        a->options.format.sample_bits==b->options.format.sample_bits && a->options.buffer_frames==b->options.buffer_frames &&
+        a->options.maximum_queued_frames==b->options.maximum_queued_frames &&
+        ((a->name && b->name)?!strcmp(a->name,b->name):a->name==b->name);
+}
+bool qa_audio_device_restore(qa_bytes bytes,const qa_audio_device *active,qa_audio_engine *engine,
+    qa_audio_device **out,qa_audio_device_restore_guard **guard_out,qa_error *error)
+{
+    if (!active || active->pumping || active->capturing || !engine || !out || *out || !guard_out || *guard_out)
+        return device_error(error,QA_ERROR_ARGUMENT,"Audio device restoration requires separate genuine active/candidate owners");
+    qa_audio_device *candidate=calloc(1,sizeof(*candidate));
+    qa_audio_device_restore_guard *guard=calloc(1,sizeof(*guard));
+    if (!candidate || !guard) {
+        free(candidate); free(guard); return device_error(error,QA_ERROR_MEMORY,"Allocating detached audio device continuation");
+    }
+    qa_source_save_io io={0}; qa_bytes conversion={0}; bool attached=false,current_engine=false;
+    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && saved_device_fields(&io,candidate,&attached,&current_engine,&conversion) &&
+        qa_source_save_finish(&io,NULL) && same_device_options(candidate,active) && attached==(active->id!=0) &&
+        candidate->frequency==active->frequency;
+    if (ok && candidate->encoded_capacity) {
+        candidate->encoded=malloc(candidate->encoded_capacity);
+        if (!candidate->encoded) ok=device_error(error,QA_ERROR_MEMORY,"Restoring audio device encoding storage");
+    }
+    if (ok) ok=qa_audio_raw_restore(conversion,candidate->options.format.sample_rate,&candidate->conversion,error);
+    if (ok) {
+        /* Only equality with the current mixer is observable. Zero retains a
+         * previous-engine mismatch without retaining a retired raw pointer. */
+        candidate->pump_engine_identity=current_engine?(uintptr_t)engine:0;
+        *guard=(qa_audio_device_restore_guard){.active=(qa_audio_device *)active,.candidate=candidate,
+            .endpoint=active->id,.saved_submitted=candidate->submitted,
+            .candidate_engine=engine,
+            .saved_attached=attached,.saved_playing=candidate->playing};
+        /* A detached owner has submitted no PCM to a native endpoint. Its
+         * saved private queue/conversion/pump fields otherwise remain exact. */
+        candidate->submitted=0; candidate->playing=false;
+        *out=candidate; *guard_out=guard; candidate=NULL; guard=NULL;
+    }
+    qa_source_save_dispose(&io); qa_audio_device_close(candidate); free(guard);
+    if (!ok && (!error || error->code==QA_OK)) device_error(error,QA_ERROR_FORMAT,"Saved audio device differs from its genuine native output owner");
+    return ok;
+}
+static bool device_guard_ready(const qa_audio_device_restore_guard *guard,qa_error *error)
+{
+    if (!guard || guard->transferred || !guard->active || !guard->candidate || guard->active==guard->candidate ||
+        guard->active->pumping || guard->active->capturing || guard->candidate->pumping || guard->candidate->capturing ||
+        guard->active->id!=guard->endpoint || (guard->endpoint!=0)!=guard->saved_attached ||
+        (guard->prepared ? (guard->candidate->id!=0)!=guard->saved_attached ||
+            guard->candidate->submitted!=guard->saved_submitted : guard->candidate->id || guard->candidate->submitted) ||
+        guard->candidate->playing || !guard->candidate->conversion ||
+        !same_device_options(guard->active,guard->candidate) || guard->active->frequency!=guard->candidate->frequency)
+        return device_error(error,QA_ERROR_ARGUMENT,"Audio native handoff lost its genuine qualified endpoint/device cut");
+    return true;
+}
+bool qa_audio_device_handoff_ready(const qa_audio_device_restore_guard *guard,qa_error *error)
+{
+    if (!device_guard_ready(guard,error)) return false;
+    if (!guard->prepared)
+        return device_error(error,QA_ERROR_ARGUMENT,"Audio endpoint publication requires its prepared saved PCM prefix");
+    return true;
+}
+bool qa_audio_device_handoff_prepare(qa_audio_device_restore_guard *guard,qa_error *error)
+{
+    if (!device_guard_ready(guard,error)) return false;
+    if (guard->prepared) return true;
+    if (guard->saved_attached) {
+        qa_audio_device *candidate=guard->candidate;
+        device_pcm prefix=candidate->pcm; prefix.count=guard->saved_submitted;
+        /* Native encoding scratch belongs to this preparation, so opening an
+         * endpoint never changes the saved candidate allocation continuation. */
+        qa_audio_device encoder={0}; SDL_AudioDeviceID endpoint=0;
+        unsigned buffer=candidate->options.buffer_frames; bool unavailable=false;
+        bool ok=open_retained(&encoder,&candidate->options,&prefix,&endpoint,&buffer,&unavailable,error);
+        free(encoder.encoded);
+        if (!ok) return false;
+        if (buffer!=candidate->options.buffer_frames) {
+            SDL_CloseAudioDevice(endpoint);
+            return device_error(error,QA_ERROR_UNSUPPORTED,"Prepared audio endpoint changed the saved native buffer size");
+        }
+        candidate->id=endpoint; candidate->submitted=guard->saved_submitted;
+    }
+    guard->prepared=true;
+    return true;
+}
+bool qa_audio_device_restore_checkpoint(const qa_audio_device_restore_guard *guard,qa_buffer *out,qa_error *error)
+{
+    if (!out || out->data || out->size || !device_guard_ready(guard,error)) return false;
+    qa_audio_device state=*guard->candidate;
+    state.submitted=guard->saved_submitted; state.playing=guard->saved_playing;
+    bool attached=guard->saved_attached;
+    bool current_engine=state.have_pump_engine && state.pump_engine_identity==(uintptr_t)guard->candidate_engine;
+    qa_buffer raw={0}; qa_source_save_io io={0};
+    bool ok=qa_audio_raw_checkpoint(state.conversion,&raw,error);
+    qa_bytes conversion={raw.data,raw.size};
+    if (ok) ok=qa_source_save_writer(&io,NULL,error) && saved_device_fields(&io,&state,&attached,&current_engine,&conversion) &&
+        qa_source_save_finish(&io,out);
+    qa_source_save_dispose(&io); qa_buffer_free(&raw);
+    return ok;
+}
+void qa_audio_device_handoff(qa_audio_device_restore_guard *guard)
+{
+    qa_audio_device *active=guard->active,*candidate=guard->candidate;
+    if (guard->endpoint) SDL_PauseAudioDevice(guard->endpoint,1);
+    active->playing=false;
+    candidate->playing=guard->saved_playing;
+    candidate->playing_since=candidate->playing?SDL_GetPerformanceCounter():0;
+    if (candidate->id) SDL_PauseAudioDevice(candidate->id,candidate->playing?0:1);
+    guard->transferred=true;
+}
+void qa_audio_device_restore_guard_destroy(qa_audio_device_restore_guard *guard)
+{ free(guard); }
