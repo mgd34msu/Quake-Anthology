@@ -117,7 +117,7 @@ qa_input_seat *qa_input_seat_create(const qa_input_seat_options *o, qa_error *er
     return s;
 }
 void qa_input_seat_destroy(qa_input_seat *s) {
-    if (!s)
+    if (!s || s->release)
         return;
     /* The owner releases input while its console is still alive. Destruction
      * then has no callbacks and remains safe during failed construction. */
@@ -179,6 +179,7 @@ uint32_t qa_input_seat_catcher(const qa_input_seat *s, uint64_t owner) {
     return mask;
 }
 void qa_input_seat_retire_catcher(qa_input_seat *s, uint64_t owner) {
+    if (!qa_input_release_mutation_access(s,NULL)) return;
     if (!s || !owner) return;
     for (size_t i = 0; i < s->catcher_count; ++i) if (s->catchers[i].owner == owner) {
         memmove(s->catchers + i, s->catchers + i + 1,
@@ -187,6 +188,7 @@ void qa_input_seat_retire_catcher(qa_input_seat *s, uint64_t owner) {
     }
 }
 bool qa_input_seat_set_catcher(qa_input_seat *s, uint64_t owner, uint32_t mask, qa_error *error) {
+    if (!qa_input_release_mutation_access(s,error)) return false;
     if (!s || !owner) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input catcher requires a seat and provider owner"); return false;
     }
@@ -206,6 +208,7 @@ bool qa_input_seat_catcher_at(const qa_input_seat *s, size_t index, qa_input_cat
 qa_gamepad_input *qa_input_seat_gamepad(qa_input_seat *s) { return &s->gamepad; }
 qa_gamepad_tuning *qa_input_seat_gamepad_tuning(qa_input_seat *s) { return &s->options.gamepad; }
 bool qa_input_seat_profile(qa_input_seat *s, qa_console_dialect dialect, qa_error *error) {
+    if (!qa_input_release_mutation_access(s,error)) return false;
     if (dialect < QA_CONSOLE_Q1 || dialect > QA_CONSOLE_Q3 || qa_input_seat_has_held(s)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                      "Input profile requires valid dialect and released keys");
@@ -215,6 +218,7 @@ bool qa_input_seat_profile(qa_input_seat *s, qa_console_dialect dialect, qa_erro
     return true;
 }
 bool qa_input_seat_bind(qa_input_seat *s, const qa_input_binding *binding, qa_error *error) {
+    if (!qa_input_release_action_access(s,error)) return false;
     if (!s || !binding || !qa_input_physical_valid(binding->input) ||
         (binding->kind != QA_BIND_ACTION && binding->kind != QA_BIND_COMMAND) ||
         (binding->kind == QA_BIND_ACTION &&
@@ -256,6 +260,7 @@ bool qa_input_seat_bind(qa_input_seat *s, const qa_input_binding *binding, qa_er
     return true;
 }
 bool qa_input_seat_unbind(qa_input_seat *s, qa_physical_input input) {
+    if (!qa_input_release_action_access(s,NULL)) return false;
     size_t index = 0;
     qa_binding_record *old = binding_find(s, input, &index);
     if (!old)
@@ -267,6 +272,7 @@ bool qa_input_seat_unbind(qa_input_seat *s, qa_physical_input input) {
     return true;
 }
 void qa_input_seat_unbind_all(qa_input_seat *s) {
+    if (!qa_input_release_action_access(s,NULL)) return;
     for (size_t i = 0; i < s->binding_count; ++i)
         qa_input_binding_record_release(s->bindings[i]);
     s->binding_count = 0;
@@ -288,6 +294,7 @@ static void replace_bindings(qa_input_seat *s, qa_input_seat *candidate) {
 }
 bool qa_input_seat_replace_bindings(qa_input_seat *s, const qa_input_binding *bindings,
                                     size_t count, qa_error *error) {
+    if (!qa_input_release_action_access(s,error)) return false;
     if (!s || (count && !bindings)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid replacement binding list"); return false;
     }
@@ -307,7 +314,8 @@ bool qa_input_seat_configuration_ready(const qa_input_seat *active,
                      "Input configuration requires distinct returned owners of the same seat");
         return false;
     }
-    return true;
+    return qa_input_seat_context_ready(active,&active->options.context,error) &&
+        qa_input_seat_context_ready(candidate,&candidate->options.context,error);
 }
 void qa_input_seat_configuration_publish(qa_input_seat *active, qa_input_seat *candidate) {
     qa_binding_record **bindings = active->bindings;
@@ -323,6 +331,7 @@ void qa_input_seat_configuration_publish(qa_input_seat *active, qa_input_seat *c
     candidate->options.gamepad = gamepad;
 }
 bool qa_input_seat_remap_controller(qa_input_seat *s, int32_t device, qa_error *error) {
+    if (!qa_input_release_mutation_access(s,error)) return false;
     if (device < 0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Negative controller instance");
         return false;
@@ -344,6 +353,7 @@ bool qa_input_seat_remap_controller(qa_input_seat *s, int32_t device, qa_error *
 }
 bool qa_input_seat_action(qa_input_seat *s, qa_input_action action, uint64_t source, bool down,
                           double time, qa_error *error) {
+    if (!qa_input_release_action_access(s,error)) return false;
     if (!s || action < 0 || action >= QA_INPUT_ACTION_COUNT || !isfinite(time) || time < 0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid input action");
         return false;
@@ -361,18 +371,15 @@ static uint64_t command_key(qa_physical_input p) {
     return UINT64_C(65536) + (uint64_t)(uint32_t)p.device * 64 +
            (p.kind == QA_PHYSICAL_BUTTON ? p.code : 32 + p.code * 2 + (unsigned)p.positive);
 }
-static bool run_binding(qa_input_seat *s, const qa_held_binding *held, bool down, double time,
+static bool format_binding(qa_input_seat *s, const qa_held_binding *held, bool down, double time,
                         qa_error *error) {
     const qa_input_binding *b = held->binding ? &held->binding->view : NULL;
-    if (!b)
+    s->scratch_size = 0;
+    if (!b || b->kind==QA_BIND_ACTION)
         return true;
-    if (b->kind == QA_BIND_ACTION)
-        return qa_input_seat_action(s, b->action, qa_input_physical_source(held->input), down, time,
-                                    error);
     const char *text = b->command;
     size_t left = strlen(text);
     bool had_button = false;
-    s->scratch_size = 0;
     while (left) {
         size_t n = qa_command_separator(text, left, s->options.context.dialect),
                consumed = n < left ? n + 1 : n;
@@ -402,8 +409,20 @@ static bool run_binding(qa_input_seat *s, const qa_held_binding *held, bool down
         text += consumed;
         left -= consumed;
     }
-    if (!s->scratch_size)
-        return true;
+    return true;
+}
+bool qa_input_binding_release_text(qa_input_seat *s,const qa_held_binding *held,double time,
+    const char **out,qa_error *error) {
+    if (!format_binding(s,held,false,time,error)) return false;
+    *out=s->scratch_size?s->scratch:""; return true;
+}
+static bool run_binding(qa_input_seat *s,const qa_held_binding *held,bool down,double time,
+    qa_error *error) {
+    const qa_input_binding *binding=held->binding?&held->binding->view:NULL;
+    if (binding && binding->kind==QA_BIND_ACTION)
+        return qa_input_seat_action(s,binding->action,qa_input_physical_source(held->input),down,time,error);
+    if (!format_binding(s,held,down,time,error)) return false;
+    if (!s->scratch_size) return true;
     qa_command_context context = s->options.context;
     context.script = "key-binding";
     context.direct = false;
@@ -443,6 +462,7 @@ static bool digital(qa_input_seat *s, qa_physical_input input, bool down, double
     return true;
 }
 bool qa_input_seat_release_device(qa_input_seat *s, int32_t device, double time, qa_error *error) {
+    if (!qa_input_release_mutation_access(s,error)) return false;
     bool success = true;
     for (size_t i = 0; i < s->held_count;) {
         qa_held_binding *held = &s->held[i];
@@ -450,36 +470,47 @@ bool qa_input_seat_release_device(qa_input_seat *s, int32_t device, double time,
             ++i;
             continue;
         }
-        if (!run_binding(s, held, false, time, error))
+        if (!run_binding(s, held, false, time, error)) {
             success = false;
+            ++i; continue;
+        }
         qa_input_binding_record_release(held->binding);
         memmove(held, held + 1, (s->held_count - i - 1) * sizeof(*held));
         --s->held_count;
     }
-    qa_gamepad_clear(&s->gamepad);
-    qa_gamepad_calibration_reset(&s->gamepad);
+    if (success) {
+        qa_gamepad_clear(&s->gamepad);
+        qa_gamepad_calibration_reset(&s->gamepad);
+    }
     return success;
 }
 bool qa_input_seat_release(qa_input_seat *s, double time, qa_error *error) {
+    if (!qa_input_release_mutation_access(s,error)) return false;
     if (!isfinite(time) || time < 0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid input release time");
         return false;
     }
     bool success = true;
-    for (size_t i = 0; i < s->held_count; ++i) {
-        if (!run_binding(s, &s->held[i], false, time, error))
+    for (size_t i = 0; i < s->held_count;) {
+        if (!run_binding(s, &s->held[i], false, time, error)) {
             success = false;
+            ++i; continue;
+        }
         qa_input_binding_record_release(s->held[i].binding);
+        memmove(s->held+i,s->held+i+1,(s->held_count-i-1)*sizeof(*s->held));
+        --s->held_count;
     }
-    s->held_count = 0;
-    for (size_t i = 0; i < QA_INPUT_ACTION_COUNT; ++i)
-        qa_input_button_release(&s->buttons[i], time);
-    qa_gamepad_clear(&s->gamepad);
-    s->mouse = (qa_input_pair){0};
-    s->impulse = 0;
+    if (success) {
+        for (size_t i = 0; i < QA_INPUT_ACTION_COUNT; ++i)
+            qa_input_button_release(&s->buttons[i], time);
+        qa_gamepad_clear(&s->gamepad);
+        s->mouse = (qa_input_pair){0};
+        s->impulse = 0;
+    }
     return success;
 }
 bool qa_input_seat_set_focus(qa_input_seat *s, qa_input_focus focus, double time, qa_error *error) {
+    if (!qa_input_release_mutation_access(s,error)) return false;
     if (focus < QA_INPUT_GAME || focus > QA_INPUT_UI) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid seat focus");
         return false;
@@ -490,6 +521,7 @@ bool qa_input_seat_set_focus(qa_input_seat *s, qa_input_focus focus, double time
 }
 bool qa_input_seat_ui_push(qa_input_seat *s, qa_input_ui_handler handler, void *user, double time,
                            qa_input_ui_token *out, qa_error *error) {
+    if (!qa_input_release_mutation_access(s,error)) return false;
     if (!handler || !out || s->next_ui == UINT64_MAX ||
         !qa_input_reserve((void **)&s->ui, &s->ui_capacity, s->ui_count + 1, sizeof(*s->ui), error))
         return false;
@@ -502,6 +534,7 @@ bool qa_input_seat_ui_push(qa_input_seat *s, qa_input_ui_handler handler, void *
     return true;
 }
 bool qa_input_seat_ui_remove(qa_input_seat *s, qa_input_ui_token id, double time, qa_error *error) {
+    if (!qa_input_release_mutation_access(s,error)) return false;
     if (!id)
         return true;
     for (size_t i = 1; i < s->ui_count; ++i)
@@ -519,6 +552,7 @@ bool qa_input_seat_ui_remove(qa_input_seat *s, qa_input_ui_token id, double time
 }
 bool qa_input_seat_event(qa_input_seat *s, const qa_input_event *event, bool *consumed,
                          qa_error *error) {
+    if (!qa_input_release_mutation_access(s,error)) return false;
     if (!s || !event || !isfinite(event->time_ms) || event->time_ms < 0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid input event");
         return false;
@@ -615,6 +649,7 @@ bool qa_input_seat_event(qa_input_seat *s, const qa_input_event *event, bool *co
 }
 bool qa_input_seat_sample(qa_input_seat *s, double now, double frame, qa_seat_input_sample *out,
                           qa_error *error) {
+    if (!qa_input_release_mutation_access(s,error)) return false;
     if (!out || !isfinite(now) || now < 0 || !isfinite(frame) || frame <= 0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid seat sample");
         return false;
@@ -643,6 +678,7 @@ bool qa_input_seat_sample(qa_input_seat *s, double now, double frame, qa_seat_in
     return true;
 }
 bool qa_input_seat_impulse(qa_input_seat *s, const char *text, qa_error *error) {
+    if (!qa_input_release_action_access(s,error)) return false;
     if (!text) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Missing impulse");
         return false;

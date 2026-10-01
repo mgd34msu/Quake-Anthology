@@ -22,6 +22,7 @@ typedef struct qa_ui_record {
     bool active;
 } qa_ui_record;
 struct qa_input_seat {
+    struct qa_input_release *release;
     qa_input_seat_options options;
     qa_input_button buttons[QA_INPUT_ACTION_COUNT];
     qa_gamepad_input gamepad;
@@ -42,6 +43,10 @@ struct qa_input_seat {
     char *scratch;
     size_t scratch_size, scratch_capacity;
 };
+bool qa_input_release_action_access(const qa_input_seat *, qa_error *);
+bool qa_input_release_mutation_access(const qa_input_seat *, qa_error *);
+bool qa_input_binding_release_text(qa_input_seat *, const qa_held_binding *, double,
+    const char **, qa_error *);
 bool qa_input_reserve(void **, size_t *capacity, size_t needed, size_t stride, qa_error *);
 bool qa_input_text_append(qa_input_seat *, const char *, size_t, qa_error *);
 bool qa_input_physical_equal(qa_physical_input, qa_physical_input);

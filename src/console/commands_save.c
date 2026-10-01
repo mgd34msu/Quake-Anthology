@@ -305,7 +305,8 @@ static bool fields(qa_source_save_io *io, qa_console *state, qa_console *candida
 
 bool qa_console_save_capture(const qa_console *console, qa_session *session, qa_buffer *out, qa_error *error)
 {
-    if (!console || !session || !out || !qa_console_idle(console))
+    if (!console || !session || !out || !qa_console_idle(console) || console->program_leases || console->release_leases ||
+        console->program_unpublished)
         return qac_fail(error, QA_ERROR_ARGUMENT, "Console capture requires its idle owner and session");
     qa_source_save_io io;
     if (!qa_source_save_writer(&io, session, error)) return false;
@@ -318,7 +319,8 @@ bool qa_console_save_capture(const qa_console *console, qa_session *session, qa_
 bool qa_console_save_restore(qa_console *console, qa_session *session,
     const qa_console_save_resolvers *resolve, qa_bytes bytes, qa_error *error)
 {
-    if (!console || !session || !resolve || !qa_console_idle(console))
+    if (!console || !session || !resolve || !qa_console_idle(console) || console->program_leases || console->release_leases ||
+        console->program_unpublished)
         return qac_fail(error, QA_ERROR_ARGUMENT, "Console restore requires an idle candidate owner");
     qa_buffer before = {0}, after = {0};
     if (!qa_console_save_capture(console, session, &before, error)) return false;

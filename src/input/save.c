@@ -227,7 +227,7 @@ static bool continuation(qa_source_save_io *io, qa_input_seat *seat, const qa_in
 }
 bool qa_input_seat_checkpoint(const qa_input_seat *seat, const qa_input_checkpoint_refs *refs, qa_buffer *out, qa_error *error)
 {
-    if (!seat || !out || !refs_ready(refs)) return fail(error,"Input capture requires a seat and owner resolvers");
+    if (!seat || seat->release || !out || !refs_ready(refs)) return fail(error,"Input capture requires a seat and owner resolvers");
     qa_source_save_io io; uint8_t magic[4]={'Q','I','N','S'}; uint32_t schema=2; uint64_t services=0;
     if (!qa_source_save_writer(&io,NULL,error)) return false;
     qa_input_seat saved=*seat;
@@ -241,7 +241,7 @@ bool qa_input_seat_checkpoint(const qa_input_seat *seat, const qa_input_checkpoi
 }
 bool qa_input_seat_restore(qa_input_seat *seat, qa_bytes bytes, const qa_input_checkpoint_refs *refs, qa_error *error)
 {
-    if (!seat || !refs_ready(refs)) return fail(error,"Input restore requires an installed candidate seat and owner resolvers");
+    if (!seat || seat->release || !refs_ready(refs)) return fail(error,"Input restore requires an installed candidate seat and owner resolvers");
     qa_source_save_io io; uint8_t magic[4]; uint32_t schema=0, ordinal=0, launch_seat=0; uint64_t services=0;
     qa_input_seat *saved=calloc(1,sizeof(*saved));
     if (!saved) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating restored input seat"); return false; }
