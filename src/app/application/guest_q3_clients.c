@@ -1,6 +1,50 @@
 #include "guest_q3_private.h"
 #include "guest_projection_private.h"
 #include "qa/application_players.h"
+#include "q3_world_restart.h"
+#include "guest_q3_restart.h"
+#include "native_q3_wire_state.h"
+#include "native_q3_console.h"
+
+bool application_q3_guest_actor_bound(application_provider *provider, qa_actor_id actor,
+    uint32_t *slot)
+{
+    struct application_q3_guest *engine = q3g_engine(provider);
+    if (!engine || !slot || !engine->game || !engine->game->initialized ||
+        !qa_actors_get(qa_session_actors(provider->application->session), actor)) return false;
+    uint32_t actual;
+    if (!qa_q3_host_actor_slot(engine->game->host, actor, &actual, NULL) || actual >= 64) return false;
+    const q3g_client *client = &engine->clients[actual];
+    if (!(client->reserved || client->allocated) || client->pending_retirement ||
+        !qa_actor_id_equal(client->actor, actor)) return false;
+    *slot = actual;
+    return true;
+}
+
+bool application_q3_guest_client_reserve(application_provider *provider, uint32_t slot,
+    qa_actor_id actor, qa_error *error)
+{
+    struct application_q3_guest *engine = q3g_engine(provider);
+    if (!engine || slot >= 64 || !provider->constructed || !provider->attached ||
+        !engine->game || !engine->game->initialized || engine->restore_pending || engine->calls ||
+        engine->draining_clients || provider->application->operation != APPLICATION_CONFIGURING ||
+        !qa_session_safe(provider->application->session) || !qa_world_idle(engine->world) ||
+        !application_q3_guest_idle(provider) ||
+        (engine->round.phase != Q3G_ROUND_NONE &&
+         (engine->round.phase != Q3G_ROUND_SETTLING || engine->round.completed_frames != 3)))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 source client reservation requires its genuine prejoin cut");
+    q3g_client *client = &engine->clients[slot];
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(provider->application->session), actor);
+    bool borrowed = record && record->owner != provider->owner;
+    if (!record || client->connected || client->pending_retirement ||
+        (client->actor.registry && !qa_actor_id_equal(client->actor, actor)) ||
+        (!borrowed && (!record->has_source || record->source_slot != slot)))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 source client reservation changes its physical actor binding");
+    if (!qa_q3_host_bind_actor(engine->game->host, slot, actor, borrowed, error)) return false;
+    client->actor = actor;
+    client->reserved = true;
+    return true;
+}
 
 bool application_q3_guest_actor_client(application_provider *provider, qa_actor_id actor,
                                          uint32_t *slot)
@@ -20,7 +64,8 @@ static q3g_client *client_slot(application_provider *provider, uint32_t slot,
                                struct application_q3_guest **engine, qa_error *error)
 {
     *engine = q3g_engine(provider);
-    if (!*engine || !(*engine)->game || !(*engine)->game->initialized || slot >= 64) {
+    if (!*engine || !(*engine)->game || !(*engine)->game->initialized || slot >= 64 ||
+        ((*engine)->round.phase != Q3G_ROUND_NONE && !(*engine)->round.source_entry)) {
         application_fail(error, QA_ERROR_ARGUMENT, "Q3 client requires an initialized game and source slot");
         return NULL;
     }
@@ -56,6 +101,9 @@ bool application_q3_guest_client_connect(application_provider *provider, uint32_
     client->begun = false;
     client->disconnect_started = false;
     client->entered_ns = qa_session_elapsed(provider->application->session);
+    application_q3_world_startup startup;
+    client->carry_pending = !first_time &&
+        application_q3_world_restart_source(provider->application, provider, &startup);
     int32_t arguments[] = {(int32_t)slot, first_time ? 1 : 0, bot ? 1 : 0}, result;
     if (engine->game->native) {
         qa_buffer denial = {0};
@@ -72,22 +120,45 @@ bool application_q3_guest_client_connect(application_provider *provider, uint32_
     }
     if (client->pending_retirement) *accepted = false;
     client->connected = *accepted;
+    client->reserved = false;
     if (!*accepted && !client->pending_retirement &&
         !application_guest_client_drop(provider, slot, "", error)) return false;
     return application_guest_bots_admit(provider, error) && application_guest_clients_drain(provider, error);
+}
+
+bool application_q3_guest_client_enter_command(application_provider *provider, uint32_t slot,
+    qa_actor_id actor, const qa_q3_usercmd *command, qa_error *error)
+{
+    struct application_q3_guest *engine;
+    q3g_client *client = client_slot(provider, slot, &engine, error);
+    if (!client || !command || !provider->constructed || !provider->attached ||
+        engine->calls || engine->draining_clients || engine->restore_pending ||
+        !client->allocated || !client->connected || client->begun || client->bot ||
+        client->carry_pending || client->pending_retirement ||
+        !qa_actor_id_equal(client->actor, actor) ||
+        !qa_actors_get(qa_session_actors(provider->application->session), actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 enter command requires its accepted physical client before Begin");
+    uint32_t actual;
+    if (!qa_q3_host_actor_slot(engine->game->host, actor, &actual, error)) return false;
+    if (actual != slot)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 enter command changes the actual source client slot");
+    client->command = *command;
+    return true;
 }
 
 bool application_q3_guest_client_begin(application_provider *provider, uint32_t slot, qa_error *error)
 {
     struct application_q3_guest *engine;
     q3g_client *client = client_slot(provider, slot, &engine, error);
-    if (!client || !client->connected) return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client has not connected");
+    if (!client || !client->connected || client->carry_pending)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client has not completed its source command admission");
     int32_t argument = (int32_t)slot, result;
     if (!q3g_call(engine->game, 3, &argument, 1, &result, error)) return false;
     if (!client->connected || client->pending_retirement ||
         !qa_actors_get(qa_session_actors(provider->application->session), client->actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client retired during source begin");
     client->begun = true;
+    client->carry_pending = false;
     if (!application_guest_actor_admit(provider, client->actor, error)) return false;
     if (!client->gamestate) {
         client->gamestate = malloc(sizeof(*client->gamestate));
@@ -161,8 +232,10 @@ bool application_q3_guest_client_think(application_provider *provider, uint32_t 
 bool application_q3_guest_client_command(application_provider *provider, uint32_t slot,
                                            const char *text, qa_error *error)
 {
-    struct application_q3_guest *engine;
-    q3g_client *client = client_slot(provider, slot, &engine, error);
+    struct application_q3_guest *engine = q3g_engine(provider);
+    bool shutdown = engine && engine->game && engine->game->shutdown_entry && engine->calls;
+    q3g_client *client = shutdown ? (slot < 64 ? &engine->clients[slot] : NULL) :
+        client_slot(provider, slot, &engine, error);
     if (!client || !client->connected || !text)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 command requires a connected client");
     qa_command_tokens next = {0};
@@ -171,8 +244,8 @@ bool application_q3_guest_client_command(application_provider *provider, uint32_
     int32_t argument = (int32_t)slot, result;
     bool ok = q3g_call(engine->game, 6, &argument, 1, &result, error);
     qa_command_tokens_free(&engine->arguments); engine->arguments = prior;
-    if (ok) ok = application_guest_bots_admit(provider, error);
-    if (ok) ok = application_guest_clients_drain(provider, error);
+    if (ok && !shutdown) ok = application_guest_bots_admit(provider, error);
+    if (ok && !shutdown) ok = application_guest_clients_drain(provider, error);
     return ok;
 }
 
@@ -235,9 +308,35 @@ static bool snapshot(void *context, int32_t number, const qa_q3_snapshot **out, 
     *out = NULL; *ping = 0;
     if (number < 0 || !client->has_snapshot || (int64_t)client->snapshot_sequence - number >= QA_Q3_PACKET_BACKUP) return true;
     const q3g_snapshot *value = &client->snapshots[(uint32_t)number & (QA_Q3_PACKET_BACKUP - 1)];
-    if (value->value.valid && value->value.message_number == number) { *out = &value->value; *ping = value->ping; }
+    if (value->value.valid && value->value.message_number == number) {
+        const qa_q3_snapshot *latest = &client->snapshots[(uint32_t)client->snapshot_sequence &
+            (QA_Q3_PACKET_BACKUP - 1)].value;
+        uint32_t distance_bits = (uint32_t)latest->parse_entities_number +
+            (uint32_t)latest->entity_count - (uint32_t)value->value.parse_entities_number;
+        int32_t distance;
+        memcpy(&distance, &distance_bits, sizeof(distance));
+        if (distance >= 2048) return true;
+        *out = &value->value; *ping = value->ping;
+    }
     return true;
 }
+
+static int32_t source_integer(const char *text)
+{
+    while (*text == ' ' || (*text >= '\t' && *text <= '\r')) ++text;
+    bool negative = *text == '-';
+    if (*text == '-' || *text == '+') ++text;
+    uint32_t value = 0, limit = negative ? UINT32_C(2147483648) : UINT32_C(2147483647);
+    while (*text >= '0' && *text <= '9') {
+        unsigned digit = (unsigned)(*text++ - '0');
+        value = value > (limit - digit) / 10 ? limit : value * 10 + digit;
+    }
+    uint32_t bits = negative ? 0u - value : value;
+    int32_t result;
+    memcpy(&result, &bits, sizeof(result));
+    return result;
+}
+
 static bool server_command(void *context, int32_t number, bool *present, qa_error *error)
 {
     q3g_role *role = context; q3g_client *client = role_client(role, error); if (!client) return false;
@@ -248,6 +347,7 @@ static bool server_command(void *context, int32_t number, bool *present, qa_erro
     if ((int64_t)client->reliable.sequence - number >= QA_Q3_RELIABLE)
         return application_fail(error, QA_ERROR_FORMAT, "Q3 server command has left the retained history");
     const char *text = qa_q3_reliable_lookup(&client->reliable, number);
+rescan: ;
     qa_command_tokens tokens = {0};
     if (!qa_command_tokenize(text, QA_CONSOLE_Q3, false, &tokens, error)) return false;
     qa_command_tokens_free(&role->arguments); role->arguments = tokens;
@@ -255,54 +355,56 @@ static bool server_command(void *context, int32_t number, bool *present, qa_erro
         const char *reason = tokens.count >= 2 ? tokens.values[1] : "Server disconnected";
         return q3g_client_effect(role, QA_APPLICATION_Q3_DISCONNECT, reason, error);
     }
-    if (tokens.count && !strncmp(tokens.values[0], "bcs", 3)) {
-        if (tokens.count != 3 || (strcmp(tokens.values[0], "bcs0") &&
-            strcmp(tokens.values[0], "bcs1") && strcmp(tokens.values[0], "bcs2")))
-            return application_fail(error, QA_ERROR_FORMAT, "invalid Q3 configstring continuation");
-        char *end; unsigned long index = strtoul(tokens.values[1], &end, 10);
-        if (*end || index >= QA_Q3_CONFIGSTRINGS) return application_fail(error, QA_ERROR_FORMAT, "invalid Q3 continued configstring index");
-        if (!strcmp(tokens.values[0], "bcs0")) {
-            if (!client->big_configstring) {
-                client->big_configstring = malloc(QA_Q3_GAMESTATE_CHARS);
-                if (!client->big_configstring) return application_fail(error, QA_ERROR_MEMORY, "retaining Q3 configstring continuation");
-            }
-            client->big_configstring_length = 0; client->big_configstring_index = (uint32_t)index;
-            client->big_configstring_active = true;
+    if (tokens.count && (!strcmp(tokens.values[0], "bcs0") ||
+        !strcmp(tokens.values[0], "bcs1") || !strcmp(tokens.values[0], "bcs2"))) {
+        const char *fragment = tokens.count > 2 ? tokens.values[2] : "";
+        if (!client->big_configstring) {
+            client->big_configstring = malloc(Q3G_BIG_INFO_CHARS);
+            if (!client->big_configstring)
+                return application_fail(error, QA_ERROR_MEMORY, "retaining Q3 configstring continuation");
+            client->big_configstring[0] = 0;
         }
-        if (!client->big_configstring_active || client->big_configstring_index != index)
-            return application_fail(error, QA_ERROR_FORMAT, "Q3 configstring continuation has no start");
-        size_t size = strlen(tokens.values[2]);
-        if (size >= QA_Q3_GAMESTATE_CHARS - client->big_configstring_length)
-            return application_fail(error, QA_ERROR_FORMAT, "Q3 continued configstring exceeds capacity");
-        memcpy(client->big_configstring + client->big_configstring_length, tokens.values[2], size + 1);
-        client->big_configstring_length += size;
+        if (!strcmp(tokens.values[0], "bcs0")) {
+            const char *index_text = tokens.count > 1 ? tokens.values[1] : "";
+            int length = snprintf(client->big_configstring, Q3G_BIG_INFO_CHARS,
+                "cs %s \"%s", index_text, fragment);
+            if (length < 0)
+                return application_fail(error, QA_ERROR_FORMAT, "Q3 continued configstring start cannot be encoded");
+            client->big_configstring_length = strlen(client->big_configstring);
+        } else {
+            size_t size = strlen(fragment), quote = !strcmp(tokens.values[0], "bcs2") ? 1u : 0u;
+            if (size + quote >= Q3G_BIG_INFO_CHARS - client->big_configstring_length)
+                return application_fail(error, QA_ERROR_FORMAT, "Q3 continued configstring exceeds capacity");
+            memcpy(client->big_configstring + client->big_configstring_length, fragment, size + 1);
+            client->big_configstring_length += size;
+        }
         if (!strcmp(tokens.values[0], "bcs2")) {
-            size_t capacity = client->big_configstring_length + 32;
-            char *command = malloc(capacity);
-            if (!command) return application_fail(error, QA_ERROR_MEMORY, "publishing Q3 configstring continuation");
-            snprintf(command, capacity, "cs %lu \"%s\"", index, client->big_configstring);
-            qa_command_tokens complete = {0};
-            bool ok = qa_command_tokenize(command, QA_CONSOLE_Q3, false, &complete, error); free(command);
-            if (!ok) return false;
-            qa_command_tokens_free(&role->arguments); role->arguments = complete;
-            client->big_configstring_active = false; *present = true;
+            client->big_configstring[client->big_configstring_length++] = '"';
+            client->big_configstring[client->big_configstring_length] = 0;
+            text = client->big_configstring;
+            goto rescan;
         }
     } else *present = true;
     if (*present && role->arguments.count && !strcmp(role->arguments.values[0], "cs")) {
         qa_command_tokens *args = &role->arguments;
-        if (args->count != 3 || !client->gamestate)
+        if (!client->gamestate)
             return application_fail(error, QA_ERROR_FORMAT, "Q3 configstring command requires admitted client gamestate");
-        char *end; unsigned long index = strtoul(args->values[1], &end, 10);
-        if (!*args->values[1] || *end || index >= QA_Q3_CONFIGSTRINGS)
+        int32_t index = source_integer(args->count > 1 ? args->values[1] : "");
+        if (index < 0 || index >= QA_Q3_CONFIGSTRINGS)
             return application_fail(error, QA_ERROR_FORMAT, "invalid Q3 client configstring command index");
-        bool changed = strcmp(qa_q3_configstring(client->gamestate, (unsigned)index), args->values[2]) != 0;
-        if (changed && !qa_q3_configstring_set(client->gamestate, (unsigned)index, args->values[2], error)) return false;
+        const char *value = args->count > 1 ? args->args_text + strlen(args->values[1]) +
+            (args->count > 2 ? 1u : 0u) : "";
+        bool changed = strcmp(qa_q3_configstring(client->gamestate, (unsigned)index), value) != 0;
+        if (changed && !qa_q3_configstring_set(client->gamestate, (unsigned)index, value, error)) return false;
         if (changed && index == 1) client->pending_system_info = true;
         if (index == 1 && client->pending_system_info) {
             if (!q3g_client_effect(role, QA_APPLICATION_Q3_SYSTEM_INFO,
                     qa_q3_configstring(client->gamestate, 1), error)) return false;
             client->pending_system_info = false;
         }
+        qa_command_tokens restored = {0};
+        if (!qa_command_tokenize(text, QA_CONSOLE_Q3, false, &restored, error)) return false;
+        qa_command_tokens_free(&role->arguments); role->arguments = restored;
     }
     if (*present && role->arguments.count && !strcmp(role->arguments.values[0], "map_restart") &&
         !q3g_client_effect(role, QA_APPLICATION_Q3_MAP_RESTART, text, error)) return false;
@@ -345,15 +447,67 @@ static bool source_actor(void *context, uint32_t number, qa_actor_id *out,
     *present = out->registry && qa_actors_get(qa_session_actors(role->engine->provider->application->session), *out);
     return true;
 }
+application_provider *q3g_native_game_source(qa_application *application)
+{
+    const qa_launch_snapshot *snapshot = application->routing_snapshot;
+    if (!snapshot) snapshot = qa_application_launch(application);
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
+    if (!choices) return NULL;
+    const qa_launch_binding *binding = qa_launch_binding_for(choices,
+        (qa_launch_scope){.kind = QA_SCOPE_WORLD}, QA_ROLE_ENTITIES, "");
+    if (!binding) return NULL;
+    application_provider **providers = application->routing_providers ?
+        application->routing_providers : application->providers;
+    size_t count = application->routing_providers ?
+        application->routing_provider_count : application->provider_count;
+    for (size_t i = 0; i < count; ++i) {
+        application_provider *provider = providers[i];
+        if (provider && provider->launch && provider->kind == APPLICATION_PROVIDER_Q3 &&
+            !strcmp(provider->launch->selection.instance, binding->instance)) return provider;
+    }
+    return NULL;
+}
+
 bool q3g_client_bind(q3g_role *role, qa_q3_host_options *options, qa_error *error)
 {
-    if (role->kind == QA_QVM_GAME || options->client.gamestate) return true;
+    if (role->kind == QA_QVM_GAME || options->client.gamestate) {
+        if (options->client_time_from_game)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Q3 timing source request requires a genuine local CGAME binding");
+        return true;
+    }
     for (uint32_t i = 0; i < 64; ++i)
         if (role->engine->seats[i] == role->seat) { role->client = i; break; }
     if (role->client >= 64) return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client role requires a configured seat");
-    role->local_client = true;
-    options->client = (qa_q3_host_client_services){role, gamestate, current_snapshot, snapshot,
-        server_command, current_command, user_command, command_values, source_actor};
+    application_provider *source = role->engine->game ? NULL :
+        q3g_native_game_source(role->engine->provider->application);
+    if (source) {
+        if (!source->constructed || !source->state.q3 || !source->native_q3_wire || source->close_pending)
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                "Q3 client role requires its constructed actual native GAME source");
+        if (!application_native_q3_wire_client_bind(source, role->engine->provider->owner,
+            role->seat, role->client, &role->arguments, &role->native_client, options, error)) return false;
+        role->local_client = true;
+        role->source_owner = source->owner;
+        role->client_source = source;
+    } else {
+        role->local_client = true;
+        role->source_owner = role->engine->provider->owner;
+        options->client = (qa_q3_host_client_services){role, gamestate, current_snapshot, snapshot,
+            server_command, current_command, user_command, command_values, source_actor};
+    }
+    if (options->client_time_from_game || options->client_time_cvars) {
+        qa_cvars *actual = source ? application_native_q3_console_registry(source) : NULL;
+        if (!source && role->engine->game)
+            qa_q3_host_console(role->engine->game->host, &actual, NULL);
+        if (!actual || (options->client_time_from_game &&
+            (role->kind != QA_QVM_CGAME || options->client_time_cvars || options->client_time_owner)) ||
+            (!options->client_time_from_game && (options->client_time_cvars != actual ||
+                options->client_time_owner != role->source_owner)))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client timing authority requires its explicit actual GAME registry");
+        options->client_time_cvars = actual;
+        options->client_time_owner = role->source_owner;
+        options->client_time_from_game = false;
+    }
     return true;
 }
 

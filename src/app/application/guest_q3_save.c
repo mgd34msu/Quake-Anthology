@@ -9,6 +9,7 @@
 #include "qa/q3_host_save.h"
 #include "qa/q3_abi.h"
 #include "qa/source_save.h"
+#include "native_q3_wire_state.h"
 
 static bool state_fail(qa_source_save_io *io, qa_status status, const char *message)
 {
@@ -21,10 +22,10 @@ static bool state_signature(qa_source_save_io *io)
 {
     uint8_t magic[8] = {'Q','A','G','3','S','T',0,0};
     const uint8_t expected[8] = {'Q','A','G','3','S','T',0,0};
-    uint32_t version = 1;
+    uint32_t version = 3;
     return qa_source_save_bytes(io, magic, sizeof(magic)) &&
         qa_source_save_u32(io, &version) &&
-        ((!memcmp(magic, expected, sizeof(magic)) && version == 1) ||
+        ((!memcmp(magic, expected, sizeof(magic)) && version == 3) ||
          state_fail(io, QA_ERROR_FORMAT, "Invalid application Q3 state signature"));
 }
 
@@ -231,15 +232,13 @@ static bool client(qa_source_save_io *io, q3g_client *value)
     for (size_t i = 0; i < QA_Q3_PACKET_BACKUP; ++i)
         if (!snapshot(io, &value->snapshots[i], i)) return false;
     if (!qa_source_save_f32(io, &value->sensitivity) || !qa_source_save_i32(io, &value->weapon) ||
-        !qa_source_save_u32(io, &value->big_configstring_index) ||
-        !qa_source_save_count(io, &value->big_configstring_length, QA_Q3_GAMESTATE_CHARS - 1) ||
-        !qa_source_save_bool(io, &value->big_configstring_active)) return false;
+        !qa_source_save_count(io, &value->big_configstring_length, Q3G_BIG_INFO_CHARS - 1)) return false;
     present = value->big_configstring != NULL;
     if (!qa_source_save_bool(io, &present)) return false;
     if (present && io->direction == QA_SOURCE_SAVE_READ) {
         if (value->big_configstring_length + 1 > io->input.size - io->offset)
             return state_fail(io, QA_ERROR_FORMAT, "Truncated application Q3 continued configstring");
-        value->big_configstring = malloc(QA_Q3_GAMESTATE_CHARS);
+        value->big_configstring = malloc(Q3G_BIG_INFO_CHARS);
         if (!value->big_configstring)
             return state_fail(io, QA_ERROR_MEMORY, "Restoring application Q3 continued configstring");
     }
@@ -252,8 +251,7 @@ static bool client(qa_source_save_io *io, q3g_client *value)
     FLAG(pending_system_info); FLAG(pending_bot); FLAG(pending_retirement);
     FLAG(disconnect_pending); FLAG(disconnect_started); FLAG(roster_attached);
 #undef FLAG
-    if (!isfinite(value->sensitivity) || (value->big_configstring_active &&
-        (!value->big_configstring || value->big_configstring_index >= QA_Q3_CONFIGSTRINGS)) ||
+    if (!isfinite(value->sensitivity) ||
         (!value->big_configstring && value->big_configstring_length) ||
         (value->connected && (!value->actor.registry || !value->allocated)) ||
         (value->has_snapshot && (!value->snapshots[(uint32_t)value->snapshot_sequence &
@@ -269,9 +267,19 @@ static bool fields(qa_source_save_io *io, struct application_q3_guest *engine)
     uint32_t product = engine->product;
     bool ok = state_signature(io) && qa_source_save_u32(io, &product) &&
         product == engine->product && qa_source_save_u64(io, &engine->role_sequence) &&
-        qa_source_save_i32(io, &engine->milliseconds) && qa_source_save_bool(io, &engine->map_ready) &&
+        qa_source_save_i32(io, &engine->milliseconds) && qa_source_save_i32(io, &engine->random_seed) &&
+        qa_source_save_bool(io, &engine->map_ready) &&
+        qa_source_save_bool(io, &engine->loaded_compatibility) &&
+        qa_source_save_i32(io, &engine->loaded_game_type) &&
+        qa_source_save_i32(io, &engine->loaded_max_clients) &&
+        qa_source_save_u8(io, &engine->local_snapshot_server_bit) &&
         owned_text(io, &engine->entity_text) && tokens(io, &engine->arguments) && gamestate(io, &engine->gamestate);
     if (!ok) return state_fail(io, QA_ERROR_FORMAT, "Application Q3 state product or envelope differs");
+    if ((engine->loaded_compatibility && (!engine->map_ready ||
+         engine->loaded_max_clients < 1 || engine->loaded_max_clients > 64)) ||
+        (!engine->loaded_compatibility && (engine->loaded_game_type || engine->loaded_max_clients)) ||
+        (engine->local_snapshot_server_bit != 0 && engine->local_snapshot_server_bit != 4))
+        return state_fail(io, QA_ERROR_FORMAT, "Invalid application Q3 loaded compatibility");
     for (size_t i = 0; i < 64; ++i)
         if (!qa_source_save_u32(io, &engine->seats[i]) || !client(io, &engine->clients[i])) return false;
     return true;
@@ -280,7 +288,10 @@ static bool fields(qa_source_save_io *io, struct application_q3_guest *engine)
 static bool owner(application_provider *provider, qa_error *error)
 {
     struct application_q3_guest *engine = q3g_engine(provider);
-    return (engine && !engine->calls && !engine->draining_clients &&
+    if (engine) for (size_t i = 0; i < 64; ++i)
+        if (engine->clients[i].carry_pending || engine->clients[i].reserved)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Q3 source client still owns unfinished admission");
+    return (engine && engine->round.phase == Q3G_ROUND_NONE && !engine->startup_restart && !engine->handoff_ready && !engine->calls && !engine->draining_clients &&
         qa_session_safe(provider->application->session) && application_q3_guest_idle(provider)) ||
         application_fail(error, QA_ERROR_ARGUMENT, "Application Q3 state requires an idle source owner");
 }
@@ -320,6 +331,8 @@ bool application_guest_q3_state_restore(application_provider *provider, qa_bytes
     bool ok = qa_source_save_reader(&io, provider->application->session, bytes, error) &&
         fields(&io, candidate) && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
+    if (ok && candidate->random_seed != engine->random_seed)
+        ok = application_fail(error, QA_ERROR_FORMAT, "Application Q3 initialization seed differs from its source owner");
     if (ok && ((engine->entity_text != NULL) != (candidate->entity_text != NULL) ||
         (engine->entity_text && strcmp(engine->entity_text, candidate->entity_text))))
         ok = application_fail(error, QA_ERROR_FORMAT, "Application Q3 entity text differs from its prepared immutable map");
@@ -334,7 +347,12 @@ bool application_guest_q3_state_restore(application_provider *provider, qa_bytes
         engine->gamestate = candidate->gamestate;
         memcpy(engine->seats, candidate->seats, sizeof(engine->seats));
         engine->milliseconds = candidate->milliseconds;
+        engine->random_seed = candidate->random_seed;
         engine->map_ready = candidate->map_ready;
+        engine->loaded_compatibility = candidate->loaded_compatibility;
+        engine->loaded_game_type = candidate->loaded_game_type;
+        engine->loaded_max_clients = candidate->loaded_max_clients;
+        engine->local_snapshot_server_bit = candidate->local_snapshot_server_bit;
         engine->role_sequence = candidate->role_sequence;
     }
     q3g_clients_clear(candidate); qa_command_tokens_free(&candidate->arguments);
@@ -343,7 +361,8 @@ bool application_guest_q3_state_restore(application_provider *provider, qa_bytes
 }
 
 enum { ROLE_INITIALIZED = 1, ROLE_RETIRED = 2, ROLE_READY = 4,
-       ROLE_PRIMARY = 8, ROLE_LOCAL_CLIENT = 16, ROLE_COMMITTED = 32 };
+       ROLE_PRIMARY = 8, ROLE_LOCAL_CLIENT = 16, ROLE_COMMITTED = 32,
+       ROLE_NATIVE_CLIENT = 64 };
 
 typedef struct saved_artifact {
     char *path;
@@ -360,6 +379,7 @@ typedef struct saved_projection {
 typedef struct saved_role {
     size_t artifact;
     uint32_t seat, client, flags;
+    qa_actor_owner source_owner;
     uint64_t sequence;
     qa_string_id owner;
     bool keys[256];
@@ -429,13 +449,26 @@ static uint32_t role_flags(const q3g_role *role)
     uint32_t flags = (role->initialized ? ROLE_INITIALIZED : 0) |
         (role->retired ? ROLE_RETIRED : 0) | (role->ready ? ROLE_READY : 0) |
         (role->primary ? ROLE_PRIMARY : 0) | (role->local_client ? ROLE_LOCAL_CLIENT : 0) |
-        (role->committed ? ROLE_COMMITTED : 0);
+        (role->committed ? ROLE_COMMITTED : 0) | (role->native_client ? ROLE_NATIVE_CLIENT : 0);
     const q3g_restore *pending = role->engine->restoration;
     if (pending && role->engine->restore_pending)
         for (size_t i = 0; i < pending->role_count; ++i)
             if (pending->roles[i].actual == role)
                 flags |= pending->roles[i].flags & ROLE_INITIALIZED;
     return flags;
+}
+
+static bool client_topology(const q3g_role *role, qa_error *error)
+{
+    if (!role->native_client)
+        return !role->client_source || application_fail(error, QA_ERROR_FORMAT,
+            "Q3 role retains a source without its actual native client lease");
+    application_native_q3_wire_client_topology actual;
+    if (!application_native_q3_wire_client_topology_read(role->native_client, &actual, error)) return false;
+    return (role->local_client && actual.source == role->client_source &&
+        actual.source_owner == role->source_owner && actual.receiver == role->engine->provider->owner &&
+        actual.seat == role->seat && actual.source_slot == role->client) ||
+        application_fail(error, QA_ERROR_FORMAT, "Q3 role differs from its actual native GAME client topology");
 }
 
 static bool portable_executor(qa_bytes bytes, qa_error *error)
@@ -453,9 +486,9 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
 {
     uint8_t magic[8] = {'Q','A','G','3','P','V',0,0};
     const uint8_t expected[8] = {'Q','A','G','3','P','V',0,0};
-    uint32_t version = 1;
+    uint32_t version = 2;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || !qa_source_save_u32(io, &version) ||
-        memcmp(magic, expected, sizeof(magic)) || version != 1 ||
+        memcmp(magic, expected, sizeof(magic)) || version != 2 ||
         !qa_source_save_u32(io, &saved->product) || saved->product > QA_Q3_TEAM_ARENA ||
         !qa_source_save_u64(io, &saved->sequence) || !owned_text(io, &saved->entity_text) ||
         !blob(io, &saved->state, 12) ||
@@ -493,9 +526,10 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
         saved_role *role = &saved->roles[i];
         if (!qa_source_save_count(io, &role->artifact, saved->artifact_count - 1) ||
             !qa_source_save_u32(io, &role->seat) || !qa_source_save_u32(io, &role->client) ||
+            !qa_source_save_u32(io, &role->source_owner) ||
             !qa_source_save_u64(io, &role->sequence) || !role->sequence || role->sequence > saved->sequence ||
             !qa_source_save_u32(io, &role->owner) || !role->owner ||
-            !qa_source_save_u32(io, &role->flags) || role->flags > 63 || !(role->flags & ROLE_READY) ||
+            !qa_source_save_u32(io, &role->flags) || role->flags > 127 || !(role->flags & ROLE_READY) ||
             ((role->flags & ROLE_INITIALIZED) &&
              (!(role->flags & ROLE_COMMITTED) || (role->flags & ROLE_RETIRED))))
             return state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 source role identity or lifecycle");
@@ -504,7 +538,9 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
         games += artifact->kind == QA_QVM_GAME;
         if ((artifact->kind == QA_QVM_GAME) != (saved->game == i + 1) ||
             (artifact->kind == QA_QVM_GAME && !(role->flags & ROLE_PRIMARY)) ||
-            ((role->flags & ROLE_LOCAL_CLIENT) ? artifact->kind == QA_QVM_GAME || role->client >= 64 : role->client != UINT32_MAX))
+            ((role->flags & ROLE_LOCAL_CLIENT) ? artifact->kind == QA_QVM_GAME || role->client >= 64 || !role->source_owner
+                : role->client != UINT32_MAX || role->source_owner) ||
+            ((role->flags & ROLE_NATIVE_CLIENT) && !(role->flags & ROLE_LOCAL_CLIENT)))
             return state_fail(io, QA_ERROR_FORMAT, "Q3 source role changes its actual game/client authority");
         for (size_t j = 0; j < i; ++j) {
             const saved_role *prior = &saved->roles[j];
@@ -575,7 +611,8 @@ static bool saved_collect(application_provider *provider, q3g_restore **out, qa_
     i = 0;
     for (q3g_role *r = engine->roles; r; r = r->next, ++i) {
         saved_role *row = &saved->roles[i];
-        if (!r->vm || !r->image || r->native || r->module || r->activation_failed || r->arguments_scoped) {
+        if (!client_topology(r, error)) { saved_free(saved); return false; }
+        if (!r->vm || !r->image || r->native || r->module || r->activation_failed || r->arguments_scoped || r->shutdown_entry) {
             saved_free(saved); return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 source role has an unqualified native executor or command scope");
         }
         size_t a = 0;
@@ -584,6 +621,7 @@ static bool saved_collect(application_provider *provider, q3g_restore **out, qa_
             saved_free(saved); return application_fail(error, QA_ERROR_FORMAT, "Q3 source role has no retained artifact owner");
         }
         *row = (saved_role){.artifact = a, .seat = r->seat, .client = r->client,
+            .source_owner = r->source_owner,
             .flags = role_flags(r), .sequence = r->service_sequence, .owner = r->service_owner,
             .arguments = r->arguments, .actual = r};
         memcpy(row->keys, r->input_keys, sizeof(row->keys));
@@ -797,9 +835,18 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
         saved_artifact *artifact = saved->artifacts + role->artifact;
         if (role->flags & ROLE_PRIMARY) {
             primary = role->artifact;
+            uint32_t seat = choices->seat_count ? choices->seats[0].id : UINT32_MAX;
+            if (artifact->kind != QA_QVM_GAME) {
+                seat = UINT32_MAX;
+                for (size_t j = 0; j < choices->seat_count; ++j)
+                    if (q3g_selected_client_seat(provider, choices, (qa_qvm_role)artifact->kind, j)) {
+                        seat = choices->seats[j].id;
+                        break;
+                    }
+            }
             if (strcmp(artifact->path, provider->launch->selection.artifact) ||
                 artifact->kind != (uint32_t)q3g_primary_role(provider->launch->selection.artifact) ||
-                role->seat != (choices->seat_count ? choices->seats[0].id : UINT32_MAX))
+                role->seat != seat)
                 ok = application_fail(error, QA_ERROR_FORMAT, "Q3 primary role differs from its selected source artifact");
         }
         char identity[65], name[160]; qa_sha256_hex(&provider->launch->identity, identity);
@@ -830,8 +877,11 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
         if (!q3g_role_create_restored(engine, (qa_qvm_role)artifact->kind, next->seat, artifact->path,
             (next->flags & ROLE_PRIMARY) != 0, next->sequence, next->owner, &role, error)) return false;
         next->actual = role; role->next = engine->roles; engine->roles = role;
-        if (role->client != next->client || role->local_client != ((next->flags & ROLE_LOCAL_CLIENT) != 0))
+        if (role->client != next->client || role->source_owner != next->source_owner ||
+            role->local_client != ((next->flags & ROLE_LOCAL_CLIENT) != 0) ||
+            (role->native_client != NULL) != ((next->flags & ROLE_NATIVE_CLIENT) != 0))
             return application_fail(error, QA_ERROR_FORMAT, "Q3 role changes its actual admitted local or remote client services");
+        if (!client_topology(role, error)) return false;
         if (artifact->kind == QA_QVM_GAME) {
             engine->game = role; q3g_game_aliases(engine, role);
             if ((next->flags & ROLE_COMMITTED) && application_bots_runtime(provider->application) &&
@@ -855,6 +905,7 @@ bool application_guest_q3_save_restore(application_provider *provider, qa_bytes 
     if (!application_guest_q3_state_restore(provider, saved->state, error)) return false;
     for (size_t i = 0; i < saved->role_count; ++i) {
         saved_role *row = saved->roles + i; q3g_role *role = row->actual;
+        if (!client_topology(role, error)) return false;
         if (!portable_executor(row->executor, error) ||
             !application_guest_input_restore(role, row->input, error) ||
             !qa_qvm_restore_candidate(role->vm, row->executor, error)) return false;
@@ -899,13 +950,14 @@ bool application_guest_q3_save_finish(application_provider *provider, qa_error *
      * Engine entry stays blocked throughout this final byte qualification. */
     for (size_t i = 0; i < saved->role_count; ++i) {
         saved_role *row = saved->roles + i; q3g_role *role = row->actual;
+        if (!client_topology(role, error)) return false;
         if (role->projection)
             for (guest_projection_actor *context = role->projection->actors; context; context = context->next)
                 if (context->inventory_prepared || (context->inventory_bound &&
                     (!qa_inventory_primary_current(provider->application->inventory, context->inventory_lease, context) ||
                      application_provider_for(provider->application, context->actor, QA_ROLE_INVENTORY, NULL) != provider)))
                     return application_fail(error, QA_ERROR_FORMAT, "Q3 source primary lease was not restored exactly");
-        if (role->local_client && ((row->flags & ROLE_INITIALIZED) &&
+        if (role->local_client && !role->native_client && ((row->flags & ROLE_INITIALIZED) &&
             (!engine->clients[role->client].connected || engine->seats[role->client] != role->seat)))
             return application_fail(error, QA_ERROR_FORMAT, "Q3 local client role disagrees with its restored source seat");
         qa_buffer services = {0};

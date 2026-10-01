@@ -98,6 +98,13 @@ typedef struct qa_q3_host_options {
      * lifetime; zero retains the standalone actor-owner convention. */
     uint64_t service_owner;
     qa_cvars *cvars;
+    /* Optional client timing authority supplied by the actual constructor.
+     * A local CGAME factory may request its real GAME registry before the
+     * client binding is installed. The application resolves that request
+     * before host creation; a standalone host requires concrete ownership. */
+    qa_cvars *client_time_cvars;
+    qa_actor_owner client_time_owner;
+    bool client_time_from_game;
     qa_console *console;
     qa_command_context command_context;
     qa_vfs *mounts;
@@ -140,6 +147,8 @@ bool qa_q3_host_create(const qa_q3_host_options *, qa_q3_host **, qa_error *);
  * a copied options struct after the host was created. */
 bool qa_q3_host_attach_bots(qa_q3_host *, qa_bot_runtime *, uint32_t client_base,
                            uint32_t entity_base, bool shared_lifetime, qa_error *);
+/* Pointer identity only; the borrowed runtime need not be entered or read. */
+bool qa_q3_host_borrows_bots(const qa_q3_host *, const qa_bot_runtime *);
 /* Admission only: portal/registry cleanup can still fail without consuming.
  * Executor ownership is checked by the module owner before calling destroy. */
 bool qa_q3_host_destroy_ready(const qa_q3_host *);
@@ -157,11 +166,19 @@ void qa_q3_host_scene_world_rebind(qa_q3_host *, qa_scene_world *destination);
 /* Close this source's portal contributions before replacing map geometry.
  * Source records/body bindings remain alive until their actors retire. */
 bool qa_q3_host_close_map(qa_q3_host *, qa_error *);
+/* Same-map GAME restart keeps the host and its real service bindings. Admission
+ * is readonly; reset additionally requires every source actor to be retired. */
+bool qa_q3_host_round_ready(const qa_q3_host *, qa_error *);
+bool qa_q3_host_round_reset(qa_q3_host *, qa_bytes entity_text, qa_error *);
 bool qa_q3_host_destroy(qa_q3_host *, qa_error *);
 /* Attach before restoring host state or querying source records. Ordinary
  * syscall entry also attaches the same executor; replacing one is rejected. */
 bool qa_q3_host_attach_qvm(qa_q3_host *, qa_qvm *, qa_error *);
 bool qa_q3_host_attach_native(qa_q3_host *, qa_native_host *, qa_error *);
+/* After the owned executor pointer clears, retire its borrowed aliases
+ * before fallible host cleanup. Prior destruction admission must be complete. */
+void qa_q3_host_native_consumed(qa_q3_host *);
+void qa_q3_host_qvm_consumed(qa_q3_host *);
 qa_qvm_options qa_q3_host_qvm_options(qa_q3_host *, qa_qvm_semantics);
 qa_native_host_q3_bridge qa_q3_host_native_bridge(qa_q3_host *);
 typedef struct qa_q3_host_game_data {
@@ -174,6 +191,7 @@ bool qa_q3_host_entity(qa_q3_host *, uint32_t, qa_q3_entity *, qa_qvm_entity_sha
 bool qa_q3_host_player(qa_q3_host *, uint32_t, qa_q3_player *, qa_error *);
 /* Qualified guest adapters read original enum/flag words. Presentation
  * translation must not reject mod-private words needed by gameplay views. */
+bool qa_q3_host_source_entity(qa_q3_host *, uint32_t, qa_q3_entity *, qa_qvm_entity_shared *, qa_error *);
 bool qa_q3_host_source_player(qa_q3_host *, uint32_t, qa_q3_player *, qa_error *);
 bool qa_q3_host_write_player(qa_q3_host *, uint32_t, const qa_q3_player *, qa_error *);
 /* Mutates only public playerState motion/view fields. The application retains
@@ -198,6 +216,21 @@ bool qa_q3_host_player_motion(qa_q3_host *, uint32_t, bool begin, qa_error *);
 bool qa_q3_host_input_idle(const qa_q3_host *, uint32_t);
 bool qa_q3_host_source_input(const qa_q3_host *, qa_input_seat **, uint64_t *owner);
 qa_console *qa_q3_host_console(const qa_q3_host *, qa_cvars **, qa_command_context *);
+typedef struct qa_q3_host_client_context {
+    qa_session *session;
+    qa_qvm_role role;
+    qa_actor_owner owner;
+    uint64_t service_owner;
+    qa_console *console;
+    qa_cvars *cvars;
+    qa_cvars *client_time_cvars;
+    qa_actor_owner client_time_owner;
+    qa_command_context command_context;
+    void *frontend_lifetime;
+} qa_q3_host_client_context;
+/* Pure borrowed identity, valid during the host's synchronous source callbacks.
+ * frontend_lifetime stays owned by the host and must not be released here. */
+bool qa_q3_host_client_context_read(const qa_q3_host *, qa_q3_host_client_context *);
 bool qa_q3_host_retire_input(qa_q3_host *, uint32_t, bool retired, qa_error *);
 typedef struct qa_q3_host_visibility {
     int32_t area, area2, last_cluster, clusters[16];

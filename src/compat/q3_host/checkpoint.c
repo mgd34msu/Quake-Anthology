@@ -36,7 +36,11 @@ bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_e
         return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 retained command context requires its qualified source registry owner");
     qa_source_save_io io = {0};
     uint8_t magic[8] = {'Q','A','G','3','S','V',0,0};
-    uint32_t version = 1, role = o->role, abi = o->abi, owner = o->owner;
+    uint32_t version = 2, role = o->role, abi = o->abi, owner = o->owner;
+    uint32_t time_owner = o->client_time_owner;
+    uint32_t time_dialect = o->client_time_cvars ? qa_cvars_dialect(o->client_time_cvars) : 0;
+    bool time_present = o->client_time_cvars != NULL;
+    bool time_alias = time_present && o->client_time_cvars == o->cvars;
     uint64_t service_owner = o->service_owner, input_owner = o->input_owner;
     uint32_t client_base = o->bot_client_base, entity_base = o->bot_entity_base;
     uint32_t maximum_clients = o->server.maximum_clients, command_seat = c->seat;
@@ -55,6 +59,8 @@ bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_e
     bool ok = qa_source_save_writer(&io, NULL, error) &&
         qa_source_save_bytes(&io, magic, sizeof(magic)) && qa_source_save_u32(&io, &version) &&
         qa_source_save_u32(&io, &role) && qa_source_save_u32(&io, &abi) && qa_source_save_u32(&io, &owner) &&
+        qa_source_save_bool(&io, &time_present) && qa_source_save_bool(&io, &time_alias) &&
+        qa_source_save_u32(&io, &time_owner) && qa_source_save_u32(&io, &time_dialect) &&
         qa_source_save_u64(&io, &service_owner) && qa_source_save_u64(&io, &input_owner) &&
         qa_source_save_u32(&io, &client_base) && qa_source_save_u32(&io, &entity_base) &&
         qa_source_save_u32(&io, &maximum_clients) && qa_source_save_u64(&io, &maximum_string) &&

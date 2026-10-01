@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "control_frame.h"
+#include "qa/game_q3_source.h"
 #include <string.h>
 
 bool qa_application_weapon_read(qa_application *application, qa_actor_id actor,
@@ -107,19 +109,33 @@ bool application_arsenal_source_actor(void *context, qa_session *session, qa_act
     qa_application *application = context;
     if (application == NULL || session != application->session || frame == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT, "Arsenal turn belongs to another session");
+    for (size_t i = 0; i < application->provider_count; ++i) {
+        application_provider *source = application->providers[i];
+        if (source->owner != frame->provider ||
+            !source->constructed || !source->attached || source->close_pending) continue;
+        if (source->kind == APPLICATION_PROVIDER_Q3) {
+            uint32_t slot;
+            if (qa_q3_source_actor_slot(source->state.q3, actor, &slot, NULL) &&
+                !qa_q3_source_run_actor(source->state.q3, actor, frame, error)) return false;
+        } else if ((source->kind == APPLICATION_PROVIDER_Q1 ||
+            (source->kind == APPLICATION_PROVIDER_QC && !source->state.qc.qualified)) &&
+            frame->kind == QA_CLOCK_NETQUAKE &&
+            source->component.command_actor &&
+            source->component.command_actor(source->component.state, session, actor) &&
+            actor.slot < application->control_capacity && application->controls[actor.slot].active &&
+            qa_actor_id_equal(application->controls[actor.slot].actor, actor) &&
+            application->controls[actor.slot].state.kind == QA_MOVEMENT_NETQUAKE) {
+            bool handled;
+            if (!application_control_frames_actor(application, session, actor, frame, &handled, error)) return false;
+        }
+        if (!qa_actors_get(qa_session_actors(session), actor)) return true;
+        break;
+    }
     application_provider *arsenal = application_provider_for(application, actor, QA_ROLE_ARSENAL, "");
     if (arsenal == NULL || arsenal->owner != frame->provider)
         return true;
     if (arsenal->kind == APPLICATION_PROVIDER_Q1) {
-        application_provider *movement = application_provider_for(application, actor, QA_ROLE_MOVEMENT, "");
-        if (movement == NULL || movement->component.clock.kind == QA_CLOCK_NETQUAKE ||
-            movement->component.clock.kind == QA_CLOCK_QUAKEWORLD)
-            return true;
-        qa_q1_game_operation operation = {0};
-        if (!qa_q1_game_operation_begin(arsenal->state.q1, &operation, error)) return false;
-        bool ok = qa_q1_player_prethink(arsenal->state.q1, actor, error);
-        qa_q1_game_operation_end(&operation);
-        return ok;
+        return true;
     }
     if (arsenal->kind != APPLICATION_PROVIDER_Q2)
         return true;
@@ -138,4 +154,25 @@ bool application_arsenal_source_actor(void *context, qa_session *session, qa_act
         return true;
     return qa_q2_weapon_tick(arsenal->state.q2, actor, &input, frame->time_ns,
                               frame->elapsed_ns, error);
+}
+
+bool application_arsenal_prepare_frame(qa_application *app,
+                                        const qa_source_frame *frames, size_t count, qa_error *error)
+{
+    application_provider *map = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    bool due = false;
+    for (size_t i = 0; i < count; ++i) due |= map && frames[i].provider == map->owner;
+    if (!due) return true;
+    for (uint32_t i = 0; i < app->control_capacity; ++i) {
+        application_control_record *control = &app->controls[i];
+        if (!control->active || !qa_actors_get(qa_session_actors(app->session), control->actor)) continue;
+        application_provider *arsenal = application_provider_for(app, control->actor, QA_ROLE_ARSENAL, "");
+        if (!arsenal || arsenal == map || arsenal->kind != APPLICATION_PROVIDER_Q1) continue;
+        qa_q1_game_operation operation = {0};
+        if (!application_control_q1_world_begin(arsenal, &operation, error)) return false;
+        bool okay = qa_q1_player_weapon_frame(arsenal->state.q1, control->actor, error);
+        qa_q1_game_operation_end(&operation);
+        if (!okay) return false;
+    }
+    return true;
 }

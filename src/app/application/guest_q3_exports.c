@@ -3,6 +3,9 @@
 #include "guest_projection_private.h"
 #include "guest_qc_internal.h"
 #include "native_q3_console.h"
+#include "native_q3_wire.h"
+#include "native_q3_wire_state.h"
+#include "qa/application_q3_client.h"
 
 bool application_guest_frontend_rebind_ready(application_provider *provider,
     const qa_scene_frame *current_frame, void *current_context, qa_error *error)
@@ -118,11 +121,95 @@ static q3g_role *find_role(application_provider *provider, qa_qvm_role kind,
     return NULL;
 }
 
+bool qa_application_q3_client_context_read(qa_application *app, qa_actor_owner receiver,
+    uint32_t seat, qa_application_q3_client_context *out, qa_error *error)
+{
+    if (!app || !out || !receiver || app->destroy_requested)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client context requires its live receiver owner");
+    application_provider **providers = app->routing_providers ? app->routing_providers : app->providers;
+    size_t count = app->routing_providers ? app->routing_provider_count : app->provider_count;
+    application_provider *provider = NULL;
+    for (size_t i = 0; i < count; ++i)
+        if (providers[i] && providers[i]->owner == receiver) {
+            if (provider)
+                return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client receiver has ambiguous source ownership");
+            provider = providers[i];
+        }
+    struct application_q3_guest *engine = q3g_engine(provider);
+    if (!provider || provider->application != app || !provider->constructed || !provider->attached ||
+        provider->close_pending || !engine || engine->restore_pending || engine->round.phase != Q3G_ROUND_NONE)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 client receiver is not admitted");
+    q3g_role *role = NULL;
+    for (q3g_role *current = engine->roles; current; current = current->next)
+        if (current->kind == QA_QVM_CGAME && current->seat == seat && current->ready &&
+            !current->retired && current->host) {
+            if (role)
+                return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client seat has ambiguous CGAME hosts");
+            role = current;
+        }
+    if (!role || !role->local_client || role->client >= 64)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 client context has no actual local GAME source");
+    qa_q3_host_client_context host;
+    if (!qa_q3_host_client_context_read(role->host, &host) || host.role != QA_QVM_CGAME ||
+        host.session != app->session || host.owner != receiver || host.service_owner != role->service_owner ||
+        host.command_context.owner != receiver || host.command_context.seat != seat ||
+        host.command_context.dialect != QA_CONSOLE_Q3)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client context differs from its actual CGAME host");
+    qa_application_q3_client_context view = {.session = host.session, .receiver = receiver,
+        .seat = seat, .source_client = role->client, .service_owner = host.service_owner,
+        .frontend_lifetime = host.frontend_lifetime, .console = host.console, .cvars = host.cvars,
+        .client_time_cvars = host.client_time_cvars, .client_time_owner = host.client_time_owner,
+        .command_context = host.command_context, .native_source = role->native_client != NULL,
+        .initialized = role->initialized};
+    if (role->native_client) {
+        application_native_q3_wire_client_topology topology;
+        if (!application_native_q3_wire_client_topology_read(role->native_client, &topology, error)) return false;
+        if (topology.source != role->client_source || topology.source_owner != role->source_owner ||
+            topology.receiver != receiver || topology.seat != seat || topology.source_slot != role->client ||
+            topology.source->application != app || !topology.source->constructed ||
+            !topology.source->attached || topology.source->close_pending)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client context lost its actual native GAME lease");
+        view.source_owner = topology.source_owner;
+        view.source_cvars = application_native_q3_console_registry(topology.source);
+        if (!view.source_cvars)
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 client context lacks its native GAME registry");
+        if (!application_native_q3_wire_client_time(role->native_client, &view.source_milliseconds, error)) return false;
+    } else {
+        q3g_role *game = engine->game;
+        q3g_client *client = &engine->clients[role->client];
+        uint32_t source_slot;
+        if (role->client_source || role->source_owner != receiver || !engine->map_ready ||
+            !game || !game->initialized || game->retired || !game->host || !client->allocated ||
+            !client->begun || client->bot || client->pending_retirement || !client->actor.registry ||
+            !qa_actors_get(qa_session_actors(app->session), client->actor) ||
+            !qa_q3_host_actor_slot(game->host, client->actor, &source_slot, error) || source_slot != role->client)
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 client context lost its original GAME client binding");
+        view.source_owner = provider->owner;
+        if (!qa_q3_host_console(game->host, &view.source_cvars, NULL) || !view.source_cvars)
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 client context lacks its original GAME registry");
+        if (!application_q3_wire_time(provider, &view.source_milliseconds, error)) return false;
+    }
+    if (!role->client_services.gamestate || !role->client_services.gamestate(role->client_services.context))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 client context requires its source gamestate after Begin");
+    if (view.client_time_cvars && (view.client_time_cvars != view.source_cvars ||
+        view.client_time_owner != view.source_owner))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 local client timing authority differs from its actual GAME source");
+    qa_clock_state clock;
+    if (!qa_session_clock(app->session, view.source_owner, &clock) ||
+        clock.frame.provider != view.source_owner || clock.frame.kind != QA_CLOCK_Q3 ||
+        (clock.frame.number && clock.frame.phase != QA_FRAME_EXIT))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client context lost its actual GAME clock");
+    view.source_frame = clock.frame;
+    *out = view;
+    return true;
+}
+
 bool application_q3_guest_role_add(application_provider *provider, qa_qvm_role kind,
                                      uint32_t seat, const char *path, qa_error *error)
 {
     struct application_q3_guest *engine = q3g_engine(provider);
-    if (!engine || engine->calls || kind == QA_QVM_GAME || kind > QA_QVM_UI || !path)
+    if (!engine || engine->calls || engine->round.phase != Q3G_ROUND_NONE ||
+        kind == QA_QVM_GAME || kind > QA_QVM_UI || !path)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 companion creation requires an idle owner and client role");
     for (q3g_role *role = engine->roles; role; role = role->next)
         if (role->kind == kind && role->seat == seat)
@@ -139,8 +226,12 @@ bool application_q3_guest_role_initialize(application_provider *provider, qa_qvm
 {
     q3g_role *role = find_role(provider, kind, seat, error);
     if (!role) return false;
-    if (kind == QA_QVM_GAME || role->engine->calls || role->initialized)
+    if (kind == QA_QVM_GAME || role->engine->calls || role->initialized ||
+        role->engine->round.phase != Q3G_ROUND_NONE)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client initialization requires an idle fresh role");
+    if (role->native_client && (!role->client_services.gamestate ||
+        !role->client_services.gamestate(role->client_services.context)))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client initialization requires its admitted actual native GAME client");
     if (!q3g_role_activate(role, error)) return false;
     int32_t result;
     if (kind == QA_QVM_UI) {
@@ -168,7 +259,7 @@ bool application_q3_guest_role_initialize(application_provider *provider, qa_qvm
         if (!ready) return false;
         if (!matches)
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 cgame initialization differs from the active client gamestate");
-        if (role->client < 64 && !role->engine->clients[role->client].connected)
+        if (!role->native_client && role->client < 64 && !role->engine->clients[role->client].connected)
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 local cgame has no connected source client");
         if (role->client < 64 && role->client != (uint32_t)client_number)
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 cgame source client ordinal differs from its seat");
@@ -188,7 +279,7 @@ bool application_q3_guest_role_call(application_provider *provider, qa_qvm_role 
     if (!role) return false;
     int32_t first = kind == QA_QVM_UI ? 3 : kind == QA_QVM_CGAME ? 2 : 8;
     int32_t last = kind == QA_QVM_UI ? 10 : kind == QA_QVM_CGAME ? 8 : 10;
-    if (!role->initialized || command < first || command > last)
+    if (!role->initialized || role->engine->round.phase != Q3G_ROUND_NONE || command < first || command > last)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 role export is unavailable in its current lifecycle/profile");
     return q3g_call(role, command, arguments, count, result, error);
 }
@@ -197,7 +288,8 @@ bool application_q3_guest_console_command(application_provider *provider, const 
                                             bool *handled, qa_error *error)
 {
     struct application_q3_guest *engine = q3g_engine(provider);
-    if (!engine || !engine->game || !engine->game->initialized || !text || !handled)
+    if (!engine || !engine->game || !engine->game->initialized ||
+        engine->round.phase != Q3G_ROUND_NONE || !text || !handled)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 console command requires initialized game");
     qa_command_tokens next = {0};
     if (!qa_command_tokenize(text, QA_CONSOLE_Q3, false, &next, error)) return false;

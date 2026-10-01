@@ -244,10 +244,28 @@ qa_console *qa_q3_host_console(const qa_q3_host *host, qa_cvars **cvars, qa_comm
     return host->options.console;
 }
 
+bool qa_q3_host_client_context_read(const qa_q3_host *host, qa_q3_host_client_context *out)
+{
+    if (!host || !out || host->retired || host->options.role == QA_QVM_GAME ||
+        !host->options.owner || !host->options.service_owner || !host->options.cvars ||
+        !host->options.console) return false;
+    *out = (qa_q3_host_client_context){.session = host->options.session,
+        .role = host->options.role, .owner = host->options.owner,
+        .service_owner = host->options.service_owner, .console = host->options.console,
+        .cvars = host->options.cvars, .command_context = host->options.command_context,
+        .client_time_cvars = host->options.client_time_cvars,
+        .client_time_owner = host->options.client_time_owner,
+        .frontend_lifetime = host->options.frontend_lifetime};
+    return true;
+}
+
 bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_error *error)
 {
     if (!options || !out || (unsigned)options->role > QA_QVM_UI ||
         (unsigned)options->abi > QA_QVM_Q3_116N || !options->owner ||
+        options->client_time_from_game ||
+        (!!options->client_time_cvars != !!options->client_time_owner) ||
+        (options->role == QA_QVM_GAME && options->client_time_cvars) ||
         (!!options->frontend_lifetime != !!options->release_frontend) ||
         options->server.maximum_clients > 64)
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "invalid Q3 module host options");
@@ -275,6 +293,11 @@ bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_e
     *out = host; return true;
 }
 
+bool qa_q3_host_borrows_bots(const qa_q3_host *host, const qa_bot_runtime *runtime)
+{
+    return host && runtime && host->options.bots == runtime;
+}
+
 bool qa_q3_host_destroy_ready(const qa_q3_host *host)
 {
     if (!host) return true;
@@ -294,6 +317,59 @@ bool qa_q3_host_close_map(qa_q3_host *host, qa_error *error)
     if (host->calls || host->retired || (host->options.world && !qa_world_idle(host->options.world)))
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 map portal cleanup requires an idle live host");
     return q3_game_close_portals(host, error);
+}
+
+bool qa_q3_host_round_ready(const qa_q3_host *host, qa_error *error)
+{
+    if (!host || host->retired || host->restore_pending || !host->game ||
+        host->options.role != QA_QVM_GAME || host->calls || host->scripts_reporting ||
+        (host->vm && !qa_qvm_can_destroy(host->vm)) ||
+        (host->native && !qa_native_can_destroy(host->native)) ||
+        !qa_session_safe(host->options.session) || !qa_world_idle(host->options.world) ||
+        (host->options.bots && !qa_bot_runtime_can_destroy(host->options.bots)))
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 round restart requires idle GAME services and input");
+    for (size_t i = 0; i < 1024; ++i)
+        if (host->game->slots[i].input_motion)
+            return q3_fail(error, QA_ERROR_ARGUMENT, i, "Q3 round restart has an admitted input motion");
+    for (size_t i = 0; i < 64; ++i)
+        if (host->script_pending[i] || (host->scripts[i] && host->scripts[i]->operations))
+            return q3_fail(error, QA_ERROR_ARGUMENT, i, "Q3 round restart has an admitted script operation");
+    for (const q3_crossings *lease = host->crossings; lease; lease = lease->next)
+        if (lease->busy)
+            return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 round restart has a borrowed navigation crossing");
+    return true;
+}
+
+bool qa_q3_host_source_entity(qa_q3_host *host, uint32_t number, qa_q3_entity *entity,
+    qa_qvm_entity_shared *shared, qa_error *error)
+{
+    q3_call call;
+    if ((!entity && !shared) || !q3_game_begin(host, &call, error)) return false;
+    q3_record record;
+    bool ok = q3_game_entity_record(&call, number, &record, error) &&
+        (!entity || qa_q3_abi_read_entity(&record.abi, 0, true, entity, error)) &&
+        (!shared || qa_q3_abi_read_shared_entity(&record.abi, 0, shared, error));
+    return q3_game_end(&call, ok);
+}
+
+bool qa_q3_host_round_reset(qa_q3_host *host, qa_bytes entity_text, qa_error *error)
+{
+    if (!qa_q3_host_round_ready(host, error)) return false;
+    for (size_t i = 0; i < 1024; ++i)
+        if (host->game->slots[i].actor.registry)
+            return q3_fail(error, QA_ERROR_ARGUMENT, i, "Retire Q3 source bindings before round reset");
+    qa_common_cursor cursor;
+    if (!qa_common_cursor_init(&cursor, entity_text, QA_COMMON_TERMINATED, error)) return false;
+    if (!q3_game_close_portals(host, error)) return false;
+    host->game->entities = host->game->clients = 0;
+    host->game->entity_count = host->game->entity_stride = host->game->client_stride = 0;
+    for (uint32_t i = 0; i < 1024; ++i)
+        host->game->slots[i] = (q3_entity_slot){.host = host, .number = i};
+    host->options.entity_text = entity_text;
+    host->entity_cursor = cursor;
+    qa_common_parser_reset(&host->entity_parser);
+    host->bots_shutdown = false;
+    return true;
 }
 
 bool qa_q3_host_frontend_rebind_ready(const qa_q3_host *host, const qa_scene_frame *current,
@@ -395,6 +471,29 @@ bool qa_q3_host_attach_native(qa_q3_host *host, qa_native_host *native, qa_error
     if (!qa_native_host_q3_memory(native, host->options.role, host->options.abi, &memory, error)) return false;
     host->native = instance; host->native_host = native; host->native_profile = qa_native_host_profile(native);
     host->memory = memory; return true;
+}
+
+void qa_q3_host_native_consumed(qa_q3_host *host)
+{
+    if (!host) return;
+    host->native = NULL;
+    host->native_host = NULL;
+    host->memory = (qa_native_host_guest_memory){0};
+    if (host->game) {
+        host->game->entities = host->game->clients = 0;
+        host->game->entity_count = host->game->entity_stride = host->game->client_stride = 0;
+    }
+}
+
+void qa_q3_host_qvm_consumed(qa_q3_host *host)
+{
+    if (!host) return;
+    host->vm = NULL;
+    host->memory = (qa_native_host_guest_memory){0};
+    if (host->game) {
+        host->game->entities = host->game->clients = 0;
+        host->game->entity_count = host->game->entity_stride = host->game->client_stride = 0;
+    }
 }
 
 qa_qvm_options qa_q3_host_qvm_options(qa_q3_host *host, qa_qvm_semantics semantics)

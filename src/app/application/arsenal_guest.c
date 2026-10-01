@@ -1,4 +1,7 @@
 #include "guest_input_private.h"
+#include "control_frame.h"
+#include "client_outputs.h"
+#include "guest_q3_control.h"
 #include "guest_projection_private.h"
 #include "qa/q3_abi.h"
 #include "qa/qvm_save.h"
@@ -9,8 +12,9 @@ typedef struct guest_client_scope {
     struct guest_client_scope *previous;
     const qa_qvm_call *call;
     qa_actor_id actor;
+    qa_q3_host_game_data data;
     uint32_t slot, player, movement, milliseconds;
-    bool spawning;
+    bool spawning, input_active;
 } guest_client_scope;
 
 typedef struct guest_weapon_branch_context {
@@ -23,6 +27,8 @@ typedef struct application_guest_input {
     application_guest_input_profile profile;
     qa_qvm_binding bindings[6];
     size_t binding_count;
+    application_guest_q3_control *body_control;
+    qa_qvm_binding body_binding;
     guest_client_scope *scope;
     qa_actor_id applying;
     qa_actor_id command_actor;
@@ -36,12 +42,34 @@ typedef struct application_guest_input {
     bool in_command;
 } application_guest_input;
 
-static bool current(application_guest_input *input, const guest_client_scope *scope)
+static bool cancel_client(const qa_qvm_call *call, const qa_qvm_call *client, qa_error *error)
 {
-    qa_actor_id actor;
-    return qa_actors_get(qa_session_actors(input->role->engine->provider->application->session), scope->actor) &&
+    bool cancelled;
+    return qa_qvm_call_cancelled(call, &cancelled, error) &&
+        (cancelled || qa_qvm_cancel(client, error));
+}
+
+static bool record_current(application_guest_input *input, const guest_client_scope *scope)
+{
+    qa_actor_id actor; qa_q3_host_game_data data;
+    if (!(qa_actors_get(qa_session_actors(input->role->engine->provider->application->session), scope->actor) &&
         qa_q3_host_actor(input->role->host, scope->slot, false, &actor, NULL) &&
-        qa_actor_id_equal(actor, scope->actor);
+        qa_actor_id_equal(actor, scope->actor) && qa_q3_host_game_data_read(input->role->host, &data) &&
+        data.entities_address == scope->data.entities_address && data.clients_address == scope->data.clients_address &&
+        data.entity_stride == scope->data.entity_stride && data.client_stride == scope->data.client_stride &&
+        scope->slot < data.entity_count && scope->slot < data.client_count)) return false;
+    uint8_t bytes[4];
+    uint64_t address = data.entities_address + (uint64_t)scope->slot * data.entity_stride + input->profile.client_pointer;
+    if (address > UINT32_MAX || !qa_qvm_read(input->role->vm, (uint32_t)address, bytes, sizeof(bytes), NULL) ||
+        qa_load_u32le(bytes) != scope->player) return false;
+    return !scope->movement || (qa_qvm_read(input->role->vm, scope->movement, bytes, sizeof(bytes), NULL) &&
+        qa_load_u32le(bytes) == scope->player);
+}
+
+static bool current(application_guest_input *input, const guest_client_scope *scope, const qa_qvm_call *call)
+{
+    bool cancelled;
+    return qa_qvm_call_cancelled(call, &cancelled, NULL) && !cancelled && record_current(input, scope);
 }
 
 static bool source_word(application_guest_input *input, uint32_t address,
@@ -73,7 +101,7 @@ static bool slot_player(application_guest_input *input, uint32_t slot,
     qa_actor_id actor;
     if (!qa_q3_host_actor(input->role->host, slot, false, &actor, error)) return false;
     if (!actor.registry) return true;
-    scope->slot = slot; scope->player = pointer; scope->actor = actor;
+    scope->slot = slot; scope->player = pointer; scope->actor = actor; scope->data = data;
     *present = true; return true;
 }
 
@@ -104,7 +132,7 @@ static bool envelope(void *context, const qa_qvm_call *call, int32_t *result, qa
     if (!present) return qa_qvm_proceed(call, result, error);
     input->scope = &scope;
     bool ok = qa_qvm_proceed(call, result, error);
-    if (ok && !current(input, &scope)) ok = qa_qvm_cancel(call, error);
+    if (ok && !current(input, &scope, call)) ok = cancel_client(call, call, error);
     input->scope = scope.previous;
     return ok;
 }
@@ -116,8 +144,8 @@ static bool weapon_branch(void *context, const qa_qvm_call *call, bool original,
     application_guest_input *input = branch->input;
     guest_client_scope *scope = input->scope;
     if (!scope || scope->spawning) { *taken = original; return true; }
-    if (!current(input, scope)) {
-        *taken = original; return qa_qvm_cancel(scope->call, error);
+    if (!current(input, scope, call)) {
+        *taken = original; return cancel_client(call, scope->call, error);
     }
     qa_application *app = input->role->engine->provider->application;
     if (application_provider_for(app, scope->actor, QA_ROLE_ARSENAL, "") == input->role->engine->provider) {
@@ -156,8 +184,7 @@ static bool weapon_stage(void *context, const qa_qvm_call *call, int32_t *result
 
 static int32_t angle_word(float angle)
 {
-    float reduced = fmodf(angle, 360.0f);
-    return (int32_t)(uint16_t)(int32_t)(reduced * (65536.0f / 360.0f));
+    return (int32_t)(uint16_t)(int32_t)(fmod((double)angle, 360.0) * 65536.0 / 360.0);
 }
 
 static float move_scale(qa_movement_kind kind)
@@ -173,13 +200,20 @@ static int8_t axis(float value)
     return (int8_t)lrintf(value);
 }
 
+static int8_t source_axis(float value)
+{
+    if (value > 127) return 127;
+    if (value < -128) return -128;
+    return (int8_t)lrintf(value);
+}
+
 static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *skip, qa_error *error)
 {
     application_guest_input *input = context;
     guest_client_scope *scope = input->scope;
     *skip = false;
     if (!scope || scope->spawning) return true;
-    if (!current(input, scope)) return qa_qvm_cancel(scope->call, error);
+    if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     qa_application *app = input->role->engine->provider->application;
     if (application_provider_for(app, scope->actor, QA_ROLE_MOVEMENT, "") == input->role->engine->provider)
         return true;
@@ -191,14 +225,14 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
     if (!qa_application_control_read(app, scope->actor, &control))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Guest movement has no shared continuation");
     uint32_t remaining = scope->milliseconds;
-    float scale = move_scale(control.state.kind) / 127.0f;
+    double scale = move_scale(control.state.kind);
     qa_movement_command command = {.kind = control.state.kind,
         .sequence = input->command ? input->command->sequence : control.command_sequence + 1,
         .milliseconds = remaining, .server_time_ms = source.serverTime,
         .angles = {player.viewangles[0], player.viewangles[1], player.viewangles[2]},
-        .forward_move = source.forwardmove * scale,
-        .side_move = source.rightmove * scale,
-        .up_move = source.upmove * scale, .buttons = (uint32_t)source.buttons & 5u,
+        .forward_move = (float)((double)source.forwardmove * scale / 127.0),
+        .side_move = (float)((double)source.rightmove * scale / 127.0),
+        .up_move = (float)((double)source.upmove * scale / 127.0), .buttons = (uint32_t)source.buttons & 1u,
         .weapon = input->command ? input->command->weapon : source.weapon,
         .impulse = input->command && input->input_applied ? input->applied_command.impulse
                  : input->command ? input->command->impulse : 0};
@@ -216,10 +250,10 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
                                                control.state.data.q2.delta_angle_shorts[i]);
     } else if (command.kind == QA_MOVEMENT_Q2_RERELEASE) {
         command.angles = qa_vec_sub(command.angles, control.state.data.q2r.delta_angles);
-        if (source.upmove >= 10) command.buttons |= 8u;
-        if (source.upmove <= -10) command.buttons |= 16u;
+        if (source.upmove > 0) command.buttons |= 8u;
+        if (source.upmove < 0) command.buttons |= 16u;
         command.up_move = 0;
-    } else if (source.upmove >= 10) command.buttons |= 2u;
+    } else if (command.kind == QA_MOVEMENT_NETQUAKE && source.upmove > 0) command.buttons |= 2u;
     if ((command.kind == QA_MOVEMENT_NETQUAKE || command.kind == QA_MOVEMENT_QUAKEWORLD) &&
         input->command && input->input_applied && input->command_projected &&
         input->applied_command.kind == command.kind && source.upmove == input->projected_command.upmove) {
@@ -230,18 +264,18 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
     }
     qa_actor_id previous = input->applying; input->applying = scope->actor;
     qa_movement_command applied = command;
-    bool ok = application_control_move_applied(app, scope->actor, &command, &applied, error);
+    bool ok = application_control_frames_apply_nested(app, scope->actor, &command, &applied, error);
     input->applying = previous;
     if (!ok) return false;
-    if (!current(input, scope)) return qa_qvm_cancel(scope->call, error);
+    if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     if (input->command) { input->applied_command = applied; input->input_applied = true; }
     qa_q3_usercmd updated = source;
     updated.buttons = command.kind == QA_MOVEMENT_Q3 ? (int32_t)applied.buttons
-        : (int32_t)(((uint32_t)source.buttons & ~5u) | (applied.buttons & 5u));
+        : (int32_t)(((uint32_t)source.buttons & ~1u) | (applied.buttons & 1u));
     float source_scale = 127.0f / move_scale(applied.kind);
-    updated.forwardmove = axis(applied.forward_move * source_scale);
-    updated.rightmove = axis(applied.side_move * source_scale);
-    updated.upmove = axis(applied.up_move * source_scale);
+    updated.forwardmove = source_axis(applied.forward_move * source_scale);
+    updated.rightmove = source_axis(applied.side_move * source_scale);
+    updated.upmove = source_axis(applied.up_move * source_scale);
     if (applied.kind == QA_MOVEMENT_Q2_RERELEASE) {
         if (applied.buttons & 8u) updated.upmove = 127;
         else if (applied.buttons & 16u) updated.upmove = -127;
@@ -263,17 +297,21 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
         applied_aim = qa_v3(decoded[0], decoded[1], decoded[2]);
     }
     const float applied_angles[] = {applied_aim.x, applied_aim.y, applied_aim.z};
-    for (size_t i = 0; i < 3; ++i)
-        updated.angles[i] = (uint16_t)(angle_word(applied_angles[i]) - player.deltaAngles[i]);
+    bool aim_changed = applied.angles.x != command.angles.x || applied.angles.y != command.angles.y ||
+        applied.angles.z != command.angles.z || memcmp(applied.angle_words, command.angle_words, sizeof(command.angle_words));
+    if (aim_changed) for (size_t i = 0; i < 3; ++i) {
+        uint32_t bits = (uint32_t)angle_word(applied_angles[i]) - (uint32_t)player.deltaAngles[i];
+        memcpy(&updated.angles[i], &bits, sizeof(bits));
+    }
     if (memcmp(&updated, &source, sizeof(source)) != 0 &&
         !qa_qvm_write_usercmd(input->role->vm, (int32_t)(scope->movement + 4), true, &updated, error))
         return false;
-    if (!current(input, scope)) return qa_qvm_cancel(scope->call, error);
+    if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     if (input->command) { input->projected_command = updated; input->command_projected = true; }
     qa_body_state body;
     if (!qa_world_body_read(app->world, scope->actor, &body, error) ||
         !qa_application_control_read(app, scope->actor, &control)) return false;
-    if (!current(input, scope)) return qa_qvm_cancel(scope->call, error);
+    if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     uint32_t ground = body.ground.registry ? 1022u : 1023u;
     if (body.ground.registry && !qa_actor_id_equal(body.ground, app->physics->world_actor) &&
         !qa_q3_host_actor_slot(input->role->host, body.ground, &ground, error)) return false;
@@ -284,17 +322,17 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
         uint32_t bits; memcpy(&bits, &motion[i], sizeof(bits)); uint8_t bytes[4]; qa_store_u32le(bytes, bits);
         uint32_t offset = i < 6 ? 20u + (uint32_t)i * 4 : 152u + (uint32_t)(i - 6) * 4;
         if (!qa_qvm_write(input->role->vm, scope->player + offset, (qa_bytes){bytes, 4}, error)) return false;
-        if (!current(input, scope)) return qa_qvm_cancel(scope->call, error);
+        if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     }
     uint8_t word[4]; qa_store_u32le(word, ground);
     if (!qa_qvm_write(input->role->vm, scope->player + 68, (qa_bytes){word, 4}, error)) return false;
-    if (!current(input, scope)) return qa_qvm_cancel(scope->call, error);
+    if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     if (!isfinite(control.view_height) || control.view_height < (float)INT32_MIN ||
         (double)control.view_height > INT32_MAX)
         return application_fail(error, QA_ERROR_FORMAT, "Guest view height exceeds its source word");
     qa_store_u32le(word, (uint32_t)(int32_t)control.view_height);
     if (!qa_qvm_write(input->role->vm, scope->player + 164, (qa_bytes){word, 4}, error)) return false;
-    if (!current(input, scope)) return qa_qvm_cancel(scope->call, error);
+    if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     const float bounds[] = {body.bounds.mins.x, body.bounds.mins.y, body.bounds.mins.z,
                             body.bounds.maxs.x, body.bounds.maxs.y, body.bounds.maxs.z};
     for (size_t i = 0; i < 6; ++i) {
@@ -302,23 +340,41 @@ static bool replace_locomotion(void *context, const qa_qvm_call *call, bool *ski
         uint32_t offset = i < 3 ? input->profile.movement_mins + (uint32_t)i * 4
                                : input->profile.movement_maxs + (uint32_t)(i - 3) * 4;
         if (!qa_qvm_write(input->role->vm, scope->movement + offset, (qa_bytes){bytes, 4}, error)) return false;
-        if (!current(input, scope)) return qa_qvm_cancel(scope->call, error);
+        if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     }
     uint8_t water[8]; qa_store_u32le(water, (uint32_t)control.water_level);
     qa_store_u32le(water + 4, (uint32_t)control.water_type);
     if (!qa_qvm_write(input->role->vm, scope->movement + input->profile.movement_water,
                        (qa_bytes){water, sizeof(water)}, error)) return false;
-    if (!current(input, scope)) return qa_qvm_cancel(scope->call, error);
+    if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     *skip = true; return true;
 }
 
-static bool source_input(application_guest_input *input, guest_client_scope *scope,
+static qa_vec3 source_view_angles(const application_guest_input *input,
+    const qa_q3_usercmd *command, const qa_q3_player *player)
+{
+    qa_vec3 previous = qa_v3(player->viewangles[0], player->viewangles[1], player->viewangles[2]);
+    for (size_t i = 0; i < input->profile.intermission_count; ++i)
+        if (player->pmType == input->profile.intermission_modes[i]) return previous;
+    if (player->pmType != 2 && player->stats[0] <= 0) return previous;
+    float angles[3];
+    for (size_t i = 0; i < 3; ++i) {
+        uint32_t word = ((uint32_t)command->angles[i] + (uint32_t)player->deltaAngles[i]) & UINT32_C(65535);
+        int32_t signed_word = word >= UINT32_C(32768) ? (int32_t)word - 65536 : (int32_t)word;
+        if (i == 0) {
+            if (signed_word > 16000) signed_word = 16000;
+            else if (signed_word < -16000) signed_word = -16000;
+        }
+        angles[i] = (float)((double)signed_word * (360.0 / 65536.0));
+    }
+    return qa_v3(angles[0], angles[1], angles[2]);
+}
+
+static bool source_input(application_guest_input *input, guest_client_scope *scope, const qa_qvm_call *call,
                            application_source_input_scope *input_scope,
                            bool before, bool slice, uint32_t milliseconds, qa_error *error)
 {
     qa_application *app = input->role->engine->provider->application;
-    if (application_provider_for(app, scope->actor, QA_ROLE_MOVEMENT, "") != input->role->engine->provider)
-        return true;
     qa_q3_usercmd source;
     qa_q3_player player;
     if (!qa_qvm_read_usercmd(input->role->vm, (int32_t)(scope->movement + 4), &source, error) ||
@@ -338,18 +394,26 @@ static bool source_input(application_guest_input *input, guest_client_scope *sco
         .impulse = input->command && input->input_applied ? input->applied_command.impulse
                  : input->command ? input->command->impulse : 0};
     memcpy(command.angle_words, source.angles, sizeof(command.angle_words));
-    if (!application_control_source_input(app, scope->actor, &state, &command, input_scope, before, slice,
+    qa_vec3 absolute_aim = source_view_angles(input, &source, &player);
+    if (!application_control_source_input(app, scope->actor, &state, &command, &absolute_aim, input_scope, before, slice,
                                            (uint64_t)milliseconds * UINT64_C(1000000), error)) return false;
-    if (!current(input, scope)) return qa_qvm_cancel(scope->call, error);
+    if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     qa_q3_usercmd updated = source;
     memcpy(updated.angles, command.angle_words, sizeof(updated.angles));
     updated.buttons = (int32_t)command.buttons; updated.weapon = command.weapon;
-    updated.forwardmove = axis(command.forward_move);
-    updated.rightmove = axis(command.side_move); updated.upmove = axis(command.up_move);
+    updated.forwardmove = source_axis(command.forward_move);
+    updated.rightmove = source_axis(command.side_move); updated.upmove = source_axis(command.up_move);
+    if (before && slice) {
+        application_client_outputs outputs;
+        if (!application_control_outputs(app, scope->actor, &outputs, error)) return false;
+        if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
+        if (outputs.has_stance) updated.upmove = outputs.crouched ?
+            (int8_t)-fmax(1, fabs((double)updated.upmove)) : updated.upmove < 0 ? 0 : updated.upmove;
+    }
     if (memcmp(&updated, &source, sizeof(source)) != 0 &&
         !qa_qvm_write_usercmd(input->role->vm, (int32_t)(scope->movement + 4), true, &updated, error))
         return false;
-    if (!current(input, scope)) return qa_qvm_cancel(scope->call, error);
+    if (!current(input, scope, call)) return cancel_client(call, scope->call, error);
     if (input->command) {
         input->applied_command = command;
         input->input_applied = true;
@@ -367,6 +431,7 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
         !source_word(input, (uint32_t)movement, &player, error)) return false;
     if (player != scope->player) return qa_qvm_proceed(call, result, error);
     uint32_t previous = scope->movement, previous_ms = scope->milliseconds;
+    bool previous_active = scope->input_active;
     scope->movement = (uint32_t)movement;
     uint64_t end = (uint64_t)scope->movement + 28;
     const uint32_t offsets[] = {input->profile.movement_mins, input->profile.movement_maxs,
@@ -385,10 +450,9 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
         !qa_qvm_read_player(input->role->vm, (int32_t)scope->player, true, &state, error)) {
         scope->movement = previous; return false;
     }
-    uint32_t elapsed = (uint32_t)command.serverTime - (uint32_t)state.commandTime;
-    if (elapsed > INT32_MAX) elapsed = 0;
-    scope->milliseconds = slice ? elapsed > 200 ? 200 : elapsed ? elapsed : 1
-                                : elapsed > 1000 ? 1000 : elapsed;
+    int64_t elapsed = (int64_t)command.serverTime - (int64_t)state.commandTime;
+    scope->milliseconds = slice ? elapsed > 200 ? 200 : elapsed < 1 ? 1 : (uint32_t)elapsed
+                                : elapsed > 1000 ? 1000 : elapsed < 0 ? 0 : (uint32_t)elapsed;
     if (slice) {
         qa_application *app = input->role->engine->provider->application;
         if (application_provider_for(app, scope->actor, QA_ROLE_MOVEMENT, "") !=
@@ -400,28 +464,73 @@ static bool source_move(void *context, const qa_qvm_call *call, int32_t *result,
         }
     }
     application_source_input_scope input_scope = {0};
-    bool ok = source_input(input, scope, &input_scope, true, slice, scope->milliseconds, error);
-    if (ok && !current(input, scope)) {
+    application_guest_q3_control_scope body_scope = {0};
+    uint32_t before_type = 0, projected_type = 0;
+    bool type_projected = false;
+    bool ok = source_input(input, scope, call, &input_scope, true, slice, scope->milliseconds, error);
+    scope->input_active = ok;
+    bool cancelled = false;
+    if (ok) ok = qa_qvm_call_cancelled(call, &cancelled, error);
+    if (ok && !current(input, scope, call)) {
         qa_error cleanup = {0};
         (void)application_control_source_abort(&input_scope, &cleanup);
-        scope->movement = previous; scope->milliseconds = previous_ms;
-        return qa_qvm_cancel(scope->call, error);
+        scope->movement = previous; scope->milliseconds = previous_ms; scope->input_active = previous_active;
+        return cancel_client(call, scope->call, error);
     }
-    if (ok && slice && input->profile.has_locomotion) {
+    if (ok && !cancelled && slice && input->profile.has_locomotion) {
         qa_qvm_region_binding binding = {.entry = input->profile.locomotion_entry,
             .join = input->profile.locomotion_join, .enter = replace_locomotion, .context = input};
         ok = qa_qvm_bind_regions(call, &binding, 1, error);
     }
-    if (ok) ok = qa_qvm_proceed(call, result, error);
-    if (ok && current(input, scope))
-        ok = source_input(input, scope, &input_scope, false, slice, scope->milliseconds, error);
+    qa_application *app = input->role->engine->provider->application;
+    if (ok && !cancelled && slice) {
+        application_client_outputs outputs;
+        ok = application_control_outputs(app, scope->actor, &outputs, error);
+        if (ok && !current(input, scope, call)) ok = cancel_client(call, scope->call, error);
+        else if (ok && outputs.has_mode) {
+            if (!input->profile.has_modes)
+                ok = application_fail(error, QA_ERROR_UNSUPPORTED, "Original movement mode has no exact source declaration");
+            else {
+                projected_type = (uint32_t)(outputs.mode == QA_MOVEMENT_MODE_NORMAL ? input->profile.normal_mode :
+                    outputs.mode == QA_MOVEMENT_MODE_NOCLIP ? input->profile.noclip_mode : input->profile.freeze_mode);
+                ok = source_word(input, scope->player + 4, &before_type, error);
+                uint8_t bytes[4]; qa_store_u32le(bytes, projected_type);
+                type_projected = ok;
+                if (ok) ok = qa_qvm_write(input->role->vm, scope->player + 4, (qa_bytes){bytes, sizeof(bytes)}, error);
+            }
+        }
+    }
+    if (ok) ok = qa_qvm_call_cancelled(call, &cancelled, error);
+    if (ok && !cancelled && !slice && application_provider_for(app, scope->actor, QA_ROLE_MOVEMENT, "") ==
+        input->role->engine->provider)
+        ok = application_guest_q3_control_begin(input->body_control, call, scope->call, scope->actor,
+            scope->slot, scope->player, scope->movement, NULL, &body_scope, error);
+    if (ok && !cancelled && !body_scope.retired && !body_scope.cancelled) ok = qa_qvm_proceed(call, result, error);
+    if (ok) ok = qa_qvm_call_cancelled(call, &cancelled, error);
+    qa_error body_cleanup = {0};
+    if (!application_guest_q3_control_end(input->body_control, &body_scope, &body_cleanup)) {
+        if (ok && error) *error = body_cleanup;
+        ok = false;
+    }
+    if (ok && !cancelled && !body_scope.retired && !body_scope.cancelled && current(input, scope, call))
+        ok = source_input(input, scope, call, &input_scope, false, slice, scope->milliseconds, error);
     qa_error cleanup = {0};
     if (!application_control_source_abort(&input_scope, &cleanup)) {
         if (ok && error) *error = cleanup;
         ok = false;
     }
-    if (ok && !current(input, scope)) ok = qa_qvm_cancel(scope->call, error);
-    scope->movement = previous; scope->milliseconds = previous_ms; return ok;
+    if (type_projected && record_current(input, scope)) {
+        qa_error restore = {0}; uint32_t value;
+        bool restored = source_word(input, scope->player + 4, &value, &restore);
+        if (restored && value == projected_type) {
+            uint8_t bytes[4]; qa_store_u32le(bytes, before_type);
+            restored = qa_qvm_write(input->role->vm, scope->player + 4, (qa_bytes){bytes, sizeof(bytes)}, &restore);
+        }
+        if (!restored) { if (ok && error) *error = restore; ok = false; }
+    }
+    if (ok && (body_scope.retired || body_scope.cancelled || !current(input, scope, call)))
+        ok = cancel_client(call, scope->call, error);
+    scope->movement = previous; scope->milliseconds = previous_ms; scope->input_active = previous_active; return ok;
 }
 
 bool application_guest_input_attach(q3g_role *role, qa_bytes primary, qa_error *error)
@@ -461,6 +570,10 @@ bool application_guest_input_attach(q3g_role *role, qa_bytes primary, qa_error *
         }
         ++input->binding_count;
     }
+    if (!application_guest_q3_control_attach(role, &input->profile, &input->body_control, error)) {
+        qa_error ignored = {0}; (void)application_guest_input_detach(role, &ignored); return false;
+    }
+    input->body_binding = application_guest_q3_control_binding(input->body_control);
     return true;
 }
 
@@ -470,6 +583,8 @@ bool application_guest_input_detach(q3g_role *role, qa_error *error)
     if (!input) return true;
     if (input->scope || input->in_command || (role->vm && qa_qvm_active(role->vm)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Guest input hooks still own a source invocation");
+    if (!application_guest_q3_control_detach(&input->body_control, error)) return false;
+    input->body_binding = 0;
     while (input->binding_count) {
         qa_qvm_binding binding = input->bindings[input->binding_count - 1];
         if (!qa_qvm_unbind(role->vm, binding, error)) return false;
@@ -488,7 +603,7 @@ static bool input_checkpoint_idle(q3g_role *role, qa_error *error)
                     !input->applying.registry && !input->command_actor.registry))) ||
         application_fail(error, QA_ERROR_ARGUMENT, "Q3 input checkpoint requires completed source command scopes");
     if (!idle) return false;
-    qa_qvm_saved_function descriptors[6] = {0};
+    qa_qvm_saved_function descriptors[7] = {0};
     size_t count = input && input->profile.input_present ? (input->profile.has_weapons ? 6u : 5u) : 0;
     if (input && input->binding_count != count)
         return application_fail(error, QA_ERROR_FORMAT, "Q3 input callback count differs from its source declaration");
@@ -502,6 +617,12 @@ static bool input_checkpoint_idle(q3g_role *role, qa_error *error)
             if (input->bindings[i])
                 return application_fail(error, QA_ERROR_FORMAT, "Q3 input retains an undeclared callback identity");
     }
+    if (input && input->body_binding) {
+        if (input->body_binding != application_guest_q3_control_binding(input->body_control) ||
+            !application_guest_q3_control_descriptor(input->body_control, &descriptors[count], error)) return false;
+        ++count;
+    } else if (input && input->body_control)
+        return application_fail(error, QA_ERROR_FORMAT, "Q3 body callback identity differs from its source owner");
     return qa_qvm_checkpoint_functions(role->vm, descriptors, count, error);
 }
 
@@ -535,16 +656,17 @@ static bool input_fields(qa_source_save_io *io, application_guest_input *input)
 {
     uint8_t magic[8] = {'Q','A','G','3','I','N',0,0};
     const uint8_t expected[8] = {'Q','A','G','3','I','N',0,0};
-    uint32_t version = 1;
+    uint32_t version = 2;
     bool present = input != NULL;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || !qa_source_save_u32(io, &version) ||
-        memcmp(magic, expected, sizeof(magic)) || version != 1 ||
+        memcmp(magic, expected, sizeof(magic)) || version != 2 ||
         !qa_source_save_bool(io, &present) || present != (input != NULL))
         return application_fail(io->error, QA_ERROR_FORMAT, "Q3 input checkpoint declaration differs");
     if (!present) return true;
     if (!qa_source_save_count(io, &input->binding_count, 6)) return false;
     for (size_t i = 0; i < 6; ++i)
         if (!qa_source_save_u64(io, &input->bindings[i])) return false;
+    if (!qa_source_save_u64(io, &input->body_binding)) return false;
     uint8_t bytes[24] = {0};
     qa_q3_abi_record record = {.abi = QA_QVM_Q3_MODERN,
         .bytes = {bytes, sizeof(bytes)}, .context = bytes, .write = input_record_write};
@@ -580,7 +702,8 @@ bool application_guest_input_restore(q3g_role *role, qa_bytes bytes, qa_error *e
         input_fields(&io, input ? &candidate : NULL) && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
     if (ok && input && (candidate.binding_count != input->binding_count ||
-        memcmp(candidate.bindings, input->bindings, sizeof(input->bindings))))
+        memcmp(candidate.bindings, input->bindings, sizeof(input->bindings)) ||
+        candidate.body_binding != input->body_binding))
         ok = application_fail(error, QA_ERROR_FORMAT, "Q3 input callback identities differ from their source constructor");
     if (ok && input) {
         input->applied_command = candidate.applied_command;
@@ -600,6 +723,23 @@ bool application_guest_input_applying(const qa_application *app, qa_actor_id act
         struct application_q3_guest *engine = q3g_engine(provider);
         application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
         if (input && qa_actor_id_equal(input->applying, actor)) return true;
+    }
+    return false;
+}
+
+bool application_guest_input_interval(const qa_application *app, qa_actor_id actor, uint64_t *out)
+{
+    if (!app || !out) return false;
+    for (size_t i = 0; i < app->provider_count; ++i) {
+        application_provider *provider = app->providers[i];
+        if (provider->component.clock.kind != QA_CLOCK_Q3) continue;
+        struct application_q3_guest *engine = q3g_engine(provider);
+        application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
+        if (input && qa_actor_id_equal(input->applying, actor) && input->scope && input->scope->input_active &&
+            qa_actor_id_equal(input->scope->actor, actor) && record_current(input, input->scope)) {
+            *out = (uint64_t)input->scope->milliseconds * UINT64_C(1000000);
+            return true;
+        }
     }
     return false;
 }
@@ -629,6 +769,125 @@ static bool is_guest(const application_provider *provider)
 {
     return provider && (provider->kind == APPLICATION_PROVIDER_QVM ||
         (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->component.clock.kind == QA_CLOCK_Q3));
+}
+
+bool application_arsenal_guest_output_admit(application_provider *provider, uint8_t channels,
+    qa_error *error)
+{
+    if (!is_guest(provider) || !provider->constructed || !provider->attached || provider->close_pending)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original Q3 outputs need an attached source owner");
+    struct application_q3_guest *engine = q3g_engine(provider);
+    const application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
+    if ((channels & (1u << APPLICATION_CLIENT_MOVEMENT_MODE)) &&
+        (!input || !input->profile.has_modes))
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Original Q3 movement modes need an artifact-qualified input declaration");
+    if ((channels & (1u << APPLICATION_CLIENT_BODY_SHAPE)) &&
+        (!input || !application_guest_q3_control_supports_body(input->body_control)))
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Original Q3 movement has no admitted body trace interface");
+    return true;
+}
+
+bool application_arsenal_guest_outputs(application_provider *provider, qa_actor_id actor,
+    application_client_outputs *out, qa_error *error)
+{
+    if (!out || !is_guest(provider) || !provider->constructed || !provider->attached || provider->close_pending)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original Q3 output use lost its actual source owner");
+    struct application_q3_guest *engine = q3g_engine(provider);
+    application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
+    uint32_t slot; qa_q3_player player;
+    if (!engine || !engine->game || !application_q3_guest_actor_client(provider, actor, &slot) ||
+        !qa_q3_host_source_player(engine->game->host, slot, &player, error)) return false;
+    *out = (application_client_outputs){0};
+    if (input) for (size_t i = 0; i < input->profile.intermission_count; ++i)
+        if (player.pmType == input->profile.intermission_modes[i]) return true;
+    return application_qc_control_outputs(provider->application, actor, out, error);
+}
+
+bool application_arsenal_guest_crouched(application_provider *provider, qa_actor_id actor,
+    bool *out, qa_error *error)
+{
+    struct application_q3_guest *engine = is_guest(provider) ? q3g_engine(provider) : NULL;
+    uint32_t slot; qa_q3_player player;
+    if (!out || !engine || !engine->game || !application_q3_guest_actor_client(provider, actor, &slot) ||
+        !qa_q3_host_source_player(engine->game->host, slot, &player, error))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original view stance lost its actual source client");
+    *out = ((uint32_t)player.pmFlags & 1u) != 0;
+    return true;
+}
+
+static bool guest_command(application_guest_input *input, qa_actor_id actor, uint32_t slot,
+    const qa_q3_usercmd *source, const qa_movement_command *command, qa_error *error)
+{
+    application_provider *guest = input->role->engine->provider;
+    qa_application *app = guest->application;
+    struct application_q3_guest *engine = input->role->engine;
+    application_provider *movement = application_provider_for(app, actor, QA_ROLE_MOVEMENT, "");
+    qa_q3_player player;
+    if (!qa_q3_host_source_player(input->role->host, slot, &player, error)) return false;
+    int32_t before_time = player.commandTime;
+    if (!qa_q3_host_player_motion(input->role->host, slot, true, error)) return false;
+    input->in_command = true; input->command_actor = actor;
+    input->command = command; input->input_applied = false;
+    input->command_projected = false;
+    bool ok = application_q3_guest_client_think(guest, slot, source, error);
+    if (ok && qa_actors_get(qa_session_actors(app->session), actor) && movement == guest &&
+        engine->clients[slot].connected && !engine->clients[slot].pending_retirement &&
+        qa_actor_id_equal(engine->clients[slot].actor, actor)) {
+        ok = qa_q3_host_source_player(input->role->host, slot, &player, error);
+        if (ok && engine->clients[slot].connected && !engine->clients[slot].pending_retirement &&
+            qa_actor_id_equal(engine->clients[slot].actor, actor)) {
+            qa_movement_command applied = input->input_applied ? input->applied_command : *command;
+            uint32_t elapsed = (uint32_t)player.commandTime - (uint32_t)before_time;
+            if (elapsed > INT32_MAX) elapsed = 0;
+            applied.milliseconds = elapsed > 1000 ? 1000 : elapsed;
+            ok = application_control_guest_complete(app, actor, &applied, &player, error);
+        }
+    }
+    qa_error unwind = {0};
+    if (!qa_q3_host_player_motion(input->role->host, slot, false, &unwind)) {
+        if (ok && error) *error = unwind;
+        ok = false;
+    }
+    input->command = NULL; input->in_command = false;
+    input->command_actor = (qa_actor_id){0};
+    qa_error drain = {0};
+    if (!application_guest_clients_drain(guest, &drain)) {
+        if (ok && error) *error = drain;
+        ok = false;
+    }
+    return ok;
+}
+
+bool application_arsenal_guest_source_command(qa_application *app, qa_actor_id actor,
+    const qa_movement_command *command, qa_error *error)
+{
+    application_provider *source = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
+    const application_control_context *context = application_control_frame_current(app, actor);
+    if (!is_guest(source) || !command || command->kind != QA_MOVEMENT_Q3 || !context ||
+        !context->source_guestcmd || !context->command_only || context->command.provider != source->owner)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original Q3 command has no genuine source admission");
+    struct application_q3_guest *engine = q3g_engine(source);
+    application_guest_input *input = engine && engine->game ? engine->game->input : NULL;
+    application_provider *movement = application_provider_for(app, actor, QA_ROLE_MOVEMENT, "");
+    application_provider *arsenal = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
+    uint32_t slot;
+    if (!input || input->in_command || (movement != source && !input->profile.has_locomotion) ||
+        (arsenal != source && (!input->profile.has_weapons || !input->profile.weapon_branch_count)))
+        return application_fail(error, QA_ERROR_UNSUPPORTED,
+            "Original Q3 command requires qualified movement and weapon source regions");
+    if ((is_guest(movement) && movement != source) ||
+        !qa_q3_host_actor_slot(engine->game->host, actor, &slot, error) || slot >= 64 ||
+        !engine->clients[slot].connected || !engine->clients[slot].begun ||
+        engine->clients[slot].pending_retirement || !qa_actor_id_equal(engine->clients[slot].actor, actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original Q3 command has no current source client");
+    qa_q3_usercmd raw = {.serverTime = command->server_time_ms,
+        .buttons = (int32_t)command->buttons, .weapon = command->weapon,
+        .forwardmove = (int8_t)command->forward_move, .rightmove = (int8_t)command->side_move,
+        .upmove = (int8_t)command->up_move};
+    memcpy(raw.angles, command->angle_words, sizeof(raw.angles));
+    return guest_command(input, actor, slot, &raw, command, error);
 }
 
 bool application_arsenal_guest_move(qa_application *app, qa_actor_id actor,
@@ -691,37 +950,6 @@ bool application_arsenal_guest_move(qa_application *app, qa_actor_id actor,
         if (command->buttons & 8u) source.upmove = 127;
         if (command->buttons & 16u) source.upmove = -127;
     } else if ((command->buttons & 2u) && source.upmove == 0) source.upmove = 127;
-    int32_t before_time = player.commandTime;
-    if (!qa_q3_host_player_motion(engine->game->host, slot, true, error)) return false;
-    input->in_command = true; input->command_actor = actor;
-    input->command = command; input->input_applied = false;
-    input->command_projected = false;
-    bool ok = application_q3_guest_client_think(guest, slot, &source, error);
     *handled = true;
-    if (ok && qa_actors_get(qa_session_actors(app->session), actor) && movement == guest &&
-        engine->clients[slot].connected && !engine->clients[slot].pending_retirement &&
-        qa_actor_id_equal(engine->clients[slot].actor, actor)) {
-        ok = qa_q3_host_source_player(engine->game->host, slot, &player, error);
-        if (ok && engine->clients[slot].connected && !engine->clients[slot].pending_retirement &&
-            qa_actor_id_equal(engine->clients[slot].actor, actor)) {
-            qa_movement_command applied = input->input_applied ? input->applied_command : *command;
-            uint32_t elapsed = (uint32_t)player.commandTime - (uint32_t)before_time;
-            if (elapsed > INT32_MAX) elapsed = 0;
-            applied.milliseconds = elapsed > 1000 ? 1000 : elapsed;
-            ok = application_control_guest_complete(app, actor, &applied, &player, error);
-        }
-    }
-    qa_error unwind = {0};
-    if (!qa_q3_host_player_motion(engine->game->host, slot, false, &unwind)) {
-        if (ok && error) *error = unwind;
-        ok = false;
-    }
-    input->command = NULL; input->in_command = false;
-    input->command_actor = (qa_actor_id){0};
-    qa_error drain = {0};
-    if (!application_guest_clients_drain(guest, &drain)) {
-        if (ok && error) *error = drain;
-        ok = false;
-    }
-    return ok;
+    return guest_command(input, actor, slot, &source, command, error);
 }
