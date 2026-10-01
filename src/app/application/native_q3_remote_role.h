@@ -52,6 +52,12 @@ bool application_native_q3_remote_role_modules_source_read(application_provider 
     qa_application_q3_remote_source *, application_native_q3_client_modules **, qa_error *);
 bool application_native_q3_remote_role_modules_current(application_provider *,
     const qa_application_q3_remote_source *, const application_native_q3_client_modules *);
+/* Acquired CGAME completion has its own actual receipt; it does not mark the
+ * compiled service or QNRC continuation initialized. */
+bool application_native_q3_remote_role_modules_initialized(application_provider *,
+    const qa_application_q3_remote_source *, const application_native_q3_client_modules *, qa_error *);
+bool application_native_q3_remote_role_modules_initialized_read(application_provider *,
+    const qa_application_q3_remote_source *, const application_native_q3_client_modules *, bool *, qa_error *);
 /* Physical attachment proof for the module owner's entered teardown loan. */
 bool application_native_q3_remote_role_modules_retained(application_provider *,
     const qa_application_q3_remote_source *, const application_native_q3_client_modules *);

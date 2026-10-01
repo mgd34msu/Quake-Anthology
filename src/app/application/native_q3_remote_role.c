@@ -3,6 +3,7 @@
 #include "engine_shutdown.h"
 #include "qa/application_native_q3_remote_client.h"
 #include "qa/application_character_selection.h"
+#include "qa/application_native_q3_client_modules.h"
 
 static struct application_native_q3_remote_role *find(application_provider *provider, uint32_t seat)
 {
@@ -506,6 +507,33 @@ bool application_native_q3_remote_role_modules_current(application_provider *pro
     return row && modules && row->modules == modules &&
         application_native_q3_remote_role_source_current(provider, source);
 }
+bool application_native_q3_remote_role_modules_initialized(application_provider *provider,
+    const qa_application_q3_remote_source *source, const application_native_q3_client_modules *modules,
+    qa_error *error)
+{
+    struct application_native_q3_remote_role *row = source ? find(provider, source->receiver.seat) : NULL;
+    qa_application_q3_role_receipt receipt;
+    if (!row || row->calls || row->module_calls ||
+        !application_native_q3_remote_role_modules_current(provider, source, modules) ||
+        !qa_application_native_q3_client_modules_idle(modules) ||
+        !qa_application_native_q3_client_modules_receipt_read(modules, QA_QVM_CGAME, &receipt, error) ||
+        !qa_application_native_q3_client_modules_receipt_current(modules, &receipt))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Acquired CGAME completion lost its successful current Init receipt");
+    row->acquired_initialized = true; return true;
+}
+bool application_native_q3_remote_role_modules_initialized_read(application_provider *provider,
+    const qa_application_q3_remote_source *source, const application_native_q3_client_modules *modules,
+    bool *out, qa_error *error)
+{
+    struct application_native_q3_remote_role *row = source ? find(provider, source->receiver.seat) : NULL;
+    qa_application_q3_role_receipt receipt;
+    if (!out || !row || !application_native_q3_remote_role_modules_current(provider, source, modules) ||
+        (row->acquired_initialized &&
+            (!qa_application_native_q3_client_modules_receipt_read(modules, QA_QVM_CGAME, &receipt, error) ||
+             !qa_application_native_q3_client_modules_receipt_current(modules, &receipt))))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Acquired CGAME completion lost its physical receipt owner");
+    *out = row->acquired_initialized; return true;
+}
 bool application_native_q3_remote_role_modules_retained(application_provider *provider,
     const qa_application_q3_remote_source *source, const application_native_q3_client_modules *modules)
 {
@@ -554,7 +582,7 @@ bool application_native_q3_remote_role_modules_detach(application_provider *prov
     if (!row || !modules || row->modules != modules || row->calls || !qa_console_idle(row->console) ||
         !qa_cvars_observer_idle(row->cvars))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native client module detach retains a physical CLIENT borrow");
-    row->modules = NULL; row->module_generation = 0; return true;
+    row->modules = NULL; row->module_generation = 0; row->acquired_initialized = false; return true;
 }
 bool application_native_q3_remote_role_module_sequence_read(application_provider *provider,
     const qa_application_q3_remote_source *source, uint64_t *out, qa_error *error)

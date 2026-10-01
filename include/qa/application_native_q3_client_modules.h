@@ -80,6 +80,12 @@ bool qa_application_native_q3_client_modules_host_read(const application_native_
  * including entered Shutdown. Retirement never reopens media readiness. */
 bool qa_application_native_q3_client_modules_host_entered(const application_native_q3_client_modules *,
     qa_qvm_role, const qa_q3_host *, uint64_t service_owner);
+/* Constructor callbacks precede ready-host publication. This returns only the
+ * actual host of the presently entered role and exact reserved namespace. */
+bool qa_application_native_q3_client_modules_entered_host_read(const application_native_q3_client_modules *,
+    qa_qvm_role, uint64_t service_owner, qa_q3_host **, qa_q3_host_client_context *, qa_error *);
+bool qa_application_native_q3_client_modules_entered_arguments_read(const application_native_q3_client_modules *,
+    qa_qvm_role, uint64_t service_owner, qa_native_host_command_view *, uint64_t *revision, qa_error *);
 bool qa_application_native_q3_client_modules_receipt_read(const application_native_q3_client_modules *,
     qa_qvm_role, qa_application_q3_role_receipt *, qa_error *);
 bool qa_application_native_q3_client_modules_receipt_current(const application_native_q3_client_modules *,

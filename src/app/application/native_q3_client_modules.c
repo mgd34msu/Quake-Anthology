@@ -543,6 +543,11 @@ bool qa_application_native_q3_client_modules_initialize(application_native_q3_cl
     }
     if (okay) okay = init_current(owner, request, error);
     if (okay && owner->cgame.ready) owner->cgame.init_succeeded = true;
+    if (okay && owner->cgame.ready) {
+        qa_application_q3_remote_source actual;
+        okay = native_client_modules_physical(owner, &actual, error) &&
+            application_native_q3_remote_role_modules_initialized(owner->provider, &actual, owner, error);
+    }
     if (!okay) { owner->ui.init_succeeded = false; owner->cgame.init_succeeded = false; }
     return okay;
 }
@@ -702,6 +707,38 @@ bool qa_application_native_q3_client_modules_host_entered(const application_nati
         retained.session == owner->app->session && retained.owner == actual.receiver.receiver &&
         retained.role == kind && retained.service_owner == service_owner &&
         retained.console == actual.receiver.console && retained.cvars == actual.receiver.cvars;
+}
+
+bool qa_application_native_q3_client_modules_entered_host_read(const application_native_q3_client_modules *owner,
+    qa_qvm_role kind, uint64_t service_owner, qa_q3_host **host,
+    qa_q3_host_client_context *context, qa_error *error)
+{
+    const native_client_module *role = owner ? module_role((application_native_q3_client_modules *)owner, kind) : NULL;
+    qa_q3_host_client_context actual;
+    if (!role || !host || !context ||
+        !qa_application_native_q3_client_modules_host_entered(owner, kind, role->host, service_owner) ||
+        !qa_q3_host_client_context_read(role->host, &actual))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Acquired CLIENT callback lacks its actual entered host namespace");
+    *host = role->host; *context = actual; return true;
+}
+
+bool qa_application_native_q3_client_modules_entered_arguments_read(const application_native_q3_client_modules *owner,
+    qa_qvm_role kind, uint64_t service_owner, qa_native_host_command_view *out,
+    uint64_t *revision, qa_error *error)
+{
+    qa_q3_host *host = NULL;
+    qa_q3_host_client_context context;
+    const qa_command_tokens *arguments = NULL;
+    uint64_t actual_revision;
+    if (!out || !revision || !qa_application_native_q3_client_modules_entered_host_read(owner, kind,
+            service_owner, &host, &context, error) ||
+        !application_native_q3_remote_role_arguments(owner->provider, owner->source.receiver.seat,
+            &arguments, &actual_revision, error) || !arguments ||
+        !qa_application_native_q3_client_modules_host_entered(owner, kind, host, service_owner))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Acquired CLIENT arguments lost their actual entered parser owner");
+    *out = (qa_native_host_command_view){.count = arguments->count,
+        .arguments = (const char *const *)arguments->values, .tail = arguments->args_text ? arguments->args_text : ""};
+    *revision = actual_revision; return true;
 }
 
 bool qa_application_native_q3_client_modules_receipt_current(const application_native_q3_client_modules *owner,

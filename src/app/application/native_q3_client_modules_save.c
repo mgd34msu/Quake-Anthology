@@ -318,6 +318,14 @@ bool qa_application_native_q3_client_modules_finish_restore(application_native_q
     qa_buffer_free(&actual);
     if (!okay) return application_fail(error, QA_ERROR_FORMAT, "Acquired CLIENT differs after true owner reconnection");
     owner->restore_pending = false;
+    if (owner->cgame.ready && owner->cgame.init_succeeded) {
+        qa_application_q3_remote_source source;
+        if (!native_client_modules_physical(owner, &source, error) ||
+            !application_native_q3_remote_role_modules_initialized(owner->provider, &source, owner, error)) {
+            owner->restore_pending = true;
+            return false;
+        }
+    }
     qa_buffer_free(&owner->saved);
     for (size_t i = 0; i < 2; ++i) qa_buffer_free(&roles[i]->saved_services);
     return true;

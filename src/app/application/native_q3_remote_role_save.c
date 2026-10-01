@@ -204,9 +204,17 @@ bool application_native_q3_remote_roles_capture(application_provider *provider, 
     const qa_application_content_graph *graph = qa_application_content_graph_read(provider->application);
     size_t index = 0;
     for (struct application_native_q3_remote_role *row = provider->native_q3_remote_roles; ok && row; row = row->next) {
-        if (row->retiring || ((row->modules || row->service || row->initialized || row->modules_restore.size) &&
+        if (row->retiring || ((row->modules || row->service || row->initialized || row->acquired_initialized || row->modules_restore.size) &&
             row->lifecycle != NATIVE_Q3_REMOTE_ATTACHED) ||
             (row->lifecycle == NATIVE_Q3_REMOTE_CLEARED && !row->connection_epoch)) { ok = false; break; }
+        if (row->acquired_initialized) {
+            qa_application_q3_remote_source source; bool completed = false;
+            ok = row->modules && application_native_q3_remote_role_source_read(provider, row->seat,
+                row->connection_epoch, &source, error) &&
+                application_native_q3_remote_role_modules_initialized_read(provider, &source,
+                    row->modules, &completed, error) && completed;
+            if (!ok) break;
+        }
         saved_role *r = saved.roles + index++;
         *r = (saved_role){.seat = row->seat, .service_owner = row->service_owner, .lifecycle = row->lifecycle,
             .argument_revision = row->argument_revision, .module_sequence = row->module_sequence, .arguments = row->arguments,
@@ -274,7 +282,7 @@ bool application_native_q3_remote_roles_restore_prepare(application_provider *pr
     for (size_t i = 0; ok && i < saved.count; ++i) {
         saved_role *r = saved.roles + i;
         ok = row && !row->retiring && row->lifecycle == NATIVE_Q3_REMOTE_COLD &&
-            !row->service && !row->modules && !row->descriptor && !row->initialized && row->owns_cvars &&
+            !row->service && !row->modules && !row->descriptor && !row->initialized && !row->acquired_initialized && row->owns_cvars &&
             !row->argument_revision && !row->module_sequence && !row->modules_restore.data && !row->modules_restore.size &&
             !row->system_info && !qa_cvars_count(row->cvars) &&
             r->seat == row->seat && r->service_owner == row->service_owner;
