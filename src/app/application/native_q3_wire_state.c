@@ -48,7 +48,6 @@ typedef struct native_q3_wire_client {
     char *big_configstring;
     size_t big_configstring_length;
     bool admitted, begun, bot, command_received, has_snapshot;
-    bool pending_system_info;
     bool drop_pending, drop_delivered;
     bool bot_snapshot_ready;
     qa_error drop_failure;
@@ -219,7 +218,6 @@ static void client_world_clear(native_q3_wire_client *client)
     free(client->big_configstring);
     client->big_configstring = NULL;
     client->big_configstring_length = 0;
-    client->pending_system_info = false;
     client->initial_server_command = 0;
     memset(client->config_commands, 0, sizeof(client->config_commands));
     for (size_t i = 0; i < QA_Q3_PACKET_BACKUP; ++i) {
@@ -1290,12 +1288,8 @@ static bool leased_server_command(void *context, int32_t number, bool *present,
         if (changed && !qa_q3_configstring_set(client->gamestate, (unsigned)index,
                                                value, error)) return false;
         client->config_commands[index] = number;
-        if (changed && index == 1) client->pending_system_info = true;
-        if (index == 1 && client->pending_system_info) {
-            if (!leased_effect(lease, QA_APPLICATION_Q3_SYSTEM_INFO,
-                                qa_q3_configstring(client->gamestate, 1), error)) return false;
-            client->pending_system_info = false;
-        }
+        if (changed && index == 1 && !leased_effect(lease, QA_APPLICATION_Q3_SYSTEM_INFO,
+            qa_q3_configstring(client->gamestate, 1), error)) return false;
     }
     if (*present && args->count && !strcmp(args->values[0], "map_restart") &&
         !leased_effect(lease, QA_APPLICATION_Q3_MAP_RESTART, text, error)) return false;
@@ -1874,7 +1868,6 @@ static bool client_fields(qa_source_save_io *io, native_q3_wire_client *client, 
         !qa_source_save_u64(io, &client->entered_ns) ||
         !qa_source_save_f32(io, &client->sensitivity) ||
         !qa_source_save_bool(io, &client->has_snapshot) ||
-        !qa_source_save_bool(io, &client->pending_system_info) ||
         !qa_source_save_i32(io, &client->reliable.sequence) ||
         !qa_source_save_i32(io, &client->reliable.acknowledged)) return false;
     if (failure_code > QA_ERROR_NOT_FOUND || failure_offset > SIZE_MAX ||
@@ -1942,7 +1935,7 @@ static bool client_fields(qa_source_save_io *io, native_q3_wire_client *client, 
         client->consumed_server_command < 0 ||
         client->consumed_server_command > client->reliable.sequence ||
         (!client->admitted && (client->gamestate || client->has_snapshot ||
-         client->snapshot_sequence || client->big_configstring || client->pending_system_info ||
+         client->snapshot_sequence || client->big_configstring ||
          client->drop_pending)) ||
         (client->has_snapshot && (!client->gamestate || !client->begun ||
          !client->snapshots[(uint32_t)client->snapshot_sequence &

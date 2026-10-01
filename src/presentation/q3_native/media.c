@@ -322,7 +322,14 @@ static bool load_valid(q3n_media *m,const q3n_media_load *load,qa_error *e)
     const char *text; uint64_t revision; char value[8192];
     if (!source_string(m,load,0,&text,&revision,e) ||
         !qa_q3_info_value(text,"g_gametype",value,sizeof(value),e)) return false;
-    return load->game_type>=0 && load->game_type<=7 && strtol(value,NULL,10)==load->game_type ? true :
+    const char *number=value;
+    while (*number && (signed char)*number<=32) ++number;
+    bool negative=*number=='-';
+    if (*number=='-' || *number=='+') ++number;
+    uint32_t parsed=0;
+    while (*number>='0' && *number<='9') parsed=parsed*10u+(uint32_t)(*number++-'0');
+    if (negative) parsed=0u-parsed;
+    return load->game_type>=0 && load->game_type<=7 && parsed==(uint32_t)load->game_type ? true :
         q3p_fail(e,QA_ERROR_ARGUMENT,"Native media loading differs from its reached serverinfo game type");
 }
 static bool bits(q3n_media *m, const q3n_media_load *load, const char **text, qa_error *e)
@@ -557,7 +564,9 @@ static bool load_graphics_now(q3n_media *m,const q3n_media_load *load,qa_error *
     const char *item_bits;
     if (!bits(m,load,&item_bits,e)) return false;
     size_t item_extent=strlen(item_bits);
-    for (uint32_t i=1;i<m->view.item_count;++i) if ((i<item_extent && item_bits[i]=='1') || load->build_script) {
+    char item_snapshot[257];
+    memcpy(item_snapshot,item_bits,item_extent+1);
+    for (uint32_t i=1;i<m->view.item_count;++i) if ((i<item_extent && item_snapshot[i]=='1') || load->build_script) {
         if (!load->loading(load->context,NULL,(int32_t)i,e) || !load_valid(m,load,e)) return false;
         if (!item_now(m,i,e)) return false;
     }
