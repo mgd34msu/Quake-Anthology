@@ -44,6 +44,8 @@ bool application_native_q3_remote_role_modules_attach(application_provider *,
     const qa_application_q3_remote_source *, application_native_q3_client_modules *, qa_error *);
 bool application_native_q3_remote_role_modules_read(application_provider *,
     const qa_application_q3_remote_source *, application_native_q3_client_modules **, qa_error *);
+bool application_native_q3_remote_role_modules_source_read(application_provider *, uint32_t,
+    qa_application_q3_remote_source *, application_native_q3_client_modules **, qa_error *);
 bool application_native_q3_remote_role_modules_current(application_provider *,
     const qa_application_q3_remote_source *, const application_native_q3_client_modules *);
 bool application_native_q3_remote_role_modules_borrow(application_provider *,

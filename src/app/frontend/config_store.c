@@ -988,7 +988,8 @@ static bool prepare(void *context,qa_application *application,const qa_launch_sn
     source->primary=entities && !strcmp(entities->instance,selected->selection.instance);
     qa_catalog *catalog=qa_launch_instance_catalog(selected);
     const qa_product *product=qa_catalog_product(catalog,selected->selection.product);
-    const qa_product *base=product && product->base?qa_catalog_product(catalog,product->base):product;
+    qa_product_id base_id=product?qa_catalog_configuration_base(catalog,product->id):QA_PRODUCT_NONE;
+    const qa_product *base=base_id?qa_catalog_product(catalog,base_id):product;
     source->has_mod=product && base && strcmp(product->directory,base->directory)!=0;
     bool ok=product && qa_source_frame_time_register(cvars,authority->declaration_owner,error) &&
         qa_launch_instance_retain_metadata(selected,&source->metadata,error);

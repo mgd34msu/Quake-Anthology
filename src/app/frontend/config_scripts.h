@@ -6,8 +6,9 @@
 #include "qa/console_buffer.h"
 
 typedef struct frontend_config_files frontend_config_files;
-/* Normal source preparation only. Roots come from the actual configured
- * source owner and remain independent of restricted product media. */
+/* Normal source preparation only. Product roots retain actual catalogue
+ * authorities independently of restricted media. Configured user_root owns
+ * console/shared files and supplies an absent product write-root fallback. */
 frontend_config_files *frontend_config_files_create(qa_catalog *, qa_product_id,
                                                    const char *user_root, const char *content_root, qa_error *);
 bool frontend_config_files_destroy(frontend_config_files *, qa_error *);

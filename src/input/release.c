@@ -25,6 +25,12 @@ bool qa_input_release_idle(const qa_input_seat *seat)
 { return !seat || !seat->release; }
 const qa_console *qa_input_release_console(const qa_input_release *owner)
 { return owner ? owner->seat->options.console : NULL; }
+const qa_console_release *qa_input_release_program_parent(const qa_input_release *owner)
+{
+    if (!owner || owner->seat->release!=owner || owner->advancing) return NULL;
+    for (size_t i=0;i<owner->count;++i) if (owner->records[i].program) return owner->records[i].program;
+    return NULL;
+}
 static bool scope_valid(const qa_input_release_scope *scope)
 {
     if (!scope || scope->controller<-1 || (scope->key_count && !scope->keys) ||
@@ -57,11 +63,12 @@ static void storage_free(qa_input_release *owner)
 {
     free(owner->keys); free(owner->snapshot); free(owner->records); free(owner);
 }
-bool qa_input_release_prepare(qa_input_seat *seat,const qa_input_release_scope *scope,
-    double time,qa_input_release **out,qa_error *error)
+static bool prepare(qa_input_seat *seat,const qa_input_release_scope *scope,
+    double time,const qa_console_release *parent,qa_input_release **out,qa_error *error)
 {
     if (!seat || seat->release || !scope_valid(scope) || !out || *out || !isfinite(time) || time<0 ||
-        !qa_input_seat_context_ready(seat,&seat->options.context,error))
+        !qa_input_seat_context_ready(seat,&seat->options.context,error) ||
+        (parent && !qa_console_release_parent_ready(parent,seat->options.console,error)))
         return fail(error,"source release preparation requires its returned actual input seat and scope");
     if (seat->held_count>SIZE_MAX/sizeof(qa_held_binding) || seat->held_count>SIZE_MAX/sizeof(release_record))
         return fail(error,"source release held records exceed address space");
@@ -89,7 +96,8 @@ bool qa_input_release_prepare(qa_input_seat *seat,const qa_input_release_scope *
         ok=qa_input_binding_release_text(seat,held,time,&text,error);
         qa_command_context context=seat->options.context;
         context.script="key-binding"; context.direct=false;
-        if (ok) ok=qa_console_release_prepare(seat->options.console,&context,text,&record->program,error);
+        if (ok) ok=parent?qa_console_release_prepare_sibling(seat->options.console,parent,&context,text,&record->program,error):
+            qa_console_release_prepare(seat->options.console,&context,text,&record->program,error);
     }
     if (!ok) {
         for (size_t i=0;i<owner->count;++i) if (owner->records[i].program) {
@@ -100,9 +108,19 @@ bool qa_input_release_prepare(qa_input_seat *seat,const qa_input_release_scope *
     }
     seat->release=owner; *out=owner; return true;
 }
+bool qa_input_release_prepare(qa_input_seat *seat,const qa_input_release_scope *scope,
+    double time,qa_input_release **out,qa_error *error)
+{ return prepare(seat,scope,time,NULL,out,error); }
+bool qa_input_release_prepare_sibling(qa_input_seat *seat,const qa_input_release_scope *scope,
+    double time,const qa_console_release *parent,qa_input_release **out,qa_error *error)
+{
+    if (!parent) return fail(error,"input sibling capture requires its actual retained console programme");
+    return prepare(seat,scope,time,parent,out,error);
+}
 static qa_input_release_outcome outcome(const qa_input_release *owner)
 {
-    if (owner->complete) return owner->fault.code==QA_OK?QA_INPUT_RELEASE_COMPLETED:QA_INPUT_RELEASE_FAILED;
+    if (owner->fault.code!=QA_OK) return QA_INPUT_RELEASE_FAILED;
+    if (owner->complete) return QA_INPUT_RELEASE_COMPLETED;
     return owner->entered?QA_INPUT_RELEASE_WAITING:QA_INPUT_RELEASE_UNENTERED;
 }
 static void enter_metadata(qa_input_release *owner)
@@ -111,6 +129,7 @@ static void enter_metadata(qa_input_release *owner)
     qa_input_seat *seat=owner->seat;
     for (size_t i=0;i<owner->count;++i) {
         release_record *record=&owner->records[i];
+        if (record->complete) continue;
         if (record->program) continue;
         if (record->action) {
             const qa_input_binding *binding=&record->held.binding->view;
@@ -136,6 +155,10 @@ bool qa_input_release_advance(qa_input_release *owner,qa_input_release_outcome *
     if (!owner || !out || owner->seat->release!=owner || owner->advancing ||
         !qa_console_idle(owner->seat->options.console)) return fail(error,"input release advance requires its returned actual owner");
     *out=outcome(owner);
+    if (owner->fault.code!=QA_OK) {
+        if (error && error->code==QA_OK) *error=owner->fault;
+        return false;
+    }
     if (owner->complete) {
         if (owner->fault.code!=QA_OK) { if (error && error->code==QA_OK) *error=owner->fault; return false; }
         return true;
@@ -188,6 +211,50 @@ static bool physical_ready(const qa_input_release *owner,const qa_input_seat *se
         if (!qa_input_physical_equal(owner->snapshot[i].input,seat->held[i].input) ||
             owner->snapshot[i].binding!=seat->held[i].binding)
             return fail(error,"actual held input changed during source release");
+    return true;
+}
+bool qa_input_release_extend_all(qa_input_release *owner,double time,
+    const qa_console_release *parent,qa_error *error)
+{
+    if (!owner || !isfinite(time) || time<0 ||
+        !physical_ready(owner,owner->seat,&owner->scope,error) ||
+        !qa_console_idle(owner->seat->options.console) ||
+        (parent && !qa_console_release_parent_ready(parent,owner->seat->options.console,error)))
+        return fail(error,"all-input extension requires its returned retained physical source");
+    if (owner->scope.all) return true;
+    if (!qa_input_seat_context_ready(owner->seat,&owner->seat->options.context,error)) return false;
+    size_t available=owner->held_count-owner->count,count=0;
+    release_record *added=available?calloc(available,sizeof(*added)):NULL;
+    if (available && !added) {
+        qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining uncovered final input releases"); return false;
+    }
+    bool ok=true;
+    if (!parent) parent=qa_input_release_program_parent(owner);
+    for (size_t i=0;ok && i<owner->held_count;++i) {
+        const qa_held_binding *held=&owner->snapshot[i];
+        if (selected(&owner->scope,held->input)) continue;
+        release_record *record=&added[count++]; record->held=*held;
+        const qa_input_binding *binding=held->binding?&held->binding->view:NULL;
+        record->action=binding && binding->kind==QA_BIND_ACTION;
+        if (!binding || record->action) continue;
+        const char *text=NULL;
+        ok=qa_input_binding_release_text(owner->seat,held,time,&text,error);
+        qa_command_context context=owner->seat->options.context;
+        context.script="key-binding"; context.direct=false;
+        if (ok) ok=parent?qa_console_release_prepare_sibling(owner->seat->options.console,parent,&context,text,&record->program,error):
+            qa_console_release_prepare(owner->seat->options.console,&context,text,&record->program,error);
+    }
+    if (!ok) {
+        for (size_t i=0;i<count;++i) if (added[i].program) {
+            qa_console_release_outcome result;
+            qa_console_release_abort(added[i].program,&result,NULL);
+        }
+        free(added); return false;
+    }
+    if (count) memcpy(owner->records+owner->count,added,count*sizeof(*added));
+    free(added); owner->count+=count;
+    owner->scope.all=true; owner->time_ms=time;
+    owner->complete=false; owner->metadata_entered=false;
     return true;
 }
 bool qa_input_release_ready(const qa_input_release *owner,const qa_input_seat *seat,

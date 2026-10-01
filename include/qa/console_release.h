@@ -13,6 +13,13 @@ typedef enum qa_console_release_outcome {
  * borrowing the same console's registered handlers and lifetime. */
 bool qa_console_release_prepare(qa_console *, const qa_command_context *, const char *,
     qa_console_release **, qa_error *);
+/* Capture an additional programme under a real retained same-console lease,
+ * including while a sibling holds its returned wait/tail. The caller retains
+ * that physical input/source owner. No installed programme is advanced or
+ * replaced, and current source context admission still precedes capture. */
+bool qa_console_release_prepare_sibling(qa_console *,const qa_console_release *,const qa_command_context *,
+    const char *,qa_console_release **,qa_error *);
+bool qa_console_release_parent_ready(const qa_console_release *,const qa_console *,qa_error *);
 /* The entered program uses the actual console queue, including aliases,
  * scripts and waits. The original pending program remains retained. Failed
  * commands keep the normal consumed-command outcome and are never replayed. */

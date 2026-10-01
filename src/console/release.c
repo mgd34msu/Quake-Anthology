@@ -36,11 +36,21 @@ void qac_console_release_enter(qa_console *console)
     if (console->release_advancing && console->release_owner)
         console->release_owner->entered=true;
 }
-bool qa_console_release_prepare(qa_console *console,const qa_command_context *context,
-    const char *text,qa_console_release **out,qa_error *error)
+bool qa_console_release_parent_ready(const qa_console_release *parent,const qa_console *console,qa_error *error)
+{
+    if (!parent || !console || parent->console!=console || !console->release_leases ||
+        !qa_console_idle(console) || console->release_advancing || console->program_unpublished ||
+        console->pending_program)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"sibling capture lacks its returned same-console programme lease");
+    return true;
+}
+static bool prepare(qa_console *console,const qa_console_release *parent,
+    const qa_command_context *context,const char *text,qa_console_release **out,qa_error *error)
 {
     if (!console || !context || !text || !out || *out || !qa_console_idle(console) ||
-        console->release_owner || console->program_unpublished || console->pending_program || console->release_leases==SIZE_MAX)
+        console->release_advancing || (console->release_owner && !parent) ||
+        (parent && !qa_console_release_parent_ready(parent,console,error)) ||
+        console->program_unpublished || console->pending_program || console->release_leases==SIZE_MAX)
         return qac_fail(error,QA_ERROR_ARGUMENT,"source release requires its returned actual console and empty output");
     size_t maximum=0,limit=0,length=strlen(text);
     if (!qa_console_limits(console,context,&maximum,&limit,error)) return false;
@@ -66,6 +76,15 @@ bool qa_console_release_prepare(qa_console *console,const qa_command_context *co
     }
     if (!ok) { chunk_free(owner->prepared); free((char *)owner->context.script); free(owner); return false; }
     ++console->release_leases; *out=owner; return true;
+}
+bool qa_console_release_prepare(qa_console *console,const qa_command_context *context,
+    const char *text,qa_console_release **out,qa_error *error)
+{ return prepare(console,NULL,context,text,out,error); }
+bool qa_console_release_prepare_sibling(qa_console *console,const qa_console_release *parent,
+    const qa_command_context *context,const char *text,qa_console_release **out,qa_error *error)
+{
+    if (!parent) return qac_fail(error,QA_ERROR_ARGUMENT,"sibling capture requires its retained actual release parent");
+    return prepare(console,parent,context,text,out,error);
 }
 static void restore_program(qa_console_release *owner)
 {

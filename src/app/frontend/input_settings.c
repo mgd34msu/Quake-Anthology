@@ -13,6 +13,7 @@ struct frontend_input_settings {
     qa_input_platform_settings_ticket *native;
     qa_input_release *release[QA_INPUT_LOCAL_SEATS];
     qa_input_release_outcome source[QA_INPUT_LOCAL_SEATS];
+    unsigned shutdown_all;
     double now_ms;
     bool prepared, aborting, terminal;
     qa_error failure;
@@ -60,9 +61,32 @@ bool frontend_input_settings_shutdown_ready(const frontend_input_settings *owner
             continue;
         }
         int keys[528]; qa_input_release_scope scope;
-        if (!owner->native || slot>=owner->seat_count ||
-            !qa_input_platform_settings_release_scope(owner->native,slot,&scope,keys,528,error) ||
+        if (owner->shutdown_all&(1u<<slot)) scope=(qa_input_release_scope){.all=true,.controller=-1};
+        else if (!owner->native ||
+            !qa_input_platform_settings_release_scope(owner->native,slot,&scope,keys,528,error)) return false;
+        if (slot>=owner->seat_count ||
             !qa_input_release_scope_owned(owner->release[slot],owner->physical[slot],&scope,error)) return false;
+    }
+    return true;
+}
+bool frontend_input_settings_shutdown_prepare(frontend_input_settings *owner,double now,qa_error *error)
+{
+    if (!owner || owner->terminal || !isfinite(now) || now<0 ||
+        !frontend_input_settings_shutdown_ready(owner,owner->frontend,error))
+        return fail(error,"Final settings release requires its installed returned pre-detach owner");
+    qa_input_release_scope all={.all=true,.controller=-1};
+    owner->aborting=true;
+    const qa_console_release *parent=NULL;
+    for (unsigned slot=0;slot<owner->seat_count && !parent;++slot)
+        parent=qa_input_release_program_parent(owner->release[slot]);
+    for (unsigned slot=0;slot<owner->seat_count;++slot) {
+        if (owner->shutdown_all&(1u<<slot)) continue;
+        bool ok=owner->release[slot]?qa_input_release_extend_all(owner->release[slot],now,parent,error):
+            parent?qa_input_release_prepare_sibling(owner->physical[slot],&all,now,parent,&owner->release[slot],error):
+            qa_input_release_prepare(owner->physical[slot],&all,now,&owner->release[slot],error);
+        if (!ok) return false;
+        if (!parent) parent=qa_input_release_program_parent(owner->release[slot]);
+        owner->shutdown_all|=1u<<slot;
     }
     return true;
 }
@@ -259,8 +283,9 @@ bool frontend_input_settings_engine_shutdown(frontend_input_settings *owner,
      * The physical scope comes from the same native owner that prepared it. */
     for (unsigned slot=0;slot<QA_INPUT_LOCAL_SEATS;++slot) if (owner->release[slot]) {
         int keys[528]; qa_input_release_scope scope;
+        if (owner->shutdown_all&(1u<<slot)) scope=(qa_input_release_scope){.all=true,.controller=-1};
+        else if (!qa_input_platform_settings_release_scope(owner->native,slot,&scope,keys,528,error)) return false;
         if (qa_input_release_console(owner->release[slot])!=console ||
-            !qa_input_platform_settings_release_scope(owner->native,slot,&scope,keys,528,error) ||
             !qa_input_release_retirement_scope_ready(owner->release[slot],owner->physical[slot],&scope,
                 QA_CONSOLE_RELEASE_DETACHED_SOURCE,retirement,owner,error)) return false;
     }

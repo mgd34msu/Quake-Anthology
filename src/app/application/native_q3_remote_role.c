@@ -468,6 +468,18 @@ bool application_native_q3_remote_role_modules_read(application_provider *provid
         return application_fail(error, QA_ERROR_ARGUMENT, "Native client module inventory lost its current physical CLIENT");
     *out = row->modules; return true;
 }
+bool application_native_q3_remote_role_modules_source_read(application_provider *provider, uint32_t seat,
+    qa_application_q3_remote_source *source, application_native_q3_client_modules **modules, qa_error *error)
+{
+    struct application_native_q3_remote_role *row = find(provider, seat);
+    if (!row || !source || !modules || !row->connection_epoch)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native client module lookup lost its retained connection epoch");
+    qa_application_q3_remote_source actual;
+    application_native_q3_client_modules *attached = NULL;
+    if (!application_native_q3_remote_role_source_read(provider, seat, row->connection_epoch, &actual, error) ||
+        !application_native_q3_remote_role_modules_read(provider, &actual, &attached, error)) return false;
+    *source = actual; *modules = attached; return true;
+}
 bool application_native_q3_remote_role_modules_current(application_provider *provider,
     const qa_application_q3_remote_source *source, const application_native_q3_client_modules *modules)
 {

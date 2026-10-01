@@ -39,34 +39,52 @@ static bool child_mount(frontend_config_files *owner,qa_fs_root *root,const char
         qa_vfs_mount_directory(owner->console,path,QA_ARCHIVE_CASE_INSENSITIVE,create,out,error);
     free(resolved); free(path); return ok;
 }
-static bool actual_roots(frontend_config_files *owner,const char *user_root,const char *content_root,
+static bool product_user_mount(frontend_config_files *owner,qa_fs_root *user,
+    const qa_product *product,qa_mount_id *out,qa_error *error)
+{
+    const qa_catalog_mount *mount=qa_catalog_product_write_mount(owner->catalog,product->id);
+    qa_fs_root *root=qa_catalog_product_write_root(owner->catalog,product->id);
+    if (!mount) return child_mount(owner,user,product->directory,true,out,error);
+    if (!root || !qa_vfs_mount_retained(owner->console,qa_catalog_files(owner->catalog),mount->id,
+        QA_ARCHIVE_CASE_INSENSITIVE,true,out,error)) return false;
+    return qa_vfs_mount_root(owner->console,*out)==root ||
+        fail(error,QA_ERROR_FORMAT,"Configuration mount lost its actual product writable capability");
+}
+static bool product_loose_mount(frontend_config_files *owner,const qa_product *product,
+    qa_mount_id *out,qa_error *error)
+{
+    const qa_catalog_mount *mount=qa_catalog_product_loose_mount(owner->catalog,product->id);
+    if (!mount) return true;
+    qa_fs_root *root=qa_catalog_product_loose_root(owner->catalog,product->id);
+    if (!root || !qa_vfs_mount_retained(owner->console,qa_catalog_files(owner->catalog),mount->id,
+        QA_ARCHIVE_CASE_INSENSITIVE,false,out,error)) return false;
+    return qa_vfs_mount_root(owner->console,*out)==root ||
+        fail(error,QA_ERROR_FORMAT,"Configuration mount lost its actual product loose capability");
+}
+static bool actual_roots(frontend_config_files *owner,const char *user_root,
     const qa_product *selected,const qa_product *base,qa_error *error)
 {
     if (!qa_fs_path_create_directory(user_root,error) ||
         !qa_vfs_mount_directory(owner->console,user_root,QA_ARCHIVE_CASE_INSENSITIVE,true,&owner->shared,error)) return false;
     qa_fs_root *user=qa_vfs_mount_root(owner->console,owner->shared);
-    if (!child_mount(owner,user,selected->directory,true,&owner->writable,error)) return false;
+    if (!product_user_mount(owner,user,selected,&owner->writable,error)) return false;
     if (selected==base) owner->base_writable=owner->writable;
-    else if (!child_mount(owner,user,base->directory,true,&owner->base_writable,error)) return false;
-    const qa_product *script_base=selected->base?qa_catalog_product(owner->catalog,selected->base):selected;
+    else if (!product_user_mount(owner,user,base,&owner->base_writable,error)) return false;
+    qa_product_id immediate=qa_catalog_configuration_base(owner->catalog,selected->id);
+    const qa_product *script_base=immediate?qa_catalog_product(owner->catalog,immediate):selected;
     if (!script_base) return fail(error,QA_ERROR_FORMAT,"Source scripts lack their actual immediate base");
     if (script_base==selected) owner->script_base_user=owner->writable;
     else if (script_base==base) owner->script_base_user=owner->base_writable;
-    else if (!child_mount(owner,user,script_base->directory,true,&owner->script_base_user,error)) return false;
+    else if (!product_user_mount(owner,user,script_base,&owner->script_base_user,error)) return false;
     if (!qa_fs_root_create_directory(user,"console",error) ||
         !child_mount(owner,user,"console",true,&owner->console_writable,error)) return false;
-    qa_fs_root *content=NULL; qa_error observed={0};
-    if (!qa_fs_root_open(content_root,&content,&observed)) {
-        if (observed.code==QA_ERROR_NOT_FOUND) return true;
-        if (error) *error=observed; return false;
-    }
-    bool ok=child_mount(owner,content,selected->directory,false,&owner->loose,error);
+    bool ok=product_loose_mount(owner,selected,&owner->loose,error);
     if (selected==base) owner->base_loose=owner->loose;
-    else if (ok) ok=child_mount(owner,content,base->directory,false,&owner->base_loose,error);
+    else if (ok) ok=product_loose_mount(owner,base,&owner->base_loose,error);
     if (script_base==selected) owner->script_base_loose=owner->loose;
     else if (script_base==base) owner->script_base_loose=owner->base_loose;
-    else if (ok) ok=child_mount(owner,content,script_base->directory,false,&owner->script_base_loose,error);
-    qa_fs_root_close(content); return ok;
+    else if (ok) ok=product_loose_mount(owner,script_base,&owner->script_base_loose,error);
+    return ok;
 }
 frontend_config_files *frontend_config_files_create(qa_catalog *catalog,qa_product_id product,
     const char *user_root,const char *content_root,qa_error *error)
@@ -75,8 +93,9 @@ frontend_config_files *frontend_config_files_create(qa_catalog *catalog,qa_produ
     if (!selected || !user_root || !*user_root || !content_root || !*content_root)
         return fail(error,QA_ERROR_ARGUMENT,"Configuration requires its actual selected product and configured roots"),NULL;
     const qa_product *base=selected; size_t depth=0;
-    while (base->base) {
-        base=qa_catalog_product(catalog,base->base);
+    qa_product_id ancestor;
+    while ((ancestor=qa_catalog_configuration_base(catalog,base->id))!=QA_PRODUCT_NONE) {
+        base=qa_catalog_product(catalog,ancestor);
         if (!base || ++depth>qa_catalog_count(catalog)) return fail(error,QA_ERROR_FORMAT,"Configuration source has cyclic or absent base ancestry"),NULL;
     }
     frontend_config_files *owner=calloc(1,sizeof(*owner));
@@ -86,7 +105,7 @@ frontend_config_files *frontend_config_files_create(qa_catalog *catalog,qa_produ
     if (ok && base->id==product) owner->base_files=owner->selected;
     else if (ok) ok=qa_catalog_open(catalog,base->id,&owner->base_files,error);
     if (ok) owner->console=qa_vfs_create(qa_catalog_resources(catalog),error);
-    if (ok) ok=owner->console && actual_roots(owner,user_root,content_root,selected,base,error);
+    if (ok) ok=owner->console && actual_roots(owner,user_root,selected,base,error);
     if (!ok) { frontend_config_files_destroy(owner,NULL); return NULL; }
     return owner;
 }
@@ -164,15 +183,20 @@ static bool legacy(frontend_config_files *owner,const char *name,qa_resource **o
     if (!selected || selected->family!=QA_GAME_Q1 || selected->edition==QA_EDITION_QUAKEWORLD || !folded_equal(name,"config.cfg")) return false;
     if (acquire(owner->console,owner->shared,name,out,error)) return true;
     if (error && error->code!=QA_OK) return false;
-    qa_fs_root *root=qa_vfs_mount_root(owner->console,owner->shared);
+    qa_fs_root *shared=qa_vfs_mount_root(owner->console,owner->shared);
     char *newest=NULL; qa_fs_timestamp modified={0}; bool ok=true;
+    qa_mount_id newest_mount=0;
+    qa_fs_root *newest_root=NULL;
     for (size_t i=0;ok && i<=qa_catalog_count(owner->catalog);++i) {
         const qa_product *product=i?qa_catalog_at(owner->catalog,i-1):selected;
         if (!product || product->family!=QA_GAME_Q1 || product->edition==QA_EDITION_QUAKEWORLD || (i && product==selected)) continue;
-        size_t length=strlen(product->directory);
+        const qa_catalog_mount *mount=qa_catalog_product_write_mount(owner->catalog,product->id);
+        qa_fs_root *root=qa_catalog_product_write_root(owner->catalog,product->id);
+        size_t length=root?0:strlen(product->directory);
         char *path=length<=SIZE_MAX-12?malloc(length+12):NULL;
         if (!path) { ok=fail(error,QA_ERROR_MEMORY,"Selecting newest Q1 user configuration"); break; }
-        memcpy(path,product->directory,length); memcpy(path+length,"/config.cfg",12);
+        if (root) memcpy(path,"config.cfg",11);
+        else { root=shared; memcpy(path,product->directory,length); memcpy(path+length,"/config.cfg",12); }
         char *resolved=NULL; qa_error observed={0};
         bool found=qa_fs_root_resolve(root,path,fs_equal,NULL,false,&resolved,&observed);
         free(path);
@@ -187,11 +211,26 @@ static bool legacy(frontend_config_files *owner,const char *name,qa_resource **o
             if (ok && (!newest || time.seconds>modified.seconds ||
                 (time.seconds==modified.seconds && time.nanoseconds>modified.nanoseconds))) {
                 free(newest); newest=resolved; resolved=NULL; modified=time;
+                newest_mount=mount?mount->id:0; newest_root=root;
             }
         }
         free(resolved);
     }
-    bool found=ok && newest && acquire(owner->console,owner->shared,newest,out,error);
+    qa_mount_id read_mount=owner->shared;
+    if (ok && newest && newest_mount) {
+        read_mount=0;
+        for (size_t i=0;i<qa_vfs_mount_count(owner->console);++i) {
+            qa_vfs_mount_info info={0};
+            if (qa_vfs_mount_at(owner->console,i,&info) && !info.is_archive &&
+                info.comparison==QA_ARCHIVE_CASE_INSENSITIVE &&
+                qa_fs_root_same_object(newest_root,qa_vfs_mount_root(owner->console,info.id))) {
+                read_mount=info.id; break;
+            }
+        }
+        if (!read_mount) ok=qa_vfs_mount_retained(owner->console,qa_catalog_files(owner->catalog),newest_mount,
+            QA_ARCHIVE_CASE_INSENSITIVE,false,&read_mount,error);
+    }
+    bool found=ok && newest && acquire(owner->console,read_mount,newest,out,error);
     free(newest); return found;
 }
 bool frontend_config_files_read(void *context,frontend_script_scope scope,const char *name,
@@ -407,8 +446,14 @@ bool frontend_config_files_restore(qa_application_content_graph *graph,qa_bytes 
         owner->selected=qa_application_content_view(graph,state.selected); owner->base_files=qa_application_content_view(graph,state.base_files);
         owner->console=qa_application_content_view(graph,state.console);
         const qa_product *product=qa_catalog_product(owner->catalog,owner->product); size_t depth=0;
-        while (product && product->base && depth++<qa_catalog_count(owner->catalog)) product=qa_catalog_product(owner->catalog,product->base);
-        ok=product && !product->base && product->id==owner->base && owner->selected && owner->base_files && owner->console;
+        qa_product_id ancestor=product?qa_catalog_configuration_base(owner->catalog,product->id):QA_PRODUCT_NONE;
+        while (product && ancestor && depth++<qa_catalog_count(owner->catalog)) {
+            product=qa_catalog_product(owner->catalog,ancestor);
+            ancestor=product?qa_catalog_configuration_base(owner->catalog,product->id):QA_PRODUCT_NONE;
+        }
+        ok=product && !ancestor && product->id==owner->base && owner->selected && owner->base_files && owner->console &&
+            qa_catalog_product_view_current(owner->catalog,owner->product,owner->selected) &&
+            qa_catalog_product_view_current(owner->catalog,owner->base,owner->base_files);
         qa_mount_id ids[]={state.writable,state.base_writable,state.console_writable,state.shared,state.loose,state.base_loose,state.script_base_user,state.script_base_loose};
         for (size_t j=0;ok && j<sizeof(ids)/sizeof(ids[0]);++j) {
             if (!ids[j]) continue;
@@ -421,6 +466,17 @@ bool frontend_config_files_restore(qa_application_content_graph *graph,qa_bytes 
             (owner->product!=owner->base || state.loose==state.base_loose) && state.console_writable!=state.shared &&
             state.console_writable!=state.writable && state.console_writable!=state.base_writable &&
             state.shared!=state.writable && state.shared!=state.base_writable;
+        qa_product_id immediate=qa_catalog_configuration_base(owner->catalog,owner->product);
+        qa_product_id products[]={owner->product,owner->base,immediate?immediate:owner->product};
+        qa_mount_id mounts[]={state.writable,state.base_writable,state.script_base_user};
+        qa_mount_id loose_mounts[]={state.loose,state.base_loose,state.script_base_loose};
+        for (size_t i=0;ok && i<sizeof(products)/sizeof(products[0]);++i) {
+            qa_fs_root *actual=qa_catalog_product_write_root(owner->catalog,products[i]);
+            if (actual) ok=qa_fs_root_same_object(actual,qa_vfs_mount_root(owner->console,mounts[i]));
+            qa_fs_root *loose_root=qa_catalog_product_loose_root(owner->catalog,products[i]);
+            if (ok) ok=loose_root?loose_mounts[i] &&
+                qa_fs_root_same_object(loose_root,qa_vfs_mount_root(owner->console,loose_mounts[i])):!loose_mounts[i];
+        }
         /* Borrowed qualification precedes every transfer of destructor ownership. */
         owner->catalog=NULL; owner->selected=owner->base_files=owner->console=NULL;
     }

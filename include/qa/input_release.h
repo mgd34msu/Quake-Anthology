@@ -22,12 +22,25 @@ typedef enum qa_input_release_outcome {
  * failed entered history, keeps the actual physical seat and source alive. */
 bool qa_input_release_idle(const qa_input_seat *);
 const qa_console *qa_input_release_console(const qa_input_release *);
+/* Borrowed real programme lease for another physical seat sharing this
+ * returned console. NULL means this input owner retained no command record. */
+const qa_console_release *qa_input_release_program_parent(const qa_input_release *);
 
 /* Preparation retains the actual physical seat, held binding records and
  * captured source commands. It dispatches nothing. Keys are copied and the
  * seat remains leased until publication or checked abort. */
 bool qa_input_release_prepare(qa_input_seat *, const qa_input_release_scope *,
     double time_ms, qa_input_release **, qa_error *);
+bool qa_input_release_prepare_sibling(qa_input_seat *,const qa_input_release_scope *,
+    double time_ms,const qa_console_release *,qa_input_release **,qa_error *);
+/* Before actual ENGINE detach, capture only held rows outside the retained
+ * scope and extend that same physical lease to ALL. Existing entered/failed
+ * programmes remain unchanged. Failure leaves the old scope/history intact;
+ * preparation dispatches no commands or logical clears. An optional actual
+ * same-console parent admits capture while another physical seat retains its
+ * returned wait; NULL uses this owner's captured programme when present. */
+bool qa_input_release_extend_all(qa_input_release *,double time_ms,
+    const qa_console_release *same_console_parent,qa_error *);
 /* Enters the requested logical holder/gamepad clear once, then executes the
  * retained source release program through the actual console.
  * A wait retains the ticket. An entered failure is an observable outcome;

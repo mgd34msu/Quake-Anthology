@@ -299,7 +299,7 @@ static bool selected_defaults(frontend_remote_config *row,bool seed,qa_error *er
         catalog.items,catalog.count,error):frontend_authored_bindings_select(row->authored,row->input,
         (qa_console_dialect)row->movement,strings,catalog.items,catalog.count,0,error);
 }
-static frontend_remote_config *previous_seat(const frontend_remote_config *fresh)
+static frontend_remote_config *same_receiver_previous(const frontend_remote_config *fresh)
 {
     const qa_launch_instance *selected=descriptor(fresh);
     const qa_launch_instance *previous=selected?qa_launch_snapshot_find(qa_application_launch(fresh->application),
@@ -313,6 +313,29 @@ static frontend_remote_config *previous_seat(const frontend_remote_config *fresh
     }
     return NULL;
 }
+static bool previous_seat(const frontend_remote_config *fresh,frontend_remote_config **out,qa_error *error)
+{
+    *out=NULL;
+    qa_frontend *f=fresh->owner->frontend;
+    if (!frontend_network_remote(f) || fresh->physical_seat) {
+        *out=same_receiver_previous(fresh); return true;
+    }
+    const qa_launch_snapshot *published=qa_application_launch(fresh->application);
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(published);
+    if (!choices || !choices->seat_count || fresh->scope.seat!=choices->seats[0].id) return true;
+    frontend_remote_config_view view; bool present=false;
+    if (!frontend_network_client_previous_configuration_read(f,choices->seats[0].id,&view,&present,error)) return false;
+    if (!present) return true;
+    frontend_remote_config *old=fresh->owner->rows;
+    while (old && old!=view.owner) old=old->next;
+    if (!old || old==fresh || old->application!=fresh->application || old->hosted ||
+        view.physical_seat!=fresh->physical_seat || view.scope.seat!=choices->seats[0].id ||
+        !view.ready || !view.published || !frontend_remote_config_current(old,&view) ||
+        !old->authored || !frontend_authored_bindings_completed(old->authored) ||
+        !f->seats || !f->seats[fresh->physical_seat].input)
+        return fail(error,QA_ERROR_ARGUMENT,"CLIENT archive lost its actual previous published input profile");
+    *out=old; return true;
+}
 static bool apply_archive(void *context,qa_error *error)
 {
     frontend_remote_config *row=context;
@@ -320,7 +343,8 @@ static bool apply_archive(void *context,qa_error *error)
         !qa_cvar_archive_apply(row->q3_mouse,&row->mouse_archive,error) ||
         !qa_cvar_archive_apply(row->q3_view,&row->view_archive,error) ||
         (row->movement_mouse!=row->q3_view && !qa_cvar_archive_apply(row->movement_mouse,&row->movement_archive,error))) return false;
-    frontend_remote_config *old=previous_seat(row);
+    frontend_remote_config *old=NULL;
+    if (!previous_seat(row,&old,error)) return false;
     if (old) {
         qa_frontend *f=row->owner->frontend;
         qa_input_command_tuning tuning;
@@ -592,7 +616,8 @@ bool frontend_remote_config_advance(frontend_remote_config *row,qa_console *cons
         if (!primary || !primary->configured || !frontend_authored_bindings_completed(primary->authored))
             return fail(error,QA_ERROR_ARGUMENT,"Secondary CLIENT scripts precede their actual primary authored defaults");
         if (!frontend_authored_bindings_secondary(row->authored,primary->authored,row->input,(qa_console_dialect)row->movement,error)) return false;
-        if (previous_seat(row) && !selected_defaults(row,false,error)) return false;
+        frontend_remote_config *old=NULL;
+        if (!previous_seat(row,&old,error) || (old && !selected_defaults(row,false,error))) return false;
         row->secondary_pending=false;
     }
     row->running=true; bool ok=frontend_startup_config_advance(row->phase,console,complete,error); row->running=false;

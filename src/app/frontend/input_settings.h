@@ -25,6 +25,10 @@ bool frontend_input_settings_current(const frontend_input_settings *,const qa_fr
 /* Exact retained native/physical release associations for final detach
  * admission. No completed-source or retirement proof is substituted here. */
 bool frontend_input_settings_shutdown_ready(const frontend_input_settings *,const qa_frontend *,qa_error *);
+/* Extend this same installed owner's scopes to ALL before ENGINE detach,
+ * capturing only uncovered held rows. Partial success remains retained and
+ * retryable; failed entered programmes are not dispatched or recaptured. */
+bool frontend_input_settings_shutdown_prepare(frontend_input_settings *,double now_ms,qa_error *);
 bool frontend_input_settings_read(const frontend_input_settings *,frontend_input_settings_view *,qa_error *);
 /* Advance at a returned callback boundary before ordinary input, capture or
  * owner-idle admission. A wait is successful with complete=false. Failed
