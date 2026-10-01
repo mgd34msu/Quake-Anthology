@@ -1142,7 +1142,8 @@ bool application_construct_qc(qa_application *app, application_provider *provide
         QA_QC_BUILTIN_EX_DRAW_POINT, QA_QC_BUILTIN_EX_DRAW_LINE, QA_QC_BUILTIN_EX_DRAW_ARROW,
         QA_QC_BUILTIN_EX_DRAW_RAY, QA_QC_BUILTIN_EX_DRAW_CIRCLE, QA_QC_BUILTIN_EX_DRAW_BOUNDS,
         QA_QC_BUILTIN_EX_DRAW_WORLDTEXT, QA_QC_BUILTIN_EX_DRAW_SPHERE, QA_QC_BUILTIN_EX_DRAW_CYLINDER,
-        QA_QC_BUILTIN_EX_PROMPT, QA_QC_BUILTIN_EX_PROMPTCHOICE, QA_QC_BUILTIN_EX_CLEARPROMPT
+        QA_QC_BUILTIN_EX_PROMPT, QA_QC_BUILTIN_EX_PROMPTCHOICE, QA_QC_BUILTIN_EX_CLEARPROMPT,
+        QA_QC_BUILTIN_EX_CHECK_PLAYER_FLAGS
     };
     size_t import_count=sizeof(imports)/sizeof(imports[0]);
     qa_qc_builtin_binding bindings[sizeof(imports)/sizeof(imports[0])+
