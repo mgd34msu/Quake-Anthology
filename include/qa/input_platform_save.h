@@ -24,6 +24,11 @@ bool qa_input_platform_restore(qa_input_platform *detached, const qa_input_platf
     const qa_input_platform_checkpoint_refs *, qa_bytes,
     qa_input_platform_restore_guard **, qa_error *);
 bool qa_input_platform_handoff_ready(const qa_input_platform_restore_guard *, qa_error *);
+/* Recapture the genuine detached candidate before publication. Its guard must
+ * still qualify the active native endpoints; only that retained native cut is
+ * encoded alongside the candidate's actual private state and haptic holders. */
+bool qa_input_platform_restore_checkpoint(const qa_input_platform_restore_guard *,
+    const qa_input_platform_checkpoint_refs *, qa_buffer *, qa_error *);
 void qa_input_platform_handoff(qa_input_platform_restore_guard *);
 void qa_input_platform_restore_guard_destroy(qa_input_platform_restore_guard *);
 bool qa_input_platform_context_rebind_ready(const qa_input_platform *, const void *current, qa_error *);

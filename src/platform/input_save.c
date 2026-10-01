@@ -318,6 +318,26 @@ bool qa_input_platform_handoff_ready(const qa_input_platform_restore_guard *g, q
             return fail(error, QA_ERROR_ARGUMENT, "platform native controller owner changed");
     return native_matches(g->active, (qa_bytes){g->native_cut.data, g->native_cut.size}, error);
 }
+bool qa_input_platform_restore_checkpoint(const qa_input_platform_restore_guard *g,
+    const qa_input_platform_checkpoint_refs *refs, qa_buffer *out, qa_error *error)
+{
+    if (!refs || !refs->seat_encode || !out || out->data || out->size)
+        return fail(error, QA_ERROR_ARGUMENT, "platform candidate capture requires actual references and empty output");
+    if (!qa_input_platform_handoff_ready(g, error)) return false;
+    const qa_input_platform *p = g->candidate;
+    qa_buffer native_cut = g->native_cut, haptic = {0};
+    qa_haptic_player *players[4];
+    for (unsigned i = 0; i < 4; ++i) players[i] = (qa_haptic_player *)&p->seats[i].haptic;
+    qa_source_save_io io = {0};
+    bool success = qa_haptic_checkpoint(p->haptics, players, 4, &refs->haptics, &haptic, error) &&
+        qa_source_save_writer(&io, NULL, error) &&
+        envelope(&io, (qa_input_platform *)p, NULL, refs, &native_cut, &haptic) &&
+        qa_source_save_finish(&io, out);
+    qa_buffer_free(&haptic); qa_source_save_dispose(&io);
+    if (!success && error && error->code == QA_OK)
+        fail(error, QA_ERROR_FORMAT, "invalid detached platform continuation");
+    return success;
+}
 void qa_input_platform_handoff(qa_input_platform_restore_guard *g)
 {
     ((qa_input_platform *)g->active)->native_owned = false;

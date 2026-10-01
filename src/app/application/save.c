@@ -1595,6 +1595,9 @@ static bool persistence_publish(void *opaque, void *value, qa_error *error)
         return false;
     if (!persistence_safe(candidate))
         return application_fail(error, QA_ERROR_ARGUMENT, "progression validation changed the restored candidate");
+    if (operation->ops->publish_ready &&
+        !operation->ops->publish_ready(operation->ops->context,
+            operation->active, candidate, error)) return false;
     bool relinquish_active = false;
     candidate->operation = APPLICATION_PERSISTING;
     if (!application_save_progression_handoff(operation->active, candidate,
@@ -1607,6 +1610,8 @@ static bool persistence_publish(void *opaque, void *value, qa_error *error)
     candidate->source_shutdown_admitted = true;
     operation->active->source_shutdown_admitted = false;
     operation->displaced = operation->active;
+    if (operation->ops->publish)
+        operation->ops->publish(operation->ops->context, operation->active, candidate);
     *operation->slot = value;
     return true;
 }
@@ -1615,6 +1620,11 @@ static void persistence_discard(void *opaque, void *value)
 {
     application_persistence *operation = opaque;
     ((qa_application *)value)->operation = APPLICATION_IDLE;
+    if (operation->ops->discard_services &&
+        !operation->ops->discard_services(operation->ops->context, value, NULL)) {
+        operation->retained = value;
+        return;
+    }
     if (!qa_application_destroy(value, NULL)) operation->retained = value;
 }
 
@@ -1625,6 +1635,7 @@ bool qa_application_persistence_restore(qa_application **active,
 {
     if (!active || !options || !ops || !ops->validate ||
         (ops->owner_count && !ops->owners) || ops->owner_count > QA_SAVE_OWNER_LIMIT ||
+        ((ops->publish_ready != NULL) != (ops->publish != NULL)) ||
         !image || !displaced || !retained_on_failure || *retained_on_failure ||
         active == displaced || active == retained_on_failure || displaced == retained_on_failure)
         return application_fail(error, QA_ERROR_ARGUMENT, "application restore requires isolated content and owner producers");

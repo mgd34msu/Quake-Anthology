@@ -6,6 +6,7 @@
 #include "qa/persistence_content.h"
 #include "qa/rankings_save.h"
 #include "qa/player_progress_save.h"
+#include "qa/application_rankings.h"
 
 /* Services outside the application's concrete codecs supply their actual
  * producer here. Every shared owner and selected provider must be represented;
@@ -40,6 +41,7 @@ typedef struct qa_application_persistence_ops {
      * binding/continuation refs and the final transactional handoff below. */
     const qa_rankings_checkpoint_refs *rankings;
     const qa_player_progress_checkpoint_refs *progress;
+    const qa_application_ranking_checkpoint_refs *ranking_source;
     /* Last fallible step, after complete candidate validation. Failure must
      * leave both backend ownerships unchanged. Success qualifies and transfers
      * the genuine candidate backend continuation; relinquish_active is true
@@ -72,6 +74,17 @@ typedef struct qa_application_persistence_ops {
     /* Validate every service's restored references and pending continuation.
      * No external publication, file writes or source callbacks are allowed. */
     bool (*validate)(void *, qa_application *, const qa_save_image *, qa_error *);
+    /* Last external qualification before backend continuation handoff. It must
+     * leave both applications and their external owners unchanged on failure.
+     * The paired publish callback transfers qualified external ownership without
+     * allocation, failure or source calls, immediately before pointer publication. */
+    bool (*publish_ready)(void *, qa_application *active,
+                          qa_application *candidate, qa_error *);
+    void (*publish)(void *, qa_application *active, qa_application *candidate);
+    /* Failed candidate teardown closes external consumers while their borrowed
+     * application is still alive. False retains both owners for a later retry;
+     * the application's ordinary destruction follows only after true. */
+    bool (*discard_services)(void *, qa_application *, qa_error *);
 } qa_application_persistence_ops;
 
 bool qa_application_persistence_capture(qa_application *,

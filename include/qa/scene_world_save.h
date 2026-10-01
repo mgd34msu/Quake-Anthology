@@ -45,6 +45,11 @@ typedef struct qa_scene_world_owner_refs {
      * use these same identities. It must not mint IDs or execute source code. */
     bool (*identity_decode)(void *, qa_scene_world_identity_kind, size_t ordinal,
         uint64_t saved, uint64_t *installed, qa_error *);
+    /* Optional canonical capture mapping for an imported owner. Qualifies its
+     * physical producer and returns the original saved identity without
+     * modifying the installed world. NULL preserves actual identities. */
+    bool (*identity_encode)(void *, qa_scene_world_identity_kind, size_t ordinal,
+        uint64_t installed, uint64_t *saved, qa_error *);
 } qa_scene_world_owner_refs;
 typedef struct qa_scene_world_saved_identity {
     qa_scene_world_identity_kind kind;

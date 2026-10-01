@@ -194,6 +194,8 @@ static bool geometry_decode(void *context,uint64_t key,const qa_scene_geometry *
 { return frontend_scene_geometry_decode(((world_scope *)context)->inventory->space,key,geometry,error); }
 static bool identity_decode(void *context,qa_scene_world_identity_kind kind,size_t ordinal,uint64_t saved,uint64_t *out,qa_error *error)
 { return frontend_scene_world_install(&((world_scope *)context)->identity,kind,ordinal,saved,out,error); }
+static bool identity_encode(void *context,qa_scene_world_identity_kind kind,size_t ordinal,uint64_t actual,uint64_t *out,qa_error *error)
+{ return frontend_scene_world_saved(&((world_scope *)context)->identity,kind,ordinal,actual,out,error); }
 static bool world_source_qualify(void *context,qa_bytes bytes,const qa_scene_world_options *options,qa_error *error)
 {
     world_scope *scope=context; const world_policy *policy=&scope->row->policy;
@@ -224,7 +226,7 @@ static qa_scene_world_owner_refs world_refs(world_scope *scope)
     return (qa_scene_world_owner_refs){.state={.images={scope,image_encode,image_decode},.context=scope,
         .material_encode=material_encode,.material_decode=material_decode,.frame_encode=frame_encode,.frame_decode=frame_decode},
         .context=scope,.geometry_encode=geometry_encode,.geometry_decode=geometry_decode,
-        .source_qualify=world_source_qualify,.identity_decode=identity_decode};
+        .source_qualify=world_source_qualify,.identity_decode=identity_decode,.identity_encode=identity_encode};
 }
 void frontend_world_inventory_destroy(frontend_world_inventory *inventory)
 {
