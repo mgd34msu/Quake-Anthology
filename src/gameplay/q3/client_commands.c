@@ -96,6 +96,37 @@ bool qa_q3_client_userinfo(qa_q3_game *game, qa_actor_id actor, const char *sour
     if (!q3_client_actor(game, actor, error) || !q3_client_slot(game, actor, &slot)) return false;
     return qa_q3_client_slot_userinfo(game, slot, source, scoreboard, error);
 }
+bool qa_q3_client_selected_presentation(qa_q3_game *game, qa_actor_id actor,
+    const char *source, int32_t game_type, qa_error *error) {
+    uint32_t slot;
+    if (!game || game->source_restored || !source || game->observation_depth == SIZE_MAX ||
+        !qa_q3_native_client_slot(game, actor, &slot, error))
+        return q3_fail(error, "Selected Q3 presentation has no actual source client");
+    char name[1024], model[64], head[64], red[1024], blue[1024], color1[1024], color2[1024], task[1024];
+    qa_q3_client_info_value(source, "name", name, sizeof(name));
+    qa_q3_client_info_value(source, game_type >= 3 ? "team_model" : "model", model, sizeof(model));
+    qa_q3_client_info_value(source, game_type >= 3 ? "team_headmodel" : "headmodel", head, sizeof(head));
+    qa_q3_client_info_value(source, "g_redteam", red, sizeof(red));
+    qa_q3_client_info_value(source, "g_blueteam", blue, sizeof(blue));
+    qa_q3_client_info_value(source, "color1", color1, sizeof(color1));
+    qa_q3_client_info_value(source, "color2", color2, sizeof(color2));
+    qa_q3_client_info_value(source, "teamtask", task, sizeof(task));
+    qa_q3_native_client *client = &game->clients[slot];
+    qa_q3_client_clean_name(name, client->netname);
+    qa_q3_client_session session = client->session;
+    char config[8192];
+    snprintf(config, sizeof(config), "n\\%s\\t\\%d\\model\\%s\\hmodel\\%s\\g_redteam\\%s\\g_blueteam\\%s\\c1\\%s\\c2\\%s\\hc\\%d\\w\\%d\\l\\%d\\tt\\%d\\tl\\%d",
+        client->netname, session.team, model, head, red, blue, color1, color2,
+        client->max_health, session.wins, session.losses, source_integer(task), session.team_leader);
+    ++game->observation_depth;
+    bool okay = qa_q3_configstring_write(game, 544u + slot, config, error);
+    uint32_t current;
+    if (okay && (!qa_q3_native_client_slot(game, actor, &current, error) || current != slot ||
+        !qa_actors_get(qa_session_actors(game->options.services.session), actor)))
+        okay = q3_fail(error, "Selected Q3 presentation lost its actual source client");
+    --game->observation_depth;
+    return okay;
+}
 bool qa_q3_client_slot_userinfo(qa_q3_game *game, uint32_t slot, const char *source,
                                bool scoreboard, qa_error *error) {
     if (!game || game->source_restored || !source || slot >= game->options.max_clients)

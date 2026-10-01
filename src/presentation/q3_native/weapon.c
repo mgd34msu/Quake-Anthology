@@ -438,7 +438,7 @@ static bool selected_begin(q3n_weapons *owner,const q3n_selected_weapon_media *m
     if (submitted) *submitted=false;
     if (!q3n_weapons_idle(owner) || !media || !state || !draw || !submitted ||
         !draw->player || !draw->current || !draw->submit || media->assets!=owner->options.assets ||
-        draw->player->product!=owner->options.product || draw->player->weapon<1 || draw->player->weapon>=16 ||
+        draw->player->product!=owner->options.product || draw->presentation_weapon<1 || draw->presentation_weapon>=16 ||
         !qa_q3_assets_idle(media->assets))
         return q3p_fail(e,QA_ERROR_ARGUMENT,"Selected Q3 weapon needs its actual source and retained resource owner");
     const q3p_model *model; const qa_material *shader;
@@ -482,7 +482,7 @@ static qa_q3_ref_entity selected_part(int32_t model,int32_t flags,qa_vec3 lighti
 }
 static bool selected_flash(const q3n_selected_weapon_draw *draw)
 {
-    int32_t weapon=draw->player->weapon;
+    int32_t weapon=draw->presentation_weapon;
     return (draw->firing && (weapon==1 || weapon==6 || weapon==10)) ||
         (draw->has_last_fire && (int64_t)draw->time-(int64_t)draw->last_fire<=20);
 }
@@ -529,6 +529,15 @@ bool q3n_weapons_selected_held(q3n_weapons *owner,const q3n_selected_weapon_medi
     }
     return selected_end(owner,okay);
 }
+static qa_vec3 selected_view_angles(const q3n_selected_weapon_view *view,int32_t time)
+{
+    double bob=fabs(sin((double)(view->bob_cycle&127)/127*3.14159265358979323846));
+    double roll_scale=(view->bob_cycle&128)?-view->horizontal_speed:view->horizontal_speed;
+    qa_vec3 angles=plus(view->angles,qa_v3(mul((float)(view->horizontal_speed*bob),.005f),
+        mul((float)(roll_scale*bob),.01f),mul((float)(roll_scale*bob),.005f)));
+    float drift=mul(mul((float)(view->horizontal_speed+40),(float)sin((double)mul((float)time,.001f))),.01f);
+    return plus(angles,qa_v3(drift,drift,drift));
+}
 bool q3n_weapons_selected_view(q3n_weapons *owner,const q3n_selected_weapon_media *media,
     q3n_selected_weapon_state *state,const q3n_selected_weapon_draw *draw,
     const q3n_selected_weapon_view *view,bool *submitted,qa_error *e)
@@ -540,12 +549,7 @@ bool q3n_weapons_selected_view(q3n_weapons *owner,const q3n_selected_weapon_medi
     if (!view->draw_gun || !media->gun) return selected_end(owner,true);
     if (!media->hands) return selected_end(owner,q3p_fail(e,QA_ERROR_FORMAT,"Selected Q3 weapon has no hands model or fallback"));
     if (!q3n_lerp_run(view->animations,&state->torso,draw->player->torsoAnim,draw->time,1,false,e)) return selected_end(owner,false);
-    double bob=fabs(sin((double)(view->bob_cycle&127)/127*3.14159265358979323846));
-    double roll_scale=(view->bob_cycle&128)?-view->horizontal_speed:view->horizontal_speed;
-    qa_vec3 angles=plus(view->angles,qa_v3(mul((float)(view->horizontal_speed*bob),.005f),
-        mul((float)(roll_scale*bob),.01f),mul((float)(roll_scale*bob),.005f)));
-    float drift=mul(mul((float)(view->horizontal_speed+40),(float)sin((double)mul((float)draw->time,.001f))),.01f);
-    angles=plus(angles,qa_v3(drift,drift,drift));
+    qa_vec3 angles=selected_view_angles(view,draw->time);
     qa_q3_ref_entity hands=selected_part(media->hands,1|4|8,view->origin);
     hands.origin=hands.old_origin=view->origin; q3n_angles_axis(angles,hands.axis);
     if (!torso_frame(view->animations,state->torso.frame,&hands.frame,e) ||
@@ -564,6 +568,47 @@ bool q3n_weapons_selected_view(q3n_weapons *owner,const q3n_selected_weapon_medi
     }
     bool okay=selected_parts(media,draw,&gun,&barrel,have_barrel,0,submitted,e);
     if (okay && have_flash && !draw->reduced_flashes) okay=selected_emit(media,draw,&flash,submitted,e);
+    return selected_end(owner,okay);
+}
+bool q3n_weapons_selected_authored_view(q3n_weapons *owner,const q3n_selected_weapon_media *media,
+    q3n_selected_weapon_state *state,const q3n_selected_weapon_draw *draw,
+    const q3n_selected_weapon_authored_view *view,bool *submitted,qa_error *e)
+{
+    if (!view || !qa_vec_finite(view->camera.origin) || !qa_vec_finite(view->camera.angles) ||
+        !isfinite(view->camera.horizontal_speed) || view->camera.horizontal_speed<0 ||
+        !view->anchor_tag || !view->anchor_tag[0] || !qa_vec_finite(view->anchor_offset) ||
+        !isfinite(view->field_of_view) || !isfinite(view->fov_above) || !isfinite(view->fov_scale) ||
+        !isfinite(view->back_lerp) || view->back_lerp<0 || view->back_lerp>1 ||
+        (view->attachment_count && !view->attachments) || !media || media->barrel || media->flash)
+        return q3p_fail(e,QA_ERROR_ARGUMENT,"Authored Q3 view requires its actual camera, anchor and registered attachments");
+    if (!selected_begin(owner,media,state,draw,submitted,e)) return false;
+    if (!view->camera.draw_gun || !media->gun) return selected_end(owner,true);
+    if (!media->hands) return selected_end(owner,q3p_fail(e,QA_ERROR_FORMAT,"Authored Q3 view has no retained anchor model"));
+    for (size_t i=0;i<view->attachment_count;++i) {
+        const q3n_selected_weapon_attachment *attachment=view->attachments+i;
+        const q3p_model *model;
+        if (attachment->model<=0 || !attachment->tag || !attachment->tag[0])
+            return selected_end(owner,q3p_fail(e,QA_ERROR_FORMAT,"Authored Q3 attachment lost its retained model or tag"));
+        if (!q3p_model_get(media->assets,attachment->model,&model,e)) return selected_end(owner,false);
+    }
+    qa_vec3 camera_axis[3]; q3n_angles_axis(view->camera.angles,camera_axis);
+    float fov_offset=mul(view->fov_scale,fmaxf(0,add(view->field_of_view,-view->fov_above)));
+    qa_q3_ref_entity hands=selected_part(media->hands,1|4|8,view->camera.origin);
+    hands.origin=plus(view->camera.origin,plus(plus(scale(camera_axis[0],view->anchor_offset.x),
+        scale(camera_axis[1],view->anchor_offset.y)),scale(camera_axis[2],add(view->anchor_offset.z,fov_offset))));
+    hands.old_origin=hands.origin;
+    q3n_angles_axis(selected_view_angles(&view->camera,draw->time),hands.axis);
+    hands.frame=view->frame; hands.old_frame=view->old_frame; hands.back_lerp=view->back_lerp;
+    qa_q3_ref_entity gun=selected_part(media->gun,1|4|8,view->camera.origin); bool found;
+    if (!selected_attach(media->assets,&gun,&hands,view->anchor_tag,true,&found,e)) return selected_end(owner,false);
+    (void)selected_spin(&state->view_barrel,draw->time,draw->firing);
+    bool okay=selected_emit(media,draw,&gun,submitted,e);
+    for (size_t i=0;okay && i<view->attachment_count;++i) {
+        const q3n_selected_weapon_attachment *attachment=view->attachments+i;
+        qa_q3_ref_entity part=selected_part(attachment->model,1|4|8,view->camera.origin);
+        okay=selected_attach(media->assets,&part,&gun,attachment->tag,false,&found,e);
+        if (okay && found) okay=selected_emit(media,draw,&part,submitted,e);
+    }
     return selected_end(owner,okay);
 }
 bool q3n_selected_weapon_state_fields(qa_source_save_io *io,q3n_selected_weapon_state *state)

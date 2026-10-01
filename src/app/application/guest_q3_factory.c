@@ -6,6 +6,7 @@
 #include "native_q3_console.h"
 #include "native_q3_remote_role.h"
 #include "native_q3_remote_role_save.h"
+#include "qa/application_native_q3_client_modules.h"
 #include "q3_product.h"
 #include "qa/network_q3.h"
 
@@ -162,6 +163,14 @@ bool qa_application_q3_equipment_requests(qa_application *app, qa_actor_owner re
     uint32_t seat, bool *hud, bool *view, qa_error *error)
 {
     application_provider *provider = receiver_provider(app, receiver);
+    if (provider && provider->kind == APPLICATION_PROVIDER_Q3) {
+        application_native_q3_client_modules *modules = NULL;
+        qa_application_q3_remote_source source;
+        if (!hud || !view || !application_native_q3_remote_role_modules_pointer_read(provider, seat, &modules, error) ||
+            !modules || !application_native_q3_remote_role_modules_source_read(provider, seat, &source, &modules, error))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Equipment requests lack actual acquired CGAME modules");
+        return qa_application_native_q3_client_modules_equipment_requests(modules, hud, view, error);
+    }
     struct application_q3_guest *engine = q3g_engine(provider);
     q3g_role *role = NULL;
     if (engine) for (q3g_role *r = engine->roles; r; r = r->next)
@@ -522,6 +531,14 @@ bool qa_application_q3_source_loading_screen(qa_application *app, qa_actor_owner
         provider->close_pending || app->destroy_requested)
         return application_fail(error, QA_ERROR_ARGUMENT, "Loading screen requires its actual live source receiver");
     *drawn = false;
+    if (provider->kind == APPLICATION_PROVIDER_Q3) {
+        application_native_q3_client_modules *modules = NULL;
+        qa_application_q3_remote_source source;
+        if (!application_native_q3_remote_role_modules_pointer_read(provider, seat, &modules, error)) return false;
+        if (!modules) return true;
+        if (!application_native_q3_remote_role_modules_source_read(provider, seat, &source, &modules, error)) return false;
+        return qa_application_native_q3_client_modules_loading_screen(modules, drawn, error);
+    }
     q3g_role *cgame = engine ? engine->initializing_role : NULL;
     if (!cgame || cgame->kind != QA_QVM_CGAME || cgame->seat != seat ||
         !engine->calls || cgame->init_succeeded) return true;

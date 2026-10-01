@@ -40,6 +40,7 @@ struct application_native_q3_client_modules {
     qa_application_native_q3_client_modules_options options;
     native_client_module ui, cgame;
     native_client_module *initializing;
+    native_client_module *entered;
     size_t calls;
     bool attached, pure, retiring, restore_pending;
     qa_buffer saved;
@@ -47,6 +48,7 @@ struct application_native_q3_client_modules {
 
 bool native_client_modules_physical(const application_native_q3_client_modules *,
     qa_application_q3_remote_source *, qa_error *);
+bool native_client_modules_policy(const qa_q3_gamestate *, bool, qa_error *);
 bool native_client_module_construct(native_client_module *, bool restoring, qa_error *);
 bool native_client_module_namespace(native_client_module *, bool restoring, qa_error *);
 bool native_client_modules_allocate(qa_application *,

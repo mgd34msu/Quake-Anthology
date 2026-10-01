@@ -69,7 +69,7 @@ bool qa_application_native_q3_client_modules_current(const application_native_q3
 
 bool qa_application_native_q3_client_modules_idle(const application_native_q3_client_modules *owner)
 {
-    if (!owner || owner->calls || owner->initializing) return false;
+    if (!owner || owner->calls || owner->initializing || owner->entered) return false;
     const native_client_module *roles[] = {&owner->ui, &owner->cgame};
     for (size_t i = 0; i < 2; ++i) {
         const native_client_module *role = roles[i];
@@ -88,6 +88,13 @@ static bool decoded_pure(const qa_q3_gamestate *state, bool *pure, qa_error *err
     char value[QA_Q3_BIG_INFO_CHARS];
     if (!qa_q3_info_value(qa_q3_gamestate_configstring(state, 1), "sv_pure", value, sizeof(value), error)) return false;
     *pure = strtol(value, NULL, 10) != 0; return true;
+}
+
+bool native_client_modules_policy(const qa_q3_gamestate *state, bool pure, qa_error *error)
+{
+    bool actual;
+    return decoded_pure(state, &actual, error) && (actual == pure ||
+        application_fail(error, QA_ERROR_FORMAT, "Acquired CLIENT policy differs from actual received SystemInfo"));
 }
 
 bool native_client_modules_allocate(qa_application *app,
@@ -361,9 +368,12 @@ bool native_client_module_construct(native_client_module *role, bool restoring, 
         if (!native_client_modules_physical(owner, &actual, error) ||
             !application_native_q3_remote_role_modules_borrow(owner->provider, &actual, owner, error)) return false;
         ++owner->calls;
+        native_client_module *previous = owner->entered;
+        owner->entered = role;
         okay = qa_native_host_create_q3(role->module, &native, &role->native, error);
         role->native_load_failed = !okay;
         if (okay) okay = qa_q3_host_attach_native(role->host, role->native, error);
+        owner->entered = previous;
         --owner->calls;
         if (!application_native_q3_remote_role_modules_return(owner->provider, actual.receiver.seat, owner, &returned)) {
             if (okay && error) *error = returned;
@@ -419,6 +429,8 @@ static bool invoke(native_client_module *role, int32_t command, const int32_t *a
         return application_fail(error, QA_ERROR_ARGUMENT, "Acquired CLIENT entry requires its admitted current executor");
     if (!application_native_q3_remote_role_modules_borrow(owner->provider, &actual, owner, error)) return false;
     ++owner->calls;
+    native_client_module *previous = owner->entered;
+    owner->entered = role;
     bool drawing = role->kind == QA_QVM_CGAME && command == 3 && role->equipment;
     bool okay = !drawing || application_q3_equipment_draw_begin(role->equipment, error);
     if (okay) {
@@ -436,6 +448,7 @@ static bool invoke(native_client_module *role, int32_t command, const int32_t *a
         }
     }
     if (drawing) application_q3_equipment_draw_end(role->equipment);
+    owner->entered = previous;
     --owner->calls;
     qa_error returned = {0};
     if (!application_native_q3_remote_role_modules_return(owner->provider, actual.receiver.seat, owner, &returned)) {
@@ -476,7 +489,10 @@ static bool initialize_ui(application_native_q3_client_modules *owner, bool conn
             !qa_application_native_q3_client_modules_current(owner, &actual) ||
             !application_native_q3_remote_role_modules_borrow(owner->provider, &actual, owner, error)) return false;
         ++owner->calls;
+        native_client_module *previous = owner->entered;
+        owner->entered = &owner->ui;
         bool okay = qa_qvm_validate_ui(owner->ui.vm, &result, error);
+        owner->entered = previous;
         --owner->calls;
         qa_error returned = {0};
         if (!application_native_q3_remote_role_modules_return(owner->provider, actual.receiver.seat, owner, &returned)) {
@@ -554,6 +570,8 @@ static bool shutdown(native_client_module *role, qa_error *error)
     }
     role->initialized = false; role->init_succeeded = false;
     bool started = false, okay;
+    native_client_module *previous = role->owner->entered;
+    role->owner->entered = role;
     ++role->owner->calls;
     if (role->native) {
         okay = qa_native_host_shutdown(role->native, false, error);
@@ -563,6 +581,7 @@ static bool shutdown(native_client_module *role, qa_error *error)
         okay = qa_qvm_invoke_started(role->vm, 0, &word, 1, &result, &started, error);
     }
     --role->owner->calls;
+    role->owner->entered = previous;
     role->initialized = !started; return okay;
 }
 
@@ -574,9 +593,12 @@ static bool consume(native_client_module *role, qa_error *error)
         role->equipment = NULL;
     }
     if (role->native) {
+        native_client_module *previous = role->owner->entered;
+        role->owner->entered = role;
         ++role->owner->calls;
         bool okay = qa_native_host_destroy_owned(&role->native, error);
         --role->owner->calls;
+        role->owner->entered = previous;
         if (!role->native) qa_q3_host_native_consumed(role->host);
         if (!okay) return false;
     }
@@ -661,6 +683,25 @@ bool qa_application_native_q3_client_modules_host_read(const application_native_
         retained.console != actual.receiver.console || retained.cvars != actual.receiver.cvars)
         return application_fail(error, QA_ERROR_ARGUMENT, "Acquired CLIENT host identity lost its real physical parent");
     *host = role->host; *context = retained; return true;
+}
+
+bool qa_application_native_q3_client_modules_host_entered(const application_native_q3_client_modules *owner,
+    qa_qvm_role kind, const qa_q3_host *host, uint64_t service_owner)
+{
+    const native_client_module *role = owner ? module_role((application_native_q3_client_modules *)owner, kind) : NULL;
+    qa_application_q3_remote_source actual;
+    qa_q3_host_client_context retained;
+    if (!role || !owner->attached || !owner->calls || owner->entered != role || !host || role->host != host ||
+        service_owner != role->service_owner || owner->restore_pending) return false;
+    if (owner->retiring) {
+        if (!application_native_q3_remote_role_modules_retained(owner->provider, &owner->source, owner)) return false;
+        actual = owner->source;
+    } else if (!native_client_modules_physical(owner, &actual, NULL) ||
+        !qa_application_native_q3_client_modules_current(owner, &actual)) return false;
+    return qa_q3_host_client_context_read(role->host, &retained) &&
+        retained.session == owner->app->session && retained.owner == actual.receiver.receiver &&
+        retained.role == kind && retained.service_owner == service_owner &&
+        retained.console == actual.receiver.console && retained.cvars == actual.receiver.cvars;
 }
 
 bool qa_application_native_q3_client_modules_receipt_current(const application_native_q3_client_modules *owner,

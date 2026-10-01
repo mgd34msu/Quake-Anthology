@@ -167,7 +167,12 @@ static bool capture(application_native_q3_client_modules *owner, qa_buffer *out,
 bool qa_application_native_q3_client_modules_checkpoint(const application_native_q3_client_modules *owner,
     qa_buffer *out, qa_error *error)
 {
-    if (!owner || owner->restore_pending || owner->app->operation != APPLICATION_PERSISTING)
+    qa_application_q3_remote_source actual;
+    if (!owner || owner->restore_pending || owner->retiring ||
+        (owner->app->operation != APPLICATION_PERSISTING &&
+            (owner->app->operation != APPLICATION_IDLE || !owner->app->content_graph ||
+             owner->app->capture_content_graph || !native_client_modules_physical(owner, &actual, error) ||
+             !qa_application_native_q3_client_modules_current(owner, &actual))))
         return application_fail(error, QA_ERROR_ARGUMENT, "Acquired CLIENT checkpoint requires its application capture lease");
     return capture((application_native_q3_client_modules *)owner, out, error);
 }
@@ -259,6 +264,7 @@ bool qa_application_native_q3_client_modules_restore(qa_application *app,
         qa_sha256_equal(&saved.identity, &source->descriptor->identity) &&
         qa_application_content_catalog(graph, saved.catalog) == qa_launch_instance_catalog(source->descriptor) &&
         qa_application_content_view(graph, saved.view) == source->descriptor->content;
+    if (okay) okay = native_client_modules_policy(options->gamestate, saved.pure, error);
     if (okay) okay = opening_valid(graph, source->descriptor->content, &saved.ui.artifact, true, error) &&
         opening_valid(graph, source->descriptor->content, &saved.ui.declaration, false, error) &&
         (!saved.cgame.present || (opening_valid(graph, source->descriptor->content, &saved.cgame.artifact, true, error) &&
@@ -294,7 +300,8 @@ bool qa_application_native_q3_client_modules_restore(qa_application *app,
 bool qa_application_native_q3_client_modules_finish_restore(application_native_q3_client_modules *owner, qa_error *error)
 {
     if (!owner || !owner->restore_pending || !owner->saved.data || owner->app->operation != APPLICATION_PERSISTING ||
-        !qa_application_native_q3_client_modules_idle(owner))
+        !qa_application_native_q3_client_modules_idle(owner) ||
+        !native_client_modules_policy(owner->options.gamestate, owner->pure, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Acquired CLIENT finish requires its restored actual owners");
     native_client_module *roles[] = {&owner->ui, &owner->cgame};
     for (size_t i = 0; i < 2; ++i) if (roles[i]->ready) {

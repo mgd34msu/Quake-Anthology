@@ -14,8 +14,9 @@ struct application_native_q3_remote_role {
     qa_native_q3_remote_client_service *service;
     application_native_q3_client_modules *modules;
     qa_command_tokens arguments;
+    qa_buffer modules_restore;
     char *system_info;
-    uint64_t argument_revision, module_sequence;
+    uint64_t argument_revision, module_sequence, module_generation;
     size_t calls, module_calls;
     bool owns_cvars, initialized, retiring;
 };

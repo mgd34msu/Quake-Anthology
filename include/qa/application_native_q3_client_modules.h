@@ -76,6 +76,10 @@ bool qa_application_native_q3_client_modules_artifact_read(const application_nat
  * attached physical parent retains the module host; no source entry occurs. */
 bool qa_application_native_q3_client_modules_host_read(const application_native_q3_client_modules *,
     qa_qvm_role, qa_q3_host **, qa_q3_host_client_context *, qa_error *);
+/* Pure proof for retained host callbacks during their actual source entry,
+ * including entered Shutdown. Retirement never reopens media readiness. */
+bool qa_application_native_q3_client_modules_host_entered(const application_native_q3_client_modules *,
+    qa_qvm_role, const qa_q3_host *, uint64_t service_owner);
 bool qa_application_native_q3_client_modules_receipt_read(const application_native_q3_client_modules *,
     qa_qvm_role, qa_application_q3_role_receipt *, qa_error *);
 bool qa_application_native_q3_client_modules_receipt_current(const application_native_q3_client_modules *,

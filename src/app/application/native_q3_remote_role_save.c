@@ -4,6 +4,10 @@
 #include "qa/cvars_save.h"
 #include "qa/launch_save.h"
 #include "qa/source_save.h"
+#include "qa/binary.h"
+#include "qa/application_native_q3_client_modules.h"
+#include "qa/application_native_q3_remote_client.h"
+#include "qa/application_native_q3_remote_modules_save.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -25,6 +29,7 @@ typedef struct saved_role {
     uint32_t registry_seat;
     bool shared_registry;
     qa_buffer cvars;
+    qa_buffer modules;
     qa_cvars_restore *ticket;
     struct application_native_q3_remote_role *actual;
 } saved_role;
@@ -43,6 +48,7 @@ static void dispose(saved_roles *saved)
         saved_role *row = saved->roles + i;
         qa_cvars_save_abort(row->ticket);
         qa_buffer_free(&row->cvars);
+        qa_buffer_free(&row->modules);
         if (saved->reading) {
             qa_command_tokens_free(&row->arguments);
             free(row->system_info);
@@ -106,9 +112,9 @@ static bool argument_fields(qa_source_save_io *io, qa_command_tokens *arguments)
 }
 static bool fields(qa_source_save_io *io, saved_roles *saved)
 {
-    uint8_t magic[4] = {'Q','N','R','S'}; uint32_t version = 3;
+    uint8_t magic[4] = {'Q','N','R','S'}; uint32_t version = 4;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QNRS", 4) ||
-        !qa_source_save_u32(io, &version) || version != 3 ||
+        !qa_source_save_u32(io, &version) || version != 4 ||
         !qa_source_save_u32(io, &saved->product) || saved->product > QA_Q3_TEAM_ARENA ||
         !qa_source_save_count(io, &saved->descriptor_count, 64) ||
         !qa_source_save_count(io, &saved->count, 64)) return false;
@@ -135,7 +141,7 @@ static bool fields(qa_source_save_io *io, saved_roles *saved)
             !qa_source_save_u64(io, &row->module_sequence) ||
             !qa_source_save_count(io, &row->descriptor, saved->descriptor_count) ||
             !qa_source_save_u64(io, &row->epoch) || !qa_source_save_u64(io, &row->generation) ||
-            (!!row->descriptor != !!row->epoch) || (!!row->descriptor != !!row->generation) ||
+            (row->descriptor && (!row->epoch || !row->generation)) || (!row->descriptor && row->generation) ||
             !argument_fields(io, &row->arguments) || (!row->argument_revision &&
                 (row->arguments.count || row->arguments.args_text)) ||
             (row->argument_revision && !row->arguments.args_text) ||
@@ -153,6 +159,18 @@ static bool fields(qa_source_save_io *io, saved_roles *saved)
                 if (!row->cvars.data) return application_fail(io->error, QA_ERROR_MEMORY, "Restoring native CLIENT registry bytes");
             }
             if (!qa_source_save_bytes(io, row->cvars.data, row->cvars.size)) return false;
+        }
+        if (!qa_source_save_count(io, &row->modules.size, SIZE_MAX)) return false;
+        if (row->modules.size) {
+            if (!row->epoch || !row->module_sequence || row->modules.size < 12) return false;
+            if (saved->reading) {
+                if (row->modules.size > io->input.size - io->offset) return false;
+                row->modules.data = malloc(row->modules.size);
+                if (!row->modules.data) return application_fail(io->error, QA_ERROR_MEMORY, "Retaining staged CLIENT module continuation");
+            }
+            static const uint8_t signature[8] = {'Q','A','N','C','M',0,0,0};
+            if (!qa_source_save_bytes(io, row->modules.data, row->modules.size) ||
+                memcmp(row->modules.data, signature, sizeof(signature)) || qa_load_u32le(row->modules.data + 8) != 1) return false;
         }
         for (size_t j = 0; j < i; ++j) if (row->seat == saved->roles[j].seat ||
             row->service_owner == saved->roles[j].service_owner) return false;
@@ -217,6 +235,18 @@ bool application_native_q3_remote_roles_capture(application_provider *provider, 
             }
         }
         if (ok && !r->shared_registry) ok = row->owns_cvars && qa_cvars_save_capture(row->cvars, &r->cvars, error);
+        if (ok && row->modules) ok = qa_application_native_q3_client_modules_checkpoint(row->modules, &r->modules, error);
+        else if (ok && row->modules_restore.size) {
+            ok = provider->application->operation == APPLICATION_PERSISTING;
+            if (ok) {
+                r->modules.data = malloc(row->modules_restore.size);
+                ok = r->modules.data != NULL;
+                if (ok) {
+                    r->modules.size = row->modules_restore.size;
+                    memcpy(r->modules.data, row->modules_restore.data, r->modules.size);
+                } else application_fail(error, QA_ERROR_MEMORY, "Copying staged CLIENT module witness");
+            }
+        }
     }
     qa_source_save_io io = {0};
     if (ok) ok = qa_source_save_writer(&io, provider->application->session, error) &&
@@ -240,7 +270,8 @@ bool application_native_q3_remote_roles_restore_prepare(application_provider *pr
     for (size_t i = 0; ok && i < saved.count; ++i) {
         saved_role *r = saved.roles + i;
         ok = row && !row->retiring && !row->service && !row->modules && !row->descriptor && !row->initialized && row->owns_cvars &&
-            !row->argument_revision && !row->module_sequence && !row->system_info && !qa_cvars_count(row->cvars) &&
+            !row->argument_revision && !row->module_sequence && !row->modules_restore.data && !row->modules_restore.size &&
+            !row->system_info && !qa_cvars_count(row->cvars) &&
             r->seat == row->seat && r->service_owner == row->service_owner;
         if (ok) {
             r->actual = row;
@@ -274,9 +305,11 @@ bool application_native_q3_remote_roles_restore_prepare(application_provider *pr
         if (r->descriptor) ok = application_native_q3_remote_role_descriptor_bind(provider, row->seat,
             qa_launch_instance_lease_view(saved.descriptors[r->descriptor - 1].restored), r->epoch, r->generation, error);
         if (!ok) break;
+        row->connection_epoch = r->epoch;
         qa_command_tokens_free(&row->arguments); row->arguments = r->arguments; r->arguments = (qa_command_tokens){0};
         row->argument_revision = r->argument_revision; row->system_info = r->system_info; r->system_info = NULL;
         row->module_sequence = r->module_sequence;
+        row->modules_restore = r->modules; r->modules = (qa_buffer){0};
         qa_application_startup_source source;
         ok = application_native_q3_remote_role_configuration(provider, row->seat, &source, error) &&
             application_startup_tuple_restore(provider, &source, error);
@@ -307,11 +340,54 @@ bool application_native_q3_remote_roles_content_visit(const application_provider
 {
     if (!provider || !visitor || !visitor->catalog || !visitor->view || !application_native_q3_remote_roles_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT content visitor requires its actual idle holders");
-    for (const struct application_native_q3_remote_role *row = provider->native_q3_remote_roles; row; row = row->next)
+    for (const struct application_native_q3_remote_role *row = provider->native_q3_remote_roles; row; row = row->next) {
         if (row->descriptor) {
             const qa_launch_instance *source = qa_launch_instance_lease_view(row->descriptor);
             if (!visitor->catalog(visitor->context, qa_launch_instance_catalog(source), error) ||
                 !visitor->view(visitor->context, source->content, error)) return false;
         }
+        if (row->modules && !qa_application_native_q3_client_modules_content_visit(row->modules, visitor, error)) return false;
+    }
     return true;
+}
+
+static struct application_native_q3_remote_role *restoring_row(qa_application *app,
+    const qa_application_q3_remote_source *source, qa_error *error)
+{
+    uint64_t publication;
+    if (!app || app->operation != APPLICATION_PERSISTING ||
+        !qa_native_q3_remote_client_publication_read(app, source, &publication, error)) return NULL;
+    application_provider *provider = NULL;
+    for (size_t i = 0; i < app->provider_count; ++i)
+        if (app->providers[i] && app->providers[i]->owner == source->receiver.receiver) {
+            if (provider) return NULL;
+            provider = app->providers[i];
+        }
+    for (struct application_native_q3_remote_role *row = provider ? provider->native_q3_remote_roles : NULL;
+        row; row = row->next) if (row->seat == source->receiver.seat && !row->retiring) return row;
+    return NULL;
+}
+bool qa_native_q3_remote_client_modules_restore_read(qa_application *app,
+    const qa_application_q3_remote_source *source, qa_bytes *out, bool *found, qa_error *error)
+{
+    struct application_native_q3_remote_role *row = restoring_row(app, source, error);
+    if (!row || !out || !found)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Staged CLIENT modules require their real restoration source");
+    *out = (qa_bytes){row->modules_restore.data, row->modules_restore.size};
+    *found = row->modules_restore.size != 0; return true;
+}
+bool qa_native_q3_remote_client_modules_restore_complete(qa_application *app,
+    const qa_application_q3_remote_source *source, qa_error *error)
+{
+    struct application_native_q3_remote_role *row = restoring_row(app, source, error);
+    if (!row || !row->modules_restore.size || !row->modules ||
+        !qa_application_native_q3_client_modules_current(row->modules, source))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Staged CLIENT completion requires its actual finished module owner");
+    qa_buffer actual = {0};
+    bool ok = qa_application_native_q3_client_modules_checkpoint(row->modules, &actual, error);
+    if (ok && (actual.size != row->modules_restore.size || memcmp(actual.data, row->modules_restore.data, actual.size)))
+        ok = application_fail(error, QA_ERROR_FORMAT, "Restored CLIENT modules changed their staged continuation");
+    qa_buffer_free(&actual);
+    if (ok) qa_buffer_free(&row->modules_restore);
+    return ok;
 }

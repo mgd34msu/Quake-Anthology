@@ -112,5 +112,9 @@ bool qa_q3_client_userinfo(qa_q3_game *, qa_actor_id, const char *,
                           bool scoreboard, qa_error *);
 bool qa_q3_client_slot_userinfo(qa_q3_game *, uint32_t, const char *,
                                bool scoreboard, qa_error *);
+/* Selected-source refresh publishes the real name/session presentation without
+ * changing handicap, prediction or the physical source's maximum health. */
+bool qa_q3_client_selected_presentation(qa_q3_game *, qa_actor_id,
+                                        const char *, int32_t game_type, qa_error *);
 
 #endif

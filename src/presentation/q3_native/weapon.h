@@ -51,7 +51,7 @@ typedef struct q3n_selected_weapon_state {
 } q3n_selected_weapon_state;
 typedef struct q3n_selected_weapon_draw {
     const qa_q3_player *player;
-    int32_t time, last_fire;
+    int32_t time, last_fire, presentation_weapon;
     bool firing, has_last_fire, reduced_flashes;
     void *context;
     bool (*current)(void *);
@@ -64,6 +64,20 @@ typedef struct q3n_selected_weapon_view {
     int32_t bob_cycle;
     bool draw_gun;
 } q3n_selected_weapon_view;
+typedef struct q3n_selected_weapon_attachment {
+    int32_t model;
+    const char *tag;
+} q3n_selected_weapon_attachment;
+typedef struct q3n_selected_weapon_authored_view {
+    q3n_selected_weapon_view camera;
+    const char *anchor_tag;
+    qa_vec3 anchor_offset;
+    float field_of_view, fov_above, fov_scale;
+    int32_t frame, old_frame;
+    float back_lerp;
+    const q3n_selected_weapon_attachment *attachments;
+    size_t attachment_count;
+} q3n_selected_weapon_authored_view;
 typedef struct q3n_selected_weapon_held {
     const qa_q3_presentation_assets *parent_assets;
     const qa_q3_ref_entity *torso;
@@ -83,6 +97,11 @@ bool q3n_weapons_selected_view(q3n_weapons *, const q3n_selected_weapon_media *,
 bool q3n_weapons_selected_held(q3n_weapons *, const q3n_selected_weapon_media *,
     q3n_selected_weapon_state *, const q3n_selected_weapon_draw *,
     const q3n_selected_weapon_held *, bool *submitted, qa_error *);
+/* The actual immutable anchor/attachment declaration supplies this pose.
+ * Source PS remains unchanged; presentation_weapon qualifies flash semantics. */
+bool q3n_weapons_selected_authored_view(q3n_weapons *, const q3n_selected_weapon_media *,
+    q3n_selected_weapon_state *, const q3n_selected_weapon_draw *,
+    const q3n_selected_weapon_authored_view *, bool *submitted, qa_error *);
 typedef enum q3n_impact_sound { Q3N_IMPACT_DEFAULT, Q3N_IMPACT_METAL, Q3N_IMPACT_FLESH } q3n_impact_sound;
 typedef struct q3n_weapon_drawing {
     void *context;

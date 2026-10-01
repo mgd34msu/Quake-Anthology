@@ -466,6 +466,7 @@ bool application_native_q3_remote_role_modules_attach(application_provider *prov
         !qa_cvars_observer_idle(row->cvars) || !application_native_q3_remote_role_source_current(provider, source))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native client modules require their current physical CLIENT slot");
     row->connection_epoch = source->connection_epoch;
+    row->module_generation = source->configuration_generation;
     row->modules = modules; return true;
 }
 bool application_native_q3_remote_role_modules_pointer_read(application_provider *provider, uint32_t seat,
@@ -503,6 +504,29 @@ bool application_native_q3_remote_role_modules_current(application_provider *pro
     return row && modules && row->modules == modules &&
         application_native_q3_remote_role_source_current(provider, source);
 }
+bool application_native_q3_remote_role_modules_retained(application_provider *provider,
+    const qa_application_q3_remote_source *source, const application_native_q3_client_modules *modules)
+{
+    struct application_native_q3_remote_role *row = source ? find(provider, source->receiver.seat) : NULL;
+    if (!native_receiver(provider) || !provider->application || !row || row->provider != provider ||
+        !modules || row->modules != modules || !source->descriptor || !row->connection_epoch ||
+        source->connection_epoch != row->connection_epoch || !row->module_generation ||
+        source->configuration_generation != row->module_generation ||
+        (row->configuration_generation && source->configuration_generation != row->configuration_generation)) return false;
+    const qa_launch_instance *descriptor = row->descriptor ? qa_launch_instance_lease_view(row->descriptor) : provider->launch;
+    const qa_application_q3_client_context *receiver = &source->receiver;
+    const qa_command_context *command = &receiver->command_context;
+    return source->descriptor->storage == descriptor->storage && source->descriptor->content == descriptor->content &&
+        qa_sha256_equal(&source->descriptor->identity, &descriptor->identity) &&
+        receiver->session == provider->application->session && receiver->receiver == provider->owner &&
+        receiver->seat == row->seat && receiver->service_owner == row->service_owner &&
+        receiver->frontend_lifetime == row && receiver->console == row->console && receiver->cvars == row->cvars &&
+        receiver->client_time_cvars == row->cvars && receiver->client_time_owner == provider->owner &&
+        !receiver->source_owner && !receiver->source_cvars && qa_actor_id_equal(receiver->source_actor, (qa_actor_id){0}) &&
+        receiver->native_source && command->owner == provider->owner && command->seat == row->seat &&
+        command->dialect == QA_CONSOLE_Q3 && command->origin == QA_COMMAND_SEAT && !command->client &&
+        qa_actor_id_equal(command->actor, (qa_actor_id){0});
+}
 bool application_native_q3_remote_role_modules_borrow(application_provider *provider,
     const qa_application_q3_remote_source *source, const application_native_q3_client_modules *modules, qa_error *error)
 {
@@ -528,7 +552,7 @@ bool application_native_q3_remote_role_modules_detach(application_provider *prov
     if (!row || !modules || row->modules != modules || row->calls || !qa_console_idle(row->console) ||
         !qa_cvars_observer_idle(row->cvars))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native client module detach retains a physical CLIENT borrow");
-    row->modules = NULL; return true;
+    row->modules = NULL; row->module_generation = 0; return true;
 }
 bool application_native_q3_remote_role_module_sequence_read(application_provider *provider,
     const qa_application_q3_remote_source *source, uint64_t *out, qa_error *error)
@@ -571,7 +595,8 @@ bool application_native_q3_remote_roles_destroy(application_provider *provider, 
         if (!application_startup_tuple_retire(provider, &source, error)) return false;
         provider->native_q3_remote_roles = row->next;
         qa_console_destroy(row->console); if (row->owns_cvars) qa_cvars_destroy(row->cvars);
-        qa_command_tokens_free(&row->arguments); qa_launch_instance_lease_release(row->descriptor); free(row->system_info); free(row);
+        qa_command_tokens_free(&row->arguments); qa_buffer_free(&row->modules_restore);
+        qa_launch_instance_lease_release(row->descriptor); free(row->system_info); free(row);
     }
     return true;
 }

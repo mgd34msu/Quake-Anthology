@@ -182,6 +182,7 @@ static bool draw(frontend_equipment_q3_presenter *presenter, const qa_applicatio
     q3n_selected_weapon_media media;
     bool ok = q3n_selected_media_read(presenter->owner->view.media, source->q3_source.weapon, view != NULL, &media, error);
     q3n_selected_weapon_draw request = {.player = &source->q3_source, .time = source->q3_time_ms,
+        .presentation_weapon = source->q3_source.weapon,
         .has_last_fire = source->q3_fire.present, .last_fire = source->q3_fire.time_ms,
         .firing = (source->q3_source.eFlags & 256) != 0, .reduced_flashes = reduced_flashes,
         .context = &call, .current = call_current, .submit = collect};
