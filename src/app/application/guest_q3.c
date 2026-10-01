@@ -4,6 +4,7 @@
 #include "bots_private.h"
 #include "guest_q3_restart.h"
 #include "guest_q3_console.h"
+#include "guest_q3_client_console.h"
 #include "q3_campaign_launch.h"
 #include "guest_q3_factory.h"
 
@@ -130,6 +131,38 @@ bool application_guest_q3_create_empty(qa_application *application, application_
     if (!engine) return application_fail(error, QA_ERROR_MEMORY, "allocating Q3 guest owner");
     engine->provider = provider; engine->world = world;
     engine->restore_pending = restoring;
+    if (!restoring) {
+        const qa_launch_snapshot *published = qa_configuration_current(application->configuration);
+        const qa_launch_instance *previous = published ? qa_launch_snapshot_find(published,
+            provider->launch->selection.instance) : NULL;
+        application_provider *old = previous ? previous->state : NULL;
+        struct application_q3_guest *old_engine = old != provider ? q3g_engine(old) : NULL;
+        if (old_engine) {
+            const qa_launch_snapshot *candidate = application->routing_snapshot;
+            const qa_launch_instance *selected = candidate ? qa_launch_snapshot_find(candidate,
+                provider->launch->selection.instance) : NULL;
+            if (old->application != application || old->owner != provider->owner ||
+                old_engine->provider != old || !old->constructed || !old->attached || old->close_pending ||
+                old_engine->calls || old_engine->restore_pending || !qa_world_idle(old_engine->world) ||
+                !old->launch || previous->storage != old->launch->storage ||
+                !qa_sha256_equal(&previous->identity, &old->launch->identity) || !selected ||
+                selected->state != provider || selected->storage != provider->launch->storage ||
+                !qa_sha256_equal(&selected->identity, &provider->launch->identity) ||
+                old_engine->role_sequence == UINT64_MAX) {
+                free(engine);
+                return application_fail(error, QA_ERROR_ARGUMENT,
+                    "Fresh Q3 role lifetimes lost their actual published and candidate registration owners");
+            }
+            for (q3g_role *role = old_engine->roles; role; role = role->next)
+                if (role->engine != old_engine || !role->service_owner || !role->service_sequence ||
+                    role->service_sequence > old_engine->role_sequence) {
+                    free(engine);
+                    return application_fail(error, QA_ERROR_ARGUMENT,
+                        "Published Q3 role leaves its actual registration sequence authority");
+                }
+            engine->role_sequence = old_engine->role_sequence;
+        }
+    }
     engine->milliseconds = (int32_t)(uint32_t)(provider->launch->selection.clock.initial_time_ns /
         UINT64_C(1000000));
     engine->random_seed = (int32_t)(provider->owner * UINT32_C(2246822519));
@@ -166,8 +199,18 @@ bool q3g_selected_client_seat(const application_provider *provider,
 {
     if (choices->seats[index].bot) return false;
     qa_launch_role selected_role = kind == QA_QVM_CGAME ? QA_ROLE_HUD : QA_ROLE_MENU;
-    const qa_launch_binding *binding = qa_launch_binding_for(choices,
-        (qa_launch_scope){.kind = QA_SCOPE_SEAT, .seat = choices->seats[index].id}, selected_role, "");
+    const qa_launch_seat *seat = &choices->seats[index];
+    const qa_launch_binding *binding = NULL;
+    if (seat->actor.generation)
+        for (size_t i = 0; i < choices->binding_count; ++i) {
+            const qa_launch_binding *candidate = &choices->bindings[i];
+            if (candidate->role == selected_role && candidate->scope.kind == QA_SCOPE_ACTOR &&
+                qa_actor_id_equal(candidate->scope.actor, seat->actor) && !*candidate->selector) {
+                binding = candidate; break;
+            }
+        }
+    if (!binding) binding = qa_launch_binding_for(choices,
+        (qa_launch_scope){.kind = QA_SCOPE_SEAT, .seat = seat->id}, selected_role, "");
     if (!binding) binding = qa_launch_binding_for(choices,
         (qa_launch_scope){.kind = QA_SCOPE_WORLD}, selected_role, "");
     return binding && !strcmp(binding->instance, provider->launch->selection.instance);
@@ -433,7 +476,8 @@ bool application_q3_guest_deconstruct(application_provider *provider, qa_error *
             } else { provider->state.native.q3_host = NULL; provider->state.native.host = NULL; }
         }
     }
-    if (!application_guest_q3_console_destroy(engine, error)) return false;
+    if (!application_guest_q3_client_console_destroy(engine, error) ||
+        !application_guest_q3_console_destroy(engine, error)) return false;
     if (provider->kind == APPLICATION_PROVIDER_QVM) {
         provider->state.qvm.host = NULL; provider->state.qvm.machine = NULL; provider->state.qvm.engine = NULL;
     } else { provider->state.native.q3_host = NULL; provider->state.native.host = NULL; provider->state.native.engine = NULL; }
@@ -446,6 +490,7 @@ bool application_q3_guest_deconstruct(application_provider *provider, qa_error *
         qa_launch_instance_lease_release(artifact->descriptor);
         qa_buffer_free(&artifact->equipment_presentation);
         application_q3_equipment_profile_free(&artifact->equipment_profile);
+        application_q3_grapple_profile_destroy(artifact->grapple_profile);
         free(artifact->path); free(artifact);
     }
     application_guest_q3_save_clear(engine);

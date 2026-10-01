@@ -4,6 +4,7 @@
 #include "internal.h"
 #include "guest_q3_equipment_profile.h"
 #include "guest_q3_equipment.h"
+#include "guest_q3_grapple_profile.h"
 #include "guest_q3_fire.h"
 #include <limits.h>
 #include <stdlib.h>
@@ -53,6 +54,7 @@ typedef struct q3g_artifact {
     qa_vfs *view;
     qa_buffer primary, equipment_presentation;
     application_q3_equipment_profile equipment_profile;
+    application_q3_grapple_profile *grapple_profile;
     bool qvm;
 } q3g_artifact;
 typedef struct q3g_role {
@@ -118,6 +120,7 @@ struct application_q3_guest {
     uint32_t restored_client_source_seat;
     q3g_artifact *artifacts;
     struct application_guest_q3_console *console;
+    struct application_guest_q3_client_console *client_preparation;
     qa_q3_product product;
     qa_q3_gamestate gamestate;
     q3g_client clients[64];

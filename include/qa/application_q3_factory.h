@@ -1,5 +1,6 @@
 #ifndef QA_APPLICATION_Q3_FACTORY_H
 #define QA_APPLICATION_Q3_FACTORY_H
+#include "qa/application_startup_prepare.h"
 
 #include "qa/application_q3_client.h"
 #include "qa/persistence_content.h"
@@ -65,6 +66,15 @@ bool qa_application_q3_remote_source_current(qa_application *,
  * source_client remains unbound until the real GAME binding follows. */
 bool qa_application_q3_preconstruction_source_read(qa_application *, qa_actor_owner,
     qa_qvm_role, uint32_t seat, qa_application_q3_client_preparation *, qa_error *);
+/* Actual CLIENT configuration owners exist before any role host or imports.
+ * Bind a prepared hosted registry or transfer the private heap once to its
+ * configuration owner; the retained physical console continues borrowing it. */
+bool qa_application_q3_client_configuration_read(qa_application *, qa_actor_owner,
+    uint32_t authored_seat, qa_application_startup_source *, qa_error *);
+bool qa_application_q3_client_configuration_take_cvars(qa_application *,
+    const qa_application_startup_source *, qa_cvars **, qa_error *);
+bool qa_application_q3_client_configuration_bind_cvars(qa_application *,
+    const qa_application_startup_source *, qa_cvars *, qa_error *);
 /* Consume source Shutdown once at the idle decoder boundary. Actual hosts,
  * registry and metadata remain retained, ready for content replacement. */
 bool qa_application_q3_remote_clear(qa_application *,

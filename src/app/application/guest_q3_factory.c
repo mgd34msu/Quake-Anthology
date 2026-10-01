@@ -1,8 +1,11 @@
 #include "guest_q3_factory.h"
 #include "guest_q3_private.h"
 #include "guest_q3_console.h"
+#include "guest_q3_client_console.h"
 #include "qa/application_q3_factory.h"
 #include "native_q3_console.h"
+#include "native_q3_remote_role.h"
+#include "native_q3_remote_role_save.h"
 #include "q3_product.h"
 #include "qa/network_q3.h"
 
@@ -52,6 +55,61 @@ static bool same_descriptor(const qa_launch_instance *actual, const qa_launch_in
     return actual && retained && actual->storage == retained->storage &&
         actual->content == retained->content && actual->roles == retained->roles &&
         qa_sha256_equal(&actual->identity, &retained->identity);
+}
+
+bool qa_application_q3_client_configuration_read(qa_application *app, qa_actor_owner receiver,
+    uint32_t seat, qa_application_startup_source *out, qa_error *error)
+{
+    application_provider *provider = receiver_provider(app, receiver);
+    struct application_q3_guest *engine = q3g_engine(provider);
+    if (!app || !out || !provider || provider->application != app || provider->close_pending || app->destroy_requested)
+        return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT configuration lost its retained receiver");
+    if (provider->kind == APPLICATION_PROVIDER_Q3)
+        return application_native_q3_remote_role_configuration(provider, seat, out, error);
+    if (!engine ||
+        !application_guest_q3_client_console_at(engine, seat, NULL, NULL))
+        return application_fail(error, QA_ERROR_ARGUMENT, "CLIENT configuration lost its retained receiver");
+    qa_application_startup_source actual;
+    for (size_t index = 0; application_guest_q3_client_console_source(engine, index, &actual); ++index)
+        if (actual.scope.seat == seat) { *out = actual; return true; }
+    return application_fail(error, QA_ERROR_NOT_FOUND, "Receiver has no prepared physical CLIENT seat console");
+}
+
+static application_provider *configuration_owner(qa_application *app,
+    const qa_application_startup_source *source, qa_error *error)
+{
+    qa_application_startup_source actual;
+    if (!source || !qa_application_q3_client_configuration_read(app, source->scope.provider,
+        source->scope.seat, &actual, error)) return NULL;
+    if (!same_descriptor(actual.descriptor, source->descriptor) || actual.scope.kind != source->scope.kind ||
+        actual.console != source->console || actual.cvars != source->cvars ||
+        source->command.owner != actual.command.owner || source->command.seat != actual.command.seat ||
+        source->command.dialect != actual.command.dialect || source->command.origin != actual.command.origin ||
+        source->declaration_owner != actual.declaration_owner) {
+        application_fail(error, QA_ERROR_ARGUMENT, "CLIENT configuration changed its exact physical preparation");
+        return NULL;
+    }
+    return receiver_provider(app, source->scope.provider);
+}
+
+bool qa_application_q3_client_configuration_take_cvars(qa_application *app,
+    const qa_application_startup_source *source, qa_cvars **out, qa_error *error)
+{
+    application_provider *provider = configuration_owner(app, source, error);
+    if (!provider) return false;
+    if (provider->kind == APPLICATION_PROVIDER_Q3)
+        return application_native_q3_remote_role_take(provider, source->scope.seat, out, error);
+    return application_guest_q3_client_console_take(q3g_engine(provider), source->scope.seat, out, error);
+}
+
+bool qa_application_q3_client_configuration_bind_cvars(qa_application *app,
+    const qa_application_startup_source *source, qa_cvars *cvars, qa_error *error)
+{
+    application_provider *provider = configuration_owner(app, source, error);
+    if (!provider) return false;
+    if (provider->kind == APPLICATION_PROVIDER_Q3)
+        return application_native_q3_remote_role_bind(provider, source->scope.seat, cvars, error);
+    return application_guest_q3_client_console_bind(q3g_engine(provider), source->scope.seat, cvars, error);
 }
 
 bool qa_application_q3_preconstruction_source_read(qa_application *app,
@@ -139,9 +197,17 @@ bool qa_application_q3_role_loading(qa_application *app, qa_actor_owner receiver
 bool qa_application_q3_remote_source_read(qa_application *app, qa_actor_owner receiver,
     uint32_t seat, uint64_t epoch, qa_application_q3_remote_source *out, qa_error *error)
 {
+    if (!out || !epoch)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Remote source requires its actual connection lifetime and output");
     application_provider *provider = receiver_provider(app, receiver);
     struct application_q3_guest *engine = q3g_engine(provider);
-    if (!out || !epoch || !engine || (engine->connection_epoch && engine->connection_epoch != epoch))
+    if (provider && provider->kind == APPLICATION_PROVIDER_Q3) {
+        qa_application_q3_remote_source source;
+        if (!application_native_q3_remote_role_source_read(provider, seat, epoch, &source, error) ||
+            !qa_application_q3_remote_context_read(app, receiver, seat, &source.receiver, error)) return false;
+        *out = source; return true;
+    }
+    if (!engine || (engine->connection_epoch && engine->connection_epoch != epoch))
         return application_fail(error, QA_ERROR_ARGUMENT, "Remote source differs from its actual connection lifetime");
     qa_application_q3_remote_source source = {.descriptor = engine->client_descriptor ?
         qa_launch_instance_lease_view(engine->client_descriptor) : provider->launch,
@@ -156,10 +222,14 @@ bool qa_application_q3_remote_source_current(qa_application *app,
     const qa_application_q3_remote_source *source)
 {
     qa_application_q3_remote_source actual;
-    return source && qa_application_q3_remote_source_read(app, source->receiver.receiver,
-        source->receiver.seat, source->connection_epoch, &actual, NULL) &&
-        same_descriptor(actual.descriptor, source->descriptor) && actual.configuration_generation == source->configuration_generation &&
-        qa_application_q3_remote_context_current(app, &source->receiver);
+    if (!source || !qa_application_q3_remote_source_read(app, source->receiver.receiver,
+        source->receiver.seat, source->connection_epoch, &actual, NULL)) return false;
+    if (!same_descriptor(actual.descriptor, source->descriptor) ||
+        actual.configuration_generation != source->configuration_generation ||
+        !qa_application_q3_remote_context_current(app, &source->receiver)) return false;
+    application_provider *provider = receiver_provider(app, source->receiver.receiver);
+    return provider && (provider->kind != APPLICATION_PROVIDER_Q3 ||
+        application_native_q3_remote_role_source_current(provider, source));
 }
 
 static bool discard_role(q3g_role **role, qa_error *error)
@@ -173,15 +243,14 @@ static application_provider *menu_provider(qa_application *app, uint32_t seat)
 {
     const qa_launch_snapshot *snapshot = app->routing_snapshot ? app->routing_snapshot : qa_application_launch(app);
     const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
-    const qa_launch_binding *binding = choices ? qa_launch_binding_for(choices,
-        (qa_launch_scope){.kind = QA_SCOPE_SEAT, .seat = seat}, QA_ROLE_MENU, "") : NULL;
-    if (!binding && choices) binding = qa_launch_binding_for(choices,
-        (qa_launch_scope){.kind = QA_SCOPE_WORLD}, QA_ROLE_MENU, "");
+    size_t index = 0;
+    while (choices && index < choices->seat_count && choices->seats[index].id != seat) ++index;
+    if (!choices || index == choices->seat_count) return NULL;
     application_provider **providers = app->routing_providers ? app->routing_providers : app->providers;
     size_t count = app->routing_providers ? app->routing_provider_count : app->provider_count;
-    for (size_t i = 0; binding && i < count; ++i)
+    for (size_t i = 0; i < count; ++i)
         if (providers[i] && providers[i]->launch &&
-            !strcmp(providers[i]->launch->selection.instance, binding->instance)) return providers[i];
+            q3g_selected_client_seat(providers[i], choices, QA_QVM_UI, index)) return providers[i];
     return NULL;
 }
 
@@ -404,6 +473,8 @@ bool qa_application_q3_remote_initialize(qa_application *app,
         return application_fail(error, QA_ERROR_ARGUMENT, "Remote Init requires its actual decoded connection counters");
     application_provider *provider = receiver_provider(app, request->source.receiver.receiver);
     struct application_q3_guest *engine = q3g_engine(provider);
+    if (!engine)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Remote source Init requires its actual acquired role factory");
     q3g_role *cgame = NULL, *ui = NULL;
     for (q3g_role *role = engine->roles; role; role = role->next)
         if (role->seat == request->source.receiver.seat && role->ready && !role->retired) {
@@ -477,6 +548,8 @@ bool qa_application_q3_content_visit(const qa_application *app,
     if (!app || !visitor || !visitor->catalog || !visitor->view)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 content visitor requires actual retained owners");
     for (size_t i = 0; i < app->provider_count; ++i) {
+        if (app->providers[i]->kind == APPLICATION_PROVIDER_Q3 &&
+            !application_native_q3_remote_roles_content_visit(app->providers[i], visitor, error)) return false;
         struct application_q3_guest *engine = q3g_engine(app->providers[i]);
         if (!engine) continue;
         if (engine->client_candidate || engine->calls)
@@ -490,7 +563,7 @@ bool qa_application_q3_content_visit(const qa_application *app,
             const qa_launch_instance *descriptor = qa_launch_instance_lease_view(artifact->descriptor);
             if (!descriptor || descriptor->content != artifact->view || !artifact->resource ||
                 artifact->acquisition.resource_id != qa_resource_id(artifact->resource) ||
-                !qa_vfs_acquisition_valid(artifact->view, &artifact->acquisition, error) ||
+                !qa_vfs_acquisition_retained(artifact->view, &artifact->acquisition, error) ||
                 !visitor->catalog(visitor->context, qa_launch_instance_catalog(descriptor), error) ||
                 !visitor->view(visitor->context, artifact->view, error)) return false;
         }
@@ -530,11 +603,108 @@ bool application_guest_q3_console_prepare(qa_application *app, application_provi
     if (!q3g_engine(provider) && !application_guest_q3_create_empty(app, provider, world,
         product, choices, false, error)) return false;
     if (!application_guest_q3_factory_reuse(app, provider, world, product, choices, error)) return false;
-    if (q3g_primary_role(provider->launch->selection.artifact) != QA_QVM_GAME) return true;
+    qa_qvm_role kind = q3g_primary_role(provider->launch->selection.artifact);
+    struct application_q3_guest *engine = q3g_engine(provider);
+    if (!application_guest_q3_client_consoles_prepare(engine, choices, error)) return false;
+    if (kind != QA_QVM_GAME) {
+        qa_application_startup_source source;
+        if (!application_guest_q3_client_console_source(engine, 0, &source))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Original CLIENT preparation has no authored selected seat");
+        *console = source.console; *cvars = source.cvars; *command = source.command;
+        return true;
+    }
     *console = application_guest_q3_console_owner(provider);
     *cvars = application_guest_q3_console_registry(provider);
     *command = (qa_command_context){.owner = provider->owner,
         .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SERVER};
     return (*console && *cvars) || application_fail(error, QA_ERROR_ARGUMENT,
         "Original Q3 preparation did not retain its actual private GAME console");
+}
+
+bool application_guest_q3_startup_source_at(application_provider *provider, size_t index,
+    qa_application_startup_source *out, bool *found, qa_error *error)
+{
+    struct application_q3_guest *engine = q3g_engine(provider);
+    if (!provider || !engine || !out || !found)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Startup enumeration lost its retained original source");
+    *found = false;
+    qa_console *console = application_guest_q3_console_owner(provider);
+    if (console) {
+        if (!index) {
+            *out = (qa_application_startup_source){.descriptor = provider->launch,
+                .scope = {.provider = provider->owner, .kind = QA_APPLICATION_CONSOLE_Q3_GAME},
+                .console = console, .cvars = application_guest_q3_console_registry(provider),
+                .declaration_owner = provider->owner,
+                .command = {.owner = provider->owner, .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SERVER}};
+            *found = true; return true;
+        }
+        --index;
+    }
+    *found = application_guest_q3_client_console_source(engine, index, out);
+    return true;
+}
+
+static bool program_tuple(struct application_q3_guest *engine,
+    const qa_application_startup_source *source)
+{
+    qa_application_startup_source actual;
+    for (size_t index = 0;; ++index) {
+        bool found;
+        if (!application_guest_q3_startup_source_at(engine->provider, index, &actual, &found, NULL) || !found)
+            return false;
+        if (actual.console == source->console)
+            return actual.cvars == source->cvars && same_descriptor(actual.descriptor, source->descriptor) &&
+                actual.scope.provider == source->scope.provider && actual.scope.kind == source->scope.kind &&
+                actual.scope.seat == source->scope.seat && source->command.owner == actual.command.owner &&
+                source->command.seat == actual.command.seat && source->command.dialect == actual.command.dialect;
+    }
+}
+
+bool application_guest_q3_program_identity(application_provider *old, application_provider *fresh,
+    const qa_application_startup_source *old_tuple, const qa_application_startup_source *new_tuple,
+    qa_console_program_identity kind, uint64_t old_id, uint64_t *new_id, bool *handled, qa_error *error)
+{
+    if (!new_id || !handled)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 program identity requires its actual result owners");
+    *handled = false;
+    struct application_q3_guest *source = q3g_engine(old), *target = q3g_engine(fresh);
+    if (!source || !target) return true;
+    if (!old_tuple || !new_tuple || (unsigned)kind > QA_CONSOLE_PROGRAM_CLIENT || old == fresh ||
+        old->application != fresh->application || old->owner != fresh->owner || !old->constructed ||
+        !old->attached || old->close_pending || fresh->attached || fresh->close_pending ||
+        source->provider != old || target->provider != fresh || target->role_sequence < source->role_sequence ||
+        source->calls || target->calls || source->restore_pending || target->restore_pending ||
+        source->constructing_role || target->constructing_role ||
+        old_tuple->scope.kind != new_tuple->scope.kind || old_tuple->scope.seat != new_tuple->scope.seat ||
+        strcmp(old->launch->selection.instance, fresh->launch->selection.instance) ||
+        !program_tuple(source, old_tuple) || !program_tuple(target, new_tuple))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 program mapping lost its exact old and fresh physical scopes");
+    *handled = true; *new_id = old_id;
+    if (!old_id) return true;
+    if (kind == QA_CONSOLE_PROGRAM_OWNER && old_id == old->owner) { *new_id = fresh->owner; return true; }
+    q3g_role *live = NULL;
+    for (q3g_role *role = source->roles; role; role = role->next)
+        if (role->service_owner == old_id && role->ready && !role->retired && role->host &&
+            !role->activation_failed && qa_q3_host_console(role->host, NULL, NULL) == old_tuple->console) {
+            if (live) return application_fail(error, QA_ERROR_ARGUMENT, "Ambiguous old Q3 program lifetime");
+            live = role;
+        }
+    q3g_role *replacement = NULL;
+    for (q3g_role *role = target->roles; role; role = role->next) {
+        if (!live && role->service_owner == old_id)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Historical Q3 lifetime collides with a fresh actual role");
+        if (live && role->kind == live->kind && (live->kind == QA_QVM_GAME || role->seat == live->seat) &&
+            role->ready && !role->retired && role->host && !role->activation_failed &&
+            qa_q3_host_console(role->host, NULL, NULL) == new_tuple->console) {
+            if (replacement) return application_fail(error, QA_ERROR_ARGUMENT, "Ambiguous fresh Q3 program lifetime");
+            replacement = role;
+        }
+    }
+    if (live) {
+        if (!fresh->constructed || !replacement || !replacement->service_owner ||
+            replacement->service_sequence <= source->role_sequence)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Live Q3 program lifetime has no genuine fresh role");
+        *new_id = replacement->service_owner;
+    }
+    return true;
 }

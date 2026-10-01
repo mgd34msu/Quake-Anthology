@@ -8,6 +8,7 @@
 #include "campaign_cinematic.h"
 #include "config_store.h"
 #include "keys.h"
+#include "equipment_events.h"
 #include "qa/application_q1_save.h"
 #include <SDL.h>
 
@@ -88,7 +89,8 @@ static bool original_create(qa_frontend *active,const qa_q1_save_data *save,cons
     if (!f->config_store) return false;
     qa_application_options options=f->options.application;
     frontend_application_options(f,&options);
-    if (!qa_application_create(&options,&f->application,error) || !frontend_commands(f,error)) return false;
+    if (!qa_application_create(&options,&f->application,error) ||
+        !frontend_equipment_events_create(f,&f->gear_events,error) || !frontend_commands(f,error)) return false;
     if (f->options.dedicated) {
         f->terminal=qa_dedicated_console_create(error);
         if (!f->terminal || !frontend_ui_features_prepare(f,error)) return false;

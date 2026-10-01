@@ -348,7 +348,7 @@ static bool restored_instance_content(qa_configuration_transaction *transaction,
     if (saved.artifact) {
         if (!retain_acquisition(saved.artifact_acquisition, &owner->artifact_acquisition, error) ||
             owner->artifact_acquisition.resource_id != qa_resource_id(saved.artifact) ||
-            !qa_vfs_acquisition_valid(owner->view.content, &owner->artifact_acquisition, error)) return false;
+            !qa_vfs_acquisition_retained(owner->view.content, &owner->artifact_acquisition, error)) return false;
         owner->view.artifact_acquisition = &owner->artifact_acquisition;
     }
     qa_launch_resource *interfaces = calloc(saved.interface_count ? saved.interface_count : 1,
@@ -536,7 +536,7 @@ bool qa_launch_instance_restore_client_metadata(const qa_launch_instance *source
         owner->view.declaration = saved->declaration; qa_resource_retain((qa_resource *)saved->declaration);
         ok = retain_acquisition(saved->artifact_acquisition, &owner->artifact_acquisition, error) &&
             owner->artifact_acquisition.resource_id == qa_resource_id(saved->artifact) &&
-            qa_vfs_acquisition_valid(owner->view.content, &owner->artifact_acquisition, error);
+            qa_vfs_acquisition_retained(owner->view.content, &owner->artifact_acquisition, error);
         owner->view.artifact_acquisition = &owner->artifact_acquisition;
     }
     if (ok && saved->interface_count) {
@@ -561,6 +561,84 @@ bool qa_launch_instance_restore_client_metadata(const qa_launch_instance *source
         qa_sha256_equal(&owner->view.identity, &saved->identity);
     if (!ok && error && error->code == QA_OK)
         error_message(error, "Restored private descriptor identity differs from its actual retained content");
+    if (ok) ok = qa_launch_instance_retain_metadata(&owner->view, out, error);
+    owner_release(owner); return ok;
+}
+
+static bool builtin_client_source(const qa_launch_instance *source)
+{
+    const qa_product *product = source ? qa_catalog_product(qa_launch_instance_catalog(source),
+        source->selection.product) : NULL;
+    return source && source->storage && product && product->family == QA_GAME_Q3 &&
+        source->selection.runtime == QA_PROGRAM_BUILTIN && source->selection.clock.kind == QA_CLOCK_Q3 &&
+        source->selection.artifact && !*source->selection.artifact &&
+        source->selection.component && !*source->selection.component &&
+        !source->artifact && !source->artifact_acquisition && !source->declaration &&
+        !source->interface_count && !source->behavior_count && (source->roles & QA_ROLE_BIT(QA_ROLE_HUD));
+}
+
+bool qa_launch_instance_prepare_builtin_client_metadata(const qa_launch_instance *source,
+    qa_catalog *catalog, qa_product_id selected, const qa_vfs *prepared,
+    qa_launch_instance_lease **out, qa_error *error)
+{
+    const qa_product *product = catalog ? qa_catalog_product(catalog, selected) : NULL;
+    if (!builtin_client_source(source) || !product || product->family != QA_GAME_Q3 ||
+        !prepared || !out || *out)
+        return error_message(error, "Builtin client metadata requires its actual source and prepared content");
+    instance_owner *owner = calloc(1, sizeof(*owner));
+    if (!owner) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining builtin client metadata"); return false; }
+    owner->references = 1; owner->view.storage = owner;
+    owner->view.state = source->state;
+    owner->view.roles = QA_ROLE_BIT(QA_ROLE_HUD) | QA_ROLE_BIT(QA_ROLE_MENU);
+    qa_launch_provider selection = source->selection;
+    selection.product = selected;
+    bool ok = launch_empty(catalog, &owner->identity, error) &&
+        qa_launch_set_provider(owner->identity, &selection, error);
+    if (ok) {
+        owner->view.selection = owner->identity->choices.providers[0];
+        owner->view.content = qa_vfs_clone(prepared, error);
+        ok = owner->view.content != NULL;
+    }
+    if (ok) ok = instance_identity(owner, &owner->identity->choices, error) &&
+        qa_launch_instance_retain_metadata(&owner->view, out, error);
+    owner_release(owner); return ok;
+}
+
+bool qa_launch_instance_restore_builtin_client_metadata(const qa_launch_instance *source,
+    const qa_launch_restored_instance *saved, qa_launch_instance_lease **out, qa_error *error)
+{
+    if (!source || !saved || !saved->content || !saved->catalog || !out || *out)
+        return error_message(error, "Builtin client restoration requires its actual claimed owners");
+    instance_owner *owner = calloc(1, sizeof(*owner));
+    if (!owner) {
+        qa_vfs_destroy(saved->content);
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring builtin client metadata"); return false;
+    }
+    owner->references = 1; owner->view.storage = owner; owner->view.content = saved->content;
+    owner->view.state = source->state;
+    owner->view.roles = QA_ROLE_BIT(QA_ROLE_HUD) | QA_ROLE_BIT(QA_ROLE_MENU);
+    const qa_launch_provider *a = &source->selection, *b = &saved->selection;
+    const qa_product *product = qa_catalog_product(saved->catalog, b->product);
+    bool ok = builtin_client_source(source) && product && product->family == QA_GAME_Q3 &&
+        b->instance && b->implementation && b->artifact && !*b->artifact && b->component && !*b->component &&
+        !strcmp(a->instance, b->instance) && !strcmp(a->implementation, b->implementation) &&
+        b->runtime == QA_PROGRAM_BUILTIN && a->options.size == b->options.size &&
+        (!a->options.size || (b->options.data && !memcmp(a->options.data, b->options.data, a->options.size))) &&
+        a->clock.kind == b->clock.kind && a->clock.initial_time_ns == b->clock.initial_time_ns &&
+        a->clock.interval_ns == b->clock.interval_ns && a->clock.minimum_frame_ns == b->clock.minimum_frame_ns &&
+        a->clock.maximum_frame_ns == b->clock.maximum_frame_ns && a->clock.initial_lead_ns == b->clock.initial_lead_ns &&
+        a->clock.maximum_steps == b->clock.maximum_steps && !saved->artifact && !saved->artifact_acquisition &&
+        !saved->declaration && !saved->interface_count && !saved->behavior_count;
+    if (!ok) error_message(error, "Saved builtin client descriptor leaves its actual compiled source selection");
+    if (ok) ok = launch_empty(saved->catalog, &owner->identity, error) &&
+        qa_launch_set_provider(owner->identity, b, error);
+    if (ok) {
+        owner->view.selection = owner->identity->choices.providers[0];
+        ok = instance_identity(owner, &owner->identity->choices, error) &&
+            qa_sha256_equal(&owner->view.identity, &saved->identity);
+    }
+    if (!ok && error && error->code == QA_OK)
+        error_message(error, "Restored builtin client identity differs from its actual retained content");
     if (ok) ok = qa_launch_instance_retain_metadata(&owner->view, out, error);
     owner_release(owner); return ok;
 }

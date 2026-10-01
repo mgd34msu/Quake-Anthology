@@ -10,6 +10,8 @@
 #include "qa/application_q3_equipment_source.h"
 #include "native_q3_console.h"
 #include "qa/cvars_save.h"
+#include "startup_flow.h"
+#include "guest_q3_client_console.h"
 
 static bool equipment_entity(void *context, const qa_qvm_call *call, int32_t pointer,
     const qa_q3_ref_entity *entity, bool *suppress, qa_error *error)
@@ -120,6 +122,8 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         engine->client_candidate ? engine->client_candidate : engine->client_descriptor ?
         qa_launch_instance_lease_view(engine->client_descriptor) : provider->launch;
     role->descriptor = descriptor;
+    if (kind != QA_QVM_GAME && !application_guest_q3_client_console_prepare(engine,
+        engine->restore_pending ? engine->restored_client_role : kind, seat, error)) goto failed;
     if (!saved_owner && engine->role_sequence == UINT64_MAX) {
         application_fail(error, QA_ERROR_MEMORY, "Q3 role registration sequence exhausted"); goto failed;
     }
@@ -146,6 +150,22 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         if (!qa_strings_intern_cstr(strings, service_name, &role->service_owner, error)) goto failed;
         role->service_sequence = engine->role_sequence;
     }
+    if (kind != QA_QVM_GAME && !provider->attached &&
+        q3g_primary_role(provider->launch->selection.artifact) != QA_QVM_GAME) {
+        qa_application_startup_source source;
+        bool found = false;
+        for (size_t index = 0; application_guest_q3_client_console_source(engine, index, &source); ++index)
+            if (source.scope.seat == seat) { found = true; break; }
+        bool prepared = found && (engine->restore_pending ?
+            application_startup_tuple_restore(provider, &source, error) :
+            application_startup_tuple_preinit(provider, &source, error) &&
+                qa_cvars_apply_latched(source.cvars, NULL, error));
+        if (!prepared) {
+            if (!found) application_fail(error, QA_ERROR_ARGUMENT,
+                "CLIENT construction lost its completed physical preparation");
+            goto failed;
+        }
+    }
     ++engine->calls;
     engine->constructing_role = role;
     engine->constructing_equipment_services = &equipment_services;
@@ -155,6 +175,15 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
     engine->constructing_equipment_services = NULL;
     --engine->calls;
     if (!services_ready) goto failed;
+    if (kind != QA_QVM_GAME) {
+        qa_console *console = NULL;
+        if (!application_guest_q3_client_console_at(engine, seat, &console, NULL) ||
+            options.console != console || !application_guest_q3_client_console_bind(engine, seat, options.cvars, error)) {
+            if (error && error->code == QA_OK)
+                application_fail(error, QA_ERROR_ARGUMENT, "CLIENT services displaced its retained physical console");
+            goto failed;
+        }
+    }
     if (saved_owner && kind != QA_QVM_GAME) {
         if (engine->restored_client_source_instance) {
             const char *instance = NULL;
@@ -181,11 +210,29 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
             if (!qa_cvars_save_prepare(options.cvars, engine->restored_client_cvars, &ticket, error)) goto failed;
             if (!qa_cvars_save_commit(ticket, error)) { qa_cvars_save_abort(ticket); goto failed; }
         }
+        if (q3g_primary_role(provider->launch->selection.artifact) != QA_QVM_GAME) {
+            qa_application_startup_source source;
+            bool found = false;
+            for (size_t index = 0; application_guest_q3_client_console_source(engine, index, &source); ++index)
+                if (source.scope.seat == seat) { found = true; break; }
+            if (!found || !application_startup_tuple_restore(provider, &source, error)) {
+                if (!found) application_fail(error, QA_ERROR_FORMAT,
+                    "Restored CLIENT lost its canonical physical preparation");
+                goto failed;
+            }
+        }
     }
-    if (kind == QA_QVM_GAME && !saved_owner && !engine->game &&
-        (!application_q3_world_restart_cvars(provider->application, provider, options.cvars, error) ||
+    if (kind == QA_QVM_GAME && !saved_owner && !engine->game) {
+        qa_application_startup_source source = {.descriptor = descriptor,
+            .scope = {.provider = provider->owner, .kind = QA_APPLICATION_CONSOLE_Q3_GAME},
+            .console = options.console, .cvars = options.cvars,
+            .command = options.command_context, .declaration_owner = role->service_owner};
+        bool carried = false;
+        if ((!provider->attached && !application_startup_source_carry(provider, &source, &carried, error)) ||
+         !application_q3_world_restart_cvars(provider->application, provider, options.cvars, error) ||
          !application_q3_campaign_launch_cvars(provider, options.cvars, role->service_owner, error) ||
-         !application_guest_q3_console_startup(provider, error))) goto failed;
+         !application_guest_q3_console_startup(provider, error)) goto failed;
+    }
     options.world = engine->world;
     options.service_owner = role->service_owner;
     if (engine->entity_text)
@@ -239,6 +286,8 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
                 compatibility.equipment_presentation.size}, &shared->equipment_profile, error)) {
             goto failed;
         }
+        if (role->image && kind == QA_QVM_GAME && !application_q3_grapple_profile_create(role->image,
+            kind, shared->abi, path, &shared->grapple_profile, error)) goto failed;
         shared->image = role->image; qa_qvm_image_retain(shared->image);
         shared->module = role->module; qa_native_module_retain(shared->module);
         shared->declaration = role->declaration;

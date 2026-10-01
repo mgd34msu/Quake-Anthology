@@ -2,6 +2,8 @@
 #include "guest_q3_private.h"
 #include "q3_product.h"
 #include "startup_flow.h"
+#include "guest_q3_client_console.h"
+#include "engine_shutdown.h"
 
 #include <ctype.h>
 
@@ -34,7 +36,7 @@ qa_console *application_guest_q3_console_owner(const application_provider *provi
 
 qa_cvars *application_guest_q3_cvar_owner(const application_provider *provider, const char *name)
 {
-    return provider && named(name, "sv_cheats") ? provider->application->cvars :
+    return provider && named(name, "sv_cheats") ? application_engine_shutdown_cvars(provider) :
         application_guest_q3_console_registry(provider);
 }
 
@@ -81,7 +83,8 @@ static qa_cvars *visible_cvars(void *context, const qa_command_context *command,
     qa_cvars *routed = NULL;
     if (application_startup_visible_cvars(owner->engine->provider, owner->console,
         command, index, &routed)) return routed;
-    return index == 0 ? owner->cvars : index == 1 ? owner->engine->provider->application->cvars : NULL;
+    return index == 0 ? owner->cvars : index == 1 ?
+        application_engine_shutdown_cvars(owner->engine->provider) : NULL;
 }
 
 static bool cheats_allowed(void *context)
@@ -274,9 +277,9 @@ bool application_guest_q3_console_create(struct application_q3_guest *engine,
 
 bool application_guest_q3_console_idle(const struct application_q3_guest *engine)
 {
-    return !engine || !engine->console ||
+    return application_guest_q3_client_console_idle(engine) && (!engine || !engine->console ||
         (!engine->console->calls && qa_console_idle(engine->console->console) &&
-            qa_cvars_observer_idle(engine->console->cvars));
+            qa_cvars_observer_idle(engine->console->cvars)));
 }
 
 bool application_guest_q3_console_destroy(struct application_q3_guest *engine, qa_error *error)

@@ -4,6 +4,7 @@
 #include "equipment_media.h"
 #include "equipment_q3.h"
 #include "selected_character.h"
+#include "selected_effects.h"
 #include "source_restore.h"
 #include "save_private.h"
 #include "qa/material_library_save.h"
@@ -122,7 +123,7 @@ static bool owner_shape(frontend_scene_owner owner,bool world)
     if (owner.kind==FRONTEND_SCENE_OWNER_SOURCE) return world && owner.owner && owner.row==1;
     return owner.owner && owner.row && (owner.kind==FRONTEND_SCENE_OWNER_Q3 ||
         owner.kind==FRONTEND_SCENE_OWNER_NATIVE_Q3 || owner.kind==FRONTEND_SCENE_OWNER_SELECTED_Q3 ||
-        owner.kind==FRONTEND_SCENE_OWNER_CHARACTER || (!world &&
+        owner.kind==FRONTEND_SCENE_OWNER_CHARACTER || owner.kind==FRONTEND_SCENE_OWNER_EFFECTS || (!world &&
         (owner.kind==FRONTEND_SCENE_OWNER_VISUAL ||
          (owner.kind==FRONTEND_SCENE_OWNER_EQUIPMENT && owner.row==1))));
 }
@@ -236,6 +237,24 @@ static bool owners_capture(frontend_world_inventory *inventory,qa_error *error)
             if (!qa_q3_assets_model_holder(character.assets,j,&model,error)) return false;
             if (!model.present) continue;
             frontend_scene_owner owner={FRONTEND_SCENE_OWNER_CHARACTER,i+1,j+1};
+            if (model.owns_world && (!model.world || !world_claim(inventory,model.world,owner,error))) return false;
+            for (unsigned k=0;k<3;++k) if (model.scenes[k]) {
+                bool alias=false;
+                for (unsigned p=0;p<k;++p) if (model.scenes[p]==model.scenes[k]) alias=true;
+                if (!alias && !model_claim(inventory,model.scenes[k],owner,NULL,error)) return false;
+            }
+        }
+    }
+    for (size_t i=0;i<frontend_selected_effects_count(f);++i) {
+        frontend_selected_effects_view effects;
+        if (!frontend_selected_effects_at(f,i,&effects,error) || !effects.assets) return false;
+        size_t count=0;
+        if (!qa_q3_assets_model_count(effects.assets,&count,error)) return false;
+        for (size_t j=0;j<count;++j) {
+            qa_q3_asset_model_holder model;
+            if (!qa_q3_assets_model_holder(effects.assets,j,&model,error)) return false;
+            if (!model.present) continue;
+            frontend_scene_owner owner={FRONTEND_SCENE_OWNER_EFFECTS,i+1,j+1};
             if (model.owns_world && (!model.world || !world_claim(inventory,model.world,owner,error))) return false;
             for (unsigned k=0;k<3;++k) if (model.scenes[k]) {
                 bool alias=false;
@@ -388,7 +407,7 @@ bool frontend_world_inventory_capture(qa_frontend *f,const frontend_scene_invent
 static bool owner_fields(qa_source_save_io *io,frontend_scene_owner *owner,bool world)
 {
     uint32_t kind=owner->kind;
-    if (!qa_source_save_u32(io,&kind) || kind>FRONTEND_SCENE_OWNER_CHARACTER ||
+    if (!qa_source_save_u32(io,&kind) || kind>FRONTEND_SCENE_OWNER_EFFECTS ||
         !qa_source_save_u64(io,&owner->owner) || !qa_source_save_u64(io,&owner->row)) return false;
     owner->kind=(frontend_scene_owner_kind)kind; return owner_shape(*owner,world);
 }
@@ -470,9 +489,9 @@ static bool rows_fields(qa_source_save_io *io,frontend_world_inventory *inventor
 }
 static bool header(qa_source_save_io *io,size_t *worlds,size_t *models)
 {
-    uint8_t magic[4]={'Q','F','W','R'}; uint32_t version=5;
+    uint8_t magic[4]={'Q','F','W','R'}; uint32_t version=6;
     size_t maximum=io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFWR",4) && qa_source_save_u32(io,&version) && version==5 &&
+    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFWR",4) && qa_source_save_u32(io,&version) && version==6 &&
         qa_source_save_count(io,worlds,maximum) && qa_source_save_count(io,models,maximum);
 }
 bool frontend_world_inventory_checkpoint(const frontend_world_inventory *inventory,qa_buffer *out,qa_error *error)

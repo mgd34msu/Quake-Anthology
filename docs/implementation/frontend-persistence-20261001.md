@@ -311,6 +311,27 @@ private import. Feature import follows actual seats and engine restoration and
 precedes final asset-inventory qualification. These constructor and feature
 callers remain unreviewed pending their complete producer packets.
 
+The selected EFFECTS and gear-event caller draft advances PRESENTATION to
+version 9 and AUDIO to version 4. QFEX1 prepares each real FX bank, registry
+and collecting backend over its imported visual heap and exact SOURCE or
+NATIVE parent. QFQ3v7 restores the genuine borrowed parent world/collision to
+both registry and backend, then imports QFEP1 after the collecting packet
+under that registry's capture lease. QFWR6 names only FX-owned model/preview
+destructors; the primary map remains owned by its actual parent. QFAG3 and
+the audio reference domain include each actual FX bank, asset holder and
+WORLD voice owner. Its content visitor must admit the same genuine assets
+capture without relaxing retirement idle.
+
+Mandatory QFGE1 records reached private gear configstrings and exact partial
+HUD/console delivery. Shared and fresh-original candidates create one real
+empty consumer; import follows the application's QERT2 owner and physical
+seats. Candidate discard checks and destroys gear delivery and selected FX
+before any external callback can retire their source parents. Nofail
+publication rebinds the gear consumer to its stable published frontend.
+This new nine-file caller packet awaits independent source review. The full
+native composition factory remains on its separate producer review; these
+callers still use the accepted equipment-only factory.
+
 The display codec currently qualifies the same live native window state,
 including dimensions, title, position and focus. It truthfully rejects a saved
 window cut that differs from that state. Native historical window-state rewind

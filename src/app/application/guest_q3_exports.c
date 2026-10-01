@@ -1,8 +1,11 @@
 #include "guest_q3_private.h"
+#include "guest_q3_client_console.h"
+#include "guest_q3_console.h"
 #include "guest_native_q2_private.h"
 #include "guest_projection_private.h"
 #include "guest_qc_internal.h"
 #include "native_q3_console.h"
+#include "native_q3_remote_role.h"
 #include "native_q1_console.h"
 #include "native_q2_console.h"
 #include "native_q3_wire.h"
@@ -44,8 +47,20 @@ bool application_guest_console_at(application_provider *provider, size_t index,
         return !index && application_native_q1_console_at(provider, console, cvars, context);
     if (provider->kind == APPLICATION_PROVIDER_Q2)
         return !index && application_native_q2_console_at(provider, console, cvars, context);
-    if (provider->kind == APPLICATION_PROVIDER_Q3)
-        return !index && application_native_q3_console_at(provider, console, cvars, context);
+    if (provider->kind == APPLICATION_PROVIDER_Q3) {
+        qa_console *game = NULL;
+        if (application_native_q3_console_at(provider, &game, NULL, NULL)) {
+            if (!index) return application_native_q3_console_at(provider, console, cvars, context);
+            --index;
+        }
+        qa_application_startup_source source; bool found;
+        if (!application_native_q3_remote_role_source_at(provider, index, &source, &found, NULL) || !found ||
+            !application_native_q3_remote_role_configuration(provider, source.scope.seat, &source, NULL)) return false;
+        *console = source.console;
+        if (cvars) *cvars = source.cvars;
+        if (context) *context = source.command;
+        return true;
+    }
     if (provider->kind == APPLICATION_PROVIDER_QC) {
         struct application_qc_state *engine = provider->state.qc.engine;
         if (index || !engine || !engine->console) return false;
@@ -64,15 +79,30 @@ bool application_guest_console_at(application_provider *provider, size_t index,
     }
     struct application_q3_guest *engine = q3g_engine(provider);
     if (!engine) return false;
-    for (q3g_role *role = engine->roles; role; role = role->next) {
-        qa_console *current = qa_q3_host_console(role->host, NULL, NULL);
-        if (!current) continue;
-        bool duplicate = false;
-        for (q3g_role *prior = engine->roles; prior != role; prior = prior->next)
-            if (qa_q3_host_console(prior->host, NULL, NULL) == current) { duplicate = true; break; }
-        if (duplicate) continue;
-        if (index) { --index; continue; }
-        *console = qa_q3_host_console(role->host, cvars, context);
+    qa_console *game = application_guest_q3_console_owner(provider);
+    if (game) {
+        if (!index) {
+            if (engine->game && engine->game->host)
+                *console = qa_q3_host_console(engine->game->host, cvars, context);
+            else {
+                *console = game;
+                if (cvars) *cvars = application_guest_q3_console_registry(provider);
+                if (context) *context = (qa_command_context){.owner = provider->owner,
+                    .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SERVER};
+            }
+            return true;
+        }
+        --index;
+    }
+    qa_application_startup_source source;
+    if (application_guest_q3_client_console_source(engine, index, &source) &&
+        application_guest_q3_client_console_at(engine, source.scope.seat, console, cvars)) {
+        if (context) *context = source.command;
+        for (q3g_role *role = engine->roles; role; role = role->next)
+            if (qa_q3_host_console(role->host, NULL, NULL) == *console) {
+                *console = qa_q3_host_console(role->host, cvars, context);
+                break;
+            }
         return true;
     }
     return false;
@@ -96,9 +126,19 @@ bool application_guest_console_scope(application_provider *provider,
         scope.kind = QA_APPLICATION_CONSOLE_Q2_GAME;
     } else if (provider->kind == APPLICATION_PROVIDER_Q3) {
         qa_console *source = NULL;
-        if (!application_native_q3_console_at(provider, &source, NULL, NULL) || source != console)
-            return false;
-        scope.kind = QA_APPLICATION_CONSOLE_Q3_GAME;
+        if (application_native_q3_console_at(provider, &source, NULL, NULL) && source == console)
+            scope.kind = QA_APPLICATION_CONSOLE_Q3_GAME;
+        else {
+            qa_application_startup_source client;
+            bool matched = false;
+            for (size_t index = 0;; ++index) {
+                bool found;
+                if (!application_native_q3_remote_role_source_at(provider, index, &client, &found, NULL) || !found) break;
+                if (client.console == console && application_native_q3_remote_role_configuration(provider,
+                    client.scope.seat, &client, NULL)) { scope = client.scope; matched = true; break; }
+            }
+            if (!matched) return false;
+        }
     } else if (provider->kind == APPLICATION_PROVIDER_QC) {
         struct application_qc_state *engine = provider->state.qc.engine;
         if (!engine || engine->console != console)
@@ -110,19 +150,17 @@ bool application_guest_console_scope(application_provider *provider,
         scope.kind = QA_APPLICATION_CONSOLE_NATIVE_Q2;
     } else {
         struct application_q3_guest *engine = q3g_engine(provider);
-        q3g_role *selected = NULL;
-        if (engine)
-            for (q3g_role *role = engine->roles; role; role = role->next)
-                if (qa_q3_host_console(role->host, NULL, NULL) == console &&
-                    (!selected || role->kind < selected->kind ||
-                     (role->kind == selected->kind && role->seat < selected->seat)))
-                    selected = role;
-        if (!selected)
-            return false;
-        scope.kind = selected->kind == QA_QVM_GAME ? QA_APPLICATION_CONSOLE_Q3_GAME
-            : selected->kind == QA_QVM_CGAME ? QA_APPLICATION_CONSOLE_Q3_CGAME
-            : QA_APPLICATION_CONSOLE_Q3_UI;
-        scope.seat = selected->kind == QA_QVM_GAME ? 0 : selected->seat;
+        if (!engine) return false;
+        if (application_guest_q3_console_owner(provider) == console)
+            scope.kind = QA_APPLICATION_CONSOLE_Q3_GAME;
+        else {
+            qa_application_startup_source client;
+            bool matched = false;
+            for (size_t index = 0; application_guest_q3_client_console_source(engine, index, &client); ++index)
+                if (client.console == console && application_guest_q3_client_console_at(engine,
+                    client.scope.seat, NULL, NULL)) { scope = client.scope; matched = true; break; }
+            if (!matched) return false;
+        }
     }
     *out = scope;
     return true;
@@ -289,17 +327,18 @@ bool qa_application_q3_client_retire(qa_application *app,
     return ok;
 }
 
-bool qa_application_q3_remote_context_read(qa_application *app, qa_actor_owner receiver,
-    uint32_t seat, qa_application_q3_client_context *out, qa_error *error)
+static bool remote_context_read(qa_application *app, qa_actor_owner receiver,
+    uint32_t seat, bool published, qa_application_q3_client_context *out, qa_error *error)
 {
     if (!app || !out || !receiver || app->destroy_requested)
         return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 context requires its live actual-seat receiver");
-    const qa_launch_snapshot *snapshot = app->routing_snapshot ? app->routing_snapshot : qa_application_launch(app);
+    const qa_launch_snapshot *snapshot = !published && app->routing_snapshot ?
+        app->routing_snapshot : qa_application_launch(app);
     const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
     if (!choices || choices->seat_count != 1 || choices->seats[0].id != seat)
         return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 context leaves its single actual launch seat");
-    application_provider **providers = app->routing_providers ? app->routing_providers : app->providers;
-    size_t count = app->routing_providers ? app->routing_provider_count : app->provider_count;
+    application_provider **providers = !published && app->routing_providers ? app->routing_providers : app->providers;
+    size_t count = !published && app->routing_providers ? app->routing_provider_count : app->provider_count;
     application_provider *provider = NULL;
     for (size_t i = 0; i < count; ++i)
         if (providers[i] && providers[i]->owner == receiver) {
@@ -308,12 +347,14 @@ bool qa_application_q3_remote_context_read(qa_application *app, qa_actor_owner r
             provider = providers[i];
         }
     struct application_q3_guest *engine = q3g_engine(provider);
-    const qa_launch_binding *binding = qa_launch_binding_for(choices,
-        (qa_launch_scope){.kind = QA_SCOPE_SEAT, .seat = seat}, QA_ROLE_HUD, "");
     if (!provider || provider->application != app || !provider->constructed || !provider->attached ||
-        provider->close_pending || !engine || engine->restore_pending || engine->round.phase != Q3G_ROUND_NONE ||
-        !binding || strcmp(binding->instance, provider->launch->selection.instance))
+        provider->close_pending ||
+        !q3g_selected_client_seat(provider, choices, QA_QVM_CGAME, 0))
         return application_fail(error, QA_ERROR_NOT_FOUND, "Remote Q3 context has no admitted selected HUD receiver");
+    if (provider->kind == APPLICATION_PROVIDER_Q3)
+        return application_native_q3_remote_role_context(provider, seat, out, error);
+    if (!engine || engine->restore_pending || engine->round.phase != Q3G_ROUND_NONE)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Remote Q3 context has no admitted original source owner");
     q3g_role *role = NULL;
     for (q3g_role *current = engine->roles; current; current = current->next)
         if (current->kind == QA_QVM_CGAME && current->seat == seat && current->ready &&
@@ -337,12 +378,27 @@ bool qa_application_q3_remote_context_read(qa_application *app, qa_actor_owner r
     return true;
 }
 
-bool qa_application_q3_remote_context_current(qa_application *app,
-    const qa_application_q3_client_context *retained)
+bool qa_application_q3_remote_context_read(qa_application *app, qa_actor_owner receiver,
+    uint32_t seat, qa_application_q3_client_context *out, qa_error *error)
+{ return remote_context_read(app, receiver, seat, false, out, error); }
+
+bool qa_application_q3_remote_published_context_read(qa_application *app, qa_actor_owner receiver,
+    uint32_t seat, qa_application_q3_client_context *out, qa_error *error)
+{ return remote_context_read(app, receiver, seat, true, out, error); }
+
+static bool remote_context_current(qa_application *app,
+    const qa_application_q3_client_context *retained, bool published)
 {
     qa_application_q3_client_context actual;
-    return retained && qa_application_q3_remote_context_read(app, retained->receiver,
-        retained->seat, &actual, NULL) && actual.session == retained->session &&
+    if (!retained || !remote_context_read(app, retained->receiver,
+        retained->seat, published, &actual, NULL)) return false;
+    application_provider **providers = !published && app->routing_providers ? app->routing_providers : app->providers;
+    size_t count = !published && app->routing_providers ? app->routing_provider_count : app->provider_count;
+    for (size_t index = 0; index < count; ++index)
+        if (providers[index] && providers[index]->owner == retained->receiver &&
+            providers[index]->kind == APPLICATION_PROVIDER_Q3)
+            return application_native_q3_remote_role_current(providers[index], retained);
+    return actual.session == retained->session &&
         actual.service_owner == retained->service_owner && actual.frontend_lifetime == retained->frontend_lifetime &&
         actual.console == retained->console && actual.cvars == retained->cvars &&
         actual.client_time_cvars == retained->client_time_cvars && actual.client_time_owner == retained->client_time_owner &&
@@ -350,6 +406,14 @@ bool qa_application_q3_remote_context_current(qa_application *app,
         actual.command_context.seat == retained->command_context.seat &&
         actual.command_context.dialect == retained->command_context.dialect;
 }
+
+bool qa_application_q3_remote_context_current(qa_application *app,
+    const qa_application_q3_client_context *retained)
+{ return remote_context_current(app, retained, false); }
+
+bool qa_application_q3_remote_published_context_current(qa_application *app,
+    const qa_application_q3_client_context *retained)
+{ return remote_context_current(app, retained, true); }
 
 bool application_q3_guest_role_add(application_provider *provider, qa_qvm_role kind,
                                      uint32_t seat, const char *path, qa_error *error)

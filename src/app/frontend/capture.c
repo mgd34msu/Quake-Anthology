@@ -4,8 +4,10 @@
 #include "native_q3_client.h"
 #include "equipment_media.h"
 #include "equipment_q3.h"
+#include "equipment_events.h"
 #include "selected_character.h"
 #include "selected_character_lifetime.h"
+#include "selected_effects.h"
 #include "save_commands.h"
 #include "qc_rerelease_events.h"
 #include "campaign_cinematic.h"
@@ -65,7 +67,8 @@ bool frontend_owners_idle(const qa_frontend *f)
     if (!f || f->capture || (f->input && !qa_input_platform_settings_idle(f->input)) ||
         !frontend_cinematic_idle(f) || !frontend_qc_rerelease_idle(f) || !frontend_native_q2_children_idle(f) ||
         !frontend_native_q3_idle(f) || !frontend_equipment_idle(f) || !frontend_equipment_q3_idle(f) ||
-        !frontend_selected_character_idle(f) || !frontend_sources_idle(f) ||
+        !frontend_equipment_events_idle(f->gear_events) ||
+        !frontend_selected_character_idle(f) || !frontend_selected_effects_idle(f) || !frontend_sources_idle(f) ||
         !resources_idle(f->images) || !resources_idle(f->ui_images) || !library_idle(f->materials) ||
         !fonts_idle(f->fonts) || (f->order && !qa_material_order_idle(f->order)) ||
         (f->scene_world && !qa_scene_world_idle(f->scene_world)) || !frontend_visuals_idle(f) ||
@@ -210,6 +213,11 @@ bool frontend_capture_begin(qa_frontend *f, frontend_capture **out, qa_error *er
     for (size_t i=0;ok && i<frontend_selected_character_count(f);++i) {
         frontend_selected_character_view owner;
         ok=frontend_selected_character_at(f,i,&owner,error) && owner.assets &&
+            add(capture,CAPTURE_ASSETS,owner.assets,error);
+    }
+    for (size_t i=0;ok && i<frontend_selected_effects_count(f);++i) {
+        frontend_selected_effects_view owner;
+        ok=frontend_selected_effects_at(f,i,&owner,error) && owner.assets &&
             add(capture,CAPTURE_ASSETS,owner.assets,error);
     }
     /* Registry entry preflights strict child idle, so it precedes child tokens. */

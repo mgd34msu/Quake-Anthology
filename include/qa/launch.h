@@ -212,6 +212,14 @@ struct qa_launch_restored_instance;
  * the enclosing source owner has decoded and qualified its complete inventory. */
 bool qa_launch_instance_restore_client_metadata(const qa_launch_instance *,
     const struct qa_launch_restored_instance *, qa_launch_instance_lease **, qa_error *);
+/* Builtin client metadata retains the actual prepared content without opening
+ * a program artifact. Execution remains owned by the original compiled source. */
+bool qa_launch_instance_prepare_builtin_client_metadata(const qa_launch_instance *, qa_catalog *,
+    qa_product_id, const qa_vfs *, qa_launch_instance_lease **, qa_error *);
+/* Transfers the claimed saved view, also on failure after argument admission.
+ * The saved descriptor must retain the same builtin source and empty artifact. */
+bool qa_launch_instance_restore_builtin_client_metadata(const qa_launch_instance *,
+    const struct qa_launch_restored_instance *, qa_launch_instance_lease **, qa_error *);
 
 /* B25/B34 prepare native or qualified external state in detached ownership.
  * Preparation may warm the session's append-only string table, because an

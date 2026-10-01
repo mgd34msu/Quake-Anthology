@@ -278,22 +278,25 @@ bool q1_weapon_event(qa_q1_game *g, q1_player *player, float punch, int32_t atta
                               .flags = (uint32_t)player->weapon};
     return qa_builtin_emit(&g->services, &event, error);
 }
-static bool reset_inventory(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+static bool reset_inventory(qa_q1_game *g, qa_actor_id actor, bool extensions, qa_error *error) {
     qa_inventory_entry entries[QA_Q1_WEAPON_COUNT + QA_Q1_AMMO_COUNT];
-    for (size_t i = 0; i < QA_Q1_WEAPON_COUNT; ++i)
+    size_t weapons = extensions ? QA_Q1_WEAPON_COUNT : QA_Q1_LIGHTNING + 1;
+    size_t ammo = extensions ? QA_Q1_AMMO_COUNT : QA_Q1_CELLS + 1;
+    for (size_t i = 0; i < weapons; ++i)
         entries[i] = (qa_inventory_entry){.item = g->weapons[i],
                                           .count = i == QA_Q1_AXE || i == QA_Q1_SHOTGUN ? 1 : 0,
                                           .capacity = 1,
                                           .policy = QA_COUNT_SOURCE_FLOAT};
-    if (g->options.program == QA_Q1_ROGUE && g->options.deathmatch && g->options.teamplay >= 4)
+    if (extensions && g->options.program == QA_Q1_ROGUE && g->options.deathmatch &&
+        g->options.teamplay >= 4)
         entries[QA_Q1_ROGUE_GRAPPLE].count = 1;
-    for (size_t i = 0; i < QA_Q1_AMMO_COUNT; ++i)
-        entries[QA_Q1_WEAPON_COUNT + i] = (qa_inventory_entry){
+    for (size_t i = 0; i < ammo; ++i)
+        entries[weapons + i] = (qa_inventory_entry){
             .item = g->ammo[i],
             .count = i == QA_Q1_SHELLS ? 25 : 0,
             .capacity = i == QA_Q1_NAILS || i == QA_Q1_LAVA_NAILS ? 200 : 100,
             .policy = QA_COUNT_SOURCE_FLOAT};
-    size_t count = sizeof(entries) / sizeof(*entries);
+    size_t count = weapons + ammo;
     if (!qa_inventory_has(g->services.inventory, actor)) {
         if (!qa_inventory_create_actor(g->services.inventory, actor, entries, count, error))
             return false;
@@ -318,7 +321,7 @@ bool qa_q1_player_inventory_reset(qa_q1_game *g, qa_actor_id actor, qa_error *er
     if (!player || !player->arsenal) {
         qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 inventory reset needs an arsenal");
     } else {
-        result = reset_inventory(g, actor, error) &&
+        result = reset_inventory(g, actor, true, error) &&
                  (g->options.program != QA_Q1_MG3 || q1_mg3_capacities(g, player, error));
         if (result && !q1_alive(g,actor)) {
             qa_error_set(error,QA_ERROR_ARGUMENT,actor.slot,"Q1 inventory reset requested teardown");
@@ -345,14 +348,15 @@ bool qa_q1_player_attach(qa_q1_game *g, qa_actor_id actor, bool initial_inventor
         result = q1_inventory_bind(g, player, error);
         goto finish;
     }
-    if (initial_inventory && !reset_inventory(g, actor, error))
+    if (initial_inventory && !reset_inventory(g, actor, false, error))
+        goto finish;
+    if (!q1_inventory_register(&operation, actor, error))
         goto finish;
     player = q1_player_allocate(g, actor, error);
     if (!player)
         goto finish;
     player->arsenal = true;
-    if (initial_inventory && g->options.program == QA_Q1_MG3 &&
-        !q1_mg3_capacities(g, player, error))
+    if (!q1_inventory_attach(&operation, player, error))
         goto finish;
     if (!q1_inventory_bind(g, player, error))
         goto finish;

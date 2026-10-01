@@ -39,7 +39,8 @@ static bool native_artifact(struct application_q3_guest *engine, q3g_role *cgame
             *loaded = true; return true;
         }
     bool found = false;
-    if (!qa_vfs_probe(cgame->descriptor->content, path, &found, NULL, error)) return false;
+    uint64_t extent = 0;
+    if (!qa_vfs_probe(cgame->descriptor->content, path, &found, &extent, error)) return false;
     if (!found) return true;
     q3g_artifact *artifact = calloc(1, sizeof(*artifact));
     if (!artifact) return application_fail(error, QA_ERROR_MEMORY, "Retaining source UI native opening");
@@ -82,7 +83,8 @@ bool application_guest_q3_source_ui_create(struct application_q3_guest *engine,
     const qa_cvar_view *choice = qa_cvars_find(cvars, "vm_ui");
     const qa_cvar_view *restricted = qa_cvars_find(cvars, "fs_restrict");
     const char *path = "vm/ui.qvm";
-    if (choice && choice->number == 0 && (!restricted || restricted->number == 0)) {
+    if (choice && isfinite(choice->number) && truncf(choice->number) == 0 &&
+        (!restricted || restricted->number == 0)) {
         const char *native_path = native_ui_path(cgame);
         bool loaded = false;
         if (native_path && !native_artifact(engine, cgame, native_path, &loaded, error)) return false;

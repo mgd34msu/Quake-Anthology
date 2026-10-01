@@ -506,6 +506,8 @@ const q1_actor *q1_entity_const(const qa_q1_game *, qa_actor_id);
 q1_player *q1_player_get(qa_q1_game *, qa_actor_id);
 q1_player *q1_player_allocate(qa_q1_game *, qa_actor_id, qa_error *);
 bool q1_inventory_bind(qa_q1_game *, q1_player *, qa_error *);
+bool q1_inventory_register(qa_q1_game_operation *, qa_actor_id, qa_error *);
+bool q1_inventory_attach(qa_q1_game_operation *, q1_player *, qa_error *);
 void q1_inventory_close(qa_q1_game *, q1_player *);
 bool q1_alive(qa_q1_game *, qa_actor_id);
 float q1_random(qa_q1_game *);

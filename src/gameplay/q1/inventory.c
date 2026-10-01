@@ -5,13 +5,17 @@ static bool fail(qa_error *error, qa_actor_id actor, const char *message) {
     qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "%s", message);
     return false;
 }
+static qa_q1_weapon definition_weapon(const qa_q1_game *game, unsigned ordinal) {
+    if (game->options.program == QA_Q1_ROGUE && ordinal >= QA_Q1_LAVA_NAILGUN &&
+        ordinal <= QA_Q1_ROGUE_GRAPPLE)
+        return ordinal == QA_Q1_LAVA_NAILGUN ? QA_Q1_ROGUE_GRAPPLE :
+            (qa_q1_weapon)(ordinal - 1);
+    return (qa_q1_weapon)ordinal;
+}
 static size_t definitions(const qa_q1_game *game, qa_item_definition *out) {
     size_t count = 0;
     for (unsigned ordinal = 0; ordinal < QA_Q1_WEAPON_COUNT; ++ordinal) {
-        unsigned i = ordinal;
-        if (game->options.program == QA_Q1_ROGUE && ordinal >= QA_Q1_LAVA_NAILGUN &&
-            ordinal <= QA_Q1_ROGUE_GRAPPLE)
-            i = ordinal == QA_Q1_LAVA_NAILGUN ? QA_Q1_ROGUE_GRAPPLE : ordinal - 1;
+        qa_q1_weapon i = definition_weapon(game, ordinal);
         qa_q1_weapon_profile identity;
         if (!qa_q1_weapon_profile_identity(game->options.program, (qa_q1_weapon)i, &identity))
             continue;
@@ -21,6 +25,68 @@ static size_t definitions(const qa_q1_game *game, qa_item_definition *out) {
             .label = identity.label, .weapon = true, .actions = QA_ITEM_USE};
     }
     return count;
+}
+static bool attach_current(qa_q1_game_operation *operation, qa_actor_id actor,
+    q1_player *player, qa_error *error) {
+    return (qa_q1_game_operation_live(operation) && q1_alive(operation->game, actor) &&
+        q1_player_get(operation->game, actor) == player) ||
+        fail(error, actor, "Q1 selected inventory attachment retired its source player");
+}
+static bool attach_item(qa_q1_game_operation *operation, qa_actor_id actor,
+    q1_player *player, qa_item_id item, double capacity, bool preserve, double count,
+    qa_error *error) {
+    qa_q1_game *game = operation->game;
+    if (!attach_current(operation, actor, player, error))
+        return false;
+    if (preserve && (!qa_inventory_count_read(game->services.inventory, actor, item,
+        &count, error) || !attach_current(operation, actor, player, error)))
+        return false;
+    qa_inventory_entry entry = {.item = item, .count = count, .capacity = capacity,
+        .policy = QA_COUNT_SOURCE_FLOAT};
+    return qa_inventory_configure(game->services.inventory, actor, &entry, NULL, NULL,
+        error) && attach_current(operation, actor, player, error);
+}
+bool q1_inventory_register(qa_q1_game_operation *operation, qa_actor_id actor,
+    qa_error *error) {
+    qa_q1_game *game = operation->game;
+    q1_player *player = q1_player_get(game, actor);
+    for (unsigned ordinal = 0; ordinal < QA_Q1_WEAPON_COUNT; ++ordinal) {
+        qa_q1_weapon weapon = definition_weapon(game, ordinal);
+        qa_q1_weapon_profile profile;
+        if (weapon <= QA_Q1_LIGHTNING ||
+            !qa_q1_weapon_profile_identity(game->options.program, weapon, &profile))
+            continue;
+        if (!attach_item(operation, actor, player, game->weapons[weapon], 1, true, 0, error))
+            return false;
+    }
+    if (game->options.program == QA_Q1_MG3)
+        for (int weapon = QA_Q1_SHOTGUN; weapon <= QA_Q1_SUPER_SHOTGUN; ++weapon)
+            if (!attach_item(operation, actor, player, game->weapons[weapon], 1, true, 0, error))
+                return false;
+    return true;
+}
+bool q1_inventory_attach(qa_q1_game_operation *operation, q1_player *player,
+    qa_error *error) {
+    qa_q1_game *game = operation->game;
+    qa_actor_id actor = player->id;
+    if (game->options.program == QA_Q1_HIPNOTIC || game->options.program == QA_Q1_ROGUE) {
+        int first = game->options.program == QA_Q1_HIPNOTIC ? QA_Q1_LASER : QA_Q1_LAVA_NAILGUN;
+        int last = game->options.program == QA_Q1_HIPNOTIC ? QA_Q1_PROXIMITY : QA_Q1_PLASMA;
+        for (int weapon = first; weapon <= last; ++weapon)
+            if (!attach_item(operation, actor, player, game->weapons[weapon], 1, true, 0, error))
+                return false;
+    }
+    if (game->options.program == QA_Q1_ROGUE) {
+        for (int ammo = QA_Q1_LAVA_NAILS; ammo <= QA_Q1_PLASMA_CELLS; ++ammo)
+            if (!attach_item(operation, actor, player, game->ammo[ammo],
+                ammo == QA_Q1_LAVA_NAILS ? 200 : 100, true, 0, error))
+                return false;
+        if (!attach_item(operation, actor, player, game->vengeance_item, 1, true, 0, error) ||
+            !attach_item(operation, actor, player, game->weapons[QA_Q1_ROGUE_GRAPPLE], 1,
+                false, game->options.deathmatch && game->options.teamplay >= 4 ? 1 : 0, error))
+            return false;
+    }
+    return game->options.program != QA_Q1_MG3 || q1_mg3_capacities(game, player, error);
 }
 static bool invoke(void *context, qa_item_id item, qa_item_action action, qa_error *error) {
     q1_player *player = context;

@@ -11,6 +11,7 @@
 #include "qa/source_save.h"
 #include "native_q3_wire_state.h"
 #include "guest_q3_console.h"
+#include "guest_q3_client_console.h"
 #include "qa/cvars_save.h"
 #include "startup_flow.h"
 #include "guest_q3_functions.h"
@@ -779,7 +780,7 @@ static bool collect_descriptor(const qa_application_content_graph *graph,
         .component = (char *)source->selection.component, .identity = source->identity,
         .interface_count = source->interface_count};
     if (!row->catalog || !row->view || !source->artifact_acquisition ||
-        !qa_vfs_acquisition_valid(source->content, source->artifact_acquisition, error) ||
+        !qa_vfs_acquisition_retained(source->content, source->artifact_acquisition, error) ||
         !qa_application_content_resource_id(graph, source->artifact, &row->artifact_pool, &row->artifact) ||
         (source->declaration && !qa_application_content_resource_id(graph, source->declaration,
             &row->declaration_pool, &row->declaration)))
@@ -858,11 +859,17 @@ static bool saved_collect(application_provider *provider, q3g_restore **out, qa_
         if (!a->qvm || !a->image || a->module || a->declaration) {
             saved_free(saved); return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 native artifact cache requires its actual module owner");
         }
+        if (a->grapple_profile && (a->kind != QA_QVM_GAME ||
+            application_q3_grapple_profile_image(a->grapple_profile) != a->image ||
+            strcmp(application_q3_grapple_profile_path(a->grapple_profile), a->path))) {
+            saved_free(saved); return application_fail(error, QA_ERROR_FORMAT,
+                "GAME grapple metadata leaves its retained immutable artifact");
+        }
         saved->artifacts[i] = (saved_artifact){.path = a->path, .kind = a->kind,
             .abi = a->abi, .digest = *qa_qvm_image_digest(a->image), .actual = a,
             .descriptor = descriptor_index(saved, qa_launch_instance_lease_view(a->descriptor)),
             .acquisition = a->acquisition};
-        if (!a->resource || !qa_vfs_acquisition_valid(a->view, &a->acquisition, error) ||
+        if (!a->resource || !qa_vfs_acquisition_retained(a->view, &a->acquisition, error) ||
             !qa_application_content_resource_id(graph, a->resource,
                 &saved->artifacts[i].pool, &saved->artifacts[i].resource)) {
             saved_free(saved); return application_fail(error, QA_ERROR_FORMAT, "Q3 artifact leaves its actual opening inventory");
@@ -1051,7 +1058,7 @@ static bool qualify_content(application_provider *provider, q3g_restore *saved, 
             qa_application_content_pool(graph, d->artifact_pool) != qa_vfs_resources(view) ||
             (d->declaration && (qa_application_content_pool(graph, d->declaration_pool) != qa_vfs_resources(view) ||
                 !qa_application_content_resource(graph, d->declaration_pool, d->declaration))) ||
-            !qa_vfs_acquisition_valid(view, &d->acquisition, error))
+            !qa_vfs_acquisition_retained(view, &d->acquisition, error))
             return application_fail(error, QA_ERROR_FORMAT, "Q3 private descriptor changes its actual retained content");
         for (size_t j = 0; j < d->interface_count; ++j)
             if (qa_application_content_pool(graph, d->interfaces[j].pool) != qa_vfs_resources(view) ||
@@ -1065,7 +1072,7 @@ static bool qualify_content(application_provider *provider, q3g_restore *saved, 
         const qa_resource *resource = qa_application_content_resource(graph, a->pool, a->resource);
         if (!view || !resource || qa_application_content_pool(graph, a->pool) != qa_vfs_resources(view) ||
             !qa_sha256_equal(qa_resource_digest(resource), &a->digest) ||
-            strcmp(a->path, a->acquisition.path) || !qa_vfs_acquisition_valid(view, &a->acquisition, error))
+            strcmp(a->path, a->acquisition.path) || !qa_vfs_acquisition_retained(view, &a->acquisition, error))
             return application_fail(error, QA_ERROR_FORMAT, "Q3 artifact changes its true opening recipe");
     }
     return true;
@@ -1149,6 +1156,9 @@ static bool prepare_artifact(application_provider *provider, struct application_
         ok = artifact->kind != QA_QVM_CGAME || application_q3_equipment_profile_read(artifact->image, artifact->kind,
             artifact->abi, (qa_bytes){artifact->equipment_presentation.data,
                 artifact->equipment_presentation.size}, &artifact->equipment_profile, error);
+        if (ok && artifact->kind == QA_QVM_GAME)
+            ok = application_q3_grapple_profile_create(artifact->image, artifact->kind,
+                artifact->abi, artifact->path, &artifact->grapple_profile, error);
     }
     qa_qvm_compatibility_free(&compatibility);
     return ok;
@@ -1279,6 +1289,12 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
             .origin = QA_COMMAND_SERVER};
         if (!application_startup_source_restore(provider,
             application_guest_q3_console_owner(provider), cvars, &command, error)) return false;
+    }
+    if (!application_guest_q3_client_consoles_prepare(engine, choices, error)) return false;
+    for (size_t index = 0;; ++index) {
+        qa_application_startup_source source;
+        if (!application_guest_q3_client_console_source(engine, index, &source)) break;
+        if (!application_startup_tuple_restore(provider, &source, error)) return false;
     }
     memcpy(engine->seats, saved->seats, sizeof(engine->seats));
     if (saved->entity_text && !(engine->entity_text = q3g_copy_text(saved->entity_text, error))) return false;

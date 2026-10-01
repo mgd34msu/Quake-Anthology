@@ -45,4 +45,11 @@ bool qa_application_q3_remote_context_read(qa_application *, qa_actor_owner rece
 bool qa_application_q3_remote_context_current(qa_application *,
     const qa_application_q3_client_context *);
 
+/* Qualifies the actual published receiver while a detached candidate is routed.
+ * Uses the published snapshot and physical provider inventory without mutation. */
+bool qa_application_q3_remote_published_context_read(qa_application *, qa_actor_owner receiver,
+    uint32_t seat, qa_application_q3_client_context *, qa_error *);
+bool qa_application_q3_remote_published_context_current(qa_application *,
+    const qa_application_q3_client_context *);
+
 #endif
