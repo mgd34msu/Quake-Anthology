@@ -1110,6 +1110,61 @@ static PSECURITY_DESCRIPTOR private_descriptor(qa_error *error)
     return descriptor;
 }
 
+static bool private_handle(HANDLE handle, const char *path, qa_error *error)
+{
+    const SECURITY_INFORMATION fields = OWNER_SECURITY_INFORMATION
+        | DACL_SECURITY_INFORMATION;
+    DWORD size = 0;
+    (void)GetKernelObjectSecurity(handle, fields, NULL, 0, &size);
+    if (!size)
+        return fail_windows(error, "cannot inspect staged permissions", path,
+                            GetLastError());
+    PSECURITY_DESCRIPTOR actual = malloc(size);
+    if (!actual) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0,
+                     "allocating staged permissions");
+        return false;
+    }
+    if (!GetKernelObjectSecurity(handle, fields, actual, size, &size)) {
+        DWORD code = GetLastError();
+        free(actual);
+        return fail_windows(error, "cannot inspect staged permissions", path,
+                            code);
+    }
+    PSECURITY_DESCRIPTOR expected = private_descriptor(error);
+    if (!expected) { free(actual); return false; }
+    PSID owner = NULL, current_owner = NULL;
+    PACL acl = NULL;
+    BOOL owner_defaulted = FALSE, current_defaulted = FALSE;
+    BOOL present = FALSE, acl_defaulted = FALSE;
+    SECURITY_DESCRIPTOR_CONTROL control = 0;
+    DWORD revision = 0;
+    ACL_SIZE_INFORMATION information = {0};
+    void *entry = NULL;
+    bool ok = GetSecurityDescriptorOwner(actual, &owner, &owner_defaulted)
+        && GetSecurityDescriptorOwner(expected, &current_owner, &current_defaulted)
+        && owner && current_owner && EqualSid(owner, current_owner)
+        && GetSecurityDescriptorDacl(actual, &present, &acl, &acl_defaulted)
+        && present && acl
+        && GetSecurityDescriptorControl(actual, &control, &revision)
+        && (control & SE_DACL_PROTECTED)
+        && GetAclInformation(acl, &information, sizeof information, AclSizeInformation)
+        && information.AceCount == 1 && GetAce(acl, 0, &entry);
+    if (ok) {
+        const ACCESS_ALLOWED_ACE *ace = entry;
+        ok = ace->Header.AceType == ACCESS_ALLOWED_ACE_TYPE
+            && ace->Header.AceFlags == 0
+            && ace->Mask == FILE_ALL_ACCESS
+            && EqualSid((PSID)&ace->SidStart, current_owner);
+    }
+    LocalFree(expected);
+    free(actual);
+    if (!ok)
+        qa_error_set(error, QA_ERROR_IO, 0,
+                     "staged file is not private to the current owner: %s", path);
+    return ok;
+}
+
 bool qa_fs_root_publish(qa_fs_root *root, const char *relative,
                         qa_bytes bytes, uint64_t nonce, bool exclusive,
                         bool private_file, bool *created, qa_error *error)
@@ -1491,7 +1546,7 @@ struct qa_fs_stage {
     writable_path locked;
     wchar_t *temporary, *target;
     char *display;
-    bool sealed, published;
+    bool sealed, published, readonly;
 };
 static bool stage_argument(qa_error *error, const char *message) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message); return false;
@@ -1515,13 +1570,14 @@ static bool stage_identity(qa_fs_stage *stage, qa_fs_identity *out, qa_error *er
     }
     identity_from_info(&legacy, &basic, out); return true;
 }
-bool qa_fs_stage_open(qa_fs_root *root, const char *target, uint64_t nonce, bool resume,
+static bool stage_open(qa_fs_root *root, const char *target, uint64_t nonce, bool resume, bool readonly,
                        qa_fs_stage **out, uint64_t *initial, qa_error *error) {
     if (!root || !out || !initial || !qa_fs_relative_valid(target, false, error))
         return stage_argument(error, "Invalid contained staging request");
     qa_fs_stage *stage = calloc(1, sizeof(*stage));
     if (!stage) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating file stage"); return false; }
     stage->handle = INVALID_HANDLE_VALUE; stage->display = copy_string(target);
+    stage->readonly = readonly; stage->sealed = readonly;
     if (!stage->display || !writable_parent(root, target, !resume, &stage->locked, error)) {
         if (!stage->display) qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining stage target");
         qa_fs_stage_close(stage, true); return false;
@@ -1537,7 +1593,9 @@ bool qa_fs_stage_open(qa_fs_root *root, const char *target, uint64_t nonce, bool
     PSECURITY_DESCRIPTOR descriptor = resume ? NULL : private_descriptor(error);
     if (!resume && !descriptor) { qa_fs_stage_close(stage, true); return false; }
     SECURITY_ATTRIBUTES attributes = {sizeof(attributes), descriptor, FALSE};
-    stage->handle = CreateFileW(stage->temporary, GENERIC_READ | GENERIC_WRITE | DELETE | FILE_READ_ATTRIBUTES,
+    DWORD access = GENERIC_READ | FILE_READ_ATTRIBUTES;
+    if (!readonly) access |= GENERIC_WRITE | DELETE;
+    stage->handle = CreateFileW(stage->temporary, access,
         FILE_SHARE_READ | FILE_SHARE_DELETE, resume ? NULL : &attributes, resume ? OPEN_EXISTING : CREATE_NEW,
         FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_OPEN_REPARSE_POINT, NULL);
     DWORD code = GetLastError();
@@ -1549,11 +1607,20 @@ bool qa_fs_stage_open(qa_fs_root *root, const char *target, uint64_t nonce, bool
     bool contained = opened && path_within(stage->locked.root_path, opened);
     free(opened);
     qa_fs_identity identity;
-    if (!contained || !stage_identity(stage, &identity, error)) {
+    if (!contained || !stage_identity(stage, &identity, error)
+        || !private_handle(stage->handle, target, error)) {
         if (!contained && (!error || error->code == QA_OK)) stage_argument(error, "Stage escapes retained root");
         qa_fs_stage_close(stage, resume); return false;
     }
     *initial = identity.words[2]; *out = stage; return true;
+}
+bool qa_fs_stage_open(qa_fs_root *root, const char *target, uint64_t nonce, bool resume,
+    qa_fs_stage **out, uint64_t *initial, qa_error *error) {
+    return stage_open(root, target, nonce, resume, false, out, initial, error);
+}
+bool qa_fs_stage_open_readonly(qa_fs_root *root, const char *target, uint64_t nonce,
+    qa_fs_stage **out, uint64_t *initial, qa_error *error) {
+    return stage_open(root, target, nonce, true, true, out, initial, error);
 }
 bool qa_fs_stage_size(qa_fs_stage *stage, uint64_t *out, qa_error *error) {
     if (!stage || !out) return stage_argument(error, "Missing stage size output");
@@ -1601,7 +1668,7 @@ bool qa_fs_stage_write(qa_fs_stage *stage, uint64_t offset, qa_bytes bytes, size
     return true;
 }
 bool qa_fs_stage_seal(qa_fs_stage *stage, qa_fs_identity *identity, qa_error *error) {
-    if (!stage || !identity || stage->published) return stage_argument(error, "Invalid stage seal");
+    if (!stage || !identity || stage->published || stage->readonly) return stage_argument(error, "Invalid stage seal");
     if (!FlushFileBuffers(stage->handle)) return fail_windows(error, "cannot sync staged file", stage->display, GetLastError());
     if (!stage_identity(stage, identity, error)) return false;
     stage->sealed = true; return true;
@@ -1640,7 +1707,7 @@ bool qa_fs_stage_map(qa_fs_stage *stage, qa_fs_stage_mapping **out, qa_error *er
 }
 bool qa_fs_stage_publish(qa_fs_stage *stage, const qa_fs_identity *expected, bool exclusive,
                           bool *created, qa_error *error) {
-    if (!stage || !expected || !created || !stage->sealed || stage->published)
+    if (!stage || !expected || !created || !stage->sealed || stage->published || stage->readonly)
         return stage_argument(error, "Invalid stage publication");
     *created = false;
     qa_fs_identity identity;
@@ -1676,10 +1743,10 @@ bool qa_fs_stage_publish(qa_fs_stage *stage, const qa_fs_identity *expected, boo
 void qa_fs_stage_close(qa_fs_stage *stage, bool keep) {
     if (!stage) return;
     if (stage->handle != INVALID_HANDLE_VALUE) {
-        if (!keep && !stage->published) {
+        if (!keep && !stage->published && !stage->readonly) {
             FILE_DISPOSITION_INFO disposition = {TRUE};
             (void)SetFileInformationByHandle(stage->handle, FileDispositionInfo, &disposition, sizeof(disposition));
-        } else if (keep && !stage->published) (void)FlushFileBuffers(stage->handle);
+        } else if (keep && !stage->published && !stage->readonly) (void)FlushFileBuffers(stage->handle);
         CloseHandle(stage->handle);
     }
     writable_path_close(&stage->locked); free(stage->temporary); free(stage->target); free(stage->display); free(stage);

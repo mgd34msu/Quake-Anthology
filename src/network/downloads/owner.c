@@ -1,5 +1,6 @@
 #include "qa/downloads.h"
 #include "qa/network_downloads_save.h"
+#include "qa/http_save.h"
 #include "../service_save_fields.h"
 #include "qa/vfs.h"
 #include <inttypes.h>
@@ -12,7 +13,9 @@ typedef struct download_job {
     qa_download_view view;
     qa_download_request request;
     qa_fs_stage *stage;
+    uint64_t native_stage_nonce;
     qa_http_request_id http_id;
+    char *http_url;
     uint64_t http_start, http_total;
     bool has_http_total, retained_stage;
 } download_job;
@@ -46,6 +49,7 @@ static void discard_stage(download_job *job, bool keep) {
         job->owner->reserved -= job->view.limit;
         job->retained_stage = keep;
         qa_fs_stage_close(job->stage, keep); job->stage = NULL;
+        if (!keep) job->native_stage_nonce = 0;
     }
 }
 static void rejected(download_job *job, const qa_error *error, bool recoverable) {
@@ -78,7 +82,7 @@ void qa_downloads_release(qa_downloads *owner, qa_download_id id) {
     download_job *job = lookup(owner, id);
     if (!job || owner->callback) return;
     qa_downloads_cancel(owner, id);
-    discard_stage(job, false); free((char *)job->view.path); memset(job, 0, sizeof(*job));
+    discard_stage(job, false); free((char *)job->view.path); free(job->http_url); memset(job, 0, sizeof(*job));
 }
 void qa_downloads_destroy(qa_downloads *owner) {
     if (!owner || owner->callback) return;
@@ -231,11 +235,21 @@ bool qa_downloads_begin(qa_downloads *owner, const qa_download_request *request,
     if (initial > request->maximum_bytes || (request->exact_identity && initial > request->expected_bytes)) {
         qa_fs_stage_close(stage, false); free(path); return fail(error, "Resumed download exceeds admitted identity");
     }
-    *job = (download_job){.owner = owner, .request = normalized, .stage = stage, .http_start = initial,
+    *job = (download_job){.owner = owner, .request = normalized, .stage = stage, .native_stage_nonce = nonce, .http_start = initial,
         .view = {.id = owner->next_id++, .path = path, .received = initial, .limit = request->maximum_bytes,
                  .state = QA_DOWNLOAD_RECEIVING, .stage_nonce = nonce}};
     owner->reserved += request->maximum_bytes;
     if (url && !(request->exact_identity && initial == request->expected_bytes)) {
+        if (strlen(url) > 65535) {
+            discard_stage(job, request->resume); free(path); memset(job, 0, sizeof(*job));
+            return fail(error, "HTTP download address exceeds retained recipe capacity");
+        }
+        job->http_url = malloc(strlen(url) + 1);
+        if (!job->http_url) {
+            discard_stage(job, request->resume); free(path); memset(job, 0, sizeof(*job));
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining HTTP download address"); return false;
+        }
+        strcpy(job->http_url, url);
         char range[64]; qa_http_header header = {"Range", range};
         (void)snprintf(range, sizeof(range), "bytes=%" PRIu64 "-", initial);
         qa_http_request http = {.url = url, .method = "GET", .timeout_ms = 120000, .connect_timeout_ms = 10000,
@@ -243,7 +257,7 @@ bool qa_downloads_begin(qa_downloads *owner, const qa_download_request *request,
             .headers = initial ? &header : NULL, .header_count = initial ? 1 : 0,
             .callbacks = {job, headers, body, complete}};
         if (!qa_http_submit(owner->http, &http, &job->http_id, error)) {
-            discard_stage(job, request->resume); free(path); memset(job, 0, sizeof(*job)); return false;
+            discard_stage(job, request->resume); free(path); free(job->http_url); memset(job, 0, sizeof(*job)); return false;
         }
     }
     *out = job->view.id; notify(job);
@@ -259,10 +273,35 @@ bool qa_downloads_view(const qa_downloads *owner, qa_download_id id, qa_download
     return false;
 }
 
+static bool download_http_valid(const download_job *job, qa_error *error)
+{
+    if (!job->http_id) return true;
+    qa_http_continuation_view view;
+    if (!job->http_url || !qa_http_continuation_read(job->owner->http, job->http_id, &view, error)) return false;
+    if (strcmp(view.url, job->http_url) || strcmp(view.method, "GET") || view.request_body.size ||
+        view.header_count != (job->http_start ? 1u : 0u) || view.timeout_ms != 120000 ||
+        view.connect_timeout_ms != 10000 || view.maximum_redirects != 5 ||
+        view.maximum_response_bytes != job->view.limit - job->http_start || view.canceled || view.failure.code != QA_OK)
+        return fail(error, "HTTP download consumer differs from its actual request recipe");
+    if (job->http_start) {
+        const char *line = NULL; char range[80];
+        snprintf(range, sizeof(range), "Range: bytes=%" PRIu64 "-", job->http_start);
+        if (!qa_http_continuation_header(job->owner->http, job->http_id, 0, &line, error) || strcmp(line, range))
+            return fail(error, "HTTP download request lost its genuine Range prefix");
+    }
+    uint64_t received = view.response.bytes - view.response_body_start;
+    bool successful = view.response.status == 200 || view.response.status == 206;
+    if (job->view.received - job->http_start != (successful ? received : 0))
+        return fail(error, "HTTP download received prefix differs from its actual response continuation");
+    if (job->has_http_total && (!view.response.has_range || view.response.range_first != job->http_start ||
+        view.response.range_total != job->http_total || !job->http_total || view.response.range_last != job->http_total - 1))
+        return fail(error, "HTTP download range response differs from its retained total");
+    return true;
+}
 static bool download_job_valid(const qa_downloads *owner, const download_job *job, bool staged)
 {
     const qa_download_request *request = &job->request; const qa_download_view *view = &job->view;
-    if (job->owner != owner || job->http_id || job->retained_stage || !view->path || request->path != view->path || !*view->path ||
+    if (job->owner != owner || !view->path || request->path != view->path || !*view->path ||
             (unsigned)view->state > QA_DOWNLOAD_CANCELED || (unsigned)view->failure.code > QA_ERROR_NOT_FOUND ||
             !memchr(view->failure.message, 0, sizeof(view->failure.message)) ||
             request->maximum_bytes != view->limit || view->limit > INT64_MAX || view->received > view->limit ||
@@ -272,6 +311,10 @@ static bool download_job_valid(const qa_downloads *owner, const download_job *jo
             (job->has_http_total && (job->http_total > view->limit || job->http_start > job->http_total)) ||
             (owner->next_id && view->id >= owner->next_id) ||
             staged != (view->state == QA_DOWNLOAD_RECEIVING) ||
+            (job->http_id && !staged) ||
+            (job->stage && !job->native_stage_nonce) ||
+            (job->retained_stage && (staged || job->http_id || view->published || view->mounted ||
+                (view->state != QA_DOWNLOAD_FAILED && view->state != QA_DOWNLOAD_CANCELED))) ||
             (view->state == QA_DOWNLOAD_INSTALLING && (!view->published || view->mounted)) ||
             (view->state == QA_DOWNLOAD_COMPLETE && (!view->published || !view->mounted)) ||
             (view->mounted && view->state != QA_DOWNLOAD_COMPLETE) ||
@@ -288,10 +331,12 @@ static bool download_inventory_valid(const qa_downloads *owner, const bool *stag
     for (uint32_t i = 0; i < owner->options.jobs; ++i) {
         const download_job *job = &owner->jobs[i]; if (!job->view.id) continue;
         bool has_stage = staged ? staged[i] : job->stage != NULL;
-        if (!download_job_valid(owner, job, has_stage)) return false;
+        if (!download_job_valid(owner, job, has_stage) || !download_http_valid(job, NULL)) return false;
         const qa_download_view *view = &job->view;
         for (uint32_t j = 0; j < i; ++j) if (owner->jobs[j].view.id == view->id ||
             (job->stage && owner->jobs[j].stage == job->stage)) return false;
+        for (uint32_t j = 0; j < i; ++j)
+            if (job->http_id && job->http_id == owner->jobs[j].http_id) return false;
         if (has_stage) {
             if (view->limit > owner->options.maximum_pending_bytes - reserved) return false;
             reserved += view->limit;
@@ -316,24 +361,38 @@ static bool download_save_job(qa_net_writer *w, const download_job *job)
         qa_net_write_data(w, view->failure.message, sizeof(view->failure.message)) &&
         qa_net_write_u8(w, view->published) && qa_net_write_u8(w, view->mounted) &&
         qa_net_write_data(w, view->digest.bytes, sizeof(view->digest.bytes)) && qa_net_write_u64(w, view->stage_nonce) &&
-        qa_net_write_u64(w, job->http_start) && qa_net_write_u64(w, job->http_total) && qa_net_write_u8(w, job->has_http_total);
+        qa_net_write_u64(w, job->http_start) && qa_net_write_u64(w, job->http_total) && qa_net_write_u8(w, job->has_http_total) &&
+        qa_net_write_u64(w, job->http_id) && qa_net_write_u8(w, job->http_url != NULL) &&
+        (!job->http_url || qa_net_write_string(w, job->http_url)) && qa_net_write_u8(w, job->retained_stage);
 }
 bool qa_downloads_checkpoint(const qa_downloads *owner, qa_buffer *out, qa_error *error)
 {
-    if (!out || !download_checkpoint_valid(owner) || (uint64_t)owner->options.jobs > (SIZE_MAX - 36) / 513)
-        return fail(error, "Download continuation requires idle native jobs and drained HTTP ownership");
-    size_t capacity = 36 + (size_t)owner->options.jobs * 513;
+    if (!out || !download_checkpoint_valid(owner) || (uint64_t)owner->options.jobs > (SIZE_MAX - 36) / 530)
+        return fail(error, "Download continuation requires idle native jobs and HTTP callbacks");
+    size_t capacity = 36 + (size_t)owner->options.jobs * 530;
     for (uint32_t i = 0; i < owner->options.jobs; ++i) {
         const download_job *job = &owner->jobs[i]; if (!job->view.id) continue;
         size_t length = strlen(job->view.path);
-        if (length > SIZE_MAX - capacity || (job->stage && job->view.received > SIZE_MAX - capacity - length))
+        uint64_t prefix_size = job->stage ? job->view.received : 0;
+        if (job->retained_stage) {
+            qa_fs_stage *artifact = NULL;
+            if (!qa_fs_stage_open_readonly(owner->root, job->view.path, job->view.stage_nonce, &artifact, &prefix_size, error)) return false;
+            qa_fs_stage_close(artifact, true);
+            if (prefix_size < job->view.received || prefix_size > job->view.limit) return fail(error, "Retained download artifact prefix exceeds its actual accepted limits");
+        }
+        if (length > SIZE_MAX - capacity || prefix_size > SIZE_MAX - capacity - length)
             return fail(error, "Download continuation extent exceeds memory");
-        capacity += length; if (job->stage) capacity += (size_t)job->view.received;
+        capacity += length + (size_t)prefix_size;
+        if (job->http_url) {
+            size_t url_bytes = strlen(job->http_url) + 1;
+            if (url_bytes > SIZE_MAX - capacity) return fail(error, "Download address continuation extent exceeds memory");
+            capacity += url_bytes;
+        }
     }
     uint8_t *data = malloc(capacity);
     if (!data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Encoding native download continuation"); return false; }
     qa_net_writer w; qa_net_writer_init(&w, data, capacity, error);
-    bool ok = qa_net_write_u32(&w, UINT32_C(0x4a444151)) && qa_net_write_u32(&w, 1) &&
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x4a444151)) && qa_net_write_u32(&w, 3) &&
         qa_net_write_u32(&w, owner->options.jobs) && qa_net_write_u64(&w, owner->options.maximum_pending_bytes) &&
         qa_net_write_u64(&w, owner->next_id) && qa_net_write_u64(&w, owner->reserved);
     uint8_t scratch[65536];
@@ -341,16 +400,21 @@ bool qa_downloads_checkpoint(const qa_downloads *owner, qa_buffer *out, qa_error
         const download_job *job = &owner->jobs[i]; ok = qa_net_write_u8(&w, job->view.id != 0);
         if (!ok || !job->view.id) continue;
         ok = download_save_job(&w, job) && qa_net_write_u8(&w, job->stage != NULL);
-        if (!ok || !job->stage) continue;
+        if (!ok || (!job->stage && !job->retained_stage)) continue;
+        qa_fs_stage *stage = job->stage;
+        bool artifact = job->retained_stage;
         uint64_t size = 0;
-        ok = qa_fs_stage_size(job->stage, &size, error) && size == job->view.received && qa_net_write_u64(&w, size);
+        if (artifact) ok = qa_fs_stage_open_readonly(owner->root, job->view.path, job->view.stage_nonce, &stage, &size, error);
+        else ok = qa_fs_stage_size(stage, &size, error);
+        ok = ok && (artifact ? size >= job->view.received && size <= job->view.limit : size == job->view.received) && qa_net_write_u64(&w, size);
         uint64_t offset = 0;
         while (ok && offset < size) {
             size_t count = size - offset > sizeof(scratch) ? sizeof(scratch) : (size_t)(size - offset), read = 0;
-            ok = qa_fs_stage_read(job->stage, offset, scratch, count, &read, error) && read == count && qa_net_write_data(&w, scratch, read);
+            ok = qa_fs_stage_read(stage, offset, scratch, count, &read, error) && read == count && qa_net_write_data(&w, scratch, read);
             offset += read;
         }
-        uint64_t after = 0; if (ok) ok = qa_fs_stage_size(job->stage, &after, error) && after == size;
+        uint64_t after = 0; if (ok) ok = qa_fs_stage_size(stage, &after, error) && after == size;
+        if (artifact) qa_fs_stage_close(stage, true);
     }
     if (!ok || w.failed) { free(data); if (!error || !error->code) fail(error, "Native stage changed during continuation capture"); return false; }
     *out = (qa_buffer){data, qa_net_writer_size(&w)}; return true;
@@ -377,9 +441,12 @@ static bool download_restore_job(qa_net_reader *r, download_job *job)
     view->failure.offset = (size_t)failure_offset; view->published = q3_save_bool(r); view->mounted = q3_save_bool(r);
     if (!qa_net_read_data(r, view->digest.bytes, sizeof(view->digest.bytes))) return false;
     view->stage_nonce = qa_net_read_u64(r); job->http_start = qa_net_read_u64(r); job->http_total = qa_net_read_u64(r);
-    job->has_http_total = q3_save_bool(r); return !r->failed;
+    job->has_http_total = q3_save_bool(r); job->http_id = qa_net_read_u64(r);
+    bool has_url = q3_save_bool(r);
+    if (has_url && !service_restore_text(r, &job->http_url, 65535)) return false;
+    job->retained_stage = q3_save_bool(r); return !r->failed;
 }
-static bool download_stage_matches(qa_fs_stage *stage, qa_bytes prefix, qa_error *error)
+static bool download_stage_matches(qa_fs_stage *stage, qa_bytes prefix, bool writable, qa_error *error)
 {
     uint64_t size = 0; if (!qa_fs_stage_size(stage, &size, error) || size != prefix.size) return false;
     uint8_t scratch[65536]; size_t offset = 0;
@@ -388,6 +455,7 @@ static bool download_stage_matches(qa_fs_stage *stage, qa_bytes prefix, qa_error
         if (!qa_fs_stage_read(stage, offset, scratch, count, &read, error) || read != count || memcmp(scratch, prefix.data + offset, count)) return false;
         offset += count;
     }
+    if (!writable) return true;
     size_t written = 0;
     return qa_fs_stage_write(stage, size, (qa_bytes){0}, &written, error) && !written;
 }
@@ -397,7 +465,7 @@ bool qa_downloads_restore_checkpoint(qa_bytes bytes, qa_http *http, qa_fs_root *
     if (!out || *out || !options || !refs || !refs->resource || (bytes.size && !bytes.data))
         return fail(error, "Native download restore requires qualified candidate filesystem resources");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error);
-    if (qa_net_read_u32(&r) != UINT32_C(0x4a444151) || qa_net_read_u32(&r) != 1 ||
+    if (qa_net_read_u32(&r) != UINT32_C(0x4a444151) || qa_net_read_u32(&r) != 3 ||
         qa_net_read_u32(&r) != options->jobs || qa_net_read_u64(&r) != options->maximum_pending_bytes)
         return fail(error, "Native download continuation schema/policy differs");
     uint64_t next = qa_net_read_u64(&r), reserved = qa_net_read_u64(&r);
@@ -413,9 +481,10 @@ bool qa_downloads_restore_checkpoint(qa_bytes bytes, qa_http *http, qa_fs_root *
         bool present = q3_save_bool(&r); if (!present) continue;
         download_job *job = &owner->jobs[i]; job->owner = owner;
         ok = download_restore_job(&r, job); staged[i] = q3_save_bool(&r);
-        if (ok && staged[i]) {
+        if (ok && (staged[i] || job->retained_stage)) {
             uint64_t size = qa_net_read_u64(&r);
-            ok = size <= SIZE_MAX && size == job->view.received && size <= job->view.limit && qa_net_read_bytes(&r, (size_t)size, &prefixes[i]);
+            ok = size <= SIZE_MAX && (staged[i] ? size == job->view.received : size >= job->view.received) &&
+                size <= job->view.limit && qa_net_read_bytes(&r, (size_t)size, &prefixes[i]);
         }
     }
     if (ok) ok = qa_net_reader_finish(&r) && download_inventory_valid(owner, staged);
@@ -431,13 +500,25 @@ bool qa_downloads_restore_checkpoint(qa_bytes bytes, qa_http *http, qa_fs_root *
                 for (uint32_t j = 0; j < i; ++j) if (owner->jobs[j].stage == stage) { stage = NULL; ok = false; break; }
                 if (stage) {
                     job->stage = stage; owner->reserved += job->view.limit;
-                    ok = nonce && nonce != job->view.stage_nonce && download_stage_matches(stage, prefixes[i], error);
-                    if (ok) { job->view.stage_nonce = nonce; if (job->request.stage_nonce) job->request.stage_nonce = nonce; }
+                    ok = nonce && nonce != job->view.stage_nonce && download_stage_matches(stage, prefixes[i], true, error);
+                    if (ok) job->native_stage_nonce = nonce;
                 }
             } else if (ok) ok = false;
         }
+        if (ok && job->retained_stage) {
+            qa_fs_stage *artifact = NULL;
+            ok = refs->artifact && refs->artifact(refs->context, &job->request, &job->view, &artifact, error) && artifact &&
+                download_stage_matches(artifact, prefixes[i], false, error);
+            qa_fs_stage_close(artifact, true);
+            if (ok) job->native_stage_nonce = job->view.stage_nonce;
+        }
     }
     if (ok) ok = owner->reserved == reserved && download_checkpoint_valid(owner);
+    for (uint32_t i = 0; ok && i < options->jobs; ++i) {
+        download_job *job = &owner->jobs[i]; if (!job->http_id) continue;
+        qa_http_callbacks callbacks = {job, headers, body, complete};
+        ok = qa_http_restore_callbacks(http, job->http_id, &callbacks, error);
+    }
     free(prefixes); free(staged);
     if (!ok) {
         owner->options.hooks.changed = NULL;
@@ -457,4 +538,32 @@ bool qa_downloads_resources_ready(qa_downloads *owner, const qa_download_checkpo
     }
     owner->callback = false;
     return ok;
+}
+bool qa_downloads_handoff_ready(const qa_downloads *active, const qa_downloads *candidate, qa_error *error)
+{
+    if (!active || !candidate || active == candidate || active->options.jobs != candidate->options.jobs ||
+        active->options.maximum_pending_bytes != candidate->options.maximum_pending_bytes ||
+        !download_checkpoint_valid(active) || !download_checkpoint_valid(candidate))
+        return fail(error, "Download native handoff requires matching idle owners");
+    bool ok = true;
+    for (uint32_t i = 0; i < candidate->options.jobs; ++i) {
+        const download_job *job = candidate->jobs + i, *original = active->jobs + i;
+        if (job->view.id != original->view.id || (job->stage != NULL) != (original->stage != NULL)) { ok = false; break; }
+    }
+    qa_buffer current = {0}, restored = {0};
+    if (ok) ok = qa_downloads_checkpoint(active, &current, error) && qa_downloads_checkpoint(candidate, &restored, error);
+    if (ok) ok = current.size == restored.size && !memcmp(current.data, restored.data, current.size);
+    qa_buffer_free(&current); qa_buffer_free(&restored);
+    if (!ok && (!error || error->code == QA_OK))
+        qa_error_set(error, QA_ERROR_UNSUPPORTED, 0, "Live download advanced beyond its saved job and native prefix cut");
+    return ok;
+}
+void qa_downloads_handoff_publish(qa_downloads *active, qa_downloads *candidate)
+{
+    for (uint32_t i = 0; i < active->options.jobs; ++i) {
+        download_job *old = active->jobs + i, *next = candidate->jobs + i;
+        if (!old->stage) continue;
+        qa_fs_stage *stage = old->stage; old->stage = next->stage; next->stage = stage;
+        uint64_t nonce = old->native_stage_nonce; old->native_stage_nonce = next->native_stage_nonce; next->native_stage_nonce = nonce;
+    }
 }

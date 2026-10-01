@@ -82,7 +82,9 @@ bool qa_server_browser_restore(qa_server_browser *browser, qa_bytes bytes, qa_er
 
 static bool browser_checkpoint_valid(const qa_server_browser *b)
 {
-    if (!b || b->callback || b->http_master || b->master_body.size || b->master_body.data ||
+    if (!b || b->callback || !qa_http_callbacks_idle(b->http) ||
+        b->master_body.size > 1048576 || (b->master_body.size && !b->master_body.data) ||
+        (!b->http_master && b->master_body.size) ||
         !b->capacity || b->capacity > 8192 || !b->records ||
         !service_address_valid(&b->broadcast) || !service_address_valid(&b->master) ||
         !qa_net_protocol_valid(b->broadcast_protocol, NULL) || !qa_net_protocol_valid(b->master_protocol, NULL) ||
@@ -107,19 +109,22 @@ static bool browser_checkpoint_valid(const qa_server_browser *b)
 }
 bool qa_server_browser_checkpoint(const qa_server_browser *b, qa_buffer *out, qa_error *error)
 {
-    if (!out || !browser_checkpoint_valid(b))
-        return qa_browser_fail(error, "Browser continuation requires drained HTTP and valid UDP service ownership");
-    size_t capacity = 512 + (size_t)b->capacity * 10000;
+    if (!out || !browser_checkpoint_valid(b) || !qa_browser_http_valid(b, error))
+        return qa_browser_fail(error, "Browser continuation requires idle callbacks and valid service ownership");
+    size_t capacity = 512 + (size_t)b->capacity * 10000 + b->master_body.size + (b->master_url ? strlen(b->master_url) + 1 : 0);
     uint8_t *data = malloc(capacity);
     if (!data) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Encoding browser continuation"); return false; }
     qa_net_writer w; qa_net_writer_init(&w, data, capacity, error);
-    bool ok = qa_net_write_u32(&w, UINT32_C(0x42534151)) && qa_net_write_u32(&w, 1) &&
+    bool ok = qa_net_write_u32(&w, UINT32_C(0x42534151)) && qa_net_write_u32(&w, 2) &&
         qa_net_write_u32(&w, b->capacity) && qa_net_write_u64(&w, b->next_query) &&
         q3_save_address(&w, &b->broadcast) && q3_save_address(&w, &b->master) &&
         service_save_protocol(&w, b->broadcast_protocol) && service_save_protocol(&w, b->master_protocol) &&
         qa_net_write_u64(&w, b->broadcast_sent) && qa_net_write_u64(&w, b->broadcast_timeout) &&
         qa_net_write_u64(&w, b->master_sent) && qa_net_write_u64(&w, b->master_timeout) &&
-        qa_net_write_u64(&w, b->broadcast_query) && qa_net_write_u8(&w, b->broadcasting) && qa_net_write_u8(&w, b->master_pending);
+        qa_net_write_u64(&w, b->broadcast_query) && qa_net_write_u8(&w, b->broadcasting) && qa_net_write_u8(&w, b->master_pending) &&
+        qa_net_write_u64(&w, b->http_master) && qa_net_write_u32(&w, (uint32_t)b->master_body.size) &&
+        qa_net_write_data(&w, b->master_body.data, b->master_body.size);
+    if (ok && b->http_master) ok = qa_net_write_string(&w, b->master_url);
     for (uint32_t i = 0; ok && i < b->capacity; ++i) {
         const browser_record *r = &b->records[i]; const qa_server_entry *e = &r->entry;
         ok = qa_net_write_u8(&w, r->occupied); if (!ok || !r->occupied) continue;
@@ -137,10 +142,10 @@ bool qa_server_browser_checkpoint(const qa_server_browser *b, qa_buffer *out, qa
 bool qa_server_browser_restore_checkpoint(qa_bytes bytes, qa_http *http, uint32_t capacity,
     const qa_browser_hooks *hooks, qa_server_browser **out, qa_error *error)
 {
-    if (!out || *out || bytes.size > 512 + (size_t)8192 * 10000 || (bytes.size && !bytes.data))
+    if (!out || *out || bytes.size > 512 + (size_t)8192 * 10000 + 1048576 + 65536 || (bytes.size && !bytes.data))
         return qa_browser_fail(error, "Invalid browser continuation output or extent");
     qa_net_reader r; qa_net_reader_init(&r, bytes, error);
-    if (qa_net_read_u32(&r) != UINT32_C(0x42534151) || qa_net_read_u32(&r) != 1 || qa_net_read_u32(&r) != capacity)
+    if (qa_net_read_u32(&r) != UINT32_C(0x42534151) || qa_net_read_u32(&r) != 2 || qa_net_read_u32(&r) != capacity)
         return qa_browser_fail(error, "Browser continuation schema or capacity differs");
     qa_server_browser *b = NULL;
     if (!qa_server_browser_create(http, capacity, hooks, &b, error)) return false;
@@ -150,6 +155,21 @@ bool qa_server_browser_restore_checkpoint(qa_bytes bytes, qa_http *http, uint32_
     b->broadcast_sent = qa_net_read_u64(&r); b->broadcast_timeout = qa_net_read_u64(&r);
     b->master_sent = qa_net_read_u64(&r); b->master_timeout = qa_net_read_u64(&r); b->broadcast_query = qa_net_read_u64(&r);
     b->broadcasting = q3_save_bool(&r); b->master_pending = q3_save_bool(&r);
+    b->http_master = qa_net_read_u64(&r);
+    uint32_t body_size = qa_net_read_u32(&r);
+    if (!r.failed && body_size <= 1048576 && body_size <= qa_net_reader_remaining(&r)) {
+        if (body_size) {
+            b->master_body.data = malloc((size_t)body_size + 1);
+            if (!b->master_body.data) {
+                qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring HTTP master prefix"); ok = false;
+            } else {
+                b->master_body.size = body_size;
+                ok = ok && qa_net_read_data(&r, b->master_body.data, body_size);
+                b->master_body.data[body_size] = 0;
+            }
+        }
+    } else ok = false;
+    if (ok && b->http_master) ok = service_restore_text(&r, &b->master_url, 65535);
     for (uint32_t i = 0; ok && !r.failed && i < capacity; ++i) {
         browser_record *record = &b->records[i]; qa_server_entry *e = &record->entry;
         record->occupied = q3_save_bool(&r); if (!record->occupied) continue;
@@ -161,8 +181,25 @@ bool qa_server_browser_restore_checkpoint(qa_bytes bytes, qa_http *http, uint32_
             qa_net_read_string(&r, e->rules, sizeof(e->rules));
         record->query = qa_net_read_u64(&r); record->sent_ns = qa_net_read_u64(&r); record->timeout_ns = qa_net_read_u64(&r);
     }
-    if (!ok || !qa_net_reader_finish(&r) || !browser_checkpoint_valid(b)) {
+    if (!ok || !qa_net_reader_finish(&r) || !browser_checkpoint_valid(b) || !qa_browser_restore_http(b, error)) {
         qa_server_browser_destroy(b); return qa_browser_fail(error, "Invalid browser continuation fields");
     }
     *out = b; return true;
+}
+bool qa_server_browser_http_handoff_ready(const qa_server_browser *active,
+    const qa_server_browser *candidate, qa_error *error)
+{
+    if (!active || !candidate || active == candidate || !browser_checkpoint_valid(active) ||
+        !browser_checkpoint_valid(candidate) || !qa_browser_http_valid(active, error) || !qa_browser_http_valid(candidate, error))
+        return qa_browser_fail(error, "HTTP master handoff requires idle genuine consumers");
+    if (!active->http_master && !candidate->http_master) return true;
+    return (active->http_master == candidate->http_master &&
+        active->master_protocol.kind == candidate->master_protocol.kind &&
+        active->master_protocol.revision == candidate->master_protocol.revision &&
+        active->master_protocol.flags == candidate->master_protocol.flags &&
+        active->master_sent == candidate->master_sent && active->master_url && candidate->master_url &&
+        !strcmp(active->master_url, candidate->master_url) &&
+        active->master_body.size == candidate->master_body.size &&
+        (!active->master_body.size || !memcmp(active->master_body.data, candidate->master_body.data, active->master_body.size))) ||
+        qa_browser_fail(error, "Live HTTP master advanced beyond its saved consumer body and request cut");
 }

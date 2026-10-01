@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/http_save.h"
 #include "qa/network_q2.h"
 #include <stdlib.h>
 #include <string.h>
@@ -36,6 +37,7 @@ void qa_server_browser_cancel_master(qa_server_browser *browser) {
     if (!browser || browser->callback) return;
     qa_http_cancel(browser->http, browser->http_master); browser->http_master = 0;
     browser->master_pending = false; qa_buffer_free(&browser->master_body);
+    free(browser->master_url); browser->master_url = NULL;
 }
 void qa_server_browser_destroy(qa_server_browser *browser) {
     if (!browser || browser->callback) return;
@@ -203,22 +205,47 @@ static void http_complete(void *context, qa_http_request_id id, const qa_http_re
         }
     }
     qa_buffer_free(&browser->master_body);
+    free(browser->master_url); browser->master_url = NULL;
     if (browser->hooks.master_complete) {
         browser->callback = true;
         browser->hooks.master_complete(browser->hooks.context, error.code == QA_OK ? NULL : &error);
         browser->callback = false;
     }
 }
+bool qa_browser_restore_http(qa_server_browser *browser, qa_error *error)
+{
+    if (!browser->http_master) return true;
+    if (!qa_browser_http_valid(browser, error)) return false;
+    qa_http_callbacks callbacks = {browser, http_headers, http_body, http_complete};
+    return qa_http_restore_callbacks(browser->http, browser->http_master, &callbacks, error);
+}
+bool qa_browser_http_valid(const qa_server_browser *browser, qa_error *error)
+{
+    if (!browser->http_master) return !browser->master_url && !browser->master_body.size;
+    qa_http_continuation_view view;
+    if (!browser->master_url || !qa_http_continuation_read(browser->http, browser->http_master, &view, error)) return false;
+    uint64_t entity_bytes = view.response.bytes - view.response_body_start;
+    return (!strcmp(view.url, browser->master_url) && !strcmp(view.method, "GET") &&
+        !view.request_body.size && !view.header_count && view.timeout_ms == 15000 &&
+        view.connect_timeout_ms == 5000 && view.maximum_redirects == 5 &&
+        view.maximum_response_bytes == 1048576 && !view.canceled && view.failure.code == QA_OK &&
+        browser->master_body.size == (view.response.status == 200 ? entity_bytes : 0)) ||
+        qa_browser_fail(error, "HTTP master consumer differs from its actual recipe and received prefix");
+}
 bool qa_server_browser_master_http(qa_server_browser *browser, const char *url,
                                     qa_net_protocol_id protocol, uint64_t now, qa_error *error) {
-    if (!browser || browser->callback || !url || !qa_net_protocol_valid(protocol, error))
+    if (!browser || browser->callback || !url || strlen(url) > 65535 || !qa_net_protocol_valid(protocol, error))
         return qa_browser_fail(error, "Invalid HTTP master query");
     qa_server_browser_cancel_master(browser);
+    browser->master_url = malloc(strlen(url) + 1);
+    if (!browser->master_url) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining HTTP master address"); return false; }
+    strcpy(browser->master_url, url);
     browser->master_protocol = protocol; browser->master_sent = now;
     qa_http_request request = {.url = url, .method = "GET", .maximum_response_bytes = 1048576,
         .timeout_ms = 15000, .connect_timeout_ms = 5000, .maximum_redirects = 5,
         .callbacks = {browser, http_headers, http_body, http_complete}};
-    return qa_http_submit(browser->http, &request, &browser->http_master, error);
+    if (qa_http_submit(browser->http, &request, &browser->http_master, error)) return true;
+    free(browser->master_url); browser->master_url = NULL; return false;
 }
 size_t qa_server_browser_count(const qa_server_browser *browser) {
     size_t count = 0;

@@ -134,6 +134,11 @@ typedef struct qa_fs_stage qa_fs_stage;
  * recovery and revalidates retained bytes before resuming a transfer. */
 bool qa_fs_stage_open(qa_fs_root *, const char *target, uint64_t nonce,
                        bool resume, qa_fs_stage **, uint64_t *initial_size, qa_error *);
+/* Read-only inspection of an existing retained private stage. Never creates,
+ * truncates, syncs, publishes or removes the artifact, even on close(false).
+ * Its retained handle qualifies the same contained regular file identity. */
+bool qa_fs_stage_open_readonly(qa_fs_root *, const char *target, uint64_t nonce,
+                                qa_fs_stage **, uint64_t *initial_size, qa_error *);
 bool qa_fs_stage_size(qa_fs_stage *, uint64_t *, qa_error *);
 bool qa_fs_stage_read(qa_fs_stage *, uint64_t offset, void *, size_t capacity,
                        size_t *read, qa_error *);

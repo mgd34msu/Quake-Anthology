@@ -19,8 +19,11 @@ struct qa_server_browser {
     bool broadcasting, master_pending, callback;
     qa_http_request_id http_master;
     qa_buffer master_body;
+    char *master_url;
 };
 bool qa_browser_fail(qa_error *, const char *);
+bool qa_browser_restore_http(qa_server_browser *, qa_error *);
+bool qa_browser_http_valid(const qa_server_browser *, qa_error *);
 bool qa_browser_query_encode(qa_net_protocol_id, uint64_t challenge, qa_net_writer *);
 bool qa_browser_status_decode(qa_bytes, qa_net_protocol_id, qa_server_entry *, uint64_t *challenge, qa_error *);
 bool qa_browser_master_decode(qa_bytes, qa_net_protocol_id, qa_net_address *, size_t, size_t *, bool *complete, qa_error *);
