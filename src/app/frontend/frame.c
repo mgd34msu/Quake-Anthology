@@ -6,6 +6,12 @@
 #include "campaign_cinematic.h"
 #include "ui_features.h"
 #include "input_profile.h"
+#include "config_store.h"
+#include "network_prediction.h"
+#include "network_config.h"
+#include "equipment_events.h"
+#include "particle_clock.h"
+#include "qa/source_frame_time.h"
 #include "qa/application_startup_prepare.h"
 #include <stdio.h>
 
@@ -20,11 +26,66 @@ static qa_console_dialect dialect(qa_movement_kind kind)
     }
     return QA_CONSOLE_Q1;
 }
-static bool controls(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error)
+static bool source_elapsed(qa_frontend *frontend,uint64_t supplied,const qa_cvars **owner,
+    uint64_t *out,qa_error *error)
 {
-    double now = (double)frontend->time_ns / 1000000.0;
-    double duration = fmin((double)elapsed_ns / 1000000.0, 250.0);
-    if (duration <= 0) return true;
+    const qa_cvars *cvars=NULL;
+    bool remote=frontend_network_remote(frontend);
+    if (remote) {
+        bool present;
+        if (!frontend_network_client_time_cvars_read(frontend,&cvars,&present,error)) return false;
+        if (!present) cvars=NULL;
+    } else if (!qa_application_startup_pending(frontend->application)) {
+        const qa_launch_snapshot *publication=qa_application_launch(frontend->application);
+        const qa_launch_binding *entities=qa_launch_binding_for(qa_launch_snapshot_choices(publication),
+            (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
+        const qa_launch_instance *source=entities?qa_launch_snapshot_find(publication,entities->instance):NULL;
+        if (source) {
+            qa_console *console; qa_cvars *actual; qa_command_context command;
+            if (!qa_application_startup_source_read(frontend->application,publication,source,
+                &console,&actual,&command,error)) return false;
+            cvars=actual;
+        }
+    }
+    double milliseconds=(double)supplied/1000000.0;
+    if (cvars && !qa_source_frame_time_sample(cvars,milliseconds,frontend->options.dedicated,!remote,
+        &milliseconds,error)) return false;
+    double duration=milliseconds*1000000.0;
+    if (!isfinite(duration) || duration<0 || duration>=18446744073709551616.0)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source frame duration exceeds the native elapsed range");
+    *owner=cvars; *out=cvars?(uint64_t)duration:supplied; return true;
+}
+static bool selected_bindings(qa_frontend *frontend,qa_error *error)
+{
+    qa_inventory *inventory=qa_application_inventory(frontend->application);
+    qa_strings *strings=qa_session_strings(qa_application_session(frontend->application));
+    for (uint32_t ordinal=0;ordinal<frontend->options.seats;++ordinal) {
+        uint32_t launch_seat; qa_actor_id actor;
+        if (!frontend_seat_launch_id_read(frontend,ordinal,&launch_seat) ||
+            !qa_application_player_actor(frontend->application,launch_seat,&actor)) continue;
+        size_t count;
+        if (!qa_inventory_item_definitions(inventory,actor,NULL,0,&count,error)) return false;
+        qa_item_definition local[64],*items=local;
+        if (count>sizeof(local)/sizeof(*local)) {
+            if (count>SIZE_MAX/sizeof(*items))
+                return frontend_fail(error,QA_ERROR_MEMORY,"Selected binding catalog storage overflow");
+            items=malloc(count*sizeof(*items));
+            if (!items) return frontend_fail(error,QA_ERROR_MEMORY,"Allocating selected binding catalog");
+        }
+        bool ok=qa_inventory_item_definitions(inventory,actor,items,count,&count,error) &&
+            frontend_config_store_select_bindings(frontend->config_store,launch_seat,strings,items,count,
+                qa_input_platform_controller(frontend->input,ordinal),error);
+        if (items!=local) free(items);
+        if (!ok) return false;
+    }
+    return true;
+}
+static bool controls(qa_frontend *frontend,uint64_t elapsed_ns,uint64_t wall_elapsed_ns,qa_error *error)
+{
+    double now=(double)frontend->wall_time_ns/1000000.0;
+    double duration=(double)elapsed_ns/1000000.0;
+    double wall_duration=(double)wall_elapsed_ns/1000000.0;
+    if (wall_duration<=0) return true;
     for (unsigned i = 0; i < frontend->options.seats; ++i) {
         frontend_seat *seat = &frontend->seats[i];
         qa_actor_id actor; uint32_t launch_seat;
@@ -47,8 +108,22 @@ static bool controls(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error
             !qa_input_command_angles(&seat->builder, state.command_angles, error)) return false;
         qa_seat_input_sample sample;
         qa_input_command_tuning tuning;
-        if (!qa_input_seat_sample(seat->input, now, duration, &sample, error) ||
-            !qa_input_settings_read(qa_application_cvars(frontend->application), kind, &tuning, error)) return false;
+        qa_movement_kind configured_kind;
+        qa_cvars *input_settings, *view_settings;
+        if (frontend_network_remote(frontend)) {
+            frontend_remote_config_view configuration;
+            if (!frontend_network_client_configuration(frontend,launch_seat,&configuration,error)) return false;
+            input_settings=configuration.q3_mouse; view_settings=configuration.movement_mouse;
+            configured_kind=configuration.movement;
+        } else {
+            input_settings=frontend_config_store_primary_mouse_cvars(frontend->config_store,launch_seat,&configured_kind);
+            view_settings=input_settings;
+        }
+        if (!input_settings || !view_settings || configured_kind!=kind)
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Player input lacks its actual published source settings and movement profile");
+        if (!qa_input_seat_sample(seat->input,now,wall_duration,&sample,error) ||
+            !qa_input_settings_read_routed(input_settings, view_settings, kind, &tuning, error)) return false;
+        if (!frontend_network_remote(frontend) && qa_application_q1_paused(frontend->application)) continue;
         qa_hud_wheel_command wheel;
         if (!qa_hud_wheel_update(seat->wheel, frontend->time_ns, error) ||
             !qa_hud_wheel_prepare(seat->wheel, sample.buttons[QA_INPUT_ATTACK].active,
@@ -73,7 +148,7 @@ static bool input_events(qa_frontend *frontend, qa_error *error)
 {
     if (!frontend_ui_features_sync(frontend,error)) return false;
     SDL_Event event;
-    double now = (double)frontend->time_ns / 1000000.0;
+    double now = (double)frontend->wall_time_ns / 1000000.0;
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_QUIT) { qa_application_request_stop(frontend->application); continue; }
         if (frontend->options.dedicated) continue;
@@ -125,7 +200,8 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
     }
     /* Network, demos and tools also consume application events. Their owner
      * must drain its projections before this shared queue is released. */
-    return qa_application_clear_events(frontend->application, error);
+    return frontend_equipment_events_drain(frontend->gear_events,error) &&
+        qa_application_clear_events(frontend->application, error);
 }
 static bool phase_end(qa_profiler *profiler, bool ok, qa_error *error)
 {
@@ -173,8 +249,9 @@ static bool audio_positions(qa_frontend *frontend, qa_error *error)
 bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error)
 {
     if (!frontend || frontend->shutdown || frontend->stepping || frontend->preparing || frontend->round || !frontend_save_commands_idle(frontend) ||
+        frontend_save_commands_restoring(frontend) ||
         !frontend_owners_idle(frontend) || !frontend_seat_callbacks_idle(frontend) || frontend->frame_number == UINT64_MAX ||
-        elapsed_ns > UINT64_MAX - frontend->time_ns)
+        elapsed_ns > UINT64_MAX - frontend->wall_time_ns)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid frontend frame duration or reentry");
     if (qa_application_startup_pending(frontend->application)) {
         frontend->preparing=true;
@@ -182,25 +259,30 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         bool prepared=qa_application_startup_advance(frontend->application,&complete,error);
         frontend->preparing=false;
         if (!prepared) return false;
+        if (complete && !frontend_campaign_sync(frontend,error)) return false;
+        uint64_t travel_revision;
+        if (complete && !qa_application_travel_publication_read(frontend->application,&travel_revision) &&
+            !qa_application_rankings_start(frontend->application,error)) return false;
     }
     if (!frontend_startup_replay(frontend,error)) return false;
+    qa_application_travel_view pending;
+    bool retiring_map=qa_application_travel_read(frontend->application,&pending) &&
+        pending.target.kind==QA_TRAVEL_MAP;
     if (!qa_application_should_stop(frontend->application) && !frontend_startup_queued(frontend) &&
-        !qa_application_startup_pending(frontend->application) && frontend_cinematic_capture_ready(frontend) &&
+        !retiring_map && !qa_application_startup_pending(frontend->application) && frontend_cinematic_capture_ready(frontend) &&
         qa_application_world(frontend->application)) {
         frontend->preparing = true;
         bool prepared = qa_application_prepare_frame(frontend->application, error);
         frontend->preparing = false;
         if (!prepared) return false;
     }
+    if (!frontend->options.dedicated && !frontend_network_remote(frontend) &&
+        !qa_application_should_stop(frontend->application) && !retiring_map &&
+        !qa_application_startup_pending(frontend->application) && !selected_bindings(frontend,error)) return false;
     frontend->stepping = true;
-    qa_application_travel_view pending;
-    bool retiring_map = qa_application_travel_read(frontend->application, &pending) &&
-        pending.target.kind == QA_TRAVEL_MAP;
-    uint64_t adjusted;
-    bool ok = frontend_tools_capture_clock(frontend, elapsed_ns, &adjusted, error);
-    if (ok && adjusted > UINT64_MAX - frontend->time_ns) ok = frontend_fail(error, QA_ERROR_ARGUMENT, "capture duration overflow");
-    if (ok) { elapsed_ns = adjusted; frontend->time_ns += elapsed_ns; }
-    if (ok) ok = frontend_tools_pump(frontend, error) && input_events(frontend, error);
+    uint64_t raw_elapsed=elapsed_ns;
+    frontend->wall_time_ns+=raw_elapsed;
+    bool ok = frontend_tools_pump(frontend, error) && input_events(frontend, error);
     qa_console *console = qa_application_console(frontend->application);
     if (ok && frontend->terminal) {
         size_t lines;
@@ -213,9 +295,13 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         qa_console_drain(console, 4096, &executed, error)) &&
         frontend_tools_sync(frontend, error) && frontend_network_pump(frontend, error);
     if (ok) ok=frontend_cinematic_drain(frontend,error);
-    if (ok && frontend_cinematic_running(frontend)) {
+    if (ok && !qa_application_should_stop(frontend->application) && frontend_cinematic_running(frontend)) {
         bool rendered=false;
-        ok=frontend_cinematic_frame(frontend,elapsed_ns,&rendered,error);
+        /* Playback owns its separate media clock. A console fallback may
+         * still draw the frozen GAME scene under this actual host frame. */
+        ok=frontend_particle_source_begin(frontend,0,error) &&
+            frontend_particle_source_complete(frontend,error) &&
+            frontend_cinematic_frame(frontend,elapsed_ns,&rendered,error);
         if (ok && !rendered) {
             bool console_open=false;
             for (uint32_t i=0;i<frontend->options.seats;++i)
@@ -228,11 +314,22 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         if (ok) ++frontend->frame_number;
         return ok;
     }
+    uint64_t source_duration,adjusted;
+    const qa_cvars *time_owner;
+    if (ok) ok=source_elapsed(frontend,raw_elapsed,&time_owner,&source_duration,error) &&
+        frontend_tools_capture_clock(frontend,time_owner,source_duration,&adjusted,error);
+    bool paused=!frontend_network_remote(frontend) && qa_application_q1_paused(frontend->application);
+    if (ok && !paused && adjusted>UINT64_MAX-frontend->time_ns)
+        ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Source frame duration overflow");
+    if (ok) { elapsed_ns=adjusted; if (!paused) frontend->time_ns+=elapsed_ns; }
+    if (ok) ok=frontend_particle_source_begin(frontend,elapsed_ns,error);
+    if (ok) ok=frontend_network_client_frame(frontend,error);
+    retiring_map=qa_application_travel_read(frontend->application,&pending) && pending.target.kind==QA_TRAVEL_MAP;
     qa_profiler *profiler = qa_tools_profiler(frontend_tools_owner(frontend));
     if (ok && !qa_application_should_stop(frontend->application)) {
         if (!retiring_map && !qa_application_startup_pending(frontend->application) && !frontend->options.dedicated) {
             ok = qa_profiler_push(profiler, "controls", error);
-            if (ok) ok = phase_end(profiler, controls(frontend, elapsed_ns, error), error);
+            if (ok) ok = phase_end(profiler, controls(frontend,elapsed_ns,raw_elapsed,error), error);
         }
         if (ok && !retiring_map && !qa_application_startup_pending(frontend->application) &&
             qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING && !frontend_network_remote(frontend)) {
@@ -243,10 +340,12 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         if (ok) ok = frontend_network_publish(frontend, error) && frontend_source_times_sync(frontend, false, error) &&
             frontend_input_profile_bind(frontend,error) && frontend_campaign_drain(frontend,error);
         if (ok && !frontend->options.dedicated) ok = frontend_scene_sync(frontend, error) &&
+            frontend_particle_source_complete(frontend, error) &&
             frontend_map_events(frontend, error) && frontend_particle_events(frontend, error) && frontend_player_events(frontend, error);
         if (ok && !frontend->options.dedicated) {
             ok = qa_profiler_push(profiler, "presentation", error);
             if (ok) ok = phase_end(profiler, frontend_present(frontend, error), error);
+            if (ok) ok=frontend_network_client_pose_publish(frontend,error);
         }
         if (ok && !frontend->options.dedicated) {
             qa_error capture_error = {0};
