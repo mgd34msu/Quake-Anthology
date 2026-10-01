@@ -132,6 +132,8 @@ qa_actor_id application_bot_client_actor(application_bots *,int32_t);
 qa_bot_navigation *application_bot_navigation(void *,int32_t);
 bool application_bot_movement_input(void *,qa_actor_id,qa_movement_input *,qa_error *);
 bool application_bot_inventory(application_bots *,qa_actor_id,int32_t [QA_BOT_INVENTORY_SIZE],qa_error *);
+bool application_bot_weapon_slot(application_provider *,int32_t source,int32_t *,qa_error *);
+bool application_bot_weapon_resolve(application_bots *,qa_actor_id,int32_t slot,qa_item_id *,qa_error *);
 qa_actor_id application_bot_actor(void *,int32_t);
 bool application_bot_travel_model(void *,int32_t,qa_bot_travel_model *,bool *,qa_error *);
 bool application_bot_activation(void *,qa_actor_id,int32_t,qa_bot_activation *,bool *,qa_error *);

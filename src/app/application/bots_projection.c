@@ -3,6 +3,7 @@
 #include "native_q3_wire_state.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
+#include "qa/game_q1_bots.h"
 #include "bot_world.h"
 #include "bots_knowledge.h"
 #include <limits.h>
@@ -41,17 +42,15 @@ bool application_bot_source_weapon(application_bots *bots,qa_actor_id actor,
     if(!arsenal || !qa_actors_get(qa_session_actors(bots->application->session),actor))
         return application_fail(error,QA_ERROR_NOT_FOUND,"bot selected weapon has no actual live arsenal owner");
     if(arsenal->kind==APPLICATION_PROVIDER_Q1) {
-        qa_q1_player_view player;qa_q1_weapon_view current;bool found;double time;uint64_t source_ns;
-        if(!qa_q1_player_read(arsenal->state.q1,actor,&player) ||
-           !qa_q1_game_clock_read(arsenal->state.q1,&source_ns,&time))
-            return application_fail(error,QA_ERROR_NOT_FOUND,"bot selected Q1 weapon continuation is absent");
-        if(!qa_q1_player_weapon_read(arsenal->state.q1,actor,player.weapon,&current,&found,error)) return false;
-        if(!found) return application_fail(error,QA_ERROR_NOT_FOUND,"bot selected Q1 weapon observation is absent");
-        *weapon=(int32_t)player.weapon+1;*phase=current.attack_finished>time?3:0;
+        qa_q1_weapon source;double finished,time;bool present;
+        if(!qa_q1_bot_weapon_state_read(arsenal->state.q1,actor,&source,&finished,&time,&present,error)) return false;
+        *weapon=0;*phase=present && finished>time?3:0;
+        if(present && !application_bot_weapon_slot(arsenal,(int32_t)source,weapon,error)) return false;
     } else if(arsenal->kind==APPLICATION_PROVIDER_Q2) {
         qa_q2_weapon_state player;
         if(!qa_q2_weapon_read(arsenal->state.q2,actor,&player,error)) return false;
-        *weapon=(int32_t)player.weapon;*phase=player.phase==QA_Q2_ACTIVATING?1:
+        if(!application_bot_weapon_slot(arsenal,(int32_t)player.weapon,weapon,error)) return false;
+        *phase=player.phase==QA_Q2_ACTIVATING?1:
             player.phase==QA_Q2_DROPPING?2:player.phase==QA_Q2_FIRING?3:0;
     } else if(arsenal->kind==APPLICATION_PROVIDER_Q3) {
         qa_q3_player_state player;

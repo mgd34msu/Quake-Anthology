@@ -52,13 +52,8 @@ bool application_bot_submit(void *opaque,qa_actor_id actor,const qa_bot_input *i
         return application_fail(error,QA_ERROR_ARGUMENT,"bot action contains nonfinite movement");
     application_provider *arsenal=application_provider_for(application,actor,QA_ROLE_ARSENAL,NULL);
     qa_item_id requested_item=0;qa_actor_owner requested_owner=0;
-    if(arsenal && arsenal->kind==APPLICATION_PROVIDER_Q1 && input->weapon>0 && input->weapon<=QA_Q1_WEAPON_COUNT) {
-        requested_item=qa_q1_weapon_item(arsenal->state.q1,(qa_q1_weapon)(input->weapon-1));
-    } else if(arsenal && arsenal->kind==APPLICATION_PROVIDER_Q2 && input->weapon>0 && input->weapon<QA_Q2_WEAPON_COUNT) {
-        const qa_q2_weapon_definition *definition=qa_q2_weapon_definition_at(arsenal->state.q2,(qa_q2_weapon)input->weapon);
-        const qa_q2_item_definition *item=definition?qa_q2_item_lookup(arsenal->state.q2,definition->item):NULL;
-        if(item) requested_item=item->item;
-    }
+    if(arsenal && (arsenal->kind==APPLICATION_PROVIDER_Q1 || arsenal->kind==APPLICATION_PROVIDER_Q2) &&
+       !application_bot_weapon_resolve(bots,actor,input->weapon,&requested_item,error)) return false;
     if(requested_item) requested_owner=arsenal->owner;
     if(seat->retired || !qa_actors_get(qa_session_actors(application->session),actor)) return true;
     if(!qa_application_control_read(application,actor,&view)) return true;
@@ -71,7 +66,7 @@ bool application_bot_submit(void *opaque,qa_actor_id actor,const qa_bot_input *i
     uint64_t milliseconds=admitted.elapsed_ns/1000000;
     command.milliseconds=(uint32_t)(milliseconds>UINT32_MAX?UINT32_MAX:milliseconds);
     command.server_time_ms=source->server_time_ms;
-    command.weapon=input->weapon>0 && input->weapon<=UINT8_MAX?(uint8_t)input->weapon:0;
+    command.weapon=source->weapon;
     if(view.state.kind!=QA_MOVEMENT_Q3) {
         float scale=view.state.kind==QA_MOVEMENT_NETQUAKE || view.state.kind==QA_MOVEMENT_QUAKEWORLD?320.0f:200.0f;
         command.forward_move=(float)((double)source->forward_move*(double)scale/127.0);
