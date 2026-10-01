@@ -12,10 +12,11 @@ struct application_native_q3_remote_role {
     qa_launch_instance_lease *descriptor;
     uint64_t connection_epoch, configuration_generation;
     qa_native_q3_remote_client_service *service;
+    application_native_q3_client_modules *modules;
     qa_command_tokens arguments;
     char *system_info;
-    uint64_t argument_revision;
-    size_t calls;
+    uint64_t argument_revision, module_sequence;
+    size_t calls, module_calls;
     bool owns_cvars, initialized, retiring;
 };
 #endif

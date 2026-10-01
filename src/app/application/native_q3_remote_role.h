@@ -6,8 +6,11 @@
 #include "qa/application_q3_factory.h"
 
 typedef struct qa_native_q3_remote_client_service qa_native_q3_remote_client_service;
+typedef struct application_native_q3_client_modules application_native_q3_client_modules;
 
 bool application_native_q3_remote_roles_prepare(application_provider *, const qa_launch_choices *, qa_error *);
+bool application_native_q3_remote_roles_identity(const qa_launch_instance *, const qa_launch_choices *,
+    qa_sha256_context *, qa_error *);
 bool application_native_q3_remote_roles_preinit(application_provider *, qa_error *);
 bool application_native_q3_remote_role_source_at(application_provider *, size_t,
     qa_application_startup_source *, bool *, qa_error *);
@@ -37,6 +40,22 @@ bool application_native_q3_remote_role_source_read(application_provider *, uint3
 bool application_native_q3_remote_role_source_current(application_provider *, const qa_application_q3_remote_source *);
 bool application_native_q3_remote_role_descriptor_bind(application_provider *, uint32_t,
     const qa_launch_instance *, uint64_t epoch, uint64_t generation, qa_error *);
+bool application_native_q3_remote_role_modules_attach(application_provider *,
+    const qa_application_q3_remote_source *, application_native_q3_client_modules *, qa_error *);
+bool application_native_q3_remote_role_modules_read(application_provider *,
+    const qa_application_q3_remote_source *, application_native_q3_client_modules **, qa_error *);
+bool application_native_q3_remote_role_modules_current(application_provider *,
+    const qa_application_q3_remote_source *, const application_native_q3_client_modules *);
+bool application_native_q3_remote_role_modules_borrow(application_provider *,
+    const qa_application_q3_remote_source *, const application_native_q3_client_modules *, qa_error *);
+bool application_native_q3_remote_role_modules_return(application_provider *, uint32_t,
+    const application_native_q3_client_modules *, qa_error *);
+bool application_native_q3_remote_role_modules_detach(application_provider *, uint32_t,
+    const application_native_q3_client_modules *, qa_error *);
+bool application_native_q3_remote_role_module_sequence_read(application_provider *,
+    const qa_application_q3_remote_source *, uint64_t *, qa_error *);
+bool application_native_q3_remote_role_module_sequence_reserve(application_provider *,
+    const qa_application_q3_remote_source *, const application_native_q3_client_modules *, uint64_t *, qa_error *);
 bool application_native_q3_remote_roles_idle(const application_provider *);
 bool application_native_q3_remote_roles_destroy(application_provider *, qa_error *);
 /* Secondary compiled gameplay selections retain their real GAME kernel. */

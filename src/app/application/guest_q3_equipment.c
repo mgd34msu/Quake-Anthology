@@ -15,7 +15,7 @@ typedef struct equipment_hook {
     qa_qvm_function_hook function;
 } equipment_hook;
 struct application_q3_equipment {
-    q3g_role *role;
+    application_q3_equipment_module module;
     const application_q3_equipment_profile *profile;
     application_q3_equipment_services services;
     application_q3_equipment_draw draw;
@@ -134,7 +134,7 @@ static bool warning(void *context, const qa_qvm_call *call, int32_t *result, qa_
     int32_t value = owner->draw.warning == QA_APPLICATION_AMMO_EMPTY ? owner->profile->warning_empty :
         owner->draw.warning == QA_APPLICATION_AMMO_LOW ? owner->profile->warning_low : owner->profile->warning_none;
     warning_call request = {result};
-    return qa_qvm_source_global_word(call, owner->role->image, owner->profile->warning_state,
+    return qa_qvm_source_global_word(call, owner->module.image, owner->profile->warning_state,
         value, warning_proceed, &request, error);
 }
 
@@ -167,8 +167,8 @@ static bool held(void *context, const qa_qvm_call *call, int32_t *result, qa_err
     if (number < 0)
         return application_fail(error, QA_ERROR_FORMAT, "Held source entity number is negative");
     qa_actor_id actor = {0}; bool present = false;
-    if (!owner->role->client_services.source_actor ||
-        !owner->role->client_services.source_actor(owner->role->client_services.context,
+    if (!owner->module.client.source_actor ||
+        !owner->module.client.source_actor(owner->module.client.context,
             (uint32_t)number, &actor, &present, error)) return false;
     if (!present) return qa_qvm_proceed(call, result, error);
     equipment_scope scope = {.previous = owner->scopes};
@@ -182,7 +182,7 @@ static bool held(void *context, const qa_qvm_call *call, int32_t *result, qa_err
         if (scope.token) owner->services.held_release(owner->services.context, scope.token);
         return qa_qvm_proceed(call, result, error);
     }
-    bool ok = qa_qvm_call_source_frame(call, owner->role->image, &scope.frame, error);
+    bool ok = qa_qvm_call_source_frame(call, owner->module.image, &scope.frame, error);
     if (ok && (uint64_t)scope.frame.start + profile->gun + 140 > scope.frame.end)
         ok = application_fail(error, QA_ERROR_FORMAT, "Held gun leaves its actual source function frame");
     if (ok) {
@@ -202,7 +202,7 @@ bool application_q3_equipment_source_entity(void *context, const qa_qvm_call *ca
     int32_t pointer, const qa_q3_ref_entity *entity, bool *suppress, qa_error *error)
 {
     application_q3_equipment *owner = context;
-    if (!owner || !call || !entity || !suppress || call->vm != owner->role->vm)
+    if (!owner || !call || !entity || !suppress || call->vm != owner->module.vm)
         return application_fail(error, QA_ERROR_ARGUMENT, "Held source submission requires its actual executor");
     *suppress = false;
     equipment_scope *scope = owner->scopes;
@@ -223,14 +223,20 @@ bool application_q3_equipment_idle(const application_q3_equipment *owner)
     return !owner || (!owner->drawing && !owner->scopes);
 }
 
+bool application_q3_equipment_executor(const application_q3_equipment *owner,
+    const qa_session *session, const qa_qvm *vm)
+{
+    return !owner || (owner->module.session == session && owner->module.vm == vm);
+}
+
 bool application_q3_equipment_destroy(application_q3_equipment *owner, qa_error *error)
 {
     if (!owner) return true;
-    if (!application_q3_equipment_idle(owner) || !qa_qvm_can_destroy(owner->role->vm))
+    if (!application_q3_equipment_idle(owner) || !qa_qvm_can_destroy(owner->module.vm))
         return application_fail(error, QA_ERROR_ARGUMENT, "Equipment source owner is executing");
     for (size_t i = owner->hook_count; i; --i) {
         equipment_hook *hook = owner->hooks + i - 1;
-        if (hook->binding && !qa_qvm_unbind(owner->role->vm, hook->binding, error)) return false;
+        if (hook->binding && !qa_qvm_unbind(owner->module.vm, hook->binding, error)) return false;
         hook->binding = 0;
     }
     free(owner->hooks); free(owner);
@@ -240,14 +246,28 @@ bool application_q3_equipment_destroy(application_q3_equipment *owner, qa_error 
 bool application_q3_equipment_create(q3g_role *role,
     const application_q3_equipment_services *services, application_q3_equipment **out, qa_error *error)
 {
-    if (!role || !role->vm || !role->image || !role->artifact || role->kind != QA_QVM_CGAME ||
+    if (!role || !role->artifact || !role->engine || !role->engine->provider || role->kind != QA_QVM_CGAME)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Equipment source requires its actual CGAME role");
+    application_q3_equipment_module module = {.session = role->engine->provider->application->session,
+        .vm = role->vm, .image = role->image,
+        .profile = &role->artifact->equipment_profile, .receiver = role->engine->provider->owner,
+        .seat = role->seat, .client = role->client_services};
+    return application_q3_equipment_create_module(&module, services, out, error);
+}
+
+bool application_q3_equipment_create_module(const application_q3_equipment_module *module,
+    const application_q3_equipment_services *services, application_q3_equipment **out, qa_error *error)
+{
+    if (!module || !module->session || !module->vm || !module->image || !module->profile || !module->receiver ||
+        qa_qvm_get_role(module->vm) != QA_QVM_CGAME ||
+        (module->profile->present && (!module->client.context || !module->client.source_actor)) ||
         !out || *out || !services || !services->context || !services->prepare || !services->current ||
         !services->release_draw || !services->held_begin || !services->held_pass ||
-        !services->held_submit || !services->held_release || !qa_qvm_can_destroy(role->vm))
+        !services->held_submit || !services->held_release || !qa_qvm_can_destroy(module->vm))
         return application_fail(error, QA_ERROR_ARGUMENT, "Equipment source constructor requires actual cgame/media owners");
     application_q3_equipment *owner = calloc(1, sizeof(*owner));
     if (!owner) return application_fail(error, QA_ERROR_MEMORY, "Allocating original equipment boundary owner");
-    owner->role = role; owner->profile = &role->artifact->equipment_profile; owner->services = *services;
+    owner->module = *module; owner->profile = module->profile; owner->services = *services;
     *out = owner;
     if (!owner->profile->present) return true;
     if (owner->profile->status_count > SIZE_MAX / sizeof(*owner->hooks) - 4)
@@ -262,7 +282,7 @@ bool application_q3_equipment_create(q3g_role *role,
         equipment_hook *hook = owner->hooks + i;
         *hook = (equipment_hook){.owner = owner, .instruction = i < 4 ? entries[i] : owner->profile->status[i - 4].entry,
             .status = i < 4 ? 0 : i - 4, .function = i < 4 ? functions[i] : status};
-        if (!qa_qvm_bind_function(role->vm, hook->instruction, false, hook->function,
+        if (!qa_qvm_bind_function(module->vm, hook->instruction, false, hook->function,
                 hook, &hook->binding, error)) return false;
     }
     return true;
@@ -275,8 +295,8 @@ bool application_q3_equipment_draw_begin(application_q3_equipment *owner, qa_err
     owner->hud_requested = owner->view_requested = false;
     owner->draw.selected = false;
     application_q3_equipment_draw draw = {.view_visible = true};
-    if (!owner->services.prepare(owner->services.context, owner->role->engine->provider->owner,
-            owner->role->seat, &draw, error)) {
+    if (!owner->services.prepare(owner->services.context, owner->module.receiver,
+            owner->module.seat, &draw, error)) {
         owner->services.release_draw(owner->services.context);
         return false;
     }

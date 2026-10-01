@@ -51,6 +51,8 @@ typedef struct qa_native_q3_remote_client_cache {
 
 bool qa_native_q3_remote_client_publication_read(qa_application *,
     const qa_application_q3_remote_source *, uint64_t *, qa_error *);
+bool qa_native_q3_remote_client_product_read(qa_application *,
+    const qa_application_q3_remote_source *, qa_q3_product *, qa_error *);
 /* A borrowed physical attachment; NULL before the actual frontend constructs
  * the service. Its own current/initialized predicates qualify media use. */
 bool qa_native_q3_remote_client_service_read(qa_application *,
@@ -84,10 +86,13 @@ bool qa_native_q3_remote_client_cache_read(const qa_native_q3_remote_client_serv
     qa_native_q3_remote_client_cache *, qa_error *);
 bool qa_native_q3_remote_client_cache_current(const qa_native_q3_remote_client_service *,
     const qa_native_q3_remote_client_cache *);
+bool qa_native_q3_remote_client_local_server_read(const qa_native_q3_remote_client_service *,
+    int32_t *, qa_error *);
 bool qa_native_q3_remote_client_reliable(qa_native_q3_remote_client_service *, const char *, qa_error *);
 bool qa_native_q3_remote_client_console(qa_native_q3_remote_client_service *, const char *, qa_error *);
 bool qa_native_q3_remote_client_command_values(qa_native_q3_remote_client_service *, int32_t, float, qa_error *);
 bool qa_native_q3_remote_client_set_timescale(qa_native_q3_remote_client_service *, float, qa_error *);
+bool qa_native_q3_remote_client_set_view_size(qa_native_q3_remote_client_service *, int32_t, qa_error *);
 bool qa_native_q3_remote_client_frame_time(qa_native_q3_remote_client_service *, double, double *, qa_error *);
 bool qa_native_q3_remote_client_checkpoint(const qa_native_q3_remote_client_service *, qa_buffer *, qa_error *);
 bool qa_native_q3_remote_client_restore(qa_native_q3_remote_client_services *,

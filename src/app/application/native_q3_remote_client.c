@@ -32,6 +32,13 @@ bool qa_native_q3_remote_client_service_read(qa_application *app,
     return application_native_q3_remote_role_service_read(receiver(app, source->receiver.receiver),
         source->receiver.seat, out, error);
 }
+bool qa_native_q3_remote_client_product_read(qa_application *app,
+    const qa_application_q3_remote_source *source, qa_q3_product *out, qa_error *error)
+{
+    uint64_t publication;
+    if (!qa_native_q3_remote_client_publication_read(app, source, &publication, error)) return false;
+    return application_native_q3_remote_role_product(receiver(app, source->receiver.receiver), source->receiver.seat, out, error);
+}
 static bool basis_current(const qa_native_q3_remote_client_services *services)
 {
     const qa_native_q3_remote_client_basis *basis = &services->basis;
@@ -112,11 +119,11 @@ bool qa_native_q3_remote_client_destroy(qa_native_q3_remote_client_service *serv
     if (!service) return true;
     if (!qa_native_q3_remote_client_idle(service))
         return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote native CGAME retains an active frontend callback");
-    service->retiring = true;
     if (service->attached) {
         if (!application_native_q3_remote_role_detach(service->provider, service->services.basis.client.seat, service, error)) return false;
         service->attached = false;
     }
+    service->retiring = true;
     if (!service->services.release(service->services.context, error)) return false;
     service->character.release(service->character.lifetime);
     qa_launch_instance_lease_release(service->descriptor); free(service->system_info); free(service); return true;
@@ -209,6 +216,13 @@ bool qa_native_q3_remote_client_cache_read(const qa_native_q3_remote_client_serv
 bool qa_native_q3_remote_client_cache_current(const qa_native_q3_remote_client_service *service,
     const qa_native_q3_remote_client_cache *cache)
 { return service && cache && cache->owner == service && cache->revision == service->cache_revision && qa_native_q3_remote_client_current(service); }
+bool qa_native_q3_remote_client_local_server_read(const qa_native_q3_remote_client_service *service,
+    int32_t *out, qa_error *error)
+{
+    if (!out || !service || !service->registered || !qa_native_q3_remote_client_current(service))
+        return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote localServer requires its actual registered CLIENT cache");
+    *out = service->local_server; return true;
+}
 bool qa_native_q3_remote_client_command_values(qa_native_q3_remote_client_service *service, int32_t weapon, float sensitivity, qa_error *error)
 {
     if (!qa_native_q3_remote_client_current(service) || service->actions == SIZE_MAX)
@@ -239,6 +253,17 @@ bool qa_native_q3_remote_client_set_timescale(qa_native_q3_remote_client_service
     if (length < 0 || (size_t)length >= sizeof(text)) return native_client_fail(error, QA_ERROR_FORMAT, "Remote timescale formatting exceeds source capacity");
     service->updating = true;
     bool ok = qa_cvars_set(service->services.basis.client.cvars, "timescale", text, false, error);
+    service->updating = false; return ok && qa_native_q3_remote_client_current(service);
+}
+bool qa_native_q3_remote_client_set_view_size(qa_native_q3_remote_client_service *service, int32_t value, qa_error *error)
+{
+    if (!qa_native_q3_remote_client_current(service) || service->updating)
+        return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote view size write requires the actual CLIENT registry");
+    char text[32]; int length = snprintf(text, sizeof(text), "%d", (int)value);
+    if (length < 0 || (size_t)length >= sizeof(text))
+        return native_client_fail(error, QA_ERROR_FORMAT, "Remote view size formatting exceeds source capacity");
+    service->updating = true;
+    bool ok = qa_cvars_set(service->services.basis.client.cvars, "cg_viewsize", text, false, error);
     service->updating = false; return ok && qa_native_q3_remote_client_current(service);
 }
 bool qa_native_q3_remote_client_frame_time(qa_native_q3_remote_client_service *service, double supplied, double *out, qa_error *error)

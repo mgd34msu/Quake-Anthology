@@ -77,8 +77,9 @@ static bool read_script(void *context, const qa_command_context *command, const 
         return application_startup_console_script_read(row->provider, row->console, command, path, out, lease, error);
     if (application_startup_source_scripts(row->provider))
         return application_startup_source_script_read(row->provider, row->console, command, path, out, lease, error);
+    const qa_launch_instance *source = row->descriptor ? qa_launch_instance_lease_view(row->descriptor) : row->provider->launch;
     qa_resource *resource = NULL;
-    if (!qa_vfs_acquire(row->provider->launch->content, path, &resource, NULL, error)) return false;
+    if (!qa_vfs_acquire(source->content, path, &resource, NULL, error)) return false;
     *out = qa_resource_bytes(resource); *lease = resource; return true;
 }
 static void release_script(void *context, void *lease)
@@ -118,6 +119,30 @@ static const qa_launch_binding *hud_binding(const qa_launch_choices *choices, co
     const qa_launch_binding *binding = qa_launch_binding_for(choices,
         (qa_launch_scope){.kind = QA_SCOPE_SEAT, .seat = seat->id}, QA_ROLE_HUD, "");
     return binding ? binding : qa_launch_binding_for(choices, (qa_launch_scope){.kind = QA_SCOPE_WORLD}, QA_ROLE_HUD, "");
+}
+static bool selected_seat(const qa_launch_instance *launch, const qa_launch_choices *choices, const qa_launch_seat *seat)
+{
+    const qa_launch_binding *binding = hud_binding(choices, seat);
+    return seat->local && !seat->bot && binding && !strcmp(binding->instance, launch->selection.instance);
+}
+bool application_native_q3_remote_roles_identity(const qa_launch_instance *launch, const qa_launch_choices *choices,
+    qa_sha256_context *hash, qa_error *error)
+{
+    if (!launch || !choices || !hash || launch->selection.runtime != QA_PROGRAM_BUILTIN ||
+        launch->selection.clock.kind != QA_CLOCK_Q3)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT roster identity requires its actual builtin Q3 selection");
+    static const uint8_t domain[] = "native-q3-client-roster-v1";
+    qa_sha256_update(hash, (qa_bytes){domain, sizeof(domain) - 1});
+    size_t count = 0;
+    for (size_t i = 0; i < choices->seat_count; ++i) count += selected_seat(launch, choices, choices->seats + i);
+    uint8_t encoded[8];
+    for (size_t i = 0; i < sizeof(encoded); ++i) encoded[i] = (uint8_t)((uint64_t)count >> (i * 8));
+    qa_sha256_update(hash, (qa_bytes){encoded, sizeof(encoded)});
+    for (size_t i = 0; i < choices->seat_count; ++i) if (selected_seat(launch, choices, choices->seats + i)) {
+        for (size_t j = 0; j < sizeof(encoded); ++j) encoded[j] = (uint8_t)((uint64_t)choices->seats[i].id >> (j * 8));
+        qa_sha256_update(hash, (qa_bytes){encoded, sizeof(encoded)});
+    }
+    return true;
 }
 static bool engine_defaults(struct application_native_q3_remote_role *row, const qa_launch_choices *choices,
     const qa_launch_seat *seat, qa_error *error)
@@ -191,8 +216,7 @@ bool application_native_q3_remote_roles_prepare(application_provider *provider, 
         return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT preparation requires its selected builtin Q3 descriptor");
     for (size_t i = 0; i < choices->seat_count; ++i) {
         const qa_launch_seat *seat = &choices->seats[i];
-        const qa_launch_binding *binding = hud_binding(choices, seat);
-        if (seat->local && !seat->bot && binding && !strcmp(binding->instance, provider->launch->selection.instance) &&
+        if (selected_seat(provider->launch, choices, seat) &&
             !prepare_seat(provider, choices, seat, error)) return false;
     }
     return true;
@@ -236,7 +260,7 @@ bool application_native_q3_remote_roles_preinit(application_provider *provider, 
 }
 static bool replace_ready(const struct application_native_q3_remote_role *row)
 {
-    return row && !row->retiring && !row->service && !row->calls && qa_console_idle(row->console) &&
+    return row && !row->retiring && !row->service && !row->modules && !row->calls && qa_console_idle(row->console) &&
         qa_cvars_observer_idle(row->cvars);
 }
 bool application_native_q3_remote_role_take(application_provider *provider, uint32_t seat, qa_cvars **out, qa_error *error)
@@ -288,7 +312,8 @@ bool application_native_q3_remote_role_attach(application_provider *provider, ui
     qa_native_q3_remote_client_service *service, qa_error *error)
 {
     struct application_native_q3_remote_role *row = find(provider, seat);
-    if (!replace_ready(row) || !service)
+    if (!row || row->retiring || row->service || row->calls || !service ||
+        !qa_console_idle(row->console) || !qa_cvars_observer_idle(row->cvars))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native remote service attachment requires its prepared physical CLIENT");
     row->service = service; return true;
 }
@@ -312,7 +337,7 @@ bool application_native_q3_remote_role_detach(application_provider *provider, ui
     qa_native_q3_remote_client_service *service, qa_error *error)
 {
     struct application_native_q3_remote_role *row = find(provider, seat);
-    if (!row || !service || row->service != service || row->calls)
+    if (!row || !service || row->service != service || row->modules || row->calls)
         return application_fail(error, QA_ERROR_ARGUMENT, "Native remote service is borrowed or no longer attached");
     row->initialized = false; row->service = NULL; return true;
 }
@@ -426,6 +451,77 @@ bool application_native_q3_remote_role_descriptor_bind(application_provider *pro
     qa_launch_instance_lease_release(row->descriptor); row->descriptor = lease;
     row->connection_epoch = epoch; row->configuration_generation = generation; return true;
 }
+bool application_native_q3_remote_role_modules_attach(application_provider *provider,
+    const qa_application_q3_remote_source *source, application_native_q3_client_modules *modules, qa_error *error)
+{
+    struct application_native_q3_remote_role *row = source ? find(provider, source->receiver.seat) : NULL;
+    if (!row || !modules || row->modules || row->retiring || row->calls || !qa_console_idle(row->console) ||
+        !qa_cvars_observer_idle(row->cvars) || !application_native_q3_remote_role_source_current(provider, source))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native client modules require their current physical CLIENT slot");
+    row->modules = modules; return true;
+}
+bool application_native_q3_remote_role_modules_read(application_provider *provider,
+    const qa_application_q3_remote_source *source, application_native_q3_client_modules **out, qa_error *error)
+{
+    struct application_native_q3_remote_role *row = source ? find(provider, source->receiver.seat) : NULL;
+    if (!row || !out || !application_native_q3_remote_role_source_current(provider, source))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native client module inventory lost its current physical CLIENT");
+    *out = row->modules; return true;
+}
+bool application_native_q3_remote_role_modules_current(application_provider *provider,
+    const qa_application_q3_remote_source *source, const application_native_q3_client_modules *modules)
+{
+    struct application_native_q3_remote_role *row = source ? find(provider, source->receiver.seat) : NULL;
+    return row && modules && row->modules == modules &&
+        application_native_q3_remote_role_source_current(provider, source);
+}
+bool application_native_q3_remote_role_modules_borrow(application_provider *provider,
+    const qa_application_q3_remote_source *source, const application_native_q3_client_modules *modules, qa_error *error)
+{
+    if (!application_native_q3_remote_role_modules_current(provider, source, modules))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native client module borrow lost its retained physical CLIENT");
+    struct application_native_q3_remote_role *row = find(provider, source->receiver.seat);
+    if (row->calls == SIZE_MAX || row->module_calls == SIZE_MAX)
+        return application_fail(error, QA_ERROR_MEMORY, "Native client module borrow exceeds capacity");
+    ++row->calls; ++row->module_calls; return true;
+}
+bool application_native_q3_remote_role_modules_return(application_provider *provider, uint32_t seat,
+    const application_native_q3_client_modules *modules, qa_error *error)
+{
+    struct application_native_q3_remote_role *row = find(provider, seat);
+    if (!row || !modules || row->modules != modules || !row->calls || !row->module_calls)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native client module return lost its actual borrow");
+    --row->calls; --row->module_calls; return true;
+}
+bool application_native_q3_remote_role_modules_detach(application_provider *provider, uint32_t seat,
+    const application_native_q3_client_modules *modules, qa_error *error)
+{
+    struct application_native_q3_remote_role *row = find(provider, seat);
+    if (!row || !modules || row->modules != modules || row->calls || !qa_console_idle(row->console) ||
+        !qa_cvars_observer_idle(row->cvars))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native client module detach retains a physical CLIENT borrow");
+    row->modules = NULL; return true;
+}
+bool application_native_q3_remote_role_module_sequence_read(application_provider *provider,
+    const qa_application_q3_remote_source *source, uint64_t *out, qa_error *error)
+{
+    struct application_native_q3_remote_role *row = source ? find(provider, source->receiver.seat) : NULL;
+    if (!row || !out || !application_native_q3_remote_role_source_current(provider, source))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native module sequence lost its current physical CLIENT");
+    *out = row->module_sequence; return true;
+}
+bool application_native_q3_remote_role_module_sequence_reserve(application_provider *provider,
+    const qa_application_q3_remote_source *source, const application_native_q3_client_modules *modules,
+    uint64_t *out, qa_error *error)
+{
+    if (!out || !application_native_q3_remote_role_modules_current(provider, source, modules) ||
+        provider->application->operation == APPLICATION_PERSISTING)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native module lifetime requires its genuine fresh CLIENT owner");
+    struct application_native_q3_remote_role *row = find(provider, source->receiver.seat);
+    if (row->calls || row->module_sequence == UINT64_MAX)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native module lifetime retains a borrow or exhausted sequence");
+    *out = ++row->module_sequence; return true;
+}
 bool application_native_q3_remote_roles_idle(const application_provider *provider)
 {
     for (const struct application_native_q3_remote_role *row = provider ? provider->native_q3_remote_roles : NULL;
@@ -440,7 +536,7 @@ bool application_native_q3_remote_roles_destroy(application_provider *provider, 
         return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT consoles retain actual service leases");
     while (provider && provider->native_q3_remote_roles) {
         struct application_native_q3_remote_role *row = provider->native_q3_remote_roles;
-        if (row->service) return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT teardown retains its actual frontend service");
+        if (row->modules || row->service) return application_fail(error, QA_ERROR_ARGUMENT, "Native CLIENT teardown retains its actual client modules or frontend service");
         qa_application_startup_source source; bool found;
         if (!application_native_q3_remote_role_source_at(provider, 0, &source, &found, error) || !found) return false;
         row->retiring = true;
