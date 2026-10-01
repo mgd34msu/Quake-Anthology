@@ -36,7 +36,7 @@ bool qa_q2_player_capture(qa_q2_game *g, qa_actor_id id, qa_q2_player_checkpoint
     }
     if (!q2_checkpoint_idle(g, e))
         return false;
-    qa_q2_player_checkpoint saved = {.version = 4};
+    qa_q2_player_checkpoint saved = {.version = 5};
     q2_actor *a = q2_actor_get(g, id, false, NULL);
     if (!a || !a->client) {
         *out = saved;
@@ -106,6 +106,14 @@ static bool valid_state(qa_q2_game *g, const qa_q2_player_state *s, qa_error *e)
         !q2_saved_inventory(g, s->spawn_inventory, s->spawn_count, e))
         return false;
     const qa_armor *armor = &s->coop.armor;
+    if (s->character_configured) {
+        const char *model = qa_strings_cstr(qa_session_strings(g->services.session),
+                                            s->character_model);
+        if (!model || !*model || s->character_skin < 0 || s->corpse ||
+            !s->info.connected || s->awaiting_respawn)
+            return false;
+    } else if (s->character_model || s->character_skin)
+        return false;
     if (s->hit_marker_damage < INT16_MIN || s->hit_marker_damage > INT16_MAX ||
         (g->options.edition != QA_Q2_RERELEASE && s->hit_marker_damage)) return false;
     if (!qa_armor_validate(armor, e) || !q2_saved_resource(g, armor->powered.source_owner))
@@ -129,7 +137,7 @@ static bool valid_state(qa_q2_game *g, const qa_q2_player_state *s, qa_error *e)
 }
 bool qa_q2_player_restore(qa_q2_game *g, qa_actor_id id, const qa_q2_player_checkpoint *saved,
                           qa_error *e) {
-    if (!g || !saved || saved->version != 4 || !q2_actor_live(g, id) ||
+    if (!g || !saved || saved->version != 5 || !q2_actor_live(g, id) ||
         (saved->present && !valid_state(g, &saved->value, e))) {
         qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid Q2 player checkpoint");
         return false;

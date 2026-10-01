@@ -29,9 +29,10 @@ bool q2_client_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     q2_client_state *s = a->client;
     q2_players *p = g->player_runtime;
     bool rr = g->options.edition == QA_Q2_RERELEASE;
-    if (rr && s->awaiting_respawn)
+    if (!s->character_configured && rr && s->awaiting_respawn)
         return (g->now_ns / Q2_MS) % 500 == 0 ? qa_q2_player_spawn(g, a->id, true, NULL, e) : true;
-    if (g->options.deathmatch && s->requested_spectator != s->info.spectator &&
+    if (!s->character_configured && g->options.deathmatch &&
+        s->requested_spectator != s->info.spectator &&
         g->now_ns >= q2_deadline(s->respawn_ns, 5 * Q2_NS)) {
         qa_q2_connection_result result;
         if (!qa_q2_player_connect(g, s->userinfo, s->bot, &result, e))
@@ -73,6 +74,20 @@ bool q2_client_tick(qa_q2_game *g, q2_actor *a, qa_error *e) {
     if (!q2_actor_live(g, a->id))
         return true;
     if (s->info.dead) {
+        if (s->character_configured) {
+            if (g->now_ns > s->respawn_ns &&
+                ((s->latched_buttons & (g->options.deathmatch ? 1u : UINT32_MAX)) ||
+                 (g->options.deathmatch && (g->options.deathmatch_flags & 1024)))) {
+                s->latched_buttons = 0;
+                if (!p->services.request_respawn) {
+                    qa_error_set(e, QA_ERROR_UNSUPPORTED, 0,
+                                 "Q2 CHARACTER has no selected campaign respawn service");
+                    return false;
+                }
+                return p->services.request_respawn(p->services.context, a->id, e);
+            }
+            return true;
+        }
         if (g->now_ns <= s->respawn_ns || p->restart_ns)
             return true;
         if (rr && g->options.cooperative && (p->rules.coop_squad_respawn || p->rules.coop_lives))

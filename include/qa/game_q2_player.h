@@ -135,6 +135,9 @@ typedef struct qa_q2_player_services {
      * obituary supplies presentation only; score_read remains authoritative. */
     bool shared_score_owned;
     bool (*spawned)(void *, qa_actor_id, qa_error *);
+    /* Borrowed CHARACTER members ask the selected campaign to place the same
+     * actor before qa_q2_character_respawned publishes its source reset. */
+    bool (*request_respawn)(void *, qa_actor_id, qa_error *);
     bool (*persistent_inventory)(void *, qa_actor_id, qa_error *);
     bool (*select_spawn)(void *, qa_actor_id, qa_vec3 *, qa_vec3 *, bool *, qa_error *);
     bool (*death)(void *, qa_actor_id, const qa_attack *, qa_error *);
@@ -212,6 +215,9 @@ typedef struct qa_q2_player_state {
     qa_vec3 help_location, *help_points;
     size_t help_count, help_index, help_capacity;
     qa_string_id loop_sound, help_image;
+    qa_string_id character_model;
+    int character_skin;
+    bool character_configured;
     qa_actor_id noise[2], sphere_camera;
     qa_q2_fog fog, wanted_fog;
     float fog_transition;
@@ -265,6 +271,11 @@ bool qa_q2_players_configure(qa_q2_game *, const qa_q2_player_rules *,
 bool qa_q2_player_connect(qa_q2_game *, const char *, bool bot, qa_q2_connection_result *,
                           qa_error *);
 bool qa_q2_player_admit(qa_q2_game *, qa_actor_id, const qa_q2_player_admission *, qa_error *);
+/* Bind the authored appearance of a Q2 CHARACTER on an existing campaign
+ * actor. These calls allocate no body, inventory or arsenal and do not run
+ * Q2's source spawn selection. The installed campaign owns respawn travel. */
+bool qa_q2_character_configure(qa_q2_game *, qa_actor_id, qa_string_id model, int skin, qa_error *);
+bool qa_q2_character_respawned(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_player_userinfo(qa_q2_game *, qa_actor_id, const char *, qa_error *);
 bool qa_q2_player_read(qa_q2_game *, qa_actor_id, qa_q2_player_info *);
 bool qa_q2_player_notarget(qa_q2_game *, qa_actor_id, bool *enabled, qa_error *);

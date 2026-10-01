@@ -3,6 +3,7 @@
 
 #include "qa/application_q3_factory.h"
 #include "qa/application_native_q3_remote_client.h"
+#include "qa/application_native_q3_client_modules.h"
 #include "qa/network_q3.h"
 
 typedef struct frontend_q3_content frontend_q3_content;
@@ -28,6 +29,10 @@ typedef struct frontend_q3_content_request {
      * and restore only qualify their retained media; they never collect again. */
     bool (*native_media_read)(void *, frontend_q3_content_native_receipt *,
         frontend_q3_content_role_receipt *, qa_error *);
+    /* Resolves the actual attached acquired CGAME/UI owner and their genuine
+     * completed frontend media receipts, including after module restoration. */
+    bool (*modules_media_read)(void *, const application_native_q3_client_modules **,
+        frontend_q3_content_role_receipt *, frontend_q3_content_role_receipt *, qa_error *);
 } frontend_q3_content_request;
 
 typedef struct frontend_q3_content_view {
@@ -108,6 +113,12 @@ bool frontend_q3_content_media_ready(frontend_q3_content *,
 bool frontend_q3_content_native_media_ready(frontend_q3_content *,
     const frontend_q3_content_native_receipt *cgame,
     const frontend_q3_content_role_receipt *ui, qa_error *);
+bool frontend_q3_content_modules_media_ready(frontend_q3_content *,
+    const application_native_q3_client_modules *,
+    const frontend_q3_content_role_receipt *cgame,
+    const frontend_q3_content_role_receipt *ui, qa_error *);
+/* Qualifies completed source/media owners without collecting journals again. */
+bool frontend_q3_content_media_current(frontend_q3_content *, qa_error *);
 bool frontend_q3_content_pure_command(frontend_q3_content *,
     char *, size_t capacity, qa_error *);
 bool frontend_q3_content_download_reference(const frontend_q3_content *,
@@ -131,6 +142,12 @@ bool frontend_q3_content_restore(const frontend_q3_content_request *binding,
  * initialized owners. Ordinary read, CP and capture reject that pending cut. */
 bool frontend_q3_content_restore_native_staged(const frontend_q3_content_request *,
     qa_application_content_graph *, qa_bytes, frontend_q3_content **empty, qa_error *);
+/* Acquired CGAME/UI import waits for the actual module and frontend owners;
+ * successful module Init does not fabricate compiled physical CLIENT Init. */
+bool frontend_q3_content_restore_modules_staged(const frontend_q3_content_request *,
+    qa_application_content_graph *, qa_bytes, frontend_q3_content **empty, qa_error *);
+/* Observes only the owned staging cell; it does not qualify readiness. */
+bool frontend_q3_content_native_restore_pending(const frontend_q3_content *);
 bool frontend_q3_content_native_restore_read(const frontend_q3_content *,
     frontend_q3_content_view *, qa_error *);
 bool frontend_q3_content_native_restore_finish(frontend_q3_content *, qa_error *);

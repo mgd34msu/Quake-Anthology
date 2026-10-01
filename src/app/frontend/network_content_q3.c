@@ -26,6 +26,8 @@ struct frontend_q3_content {
     bool (*connection_current)(void *, uint64_t, qa_error *);
     bool (*native_media_read)(void *, frontend_q3_content_native_receipt *,
         frontend_q3_content_role_receipt *, qa_error *);
+    bool (*modules_media_read)(void *, const application_native_q3_client_modules **,
+        frontend_q3_content_role_receipt *, frontend_q3_content_role_receipt *, qa_error *);
     frontend_q3_content_phase phase;
     qa_product_id selected, base;
     qa_vfs *mounts;
@@ -44,7 +46,7 @@ struct frontend_q3_content {
     qa_q3_server_pak_set *loaded_server, *referenced_server;
     qa_q3_pak_references *references;
     int32_t server_id;
-    bool pure, native_cgame, pending_native;
+    bool pure, native_cgame, acquired_cgame, pending_native;
 };
 static bool fail(qa_error *error, qa_status code, const char *message)
 { qa_error_set(error, code, 0, "%s", message); return false; }
@@ -130,6 +132,7 @@ static bool game_type(const char *text, int32_t *out)
 static double loose_random(void *context) { (void)context; return 1; }
 static bool matching_view(frontend_q3_content *, const qa_vfs *, qa_error *);
 static bool policy_current(const frontend_q3_content *, const qa_vfs *, qa_error *);
+static bool initialized_cut(frontend_q3_content *, qa_error *);
 static bool binding_current(const frontend_q3_content_request *binding, qa_error *error)
 {
     if (!binding || !binding->application || !binding->descriptor || !binding->connection_epoch ||
@@ -293,6 +296,7 @@ static bool create(const frontend_q3_content_request *request, qa_vfs **imported
     content->connection_epoch = request->connection_epoch; content->base = base->id;
     content->connection = request->connection; content->connection_current = request->connection_current;
     content->native_media_read = request->native_media_read;
+    content->modules_media_read = request->modules_media_read;
     content->gamestate = malloc(sizeof(*content->gamestate));
     if (!content->gamestate) { fail(error, QA_ERROR_MEMORY, "Retaining decoded Q3 gamestate"); goto failed; }
     *content->gamestate = *request->gamestate;
@@ -622,6 +626,56 @@ static bool native_receipt(frontend_q3_content *content,
     }
     return receipt->current(receipt->producer, receipt, error);
 }
+static bool modules_current(frontend_q3_content *content,
+    const application_native_q3_client_modules *modules, qa_error *error)
+{
+    qa_application_q3_remote_source source;
+    const qa_launch_instance *descriptor = qa_launch_instance_lease_view(content->descriptor);
+    if (!source_current(content, error) || !modules ||
+        !qa_application_q3_remote_source_read(content->application, content->receiver.receiver,
+            content->receiver.seat, content->connection_epoch, &source, error) ||
+        !source.receiver.native_source || source.descriptor->selection.runtime != QA_PROGRAM_BUILTIN ||
+        source.descriptor->artifact || source.descriptor->storage != descriptor->storage ||
+        source.descriptor->content != descriptor->content ||
+        source.configuration_generation != content->configuration_generation ||
+        !qa_application_native_q3_client_modules_current(modules, &source))
+        return fail(error, QA_ERROR_ARGUMENT, "Remote acquired client modules lost their actual physical CLIENT source");
+    return true;
+}
+static bool module_receipt(frontend_q3_content *content,
+    const application_native_q3_client_modules *modules,
+    const frontend_q3_content_role_receipt *receipt, qa_qvm_role role,
+    content_mount **mount, qa_error *error)
+{
+    qa_application_q3_role_receipt actual;
+    if (!modules_current(content, modules, error) || !receipt || receipt->role != role ||
+        !qa_application_native_q3_client_modules_receipt_read(modules, role, &actual, error) ||
+        !qa_application_native_q3_client_modules_receipt_current(modules, &actual) ||
+        receipt->receiver != actual.receiver || receipt->seat != actual.seat ||
+        receipt->service_owner != actual.service_owner ||
+        receipt->configuration_generation != actual.configuration_generation ||
+        receipt->connection_epoch != actual.connection_epoch || !receipt->descriptor ||
+        receipt->descriptor->storage != actual.descriptor->storage ||
+        receipt->descriptor->content != actual.descriptor->content ||
+        receipt->descriptor->state != actual.descriptor->state ||
+        !qa_sha256_equal(&receipt->descriptor->identity, &actual.descriptor->identity) ||
+        receipt->artifact != actual.artifact || receipt->acquisition != actual.acquisition ||
+        receipt->artifact_view != actual.artifact_view || !receipt->current ||
+        (receipt->media_view_count && !receipt->media_views) ||
+        actual.acquisition->resource_id != qa_resource_id(actual.artifact) ||
+        qa_resource_pool_find(qa_vfs_resources(actual.artifact_view), actual.acquisition->resource_id) != actual.artifact ||
+        !receipt->current(receipt->producer, receipt, error) ||
+        !qa_vfs_acquisition_retained(actual.artifact_view, actual.acquisition, error) ||
+        !matching_view(content, actual.artifact_view, error))
+        return fail(error, QA_ERROR_ARGUMENT, "Remote acquired client media lacks its actual module namespace and successful Init receipt");
+    for (size_t i = 0; i < receipt->media_view_count; ++i)
+        if (!matching_view(content, receipt->media_views[i], error)) return false;
+    *mount = matching_mount(content, actual.artifact_view, actual.acquisition->mount, error);
+    if (!*mount || (content->pure && !(*mount)->pack.archive_path))
+        return fail(error, QA_ERROR_FORMAT, "Pure Q3 acquired client modules require their actual selected PK3 openings");
+    return receipt->current(receipt->producer, receipt, error) &&
+        qa_application_native_q3_client_modules_receipt_current(modules, &actual) && modules_current(content, modules, error);
+}
 bool frontend_q3_content_media_ready(frontend_q3_content *content,
     const frontend_q3_content_role_receipt *cgame, const frontend_q3_content_role_receipt *ui, qa_error *error)
 {
@@ -647,11 +701,46 @@ bool frontend_q3_content_native_media_ready(frontend_q3_content *content,
     content->native_cgame = true; content->receiver.initialized = true;
     content->phase = FRONTEND_Q3_CONTENT_MEDIA_READY; return true;
 }
+bool frontend_q3_content_modules_media_ready(frontend_q3_content *content,
+    const application_native_q3_client_modules *modules,
+    const frontend_q3_content_role_receipt *cgame,
+    const frontend_q3_content_role_receipt *ui, qa_error *error)
+{
+    const application_native_q3_client_modules *actual = NULL;
+    frontend_q3_content_role_receipt held_cgame = {0}, held_ui = {0};
+    content_mount *cgame_mount, *ui_mount;
+    if (!current(content, error) || content->phase != FRONTEND_Q3_CONTENT_PUBLISHED ||
+        !content->modules_media_read ||
+        !content->modules_media_read(content->connection, &actual, &held_cgame, &held_ui, error) || actual != modules ||
+        !module_receipt(content, modules, &held_cgame, QA_QVM_CGAME, &cgame_mount, error) ||
+        !module_receipt(content, modules, &held_ui, QA_QVM_UI, &ui_mount, error) ||
+        !module_receipt(content, modules, cgame, QA_QVM_CGAME, &cgame_mount, error) ||
+        !module_receipt(content, modules, ui, QA_QVM_UI, &ui_mount, error)) return false;
+    const frontend_q3_content_role_receipt *roles[] = {cgame, ui};
+    content_mount *mounts[] = {cgame_mount, ui_mount};
+    for (size_t i = 0; i < 2; ++i) {
+        if (!collect_view(content, roles[i]->artifact_view, error)) return false;
+        if (mounts[i]->pack.archive_path &&
+            !qa_q3_pak_record_client_role(content->references, &mounts[i]->pack, roles[i]->role, error)) return false;
+        for (size_t j = 0; j < roles[i]->media_view_count; ++j)
+            if (!collect_view(content, roles[i]->media_views[j], error)) return false;
+    }
+    if (!collect_view(content, content->mounts, error) ||
+        !module_receipt(content, modules, cgame, QA_QVM_CGAME, &cgame_mount, error) ||
+        !module_receipt(content, modules, ui, QA_QVM_UI, &ui_mount, error) || !current(content, error)) return false;
+    content->acquired_cgame = true; content->phase = FRONTEND_Q3_CONTENT_MEDIA_READY; return true;
+}
+bool frontend_q3_content_media_current(frontend_q3_content *content, qa_error *error)
+{
+    return current(content, error) && content->phase == FRONTEND_Q3_CONTENT_MEDIA_READY &&
+        initialized_cut(content, error) && current(content, error);
+}
 bool frontend_q3_content_pure_command(frontend_q3_content *content, char *out, size_t capacity, qa_error *error)
 {
     if (!out || !capacity || !current(content, error) ||
         content->phase != FRONTEND_Q3_CONTENT_MEDIA_READY)
         return fail(error, QA_ERROR_ARGUMENT, "Remote Q3 CP requires completed real CGAME and UI media initialization");
+    if (content->acquired_cgame && !frontend_q3_content_media_current(content, error)) return false;
     char report[QA_Q3_BIG_INFO_CHARS];
     if (!qa_q3_pak_report(content->references, QA_Q3_PAK_REFERENCED_PURE_CHECKSUMS, report, sizeof(report), error)) return false;
     int length = snprintf(out, capacity, "cp %d %s", content->server_id, report);
@@ -722,7 +811,7 @@ typedef struct content_saved {
     qa_buffer gamestate, references;
     qa_mount_id *order;
     size_t order_count;
-    bool has_map, native_cgame;
+    bool has_map, native_cgame, acquired_cgame;
     uint64_t map_pool, map_resource;
     qa_vfs_acquisition map_acquisition;
 } content_saved;
@@ -754,14 +843,16 @@ static bool saved_text(qa_source_save_io *io, char **text)
 #define CONTENT_FIELD(kind, name) do { if (!qa_source_save_##kind(io, &saved->name)) return false; } while (0)
 static bool saved_fields(qa_source_save_io *io, content_saved *saved)
 {
-    uint8_t magic[4] = {'Q','3','C','T'}; uint32_t schema = 2;
+    uint8_t magic[4] = {'Q','3','C','T'}; uint32_t schema = 3;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "Q3CT", 4) ||
-        !qa_source_save_u32(io, &schema) || schema != 2) return false;
+        !qa_source_save_u32(io, &schema) || schema != 3) return false;
     CONTENT_FIELD(u32, phase); CONTENT_FIELD(u32, selected); CONTENT_FIELD(u32, base); CONTENT_FIELD(u32, seat);
     CONTENT_FIELD(u64, generation); CONTENT_FIELD(u64, epoch); CONTENT_FIELD(u64, receiver); CONTENT_FIELD(u64, service_owner);
     CONTENT_FIELD(u64, catalog); CONTENT_FIELD(u64, view); CONTENT_FIELD(u64, descriptor_view);
     CONTENT_FIELD(bool, native_cgame);
-    if (saved->native_cgame && saved->phase != FRONTEND_Q3_CONTENT_MEDIA_READY) return false;
+    CONTENT_FIELD(bool, acquired_cgame);
+    if ((saved->native_cgame && saved->acquired_cgame) ||
+        ((saved->native_cgame || saved->acquired_cgame) && saved->phase != FRONTEND_Q3_CONTENT_MEDIA_READY)) return false;
     if (saved->phase > FRONTEND_Q3_CONTENT_MEDIA_READY || !saved->selected || !saved->base ||
         !saved->generation || !saved->epoch || !saved->receiver || !saved->service_owner ||
         !saved->catalog || !saved->view || !saved->descriptor_view ||
@@ -802,6 +893,29 @@ static bool initialized_cut(frontend_q3_content *content, qa_error *error)
 {
     if (content->phase != FRONTEND_Q3_CONTENT_MEDIA_READY) return true;
     const qa_launch_instance *descriptor = qa_launch_instance_lease_view(content->descriptor);
+    if (content->acquired_cgame) {
+        const application_native_q3_client_modules *modules = NULL;
+        frontend_q3_content_role_receipt cgame = {0}, ui = {0};
+        if (!content->modules_media_read ||
+            !content->modules_media_read(content->connection, &modules, &cgame, &ui, error)) return false;
+        const frontend_q3_content_role_receipt *roles[] = {&cgame, &ui};
+        const qa_qvm_role kinds[] = {QA_QVM_CGAME, QA_QVM_UI};
+        for (size_t i = 0; i < 2; ++i) {
+            content_mount *mount;
+            if (!module_receipt(content, modules, roles[i], kinds[i], &mount, error)) return false;
+            if (!mount->pack.archive_path) continue;
+            unsigned flag = kinds[i] == QA_QVM_CGAME ? QA_Q3_PAK_CGAME : QA_Q3_PAK_UI;
+            bool marked = false;
+            for (size_t j = 0; j < qa_q3_pak_reference_count(content->references); ++j) {
+                qa_q3_pak_reference reference;
+                if (!qa_q3_pak_reference_at(content->references, j, &reference)) return false;
+                if (reference.pack == &mount->pack && (reference.flags & flag)) marked = true;
+            }
+            if (!marked) return fail(error, QA_ERROR_FORMAT, "Acquired client continuation lost its actual module package role");
+        }
+        return modules_current(content, modules, error) &&
+            cgame.current(cgame.producer, &cgame, error) && ui.current(ui.producer, &ui, error);
+    }
     if (content->native_cgame) {
         frontend_q3_content_native_receipt cgame = {0};
         frontend_q3_content_role_receipt ui = {0};
@@ -907,7 +1021,7 @@ bool frontend_q3_content_checkpoint(const frontend_q3_content *content,
         !policy_current(content, content->mounts, error)) return false;
     const qa_launch_instance *descriptor = qa_launch_instance_lease_view(content->descriptor);
     content_saved saved = {.phase = content->phase, .selected = content->selected, .base = content->base,
-        .native_cgame = content->native_cgame,
+        .native_cgame = content->native_cgame, .acquired_cgame = content->acquired_cgame,
         .seat = content->receiver.seat, .generation = content->configuration_generation,
         .epoch = content->connection_epoch, .receiver = content->receiver.receiver,
         .service_owner = content->receiver.service_owner,
@@ -948,7 +1062,7 @@ bool frontend_q3_content_checkpoint(const frontend_q3_content *content,
     return ok;
 }
 static bool restore(const frontend_q3_content_request *binding,
-    qa_application_content_graph *graph, qa_bytes bytes, bool native_staged,
+    qa_application_content_graph *graph, qa_bytes bytes, bool native_staged, bool modules_staged,
     frontend_q3_content **out, qa_error *error)
 {
     if (!out || *out || !graph || !binding_current(binding, error)) return false;
@@ -959,6 +1073,10 @@ static bool restore(const frontend_q3_content_request *binding,
         binding->descriptor->selection.runtime != QA_PROGRAM_BUILTIN || binding->descriptor->artifact ||
         (saved.phase == FRONTEND_Q3_CONTENT_MEDIA_READY && !saved.native_cgame)))
         ok = fail(error, QA_ERROR_FORMAT, "Staged Q3 content import requires its actual compiled CLIENT completion variant");
+    if (ok && modules_staged && (!binding->receiver.native_source || !binding->modules_media_read ||
+        binding->descriptor->selection.runtime != QA_PROGRAM_BUILTIN || binding->descriptor->artifact ||
+        (saved.phase == FRONTEND_Q3_CONTENT_MEDIA_READY && !saved.acquired_cgame)))
+        ok = fail(error, QA_ERROR_FORMAT, "Staged acquired content import requires its actual native-parent module completion variant");
     qa_q3_gamestate *state = NULL; qa_catalog *catalog = NULL; qa_vfs *mounts = NULL;
     frontend_q3_content *content = NULL;
     if (ok && (saved.generation != binding->configuration_generation || saved.epoch != binding->connection_epoch ||
@@ -1002,7 +1120,8 @@ static bool restore(const frontend_q3_content_request *binding,
         if (ok) {
             qa_q3_pak_references_destroy(content->references); content->references = references;
             content->phase = saved.phase; content->native_cgame = saved.native_cgame;
-            content->pending_native = native_staged && saved.native_cgame;
+            content->acquired_cgame = saved.acquired_cgame;
+            content->pending_native = (native_staged && saved.native_cgame) || (modules_staged && saved.acquired_cgame);
             ok = policy_current(content, content->mounts, error) && reference_order_current(content, error) &&
                 (content->phase < FRONTEND_Q3_CONTENT_PUBLISHED || matching_view(content, binding->descriptor->content, error)) &&
                 (content->pending_native || initialized_cut(content, error)) && source_current(content, error);
@@ -1018,10 +1137,15 @@ static bool restore(const frontend_q3_content_request *binding,
 }
 bool frontend_q3_content_restore(const frontend_q3_content_request *binding,
     qa_application_content_graph *graph, qa_bytes bytes, frontend_q3_content **out, qa_error *error)
-{ return restore(binding, graph, bytes, false, out, error); }
+{ return restore(binding, graph, bytes, false, false, out, error); }
 bool frontend_q3_content_restore_native_staged(const frontend_q3_content_request *binding,
     qa_application_content_graph *graph, qa_bytes bytes, frontend_q3_content **out, qa_error *error)
-{ return restore(binding, graph, bytes, true, out, error); }
+{ return restore(binding, graph, bytes, true, false, out, error); }
+bool frontend_q3_content_restore_modules_staged(const frontend_q3_content_request *binding,
+    qa_application_content_graph *graph, qa_bytes bytes, frontend_q3_content **out, qa_error *error)
+{ return restore(binding, graph, bytes, false, true, out, error); }
+bool frontend_q3_content_native_restore_pending(const frontend_q3_content *content)
+{ return content && content->pending_native; }
 bool frontend_q3_content_native_restore_read(const frontend_q3_content *content,
     frontend_q3_content_view *out, qa_error *error)
 {
@@ -1034,7 +1158,9 @@ bool frontend_q3_content_native_restore_finish(frontend_q3_content *content, qa_
     if (!content || !content->pending_native || !source_current(content, error) ||
         !initialized_cut(content, error) || !reference_order_current(content, error) ||
         !policy_current(content, content->mounts, error) || !source_current(content, error)) return false;
-    content->pending_native = false; content->receiver.initialized = true; return true;
+    content->pending_native = false;
+    if (!content->acquired_cgame) content->receiver.initialized = true;
+    return true;
 }
 bool frontend_q3_content_rebind(frontend_q3_content *content,
     const frontend_q3_content_request *binding, qa_error *error)
@@ -1051,6 +1177,7 @@ bool frontend_q3_content_rebind(frontend_q3_content *content,
     candidate.descriptor = descriptor; candidate.application = binding->application; candidate.receiver = binding->receiver;
     candidate.connection = binding->connection; candidate.connection_current = binding->connection_current;
     candidate.native_media_read = binding->native_media_read;
+    candidate.modules_media_read = binding->modules_media_read;
     if (!current(&candidate, error) || !initialized_cut(&candidate, error)) {
         qa_launch_instance_lease_release(descriptor); return false;
     }
@@ -1058,5 +1185,6 @@ bool frontend_q3_content_rebind(frontend_q3_content *content,
     content->application = binding->application; content->receiver = binding->receiver;
     content->connection = binding->connection; content->connection_current = binding->connection_current;
     content->native_media_read = binding->native_media_read;
+    content->modules_media_read = binding->modules_media_read;
     return true;
 }

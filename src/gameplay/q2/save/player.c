@@ -53,6 +53,7 @@ static bool state(q2_save_io *io, qa_q2_player_state *s) {
     if (s->help_index > UINT32_MAX) return q2_save_fail(io, "Oversized Q2 help cursor");
     Q2U(help_index); s->help_capacity = s->help_count;
     Q2N(loop_sound); Q2N(help_image);
+    Q2N(character_model); Q2I(character_skin); Q2B(character_configured);
     if (!q2_save_fog(io, &s->fog) || !q2_save_fog(io, &s->wanted_fog)) return false;
     Q2F(fog_transition); Q2U(flood_count);
     Q2B(use_weapons); Q2B(use_inventory); Q2B(requested_spectator); Q2B(bot); Q2B(gibbed);
