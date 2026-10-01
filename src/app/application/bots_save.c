@@ -20,9 +20,9 @@ static const uint8_t bots_magic[8]={'Q','A','B','A','P','P',0,0};
 static const uint8_t nav_magic[8]={'Q','A','N','A','P','P',0,0};
 
 static bool app_signature(qa_source_save_io *io) {
-    uint8_t magic[8];memcpy(magic,bots_magic,sizeof(magic));uint32_t version=6;
+    uint8_t magic[8];memcpy(magic,bots_magic,sizeof(magic));uint32_t version=7;
     return qa_source_save_bytes(io,magic,sizeof(magic)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(magic,bots_magic,sizeof(magic)) && version==6?true:
+        (!memcmp(magic,bots_magic,sizeof(magic)) && version==7?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported application bot continuation schema"));
 }
 
@@ -52,12 +52,6 @@ static bool provider_field(qa_source_save_io *io,qa_application *app,application
     if(io->direction==QA_SOURCE_SAVE_READ) *value=actual;
     else if(actual!=*value) return bot_save_fail(io,QA_ERROR_FORMAT,"Application bot provider is outside selected inventory");
     return true;
-}
-static bool controls_field(qa_source_save_io *io,qa_bot_controls *c) {
-    return qa_source_save_i32(io,&c->think_time_ms) && qa_source_save_bool(io,&c->paused) &&
-        qa_source_save_bool(io,&c->challenge) && qa_source_save_bool(io,&c->fast_chat) &&
-        qa_source_save_bool(io,&c->no_chat) && qa_source_save_bool(io,&c->rocket_jump) &&
-        qa_source_save_bool(io,&c->grapple) && qa_source_save_bool(io,&c->report);
 }
 /* Bot file views are constructor clones with read-only script consumers. Their
  * origin selects the complete pinned policy; numeric mount IDs are remapped
@@ -170,7 +164,7 @@ static bool fields(qa_source_save_io *io,application_bots *bots,bot_app_record *
     qa_application *app=bots->application;
     if(!provider_field(io,app,&bots->source,true) || !map_field(io,bots) || !files_field(io,bots) || !qa_source_save_u32(io,&bots->capacity) ||
         bots->capacity>INT32_MAX || bots->capacity>SIZE_MAX/sizeof(*bots->seats) ||
-        !qa_source_save_u32(io,&bots->metadata_weapon) || !controls_field(io,&bots->controls)) return false;
+        !qa_source_save_u32(io,&bots->metadata_weapon)) return false;
     if(io->direction==QA_SOURCE_SAVE_READ && bots->capacity) {
         if(bots->capacity>(io->input.size-io->offset)/14) return bot_save_fail(io,QA_ERROR_FORMAT,"Truncated application bot seats");
         bots->seats=calloc(bots->capacity,sizeof(*bots->seats));

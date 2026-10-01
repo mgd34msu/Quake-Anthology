@@ -73,7 +73,6 @@ typedef struct application_bots {
     uint32_t capacity,metadata_weapon;
     qa_bot_weapon_knowledge knowledge[QA_Q2_WEAPON_COUNT];
     size_t knowledge_count,arsenal_leases;
-    qa_bot_controls controls;
     size_t calls;
     qa_builtin_actor_snapshot pickup_snapshot;
     bool pickup_borrowed,mover_borrowed;

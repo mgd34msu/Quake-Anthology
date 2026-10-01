@@ -124,6 +124,7 @@ typedef struct qa_bot_services {
     qa_cvars *(*configuration)(void *);
     bool (*register_cvar)(void *, const char *, const char *, uint32_t, qa_error *);
     bool (*configstring)(void *, uint32_t, char *, size_t, qa_error *);
+    bool (*set_configstring)(void *, uint32_t, const char *, qa_error *);
     bool (*source_generic1)(void *, int32_t, int32_t *, qa_error *);
     bool (*source_player)(void *, int32_t, qa_bot_source_player *, qa_error *);
     bool (*source_player_state)(void *, int32_t, qa_bot_source_player_state *, qa_error *);
@@ -142,8 +143,6 @@ typedef struct qa_bot_services {
     bool (*insert_console_command)(void *, const char *, qa_error *);
     /* GAME owns this draw and its checkpoint. Botlib has a separate RNG. */
     bool (*random)(void *, float *, qa_error *);
-    bool (*controls)(void *, qa_bot_controls *, qa_error *);
-    bool (*set_think_time)(void *, int32_t milliseconds, qa_error *);
     bool (*check_spawn)(void *, qa_error *);
     bool (*command)(void *, qa_actor_id, const char *, qa_error *);
     bool (*activation)(void *, qa_actor_id bot, int32_t blocker_entity,
