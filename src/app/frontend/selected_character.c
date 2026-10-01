@@ -341,6 +341,14 @@ const qa_q3_presentation_assets *frontend_selected_character_output_assets(
 { return output ? output->pose->owner->view.assets : NULL; }
 bool frontend_selected_character_output_current(const frontend_selected_character_output *output)
 { return output && current(output->pose->owner, &output->source); }
+bool frontend_selected_character_output_origin(const frontend_selected_character_output *output,
+    qa_actor_id actor, qa_vec3 *origin, qa_error *error)
+{
+    if (!origin || !frontend_selected_character_output_current(output) ||
+        !qa_actor_id_equal(output->source.actor, actor))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected character origin requires its actual current full actor output");
+    *origin = output->source.body.origin; return true;
+}
 
 bool frontend_selected_character_output_passes(frontend_selected_character_output *output,
     qa_q3_presentation *presentation, const qa_q3_presentation_assets *primary,

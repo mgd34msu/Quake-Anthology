@@ -7,19 +7,26 @@
 #include <stdlib.h>
 #include <string.h>
 
+typedef struct primary_pose {
+    struct primary_pose *next;
+    qa_actor_id actor;
+    uint32_t physical;
+    qa_vec3 origin;
+} primary_pose;
 typedef struct native_composition {
     qa_frontend *frontend;
     frontend_native_q3 *row;
     frontend_native_q3_composition equipment;
     frontend_native_character *character;
     const q3n_frame *frame;
+    primary_pose *primary_poses;
     uint32_t effects_first, effects_count;
     bool entered;
 } native_composition;
 static bool idle(const void *context)
 {
     const native_composition *owner = context;
-    return owner && !owner->entered && !owner->frame &&
+    return owner && !owner->entered && !owner->frame && !owner->primary_poses &&
         (!owner->character || frontend_native_character_idle(owner->character)) &&
         (!owner->equipment.context || owner->equipment.idle(owner->equipment.context));
 }
@@ -59,8 +66,46 @@ static void end(void *context)
     if (!owner || !owner->entered) return;
     frontend_native_character_end(owner->character);
     owner->equipment.end_frame(owner->equipment.context);
+    while (owner->primary_poses) {
+        primary_pose *next = owner->primary_poses->next;
+        free(owner->primary_poses); owner->primary_poses = next;
+    }
     owner->frame = NULL; owner->entered = false;
     owner->effects_first = owner->effects_count = 0;
+}
+static bool captured_origin(native_composition *owner, qa_actor_id actor,
+    qa_vec3 *origin, bool *found, qa_error *error)
+{
+    *found = false;
+    if (!owner->entered || !owner->frame ||
+        !qa_application_native_q3_presentation_current(owner->frame->application, &owner->frame->source) ||
+        !frontend_native_character_origin(owner->character, owner->frame, actor, origin, found, error)) return false;
+    if (*found) return true;
+    for (const primary_pose *pose = owner->primary_poses; pose; pose = pose->next) {
+        if (!qa_actor_id_equal(pose->actor, actor)) continue;
+        qa_application_native_q3_entity actual;
+        if (!qa_application_native_q3_presentation_entity(owner->frame->application, &owner->frame->source,
+            pose->physical, &actual, error) || !actual.present || !qa_actor_id_equal(actual.binding.actor, actor))
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "Captured primary pose lost its actual physical source actor");
+        *origin = pose->origin; *found = true; return true;
+    }
+    qa_world *world = qa_application_world(owner->frame->application);
+    if (!world || !qa_actors_get(qa_world_actors(world), actor) || !qa_world_body_storage_serial(world, actor)) return true;
+    qa_body_state body;
+    if (!qa_world_body_read(world, actor, &body, error) ||
+        !qa_application_native_q3_presentation_current(owner->frame->application, &owner->frame->source)) return false;
+    *origin = body.origin; *found = true; return true;
+}
+typedef struct effect_pose_scope {
+    native_composition *owner;
+    qa_actor_id actor;
+    qa_vec3 origin;
+} effect_pose_scope;
+static bool effect_pose_current(void *context)
+{
+    effect_pose_scope *scope = context; qa_vec3 actual; bool found;
+    return captured_origin(scope->owner, scope->actor, &actual, &found, NULL) && found &&
+        actual.x == scope->origin.x && actual.y == scope->origin.y && actual.z == scope->origin.z;
 }
 static bool before_render(void *context, const q3n_frame *frame, qa_error *error)
 {
@@ -75,9 +120,13 @@ static bool before_render(void *context, const q3n_frame *frame, qa_error *error
         if (!qa_application_event_at(frame->application, i, &event))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effect canonical queue changed during its native frame");
         if (event.family != QA_GAME_Q3) continue;
+        effect_pose_scope scope = {.owner = owner, .actor = event.actor}; bool found;
+        if (!captured_origin(owner, event.actor, &scope.origin, &found, error)) return false;
+        if (!found) continue;
+        frontend_selected_effects_pose pose = {event.actor, scope.origin, &scope, effect_pose_current};
         qa_application_effect_event actual; bool admitted;
         if (!qa_application_effect_event_read(frame->application, i, &actual, error) ||
-            !frontend_selected_effects_event(owner->frontend, frame, &actual, &admitted, error)) return false;
+            !frontend_selected_effects_event(owner->frontend, frame, &actual, &pose, &admitted, error)) return false;
     }
     return frontend_selected_effects_prepare(owner->frontend, frame, error) &&
         frontend_selected_effects_lights(owner->frontend, frame, error) &&
@@ -86,12 +135,32 @@ static bool before_render(void *context, const q3n_frame *frame, qa_error *error
 static bool body_hidden(void *context, const q3n_frame *frame,
     const qa_application_native_q3_entity *actual, bool *hidden, qa_error *error)
 { native_composition *owner = context; return frontend_native_character_body_hidden(owner->character, frame, actual, hidden, error); }
+static bool capture_primary_pose(native_composition *owner, const q3n_frame *frame,
+    const qa_application_native_q3_entity *actual, uint32_t part, const qa_q3_ref_entity *ref, qa_error *error)
+{
+    if (part != 0 && part != 3) return true;
+    if (!owner->entered || owner->frame != frame || !actual || !actual->present || !ref ||
+        !qa_application_native_q3_presentation_current(frame->application, &frame->source)) return false;
+    if (ref->kind != QA_Q3_REF_MODEL || (ref->flags & 4)) return true;
+    for (const primary_pose *pose = owner->primary_poses; pose; pose = pose->next)
+        if (qa_actor_id_equal(pose->actor, actual->binding.actor)) return true;
+    if (actual->binding.number < 0 || (uint32_t)actual->binding.number >= frame->source.entity_count)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Primary presentation pose lacks its actual physical source row");
+    primary_pose *pose = malloc(sizeof(*pose));
+    if (!pose) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual primary presentation pose for selected effects");
+    *pose = (primary_pose){owner->primary_poses, actual->binding.actor, (uint32_t)actual->binding.number, ref->origin};
+    owner->primary_poses = pose; return true;
+}
 static bool body(void *context, const q3n_frame *frame, const qa_application_native_q3_entity *actual,
     uint32_t part, const qa_q3_ref_entity *material, bool base, bool *consumed, qa_error *error)
-{ native_composition *owner = context; return frontend_native_character_body(owner->character, frame, actual, part, material, base, consumed, error); }
+{
+    native_composition *owner = context;
+    return frontend_native_character_body(owner->character, frame, actual, part, material, base, consumed, error) &&
+        (*consumed || capture_primary_pose(owner, frame, actual, part, material, error));
+}
 static bool packet(void *context, const q3n_frame *frame, const qa_application_native_q3_entity *actual,
     q3n_entity *cent, const qa_q3_ref_entity *material, bool *consumed, qa_error *error)
-{ (void)cent; native_composition *owner = context; return frontend_native_character_packet(owner->character, frame, actual, material, consumed, error); }
+{ (void)cent; return body(context, frame, actual, 3, material, true, consumed, error); }
 static bool view(void *context, const q3n_frame *frame, const qa_q3_player *player, bool *consumed, qa_error *error)
 { native_composition *owner = context; return owner->equipment.view_weapon(owner->equipment.context, frame, player, consumed, error); }
 static bool held(void *context, const q3n_frame *frame, const qa_q3_entity *state,
@@ -150,7 +219,7 @@ static bool prepare(void *context, const qa_q3_refdef *definition,
             const frontend_selected_effects_group *group = frontend_selected_effects_group_at(owner->frontend, i);
             if (!frontend_selected_effects_at(owner->frontend, i, &view, error) || !view.prepared ||
                 !qa_application_effects_producer_read(owner->frame->application, view.provider, &source, error) ||
-                view.sampled_application_frame != source.application_frame || view.source_time_ms != source.q3_time_ms)
+                view.sampled_application_frame != source.application_frame || view.source_time_ms != source.sample_time_ms)
                 return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effects have no completed source packet for this scene");
             size_t count = frontend_selected_effects_ref_count(group);
             if (options->first_entity >= 1022 || count > 1021u - options->first_entity)

@@ -20,6 +20,8 @@ bool frontend_native_character_body(frontend_native_character *, const q3n_frame
 bool frontend_native_character_packet(frontend_native_character *, const q3n_frame *,
     const qa_application_native_q3_entity *, const qa_q3_ref_entity *, bool *, qa_error *);
 bool frontend_native_character_admitted(const frontend_native_character *, qa_actor_id);
+bool frontend_native_character_origin(const frontend_native_character *, const q3n_frame *,
+    qa_actor_id, qa_vec3 *, bool *found, qa_error *);
 bool frontend_native_character_torso(const frontend_native_character *, qa_actor_id,
     const qa_q3_presentation_assets **, const qa_q3_ref_entity **, bool *, qa_error *);
 bool frontend_native_character_submit(frontend_native_character *, const qa_q3_scene_options *,

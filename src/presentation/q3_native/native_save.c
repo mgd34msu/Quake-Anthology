@@ -1,4 +1,5 @@
 #include "native_internal.h"
+#include "entity_save.h"
 #include "../q3/internal.h"
 #include "qa/game_q3_source.h"
 
@@ -31,33 +32,10 @@ static bool finite_float(qa_source_save_io *io,float *value)
 { return qa_source_save_f32(io,value) && isfinite(*value); }
 static bool vector(qa_source_save_io *io,qa_vec3 *value)
 { return qa_source_save_vec3(io,value) && qa_vec_finite(*value); }
-static bool lerp(qa_source_save_io *io,q3n_lerp_frame *f)
-{
-    return qa_source_save_i32(io,&f->old_frame) && qa_source_save_i32(io,&f->old_frame_time) &&
-        qa_source_save_i32(io,&f->frame) && qa_source_save_i32(io,&f->frame_time) && finite_float(io,&f->back_lerp) &&
-        qa_source_save_i32(io,&f->animation_number) && qa_source_save_i32(io,&f->animation_time) &&
-        qa_source_save_bool(io,&f->selected);
-}
-static bool pose(qa_source_save_io *io,q3n_pose_frame *p)
-{
-    return lerp(io,&p->animation) && finite_float(io,&p->yaw_angle) && finite_float(io,&p->pitch_angle) &&
-        qa_source_save_bool(io,&p->yawing) && qa_source_save_bool(io,&p->pitching);
-}
 static bool entity(qa_source_save_io *io,q3n_native *o,uint32_t index)
 {
     q3n_entity *s=&o->entities[index];
-    if(!qa_source_save_actor(io,&s->actor) || !qa_source_save_u32(io,&s->physical) ||
-        !qa_source_save_u64(io,&s->client_media_revision) || !qa_source_save_bool(io,&s->valid) ||
-        !qa_source_save_bool(io,&s->event_only_fired) || !qa_source_save_bool(io,&s->teleport_bit) ||
-        !qa_source_save_bool(io,&s->loop_stopped) || !qa_source_save_i32(io,&s->previous_event) ||
-        !qa_source_save_i32(io,&s->snapshot_time) || !qa_source_save_i32(io,&s->trail_time) ||
-        !qa_source_save_i32(io,&s->dust_trail_time) || !qa_source_save_i32(io,&s->misc_time) ||
-        !qa_source_save_i32(io,&s->muzzle_flash_time) || !vector(io,&s->lerp_origin) || !vector(io,&s->lerp_angles) ||
-        !pose(io,&s->player.legs) || !pose(io,&s->player.torso) || !qa_source_save_i32(io,&s->player.pain_time) ||
-        !qa_source_save_bool(io,&s->player.pain_direction) || !q3n_player_fx_codec(io,&s->player_fx) ||
-        !finite_float(io,&s->barrel_angle) || !qa_source_save_i32(io,&s->barrel_time) ||
-        !qa_source_save_bool(io,&s->barrel_spinning) || !qa_source_save_bool(io,&s->lightning_firing) ||
-        !qa_source_save_bool(io,&s->railgun_flash) || !vector(io,&s->rail_impact))return false;
+    if(!q3n_entity_codec(io,s))return false;
     if(s->actor.registry && s->physical!=index)return false;
     /* Private poses can still name the previous completed presentation cut
      * after GAME has freed/reused a row. The typed actor codec preserves that

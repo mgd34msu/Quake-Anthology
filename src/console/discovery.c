@@ -70,14 +70,17 @@ bool qa_console_discovery_find(qa_console *console, const qa_command_context *co
                 return true;
             }
     }
-    const qa_cvar_view *found = qa_cvars_find(qa_console_cvar_owner(console, context, name), name);
+    const qa_cvar_view *found = NULL;
+    if (!qa_console_cvar_read(console,context,name,&found,NULL)) return false;
     if (!found)
         for (size_t r = 0;; ++r) {
             qa_cvars *vars = qa_console_visible_cvars(console, context, r);
             if (!vars)
                 break;
-            for (size_t i = 0; i < qa_cvars_count(vars); ++i) {
-                const qa_cvar_view *var = qa_cvars_at(vars, i);
+            for (size_t i = 0;; ++i) {
+                const qa_cvar_view *var=NULL;
+                if (!qa_console_cvar_snapshot_at(console,context,vars,i,&var,NULL)) return false;
+                if (!var) break;
                 if (qac_equal(var->name, name) &&
                     qa_console_cvar_owner(console, context, var->name) == vars) {
                     found = var;
@@ -128,8 +131,10 @@ bool qa_console_discover(qa_console *console, const qa_command_context *context,
         qa_cvars *vars = qa_console_visible_cvars(console, context, registry);
         if (!vars)
             break;
-        for (size_t i = 0; i < qa_cvars_count(vars); ++i) {
-            const qa_cvar_view *var = qa_cvars_at(vars, i);
+        for (size_t i = 0;; ++i) {
+            const qa_cvar_view *var=NULL;
+            if (!qa_console_cvar_snapshot_at(console,context,vars,i,&var,error)) goto fail;
+            if (!var) break;
             if (qa_console_cvar_owner(console, context, var->name) != vars)
                 continue;
             if (!add(&list,

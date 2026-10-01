@@ -8,6 +8,8 @@
 struct qa_cvars_restore {
     qa_cvars *registry;
     cvar *first;
+    cvar_alias *aliases, *last_alias;
+    size_t alias_count;
     size_t count, next_handle;
     uint64_t revision;
     uint32_t changed_flags;
@@ -91,14 +93,15 @@ static bool field_entry(qa_source_save_io *io, cvar *entry)
 static bool header(qa_source_save_io *io, uint32_t *dialect, qa_cvars_restore *state)
 {
     char magic[4] = {'Q','A','C','V'};
-    uint32_t version = 1;
+    uint32_t version = 2;
     bool ok = qa_source_save_bytes(io, magic, sizeof(magic)) && qa_source_save_u32(io, &version) &&
         qa_source_save_u32(io, dialect) && qa_source_save_count(io, &state->count, SIZE_MAX / sizeof(cvar)) &&
         qa_source_save_count(io, &state->next_handle, SIZE_MAX) && qa_source_save_u32(io, &state->changed_flags) &&
         qa_source_save_bool(io, &state->userinfo_modified) && qa_source_save_bool(io, &state->server_active) &&
-        qa_source_save_bool(io, &state->high_characters) && qa_source_save_bool(io, &state->cheats);
+        qa_source_save_bool(io, &state->high_characters) && qa_source_save_bool(io, &state->cheats) &&
+        qa_source_save_count(io,&state->alias_count,SIZE_MAX/sizeof(cvar_alias));
     if (!ok) return false;
-    if (memcmp(magic, "QACV", 4) || version != 1 || !qac_dialect_valid((qa_console_dialect)*dialect))
+    if (memcmp(magic, "QACV", 4) || version != 2 || !qac_dialect_valid((qa_console_dialect)*dialect))
         return qac_fail(io->error, QA_ERROR_FORMAT, "unsupported cvar continuation schema");
     return true;
 }
@@ -106,6 +109,21 @@ static bool header(qa_source_save_io *io, uint32_t *dialect, qa_cvars_restore *s
 static void list_free(cvar *entry)
 {
     while (entry) { cvar *next = entry->next; qac_cvars_entry_free(entry); entry = next; }
+}
+static void aliases_free(cvar_alias *alias)
+{ while (alias) { cvar_alias *next=alias->next; qac_cvars_alias_free(alias); alias=next; } }
+static bool alias_fields(qa_source_save_io *io,cvar_alias *alias)
+{
+    const char *name=alias->name,*target=alias->target;
+    uint32_t conversion=alias->conversion;
+    bool ok=qac_save_text(io,&name) && qac_save_text(io,&target) &&
+        qa_source_save_u32(io,&conversion) && qa_source_save_bool(io,&alias->vm_bound);
+    if (io->direction==QA_SOURCE_SAVE_READ) {
+        alias->name=(char *)name; alias->target=(char *)target;
+        alias->conversion=(qa_cvar_alias_conversion)conversion;
+    }
+    if (ok && alias->vm_bound) ok=qa_source_save_count(io,&alias->handle,SIZE_MAX-1);
+    return ok;
 }
 
 bool qa_cvars_save_capture(const qa_cvars *registry, qa_buffer *out, qa_error *error)
@@ -115,6 +133,7 @@ bool qa_cvars_save_capture(const qa_cvars *registry, qa_buffer *out, qa_error *e
     *out = (qa_buffer){0};
     uint64_t revision = registry->mutation_revision;
     qa_cvars_restore state = {.count = registry->values.count, .next_handle = registry->values.next_handle,
+        .alias_count=registry->values.alias_count,
         .changed_flags = registry->values.changed_flags, .userinfo_modified = registry->values.userinfo_modified,
         .server_active = registry->values.server_active, .high_characters = registry->values.high_characters, .cheats = registry->values.cheats};
     uint32_t dialect = (uint32_t)registry->options.dialect;
@@ -126,7 +145,13 @@ bool qa_cvars_save_capture(const qa_cvars *registry, qa_buffer *out, qa_error *e
         cvar copy = *entry;
         ok = field_entry(&io, &copy); ++count;
     }
-    if (ok && (count != registry->values.count || revision != registry->mutation_revision))
+    size_t aliases=0;
+    for (const cvar_alias *alias=registry->values.aliases;ok && alias;alias=alias->next) {
+        cvar_alias copy=*alias;
+        ok=alias_fields(&io,&copy); ++aliases;
+    }
+    if (ok && (count != registry->values.count || aliases!=registry->values.alias_count ||
+        revision != registry->mutation_revision))
         ok = qac_fail(error, QA_ERROR_ARGUMENT, "cvar registry changed during capture");
     if (ok) ok = qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io);
@@ -148,6 +173,9 @@ static bool valid_entry(const qa_cvars_restore *state, const cvar *entry, qa_err
     for (const cvar *prior = state->first; prior != entry; prior = prior->next)
         if (prior->view.handle == v->handle || same_name(state->registry->options.dialect, prior->view.name, v->name))
             return qac_fail(error, QA_ERROR_FORMAT, "duplicate saved cvar name or handle");
+    for (const cvar_alias *alias=state->registry->values.aliases;alias;alias=alias->next)
+        if (same_name(state->registry->options.dialect,alias->name,v->name))
+            return qac_fail(error,QA_ERROR_FORMAT,"saved physical cvar conflicts with a declared alias");
     return true;
 }
 
@@ -163,7 +191,8 @@ bool qa_cvars_save_prepare(qa_cvars *registry, qa_bytes bytes, qa_cvars_restore 
     if (!qa_source_save_reader(&io, NULL, bytes, error)) { free(state); return false; }
     uint32_t dialect = 0;
     bool ok = header(&io, &dialect, state);
-    if (ok && (dialect != (uint32_t)registry->options.dialect || state->count > bytes.size - io.offset))
+    if (ok && (dialect != (uint32_t)registry->options.dialect || state->count > bytes.size - io.offset ||
+        state->alias_count!=registry->values.alias_count))
         ok = qac_fail(error, QA_ERROR_FORMAT, "saved cvar dialect or count differs from its candidate");
     cvar **tail = &state->first;
     for (size_t i = 0; ok && i < state->count; ++i) {
@@ -196,6 +225,36 @@ bool qa_cvars_save_prepare(qa_cvars *registry, qa_bytes bytes, qa_cvars_restore 
         while (saved && !same_name(registry->options.dialect, existing->view.name, saved->view.name)) saved = saved->next;
         if (!saved) ok = qac_fail(error, QA_ERROR_FORMAT, "restore would discard an actual cvar binding");
     }
+    const cvar_alias *actual=registry->values.aliases;
+    for (size_t i=0;ok && i<state->alias_count;++i) {
+        cvar_alias saved={0};
+        ok=alias_fields(&io,&saved);
+        if (ok && (!actual || !saved.name || !saved.target || strcmp(saved.name,actual->name) ||
+            strcmp(saved.target,actual->target) || saved.conversion!=actual->conversion ||
+            (saved.vm_bound && (saved.conversion==QA_CVAR_ALIAS_IDENTITY ||
+                registry->options.dialect!=QA_CONSOLE_Q3 || saved.handle>=state->next_handle || saved.handle>=1024))))
+            ok=qac_fail(error,QA_ERROR_FORMAT,"saved alias differs from its actual factory declaration");
+        const cvar *target=state->first;
+        while (ok && target && !same_name(registry->options.dialect,target->view.name,saved.target)) target=target->next;
+        if (ok && saved.vm_bound && !target)
+            ok=qac_fail(error,QA_ERROR_FORMAT,"saved alias lacks its canonical target");
+        for (const cvar *entry=state->first;ok && saved.vm_bound && entry;entry=entry->next)
+            if (entry->view.handle==saved.handle)
+                ok=qac_fail(error,QA_ERROR_FORMAT,"saved alias handle conflicts with a physical cvar");
+        for (const cvar_alias *prior=state->aliases;ok && saved.vm_bound && prior;prior=prior->next)
+            if (prior->vm_bound && prior->handle==saved.handle)
+                ok=qac_fail(error,QA_ERROR_FORMAT,"duplicate saved alias handle");
+        cvar_alias *copy=ok?qac_cvars_alias_copy(actual,error):NULL;
+        if (ok && !copy) ok=false;
+        if (copy) {
+            copy->vm_bound=saved.vm_bound; copy->handle=saved.handle;
+            if (state->last_alias) state->last_alias->next=copy;
+            else state->aliases=copy;
+            state->last_alias=copy;
+        }
+        free(saved.name); free(saved.target);
+        if (actual) actual=actual->next;
+    }
     if (ok) ok = qa_source_save_finish(&io, NULL) && qa_cvars_save_validate(state, error);
     qa_source_save_dispose(&io);
     if (!ok) { qa_cvars_save_abort(state); return false; }
@@ -214,12 +273,15 @@ bool qa_cvars_save_commit(qa_cvars_restore *state, qa_error *error)
     if (!qa_cvars_save_validate(state, error)) return false;
     qa_cvars *registry = state->registry;
     cvar *previous = registry->values.first;
+    cvar_alias *previous_aliases=registry->values.aliases;
     registry->values.first = state->first; state->first = NULL;
     registry->values.count = state->count; registry->values.next_handle = state->next_handle;
+    registry->values.aliases=state->aliases; registry->values.last_alias=state->last_alias;
+    registry->values.alias_count=state->alias_count; state->aliases=NULL;
     registry->values.changed_flags = state->changed_flags; registry->values.userinfo_modified = state->userinfo_modified;
     registry->values.server_active = state->server_active; registry->values.high_characters = state->high_characters;
     registry->values.cheats = state->cheats; ++registry->mutation_revision;
-    list_free(previous); free(state); return true;
+    list_free(previous); aliases_free(previous_aliases); free(state); return true;
 }
 void qa_cvars_save_abort(qa_cvars_restore *state)
-{ if (state) { list_free(state->first); free(state); } }
+{ if (state) { list_free(state->first); aliases_free(state->aliases); free(state); } }

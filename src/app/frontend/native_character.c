@@ -123,6 +123,16 @@ bool frontend_native_character_admitted(const frontend_native_character *owner, 
     return current(owner, owner ? owner->frame : NULL) && output &&
         frontend_selected_character_output_current(output->output);
 }
+bool frontend_native_character_origin(const frontend_native_character *owner, const q3n_frame *frame,
+    qa_actor_id actor, qa_vec3 *origin, bool *found, qa_error *error)
+{
+    if (!origin || !found || !current(owner, frame))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Native character origin requires its actual entered frame");
+    *found = false; character_output *output = output_for(owner, actor);
+    if (!output) return true;
+    if (!frontend_selected_character_output_origin(output->output, actor, origin, error)) return false;
+    *found = true; return true;
+}
 bool frontend_native_character_body_hidden(frontend_native_character *owner, const q3n_frame *frame,
     const qa_application_native_q3_entity *actual, bool *hidden, qa_error *error)
 {

@@ -26,6 +26,9 @@ bool qa_parse_atof(const char *text, double *out, qa_error *error);
 bool qa_parse_atof_float(const char *text, float *out, qa_error *error);
 /* Finite double serialization in the same C locale, with round-trip precision. */
 bool qa_format_number(double value, char out[32], qa_error *error);
+/* ECMAScript Number/String spelling: shortest round-tripping binary64,
+ * closest decimal with even ties, fixed/scientific thresholds, and -0 as 0. */
+bool qa_format_ecmascript_number(double value, char out[32], qa_error *error);
 /* Fixed decimal C-locale formatting, rounding ties to even. Nonfinite values
  * use nan/inf/-inf. Capacity includes NUL; failure empties a valid output. */
 bool qa_format_fixed(double value, unsigned digits, char *out, size_t capacity, qa_error *error);

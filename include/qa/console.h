@@ -271,6 +271,8 @@ typedef struct qa_console_entry {
 } qa_console_entry;
 
 qa_console *qa_console_create(const qa_console_options *options, qa_error *error);
+/* Pure teardown qualification; NULL is ready. */
+bool qa_console_destroy_ready(const qa_console *console);
 void qa_console_destroy(qa_console *console);
 /* Queued chunks retain their original dialect and origin. Change the default
  * profile only between command invocations. */
@@ -308,6 +310,11 @@ qa_cvars *qa_console_cvar_owner(qa_console *, const qa_command_context *, const 
  * actual registry. Contexts are already captured by the owning caller. */
 bool qa_console_cvar_read(qa_console *, const qa_command_context *, const char *,
                           const qa_cvar_view **out, qa_error *);
+/* Reads one visible scalar/alias snapshot through the same admitted candidate
+ * view. Registry must be an actual visible owner for this captured context.
+ * Missing ordinal succeeds with NULL; a refused view never falls back live. */
+bool qa_console_cvar_snapshot_at(qa_console *, const qa_command_context *, qa_cvars *,
+                                 size_t ordinal, const qa_cvar_view **out, qa_error *);
 bool qa_console_cvar_apply(qa_console *, const qa_command_context *,
                            const struct qa_cvars_edit_command *, qa_error *);
 /* Actual startup forced publication, empty Q3 registration retaining its

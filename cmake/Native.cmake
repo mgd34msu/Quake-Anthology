@@ -8,6 +8,7 @@ add_library(qa_data STATIC
     src/core/binary.c
     src/core/json.c
     src/core/number.c
+    src/core/number_js.c
     src/core/hash.c
     src/platform/filesystem.c
     src/platform/mapping.c)

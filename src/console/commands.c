@@ -1,4 +1,5 @@
 #include "commands_private.h"
+#include "qa/cvars_alias.h"
 #include "qa/text.h"
 #include "qa/console_cvars_prepare.h"
 
@@ -174,9 +175,9 @@ static bool cvar_access_read(qa_console *console,const qa_command_context *conte
 static const qa_cvar_view *cvar_find(cvar_access access,const char *name)
 { return access.edit?qa_cvars_edit_find(access.edit,name):qa_cvars_find(access.registry,name); }
 static const qa_cvar_view *cvar_at(cvar_access access,size_t ordinal)
-{ return access.edit?qa_cvars_edit_at(access.edit,ordinal):qa_cvars_at(access.registry,ordinal); }
+{ return access.edit?qa_cvars_edit_visible_at(access.edit,ordinal):qa_cvars_visible_at(access.registry,ordinal); }
 static size_t cvar_count(cvar_access access)
-{ return access.edit?qa_cvars_edit_count(access.edit):qa_cvars_count(access.registry); }
+{ return access.edit?qa_cvars_edit_visible_count(access.edit):qa_cvars_visible_count(access.registry); }
 static size_t cvar_handles(cvar_access access)
 { return access.edit?qa_cvars_edit_handle_count(access.edit):qa_cvars_handle_count(access.registry); }
 static bool cvar_apply(cvar_access access,const qa_cvars_edit_command *command,qa_error *error)
@@ -208,6 +209,24 @@ bool qa_console_cvar_read(qa_console *console,const qa_command_context *context,
     cvar_access access;
     if (!cvar_access_read(console,context,cvar_owner(console,context,name),&access,error)) return false;
     *out=cvar_find(access,name); return true;
+}
+bool qa_console_cvar_snapshot_at(qa_console *console,const qa_command_context *context,
+    qa_cvars *registry,size_t ordinal,const qa_cvar_view **out,qa_error *error)
+{
+    if (!console || !registry || !out)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"cvar snapshot requires its console and actual visible registry");
+    context=context_for(console,context);
+    if (!valid_context(console,context,error)) return false;
+    bool visible=false;
+    for (size_t i=0;;++i) {
+        qa_cvars *actual=qa_console_visible_cvars(console,context,i);
+        if (!actual) break;
+        if (actual==registry) { visible=true; break; }
+    }
+    if (!visible) return qac_fail(error,QA_ERROR_ARGUMENT,"cvar snapshot registry is not an admitted visible owner");
+    cvar_access access;
+    if (!cvar_access_read(console,context,registry,&access,error)) return false;
+    *out=cvar_at(access,ordinal); return true;
 }
 bool qa_console_cvar_apply(qa_console *console,const qa_command_context *context,
     const qa_cvars_edit_command *command,qa_error *error)
@@ -359,9 +378,15 @@ static void free_alias(alias_entry *alias)
     free(alias);
 }
 
+bool qa_console_destroy_ready(const qa_console *console)
+{
+    return console == NULL || (qa_console_idle(console) &&
+        !console->program_leases && !console->release_leases);
+}
+
 void qa_console_destroy(qa_console *console)
 {
-    if (console == NULL || !qa_console_idle(console) || console->program_leases || console->release_leases) return;
+    if (console == NULL || !qa_console_destroy_ready(console)) return;
     while (console->commands != NULL) {
         command_entry *next = console->commands->next;
         free_command(console->commands);

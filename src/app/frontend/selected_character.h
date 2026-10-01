@@ -55,6 +55,8 @@ const qa_q3_ref_entity *frontend_selected_character_output_part(
 const qa_q3_presentation_assets *frontend_selected_character_output_assets(
     const frontend_selected_character_output *);
 bool frontend_selected_character_output_current(const frontend_selected_character_output *);
+bool frontend_selected_character_output_origin(const frontend_selected_character_output *,
+    qa_actor_id expected_actor, qa_vec3 *, qa_error *);
 bool frontend_selected_character_output_passes(frontend_selected_character_output *,
     qa_q3_presentation *, const qa_q3_presentation_assets *primary,
     const frontend_selected_character_pass *, size_t,

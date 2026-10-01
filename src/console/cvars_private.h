@@ -3,6 +3,7 @@
 #include "internal.h"
 #include "qa/console_cvar_observer.h"
 #include "qa/console_cvars_prepare.h"
+#include "qa/cvars_alias.h"
 
 typedef struct cvar_observer {
     struct cvar_observer *next;
@@ -27,8 +28,20 @@ typedef struct cvar {
     uint64_t binding_order;
     struct cvar *next;
 } cvar;
+typedef struct cvar_alias {
+    struct cvar_alias *next;
+    char *name, *target, *description;
+    const qa_console_documentation *documentation;
+    qa_cvar_alias_conversion conversion;
+    size_t handle;
+    bool vm_bound;
+    qa_cvar_view projection;
+    char value[32], reset[32], latched[32];
+} cvar_alias;
 typedef struct cvar_values {
     cvar *first;
+    cvar_alias *aliases, *last_alias;
+    size_t alias_count;
     size_t count, next_handle;
     uint32_t changed_flags;
     bool userinfo_modified, server_active, high_characters, cheats;
@@ -71,4 +84,6 @@ struct qa_cvars {
 };
 bool qac_cvars_touch(qa_cvars *, qa_error *);
 void qac_cvars_entry_free(cvar *);
+void qac_cvars_alias_free(cvar_alias *);
+cvar_alias *qac_cvars_alias_copy(const cvar_alias *, qa_error *);
 #endif
