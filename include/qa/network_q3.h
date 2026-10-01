@@ -183,6 +183,8 @@ bool qa_q3_server_gamestate(qa_q3_writer *, const qa_q3_gamestate *);
 bool qa_q3_server_snapshot(qa_q3_writer *, const qa_q3_snapshot *from,
                            const qa_q3_snapshot *to, const qa_q3_gamestate *);
 bool qa_q3_server_download(qa_q3_writer *, const qa_q3_download *);
+/* Header presence follows the full source ordinal before wire-short narrowing. */
+bool qa_q3_server_download_block(qa_q3_writer *, int32_t source_block, int32_t file_size, qa_bytes);
 bool qa_q3_server_end(qa_q3_writer *);
 
 typedef struct qa_q3_client_header { int32_t server_id, message_acknowledge, reliable_acknowledge; } qa_q3_client_header;
@@ -342,7 +344,8 @@ typedef struct qa_q3_server_hooks {
     qa_q3_send_fn send;
 } qa_q3_server_hooks;
 typedef struct qa_q3_server_rate {
-    uint32_t bytes_per_second, maximum_rate, snapshot_ms;
+    uint32_t bytes_per_second, snapshot_ms;
+    double maximum_rate;
     bool local, lan, force_lan;
 } qa_q3_server_rate;
 typedef struct qa_q3_server_state {
@@ -382,6 +385,15 @@ bool qa_q3_server_peer_disconnect(qa_q3_server_peer *, const qa_q3_server_rate *
 bool qa_q3_server_peer_snapshot_downloads(qa_q3_server_peer *, const qa_q3_snapshot *,
                                           const qa_q3_server_rate *, const qa_q3_download *,
                                           size_t download_count, qa_error *);
+/* Runs only after the new physical snapshot is encoded, with its actual
+ * bounded message writer. Existing FIFO/fragments bypass this producer. */
+typedef bool (*qa_q3_server_download_write_fn)(void *, qa_q3_writer *, qa_error *);
+bool qa_q3_server_peer_snapshot_write(qa_q3_server_peer *, const qa_q3_snapshot *,
+    const qa_q3_server_rate *, qa_q3_server_download_write_fn, void *, qa_error *);
+/* True only when the next snapshot call will encode a new physical message,
+ * rather than drain the existing native FIFO or fragment continuation. */
+bool qa_q3_server_peer_snapshot_ready(const qa_q3_server_peer *);
+bool qa_q3_server_peer_reset_pure(qa_q3_server_peer *, qa_error *);
 bool qa_q3_server_peer_fragment(qa_q3_server_peer *, bool *sent, qa_error *);
 bool qa_q3_server_peer_pure(qa_q3_server_peer *, const qa_q3_pure_server *, const qa_q3_tokens *,
                             qa_q3_pure_result *, qa_error *);

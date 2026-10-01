@@ -33,11 +33,14 @@ bool qa_network_q3_seed_baselines(qa_network_runtime *, qa_net_client_id,
 bool qa_network_q3_snapshot(qa_network_runtime *, qa_net_client_id,
     const qa_q3_snapshot *, const qa_q3_server_rate *, const qa_q3_download *,
     size_t download_count, qa_error *);
+bool qa_network_q3_snapshot_write(qa_network_runtime *, qa_net_client_id,
+    const qa_q3_snapshot *, const qa_q3_server_rate *, qa_q3_server_download_write_fn, void *, qa_error *);
 bool qa_network_q3_command(qa_network_runtime *, qa_net_client_id, const char *, qa_error *);
 bool qa_network_q3_configstring(qa_network_runtime *, qa_net_client_id,
     unsigned index, const char *, qa_error *);
 bool qa_network_q3_pure(qa_network_runtime *, qa_net_client_id,
     const qa_q3_pure_server *, const qa_q3_tokens *, qa_q3_pure_result *, qa_error *);
+bool qa_network_q3_reset_pure(qa_network_runtime *, qa_net_client_id, qa_error *);
 /* Copies the actual original peer state. No borrowed peer pointer escapes. */
 bool qa_network_q3_state(qa_network_runtime *, qa_net_client_id, qa_q3_server_state *, qa_error *);
 const qa_q3_server_peer *qa_network_q3_server_view(qa_network_runtime *, qa_net_client_id);

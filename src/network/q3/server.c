@@ -3,6 +3,7 @@
 #include "qa/network_q3_save.h"
 #include <limits.h>
 #include <stdio.h>
+#include <math.h>
 
 static bool fail(qa_error *e, qa_status code, const char *s) { qa_error_set(e, code, 0, "%s", s); return false; }
 static const char *lookup(void *p, int32_t sequence) { return qa_q3_reliable_lookup(&((qa_q3_server_peer *)p)->reliable, sequence); }
@@ -147,14 +148,15 @@ bool qa_q3_server_peer_fragment(qa_q3_server_peer *p, bool *sent, qa_error *e) {
     return true;
 }
 static bool rate_interval(size_t size, const qa_q3_server_rate *rate, int64_t *interval, qa_error *e) {
-    uint32_t speed = rate->bytes_per_second;
+    if (!isfinite(rate->maximum_rate)) return fail(e, QA_ERROR_ARGUMENT, "Q3 maximum rate must retain a finite source number");
+    double speed = rate->bytes_per_second;
     if (rate->maximum_rate) {
-        uint32_t maximum = rate->maximum_rate < 1000 ? 1000 : rate->maximum_rate;
+        double maximum = rate->maximum_rate < 1000 ? 1000 : rate->maximum_rate;
         if (speed > maximum) speed = maximum;
     }
     if (!speed) return fail(e, QA_ERROR_ARGUMENT, "Q3 rate must be nonzero");
     if (size > 1500) size = 1500;
-    *interval = (int64_t)(size + 48) * 1000 / speed; return true;
+    *interval = (int64_t)((double)(size + 48) * 1000 / speed); return true;
 }
 static bool transmit(qa_q3_server_peer *p, qa_q3_writer *writer, uint8_t *data, const qa_q3_server_rate *rate, qa_error *e) {
     if (!qa_q3_server_end(writer)) return false;
@@ -272,11 +274,11 @@ bool qa_q3_server_peer_gamestate(qa_q3_server_peer *p, const qa_q3_gamestate *st
     p->state.gamestate_message_number = (int32_t)sequence; p->state.delta_message = -1;
     return transmit(p, &writer, data, rate, e);
 }
-bool qa_q3_server_peer_snapshot_downloads(qa_q3_server_peer *p, const qa_q3_snapshot *snapshot,
-                                          const qa_q3_server_rate *rate, const qa_q3_download *downloads,
-                                          size_t download_count, qa_error *e) {
-    if (!p || !snapshot || !rate || snapshot->player.product != p->product
-        || download_count > QA_Q3_DOWNLOAD_WINDOW || (download_count && !downloads))
+bool qa_q3_server_peer_snapshot_ready(const qa_q3_server_peer *p)
+{ return p && !qa_q3_channel_pending(p->channel) && !p->queue_first; }
+bool qa_q3_server_peer_snapshot_write(qa_q3_server_peer *p, const qa_q3_snapshot *snapshot,
+    const qa_q3_server_rate *rate, qa_q3_server_download_write_fn write_downloads, void *context, qa_error *e) {
+    if (!p || !snapshot || !rate || snapshot->player.product != p->product)
         return fail(e, QA_ERROR_ARGUMENT, "Invalid Q3 snapshot send");
     if (qa_q3_channel_pending(p->channel) || p->queue_first) {
         bool sent; int64_t interval;
@@ -298,8 +300,7 @@ bool qa_q3_server_peer_snapshot_downloads(qa_q3_server_peer *p, const qa_q3_snap
     uint8_t data[QA_Q3_MESSAGE_BYTES]; qa_q3_writer writer;
     qa_q3_writer_init(&writer, data, sizeof(data), false, e);
     if (!message_begin(p, &writer) || !qa_q3_server_snapshot(&writer, old, &current_snapshot, &p->gamestate)) return false;
-    for (size_t i = 0; i < download_count; ++i)
-        if (!qa_q3_server_download(&writer, &downloads[i])) return false;
+    if (write_downloads && !write_downloads(context, &writer, e)) return false;
     qa_q3_snapshot_slot *slot = &p->history[sequence & 31];
     if (current_snapshot.entity_count > UINT64_MAX - p->entity_number)
         return fail(e, QA_ERROR_FORMAT, "Q3 snapshot entity sequence exhausted");
@@ -307,6 +308,21 @@ bool qa_q3_server_peer_snapshot_downloads(qa_q3_server_peer *p, const qa_q3_snap
     p->entity_number += current_snapshot.entity_count;
     slot->sent_time = world.time; slot->ack_time = -1; slot->message_size = qa_q3_writer_size(&writer);
     return transmit(p, &writer, data, rate, e);
+}
+typedef struct snapshot_downloads { const qa_q3_download *messages; size_t count; } snapshot_downloads;
+static bool write_download_array(void *context, qa_q3_writer *writer, qa_error *error)
+{
+    const snapshot_downloads *downloads = context; (void)error;
+    for (size_t i = 0; i < downloads->count; ++i)
+        if (!qa_q3_server_download(writer, downloads->messages + i)) return false;
+    return true;
+}
+bool qa_q3_server_peer_snapshot_downloads(qa_q3_server_peer *p, const qa_q3_snapshot *snapshot,
+    const qa_q3_server_rate *rate, const qa_q3_download *downloads, size_t count, qa_error *error)
+{
+    if (count && !downloads) return fail(error, QA_ERROR_ARGUMENT, "Missing Q3 snapshot download records");
+    snapshot_downloads source = {downloads, count};
+    return qa_q3_server_peer_snapshot_write(p, snapshot, rate, write_download_array, &source, error);
 }
 bool qa_q3_server_peer_snapshot(qa_q3_server_peer *p, const qa_q3_snapshot *snapshot,
                                 const qa_q3_server_rate *rate, const qa_q3_download *download, qa_error *e) {
@@ -324,6 +340,11 @@ bool qa_q3_server_peer_pure(qa_q3_server_peer *p, const qa_q3_pure_server *serve
         return drop(p, "Unpure client detected. Invalid .PK3 files referenced!", e);
     }
     return true;
+}
+bool qa_q3_server_peer_reset_pure(qa_q3_server_peer *p, qa_error *error)
+{
+    if (!p) return fail(error, QA_ERROR_ARGUMENT, "Missing Q3 pure admission owner");
+    p->state.pure_authentic = false; p->state.got_pure_command = false; return true;
 }
 bool qa_q3_server_peer_configstring(qa_q3_server_peer *p, unsigned index, const char *text, qa_error *e) {
     if (!p || !text || index >= QA_Q3_CONFIGSTRINGS || strlen(text) >= 8192 || strpbrk(text, "\"\r\n"))

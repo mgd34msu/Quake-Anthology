@@ -231,6 +231,13 @@ bool qa_network_q3_snapshot(qa_network_runtime *runtime, qa_net_client_id id,
     q3_runtime_peer *p = get(runtime, id, error);
     return p && qa_q3_server_peer_snapshot_downloads(p->source, snapshot, rate, downloads, count, error);
 }
+bool qa_network_q3_snapshot_write(qa_network_runtime *runtime, qa_net_client_id id,
+    const qa_q3_snapshot *snapshot, const qa_q3_server_rate *rate,
+    qa_q3_server_download_write_fn write_downloads, void *context, qa_error *error)
+{
+    q3_runtime_peer *p = get(runtime, id, error);
+    return p && qa_q3_server_peer_snapshot_write(p->source, snapshot, rate, write_downloads, context, error);
+}
 bool qa_network_q3_command(qa_network_runtime *runtime, qa_net_client_id id, const char *text, qa_error *error)
 { q3_runtime_peer *p = get(runtime, id, error); return p && qa_q3_server_peer_command(p->source, text, error); }
 bool qa_network_q3_configstring(qa_network_runtime *runtime, qa_net_client_id id,
@@ -239,6 +246,8 @@ bool qa_network_q3_configstring(qa_network_runtime *runtime, qa_net_client_id id
 bool qa_network_q3_pure(qa_network_runtime *runtime, qa_net_client_id id,
     const qa_q3_pure_server *pure, const qa_q3_tokens *tokens, qa_q3_pure_result *result, qa_error *error)
 { q3_runtime_peer *p = get(runtime, id, error); return p && qa_q3_server_peer_pure(p->source, pure, tokens, result, error); }
+bool qa_network_q3_reset_pure(qa_network_runtime *runtime, qa_net_client_id id, qa_error *error)
+{ q3_runtime_peer *p = get(runtime, id, error); return p && qa_q3_server_peer_reset_pure(p->source, error); }
 bool qa_network_q3_state(qa_network_runtime *runtime, qa_net_client_id id, qa_q3_server_state *out, qa_error *error)
 {
     q3_runtime_peer *p = get(runtime, id, error);

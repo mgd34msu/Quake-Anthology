@@ -6,6 +6,7 @@
 #include "qa/server_admin.h"
 #include "qa/launch_identity.h"
 #include "qa/network_q3_runtime.h"
+#include "qa/network_q3_download.h"
 #include "qa/network_save.h"
 #include "qa/network_services_save.h"
 #include "qa/network_downloads_save.h"
@@ -28,6 +29,7 @@ typedef struct frontend_q3_peer {
     qa_q3_server_world world;
     qa_q3_server_rate rate;
     qa_q3_product product;
+    qa_q3_download_window *download;
     uint64_t sequence;
     int64_t connected_ms;
     uint32_t slot;
@@ -181,12 +183,13 @@ static void disconnected(void *context, qa_net_client_id id, const char *reason)
     }
     const qa_net_client *client = qa_net_connections_get(qa_network_connections(n->runtime), id);
     qa_error error = {0};
-    if (client && !qa_application_network_detach(n->frontend->application, client, &error))
+    if (client && !n->detached_transport && !qa_application_network_detach(n->frontend->application, client, &error))
         frontend_print(n->frontend, error.message);
     frontend_nq_disconnected(n->nq_host, id);
     frontend_qw_disconnected(n->qw_host, id);
     for (size_t i = 0; i < 64; ++i) if (n->q3_peers[i].occupied && qa_net_client_id_equal(n->q3_peers[i].client, id)) {
-        if (n->q3_admission && client) qa_q3_server_admission_disconnect(n->q3_admission, &client->endpoint);
+        if (n->q3_admission && client && !n->detached_transport) qa_q3_server_admission_disconnect(n->q3_admission, &client->endpoint);
+        qa_q3_download_window_destroy(n->q3_peers[i].download);
         n->q3_peers[i] = (frontend_q3_peer){0};
     }
 }
@@ -278,7 +281,49 @@ static bool q3_actor(frontend_q3_peer *peer, qa_actor_id *actor, qa_error *error
         frontend_fail(error, QA_ERROR_NOT_FOUND, "Q3 peer no longer owns a canonical player");
 }
 static qa_q3_server_world q3_world(void *context)
-{ return ((frontend_q3_peer *)context)->world; }
+{
+    frontend_q3_peer *peer = context; qa_q3_server_world world = peer->world;
+    world.downloading = qa_q3_download_window_active(peer->download); return world;
+}
+static bool q3_download_resolve(void *context, const char *name, qa_bytes *bytes,
+    const qa_sha256_digest **digest, qa_error *error)
+{
+    qa_frontend_network *n = context; qa_error local = {0};
+    *bytes = (qa_bytes){0}; *digest = NULL;
+    if (frontend_q3_packages_download(n->q3_packages, name, bytes, digest, &local)) return true;
+    if (local.code == QA_ERROR_NOT_FOUND) return true;
+    if (error) *error = local; return false;
+}
+static bool q3_rate(frontend_q3_peer *peer, qa_q3_server_rate *out, bool *download_enabled, qa_error *error)
+{
+    qa_frontend_network *n = peer->network; qa_actor_owner owner; qa_q3_product product; qa_actor_id actor;
+    const char *userinfo = NULL;
+    if (!out || !qa_application_network_q3_owner(n->frontend->application, &owner, &product, error) ||
+        !q3_actor(peer, &actor, error) || !qa_application_network_q3_userinfo_read(n->frontend->application, actor, &userinfo, error)) return false;
+    qa_cvars *cvars = qa_application_network_q3_host_cvars(n->frontend->application, owner, error);
+    if (!cvars) return false;
+    const qa_cvar_view *fps = qa_cvars_find(cvars, "sv_fps"), *maximum = qa_cvars_find(cvars, "sv_maxRate"),
+        *enabled = qa_cvars_find(cvars, "sv_allowDownload");
+    if (!fps || !maximum || !enabled || !isfinite(fps->number) || !isfinite(maximum->number) || !isfinite(enabled->number))
+        return frontend_fail(error, QA_ERROR_FORMAT, "Q3 source rate/download policy lacks its actual finite cvar producer");
+    char rate_text[1024], snaps_text[1024], ip[1024];
+    if (!qa_q3_info_value(userinfo, "rate", rate_text, sizeof(rate_text), error) ||
+        !qa_q3_info_value(userinfo, "snaps", snaps_text, sizeof(snaps_text), error) ||
+        !qa_q3_info_value(userinfo, "ip", ip, sizeof(ip), error)) return false;
+    char *end = NULL; long requested = strtol(rate_text, &end, 10);
+    uint32_t rate = end == rate_text ? 3000 : requested < 1000 ? 1000 : requested > 90000 ? 90000 : (uint32_t)requested;
+    double frequency = fps->number < 1 ? 1 : fps->number;
+    requested = strtol(snaps_text, &end, 10);
+    if (end != snaps_text) {
+        double selected = requested < 1 ? 1 : requested;
+        if (selected < frequency) frequency = selected;
+    }
+    *out = (qa_q3_server_rate){.bytes_per_second = rate,
+        .maximum_rate = maximum->number,
+        .snapshot_ms = (uint32_t)(1000 / frequency), .local = !strcmp(ip, "localhost")};
+    if (download_enabled) *download_enabled = enabled->number != 0;
+    return true;
+}
 static bool q3_signon(void *context, qa_error *error)
 {
     frontend_q3_peer *peer = context; qa_frontend_network *n = peer->network; qa_actor_id actor;
@@ -290,24 +335,54 @@ static bool q3_signon(void *context, qa_error *error)
         q3_actor(peer, &actor, error) && qa_application_network_q3_signon(n->frontend->application, actor,
         n->q3_server_id, n->q3_checksum_feed, &packages, state, &peer->world, error);
     if (ok) {
+        ok = q3_rate(peer, &peer->rate, NULL, error);
         peer->world.restarted_server_id = n->q3_restarted_server_id;
-        ok = qa_network_q3_gamestate(n->runtime, peer->client, state, &peer->rate, error);
+        peer->world.downloading = qa_q3_download_window_active(peer->download);
+        if (ok) ok = qa_network_q3_gamestate(n->runtime, peer->client, state, &peer->rate, error);
     }
     free(state); return ok;
+}
+typedef struct q3_download_packet {
+    frontend_q3_peer *peer;
+    qa_q3_download_offer offer;
+    bool enabled;
+} q3_download_packet;
+static bool q3_write_downloads(void *context, qa_q3_writer *writer, qa_error *error)
+{
+    q3_download_packet *packet = context; frontend_q3_peer *peer = packet->peer;
+    if (!*qa_q3_download_window_name(peer->download)) return true;
+    bool ok = qa_q3_download_window_write(peer->download, packet->enabled, peer->world.pure,
+        peer->world.time, &peer->rate, writer, &packet->offer, error);
+    peer->world.downloading = qa_q3_download_window_active(peer->download); return ok;
 }
 static bool q3_snapshot(frontend_q3_peer *peer, qa_error *error)
 {
     qa_actor_id actor; qa_frontend_network *n = peer->network;
+    bool enabled;
+    if (!q3_rate(peer, &peer->rate, &enabled, error)) return false;
+    const qa_q3_server_peer *native = qa_network_q3_server_view(n->runtime, peer->client);
+    if (!native) return frontend_fail(error, QA_ERROR_NOT_FOUND, "Q3 snapshot has no actual native packet owner");
+    if (!qa_q3_server_peer_snapshot_ready(native)) {
+        qa_q3_snapshot unused = {.player = {.product = peer->product}};
+        return qa_network_q3_snapshot(n->runtime, peer->client, &unused, &peer->rate, NULL, 0, error);
+    }
     qa_application_network_q3_frame frame;
-    return q3_actor(peer, &actor, error) && qa_application_network_q3_snapshot(n->frontend->application,
-        actor, 0, 0, n->q3_server_bit, &frame, error) &&
-        qa_network_q3_snapshot(n->runtime, peer->client, &frame.snapshot, &peer->rate, NULL, 0, error);
+    if (!q3_actor(peer, &actor, error) || !qa_application_network_q3_snapshot(n->frontend->application,
+        actor, 0, 0, n->q3_server_bit, &frame, error)) return false;
+    q3_download_packet packet = {.peer = peer, .enabled = enabled};
+    peer->world.downloading = qa_q3_download_window_active(peer->download);
+    bool ok = qa_network_q3_snapshot_write(n->runtime, peer->client, &frame.snapshot, &peer->rate,
+        q3_write_downloads, &packet, error);
+    if (ok && packet.offer.owner) ok = qa_q3_download_window_commit(peer->download, &packet.offer, error);
+    peer->world.downloading = qa_q3_download_window_active(peer->download);
+    return ok;
 }
 static bool q3_rejected_snapshot(void *context, qa_error *error)
 { return q3_snapshot(context, error); }
 static bool q3_drop(void *context, const char *reason, qa_error *error)
 {
     frontend_q3_peer *peer = context; (void)error;
+    qa_q3_download_window_close(peer->download); peer->world.downloading = false;
     peer->retiring = true; snprintf(peer->reason, sizeof(peer->reason), "%s", reason); return true;
 }
 static bool q3_input(void *context, const qa_q3_usercmd *source, qa_error *error)
@@ -346,17 +421,31 @@ static bool q3_client_command(void *context, const qa_q3_command *command, bool 
         return frontend_q3_packages_pure(n->q3_packages, n->q3_restarted_server_id, &pure, error) &&
             qa_network_q3_pure(n->runtime, peer->client, &pure, &tokens, &result, error);
     }
-    if (!strcmp(name, "vdr") || !strcmp(name, "stopdl") || !strcmp(name, "nextdl")) return true;
+    if (!strcmp(name, "vdr")) return qa_network_q3_reset_pure(n->runtime, peer->client, error);
+    if (!strcmp(name, "stopdl")) {
+        qa_q3_download_window_close(peer->download); peer->world.downloading = false; return true;
+    }
+    if (!strcmp(name, "nextdl")) {
+        long requested = strtol(qa_q3_token(&tokens, 1), NULL, 10);
+        int32_t block = requested < INT32_MIN ? INT32_MIN : requested > INT32_MAX ? INT32_MAX : (int32_t)requested;
+        bool broken;
+        if (!qa_q3_download_window_acknowledge(peer->download, block, peer->world.time, &broken, error)) return false;
+        peer->world.downloading = qa_q3_download_window_active(peer->download);
+        return !broken || q3_drop(peer, "broken download", error);
+    }
     if (!strcmp(name, "donedl")) {
         qa_q3_server_state state;
         return qa_network_q3_state(n->runtime, peer->client, &state, error) &&
             (state.phase == QA_Q3_ACTIVE || q3_signon(peer, error));
     }
     if (!strcmp(name, "download")) {
-        qa_q3_download denied = {.file_size = -1};
-        snprintf(denied.error, sizeof(denied.error), "Native package download admission is unavailable");
-        qa_q3_snapshot snapshot = {.player = {.product = peer->product}};
-        return qa_network_q3_snapshot(n->runtime, peer->client, &snapshot, &peer->rate, &denied, 1, error);
+        char requested[64]; const char *text = qa_q3_token(&tokens, 1);
+        size_t length = strlen(text); if (length >= sizeof(requested)) length = sizeof(requested) - 1;
+        memcpy(requested, text, length); requested[length] = 0;
+        qa_error path = {0};
+        if (*requested && !qa_q3_download_name(requested, &path)) return q3_drop(peer, "Invalid download path", error);
+        bool ok = qa_q3_download_window_begin(peer->download, requested, error);
+        peer->world.downloading = qa_q3_download_window_active(peer->download); return ok;
     }
     qa_actor_id actor;
     if (!q3_actor(peer, &actor, error)) return false;
@@ -383,11 +472,20 @@ static bool q3_admit(void *context, const qa_q3_accepted_connect *request, char 
             (void)qa_network_detach(n->runtime, retained_id, "reconnect source reset failed", NULL); return false;
         }
     }
+    qa_q3_download_window_destroy(peer->download);
     *peer = (frontend_q3_peer){.network = n, .slot = request->slot, .qport = request->qport,
         .seat = {NETWORK_OWNER, 64u + request->slot}, .connected_ms = (int64_t)(n->frontend->time_ns / UINT64_C(1000000)),
         .rate = {.bytes_per_second = 3000, .snapshot_ms = 50}};
     qa_actor_owner source_owner;
-    if (!qa_application_network_q3_owner(n->frontend->application, &source_owner, &peer->product, error)) return false;
+    if (!qa_application_network_q3_owner(n->frontend->application, &source_owner, &peer->product, error)) {
+        if (retained) (void)qa_network_detach(n->runtime, retained_id, "reconnect source owner unavailable", NULL);
+        return false;
+    }
+    qa_q3_download_source download_source = {.context = n, .resolve = q3_download_resolve};
+    if (!qa_q3_download_window_create(&download_source, &peer->download, error)) {
+        if (retained) (void)qa_network_detach(n->runtime, retained_id, "reconnect download owner unavailable", NULL);
+        return false;
+    }
     qa_net_seat_binding seat = {peer->seat, 0};
     qa_net_connect connect = {.attachment = QA_NET_REMOTE, .endpoint = request->address,
         .protocol = {QA_NET_Q3_68, 0, 0}, .seats = &seat, .seat_count = 1, .composition = n->composition};
@@ -396,7 +494,9 @@ static bool q3_admit(void *context, const qa_q3_accepted_connect *request, char 
         .pure_rejected_snapshot = q3_rejected_snapshot, .drop = q3_drop};
     if (retained) peer->client = retained_id;
     else if (!qa_network_attach_q3_server(n->runtime, &connect, peer->product, request->challenge,
-        request->qport, &hooks, n->frontend->time_ns, &peer->client, error)) return false;
+        request->qport, &hooks, n->frontend->time_ns, &peer->client, error)) {
+        qa_q3_download_window_destroy(peer->download); peer->download = NULL; return false;
+    }
     peer->occupied = true;
     char name[1024], team[1024], skin[1024]; qa_actor_id actor;
     bool ok = qa_q3_info_value(request->userinfo, "name", name, sizeof(name), error) &&
@@ -420,6 +520,7 @@ static bool q3_admit(void *context, const qa_q3_accepted_connect *request, char 
             free(baselines);
         }
     }
+    if (ok) ok = q3_rate(peer, &peer->rate, NULL, error);
     if (!ok) {
         qa_error rejected = error ? *error : (qa_error){0};
         (void)qa_network_detach(n->runtime, peer->client, "source admission rejected", NULL);
@@ -427,10 +528,7 @@ static bool q3_admit(void *context, const qa_q3_accepted_connect *request, char 
         if (qa_application_get_state(n->frontend->application) == QA_APPLICATION_FAULTED) return false;
         if (error) *error = (qa_error){0}; return true;
     }
-    char value[64];
-    if (!qa_q3_info_value(request->userinfo, "rate", value, sizeof(value), error)) return false;
-    if (*value) { long rate = strtol(value, NULL, 10); peer->rate.bytes_per_second = rate < 1000 ? 1000 : rate > 90000 ? 90000 : (uint32_t)rate; }
-    peer->rate.lan = qa_q3_is_lan(&request->address); return true;
+    return true;
 }
 static bool q3_query(void *context, const qa_net_address *address, const qa_q3_connectionless *packet, qa_error *error)
 {
@@ -547,6 +645,9 @@ static bool q3_prepare(qa_frontend_network *n, qa_error *error)
     if (!n->q3_packages || changed) {
         frontend_q3_packages *packages = NULL;
         if (!frontend_q3_packages_create(n->frontend->application, source_owner, (uint32_t)n->q3_checksum_feed, &packages, error)) return false;
+        if (changed) for (size_t i = 0; i < 64; ++i) {
+            qa_q3_download_window_close(n->q3_peers[i].download); n->q3_peers[i].world.downloading = false;
+        }
         frontend_q3_packages_destroy(n->q3_packages); n->q3_packages = packages;
     }
     if (!frontend_q3_packages_prepare(n->q3_packages, false, error)) return false;
@@ -568,6 +669,7 @@ static bool q3_prepare(qa_frontend_network *n, qa_error *error)
         frontend_q3_peer *peer = &n->q3_peers[i]; qa_actor_id actor;
         if (!q3_actor(peer, &actor, error) || !qa_application_network_q3_world(n->frontend->application, actor,
             n->q3_server_id, n->q3_restarted_server_id, n->q3_checksum_feed, &peer->world, error)) return false;
+        peer->world.downloading = qa_q3_download_window_active(peer->download);
         if (changed) {
             peer->sequence = 0;
             if (!qa_network_restart(n->runtime, peer->client, &n->composition, error)) return false;
@@ -1223,9 +1325,9 @@ static bool detached_transport(const qa_net_address *address, qa_net_transport *
 }
 static bool network_header(qa_source_save_io *io, bool *installed)
 {
-    uint32_t magic = UINT32_C(0x464e4151), version = 7;
+    uint32_t magic = UINT32_C(0x464e4151), version = 8;
     return qa_source_save_u32(io, &magic) && magic == UINT32_C(0x464e4151) &&
-        qa_source_save_u32(io, &version) && version == 7 && qa_source_save_bool(io, installed);
+        qa_source_save_u32(io, &version) && version == 8 && qa_source_save_bool(io, installed);
 }
 bool frontend_network_prepare_restored(qa_frontend *f, qa_bytes bytes, qa_error *error)
 {
@@ -1313,7 +1415,8 @@ static bool network_frontend_fields(qa_source_save_io *io, qa_frontend_network *
     for (size_t i = 0; i < QA_Q3_ENTITY_WORLD; ++i) if (!qa_source_save_actor(io, &n->q3_projection.actors[i])) return false;
     return true;
 }
-static bool network_host_fields(qa_source_save_io *io, qa_frontend_network *n, bool *installed, qa_bytes *package_cut)
+static bool network_host_fields(qa_source_save_io *io, qa_frontend_network *n, bool *installed,
+    qa_bytes *package_cut, qa_bytes download_cuts[64])
 {
     if (!qa_source_save_bool(io, installed)) return false;
     if (!*installed) return true;
@@ -1342,7 +1445,7 @@ static bool network_host_fields(qa_source_save_io *io, qa_frontend_network *n, b
             !qa_source_save_i32(io, &p->world.time) || !qa_source_save_bool(io, &p->world.pure) ||
             !qa_source_save_bool(io, &p->world.client_running) || !qa_source_save_bool(io, &p->world.flood_protect) ||
             !qa_source_save_bool(io, &p->world.downloading) || !qa_source_save_u32(io, &p->rate.bytes_per_second) ||
-            !qa_source_save_u32(io, &p->rate.maximum_rate) || !qa_source_save_u32(io, &p->rate.snapshot_ms) ||
+            !qa_source_save_f64(io, &p->rate.maximum_rate) || !qa_source_save_u32(io, &p->rate.snapshot_ms) ||
             !qa_source_save_bool(io, &p->rate.local) || !qa_source_save_bool(io, &p->rate.lan) ||
             !qa_source_save_bool(io, &p->rate.force_lan) || !qa_source_save_u32(io, &product) || product > QA_Q3_TEAM_ARENA ||
             !qa_source_save_u64(io, &p->sequence) || !qa_source_save_i64(io, &p->connected_ms) ||
@@ -1351,6 +1454,13 @@ static bool network_host_fields(qa_source_save_io *io, qa_frontend_network *n, b
             !memchr(p->reason, 0, sizeof(p->reason))) return false;
         p->client.owner = NETWORK_OWNER; p->product = (qa_q3_product)product;
         if (io->direction == QA_SOURCE_SAVE_READ) p->network = n;
+        if (io->direction == QA_SOURCE_SAVE_READ) {
+            if (!download_cuts || !network_blob(io, download_cuts + i)) return false;
+        } else {
+            qa_buffer buffer = {0}; bool ok = qa_q3_download_window_checkpoint(p->download, &buffer, io->error);
+            qa_bytes bytes = {buffer.data, buffer.size}; if (ok) ok = network_blob(io, &bytes);
+            qa_buffer_free(&buffer); if (!ok) return false;
+        }
     }
     /* Draining retains physical packet rows. Keep their last extent and bytes,
      * although only the active prefix is scheduled for the next drain. */
@@ -1418,9 +1528,11 @@ static bool network_metadata_check(qa_frontend_network *n, bool hosting, bool fi
             if (p->slot != i || !p->client.generation || p->client.owner != NETWORK_OWNER || p->client.slot >= 64 ||
                 p->seat.owner != NETWORK_OWNER || p->seat.index != 64u + i || p->product != source_product ||
                 p->connected_ms < 0 || p->world.server_id <= 0 || p->world.restarted_server_id <= 0 ||
-                !p->world.generation || p->world.pure != package_policy.enabled || p->world.client_running || p->world.downloading ||
-                p->world.checksum_feed != n->q3_checksum_feed || p->rate.maximum_rate || p->rate.local || p->rate.force_lan ||
-                p->rate.bytes_per_second < 1000 || p->rate.bytes_per_second > 90000 || p->rate.snapshot_ms != 50 ||
+                !p->world.generation || p->world.pure != package_policy.enabled || p->world.client_running || !p->download ||
+                p->world.downloading != qa_q3_download_window_active(p->download) ||
+                p->world.checksum_feed != n->q3_checksum_feed || p->rate.lan || p->rate.force_lan ||
+                !isfinite(p->rate.maximum_rate) ||
+                p->rate.bytes_per_second < 1000 || p->rate.bytes_per_second > 90000 || p->rate.snapshot_ms > 1000 ||
                 (!p->retiring && (p->world.generation != n->q3_generation || p->world.server_id != n->q3_server_id ||
                     p->world.restarted_server_id != n->q3_restarted_server_id)) || !network_host_player(n, p, &row, error))
                 return frontend_fail(error, QA_ERROR_FORMAT, "Q3 hosting peer lacks its retained source identity/rate/roster");
@@ -1580,7 +1692,7 @@ static bool network_runtime_check(qa_frontend_network *n, bool complete_world, b
                 client->attachment != QA_NET_REMOTE || client->protocol.kind != QA_NET_Q3_68 ||
                 client->protocol.revision || client->protocol.flags || client->seat_count != 1 || client->seats[0].remote_index ||
                 client->seats[0].seat.owner != p->seat.owner || client->seats[0].seat.index != p->seat.index ||
-                !qa_sha256_equal(&client->composition, &n->composition) || p->rate.lan != qa_q3_is_lan(&client->endpoint) ||
+                !qa_sha256_equal(&client->composition, &n->composition) ||
                 !qa_network_q3_state(n->runtime, client->id, &state, error) || !network_host_player(n, p, &row, error) ||
                 (!p->retiring && ((state.phase == QA_Q3_ACTIVE && row.source_begin_pending) ||
                     state.phase == QA_Q3_ZOMBIE || state.phase == QA_Q3_FREE)))
@@ -1649,7 +1761,7 @@ bool frontend_network_checkpoint(qa_frontend *f, qa_buffer *connections, qa_buff
         else {
             *copy = *n; qa_net_address address = *qa_network_local_address(n->runtime);
             bool hosting = n->q3_admission != NULL;
-            ok = network_address_fields(&io, &address) && network_frontend_fields(&io, copy) && network_host_fields(&io, copy, &hosting, NULL);
+            ok = network_address_fields(&io, &address) && network_frontend_fields(&io, copy) && network_host_fields(&io, copy, &hosting, NULL, NULL);
             if (ok && hosting) ok = qa_q3_server_admission_checkpoint(n->q3_admission, &admission, error);
             free(copy);
         }
@@ -1712,11 +1824,12 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
     }
     qa_frontend_network *state = calloc(1, sizeof(*state));
     if (!state) { qa_source_save_dispose(&io); return frontend_fail(error, QA_ERROR_MEMORY, "decoding network candidate fields"); }
-    state->frontend = f; state->registered = n->registered;
+    state->frontend = f; state->registered = n->registered; bool transferred = false;
     qa_net_address local = {0}; qa_bytes runtime = {0}, browser = {0}, admin = {0}, jobs = {0}, admission = {0}, nq_state = {0}, qw_state = {0}, package_cut = {0};
+    qa_bytes download_cuts[64] = {{0}};
     bool content = false, downloads = false, hosting = false, nq = false, qw = false;
     ok = ok && network_address_fields(&io, &local) && service_address_valid(&local) &&
-        network_frontend_fields(&io, state) && network_host_fields(&io, state, &hosting, &package_cut) &&
+        network_frontend_fields(&io, state) && network_host_fields(&io, state, &hosting, &package_cut, download_cuts) &&
         (!hosting || network_blob(&io, &admission)) &&
         qa_source_save_bool(&io, &nq) && (!nq || network_blob(&io, &nq_state)) &&
         qa_source_save_bool(&io, &qw) && (!qw || network_blob(&io, &qw_state)) &&
@@ -1733,13 +1846,18 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
             frontend_q3_packages_create(f->application, owner, (uint32_t)state->q3_checksum_feed, &state->q3_packages, error) &&
             frontend_q3_packages_restore_receipt(state->q3_packages, package_cut, error) &&
             frontend_q3_packages_prepare(state->q3_packages, true, error);
+        qa_q3_download_source source = {.context = state, .resolve = q3_download_resolve};
+        for (size_t i = 0; ok && i < 64; ++i) if (state->q3_peers[i].occupied)
+            ok = qa_q3_download_window_restore(download_cuts[i], &source, &state->q3_peers[i].download, error);
     }
     if (ok) ok = network_metadata_valid(state, hosting, error);
     if (ok) {
         qa_network_runtime *previous = n->runtime; qa_server_browser *old_browser = n->browser; qa_server_admin *old_admin = n->admin;
         qa_fs_root *preferences = n->preferences;
-        *n = *state; n->detached_transport = true; n->runtime = previous; n->browser = old_browser; n->admin = old_admin; n->preferences = preferences;
-        for (size_t i = 0; i < 64; ++i) if (n->q3_peers[i].occupied) n->q3_peers[i].network = n;
+        *n = *state; transferred = true; n->detached_transport = true; n->runtime = previous; n->browser = old_browser; n->admin = old_admin; n->preferences = preferences;
+        for (size_t i = 0; i < 64; ++i) if (n->q3_peers[i].occupied) {
+            n->q3_peers[i].network = n; qa_q3_download_window_rebind(n->q3_peers[i].download, n);
+        }
         if (hosting) {
             qa_q3_admission_hooks admission_hooks = saved_admission_hooks(n);
             ok = qa_q3_server_admission_restore_checkpoint(admission, &admission_hooks, &n->q3_admission, error);
@@ -1774,6 +1892,8 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
     if (state->nq_host && state->nq_host != n->nq_host) frontend_nq_destroy(state->nq_host);
     if (state->qw_host && state->qw_host != n->qw_host) frontend_qw_destroy(state->qw_host);
     if (state->q3_packages && state->q3_packages != n->q3_packages) frontend_q3_packages_destroy(state->q3_packages);
+    for (size_t i = 0; !transferred && i < 64; ++i)
+        qa_q3_download_window_destroy(state->q3_peers[i].download);
     free(state); qa_source_save_dispose(&io); return ok;
 }
 bool frontend_network_restore_prediction(qa_frontend *f, qa_bytes bytes, qa_error *error)
@@ -1801,7 +1921,7 @@ static bool network_host_cut(qa_frontend_network *n, qa_buffer *out, qa_error *e
     if (!copy) return frontend_fail(error, QA_ERROR_MEMORY, "qualifying retained hosting cut");
     *copy = *n;
     qa_source_save_io io = {0}; qa_buffer admission = {0}; bool hosting = n->q3_admission != NULL;
-    bool ok = qa_source_save_writer(&io, NULL, error) && network_host_fields(&io, copy, &hosting, NULL);
+    bool ok = qa_source_save_writer(&io, NULL, error) && network_host_fields(&io, copy, &hosting, NULL, NULL);
     if (ok && hosting) {
         ok = qa_q3_server_admission_checkpoint(n->q3_admission, &admission, error);
         qa_bytes bytes = {admission.data, admission.size};
@@ -1924,6 +2044,7 @@ bool frontend_network_destroy(qa_frontend *f, qa_error *error)
     qa_network_destroy(n->runtime); qa_q3_server_admission_destroy(n->q3_admission);
     frontend_nq_destroy(n->nq_host);
     frontend_qw_destroy(n->qw_host);
+    for (size_t i = 0; i < 64; ++i) qa_q3_download_window_destroy(n->q3_peers[i].download);
     frontend_q3_packages_destroy(n->q3_packages);
     qa_fs_root_close(n->preferences); qa_fs_root_close(n->content);
     free(n); f->network = NULL; return true;
@@ -2128,6 +2249,7 @@ static bool round_bind_world(qa_network_q3_round *cut, bool prepare, qa_error *e
         frontend_q3_peer *peer;
         if (!round_peer(cut, i, &peer, error)) return false;
         peer->world = world;
+        peer->world.downloading = qa_q3_download_window_active(peer->download);
     }
     return true;
 }

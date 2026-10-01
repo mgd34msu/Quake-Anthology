@@ -101,14 +101,18 @@ bool qa_q3_server_snapshot(qa_q3_writer *w, const qa_q3_snapshot *from,
     }
     return qa_q3_write_bits(w, QA_Q3_ENTITY_NONE, 10);
 }
+bool qa_q3_server_download_block(qa_q3_writer *w, int32_t source_block, int32_t file_size, qa_bytes bytes)
+{
+    if (source_block < 0 || file_size < 0 || bytes.size > QA_Q3_DOWNLOAD_BYTES || (bytes.size && !bytes.data))
+        return write_fail(w, "Invalid original Q3 download block");
+    return write8(w, 6) && qa_q3_write_bits(w, (uint32_t)source_block & UINT32_C(65535), 16) &&
+        (source_block != 0 || write32(w, file_size)) && qa_q3_write_bits(w, (uint32_t)bytes.size, 16) && qa_q3_write_data(w, bytes);
+}
 bool qa_q3_server_download(qa_q3_writer *w, const qa_q3_download *d) {
     if (!d || d->size > QA_Q3_DOWNLOAD_BYTES) return write_fail(w, "Invalid Q3 download block size");
-    if (!write8(w, 6) || !qa_q3_write_bits(w, d->block, 16)) return false;
-    if (!d->block) {
-        if (!write32(w, d->file_size)) return false;
-        if (d->file_size < 0) return qa_q3_write_string(w, d->error, false);
-    }
-    return qa_q3_write_bits(w, (uint32_t)d->size, 16) && qa_q3_write_data(w, (qa_bytes){d->data, d->size});
+    if (!d->block && d->file_size < 0)
+        return write8(w, 6) && qa_q3_write_bits(w, 0, 16) && write32(w, d->file_size) && qa_q3_write_string(w, d->error, false);
+    return qa_q3_server_download_block(w, d->block, d->block ? 0 : d->file_size, (qa_bytes){d->data, d->size});
 }
 bool qa_q3_server_end(qa_q3_writer *w) { return write8(w, 8); }
 
