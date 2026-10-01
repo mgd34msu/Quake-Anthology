@@ -72,6 +72,7 @@ struct application_qc_state {
     const float *client_think_time;
     float serverflags;
     qa_buffer original_extension;
+    struct application_qc_rerelease *rerelease;
     char *lightstyles[64];
     application_qc_message *messages;
     size_t message_count, message_capacity;

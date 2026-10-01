@@ -1,8 +1,9 @@
 #include "guest_qc_profile.h"
 #include "qa/vfs_view_save.h"
+#include "guest_qc_rerelease.h"
 
 #define QC_ENGINE_LIMIT (64u * 1024u * 1024u)
-#define QC_ENGINE_VERSION 9u
+#define QC_ENGINE_VERSION 10u
 static bool add_size(size_t *total, size_t amount, qa_error *error)
 {
     if (amount > QC_ENGINE_LIMIT - *total)
@@ -239,12 +240,17 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
         if (!add_size(&capacity, strlen(cvar->name) + strlen(cvar->value) + strlen(cvar->reset_value) +
             (cvar->latched_value ? strlen(cvar->latched_value) : 0) + 64, error)) return false;
     }
+    qa_buffer rerelease={0};
+    if (!application_qc_rerelease_checkpoint(engine,&rerelease,error)) return false;
+    if (rerelease.size>UINT32_MAX || !add_size(&capacity,rerelease.size+4,error)) {
+        qa_buffer_free(&rerelease); return false;
+    }
     qa_cvar_registry_state registry;
     qa_cvar_record_state *metadata = cvar_count ? calloc(cvar_count, sizeof(*metadata)) : NULL;
-    if (cvar_count && metadata == NULL) return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC cvar metadata");
-    if (!qa_cvars_capture_metadata(engine->cvars, &registry, metadata, cvar_count, error)) { free(metadata); return false; }
+    if (cvar_count && metadata == NULL) { qa_buffer_free(&rerelease); return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC cvar metadata"); }
+    if (!qa_cvars_capture_metadata(engine->cvars, &registry, metadata, cvar_count, error)) { qa_buffer_free(&rerelease); free(metadata); return false; }
     uint8_t *data = malloc(capacity);
-    if (data == NULL) { free(metadata); return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC engine checkpoint"); }
+    if (data == NULL) { qa_buffer_free(&rerelease); free(metadata); return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC engine checkpoint"); }
     qa_net_writer writer; qa_net_writer_init(&writer, data, capacity, error);
     const qa_actor_registry *actors = qa_session_actors(engine->services.session);
     const qa_sha256_digest *declaration = qa_resource_digest(engine->provider->launch->declaration);
@@ -291,6 +297,7 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
     for (size_t i = 0; ok && i < 64; ++i) ok = write_text(&writer, engine->lightstyles[i]);
     if (ok) ok=qa_net_write_u32(&writer,(uint32_t)engine->original_extension.size) &&
         qa_net_write_data(&writer,engine->original_extension.data,engine->original_extension.size);
+    if (ok) ok=qa_net_write_u32(&writer,(uint32_t)rerelease.size) && qa_net_write_data(&writer,rerelease.data,rerelease.size);
     if (ok) ok = qa_net_write_u32(&writer, (uint32_t)engine->message_count);
     for (size_t i = 0; ok && i < engine->message_count; ++i) {
         application_qc_message *message = &engine->messages[i];
@@ -304,7 +311,7 @@ bool application_qc_capture_engine(void *opaque, qa_buffer *out, qa_error *error
                 write_actor(&writer, actors, reference->actor) && qa_net_write_u8(&writer, reference->packed_sound);
         }
     }
-    free(metadata);
+    free(metadata); qa_buffer_free(&rerelease);
     if (!ok) { free(data); return false; }
     *out = (qa_buffer){data, qa_net_writer_size(&writer)}; return true;
 }
@@ -319,6 +326,7 @@ static void dispose_candidate(struct application_qc_state *candidate)
     }
     for (size_t i = 0; i < 64; ++i) free(candidate->lightstyles[i]);
     qa_buffer_free(&candidate->original_extension);
+    application_qc_rerelease_destroy(candidate);
     qa_console_destroy(candidate->console); qa_cvars_destroy(candidate->cvars);
     free(candidate->resources); free(candidate->messages); free(candidate->clients);
 }
@@ -445,6 +453,14 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
                 !memchr(candidate.original_extension.data,0,extension);
         }
     }
+    uint32_t rerelease=ok?qa_net_read_u32(&reader):0;
+    if (ok && (reader.failed || !rerelease || rerelease>qa_net_reader_remaining(&reader)))
+        ok=qa_net_reader_fail(&reader,"Rerelease source continuation exceeds its checkpoint");
+    if (ok) {
+        qa_bytes state={reader.bytes.data+reader.bit/8,rerelease};
+        ok=!(reader.bit%8) && application_qc_rerelease_restore(&candidate,state,error);
+        if (ok) reader.bit+=(size_t)rerelease*8;
+    }
     uint32_t messages = ok ? qa_net_read_u32(&reader) : 0;
     if ((uint64_t)messages > (uint64_t)candidate.max_clients + 4) ok = qa_net_reader_fail(&reader, "QuakeC message route count exceeds source destinations");
     if (ok && messages) {
@@ -516,6 +532,8 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
         qa_buffer_free(&engine->original_extension);
         engine->original_extension=candidate.original_extension;
         candidate.original_extension=(qa_buffer){0};
+        application_qc_rerelease_destroy(engine);
+        engine->rerelease=candidate.rerelease; candidate.rerelease=NULL;
         engine->random = candidate.random;
         engine->check_slot = candidate.check_slot; engine->check_time = candidate.check_time; engine->check_cluster = candidate.check_cluster;
         engine->loading = loading != 0;

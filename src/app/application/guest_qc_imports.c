@@ -1,4 +1,7 @@
 #include "guest_qc_internal.h"
+#include "map_travel_private.h"
+#include "qa/application_network_qw.h"
+#include "guest_qc_rerelease.h"
 #include <stdio.h>
 
 static bool vector_field(struct application_qc_state *engine, int32_t reference,
@@ -6,6 +9,62 @@ static bool vector_field(struct application_qc_state *engine, int32_t reference,
 {
     const qa_qc_definition *field = application_qc_field(engine, name, QA_QC_VECTOR, error);
     return field != NULL && qa_qc_entity_vector(engine->provider->state.qc.instance, reference, field->offset, out, error);
+}
+static bool info_key(struct application_qc_state *engine, qa_qc_instance *vm, qa_error *error)
+{
+    int32_t reference; const char *key, *value = "";
+    if (!qa_qc_arg_int(vm, 0, &reference, error) || !qa_qc_arg_string(vm, 1, &key, error)) return false;
+    qa_qc_entity_layout layout = qa_qc_default_entity_layout(engine->provider->state.qc.program, engine->profile);
+    if (reference < 0 || !layout.stride_bytes || (uint32_t)reference % layout.stride_bytes)
+        return application_fail(error, QA_ERROR_FORMAT, "QuakeC infokey has an invalid physical entity reference");
+    uint32_t slot = (uint32_t)reference / layout.stride_bytes;
+    int32_t actual_reference;
+    if (!qa_qc_slot_reference(vm, slot, &actual_reference, error)) return false;
+    if (actual_reference != reference)
+        return application_fail(error, QA_ERROR_FORMAT, "QuakeC infokey reference differs from its actual source layout");
+    qa_qw_info info = {0};
+    if (slot == 0) {
+        const qa_cvar_view *cvar = qa_cvars_find(engine->cvars, key);
+        if (cvar) value = cvar->value;
+    } else if (slot <= engine->max_clients) {
+        const application_qc_client *client = &engine->clients[slot];
+        if (client->connected) {
+            qa_qc_slot_binding binding;
+            const qa_actor_record *record = qa_actors_get(qa_session_actors(engine->services.session), client->actor);
+            if (!qa_qc_slot(vm, slot, &binding) || !record ||
+                binding.owner != record->owner || binding.source_slot != (record->has_source ? record->source_slot : 0) ||
+                (binding.kind != QA_QC_SLOT_BORROWED && (binding.kind != QA_QC_SLOT_OWNED ||
+                 engine->provider->state.qc.qualified || engine->profile != QA_QC_QUAKEWORLD ||
+                 record->owner != engine->provider->owner || !record->has_source || record->source_slot != slot)) ||
+                !qa_actor_id_equal(binding.actor, client->actor))
+                return application_fail(error, QA_ERROR_FORMAT, "QuakeC infokey client differs from its source binding");
+            const char *raw;
+            if (!qa_application_network_qw_userinfo_read(engine->provider->application, client->actor, &raw, error) ||
+                !qa_qw_info_parse(raw, &info, error)) return false;
+            const char *entry = qa_qw_info_get(&info, key);
+            if (entry) value = entry;
+        }
+    }
+    size_t length = strlen(key);
+    if (length > SIZE_MAX - 48) {
+        qa_qw_info_free(&info);
+        return application_fail(error, QA_ERROR_MEMORY, "QuakeC infokey engine string name is too long");
+    }
+    char *name = malloc(length + 48);
+    if (!name) {
+        qa_qw_info_free(&info);
+        return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC infokey engine string name");
+    }
+    bool qualified = engine->provider->state.qc.qualified != NULL;
+    snprintf(name, length + 48, "%s:%u:%s", qualified ? "mod-infokey" : "qw-infokey",
+        qualified ? (uint32_t)reference : slot, key);
+    size_t capacity = 1024;
+    if (qualified && strlen(value) >= capacity) capacity = strlen(value) + 1;
+    int32_t string;
+    bool ok = qa_qc_engine_string(vm, name, value, capacity, &string, error) &&
+        qa_qc_return_int(vm, string, error);
+    free(name); qa_qw_info_free(&info);
+    return ok;
 }
 static bool global_reference(struct application_qc_state *engine, const char *name,
                               int32_t *out, qa_error *error)
@@ -31,6 +90,33 @@ static bool eye_cluster(struct application_qc_state *engine, int32_t reference,
         !qa_collision_point_leaf(qa_world_geometry(engine->world), qa_vec_add(origin, offset), &leaf, error)) return false;
     *out = leaf.cluster; return true;
 }
+static bool check_client_reference(struct application_qc_state *engine, uint32_t slot,
+    int32_t *reference, bool *alive, qa_error *error)
+{
+    qa_qc_instance *vm = engine->provider->state.qc.instance;
+    if (!engine->provider->state.qc.qualified && engine->profile == QA_QC_QUAKEWORLD) {
+        qa_qc_slot_binding binding;
+        if (!qa_qc_slot(vm, slot, &binding))
+            return application_fail(error, QA_ERROR_FORMAT, "QW checkclient has no reserved physical source actor");
+        if (binding.kind == QA_QC_SLOT_FREE) {
+            *alive = false;
+            return qa_qc_slot_reference(vm, slot, reference, error);
+        }
+        if (binding.kind != QA_QC_SLOT_OWNED && binding.kind != QA_QC_SLOT_BORROWED)
+            return application_fail(error, QA_ERROR_FORMAT, "QW checkclient has an invalid reserved source binding");
+        const qa_actor_record *record = qa_actors_get(qa_session_actors(engine->services.session), binding.actor);
+        if (!record || binding.owner != record->owner ||
+            binding.source_slot != (record->has_source ? record->source_slot : 0) ||
+            (binding.kind == QA_QC_SLOT_OWNED && (record->owner != engine->provider->owner ||
+             !record->has_source || record->source_slot != slot)))
+            return application_fail(error, QA_ERROR_FORMAT, "QW checkclient reserved actor differs from its source generation");
+        *alive = true;
+        return qa_qc_slot_reference(vm, slot, reference, error);
+    }
+    application_qc_client *client = &engine->clients[slot];
+    *alive = client->connected && qa_actors_get(qa_session_actors(engine->services.session), client->actor) != NULL;
+    return !*alive || application_qc_reference(engine, client->actor, reference, error);
+}
 static bool check_client(struct application_qc_state *engine, qa_qc_instance *vm, qa_error *error)
 {
     const qa_qc_definition *time = qa_qc_program_find_global(engine->provider->state.qc.program, "time");
@@ -41,33 +127,27 @@ static bool check_client(struct application_qc_state *engine, qa_qc_instance *vm
         uint32_t previous = engine->check_slot ? engine->check_slot : 1;
         uint32_t slot = previous == engine->max_clients ? 1 : previous + 1;
         for (;;) {
-            application_qc_client *client = &engine->clients[slot];
-            int32_t reference; float health = 0, flags = 0;
-            bool alive = client->connected && qa_actors_get(qa_session_actors(engine->services.session), client->actor) != NULL;
-            if (alive && (!application_qc_reference(engine, client->actor, &reference, error) ||
-                !application_qc_float(engine, reference, "health", &health, error) ||
+            int32_t reference; float health = 0, flags = 0; bool alive;
+            if (!check_client_reference(engine, slot, &reference, &alive, error)) return false;
+            if (alive && (!application_qc_float(engine, reference, "health", &health, error) ||
                 !application_qc_float(engine, reference, "flags", &flags, error))) return false;
-            if (slot == previous || (alive && health > 0 && !(source_flags(flags) & 128u))) break;
+            if (slot == previous || (alive && !(health <= 0) && !(source_flags(flags) & 128u))) break;
             slot = slot == engine->max_clients ? 1 : slot + 1;
         }
         engine->check_slot = slot; engine->check_time = now; engine->check_cluster = -1;
-        application_qc_client *client = &engine->clients[slot];
-        if (client->connected && qa_actors_get(qa_session_actors(engine->services.session), client->actor) != NULL) {
-            int32_t reference;
-            if (!application_qc_reference(engine, client->actor, &reference, error) ||
-                !eye_cluster(engine, reference, &engine->check_cluster, error)) return false;
-        }
+        int32_t reference; bool alive;
+        if (!check_client_reference(engine, slot, &reference, &alive, error) ||
+            ((alive || (!engine->provider->state.qc.qualified && engine->profile == QA_QC_QUAKEWORLD)) &&
+             !eye_cluster(engine, reference, &engine->check_cluster, error))) return false;
     }
     if (engine->check_slot == 0 || engine->check_cluster < 0) return qa_qc_return_int(vm, 0, error);
-    application_qc_client *client = &engine->clients[engine->check_slot];
-    if (!client->connected || qa_actors_get(qa_session_actors(engine->services.session), client->actor) == NULL)
-        return qa_qc_return_int(vm, 0, error);
-    int32_t reference, observer, cluster; float health; bool visible;
-    if (!application_qc_reference(engine, client->actor, &reference, error) ||
-        !application_qc_float(engine, reference, "health", &health, error) ||
+    int32_t reference, observer, cluster; float health; bool visible, alive;
+    if (!check_client_reference(engine, engine->check_slot, &reference, &alive, error)) return false;
+    if (!alive) return qa_qc_return_int(vm, 0, error);
+    if (!application_qc_float(engine, reference, "health", &health, error) ||
         !global_reference(engine, "self", &observer, error) || !eye_cluster(engine, observer, &cluster, error) ||
         !qa_collision_cluster_visible(qa_world_geometry(engine->world), engine->check_cluster, cluster, false, &visible, error)) return false;
-    return qa_qc_return_int(vm, health > 0 && visible ? reference : 0, error);
+    return qa_qc_return_int(vm, !(health <= 0) && visible ? reference : 0, error);
 }
 static bool aim_eligible(struct application_qc_state *engine, int32_t source, qa_actor_id shooter,
                           qa_actor_id actor, float teamplay, bool *eligible, qa_error *error)
@@ -197,6 +277,8 @@ bool application_qc_import(void *opaque, qa_qc_instance *vm, qa_qc_builtin built
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC import belongs to another provider");
     if (builtin >= QA_QC_BUILTIN_WRITEBYTE && builtin <= QA_QC_BUILTIN_WRITEENTITY)
         return application_qc_write_message(engine, vm, builtin, error);
+    if (builtin>=QA_QC_BUILTIN_SETCOLOR && builtin<=QA_QC_BUILTIN_EX_CLEARPROMPT)
+        return application_qc_rerelease_import(engine,vm,builtin,error);
     switch (builtin) {
     case QA_QC_BUILTIN_CHECKCLIENT: return check_client(engine, vm, error);
     case QA_QC_BUILTIN_AIM: return aim(engine, vm, error);
@@ -244,7 +326,7 @@ bool application_qc_import(void *opaque, qa_qc_instance *vm, qa_qc_builtin built
         if (self != 0 && !qa_qc_reference_actor(vm, self, &actor, error)) return false;
         qa_application_travel_request request = {.provider = engine->provider->owner, .cause = actor,
             .expression = map, .carry_players = true};
-        return qa_application_queue_travel(engine->provider->application, &request, error);
+        return application_source_queue_travel(engine->provider->application, &request, error);
     }
     case QA_QC_BUILTIN_SETSPAWNPARMS: {
         int32_t reference; qa_actor_id actor;
@@ -277,22 +359,7 @@ bool application_qc_import(void *opaque, qa_qc_instance *vm, qa_qc_builtin built
             .provider = engine->provider->owner, .actor = second, .other = first, .time_ns = engine->source_time_ns};
         return qa_builtin_emit(&engine->services, &event, error);
     }
-    case QA_QC_BUILTIN_INFOKEY: {
-        int32_t reference; const char *key, *value = "";
-        if (!qa_qc_arg_int(vm, 0, &reference, error) || !qa_qc_arg_string(vm, 1, &key, error)) return false;
-        if (reference == 0) { const qa_cvar_view *cvar = qa_cvars_find(engine->cvars, key); if (cvar != NULL) value = cvar->value; }
-        else {
-            qa_actor_id actor; qa_builtin_player_info player;
-            if (!qa_qc_reference_actor(vm, reference, &actor, error)) return false;
-            if (engine->services.player_info && engine->services.player_info(engine->services.context, actor, &player)) {
-                if (strcmp(key, "name") == 0) value = player.name ? player.name : "";
-                else if (strcmp(key, "skin") == 0) value = player.skin ? player.skin : "";
-                else if (strcmp(key, "*spectator") == 0) value = player.spectator ? "1" : "";
-            }
-        }
-        int32_t string;
-        return qa_qc_string_allocate(vm, value, &string, error) && qa_qc_return_int(vm, string, error);
-    }
+    case QA_QC_BUILTIN_INFOKEY: return info_key(engine, vm, error);
     default: return application_fail(error, QA_ERROR_UNSUPPORTED, "QuakeC engine extension has no concrete application owner");
     }
 }

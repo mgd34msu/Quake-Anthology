@@ -1,5 +1,6 @@
 #include "guest_qc_profile.h"
 #include "guest_qc_original_save.h"
+#include "guest_qc_rerelease.h"
 #include "control_frame.h"
 #include <float.h>
 #include <stdio.h>
@@ -989,7 +990,8 @@ static bool end_frame(void *opaque, qa_session *session, const qa_source_frame *
         if (value != 0 && !qa_qc_set_global_float(engine->provider->state.qc.instance, retouch->offset, value - 1, error)) return false;
     }
     size_t commands;
-    bool ok = application_qc_flush(engine, error) && qa_console_drain(engine->console, 0, &commands, error);
+    bool ok = application_qc_rerelease_frame(engine,error) &&
+        application_qc_flush(engine, error) && qa_console_drain(engine->console, 0, &commands, error);
     engine->has_frame = false;
     return ok;
 }
@@ -1132,9 +1134,22 @@ bool application_construct_qc(qa_application *app, application_provider *provide
         QA_QC_BUILTIN_CHANGELEVEL, QA_QC_BUILTIN_SETSPAWNPARMS,
         QA_QC_BUILTIN_LOGFRAG, QA_QC_BUILTIN_INFOKEY, QA_QC_BUILTIN_MULTICAST
     };
-    qa_qc_builtin_binding bindings[sizeof(imports) / sizeof(imports[0])];
-    for (size_t i = 0; i < sizeof(imports) / sizeof(imports[0]); ++i)
+    static const qa_qc_builtin rerelease_imports[] = {
+        QA_QC_BUILTIN_SETCOLOR, QA_QC_BUILTIN_EX_BPRINT, QA_QC_BUILTIN_EX_SPRINT,
+        QA_QC_BUILTIN_EX_CENTERPRINT, QA_QC_BUILTIN_EX_FINALE_FINISHED, QA_QC_BUILTIN_EX_LOCALSOUND,
+        QA_QC_BUILTIN_EX_DRAW_POINT, QA_QC_BUILTIN_EX_DRAW_LINE, QA_QC_BUILTIN_EX_DRAW_ARROW,
+        QA_QC_BUILTIN_EX_DRAW_RAY, QA_QC_BUILTIN_EX_DRAW_CIRCLE, QA_QC_BUILTIN_EX_DRAW_BOUNDS,
+        QA_QC_BUILTIN_EX_DRAW_WORLDTEXT, QA_QC_BUILTIN_EX_DRAW_SPHERE, QA_QC_BUILTIN_EX_DRAW_CYLINDER,
+        QA_QC_BUILTIN_EX_PROMPT, QA_QC_BUILTIN_EX_PROMPTCHOICE, QA_QC_BUILTIN_EX_CLEARPROMPT
+    };
+    size_t import_count=sizeof(imports)/sizeof(imports[0]);
+    qa_qc_builtin_binding bindings[sizeof(imports)/sizeof(imports[0])+
+        sizeof(rerelease_imports)/sizeof(rerelease_imports[0])];
+    for (size_t i = 0; i < import_count; ++i)
         bindings[i] = (qa_qc_builtin_binding){imports[i], NULL, engine, application_qc_import};
+    if (engine->profile==QA_QC_RERELEASE)
+        for (size_t i=0;i<sizeof(rerelease_imports)/sizeof(rerelease_imports[0]);++i)
+            bindings[import_count++]=(qa_qc_builtin_binding){rerelease_imports[i],NULL,engine,application_qc_import};
     qa_actor_definition definition;
     if (!qa_strings_intern_cstr(qa_session_strings(app->session), "quakec:authored", &definition, error)) return false;
     qa_qc_game_options options = {
@@ -1144,7 +1159,7 @@ bool application_construct_qc(qa_application *app, application_provider *provide
                      .context = engine, .random_u32 = source_random, .may_move = application_qc_may_move,
                      .declared_projection = profile != NULL, .prepare_entity = application_qc_prepare_entity,
                      .source_time_seconds = source_time_seconds,
-                     .builtins = bindings, .builtin_count = sizeof(imports) / sizeof(imports[0])}},
+                     .builtins = bindings, .builtin_count = import_count}},
         .services = engine->services, .cvars = engine->cvars, .console = engine->console,
         .command_context = engine->command_context, .max_clients = engine->max_clients,
         .map_exclusion_flags = deathmatch ? 2048u : choices->world.skill <= 0 ? 256u : choices->world.skill == 1 ? 512u : 1024u,
@@ -1174,6 +1189,7 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
     (void)bsp; (void)spawn_id;
     if (engine != NULL && !engine->loading) {
         if (!qa_qc_game_reset_level(provider->state.qc.game, error)) return false;
+        application_qc_rerelease_reset(engine);
         provider->state.qc.instance = qa_qc_game_instance(provider->state.qc.game);
         engine->loading = true; engine->check_slot = 0; engine->check_time = 0; engine->check_cluster = -1;
         qa_cvars_set_server_active(engine->cvars, false);
@@ -1289,6 +1305,7 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
     }
     for (size_t i = 0; i < 64; ++i) free(engine->lightstyles[i]);
     qa_buffer_free(&engine->original_extension);
+    application_qc_rerelease_destroy(engine);
     qa_builtin_snapshot_free(&engine->observations);
     free(engine->resources); free(engine->messages); free(engine->clients); free(engine->actors); free(engine);
     provider->state.qc.engine = NULL;
@@ -1299,6 +1316,7 @@ bool application_qc_actor_released(application_provider *provider, qa_actor_reco
     struct application_qc_state *engine = provider->state.qc.engine;
     if (engine == NULL) return true;
     if (!application_qc_source_client_released(engine, record, error)) return false;
+    application_qc_rerelease_released(engine,record.id);
     qa_qc_game_actor_released(provider->state.qc.game, record);
     if (record.id.slot < engine->actor_capacity && qa_actor_id_equal(engine->actors[record.id.slot].actor, record.id))
         engine->actors[record.id.slot] = (application_qc_actor){0};
