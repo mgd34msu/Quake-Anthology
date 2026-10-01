@@ -74,24 +74,32 @@ bool qa_bot_goals_load_weights(qa_bot_goals *g, uint32_t id, qa_bot_library *lib
             if (e) *e = local;
             return false;
         }
-        if (!qa_bot_goals_weights(g, id, NULL, e)) return false;
+        if (!bot_goal_config_set(g,s,NULL,e)) return false;
         g->busy = true;
         bot_goal_report(g, QA_SCRIPT_FATAL, "couldn't load weights\n");
         g->busy = false;
         return true;
     }
-    bool ok = qa_bot_goals_weights(g, id, weights, e);
+    bool ok = bot_goal_config_set(g,s,weights,e);
     qa_bot_weights_release(weights);
     if (!ok || !g->configured) return ok;
     g->busy = true;
     const qa_bot_items_view *items = qa_bot_items_read(g->items);
-    for (size_t i = 0; i < items->count; ++i)
-        if (s->weights->indices[i] < 0) {
+    qa_bot_memory_allocation indexes;
+    if(items->count>UINT32_MAX || !bot_goal_indexes_create(g,(uint32_t)items->count,&indexes,e)) {
+        g->busy=false;return false;
+    }
+    for (size_t i = 0; i < items->count; ++i) {
+        int32_t index=qa_bot_weights_find(weights,items->items[i].classname);
+        if(!bot_goal_indexes_write(g,indexes,(uint32_t)i,index,e)) {g->busy=false;return false;}
+        if (index < 0) {
             char line[256];
             (void)snprintf(line, sizeof(line), "item info %zu \"%s\" has no fuzzy weight\r\n",
                            i, items->items[i].classname);
             if (!bot_goal_log(g, line, e)) { g->busy = false; return false; }
         }
+    }
+    if(!bot_goal_indexes_publish(g,s,indexes,e)) {g->busy=false;return false;}
     *result = 0;
     g->busy = false;
     return true;

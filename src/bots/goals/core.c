@@ -20,43 +20,55 @@ bot_goal_slot *bot_goal_slot_get(const qa_bot_goals *g, uint32_t id, qa_error *e
     }
     return &g->states[id - 1];
 }
-static void release_weights(qa_bot_goals *g, bot_goal_slot *s) {
+static bool release_weights(qa_bot_goals *g, bot_goal_slot *s,qa_error *error) {
+    if(!bot_goal_indexes_release(g,s,error)) return false;
     bot_goal_weights *w = s->weights;
     s->weights = NULL;
-    if (!w || --w->users) return;
+    if (!w || --w->users) return true;
     bot_goal_weights **link = &g->weights;
     while (*link != w) link = &(*link)->next;
     *link = w->next;
     qa_bot_weights_release(w->weights);
-    free(w->indices);
     free(w);
+    return true;
 }
-static bool bind_weights(qa_bot_goals *g, bot_goal_slot *s, qa_bot_weights *weights, qa_error *e) {
+bool bot_goal_config_set(qa_bot_goals *g, bot_goal_slot *s, qa_bot_weights *weights, qa_error *e) {
     if (s->weights && s->weights->weights == weights) return true;
     bot_goal_weights *w = g->weights;
     if (weights) {
         while (w && w->weights != weights) w = w->next;
         if (!w) {
-            size_t count = qa_bot_items_read(g->items)->count;
+            if(!g->next_pointer || g->next_pointer>UINT32_MAX)
+                return bot_goal_fail(e,"Goal weight pointer identities exhausted");
             w = calloc(1, sizeof(*w));
-            if (!w || (count && !(w->indices = malloc(count * sizeof(*w->indices))))) {
-                free(w);
-                qa_error_set(e, QA_ERROR_MEMORY, count, "allocating shared item weight mapping");
+            if (!w) {
+                qa_error_set(e, QA_ERROR_MEMORY, 0, "Retaining goal weight configuration reference");
                 return false;
             }
-            const qa_bot_items_view *items = qa_bot_items_read(g->items);
-            for (size_t i = 0; i < count; ++i)
-                w->indices[i] = qa_bot_weights_find(weights, items->items[i].classname);
+            w->pointer=(uint32_t)g->next_pointer++;
             w->weights = weights;
             qa_bot_weights_retain(weights);
-            w->next = g->weights;
-            g->weights = w;
+            bot_goal_weights **tail=&g->weights;
+            while(*tail) tail=&(*tail)->next;
+            *tail=w;
         }
         ++w->users;
     }
-    release_weights(g, s);
+    if(s->weights) --s->weights->users;
     s->weights = weights ? w : NULL;
     return true;
+}
+static bool bind_weights(qa_bot_goals *g,bot_goal_slot *s,qa_bot_weights *weights,qa_error *e) {
+    if(!bot_goal_config_set(g,s,weights,e)) return false;
+    if(!weights) return bot_goal_indexes_release(g,s,e);
+    if(!g->configured) return true;
+    const qa_bot_items_view *items=qa_bot_items_read(g->items);
+    if(items->count>UINT32_MAX) return bot_goal_fail(e,"Item index count exceeds the source domain");
+    qa_bot_memory_allocation indexes;
+    if(!bot_goal_indexes_create(g,(uint32_t)items->count,&indexes,e)) return false;
+    for(uint32_t i=0;i<(uint32_t)items->count;++i)
+        if(!bot_goal_indexes_write(g,indexes,i,qa_bot_weights_find(weights,items->items[i].classname),e)) return false;
+    return bot_goal_indexes_publish(g,s,indexes,e);
 }
 bool qa_bot_goals_create(qa_bot_items *items, const qa_bot_goal_options *options,
                          const qa_bot_goal_services *services, qa_bot_goals **out, qa_error *e) {
@@ -79,8 +91,9 @@ bool qa_bot_goals_create(qa_bot_items *items, const qa_bot_goal_options *options
     g->items = items;
     g->configured = true;
     g->next_source = INT32_MAX;
+    g->next_pointer=1;
     qa_bot_items_retain(items);
-    if (!qa_bot_weight_workspace_create(&g->workspace, e)) {
+    if (!qa_bot_memory_create(NULL,&g->memory,e) || !qa_bot_weight_workspace_create(&g->workspace, e)) {
         qa_bot_goals_destroy(g);
         return false;
     }
@@ -89,11 +102,14 @@ bool qa_bot_goals_create(qa_bot_items *items, const qa_bot_goal_options *options
 }
 void qa_bot_goals_destroy(qa_bot_goals *g) {
     if (!g || g->busy) return;
-    for (uint32_t i = 0; i < g->options.maximum_states; ++i) release_weights(g, &g->states[i]);
+    for (uint32_t i = 0; i < g->options.maximum_states; ++i) (void)release_weights(g, &g->states[i],NULL);
+    while(g->weights) {bot_goal_weights *w=g->weights;g->weights=w->next;qa_bot_weights_release(w->weights);free(w);}
+    bot_goal_indexes_clear(g);
     bot_goal_map_clear(g);
     qa_bot_weight_workspace_destroy(g->workspace);
     qa_bot_items_release(g->items);
     free(g->states);
+    (void)qa_bot_memory_release(g->memory,NULL);
     free(g);
 }
 bool qa_bot_goals_reconfigure(qa_bot_goals *g, qa_bot_items *items, int32_t game_type,
@@ -106,30 +122,6 @@ bool qa_bot_goals_reconfigure(qa_bot_goals *g, qa_bot_items *items, int32_t game
     for (uint32_t i = g->level_head; i; i = g->level[i].next)
         if (g->level[i].info >= view->count)
             return bot_goal_fail(e, "replacement item config omits retained level item");
-    size_t count = 0;
-    for (bot_goal_weights *w = g->weights; w; w = w->next) ++count;
-    int32_t **indices = count ? calloc(count, sizeof(*indices)) : NULL;
-    if (count && !indices) {
-        qa_error_set(e, QA_ERROR_MEMORY, count, "preparing item weight mappings");
-        return false;
-    }
-    size_t i = 0;
-    for (bot_goal_weights *w = g->weights; w; w = w->next, ++i) {
-        indices[i] = view->count ? malloc(view->count * sizeof(**indices)) : NULL;
-        if (view->count && !indices[i]) {
-            for (size_t j = 0; j < i; ++j) free(indices[j]);
-            free(indices);
-            qa_error_set(e, QA_ERROR_MEMORY, view->count, "rebuilding item weight mapping");
-            return false;
-        }
-        for (size_t j = 0; j < view->count; ++j)
-            indices[i][j] = qa_bot_weights_find(w->weights, view->items[j].classname);
-    }
-    i = 0;
-    for (bot_goal_weights *w = g->weights; w; w = w->next, ++i) {
-        free(w->indices); w->indices = indices[i];
-    }
-    free(indices);
     qa_bot_items_retain(items);
     qa_bot_items_release(g->items);
     g->items = items;
@@ -160,7 +152,7 @@ bool qa_bot_goals_free(qa_bot_goals *g, uint32_t id, qa_error *e) {
     if (!bot_goal_mutable(g, e)) return false;
     bot_goal_slot *s = bot_goal_slot_get(g, id, e);
     if (!s) return false;
-    release_weights(g, s);
+    if(!release_weights(g, s,e)) return false;
     *s = (bot_goal_slot){0};
     return true;
 }
@@ -176,7 +168,7 @@ bool qa_bot_goals_reset(qa_bot_goals *g, uint32_t id, qa_error *e) {
 bool qa_bot_goals_weights(qa_bot_goals *g, uint32_t id, qa_bot_weights *w, qa_error *e) {
     if (!bot_goal_mutable(g, e)) return false;
     bot_goal_slot *s = bot_goal_slot_get(g, id, e);
-    return s && bind_weights(g, s, w, e);
+    return s && (w?bind_weights(g,s,w,e):release_weights(g,s,e));
 }
 static void breed_report(void *context, const char *message) {
     char line[128];
@@ -363,27 +355,99 @@ struct bot_goal_restore {
     qa_bot_goals *owner;
     uint32_t id;
     bot_goal_slot slot;
+    bot_goal_indexes *pending_indexes;
+    qa_bot_memory_span index_span;
+    const bot_goal_index_image *image;
 };
 void bot_goal_restore_lock(qa_bot_goals *g, bool locked) { g->busy = locked; }
 bool bot_goal_restore_prepare(qa_bot_goals *g, uint32_t id, const qa_bot_goal_state *state,
-                              qa_bot_weights *weights, bot_goal_restore **out, qa_error *e) {
-    if (!qa_bot_goals_has_handle(g,id) || !state || state->stack_top >= QA_BOT_GOAL_STACK)
+                              qa_bot_weights *weights,const bot_goal_index_image *image, bot_goal_restore **out, qa_error *e) {
+    if (!qa_bot_goals_has_handle(g,id) || !state || !image || state->stack_top >= QA_BOT_GOAL_STACK ||
+        (image->bytes.size && !image->bytes.data) || image->bytes.size>INT32_MAX-4 ||
+        (!image->pointer && image->bytes.size) || image->pointer>=g->next_pointer)
         return bot_goal_fail(e,"invalid prepared goal checkpoint");
     for (size_t i=0;i<QA_BOT_AVOID_GOALS;++i)
         if (!isfinite(state->avoid[i].expires)) return bot_goal_fail(e,"invalid saved avoid time");
     bot_goal_restore *prepared=calloc(1,sizeof(*prepared));
     if (!prepared) { qa_error_set(e,QA_ERROR_MEMORY,0,"preparing goal checkpoint");return false; }
     prepared->owner=g;prepared->id=id;
-    if (!bind_weights(g,&prepared->slot,weights,e)) { free(prepared);return false; }
+    if (!bot_goal_config_set(g,&prepared->slot,weights,e)) { free(prepared);return false; }
+    prepared->image=image;
+    if(image->pointer) {
+        bot_goal_indexes *row=g->indexes;
+        while(row && row->pointer!=image->pointer) row=row->next;
+        if(row) {
+            if(row->allocation.owner!=image->allocation.owner || row->allocation.slot!=image->allocation.slot ||
+               row->allocation.generation!=image->allocation.generation ||
+               !qa_bot_memory_bytes(g->memory,row->allocation,&prepared->index_span,e) ||
+               prepared->index_span.size!=image->bytes.size) goto invalid;
+        } else {
+            row=g->prepared_indexes;
+            while(row && row->pointer!=image->pointer) row=row->next;
+            if(row) {
+                if(row->prepared_users==SIZE_MAX ||
+                   !qa_bot_memory_bytes(g->memory,row->allocation,&prepared->index_span,e) ||
+                   prepared->index_span.size!=image->bytes.size) goto invalid;
+                ++row->prepared_users;prepared->pending_indexes=row;
+                prepared->slot.index_pointer=image->pointer;
+                prepared->slot.state=*state;prepared->slot.used=true;
+                *out=prepared;return true;
+            }
+            for(bot_goal_weights *w=g->weights;w;w=w->next)
+                if(w->pointer==image->pointer) goto invalid;
+            row=calloc(1,sizeof(*row));
+            if(!row) {qa_error_set(e,QA_ERROR_MEMORY,0,"Preparing goal index alias");goto failed;}
+            row->pointer=image->pointer;
+            if(!qa_bot_memory_allocate(g->memory,(uint32_t)image->bytes.size,QA_BOT_MEMORY_HEAP,false,NULL,&row->allocation,e) ||
+               !qa_bot_memory_bytes(g->memory,row->allocation,&prepared->index_span,e)) {
+                if(row->allocation.owner) (void)qa_bot_memory_free(g->memory,row->allocation,NULL);
+                free(row);goto failed;
+            }
+            row->prepared_users=1;row->next=g->prepared_indexes;g->prepared_indexes=row;
+            prepared->pending_indexes=row;
+        }
+        prepared->slot.index_pointer=image->pointer;
+    }
     prepared->slot.state=*state;prepared->slot.used=true;
     *out=prepared;return true;
+invalid:
+    bot_goal_fail(e,"Prepared goal index alias differs from its captured source allocation");
+failed:
+    bot_goal_restore_finish(prepared,false);return false;
 }
 void bot_goal_restore_finish(bot_goal_restore *prepared, bool commit) {
     if (!prepared) return;
     if (commit) {
         bot_goal_slot *slot=&prepared->owner->states[prepared->id-1];
-        release_weights(prepared->owner,slot);
+        if(slot->index_pointer==prepared->slot.index_pointer) slot->index_pointer=0;
+        (void)release_weights(prepared->owner,slot,NULL);
+        if(prepared->pending_indexes) {
+            qa_bot_goals *g=prepared->owner;
+            bot_goal_indexes *row=prepared->pending_indexes,**link=&g->prepared_indexes;
+            while(*link && *link!=row) link=&(*link)->next;
+            if(*link) {
+                *link=row->next;row->next=NULL;
+                if(g->last_indexes) g->last_indexes->next=row;
+                else g->indexes=row;
+                g->last_indexes=row;
+            }
+            --row->prepared_users;
+        }
+        if(prepared->image->bytes.size)
+            memcpy(prepared->index_span.data,prepared->image->bytes.data,prepared->image->bytes.size);
         *slot=prepared->slot;
-    } else release_weights(prepared->owner,&prepared->slot);
+    } else {
+        prepared->slot.index_pointer=0;
+        (void)release_weights(prepared->owner,&prepared->slot,NULL);
+        if(prepared->pending_indexes && !--prepared->pending_indexes->prepared_users) {
+            qa_bot_goals *g=prepared->owner;bot_goal_indexes *row=prepared->pending_indexes;
+            bot_goal_indexes **link=&g->prepared_indexes;
+            while(*link && *link!=row) link=&(*link)->next;
+            if(*link) {
+                *link=row->next;
+                (void)qa_bot_memory_free(g->memory,row->allocation,NULL);free(row);
+            }
+        }
+    }
     free(prepared);
 }

@@ -5,6 +5,7 @@ typedef struct bot_checkpoint_record {
     bot_ai_state state;
     uint8_t source_bytes[QA_BOT_STATE_SOURCE_BYTES];
     qa_bot_goal_state goals;
+    bot_goal_index_image goal_indexes;
     qa_bot_move_state movement;
     qa_bot_chat_state chat;
     qa_bot_input actions;
@@ -36,6 +37,7 @@ void qa_bots_checkpoint_destroy(qa_bots_checkpoint *checkpoint) {
     for(uint32_t i=0;i<checkpoint->count;++i) {
         bot_checkpoint_record *record=&checkpoint->records[i];
         qa_bot_chat_state_free(&record->chat);
+        qa_buffer_free(&record->goal_indexes.bytes);
         qa_bot_weights_release(record->goal_weights);qa_bot_weights_release(record->weapon_weights);
         qa_bot_character_release(record->character);
         free(record->state.admitted_character);
@@ -98,6 +100,7 @@ static bool capture(qa_bots *b,qa_bots_checkpoint **out,qa_error *e) {
         if(record->character) qa_bot_character_retain(record->character);
         qa_bot_weights *borrowed=NULL;
         if((s->goals && !qa_bot_goals_capture(qa_bot_runtime_goals(b->runtime),s->goals,&record->goals,&borrowed,e)) ||
+           (s->goals && !bot_goal_indexes_capture(qa_bot_runtime_goals(b->runtime),s->goals,&record->goal_indexes,e)) ||
            (borrowed && !qa_bot_weights_clone(borrowed,&record->goal_weights,e)) ||
            (s->movement && !qa_bot_moves_capture(qa_bot_runtime_moves(b->runtime),s->movement,&record->movement,e)) ||
            (s->chat && !qa_bot_chat_capture_state(qa_bot_runtime_chat(b->runtime,s->chat),&record->chat,e)) ||
@@ -195,7 +198,7 @@ static bool prepare(qa_bots *b,const qa_bots_checkpoint *checkpoint,bot_prepared
             qa_bot_weights_release(goal_weights);return false;
         }
         bool ok=(!s->goals || bot_goal_restore_prepare(qa_bot_runtime_goals(b->runtime),s->goals,&record->goals,
-                                         goal_weights,&prepared[i].goals,e)) &&
+                                         goal_weights,&record->goal_indexes,&prepared[i].goals,e)) &&
             (!s->weapons || bot_weapon_restore_prepare(b->runtime,s->weapons,weapon_weights,&prepared[i].weapons,e));
         qa_bot_weights_release(goal_weights);qa_bot_weights_release(weapon_weights);
         if(!ok) return false;

@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "../goals/internal.h"
 #include "qa/bots_log_consumers.h"
 
 static bool command(void *context, int32_t client, const char *text, qa_error *e) {
@@ -169,6 +170,7 @@ bool bot_runtime_owners_create(qa_bot_runtime *r, qa_error *e) {
     bool ok = qa_bot_goals_create(items, &goals, &goal_services, &r->goals, e);
     qa_bot_items_release(items);
     if (!ok) return false;
+    if(!bot_goal_memory_bind(r->goals,r->memory,e)) return false;
     if (!qa_bot_goals_reconfigure(r->goals, NULL, 0, 0, e)) return false;
     qa_bot_move_services movement = movement_services(r);
     return qa_bot_moves_create(r->options.maximum_states, r->library, r->actions,
@@ -253,6 +255,7 @@ static bool setup_goals(qa_bot_runtime *r, int32_t *result, qa_error *e) {
             .dropped_weight = dropped->value, .random = r->services.random};
         qa_bot_goal_services services = bot_runtime_goal_services(r);
         ok = qa_bot_goals_create(items, &options, &services, &r->goals, e);
+        if(ok) ok=bot_goal_memory_bind(r->goals,r->memory,e);
     }
     qa_bot_items_release(items);
     return ok;

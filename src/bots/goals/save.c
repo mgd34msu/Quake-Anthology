@@ -1,8 +1,15 @@
 #include "internal.h"
 #include "../save_fields.h"
 #include "qa/bot_goals_save.h"
+#include "qa/bots_allocator_save.h"
 
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'G', 'O', 'A', 'L', 0};
+static bool signature(qa_source_save_io *io) {
+    uint8_t bytes[8];memcpy(bytes,magic,sizeof(bytes));uint32_t version=2;
+    return qa_source_save_bytes(io,bytes,sizeof(bytes)) && !memcmp(bytes,magic,sizeof(bytes)) &&
+        qa_source_save_u32(io,&version) && version==2 ? true :
+        bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported goal allocation continuation schema");
+}
 
 static bool goal_fields(qa_source_save_io *io, qa_bot_goal *goal)
 {
@@ -69,8 +76,9 @@ static void clear(qa_bot_goals *goals)
 {
     while (goals->weights) {
         bot_goal_weights *weight = goals->weights; goals->weights = weight->next;
-        qa_bot_weights_release(weight->weights); free(weight->indices); free(weight);
+        qa_bot_weights_release(weight->weights); free(weight);
     }
+    bot_goal_indexes_clear(goals);
     if (!goals->source) goals->source_count = 0;
     bot_goal_map_clear(goals);
     qa_bot_items_release(goals->items); free(goals->states);
@@ -104,25 +112,42 @@ static bool topology(const qa_bot_goals *goals, qa_error *error)
     }
     for (size_t i = 1; ok && i < capacity; ++i) if (!marks[i]) ok = false;
     free(marks);
+    if(!goals->memory || goals->prepared_indexes || qa_bot_memory_disposed(goals->memory) ||
+       !goals->next_pointer || goals->next_pointer>UINT64_C(0x100000000)) goto invalid;
     size_t wrapper_count = 0;
     for (const bot_goal_weights *weight = goals->weights; ok && weight; weight = weight->next) {
-        if (!weight->weights || (item_count && !weight->indices) || !weight->users ||
-            wrapper_count++ >= goals->options.maximum_states) { ok = false; break; }
+        if (!weight->weights || !weight->pointer || weight->pointer>=goals->next_pointer ||
+            wrapper_count++ >= UINT32_MAX) { ok = false; break; }
         size_t users = 0;
         for (uint32_t i = 0; i < goals->options.maximum_states; ++i) if (goals->states[i].weights == weight) ++users;
         if (users != weight->users) { ok = false; break; }
         for (const bot_goal_weights *other = weight->next; other; other = other->next)
-            if (other->weights == weight->weights) { ok = false; break; }
-        for (size_t i = 0; ok && i < item_count; ++i)
-            if (weight->indices[i] != qa_bot_weights_find(weight->weights, qa_bot_items_read(goals->items)->items[i].classname)) ok = false;
+            if (other->weights == weight->weights || other->pointer==weight->pointer) { ok = false; break; }
     }
+    const bot_goal_indexes *last=NULL;
+    for(const bot_goal_indexes *row=goals->indexes;ok && row;row=row->next) {
+        qa_bot_memory_span bytes;
+        if(!row->pointer || row->prepared_users || row->pointer>=goals->next_pointer ||
+           !qa_bot_memory_bytes(goals->memory,row->allocation,&bytes,error)) {ok=false;break;}
+        for(const bot_goal_indexes *other=row->next;other;other=other->next)
+            if(other->pointer==row->pointer) ok=false;
+        for(const bot_goal_weights *weight=goals->weights;weight;weight=weight->next)
+            if(weight->pointer==row->pointer) ok=false;
+        last=row;
+    }
+    if(last!=goals->last_indexes) ok=false;
     for (uint32_t i = 0; ok && i < goals->options.maximum_states; ++i) {
         const bot_goal_slot *slot = &goals->states[i];
-        if ((!slot->used && slot->weights) || slot->state.stack_top >= QA_BOT_GOAL_STACK) { ok = false; break; }
+        if ((!slot->used && (slot->weights || slot->index_pointer)) || slot->state.stack_top >= QA_BOT_GOAL_STACK) { ok = false; break; }
         if (slot->weights) {
             const bot_goal_weights *weight = goals->weights;
             while (weight && weight != slot->weights) weight = weight->next;
             if (!weight) ok = false;
+        }
+        if(slot->index_pointer) {
+            const bot_goal_indexes *row=goals->indexes;
+            while(row && row->pointer!=slot->index_pointer) row=row->next;
+            if(!row) ok=false;
         }
     }
     uint32_t buckets[256] = {0};
@@ -161,7 +186,10 @@ static bool fields(qa_source_save_io *io, qa_bot_goals *goals, const qa_bot_save
         (!has_entities || !reading || (entities && entity_count == entities->count));
     if (ok) ok = asset_field(io, assets, QA_BOT_SAVED_ITEMS, &items);
     if (reading) { goals->items = items; goals->entities = has_entities ? entities : NULL; }
-    if (ok) ok = qa_source_save_count(io, &weight_count, state_count);
+    if (ok) ok = qa_source_save_u64(io,&goals->next_pointer) &&
+        qa_source_save_count(io, &weight_count, UINT32_MAX);
+    if(ok && reading && weight_count>(io->input.size-io->offset)/20)
+        ok=bot_save_fail(io,QA_ERROR_FORMAT,"Truncated retained goal configuration references");
     if (ok && reading) ok = array(io, (void **)&goals->states, state_count, sizeof(*goals->states), 2517);
     bot_goal_weights **tail = &goals->weights;
     for (size_t i = 0; ok && i < weight_count; ++i) {
@@ -174,12 +202,29 @@ static bool fields(qa_source_save_io *io, qa_bot_goals *goals, const qa_bot_save
         void *object = weight->weights;
         ok = asset_field(io, assets, QA_BOT_SAVED_WEIGHTS, &object);
         if (reading) weight->weights = object;
-        size_t indices = qa_bot_items_read(goals->items)->count;
-        if (ok) ok = qa_source_save_count(io, &weight->users, state_count) && qa_source_save_count(io, &indices, SIZE_MAX) &&
-                     indices == qa_bot_items_read(goals->items)->count;
-        if (ok && reading) ok = array(io, (void **)&weight->indices, indices, sizeof(*weight->indices), 4);
-        for (size_t j = 0; ok && j < indices; ++j) ok = qa_source_save_i32(io, &weight->indices[j]);
+        if (ok) ok = qa_source_save_count(io, &weight->users, state_count) && qa_source_save_u32(io,&weight->pointer);
         tail = &weight->next;
+    }
+    size_t index_count=0;
+    if(!reading) for(bot_goal_indexes *row=goals->indexes;row;row=row->next) ++index_count;
+    if(ok) ok=qa_source_save_count(io,&index_count,UINT32_MAX);
+    if(ok && reading && index_count>(io->input.size-io->offset)/12)
+        ok=bot_save_fail(io,QA_ERROR_FORMAT,"Truncated retained goal index references");
+    bot_goal_indexes **index_tail=&goals->indexes;
+    for(size_t i=0;ok && i<index_count;++i) {
+        bot_goal_indexes *row;
+        if(reading) {
+            row=calloc(1,sizeof(*row));
+            if(!row) {ok=bot_save_fail(io,QA_ERROR_MEMORY,"Restoring goal index reference");break;}
+            *index_tail=row;
+        } else row=*index_tail;
+        size_t reference=0;
+        ok=qa_source_save_u32(io,&row->pointer);
+        if(ok && !reading) ok=qa_bot_memory_reference(goals->memory,row->allocation,&reference,io->error);
+        if(ok) ok=qa_source_save_count(io,&reference,SIZE_MAX);
+        if(ok && reading) ok=qa_bot_memory_resolve(goals->memory,reference,&row->allocation,io->error);
+        if(!ok && !io->failed) io->failed=true;
+        goals->last_indexes=row;index_tail=&row->next;
     }
     for (size_t i = 0; ok && i < state_count; ++i) {
         size_t key = 0;
@@ -192,6 +237,14 @@ static bool fields(qa_source_save_io *io, qa_bot_goals *goals, const qa_bot_save
             bot_goal_weights *weight = goals->weights;
             for (size_t j = 1; j < key; ++j) weight = weight->next;
             goals->states[i].weights = weight;
+        }
+        uint32_t pointer=!reading?goals->states[i].index_pointer:0;
+        if(ok) ok=qa_source_save_u32(io,&pointer);
+        if(ok && reading && pointer) {
+            bot_goal_indexes *row=goals->indexes;
+            while(row && row->pointer!=pointer) row=row->next;
+            if(!row) ok=bot_save_fail(io,QA_ERROR_FORMAT,"Saved goal index pointer is missing");
+            else goals->states[i].index_pointer=row->pointer;
         }
     }
     if (ok) ok = qa_source_save_count(io, &goals->level_capacity, UINT32_MAX) &&
@@ -236,21 +289,27 @@ static bool fields(qa_source_save_io *io, qa_bot_goals *goals, const qa_bot_save
 bool qa_bot_goals_save_capture(qa_session *session, const qa_bot_goals *goals, const qa_bot_saved_assets *assets,
                               qa_buffer *out, qa_error *error)
 {
-    if (!session || !goals || goals->busy || !assets || !out || !topology(goals, error)) return false;
+    if (!session || !goals || goals->busy || !goals->shared_memory || !assets || !out) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Goal capture requires the actual runtime allocation owner and asset registry");return false;
+    }
+    if(!topology(goals,error)) return false;
     qa_source_save_io io = {0}; qa_bot_goals view = *goals;
-    bool ok = qa_source_save_writer(&io, session, error) && bot_save_signature(&io, magic) &&
+    bool ok = qa_source_save_writer(&io, session, error) && signature(&io) &&
         fields(&io, &view, assets, NULL) && qa_source_save_finish(&io, out);
     qa_source_save_dispose(&io); return ok;
 }
 bool qa_bot_goals_save_restore(qa_session *session, qa_bot_goals *goals, qa_bytes bytes,
                               const qa_bot_saved_assets *assets, const qa_entities *entities, qa_error *error)
 {
-    if (!session || !goals || goals->busy || !assets) {
+    if (!session || !goals || goals->busy || !goals->shared_memory || !assets || goals->weights || goals->indexes) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Bot goal import requires a detached idle actual owner"); return false;
     }
-    qa_bot_goals scratch = {.options = goals->options, .services = goals->services, .workspace = goals->workspace};
+    for(uint32_t i=0;i<goals->options.maximum_states;++i)
+        if(goals->states[i].used) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Goal import requires its fresh state store");return false;}
+    qa_bot_goals scratch = {.options = goals->options, .services = goals->services, .workspace = goals->workspace,
+        .memory=goals->memory,.shared_memory=true};
     qa_source_save_io io = {0};
-    bool ok = qa_source_save_reader(&io, session, bytes, error) && bot_save_signature(&io, magic) &&
+    bool ok = qa_source_save_reader(&io, session, bytes, error) && signature(&io) &&
         fields(&io, &scratch, assets, entities) && qa_source_save_finish(&io, NULL) && topology(&scratch, error);
     if (ok) { qa_bot_goals old = *goals; *goals = scratch; clear(&old); }
     else clear(&scratch);

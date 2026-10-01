@@ -1,6 +1,14 @@
 #ifndef QA_BOT_CHECKPOINT_INTERNAL_H
 #define QA_BOT_CHECKPOINT_INTERNAL_H
 #include "qa/bot_runtime.h"
+#include "qa/bots_allocator.h"
+
+typedef struct bot_goal_index_image {
+    uint32_t pointer;
+    qa_bot_memory_allocation allocation;
+    qa_buffer bytes;
+} bot_goal_index_image;
+bool bot_goal_indexes_capture(qa_bot_goals *,uint32_t,bot_goal_index_image *,qa_error *);
 
 typedef struct bot_goal_restore bot_goal_restore;
 typedef struct bot_weapon_restore bot_weapon_restore;
@@ -14,7 +22,7 @@ bool bot_runtime_restore_begin(qa_bot_runtime *, qa_error *);
 void bot_runtime_restore_end(qa_bot_runtime *);
 void bot_goal_restore_lock(qa_bot_goals *, bool);
 bool bot_goal_restore_prepare(qa_bot_goals *, uint32_t, const qa_bot_goal_state *,
-                              qa_bot_weights *, bot_goal_restore **, qa_error *);
+                              qa_bot_weights *,const bot_goal_index_image *, bot_goal_restore **, qa_error *);
 void bot_goal_restore_finish(bot_goal_restore *, bool commit);
 void bot_move_restore_lock(qa_bot_moves *, bool);
 bool bot_move_restore_validate(qa_bot_moves *, uint32_t, const qa_bot_move_state *, qa_error *);

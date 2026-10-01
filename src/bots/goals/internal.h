@@ -2,6 +2,7 @@
 #define QA_BOT_GOALS_INTERNAL_H
 #include "qa/bot_goals.h"
 #include "qa/bot_bsp.h"
+#include "qa/bots_allocator.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -9,14 +10,21 @@
 
 typedef struct bot_goal_weights {
     qa_bot_weights *weights;
-    int32_t *indices;
+    uint32_t pointer;
     size_t users;
     struct bot_goal_weights *next;
 } bot_goal_weights;
+typedef struct bot_goal_indexes {
+    qa_bot_memory_allocation allocation;
+    uint32_t pointer;
+    size_t prepared_users;
+    struct bot_goal_indexes *next;
+} bot_goal_indexes;
 typedef struct bot_goal_slot {
     bool used;
     qa_bot_goal_state state;
     bot_goal_weights *weights;
+    uint32_t index_pointer;
 } bot_goal_slot;
 typedef struct bot_level_item {
     int32_t number, entity;
@@ -44,9 +52,12 @@ struct qa_bot_goals {
     qa_bot_goal_services services;
     bot_goal_slot *states;
     bot_goal_weights *weights;
+    qa_bot_memory *memory;
+    bot_goal_indexes *indexes,*last_indexes,*prepared_indexes;
+    uint64_t next_pointer;
     qa_bot_weight_workspace *workspace;
     float time;
-    bool busy, configured;
+    bool busy, configured,shared_memory;
     const qa_entities *entities;
     bot_level_item *level;
     size_t level_capacity;
@@ -79,4 +90,12 @@ bool bot_goal_entities(qa_bot_goals *, const qa_bot_goal_entity **, size_t *, vo
 void bot_goal_entities_end(qa_bot_goals *, void *);
 bool bot_goal_equal_name(const char *, const char *);
 uint32_t bot_goal_source_bucket(qa_actor_id);
+bool bot_goal_memory_bind(qa_bot_goals *,qa_bot_memory *,qa_error *);
+bool bot_goal_config_set(qa_bot_goals *,bot_goal_slot *,qa_bot_weights *,qa_error *);
+bool bot_goal_indexes_create(qa_bot_goals *,uint32_t,qa_bot_memory_allocation *,qa_error *);
+bool bot_goal_indexes_write(qa_bot_goals *,qa_bot_memory_allocation,uint32_t,int32_t,qa_error *);
+bool bot_goal_indexes_read(qa_bot_goals *,const bot_goal_slot *,int32_t,int32_t *,qa_error *);
+bool bot_goal_indexes_publish(qa_bot_goals *,bot_goal_slot *,qa_bot_memory_allocation,qa_error *);
+bool bot_goal_indexes_release(qa_bot_goals *,bot_goal_slot *,qa_error *);
+void bot_goal_indexes_clear(qa_bot_goals *);
 #endif

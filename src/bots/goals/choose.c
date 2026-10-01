@@ -152,7 +152,8 @@ static bool choose(goal_choice *c, qa_error *e) {
         const qa_bot_item_info *info = &items->items[item->info];
         if (info->number < 0 || (size_t)info->number >= items->count)
             return bot_goal_fail(e, "item weight index is outside its configuration");
-        int32_t index = c->state->weights->indices[info->number];
+        int32_t index;
+        if(!bot_goal_indexes_read(g,c->state,info->number,&index,e)) return false;
         if (index < 0) continue;
         float weight;
         qa_bot_inventory_view native = {.data = c->query->inventory, .count = c->query->inventory_count};
