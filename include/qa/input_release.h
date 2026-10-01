@@ -22,6 +22,10 @@ typedef enum qa_input_release_outcome {
  * failed entered history, keeps the actual physical seat and source alive. */
 bool qa_input_release_idle(const qa_input_seat *);
 const qa_console *qa_input_release_console(const qa_input_release *);
+/* Only the exact currently advancing captured programme may route its
+ * synchronous command into an enclosing prepared owner. */
+bool qa_input_release_context_current(const qa_input_release *,const qa_console *,
+                                      const qa_command_context *);
 /* Borrowed real programme lease for another physical seat sharing this
  * returned console. NULL means this input owner retained no command record. */
 const qa_console_release *qa_input_release_program_parent(const qa_input_release *);

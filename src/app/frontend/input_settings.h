@@ -2,6 +2,7 @@
 #define QA_FRONTEND_INPUT_SETTINGS_H
 #include "internal.h"
 #include "qa/application_engine_shutdown.h"
+#include "qa/display_settings.h"
 
 typedef struct frontend_input_settings frontend_input_settings;
 typedef struct frontend_input_settings_view {
@@ -22,6 +23,10 @@ bool frontend_input_settings_prepare(qa_frontend *,const qa_input_platform_setti
 bool frontend_input_settings_reconnect_prepare(qa_frontend *,double now_ms,
     frontend_input_settings **,qa_error *);
 bool frontend_input_settings_current(const frontend_input_settings *,const qa_frontend *,qa_error *);
+/* Exact advancing captured release command; this is separate from pending
+ * GAME/CLIENT startup tuple admission and does not restamp source identity. */
+bool frontend_input_settings_command_current(const frontend_input_settings *,const qa_console *,
+                                             const qa_command_context *);
 /* Exact retained native/physical release associations for final detach
  * admission. No completed-source or retirement proof is substituted here. */
 bool frontend_input_settings_shutdown_ready(const frontend_input_settings *,const qa_frontend *,qa_error *);
@@ -29,6 +34,14 @@ bool frontend_input_settings_shutdown_ready(const frontend_input_settings *,cons
  * capturing only uncovered held rows. Partial success remains retained and
  * retryable; failed entered programmes are not dispatched or recaptured. */
 bool frontend_input_settings_shutdown_prepare(frontend_input_settings *,double now_ms,qa_error *);
+/* A real window replacement releases every physical held row while keeping
+ * the native settings publication admissible. This is not a restart request
+ * or a shutdown disposition. Partial captures remain owned for retry. */
+bool frontend_input_settings_release_all_prepare(frontend_input_settings *,double now_ms,qa_error *);
+bool frontend_input_settings_release_all_ready(const frontend_input_settings *,qa_error *);
+/* Associates the actual candidate surface after every physical ALL release
+ * completes. Both native windows remain retained through checked cleanup. */
+bool frontend_input_settings_window_stage(frontend_input_settings *,qa_display_surface_ticket *,qa_error *);
 bool frontend_input_settings_read(const frontend_input_settings *,frontend_input_settings_view *,qa_error *);
 /* Advance at a returned callback boundary before ordinary input, capture or
  * owner-idle admission. A wait is successful with complete=false. Failed

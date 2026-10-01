@@ -322,6 +322,10 @@ bool qa_console_cvar_access(qa_console *,const qa_command_context *,const char *
  * Missing ordinal succeeds with NULL; a refused view never falls back live. */
 bool qa_console_cvar_snapshot_at(qa_console *, const qa_command_context *, qa_cvars *,
                                  size_t ordinal, const qa_cvar_view **out, qa_error *);
+/* Reads an actual VM handle through that same admitted live/prepared owner.
+ * Handles outside its allocated extent fail; cleared in-range slots return NULL. */
+bool qa_console_cvar_handle(qa_console *,const qa_command_context *,qa_cvars *,
+                            size_t handle,const qa_cvar_view **out,qa_error *);
 bool qa_console_cvar_apply(qa_console *, const qa_command_context *,
                            const struct qa_cvars_edit_command *, qa_error *);
 /* Actual startup forced publication, empty Q3 registration retaining its

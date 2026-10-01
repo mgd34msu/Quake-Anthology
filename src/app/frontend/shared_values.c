@@ -1,4 +1,5 @@
 #include "shared_values.h"
+#include "input_settings.h"
 
 typedef struct shared_source {
     struct shared_source *next;
@@ -97,6 +98,18 @@ bool frontend_shared_values_edit(const frontend_shared_values *owner,
 {
     if (!out || !registry || !command_current(owner,source,command,error)) return false;
     *out=registry==owner->registry?owner->edit:NULL; return true;
+}
+bool frontend_shared_values_release_access(const frontend_shared_values *owner,
+    const frontend_input_settings *input,const qa_console *console,const qa_command_context *command,
+    qa_cvars **registry,qa_cvars_edit **edit,qa_error *error)
+{
+    if (!registry || !edit || !current(owner,error) || owner->terminal || owner->published ||
+        !owner->edit || console!=qa_application_console(owner->application) || !command || command->owner ||
+        !qa_application_command_context_active(owner->application,command) ||
+        !frontend_input_settings_current(input,owner->frontend,error) ||
+        !frontend_input_settings_command_current(input,console,command))
+        return fail(error,"Shared release access lacks its exact advancing ENGINE programme");
+    *registry=owner->registry; *edit=owner->edit; return true;
 }
 bool frontend_shared_values_input_restart(frontend_shared_values *owner,
     const qa_application_startup_source *source,const qa_command_context *command,qa_error *error)

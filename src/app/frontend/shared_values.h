@@ -4,6 +4,7 @@
 #include "qa/console_cvars_prepare.h"
 
 typedef struct frontend_shared_values frontend_shared_values;
+struct frontend_input_settings;
 /* One retained scalar ticket edits the actual application ENGINE registry.
  * The manager owns this ticket and keeps its app/candidate/source rows alive.
  * Begin once before cfg; subsequent sources join that same admitted ticket. */
@@ -19,6 +20,11 @@ bool frontend_shared_values_resolve(const frontend_shared_values *,
 bool frontend_shared_values_edit(const frontend_shared_values *,
     const qa_application_startup_source *,const qa_command_context *,qa_cvars *,
     qa_cvars_edit **,qa_error *);
+/* A real held release on the published ENGINE console uses its retained
+ * synchronous programme capability, never a pending source's identity. */
+bool frontend_shared_values_release_access(const frontend_shared_values *,
+    const struct frontend_input_settings *,const qa_console *,const qa_command_context *,
+    qa_cvars **,qa_cvars_edit **,qa_error *);
 /* A genuine pending in_restart stages its request before any held-key or
  * device side effect. The enclosing native ticket consumes this exact bit. */
 bool frontend_shared_values_input_restart(frontend_shared_values *,

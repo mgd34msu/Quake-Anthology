@@ -271,6 +271,7 @@ bool qa_q3_host_create(const qa_q3_host_options *options, qa_q3_host **out, qa_e
             qa_cvars_dialect(options->cvars) != QA_CONSOLE_Q3)) ||
         (!!options->frontend_lifetime != !!options->release_frontend) ||
         (!!options->source_entity != !!options->source_entity_context) ||
+        (!!options->cvar_namespaces.reference != !!options->cvar_namespaces.resolve) ||
         (options->source_entity && options->role != QA_QVM_CGAME) ||
         options->server.maximum_clients > 64)
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "invalid Q3 module host options");
@@ -451,6 +452,8 @@ bool qa_q3_host_destroy(qa_q3_host *host, qa_error *error)
     qa_arena_destroy(&host->scratch);
     if (host->game) free(host->game->portals);
     free(host->game);
+    q3_cvars_bindings_free(host->cvar_bindings,host->cvar_binding_count);
+    free(host->cvar_caches);
     void *frontend_lifetime=host->options.frontend_lifetime;
     void (*release_frontend)(void *)=host->options.release_frontend;
     host->options.frontend_lifetime=NULL;host->options.release_frontend=NULL;
@@ -481,6 +484,7 @@ bool qa_q3_host_attach_native(qa_q3_host *host, qa_native_host *native, qa_error
 void qa_q3_host_native_consumed(qa_q3_host *host)
 {
     if (!host) return;
+    free(host->cvar_caches); host->cvar_caches=NULL; host->cvar_cache_count=0;
     host->native = NULL;
     host->native_host = NULL;
     host->memory = (qa_native_host_guest_memory){0};
@@ -493,6 +497,7 @@ void qa_q3_host_native_consumed(qa_q3_host *host)
 void qa_q3_host_qvm_consumed(qa_q3_host *host)
 {
     if (!host) return;
+    free(host->cvar_caches); host->cvar_caches=NULL; host->cvar_cache_count=0;
     host->vm = NULL;
     host->memory = (qa_native_host_guest_memory){0};
     if (host->game) {

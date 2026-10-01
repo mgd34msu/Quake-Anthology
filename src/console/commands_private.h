@@ -82,6 +82,7 @@ struct qa_console {
     size_t release_leases;
     qa_console_release *release_owner;
     bool release_advancing;
+    const qa_command_context *release_dispatch_context;
 };
 bool qac_console_context_capture(qa_console *, const qa_command_context *, qa_command_context *, qa_error *);
 bool qac_console_context_current(const qa_console *, const qa_command_context *, qa_error *);

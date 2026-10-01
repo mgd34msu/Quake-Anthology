@@ -37,7 +37,7 @@ bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_e
         return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 retained command context requires its qualified source registry owner");
     qa_source_save_io io = {0};
     uint8_t magic[8] = {'Q','A','G','3','S','V',0,0};
-    uint32_t version = 7, role = o->role, abi = o->abi, owner = o->owner;
+    uint32_t version = 8, role = o->role, abi = o->abi, owner = o->owner;
     bool engine_present = o->engine_cvars != NULL;
     bool engine_alias = engine_present && o->engine_cvars == o->cvars;
     uint32_t engine_dialect = engine_present ? qa_cvars_dialect(o->engine_cvars) : 0;
@@ -101,7 +101,9 @@ bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_e
         o->presentation.seat != NULL, o->presentation.fonts != NULL,
         o->presentation.configuration != NULL, o->presentation.update_screen != NULL,
         o->source_entity != NULL, o->source_entity_context != NULL,
-        o->render.context != NULL, o->render.enter != NULL, o->render.leave != NULL
+        o->render.context != NULL, o->render.enter != NULL, o->render.leave != NULL,
+        o->cvar_namespaces.context != NULL, o->cvar_namespaces.reference != NULL,
+        o->cvar_namespaces.resolve != NULL
     };
     for (size_t i = 0; ok && i < sizeof(installed) / sizeof(*installed); ++i) {
         bool present = installed[i];
@@ -156,20 +158,27 @@ static bool take(checkpoint_reader *reader, size_t size, qa_bytes *out, qa_error
 
 bool qa_q3_host_checkpoint_portable_state(qa_bytes input, qa_error *error)
 {
-    if (!input.data || input.size < 56 || memcmp(input.data, "Q3HC", 4) ||
-        qa_load_u32le(input.data + 4) != 4 || qa_load_u32le(input.data + 16) >= 64 ||
+    if (!input.data || input.size < 64 || memcmp(input.data, "Q3HC", 4) ||
+        qa_load_u32le(input.data + 4) != 5 || qa_load_u32le(input.data + 16) >= 64 ||
         qa_load_u32le(input.data + 20) >= 64)
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Invalid portable Q3 host stream");
-    checkpoint_reader reader = {input, 56};
+    checkpoint_reader reader = {input, 64};
     qa_bytes bytes, entity;
     if (!take(&reader, 48, &bytes, error) || !take(&reader, 32, &entity, error)) return false;
     uint64_t source = qa_load_u64le(entity.data), game = qa_load_u64le(input.data + 24);
     if (source > SIZE_MAX || game > SIZE_MAX)
         return q3_fail(error, QA_ERROR_FORMAT, reader.offset, "Portable Q3 source extent exceeds native address space");
-    if (!take(&reader, (size_t)source, &bytes, error) ||
+    uint64_t bindings_size=qa_load_u64le(input.data+56);
+    if (bindings_size>SIZE_MAX || !take(&reader, (size_t)source, &bytes, error) ||
         !take(&reader, qa_load_u32le(entity.data + 16), &bytes, error) ||
         !take(&reader, qa_load_u32le(entity.data + 20), &bytes, error) ||
-        !take(&reader, (size_t)game, &bytes, error)) return false;
+        !take(&reader, (size_t)game, &bytes, error) ||
+        !take(&reader,(size_t)bindings_size,&bytes,error)) return false;
+    q3_cvar_binding *bindings=NULL; size_t binding_count=0;
+    q3_cvar_cache *caches=NULL; size_t cache_count=0;
+    if (!q3_cvars_bindings_decode(bytes,&bindings,&binding_count,&caches,&cache_count,error)) return false;
+    q3_cvars_bindings_free(bindings,binding_count);
+    free(caches);
     for (uint32_t i = 0; i < qa_load_u32le(input.data + 16); ++i) {
         qa_bytes row;
         if (!take(&reader, 80, &row, error)) return false;
@@ -238,31 +247,35 @@ bool qa_q3_host_checkpoint(qa_q3_host *host, qa_buffer *out, qa_error *error)
     if (!out || !idle(host, error)) return false;
     if (host->native)
         return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Native Q3 continuation requires an executor memory checkpoint");
-    qa_buffer game = {0};
+    qa_buffer game = {0},bindings={0};
     if (!q3_game_checkpoint_capture(host, &game, error)) return false;
+    if (!q3_cvars_bindings_capture(host,&bindings,error)) { qa_buffer_free(&game); return false; }
     uint32_t files = 0, scripts = 0;
     for (size_t i = 1; i < 64; ++i) {
         files += host->files[i].kind != Q3_FILE_CLOSED; scripts += host->scripts[i] != NULL;
     }
     checkpoint_writer writer = {0};
-    uint8_t header[56] = {'Q','3','H','C'};
-    qa_store_u32le(header + 4, 4); qa_store_u32le(header + 8, host->options.role);
+    uint8_t header[64] = {'Q','3','H','C'};
+    qa_store_u32le(header + 4, 5); qa_store_u32le(header + 8, host->options.role);
     qa_store_u32le(header + 12, host->options.abi); qa_store_u32le(header + 16, files);
     qa_store_u32le(header + 20, scripts);
     qa_store_u64le(header + 24, game.size);
     qa_store_u64le(header + 32, host->file_serial);
     qa_store_u64le(header + 40, host->script_generation);
     qa_store_u32le(header + 48, host->bots_shutdown);
+    qa_store_u64le(header+56,bindings.size);
     for (size_t i = 1; i < 64; ++i)
         if (host->files[i].kind != Q3_FILE_CLOSED) {
             if (!host->files[i].serial || host->files[i].serial > host->file_serial) {
                 qa_buffer_free(&game);
+                qa_buffer_free(&bindings);
                 return q3_fail(error, QA_ERROR_FORMAT, i, "Q3 file serial leaves its actual owner generation");
             }
             for (size_t j = 1; j < i; ++j)
                 if (host->files[j].kind != Q3_FILE_CLOSED &&
                     host->files[j].serial == host->files[i].serial) {
                     qa_buffer_free(&game);
+                    qa_buffer_free(&bindings);
                     return q3_fail(error, QA_ERROR_FORMAT, i, "Duplicate Q3 file lifetime identity");
                 }
         }
@@ -281,8 +294,9 @@ bool qa_q3_host_checkpoint(qa_q3_host *host, qa_buffer *out, qa_error *error)
     if (ok) ok = append(&writer, entity, sizeof(entity), error) &&
         append(&writer, host->entity_cursor.source.data, host->entity_cursor.source.size, error) &&
         append(&writer, parser.token.data, parser.token.size, error) && append(&writer, parser.name.data, parser.name.size, error) &&
-        append(&writer, game.data, game.size, error);
-    qa_buffer_free(&game);
+        append(&writer, game.data, game.size, error) &&
+        append(&writer,bindings.data,bindings.size,error);
+    qa_buffer_free(&game); qa_buffer_free(&bindings);
     for (size_t i = 1; ok && i < 64; ++i)
         if (host->files[i].kind != Q3_FILE_CLOSED) ok = save_file(&writer, i, &host->files[i], error);
     for (size_t i = 1; ok && i < 64; ++i) {
@@ -348,6 +362,8 @@ static bool restore_file(qa_q3_host *host, checkpoint_reader *reader, q3_file st
 bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
 {
     if (!idle(host, error)) return false;
+    if (host->cvar_binding_count || host->cvar_cache_count)
+        return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 restore requires empty routed cvar binding ownership");
     if (host->native)
         return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Native Q3 continuation requires an executor memory checkpoint");
     if (host->game) {
@@ -359,18 +375,19 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
     for (size_t i = 1; i < 64; ++i)
         if (host->files[i].kind != Q3_FILE_CLOSED || host->scripts[i])
             return q3_fail(error, QA_ERROR_ARGUMENT, i, "Q3 restore requires an unpublished empty host");
-    if (!input.data || input.size < 56 || memcmp(input.data, "Q3HC", 4) ||
-        qa_load_u32le(input.data + 4) != 4 || qa_load_u32le(input.data + 8) != (uint32_t)host->options.role ||
+    if (!input.data || input.size < 64 || memcmp(input.data, "Q3HC", 4) ||
+        qa_load_u32le(input.data + 4) != 5 || qa_load_u32le(input.data + 8) != (uint32_t)host->options.role ||
         qa_load_u32le(input.data + 12) != (uint32_t)host->options.abi)
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 host checkpoint identity mismatch");
     uint32_t file_count = qa_load_u32le(input.data + 16), script_count = qa_load_u32le(input.data + 20);
     uint64_t game_size = qa_load_u64le(input.data + 24);
     uint64_t file_serial = qa_load_u64le(input.data + 32);
     uint64_t script_generation = qa_load_u64le(input.data + 40);
+    uint64_t bindings_size=qa_load_u64le(input.data+56);
     uint32_t bots_shutdown = qa_load_u32le(input.data + 48);
     if (file_count >= 64 || script_count >= 64 || bots_shutdown > 1 || qa_load_u32le(input.data + 52))
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 checkpoint handle count exceeds source capacity");
-    checkpoint_reader reader = {input, 56};
+    checkpoint_reader reader = {input, 64};
     qa_bytes clipping;
     if (!take(&reader, 48, &clipping, error)) return false;
     qa_bounds clip_bounds = {load_vector(clipping.data), load_vector(clipping.data + 12)};
@@ -378,14 +395,15 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
     if (!qa_vec_finite(clip_bounds.mins) || !qa_vec_finite(clip_bounds.maxs) ||
         !qa_vec_finite(clip_brush.mins) || !qa_vec_finite(clip_brush.maxs))
         return q3_fail(error, QA_ERROR_FORMAT, reader.offset, "nonfinite Q3 temporary clip state");
-    qa_bytes entity, source, token, name, game_bytes;
+    qa_bytes entity, source, token, name, game_bytes,bindings_bytes;
     if (!take(&reader, 32, &entity, error)) return false;
     uint64_t source_size = qa_load_u64le(entity.data), offset = qa_load_u64le(entity.data + 8);
     uint32_t token_size = qa_load_u32le(entity.data + 16), name_size = qa_load_u32le(entity.data + 20);
     uint32_t ended = qa_load_u32le(entity.data + 28);
-    if (source_size > SIZE_MAX || offset > SIZE_MAX || game_size > SIZE_MAX || ended > 1 ||
+    if (source_size > SIZE_MAX || offset > SIZE_MAX || game_size > SIZE_MAX || bindings_size>SIZE_MAX || ended > 1 ||
         !take(&reader, (size_t)source_size, &source, error) || !take(&reader, token_size, &token, error) ||
-        !take(&reader, name_size, &name, error) || !take(&reader, (size_t)game_size, &game_bytes, error))
+        !take(&reader, name_size, &name, error) || !take(&reader, (size_t)game_size, &game_bytes, error) ||
+        !take(&reader,(size_t)bindings_size,&bindings_bytes,error))
         return q3_fail(error, QA_ERROR_FORMAT, reader.offset, "invalid Q3 entity parser checkpoint");
     if (source.size != host->entity_cursor.source.size ||
         (source.size && memcmp(source.data, host->entity_cursor.source.data, source.size)))
@@ -397,6 +415,11 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
         !qa_common_parser_restore(&restored_parser, &parser, error)) return false;
     q3_game_data *game = NULL;
     if (!q3_game_checkpoint_decode(host, game_bytes, &game, error)) return false;
+    q3_cvar_binding *bindings=NULL; size_t binding_count=0;
+    q3_cvar_cache *caches=NULL; size_t cache_count=0;
+    if (!q3_cvars_bindings_decode(bindings_bytes,&bindings,&binding_count,&caches,&cache_count,error)) {
+        q3_game_checkpoint_free(game); return false;
+    }
     ++host->calls;
     q3_file files[64] = {0}; q3_script *scripts[64] = {0};
     bool ok = true;
@@ -432,11 +455,17 @@ bool qa_q3_host_restore(qa_q3_host *host, qa_bytes input, qa_error *error)
         host->bots_shutdown = bots_shutdown != 0;
         host->clip_bounds = clip_bounds; host->clip_brush = clip_brush;
         host->entity_cursor = restored_cursor; host->entity_parser = restored_parser;
+        host->cvar_bindings=bindings; host->cvar_binding_count=binding_count;
+        bindings=NULL; binding_count=0;
+        host->cvar_caches=caches; host->cvar_cache_count=cache_count;
+        caches=NULL; cache_count=0;
         host->restore_pending = true;
     } else {
         for (size_t i = 1; i < 64; ++i) { q3_file_close(&files[i]); q3_script_close(scripts[i]); }
     }
     q3_game_checkpoint_free(game);
+    q3_cvars_bindings_free(bindings,binding_count);
+    free(caches);
     --host->calls;
     return ok;
 }
@@ -445,5 +474,6 @@ bool qa_q3_host_finish_restore(qa_q3_host *host, qa_error *error)
 {
     if (!host || host->retired || host->calls)
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 restore publication requires an idle live host");
+    if (host->restore_pending && !q3_cvars_bindings_restore_ready(host,error)) return false;
     host->restore_pending = false; return true;
 }

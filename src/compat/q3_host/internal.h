@@ -61,6 +61,26 @@ typedef struct q3_game_data {
     size_t portal_count, portal_capacity;
 } q3_game_data;
 
+typedef struct q3_cvar_binding {
+    qa_q3_host_cvar_namespace reference;
+    size_t handle;
+    qa_cvars *registry;
+    char *name,*previous_value;
+    uint64_t previous_modification;
+    float previous_number;
+    int32_t previous_integer;
+    uint64_t revision;
+    qa_console_dialect dialect;
+    bool read,previous_current;
+} q3_cvar_binding;
+typedef struct q3_cvar_cache {
+    qa_qvm *vm;
+    qa_native_instance *native;
+    qa_native_host_guest_memory memory;
+    int32_t pointer,handle;
+    uint64_t address;
+} q3_cvar_cache;
+
 struct qa_q3_host {
     qa_q3_host_options options;
     q3_file files[64];
@@ -79,6 +99,10 @@ struct qa_q3_host {
     qa_native_host_guest_memory memory;
     qa_native_profile native_profile;
     q3_game_data *game;
+    q3_cvar_binding *cvar_bindings;
+    size_t cvar_binding_count;
+    q3_cvar_cache *cvar_caches;
+    size_t cvar_cache_count;
     qa_actor_definition slot_definition;
     unsigned calls;
     const struct q3_call *render_call;
@@ -138,6 +162,10 @@ bool q3_signature_find(qa_qvm_role, qa_qvm_abi, int32_t, const q3_signature **,
 bool q3_ql_service(int32_t source, int32_t *canonical, qa_error *);
 q3_service_result q3_common(q3_call *, int32_t *, qa_error *);
 q3_service_result q3_cvars(q3_call *, int32_t *, qa_error *);
+void q3_cvars_bindings_free(q3_cvar_binding *,size_t);
+bool q3_cvars_bindings_capture(const qa_q3_host *,qa_buffer *,qa_error *);
+bool q3_cvars_bindings_decode(qa_bytes,q3_cvar_binding **,size_t *,q3_cvar_cache **,size_t *,qa_error *);
+bool q3_cvars_bindings_restore_ready(qa_q3_host *,qa_error *);
 q3_service_result q3_files(q3_call *, int32_t *, qa_error *);
 q3_service_result q3_information(q3_call *, int32_t *, qa_error *);
 q3_service_result q3_client_state(q3_call *, int32_t *, qa_error *);

@@ -235,8 +235,8 @@ bool qa_console_cvar_access(qa_console *console,const qa_command_context *contex
     if (!access.registry) return qac_fail(error,QA_ERROR_NOT_FOUND,"cvar access has no actual name owner");
     *registry=access.registry; *edit=access.edit; return true;
 }
-bool qa_console_cvar_snapshot_at(qa_console *console,const qa_command_context *context,
-    qa_cvars *registry,size_t ordinal,const qa_cvar_view **out,qa_error *error)
+static bool cvar_snapshot_access(qa_console *console,const qa_command_context *context,
+    qa_cvars *registry,cvar_access *out,qa_error *error)
 {
     if (!console || !registry || !out)
         return qac_fail(error,QA_ERROR_ARGUMENT,"cvar snapshot requires its console and actual visible registry");
@@ -249,9 +249,24 @@ bool qa_console_cvar_snapshot_at(qa_console *console,const qa_command_context *c
         if (actual==registry) { visible=true; break; }
     }
     if (!visible) return qac_fail(error,QA_ERROR_ARGUMENT,"cvar snapshot registry is not an admitted visible owner");
+    return cvar_access_read(console,context,registry,out,error);
+}
+bool qa_console_cvar_snapshot_at(qa_console *console,const qa_command_context *context,
+    qa_cvars *registry,size_t ordinal,const qa_cvar_view **out,qa_error *error)
+{
     cvar_access access;
-    if (!cvar_access_read(console,context,registry,&access,error)) return false;
+    if (!out || !cvar_snapshot_access(console,context,registry,&access,error)) return false;
     *out=cvar_at(access,ordinal); return true;
+}
+bool qa_console_cvar_handle(qa_console *console,const qa_command_context *context,
+    qa_cvars *registry,size_t handle,const qa_cvar_view **out,qa_error *error)
+{
+    cvar_access access;
+    if (!out || !cvar_snapshot_access(console,context,registry,&access,error)) return false;
+    if (handle>=cvar_handles(access))
+        return qac_fail(error,QA_ERROR_ARGUMENT,"cvar handle is outside its admitted registry extent");
+    *out=access.edit?qa_cvars_edit_handle(access.edit,handle):qa_cvars_handle(registry,handle);
+    return true;
 }
 bool qa_console_cvar_apply(qa_console *console,const qa_command_context *context,
     const qa_cvars_edit_command *command,qa_error *error)
@@ -870,8 +885,8 @@ const qa_console_entry *qa_console_find(const qa_console *console,
     return entry == NULL ? NULL : &entry->view;
 }
 
-static bool dispatch(qa_console *console, const qa_command_context *context,
-                      const char *raw, qa_error *error)
+static bool dispatch_inner(qa_console *console, const qa_command_context *context,
+                            const char *raw, qa_error *error)
 {
     if (!valid_context(console, context, error)) return false;
     char *expanded = NULL;
@@ -904,6 +919,8 @@ static bool dispatch(qa_console *console, const qa_command_context *context,
         (context->origin == QA_COMMAND_LOCAL || context->origin == QA_COMMAND_SEAT);
     command_frame frame = {&command, console->frame};
     console->frame = &frame;
+    if (console->release_owner && console->release_advancing)
+        console->release_dispatch_context=&command.context;
     bool success = true;
     if (console->options.allow_command != NULL && !console->options.allow_command(console->options.user, &command)) {
         if (console->release_owner)
@@ -964,6 +981,17 @@ done:
     console->frame = frame.parent;
     qa_command_tokens_free(&tokens);
     return success;
+}
+
+static bool dispatch(qa_console *console,const qa_command_context *context,
+    const char *raw,qa_error *error)
+{
+    const qa_command_context *previous=console->release_dispatch_context;
+    if (console->release_owner && console->release_advancing)
+        console->release_dispatch_context=context;
+    bool ok=dispatch_inner(console,context,raw,error);
+    console->release_dispatch_context=previous;
+    return ok;
 }
 
 bool qa_console_execute_now(qa_console *console, const qa_command_context *context,

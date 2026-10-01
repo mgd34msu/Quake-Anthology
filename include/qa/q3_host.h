@@ -90,6 +90,27 @@ typedef struct qa_q3_host_presentation_services {
     bool (*update_screen)(void *, qa_error *);
 } qa_q3_host_presentation_services;
 
+typedef enum qa_q3_host_cvar_namespace {
+    QA_Q3_HOST_CVAR_ENGINE=1,
+    QA_Q3_HOST_CVAR_GAME,
+    QA_Q3_HOST_CVAR_CLIENT,
+    QA_Q3_HOST_CVAR_MOUSE,
+    QA_Q3_HOST_CVAR_MOVEMENT,
+    QA_Q3_HOST_CVAR_FALLBACK,
+    QA_Q3_HOST_CVAR_Q3_VIEW,
+    QA_Q3_HOST_CVAR_SELECTED_VIEW
+} qa_q3_host_cvar_namespace;
+/* Stable roles name actual namespaces relative to this factory's retained
+ * source/receiver tuple and authored seat. Reference qualifies pointer aliases
+ * against that inventory; resolve follows the same physical owner through
+ * publication and reconstruction. Neither infers ownership from a cvar name.
+ * Both callbacks are pure, and their parent outlives the host. */
+typedef struct qa_q3_host_cvar_services {
+    void *context;
+    bool (*reference)(void *,const qa_cvars *,qa_q3_host_cvar_namespace *,qa_error *);
+    bool (*resolve)(void *,qa_q3_host_cvar_namespace,qa_cvars **,qa_error *);
+} qa_q3_host_cvar_services;
+
 /* The actual RenderScene syscall supplies its host and optional original QVM
  * call before the backend enters. Leave runs once after every enter invocation,
  * including a failed enter that returned a partial token. It must close that
@@ -159,6 +180,7 @@ typedef struct qa_q3_host_options {
     qa_q3_host_client_services client;
     qa_q3_host_collision_services collision;
     qa_q3_host_presentation_services presentation;
+    qa_q3_host_cvar_services cvar_namespaces;
     qa_q3_host_render_services render;
     /* Original CGAME QVM submissions retain their current syscall token and
      * unmasked signed pointer. The source role owns this callback/context. */
@@ -250,6 +272,20 @@ bool qa_q3_host_player_motion(qa_q3_host *, uint32_t, bool begin, qa_error *);
 bool qa_q3_host_input_idle(const qa_q3_host *, uint32_t);
 bool qa_q3_host_source_input(const qa_q3_host *, qa_input_seat **, uint64_t *owner);
 qa_console *qa_q3_host_console(const qa_q3_host *, qa_cvars **, qa_command_context *);
+typedef struct qa_q3_host_cvar_cache {
+    qa_qvm *vm;
+    qa_native_instance *native;
+    int32_t source_pointer,handle,modification;
+    uint64_t address;
+    float number;
+    int32_t integer;
+    char value[256];
+} qa_q3_host_cvar_cache;
+/* Actual CGAME cg_drawstatus vmCvar registrations/updates, keyed by original
+ * QVM pointer and executor or native address and memory owner. Read only the
+ * real guest cache; a changed handle reports absent, never inferred status. */
+size_t qa_q3_host_cvar_cache_count(const qa_q3_host *);
+bool qa_q3_host_cvar_cache_read(const qa_q3_host *,size_t,qa_q3_host_cvar_cache *,bool *found,qa_error *);
 typedef struct qa_q3_host_client_context {
     qa_session *session;
     qa_qvm_role role;
@@ -293,8 +329,10 @@ bool qa_q3_host_checkpoint(qa_q3_host *, qa_buffer *, qa_error *);
  * path/digest/bytes and cursor without filesystem acquisition or cache mutation.
  * Failed binding installation retains its contexts until candidate actors retire. */
 bool qa_q3_host_restore(qa_q3_host *, qa_bytes, qa_error *);
-/* After aggregate portal-claim and whole-candidate validation, publish this
- * host's restored continuation. No allocation or external callbacks occur. */
+/* After aggregate portal-claim and whole-candidate validation, qualify saved
+ * cvar namespace references and original VM cache addresses, then
+ * publish this host's restored continuation. No allocation or source dispatch
+ * occurs. */
 bool qa_q3_host_finish_restore(qa_q3_host *, qa_error *);
 
 #endif

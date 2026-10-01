@@ -27,6 +27,11 @@ bool qa_console_release_advance(qa_console_release *, qa_console_release_outcome
 bool qa_console_release_ready(const qa_console_release *, const qa_console *, qa_error *);
 /* True only inside the actual retained program's command callback. */
 bool qa_console_release_active(const qa_console_release *);
+/* Exact synchronous dispatch capability, including pre-tokenization macro
+ * reads. Alias/script metadata must match the actual current dispatch, while
+ * its source identity still belongs to this retained captured programme. */
+bool qa_console_release_context_current(const qa_console_release *,const qa_console *,
+                                        const qa_command_context *);
 /* Records entry into real command dispatch, rather than queue installation. */
 bool qa_console_release_entered(const qa_console_release *);
 /* Refuses while an entered program has pending continuation or failed source

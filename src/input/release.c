@@ -25,6 +25,13 @@ bool qa_input_release_idle(const qa_input_seat *seat)
 { return !seat || !seat->release; }
 const qa_console *qa_input_release_console(const qa_input_release *owner)
 { return owner ? owner->seat->options.console : NULL; }
+bool qa_input_release_context_current(const qa_input_release *owner,const qa_console *console,
+    const qa_command_context *command)
+{
+    return owner && owner->seat->release==owner && owner->advancing &&
+        owner->cursor<owner->count &&
+        qa_console_release_context_current(owner->records[owner->cursor].program,console,command);
+}
 const qa_console_release *qa_input_release_program_parent(const qa_input_release *owner)
 {
     if (!owner || owner->seat->release!=owner || owner->advancing) return NULL;
