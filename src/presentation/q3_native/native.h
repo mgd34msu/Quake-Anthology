@@ -31,6 +31,10 @@ typedef struct q3n_native_options {
      * begin or any subsequent source callback fails. It submits no source. */
     bool (*begin_frame)(void *,const q3n_frame *,qa_error *);
     void (*end_frame)(void *);
+    /* Actual selected outputs finish after source packet/local processing and
+     * before RenderScene collects world lighting. The entered frame remains
+     * borrowed through this callback and the existing unconditional unwind. */
+    bool (*before_render)(void *,const q3n_frame *,qa_error *);
     void *packet_context;
     bool (*packet_body)(void *, const q3n_frame *, const qa_application_native_q3_entity *,
         q3n_entity *, const qa_q3_ref_entity *, bool *consumed, qa_error *);

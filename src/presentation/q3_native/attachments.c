@@ -16,7 +16,7 @@ static void multiply(const qa_vec3 left[3], const qa_vec3 right[3], qa_vec3 out[
     memcpy(out, result, sizeof(result));
 }
 
-bool q3n_attach(qa_q3_presentation_assets *assets, qa_q3_ref_entity *child,
+bool q3n_attach(const qa_q3_presentation_assets *assets, qa_q3_ref_entity *child,
     const qa_q3_ref_entity *parent, const char *name, bool rotated, qa_error *error) {
     qa_model_tag tag; bool found;
     volatile float fraction = 1.0f - parent->back_lerp;

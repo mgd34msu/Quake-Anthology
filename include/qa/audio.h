@@ -397,6 +397,7 @@ bool qa_audio_engine_create(const qa_audio_engine_options *options, qa_audio_eng
 void qa_audio_engine_destroy(qa_audio_engine *engine);
 /* Pure callback identity qualification for installed owner restoration. */
 bool qa_audio_engine_observer_is(const qa_audio_engine *, qa_audio_voice_observer, const void *);
+bool qa_audio_engine_milliseconds_is(const qa_audio_engine *, qa_audio_milliseconds_fn, const void *);
 bool qa_audio_engine_listeners(qa_audio_engine *engine, const qa_audio_listener *listeners,
                                size_t count, qa_error *error);
 bool qa_audio_engine_position(qa_audio_engine *engine, uint64_t actor, qa_vec3 origin,
@@ -404,6 +405,24 @@ bool qa_audio_engine_position(qa_audio_engine *engine, uint64_t actor, qa_vec3 o
 void qa_audio_engine_geometry(qa_audio_engine *engine, qa_audio_transmission_fn fn, void *user);
 void qa_audio_engine_pause(qa_audio_engine *engine, bool paused);
 void qa_audio_engine_gain(qa_audio_engine *engine, float gain);
+/* Updates actual music player targets, preserving source smoothing and decoder
+ * phase. Newly attached players inherit this target. Raw PCM buses retain
+ * their route gain. Serialized callers must retain the engine and its buses. */
+bool qa_audio_engine_music_gain(qa_audio_engine *, float gain, qa_error *);
+typedef struct qa_audio_engine_gains qa_audio_engine_gains;
+/* Final returned-boundary admission leases the actual idle engine and mixers.
+ * Prepare after unrelated owner-idle checks. Ordinary engine work, save/reset
+ * and destruction are excluded until publication/cancellation. No music
+ * decoder, observer, source clock or native device operation is performed. */
+bool qa_audio_engine_gains_prepare(qa_audio_engine *, float effects, float music,
+                                   qa_audio_engine_gains **out, qa_error *);
+/* Requalify immediately before publication. No borrowed bus/player mutation
+ * may intervene between this check and publish. Refusal retains the ticket. */
+bool qa_audio_engine_gains_ready(const qa_audio_engine_gains *, qa_error *);
+/* Requires successful ready; publishes real scalar targets without callbacks
+ * or allocation and consumes the ticket. Cancellation also consumes it. */
+void qa_audio_engine_gains_publish(qa_audio_engine_gains *);
+void qa_audio_engine_gains_abort(qa_audio_engine_gains *);
 void qa_audio_engine_doppler(qa_audio_engine *engine, bool enabled);
 bool qa_audio_engine_play(qa_audio_engine *engine, const qa_audio_play *sound, int32_t milliseconds,
                           qa_error *error);

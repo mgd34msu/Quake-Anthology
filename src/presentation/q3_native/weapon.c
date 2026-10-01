@@ -228,8 +228,9 @@ static qa_q3_ref_entity attached(const qa_q3_ref_entity *parent,int32_t model)
     ref.lighting_origin=parent->lighting_origin; ref.shadow_plane=parent->shadow_plane; ref.flags=parent->flags;
     return ref;
 }
-bool q3n_weapons_player(const q3n_frame *f,const qa_q3_ref_entity *parent,const qa_q3_player *ps,
-    q3n_entity *cent,const qa_q3_entity *state,qa_error *e)
+static bool player_weapon(const q3n_frame *f,const qa_q3_presentation_assets *parent_assets,
+    const qa_q3_ref_entity *parent,const qa_q3_player *ps,q3n_entity *cent,
+    const qa_q3_entity *state,bool replacement,bool *submitted,qa_error *e)
 {
     if (!frame_valid(f,e) || !parent || !cent || !state) return false;
     const q3n_weapon_media *w;
@@ -239,7 +240,7 @@ bool q3n_weapons_player(const q3n_frame *f,const qa_q3_ref_entity *parent,const 
         uint8_t color=(uint8_t)((uint32_t)integer(mul(255,add(1,-divide((float)f->local_player.weaponTime,1500))))&255u);
         gun.color[0]=gun.color[2]=color; gun.color[1]=gun.color[3]=0;
     } else if (ps) memset(gun.color,255,sizeof(gun.color));
-    if (!ps && f->weapons->options.held_replacement) {
+    if (replacement && !ps && f->weapons->options.held_replacement) {
         bool suppressed=false;
         if (!f->weapons->options.held_replacement(f->weapons->options.context,f,state,parent,&suppressed,e)) return false;
         if (!frame_valid(f,e)) return false;
@@ -253,7 +254,9 @@ bool q3n_weapons_player(const q3n_frame *f,const qa_q3_ref_entity *parent,const 
             cent->lightning_firing=true;
         } else if (w->ready_sound && !loop_sound(f,w->ready_sound,state->number,cent->lerp_origin,e)) return false;
     }
-    if (!attach(f,&gun,parent,"tag_weapon",false,e) || !powered(f,&gun,state->powerups,e)) return false;
+    if (!q3n_attach(parent_assets,&gun,parent,"tag_weapon",false,e) || !frame_valid(f,e) ||
+        !powered(f,&gun,state->powerups,e)) return false;
+    if (submitted) *submitted=true;
     if (w->barrel_model) {
         qa_q3_ref_entity barrel=attached(parent,w->barrel_model); float angle;
         if (!spin(f,cent,state,&angle,e)) return false;
@@ -290,6 +293,29 @@ bool q3n_weapons_player(const q3n_frame *f,const qa_q3_ref_entity *parent,const 
         }
     }
     return true;
+}
+bool q3n_weapons_player(const q3n_frame *f,const qa_q3_ref_entity *parent,const qa_q3_player *ps,
+    q3n_entity *cent,const qa_q3_entity *state,qa_error *e)
+{
+    return player_weapon(f,f?f->assets:NULL,parent,ps,cent,state,true,NULL,e);
+}
+bool q3n_weapons_player_parent(const q3n_frame *f,const qa_q3_presentation_assets *parent_assets,
+    const qa_q3_ref_entity *parent,q3n_entity *cent,const qa_q3_entity *state,
+    bool *submitted,qa_error *e)
+{
+    if (submitted) *submitted=false;
+    if (!submitted || !frame_valid(f,e) || !parent_assets || !qa_q3_assets_idle(parent_assets) ||
+        !parent || parent->kind!=QA_Q3_REF_MODEL || parent->model<=0 || !cent || !state ||
+        state->number<0 || (uint32_t)state->number>=f->source.entity_count ||
+        state->number>=1024 || cent!=&f->entities[state->number])
+        return q3p_fail(e,QA_ERROR_ARGUMENT,"Primary held weapon requires its actual character parent and source centity");
+    qa_model_tag tag; bool found;
+    if (!qa_q3_presentation_tag(parent_assets,parent->model,"tag_weapon",parent->old_frame,
+        parent->frame,add(1,-parent->back_lerp),&tag,&found,e) || !frame_valid(f,e)) return false;
+    if (!found) return true;
+    bool emitted=false;
+    if (!player_weapon(f,parent_assets,parent,NULL,cent,state,false,&emitted,e)) return false;
+    *submitted=emitted; return true;
 }
 static bool torso_frame(const qa_player_animation_config *config,int32_t frame,int32_t *out,qa_error *e)
 {

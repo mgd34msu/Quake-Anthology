@@ -31,7 +31,7 @@ struct qa_audio_engine {
     int16_t *pcm_scratch;
     uint64_t clock, next_voice;
     double milliseconds;
-    float effects_gain;
+    float effects_gain, music_gain;
     bool paused, doppler, destroy_pending, destroying;
     bool round_resetting, round_destroy_requested;
     unsigned operation_depth, callback_depth;

@@ -1,5 +1,6 @@
 #include "engine_internal.h"
 #include "mixer_internal.h"
+#include "music_internal.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -138,6 +139,7 @@ bool qa_audio_engine_create(const qa_audio_engine_options *options, qa_audio_eng
     if (!engine->options.initial_voices)
         engine->options.initial_voices = 96;
     engine->effects_gain = 0.7f;
+    engine->music_gain = 0.25f;
     engine->doppler = true;
     engine->sum = malloc(frames * 2 * sizeof(float));
     engine->seat_scratch = malloc(frames * 2 * sizeof(float));
@@ -318,6 +320,17 @@ void qa_audio_engine_gain(qa_audio_engine *engine, float gain) {
     for (size_t i = 0; i < engine->seat_count; i++)
         qa_audio_mixer_effects_gain(engine->seats[i]->mixer, gain);
 }
+bool qa_audio_engine_music_gain(qa_audio_engine *engine, float gain, qa_error *error) {
+    if (!isfinite(gain) || gain < 0)
+        return fail(error, QA_ERROR_ARGUMENT, "Invalid shared music target");
+    if (!enter(engine, true, error)) return false;
+    engine->music_gain = gain;
+    for (size_t i = 0; i < engine->bus_count; ++i)
+        if (engine->buses[i].music)
+            qa_audio_music_target_publish(engine->buses[i].music, gain);
+    leave(engine);
+    return true;
+}
 void qa_audio_engine_doppler(qa_audio_engine *engine, bool enabled) {
     if (!engine || engine->destroying || engine->destroy_pending || engine->round_resetting)
         return;
@@ -450,6 +463,7 @@ static bool attach_bus(qa_audio_engine *engine, uint64_t id, uint32_t audience, 
             return false;
         engine->buses = next;
     }
+    if (music) qa_audio_music_target_publish(music, engine->music_gain);
     if (index < engine->bus_count) {
         if (engine->buses[index].raw != raw)
             qa_audio_raw_destroy(engine->buses[index].raw);
@@ -594,6 +608,25 @@ bool qa_audio_engine_observer_is(const qa_audio_engine *engine, qa_audio_voice_o
 {
     return engine && !engine->destroy_pending && !engine->destroying &&
         engine->options.observer == observer && engine->options.observer_user == context;
+}
+bool qa_audio_engine_milliseconds_is(const qa_audio_engine *engine, qa_audio_milliseconds_fn clock,
+    const void *context)
+{
+    if (!engine || engine->destroy_pending || engine->destroying ||
+        engine->options.milliseconds != clock || engine->options.milliseconds_user != context ||
+        (engine->seat_count && !engine->seats) ||
+        (engine->round_mixer_count && !engine->round_mixers)) return false;
+    for (size_t i = 0; i < engine->seat_count; ++i) {
+        const qa_audio_mixer *mixer = engine->seats[i] ? engine->seats[i]->mixer : NULL;
+        if (!mixer || mixer->options.milliseconds != clock ||
+            mixer->options.milliseconds_user != context) return false;
+    }
+    for (size_t i = 0; i < engine->round_mixer_count; ++i) {
+        const qa_audio_mixer *mixer = engine->round_mixers[i].mixer;
+        if (!mixer || mixer->options.milliseconds != clock ||
+            mixer->options.milliseconds_user != context) return false;
+    }
+    return true;
 }
 uint32_t qa_audio_engine_rate(const qa_audio_engine *engine) {
     return engine ? engine->options.sample_rate : 0;
@@ -748,6 +781,48 @@ static bool cut_engine_current(qa_audio_engine *engine) {
             mixer->destroying || mixer->callback_active || mixer->dispatching) return false;
     }
     return true;
+}
+struct qa_audio_engine_gains {
+    qa_audio_engine *engine;
+    float effects, music;
+};
+bool qa_audio_engine_gains_prepare(qa_audio_engine *engine, float effects, float music,
+    qa_audio_engine_gains **out, qa_error *error) {
+    if (!out || *out || !isfinite(effects) || effects < 0 ||
+        (double)(effects * 255.0f) > INT32_MAX || !isfinite(music) || music < 0 ||
+        !qa_audio_engine_round_ready(engine, error))
+        return fail(error, QA_ERROR_ARGUMENT, "Audio gains require actual idle owners and finite targets");
+    if (engine->seat_count > SIZE_MAX - engine->round_mixer_count ||
+        engine->bus_count > engine->bus_capacity || (engine->bus_count && !engine->buses))
+        return fail(error, QA_ERROR_ARGUMENT, "Audio gain ownership inventory is invalid");
+    qa_audio_engine_gains *ticket = malloc(sizeof(*ticket));
+    if (!ticket) return fail(error, QA_ERROR_MEMORY, "Retaining prepared audio gains");
+    if (!cut_lock(engine, error)) { free(ticket); return false; }
+    *ticket = (qa_audio_engine_gains){engine, effects, music};
+    *out = ticket;
+    return true;
+}
+bool qa_audio_engine_gains_ready(const qa_audio_engine_gains *ticket, qa_error *error) {
+    if (!ticket || !cut_engine_current(ticket->engine))
+        return fail(error, QA_ERROR_ARGUMENT, "Prepared audio gain owners have changed");
+    return true;
+}
+void qa_audio_engine_gains_publish(qa_audio_engine_gains *ticket) {
+    qa_audio_engine *engine = ticket->engine;
+    engine->effects_gain = ticket->effects;
+    engine->music_gain = ticket->music;
+    for (size_t i = 0; i < engine->seat_count + engine->round_mixer_count; ++i)
+        cut_mixer(engine, i)->effects_gain = ticket->effects;
+    for (size_t i = 0; i < engine->bus_count; ++i)
+        if (engine->buses[i].music)
+            qa_audio_music_target_publish(engine->buses[i].music, ticket->music);
+    cut_unlock(engine);
+    free(ticket);
+}
+void qa_audio_engine_gains_abort(qa_audio_engine_gains *ticket) {
+    if (!ticket) return;
+    cut_unlock(ticket->engine);
+    free(ticket);
 }
 bool qa_audio_engine_stream_cut_prepare(qa_audio_engine *destination, qa_audio_engine *source,
     uint64_t id, uint32_t audience, float gain, qa_audio_stream_cut **out, qa_error *error) {

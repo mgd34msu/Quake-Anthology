@@ -1,4 +1,4 @@
-#include "qa/audio.h"
+#include "music_internal.h"
 #include "qa/binary.h"
 #include <float.h>
 
@@ -221,8 +221,12 @@ bool qa_audio_music_volume(qa_audio_music *music, float volume, qa_error *error)
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid music volume");
         return false;
     }
-    music->target_volume = volume;
+    qa_audio_music_target_publish(music, volume);
     return true;
+}
+
+void qa_audio_music_target_publish(qa_audio_music *music, float volume) {
+    music->target_volume = volume;
 }
 
 void qa_audio_music_update(qa_audio_music *music) {

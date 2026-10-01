@@ -101,6 +101,7 @@ bool q3nn_allocate(const q3n_native_options *options,bool restoring,q3n_native *
 {
     if(!options || !out || *out || !options->application || !options->client || !options->reader || !options->presentation || !options->frame_settings ||
         (options->begin_frame==NULL)!=(options->end_frame==NULL) ||
+        (options->before_render && !options->begin_frame) ||
         !qa_native_q3_wire_reader_idle(options->reader) ||
         !qa_native_q3_client_service_idle(options->client) || (!restoring && !qa_q3_presentation_idle(options->presentation)))
         return q3nn_fail(e,QA_ERROR_ARGUMENT,"Native CGAME requires its genuine idle client and backend");
@@ -338,58 +339,58 @@ static bool timescale(q3n_native *o,qa_error *e)
     return qa_native_q3_client_cvar_number(client,"cg_timescale",value,e) &&
         (speed.number==0 || qa_native_q3_client_set_timescale(client,value,e));
 }
-static bool draw(q3n_native *o,int32_t latest,bool *rendered,bool *begun,qa_error *e)
+static bool draw(q3n_native *o,int32_t latest,bool *rendered,bool *begun,
+    q3n_frame *f,q3n_native_frame_options *settings,qa_error *e)
 {
     if(!qa_native_q3_client_refresh(o->options.client,e) || !qa_native_q3_client_update(o->options.client,e))return false;
     qa_application_native_q3_presentation source;
     if(!q3nn_source(o,&source,e))return false;
-    q3n_native_frame_options settings={0};
-    if(!o->options.frame_settings(o->options.settings_context,o,&source,&settings,e) ||
-        !qa_application_native_q3_presentation_current(o->options.application,&source) || settings.stereo>2 ||
-        !isfinite(settings.stereo_separation))return q3nn_fail(e,QA_ERROR_ARGUMENT,"Native frame requires its current cached settings projection");
-    o->frame_options=&settings;
-    q3n_frame f=frame_base(o,&source);
-    f.weapon_settings=&settings.weapons; f.event_settings=&settings.events;
-    if(!qa_ui_preferences_read(qa_application_cvars(o->options.application),o->physical_presentation_seat,&f.preferences,e))return false;
+    if(!o->options.frame_settings(o->options.settings_context,o,&source,settings,e) ||
+        !qa_application_native_q3_presentation_current(o->options.application,&source) || settings->stereo>2 ||
+        !isfinite(settings->stereo_separation))return q3nn_fail(e,QA_ERROR_ARGUMENT,"Native frame requires its current cached settings projection");
+    o->frame_options=settings;
+    *f=frame_base(o,&source);
+    f->weapon_settings=&settings->weapons; f->event_settings=&settings->events;
+    if(!qa_ui_preferences_read(qa_application_cvars(o->options.application),o->physical_presentation_seat,&f->preferences,e))return false;
     qa_application_native_q3_view local; bool found;
-    if(!qa_application_native_q3_presentation_visible(f.application,&source,o->seat,&local,&found,e))return false;
+    if(!qa_application_native_q3_presentation_visible(f->application,&source,o->seat,&local,&found,e))return false;
     if(!found)return true;
     if(local.physical_client!=o->physical_client || !qa_actor_id_equal(local.actor,o->viewing_actor))
         return q3nn_fail(e,QA_ERROR_ARGUMENT,"Native visible frame differs from its actual installed recipient");
-    f.local_player=local.player; f.has_local_player=true;
-    if(f.local_player.clientNum<0 || (uint32_t)f.local_player.clientNum>=source.max_clients)
+    f->local_player=local.player; f->has_local_player=true;
+    if(f->local_player.clientNum<0 || (uint32_t)f->local_player.clientNum>=source.max_clients)
         return q3nn_fail(e,QA_ERROR_FORMAT,"Native followed player is outside its physical client extent");
     qa_q3_presentation_binding backend;
-    if(!qa_q3_presentation_binding_read(f.presentation,&backend,e) ||
+    if(!qa_q3_presentation_binding_read(f->presentation,&backend,e) ||
         backend.options.seat!=o->physical_presentation_seat)return q3nn_fail(e,QA_ERROR_ARGUMENT,"Native draw backend has another physical presentation seat");
-    if(!qa_q3_presentation_clear_loops(f.presentation,false,e) || !qa_q3_presentation_clear(f.presentation,e) ||
-        !q3n_server_commands_execute(o->commands,&f,latest,e))return false;
+    if(!qa_q3_presentation_clear_loops(f->presentation,false,e) || !qa_q3_presentation_clear(f->presentation,e) ||
+        !q3n_server_commands_execute(o->commands,f,latest,e))return false;
     const q3n_command_state *commands=q3n_server_commands_state(o->commands);
     if(!commands)return q3nn_fail(e,QA_ERROR_ARGUMENT,"Native frame command owner is still active");
-    settings.view.dm_flags=commands->dm_flags;
+    settings->view.dm_flags=commands->dm_flags;
     if(commands->map_restart) {
         q3n_player_state_round(o->player_state);
-        if(!q3n_server_commands_map_restart_taken(o->commands,&f,e))return false;
+        if(!q3n_server_commands_map_restart_taken(o->commands,f,e))return false;
     }
     if(o->options.begin_frame) {
         *begun=true;
-        if(!o->options.begin_frame(o->options.frame_context,&f,e) ||
-            !qa_application_native_q3_presentation_current(f.application,&source))return false;
+        if(!o->options.begin_frame(o->options.frame_context,f,e) ||
+            !qa_application_native_q3_presentation_current(f->application,&source))return false;
     }
     bool fresh=!o->has_source_frame || o->source_frame_number!=source.source_frame.number;
     memset(o->seen,0,sizeof(o->seen));
     if(fresh)for(unsigned i=0;i<QA_Q3_SOURCE_ENTITIES;++i)o->entities[i].loop_stopped=false;
     qa_application_native_q3_entity followed; q3n_entity *predicted;
-    if(!q3nn_entity(o,&f,(uint32_t)f.local_player.clientNum,&followed,&predicted,e) ||
-        !q3n_trajectory(&followed.state.pos,f.time,&predicted->lerp_origin,e) ||
-        !q3n_trajectory(&followed.state.apos,f.time,&predicted->lerp_angles,e))return false;
+    if(!q3nn_entity(o,f,(uint32_t)f->local_player.clientNum,&followed,&predicted,e) ||
+        !q3n_trajectory(&followed.state.pos,f->time,&predicted->lerp_origin,e) ||
+        !q3n_trajectory(&followed.state.apos,f->time,&predicted->lerp_angles,e))return false;
     if(fresh) {
         for(size_t i=0;i<local.visible.count;++i) {
             uint32_t physical=(uint32_t)local.visible.entities[i].number;
             qa_application_native_q3_entity actual; q3n_entity *cent;
-            if(!q3nn_entity(o,&f,physical,&actual,&cent,e))return false;
-            if(physical!=(uint32_t)f.local_player.clientNum && !q3n_events_apply(&f,&actual,cent,e))return false;
-            cent->snapshot_time=f.time;
+            if(!q3nn_entity(o,f,physical,&actual,&cent,e))return false;
+            if(physical!=(uint32_t)f->local_player.clientNum && !q3n_events_apply(f,&actual,cent,e))return false;
+            cent->snapshot_time=f->time;
         }
         for(unsigned i=0;i<QA_Q3_SOURCE_ENTITIES;++i)if(!o->seen[i])o->entities[i].valid=false;
         o->source_frame_number=source.source_frame.number; o->has_source_frame=true;
@@ -397,60 +398,63 @@ static bool draw(q3n_native *o,int32_t latest,bool *rendered,bool *begun,qa_erro
     const q3n_weapon_selection *selection=q3n_weapons_selection(o->weapons);
     const q3n_view_state *camera=q3n_view_read(o->view);
     if(!selection || !camera || !qa_native_q3_client_command_values(o->options.client,selection->weapon,camera->zoom_sensitivity,e))return false;
-    o->client_frame=increment(o->client_frame); f.client_frame=o->client_frame;
+    o->client_frame=increment(o->client_frame); f->client_frame=o->client_frame;
     q3n_player_state_context transition={.warmup=commands->warmup,.timelimit=commands->timelimit,
         .fraglimit=commands->fraglimit,.scores1=commands->scores1,.intermission_started=commands->intermission_started};
     qa_native_q3_client_cvar show_miss;
     if(!qa_native_q3_client_cvar_read(o->options.client,"cg_showmiss",&show_miss,e))return false;
     transition.show_miss=show_miss.integer!=0;
     bool in_water;
-    if(!q3n_player_state_transition(o->player_state,&f,&transition,e) ||
-        !q3n_view_frame(o->view,&f,&settings.view,o->player_state,backend.options.viewport,&in_water,e) ||
-        !required_media(o,&f,&local.visible,e))return false;
-    memcpy(f.refdef.area_mask,local.visible.area_mask,sizeof(f.refdef.area_mask));
-    if(!f.third_person && !q3n_view_damage_blob(o->view,&f,&settings.view,o->player_state,e))return false;
+    if(!q3n_player_state_transition(o->player_state,f,&transition,e) ||
+        !q3n_view_frame(o->view,f,&settings->view,o->player_state,backend.options.viewport,&in_water,e) ||
+        !required_media(o,f,&local.visible,e))return false;
+    memcpy(f->refdef.area_mask,local.visible.area_mask,sizeof(f->refdef.area_mask));
+    if(!f->third_person && !q3n_view_damage_blob(o->view,f,&settings->view,o->player_state,e))return false;
     q3n_packet_imports imports={.context=o,.rand=packet_rand,.body=packet_body,.player=packet_player,
         .trail=packet_trail,.powerups=packet_powerups};
     if(!camera->hyperspace) {
         /* The local body uses its actual GAME S. No BG conversion or predicted
          * simulation is introduced by this completed-cut renderer. */
-        if(!q3n_packet_entity(&f,&followed,predicted,&settings.packet,&imports,e))return false;
+        if(!q3n_packet_entity(f,&followed,predicted,&settings->packet,&imports,e))return false;
         for(size_t i=0;i<local.visible.count;++i) {
             uint32_t physical=(uint32_t)local.visible.entities[i].number;
-            if(physical==(uint32_t)f.local_player.clientNum)continue;
+            if(physical==(uint32_t)f->local_player.clientNum)continue;
             qa_application_native_q3_entity actual; q3n_entity *cent;
-            if(!q3nn_entity(o,&f,physical,&actual,&cent,e) || !q3n_packet_entity(&f,&actual,cent,&settings.packet,&imports,e))return false;
+            if(!q3nn_entity(o,f,physical,&actual,&cent,e) || !q3n_packet_entity(f,&actual,cent,&settings->packet,&imports,e))return false;
         }
-        if(!q3n_marks_submit(&f,e) || !q3n_particles_add(&f,e) || !q3n_local_submit(&f,e))return false;
+        if(!q3n_marks_submit(f,e) || !q3n_particles_add(f,e) || !q3n_local_submit(f,e))return false;
     }
     const q3n_event_state *events=q3n_events_state(o->events);
     q3n_weapon_view weapon_view={.predicted_entity=predicted,.predicted_state=&followed.state,
         .bob_cycle=camera->bob_cycle,.xy_speed=camera->xy_speed,.bob_fraction_sin=camera->bob_fraction_sin,
         .land_time=events->land_time,.land_change=events->land_change,.test_gun=camera->test_gun};
-    if(!q3n_weapons_view(&f,&weapon_view,e) || !q3n_events_finish(&f,e) ||
-        !q3n_server_commands_finish(o->commands,&f,e) || !q3n_view_test_submit(o->view,&f,&settings.view,e) ||
-        !powerup_audio(o,&f,e) || !qa_q3_presentation_listener(f.presentation,f.local_player.clientNum,f.refdef.origin,f.refdef.axis,e))return false;
+    if(!q3n_weapons_view(f,&weapon_view,e) || !q3n_events_finish(f,e) ||
+        !q3n_server_commands_finish(o->commands,f,e) || !q3n_view_test_submit(o->view,f,&settings->view,e) ||
+        !powerup_audio(o,f,e) || !qa_q3_presentation_listener(f->presentation,f->local_player.clientNum,f->refdef.origin,f->refdef.axis,e))return false;
     (void)in_water;
-    if(settings.stereo!=2) {
-        int32_t milliseconds=subtract(f.time,o->old_time);
-        o->frame_milliseconds=milliseconds<0?0:milliseconds; o->old_time=f.time;
+    if(settings->stereo!=2) {
+        int32_t milliseconds=subtract(f->time,o->old_time);
+        o->frame_milliseconds=milliseconds<0?0:milliseconds; o->old_time=f->time;
         q3n_hud_frame_sample(o->hud,0);
     }
     if(!timescale(o,e))return false;
-    o->previous_refdef=f.refdef;
-    o->previous_view_angles=f.view_angles;
-    bool tournament=f.local_player.persistant[3]==3 && (f.local_player.pmFlags&8192);
+    if(o->options.before_render &&
+        (!o->options.before_render(o->options.frame_context,f,e) ||
+         !qa_application_native_q3_presentation_current(f->application,&source)))return false;
+    o->previous_refdef=f->refdef;
+    o->previous_view_angles=f->view_angles;
+    bool tournament=f->local_player.persistant[3]==3 && (f->local_player.pmFlags&8192);
     if(!tournament) {
-        if(!q3n_hud_tile_clear(o->hud,&f,backend.options.viewport,e))return false;
-        qa_q3_refdef render=f.refdef;
-        float separation=settings.stereo==0?0:multiply(settings.stereo_separation,settings.stereo==1?-0.5f:0.5f);
+        if(!q3n_hud_tile_clear(o->hud,f,backend.options.viewport,e))return false;
+        qa_q3_refdef render=f->refdef;
+        float separation=settings->stereo==0?0:multiply(settings->stereo_separation,settings->stereo==1?-0.5f:0.5f);
         render.origin.x=add(render.origin.x,multiply(render.axis[1].x,-separation));
         render.origin.y=add(render.origin.y,multiply(render.axis[1].y,-separation));
         render.origin.z=add(render.origin.z,multiply(render.axis[1].z,-separation));
-        if(!qa_q3_presentation_render(f.presentation,&render,e))return false;
+        if(!qa_q3_presentation_render(f->presentation,&render,e))return false;
     }
-    if(!q3n_hud_frame(o->hud,&f,&settings.hud,o->commands,o->player_state,backend.options.viewport,e) ||
-        !qa_application_native_q3_presentation_current(f.application,&source))return false;
+    if(!q3n_hud_frame(o->hud,f,&settings->hud,o->commands,o->player_state,backend.options.viewport,e) ||
+        !qa_application_native_q3_presentation_current(f->application,&source))return false;
     if(!tournament) {
         qa_native_q3_client_cvar stats;
         if(!qa_native_q3_client_cvar_read(o->options.client,"cg_stats",&stats,e))return false;
@@ -458,7 +462,7 @@ static bool draw(q3n_native *o,int32_t latest,bool *rendered,bool *begun,qa_erro
             if(!o->options.events.print)return q3nn_fail(e,QA_ERROR_UNSUPPORTED,"Native cg_stats requires its actual print service");
             char message[64]; snprintf(message,sizeof(message),"cg.clientFrame:%d\n",o->client_frame);
             o->options.events.print(o->options.events.context,message);
-            if(!qa_application_native_q3_presentation_current(f.application,&source))return false;
+            if(!qa_application_native_q3_presentation_current(f->application,&source))return false;
         }
     }
     *rendered=true; return true;
@@ -469,7 +473,8 @@ bool q3n_native_draw(q3n_native *o,int32_t latest,bool *rendered,qa_error *e)
         return q3nn_fail(e,QA_ERROR_ARGUMENT,"Native draw requires its actual initialized idle recipient");
     *rendered=false; o->busy=true;
     bool begun=false;
-    bool ok=draw(o,latest,rendered,&begun,e);
+    q3n_frame frame={0}; q3n_native_frame_options settings={0};
+    bool ok=draw(o,latest,rendered,&begun,&frame,&settings,e);
     if(begun)o->options.end_frame(o->options.frame_context);
     o->frame_options=NULL; o->busy=false;
     if(!ok)o->faulted=true;

@@ -125,11 +125,12 @@ bool qa_audio_engine_checkpoint(const qa_audio_engine *engine, const qa_audio_ch
         else qa_buffer_free(&bytes);
         selection[i] = j;
     }
-    qa_ac_write(&w, "QAEN", 4); qa_ac_u32(&w, 2); qa_ac_u32(&w, engine->options.sample_rate);
+    qa_ac_write(&w, "QAEN", 4); qa_ac_u32(&w, 3); qa_ac_u32(&w, engine->options.sample_rate);
     qa_ac_u32(&w, engine->options.output_channels); qa_ac_u64(&w, engine->options.mix_frames);
     qa_ac_u64(&w, engine->options.initial_voices); qa_ac_u32(&w, callback_mask(&engine->options));
     qa_ac_u32(&w, engine->geometry != NULL); qa_ac_u64(&w, engine->clock); qa_ac_u64(&w, engine->next_voice);
     qa_ac_double(&w, engine->milliseconds); qa_ac_float(&w, engine->effects_gain);
+    qa_ac_float(&w, engine->music_gain);
     qa_ac_u32(&w, engine->paused); qa_ac_u32(&w, engine->doppler);
     qa_ac_u64(&w, engine->seat_count); qa_ac_u64(&w, engine->position_count); qa_ac_u64(&w, engine->bus_count);
     qa_ac_u64(&w, definition_count);
@@ -185,7 +186,7 @@ bool qa_audio_engine_restore(qa_bytes bytes, const qa_audio_engine_options *opti
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid isolated audio engine destination"); return false;
     }
     qa_ac_reader r = {.bytes = bytes, .error = error}; qa_bytes magic;
-    if (!qa_ac_read(&r, 4, &magic) || memcmp(magic.data, "QAEN", 4) || qa_ac_get32(&r) != 2 ||
+    if (!qa_ac_read(&r, 4, &magic) || memcmp(magic.data, "QAEN", 4) || qa_ac_get32(&r) != 3 ||
         qa_ac_get32(&r) != options->sample_rate || qa_ac_get32(&r) != options->output_channels ||
         qa_ac_get64(&r) != (options->mix_frames ? options->mix_frames : 4096) ||
         qa_ac_get64(&r) != (options->initial_voices ? options->initial_voices : 96) ||
@@ -195,8 +196,10 @@ bool qa_audio_engine_restore(qa_bytes bytes, const qa_audio_engine_options *opti
     if (r.failed || !qa_audio_engine_create(options, &engine, error)) return false;
     engine->geometry = refs ? refs->geometry : NULL; engine->geometry_user = refs ? refs->geometry_context : NULL;
     engine->clock = qa_ac_get64(&r); engine->next_voice = qa_ac_get64(&r); engine->milliseconds = qa_ac_getdouble(&r);
-    engine->effects_gain = qa_ac_getfloat(&r); engine->paused = qa_ac_bool(&r); engine->doppler = qa_ac_bool(&r);
-    if (engine->clock > INT64_MAX || engine->effects_gain < 0 || (double)(engine->effects_gain * 255.0f) > INT32_MAX)
+    engine->effects_gain = qa_ac_getfloat(&r); engine->music_gain = qa_ac_getfloat(&r);
+    engine->paused = qa_ac_bool(&r); engine->doppler = qa_ac_bool(&r);
+    if (engine->clock > INT64_MAX || engine->effects_gain < 0 || engine->music_gain < 0 ||
+        (double)(engine->effects_gain * 255.0f) > INT32_MAX)
         qa_ac_bad(&r, "Invalid saved engine clock or gain");
     size_t seats = get_count(&r, sizeof(*engine->seats)), positions = get_count(&r, sizeof(*engine->positions));
     size_t buses = get_count(&r, sizeof(*engine->buses)), definition_count = get_count(&r, sizeof(qa_audio_environments *));
@@ -308,7 +311,7 @@ bool qa_audio_engine_restore(qa_bytes bytes, const qa_audio_engine_options *opti
 bool qa_audio_engine_restore_into(qa_audio_engine *engine, qa_bytes bytes,
     const qa_audio_checkpoint_refs *refs, qa_error *error)
 {
-    if (!engine || engine->operation_depth || engine->callback_depth || engine->destroy_pending ||
+    if (!engine || engine->round_resetting || engine->operation_depth || engine->callback_depth || engine->destroy_pending ||
         engine->destroying || engine->seat_count || engine->round_mixer_count || engine->position_count || engine->bus_count ||
         engine->clock || engine->next_voice) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Audio import requires an empty idle candidate engine");
