@@ -12,6 +12,12 @@ bool frontend_equipment_held_output_create(qa_frontend *,
     const qa_application_equipment_view *, frontend_equipment_media *,
     qa_q3_presentation_assets *, const qa_q3_ref_entity *authored_parent,
     frontend_equipment_held_output **, qa_error *);
+/* Parent tags belong to parent_assets; captured shader passes and submission
+ * belong to source_assets. Both registries remain held by the entered frame. */
+bool frontend_equipment_held_output_create_from(qa_frontend *,
+    const qa_application_equipment_view *, frontend_equipment_media *,
+    const qa_q3_presentation_assets *parent_assets, qa_q3_presentation_assets *source_assets,
+    const qa_q3_ref_entity *, frontend_equipment_held_output **, qa_error *);
 bool frontend_equipment_held_output_pass(frontend_equipment_held_output *,
     const qa_q3_ref_entity *, qa_error *);
 size_t frontend_equipment_held_output_count(const frontend_equipment_held_output *);

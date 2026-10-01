@@ -65,7 +65,7 @@ typedef struct q3n_selected_weapon_view {
     bool draw_gun;
 } q3n_selected_weapon_view;
 typedef struct q3n_selected_weapon_held {
-    qa_q3_presentation_assets *parent_assets;
+    const qa_q3_presentation_assets *parent_assets;
     const qa_q3_ref_entity *torso;
     qa_vec3 lighting_origin;
     int32_t powerups;

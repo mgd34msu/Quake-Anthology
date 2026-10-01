@@ -412,7 +412,7 @@ static bool selected_emit(const q3n_selected_weapon_media *media,const q3n_selec
 }
 /* Scene attachment composition retains each child's own pose. Missing optional
  * gun tags omit that attachment; selected hands require tag_weapon. */
-static bool selected_attach(qa_q3_presentation_assets *assets,qa_q3_ref_entity *child,
+static bool selected_attach(const qa_q3_presentation_assets *assets,qa_q3_ref_entity *child,
     const qa_q3_ref_entity *parent,const char *name,bool required,bool *found,qa_error *e)
 {
     qa_model_tag tag; float fraction=add(1,-parent->back_lerp);

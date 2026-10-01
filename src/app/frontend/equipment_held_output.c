@@ -40,8 +40,17 @@ bool frontend_equipment_held_output_create(qa_frontend *frontend,
     qa_q3_presentation_assets *assets, const qa_q3_ref_entity *parent,
     frontend_equipment_held_output **out, qa_error *error)
 {
+    return frontend_equipment_held_output_create_from(frontend, source, media,
+        assets, assets, parent, out, error);
+}
+
+bool frontend_equipment_held_output_create_from(qa_frontend *frontend,
+    const qa_application_equipment_view *source, frontend_equipment_media *media,
+    const qa_q3_presentation_assets *parent_assets, qa_q3_presentation_assets *assets,
+    const qa_q3_ref_entity *parent, frontend_equipment_held_output **out, qa_error *error)
+{
     frontend_equipment_media_view retained;
-    if (!frontend || !source || !source->selected || !parent || !assets || !out ||
+    if (!frontend || !source || !source->selected || !parent || !parent_assets || !assets || !out ||
         !qa_application_equipment_current(frontend->application, source) ||
         !frontend_equipment_media_read(media, &retained) ||
         retained.provider != source->provider || retained.family != source->family ||
@@ -66,10 +75,10 @@ bool frontend_equipment_held_output_create(qa_frontend *frontend,
     qa_model_tag tag;
     bool found = false;
     bool ok = parent->model > 0 &&
-        qa_q3_assets_model_holder(assets, (size_t)parent->model - 1, &holder, error);
+        qa_q3_assets_model_holder(parent_assets, (size_t)parent->model - 1, &holder, error);
     if (ok && (!holder.present || !holder.sources[0]))
         ok = frontend_fail(error, QA_ERROR_FORMAT, "Held replacement parent has no actual registered model holder");
-    if (ok) ok = qa_q3_presentation_tag(assets, parent->model, "tag_weapon",
+    if (ok) ok = qa_q3_presentation_tag(parent_assets, parent->model, "tag_weapon",
         parent->old_frame, parent->frame, 1 - parent->back_lerp, &tag, &found, error);
     if (ok && !found)
         ok = frontend_fail(error, QA_ERROR_FORMAT, "Original source torso has no weapon attachment");

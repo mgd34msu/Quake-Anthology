@@ -79,30 +79,33 @@ static bool view_weapon(void *context, const q3n_frame *frame, const qa_q3_playe
     owner->view_requested = frame->weapon_settings->draw_gun && !frame->third_person;
     return frontend_equipment_source_native_view(owner->source, consumed, error);
 }
-static bool held(void *context, const q3n_frame *frame, const qa_q3_entity *state,
-    const qa_q3_ref_entity *parent, bool *suppressed, qa_error *error)
+static bool held_actor(equipment_native *owner, const q3n_frame *frame, qa_actor_id actor,
+    const qa_q3_presentation_assets *parent_assets, const qa_q3_ref_entity *parent,
+    int32_t powerups, bool *suppressed, qa_error *error)
 {
-    equipment_native *owner = context;
     if (suppressed) *suppressed = false;
-    if (!suppressed || !state || !parent || state->number < 0 || !current(owner, frame))
+    if (!suppressed || !parent_assets || !parent || !current(owner, frame))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Native held replacement lost its actual source frame");
+    uint32_t physical;
     qa_application_native_q3_entity actual;
-    if (!qa_application_native_q3_presentation_entity(frame->application, &frame->source,
-            (uint32_t)state->number, &actual, error)) return false;
-    if (!actual.present || actual.state.number != state->number ||
-        !actual.binding.actor.registry)
+    if (!qa_q3_source_actor_slot(frame->source.source_game, actor, &physical, error) ||
+        !qa_application_native_q3_presentation_entity(frame->application, &frame->source,
+            physical, &actual, error)) return false;
+    if (!actual.present || !qa_actor_id_equal(actual.binding.actor, actor) ||
+        actual.state.powerups != powerups)
         return frontend_fail(error, QA_ERROR_FORMAT, "Native held parent has no physical full actor binding");
     qa_application_equipment_view source;
     if (!qa_application_equipment_read(frame->application, actual.binding.actor, &source, error)) return false;
     if (!source.selected) return true;
     if (source.family == QA_GAME_Q3) {
         bool authored = false;
-        if (!frontend_equipment_source_native_held(owner->source, actual.binding.actor, parent,
-                state->powerups, (parent->flags & 2) != 0, &authored, suppressed, error)) return false;
+        if (!frontend_equipment_source_native_held_from(owner->source, actual.binding.actor,
+                parent_assets, parent, powerups, (parent->flags & 2) != 0,
+                &authored, suppressed, error)) return false;
         if (!authored) return true;
     }
     void *token = NULL; bool admitted = false;
-    if (!owner->services.held_begin(owner->services.context, actual.binding.actor, parent,
+    if (!frontend_equipment_source_held_begin_from(owner->source, actual.binding.actor, parent_assets, parent,
             &token, &admitted, error)) return false;
     if (!admitted) return true;
     const q3n_media_view *media = q3n_media_read(frame->media);
@@ -110,17 +113,17 @@ static bool held(void *context, const q3n_frame *frame, const qa_q3_entity *stat
     qa_q3_ref_entity pass = *parent;
     pass.shader_time = 0;
     memset(pass.color, 255, sizeof(pass.color));
-    if (okay && (state->powerups & 16)) {
+    if (okay && (powerups & 16)) {
         pass.custom_shader = media->graphics[Q3N_G_INVIS];
         okay = owner->services.held_pass(owner->services.context, token, &pass, error);
     } else if (okay) {
         pass.custom_shader = 0;
         okay = owner->services.held_pass(owner->services.context, token, &pass, error);
-        if (okay && (state->powerups & 4)) {
+        if (okay && (powerups & 4)) {
             pass.custom_shader = media->graphics[Q3N_G_BATTLE_WEAPON];
             okay = owner->services.held_pass(owner->services.context, token, &pass, error);
         }
-        if (okay && (state->powerups & 2)) {
+        if (okay && (powerups & 2)) {
             pass.custom_shader = media->graphics[Q3N_G_QUAD_WEAPON];
             okay = owner->services.held_pass(owner->services.context, token, &pass, error);
         }
@@ -131,6 +134,29 @@ static bool held(void *context, const q3n_frame *frame, const qa_q3_entity *stat
         frontend_fail(error, QA_ERROR_FORMAT, "Native held replacement lost its actual powerup media");
     if (okay) *suppressed = true;
     return okay;
+}
+static bool held(void *context, const q3n_frame *frame, const qa_q3_entity *state,
+    const qa_q3_ref_entity *parent, bool *suppressed, qa_error *error)
+{
+    equipment_native *owner = context;
+    if (suppressed) *suppressed = false;
+    if (!state || state->number < 0 || !current(owner, frame))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Native held replacement lost its physical source entity");
+    qa_application_native_q3_entity actual;
+    if (!qa_application_native_q3_presentation_entity(frame->application, &frame->source,
+            (uint32_t)state->number, &actual, error)) return false;
+    if (!actual.present || actual.state.number != state->number)
+        return frontend_fail(error, QA_ERROR_FORMAT, "Native held parent lost its source entity row");
+    return held_actor(owner, frame, actual.binding.actor, frame->assets, parent,
+        state->powerups, suppressed, error);
+}
+
+bool frontend_equipment_native_character_held(void *context, const q3n_frame *frame,
+    qa_actor_id actor, const qa_q3_presentation_assets *parent_assets,
+    const qa_q3_ref_entity *parent, int32_t source_powerups,
+    bool *suppressed, qa_error *error)
+{
+    return held_actor(context, frame, actor, parent_assets, parent, source_powerups, suppressed, error);
 }
 static bool prepare_view(void *context, const qa_q3_refdef *definition,
     qa_q3_scene_options *options, qa_error *error)

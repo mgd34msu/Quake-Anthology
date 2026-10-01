@@ -155,14 +155,14 @@ static equipment_packet **token_slot(frontend_equipment_source *owner, const voi
 }
 
 static bool q3_held_output(frontend_equipment_source *owner, const qa_application_equipment_view *source,
-    const qa_q3_ref_entity *parent, int32_t powerups, bool personal_model,
+    const qa_q3_presentation_assets *parent_assets, const qa_q3_ref_entity *parent, int32_t powerups, bool personal_model,
     frontend_equipment_q3_output **out, bool *submitted, qa_error *error)
 {
     frontend_equipment_q3_presenter *presenter = NULL;
     if (!frontend_equipment_q3_prepare(owner->options.frontend, source, false, NULL,
             owner, current_preparation, &presenter, error)) return false;
     qa_ui_preferences preferences;
-    q3n_selected_weapon_held held = {.parent_assets = owner->options.assets, .torso = parent,
+    q3n_selected_weapon_held held = {.parent_assets = parent_assets, .torso = parent,
         .lighting_origin = parent->lighting_origin, .powerups = powerups, .personal_model = personal_model};
     return qa_ui_preferences_read(qa_application_cvars(owner->options.frontend->application),
         owner->options.physical_seat, &preferences, error) &&
@@ -170,11 +170,11 @@ static bool q3_held_output(frontend_equipment_source *owner, const qa_applicatio
             owner, current_preparation, out, submitted, error);
 }
 
-static bool held_begin(void *context, qa_actor_id actor, const qa_q3_ref_entity *parent,
+bool frontend_equipment_source_held_begin_from(frontend_equipment_source *owner,
+    qa_actor_id actor, const qa_q3_presentation_assets *parent_assets, const qa_q3_ref_entity *parent,
     void **token, bool *selected, qa_error *error)
 {
-    frontend_equipment_source *owner = context;
-    if (!owner || !parent || !token || *token || !selected || !owner->drawing || !current_owner(owner))
+    if (!owner || !parent_assets || !parent || !token || *token || !selected || !owner->drawing || !current_owner(owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Held equipment requires its actual active draw lease");
     *selected = false;
     qa_application_equipment_view source;
@@ -187,11 +187,11 @@ static bool held_begin(void *context, qa_actor_id actor, const qa_q3_ref_entity 
         frontend_equipment_media *media = NULL; bool authored = false;
         okay = frontend_equipment_media_prepare_q3_held(owner->options.frontend,
             &source, &media, &authored, error);
-        if (okay && authored) okay = frontend_equipment_held_output_create(owner->options.frontend,
-            &source, media, owner->options.assets, parent, &packet->output, error);
+        if (okay && authored) okay = frontend_equipment_held_output_create_from(owner->options.frontend,
+            &source, media, parent_assets, owner->options.assets, parent, &packet->output, error);
         else if (okay) {
             bool submitted = false;
-            okay = q3_held_output(owner, &source, parent, 0, false, &packet->q3_output, &submitted, error);
+            okay = q3_held_output(owner, &source, parent_assets, parent, 0, false, &packet->q3_output, &submitted, error);
             if (okay && !submitted)
                 okay = frontend_fail(error, QA_ERROR_FORMAT, "Selected Q3 weapon has no actual source held output");
             if (okay) okay = frontend_equipment_q3_output_source_style(packet->q3_output,
@@ -200,8 +200,8 @@ static bool held_begin(void *context, qa_actor_id actor, const qa_q3_ref_entity 
     } else {
         frontend_equipment_media *media = NULL;
         okay = frontend_equipment_media_prepare(owner->options.frontend, &source, &media, error) &&
-            current_owner(owner) && frontend_equipment_held_output_create(owner->options.frontend,
-                &source, media, owner->options.assets, parent, &packet->output, error);
+            current_owner(owner) && frontend_equipment_held_output_create_from(owner->options.frontend,
+                &source, media, parent_assets, owner->options.assets, parent, &packet->output, error);
     }
     if (!okay) {
         frontend_equipment_held_output_destroy(packet->output);
@@ -210,6 +210,14 @@ static bool held_begin(void *context, qa_actor_id actor, const qa_q3_ref_entity 
     packet->next = owner->active; owner->active = packet;
     *token = packet; *selected = true;
     return true;
+}
+
+static bool held_begin(void *context, qa_actor_id actor, const qa_q3_ref_entity *parent,
+    void **token, bool *selected, qa_error *error)
+{
+    frontend_equipment_source *owner = context;
+    return frontend_equipment_source_held_begin_from(owner, actor,
+        owner ? owner->options.assets : NULL, parent, token, selected, error);
 }
 
 static bool held_pass(void *context, void *token, const qa_q3_ref_entity *pass, qa_error *error)
@@ -257,9 +265,19 @@ bool frontend_equipment_source_native_held(frontend_equipment_source *owner,
     qa_actor_id actor, const qa_q3_ref_entity *parent, int32_t powerups,
     bool personal_model, bool *authored, bool *submitted, qa_error *error)
 {
+    return frontend_equipment_source_native_held_from(owner, actor,
+        owner ? owner->options.assets : NULL, parent, powerups, personal_model,
+        authored, submitted, error);
+}
+
+bool frontend_equipment_source_native_held_from(frontend_equipment_source *owner,
+    qa_actor_id actor, const qa_q3_presentation_assets *parent_assets,
+    const qa_q3_ref_entity *parent, int32_t powerups,
+    bool personal_model, bool *authored, bool *submitted, qa_error *error)
+{
     if (authored) *authored = false;
     if (submitted) *submitted = false;
-    if (!owner || !authored || !submitted || !parent || !owner->drawing || !current_owner(owner))
+    if (!owner || !authored || !submitted || !parent_assets || !parent || !owner->drawing || !current_owner(owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Native held equipment requires its actual active receiver");
     qa_application_equipment_view source;
     if (!qa_application_equipment_read(owner->options.frontend->application, actor, &source, error)) return false;
@@ -270,7 +288,7 @@ bool frontend_equipment_source_native_held(frontend_equipment_source *owner,
     if (*authored) return true;
     equipment_packet *packet = calloc(1, sizeof(*packet));
     if (!packet) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining native selected held output");
-    bool okay = q3_held_output(owner, &source, parent, powerups, personal_model,
+    bool okay = q3_held_output(owner, &source, parent_assets, parent, powerups, personal_model,
         &packet->q3_output, submitted, error);
     if (!okay || !*submitted) {
         frontend_equipment_q3_output_destroy(packet->q3_output); free(packet); return okay;

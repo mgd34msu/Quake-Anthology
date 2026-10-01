@@ -1,4 +1,5 @@
 #include "qa/ui_preferences.h"
+#include "qa/ui_language.h"
 #include "qa/text.h"
 #include <math.h>
 #include <stdio.h>
@@ -32,6 +33,7 @@ bool qa_ui_preference_name(uint32_t seat, qa_ui_preference preference, char out[
     const qa_ui_preference_description *description = qa_ui_preference_describe(preference);
     if (seat >= QA_INPUT_LOCAL_SEATS || !description || !out)
         return fail(error, "UI preference requires a physical seat and known key");
+    if (preference == QA_UI_PREF_LANGUAGE) return qa_ui_language_name(seat, out, error);
     snprintf(out, 64, "ui_seat%u_%s", seat + 1, description->key); return true;
 }
 static bool validate(void *context, const char *value, qa_error *error)

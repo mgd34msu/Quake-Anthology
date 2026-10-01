@@ -43,6 +43,12 @@ bool frontend_equipment_source_weapon(const frontend_equipment_source *,
 bool frontend_equipment_source_native_held(frontend_equipment_source *,
     qa_actor_id, const qa_q3_ref_entity *, int32_t powerups, bool personal_model,
     bool *authored, bool *submitted, qa_error *);
+bool frontend_equipment_source_native_held_from(frontend_equipment_source *,
+    qa_actor_id, const qa_q3_presentation_assets *parent_assets, const qa_q3_ref_entity *,
+    int32_t powerups, bool personal_model, bool *authored, bool *submitted, qa_error *);
+bool frontend_equipment_source_held_begin_from(frontend_equipment_source *,
+    qa_actor_id, const qa_q3_presentation_assets *parent_assets, const qa_q3_ref_entity *,
+    void **token, bool *selected, qa_error *);
 /* Own selected view output is prepared before the primary kernel. An actual
  * selected hidden request is consumed without constructing a source parent. */
 bool frontend_equipment_source_native_view(frontend_equipment_source *, bool *consumed, qa_error *);
