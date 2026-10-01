@@ -1,4 +1,5 @@
 #include "guest_qc_rerelease.h"
+#include "guest_qc_bot_orders.h"
 #include "map_players_private.h"
 #include "qa/network_q1_qw.h"
 #include "qa/source_save.h"
@@ -399,6 +400,8 @@ bool application_qc_rerelease_import(struct application_qc_state *engine,qa_qc_i
     case QA_QC_BUILTIN_EX_LOCALSOUND: return local_sound(engine,vm,error);
     case QA_QC_BUILTIN_EX_FINALE_FINISHED: return finale(engine,vm,error);
     case QA_QC_BUILTIN_EX_CHECK_PLAYER_FLAGS: return check_player_flags(engine,vm,error);
+    case QA_QC_BUILTIN_EX_BOT_MOVETOPOINT: return application_qc_bot_order(engine,vm,false,error);
+    case QA_QC_BUILTIN_EX_BOT_FOLLOWENTITY: return application_qc_bot_order(engine,vm,true,error);
     case QA_QC_BUILTIN_EX_PROMPT: case QA_QC_BUILTIN_EX_PROMPTCHOICE: case QA_QC_BUILTIN_EX_CLEARPROMPT:
         return prompt_import(engine,vm,builtin,error);
     default: return application_fail(error,QA_ERROR_UNSUPPORTED,"Rerelease import has no installed concrete capability");

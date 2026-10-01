@@ -1,6 +1,8 @@
 #include "guest_qc_profile.h"
 #include "guest_qc_original_save.h"
 #include "guest_qc_rerelease.h"
+#include "guest_qc_factory.h"
+#include "startup_flow.h"
 #include "control_frame.h"
 #include <float.h>
 #include <stdio.h>
@@ -160,12 +162,48 @@ static qa_command_result server_command(void *opaque, const qa_command_invocatio
 static bool read_script(void *opaque, const qa_command_context *context, const char *path,
                          qa_bytes *out, void **lease, qa_error *error)
 {
-    struct application_qc_state *engine = opaque; (void)context;
+    struct application_qc_state *engine = opaque;
+    if (application_startup_source_active(engine->provider))
+        return application_startup_script_read(engine->provider, context, path, out, lease, error);
+    if (application_startup_source_scripts(engine->provider))
+        return application_startup_source_script_read(engine->provider, engine->console,
+            context, path, out, lease, error);
     qa_resource *resource;
     if (!qa_vfs_acquire(engine->provider->launch->content, path, &resource, NULL, error)) return false;
     *out = qa_resource_bytes(resource); *lease = resource; return true;
 }
-static void release_script(void *opaque, void *lease) { (void)opaque; qa_resource_release(lease); }
+static void release_script(void *opaque, void *lease)
+{
+    struct application_qc_state *engine = opaque;
+    if (application_startup_source_active(engine->provider))
+        application_startup_script_release(engine->provider, lease);
+    else if (application_startup_source_scripts(engine->provider))
+        application_startup_source_script_release(engine->provider, engine->console, lease);
+    else qa_resource_release(lease);
+}
+static void script_complete(void *opaque, const qa_command_context *context,
+    const char *path, bool success)
+{
+    struct application_qc_state *engine = opaque;
+    application_startup_script_complete(engine->provider, context, path, success);
+}
+static bool allow_command(void *opaque, const qa_command_invocation *command)
+{
+    struct application_qc_state *engine = opaque;
+    return application_startup_command_allowed(engine->provider, command);
+}
+static qa_cvars *cvar_owner(void *opaque, const qa_command_context *context, const char *name)
+{
+    struct application_qc_state *engine = opaque;
+    qa_cvars *routed = application_startup_cvar_owner(engine->provider, engine->console, context, name);
+    return routed ? routed : engine->cvars;
+}
+static qa_cvars *visible_cvars(void *opaque, const qa_command_context *context, size_t index)
+{
+    struct application_qc_state *engine = opaque; qa_cvars *routed = NULL;
+    if (application_startup_visible_cvars(engine->provider, engine->console, context, index, &routed)) return routed;
+    return index == 0 ? engine->cvars : NULL;
+}
 static bool capture_context(void *opaque, const qa_command_context *source,
                               qa_command_context *out, qa_error *error)
 {
@@ -186,7 +224,9 @@ qa_console *application_qc_create_console(struct application_qc_state *engine, q
 {
     qa_console_options options = {.context = engine->command_context, .cvars = cvars,
         .user = engine, .print = console_print, .source_command = server_command, .read_script = read_script,
-        .release_script = release_script, .capture_context = capture_context, .context_active = context_active};
+        .release_script = release_script, .script_complete = script_complete, .allow_command = allow_command,
+        .cvar_owner = cvar_owner, .visible_cvars = visible_cvars,
+        .capture_context = capture_context, .context_active = context_active};
     return qa_console_create(&options, error);
 }
 static bool source_callback(struct application_qc_state *engine, qa_actor_id actor,
@@ -1057,76 +1097,19 @@ static double source_time_seconds(void *opaque)
 bool application_construct_qc(qa_application *app, application_provider *provider, qa_world *world,
                                const qa_product *product, const qa_launch_choices *choices, qa_error *error)
 {
-    if (app == NULL || provider == NULL || world == NULL || product == NULL || choices == NULL ||
-        provider->state.qc.engine != NULL || provider->state.qc.program == NULL || choices->seat_count >= UINT32_MAX)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Invalid QuakeC application construction");
-    struct application_qc_state *engine = calloc(1, sizeof(*engine));
-    if (engine == NULL) return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC application state");
-    provider->state.qc.engine = engine;
-    engine->provider = provider; engine->world = world; engine->loading = true; engine->check_cluster = -1;
-    engine->profile = product->edition == QA_EDITION_RERELEASE ? QA_QC_RERELEASE :
-        provider->launch->selection.clock.kind == QA_CLOCK_QUAKEWORLD ? QA_QC_QUAKEWORLD : QA_QC_NETQUAKE;
-    qa_qc_program_info program = qa_qc_program_describe(provider->state.qc.program);
-    if ((engine->profile == QA_QC_QUAKEWORLD) != (program.api == QA_QC_API_QUAKEWORLD))
-        return application_fail(error, QA_ERROR_FORMAT, "QC selected source profile differs from its loaded program ABI");
-    engine->protocol = (qa_net_protocol_id){engine->profile == QA_QC_QUAKEWORLD ? QA_NET_QW28 : QA_NET_NQ15, 0, 0};
-    const struct application_qc_profile *profile = provider->state.qc.qualified;
-    engine->max_clients = profile && profile->clients ? profile->maximum_clients :
-        !profile && program.api == QA_QC_API_QUAKEWORLD ? 32 :
-        choices->seat_count ? (uint32_t)choices->seat_count : 1;
-    size_t selected_clients = profile ? selected_client_count(choices, provider->launch->selection.instance) : choices->seat_count;
-    if (selected_clients > engine->max_clients)
-        return application_fail(error, QA_ERROR_FORMAT, "QC source client capacity is below the selected roster");
-    engine->clients = calloc((size_t)engine->max_clients + 1, sizeof(*engine->clients));
-    engine->actor_capacity = qa_actors_capacity(qa_session_actors(app->session));
-    engine->actors = calloc(engine->actor_capacity, sizeof(*engine->actors));
+    qa_console *console; qa_cvars *cvars; qa_command_context command;
+    if (!application_qc_console_prepare(app, provider, world, product, choices,
+        &console, &cvars, &command, error)) return false;
+    struct application_qc_state *engine = provider->state.qc.engine;
     engine->services = application_builtin_services(app, world, app->physics);
-    qa_builtin_random_seed(&engine->random, (uint32_t)(provider->owner * UINT32_C(2654435761)));
-    qa_console_dialect dialect = engine->profile == QA_QC_QUAKEWORLD ? QA_CONSOLE_QW : QA_CONSOLE_Q1;
-    qa_cvar_options cvars = {.dialect = dialect};
-    engine->cvars = qa_cvars_create(&cvars, error);
-    engine->command_context = (qa_command_context){.owner = provider->owner, .dialect = dialect, .origin = QA_COMMAND_SERVER};
-    if (engine->clients == NULL || engine->actors == NULL || engine->cvars == NULL ||
-        (engine->console = application_qc_create_console(engine, engine->cvars, error)) == NULL) return false;
-    char maximum[16]; snprintf(maximum, sizeof(maximum), "%u", engine->max_clients);
-    static const char *names[] = {"skill", "deathmatch", "coop", "teamplay", "sv_gravity", "sv_aim", "sv_maxspeed",
-        "maxclients", "registered", "developer", "sv_cheats", "samelevel", "timelimit", "fraglimit", "gamecfg"};
-    const char *values[] = {"1", "0", "0", "0", "800", engine->profile == QA_QC_QUAKEWORLD ? "2" : "0.93", "320",
-        maximum, "1", "0", "0", "0", "0", "0", "0"};
-    for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
-        if (!qa_cvars_register(engine->cvars, names[i], values[i], 0, provider->owner, NULL, error)) return false;
-    if (engine->profile == QA_QC_QUAKEWORLD) {
-        static const char *qw_names[] = {"sv_phs", "sv_stopspeed", "sv_spectatormaxspeed", "sv_accelerate",
-            "sv_airaccelerate", "sv_wateraccelerate", "sv_friction", "sv_waterfriction"};
-        static const char *qw_values[] = {"1", "100", "500", "10", "0.7", "10", "4", "4"};
-        size_t qw_count = profile ? 1 : sizeof(qw_names) / sizeof(*qw_names);
-        for (size_t i = 0; i < qw_count; ++i)
-            if (!qa_cvars_register(engine->cvars, qw_names[i], qw_values[i], 0, provider->owner, NULL, error)) return false;
-        static const char *const policy_names[] = {
-            "password", "spectator_password", "sv_highchars", "maxspectators"
-        };
-        static const char *const policy_values[] = {"", "", "1", "8"};
-        for (size_t i = 0; i < sizeof(policy_names) / sizeof(*policy_names); ++i)
-            if (!qa_cvars_register(engine->cvars, policy_names[i], policy_values[i],
-                    i == 3 ? QA_CVAR_SERVERINFO : 0, provider->owner, NULL, error)) return false;
-    }
-    if (!qa_cvars_set_number(engine->cvars, "skill", (float)choices->world.skill, error)) return false;
-    bool deathmatch = false;
-    if (choices->mode_count) {
-        size_t selected = 0;
-        for (size_t i = 0; i < choices->mode_count; ++i) if (choices->modes[i].primary_score) { selected = i; break; }
-        const qa_mode_rules *rules = &choices->modes[selected].rules;
-        deathmatch = rules->kind != QA_MODE_SINGLE_PLAYER && rules->kind != QA_MODE_COOPERATIVE;
-        if (!qa_cvars_set_number(engine->cvars, "deathmatch", deathmatch ? 1 : 0, error) ||
-            !qa_cvars_set_number(engine->cvars, "coop", rules->kind == QA_MODE_COOPERATIVE ? 1 : 0, error) ||
-            !qa_cvars_set_number(engine->cvars, "teamplay", (float)rules->teamplay, error)) return false;
-    }
-    for (size_t i = 0; profile && i < profile->cvar_count; ++i) {
-        const application_qc_cvar *entry = &profile->cvars[i];
-        if (qa_cvars_find(engine->cvars, entry->name)) {
-            if (!qa_cvars_set(engine->cvars, entry->name, entry->value, true, error)) return false;
-        } else if (!qa_cvars_register(engine->cvars, entry->name, entry->value, 0, provider->owner, NULL, error)) return false;
-    }
+    const struct application_qc_profile *profile = provider->state.qc.qualified;
+    if (!application_startup_source_preinit(provider, console, cvars, &command, error)) return false;
+    const qa_cvar_view *skill = qa_cvars_find(cvars, "skill"), *deathmatch = qa_cvars_find(cvars, "deathmatch");
+    const qa_cvar_view *maximum = qa_cvars_find(cvars, "maxclients");
+    if (!skill || !deathmatch || !maximum || !isfinite(skill->number) || !isfinite(deathmatch->number) ||
+        !isfinite(maximum->number) || maximum->number != (float)engine->max_clients)
+        return application_fail(error, QA_ERROR_FORMAT, "QC initialization lost its actual finite source rules");
+    float difficulty = fmaxf(0, fminf(3, floorf(skill->number)));
     static const qa_qc_builtin imports[] = {
         QA_QC_BUILTIN_CHECKCLIENT, QA_QC_BUILTIN_AIM, QA_QC_BUILTIN_STUFFCMD,
         QA_QC_BUILTIN_COREDUMP, QA_QC_BUILTIN_EPRINT, QA_QC_BUILTIN_LIGHTSTYLE,
@@ -1143,7 +1126,8 @@ bool application_construct_qc(qa_application *app, application_provider *provide
         QA_QC_BUILTIN_EX_DRAW_RAY, QA_QC_BUILTIN_EX_DRAW_CIRCLE, QA_QC_BUILTIN_EX_DRAW_BOUNDS,
         QA_QC_BUILTIN_EX_DRAW_WORLDTEXT, QA_QC_BUILTIN_EX_DRAW_SPHERE, QA_QC_BUILTIN_EX_DRAW_CYLINDER,
         QA_QC_BUILTIN_EX_PROMPT, QA_QC_BUILTIN_EX_PROMPTCHOICE, QA_QC_BUILTIN_EX_CLEARPROMPT,
-        QA_QC_BUILTIN_EX_CHECK_PLAYER_FLAGS
+        QA_QC_BUILTIN_EX_CHECK_PLAYER_FLAGS, QA_QC_BUILTIN_EX_BOT_MOVETOPOINT,
+        QA_QC_BUILTIN_EX_BOT_FOLLOWENTITY
     };
     size_t import_count=sizeof(imports)/sizeof(imports[0]);
     qa_qc_builtin_binding bindings[sizeof(imports)/sizeof(imports[0])+
@@ -1165,7 +1149,7 @@ bool application_construct_qc(qa_application *app, application_provider *provide
                      .builtins = bindings, .builtin_count = import_count}},
         .services = engine->services, .cvars = engine->cvars, .console = engine->console,
         .command_context = engine->command_context, .max_clients = engine->max_clients,
-        .map_exclusion_flags = deathmatch ? 2048u : choices->world.skill <= 0 ? 256u : choices->world.skill == 1 ? 512u : 1024u,
+        .map_exclusion_flags = deathmatch->number != 0 ? 2048u : difficulty <= 0 ? 256u : difficulty == 1 ? 512u : 1024u,
         .context = engine, .resource = application_qc_resource_lookup,
         .checkpoint = application_qc_capture_engine, .restore = application_qc_restore_engine};
     if (!qa_qc_game_create(provider->state.qc.program, &options, &provider->state.qc.game, error)) return false;
@@ -1291,6 +1275,8 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
     if (engine == NULL) return true;
     if (application_qc_has_source_admission(engine) || engine->input_scope || engine->parked_inputs ||
         engine->client_think_time || !qa_world_idle(engine->world) ||
+        (engine->console && !qa_console_idle(engine->console)) ||
+        (engine->cvars && !qa_cvars_observer_idle(engine->cvars)) ||
         (provider->state.qc.game && !qa_qc_game_idle(provider->state.qc.game)))
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC collision contexts are borrowed by the world");
     for (uint32_t i = 0; engine->actors && i < engine->actor_capacity; ++i) {
@@ -1302,6 +1288,8 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
     if (!qa_qc_game_destroy(provider->state.qc.game, error)) return false;
     provider->state.qc.game = NULL; provider->state.qc.instance = NULL;
     engine->output_channels = 0;
+    if (engine->console && engine->cvars &&
+        !application_startup_source_retire(provider, engine->console, engine->cvars, error)) return false;
     qa_console_destroy(engine->console); qa_cvars_destroy(engine->cvars);
     for (size_t i = 0; i < engine->resource_count; ++i) {
         qa_vfs_acquisition_dispose(&engine->resources[i].acquisition);

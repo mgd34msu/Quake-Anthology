@@ -2,6 +2,7 @@
 #include "qa/vfs_view_save.h"
 #include "guest_qc_rerelease.h"
 #include "control_frame.h"
+#include "startup_flow.h"
 
 #define QC_ENGINE_LIMIT (64u * 1024u * 1024u)
 #define QC_ENGINE_VERSION 11u
@@ -553,6 +554,9 @@ bool application_qc_restore_engine(void *opaque, qa_bytes bytes, qa_error *error
         engine->loading = loading != 0;
         engine->initialized = candidate.initialized;
         engine->output_channels = candidate.output_channels;
+        if (engine->provider->application->operation == APPLICATION_PERSISTING)
+            ok = application_startup_source_restore(engine->provider, engine->console, engine->cvars,
+                &engine->command_context, error);
     }
     dispose_candidate(&candidate);
     if (!ok && error && error->code == QA_OK) application_fail(error, QA_ERROR_FORMAT, "Invalid QuakeC engine checkpoint");

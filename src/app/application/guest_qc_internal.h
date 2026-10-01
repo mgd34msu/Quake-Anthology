@@ -68,7 +68,7 @@ struct application_qc_state {
     qa_source_frame frame;
     bool has_frame;
     bool loading, projecting;
-    bool initialized;
+    bool initialized, console_prepared;
     uint8_t output_channels;
     struct application_qc_input_scope *input_scope;
     struct application_qc_parked_input *parked_inputs;
