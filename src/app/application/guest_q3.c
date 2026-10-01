@@ -28,9 +28,12 @@ bool q3g_call(q3g_role *role, int32_t command, const int32_t *arguments, size_t 
     q3g_fire_scope fire = {0};
     if (!q3g_fire_begin(role, &fire, error)) return false;
     bool drawing = role->equipment && role->kind == QA_QVM_CGAME && command == 3;
+    q3g_role *previous = role->engine->entered_role;
+    role->engine->entered_role = role;
     ++role->engine->calls;
     if (drawing && !application_q3_equipment_draw_begin(role->equipment, error)) {
         --role->engine->calls;
+        role->engine->entered_role = previous;
         qa_error fire_error = {0};
         q3g_fire_end(&fire, &fire_error);
         return false;
@@ -53,6 +56,7 @@ bool q3g_call(q3g_role *role, int32_t command, const int32_t *arguments, size_t 
     }
     if (drawing) application_q3_equipment_draw_end(role->equipment);
     --role->engine->calls;
+    role->engine->entered_role = previous;
     qa_error fire_error = {0};
     if (!q3g_fire_end(&fire, &fire_error)) {
         if (ok && error) *error = fire_error;
@@ -547,7 +551,7 @@ bool application_q3_guest_idle(const application_provider *provider)
         provider->kind == APPLICATION_PROVIDER_QVM ? provider->state.qvm.engine :
         provider->kind == APPLICATION_PROVIDER_NATIVE ? provider->state.native.engine : NULL;
     if (!engine) return true;
-    if (engine->calls || !application_guest_q3_console_idle(engine)) return false;
+    if (engine->calls || engine->entered_role || !application_guest_q3_console_idle(engine)) return false;
     for (const q3g_role *role = engine->roles; role; role = role->next) {
         if (role->equipment && !application_q3_equipment_idle(role->equipment)) return false;
         if (role->vm && !qa_qvm_can_destroy(role->vm)) return false;

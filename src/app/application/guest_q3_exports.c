@@ -449,9 +449,12 @@ bool application_q3_guest_role_initialize(application_provider *provider, qa_qvm
     int32_t result;
     if (kind == QA_QVM_UI) {
         if (role->vm) {
+            q3g_role *previous = role->engine->entered_role;
+            role->engine->entered_role = role;
             ++role->engine->calls;
             bool ok = qa_qvm_validate_ui(role->vm, &result, error);
             --role->engine->calls;
+            role->engine->entered_role = previous;
             if (!ok) return false;
         } else if (!q3g_call(role, 0, NULL, 0, &result, error)) return false;
         if (result != 4 && !(role->abi == QA_QVM_Q3_MODERN && result == 6))

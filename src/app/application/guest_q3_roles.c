@@ -53,9 +53,12 @@ bool q3g_role_consume(q3g_role *role, qa_error *error)
     bool ok = true;
     /* OS loader destructors can still use imports and the shared bridge. */
     if (role->native) {
+        q3g_role *previous = role->engine->entered_role;
+        role->engine->entered_role = role;
         ++role->engine->calls;
         ok = qa_native_host_destroy_owned(&role->native, &first);
         --role->engine->calls;
+        role->engine->entered_role = previous;
         if (role->native) { if (error) *error = first; return false; }
         qa_q3_host_native_consumed(role->host);
         if (role == role->engine->game) q3g_game_aliases(role->engine, role);
@@ -451,6 +454,8 @@ bool q3g_role_activate(q3g_role *role, qa_error *error)
     if (!role->module)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 native role has no staged module");
     qa_error failure = {0};
+    q3g_role *previous = engine->entered_role;
+    engine->entered_role = role;
     ++engine->calls;
     bool ok = qa_native_host_create_q3(role->module, &role->native_options, &role->native, &failure);
     if (ok) ok = qa_q3_host_attach_native(role->host, role->native, &failure);
@@ -458,6 +463,7 @@ bool q3g_role_activate(q3g_role *role, qa_error *error)
         ok = application_guest_input_attach(role,
             qa_native_declaration_primary(role->artifact->declaration), &failure);
     --engine->calls;
+    engine->entered_role = previous;
     if (!ok) {
         if (failure.code == QA_OK)
             qa_error_set(&failure, QA_ERROR_ARGUMENT, 0, "Q3 native activation failed");
@@ -487,6 +493,8 @@ bool q3g_role_shutdown_source(q3g_role *role, bool restart, qa_error *error)
     bool prior_entry = role->engine->round.source_entry;
     role->engine->round.source_entry = true;
     bool ok, started = false;
+    q3g_role *previous = role->engine->entered_role;
+    role->engine->entered_role = role;
     ++role->engine->calls;
     if (role->native) {
         ok = qa_native_host_shutdown(role->native, role->kind == QA_QVM_GAME && restart, error);
@@ -498,6 +506,7 @@ bool q3g_role_shutdown_source(q3g_role *role, bool restart, qa_error *error)
             role->kind == QA_QVM_GAME ? 2 : 1, &result, &started, error);
     }
     --role->engine->calls;
+    role->engine->entered_role = previous;
     role->engine->round.source_entry = prior_entry;
     role->shutdown_entry = false;
     role->initialized = !started;

@@ -159,6 +159,69 @@ bool qa_application_q3_preconstruction_source_read(qa_application *app,
     return true;
 }
 
+bool qa_application_q3_client_configuration_retiring(const qa_application *app,
+    const qa_application_startup_source *source)
+{
+    application_provider *provider = app ? app->startup_retiring_provider : NULL;
+    return provider && provider->application == app && source &&
+        source->scope.provider == provider->owner &&
+        application_guest_q3_client_console_retirement(provider, source);
+}
+
+bool qa_application_q3_client_configuration_entered(const qa_application *app,
+    const qa_application_startup_source *source)
+{
+    if (!app || !source || !source->scope.provider || !app->session) return false;
+    bool found = false;
+    for (application_provider *provider = app->live_providers; provider; provider = provider->next_live) {
+        if (provider->owner != source->scope.provider || provider->application != app) continue;
+        struct application_q3_guest *engine = q3g_engine(provider);
+        q3g_role *role = engine ? engine->entered_role : NULL;
+        qa_q3_host_client_context host;
+        if (!role || role->engine != engine || !engine->calls || engine->restore_pending ||
+            role->kind == QA_QVM_GAME || role->seat != source->scope.seat || !role->host ||
+            !application_guest_q3_client_console_entered(engine, source) ||
+            !qa_q3_host_client_context_read(role->host, &host) || host.session != app->session ||
+            host.owner != provider->owner || host.role != role->kind || host.service_owner != role->service_owner ||
+            host.console != source->console || host.cvars != source->cvars ||
+            host.command_context.owner != source->scope.provider || host.command_context.seat != source->scope.seat ||
+            host.command_context.dialect != QA_CONSOLE_Q3) continue;
+        if (found) return false;
+        found = true;
+    }
+    return found;
+}
+
+bool qa_application_q3_configuration_host_entered(const qa_application *app,
+    const qa_application_startup_source *source, const qa_q3_host *host)
+{
+    if (!app || !source || !source->descriptor || !host || !app->session) return false;
+    for (application_provider *provider = app->live_providers; provider; provider = provider->next_live) {
+        struct application_q3_guest *engine = q3g_engine(provider);
+        q3g_role *role = engine ? engine->entered_role : NULL;
+        if (!role || role->engine != engine || role->host != host || !engine->calls || engine->restore_pending ||
+            provider->application != app || provider->owner != source->scope.provider) continue;
+        if (role->kind != QA_QVM_GAME)
+            return qa_application_q3_client_configuration_entered(app, source);
+        qa_cvars *cvars = NULL;
+        qa_command_context command;
+        qa_console *console = qa_q3_host_console(host, &cvars, &command);
+        return role == engine->game && source->scope.kind == QA_APPLICATION_CONSOLE_Q3_GAME && !source->scope.seat &&
+            same_descriptor(source->descriptor, provider->launch) && same_descriptor(role->descriptor, provider->launch) &&
+            source->console == console && source->cvars == cvars && console && cvars &&
+            console == application_guest_q3_console_owner(provider) &&
+            cvars == application_guest_q3_console_registry(provider) && qa_console_cvars(console) == cvars &&
+            source->declaration_owner == role->service_owner &&
+            source->command.owner == command.owner && source->command.seat == command.seat &&
+            source->command.dialect == command.dialect && source->command.origin == command.origin &&
+            source->command.session == command.session && source->command.client == command.client &&
+            source->command.registry == command.registry && source->command.generation == command.generation &&
+            source->command.direct == command.direct && source->command.console_text == command.console_text &&
+            source->command.script == command.script && qa_actor_id_equal(source->command.actor, command.actor);
+    }
+    return false;
+}
+
 bool qa_application_q3_equipment_requests(qa_application *app, qa_actor_owner receiver,
     uint32_t seat, bool *hud, bool *view, qa_error *error)
 {

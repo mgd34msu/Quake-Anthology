@@ -186,6 +186,7 @@ typedef struct application_publication {
     bool physics_initialized;
     bool entities_parsed;
     bool published;
+    struct application_startup_program_roster *programs;
 } application_publication;
 
 struct qa_application {
@@ -193,6 +194,8 @@ struct qa_application {
     struct application_startup_flow *startup_flow;
     application_publication *startup_publication;
     application_provider *startup_preinit_provider;
+    application_provider *startup_retiring_provider;
+    struct application_startup_program *startup_program_owners;
     struct qa_application_engine_shutdown *engine_shutdown;
     application_provider *engine_shutdown_provider;
     const struct qa_application_startup_hooks *startup_hooks;
@@ -472,6 +475,9 @@ bool application_q3_guest_console_command(application_provider *, const char *,
 bool application_q3_guest_role_command(application_provider *, qa_qvm_role,
                                        uint32_t, int32_t, const char *, bool *, qa_error *);
 bool application_guests_idle(const qa_application *);
+struct qa_application_language_ticket;
+bool application_guests_languages_idle(const qa_application *,
+    const struct qa_application_language_ticket *const *, size_t);
 bool application_q3_guest_services(qa_application *, application_provider *, qa_qvm_role,
                                     uint32_t, uint64_t service_owner, qa_q3_host_options *, qa_error *);
 bool application_q3_guest_native_options(qa_application *, application_provider *,

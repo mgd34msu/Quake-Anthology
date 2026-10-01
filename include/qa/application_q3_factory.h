@@ -75,6 +75,17 @@ bool qa_application_q3_client_configuration_take_cvars(qa_application *,
     const qa_application_startup_source *, qa_cvars **, qa_error *);
 bool qa_application_q3_client_configuration_bind_cvars(qa_application *,
     const qa_application_startup_source *, qa_cvars *, qa_error *);
+/* Exact held child identity, only inside checked hosted CLIENT retirement. */
+bool qa_application_q3_client_configuration_retiring(const qa_application *,
+    const qa_application_startup_source *);
+/* Original CGAME/UI host callbacks retain this physical namespace only while
+ * their real source entry, Shutdown or native destructor is entered. */
+bool qa_application_q3_client_configuration_entered(const qa_application *,
+    const qa_application_startup_source *);
+/* Named cvar callbacks qualify their exact retained host pointer as well as
+ * the original GAME or CLIENT physical configuration. */
+bool qa_application_q3_configuration_host_entered(const qa_application *,
+    const qa_application_startup_source *, const qa_q3_host *);
 /* Consume source Shutdown once at the idle decoder boundary. Actual hosts,
  * registry and metadata remain retained, ready for content replacement. */
 bool qa_application_q3_remote_clear(qa_application *,

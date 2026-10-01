@@ -25,7 +25,8 @@
 
 #include <stdlib.h>
 
-bool application_guests_idle(const qa_application *application)
+static bool guests_idle(const qa_application *application,
+    const qa_application_language_ticket *const *languages, size_t language_count)
 {
     if (application == NULL)
         return false;
@@ -36,7 +37,8 @@ bool application_guests_idle(const qa_application *application)
     for (const application_provider *provider = application->live_providers;
          provider != NULL; provider = provider->next_live) {
         if (!application_native_q1_console_idle(provider) ||
-            !application_native_q1_wire_idle(provider) ||
+            !(language_count ? application_native_q1_wire_language_idle(provider, languages, language_count)
+                             : application_native_q1_wire_idle(provider)) ||
             !application_native_q2_console_idle(provider) ||
             !application_native_q3_console_idle(provider) ||
             !application_native_q3_remote_roles_idle(provider) ||
@@ -71,6 +73,13 @@ bool application_guests_idle(const qa_application *application)
     }
     return true;
 }
+
+bool application_guests_idle(const qa_application *application)
+{ return guests_idle(application, NULL, 0); }
+
+bool application_guests_languages_idle(const qa_application *application,
+    const qa_application_language_ticket *const *languages, size_t count)
+{ return (!count || languages) && guests_idle(application, languages, count); }
 
 static void remember(bool result, const qa_error *current, const char *fallback,
                      bool *ok, qa_error *first)
@@ -211,7 +220,7 @@ bool application_finalize(qa_application *application, qa_error *error)
     if (application == NULL)
         return true;
     if (!application->destroy_requested || application->finalizing ||
-        application->startup_flow || application->engine_shutdown ||
+        application->startup_flow || application->startup_program_owners || application->engine_shutdown ||
         application->failed_publications ||
         application->q3_round_active || application->frame_preparing ||
         application->configuration != NULL || application->provider_states != 0 ||

@@ -5,6 +5,7 @@
 #include "qa/application_players.h"
 #include "q3_world_restart.h"
 #include "bots_private.h"
+#include "guest_q3_client_console.h"
 
 bool q3g_round_fail(struct application_q3_guest *engine, const qa_error *failure,
     qa_error *error)
@@ -173,8 +174,9 @@ bool application_q3_guest_client_sources_retire(application_provider *provider,
         (old_game && old_game->application != application) ||
         (next_game && (next_game->application != application || !choices)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client source retirement requires its actual world cut");
+    if (!application_guest_q3_client_consoles_retarget(engine, old_game, next_game, choices, error)) return false;
     for (q3g_role *role = engine->roles; role; role = role->next) {
-        if (role->kind != QA_QVM_UI || !role->local_client) continue;
+        if (role->kind != QA_QVM_UI || !role->local_client || role->retired) continue;
         if (!role->client_source || (application->operation == APPLICATION_CONFIGURING &&
             old_game && role->client_source != old_game))
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 UI lease differs from the actual retiring GAME source");

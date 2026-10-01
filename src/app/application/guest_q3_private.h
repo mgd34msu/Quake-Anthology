@@ -110,6 +110,7 @@ struct application_q3_guest {
     q3g_role *roles, *game;
     q3g_role *constructing_role;
     q3g_role *initializing_role;
+    q3g_role *entered_role;
     qa_q3_host_options *constructing_services;
     qa_application_q3_equipment_services *constructing_equipment_services;
     qa_bytes restored_client_cvars;
