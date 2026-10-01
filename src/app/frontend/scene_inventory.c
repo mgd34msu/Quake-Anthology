@@ -81,6 +81,12 @@ static bool producers(frontend_scene_inventory *inventory,sources *rows,qa_error
 {
     qa_frontend *f=inventory->frontend;
     if (f->scene_world && !world_bind(inventory,f->scene_world,f->map_resource,f->mounts,error)) return false;
+    for (size_t i=0;i<frontend_source_group_count(f);++i) {
+        frontend_source_group_view group;
+        if (!frontend_source_group_read(f,i,&group) ||
+            (!group.map_resource!=!group.geometry) || (!group.map_resource!=!group.world) ||
+            (group.world && !world_bind(inventory,group.world,group.map_resource,group.mounts,error))) return false;
+    }
     for (size_t i=0;i<frontend_visual_owner_count(f);++i) {
         frontend_visual_owner_view owner;
         if (!frontend_visual_owner_read(f,i,&owner)) return false;

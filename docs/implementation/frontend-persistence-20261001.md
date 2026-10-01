@@ -183,20 +183,20 @@ audience and gain before capture or private import. Requested intro/loop text,
 decoder phase, listener state and actual key continuation remain owned by the
 real source lease.
 
-The source-group topology follow-on uses QFTP2 and retains physical seat ordinals
+The earlier source-group topology follow-on introduced QFTP2 and physical seat ordinals
 separately from actual launch seat IDs. Actual application callbacks keep their
 launch identity, while array, renderer and audio routing use the physical ordinal.
 The PRESENTATION envelope and owner schema advance together to version 3. This
 follow-on awaits complete source review with the frontend factory and QFSO3 owner.
 
-The current inventory follow-on advances PRESENTATION to version 6, AUDIO
+The current inventory follow-on advances PRESENTATION to version 7, AUDIO
 to version 3 and INPUT to version 3. It records actual native Q3 image, material,
 font, sound-bank and asset-registry owners in physical row order, with distinct
-native audio bus and scene destructor domains. QFQ3 version 4 tags original
+native audio bus and scene destructor domains. QFQ3 version 5 tags original
 source groups, native client rows and selected-equipment asset owners separately;
 it preserves both physical seat and launch seat IDs. Selected equipment borrows
 its real visual image/material owners and has no fabricated presentation or movie
-owner. Equipment's real held scene enters the capture lease and QFWR3 root inventory;
+owner. Equipment's real held scene enters the capture lease and QFWR4 root inventory;
 its full or subset parsed holder retains the parent's actual resource and VFS
 provenance. Mandatory equipment topology precedes provider construction, and
 decoded visual roots precede binding and held-root adoption. These new helpers
@@ -243,6 +243,26 @@ before the registry is freed. The eight-file factory/order unit and actual
 provider preparation and unconstructed cleanup callers were independently
 source accepted. Wider startup flow, portable restore manager staging and
 complete rerelease admission remain separate obligations.
+
+The private source-map follow-on uses QFTP3 to retain the actual constructor's
+`private_map` policy, including a remote role prepared before its first map.
+Present maps carry their exact content graph pool/resource identities and a
+QFCG1 capsule of real Q3 area-pair, no-areas and map identity state. Early service
+preparation claims the genuine VFS, retains the saved BSP resource, constructs
+collision geometry from those immutable bytes and imports portals before host
+construction. It performs no file acquisition or source execution.
+
+Capture includes each source-owned scene world and its real image/material
+heaps. QFWR4 gives that root a SOURCE destructor scope using physical group
+ordinal plus one and row one. Import preflights all source map/resource/heap
+and root ownership edges before any nofail adoption. QFQ3's backend world,
+collision and entity-span references then qualify that source's private owners;
+ordinary and native groups retain their actual global owners. The late
+SceneHost exchange binds every installed role to its imported backend world
+before core source finish compares host service inventories. The late exchange
+caller passed an independent source review; this combined private-map pipeline
+still awaits its own full source review. Selected CHARACTER and the complete
+native composition factory remain separate producer and integration work.
 
 Original import now owns an exact copy of header values, source pairs, edicts,
 lightstyles and extension bytes across the real startup phase. Begin constructs

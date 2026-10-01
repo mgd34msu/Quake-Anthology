@@ -13,6 +13,7 @@ struct frontend_restore_topology {
     uint64_t time_ns, frame_number, configuration, map_revision, next_source_id, next_audio_id;
     uint64_t silent_audio_remainder, ui_view, world_view;
     frontend_source_group_plan *groups;
+    qa_buffer *group_portals;
     size_t group_count;
 };
 static bool key(qa_source_save_io *io, qa_strings *strings, uint64_t *owner)
@@ -50,15 +51,29 @@ static bool flags(qa_source_save_io *io, struct frontend_restore_topology *p)
         (!p->dedicated || (!p->ui_view && !p->world_view && !p->ui_images && !p->fonts && !p->order &&
             !p->images && !p->materials && !p->sounds && !p->audio));
 }
+static bool portals_fields(qa_source_save_io *io,frontend_source_group_plan *group)
+{
+    size_t count=group->portals.size;
+    if (!qa_source_save_bool(io,&group->private_map) ||
+        !qa_source_save_u64(io,&group->map_pool) || !qa_source_save_u64(io,&group->map_resource) ||
+        !qa_source_save_count(io,&count,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX)) return false;
+    if (io->direction==QA_SOURCE_SAVE_READ) {
+        if (count>io->input.size-io->offset) return false;
+        group->portals=(qa_bytes){count?io->input.data+io->offset:NULL,count}; io->offset+=count;
+    } else if ((count && !group->portals.data) ||
+        !qa_source_save_bytes(io,(void *)group->portals.data,count)) return false;
+    return (!group->map_pool==!group->map_resource) && (!group->map_resource==!count) &&
+        (group->private_map || !group->map_resource);
+}
 static bool fields(qa_source_save_io *io, qa_application *app, struct frontend_restore_topology *p)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','F','T','P'}; uint32_t version = 1;
+    uint8_t magic[4] = {'Q','F','T','P'}; uint32_t version = 3;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFTP", 4) ||
-        !qa_source_save_u32(io, &version) || version != 1 || !flags(io, p)) return false;
+        !qa_source_save_u32(io, &version) || version != 3 || !flags(io, p)) return false;
     for (size_t i = 0; i < p->seats; ++i)
         if (!qa_source_save_bool(io, &p->mods[i]) || (p->dedicated && p->mods[i])) return false;
-    if (!qa_source_save_count(io, &p->group_count, reading ? io->input.size / 44 : SIZE_MAX / sizeof(*p->groups))) return false;
+    if (!qa_source_save_count(io, &p->group_count, reading ? io->input.size / 48 : SIZE_MAX / sizeof(*p->groups))) return false;
     if (reading) {
         p->groups = calloc(p->group_count ? p->group_count : 1, sizeof(*p->groups));
         if (!p->groups) return frontend_fail(io->error, QA_ERROR_MEMORY, "retaining frontend source topology");
@@ -67,11 +82,13 @@ static bool fields(qa_source_save_io *io, qa_application *app, struct frontend_r
     for (size_t i = 0; i < p->group_count; ++i) {
         frontend_source_group_plan *g = &p->groups[i]; uint64_t owner = g->owner;
         if (!key(io, strings, &owner) || owner > UINT32_MAX || !qa_source_save_u32(io, &g->seat) ||
-            g->seat >= p->seats || p->dedicated || !qa_source_save_u64(io, &g->identity) ||
+            g->seat >= p->seats || p->dedicated || !qa_source_save_u32(io, &g->launch_seat) ||
+            !qa_source_save_u64(io, &g->identity) ||
             g->identity <= QA_FRONTEND_COMMAND_OWNER || g->identity - QA_FRONTEND_COMMAND_OWNER > p->next_source_id ||
             !qa_source_save_u64(io, &g->mounts_view) || !qa_source_save_u64(io, &g->source_view) ||
             !g->mounts_view || !g->source_view || g->mounts_view == g->source_view ||
             g->mounts_view == p->ui_view || g->mounts_view == p->world_view || !p->order ||
+            !portals_fields(io,g) ||
             !qa_source_save_count(io, &g->role_count, reading ? io->input.size / 13 : SIZE_MAX / sizeof(*g->roles)) || !g->role_count) return false;
         g->owner = (qa_actor_owner)owner;
         if (reading) {
@@ -100,6 +117,8 @@ void frontend_topology_destroy(frontend_restore_topology *p)
 {
     if (!p) return;
     if (p->groups) for (size_t i = 0; i < p->group_count; ++i) free((void *)p->groups[i].roles);
+    if (p->group_portals) for (size_t i=0;i<p->group_count;++i) qa_buffer_free(p->group_portals+i);
+    free(p->group_portals);
     free(p->groups); free(p);
 }
 bool frontend_topology_checkpoint(const qa_frontend *f, qa_buffer *out, qa_error *error)
@@ -126,14 +145,24 @@ bool frontend_topology_checkpoint(const qa_frontend *f, qa_buffer *out, qa_error
         p->mods[i] = f->seats && f->seats[i].mods != NULL;
     }
     p->groups = calloc(p->group_count ? p->group_count : 1, sizeof(*p->groups));
-    if (!p->groups) ok = frontend_fail(error, QA_ERROR_MEMORY, "retaining source constructor groups");
+    p->group_portals=calloc(p->group_count?p->group_count:1,sizeof(*p->group_portals));
+    if (!p->groups || !p->group_portals) ok = frontend_fail(error, QA_ERROR_MEMORY, "retaining source constructor groups");
     for (size_t i = 0; ok && i < p->group_count; ++i) {
         frontend_source_group_view actual;
         if (!frontend_source_group_read(f, i, &actual)) { ok = false; break; }
         frontend_source_group_plan *g = &p->groups[i];
-        *g = (frontend_source_group_plan){.owner = actual.owner, .seat = actual.seat, .identity = actual.identity,
+        *g = (frontend_source_group_plan){.owner = actual.owner, .seat = actual.seat,
+            .launch_seat = actual.launch_seat, .identity = actual.identity,
             .mounts_view = qa_application_content_view_id(graph, actual.mounts),
-            .source_view = qa_application_content_view_id(graph, actual.source_files)};
+            .source_view = qa_application_content_view_id(graph, actual.source_files),.private_map=actual.private_map};
+        if ((!actual.map_resource!=!actual.geometry) || (!actual.map_resource!=!actual.world) ||
+            (!actual.private_map && actual.map_resource)) { ok=false; break; }
+        if (actual.map_resource) {
+            ok=qa_application_content_resource_id(graph,actual.map_resource,&g->map_pool,&g->map_resource) &&
+                frontend_source_geometry_checkpoint((qa_frontend *)f,i,p->group_portals+i,error);
+            if (!ok) break;
+            g->portals=(qa_bytes){p->group_portals[i].data,p->group_portals[i].size};
+        }
         while (frontend_source_group_role_read(f, i, g->role_count, &(frontend_source_role_identity){0})) ++g->role_count;
         frontend_source_role_identity *roles = calloc(g->role_count ? g->role_count : 1, sizeof(*roles)); g->roles = roles;
         if (!roles) { ok = frontend_fail(error, QA_ERROR_MEMORY, "retaining source constructor roles"); break; }

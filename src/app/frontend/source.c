@@ -28,6 +28,7 @@
 #include "qa/application_q3_factory.h"
 #include "qa/application_q3_scene_world.h"
 #include "qa/q3_presentation_save.h"
+#include "qa/scene_world_save.h"
 #include <limits.h>
 #include <stdio.h>
 
@@ -60,6 +61,10 @@ struct frontend_source {
     frontend_key_profile *key_profile;
     qa_q3_presentation_assets *assets;
     qa_q3_presentation *presentation;
+    qa_resource *map_resource;
+    qa_collision_geometry *geometry;
+    qa_scene_world *world;
+    bool private_map;
     qa_audio_listener listener;
     bool has_listener, music_attached;
 };
@@ -85,6 +90,7 @@ struct frontend_source_lease {
 };
 static void source_retry_retirement(frontend_source *);
 static bool source_publish_backend(frontend_source *,qa_error *);
+static bool source_geometry_restore(frontend_source *,qa_bytes,qa_error *);
 static bool lease_dispose(frontend_source_lease *lease)
 {
     if (lease->time_busy || !frontend_equipment_source_idle(lease->equipment)) return false;
@@ -626,6 +632,7 @@ static bool source_idle(const frontend_source *source)
     for (const frontend_source_lease *lease=source->retired_leases;lease;lease=lease->next)
         if (lease->time_busy || !frontend_equipment_source_idle(lease->equipment)) return false;
     return (!source->presentation || qa_q3_presentation_idle(source->presentation)) &&
+        (!source->world || qa_scene_world_idle(source->world)) &&
         (!source->assets || qa_q3_assets_idle(source->assets)) &&
         (!source->fonts || qa_font_library_idle(source->fonts)) &&
         (!source->materials || qa_material_library_idle(source->materials)) &&
@@ -660,6 +667,9 @@ static bool source_free(frontend_source *source)
             fprintf(stderr, "source audio retirement: %s\n", error.message);
     }
     qa_q3_presentation_assets_destroy(source->assets);
+    qa_scene_world_destroy(source->world);
+    qa_collision_destroy(source->geometry);
+    qa_resource_release(source->map_resource);
     qa_q3_key_destroy(source->keys);
     source->keys=NULL;
     if (!source->music_attached) qa_audio_music_destroy(source->music);
@@ -769,6 +779,48 @@ static bool create_source(qa_frontend *frontend, qa_application *application, qa
     *out=source;
     return true;
 }
+static bool source_map_prepare(frontend_source *source,const qa_resource *map,bool world,qa_error *error)
+{
+    if (!map || !source->mounts || qa_resource_pool_find(qa_vfs_resources(source->mounts),qa_resource_id(map))!=map)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Private source map leaves its actual retained content pool");
+    if (source->map_resource)
+        return source->map_resource==map && source->geometry && (!world || source->world) ? true :
+            frontend_fail(error,QA_ERROR_ARGUMENT,"Private source constructor changed its retained map owner");
+    qa_bsp_view bsp;
+    if (!qa_bsp_open(qa_resource_bytes(map),&bsp,error)) return false;
+    if (bsp.family!=QA_BSP_Q3)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Private Q3 receiver requires its actual Q3 collision map");
+    source->map_resource=(qa_resource *)map; qa_resource_retain(source->map_resource);
+    if (!qa_collision_create(&bsp,&source->geometry,error)) return false;
+    if (!world) return true;
+    qa_scene_world_options options={.images={.family=QA_SCENE_Q3,.wrap=QA_SCENE_REPEAT,
+        .filter=QA_SCENE_LINEAR_MIPMAP_LINEAR,.mipmap=true,.transparent_index=255},
+        .subdivisions=64,.q1_water_alpha=1,.q2_light_modulate=1,.q3_overbright=1};
+    return qa_scene_world_create(&bsp,source->images,source->materials,&options,&source->world,error) &&
+        frontend_material_remaps(source->frontend,source->materials,error);
+}
+static qa_collision_geometry *source_map_geometry(void *context)
+{
+    const frontend_source *source=context;
+    return source && source->constructed && source->leases && source->application==source->frontend->application ?
+        source->geometry:NULL;
+}
+static bool source_map_load(void *context,const char *path,qa_error *error)
+{
+    frontend_source *source=context;
+    if (!path || !source_map_geometry(source) || !source->map_resource)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Collision load differs from the prepared private source map");
+    const char *map=qa_resource_path(source->map_resource);
+    if (!map) return frontend_fail(error,QA_ERROR_FORMAT,"Private source map has no retained resource path");
+    if (!strncmp(path,"maps/",5)) path+=5;
+    if (!strncmp(map,"maps/",5)) map+=5;
+    size_t requested=strlen(path),selected=strlen(map);
+    if (requested>4 && !strcmp(path+requested-4,".bsp")) requested-=4;
+    if (selected>4 && !strcmp(map+selected-4,".bsp")) selected-=4;
+    if (requested!=selected || memcmp(path,map,selected))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Collision load differs from the prepared private source map");
+    return true;
+}
 bool frontend_source_services(void *context, qa_application *application, qa_actor_owner owner,
     qa_qvm_role role, uint32_t seat, qa_q3_host_options *host, qa_error *error)
 {
@@ -790,7 +842,7 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Client keys require the prepared actual GAME profile and registry");
     if (frontend->source_restoring && (!frontend->seats || !frontend->seats[ordinal].input || !frontend->seats[ordinal].console))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "restored source imports require actual stable input and console owners");
-    if (!frontend->source_restoring && !frontend_scene_sync(frontend, error)) return false;
+    if (!frontend->source_restoring && !frontend_network_remote(frontend) && !frontend_scene_sync(frontend, error)) return false;
     frontend_source *source = frontend->sources;
     if (frontend->source_restoring) {
         for (; source; source = source->next) {
@@ -821,6 +873,26 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
     }
     bool created = source == NULL;
     if (created && !create_source(frontend, application, owner, ordinal,seat, host,profile,&source,error)) return false;
+    if (!frontend->source_restoring) {
+        bool private_map=frontend_network_remote(frontend);
+        if (!created && source->private_map!=private_map)
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Source constructor changed its private collision ownership policy");
+        source->private_map=private_map;
+    }
+    if (!frontend->source_restoring && frontend_network_remote(frontend)) {
+        const qa_resource *map=NULL; bool present=false;
+        bool ok=frontend_network_client_map_read(frontend,application,owner,role,seat,host->mounts,&map,&present,error) &&
+            (!present || source_map_prepare(source,map,true,error));
+        if (ok && !present && source->map_resource)
+            ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Private source constructor lost its prepared map receipt");
+        if (!ok) {
+            if (created) {
+                frontend_source *next=source->next;
+                if (source_free(source)) frontend->sources=next;
+            }
+            return false;
+        }
+    }
     if (source->key_profile!=profile)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Client role changed its genuine shared GAME key profile");
     frontend_source_lease *lease = malloc(sizeof(*lease));
@@ -860,7 +932,10 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
     host->seat = frontend->seats[ordinal].input;
     host->console_field = qa_seat_console_field(frontend->seats[ordinal].console, false);
     host->scene_resources = source->images; host->scene_frame = &frontend->frame;
-    host->scene_world = frontend->scene_world; host->sound_bank = source->sounds;
+    host->scene_world = source->private_map?source->world:frontend->scene_world;
+    host->sound_bank = source->sounds;
+    if (source->private_map)
+        host->collision=(qa_q3_host_collision_services){source,source_map_geometry,source_map_load};
     host->presentation = (qa_q3_host_presentation_services){source, source->presentation,
         source->fonts, configuration, update_screen};
     host->common = (qa_q3_host_common_services){lease, common_print, common_milliseconds,
@@ -1023,9 +1098,10 @@ static bool source_worlds_ready(qa_frontend *frontend,qa_scene_world *destinatio
         if (!qa_q3_presentation_binding_read(source->presentation,&binding,error)) return false;
         if (binding.options.context!=source || binding.options.owner!=source->identity ||
             binding.options.seat!=source->seat || binding.options.assets!=source->assets ||
-            (!restored && destination && binding.world && binding.world!=destination))
+            (!restored && !source->private_map && destination && binding.world && binding.world!=destination) ||
+            (restored && source->private_map && binding.world!=source->world))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Source backend retains a different renderer world");
-        qa_scene_world *target=restored?binding.world:destination;
+        qa_scene_world *target=restored?binding.world:source->private_map?source->world:destination;
         size_t held=0;
         for (frontend_source_lease *lease=source->lease_list;lease;lease=lease->next) {
             if (lease->source!=source || lease->released || lease->time_busy || !lease->service_owner ||
@@ -1051,7 +1127,8 @@ static void source_worlds_bind(qa_frontend *frontend,qa_scene_world *destination
         if (restored) (void)qa_q3_presentation_binding_read(source->presentation,&binding,NULL);
         for (frontend_source_lease *lease=source->lease_list;lease;lease=lease->next) {
             qa_application_q3_scene_role role=source_scene_role(lease);
-            qa_application_q3_scene_world_rebind(source->application,&role,restored?binding.world:destination);
+            qa_application_q3_scene_world_rebind(source->application,&role,restored?binding.world:
+                source->private_map?source->world:destination);
         }
     }
 }
@@ -1065,6 +1142,7 @@ bool frontend_source_retire_world(qa_frontend *frontend, qa_error *error)
     if (!source_worlds_ready(frontend,NULL,false,error)) return false;
     source_worlds_bind(frontend,NULL,false);
     for (frontend_source *source = frontend->sources; source; source = source->next) {
+        if (source->private_map) continue;
         if (!qa_q3_presentation_retire_world(source->presentation, error)) return false;
         if (source->music_attached) {
             qa_audio_engine_remove_music(frontend->audio, source->identity);
@@ -1109,7 +1187,8 @@ bool frontend_source_round_ready(const qa_frontend *frontend, qa_actor_owner own
             ++held;
         }
         if (held != source->leases || !qa_q3_presentation_round_ready(source->presentation,
-                &frontend->frame, frontend->scene_world, geometry, error))
+                &frontend->frame, source->private_map?source->world:frontend->scene_world,
+                source->private_map?source->geometry:geometry, error))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Source round presentation is not at its retained owner boundary");
     }
     return true;
@@ -1132,10 +1211,14 @@ static bool source_publish_backend(frontend_source *source,qa_error *error)
 {
     qa_frontend *frontend=source->frontend;
     qa_bsp_view bsp;
-    if (!frontend->scene_world || !frontend->map_resource) return true;
-    if (!qa_bsp_open(qa_resource_bytes(frontend->map_resource), &bsp, error)) return false;
-    return qa_q3_presentation_world(source->presentation,frontend->scene_world,
-        qa_world_geometry(qa_application_world(source->application)),bsp.lumps[QA_BSP_ENTITIES].bytes,error);
+    qa_scene_world *world=source->private_map?source->world:frontend->scene_world;
+    const qa_resource *map=source->private_map?source->map_resource:frontend->map_resource;
+    qa_collision_geometry *geometry=source->private_map?source->geometry:
+        qa_world_geometry(qa_application_world(source->application));
+    if (!world || !map) return source->private_map?
+        qa_q3_presentation_world(source->presentation,NULL,NULL,(qa_bytes){0},error):true;
+    if (!qa_bsp_open(qa_resource_bytes(map), &bsp, error)) return false;
+    return qa_q3_presentation_world(source->presentation,world,geometry,bsp.lumps[QA_BSP_ENTITIES].bytes,error);
 }
 bool frontend_source_publish_world(qa_frontend *frontend, qa_error *error)
 {
@@ -1247,6 +1330,8 @@ bool frontend_source_group_read(const qa_frontend *frontend, size_t index, front
         .source_files=source->source_files,.mounts=source->mounts,.images=source->images,.materials=source->materials,
         .fonts=source->fonts,.sounds=source->sounds,.movies=source->movies,.keys=source->keys,
         .assets=source->assets,.presentation=source->presentation,.listener=source->listener,
+        .map_resource=source->map_resource,.geometry=source->geometry,.world=source->world,
+        .private_map=source->private_map,
         .has_listener=source->has_listener,.music_attached=source->music_attached};
     unsigned held=0;
     for (const frontend_source_lease *lease=source->lease_list;lease;lease=lease->next) {
@@ -1353,6 +1438,97 @@ bool frontend_source_role_media_current(const qa_frontend *frontend,qa_actor_own
     return retained && frontend_source_role_media_read(frontend,receiver,role,launch_seat,service_owner,&actual) &&
         actual==retained;
 }
+bool frontend_source_role_geometry_read(const qa_frontend *frontend,qa_actor_owner receiver,
+    qa_qvm_role role,uint32_t seat,uint64_t service,const qa_collision_geometry **out,
+    const qa_resource **map,bool *present,qa_error *error)
+{
+    if (!frontend || !frontend->application || !receiver || !service || !out || !map || !present ||
+        (role!=QA_QVM_CGAME && role!=QA_QVM_UI))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Private collision read requires its actual source role tuple");
+    const frontend_source *selected=NULL;
+    const frontend_source_lease *selected_lease=NULL;
+    for (const frontend_source *source=frontend->sources;source;source=source->next) {
+        if (!source->constructed || source->frontend!=frontend || source->application!=frontend->application ||
+            source->owner!=receiver || source->launch_seat!=seat) continue;
+        for (const frontend_source_lease *lease=source->lease_list;lease;lease=lease->next)
+            if (!lease->released && lease->source==source && lease->role==role && lease->service_owner==service) {
+                if (selected) return frontend_fail(error,QA_ERROR_ARGUMENT,"Private collision role tuple is ambiguous");
+                selected=source;
+                selected_lease=lease;
+            }
+    }
+    if (!selected || (!selected->map_resource!=!selected->geometry) ||
+        (selected->map_resource && qa_resource_pool_find(qa_vfs_resources(selected->mounts),
+            qa_resource_id(selected->map_resource))!=selected->map_resource))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Private collision leaves its actual linked source owner");
+    qa_application_q3_scene_role actual=source_scene_role(selected_lease);
+    const qa_scene_world *world=NULL;
+    if (!qa_application_q3_scene_world_read(frontend->application,&actual,&world,error)) return false;
+    if (selected->private_map && world!=selected->world)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Private collision host retains a different source world");
+    *out=selected->geometry; *map=selected->map_resource; *present=selected->geometry!=NULL; return true;
+}
+static bool source_geometry_fields(qa_source_save_io *io,qa_collision_portal_checkpoint *saved)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    uint8_t magic[4]={'Q','F','C','G'}; uint32_t version=1,family=saved->family,format=saved->format;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFCG",4) ||
+        !qa_source_save_u32(io,&version) || version!=1 || !qa_source_save_u32(io,&family) ||
+        family!=QA_COLLISION_Q3 || !qa_source_save_u32(io,&format) ||
+        !qa_source_save_u64(io,&saved->map_identity) || !qa_source_save_u32(io,&saved->area_count) ||
+        !qa_source_save_bool(io,&saved->no_areas) ||
+        !qa_source_save_count(io,&saved->area_pair_count,reading?io->input.size/4:SIZE_MAX/sizeof(uint32_t))) return false;
+    saved->family=(qa_collision_family)family; saved->format=(qa_bsp_format)format;
+    if (reading && saved->area_pair_count) {
+        saved->area_pairs=calloc(saved->area_pair_count,sizeof(*saved->area_pairs));
+        if (!saved->area_pairs) return frontend_fail(io->error,QA_ERROR_MEMORY,"Retaining private collision area state");
+    }
+    if (saved->portal_count || (saved->area_pair_count && !saved->area_pairs)) return false;
+    for (size_t i=0;i<saved->area_pair_count;++i)
+        if (!qa_source_save_u32(io,saved->area_pairs+i)) return false;
+    return true;
+}
+bool frontend_source_geometry_checkpoint(qa_frontend *frontend,size_t index,qa_buffer *out,qa_error *error)
+{
+    frontend_source *source=frontend?frontend->sources:NULL;
+    while (source && index--) source=source->next;
+    if (!frontend || !frontend->capture || frontend->stepping || !source || !source->constructed ||
+        !source->map_resource || !source->geometry || !out || out->data || out->size)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Private geometry requires its actual held frontend capture");
+    qa_collision_portal_checkpoint saved={0}; qa_source_save_io io={0};
+    bool ok=qa_collision_capture_portals(source->geometry,&saved,error) &&
+        qa_source_save_writer(&io,qa_application_session(frontend->application),error) &&
+        source_geometry_fields(&io,&saved) && qa_source_save_finish(&io,out);
+    qa_source_save_dispose(&io); qa_collision_portal_checkpoint_free(&saved);
+    return ok;
+}
+static bool source_geometry_restore(frontend_source *source,qa_bytes bytes,qa_error *error)
+{
+    qa_collision_portal_checkpoint saved={0}; qa_source_save_io io={0};
+    bool ok=qa_source_save_reader(&io,qa_application_session(source->frontend->application),bytes,error) &&
+        source_geometry_fields(&io,&saved) && qa_source_save_finish(&io,NULL) &&
+        qa_collision_restore_portals(source->geometry,&saved,error);
+    qa_source_save_dispose(&io); qa_collision_portal_checkpoint_free(&saved);
+    if (!ok && (!error || error->code==QA_OK)) frontend_fail(error,QA_ERROR_FORMAT,"Invalid private collision continuation");
+    return ok;
+}
+bool frontend_source_world_adopt_ready(qa_frontend *frontend,size_t index,qa_scene_world *world,qa_error *error)
+{
+    frontend_source *source=frontend?frontend->sources:NULL;
+    while (source && index--) source=source->next;
+    if (!frontend || !frontend->source_restoring || frontend->capture || frontend->stepping ||
+        !source || !source->constructed || source->world || !source->map_resource || !source->geometry ||
+        !world || !qa_scene_world_idle(world) || qa_scene_world_resource_owner(world)!=source->images ||
+        qa_scene_world_material_owner(world)!=source->materials)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Private source world adoption requires its decoded root and paired heaps");
+    return true;
+}
+void frontend_source_world_adopt(qa_frontend *frontend,size_t index,qa_scene_world *world)
+{
+    frontend_source *source=frontend->sources;
+    while (index--) source=source->next;
+    source->world=world;
+}
 bool frontend_source_prepare_groups(qa_frontend *frontend, uint64_t next_source_id,
     const frontend_source_group_plan *plans, size_t count, qa_error *error)
 {
@@ -1368,6 +1544,10 @@ bool frontend_source_prepare_groups(qa_frontend *frontend, uint64_t next_source_
             plan->identity - QA_FRONTEND_COMMAND_OWNER > next_source_id || !plan->roles ||
             !plan->role_count || plan->role_count > UINT_MAX || !plan->mounts_view || !plan->source_view ||
             plan->mounts_view == plan->source_view || !qa_application_content_view(graph, plan->mounts_view) ||
+            ((!plan->map_pool)!=(!plan->map_resource)) ||
+            (!plan->private_map && plan->map_resource) ||
+            ((!plan->map_resource)!=(!plan->portals.size)) || (plan->portals.size && !plan->portals.data) ||
+            (plan->map_resource && !qa_application_content_resource(graph,plan->map_pool,plan->map_resource)) ||
             !qa_application_content_view(graph, plan->source_view) ||
             qa_vfs_resources(qa_application_content_view(graph, plan->mounts_view)) !=
                 qa_vfs_resources(qa_application_content_view(graph, plan->source_view)) ||
@@ -1396,6 +1576,7 @@ bool frontend_source_prepare_groups(qa_frontend *frontend, uint64_t next_source_
         *tail = source; tail = &source->next;
         source->frontend = frontend; source->owner = plans[i].owner; source->seat = plans[i].seat;
         source->launch_seat=plans[i].launch_seat;
+        source->private_map=plans[i].private_map;
         source->identity = plans[i].identity; source->restore_role_count = plans[i].role_count;
         source->restore_roles = malloc(plans[i].role_count * sizeof(*source->restore_roles));
         if (!source->restore_roles) goto memory;
@@ -1406,6 +1587,9 @@ bool frontend_source_prepare_groups(qa_frontend *frontend, uint64_t next_source_
     for (size_t i = 0; i < count; ++i, source = source->next) {
         source->source_files = qa_application_content_view(graph, plans[i].source_view);
         if (!qa_application_content_claim_view(graph, plans[i].mounts_view, &source->mounts, error)) return false;
+        if (plans[i].map_resource &&
+            (!source_map_prepare(source,qa_application_content_resource(graph,plans[i].map_pool,plans[i].map_resource),false,error) ||
+             !source_geometry_restore(source,plans[i].portals,error))) return false;
     }
     return true;
 memory:

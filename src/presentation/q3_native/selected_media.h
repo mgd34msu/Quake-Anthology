@@ -24,6 +24,11 @@ typedef struct q3n_selected_media_request {
     bool (*current)(void *);
 } q3n_selected_media_request;
 
+/* Parse the actual retained animation bytes without acquisition or registry
+ * services. The source path participates in authored parser diagnostics. */
+bool q3n_selected_animation_parse(qa_bytes, const char *source_path,
+    qa_player_animation_config *, qa_error *);
+
 /* The caller owns the actual selected registry and content view through this
  * cache's lifetime. Live admission qualifies its genuine equipment observation
  * before and after source services. This leaf creates no primary CGAME. */

@@ -11,6 +11,7 @@ bool bot_runtime_mutable(qa_bot_runtime *r, qa_error *e) {
 }
 bool qa_bot_runtime_can_destroy(const qa_bot_runtime *r) {
     return !r || (!r->busy && !r->observation_leases && !r->owner_leases && qa_bot_log_can_destroy(r->log) &&
+        qa_bot_memory_idle(r->memory) &&
         !qa_bot_moves_active(r->moves) && !qa_bot_goals_active(r->goals) &&
         !qa_bot_chat_system_active(r->chat_system));
 }
@@ -97,6 +98,10 @@ bool qa_bot_runtime_create(const qa_bot_runtime_options *options,
         (void)qa_bot_runtime_destroy(r, NULL);
         return false;
     }
+    r->memory=qa_bot_library_memory(r->library);
+    if(!qa_bot_memory_retain(r->memory,e)) {
+        r->memory=NULL;(void)qa_bot_runtime_destroy(r,NULL);return false;
+    }
     r->globals = (qa_script_defines *)qa_bot_library_global_defines(r->library);
     qa_script_defines_retain(r->globals);
     r->options.library.preprocessor.globals = r->globals;
@@ -127,6 +132,7 @@ static bool close(qa_bot_runtime *r,bool source,qa_error *error) {
         if(source) {bool succeeded;if(!qa_bot_log_close(r->log,&succeeded,error)) return false;}
     }
     qa_bot_library_destroy(r->library); r->library = NULL;
+    if(r->memory && !qa_bot_memory_dispose(r->memory,error)) return false;
     if (r->options.observations != QA_BOT_OBSERVATION_MODULE) {
         bot_runtime_observations_close(r);
         qa_bot_bsp_close(r->bsp); r->bsp = NULL;
@@ -149,6 +155,7 @@ bool qa_bot_runtime_destroy(qa_bot_runtime *r, qa_error *e) {
     free(r->map_name);
     free(r->characters); free(r->weapons); free(r->chats);
     qa_script_defines_release(r->globals);
+    (void)qa_bot_memory_release(r->memory,NULL);
     free(r);
     return true;
 }
@@ -167,6 +174,7 @@ qa_bot_random_source qa_bot_runtime_random_source(const qa_bot_runtime *r) {
     return r ? r->services.random : (qa_bot_random_source){0};
 }
 qa_bot_library *qa_bot_runtime_library(qa_bot_runtime *r) { return r ? r->library : NULL; }
+qa_bot_memory *qa_bot_runtime_memory(const qa_bot_runtime *r) {return r?r->memory:NULL;}
 qa_script_defines *qa_bot_runtime_global_defines(qa_bot_runtime *r) { return r ? r->globals : NULL; }
 qa_bot_log *qa_bot_runtime_log(qa_bot_runtime *r) { return r ? r->log : NULL; }
 qa_bot_actions *qa_bot_runtime_actions(qa_bot_runtime *r) { return r ? r->actions : NULL; }

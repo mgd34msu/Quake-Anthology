@@ -47,6 +47,7 @@ typedef struct frontend_keys frontend_keys;
 typedef struct frontend_restart frontend_restart;
 typedef struct frontend_equipment frontend_equipment;
 typedef struct frontend_equipment_q3 frontend_equipment_q3;
+typedef struct frontend_selected_character frontend_selected_character;
 typedef struct frontend_config_store frontend_config_store;
 typedef struct frontend_client_registry frontend_client_registry;
 typedef struct frontend_client_registry_import frontend_client_registry_import;
@@ -130,6 +131,7 @@ struct qa_frontend {
     frontend_restart *restart;
     frontend_equipment *equipment;
     frontend_equipment_q3 *equipment_q3;
+    frontend_selected_character *selected_characters;
     frontend_config_store *config_store;
     frontend_client_registry *client_registries;
     frontend_client_registry_import *client_registry_import;
@@ -294,6 +296,10 @@ typedef struct frontend_source_group_view {
     qa_q3_key *keys;
     qa_q3_presentation_assets *assets;
     qa_q3_presentation *presentation;
+    const qa_resource *map_resource;
+    qa_collision_geometry *geometry;
+    qa_scene_world *world;
+    bool private_map;
     qa_audio_listener listener;
     bool has_listener, music_attached;
 } frontend_source_group_view;
@@ -318,6 +324,10 @@ bool frontend_source_client_prepare(void *,qa_application *,const qa_application
 bool frontend_source_registry_scope_read(const qa_frontend *,const qa_cvars *,qa_application_console_scope *);
 bool frontend_source_role_media_read(const qa_frontend *,qa_actor_owner,qa_qvm_role,uint32_t,uint64_t,qa_vfs **);
 bool frontend_source_role_media_current(const qa_frontend *,qa_actor_owner,qa_qvm_role,uint32_t,uint64_t,const qa_vfs *);
+bool frontend_source_role_geometry_read(const qa_frontend *,qa_actor_owner,qa_qvm_role,uint32_t,uint64_t,
+    const qa_collision_geometry **,const qa_resource **,bool *,qa_error *);
+bool frontend_network_client_map_read(const qa_frontend *,qa_application *,qa_actor_owner,qa_qvm_role,
+    uint32_t,const qa_vfs *,const qa_resource **,bool *,qa_error *);
 bool frontend_source_frame(qa_frontend *, uint32_t, qa_scene_rect, qa_error *);
 bool frontend_source_retire_world(qa_frontend *, qa_error *);
 bool frontend_source_publish_world(qa_frontend *, qa_error *);

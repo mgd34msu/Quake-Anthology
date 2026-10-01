@@ -10,7 +10,8 @@ typedef enum frontend_scene_owner_kind {
     FRONTEND_SCENE_OWNER_VISUAL,
     FRONTEND_SCENE_OWNER_NATIVE_Q3,
     FRONTEND_SCENE_OWNER_EQUIPMENT,
-    FRONTEND_SCENE_OWNER_SELECTED_Q3
+    FRONTEND_SCENE_OWNER_SELECTED_Q3,
+    FRONTEND_SCENE_OWNER_SOURCE
 } frontend_scene_owner_kind;
 typedef struct frontend_scene_owner {
     frontend_scene_owner_kind kind;
@@ -19,6 +20,7 @@ typedef struct frontend_scene_owner {
      * Native Q3 uses its actual native-client ordinal plus one.
      * Equipment uses its actual retained media ordinal plus one and row one.
      * Selected Q3 uses its actual selected registry ordinal plus one.
+     * Source maps use their actual source-group ordinal plus one and row one.
      * The frontend map owner has owner and row zero. */
     uint64_t owner, row;
 } frontend_scene_owner;
@@ -68,5 +70,8 @@ void frontend_scene_root_adopt(void *, uint64_t);
 /* All genuine consumers have adopted before aggregate installation. Destroy
  * unadopted roots before releasing immutable inventory staging or child heaps. */
 bool frontend_world_inventory_ready(const frontend_world_inventory *, qa_error *);
+/* Adopts source-owned private map roots after all real groups construct and
+ * before their presentation backends import the saved world borrow. */
+bool frontend_source_roots_attach_restored(qa_frontend *,frontend_world_inventory *,qa_error *);
 
 #endif

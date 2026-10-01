@@ -66,9 +66,10 @@ static bool warning(const char *format, const char *first, const char *second, q
     return size >= 0 && (size_t)size < sizeof(message) ? true :
         q3p_fail(e, QA_ERROR_FORMAT, "CG_Printf exceeds its 1024-byte source buffer");
 }
-static bool parse_animation(qa_bytes bytes, qa_player_animation_config *out, qa_error *e)
+bool q3n_selected_animation_parse(qa_bytes bytes, const char *source_path,
+    qa_player_animation_config *out, qa_error *e)
 {
-    if (!bytes.size || bytes.size > 19998)
+    if (!source_path || !out || !bytes.data || !bytes.size || bytes.size > 19998)
         return q3p_fail(e, QA_ERROR_FORMAT, "Selected Q3 weapon animation configuration is empty or too long");
     qa_common_parser parser = {0}; qa_common_cursor cursor;
     if (!qa_common_cursor_init(&cursor, bytes, QA_COMMON_TERMINATED, e)) return false;
@@ -84,7 +85,7 @@ static bool parse_animation(qa_bytes bytes, qa_player_animation_config *out, qa_
             if (known) config.footsteps = QA_FOOTSTEP_NORMAL;
             for (unsigned i = 0; i < 5; ++i)
                 if (same(token, names[i])) { config.footsteps = (qa_model_footstep)i; known = true; }
-            if (!known && !warning("Bad footsteps parm in %s: %s\n", "models/players/sarge/animation.cfg", token, e)) return false;
+            if (!known && !warning("Bad footsteps parm in %s: %s\n", source_path, token, e)) return false;
         } else if (same(token, "headoffset")) {
             for (unsigned i = 0; i < 3; ++i) {
                 if (!qa_common_parse(&parser, &cursor, true, e)) return false;
@@ -101,7 +102,7 @@ static bool parse_animation(qa_bytes bytes, qa_player_animation_config *out, qa_
                 if (!qa_common_cursor_restore(&cursor, previous, e)) return false;
                 break;
             }
-            if (!warning("unknown token '%s' is %s\n", token, "models/players/sarge/animation.cfg", e)) return false;
+            if (!warning("unknown token '%s' is %s\n", token, source_path, e)) return false;
             if (previous.offset == cursor.offset && previous.ended == cursor.ended)
                 return q3p_fail(e, QA_ERROR_FORMAT, "CG animation prelude reached the source nonprogress cycle");
         }
@@ -194,7 +195,7 @@ static bool animation(q3n_selected_media *o, const q3n_selected_media_request *r
         if (ok) { resource = (qa_resource *)character->resource; qa_resource_retain(resource); config = *character->config; }
     } else {
         ok = qa_vfs_acquire_receipt(content, "models/players/sarge/animation.cfg", &resource, &receipt, e) && current(r, e);
-        if (ok) ok = parse_animation(qa_resource_bytes(resource), &config, e);
+        if (ok) ok = q3n_selected_animation_parse(qa_resource_bytes(resource), receipt.path, &config, e);
     }
     if (ok) ok = current(r, e);
     if (ok) {

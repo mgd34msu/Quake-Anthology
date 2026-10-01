@@ -1,6 +1,7 @@
 #ifndef QA_BOT_RUNTIME_INTERNAL_H
 #define QA_BOT_RUNTIME_INTERNAL_H
 #include "qa/bot_runtime.h"
+#include "qa/bots_allocator.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -18,6 +19,7 @@ struct qa_bot_runtime {
     qa_bot_runtime_options options;
     qa_bot_runtime_services services;
     qa_bot_library *library;
+    qa_bot_memory *memory;
     qa_script_defines *globals;
     qa_bot_log *log;
     qa_bot_actions *actions;

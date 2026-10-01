@@ -2,6 +2,7 @@
 #define QA_BOTS_LIBRARY_INTERNAL_H
 #include "qa/arena.h"
 #include "qa/bot_library.h"
+#include "qa/bots_allocator.h"
 #include <limits.h>
 #include <math.h>
 #include <stdatomic.h>
@@ -64,6 +65,7 @@ struct qa_bot_weapon_selector {
 };
 struct qa_bot_library {
     qa_bot_library_options options;
+    qa_bot_memory *memory;
     qa_bot_log *log;
     qa_arena arena;
     qa_bot_weights *weights;

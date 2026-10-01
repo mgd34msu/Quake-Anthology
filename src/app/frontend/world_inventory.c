@@ -3,6 +3,7 @@
 #include "native_q3_client.h"
 #include "equipment_media.h"
 #include "equipment_q3.h"
+#include "source_restore.h"
 #include "save_private.h"
 #include "qa/material_library_save.h"
 #include "qa/scene_resource_save.h"
@@ -117,6 +118,7 @@ static bool policy_capture(world_row *row,qa_error *error)
 static bool owner_shape(frontend_scene_owner owner,bool world)
 {
     if (owner.kind==FRONTEND_SCENE_OWNER_FRONTEND) return world && !owner.owner && !owner.row;
+    if (owner.kind==FRONTEND_SCENE_OWNER_SOURCE) return world && owner.owner && owner.row==1;
     return owner.owner && owner.row && (owner.kind==FRONTEND_SCENE_OWNER_Q3 ||
         owner.kind==FRONTEND_SCENE_OWNER_NATIVE_Q3 || owner.kind==FRONTEND_SCENE_OWNER_SELECTED_Q3 || (!world &&
         (owner.kind==FRONTEND_SCENE_OWNER_VISUAL ||
@@ -162,6 +164,8 @@ static bool owners_capture(frontend_world_inventory *inventory,qa_error *error)
     for (size_t i=0;i<frontend_source_group_count(f);++i) {
         frontend_source_group_view group;
         if (!frontend_source_group_read(f,i,&group)) return false;
+        if (group.world && !world_claim(inventory,group.world,
+            (frontend_scene_owner){FRONTEND_SCENE_OWNER_SOURCE,i+1,1},error)) return false;
         bool prior=false;
         for (size_t j=0;j<i;++j) {
             frontend_source_group_view earlier;
@@ -364,7 +368,7 @@ bool frontend_world_inventory_capture(qa_frontend *f,const frontend_scene_invent
 static bool owner_fields(qa_source_save_io *io,frontend_scene_owner *owner,bool world)
 {
     uint32_t kind=owner->kind;
-    if (!qa_source_save_u32(io,&kind) || kind>FRONTEND_SCENE_OWNER_SELECTED_Q3 ||
+    if (!qa_source_save_u32(io,&kind) || kind>FRONTEND_SCENE_OWNER_SOURCE ||
         !qa_source_save_u64(io,&owner->owner) || !qa_source_save_u64(io,&owner->row)) return false;
     owner->kind=(frontend_scene_owner_kind)kind; return owner_shape(*owner,world);
 }
@@ -446,9 +450,9 @@ static bool rows_fields(qa_source_save_io *io,frontend_world_inventory *inventor
 }
 static bool header(qa_source_save_io *io,size_t *worlds,size_t *models)
 {
-    uint8_t magic[4]={'Q','F','W','R'}; uint32_t version=3;
+    uint8_t magic[4]={'Q','F','W','R'}; uint32_t version=4;
     size_t maximum=io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFWR",4) && qa_source_save_u32(io,&version) && version==3 &&
+    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFWR",4) && qa_source_save_u32(io,&version) && version==4 &&
         qa_source_save_count(io,worlds,maximum) && qa_source_save_count(io,models,maximum);
 }
 bool frontend_world_inventory_checkpoint(const frontend_world_inventory *inventory,qa_buffer *out,qa_error *error)
@@ -577,5 +581,46 @@ bool frontend_world_inventory_ready(const frontend_world_inventory *inventory,qa
         if (!inventory->worlds[i].adopted) return frontend_fail(error,QA_ERROR_FORMAT,"Imported world lacks its actual destructor consumer");
     for (size_t i=0;i<inventory->model_count;++i)
         if (!inventory->models_roots[i].adopted) return frontend_fail(error,QA_ERROR_FORMAT,"Imported scene model lacks its actual destructor consumer");
+    return true;
+}
+bool frontend_source_roots_attach_restored(qa_frontend *f,frontend_world_inventory *inventory,qa_error *error)
+{
+    if (!f || !f->application || f->stepping || f->capture || !f->source_restoring ||
+        !inventory || !inventory->restoring || inventory->frontend!=f)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source map adoption requires its actual candidate root inventory");
+    size_t groups=frontend_source_group_count(f);
+    for (size_t i=0;i<inventory->world_count;++i) {
+        world_row *row=inventory->worlds+i;
+        if (row->owner.kind==FRONTEND_SCENE_OWNER_SOURCE &&
+            (!row->owner.owner || row->owner.owner>groups || row->owner.row!=1))
+            return frontend_fail(error,QA_ERROR_FORMAT,"Source map root leaves its physical group destructor");
+    }
+    /* Every root and map-presence edge qualifies before the first nofail
+     * transfer, so a rejected group leaves all roots dictionary-owned. */
+    for (size_t group=0;group<groups;++group) {
+        frontend_source_group_view actual; size_t key=0;
+        if (!frontend_source_group_read(f,group,&actual) || actual.world ||
+            (!actual.map_resource!=!actual.geometry))
+            return frontend_fail(error,QA_ERROR_FORMAT,"Source map group is not its prepared collision owner");
+        for (size_t i=0;i<inventory->world_count;++i) {
+            world_row *row=inventory->worlds+i;
+            if (row->owner.kind!=FRONTEND_SCENE_OWNER_SOURCE || row->owner.owner!=group+1) continue;
+            if (key || row->owner.row!=1 || row->source.resource!=actual.map_resource ||
+                row->source.files!=actual.mounts || row->source.images!=actual.images ||
+                row->source.materials!=actual.materials ||
+                !frontend_world_owner_ready(inventory,i+1,FRONTEND_SCENE_OWNER_SOURCE,group+1,error) ||
+                !frontend_source_world_adopt_ready(f,group,(qa_scene_world *)row->source.world,error))
+                return frontend_fail(error,QA_ERROR_FORMAT,"Source map root differs from its retained resource and paired heaps");
+            key=i+1;
+        }
+        if ((!actual.map_resource)!=(!key))
+            return frontend_fail(error,QA_ERROR_FORMAT,"Source map presence differs from its genuine root inventory");
+    }
+    for (size_t i=0;i<inventory->world_count;++i) {
+        world_row *row=inventory->worlds+i;
+        if (row->owner.kind!=FRONTEND_SCENE_OWNER_SOURCE) continue;
+        frontend_source_world_adopt(f,(size_t)row->owner.owner-1,(qa_scene_world *)row->source.world);
+        frontend_world_adopt(inventory,i+1);
+    }
     return true;
 }

@@ -90,11 +90,13 @@ bool qa_bot_library_create(const qa_bot_library_options *options, qa_bot_library
         return false;
     }
     library->options = *options;
+    if(!qa_bot_memory_create(NULL,&library->memory,e)) {free(library);return false;}
     if (options->preprocessor.globals) {
         qa_script_defines_retain((qa_script_defines *)options->preprocessor.globals);
     } else {
         qa_script_defines *globals = NULL;
         if (!qa_script_defines_create(&globals, e)) {
+            (void)qa_bot_memory_release(library->memory,NULL);
             free(library);
             return false;
         }
@@ -134,6 +136,9 @@ bool qa_bot_library_create(const qa_bot_library_options *options, qa_bot_library
 }
 const qa_script_defines *qa_bot_library_global_defines(const qa_bot_library *library) {
     return library ? library->options.preprocessor.globals : NULL;
+}
+qa_bot_memory *qa_bot_library_memory(const qa_bot_library *library) {
+    return library?library->memory:NULL;
 }
 bool qa_bot_library_log_bind(qa_bot_library *library, qa_bot_log *log, qa_error *error) {
     if (!library) {
@@ -180,6 +185,8 @@ void qa_bot_library_destroy(qa_bot_library *library) {
     qa_bot_library_variables_clear(library);
     qa_script_defines_release((qa_script_defines *)library->options.preprocessor.globals);
     qa_arena_destroy(&library->arena);
+    (void)qa_bot_memory_dispose(library->memory,NULL);
+    (void)qa_bot_memory_release(library->memory,NULL);
     free(library);
 }
 void qa_bot_library_reload(qa_bot_library *library, bool reload) {

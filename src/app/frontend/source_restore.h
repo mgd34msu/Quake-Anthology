@@ -12,6 +12,9 @@ typedef struct frontend_source_group_plan {
     uint32_t seat,launch_seat;
     uint64_t identity;
     uint64_t mounts_view, source_view;
+    uint64_t map_pool, map_resource;
+    qa_bytes portals;
+    bool private_map;
     const frontend_source_role_identity *roles;
     size_t role_count;
 } frontend_source_group_plan;
@@ -33,6 +36,11 @@ bool frontend_source_discard_unbound(qa_frontend *, qa_error *);
 bool frontend_source_identity_used(const qa_frontend *, uint64_t);
 bool frontend_source_group_role_read(const qa_frontend *, size_t group,
     size_t role, frontend_source_role_identity *);
+bool frontend_source_geometry_checkpoint(qa_frontend *,size_t,qa_buffer *,qa_error *);
+/* The world dictionary qualifies source map/resource/heaps and sole root
+ * destructor authority before the nofail ownership transfer. */
+bool frontend_source_world_adopt_ready(qa_frontend *,size_t,qa_scene_world *,qa_error *);
+void frontend_source_world_adopt(qa_frontend *,size_t,qa_scene_world *);
 /* Exact key profile alias/listener/music ownership and actual role-time mirror continuation.
  * The complete envelope qualifies before any private owner imports. AUDIO
  * engine buses and source guest state precede this late restore. */

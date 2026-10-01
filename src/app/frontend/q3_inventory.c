@@ -194,9 +194,9 @@ static bool equal_count(qa_source_save_io *io,size_t expected)
 }
 static bool header(qa_source_save_io *io,const frontend_q3_inventory *inventory)
 {
-    uint8_t magic[4]={'Q','F','Q','3'}; uint32_t version=4;
+    uint8_t magic[4]={'Q','F','Q','3'}; uint32_t version=5;
     return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFQ3",4) &&
-        qa_source_save_u32(io,&version) && version==4 && equal_count(io,inventory->group_count) &&
+        qa_source_save_u32(io,&version) && version==5 && equal_count(io,inventory->group_count) &&
         equal_count(io,inventory->registry_count) && equal_count(io,inventory->presentation_count) &&
         equal_count(io,inventory->media_count);
 }
@@ -342,39 +342,63 @@ static qa_q3_movie_checkpoint_refs movie_refs(q3_scope *scope)
     return (qa_q3_movie_checkpoint_refs){.context=scope,.asset_encode=media_asset_encode,.asset_decode=media_asset_decode,
         .playback={scope,movie_target_encode,movie_target_decode},.publication={scope,image_encode,image_decode}};
 }
+static bool map_binding(const q3_scope *scope,const qa_scene_world **world,
+    qa_collision_geometry **geometry,const qa_resource **map,qa_error *error)
+{
+    frontend_q3_inventory *inventory=scope->inventory; qa_frontend *f=inventory->frontend;
+    q3_group *group=inventory->groups+scope->group;
+    if (group->kind==Q3_OWNER_SOURCE) {
+        frontend_source_group_view source;
+        if (!frontend_source_group_read(f,group->ordinal,&source) ||
+            source.owner!=group->source.owner || source.identity!=group->source.identity ||
+            source.mounts!=group->source.mounts)
+            return frontend_fail(error,QA_ERROR_FORMAT,"Q3 map binding leaves its actual source group");
+        if (source.private_map) {
+            if ((!source.map_resource!=!source.geometry) || (!source.map_resource!=!source.world))
+                return frontend_fail(error,QA_ERROR_FORMAT,"Private Q3 map has incomplete retained owners");
+            *world=source.world; *geometry=source.geometry; *map=source.map_resource; return true;
+        }
+    }
+    *world=f->scene_world; *geometry=qa_world_geometry(qa_application_world(f->application));
+    *map=f->map_resource; return true;
+}
 static bool collision_encode(void *context,const qa_collision_geometry *geometry,uint64_t *key,qa_error *error)
 {
-    q3_scope *scope=context;
-    const qa_collision_geometry *actual=qa_world_geometry(qa_application_world(scope->inventory->frontend->application));
+    q3_scope *scope=context; const qa_scene_world *world=NULL; const qa_resource *map=NULL;
+    qa_collision_geometry *actual=NULL;
+    if (!map_binding(scope,&world,&actual,&map,error)) return false;
     if (!key || !actual || geometry!=actual)
-        return frontend_fail(error,QA_ERROR_FORMAT,"Q3 collision binding differs from its real application world owner");
+        return frontend_fail(error,QA_ERROR_FORMAT,"Q3 collision binding differs from its real map owner");
     *key=1; return true;
 }
 static bool collision_decode(void *context,uint64_t key,qa_collision_geometry **geometry,qa_error *error)
 {
-    q3_scope *scope=context;
-    qa_collision_geometry *actual=qa_world_geometry(qa_application_world(scope->inventory->frontend->application));
+    q3_scope *scope=context; const qa_scene_world *world=NULL; const qa_resource *map=NULL;
+    qa_collision_geometry *actual=NULL;
+    if (!map_binding(scope,&world,&actual,&map,error)) return false;
     if (!geometry || key!=1 || !actual)
-        return frontend_fail(error,QA_ERROR_FORMAT,"Saved Q3 collision reference lacks its actual application world owner");
+        return frontend_fail(error,QA_ERROR_FORMAT,"Saved Q3 collision reference lacks its actual map owner");
     *geometry=actual; return true;
 }
 static bool capture_binding(frontend_q3_inventory *inventory,q3_presentation *saved,qa_error *error)
 {
     q3_group *group=inventory->groups+saved->group; qa_frontend *f=inventory->frontend;
     qa_q3_presentation_binding *binding=&group->binding; q3_scope scope={inventory,saved->group,NULL};
+    const qa_scene_world *world=NULL; const qa_resource *map=NULL; qa_collision_geometry *geometry=NULL;
+    if (!map_binding(&scope,&world,&geometry,&map,error)) return false;
     if (binding->frame && (binding->frame!=&f->frame ||
         !frontend_scene_frame_encode(inventory->refs.scene,binding->frame,&saved->frame,error))) return false;
-    if (binding->world && (binding->world!=f->scene_world ||
+    if (binding->world && (binding->world!=world ||
         !frontend_world_encode(inventory->refs.worlds,binding->world,&saved->world,error) ||
         !collision_encode(&scope,binding->geometry,&saved->collision,error))) return false;
     saved->entities=binding->entities.data!=NULL;
     if (binding->entities.size && !saved->entities) return false;
     if (!saved->entities) return !binding->entities.size && (!binding->world || binding->geometry!=NULL);
-    if (!binding->world || !f->map_resource) return false;
-    qa_bytes source=qa_resource_bytes(f->map_resource);
+    if (!binding->world || !map) return false;
+    qa_bytes source=qa_resource_bytes(map);
     uintptr_t base=(uintptr_t)source.data,span=(uintptr_t)binding->entities.data;
     if (!source.data || span<base || span-base>source.size || binding->entities.size>source.size-(span-base) ||
-        !resource_encode(&scope,f->map_resource,&saved->pool,&saved->resource,error)) return false;
+        !resource_encode(&scope,map,&saved->pool,&saved->resource,error)) return false;
     saved->offset=span-base; saved->length=binding->entities.size; return true;
 }
 static bool binding_fields(qa_source_save_io *io,q3_presentation *saved)
@@ -392,12 +416,14 @@ static bool attach_binding(frontend_q3_inventory *inventory,const q3_presentatio
     qa_frontend *f=inventory->frontend; q3_group *group=inventory->groups+saved->group;
     const qa_scene_frame *frame=NULL; qa_scene_world *world=NULL; qa_collision_geometry *collision=NULL;
     qa_bytes entities={0}; q3_scope scope={inventory,saved->group,NULL};
+    const qa_scene_world *expected_world=NULL; const qa_resource *map=NULL; qa_collision_geometry *geometry=NULL;
+    if (!map_binding(&scope,&expected_world,&geometry,&map,error)) return false;
     if ((saved->frame && (!frontend_scene_frame_decode(inventory->refs.scene,saved->frame,&frame,error) || frame!=&f->frame)) ||
-        (saved->world && (!frontend_world_decode(inventory->refs.worlds,saved->world,&world,error) || world!=f->scene_world ||
+        (saved->world && (!frontend_world_decode(inventory->refs.worlds,saved->world,&world,error) || world!=expected_world ||
             !collision_decode(&scope,saved->collision,&collision,error)))) return false;
     if (saved->entities) {
         const qa_resource *resource=NULL;
-        if (!resource_decode(&scope,saved->pool,saved->resource,&resource,error) || resource!=f->map_resource) return false;
+        if (!resource_decode(&scope,saved->pool,saved->resource,&resource,error) || resource!=map) return false;
         qa_bytes source=qa_resource_bytes(resource);
         if (!source.data || saved->offset>source.size || saved->length>source.size-saved->offset) return false;
         entities=(qa_bytes){source.data+saved->offset,saved->length};

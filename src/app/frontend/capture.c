@@ -107,7 +107,7 @@ static bool heaps(frontend_capture *capture, qa_error *error)
         if (!frontend_source_group_read(f,i,&group))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend capture source is not fully constructed");
         if (!add(capture,CAPTURE_IMAGES,group.images,error) || !add(capture,CAPTURE_LIBRARY,group.materials,error) ||
-            !add(capture,CAPTURE_FONTS,group.fonts,error)) return false;
+            !add(capture,CAPTURE_FONTS,group.fonts,error) || !add(capture,CAPTURE_WORLD,group.world,error)) return false;
     }
     for (size_t i=0;;++i) {
         const qa_scene_resources *images=frontend_event_images_at(f,i);

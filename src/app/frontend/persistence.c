@@ -192,7 +192,7 @@ static bool blob(qa_source_save_io *io, qa_bytes *bytes)
 static bool envelope(qa_source_save_io *io, qa_save_owner_kind expected,
     frontend_section_set *set, const frontend_section *ids, size_t count)
 {
-    uint8_t magic[4]={'Q','F','E','X'}; uint32_t required=expected==QA_SAVE_PRESENTATION?6:
+    uint8_t magic[4]={'Q','F','E','X'}; uint32_t required=expected==QA_SAVE_PRESENTATION?7:
         expected==QA_SAVE_AUDIO?3:expected==QA_SAVE_INPUT?3:expected==QA_SAVE_MEDIA?2:1,
         version=required,kind=expected; size_t saved=count;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFEX",4) ||
@@ -794,6 +794,7 @@ static bool import_components(frontend_persistence *operation, qa_error *error)
         frontend_models_restore(content,section(set,SECTION_MODELS),&operation->models,error) &&
         frontend_world_inventory_restore(f,operation->models,operation->space,section(set,SECTION_ROOTS),&operation->roots,error) &&
         frontend_roots_attach_restored(f,operation->roots,operation->models,error) &&
+        frontend_source_roots_attach_restored(f,operation->roots,error) &&
         equipment_roots_restore(operation,error) &&
         aliases_restore(f,operation->space,section(set,SECTION_ALIASES),error) && renderer_restore(operation,error) &&
         frontend_audio_id_restore(f,section(set,SECTION_AUDIO_IDS),error) &&
@@ -1109,7 +1110,7 @@ static bool operation_init(frontend_persistence *operation,qa_frontend *active,
         operation->bindings[i]=(frontend_owner_binding){operation,kinds[i],i};
         operation->owners[i]=(qa_application_persistence_owner){
             .identity={.kind=kinds[i],.instance="",.schema=schemas[i],.schema_version=kinds[i]==QA_SAVE_CAMPAIGN?3:
-                kinds[i]==QA_SAVE_PRESENTATION?6:
+                kinds[i]==QA_SAVE_PRESENTATION?7:
                 kinds[i]==QA_SAVE_AUDIO?3:kinds[i]==QA_SAVE_INPUT?3:kinds[i]==QA_SAVE_MEDIA?2:1,.backend=""},
             .context=operation->bindings+i,.capture=capture_owner,.restore=restore_owner};
     }
