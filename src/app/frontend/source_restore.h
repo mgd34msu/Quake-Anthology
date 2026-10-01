@@ -2,6 +2,9 @@
 #define QA_FRONTEND_SOURCE_RESTORE_H
 #include "qa/frontend.h"
 #include "qa/q3_host.h"
+#include "qa/application_startup_prepare.h"
+
+typedef struct frontend_key_profile frontend_key_profile;
 
 typedef struct frontend_source_role_identity {
     qa_qvm_role role;
@@ -32,6 +35,10 @@ bool frontend_source_complete_groups(const qa_frontend *, qa_error *);
 void frontend_source_finish_groups(qa_frontend *);
 /* Candidate teardown calls this after guest leases have retired. */
 bool frontend_source_discard_unbound(qa_frontend *, qa_error *);
+/* Entered hosted CLIENT retarget: drain only the exact retired old namespace
+ * before its configuration owner consumes the held registry/key profile. */
+bool frontend_source_retire_client_configuration(qa_frontend *, qa_application *,
+    const qa_application_startup_source *, const frontend_key_profile *, qa_error *);
 /* Includes admitted groups before their real provider factories bind. */
 bool frontend_source_identity_used(const qa_frontend *, uint64_t);
 bool frontend_source_group_role_read(const qa_frontend *, size_t group,

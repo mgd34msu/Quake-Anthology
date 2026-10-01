@@ -21,7 +21,12 @@
 #include "network_q3_restart.h"
 #include "equipment_source.h"
 #include "equipment_q3.h"
+#include "equipment_gear.h"
+#include "selected_character.h"
+#include "selected_effects.h"
+#include "source_effects.h"
 #include "config_store.h"
+#include "remote_config.h"
 #include "client_registry.h"
 #include "native_q3_client.h"
 #include "qa/application_q3_factory.h"
@@ -32,6 +37,7 @@
 #include <stdio.h>
 
 typedef struct frontend_source_lease frontend_source_lease;
+typedef struct source_render_scope source_render_scope;
 struct frontend_source {
     frontend_source *next;
     qa_frontend *frontend;
@@ -43,6 +49,7 @@ struct frontend_source {
     size_t role_operations;
     frontend_source_lease *lease_list;
     frontend_source_lease *retired_leases;
+    source_render_scope *render_scope;
     frontend_source_role_identity *restore_roles;
     size_t restore_role_count;
     bool constructed, construction_started;
@@ -58,6 +65,9 @@ struct frontend_source {
     qa_media_library *movies;
     qa_q3_key *keys;
     frontend_key_profile *key_profile;
+    const frontend_key_profile *retiring_client_profile;
+    qa_console *retiring_client_console;
+    qa_cvars *retiring_client_cvars;
     qa_q3_presentation_assets *assets;
     qa_q3_presentation *presentation;
     qa_resource *map_resource;
@@ -76,6 +86,7 @@ struct frontend_source_lease {
     qa_console *console;
     qa_cvars *cvars;
     frontend_client_registry *registry;
+    frontend_config_host_cvars namespaces;
     qa_command_context command;
     frontend_equipment_source *equipment;
     qa_application_q3_client_context time_context;
@@ -87,6 +98,16 @@ struct frontend_source_lease {
     bool disconnect_pending;
     bool time_bound, released;
 };
+struct source_render_scope {
+    frontend_source_lease *lease;
+    const qa_q3_host *host;
+    const qa_qvm_call *call;
+    const qa_q3_refdef *definition;
+    frontend_source_effects *effects;
+};
+static bool render_enter(void *,const qa_q3_host *,const qa_qvm_call *,
+    const qa_q3_refdef *,void **,qa_error *);
+static void render_leave(void *,void *,bool);
 static void source_retry_retirement(frontend_source *);
 static bool source_publish_backend(frontend_source *,qa_error *);
 static bool source_geometry_restore(frontend_source *,qa_bytes,qa_error *);
@@ -393,7 +414,7 @@ bool frontend_source_drain(qa_frontend *f,qa_error *error)
 static double milliseconds(void *context)
 {
     frontend_source *source = context;
-    return (double)source->frontend->time_ns / 1000000.0;
+    return (double)source->frontend->wall_time_ns / 1000000.0;
 }
 static int32_t source_milliseconds(void *context) { return (int32_t)((uint64_t)milliseconds(context) & INT32_MAX); }
 static int32_t frame_number(void *context)
@@ -444,7 +465,7 @@ static bool music(void *context, const char *intro_name, const char *loop_name, 
         source->music = qa_audio_engine_bus_music(source->frontend->audio, source->identity);
         source->music_attached = source->music != NULL;
     }
-    if (!source->music && !qa_audio_music_create(qa_audio_engine_rate(source->frontend->audio), QA_AUDIO_Q3, false, &source->music, error)) return false;
+    if (!source->music && !qa_audio_music_create(qa_audio_engine_rate(source->frontend->audio), QA_AUDIO_Q3, true, &source->music, error)) return false;
     const char *requested_loop=loop_name?loop_name:"";
     if (intro_name && source->music_intro && source->music_loop && source->music_looping &&
         !strcmp(source->music_intro,intro_name) && !strcmp(source->music_loop,requested_loop) &&
@@ -506,23 +527,42 @@ bool frontend_source_submit_scene(qa_frontend *frontend,uint32_t seat,qa_actor_o
         frontend_event_debug(frontend,&options->world.view,error) &&
         frontend_tools_debug(frontend,&options->world.view,error);
 }
+static bool render_current(const frontend_source *source,const source_render_scope *scope)
+{
+    if (!source || !scope || source->render_scope!=scope || !source->role_operations ||
+        !source->application || source->application!=source->frontend->application ||
+        scope->lease->source!=source || scope->lease->released || !scope->lease->time_busy) return false;
+    bool linked=false;
+    for (const frontend_source_lease *row=source->lease_list;row;row=row->next)
+        if (row==scope->lease) { linked=true; break; }
+    return linked && qa_q3_host_render_scope_current(scope->host,scope->call,
+        scope->lease,scope->lease->service_owner,scope->lease->role,source->presentation);
+}
 static bool prepare_view(void *context,const qa_q3_refdef *definition,qa_q3_scene_options *options,qa_error *error)
 {
     frontend_source *source=context;
-    if (!source->application || !source->leases)
+    source_render_scope *scope=source->render_scope;
+    if (!render_current(source,scope) || scope->definition!=definition)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source view preparation requires its live application lease");
     if (!frontend_source_prepare_scene(source->frontend,source->application,source->seat,definition,options,error)) return false;
-    for (frontend_source_lease *lease=source->lease_list;lease;lease=lease->next)
-        if (lease->equipment && !frontend_equipment_source_prepare_view(lease->equipment,definition,options,error)) return false;
-    return true;
+    if (scope->effects && !frontend_source_effects_prepare(scope->effects,definition,options,error)) return false;
+    if (scope->lease->equipment &&
+        !frontend_equipment_source_prepare_view(scope->lease->equipment,definition,options,error)) return false;
+    return render_current(source,scope) ||
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Source role retired during scene preparation");
 }
 static bool submit_view(void *context,const qa_q3_scene_options *options,qa_scene_frame *frame,qa_error *error)
 {
     frontend_source *source=context;
+    source_render_scope *scope=source->render_scope;
+    if (!render_current(source,scope))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source scene submission lost its entered renderer lease");
     if (!frontend_source_submit_scene(source->frontend,source->seat,source->owner,options,frame,error)) return false;
-    for (frontend_source_lease *lease=source->lease_list;lease;lease=lease->next)
-        if (lease->equipment && !frontend_equipment_source_submit(lease->equipment,options,frame,error)) return false;
-    return true;
+    if (scope->lease->equipment &&
+        !frontend_equipment_source_submit(scope->lease->equipment,options,frame,error)) return false;
+    if (scope->effects && !frontend_source_effects_submit(scope->effects,options,frame,error)) return false;
+    return render_current(source,scope) ||
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Source role retired during scene submission");
 }
 static void scene_cleared(void *context)
 {
@@ -582,10 +622,7 @@ static void common_print(void *context, const char *text)
 static uint32_t common_milliseconds(void *context)
 {
     frontend_source_lease *lease = context;
-    if (frontend_network_remote(lease->source->frontend))
-        return (uint32_t)((lease->source->frontend->time_ns / UINT64_C(1000000)) & UINT32_MAX);
-    return lease->common.milliseconds ? lease->common.milliseconds(lease->common.context) :
-        (uint32_t)((uint64_t)milliseconds(lease->source) & UINT32_MAX);
+    return (uint32_t)(lease->source->frontend->wall_time_ns / UINT64_C(1000000));
 }
 static int32_t common_calendar(void *context, qa_q3_host_calendar *out)
 {
@@ -649,8 +686,11 @@ static bool source_free(frontend_source *source)
 {
     if (!source) return true;
     qa_frontend *frontend = source->frontend;
-    if (frontend->capture || source->retired_leases || !source_idle(source)) return false;
+    if (frontend->capture || source->retired_leases || !source_idle(source) ||
+        !frontend_selected_effects_idle(frontend)) return false;
     qa_error error = {0};
+    if (source->presentation &&
+        !frontend_selected_effects_retire_parent(frontend,source->presentation,&error)) return false;
     if (source->key_profile) {
         if (!frontend_key_profile_release(source->key_profile,&error)) return false;
         source->key_profile=NULL; source->keys=NULL;
@@ -707,6 +747,70 @@ static void source_retry_retirement(frontend_source *source)
     frontend_source *next=source->next;
     if (source_free(source) && *link) *link=next;
 }
+static bool retired_client_group(const frontend_source *source,
+    const qa_application_startup_source *held,const frontend_key_profile *profile)
+{
+    return source->owner==held->scope.provider && source->launch_seat==held->scope.seat &&
+        (source->key_profile==profile || source->keys==frontend_key_profile_state(profile) ||
+            (source->retiring_client_profile==profile && source->retiring_client_console==held->console &&
+                source->retiring_client_cvars==held->cvars));
+}
+static bool retired_client_lease(const frontend_source_lease *lease,
+    const qa_application_startup_source *held)
+{
+    return lease->console==held->console && lease->cvars==held->cvars;
+}
+bool frontend_source_retire_client_configuration(qa_frontend *f,qa_application *app,
+    const qa_application_startup_source *held,const frontend_key_profile *profile,qa_error *error)
+{
+    if(!f || !app || app!=f->application || !held || !profile || !frontend_key_profile_state(profile) ||
+        frontend_keys_profile(f->keys,frontend_key_profile_id(profile))!=profile || f->capture || f->source_restoring ||
+        !frontend_seat_callbacks_returned(f) || !qa_application_q3_client_configuration_retiring(app,held))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Old CLIENT drain requires its entered exact physical configuration loan");
+    /* Preflight every matching group before disposing any retained child. */
+    for(const frontend_source *source=f->sources;source;source=source->next) {
+        if(source->owner!=held->scope.provider || source->launch_seat!=held->scope.seat) continue;
+        bool matching=retired_client_group(source,held,profile);
+        for(const frontend_source_lease *lease=source->lease_list;lease;lease=lease->next)
+            if(matching || lease->cvars==held->cvars)
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Old CLIENT drain retains an active source role lease");
+        for(const frontend_source_lease *lease=source->retired_leases;lease;lease=lease->next) {
+            if(!retired_client_lease(lease,held)) {
+                if(matching || lease->cvars==held->cvars)
+                    return frontend_fail(error,QA_ERROR_ARGUMENT,"Old CLIENT group also retains a different physical namespace");
+                continue;
+            }
+            if(!matching) return frontend_fail(error,QA_ERROR_ARGUMENT,"Old CLIENT role differs from its retained key profile group");
+        }
+        if(matching && (source->leases || !source_idle(source)))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Old CLIENT group retains an entered source borrower");
+    }
+    frontend_source *source=f->sources;
+    while(source) {
+        frontend_source *next=source->next;
+        if(retired_client_group(source,held,profile)) {
+            source->retiring_client_profile=profile;
+            source->retiring_client_console=held->console;
+            source->retiring_client_cvars=held->cvars;
+            source_retry_retirement(source);
+        }
+        source=next;
+    }
+    if(!qa_application_q3_client_configuration_retiring(app,held))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Old CLIENT configuration loan changed during checked drain");
+    for(const frontend_source *source=f->sources;source;source=source->next) {
+        if(source->owner!=held->scope.provider || source->launch_seat!=held->scope.seat) continue;
+        if(retired_client_group(source,held,profile))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Old CLIENT drain retained its source key profile group");
+        for(const frontend_source_lease *lease=source->lease_list;lease;lease=lease->next)
+            if(lease->cvars==held->cvars)
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Old CLIENT drain retained an active registry alias");
+        for(const frontend_source_lease *lease=source->retired_leases;lease;lease=lease->next)
+            if(lease->cvars==held->cvars)
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Old CLIENT drain retained a checked retirement alias");
+    }
+    return true;
+}
 static bool construct_source(frontend_source *source, const qa_q3_host_options *host,
     frontend_key_profile *profile,bool restoring, qa_error *error)
 {
@@ -736,7 +840,7 @@ static bool construct_source(frontend_source *source, const qa_q3_host_options *
         (restoring || qa_material_library_load_scripts(source->materials, source->mounts, &images, error)) &&
         qa_audio_bank_create(source->mounts, &source->sounds, error) &&
         (profile || qa_q3_key_create(host->cvars, false, &source->keys, error));
-    if (ok && frontend->audio) ok = qa_audio_music_create(qa_audio_engine_rate(frontend->audio), QA_AUDIO_Q3, false, &source->music, error);
+    if (ok && frontend->audio) ok = qa_audio_music_create(qa_audio_engine_rate(frontend->audio), QA_AUDIO_Q3, true, &source->music, error);
     if (ok && !restoring) ok = frontend_material_remaps(frontend, source->materials, error);
     qa_q3_presentation_asset_options assets = {.provider = {source->mounts, source->images, source->materials, QA_SCENE_Q3},
         .sounds = source->sounds, .movies = source->movies, .context = source, .print = print_source};
@@ -826,19 +930,42 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
     qa_frontend *frontend = context;
     if (!frontend || !frontend_owners_idle(frontend))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Source construction requires idle frontend parent and child owners");
-    if (role == QA_QVM_GAME) return frontend_network_source_services(frontend, host, error);
+    if (role == QA_QVM_GAME) {
+        qa_application_q3_client_preparation preparation;
+        if(application!=frontend->application || !host ||
+            !qa_application_q3_preconstruction_source_read(application,owner,role,seat,&preparation,error)) return false;
+        frontend_config_source *configured=preparation.source_console?
+            frontend_config_store_source(frontend->config_store,preparation.source_console):NULL;
+        if(!configured || frontend_config_source_cvars(configured)!=host->cvars || preparation.source_cvars!=host->cvars ||
+            !frontend_config_source_host_cvars(configured,&host->cvar_namespaces,error))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"GAME host namespaces require their actual retained configuration source");
+        return frontend_network_source_services(frontend,host,error);
+    }
     uint32_t ordinal;
     if (frontend->options.dedicated || !qa_application_constructor_seat_ordinal(application,owner,seat,&ordinal,error) ||
         ordinal >= frontend->options.seats)
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "source client presentation requires an active local seat");
     qa_application_q3_client_preparation preparation;
     if (!qa_application_q3_preconstruction_source_read(application,owner,role,seat,&preparation,error)) return false;
+    qa_application_startup_source client_tuple;
+    if (!qa_application_q3_client_configuration_read(application,owner,seat,&client_tuple,error)) return false;
+    if (client_tuple.console!=host->console)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Client constructor changed its retained physical console");
+    frontend_remote_config *client_config=frontend_config_store_client(frontend->config_store,client_tuple.console);
+    frontend_remote_config_view client_view;
+    if (client_config && (!frontend_remote_config_read(client_config,&client_view) || !client_view.ready ||
+        client_view.physical_seat!=ordinal || client_view.scope.provider!=client_tuple.scope.provider ||
+        client_view.scope.kind!=client_tuple.scope.kind || client_view.scope.seat!=seat ||
+        client_view.console!=client_tuple.console || client_view.cvars!=client_tuple.cvars ||
+        !frontend_remote_config_current(client_config,&client_view)))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Client constructor lost its prepared physical configuration");
     frontend_config_source *configured=preparation.source_console?
         frontend_config_store_source(frontend->config_store,preparation.source_console):NULL;
-    frontend_key_profile *profile=configured?frontend_config_source_keys(configured):NULL;
-    if (configured && (frontend_config_source_cvars(configured)!=preparation.source_cvars || !profile ||
-        !frontend_key_profile_state(profile)))
-        return frontend_fail(error,QA_ERROR_ARGUMENT,"Client keys require the prepared actual GAME profile and registry");
+    frontend_key_profile *profile=client_config?client_view.keys:configured?frontend_config_source_keys(configured):NULL;
+    if ((!client_config && frontend_network_remote(frontend)) ||
+        (configured && !client_config && frontend_config_source_cvars(configured)!=preparation.source_cvars) ||
+        ((client_config || configured) && (!profile || !frontend_key_profile_state(profile))))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Client keys require their prepared physical configuration and registry");
     if (frontend->source_restoring && (!frontend->seats || !frontend->seats[ordinal].input || !frontend->seats[ordinal].console))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "restored source imports require actual stable input and console owners");
     if (!frontend->source_restoring && !frontend_network_remote(frontend) && !frontend_scene_sync(frontend, error)) return false;
@@ -918,14 +1045,26 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
     }
     lease->next = *link; *link = lease; ++source->leases;
     host->frontend_lifetime = lease; host->release_frontend = release_source;
+    host->render=(qa_q3_host_render_services){lease,render_enter,render_leave};
     host->keys = source->keys;
-    if (configured && !frontend_network_remote(frontend)) {
-        if (!frontend_config_source_acquire_seat_registry(configured,seat,&lease->registry,error)) return false;
+    if (client_config || configured) {
+        bool acquired=client_config?frontend_remote_config_acquire(client_config,&lease->registry,error):
+            frontend_config_source_acquire_seat_registry(configured,seat,&lease->registry,error);
+        if (!acquired) return false;
         host->cvars=frontend_client_registry_cvars(lease->registry); lease->cvars=host->cvars;
         if (!host->cvars) return frontend_fail(error,QA_ERROR_ARGUMENT,"Client constructor lost its canonical prepared registry");
     }
     if (!frontend_network_client_services(frontend,application,owner,role,seat,host,error)) return false;
     lease->common=host->common; lease->cvars=host->cvars;
+    qa_application_startup_source parent_game;
+    if(!qa_application_q3_client_configuration_read(application,owner,seat,&client_tuple,error) ||
+        client_tuple.console!=host->console || client_tuple.cvars!=host->cvars ||
+        (!client_config && (!configured || !frontend_config_source_tuple(configured,&parent_game))) ||
+        !frontend_config_host_cvars_prepare(&lease->namespaces,frontend->config_store,application,
+            &client_tuple,client_config?NULL:&parent_game,&host->cvar_namespaces,error))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"CLIENT host namespaces require the adopted physical tuple and actual GAME parent");
+    host->input=(qa_q3_host_input_services){.context=&lease->namespaces,
+        .bindings=frontend_config_host_bindings};
     if (role==QA_QVM_CGAME && !frontend_network_remote(frontend) && !host->client.gamestate)
         host->client_time_from_game=true;
     host->seat = frontend->seats[ordinal].input;
@@ -961,6 +1100,45 @@ static bool equipment_current(void *context,const qa_application_q3_client_conte
         frontend_network_q3_client_context_current(source->frontend,view):
         qa_application_q3_client_context_current(source->application,view));
 }
+static bool render_enter(void *context,const qa_q3_host *host,const qa_qvm_call *call,
+    const qa_q3_refdef *definition,void **out,qa_error *error)
+{
+    frontend_source_lease *lease=context;
+    frontend_source *source=lease?lease->source:NULL;
+    if (!source || !out || *out || !definition || lease->released || source->render_scope ||
+        source->application!=source->frontend->application || lease->time_busy==SIZE_MAX ||
+        source->role_operations==SIZE_MAX || !qa_q3_host_render_scope_current(host,call,
+            lease,lease->service_owner,lease->role,source->presentation))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source rendering requires its actual entered host and role lease");
+    bool linked=false;
+    for (frontend_source_lease *row=source->lease_list;row;row=row->next)
+        if (row==lease) { linked=true; break; }
+    if (!linked) return frontend_fail(error,QA_ERROR_ARGUMENT,"Source rendering lost its linked role owner");
+    source_render_scope *scope=calloc(1,sizeof(*scope));
+    if (!scope) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining entered source renderer scope");
+    *scope=(source_render_scope){lease,host,call,definition,NULL};
+    ++lease->time_busy; ++source->role_operations;
+    source->render_scope=scope; *out=scope;
+    if (lease->role!=QA_QVM_CGAME || source->private_map || (definition->flags&1)) return true;
+    qa_application_q3_client_context client;
+    if (!time_context_read(source->frontend,source->owner,source->launch_seat,&client,error)) return false;
+    if (!equipment_current(lease,&client))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source effects lost their genuine CGAME context");
+    if (!frontend_source_effects_begin(source->frontend,host,call,&client,source->presentation,
+        source->seat,definition,&scope->effects,error)) return false;
+    return render_current(source,scope) ||
+        frontend_fail(error,QA_ERROR_ARGUMENT,"Source role retired during render entry");
+}
+static void render_leave(void *context,void *token,bool rendered)
+{
+    (void)rendered;
+    frontend_source_lease *lease=context;
+    source_render_scope *scope=token;
+    if (!scope) return;
+    frontend_source_effects_end(scope->effects);
+    lease->source->render_scope=NULL;
+    free(scope); time_leave(lease);
+}
 static bool equipment_borrow(void *context,qa_application_q3_client_context *out,qa_error *error)
 {
     frontend_source_lease *lease=context;
@@ -991,12 +1169,24 @@ bool frontend_source_client_prepare(void *context,qa_application *application,
         host->presentation.seat!=lease->source->presentation)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Client preparation requires its actual constructed frontend role lease");
     if (lease->registry) {
+        qa_application_startup_source client_tuple;
+        if (!qa_application_q3_client_configuration_read(application,preparation->receiver,preparation->seat,
+            &client_tuple,error)) return false;
+        frontend_remote_config *client_config=frontend_config_store_client(f->config_store,client_tuple.console);
+        frontend_remote_config_view client_view;
         frontend_config_source *configured=preparation->source_console?
             frontend_config_store_source(f->config_store,preparation->source_console):NULL;
-        if (!configured || host->cvars!=frontend_client_registry_cvars(lease->registry) ||
+        if ((!client_config && !configured) || host->cvars!=frontend_client_registry_cvars(lease->registry) ||
             lease->cvars!=host->cvars)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Client preparation changed its canonical source seat registry");
-        if (preparation->restoring && !frontend_config_source_restore_seat_registry(configured,
+        if (client_config && (!frontend_remote_config_read(client_config,&client_view) || !client_view.ready ||
+            client_view.console!=host->console || client_tuple.console!=host->console ||
+            client_view.cvars!=host->cvars || client_tuple.cvars!=host->cvars ||
+            client_view.scope.provider!=preparation->receiver || client_view.scope.seat!=preparation->seat ||
+            client_view.scope.kind!=client_tuple.scope.kind || client_view.physical_seat!=lease->source->seat ||
+            client_view.keys!=lease->source->key_profile || !frontend_remote_config_current(client_config,&client_view)))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Client preparation changed its decoded physical configuration");
+        if (!client_config && preparation->restoring && !frontend_config_source_restore_seat_registry(configured,
             preparation->seat,lease->registry,NULL,error)) return false;
     }
     if (preparation->role!=QA_QVM_CGAME) return true;
@@ -1138,7 +1328,10 @@ bool frontend_source_worlds_rebind_restored(qa_frontend *frontend,qa_error *erro
 }
 bool frontend_source_retire_world(qa_frontend *frontend, qa_error *error)
 {
-    if (!source_worlds_ready(frontend,NULL,false,error)) return false;
+    if (!source_worlds_ready(frontend,NULL,false,error) || !frontend_selected_effects_idle(frontend)) return false;
+    for (frontend_source *source=frontend->sources;source;source=source->next)
+        if (!source->private_map &&
+            !frontend_selected_effects_retire_parent(frontend,source->presentation,error)) return false;
     source_worlds_bind(frontend,NULL,false);
     for (frontend_source *source = frontend->sources; source; source = source->next) {
         if (source->private_map) continue;
@@ -1266,7 +1459,9 @@ bool frontend_world_retired(void *context, qa_application *application, qa_error
     qa_frontend *frontend = context; (void)application;
     if (!frontend_owners_idle(frontend))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"World retirement requires idle frontend child owners");
+    if (!frontend_selected_effects_retire(frontend,error)) return false;
     qa_scene_frame_reset(&frontend->frame, frontend->frame_number);
+    if (!frontend_native_q3_retire_world(frontend,error)) return false;
     frontend_native_q2_retire_world(frontend);
     for (unsigned i = 0; i < frontend->options.seats && !frontend->options.dedicated; ++i) {
         if (!qa_ui_rankings_reset_binding(frontend->seats[i].rankings, error)) return false;
@@ -1275,6 +1470,8 @@ bool frontend_world_retired(void *context, qa_application *application, qa_error
     if (!frontend_shader_retire(frontend, error)) return false;
     if (!frontend_equipment_retire(frontend,error)) return false;
     if (!frontend_equipment_q3_retire(frontend,error)) return false;
+    if (!frontend_equipment_gear_retire(frontend,error)) return false;
+    if (!frontend_selected_character_retire(frontend,error)) return false;
     frontend_visuals_destroy(frontend);
     if (!frontend_source_retire_world(frontend, error)) return false;
     frontend_particle_retire(frontend);

@@ -44,6 +44,16 @@ static bool equal_fold(const char *a, const char *b)
     return *a == *b;
 }
 
+static bool dictionary(qa_q3_host *host,qa_input_seat **out,qa_error *error)
+{
+    qa_input_seat *physical=host->options.seat,*bindings=physical;
+    if (host->options.input.bindings && !host->options.input.bindings(
+        host->options.input.context,physical,&bindings,error)) return false;
+    if (!bindings || qa_input_seat_ordinal(bindings)!=qa_input_seat_ordinal(physical))
+        return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 binding dictionary lost its actual physical seat");
+    *out=bindings; return true;
+}
+
 q3_service_result q3_client_input(q3_call *call, int32_t *result, qa_error *error)
 {
     qa_qvm_role role = call->host->options.role;
@@ -84,8 +94,11 @@ q3_service_result q3_client_input(q3_call *call, int32_t *result, qa_error *erro
         return q3_write_string(call, call->arguments[1], qa_input_key_name(q3_integer(call, 0), name),
                                 q3_integer(call, 2), error) ? Q3_COMPLETED : Q3_FAILED;
     }
+    qa_input_seat *bindings=NULL;
+    if ((ui && (code==34 || code==35)) || (!ui && code==63))
+        if (!dictionary(host,&bindings,error)) return Q3_FAILED;
     if (ui && code == 34) {
-        const char *command = binding_command(qa_input_seat_binding(seat, physical(q3_integer(call, 0))));
+        const char *command = binding_command(qa_input_seat_binding(bindings, physical(q3_integer(call, 0))));
         size_t length = strlen(command);
         char *copy = qa_arena_alloc(&host->scratch, length + 1, 1, error);
         if (!copy) return Q3_FAILED;
@@ -98,12 +111,12 @@ q3_service_result q3_client_input(q3_call *call, int32_t *result, qa_error *erro
         if (ok) {
             qa_input_binding binding = {.input = physical(q3_integer(call, 0)), .kind = QA_BIND_COMMAND,
                                         .command = (const char *)text.data};
-            ok = qa_input_seat_bind(seat, &binding, error);
+            ok = qa_input_seat_bind(bindings, &binding, error);
         }
     } else if (!ui) {
         ok = q3_string(call, call->arguments[0], &text, error); *result = -1;
-        if (ok) for (size_t i = 0; i < qa_input_seat_binding_count(seat); ++i) {
-            const qa_input_binding *binding = qa_input_seat_binding_at(seat, i);
+        if (ok) for (size_t i = 0; i < qa_input_seat_binding_count(bindings); ++i) {
+            const qa_input_binding *binding = qa_input_seat_binding_at(bindings, i);
             if (!equal_fold(binding_command(binding), (const char *)text.data)) continue;
             if (binding->input.kind == QA_PHYSICAL_KEY) *result = (int32_t)binding->input.code;
             else if (binding->input.kind == QA_PHYSICAL_MOUSE)

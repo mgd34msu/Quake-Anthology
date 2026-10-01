@@ -111,6 +111,15 @@ typedef struct qa_q3_host_cvar_services {
     bool (*resolve)(void *,qa_q3_host_cvar_namespace,qa_cvars **,qa_error *);
 } qa_q3_host_cvar_services;
 
+/* Binding traps follow the actual retained configuration dictionary through
+ * preparation and publication. Physical keys, focus and catcher ownership
+ * stay on options.seat. The returned dictionary borrows the same physical
+ * ordinal; the callback's retained factory context outlives the host. */
+typedef struct qa_q3_host_input_services {
+    void *context;
+    bool (*bindings)(void *,const qa_input_seat *,qa_input_seat **,qa_error *);
+} qa_q3_host_input_services;
+
 /* The actual RenderScene syscall supplies its host and optional original QVM
  * call before the backend enters. Leave runs once after every enter invocation,
  * including a failed enter that returned a partial token. It must close that
@@ -181,6 +190,7 @@ typedef struct qa_q3_host_options {
     qa_q3_host_collision_services collision;
     qa_q3_host_presentation_services presentation;
     qa_q3_host_cvar_services cvar_namespaces;
+    qa_q3_host_input_services input;
     qa_q3_host_render_services render;
     /* Original CGAME QVM submissions retain their current syscall token and
      * unmasked signed pointer. The source role owns this callback/context. */
