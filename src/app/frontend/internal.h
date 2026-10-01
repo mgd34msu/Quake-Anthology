@@ -17,6 +17,7 @@
 #include "qa/tools.h"
 #include "qa/http.h"
 #include "qa/llm.h"
+#include "qa/recovery.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -33,6 +34,7 @@ void frontend_native_q2_rebind(qa_frontend *, qa_frontend *);
 typedef struct frontend_event_state frontend_event_state;
 typedef struct frontend_particle_state frontend_particle_state;
 typedef struct frontend_capture frontend_capture;
+typedef struct frontend_save_commands frontend_save_commands;
 typedef struct qa_application_q3_round_cut qa_application_q3_round_cut;
 typedef struct frontend_audio_identity { qa_actor_id actor; uint64_t id; bool retired; } frontend_audio_identity;
 typedef struct frontend_seat {
@@ -96,6 +98,7 @@ struct qa_frontend {
     frontend_particle_state *particles;
     qa_application_q3_round_cut *round;
     frontend_capture *capture;
+    frontend_save_commands *save_commands;
     uint64_t next_source_id;
     bool source_restoring;
     frontend_audio_identity *audio_ids;
@@ -202,6 +205,7 @@ const qa_scene_resources *frontend_event_images_at(qa_frontend *, size_t);
 const qa_scene_resources *frontend_visual_images_at(qa_frontend *, size_t);
 const qa_scene_resources *frontend_native_q2_images_at(qa_frontend *, size_t);
 bool frontend_network_remote(const qa_frontend *);
+qa_save_authority frontend_network_save_authority(const qa_frontend *);
 bool frontend_network_client_actor(const qa_frontend *, qa_actor_id);
 bool frontend_network_client_ready(const qa_frontend *);
 uint32_t frontend_network_client_time(const qa_frontend *);

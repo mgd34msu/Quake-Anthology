@@ -4,7 +4,16 @@
 #include "map_players_private.h"
 #include "guest_qc_internal.h"
 #include "network_q1_signon.h"
+#include "native_q3_wire.h"
+#include "native_q3_wire_state.h"
+#include "native_q3_console.h"
+#include "native_q3_clients.h"
 #include "qa/application_network.h"
+#include "qa/game_q3_clients.h"
+#include "qa/game_q3_round.h"
+#include "qa/game_q3_source.h"
+#include "qa/game_q3_wire.h"
+#include "qa/game_q3_configstrings.h"
 #include "qa/physics.h"
 #include <limits.h>
 #include <stdlib.h>
@@ -697,12 +706,38 @@ static bool q3_source_bindings(struct application_q3_guest *engine, qa_error *er
     return true;
 }
 
+static application_provider *q3_native_host(qa_application *app,
+    qa_actor_owner owner, qa_q3_round_source *world, qa_error *error)
+{
+    application_provider *provider = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
+    uint8_t snapshot_bit;
+    if (!app || app->destroy_requested || app->state != QA_APPLICATION_RUNNING ||
+        !provider || provider->kind != APPLICATION_PROVIDER_Q3 || !provider->owner ||
+        (owner && provider->owner != owner) || !provider->constructed || !provider->attached ||
+        provider->close_pending || !provider->state.q3 || !provider->native_q3_wire ||
+        !qa_session_safe(app->session) || qa_session_faulted(app->session) ||
+        !qa_world_idle(app->world) || !application_native_q3_wire_idle(provider) ||
+        !qa_q3_round_read(provider->state.q3, world, error) ||
+        !application_native_q3_wire_snapshot_bit(provider, &snapshot_bit, error)) {
+        application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 hosting requires its actual idle primary GAME owner");
+        return NULL;
+    }
+    return provider;
+}
+
 bool qa_application_network_q3_owner(qa_application *application,
     qa_actor_owner *owner, qa_q3_product *product, qa_error *error)
 {
-    if (!owner || !product)
+    if (!application || !owner || !product)
         return application_fail(error, QA_ERROR_ARGUMENT, "Missing primary Q3 source observation output");
     application_provider *provider = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    if (provider && provider->kind == APPLICATION_PROVIDER_Q3) {
+        qa_q3_round_source world;
+        provider = q3_native_host(application, 0, &world, error);
+        if (!provider) return false;
+        *owner = provider->owner; *product = world.product;
+        return true;
+    }
     struct application_q3_guest *engine = q3g_engine(provider);
     if (!engine || !provider->owner || !provider->constructed || !provider->attached ||
         provider->close_pending || !engine->game || !engine->game->host || engine->game->retired)
@@ -715,6 +750,98 @@ bool qa_application_network_q3_owner(qa_application *application,
             return application_fail(error, QA_ERROR_UNSUPPORTED, "Original Q3 wire cannot represent mixed primary gameplay owners");
     }
     *owner = provider->owner; *product = engine->product; return true;
+}
+
+static application_provider *q3_host_source(qa_application *app,
+    qa_actor_owner owner, qa_error *error)
+{
+    qa_actor_owner actual; qa_q3_product product;
+    if (!qa_application_network_q3_owner(app, &actual, &product, error)) return NULL;
+    if (!owner || owner != actual) {
+        application_fail(error, QA_ERROR_ARGUMENT, "Q3 host observation names another primary source owner"); return NULL;
+    }
+    return application_world_provider(app, QA_ROLE_ENTITIES, "");
+}
+
+qa_cvars *qa_application_network_q3_host_cvars(qa_application *app,
+    qa_actor_owner owner, qa_error *error)
+{
+    application_provider *provider = q3_host_source(app, owner, error);
+    qa_cvars *cvars = NULL;
+    if (!provider) return NULL;
+    if (provider->kind == APPLICATION_PROVIDER_Q3)
+        cvars = application_native_q3_console_registry(provider);
+    else {
+        struct application_q3_guest *engine = q3g_engine(provider);
+        (void)qa_q3_host_console(engine->game->host, &cvars, NULL);
+    }
+    if (!cvars) application_fail(error, QA_ERROR_ARGUMENT, "Q3 primary source cvar owner is unavailable");
+    return cvars;
+}
+qa_vfs *qa_application_network_q3_content(qa_application *app,
+    qa_actor_owner owner, qa_error *error)
+{
+    application_provider *provider = q3_host_source(app, owner, error);
+    if (!provider || !provider->launch || !provider->launch->content) {
+        application_fail(error, QA_ERROR_ARGUMENT, "Q3 primary source has no actual mounted content owner"); return NULL;
+    }
+    return provider->launch->content;
+}
+bool qa_application_network_q3_content_product(qa_application *app, qa_actor_owner owner,
+    qa_product_id *out, qa_error *error)
+{
+    application_provider *provider = q3_host_source(app, owner, error);
+    if (!provider || !provider->launch || !out)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 primary source lacks its admitted launch product identity");
+    *out = provider->launch->selection.product; return true;
+}
+bool qa_application_network_q3_host_capacity(qa_application *app,
+    qa_actor_owner owner, uint32_t *out, qa_error *error)
+{
+    application_provider *provider = q3_host_source(app, owner, error);
+    if (!provider || !out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q3 constructor capacity output");
+    if (provider->kind == APPLICATION_PROVIDER_Q3) {
+        qa_q3_round_source world;
+        if (!qa_q3_round_read(provider->state.q3, &world, error)) return false;
+        *out = world.max_clients;
+    } else {
+        struct application_q3_guest *engine = q3g_engine(provider);
+        if (!engine->loaded_compatibility || engine->loaded_max_clients < 1 || engine->loaded_max_clients > 64)
+            return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 GAME did not retain its actual initialized client capacity");
+        *out = (uint32_t)engine->loaded_max_clients;
+    }
+    return *out >= 1 && *out <= 64;
+}
+
+bool qa_application_network_q3_host_slots(qa_application *app, qa_actor_owner owner,
+    bool occupied[64], qa_error *error)
+{
+    if (!occupied) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q3 host slot observation");
+    application_provider *provider = q3_host_source(app, owner, error);
+    if (!provider) return false;
+    if (provider->kind == APPLICATION_PROVIDER_Q3) {
+        qa_q3_round_source world;
+        if (!qa_q3_round_read(provider->state.q3, &world, error)) return false;
+        memset(occupied, 0, 64 * sizeof(*occupied));
+        for (uint32_t i = 0; i < world.max_clients; ++i) {
+            qa_q3_source_binding binding; qa_q3_native_client client;
+            if (!qa_q3_source_binding_read(provider->state.q3, i, &binding, error) ||
+                !qa_q3_client_slot_read(provider->state.q3, i, &client, error)) return false;
+            occupied[i] = binding.actor.registry != 0 || client.connected != QA_Q3_CLIENT_DISCONNECTED;
+        }
+        return true;
+    }
+    struct application_q3_guest *engine = q3g_engine(provider);
+    for (size_t i = 0; i < 64; ++i)
+        occupied[i] = engine->clients[i].allocated || engine->clients[i].connected || engine->clients[i].pending_retirement;
+    return true;
+}
+
+bool qa_application_network_q3_host_baselines(qa_application *app, qa_actor_owner owner,
+    qa_q3_gamestate *out, qa_error *error)
+{
+    application_provider *provider = q3_host_source(app, owner, error);
+    return provider && application_q3_wire_host_baselines(provider, out, error);
 }
 
 static struct application_q3_guest *source(qa_application *application, qa_actor_id actor,
@@ -746,10 +873,54 @@ bool qa_application_network_q3_source(qa_application *application, qa_actor_id a
     uint32_t *slot, qa_q3_product *product, qa_error *error)
 {
     if (!slot || !product) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q3 source observation output");
+    application_provider *primary = application ?
+        application_world_provider(application, QA_ROLE_ENTITIES, "") : NULL;
+    if (primary && primary->kind == APPLICATION_PROVIDER_Q3) {
+        qa_q3_round_source world;
+        qa_q3_native_client client;
+        application_native_q3_wire_client_view admitted;
+        bool present;
+        uint32_t physical;
+        if (application->destroy_requested || !primary->constructed || !primary->attached ||
+            primary->close_pending || !primary->state.q3 || !primary->native_q3_wire ||
+            !qa_session_safe(application->session) || qa_session_faulted(application->session) ||
+            !qa_world_idle(application->world) ||
+            !qa_q3_round_read(primary->state.q3, &world, error) ||
+            !qa_q3_native_client_slot(primary->state.q3, actor, &physical, error) ||
+            !qa_q3_client_slot_read(primary->state.q3, physical, &client, error) ||
+            client.connected == QA_Q3_CLIENT_DISCONNECTED ||
+            !application_native_q3_wire_client_admission_read(primary, physical, &admitted, &present, error) ||
+            !present || !qa_actor_id_equal(admitted.actor, actor) || !admitted.userinfo)
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                "Native Q3 source observation requires its actual admitted physical GAME client");
+        *slot = physical; *product = world.product;
+        return true;
+    }
     struct application_q3_guest *engine = source(application, actor, slot, error);
     if (!engine) return false;
     *product = engine->product; return true;
 }
+
+bool qa_application_network_q3_client_bound(qa_application *app, qa_actor_owner owner,
+    qa_actor_id actor, uint32_t slot)
+{
+    application_provider *provider = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
+    if (!app || !owner || !provider || provider->owner != owner || !provider->constructed ||
+        !provider->attached || provider->close_pending || app->destroy_requested ||
+        !qa_actors_get(qa_session_actors(app->session), actor)) return false;
+    uint32_t actual;
+    if (provider->kind == APPLICATION_PROVIDER_Q3) {
+        const char *userinfo;
+        return provider->state.q3 && provider->native_q3_wire &&
+            qa_q3_native_client_slot(provider->state.q3, actor, &actual, NULL) && actual == slot &&
+            application_native_q3_wire_userinfo_read(provider, slot, &userinfo, NULL);
+    }
+    struct application_q3_guest *engine = q3g_engine(provider);
+    return engine && slot < 64 && engine->game && engine->game->host && !engine->game->retired &&
+        engine->clients[slot].connected && qa_actor_id_equal(engine->clients[slot].actor, actor) &&
+        qa_q3_host_actor_slot(engine->game->host, actor, &actual, NULL) && actual == slot;
+}
+
 static bool q3_wire_time(const struct application_q3_guest *engine, int32_t *out, qa_error *error)
 {
     qa_clock_state clock;
@@ -760,11 +931,72 @@ static bool q3_wire_time(const struct application_q3_guest *engine, int32_t *out
     memcpy(out, &bits, sizeof(bits));
     return true;
 }
+static application_provider *q3_native_actor(qa_application *app, qa_actor_id actor,
+    uint32_t *slot, qa_error *error)
+{
+    qa_q3_product product;
+    application_provider *provider = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
+    if (!provider || provider->kind != APPLICATION_PROVIDER_Q3 ||
+        !qa_application_network_q3_source(app, actor, slot, &product, error)) return NULL;
+    return provider;
+}
+bool qa_application_network_q3_command(qa_application *app,
+    const qa_network_q3_source_command *command, qa_error *error)
+{
+    if (!command || !command->sequence ||
+        !qa_application_network_controlled(app, command->client, command->seat,
+            command->actor, command->movement, (qa_bytes){0}, error)) return false;
+    uint32_t slot; qa_q3_product product;
+    if (!qa_application_network_q3_source(app, command->actor, &slot, &product, error)) return false;
+    return qa_application_control_q3_command(app, command->actor, command->sequence,
+        &command->command, error);
+}
+bool qa_application_network_q3_enter(qa_application *app, qa_net_client_id client,
+    qa_net_seat_id seat, const qa_q3_usercmd *command, qa_error *error)
+{
+    qa_actor_id actor;
+    if (!app || !command || !qa_application_remote_player_actor(app, client, seat, &actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 enter command has no admitted canonical remote actor");
+    application_provider *primary = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    uint32_t slot;
+    if (primary && primary->kind == APPLICATION_PROVIDER_Q3) {
+        application_provider *provider = q3_native_actor(app, actor, &slot, error);
+        if (!provider || !application_native_q3_wire_command_seed(provider, slot, command, error)) return false;
+    } else {
+        struct application_q3_guest *engine = source(app, actor, &slot, error);
+        if (!engine || !application_q3_guest_client_enter_command(engine->provider,
+            slot, actor, command, error)) return false;
+    }
+    return qa_application_remote_player_begin(app, client, seat, error);
+}
+static bool q3_native_world(application_provider *provider, int32_t server_id,
+    int32_t restarted_server_id, int32_t feed, qa_q3_server_world *out, qa_error *error)
+{
+    if (!out || server_id <= 0 || restarted_server_id <= 0 || restarted_server_id > server_id)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 world requires its actual wire identity and output");
+    int32_t milliseconds;
+    qa_cvars *cvars = application_native_q3_console_registry(provider);
+    const qa_cvar_view *pure = cvars ? qa_cvars_find(cvars, "sv_pure") : NULL;
+    const qa_cvar_view *flood = cvars ? qa_cvars_find(cvars, "sv_floodProtect") : NULL;
+    if (!pure || !flood)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Native Q3 engine source policies are not registered");
+    if (!application_q3_wire_time(provider, &milliseconds, error)) return false;
+    *out = (qa_q3_server_world){.generation = qa_application_configuration_generation(provider->application),
+        .server_id = server_id, .restarted_server_id = restarted_server_id,
+        .checksum_feed = feed, .time = milliseconds,
+        .pure = pure->integer != 0, .flood_protect = flood->integer != 0};
+    return true;
+}
 bool qa_application_network_q3_world(qa_application *application, qa_actor_id actor,
     int32_t server_id, int32_t restarted_server_id, int32_t feed,
     qa_q3_server_world *out, qa_error *error)
 {
     uint32_t slot;
+    application_provider *primary = application ? application_world_provider(application, QA_ROLE_ENTITIES, "") : NULL;
+    if (primary && primary->kind == APPLICATION_PROVIDER_Q3) {
+        application_provider *provider = q3_native_actor(application, actor, &slot, error);
+        return provider && q3_native_world(provider, server_id, restarted_server_id, feed, out, error);
+    }
     struct application_q3_guest *engine = source(application, actor, &slot, error);
     if (!engine || !out || server_id <= 0 || restarted_server_id <= 0)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 wire world requires its retained source identity");
@@ -784,45 +1016,97 @@ bool qa_application_network_q3_world(qa_application *application, qa_actor_id ac
 qa_cvars *qa_application_network_q3_cvars(qa_application *application, qa_actor_id actor)
 {
     uint32_t slot; qa_cvars *cvars = NULL;
+    application_provider *primary = application ? application_world_provider(application, QA_ROLE_ENTITIES, "") : NULL;
+    if (primary && primary->kind == APPLICATION_PROVIDER_Q3) {
+        application_provider *provider = q3_native_actor(application, actor, &slot, NULL);
+        return provider ? application_native_q3_console_registry(provider) : NULL;
+    }
     struct application_q3_guest *engine = source(application, actor, &slot, NULL);
     if (engine) (void)qa_q3_host_console(engine->game->host, &cvars, NULL);
     return cvars;
 }
-bool qa_application_network_q3_status(qa_application *application, qa_actor_id actor,
+static bool q3_status(struct application_q3_guest *engine,
     qa_application_network_q3_status_player players[64], size_t *count, qa_error *error)
 {
-    uint32_t slot;
-    struct application_q3_guest *engine = source(application, actor, &slot, error);
     if (!engine || !players || !count) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q3 status observation output");
     *count = 0;
     for (uint32_t i = 0; i < 64; ++i) {
         const q3g_client *client = &engine->clients[i];
-        if (!client->connected || !client->begun || client->pending_retirement) continue;
+        if (!client->connected || client->pending_retirement) continue;
         qa_q3_player player;
         if (!qa_q3_host_source_player(engine->game->host, i, &player, error)) return false;
-        players[(*count)++] = (qa_application_network_q3_status_player){i, player.persistant[0], player.ping,
-            client->userinfo ? client->userinfo : ""};
+        qa_application_network_q3_status_player value = {.slot = i,
+            .score = player.persistant[0], .ping = player.ping};
+        if (!qa_q3_info_value(client->userinfo ? client->userinfo : "", "name",
+                value.name, sizeof(value.name), error)) return false;
+        players[(*count)++] = value;
     }
     return true;
 }
-bool qa_application_network_q3_slots(qa_application *application, qa_actor_id actor,
-    bool occupied[64], qa_error *error)
+bool qa_application_network_q3_host_status(qa_application *app, qa_actor_owner owner,
+    qa_application_network_q3_status_player players[64], size_t *count, qa_error *error)
 {
-    uint32_t slot;
-    struct application_q3_guest *engine = source(application, actor, &slot, error);
-    if (!engine || !occupied) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q3 source slot observation");
-    for (size_t i = 0; i < 64; ++i)
-        occupied[i] = engine->clients[i].allocated || engine->clients[i].connected || engine->clients[i].pending_retirement;
+    application_provider *provider = q3_host_source(app, owner, error);
+    if (!provider || !players || !count)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q3 host status observation");
+    if (provider->kind != APPLICATION_PROVIDER_Q3)
+        return q3_status(q3g_engine(provider), players, count, error);
+    qa_q3_round_source world;
+    if (!qa_q3_round_read(provider->state.q3, &world, error)) return false;
+    *count = 0;
+    for (uint32_t slot = 0; slot < world.max_clients; ++slot) {
+        application_native_q3_wire_client_view client;
+        bool present, dropping; const char *reason;
+        if (!application_native_q3_wire_drop_read(provider, slot, &reason, &dropping, error)) return false;
+        if (dropping) continue;
+        if (!application_native_q3_wire_client_read(provider, slot, &client, &present, error)) return false;
+        if (!present) continue;
+        qa_q3_player player; qa_q3_native_client source_client;
+        if (!qa_q3_wire_player_read(provider->state.q3, slot, &player, error) ||
+            !qa_q3_client_slot_read(provider->state.q3, slot, &source_client, error)) return false;
+        qa_application_network_q3_status_player value = {.slot = slot,
+            .score = player.persistant[0], .ping = player.ping};
+        memcpy(value.name, source_client.netname, sizeof(source_client.netname));
+        players[(*count)++] = value;
+    }
     return true;
 }
+static bool q3_packages_valid(qa_application *app, qa_actor_owner owner, int32_t feed,
+    const qa_application_network_q3_package_view *packages, qa_error *error)
+{
+    return (packages && packages->owner == owner && packages->content && packages->references &&
+        packages->content == qa_application_network_q3_content(app, owner, error) &&
+        packages->source_generation == qa_application_configuration_generation(app) &&
+        packages->read_generation == qa_vfs_read_generation(packages->content) &&
+        packages->read_count == qa_vfs_read_count(packages->content) &&
+        qa_q3_pak_checksum_feed(packages->references) == (uint32_t)feed) ||
+        application_fail(error, QA_ERROR_FORMAT, "Q3 pure wire lacks its genuine primary package owner and complete opened-resource cut");
+}
 bool qa_application_network_q3_signon(qa_application *application, qa_actor_id actor,
-    int32_t server_id, int32_t feed, qa_q3_gamestate *out, qa_q3_server_world *world, qa_error *error)
+    int32_t server_id, int32_t feed, const qa_application_network_q3_package_view *packages,
+    qa_q3_gamestate *out, qa_q3_server_world *world, qa_error *error)
 {
     uint32_t slot;
+    application_provider *primary = application ? application_world_provider(application, QA_ROLE_ENTITIES, "") : NULL;
+    if (primary && primary->kind == APPLICATION_PROVIDER_Q3) {
+        application_provider *provider = q3_native_actor(application, actor, &slot, error);
+        if (!provider || !out || !world)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Missing native Q3 signon source or output");
+        if (!qa_application_network_q3_round_prepare(application, provider->owner,
+            server_id, server_id, feed, packages, world, error)) return false;
+        if (!q3_native_actor(application, actor, &slot, error)) return false;
+        qa_q3_gamestate_init(out);
+        out->client_number = (int32_t)slot; out->checksum_feed = feed;
+        for (uint32_t index = 0; index < QA_Q3_NATIVE_CONFIGSTRINGS; ++index) {
+            const char *text;
+            if (!qa_q3_configstring_read(provider->state.q3, index, &text, error) ||
+                !qa_q3_configstring_set(out, index, text, error)) return false;
+        }
+        return application_q3_wire_host_baselines(provider, out, error);
+    }
     struct application_q3_guest *engine = source(application, actor, &slot, error);
     if (!engine || !out || !world || !qa_application_network_q3_world(application, actor, server_id, server_id, feed, world, error)) return false;
-    if (world->pure)
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 pure signon requires complete live package-reference metadata");
+    if (world->pure && !q3_packages_valid(application, engine->provider->owner, feed, packages, error)) return false;
     char identity[32]; snprintf(identity, sizeof(identity), "%d", server_id);
     qa_cvars *cvars = qa_application_network_q3_cvars(application, actor);
     if (!cvars || !qa_cvars_register(cvars, "sv_serverid", identity, QA_CVAR_SYSTEMINFO | QA_CVAR_READONLY,
@@ -835,15 +1119,7 @@ bool qa_application_network_q3_signon(qa_application *application, qa_actor_id a
         *out = engine->gamestate; out->client_number = (int32_t)slot; out->checksum_feed = feed;
         ok = qa_q3_configstring_set(out, 0, (const char *)server.data, error) &&
             qa_q3_configstring_set(out, 1, (const char *)system.data, error);
-        qa_q3_host_game_data data;
-        if (ok && (!qa_q3_host_game_data_read(engine->game->host, &data) || data.entity_count > QA_Q3_ENTITY_NONE))
-            ok = application_fail(error, QA_ERROR_FORMAT, "Q3 source signon entity count exceeds wire capacity");
-        memset(out->baseline_present, 0, sizeof(out->baseline_present));
-        for (uint32_t i = 1; ok && i < data.entity_count; ++i) {
-            qa_qvm_entity_shared shared;
-            ok = qa_q3_host_entity(engine->game->host, i, &out->baselines[i], &shared, error);
-            if (ok) out->baseline_present[i] = shared.linked;
-        }
+        if (ok) ok = application_q3_wire_host_baselines(engine->provider, out, error);
     }
     qa_buffer_free(&system); qa_buffer_free(&server); return ok;
 }
@@ -851,6 +1127,12 @@ bool qa_application_network_q3_userinfo(qa_application *application, qa_actor_id
     const char *text, qa_error *error)
 {
     uint32_t slot;
+    application_provider *primary = application ? application_world_provider(application, QA_ROLE_ENTITIES, "") : NULL;
+    if (primary && primary->kind == APPLICATION_PROVIDER_Q3) {
+        application_provider *provider = q3_native_actor(application, actor, &slot, error);
+        return provider && application_native_q3_wire_userinfo(provider, slot, text, error) &&
+            application_native_q3_client_userinfo_changed(provider, actor, error);
+    }
     struct application_q3_guest *engine = source(application, actor, &slot, error);
     return engine && application_q3_guest_client_userinfo(engine->provider, slot, text, error);
 }
@@ -859,7 +1141,13 @@ bool qa_application_network_q3_userinfo_read(qa_application *application, qa_act
     const char **out, qa_error *error)
 {
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing retained Q3 userinfo output");
-    uint32_t slot; struct application_q3_guest *engine = source(application, actor, &slot, error);
+    uint32_t slot;
+    application_provider *primary = application ? application_world_provider(application, QA_ROLE_ENTITIES, "") : NULL;
+    if (primary && primary->kind == APPLICATION_PROVIDER_Q3) {
+        application_provider *provider = q3_native_actor(application, actor, &slot, error);
+        return provider && application_native_q3_wire_userinfo_read(provider, slot, out, error);
+    }
+    struct application_q3_guest *engine = source(application, actor, &slot, error);
     return engine && application_q3_guest_round_userinfo(engine->provider, slot, out, error);
 }
 
@@ -880,10 +1168,20 @@ static struct application_q3_guest *round_source(qa_application *application, qa
 
 bool qa_application_network_q3_round_world(qa_application *application, qa_actor_owner owner,
     int32_t server_id, int32_t restarted_server_id, int32_t feed,
-    qa_q3_server_world *out, qa_error *error)
+    const qa_application_network_q3_package_view *packages, qa_q3_server_world *out, qa_error *error)
 {
     if (!out || server_id <= 0 || restarted_server_id <= 0 || restarted_server_id > server_id)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 round world requires its admitted wire identity and output");
+    application_provider *primary = application ? application_world_provider(application, QA_ROLE_ENTITIES, "") : NULL;
+    if (primary && primary->kind == APPLICATION_PROVIDER_Q3) {
+        qa_q3_round_source source_world;
+        application_provider *provider = owner ? q3_native_host(application, owner, &source_world, error) : NULL;
+        if (!provider || application->operation != APPLICATION_IDLE)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 round world requires its exact idle source owner");
+        if (!q3_native_world(provider, server_id, restarted_server_id, feed, out, error)) return false;
+        if (out->pure && !q3_packages_valid(application, owner, feed, packages, error)) return false;
+        return true;
+    }
     struct application_q3_guest *engine = round_source(application, owner, error);
     if (!engine) return false;
     int32_t milliseconds; qa_cvars *cvars = NULL;
@@ -892,22 +1190,40 @@ bool qa_application_network_q3_round_world(qa_application *application, qa_actor
     (void)qa_q3_host_console(engine->game->host, &cvars, NULL);
     if (!cvars) return application_fail(error, QA_ERROR_ARGUMENT, "Q3 retained GAME cvar owner is unavailable");
     const qa_cvar_view *pure = qa_cvars_find(cvars, "sv_pure");
-    if (pure && pure->integer)
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 pure round wire binding lacks genuine package-reference metadata");
+    if (pure && pure->integer && !q3_packages_valid(application, owner, feed, packages, error)) return false;
     const qa_cvar_view *flood = qa_cvars_find(cvars, "sv_floodProtect");
     *out = (qa_q3_server_world){.generation = qa_application_configuration_generation(application),
         .server_id = server_id, .restarted_server_id = restarted_server_id, .checksum_feed = feed,
-        .time = milliseconds, .flood_protect = !flood || flood->integer != 0};
+        .time = milliseconds, .pure = pure && pure->integer != 0, .flood_protect = !flood || flood->integer != 0};
     return true;
 }
 
 bool qa_application_network_q3_round_prepare(qa_application *application, qa_actor_owner owner,
     int32_t server_id, int32_t restarted_server_id, int32_t feed,
-    qa_q3_server_world *out, qa_error *error)
+    const qa_application_network_q3_package_view *packages, qa_q3_server_world *out, qa_error *error)
 {
     qa_q3_server_world world;
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q3 round prepared world output");
-    if (!qa_application_network_q3_round_world(application, owner, server_id, restarted_server_id, feed, &world, error)) return false;
+    if (!qa_application_network_q3_round_world(application, owner, server_id, restarted_server_id, feed, packages, &world, error)) return false;
+    application_provider *primary = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    if (primary && primary->kind == APPLICATION_PROVIDER_Q3) {
+        qa_cvars *cvars = application_native_q3_console_registry(primary);
+        qa_q3_round_source source_world;
+        char identity[32]; snprintf(identity, sizeof(identity), "%d", server_id);
+        if (!cvars || !qa_q3_round_read(primary->state.q3, &source_world, error) ||
+            !qa_cvars_register(cvars, "fs_game", source_world.product == QA_Q3_TEAM_ARENA ? "missionpack" : "",
+                QA_CVAR_SYSTEMINFO, primary->owner, "Q3 source content directory", error) ||
+            !qa_cvars_set(cvars, "sv_serverid", identity, true, error)) return false;
+        qa_buffer system = {0}, server = {0};
+        bool ok = qa_cvars_info(cvars, QA_CVAR_SYSTEMINFO, QA_Q3_BIG_INFO_CHARS, &system, error) &&
+            qa_cvars_info(cvars, QA_CVAR_SERVERINFO, 1024, &server, error);
+        if (ok) ok = qa_q3_configstring_write(primary->state.q3, 1, (const char *)system.data, error) &&
+            qa_q3_configstring_write(primary->state.q3, 0, (const char *)server.data, error);
+        qa_buffer_free(&system); qa_buffer_free(&server);
+        if (!ok) return false;
+        *out = world;
+        return true;
+    }
     struct application_q3_guest *engine = round_source(application, owner, error);
     if (!engine) return false;
     application_provider *provider = engine->provider; qa_cvars *cvars = NULL;
@@ -1107,40 +1423,6 @@ bool qa_application_network_q3_client_command(qa_application *app, qa_actor_owne
     qa_command_tokens_free(&role->arguments); role->arguments = copy; return true;
 }
 
-typedef struct visibility_owner { qa_collision_geometry *geometry; qa_error failure; } visibility_owner;
-static bool point(void *opaque, const float origin[3], int32_t *area, int32_t *cluster, qa_error *error)
-{
-    visibility_owner *owner = opaque;
-    qa_collision_leaf leaf;
-    if (!qa_collision_point_leaf(owner->geometry, (qa_vec3){origin[0], origin[1], origin[2]}, &leaf, error)) return false;
-    if (leaf.area < INT32_MIN || leaf.area > INT32_MAX || leaf.cluster < INT32_MIN || leaf.cluster > INT32_MAX)
-        return application_fail(error, QA_ERROR_FORMAT, "Q3 geometry visibility index is outside source range");
-    *area = (int32_t)leaf.area; *cluster = (int32_t)leaf.cluster; return true;
-}
-static bool area_bits(void *opaque, int32_t area, uint8_t accumulator[32], size_t *bytes, qa_error *error)
-{
-    uint8_t bits[32]; visibility_owner *owner = opaque;
-    if (!qa_collision_area_bits(owner->geometry, area, bits, sizeof(bits), bytes, error)) return false;
-    for (size_t i = 0; i < *bytes; ++i) accumulator[i] |= bits[i];
-    return true;
-}
-static bool connected(void *opaque, int32_t first, int32_t second)
-{
-    visibility_owner *owner = opaque; bool value = false;
-    if (!qa_collision_areas_connected(owner->geometry, first, second, &value, &owner->failure)) return false;
-    return value;
-}
-static bool cluster_visible(void *opaque, int32_t first, int32_t second)
-{
-    visibility_owner *owner = opaque; bool value = false;
-    if (!qa_collision_cluster_visible(owner->geometry, first, second, false, &value, &owner->failure)) return false;
-    return value;
-}
-typedef struct source_entity {
-    qa_q3_entity state;
-    qa_q3_host_visibility visibility;
-} source_entity;
-
 bool qa_application_network_q3_snapshot(qa_application *application, qa_actor_id actor,
     int32_t message, int32_t commands, uint8_t flags,
     qa_application_network_q3_frame *out, qa_error *error)
@@ -1148,50 +1430,15 @@ bool qa_application_network_q3_snapshot(qa_application *application, qa_actor_id
     if (!out || message < 0 || commands < 0)
         return application_fail(error, QA_ERROR_ARGUMENT, "Invalid Q3 snapshot observation");
     uint32_t slot;
+    application_provider *primary = application ? application_world_provider(application, QA_ROLE_ENTITIES, "") : NULL;
+    if (primary && primary->kind == APPLICATION_PROVIDER_Q3) {
+        application_provider *provider = q3_native_actor(application, actor, &slot, error);
+        uint8_t source_bit;
+        if (!provider || !application_native_q3_wire_snapshot_bit(provider, &source_bit, error)) return false;
+        flags = (uint8_t)((flags & (uint8_t)~4u) | source_bit);
+        return application_q3_wire_host_snapshot(provider, slot, message, commands, flags, out, error);
+    }
     struct application_q3_guest *engine = source(application, actor, &slot, error);
-    if (!engine) return false;
-    int32_t milliseconds;
-    if (!q3_wire_time(engine, &milliseconds, error)) return false;
-    qa_q3_host_game_data data;
-    qa_collision_geometry *geometry = qa_world_geometry(application->world);
-    if (!geometry || !qa_q3_host_game_data_read(engine->game->host, &data) || data.entity_count > QA_Q3_ENTITIES)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 snapshot source records or geometry are unavailable");
-    source_entity *records = calloc(data.entity_count ? data.entity_count : 1, sizeof(*records));
-    qa_q3_visibility_entity *entities = calloc(data.entity_count ? data.entity_count : 1, sizeof(*entities));
-    qa_application_network_q3_frame *candidate = calloc(1, sizeof(*candidate));
-    if (!records || !entities || !candidate) {
-        free(records); free(entities); free(candidate);
-        return application_fail(error, QA_ERROR_MEMORY, "Allocating Q3 snapshot observation");
-    }
-    bool ok = qa_q3_host_source_player(engine->game->host, slot, &candidate->snapshot.player, error);
-    for (uint32_t i = 0; ok && i < data.entity_count; ++i) {
-        qa_qvm_entity_shared shared; bool present;
-        ok = qa_q3_host_entity(engine->game->host, i, &records[i].state, &shared, error) &&
-            qa_q3_host_visibility_read(engine->game->host, i, &records[i].visibility, &present, error);
-        if (!ok) break;
-        if (records[i].visibility.cluster_count > 16) {
-            ok = application_fail(error, QA_ERROR_FORMAT, "Q3 snapshot source cluster list exceeds host capacity"); break;
-        }
-        entities[i] = (qa_q3_visibility_entity){.state = &records[i].state,
-            .linked = shared.linked && present, .flags = (uint32_t)shared.server_flags,
-            .single_client = shared.single_client, .area = records[i].visibility.area,
-            .area2 = records[i].visibility.area2, .last_cluster = records[i].visibility.last_cluster,
-            .clusters = records[i].visibility.clusters, .cluster_count = records[i].visibility.cluster_count};
-    }
-    visibility_owner owner = {.geometry = geometry};
-    qa_q3_visibility_world world = {.context = &owner, .point = point, .area_bits = area_bits,
-        .areas_connected = connected, .cluster_visible = cluster_visible};
-    if (ok) ok = qa_q3_select_snapshot_entities(&candidate->snapshot.player, entities, data.entity_count,
-                                                &world, false, &candidate->visible, error);
-    if (ok && owner.failure.code) { if (error) *error = owner.failure; ok = false; }
-    if (ok) {
-        candidate->snapshot.valid = true; candidate->snapshot.message_number = message;
-        candidate->snapshot.server_command_number = commands; candidate->snapshot.server_time = milliseconds;
-        candidate->snapshot.delta_number = -1; candidate->snapshot.flags = flags;
-        candidate->snapshot.area_bytes = candidate->visible.area_bytes;
-        memcpy(candidate->snapshot.area_mask, candidate->visible.area_mask, sizeof(candidate->snapshot.area_mask));
-        candidate->snapshot.entity_count = candidate->visible.count;
-        *out = *candidate; out->snapshot.entities = out->visible.entities;
-    }
-    free(records); free(entities); free(candidate); return ok;
+    return engine && application_q3_wire_host_snapshot(engine->provider, slot,
+        message, commands, flags, out, error);
 }

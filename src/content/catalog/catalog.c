@@ -205,6 +205,13 @@ bool qa_catalog_product_mounts(const qa_catalog *c, qa_product_id id,
     *mounts = c->products[id - 1].mounts; *count = c->products[id - 1].mount_count;
     return true;
 }
+bool qa_catalog_product_own_mounts(const qa_catalog *c, qa_product_id id,
+                                   const qa_mount_id **mounts, size_t *count)
+{
+    if (!qa_catalog_product(c, id) || !mounts || !count) return false;
+    *mounts = c->products[id - 1].own_mounts; *count = c->products[id - 1].own_count;
+    return true;
+}
 const qa_catalog_map *qa_catalog_maps(const qa_catalog *c, qa_product_id id, size_t *count)
 {
     if (count) *count = qa_catalog_product(c, id) ? c->products[id - 1].map_count : 0;

@@ -1280,9 +1280,31 @@ static bool acquire_loose(qa_resource_pool *pool, const mount *source,
     return true;
 }
 
+void qa_vfs_acquisition_dispose(qa_vfs_acquisition *receipt)
+{
+    if (!receipt) return;
+    free(receipt->path); free(receipt->lookup_path); free(receipt->link_source); free(receipt->link_target);
+    *receipt = (qa_vfs_acquisition){0};
+}
+static bool acquisition_capture(mount *source, qa_resource *resource, const char *requested,
+    const char *path, const resource_link *link, qa_vfs_acquisition *out, qa_error *error)
+{
+    if (!out) return true;
+    qa_vfs_acquisition receipt = {.mount = source->id, .resource_id = qa_resource_id(resource)};
+    receipt.path = qa_vfs_normalize_path(requested, error);
+    receipt.lookup_path = qa_vfs_normalize_path(path, error);
+    receipt.link_source = copy_string(link ? link->source : "");
+    receipt.link_target = copy_string(link ? link->target : "");
+    if (!receipt.path || !receipt.lookup_path || !receipt.link_source || !receipt.link_target) {
+        qa_vfs_acquisition_dispose(&receipt);
+        if (!error || error->code == QA_OK) qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining actual VFS acquisition receipt");
+        return false;
+    }
+    *out = receipt; return true;
+}
 static bool acquire_mount(qa_vfs *vfs, mount *source,
                            const char *path, const char *requested, const resource_link *link,
-                           qa_resource **out, qa_error *error)
+                           qa_resource **out, qa_vfs_acquisition *receipt, qa_error *error)
 {
     if (!source_allowed(vfs, source, path)) {
         qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "resource excluded by content policy: %s", path);
@@ -1295,6 +1317,9 @@ static bool acquire_mount(qa_vfs *vfs, mount *source,
             qa_resource_release(*out); *out = NULL; return false;
         }
         if (source->archive != NULL) source->referenced = true;
+        if (!acquisition_capture(source, *out, requested, path, link, receipt, error)) {
+            qa_resource_release(*out); *out = NULL; return false;
+        }
     }
     return result;
 }
@@ -1314,7 +1339,7 @@ bool qa_vfs_acquire_from(qa_vfs *vfs, qa_mount_id id, const char *path,
     }
     char *normalized = qa_vfs_normalize_path(path, error);
     if (normalized == NULL) return false;
-    bool result = acquire_mount(vfs, source, normalized, path, NULL, out, error);
+    bool result = acquire_mount(vfs, source, normalized, path, NULL, out, NULL, error);
     free(normalized);
     return result;
 }
@@ -1328,7 +1353,7 @@ bool qa_vfs_acquire(qa_vfs *vfs, const char *path, qa_resource **out,
 static bool acquire_filtered_mode(qa_vfs *vfs, const char *path,
                               qa_vfs_accept_mount accept, void *context,
                               qa_resource **out, qa_mount_id *out_mount,
-                              qa_error *error)
+                              qa_vfs_acquisition *receipt, qa_error *error)
 {
     if (out != NULL) *out = NULL;
     if (vfs == NULL || out == NULL) {
@@ -1342,7 +1367,7 @@ static bool acquire_filtered_mode(qa_vfs *vfs, const char *path,
         mount *source = vfs->mounts[i];
         if (!source->user_overlay) continue;
         if (accept != NULL && !accept(source->id, context)) continue;
-        if (acquire_mount(vfs, source, normalized, path, NULL, out, &local)) {
+        if (acquire_mount(vfs, source, normalized, path, NULL, out, receipt, &local)) {
             if (out_mount != NULL) *out_mount = source->id;
             free(normalized);
             return true;
@@ -1381,7 +1406,7 @@ static bool acquire_filtered_mode(qa_vfs *vfs, const char *path,
         free(target);
         if (normalized == NULL) return false;
         mount *source = find_mount(vfs, link->mount);
-        bool result = acquire_mount(vfs, source, normalized, path, link, out, error);
+        bool result = acquire_mount(vfs, source, normalized, path, link, out, receipt, error);
         if (result && out_mount != NULL) *out_mount = source->id;
         free(normalized);
         return result;
@@ -1404,7 +1429,7 @@ static bool acquire_filtered_mode(qa_vfs *vfs, const char *path,
         mount *source = order == NULL ? vfs->mounts[i] : find_mount(vfs, order[i]);
         if (source->user_overlay) continue;
         if (accept != NULL && !accept(source->id, context)) continue;
-        if (acquire_mount(vfs, source, normalized, path, NULL, out, &local)) {
+        if (acquire_mount(vfs, source, normalized, path, NULL, out, receipt, &local)) {
             if (out_mount != NULL) *out_mount = source->id;
             free(normalized);
             return true;
@@ -1421,7 +1446,17 @@ static bool acquire_filtered_mode(qa_vfs *vfs, const char *path,
 }
 bool qa_vfs_acquire_filtered(qa_vfs *vfs, const char *path, qa_vfs_accept_mount accept,
     void *context, qa_resource **out, qa_mount_id *out_mount, qa_error *error)
-{ return acquire_filtered_mode(vfs, path, accept, context, out, out_mount, error); }
+{ return acquire_filtered_mode(vfs, path, accept, context, out, out_mount, NULL, error); }
+bool qa_vfs_acquire_receipt(qa_vfs *vfs, const char *path, qa_resource **out,
+    qa_vfs_acquisition *receipt, qa_error *error)
+{
+    if (out) *out = NULL;
+    if (!receipt || receipt->mount || receipt->resource_id || receipt->path || receipt->lookup_path ||
+        receipt->link_source || receipt->link_target) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "VFS acquisition requires an empty receipt"); return false;
+    }
+    return acquire_filtered_mode(vfs, path, NULL, NULL, out, NULL, receipt, error);
+}
 static bool probe_mount(const qa_vfs *vfs, const mount *source, const char *path,
     bool *found, uint64_t *size, qa_error *error)
 {
@@ -1449,7 +1484,7 @@ static bool probe_mount(const qa_vfs *vfs, const mount *source, const char *path
     }
     qa_fs_file_close(file); *found = true; *size = qa_fs_identity_size(&identity); return true;
 }
-bool vfs_read_valid(const qa_vfs *vfs, const qa_vfs_read_reference *entry, qa_error *error)
+static bool read_recipe_valid(const qa_vfs *vfs, const qa_vfs_read_reference *entry, bool native_identity, qa_error *error)
 {
     mount *source = find_mount(vfs, entry->mount);
     const qa_resource *resource = entry->resource;
@@ -1475,7 +1510,7 @@ bool vfs_read_valid(const qa_vfs *vfs, const qa_vfs_read_reference *entry, qa_er
         const qa_archive_entry *member = NULL;
         if (!archive_member(source, entry->lookup_path, &member, error)) return false;
         if (!member || member->ordinal != resource->ordinal || !source->referenced) goto invalid;
-    } else {
+    } else if (native_identity) {
         char *resolved = resolve_spelling(source, entry->lookup_path, error);
         if (!resolved) return false;
         qa_fs_file *file = NULL; qa_fs_identity identity;
@@ -1488,6 +1523,35 @@ bool vfs_read_valid(const qa_vfs *vfs, const qa_vfs_read_reference *entry, qa_er
 invalid:
     qa_error_set(error, QA_ERROR_FORMAT, 0, "VFS read recipe differs from its actual mounted resource"); return false;
 }
+bool vfs_read_valid(const qa_vfs *vfs, const qa_vfs_read_reference *entry, qa_error *error)
+{ return read_recipe_valid(vfs, entry, true, error); }
+static bool acquisition_valid(const qa_vfs *vfs, const qa_vfs_acquisition *receipt, bool native_identity, qa_error *error)
+{
+    if (vfs && receipt && receipt->mount && receipt->resource_id && receipt->path &&
+        receipt->lookup_path && receipt->link_source && receipt->link_target) {
+        const char *paths[] = {receipt->path, receipt->lookup_path, receipt->link_source, receipt->link_target};
+        for (size_t i = 0; i < 4; ++i) {
+            char *normalized = i < 2 ? qa_vfs_normalize_path(paths[i], error) : link_prefix(paths[i], true, error);
+            bool matches = normalized && !strcmp(normalized, paths[i]); free(normalized);
+            if (!matches) {
+                if (!error || error->code == QA_OK) qa_error_set(error, QA_ERROR_FORMAT, 0, "VFS acquisition receipt has an invalid lookup spelling");
+                return false;
+            }
+        }
+        for (size_t i = 0; i < vfs->read_count; ++i) {
+            const qa_vfs_read_reference *row = vfs->reads + i;
+            if (row->mount != receipt->mount || qa_resource_id(row->resource) != receipt->resource_id) continue;
+            qa_vfs_read_reference actual = {receipt->mount, row->resource, receipt->path,
+                receipt->lookup_path, receipt->link_source, receipt->link_target};
+            return read_recipe_valid(vfs, &actual, native_identity, error);
+        }
+    }
+    qa_error_set(error, QA_ERROR_FORMAT, 0, "VFS acquisition receipt lacks its actual retained mounted resource"); return false;
+}
+bool qa_vfs_acquisition_valid(const qa_vfs *vfs, const qa_vfs_acquisition *receipt, qa_error *error)
+{ return acquisition_valid(vfs, receipt, true, error); }
+bool qa_vfs_acquisition_retained(const qa_vfs *vfs, const qa_vfs_acquisition *receipt, qa_error *error)
+{ return acquisition_valid(vfs, receipt, false, error); }
 bool qa_vfs_probe(qa_vfs *vfs, const char *path, bool *found, uint64_t *size, qa_error *error)
 {
     if (!vfs || !found || !size) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "VFS probe requires its view and outputs"); return false; }

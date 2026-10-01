@@ -13,6 +13,12 @@ bool qa_application_network_command_owner_bound(const qa_application *);
 bool qa_application_network_controlled(qa_application *, qa_net_client_id,
     qa_net_seat_id, qa_actor_id, qa_movement_kind, qa_bytes arsenal, qa_error *);
 bool qa_application_network_command(qa_application *, const qa_network_command *, qa_error *);
+bool qa_application_network_q3_command(qa_application *,
+    const qa_network_q3_source_command *, qa_error *);
+/* Publish the actual first source usercmd before canonical ClientBegin. This
+ * seed is not a transport command acknowledgement or a second Think call. */
+bool qa_application_network_q3_enter(qa_application *, qa_net_client_id,
+    qa_net_seat_id, const qa_q3_usercmd *, qa_error *);
 bool qa_application_network_resolve(qa_application *, const qa_net_client *,
     uint32_t actor_slot, uint32_t actor_generation, qa_net_seat_id *,
     qa_unified_controlled_actor *, qa_error *);
@@ -118,35 +124,60 @@ bool qa_application_network_q1_signon_at(qa_application *, qa_actor_id, size_t,
     qa_application_protocol_event *, qa_error *);
 
 /* A caller owns this observation storage; snapshot.entities points into it.
- * The producer reads complete original records from a qualified Q3 game host.
- * Builtin/native mixed projections require their own complete wire producer
- * and are explicitly rejected here. It never publishes another world. */
+ * Native primary GAME observations use its typed physical source records and
+ * selected movement/mode services. Original hosts use qualified source ABI
+ * records. Both retain the actual source world and collision visibility. */
 typedef struct qa_application_network_q3_frame {
     qa_q3_snapshot snapshot;
     qa_q3_visible_entities visible;
 } qa_application_network_q3_frame;
 const qa_q3_gamestate *qa_application_network_q3_gamestate(qa_application *, qa_actor_id);
+/* Native physical admission is independent of the canonical character owner.
+ * Original hosts retain their qualified source composition requirement. */
 bool qa_application_network_q3_source(qa_application *, qa_actor_id,
     uint32_t *source_slot, qa_q3_product *, qa_error *);
+/* Pure full-generation physical identity for the actual primary GAME service
+ * callback. Does not require an idle frame; retained pending DROP still owns
+ * its source row. Another source owner does not match this recipient. */
+bool qa_application_network_q3_client_bound(qa_application *, qa_actor_owner,
+    qa_actor_id, uint32_t source_slot);
 /* Read the actual primary GAME owner without requiring a local player.
  * Candidate source admission may be pending; no source callback runs. */
 bool qa_application_network_q3_owner(qa_application *, qa_actor_owner *, qa_q3_product *, qa_error *);
-bool qa_application_network_q3_slots(qa_application *, qa_actor_id,
-    bool occupied[64], qa_error *);
+qa_cvars *qa_application_network_q3_host_cvars(qa_application *, qa_actor_owner, qa_error *);
+bool qa_application_network_q3_host_slots(qa_application *, qa_actor_owner, bool occupied[64], qa_error *);
+/* Copy only complete linked physical baselines at accepted Connect. This
+ * calls no source export and does not publish configstrings or a gamestate. */
+bool qa_application_network_q3_host_baselines(qa_application *, qa_actor_owner, qa_q3_gamestate *, qa_error *);
 qa_cvars *qa_application_network_q3_cvars(qa_application *, qa_actor_id);
 typedef struct qa_application_network_q3_status_player {
     uint32_t slot;
     int32_t score, ping;
-    const char *userinfo;
+    char name[1024];
 } qa_application_network_q3_status_player;
-/* Userinfo borrows the source owner until its next mutation. */
-bool qa_application_network_q3_status(qa_application *, qa_actor_id,
+/* Names copy the actual native cleaned netname or original guest userinfo. */
+bool qa_application_network_q3_host_status(qa_application *, qa_actor_owner,
     qa_application_network_q3_status_player players[64], size_t *count, qa_error *);
-/* Complete original signon records and authoritative clock from the same
- * qualified game. Pure hosting requires the package-reference producer;
+/* Actor-independent primary GAME construction policy and mounted content.
+ * Capacity is frozen at the admitted source constructor/Init boundary. */
+bool qa_application_network_q3_host_capacity(qa_application *, qa_actor_owner,
+    uint32_t *, qa_error *);
+qa_vfs *qa_application_network_q3_content(qa_application *, qa_actor_owner, qa_error *);
+bool qa_application_network_q3_content_product(qa_application *, qa_actor_owner,
+    qa_product_id *, qa_error *);
+typedef struct qa_application_network_q3_package_view {
+    qa_actor_owner owner;
+    qa_vfs *content;
+    const qa_q3_pak_references *references;
+    uint64_t source_generation, read_generation;
+    size_t read_count;
+} qa_application_network_q3_package_view;
+/* Complete physical signon records and authoritative clock from the same
+ * qualified GAME. Pure hosting requires the package-reference producer;
  * absent that contract it is rejected before publishing systeminfo. */
 bool qa_application_network_q3_signon(qa_application *, qa_actor_id,
-    int32_t server_id, int32_t checksum_feed, qa_q3_gamestate *, qa_q3_server_world *, qa_error *);
+    int32_t server_id, int32_t checksum_feed, const qa_application_network_q3_package_view *,
+    qa_q3_gamestate *, qa_q3_server_world *, qa_error *);
 bool qa_application_network_q3_world(qa_application *, qa_actor_id,
     int32_t server_id, int32_t restarted_server_id, int32_t checksum_feed,
     qa_q3_server_world *, qa_error *);
@@ -158,14 +189,14 @@ bool qa_application_network_q3_userinfo_read(qa_application *, qa_actor_id, cons
  * or used as a fallback. Requires its completed idle source round boundary. */
 bool qa_application_network_q3_round_world(qa_application *, qa_actor_owner source_owner,
     int32_t server_id, int32_t restarted_server_id, int32_t checksum_feed,
-    qa_q3_server_world *, qa_error *);
+    const qa_application_network_q3_package_view *, qa_q3_server_world *, qa_error *);
 /* Publish actual server/system configstrings through that source's ordinary
  * reliable owners before and after source reset; does not send a gamestate.
  * Failure after a source write is irreversible; the round owner must fault
  * and retire the failed transaction rather than retry it as an idle cut. */
 bool qa_application_network_q3_round_prepare(qa_application *, qa_actor_owner source_owner,
     int32_t server_id, int32_t restarted_server_id, int32_t checksum_feed,
-    qa_q3_server_world *, qa_error *);
+    const qa_application_network_q3_package_view *, qa_q3_server_world *, qa_error *);
 bool qa_application_network_q3_snapshot(qa_application *, qa_actor_id,
     int32_t message_number, int32_t server_command_number, uint8_t flags,
     qa_application_network_q3_frame *, qa_error *);

@@ -148,6 +148,22 @@ void qa_vfs_listing_free(qa_vfs_listing *listing);
  * loose files acquire a new immutable version. out_mount is optional. */
 bool qa_vfs_acquire(qa_vfs *vfs, const char *path, qa_resource **out,
                     qa_mount_id *out_mount, qa_error *error);
+/* Owned receipt of this genuine acquisition, independent of the journal's
+ * first request for a deduplicated resource. Strings belong to the receipt. */
+typedef struct qa_vfs_acquisition {
+    qa_mount_id mount;
+    uint64_t resource_id;
+    char *path, *lookup_path, *link_source, *link_target;
+} qa_vfs_acquisition;
+bool qa_vfs_acquire_receipt(qa_vfs *, const char *, qa_resource **,
+    qa_vfs_acquisition *empty_receipt, qa_error *);
+void qa_vfs_acquisition_dispose(qa_vfs_acquisition *);
+/* Qualify the retained actual recipe against a genuine journal resource and
+ * mounted native identity. No admission, byte read or journal mutation. */
+bool qa_vfs_acquisition_valid(const qa_vfs *, const qa_vfs_acquisition *, qa_error *);
+/* Observe the held immutable acquisition association without reopening a loose
+ * path. Capture/restore admission must use acquisition_valid instead. */
+bool qa_vfs_acquisition_retained(const qa_vfs *, const qa_vfs_acquisition *, qa_error *);
 /* Ordinary lookup and policy admission without producing a read reference. */
 bool qa_vfs_probe(qa_vfs *, const char *, bool *found, uint64_t *size, qa_error *);
 typedef bool (*qa_vfs_accept_mount)(qa_mount_id mount, void *context);

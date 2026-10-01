@@ -101,6 +101,10 @@ const qa_catalog_mount *qa_catalog_mount_at(const qa_catalog *, size_t);
 size_t qa_catalog_mount_count(const qa_catalog *);
 bool qa_catalog_product_mounts(const qa_catalog *, qa_product_id,
                                const qa_mount_id **, size_t *);
+/* Actual discovered physical mounts owned by this product, excluding inherited
+ * base search paths. Borrows have the same catalog lifetime as product_mounts. */
+bool qa_catalog_product_own_mounts(const qa_catalog *, qa_product_id,
+                                   const qa_mount_id **, size_t *);
 const qa_catalog_map *qa_catalog_maps(const qa_catalog *, qa_product_id, size_t *);
 const qa_catalog_start *qa_catalog_starts(const qa_catalog *, qa_product_id,
                                          const qa_catalog_episode **, size_t *);
