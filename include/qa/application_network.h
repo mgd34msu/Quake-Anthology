@@ -15,6 +15,8 @@ bool qa_application_network_controlled(qa_application *, qa_net_client_id,
 bool qa_application_network_command(qa_application *, const qa_network_command *, qa_error *);
 bool qa_application_network_q3_command(qa_application *,
     const qa_network_q3_source_command *, qa_error *);
+bool qa_application_network_nq_command(qa_application *,
+    const qa_network_nq_source_command *, qa_error *);
 /* Publish the actual first source usercmd before canonical ClientBegin. This
  * seed is not a transport command acknowledgement or a second Think call. */
 bool qa_application_network_q3_enter(qa_application *, qa_net_client_id,
@@ -40,13 +42,14 @@ typedef struct qa_application_network_q1_host {
     qa_actor_owner owner;
     qa_net_protocol_id protocol;
     uint32_t client_slots, entity_slots;
+    bool source_board_events; /* Real source owns board and lightstyle events. */
 } qa_application_network_q1_host;
 /* Primary ENTITIES observations require its real classic source producer.
  * Host admission does not require a local seat or selected CHARACTER. */
 bool qa_application_network_q1_host_source(qa_application *,
     qa_application_network_q1_host *, qa_error *);
 /* The actor is proved against the primary source's connected physical row and
- * full QC binding. Canonical character provenance may belong to another role.
+ * full native or QC binding. Canonical character provenance may belong to another role.
  * Normal entity reads may refresh the existing borrowed body projection. */
 bool qa_application_network_q1_source(qa_application *, qa_actor_id,
     qa_actor_owner *, uint32_t *source_slot, qa_net_protocol_id *, qa_error *);
@@ -216,27 +219,31 @@ bool qa_application_network_q3_round_prepare(qa_application *, qa_actor_owner so
 bool qa_application_network_q3_snapshot(qa_application *, qa_actor_id,
     int32_t message_number, int32_t server_command_number, uint8_t flags,
     qa_application_network_q3_frame *, qa_error *);
-/* Qualified external cgame consumes native client snapshots and owns source
- * prediction. Admission preserves the selected gameplay composition. */
+/* The selected original or builtin CLIENT consumes native client snapshots.
+ * Admission preserves the selected gameplay composition. */
 bool qa_application_network_q3_client_source(qa_application *, qa_actor_id,
     qa_actor_owner *, qa_q3_product *, uint32_t *launch_seat, qa_error *);
 bool qa_application_network_q3_client_command(qa_application *, qa_actor_owner,
     uint32_t seat, const qa_q3_tokens *, qa_error *);
-bool qa_application_network_q3_client_clear(qa_application *, qa_actor_owner,
-    uint32_t seat, qa_error *);
+bool qa_application_network_q3_client_native_system_info(qa_application *, qa_actor_owner,
+    uint32_t seat, const char *actual_info, qa_error *);
 /* Connection-owned projection, initialized to zero. Source numbers are kept
  * here rather than in the local GAME source-slot namespace. Bodies contain
  * authoritative snapshot state, remain unlinked, and grant no input authority.
- * Keep current and next presentation snapshots together until the source clock
- * transitions; release before closing the borrowed application. */
+ * Retain observed entity identities for the actual connection lifetime, as
+ * source centity collision rows can outlive snapshot presence. Release on real
+ * clear/epoch retirement before closing the borrowed application. */
 typedef struct qa_application_network_q3_projection {
     qa_actor_owner owner;
     qa_actor_definition definition;
-    qa_actor_id actors[QA_Q3_ENTITY_WORLD];
+    qa_actor_id actors[QA_Q3_ENTITY_NONE];
 } qa_application_network_q3_projection;
+struct qa_q3_prediction_scene;
+struct qa_q3_prediction_scene_view;
 bool qa_application_network_q3_client_project(qa_application *, qa_actor_owner,
     qa_application_network_q3_projection *, const qa_q3_snapshot *current,
-    const qa_q3_snapshot *next, qa_error *);
+    const qa_q3_snapshot *next, const struct qa_q3_prediction_scene *,
+    const struct qa_q3_prediction_scene_view *, qa_error *);
 bool qa_application_network_q3_client_unproject(qa_application *,
     qa_application_network_q3_projection *, qa_error *);
 bool qa_application_network_q3_client_actor(qa_application *,

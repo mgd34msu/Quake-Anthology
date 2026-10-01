@@ -477,11 +477,16 @@ bool qa_q3_client_peer_create_demo(qa_q3_identity, qa_q3_product,
 void qa_q3_client_peer_destroy(qa_q3_client_peer *);
 const qa_q3_identity *qa_q3_client_peer_identity(const qa_q3_client_peer *);
 qa_q3_product qa_q3_client_peer_product(const qa_q3_client_peer *);
+bool qa_q3_client_peer_demo(const qa_q3_client_peer *);
 /* Returned views remain borrowed until the next receive or history mutation. */
 const qa_q3_gamestate *qa_q3_client_peer_gamestate(const qa_q3_client_peer *);
 const qa_q3_snapshot *qa_q3_client_peer_snapshot(const qa_q3_client_peer *);
 /* Null denotes a missing, invalid or expired source history entry. */
 const qa_q3_snapshot *qa_q3_client_peer_snapshot_at(const qa_q3_client_peer *, int32_t);
+/* CL_GetSnapshot also expires a retained entry when its original parse-entity
+ * range has fallen out of the physical 2048-row producer ring. Decoder delta
+ * history uses snapshot_at independently of this presentation boundary. */
+const qa_q3_snapshot *qa_q3_client_peer_presentation_snapshot_at(const qa_q3_client_peer *, int32_t);
 bool qa_q3_client_peer_command(qa_q3_client_peer *, const char *, qa_error *);
 bool qa_q3_client_peer_usercmd(qa_q3_client_peer *, const qa_q3_usercmd *, qa_error *);
 uint64_t qa_q3_client_peer_usercmd_number(const qa_q3_client_peer *);

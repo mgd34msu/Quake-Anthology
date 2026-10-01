@@ -102,6 +102,15 @@ bool qa_vfs_mount_directory(qa_vfs *vfs, const char *path,
  * Logical path labels remain unchanged; no source path is reopened. */
 bool qa_vfs_mount_retained(qa_vfs *, const qa_vfs *, qa_mount_id,
     qa_archive_comparison, bool writable, qa_mount_id *, qa_error *);
+/* Pure qualification of a scoped retained-mount recipe. IDs in ordered_ids
+ * belong to retained; the scoped view has IDs 1..count in that exact order.
+ * Mounts keep native identities, immutable packages, paths and writable flags;
+ * comparison is replaced and demo admission is retained or forced. The view
+ * must have no overlays, links, prefixes or global restrictions. Accounting
+ * and read journals are ignored. No allocation, native I/O or mutation occurs. */
+bool qa_vfs_retained_recipe_matches(const qa_vfs *view, const qa_vfs *retained,
+    const qa_mount_id *ordered_ids, size_t count, qa_archive_comparison comparison,
+    bool force_mount_q3_demo);
 bool qa_vfs_unmount(qa_vfs *vfs, qa_mount_id mount, qa_error *error);
 /* Orders include every current mount exactly once, highest priority first.
  * A prefix is a relative directory without its trailing separator. The first

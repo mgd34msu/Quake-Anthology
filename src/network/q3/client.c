@@ -57,6 +57,7 @@ void qa_q3_client_peer_destroy(qa_q3_client_peer *p) {
 }
 const qa_q3_identity *qa_q3_client_peer_identity(const qa_q3_client_peer *p) { return &p->identity; }
 qa_q3_product qa_q3_client_peer_product(const qa_q3_client_peer *p) { return p->product; }
+bool qa_q3_client_peer_demo(const qa_q3_client_peer *p) { return p && p->demo; }
 const qa_q3_gamestate *qa_q3_client_peer_gamestate(const qa_q3_client_peer *p) { return &p->gamestate; }
 const qa_q3_snapshot *qa_q3_client_peer_snapshot(const qa_q3_client_peer *p) { return p->has_snapshot ? &p->history[(uint32_t)p->latest_snapshot & 31].value : NULL; }
 const qa_q3_snapshot *qa_q3_client_peer_snapshot_at(const qa_q3_client_peer *p, int32_t number) {
@@ -64,6 +65,11 @@ const qa_q3_snapshot *qa_q3_client_peer_snapshot_at(const qa_q3_client_peer *p, 
         (int64_t)p->latest_snapshot - number >= QA_Q3_PACKET_BACKUP) return NULL;
     const qa_q3_snapshot *value = &p->history[(uint32_t)number & (QA_Q3_PACKET_BACKUP - 1)].value;
     return value->valid && value->message_number == number ? value : NULL;
+}
+const qa_q3_snapshot *qa_q3_client_peer_presentation_snapshot_at(const qa_q3_client_peer *p, int32_t number) {
+    const qa_q3_snapshot *snapshot = qa_q3_client_peer_snapshot_at(p, number);
+    return snapshot && p->parse_entities_number >= snapshot->parse_entities_number &&
+        p->parse_entities_number - snapshot->parse_entities_number < QA_Q3_PARSE_ENTITIES ? snapshot : NULL;
 }
 bool qa_q3_client_peer_command(qa_q3_client_peer *p, const char *text, qa_error *e) {
     if (!p || p->disconnected || p->disconnect_started) return fail(e, QA_ERROR_ARGUMENT, "Q3 client is disconnected or closing");

@@ -4,6 +4,7 @@
 #include "guest_native_q2_private.h"
 #include "q1_weapon_rules.h"
 #include "native_q3_console.h"
+#include "native_q3_remote_role.h"
 #include "native_q1_console.h"
 #include "native_q2_console.h"
 #include "native_q2_arsenal.h"
@@ -292,6 +293,9 @@ bool application_instance_configuration(void *opaque,
     case QA_GAME_Q3:
         profile_word(&hash, profile.mode_kind);
         profile_word(&hash, profile.friendly_fire);
+        if (launch->selection.runtime == QA_PROGRAM_BUILTIN &&
+            !application_native_q3_remote_roles_identity(launch, choices, &hash, error))
+            return false;
         break;
     }
     qa_sha256_final(&hash, out);

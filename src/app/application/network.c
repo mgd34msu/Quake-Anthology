@@ -5,11 +5,14 @@
 #include "guest_qc_internal.h"
 #include "network_q1_signon.h"
 #include "network_q1_source.h"
+#include "native_q1_wire.h"
 #include "native_q3_wire.h"
 #include "native_q3_wire_state.h"
 #include "native_q3_console.h"
 #include "native_q3_clients.h"
+#include "native_q3_remote_role.h"
 #include "qa/application_network.h"
+#include "qa/network_q3_prediction_scene.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_round.h"
 #include "qa/game_q3_source.h"
@@ -45,6 +48,16 @@ bool qa_application_network_player_next(const qa_application *application, size_
     return false;
 }
 
+static bool q1_native(qa_application *app)
+{
+    application_provider *primary = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
+    return primary && primary->kind == APPLICATION_PROVIDER_Q1;
+}
+static bool q1_native_owner(qa_actor_owner owner, qa_error *error)
+{
+    return owner || application_fail(error, QA_ERROR_ARGUMENT,
+        "Q1 host observation requires its installed source owner");
+}
 static struct application_qc_state *q1_source(qa_application *app, qa_actor_id player,
     uint32_t *source_slot, qa_error *error)
 {
@@ -62,6 +75,7 @@ static struct application_qc_state *q1_host(qa_application *app, qa_actor_owner 
 bool qa_application_network_q1_source(qa_application *app, qa_actor_id player,
     qa_actor_owner *owner, uint32_t *slot, qa_net_protocol_id *protocol, qa_error *error)
 {
+    if (q1_native(app)) return application_native_q1_wire_source_player(app, player, owner, slot, protocol, error);
     if (!owner || !slot || !protocol) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source observation output");
     struct application_qc_state *engine = q1_source(app, player, slot, error);
     if (!engine) return false;
@@ -70,6 +84,8 @@ bool qa_application_network_q1_source(qa_application *app, qa_actor_id player,
 bool qa_application_network_q1_extents(qa_application *app, qa_actor_owner owner,
     uint32_t *clients, uint32_t *entities, qa_error *error)
 {
+    if (q1_native(app)) return q1_native_owner(owner, error) &&
+        application_native_q1_wire_extents(app, owner, clients, entities, error);
     if (!clients || !entities) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source extent outputs");
     struct application_qc_state *engine = q1_host(app, owner, error);
     if (!engine) return false;
@@ -87,6 +103,8 @@ static bool q1_wire_scalar(struct application_qc_state *engine, int32_t referenc
 }
 qa_cvars *qa_application_network_q1_cvars(qa_application *app, qa_actor_owner owner, qa_error *error)
 {
+    if (q1_native(app)) return q1_native_owner(owner, error) ?
+        application_native_q1_wire_cvars(app, owner, error) : NULL;
     struct application_qc_state *engine = q1_host(app, owner, error);
     return engine ? engine->cvars : NULL;
 }
@@ -106,6 +124,7 @@ static bool q1_entity_reference(struct application_qc_state *engine, qa_actor_id
 bool qa_application_network_q1_entity(qa_application *app, qa_actor_id player, qa_actor_id entity,
     qa_q1_entity *out, qa_error *error)
 {
+    if (q1_native(app)) return application_native_q1_wire_entity(app, player, entity, out, error);
     uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 entity observation output");
     if (!engine) return false;
@@ -129,6 +148,7 @@ bool qa_application_network_q1_entity(qa_application *app, qa_actor_id player, q
 bool qa_application_network_q1_entity_next(qa_application *app, qa_actor_id player,
     uint32_t *cursor, bool *present, qa_actor_id *actor, qa_q1_entity *out, qa_error *error)
 {
+    if (q1_native(app)) return application_native_q1_wire_entity_next(app, player, cursor, present, actor, out, error);
     if (!cursor || !present || !actor || !out)
         return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source edict inventory output");
     *present = false;
@@ -149,6 +169,8 @@ bool qa_application_network_q1_entity_next(qa_application *app, qa_actor_id play
 bool qa_application_network_q1_precache(qa_application *app, qa_actor_owner owner,
     bool models, const char *names[255], size_t *count, qa_error *error)
 {
+    if (q1_native(app)) return q1_native_owner(owner, error) &&
+        application_native_q1_wire_precache(app, owner, models, names, count, error);
     struct application_qc_state *engine = q1_host(app, owner, error);
     if (!names || !count) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 precache observation output");
     if (!engine) return false;
@@ -169,6 +191,7 @@ bool qa_application_network_q1_precache(qa_application *app, qa_actor_owner owne
 bool qa_application_network_q1_eye(qa_application *app, qa_actor_id player,
     qa_vec3 *out, qa_error *error)
 {
+    if (q1_native(app)) return application_native_q1_wire_eye(app, player, out, error);
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source eye observation output");
     uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
     if (!engine) return false;
@@ -193,6 +216,7 @@ static bool q1_wire_string(struct application_qc_state *engine, int32_t referenc
 bool qa_application_network_q1_bounds(qa_application *app, qa_actor_id player,
     qa_actor_id entity, qa_bounds *out, bool *has_model, qa_error *error)
 {
+    if (q1_native(app)) return application_native_q1_wire_bounds(app, player, entity, out, has_model, error);
     if (!out || !has_model) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source visibility observation output");
     uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
     if (!engine) return false;
@@ -244,6 +268,8 @@ static bool q1_standard_quake(qa_application *app, struct application_qc_state *
 bool qa_application_network_q1_world_read(qa_application *app, qa_actor_owner owner,
     qa_application_network_q1_world *out, qa_error *error)
 {
+    if (q1_native(app)) return q1_native_owner(owner, error) &&
+        application_native_q1_wire_world(app, owner, out, error);
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 world observation output");
     struct application_qc_state *engine = q1_host(app, owner, error);
     if (!engine) return false;
@@ -272,6 +298,7 @@ bool qa_application_network_q1_world_read(qa_application *app, qa_actor_owner ow
 bool qa_application_network_q1_clientdata(qa_application *app, qa_actor_id player,
     qa_q1_clientdata *out, qa_error *error)
 {
+    if (q1_native(app)) return application_native_q1_wire_clientdata(app, player, out, error);
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 clientdata observation output");
     uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
     if (!engine) return false;
@@ -325,6 +352,8 @@ bool qa_application_network_q1_clientdata(qa_application *app, qa_actor_id playe
 bool qa_application_network_q1_status(qa_application *app, qa_actor_owner owner,
     qa_application_network_q1_status_player players[255], size_t *count, qa_error *error)
 {
+    if (q1_native(app)) return q1_native_owner(owner, error) &&
+        application_native_q1_wire_status(app, owner, players, count, error);
     if (!players || !count)
         return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source client status output");
     struct application_qc_state *engine = q1_host(app, owner, error);
@@ -352,6 +381,7 @@ bool qa_application_network_q1_status(qa_application *app, qa_actor_owner owner,
 bool qa_application_network_q1_chat_recipients(qa_application *app, qa_actor_id sender,
     bool team_only, const char **name, qa_actor_id recipients[255], size_t *count, qa_error *error)
 {
+    if (q1_native(app)) return application_native_q1_wire_chat(app, sender, team_only, name, recipients, count, error);
     if (!name || !recipients || !count)
         return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source chat outputs");
     uint32_t slot; struct application_qc_state *engine = q1_source(app, sender, &slot, error);
@@ -405,6 +435,7 @@ bool qa_application_network_q1_kill(qa_application *app, qa_actor_id player, qa_
 bool qa_application_network_q1_pause(qa_application *app, qa_actor_id player,
     qa_buffer *text, bool *changed, qa_error *error)
 {
+    if (q1_native(app)) return application_native_q1_wire_pause(app, player, text, changed, error);
     if (!text || text->data || text->size || !changed)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q1 pause requires empty announcement output");
     uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
@@ -449,6 +480,7 @@ bool qa_application_network_q1_pause(qa_application *app, qa_actor_id player,
 bool qa_application_network_q1_name(qa_application *app, qa_actor_id player,
     const char *name, qa_error *error)
 {
+    if (q1_native(app)) return application_native_q1_wire_name(app, player, name, error);
     if (!name) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 client name");
     uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
     if (!engine) return false;
@@ -475,6 +507,7 @@ bool qa_application_network_q1_name(qa_application *app, qa_actor_id player,
 bool qa_application_network_q1_colors(qa_application *app, qa_actor_id player,
     int32_t top, int32_t bottom, qa_error *error)
 {
+    if (q1_native(app)) return application_native_q1_wire_colors(app, player, top, bottom, error);
     uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
     return engine && application_qc_client_colors(engine->provider, player, top, bottom, error);
 }
@@ -482,6 +515,7 @@ bool qa_application_network_q1_colors(qa_application *app, qa_actor_id player,
 bool qa_application_network_q1_consume_feedback(qa_application *app, qa_actor_id player,
     qa_application_network_q1_feedback *out, qa_error *error)
 {
+    if (q1_native(app)) return application_native_q1_wire_feedback(app, player, out, error);
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 client feedback output");
     uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
     if (!engine) return false;
@@ -527,6 +561,7 @@ bool qa_application_network_q1_consume_feedback(qa_application *app, qa_actor_id
 bool qa_application_network_q1_baseline(qa_application *app, qa_actor_id player,
     const qa_q1_entity *entity, qa_q1_entity *out, qa_error *error)
 {
+    if (q1_native(app)) return application_native_q1_wire_baseline(app, player, entity, out, error);
     if (!entity || !out || !entity->number || entity->number > UINT16_MAX)
         return application_fail(error, QA_ERROR_ARGUMENT, "Invalid Q1 source baseline observation");
     uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
@@ -550,6 +585,7 @@ bool qa_application_network_q1_baseline(qa_application *app, qa_actor_id player,
 bool qa_application_network_q1_client_baseline(qa_application *app, qa_actor_id player,
     uint32_t source_slot, qa_q1_entity *out, qa_error *error)
 {
+    if (q1_native(app)) return application_native_q1_wire_client_baseline(app, player, source_slot, out, error);
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing reserved Q1 client baseline output");
     uint32_t slot; struct application_qc_state *engine = q1_source(app, player, &slot, error);
     if (!engine) return false;
@@ -573,6 +609,13 @@ bool qa_application_network_q1_client_baseline(qa_application *app, qa_actor_id 
 bool qa_application_network_q1_signon_count(qa_application *app, qa_actor_owner owner,
     size_t *out, qa_error *error)
 {
+    if (q1_native(app)) {
+        if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source signon count");
+        application_native_q1_wire_source source = {0};
+        if (!q1_native_owner(owner, error) || !application_native_q1_wire_begin(app, owner, &source, error)) return false;
+        *out = application_q1_signon_count(app, source.provider->owner);
+        application_native_q1_wire_end(&source); return true;
+    }
     if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q1 source signon count");
     struct application_qc_state *engine = q1_host(app, owner, error);
     if (!engine) return false;
@@ -581,6 +624,12 @@ bool qa_application_network_q1_signon_count(qa_application *app, qa_actor_owner 
 bool qa_application_network_q1_signon_at(qa_application *app, qa_actor_owner owner, size_t index,
     qa_application_protocol_event *out, qa_error *error)
 {
+    if (q1_native(app)) {
+        application_native_q1_wire_source source = {0};
+        if (!q1_native_owner(owner, error) || !application_native_q1_wire_begin(app, owner, &source, error)) return false;
+        bool okay = application_q1_signon_at(app, source.provider->owner, index, out, error);
+        application_native_q1_wire_end(&source); return okay;
+    }
     struct application_qc_state *engine = q1_host(app, owner, error);
     return engine && application_q1_signon_at(app, engine->provider->owner, index, out, error);
 }
@@ -951,6 +1000,20 @@ bool qa_application_network_q3_command(qa_application *app,
     return qa_application_control_q3_command(app, command->actor, command->sequence,
         &command->command, error);
 }
+bool qa_application_network_nq_command(qa_application *app,
+    const qa_network_nq_source_command *command, qa_error *error)
+{
+    if (!command || !command->sequence ||
+        !qa_application_network_controlled(app, command->client, command->seat,
+            command->actor, command->movement, (qa_bytes){0}, error)) return false;
+    qa_actor_owner owner; uint32_t slot; qa_net_protocol_id protocol;
+    if (!qa_application_network_q1_source(app, command->actor, &owner, &slot, &protocol, error)) return false;
+    if (owner != command->source_owner || slot != command->source_slot ||
+        protocol.kind != QA_NET_NQ15 || protocol.flags || protocol.revision)
+        return application_fail(error, QA_ERROR_ARGUMENT, "NetQuake command lost its actual source client binding");
+    return qa_application_control_nq_command(app, command->actor, command->sequence,
+        &command->command, error);
+}
 bool qa_application_network_q3_enter(qa_application *app, qa_net_client_id client,
     qa_net_seat_id seat, const qa_q3_usercmd *command, qa_error *error)
 {
@@ -1275,7 +1338,7 @@ bool qa_application_network_q3_client_actor(qa_application *app,
     if (!app || !projection || !out || !present || app->destroy_requested)
         return application_fail(error, QA_ERROR_ARGUMENT, "Missing remote Q3 actor projection owner");
     *out = (qa_actor_id){0}; *present = false;
-    if (source_number >= QA_Q3_ENTITY_WORLD) return true;
+    if (source_number >= QA_Q3_ENTITY_NONE || source_number == QA_Q3_ENTITY_WORLD) return true;
     const qa_actor_record *record = qa_actors_get(qa_session_actors(app->session),
         projection->actors[source_number]);
     if (record && record->owner == projection->owner && record->definition == projection->definition &&
@@ -1290,7 +1353,7 @@ bool qa_application_network_q3_client_unproject(qa_application *app,
 {
     if (!app || !projection || !qa_session_safe(app->session))
         return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 projection retirement requires a safe session");
-    for (uint32_t i = 0; i < QA_Q3_ENTITY_WORLD; ++i) {
+    for (uint32_t i = 0; i < QA_Q3_ENTITY_NONE; ++i) {
         qa_actor_id actor = projection->actors[i];
         const qa_actor_record *record = qa_actors_get(qa_session_actors(app->session), actor);
         if (record) {
@@ -1310,23 +1373,23 @@ static qa_trajectory projection_trajectory(const qa_q3_trajectory *source)
         qa_v3(source->delta[0], source->delta[1], source->delta[2])};
 }
 static bool projection_snapshot(const qa_q3_snapshot *snapshot,
-    qa_body_state bodies[QA_Q3_ENTITY_WORLD], bool present[QA_Q3_ENTITY_WORLD],
+    qa_body_state bodies[QA_Q3_ENTITY_NONE], bool present[QA_Q3_ENTITY_NONE],
+    bool identities[QA_Q3_ENTITY_NONE],
     qa_error *error)
 {
     if (!snapshot) return true;
-    if (!snapshot->valid || snapshot->entity_count > QA_Q3_ENTITY_WORLD ||
+    if (!snapshot->valid || snapshot->entity_count > SIZE_MAX / sizeof(*snapshot->entities) ||
         (snapshot->entity_count && !snapshot->entities) || snapshot->player.clientNum < 0 ||
         snapshot->player.clientNum >= 64 || !qa_vec_finite(qa_v3(snapshot->player.origin[0],
             snapshot->player.origin[1], snapshot->player.origin[2])) ||
         !qa_vec_finite(qa_v3(snapshot->player.velocity[0], snapshot->player.velocity[1], snapshot->player.velocity[2])) ||
         !qa_vec_finite(qa_v3(snapshot->player.viewangles[0], snapshot->player.viewangles[1], snapshot->player.viewangles[2])))
         return application_fail(error, QA_ERROR_FORMAT, "Invalid remote Q3 projection snapshot");
-    int32_t previous = -1;
     for (size_t i = 0; i < snapshot->entity_count; ++i) {
         const qa_q3_entity *entity = &snapshot->entities[i];
-        if (entity->number <= previous || entity->number >= QA_Q3_ENTITY_WORLD)
-            return application_fail(error, QA_ERROR_FORMAT, "Remote Q3 projection entity order or number is invalid");
-        previous = entity->number;
+        if (entity->number < 0 || entity->number >= QA_Q3_ENTITY_NONE)
+            return application_fail(error, QA_ERROR_FORMAT, "Remote Q3 projection entity number is invalid");
+        if (entity->number == QA_Q3_ENTITY_WORLD) continue;
         qa_body_state body = {0};
         qa_trajectory trajectory = projection_trajectory(&entity->pos);
         if (!qa_trajectory_position(&trajectory, snapshot->server_time, 800, &body.origin, error) ||
@@ -1337,47 +1400,87 @@ static bool projection_snapshot(const qa_q3_snapshot *snapshot,
         if (!qa_trajectory_position(&trajectory, snapshot->server_time, 800, &body.angles, error) ||
             !qa_vec_finite(body.angles)) return application_fail(error, QA_ERROR_FORMAT, "Invalid remote Q3 entity angular trajectory");
         bodies[entity->number] = body; present[entity->number] = true;
+        identities[entity->number] = true;
     }
     bodies[snapshot->player.clientNum] = (qa_body_state){
         .origin = qa_v3(snapshot->player.origin[0], snapshot->player.origin[1], snapshot->player.origin[2]),
         .velocity = qa_v3(snapshot->player.velocity[0], snapshot->player.velocity[1], snapshot->player.velocity[2]),
         .angles = qa_v3(snapshot->player.viewangles[0], snapshot->player.viewangles[1], snapshot->player.viewangles[2])};
     present[snapshot->player.clientNum] = true;
+    identities[snapshot->player.clientNum] = true;
+    if (snapshot->player.groundEntityNum >= 0 && snapshot->player.groundEntityNum < QA_Q3_ENTITY_WORLD)
+        identities[snapshot->player.groundEntityNum] = true;
+    if (snapshot->player.jumppadEnt > 0 && snapshot->player.jumppadEnt < QA_Q3_ENTITY_WORLD)
+        identities[snapshot->player.jumppadEnt] = true;
     return true;
 }
 
 bool qa_application_network_q3_client_project(qa_application *app, qa_actor_owner owner,
     qa_application_network_q3_projection *projection, const qa_q3_snapshot *current,
-    const qa_q3_snapshot *next, qa_error *error)
+    const qa_q3_snapshot *next, const qa_q3_prediction_scene *scene,
+    const qa_q3_prediction_scene_view *view, qa_error *error)
 {
-    uint32_t seat;
+    uint32_t seat; qa_application_q3_client_context receiver;
     if (!app || !projection || !current || app->destroy_requested || app->operation != APPLICATION_IDLE ||
         !qa_session_safe(app->session) || qa_session_faulted(app->session) ||
-        !remote_launch_seat(app, &seat) || !external_cgame(app, owner, seat) ||
-        (projection->owner && projection->owner != owner))
+        !remote_launch_seat(app, &seat) ||
+        !qa_application_q3_remote_context_read(app, owner, seat, &receiver, error) ||
+        !qa_application_q3_remote_context_current(app, &receiver) ||
+        (projection->owner && projection->owner != owner) ||
+        !qa_q3_prediction_scene_current(scene, view) || current != view->snapshot ||
+        (next && (next != view->next_snapshot || view->next_frame_teleport)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 publication requires its admitted idle cgame owner");
-    qa_body_state bodies[QA_Q3_ENTITY_WORLD] = {0};
-    bool present[QA_Q3_ENTITY_WORLD] = {0};
+    qa_body_state bodies[QA_Q3_ENTITY_NONE] = {0};
+    bool present[QA_Q3_ENTITY_NONE] = {0};
+    bool identities[QA_Q3_ENTITY_NONE] = {0};
     /* Current state wins where both snapshots observe the same source number. */
-    if (!projection_snapshot(next, bodies, present, error) ||
-        !projection_snapshot(current, bodies, present, error)) return false;
+    if (!projection_snapshot(next, bodies, present, identities, error) ||
+        !projection_snapshot(current, bodies, present, identities, error)) return false;
+    /* Solid and trigger lists can retain a current centity which neither
+     * present snapshot publishes. Its actual row supplies the identity. */
+    for (unsigned list = 0; list < 2; ++list) for (size_t i = 0;; ++i) {
+        qa_q3_prediction_scene_entity_view cell; bool observed;
+        bool ok = list ? qa_q3_prediction_scene_trigger_at(scene, view, i, &cell, &observed, error) :
+            qa_q3_prediction_scene_solid_at(scene, view, i, &cell, &observed, error);
+        if (!ok) return false;
+        if (!observed) break;
+        if (!qa_q3_prediction_scene_entity_current(scene, view, &cell))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Q3 collision projection lost its actual retained row");
+        const qa_q3_entity *row = cell.entity;
+        if (row->number < 0 || row->number >= QA_Q3_ENTITY_NONE ||
+            (cell.published && (uint32_t)row->number != cell.source_number))
+            return application_fail(error, QA_ERROR_FORMAT, "Q3 collision projection has an invalid retained source identity");
+        if (row->number == QA_Q3_ENTITY_WORLD) continue;
+        /* A next-only cold cell can produce a literal collision hit zero.
+         * It demands that identity, without publishing a current pose. */
+        identities[row->number] = true;
+        if (!cell.published) continue;
+        if (present[row->number]) continue;
+        qa_body_state body = {0}; qa_trajectory trajectory = projection_trajectory(&row->pos);
+        if (!qa_trajectory_position(&trajectory, view->physics_time, 800, &body.origin, error) ||
+            !qa_trajectory_velocity(&trajectory, view->physics_time, 800, &body.velocity, error)) return false;
+        trajectory = projection_trajectory(&row->apos);
+        if (!qa_trajectory_position(&trajectory, view->physics_time, 800, &body.angles, error)) return false;
+        if (!qa_vec_finite(body.origin) || !qa_vec_finite(body.velocity) || !qa_vec_finite(body.angles))
+            return application_fail(error, QA_ERROR_FORMAT, "Q3 collision projection has an invalid retained source pose");
+        bodies[row->number] = body; present[row->number] = true;
+    }
     qa_string_id definition;
     if (!qa_strings_intern_cstr(qa_session_strings(app->session), "qa.network.q3.remote-entity", &definition, error)) return false;
     if (projection->owner && projection->definition != definition)
         return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 publication has a foreign definition");
     projection->owner = owner; projection->definition = definition;
-    for (uint32_t i = 0; i < QA_Q3_ENTITY_WORLD; ++i) {
+    for (uint32_t i = 0; i < QA_Q3_ENTITY_NONE; ++i) {
         const qa_actor_record *record = qa_actors_get(qa_session_actors(app->session), projection->actors[i]);
         if (record && (record->owner != owner || record->has_source || record->definition != definition))
             return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 publication contains a foreign actor");
-        if (record && !present[i] && !qa_session_release(app->session, record->id, error)) return false;
-        if (!record || !present[i]) projection->actors[i] = (qa_actor_id){0};
+        if (!record) projection->actors[i] = (qa_actor_id){0};
     }
-    for (uint32_t i = 0; i < QA_Q3_ENTITY_WORLD; ++i) {
-        if (!present[i]) continue;
+    for (uint32_t i = 0; i < QA_Q3_ENTITY_NONE; ++i) {
+        if (!identities[i]) continue;
         if (!projection->actors[i].registry &&
             !qa_session_allocate(app->session, owner, definition, false, 0, &projection->actors[i], error)) return false;
-        if (!qa_world_body_write(app->world, projection->actors[i], &bodies[i], error)) return false;
+        if (present[i] && !qa_world_body_write(app->world, projection->actors[i], &bodies[i], error)) return false;
     }
     return true;
 }
@@ -1390,25 +1493,48 @@ bool qa_application_network_q3_client_source(qa_application *app, qa_actor_id ac
         !qa_actor_id_equal(viewing, actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 remote client requires its actual viewing seat actor");
     application_provider *hud = application_provider_for(app, actor, QA_ROLE_HUD, NULL);
+    qa_application_q3_client_context receiver;
+    if (hud && hud->kind == APPLICATION_PROVIDER_Q3) {
+        if (!qa_application_q3_remote_context_read(app, hud->owner, seat, &receiver, error) ||
+            !qa_application_q3_remote_context_current(app, &receiver) || !receiver.native_source ||
+            !application_native_q3_remote_role_product(hud, seat, product, error)) return false;
+        *owner = hud->owner; *launch_seat = seat; return true;
+    }
     q3g_role *role = hud ? external_cgame(app, hud->owner, seat) : NULL;
     if (!role)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 remote client requires its selected external CGAME owner");
     *owner = hud->owner; *product = role->engine->product; *launch_seat = seat; return true;
 }
-bool qa_application_network_q3_client_clear(qa_application *app, qa_actor_owner owner,
-    uint32_t seat, qa_error *error)
+bool qa_application_network_q3_client_native_system_info(qa_application *app, qa_actor_owner owner,
+    uint32_t seat, const char *info, qa_error *error)
 {
-    q3g_role *role = external_cgame(app, owner, seat);
-    if (!role) return application_fail(error, QA_ERROR_ARGUMENT, "Q3 remote cgame owner is retired");
-    if (role->initialized) {
-        q3g_role *replacement = NULL;
-        return q3g_role_restart(role, &replacement, error);
+    qa_application_q3_client_context receiver;
+    if (!app || !info || !qa_application_q3_remote_context_read(app, owner, seat, &receiver, error) ||
+        !receiver.native_source || !qa_application_q3_remote_context_current(app, &receiver))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 SystemInfo lacks its actual native CLIENT receiver");
+    for (size_t i = 0; i < app->provider_count; ++i) {
+        application_provider *provider = app->providers[i];
+        if (provider->owner == owner && provider->attached)
+            return application_native_q3_remote_role_system_info(provider, seat, info, error);
     }
-    qa_command_tokens_free(&role->arguments); return true;
+    return application_fail(error, QA_ERROR_ARGUMENT, "Q3 SystemInfo lost its actual native provider");
 }
 bool qa_application_network_q3_client_command(qa_application *app, qa_actor_owner owner,
     uint32_t seat, const qa_q3_tokens *tokens, qa_error *error)
 {
+    qa_application_q3_client_context receiver;
+    if (!app || !tokens || tokens->truncated ||
+        !qa_application_q3_remote_context_read(app, owner, seat, &receiver, error) ||
+        !qa_application_q3_remote_context_current(app, &receiver))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 server command lacks its actual remote CLIENT receiver");
+    if (receiver.native_source) {
+        for (size_t i = 0; i < app->provider_count; ++i) {
+            application_provider *provider = app->providers[i];
+            if (provider->owner == owner && provider->attached)
+                return application_native_q3_remote_role_command(provider, seat, tokens, error);
+        }
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 native arguments lost their admitted provider");
+    }
     q3g_role *role = external_cgame(app, owner, seat);
     if (!role || !tokens || tokens->truncated)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 server command lacks the current cgame argument owner");
