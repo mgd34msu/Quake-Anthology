@@ -48,6 +48,11 @@ bool qa_input_release_abort(qa_input_release *, qa_input_release_outcome *, qa_e
 /* Consumes retained source history only after the actual owner qualifies
  * every captured actor retirement or the exact detached source lifetime.
  * It dispatches no commands and cannot use a changed publication as evidence. */
+bool qa_input_release_retirement_ready(const qa_input_release *, qa_console_release_disposition,
+    qa_console_release_retirement_fn, void *, qa_error *);
+/* The complete parent may preflight every retained history before consuming
+ * any. Publication requires that admission and runs no source callbacks. */
+void qa_input_release_retirement_publish(qa_input_release *);
 bool qa_input_release_retire(qa_input_release *, qa_console_release_disposition,
     qa_console_release_retirement_fn, void *, qa_error *);
 

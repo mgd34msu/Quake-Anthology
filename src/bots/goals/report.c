@@ -20,10 +20,14 @@ bool bot_goal_position_report(qa_bot_goals *g, const char *prefix, qa_vec3 point
     return true;
 }
 bool bot_goal_dump_stack(qa_bot_goals *g, const bot_goal_slot *s, qa_error *e) {
-    for (uint32_t i = 1; i <= s->state.stack_top; ++i) {
+    for (int32_t i = 1;; ++i) {
+        int32_t top;qa_bot_goal goal;
+        if (!bot_goal_record_integer_read(&s->record,BOT_GOAL_STACK_TOP,&top,e)) return false;
+        if (i>top) break;
+        if (!bot_goal_record_goal_read(&s->record,i,&goal,e)) return false;
         char line[64];
-        const char *name = qa_bot_goals_name(g, s->state.stack[i].number);
-        (void)snprintf(line, sizeof(line), "%u: %.31s", i, name ? name : "");
+        const char *name = qa_bot_goals_name(g, goal.number);
+        (void)snprintf(line, sizeof(line), "%d: %.31s", i, name ? name : "");
         if (!bot_goal_log(g, line, e)) return false;
     }
     return true;
@@ -44,7 +48,10 @@ bool qa_bot_goals_dump_avoid(qa_bot_goals *g, uint32_t id, qa_error *e) {
     g->busy = true;
     bool ok = true;
     for (size_t i = 0; ok && i < QA_BOT_AVOID_GOALS; ++i) {
-        const qa_bot_avoid_goal *goal = &s->state.avoid[i];
+        qa_bot_avoid_goal value;
+        ok=bot_goal_record_avoid_read(&s->record,(int32_t)i,&value,e);
+        if(!ok) break;
+        const qa_bot_avoid_goal *goal = &value;
         if (!(goal->expires >= g->time)) continue;
         const char *name = qa_bot_goals_name(g, goal->number);
         char remaining[64], line[160];

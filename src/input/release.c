@@ -224,7 +224,7 @@ bool qa_input_release_abort(qa_input_release *owner,qa_input_release_outcome *ou
     else { owner->seat->release=NULL; storage_free(owner); }
     return true;
 }
-bool qa_input_release_retire(qa_input_release *owner,qa_console_release_disposition disposition,
+bool qa_input_release_retirement_ready(const qa_input_release *owner,qa_console_release_disposition disposition,
     qa_console_release_retirement_fn qualify,void *context,qa_error *error)
 {
     if (!owner || !qualify || owner->seat->release!=owner || owner->advancing ||
@@ -236,10 +236,20 @@ bool qa_input_release_retire(qa_input_release *owner,qa_console_release_disposit
         if (!qa_console_release_retirement_ready(owner->records[i].program,disposition,qualify,context,error)) return false;
     }
     if (!captured) return fail(error,"input release has no captured source actor history");
+    return true;
+}
+void qa_input_release_retirement_publish(qa_input_release *owner)
+{
     enter_metadata(owner);
     for (size_t i=0;i<owner->count;++i) if (owner->records[i].program) {
         qa_console_release_retirement_publish(owner->records[i].program);
         owner->records[i].program=NULL;
     }
-    qa_input_release_publish(owner); return true;
+    qa_input_release_publish(owner);
+}
+bool qa_input_release_retire(qa_input_release *owner,qa_console_release_disposition disposition,
+    qa_console_release_retirement_fn qualify,void *context,qa_error *error)
+{
+    if (!qa_input_release_retirement_ready(owner,disposition,qualify,context,error)) return false;
+    qa_input_release_retirement_publish(owner); return true;
 }

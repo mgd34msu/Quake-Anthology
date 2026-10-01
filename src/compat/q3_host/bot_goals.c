@@ -14,10 +14,15 @@ static bool state(q3_call *call, qa_bot_goals *goals, int32_t handle, bool freei
     return false;
 }
 
-static bool read_push(void *context, qa_bot_goal *goal, qa_error *error)
+typedef struct source_push { q3_call *call; uint8_t bytes[56]; } source_push;
+static bool read_push(void *context, qa_bytes *goal, qa_error *error)
 {
-    q3_call *call = context;
-    return q3_bot_goal_read(call, call->arguments[1], goal, error);
+    source_push *source = context; q3_call *call = source->call;
+    if (!q3_read(call, call->arguments[1], source->bytes, sizeof(source->bytes), error)) return false;
+    int32_t entity = qa_load_i32le(source->bytes + 40);
+    if (entity > 0 && !q3_bot_entity_number(call, entity, &entity, error)) return false;
+    qa_store_u32le(source->bytes + 40, (uint32_t)entity);
+    *goal = (qa_bytes){source->bytes, sizeof(source->bytes)}; return true;
 }
 
 static bool query(q3_call *call, qa_bot_goals *goals, int32_t *result, qa_error *error)
@@ -136,15 +141,33 @@ q3_service_result q3_bot_goals(q3_call *call, int32_t *result, qa_error *error)
         switch (call->service) {
         case 525: ok = qa_bot_goals_reset(goals, handle, error); break;
         case 526: ok = qa_bot_goals_avoid_clear(goals, handle, error); break;
-        case 527: ok = qa_bot_goals_push_from(goals, handle, call, read_push, &found, error); break;
+        case 527: {
+            source_push source = {.call = call};
+            ok = qa_bot_goals_push_source_from(goals, handle, &source, read_push, &found, error); break;
+        }
         case 528: ok = qa_bot_goals_pop(goals, handle, error); break;
         case 529: ok = qa_bot_goals_empty(goals, handle, error); break;
         case 530: ok = qa_bot_goals_dump_avoid(goals, handle, error); break;
         case 531: ok = qa_bot_goals_dump_stack(goals, handle, error); break;
-        case 533: case 534:
-            ok = qa_bot_goals_top(goals, handle, call->service == 534, &goal, &found, error);
-            if (ok && found) { ok = q3_bot_goal_copy(call, call->arguments[1], &goal, error); if (ok) *result = 1; }
+        case 533: case 534: {
+            qa_bytes source = {0};
+            ok = qa_bot_goals_top_source(goals, handle, call->service == 534, &source, &found, error);
+            if (ok && found) {
+                uint8_t bytes[56];
+                if (source.size != sizeof(bytes) || !source.data) {
+                    ok = q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 goal source lacks its actual 56-byte record"); break;
+                }
+                memcpy(bytes, source.data, sizeof(bytes));
+                int32_t entity = qa_load_i32le(bytes + 40);
+                ok = !entity || q3_bot_source_entity(call, entity, &entity, error);
+                if (ok) {
+                    qa_store_u32le(bytes + 40, (uint32_t)entity);
+                    ok = q3_write(call, call->arguments[1], (qa_bytes){bytes, sizeof(bytes)}, error);
+                }
+                if (ok) *result = 1;
+            }
             break;
+        }
         case 540: {
             float time;
             ok = qa_bot_goals_avoid_time(goals, handle, q3_integer(call, 1), &time, error);

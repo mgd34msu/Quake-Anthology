@@ -34,12 +34,12 @@ bool bot_goal_indexes_write(qa_bot_goals *goals,qa_bot_memory_allocation allocat
 bool bot_goal_indexes_read(qa_bot_goals *goals,const bot_goal_slot *state,int32_t index,
     int32_t *out,qa_error *error)
 {
-    if(!state->index_pointer || !out) return bot_goal_fail(error,"Item weight indexes have not been initialized");
-    bot_goal_indexes *row=goals->indexes;
-    while(row && row->pointer!=state->index_pointer) row=row->next;
-    if(!row) return bot_goal_fail(error,"Invalid goal item weight index pointer");
+    qa_bot_memory_allocation allocation;bool present;
+    if(!out) return bot_goal_fail(error,"Item index read requires its output");
+    if(!bot_goal_indexes_get(goals,state,&allocation,&present,error)) return false;
+    if(!present) return bot_goal_fail(error,"Item weight indexes have not been initialized");
     qa_bot_memory_span bytes;
-    if(!qa_bot_memory_bytes(goals->memory,row->allocation,&bytes,error)) return false;
+    if(!qa_bot_memory_bytes(goals->memory,allocation,&bytes,error)) return false;
     if(index<0 || (uint32_t)index>=bytes.size/4)
         return bot_goal_fail(error,"Item weight index is stale for the current item configuration");
     const uint8_t *at=bytes.data+(uint32_t)index*4;
@@ -57,19 +57,34 @@ bool bot_goal_indexes_publish(qa_bot_goals *goals,bot_goal_slot *state,
     if(!row) {qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining goal index allocation reference");return false;}
     row->allocation=allocation;row->pointer=(uint32_t)goals->next_pointer++;
     if(goals->last_indexes) goals->last_indexes->next=row;else goals->indexes=row;
-    goals->last_indexes=row;state->index_pointer=row->pointer;return true;
+    goals->last_indexes=row;
+    return bot_goal_record_word_write(&state->record,BOT_GOAL_INDEX_POINTER,row->pointer,error);
 }
-bool bot_goal_indexes_release(qa_bot_goals *goals,bot_goal_slot *state,qa_error *error)
+bool bot_goal_indexes_get(const qa_bot_goals *goals,const bot_goal_slot *state,
+    qa_bot_memory_allocation *out,bool *present,qa_error *error)
 {
-    bot_goal_indexes **link=&goals->indexes,*previous=NULL;
-    if(!state->index_pointer) return true;
-    while(*link && (*link)->pointer!=state->index_pointer) {previous=*link;link=&(*link)->next;}
-    bot_goal_indexes *row=*link;
+    if(!out || !present) return bot_goal_fail(error,"Goal index read requires its actual outputs");
+    uint32_t pointer;
+    if(!bot_goal_record_word_read(&state->record,BOT_GOAL_INDEX_POINTER,&pointer,error)) return false;
+    *present=pointer!=0;
+    if(!pointer) {*out=(qa_bot_memory_allocation){0};return true;}
+    const bot_goal_indexes *row=goals->indexes;
+    while(row && row->pointer!=pointer) row=row->next;
     if(!row) return bot_goal_fail(error,"Invalid goal item weight index pointer");
-    if(!qa_bot_memory_free(goals->memory,row->allocation,error)) return false;
-    *link=row->next;
-    if(goals->last_indexes==row) goals->last_indexes=previous;
-    state->index_pointer=0;free(row);return true;
+    *out=row->allocation;return true;
+}
+bool bot_goal_indexes_drop(qa_bot_goals *goals,bot_goal_slot *state,qa_error *error)
+{
+    uint32_t pointer;
+    if(!bot_goal_record_word_read(&state->record,BOT_GOAL_INDEX_POINTER,&pointer,error)) return false;
+    bot_goal_indexes **link=&goals->indexes,*previous=NULL;
+    while(*link && (*link)->pointer!=pointer) {previous=*link;link=&(*link)->next;}
+    if(*link) {
+        bot_goal_indexes *row=*link;*link=row->next;
+        if(goals->last_indexes==row) goals->last_indexes=previous;
+        free(row);
+    }
+    return bot_goal_record_word_write(&state->record,BOT_GOAL_INDEX_POINTER,0,error);
 }
 void bot_goal_indexes_clear(qa_bot_goals *goals)
 {

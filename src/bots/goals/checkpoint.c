@@ -54,8 +54,6 @@ static bool copy(const qa_bot_goals *source,qa_bot_goals *out,qa_error *error)
         *weights=calloc(1,sizeof(**weights));
         if(!*weights) goto memory_failure;
         **weights=*row;(*weights)->next=NULL;qa_bot_weights_retain(row->weights);
-        for(uint32_t i=0;i<source->options.maximum_states;++i)
-            if(source->states[i].weights==row) out->states[i].weights=*weights;
         weights=&(*weights)->next;
     }
     bot_goal_indexes **indexes=&out->indexes;
@@ -111,6 +109,11 @@ bool bot_goal_history_capture(qa_bot_goals *goals,bot_goal_history **out,qa_erro
         qa_bot_memory_span bytes;
         if(!qa_bot_memory_bytes(goals->memory,row->allocation,&bytes,error)) return false;
     }
+    for(uint32_t i=0;i<goals->options.maximum_states;++i) if(goals->states[i].used) {
+        bot_goal_record qualified;
+        if(goals->states[i].record.memory!=goals->memory ||
+           !bot_goal_record_bind(goals->memory,goals->states[i].record.allocation,&qualified,error)) return false;
+    }
     bot_goal_history *image=calloc(1,sizeof(*image));
     if(!image) {qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating complete goal checkpoint");return false;}
     image->owner=goals;
@@ -140,6 +143,10 @@ bool bot_goal_history_prepare(qa_bot_goals *goals,const bot_goal_history *image,
     if(!plan) {qa_error_set(error,QA_ERROR_MEMORY,0,"Preparing complete goal reference history");return false;}
     plan->owner=goals;plan->image=image;
     if(!copy(&image->state,&plan->state,error)) {free(plan);return false;}
+    for(uint32_t i=0;i<plan->state.options.maximum_states;++i)
+        if(plan->state.states[i].used &&
+           !qa_bot_memory_checkpoint_resolve(memory,plan->state.states[i].record.allocation,
+               &plan->state.states[i].record.allocation,error)) goto failed;
     for(bot_goal_indexes *row=plan->state.indexes;row;row=row->next)
         if(!qa_bot_memory_checkpoint_resolve(memory,row->allocation,&row->allocation,error)) goto failed;
     for(const goal_weight_image *row=image->values;row;row=row->next)

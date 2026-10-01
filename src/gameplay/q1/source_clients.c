@@ -108,7 +108,8 @@ static bool apply(qa_q1_game *game,q1_player *player,qa_error *error) {
         !strcmp(automatic,"never")?QA_Q1_SWITCH_NEVER:QA_Q1_SWITCH_ALWAYS;
     return true;
 }
-bool qa_q1_source_client_userinfo(qa_q1_game *game,qa_actor_id actor,const char *text,qa_error *error) {
+static bool info_set(qa_q1_game *,q1_player *,const char *,const char *,qa_error *);
+static bool userinfo(qa_q1_game *game,qa_actor_id actor,const char *text,const char *name,qa_error *error) {
     qa_q1_game_operation operation={0};
     if(!text || !qa_q1_game_operation_begin(game,&operation,error)) return false;
     q1_player *player=(q1_player *)client_const(game,actor);bool okay=false;
@@ -132,10 +133,19 @@ bool qa_q1_source_client_userinfo(qa_q1_game *game,qa_actor_id actor,const char 
         }
         player->source_info[index]=(q1_source_info){key_id,value_id};cursor=next;
     }
+    if(name && !info(game,player,"name") && !info_set(game,player,"name",name,error)) goto finish;
     if(color(info(game,player,"bottomcolor"))!=previous) player->source_team=(float)color(info(game,player,"bottomcolor"))+1;
     okay=apply(game,player,error) && (!q1_alive(game,actor) || publish(game,player,error));
 finish:
     qa_q1_game_operation_end(&operation);return okay;
+}
+bool qa_q1_source_client_userinfo(qa_q1_game *game,qa_actor_id actor,const char *text,qa_error *error) {
+    return userinfo(game,actor,text,NULL,error);
+}
+bool qa_q1_source_client_userinfo_named(qa_q1_game *game,qa_actor_id actor,const char *text,
+    const char *name,qa_error *error) {
+    if(!name) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q1 source admission lost its actual name");return false;}
+    return userinfo(game,actor,text,name,error);
 }
 bool qa_q1_source_client_add_score(qa_q1_game *game,qa_actor_id actor,double delta,qa_error *error) {
     qa_q1_game_operation operation={0};if(!qa_q1_game_operation_begin(game,&operation,error)) return false;
@@ -164,6 +174,10 @@ bool qa_q1_source_client_spawned(qa_q1_game *game,qa_actor_id actor,qa_error *er
     q1_player *player=(q1_player *)client_const(game,actor);bool okay=false;
     if(!player) qa_error_set(error,QA_ERROR_NOT_FOUND,0,"Q1 source spawned client is absent");
     else {
+        player->source_death_recorded=false;
+        player->source_impulse=0;
+        player->source_use=false;
+        player->source_respawn_requested_at=-1;
         player->source_god_mode=false;
         if(game->options.edition==QA_Q1_RERELEASE && game->options.program!=QA_Q1_CTF) {
             if(game->options.coop) player->source_team=1;
@@ -173,8 +187,104 @@ bool qa_q1_source_client_spawned(qa_q1_game *game,qa_actor_id actor,qa_error *er
     }
     qa_q1_game_operation_end(&operation);return okay;
 }
+bool qa_q1_source_respawn_options_read(const qa_q1_game *game,qa_q1_options *out,
+    double *source_seconds,qa_error *error) {
+    if(!game || !out || !source_seconds || game->destroy_pending || game->continuation_pending) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q1 respawn has no current native source options");return false;
+    }
+    *out=game->options;*source_seconds=game->time;return true;
+}
+bool qa_q1_source_client_request_respawn(qa_q1_game *game,qa_actor_id actor,
+    bool *force_spawn,qa_error *error) {
+    if(!force_spawn) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q1 respawn requires its source decision output");return false;}
+    qa_q1_game_operation operation={0};
+    if(!qa_q1_game_operation_begin(game,&operation,error)) return false;
+    q1_player *player=(q1_player *)client_const(game,actor);bool okay=false;
+    if(!player) qa_error_set(error,QA_ERROR_NOT_FOUND,0,"Q1 respawn source client is absent");
+    else {
+        if(player->source_respawn_requested_at<0) player->source_respawn_requested_at=game->time;
+        *force_spawn=game->time>=player->source_respawn_requested_at+5;okay=true;
+    }
+    qa_q1_game_operation_end(&operation);return okay;
+}
 bool qa_q1_bot_exit_level(qa_q1_game *game,double seconds,bool same_level,qa_error *error) {
     if(!game || !game->maps || !game->maps->options.level) {qa_error_set(error,QA_ERROR_NOT_FOUND,0,"Q1 bot ExitLevel lacks its actual source level owner");return false;}
     qa_q1_intermission_result result;
     return qa_q1_level_request_exit(game->maps->options.level,seconds,true,same_level,&result,error);
+}
+static bool info_set(qa_q1_game *game,q1_player *player,const char *key,const char *value,qa_error *error) {
+    qa_strings *strings=qa_session_strings(game->services.session);
+    qa_string_id key_id,value_id;
+    if(!qa_strings_intern_cstr(strings,key,&key_id,error) ||
+       !qa_strings_intern_cstr(strings,value,&value_id,error)) return false;
+    size_t index=0;
+    while(index<player->source_info_count && player->source_info[index].key!=key_id) ++index;
+    if(index==player->source_info_count) {
+        if(index>=SIZE_MAX/sizeof(*player->source_info)) {
+            qa_error_set(error,QA_ERROR_MEMORY,0,"Q1 source userinfo map exceeds its extent");return false;
+        }
+        q1_source_info *entries=realloc(player->source_info,(index+1)*sizeof(*entries));
+        if(!entries) {qa_error_set(error,QA_ERROR_MEMORY,0,"growing actual Q1 source userinfo");return false;}
+        player->source_info=entries;player->source_info_count=index+1;
+    }
+    player->source_info[index]=(q1_source_info){key_id,value_id};return true;
+}
+bool qa_q1_source_client_userinfo_read(const qa_q1_game *game,qa_actor_id actor,bool include_name,qa_buffer *out,qa_error *error) {
+    const q1_player *player=client_const(game,actor);
+    if(!player || !out || out->data || out->size) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q1 source userinfo read requires its client and empty output");return false;
+    }
+    qa_strings *strings=qa_session_strings(game->services.session);size_t length=0;
+    for(size_t i=0;i<player->source_info_count;++i) {
+        const char *key=qa_strings_cstr(strings,player->source_info[i].key);
+        const char *value=qa_strings_cstr(strings,player->source_info[i].value);
+        if(!key || !value) {qa_error_set(error,QA_ERROR_FORMAT,0,"Q1 source userinfo lost its actual string");return false;}
+        if(!include_name && !strcmp(key,"name")) continue;
+        size_t key_size=strlen(key),value_size=strlen(value);
+        if(length>SIZE_MAX-2 || key_size>SIZE_MAX-length-2 || value_size>SIZE_MAX-length-key_size-2) {
+            qa_error_set(error,QA_ERROR_MEMORY,0,"Q1 source userinfo extent overflows");return false;
+        }
+        length+=key_size+value_size+2;
+    }
+    if(length==SIZE_MAX) {qa_error_set(error,QA_ERROR_MEMORY,0,"Q1 source userinfo extent overflows");return false;}
+    uint8_t *bytes=malloc(length+1);
+    if(!bytes) {qa_error_set(error,QA_ERROR_MEMORY,0,"reading actual Q1 source userinfo");return false;}
+    size_t cursor=0;
+    for(size_t i=0;i<player->source_info_count;++i) {
+        const char *key=qa_strings_cstr(strings,player->source_info[i].key);
+        const char *value=qa_strings_cstr(strings,player->source_info[i].value);
+        if(!include_name && !strcmp(key,"name")) continue;
+        size_t key_size=strlen(key),value_size=strlen(value);
+        bytes[cursor++]='\\';memcpy(bytes+cursor,key,key_size);cursor+=key_size;
+        bytes[cursor++]='\\';memcpy(bytes+cursor,value,value_size);cursor+=value_size;
+    }
+    bytes[cursor]=0;*out=(qa_buffer){bytes,length};return true;
+}
+bool qa_q1_source_client_name(qa_q1_game *game,qa_actor_id actor,const char *name,qa_error *error) {
+    qa_q1_game_operation operation={0};
+    if(!name || !qa_q1_game_operation_begin(game,&operation,error)) return false;
+    q1_player *player=(q1_player *)client_const(game,actor);bool okay=false;
+    if(!player) qa_error_set(error,QA_ERROR_NOT_FOUND,0,"Q1 source name client is absent");
+    else {
+        char declared[16];size_t length=strlen(name);if(length>15) length=15;
+        memcpy(declared,name,length);declared[length]=0;
+        okay=info_set(game,player,"name",declared,error) && publish(game,player,error);
+    }
+    qa_q1_game_operation_end(&operation);return okay;
+}
+bool qa_q1_source_client_colors(qa_q1_game *game,qa_actor_id actor,int32_t top,int32_t bottom,qa_error *error) {
+    qa_q1_game_operation operation={0};
+    if(!qa_q1_game_operation_begin(game,&operation,error)) return false;
+    q1_player *player=(q1_player *)client_const(game,actor);bool okay=false;
+    if(!player) qa_error_set(error,QA_ERROR_NOT_FOUND,0,"Q1 source colors client is absent");
+    else {
+        if(top<0) top=0;else if(top>13) top=13;
+        if(bottom<0) bottom=0;else if(bottom>13) bottom=13;
+        char shirt[4],pants[4];snprintf(shirt,sizeof(shirt),"%d",top);snprintf(pants,sizeof(pants),"%d",bottom);
+        if(info_set(game,player,"topcolor",shirt,error) && info_set(game,player,"bottomcolor",pants,error)) {
+            player->source_team=(float)bottom+1;
+            okay=apply(game,player,error) && (!q1_alive(game,actor) || publish(game,player,error));
+        }
+    }
+    qa_q1_game_operation_end(&operation);return okay;
 }

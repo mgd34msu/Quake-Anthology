@@ -22,10 +22,19 @@ bot_goal_slot *bot_goal_slot_get(const qa_bot_goals *g, uint32_t id, qa_error *e
     return &g->states[id - 1];
 }
 static bool release_weights(qa_bot_goals *g, bot_goal_slot *s,qa_error *error) {
-    if(!bot_goal_indexes_release(g,s,error)) return false;
-    bot_goal_weights *w = s->weights;
-    s->weights = NULL;
-    if (!w || --w->users) return true;
+    bot_goal_weights *w;
+    if(!bot_goal_config_get(g,s,&w,error)) return false;
+    qa_bot_memory_allocation indexes;bool present;
+    if(!bot_goal_indexes_get(g,s,&indexes,&present,error) ||
+       (present && !qa_bot_memory_free(g->memory,indexes,error)) ||
+       !bot_goal_record_word_write(&s->record,BOT_GOAL_CONFIG_POINTER,0,error) ||
+       !bot_goal_indexes_drop(g,s,error)) return false;
+    if(!w) return true;
+    for(uint32_t i=0;i<g->options.maximum_states;++i) if(g->states[i].used) {
+        bot_goal_weights *other;
+        if(!bot_goal_config_get(g,&g->states[i],&other,error)) return false;
+        if(other==w) return true;
+    }
     bot_goal_weights **link = &g->weights;
     while (*link != w) link = &(*link)->next;
     *link = w->next;
@@ -33,8 +42,17 @@ static bool release_weights(qa_bot_goals *g, bot_goal_slot *s,qa_error *error) {
     free(w);
     return true;
 }
+bool bot_goal_config_get(const qa_bot_goals *g,const bot_goal_slot *s,bot_goal_weights **out,qa_error *e) {
+    if(!out) return bot_goal_fail(e,"Goal configuration read requires its output");
+    uint32_t pointer;
+    if(!bot_goal_record_word_read(&s->record,BOT_GOAL_CONFIG_POINTER,&pointer,e)) return false;
+    if(!pointer) {*out=NULL;return true;}
+    bot_goal_weights *row=g->weights;
+    while(row && row->pointer!=pointer) row=row->next;
+    if(!row) return bot_goal_fail(e,"Invalid goal weight configuration pointer");
+    *out=row;return true;
+}
 bool bot_goal_config_set(qa_bot_goals *g, bot_goal_slot *s, qa_bot_weights *weights, qa_error *e) {
-    if (s->weights && s->weights->weights == weights) return true;
     bot_goal_weights *w = g->weights;
     if (weights) {
         while (w && w->weights != weights) w = w->next;
@@ -53,15 +71,12 @@ bool bot_goal_config_set(qa_bot_goals *g, bot_goal_slot *s, qa_bot_weights *weig
             while(*tail) tail=&(*tail)->next;
             *tail=w;
         }
-        ++w->users;
     }
-    if(s->weights) --s->weights->users;
-    s->weights = weights ? w : NULL;
-    return true;
+    return bot_goal_record_word_write(&s->record,BOT_GOAL_CONFIG_POINTER,weights?w->pointer:0,e);
 }
 static bool bind_weights(qa_bot_goals *g,bot_goal_slot *s,qa_bot_weights *weights,qa_error *e) {
     if(!bot_goal_config_set(g,s,weights,e)) return false;
-    if(!weights) return bot_goal_indexes_release(g,s,e);
+    if(!weights) return true;
     if(!g->configured) return true;
     const qa_bot_items_view *items=qa_bot_items_read(g->items);
     if(items->count>UINT32_MAX) return bot_goal_fail(e,"Item index count exceeds the source domain");
@@ -103,7 +118,11 @@ bool qa_bot_goals_create(qa_bot_items *items, const qa_bot_goal_options *options
 }
 void qa_bot_goals_destroy(qa_bot_goals *g) {
     if (!g || g->busy) return;
-    for (uint32_t i = 0; i < g->options.maximum_states; ++i) (void)release_weights(g, &g->states[i],NULL);
+    g->busy=true;
+    for (uint32_t i = 0; i < g->options.maximum_states; ++i) if(g->states[i].used) {
+        (void)release_weights(g,&g->states[i],NULL);
+        (void)qa_bot_memory_free(g->memory,g->states[i].record.allocation,NULL);
+    }
     while(g->weights) {bot_goal_weights *w=g->weights;g->weights=w->next;qa_bot_weights_release(w->weights);free(w);}
     bot_goal_indexes_clear(g);
     bot_goal_map_clear(g);
@@ -143,7 +162,12 @@ bool qa_bot_goals_allocate(qa_bot_goals *g, int32_t client, uint32_t *out, qa_er
     *out = 0;
     for (uint32_t i = 0; i < g->options.maximum_states; ++i)
         if (!g->states[i].used) {
-            g->states[i] = (bot_goal_slot){.used = true, .state = {.client = client}};
+            bot_goal_record record;
+            g->busy=true;
+            bool ok=bot_goal_record_allocate(g->memory,client,&record,e);
+            g->busy=false;
+            if(!ok) return false;
+            g->states[i] = (bot_goal_slot){.used = true, .record=record};
             *out = i + 1;
             break;
         }
@@ -153,23 +177,25 @@ bool qa_bot_goals_free(qa_bot_goals *g, uint32_t id, qa_error *e) {
     if (!bot_goal_mutable(g, e)) return false;
     bot_goal_slot *s = bot_goal_slot_get(g, id, e);
     if (!s) return false;
-    if(!release_weights(g, s,e)) return false;
-    *s = (bot_goal_slot){0};
-    return true;
+    g->busy=true;
+    bool ok=release_weights(g,s,e) && qa_bot_memory_free(g->memory,s->record.allocation,e);
+    if(ok) *s = (bot_goal_slot){0};
+    g->busy=false;
+    return ok;
 }
 bool qa_bot_goals_reset(qa_bot_goals *g, uint32_t id, qa_error *e) {
     if (!bot_goal_mutable(g, e)) return false;
     bot_goal_slot *s = bot_goal_slot_get(g, id, e);
     if (!s) return false;
-    memset(s->state.stack, 0, sizeof(s->state.stack));
-    memset(s->state.avoid, 0, sizeof(s->state.avoid));
-    s->state.stack_top = 0;
-    return true;
+    return bot_goal_record_reset(&s->record,true,e);
 }
 bool qa_bot_goals_weights(qa_bot_goals *g, uint32_t id, qa_bot_weights *w, qa_error *e) {
     if (!bot_goal_mutable(g, e)) return false;
     bot_goal_slot *s = bot_goal_slot_get(g, id, e);
-    return s && (w?bind_weights(g,s,w,e):release_weights(g,s,e));
+    if(!s) return false;
+    g->busy=true;
+    bool ok=w?bind_weights(g,s,w,e):release_weights(g,s,e);
+    g->busy=false;return ok;
 }
 static void breed_report(void *context, const char *message) {
     char line[128];
@@ -185,11 +211,11 @@ bool qa_bot_goals_interbreed(qa_bot_goals *g, uint32_t first, uint32_t second, u
     if (!matched) return bot_goal_fail(e, "goal breeding requires matched output");
     *matched = false;
     g->busy = true;
-    bool ok = true;
-    if (!a->weights || !b->weights || !c->weights)
+    bot_goal_weights *wa,*wb,*wc;
+    bool ok=bot_goal_config_get(g,a,&wa,e) && bot_goal_config_get(g,b,&wb,e) && bot_goal_config_get(g,c,&wc,e);
+    if(ok && (!wa || !wb || !wc))
         bot_goal_report(g, QA_SCRIPT_FATAL, "goal fuzzy interbreeding requires loaded item weights");
-    else ok = qa_bot_weights_interbreed_report(c->weights->weights, a->weights->weights,
-                                                   b->weights->weights, g, breed_report, matched, e);
+    else if(ok) ok=qa_bot_weights_interbreed_report(wc->weights,wa->weights,wb->weights,g,breed_report,matched,e);
     g->busy = false;
     return ok;
 }
@@ -198,9 +224,10 @@ bool qa_bot_goals_mutate(qa_bot_goals *g, uint32_t id, qa_error *e) {
     bot_goal_slot *s = bot_goal_slot_get(g, id, e);
     if (!s) return false;
     g->busy = true;
-    bool ok = true;
-    if (!s->weights) bot_goal_report(g, QA_SCRIPT_FATAL, "goal fuzzy mutation requires loaded item weights");
-    else ok = qa_bot_weights_evolve(s->weights->weights, &g->options.random, e);
+    bot_goal_weights *weights;
+    bool ok=bot_goal_config_get(g,s,&weights,e);
+    if(ok && !weights) bot_goal_report(g, QA_SCRIPT_FATAL, "goal fuzzy mutation requires loaded item weights");
+    else if(ok) ok=qa_bot_weights_evolve(weights->weights,&g->options.random,e);
     g->busy = false;
     return ok;
 }
@@ -210,15 +237,18 @@ bool qa_bot_goals_save_weights(qa_bot_goals *g, uint32_t id, qa_error *e) {
 static bool push(qa_bot_goals *g, bot_goal_slot *s, const qa_bot_goal *goal,
                  void *context, bool (*read)(void *, qa_bot_goal *, qa_error *),
                  bool *out, qa_error *e) {
-    *out = s->state.stack_top < QA_BOT_GOAL_STACK - 1;
+    int32_t top;
+    if(!bot_goal_record_integer_read(&s->record,BOT_GOAL_STACK_TOP,&top,e)) return false;
+    *out=top<QA_BOT_GOAL_STACK-1;
     if (*out) {
-        ++s->state.stack_top;
+        if(!bot_goal_record_word_write(&s->record,BOT_GOAL_STACK_TOP,(uint32_t)(top+1),e)) return false;
         qa_bot_goal value;
         if (read) {
             if (!read(context, &value, e)) return false;
             goal = &value;
         }
-        s->state.stack[s->state.stack_top] = *goal;
+        return bot_goal_record_integer_read(&s->record,BOT_GOAL_STACK_TOP,&top,e) &&
+            bot_goal_record_goal_write(&s->record,top,goal,e);
     } else {
         bot_goal_report(g, QA_SCRIPT_ERROR, "goal heap overflow\n");
         return bot_goal_dump_stack(g, s, e);
@@ -249,72 +279,105 @@ bool qa_bot_goals_push_from(qa_bot_goals *g, uint32_t id, void *context,
     g->busy = false;
     return ok;
 }
+bool qa_bot_goals_push_source_from(qa_bot_goals *g,uint32_t id,void *context,
+    bool (*read)(void *,qa_bytes *,qa_error *),bool *out,qa_error *e) {
+    if(!bot_goal_mutable(g,e)) return false;
+    bot_goal_slot *s=bot_goal_slot_get(g,id,e);
+    if(!s || !read || !out) return s?bot_goal_fail(e,"missing source goal bytes reader/output"):false;
+    int32_t top;
+    if(!bot_goal_record_integer_read(&s->record,BOT_GOAL_STACK_TOP,&top,e)) return false;
+    *out=top<QA_BOT_GOAL_STACK-1;g->busy=true;
+    bool ok;
+    if(*out) {
+        qa_bytes bytes={0};
+        ok=bot_goal_record_word_write(&s->record,BOT_GOAL_STACK_TOP,(uint32_t)(top+1),e) &&
+            read(context,&bytes,e) && bot_goal_record_integer_read(&s->record,BOT_GOAL_STACK_TOP,&top,e) &&
+            bot_goal_record_goal_bytes_write(&s->record,top,bytes,e);
+    } else {
+        bot_goal_report(g,QA_SCRIPT_ERROR,"goal heap overflow\n");
+        ok=bot_goal_dump_stack(g,s,e);
+    }
+    g->busy=false;return ok;
+}
 bool qa_bot_goals_pop(qa_bot_goals *g, uint32_t id, qa_error *e) {
     if (!bot_goal_mutable(g, e)) return false;
     bot_goal_slot *s = bot_goal_slot_get(g, id, e);
     if (!s) return false;
-    if (s->state.stack_top) --s->state.stack_top;
-    return true;
+    int32_t top;
+    if(!bot_goal_record_integer_read(&s->record,BOT_GOAL_STACK_TOP,&top,e)) return false;
+    return top<=0 || bot_goal_record_word_write(&s->record,BOT_GOAL_STACK_TOP,(uint32_t)(top-1),e);
 }
 bool qa_bot_goals_empty(qa_bot_goals *g, uint32_t id, qa_error *e) {
     if (!bot_goal_mutable(g, e)) return false;
     bot_goal_slot *s = bot_goal_slot_get(g, id, e);
     if (!s) return false;
-    s->state.stack_top = 0;
-    return true;
+    return bot_goal_record_word_write(&s->record,BOT_GOAL_STACK_TOP,0,e);
 }
 bool qa_bot_goals_top(const qa_bot_goals *g, uint32_t id, bool second, qa_bot_goal *out,
                       bool *found, qa_error *e) {
     bot_goal_slot *s = bot_goal_slot_get(g, id, e);
     if (!s) return false;
     if (!out || !found) return bot_goal_fail(e, "missing goal stack output");
-    *found = s->state.stack_top > (uint32_t)second;
-    if (*found) *out = s->state.stack[s->state.stack_top - (uint32_t)second];
-    return true;
+    int32_t top;
+    if(!bot_goal_record_integer_read(&s->record,BOT_GOAL_STACK_TOP,&top,e)) return false;
+    *found=second?top>1:top!=0;
+    return !*found || bot_goal_record_goal_read(&s->record,top-(int32_t)second,out,e);
+}
+bool qa_bot_goals_top_source(const qa_bot_goals *g,uint32_t id,bool second,qa_bytes *out,bool *found,qa_error *e) {
+    bot_goal_slot *s=bot_goal_slot_get(g,id,e);
+    if(!s) return false;
+    if(!out || !found) return bot_goal_fail(e,"missing source goal stack bytes output");
+    int32_t top;
+    if(!bot_goal_record_integer_read(&s->record,BOT_GOAL_STACK_TOP,&top,e)) return false;
+    *found=second?top>1:top!=0;
+    if(!*found) {*out=(qa_bytes){0};return true;}
+    return bot_goal_record_goal_bytes_read(&s->record,top-(int32_t)second,out,e);
 }
 bool qa_bot_goals_avoid_clear(qa_bot_goals *g, uint32_t id, qa_error *e) {
     if (!bot_goal_mutable(g, e)) return false;
     bot_goal_slot *s = bot_goal_slot_get(g, id, e);
     if (!s) return false;
-    memset(s->state.avoid, 0, sizeof(s->state.avoid));
-    return true;
+    return bot_goal_record_reset(&s->record,false,e);
 }
 float bot_goal_default_avoid(const qa_bot_item_info *item) {
     return fmaxf(10, item->respawn_seconds == 0 ? 30 : item->respawn_seconds);
 }
-void bot_goal_avoid(qa_bot_goals *g, bot_goal_slot *s, int32_t number, float duration) {
-    qa_bot_avoid_goal *slot = NULL;
-    for (size_t i = 0; i < QA_BOT_AVOID_GOALS; ++i)
-        if (s->state.avoid[i].number == number) { slot = &s->state.avoid[i]; break; }
-    if (!slot)
-        for (size_t i = 0; i < QA_BOT_AVOID_GOALS; ++i)
-            if (s->state.avoid[i].expires < g->time) { slot = &s->state.avoid[i]; break; }
-    if (slot) *slot = (qa_bot_avoid_goal){number, g->time + duration};
+bool bot_goal_avoid(qa_bot_goals *g, bot_goal_slot *s, int32_t number, float duration,qa_error *e) {
+    int32_t slot=-1;qa_bot_avoid_goal goal;
+    for(int32_t i=0;i<QA_BOT_AVOID_GOALS;++i) {
+        if(!bot_goal_record_avoid_read(&s->record,i,&goal,e)) return false;
+        if(goal.number==number) {slot=i;break;}
+    }
+    if(slot<0) for(int32_t i=0;i<QA_BOT_AVOID_GOALS;++i) {
+        if(!bot_goal_record_avoid_read(&s->record,i,&goal,e)) return false;
+        if(goal.expires<g->time) {slot=i;break;}
+    }
+    goal=(qa_bot_avoid_goal){number,g->time+duration};
+    return slot<0 || bot_goal_record_avoid_write(&s->record,slot,&goal,e);
 }
 bool qa_bot_goals_avoid_set(qa_bot_goals *g, uint32_t id, int32_t number, float duration, qa_error *e) {
     if (!bot_goal_mutable(g, e)) return false;
     bot_goal_slot *s = bot_goal_slot_get(g, id, e);
     if (!s) return false;
-    if (!isfinite(duration)) return bot_goal_fail(e, "invalid goal avoidance duration");
     if (duration < 0) {
         if (!g->configured) return true;
         bot_level_item *item = bot_goal_find(g, number);
         if (!item) return true;
         duration = bot_goal_default_avoid(&qa_bot_items_read(g->items)->items[item->info]);
     }
-    if (!isfinite(g->time + duration)) return bot_goal_fail(e, "goal avoidance time overflow");
-    bot_goal_avoid(g, s, number, duration);
-    return true;
+    return bot_goal_avoid(g,s,number,duration,e);
 }
 bool qa_bot_goals_avoid_remove(qa_bot_goals *g, uint32_t id, int32_t number, qa_error *e) {
     if (!bot_goal_mutable(g, e)) return false;
     bot_goal_slot *s = bot_goal_slot_get(g, id, e);
     if (!s) return false;
-    for (size_t i = 0; i < QA_BOT_AVOID_GOALS; ++i)
-        if (s->state.avoid[i].number == number && s->state.avoid[i].expires >= g->time) {
-            s->state.avoid[i].expires = 0;
-            break;
+    for(int32_t i=0;i<QA_BOT_AVOID_GOALS;++i) {
+        qa_bot_avoid_goal goal;
+        if(!bot_goal_record_avoid_read(&s->record,i,&goal,e)) return false;
+        if(goal.number==number && goal.expires>=g->time) {
+            goal.expires=0;return bot_goal_record_avoid_write(&s->record,i,&goal,e);
         }
+    }
     return true;
 }
 bool qa_bot_goals_avoid_time(const qa_bot_goals *g, uint32_t id, int32_t number, float *out, qa_error *e) {
@@ -322,11 +385,11 @@ bool qa_bot_goals_avoid_time(const qa_bot_goals *g, uint32_t id, int32_t number,
     if (!s) return false;
     if (!out) return bot_goal_fail(e, "missing avoidance time output");
     *out = 0;
-    for (size_t i = 0; i < QA_BOT_AVOID_GOALS; ++i)
-        if (s->state.avoid[i].number == number && s->state.avoid[i].expires >= g->time) {
-            *out = s->state.avoid[i].expires - g->time;
-            break;
-        }
+    for(int32_t i=0;i<QA_BOT_AVOID_GOALS;++i) {
+        qa_bot_avoid_goal goal;
+        if(!bot_goal_record_avoid_read(&s->record,i,&goal,e)) return false;
+        if(goal.number==number && goal.expires>=g->time) {*out=goal.expires-g->time;break;}
+    }
     return true;
 }
 bool qa_bot_goals_capture(const qa_bot_goals *g, uint32_t id, qa_bot_goal_state *out,
@@ -334,22 +397,24 @@ bool qa_bot_goals_capture(const qa_bot_goals *g, uint32_t id, qa_bot_goal_state 
     bot_goal_slot *s = bot_goal_slot_get(g, id, e);
     if (!s) return false;
     if (!out || !weights) return bot_goal_fail(e, "missing goal checkpoint output");
-    *out = s->state;
-    *weights = s->weights ? s->weights->weights : NULL;
-    return true;
+    bot_goal_weights *config;
+    if(!bot_goal_record_state_read(&s->record,out,e) || !bot_goal_config_get(g,s,&config,e)) return false;
+    *weights=config?config->weights:NULL;return true;
 }
 bool qa_bot_goals_restore(qa_bot_goals *g, uint32_t id, const qa_bot_goal_state *state,
                           qa_bot_weights *weights, qa_error *e) {
     if (!bot_goal_mutable(g, e)) return false;
-    if (!id || id > g->options.maximum_states || !state || state->stack_top >= QA_BOT_GOAL_STACK)
+    if (!id || id > g->options.maximum_states || !state || state->stack_top > QA_BOT_GOAL_STACK)
         return bot_goal_fail(e, "invalid goal state checkpoint");
-    for (size_t i = 0; i < QA_BOT_AVOID_GOALS; ++i)
-        if (!isfinite(state->avoid[i].expires)) return bot_goal_fail(e, "invalid saved avoid time");
     bot_goal_slot *s = &g->states[id - 1];
-    if (!bind_weights(g, s, weights, e)) return false;
-    s->state = *state;
-    s->used = true;
-    return true;
+    g->busy=true;
+    if(!s->used) {
+        bot_goal_record record;
+        if(!bot_goal_record_allocate(g->memory,state->client,&record,e)) {g->busy=false;return false;}
+        *s=(bot_goal_slot){.used=true,.record=record};
+    }
+    bool ok=bind_weights(g,s,weights,e) && bot_goal_record_state_write(&s->record,state,e);
+    g->busy=false;return ok;
 }
 
 void bot_goal_restore_lock(qa_bot_goals *g, bool locked) { g->busy = locked; }

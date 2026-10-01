@@ -44,7 +44,7 @@ typedef struct qa_input_platform_options {
  * native device handles, never calls SDL_PollEvent/Init/Quit, and survives
  * window replacement. It must be destroyed before SDL shuts down. */
 qa_input_platform *qa_input_platform_create(const qa_input_platform_options *, qa_error *);
-/* Complete checked settings abort/publication before destruction. A retained
+/* Complete checked settings abort/publication or entered retirement before destruction. A retained
  * nonterminal settings ticket keeps its native owner alive. */
 void qa_input_platform_destroy(qa_input_platform *);
 /* Atomic validation/copy of selections precedes release. Slots remain stable
@@ -72,7 +72,8 @@ typedef enum qa_input_platform_settings_outcome {
     QA_INPUT_PLATFORM_SETTINGS_UNENTERED,
     QA_INPUT_PLATFORM_SETTINGS_ENTERED,
     QA_INPUT_PLATFORM_SETTINGS_PUBLISHED,
-    QA_INPUT_PLATFORM_SETTINGS_ABORTED
+    QA_INPUT_PLATFORM_SETTINGS_ABORTED,
+    QA_INPUT_PLATFORM_SETTINGS_RETIRED
 } qa_input_platform_settings_outcome;
 typedef struct qa_input_platform_settings_requirements {
     bool source_changed, midi_changed;
@@ -85,7 +86,7 @@ typedef struct qa_input_platform_settings_requirements {
  * configuration entries are the actual prepared same-seat owners, or their
  * unchanged active owners. Keep them alive through readiness and termination.
  * Preparation never writes cvars or dispatches input/console callbacks. A returned
- * ticket, including on preparation failure, requires checked abort before
+ * ticket, including on preparation failure, requires checked disposition before
  * destruction. Readiness must precede publication under the held boundary. */
 bool qa_input_platform_settings_prepare(qa_input_platform *, const qa_input_platform_settings *,
     qa_input_seat *const configuration[4], double now_ms, qa_input_platform_settings_ticket **, qa_error *);
@@ -120,6 +121,16 @@ qa_input_platform_settings_outcome qa_input_platform_settings_result(const qa_in
 bool qa_input_platform_settings_ready(const qa_input_platform_settings_ticket *,
     const qa_input_release *const release[4], qa_error *);
 bool qa_input_platform_settings_abort(qa_input_platform_settings_ticket *, qa_error *);
+/* Dispose an entered replacement only while every required actual source
+ * release proof remains completed and retained. Checked cleanup restores the
+ * retained capture/output modes and disposes candidate endpoints, preserving
+ * the old routes and joystick. The already retired old MIDI stream stays
+ * closed; its decoder/held history is retired without dispatch or replay.
+ * A refusal retains the ticket and proofs for cleanup retry and excludes
+ * entry/publication. A terminal close error returns false with RETIRED, and
+ * the ticket is destroyable. This disposition never claims source rollback. */
+bool qa_input_platform_settings_retire_entered(qa_input_platform_settings_ticket *,
+    const qa_input_release *const release[4], qa_error *);
 void qa_input_platform_settings_publish(qa_input_platform_settings_ticket *);
 bool qa_input_platform_settings_ticket_destroy(qa_input_platform_settings_ticket *, qa_error *);
 size_t qa_input_platform_device_count(const qa_input_platform *);

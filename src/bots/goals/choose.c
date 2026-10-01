@@ -107,7 +107,9 @@ static bool choose_sources(goal_choice *c, const qa_actor_id *actors, size_t cou
     qa_bot_goals *g = c->goals;
     for (size_t i = 0; i < count; ++i) {
         qa_bot_pickup_goal current; bool found;
-        if (!g->services.pickup(g->services.context, c->state->state.client, actors[i], &current, &found, e)) return false;
+        int32_t client;
+        if (!bot_goal_record_integer_read(&c->state->record,BOT_GOAL_CLIENT,&client,e) ||
+            !g->services.pickup(g->services.context, client, actors[i], &current, &found, e)) return false;
         if (!found || !qa_actor_id_equal(current.actor, actors[i]) || !(current.utility > 0)) continue;
         if (!qa_vec_finite(current.origin) || !qa_vec_finite(current.bounds.mins) ||
             !qa_vec_finite(current.bounds.maxs) || !isfinite(current.utility))
@@ -127,13 +129,16 @@ static bool choose_sources(goal_choice *c, const qa_actor_id *actors, size_t cou
 static bool choose(goal_choice *c, qa_error *e) {
     qa_bot_goals *g = c->goals;
     const qa_bot_items_view *items = qa_bot_items_read(g->items);
-    if (!c->state->weights) return true;
-    c->navigation = g->services.navigation(g->services.context, c->state->state.client);
+    bot_goal_weights *weights;int32_t client;
+    if (!bot_goal_config_get(g,c->state,&weights,e)) return false;
+    if (!weights) return true;
+    if (!bot_goal_record_integer_read(&c->state->record,BOT_GOAL_CLIENT,&client,e)) return false;
+    c->navigation = g->services.navigation(g->services.context, client);
     if (!c->navigation) return true;
     if (!qa_bot_navigation_reachable(c->navigation, c->query->origin, &c->area, e)) return false;
-    if (!c->area || !qa_bot_navigation_area(c->navigation, c->area).reach_count)
-        c->area = (uint32_t)c->state->state.last_reachability_area;
-    c->state->state.last_reachability_area = (int32_t)c->area;
+    if ((!c->area || !qa_bot_navigation_area(c->navigation, c->area).reach_count) &&
+        !bot_goal_record_word_read(&c->state->record,BOT_GOAL_LAST_AREA,&c->area,e)) return false;
+    if (!bot_goal_record_word_write(&c->state->record,BOT_GOAL_LAST_AREA,c->area,e)) return false;
     if (!c->area) return true;
     c->long_term_time = 99999;
     if (c->query->nearby && c->query->long_term &&
@@ -146,7 +151,8 @@ static bool choose(goal_choice *c, qa_error *e) {
             (!item->entity && !(item->flags & 16))) continue;
         if (g->services.owns_item) {
             bool owns;
-            if (!g->services.owns_item(g->services.context, c->state->state.client, item->entity, &owns, e)) return false;
+            if (!bot_goal_record_integer_read(&c->state->record,BOT_GOAL_CLIENT,&client,e) ||
+                !g->services.owns_item(g->services.context, client, item->entity, &owns, e)) return false;
             if (owns) continue;
         }
         const qa_bot_item_info *info = &items->items[item->info];
@@ -158,7 +164,9 @@ static bool choose(goal_choice *c, qa_error *e) {
         float weight;
         qa_bot_inventory_view native = {.data = c->query->inventory, .count = c->query->inventory_count};
         const qa_bot_inventory_view *inventory = c->query->inventory_source ? c->query->inventory_source : &native;
-        if (!qa_bot_weights_evaluate_view(c->state->weights->weights, (uint32_t)index, inventory,
+        if (!bot_goal_config_get(g,c->state,&weights,e)) return false;
+        if (!weights) return bot_goal_fail(e,"Item weight configuration is absent during evaluation");
+        if (!qa_bot_weights_evaluate_view(weights->weights, (uint32_t)index, inventory,
                                            &g->options.random, g->workspace, &weight, e)) return false;
         if (item->timeout != 0) weight += g->services.dropped_weight ?
             g->services.dropped_weight(g->services.context) : g->options.dropped_weight;
@@ -169,14 +177,15 @@ static bool choose(goal_choice *c, qa_error *e) {
     }
     if (g->services.pickups) {
         const qa_actor_id *actors; size_t count; void *lease;
-        if (!g->services.pickups(g->services.context, c->state->state.client, &actors, &count, &lease, e)) return false;
+        if (!bot_goal_record_integer_read(&c->state->record,BOT_GOAL_CLIENT,&client,e) ||
+            !g->services.pickups(g->services.context, client, &actors, &count, &lease, e)) return false;
         bool ok = count && !actors ? bot_goal_fail(e, "invalid pickup candidate snapshot") :
                   choose_sources(c, actors, count, e);
         g->services.pickups_end(g->services.context, lease);
         if (!ok) return false;
     }
     if (c->found) {
-        if (c->native) bot_goal_avoid(g, c->state, c->best.number, c->avoid_duration);
+        if (c->native && !bot_goal_avoid(g, c->state, c->best.number, c->avoid_duration,e)) return false;
         bool pushed;
         if (!bot_goal_push(g, c->state, &c->best, &pushed, e)) return false;
     }

@@ -1108,7 +1108,7 @@ struct qa_input_platform_settings_ticket {
     bool source_motor_attempted;
     bool owns_joystick, owns_midi, owns_midi_devices;
     bool previous_relative, previous_grab, previous_text, relative, text;
-    bool capture_attempted, prepared, aborting, terminal, published;
+    bool capture_attempted, prepared, aborting, retiring, terminal, published;
     bool midi_deferred, enter_complete, endpoint_entered;
     char diagnostic[320];
 };
@@ -1567,7 +1567,7 @@ bool qa_input_platform_settings_release_scope(const qa_input_platform_settings_t
 }
 static bool settings_releases_ready(const qa_input_platform_settings_ticket *t,
     const qa_input_release *const release[4], qa_error *error) {
-    if (!t || !t->prepared || t->aborting || !settings_current(t, error)) return false;
+    if (!t || !t->prepared || (t->aborting && !t->retiring) || !settings_current(t, error)) return false;
     for (unsigned slot = 0; slot < 4; ++slot) if (t->routes[slot].seat &&
         t->configuration[slot] != t->routes[slot].seat &&
         !qa_input_seat_configuration_ready(t->routes[slot].seat, t->configuration[slot], error)) return false;
@@ -1589,6 +1589,7 @@ static bool settings_releases_ready(const qa_input_platform_settings_ticket *t,
 }
 qa_input_platform_settings_outcome qa_input_platform_settings_result(const qa_input_platform_settings_ticket *t) {
     if (t && t->published) return QA_INPUT_PLATFORM_SETTINGS_PUBLISHED;
+    if (t && t->terminal && t->retiring) return QA_INPUT_PLATFORM_SETTINGS_RETIRED;
     if (t && t->endpoint_entered) return QA_INPUT_PLATFORM_SETTINGS_ENTERED;
     if (t && t->terminal) return QA_INPUT_PLATFORM_SETTINGS_ABORTED;
     return QA_INPUT_PLATFORM_SETTINGS_UNENTERED;
@@ -1597,6 +1598,10 @@ static bool settings_endpoints_ready(const qa_input_platform_settings_ticket *, 
 bool qa_input_platform_settings_enter(qa_input_platform_settings_ticket *t,
     const qa_input_release *const release[4], qa_input_platform_settings_outcome *outcome, qa_error *error) {
     if (outcome) *outcome = qa_input_platform_settings_result(t);
+    if (t && t->retiring) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input endpoint retirement excludes replacement entry");
+        return false;
+    }
     if (!outcome || !settings_releases_ready(t, release, error) || !settings_endpoints_ready(t, error)) return false;
     if (t->enter_complete) return true;
     if (t->midi_deferred) {
@@ -1658,6 +1663,10 @@ static bool settings_endpoints_ready(const qa_input_platform_settings_ticket *t,
 }
 bool qa_input_platform_settings_ready(const qa_input_platform_settings_ticket *t,
     const qa_input_release *const release[4], qa_error *error) {
+    if (t && t->retiring) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input endpoint retirement excludes replacement publication");
+        return false;
+    }
     if (!settings_releases_ready(t, release, error)) return false;
     if (!t->enter_complete || t->midi_deferred) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings have not completed their endpoint entry");
@@ -1665,13 +1674,7 @@ bool qa_input_platform_settings_ready(const qa_input_platform_settings_ticket *t
     }
     return settings_endpoints_ready(t, error);
 }
-bool qa_input_platform_settings_abort(qa_input_platform_settings_ticket *t, qa_error *error) {
-    if (!t || t->terminal || !settings_current(t, error)) return false;
-    if (t->endpoint_entered) {
-        qa_error_set(error, QA_ERROR_UNSUPPORTED, 0,
-            "Entered MIDI replacement retains its owners; its retired stream cannot be restored");
-        return false;
-    }
+static bool settings_dispose(qa_input_platform_settings_ticket *t, qa_error *error) {
     t->aborting = true;
     if (t->capture_attempted) {
         if (t->previous_text) SDL_StartTextInput(); else SDL_StopTextInput();
@@ -1683,22 +1686,46 @@ bool qa_input_platform_settings_abort(qa_input_platform_settings_ticket *t, qa_e
         if (SDL_GetRelativeMouseMode() != (t->previous_relative ? SDL_TRUE : SDL_FALSE) ||
             (t->window && SDL_GetWindowGrab(t->window) != (t->previous_grab ? SDL_TRUE : SDL_FALSE)) ||
             SDL_IsTextInputActive() != (t->previous_text ? SDL_TRUE : SDL_FALSE)) {
-            if (success) qa_error_set(error, QA_ERROR_IO, 0, "Input capture abort did not restore the retained native modes");
+            if (success) qa_error_set(error, QA_ERROR_IO, 0, "Input capture cleanup did not restore the retained native modes");
             success = false;
         }
         if (!success) return false;
+        t->capture_attempted = false;
     }
     if (!settings_outputs_abort(t, error)) return false;
     bool success = true;
     if (t->owns_midi) {
         int fd = t->midi_fd; t->midi_fd = -1; t->owns_midi = false;
         if (close(fd) < 0) {
-            qa_error_set(error, QA_ERROR_IO, 0, "Closing aborted MIDI input: %s", strerror(errno)); success = false;
+            qa_error_set(error, QA_ERROR_IO, 0, "Closing disposed MIDI input: %s", strerror(errno)); success = false;
         }
     }
     if (t->owns_midi_devices) { free(t->midi_devices); t->midi_devices = NULL; t->owns_midi_devices = false; }
     if (t->owns_joystick) { SDL_JoystickClose(t->joystick); t->joystick = NULL; t->owns_joystick = false; }
+    if (t->retiring) {
+        t->platform->midi = (qa_midi_decoder){0};
+        memset(t->platform->midi_held, 0, sizeof(t->platform->midi_held));
+    }
     t->platform->settings_ticket = NULL; t->terminal = true; return success;
+}
+bool qa_input_platform_settings_abort(qa_input_platform_settings_ticket *t, qa_error *error) {
+    if (!t || t->terminal || !settings_current(t, error)) return false;
+    if (t->endpoint_entered) {
+        qa_error_set(error, QA_ERROR_UNSUPPORTED, 0,
+            "Entered MIDI replacement retains its owners; its retired stream cannot be restored");
+        return false;
+    }
+    return settings_dispose(t, error);
+}
+bool qa_input_platform_settings_retire_entered(qa_input_platform_settings_ticket *t,
+    const qa_input_release *const release[4], qa_error *error) {
+    if (!t || !t->endpoint_entered) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input retirement requires its retained entered replacement");
+        return false;
+    }
+    if (!settings_releases_ready(t, release, error)) return false;
+    t->retiring = true;
+    return settings_dispose(t, error);
 }
 void qa_input_platform_settings_publish(qa_input_platform_settings_ticket *t) {
     qa_input_platform *p = t->platform;

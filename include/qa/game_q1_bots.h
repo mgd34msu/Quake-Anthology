@@ -45,11 +45,20 @@ typedef struct qa_q1_source_client_services {
 bool qa_q1_source_clients_configure(qa_q1_game *,const qa_q1_source_client_services *,qa_error *);
 bool qa_q1_source_client_read(const qa_q1_game *,qa_actor_id,qa_q1_source_client_view *);
 bool qa_q1_source_client_userinfo(qa_q1_game *,qa_actor_id,const char *,qa_error *);
+/* The separately admitted name is used only when received userinfo has no name
+ * key. It is a typed source value, so original Q1 backslashes remain intact. */
+bool qa_q1_source_client_userinfo_named(qa_q1_game *,qa_actor_id,const char *,const char *,qa_error *);
+/* Continuations can retain name separately from delimiter-based userinfo. */
+bool qa_q1_source_client_userinfo_read(const qa_q1_game *,qa_actor_id,bool include_name,qa_buffer *,qa_error *);
+bool qa_q1_source_client_name(qa_q1_game *,qa_actor_id,const char *,qa_error *);
+bool qa_q1_source_client_colors(qa_q1_game *,qa_actor_id,int32_t,int32_t,qa_error *);
 bool qa_q1_source_client_info(const qa_q1_game *,qa_actor_id,const char *,const char **);
 bool qa_q1_source_client_add_score(qa_q1_game *,qa_actor_id,double delta,qa_error *);
 bool qa_q1_source_client_set_score(qa_q1_game *,qa_actor_id,float score,qa_error *);
 bool qa_q1_source_client_observer(qa_q1_game *,qa_actor_id,bool,qa_error *);
 bool qa_q1_source_client_spawned(qa_q1_game *,qa_actor_id,qa_error *);
+bool qa_q1_source_respawn_options_read(const qa_q1_game *,qa_q1_options *,double *source_seconds,qa_error *);
+bool qa_q1_source_client_request_respawn(qa_q1_game *,qa_actor_id,bool *force_spawn,qa_error *);
 bool qa_q1_bot_exit_level(qa_q1_game *,double seconds,bool same_level,qa_error *);
 /* The caller frees genuine supply receipts with qa_supply_preview_free.
  * found qualifies a source weapon/ammo offer; eligible also requires its

@@ -96,10 +96,16 @@ bool qa_bot_goals_save_weights(qa_bot_goals *, uint32_t, qa_error *);
 bool qa_bot_goals_push(qa_bot_goals *, uint32_t, const qa_bot_goal *, bool *pushed, qa_error *);
 bool qa_bot_goals_push_from(qa_bot_goals *, uint32_t, void *context,
                             bool (*read)(void *, qa_bot_goal *, qa_error *), bool *, qa_error *);
+/* Reads occur after the source stack increment. Copy the first 56 bytes of
+ * the supplied view without decoding float payloads. */
+bool qa_bot_goals_push_source_from(qa_bot_goals *,uint32_t,void *,
+                                   bool (*read)(void *,qa_bytes *,qa_error *),bool *,qa_error *);
 bool qa_bot_goals_pop(qa_bot_goals *, uint32_t, qa_error *);
 bool qa_bot_goals_empty(qa_bot_goals *, uint32_t, qa_error *);
 bool qa_bot_goals_top(const qa_bot_goals *, uint32_t, bool second, qa_bot_goal *, bool *,
                       qa_error *);
+/* Borrowed from the actual source allocation until that allocation is freed. */
+bool qa_bot_goals_top_source(const qa_bot_goals *,uint32_t,bool second,qa_bytes *,bool *,qa_error *);
 bool qa_bot_goals_avoid_clear(qa_bot_goals *, uint32_t, qa_error *);
 bool qa_bot_goals_avoid_set(qa_bot_goals *, uint32_t, int32_t number, float duration, qa_error *);
 bool qa_bot_goals_avoid_remove(qa_bot_goals *, uint32_t, int32_t number, qa_error *);
