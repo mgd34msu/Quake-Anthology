@@ -345,7 +345,7 @@ bool qa_modes_scoreboard(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool vis
     member->player.scoreboard = visible;
     return qa_modes_rank(m, id, e);
 }
-bool qa_modes_suicide(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool *handled, qa_error *e) {
+static bool suicide(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool *handled, qa_error *e) {
     mode_instance *v = mode_get(m, id);
     mode_member *member = mode_member_get(m, v, actor);
     mode_player *player = mode_player_get(m, actor);
@@ -360,17 +360,36 @@ bool qa_modes_suicide(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool *handl
     }
     if (!*handled || member->player.spectator || v->value.rules.start_map)
         return true;
-    if (member->suicide_count > 3)
-        return mode_event(m, v, QA_MODE_MESSAGE, actor, (qa_actor_id){0}, (qa_actor_id){0}, 0, 0, 1,
-                          e);
+    if (!m->options.hooks.q1_ctf_suicide_notice)
+        return mode_fail(e, "ThreeWave suicide needs its actual source notice producer");
+    bool limited = member->suicide_count > 3;
+    if (!MODE_CALLBACK(m, m->options.hooks.q1_ctf_suicide_notice(
+        m->options.hooks.context, id, actor, limited, e))) return false;
+    if (limited) return true;
+    if (mode_get(m, id) != v || !mode_member_get(m, v, actor))
+        return mode_fail(e, "ThreeWave suicide participant retired during notice");
+    if (!qa_modes_drop(m, id, actor, true, e)) return false;
+    if (mode_get(m, id) != v || !mode_member_get(m, v, actor))
+        return mode_fail(e, "ThreeWave suicide participant retired during drop");
+    if (!m->options.hooks.release_grapple || !MODE_CALLBACK(m,
+        m->options.hooks.release_grapple(m->options.hooks.context, actor, e)))
+        return m->options.hooks.release_grapple ? false :
+            mode_fail(e, "ThreeWave suicide needs its actual unhook producer");
+    if (mode_get(m, id) != v || !mode_member_get(m, v, actor))
+        return mode_fail(e, "ThreeWave suicide participant retired during unhook");
+    if (!qa_modes_add_score(m, id, actor, -2, e)) return false;
+    member = mode_member_get(m, mode_get(m, id), actor);
+    if (mode_get(m, id) != v || !member)
+        return mode_fail(e, "ThreeWave suicide participant retired during score");
     ++member->suicide_count;
-    member->spawn_state = 1;
-    if (!qa_modes_drop(m, id, actor, true, e) || !qa_modes_add_score(m, id, actor, -2, e))
-        return false;
-    if (!mode_event(m, v, QA_MODE_MESSAGE, actor, (qa_actor_id){0}, (qa_actor_id){0}, 0, -2, 2, e))
-        return false;
-    return !m->options.hooks.respawn ||
-           MODE_CALLBACK(m, m->options.hooks.respawn(m->options.hooks.context, id, actor, true, e));
+    if (!m->options.hooks.respawn)
+        return mode_fail(e, "ThreeWave suicide needs its actual source respawn producer");
+    return MODE_CALLBACK(m,
+        m->options.hooks.respawn(m->options.hooks.context, id, actor, true, e));
+}
+bool qa_modes_suicide(qa_modes *m, qa_mode_id id, qa_actor_id actor, bool *handled, qa_error *e) {
+    if (!m) return mode_fail(e, "invalid mode suicide service");
+    return MODE_CALLBACK(m, suicide(m, id, actor, handled, e));
 }
 static bool observer_move(qa_modes *m, mode_instance *v, mode_member *member,
                           const qa_mode_controls *input, qa_error *e) {

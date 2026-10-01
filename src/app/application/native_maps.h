@@ -5,6 +5,12 @@
 #include "qa/modes.h"
 
 struct application_provider;
+bool application_native_mode_respawn(void *, qa_mode_id, qa_actor_id, bool, qa_error *);
+bool application_native_q1_mode_score(void *, qa_mode_id, qa_actor_id, bool *, int32_t *, qa_error *);
+bool application_native_q1_mode_set_score(void *, qa_mode_id, qa_actor_id, int32_t, bool *, qa_error *);
+bool application_native_q1_mode_add_score(void *, qa_mode_id, qa_actor_id, int32_t, bool *, qa_error *);
+bool application_native_q1_ctf_suicide_notice(void *, qa_mode_id, qa_actor_id, bool, qa_error *);
+bool application_native_mode_release_grapple(void *, qa_actor_id, qa_error *);
 bool application_native_q3_settings_source_init(struct application_provider *, qa_error *);
 bool application_native_q3_settings_source_loaded(struct application_provider *, qa_error *);
 bool application_native_q3_settings_source_modes(struct application_provider *, qa_error *);

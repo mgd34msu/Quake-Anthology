@@ -11,6 +11,7 @@
 #include "native_q3_session.h"
 #include "q3_restart.h"
 #include "guest_q3_restart.h"
+#include "native_q1_respawn.h"
 #include "qa/game_q3_configstrings.h"
 #include "qa/game_q3_shader_remap.h"
 #include "qa/game_q3_source.h"
@@ -56,6 +57,62 @@ application_provider *application_mode_provider(qa_application *app, qa_mode_id 
             !strcmp(p->launch->selection.instance, choices->modes[index].instance)) return p;
     }
     return NULL;
+}
+
+static bool mode_respawn_current(qa_application *app, qa_mode_id mode,
+    application_provider *policy, application_provider *source, qa_actor_id actor,
+    qa_mode_view *view, qa_error *error) {
+    qa_mode_player_view player;
+    if (!app || app->destroy_requested || app->finalizing || !app->players ||
+        !policy || !source || app->players->map_provider != source ||
+        application_world_provider(app, QA_ROLE_ENTITIES, "") != source ||
+        application_mode_provider(app, mode) != policy ||
+        !policy->constructed || !policy->attached || policy->close_pending ||
+        !source->constructed || !source->attached || source->close_pending ||
+        !qa_actors_get(qa_session_actors(app->session), actor) ||
+        (policy != source && (!app->primary_mode_ready ||
+            app->primary_mode.slot != mode.slot ||
+            app->primary_mode.generation != mode.generation)))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Mode respawn lost its actual source and player association");
+    if (!qa_modes_read(app->modes, mode, view, error) ||
+        !qa_modes_player_read(app->modes, mode, actor, &player, error)) return false;
+    return view->rules.enabled || application_fail(error, QA_ERROR_ARGUMENT,
+        "Mode respawn requires its enabled source controller");
+}
+
+bool application_native_mode_release_grapple(void *opaque, qa_actor_id actor, qa_error *error) {
+    qa_application *app = opaque;
+    if (!app || app->destroy_requested || !app->equipment ||
+        !qa_actors_get(qa_session_actors(app->session), actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Mode unhook lost its actual equipment actor");
+    return qa_equipment_release_grapple(app->equipment, actor, error);
+}
+
+bool application_native_mode_respawn(void *opaque, qa_mode_id mode,
+    qa_actor_id actor, bool teleport, qa_error *error) {
+    qa_application *app = opaque;
+    application_provider *policy = app ? application_mode_provider(app, mode) : NULL;
+    application_provider *source = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
+    qa_mode_view view;
+    if (!mode_respawn_current(app, mode, policy, source, actor, &view, error)) return false;
+    /* Each physical source owns the discontinuity produced by its real spawn. */
+    (void)teleport;
+    bool okay;
+    if (source->kind == APPLICATION_PROVIDER_Q1) {
+        if (policy == source && (view.rules.source == QA_MODE_THREEWAVE ||
+            view.rules.kind == QA_MODE_HORDE))
+            okay = application_native_q1_respawn_new(source, actor, error);
+        else if (view.rules.kind == QA_MODE_SINGLE_PLAYER)
+            return true;
+        else okay = application_native_q1_request_respawn(source, actor, error);
+    } else if (source->kind == APPLICATION_PROVIDER_Q3)
+        okay = application_native_q3_client_respawn(source, actor, error);
+    else if (source->kind == APPLICATION_PROVIDER_Q2)
+        okay = qa_q2_player_respawn(source->state.q2, actor, error);
+    else return application_fail(error, QA_ERROR_UNSUPPORTED,
+        "Mode respawn requires its genuine original source continuation");
+    return okay && mode_respawn_current(app, mode, policy, source, actor, &view, error);
 }
 
 static bool native_q3_mode(application_provider *p, qa_mode_id id) {

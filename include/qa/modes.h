@@ -289,6 +289,13 @@ typedef struct qa_modes_hooks {
     bool (*event)(void *, const qa_mode_event *, qa_error *);
     bool (*intent)(void *, const qa_match_intent *, qa_error *);
     bool (*respawn)(void *, qa_mode_id, qa_actor_id, bool teleport, qa_error *);
+    /* Native Q1 source clients retain their actual f32 frags. bound=false
+     * delegates only modes whose physical source owns no Q1 client score. */
+    bool (*q1_source_score)(void *, qa_mode_id, qa_actor_id, bool *bound, int32_t *, qa_error *);
+    bool (*q1_source_set_score)(void *, qa_mode_id, qa_actor_id, int32_t, bool *bound, qa_error *);
+    bool (*q1_source_add_score)(void *, qa_mode_id, qa_actor_id, int32_t, bool *bound, qa_error *);
+    bool (*q1_ctf_suicide_notice)(void *, qa_mode_id, qa_actor_id, bool limited, qa_error *);
+    bool (*release_grapple)(void *, qa_actor_id, qa_error *);
     bool (*intermission)(void *, qa_mode_id, qa_actor_id, qa_error *);
     bool (*spectator)(void *, qa_mode_id, qa_actor_id, bool, qa_error *);
     /* Restored source owners resolve their binding after shared actors exist.

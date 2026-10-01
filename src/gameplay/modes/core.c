@@ -567,6 +567,19 @@ bool qa_modes_score(qa_modes *m, qa_mode_id id, qa_actor_id actor, int32_t *out,
         *out = score;
         return true;
     }
+    if (m->options.hooks.q1_source_score) {
+        bool bound = false;
+        int32_t score;
+        if (!MODE_CALLBACK(m, m->options.hooks.q1_source_score(
+            m->options.hooks.context, id, actor, &bound, &score, e))) return false;
+        p = mode_member_get(m, mode_get(m, id), actor);
+        if (mode_get(m, id) != v || !p)
+            return mode_fail(e, "native Q1 score owner changed during read");
+        if (bound) {
+            *out = score;
+            return true;
+        }
+    }
     *out = p->player.score;
     return true;
 }
@@ -585,8 +598,16 @@ bool qa_modes_set_score(qa_modes *m, qa_mode_id id, qa_actor_id actor, int32_t s
             return true;
         if (owner->serial != serial)
             return mode_fail(e, "mode score owner changed during mutation");
-    } else
-        p->player.score = score;
+    } else {
+        bool bound = false;
+        if (m->options.hooks.q1_source_set_score && !MODE_CALLBACK(m,
+            m->options.hooks.q1_source_set_score(m->options.hooks.context,
+                id, actor, score, &bound, e))) return false;
+        p = mode_member_get(m, mode_get(m, id), actor);
+        if (!p || mode_get(m, id) != v)
+            return mode_fail(e, "native Q1 score owner changed during mutation");
+        if (!bound) p->player.score = score;
+    }
     for (uint32_t i = 0; i < m->actor_capacity; ++i)
         if (v->ghosts[i].code && qa_actor_id_equal(v->ghosts[i].actor, actor))
             v->ghosts[i].score = score;
@@ -595,12 +616,23 @@ bool qa_modes_set_score(qa_modes *m, qa_mode_id id, qa_actor_id actor, int32_t s
 }
 bool qa_modes_add_score(qa_modes *m, qa_mode_id id, qa_actor_id actor, int32_t amount,
                         qa_error *e) {
-    int32_t score;
-    if (!qa_modes_score(m, id, actor, &score, e) ||
-        !qa_modes_set_score(m, id, actor, mode_add_i32(score, amount), e))
-        return false;
     mode_instance *v = mode_get(m, id);
     mode_member *member = mode_member_get(m, v, actor);
+    if (!member) return mode_fail(e, "unknown score recipient");
+    bool bound = false;
+    if (!v->bindings[actor.slot].serial && m->options.hooks.q1_source_add_score &&
+        !MODE_CALLBACK(m, m->options.hooks.q1_source_add_score(
+            m->options.hooks.context, id, actor, amount, &bound, e))) return false;
+    if (mode_get(m, id) != v || !mode_member_get(m, v, actor))
+        return mode_fail(e, "native Q1 score owner changed during addition");
+    int32_t score;
+    if (!qa_modes_score(m, id, actor, &score, e)) return false;
+    if (bound) {
+        if (!mode_event(m, v, QA_MODE_SCORE, actor, (qa_actor_id){0},
+            (qa_actor_id){0}, 0, score, 0, e)) return false;
+    } else if (!qa_modes_set_score(m, id, actor, mode_add_i32(score, amount), e)) return false;
+    v = mode_get(m, id);
+    member = mode_member_get(m, v, actor);
     if (member)
         mode_stat_add(v, &member->stats.score, amount);
     return true;
