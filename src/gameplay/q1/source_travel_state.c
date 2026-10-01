@@ -289,6 +289,15 @@ static bool valid(qa_session *session, const qa_q1_travel_state *state, qa_error
         return fail(error, "Invalid Q1 CTF travel words");
     return true;
 }
+bool qa_q1_travel_source_valid(const qa_q1_game *game,
+    const qa_q1_travel_state *state, qa_error *error) {
+    if (!game) return fail(error, "Q1 travel has no actual receiving source owner");
+    if (!valid(game->services.session, state, error)) return false;
+    if ((state->extension == TRAVEL_MG3 && game->options.program != QA_Q1_MG3) ||
+        (state->extension == TRAVEL_CTF && game->options.program != QA_Q1_CTF))
+        return fail(error, "Q1 travel extension has no actual receiving source owner");
+    return true;
+}
 static bool cvar(travel_call *call, const char *name, float *out, qa_error *error) {
     qa_q1_game *game = call->operation.game;
     qa_string_id id;
@@ -381,7 +390,7 @@ static bool mg3_restore(travel_call *call, const qa_q1_mg3_progress *progress,
 }
 bool qa_q1_travel_admit(qa_q1_game *game, qa_actor_id actor, qa_q1_travel_state *state,
     const qa_q1_travel_services *services, qa_error *error) {
-    if (!game || !valid(game->services.session, state, error) ||
+    if (!qa_q1_travel_source_valid(game, state, error) ||
         !qa_q1_travel_retain(state, error)) return false;
     travel_call call = {0};
     bool ok = begin(game, actor, &call, error);
@@ -419,9 +428,6 @@ bool qa_q1_travel_admit(qa_q1_game *game, qa_actor_id actor, qa_q1_travel_state 
         ok = new_state(&call, services, &reset, error);
         if (ok) { reset.extension = state->extension; reset.source = state->source; decoded = &reset; }
     }
-    if (ok && ((decoded->extension == TRAVEL_MG3 && game->options.program != QA_Q1_MG3) ||
-        (decoded->extension == TRAVEL_CTF && game->options.program != QA_Q1_CTF)))
-        ok = fail(error, "Q1 travel extension has no actual receiving source owner");
     if (ok) ok = qa_combat_set_health(game->services.combat, actor, decoded->health, error) &&
         current(&call, error) && qa_combat_set_armor(game->services.combat, actor,
             &decoded->armor, error) && current(&call, error);

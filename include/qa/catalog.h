@@ -111,6 +111,10 @@ const qa_product *qa_catalog_product(const qa_catalog *, qa_product_id);
 qa_product_id qa_catalog_configuration_base(const qa_catalog *, qa_product_id);
 const qa_catalog_mount *qa_catalog_product_write_mount(const qa_catalog *, qa_product_id);
 qa_fs_root *qa_catalog_product_write_root(const qa_catalog *, qa_product_id);
+/* Original corpus directory authority, including a shared writable corpus.
+ * NULL means discovery admitted no loose directory for this product. */
+const qa_catalog_mount *qa_catalog_product_loose_mount(const qa_catalog *, qa_product_id);
+qa_fs_root *qa_catalog_product_loose_root(const qa_catalog *, qa_product_id);
 /* Accepts the product key or its persistent family:edition:package identity. */
 const qa_product *qa_catalog_find(const qa_catalog *, const char *);
 const qa_catalog_mount *qa_catalog_mount_at(const qa_catalog *, size_t);
@@ -135,6 +139,9 @@ bool qa_catalog_mod_key(const char *key);
 /* A scoped view includes only this product and its base, with native search
  * precedence. It retains pool resources independently of the catalog. */
 bool qa_catalog_open(const qa_catalog *, qa_product_id, qa_vfs **, qa_error *);
+/* Pure qualification against the retained product recipe. Does not recreate
+ * a view, reopen native paths or change resource/read ownership. */
+bool qa_catalog_product_view_current(const qa_catalog *, qa_product_id, const qa_vfs *);
 /* Initial files.c identity lookup uses actual discovered Q3 mounts even when
  * the selected retail package lacks other required files. */
 bool qa_catalog_q3_identification_open(const qa_catalog *, qa_product_id, qa_vfs **, qa_error *);

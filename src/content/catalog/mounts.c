@@ -53,6 +53,15 @@ bool qa_catalog_open(const qa_catalog *c, qa_product_id id, qa_vfs **out, qa_err
     return catalog_view(c, c->products[id - 1].mounts, c->products[id - 1].mount_count, out, error);
 }
 
+bool qa_catalog_product_view_current(const qa_catalog *c, qa_product_id id, const qa_vfs *view)
+{
+    const qa_product *product = qa_catalog_product(c, id);
+    if (!product || product->availability != QA_CONTENT_INSTALLED) return false;
+    const catalog_product *entry = &c->products[id - 1];
+    return qa_vfs_retained_recipe_matches(view, c->mounts, entry->mounts, entry->mount_count,
+        QA_ARCHIVE_CASE_INSENSITIVE, c->q3_demo_restricted && product->family == QA_GAME_Q3);
+}
+
 static bool append_product(const qa_catalog *c, qa_product_id id, qa_mount_id *ids,
                             size_t *count, qa_error *error)
 {

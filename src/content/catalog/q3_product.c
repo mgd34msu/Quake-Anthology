@@ -217,6 +217,7 @@ bool qa_catalog_q3_restrict(qa_catalog *catalog, qa_error *error)
         qa_product view = product->view;
         replacement[i].configuration_base = product->configuration_base;
         replacement[i].write_mount = product->write_mount;
+        replacement[i].loose_mount = product->loose_mount;
         view.base = QA_PRODUCT_NONE;
         view.availability = QA_CONTENT_INSTALLED;
         view.requirements = NULL;

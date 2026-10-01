@@ -18,8 +18,9 @@ static bool shader_handle(const q3n_selected_media *o, const char *path, int32_t
     qa_q3_presentation_assets *a = o->options.assets;
     if (handle < 0 || (size_t)handle > a->shader_count || (handle && !a->shaders[handle - 1]))
         return q3p_fail(e, QA_ERROR_FORMAT, "Selected Q3 shader holder is absent");
-    if (!handle) return true;
     q3p_name *name = q3p_find_name(a, Q3P_SHADER, path);
+    if (!handle) return !name || !name->handle ? true :
+        q3p_fail(e, QA_ERROR_FORMAT, "Selected Q3 powerup shader lost its exact authored registration");
     return name && name->handle == handle ? true :
         q3p_fail(e, QA_ERROR_FORMAT, "Selected Q3 powerup shader lost its exact authored registration");
 }

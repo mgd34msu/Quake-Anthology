@@ -60,7 +60,7 @@ static size_t pointer_index(bot_fuzzy_pointer **rows,size_t count,uint32_t point
     for(size_t index=0;index<count;++index) if(rows[index]->pointer==pointer) return index;
     return SIZE_MAX;
 }
-static bool heap_topology(bot_fuzzy_heap *heap,qa_error *error) {
+bool bot_fuzzy_heap_topology(bot_fuzzy_heap *heap,qa_error *error) {
     if(!heap || !heap->memory || !heap->next_pointer || heap->next_pointer>UINT64_C(0x100000000))
         return fail(error,"Invalid source fuzzy heap owner or next pointer");
     size_t count=0;bot_fuzzy_pointer *last=NULL;
@@ -104,7 +104,7 @@ static bool heap_topology(bot_fuzzy_heap *heap,qa_error *error) {
 static bool store_topology(bot_fuzzy_store *store,qa_error *error) {
     if(!store || store->closed || store->active || !store->library || store->cached_count>128)
         return fail(error,"Fuzzy continuation requires its actual idle live owner");
-    if(!heap_topology(&store->heap,error)) return false;
+    if(!bot_fuzzy_heap_topology(&store->heap,error)) return false;
     bot_fuzzy_owned *last=NULL;
     for(bot_fuzzy_owned *config=store->first;config;config=config->next) {
         int32_t count;

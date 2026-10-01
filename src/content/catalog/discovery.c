@@ -134,7 +134,8 @@ static bool append_mount(catalog_product *p, qa_mount_id id, qa_error *error)
 static bool mount_file(qa_catalog *c, catalog_product *p, const char *path,
                         qa_archive_kind kind, bool writable, qa_error *error)
 {
-    for (size_t i = 0; i < c->physical_count; ++i) if (!strcmp(c->physical[i].view.path, path))
+    for (size_t i = 0; i < c->physical_count; ++i) if (c->physical[i].view.id != c->corpus_mount &&
+        !strcmp(c->physical[i].view.path, path))
         return !p || append_mount(p, c->physical[i].view.id, error);
     qa_mount_id id;
     qa_error reason = {0};
@@ -200,7 +201,7 @@ static int q2_order(const void *a, const void *b)
 }
 
 static bool scan_directory(qa_catalog *c, catalog_product *p, const char *root,
-                            bool writable, qa_error *error)
+                            bool writable, bool corpus, qa_error *error)
 {
     const char *path;
     if (!catalog_path(c, root, p->view.directory, &path, error)) return false;
@@ -244,10 +245,12 @@ static bool scan_directory(qa_catalog *c, catalog_product *p, const char *root,
         }
     }
     ok = mount_file(c, p, path, QA_ARCHIVE_AUTO, writable, error);
-    if (ok && writable) for (size_t i = 0; i < p->own_count; ++i) {
+    if (ok) for (size_t i = 0; i < p->own_count; ++i) {
         const qa_catalog_mount *mount = catalog_mount(c, p->own_mounts[i]);
-        if (mount && mount->format == QA_ARCHIVE_AUTO && mount->writable && !strcmp(mount->path, path))
-            p->write_mount = mount->id;
+        if (mount && mount->format == QA_ARCHIVE_AUTO && !strcmp(mount->path, path)) {
+            if (writable && mount->writable) p->write_mount = mount->id;
+            if (corpus) p->loose_mount = mount->id;
+        }
     }
 done:
     free(dir.entries); return ok;
@@ -375,9 +378,11 @@ static bool quakeworld_variants(qa_catalog *c, qa_error *error)
         qa_mount_id *own = malloc((own_count ? own_count : 1) * sizeof(*own));
         if (!own) { qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot retain QuakeWorld content mounts"); return false; }
         memcpy(own, p->own_mounts, own_count * sizeof(*own));
+        qa_mount_id write_mount = p->write_mount, loose_mount = p->loose_mount;
         catalog_product *variant;
         if (!catalog_add_product(c, &view, &variant, error)) { free(own); return false; }
         variant->own_mounts = own; variant->own_count = own_count;
+        variant->write_mount = write_mount; variant->loose_mount = loose_mount;
     }
     return true;
 }
@@ -498,6 +503,20 @@ static bool product_content_directory(qa_catalog *c, const catalog_product *p,
     return true;
 }
 
+static bool corpus_directory(qa_catalog *c, qa_error *error)
+{
+    qa_fs_entry_kind kind;
+    if (!qa_fs_path_status(c->root, true, &kind, NULL, error)) return false;
+    if (kind != QA_FS_DIRECTORY) return true;
+    qa_fs_root *root = NULL; char *path = NULL;
+    bool ok = qa_fs_root_open(c->root, &root, error) && qa_fs_root_join(root, "", &path, error);
+    const char *native = ok ? catalog_string(c, path, error) : NULL;
+    if (ok) ok = native && mount_file(c, NULL, native, QA_ARCHIVE_AUTO, false, error);
+    if (ok) for (size_t i = 0; i < c->physical_count; ++i)
+        if (!strcmp(c->physical[i].view.path, native)) c->corpus_mount = c->physical[i].view.id;
+    free(path); qa_fs_root_close(root); return ok;
+}
+
 bool catalog_scan(qa_catalog *c, bool mods, const char *remote_base,
     const char *remote_directory, qa_product_id *selected, qa_error *error)
 {
@@ -513,12 +532,12 @@ bool catalog_scan(qa_catalog *c, bool mods, const char *remote_base,
         }
     }
     if (remote_base && !remote_q3_product(c, remote_base, remote_directory, selected, error)) return false;
-    if (!user_product_directories(c, error)) return false;
+    if (!user_product_directories(c, error) || !corpus_directory(c, error)) return false;
     for (size_t i = 0; i < c->product_count; ++i) {
         catalog_product *p = &c->products[i];
-        if ((c->user && strcmp(c->user, c->root) && !scan_directory(c, p, c->user, true, error)) ||
+        if ((c->user && strcmp(c->user, c->root) && !scan_directory(c, p, c->user, true, false, error)) ||
             !scan_directory(c, p, c->root,
-                            c->user && !strcmp(c->user, c->root), error)) return false;
+                            c->user && !strcmp(c->user, c->root), true, error)) return false;
         for (size_t j = 0; !p->remote_directory && j < p->required_count; ++j) {
             const char *path;
             if (!catalog_path(c, c->root, p->required[j], &path, error)) return false;

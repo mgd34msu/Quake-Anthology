@@ -25,6 +25,9 @@ bool qa_q1_travel_capture(qa_q1_game *, qa_actor_id, qa_item_id selected_weapon,
                            const qa_q1_travel_services *, qa_q1_travel_state **, qa_error *);
 bool qa_q1_travel_admit(qa_q1_game *, qa_actor_id, qa_q1_travel_state *,
                          const qa_q1_travel_services *, qa_error *);
+/* Pure retained-source compatibility, including its actual session aliases
+ * and expansion program; this does not prove live admission or run callbacks. */
+bool qa_q1_travel_source_valid(const qa_q1_game *, const qa_q1_travel_state *, qa_error *);
 bool qa_q1_travel_retain(qa_q1_travel_state *, qa_error *);
 void qa_q1_travel_destroy(qa_q1_travel_state *);
 bool qa_q1_travel_encode(qa_session *, const qa_q1_travel_state *, qa_buffer *, qa_error *);

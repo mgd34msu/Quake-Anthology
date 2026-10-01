@@ -252,6 +252,19 @@ qa_fs_root *qa_catalog_product_write_root(const qa_catalog *c, qa_product_id id)
     const qa_catalog_mount *mount = qa_catalog_product_write_mount(c, id);
     return mount ? qa_vfs_mount_root(c->mounts, mount->id) : NULL;
 }
+const qa_catalog_mount *qa_catalog_product_loose_mount(const qa_catalog *c, qa_product_id id)
+{
+    if (!qa_catalog_product(c, id)) return NULL;
+    const qa_catalog_mount *mount = catalog_mount(c, c->products[id - 1].loose_mount);
+    const char *path = mount ? qa_vfs_mount_path(c->mounts, mount->id) : NULL;
+    return mount && mount->format == QA_ARCHIVE_AUTO && path &&
+        !strcmp(path, mount->path) && qa_vfs_mount_root(c->mounts, mount->id) ? mount : NULL;
+}
+qa_fs_root *qa_catalog_product_loose_root(const qa_catalog *c, qa_product_id id)
+{
+    const qa_catalog_mount *mount = qa_catalog_product_loose_mount(c, id);
+    return mount ? qa_vfs_mount_root(c->mounts, mount->id) : NULL;
+}
 const qa_product *qa_catalog_find(const qa_catalog *c, const char *key)
 {
     if (c && key) for (size_t i = 0; i < c->product_count; ++i) {

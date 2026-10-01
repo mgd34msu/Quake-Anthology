@@ -10,7 +10,7 @@
 typedef struct catalog_product {
     qa_product view;
     qa_product_id configuration_base;
-    qa_mount_id write_mount;
+    qa_mount_id write_mount, loose_mount;
     qa_mount_id *own_mounts, *mounts;
     size_t own_count, mount_count;
     qa_catalog_map *maps;
@@ -42,7 +42,7 @@ struct qa_catalog {
     qa_vfs *mounts;
     qa_resource_pool *resources;
     const char *root, *user;
-    qa_mount_id q3_download_mount;
+    qa_mount_id q3_download_mount, corpus_mount;
     catalog_product *products;
     size_t product_count, product_capacity;
     catalog_physical *physical;

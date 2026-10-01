@@ -14,6 +14,7 @@ typedef struct bot_fuzzy_heap {
     qa_bot_memory *memory;
     bot_fuzzy_pointer *first,*last;
     uint64_t next_pointer;
+    size_t standalone_users;
 } bot_fuzzy_heap;
 typedef struct bot_fuzzy_config {
     bot_fuzzy_heap *heap;

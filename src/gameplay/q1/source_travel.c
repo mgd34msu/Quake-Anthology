@@ -37,11 +37,13 @@ static bool mg3_capacities(qa_q1_game_operation *operation, qa_actor_id actor,
     if (combat.health > player->max_health &&
         (!qa_combat_set_health(game->services.combat, actor, player->max_health, error) ||
          !source_current(operation, actor, player, error))) return false;
-    uint32_t flags[] = {progress->shells, progress->nails, progress->rockets, progress->cells};
     const double base[] = {50, 100, 20, 100}, deathmatch[] = {100, 200, 100, 200};
-    for (size_t i = 0; i < sizeof(flags) / sizeof(*flags); ++i) {
+    for (size_t i = 0; i < sizeof(base) / sizeof(*base); ++i) {
+        uint32_t flags = i == 0 ? player->mg3_progress.shells :
+            i == 1 ? player->mg3_progress.nails :
+            i == 2 ? player->mg3_progress.rockets : player->mg3_progress.cells;
         double count, capacity = game->options.deathmatch ? deathmatch[i] :
-            upgraded_capacity(base[i], flags[i]);
+            upgraded_capacity(base[i], flags);
         if (!qa_inventory_count_read(game->services.inventory, actor, game->ammo[i], &count, error) ||
             !source_current(operation, actor, player, error) ||
             !configure(operation, actor, player, game->ammo[i], fmin(count, capacity),
@@ -87,6 +89,32 @@ bool qa_q1_source_inventory_initialize(qa_q1_game *game, qa_actor_id actor, qa_e
     }
     if (ok && game->options.program == QA_Q1_MG3)
         ok = mg3_capacities(&operation, actor, player, error);
+    qa_q1_game_operation_end(&operation);
+    return ok;
+}
+bool qa_q1_source_telefrag_attack(qa_q1_game *game, qa_actor_id actor,
+    qa_attack *out, qa_error *error) {
+    if (!out) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+            "Q1 spawn overlap requires its actual attack output");
+        return false;
+    }
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(game, &operation, error)) return false;
+    q1_player *player = q1_player_get(game, actor);
+    uint32_t slot;
+    qa_string_id cause;
+    bool ok = qa_q1_native_client_slot(game, actor, &slot, error) &&
+        source_current(&operation, actor, player, error) &&
+        qa_builtin_resource(&game->services, "telefrag", &cause, error) &&
+        source_current(&operation, actor, player, error);
+    qa_attack attack = {0};
+    if (ok) {
+        attack = q1_attack(game, actor, actor, QA_Q1_WEAPON_COUNT);
+        attack.cause.source.q1.death_type = cause;
+        ok = qa_attack_next(&game->attack_sequence, &attack, error);
+    }
+    if (ok) *out = attack;
     qa_q1_game_operation_end(&operation);
     return ok;
 }
