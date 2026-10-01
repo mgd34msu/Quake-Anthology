@@ -57,6 +57,7 @@ typedef struct script_macro_table {
 struct qa_script_defines {
     atomic_uint references;
     script_macro_table table;
+    script_macro *first;
 };
 typedef struct script_expansion {
     const script_macro *macro;
@@ -111,7 +112,7 @@ bool script_macro_parse(script_macro_table *, const qa_script_token *, size_t, s
 bool script_macro_text(script_macro_table *, const char *, size_t, qa_error *);
 bool script_macro_copy(script_macro_table *, const qa_script_macro_state *, script_macro **,
                        qa_error *);
-bool script_table_import(script_macro_table *, const script_macro_table *, qa_error *);
+bool script_globals_import(script_macro_table *, const qa_script_defines *, qa_error *);
 void script_table_clear(script_macro_table *);
 bool script_fail(qa_script *, qa_script_location, const char *, qa_error *);
 void script_warn(qa_script *, qa_script_location, const char *);

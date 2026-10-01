@@ -188,11 +188,22 @@ bool script_line(qa_script *s, qa_script_token **out, size_t *count, qa_error *e
 static bool install_builtins(qa_script *s, qa_error *e) {
     static const char *names[] = {"__LINE__", "__FILE__", "__DATE__", "__TIME__"};
     for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i) {
-        if (!script_macro_text(&s->macros, names[i], s->options.maximum_defines, e))
+        if (s->macros.count >= s->options.maximum_defines) {
+            qa_error_set(e, QA_ERROR_FORMAT, 0, "Script builtin count exceeds configured define limit");
             return false;
-        script_macro *m = script_macro_find(&s->macros, script_bytes(names[i]));
+        }
+        script_macro_table parsed = {.arena = s->macros.arena};
+        bool okay = script_macro_text(&parsed, names[i], SIZE_MAX, e);
+        s->macros.arena = parsed.arena;
+        if (!okay) return false;
+        size_t bucket = 0;
+        while (bucket < 1024 && !parsed.buckets[bucket]) ++bucket;
+        script_macro *m = parsed.buckets[bucket];
         m->builtin = (unsigned)i + 1;
         m->fixed = true;
+        m->next = s->macros.buckets[bucket];
+        s->macros.buckets[bucket] = m;
+        ++s->macros.count;
     }
     return true;
 }
@@ -244,7 +255,7 @@ bool qa_script_open(const char *path, const qa_script_services *services,
     if (s->options.globals != NULL) {
         s->globals = (qa_script_defines *)s->options.globals;
         qa_script_defines_retain(s->globals);
-        if (!script_table_import(&s->macros, &s->globals->table, e))
+        if (!script_globals_import(&s->macros, s->globals, e))
             goto fail;
     }
     if (s->macros.count > s->options.maximum_defines) {

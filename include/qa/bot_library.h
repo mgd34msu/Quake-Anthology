@@ -22,6 +22,8 @@ typedef struct qa_bot_library qa_bot_library;
 bool qa_bot_library_create(const qa_bot_library_options *, qa_bot_library **, qa_error *);
 void qa_bot_library_destroy(qa_bot_library *);
 void qa_bot_library_reload(qa_bot_library *, bool);
+const qa_script_defines *qa_bot_library_global_defines(const qa_bot_library *);
+bool qa_bot_library_global_define(qa_bot_library *, const char *definition, qa_error *);
 typedef struct qa_bot_variable {
     const char *name, *string;
     int32_t flags;

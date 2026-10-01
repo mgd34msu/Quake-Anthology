@@ -91,6 +91,7 @@ bool qa_script_capture(const qa_script *s, qa_script_checkpoint *out, qa_error *
                 goto fail;
             macros[mc++] = m;
         }
+    size_t linked_macros=mc;
     for (size_t i = 0; i < s->queue_count; ++i) {
         size_t count = 0;
         for (const script_expansion *p = s->queue[i].expansion;
@@ -140,7 +141,7 @@ bool qa_script_capture(const qa_script *s, qa_script_checkpoint *out, qa_error *
                                         .builtin = m->builtin,
                                         .function = m->function,
                                         .fixed = m->fixed,
-                                        .active = script_macro_find(&s->macros, m->name) == m};
+                                        .active = i<linked_macros};
         if (!copy_bytes(arena, m->name, &ms[i].name, e))
             goto fail;
         qa_bytes *parameters =
@@ -364,10 +365,6 @@ bool qa_script_restore(const qa_script_services *services, const qa_script_check
     if ((c->macro_count != 0 && macros == NULL) || (c->expansion_count != 0 && expansions == NULL))
         goto fail;
     for (size_t i = 0; i < c->macro_count; ++i) {
-        if (c->macros[i].active && script_macro_find(&s->macros, c->macros[i].name) != NULL) {
-            qa_error_set(e, QA_ERROR_FORMAT, i, "Duplicate active script macro in checkpoint");
-            goto fail;
-        }
         if (!script_macro_copy(&s->macros, c->macros + i, macros + i, e))
             goto fail;
     }

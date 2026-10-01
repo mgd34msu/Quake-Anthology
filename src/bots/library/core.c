@@ -90,7 +90,16 @@ bool qa_bot_library_create(const qa_bot_library_options *options, qa_bot_library
         return false;
     }
     library->options = *options;
-    qa_script_defines_retain((qa_script_defines *)options->preprocessor.globals);
+    if (options->preprocessor.globals) {
+        qa_script_defines_retain((qa_script_defines *)options->preprocessor.globals);
+    } else {
+        qa_script_defines *globals = NULL;
+        if (!qa_script_defines_create(&globals, e)) {
+            free(library);
+            return false;
+        }
+        library->options.preprocessor.globals = globals;
+    }
     if (options->preprocessor.include_path != NULL) {
         library->options.preprocessor.include_path =
             bot_string(&library->arena,
@@ -122,6 +131,16 @@ bool qa_bot_library_create(const qa_bot_library_options *options, qa_bot_library
     }
     *out = library;
     return true;
+}
+const qa_script_defines *qa_bot_library_global_defines(const qa_bot_library *library) {
+    return library ? library->options.preprocessor.globals : NULL;
+}
+bool qa_bot_library_global_define(qa_bot_library *library, const char *definition, qa_error *e) {
+    if (!library) {
+        qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Bot global definition needs its actual library owner");
+        return false;
+    }
+    return qa_script_defines_add((qa_script_defines *)library->options.preprocessor.globals, definition, e);
 }
 void qa_bot_library_destroy(qa_bot_library *library) {
     if (library == NULL)

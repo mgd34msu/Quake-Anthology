@@ -194,18 +194,18 @@ bool script_macro_text(script_macro_table *table, const char *definition, size_t
     qa_script_lexer_close(lexer);
     return ok;
 }
-bool script_table_import(script_macro_table *to, const script_macro_table *from, qa_error *e) {
-    for (size_t bucket = 0; bucket < 1024; ++bucket)
-        for (const script_macro *m = from->buckets[bucket]; m != NULL; m = m->next) {
-            script_macro *copy =
-                qa_arena_alloc(&to->arena, sizeof(*copy), _Alignof(script_macro), e);
-            if (copy == NULL)
-                return false;
-            *copy = *m;
-            copy->next = to->buckets[bucket];
-            to->buckets[bucket] = copy;
-            ++to->count;
-        }
+bool script_globals_import(script_macro_table *to, const qa_script_defines *from, qa_error *e) {
+    for (const script_macro *m = from->first; m != NULL; m = m->next) {
+        uint32_t bucket = hash(m->name);
+        script_macro *copy =
+            qa_arena_alloc(&to->arena, sizeof(*copy), _Alignof(script_macro), e);
+        if (copy == NULL)
+            return false;
+        *copy = *m;
+        copy->next = to->buckets[bucket];
+        to->buckets[bucket] = copy;
+        ++to->count;
+    }
     return true;
 }
 void script_table_clear(script_macro_table *table) {
@@ -260,8 +260,9 @@ bool script_macro_copy(script_macro_table *table, const qa_script_macro_state *s
     }
     if (source->active) {
         uint32_t bucket = hash(m->name);
-        m->next = table->buckets[bucket];
-        table->buckets[bucket] = m;
+        script_macro **tail=&table->buckets[bucket];
+        while(*tail) tail=&(*tail)->next;
+        *tail=m;
         ++table->count;
     }
     *out = m;
@@ -292,22 +293,48 @@ void qa_script_defines_release(qa_script_defines *d) {
     }
 }
 bool qa_script_defines_add(qa_script_defines *d, const char *text, qa_error *e) {
-    if (d == NULL) {
+    if (d == NULL || text == NULL) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing global define owner");
         return false;
     }
-    return script_macro_text(&d->table, text, SIZE_MAX, e);
+    qa_script_lexer *lexer;
+    if(!qa_script_lexer_open("*extern",script_bytes(text),NULL,&lexer,e)) return false;
+    qa_script_token *tokens=NULL;size_t count=0,capacity=0;bool okay=true,continuation=false;
+    for(;;) {
+        qa_script_token token;bool found;
+        if(!qa_script_lexer_next(lexer,&token,&found,e)) {okay=false;break;}
+        if(!found || token.lines_crossed>(continuation?1u:0u)) break;
+        if(qa_script_token_is(&token,"\\")) {continuation=true;continue;}
+        continuation=false;
+        if(!script_grow((void **)&tokens,&capacity,count+1,sizeof(*tokens),e)) {okay=false;break;}
+        tokens[count++]=token;
+    }
+    script_macro_table parsed={.arena=d->table.arena};
+    if(okay) okay=script_macro_parse(&parsed,tokens,count,SIZE_MAX,e);
+    d->table.arena=parsed.arena;
+    if(okay) {
+        script_macro *macro=NULL;
+        for(size_t bucket=0;bucket<1024 && !macro;++bucket) macro=parsed.buckets[bucket];
+        macro->next=d->first;d->first=macro;++d->table.count;
+    }
+    free(tokens);qa_script_lexer_close(lexer);return okay;
 }
 bool qa_script_defines_remove(qa_script_defines *d, const char *name, qa_error *e) {
     if (d == NULL || name == NULL) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing global define name/owner");
         return false;
     }
-    bool fixed;
-    (void)script_macro_remove(&d->table, script_bytes(name), &fixed);
-    return true;
+    qa_bytes bytes=script_bytes(name);script_macro **at=&d->first;
+    while(*at) {
+        script_macro *macro=*at;
+        if(script_bytes_equal(macro->name,bytes)) {*at=macro->next;--d->table.count;return true;}
+        at=&macro->next;
+    }
+    return false;
 }
 void qa_script_defines_clear(qa_script_defines *d) {
-    if (d != NULL)
+    if (d != NULL) {
+        d->first=NULL;
         script_table_clear(&d->table);
+    }
 }

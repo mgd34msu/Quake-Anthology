@@ -80,8 +80,14 @@ bool qa_bot_runtime_create(const qa_bot_runtime_options *options,
         (void)qa_bot_runtime_destroy(r, NULL);
         return false;
     }
-    if (!qa_bot_library_create(&options->library, &r->library, e) ||
-        !bot_runtime_owners_create(r, e)) {
+    if (!qa_bot_library_create(&options->library, &r->library, e)) {
+        (void)qa_bot_runtime_destroy(r, NULL);
+        return false;
+    }
+    r->globals = (qa_script_defines *)qa_bot_library_global_defines(r->library);
+    qa_script_defines_retain(r->globals);
+    r->options.library.preprocessor.globals = r->globals;
+    if (!bot_runtime_owners_create(r, e)) {
         (void)qa_bot_runtime_destroy(r, NULL);
         return false;
     }
@@ -95,6 +101,7 @@ static void close(qa_bot_runtime *r) {
     qa_bot_chat_system_destroy(r->chat_system); r->chat_system = NULL;
     qa_bot_weapons_release(r->weapon_config); r->weapon_config = NULL;
     qa_bot_actions_shutdown(r->actions);
+    if (!r->closed) qa_script_defines_clear(r->globals);
     qa_bot_library_destroy(r->library); r->library = NULL;
     if (r->options.observations != QA_BOT_OBSERVATION_MODULE) {
         bot_runtime_observations_close(r);
@@ -115,6 +122,7 @@ bool qa_bot_runtime_destroy(qa_bot_runtime *r, qa_error *e) {
     qa_bot_bsp_close(r->bsp);
     free(r->map_name);
     free(r->characters); free(r->weapons); free(r->chats);
+    qa_script_defines_release(r->globals);
     free(r);
     return true;
 }

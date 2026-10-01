@@ -941,8 +941,10 @@ bool application_bots_native_q3_initialize(application_provider *provider,qa_err
     if(!qa_bot_runtime_initialized(bots->runtime)) {
         const char *game_type;int32_t result;
         if(!application_native_q3_settings_string(provider,"g_gametype",&game_type,error) ||
-           !qa_bot_library_variable_set(qa_bot_runtime_library(bots->runtime),"g_gametype",game_type,error) ||
-           !qa_bot_runtime_setup(bots->runtime,&result,error)) return false;
+           !qa_bot_library_variable_set(qa_bot_runtime_library(bots->runtime),"g_gametype",game_type,error)) return false;
+        if(provider->product && !strcmp(provider->product->campaign,"missionpack") &&
+           !qa_bot_library_global_define(qa_bot_runtime_library(bots->runtime),"MISSIONPACK",error)) return false;
+        if(!qa_bot_runtime_setup(bots->runtime,&result,error)) return false;
         if(result) return application_fail(error,QA_ERROR_NOT_FOUND,"native source BotAISetup rejected required bot library resources");
     }
     const char *name=qa_strings_cstr(qa_session_strings(app->session),app->current_map);
