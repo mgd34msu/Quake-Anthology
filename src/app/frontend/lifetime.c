@@ -9,6 +9,9 @@
 #include "campaign.h"
 #include "campaign_cinematic.h"
 #include "ui_features.h"
+#include "keys.h"
+#include "config_store.h"
+#include "equipment_media.h"
 #include "qc_rerelease_events.h"
 #include "qa/application_startup_prepare.h"
 #include <signal.h>
@@ -27,9 +30,11 @@ void frontend_application_options(qa_frontend *frontend, qa_application_options 
     application->startup_commands=frontend->options.startup;
     application->startup_command_count=frontend->options.startup_count;
     application->initial_product_key=frontend->options.game;
+    application->startup_hooks=frontend_config_store_hooks(frontend->config_store);
     application->guest_context = frontend;
     application->console_print = frontend_console_print;
     application->q3_services = frontend_source_services;
+    application->q3_client_prepare=frontend_source_client_prepare;
     application->q3_client_effect = frontend_source_effect;
     application->q3_campaign_command = frontend_campaign_source_command;
     application->q3_round_services = frontend_q3_round_services();
@@ -158,6 +163,10 @@ bool qa_frontend_create(const qa_frontend_options *options, qa_frontend **out, q
         if (!ready) goto fail;
         frontend->options.application.native_runner=qa_native_runtime_config(frontend->native_runtime);
     }
+    frontend->keys=frontend_keys_create(error);
+    if (!frontend->keys) goto fail;
+    frontend->config_store=frontend_config_store_create(frontend,error);
+    if (!frontend->config_store) goto fail;
     qa_application_options application = frontend->options.application;
     frontend_application_options(frontend, &application);
     if (!qa_application_create(&application, &frontend->application, error)) goto fail;
@@ -220,14 +229,19 @@ bool qa_frontend_create(const qa_frontend_options *options, qa_frontend **out, q
     if (!options->dedicated) for (unsigned i = 0; i < options->seats; ++i)
         if (!qa_ui_llm_create(frontend->seats[i].ui, frontend_tools_llm(frontend),
             FRONTEND_ASSISTANCE, &frontend->seats[i].assistance, error)) goto fail;
-    if (!qa_application_rankings_start(frontend->application, error)) goto fail;
-    if (!options->dedicated && (options->menu || !qa_application_launch(frontend->application)))
+    if (!qa_application_startup_pending(frontend->application) &&
+        !qa_application_rankings_start(frontend->application, error)) goto fail;
+    if (!options->dedicated && (options->menu ||
+        (!qa_application_launch(frontend->application) && !qa_application_startup_pending(frontend->application))))
         if (!frontend_game_menu(&frontend->seats[0], error)) goto fail;
     *out = frontend;
     return true;
 fail: {
     qa_error cleanup = {0};
-    if (!qa_frontend_destroy(frontend, &cleanup)) fprintf(stderr, "frontend cleanup: %s\n", cleanup.message);
+    if (!qa_frontend_destroy(frontend, &cleanup)) {
+        *out=frontend;
+        fprintf(stderr, "frontend cleanup retained its owner: %s\n", cleanup.message);
+    }
     return false;
 }}
 bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
@@ -254,11 +268,16 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
          !qa_application_retire_sources(frontend->application, error))) return false;
     if (!frontend_network_destroy(frontend, error) || !frontend_tools_destroy(frontend, error)) return false;
     frontend_qc_rerelease_destroy(frontend);
+    if (frontend->config_store && !frontend_config_store_retired_ready(frontend->config_store,error)) return false;
     if (frontend->application && !qa_application_destroy(frontend->application, error)) return false;
     frontend->application = NULL;
+    if (!frontend_config_store_destroy(frontend->config_store,error)) return false;
+    frontend->config_store=NULL;
     frontend_input_profile_destroy(frontend);
     if (!frontend_native_q2_discard_unbound(frontend, error)) return false;
     if (!frontend_source_discard_unbound(frontend, error)) return false;
+    if (!frontend_keys_destroy(frontend->keys,error)) return false;
+    frontend->keys=NULL;
     qa_native_runtime_release(frontend->native_runtime); frontend->native_runtime=NULL;
     if (!frontend_seats_destroy(frontend, error)) return false;
     qa_dedicated_console_destroy(frontend->terminal);
@@ -266,6 +285,8 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     qa_audio_engine_destroy(frontend->audio); frontend->audio=NULL;
     if (!frontend_ui_features_destroy(frontend,error)) return false;
     qa_scene_frame_destroy(&frontend->frame);
+    if (!frontend_equipment_retire(frontend,error)) return false;
+    frontend_equipment_destroy(frontend);
     frontend_visuals_destroy(frontend);
     frontend_particle_retire(frontend);
     frontend_event_retire(frontend);

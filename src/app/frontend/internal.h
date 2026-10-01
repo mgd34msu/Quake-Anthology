@@ -43,6 +43,7 @@ typedef struct frontend_ui_features frontend_ui_features;
 typedef struct frontend_keys frontend_keys;
 typedef struct frontend_restart frontend_restart;
 typedef struct frontend_equipment frontend_equipment;
+typedef struct frontend_equipment_q3 frontend_equipment_q3;
 typedef struct frontend_config_store frontend_config_store;
 typedef struct frontend_cinematic frontend_cinematic;
 typedef struct qa_application_q3_round_cut qa_application_q3_round_cut;
@@ -123,6 +124,7 @@ struct qa_frontend {
     frontend_keys *keys;
     frontend_restart *restart;
     frontend_equipment *equipment;
+    frontend_equipment_q3 *equipment_q3;
     frontend_config_store *config_store;
     frontend_cinematic *cinematic;
     qa_catalog *input_catalog;
@@ -192,6 +194,10 @@ bool frontend_commands(qa_frontend *, qa_error *);
 /* Physical input/audio slots follow the retained published seat array order.
  * An absent publication/row has no admitted application seat identity. */
 bool frontend_seat_launch_id_read(const qa_frontend *,uint32_t ordinal,uint32_t *);
+bool frontend_seat_ordinal_read(const qa_frontend *,uint32_t launch_seat,uint32_t *);
+bool frontend_seat_actor_read(const qa_frontend *,uint32_t ordinal,qa_actor_id *);
+bool frontend_command_seat_read(const qa_frontend *,const qa_command_context *,uint32_t *);
+bool frontend_seat_context_ready(void *,uint32_t,const qa_command_context *,qa_error *);
 bool frontend_events(qa_frontend *, qa_error *);
 bool frontend_map_events(qa_frontend *, qa_error *);
 bool frontend_event_world(qa_frontend *, unsigned, qa_scene_world_input *, qa_error *);
@@ -287,6 +293,10 @@ typedef struct frontend_source_group_view {
 size_t frontend_source_group_count(const qa_frontend *);
 bool frontend_source_group_read(const qa_frontend *, size_t, frontend_source_group_view *);
 bool frontend_source_identity_allocate(qa_frontend *,uint64_t *,qa_error *);
+bool frontend_source_prepare_scene(qa_frontend *,qa_application *,uint32_t,
+    const qa_q3_refdef *,qa_q3_scene_options *,qa_error *);
+bool frontend_source_submit_scene(qa_frontend *,uint32_t,qa_actor_owner,
+    const qa_q3_scene_options *,qa_scene_frame *,qa_error *);
 bool frontend_source_cgame_recipient(const qa_frontend *,uint32_t,qa_actor_owner *,qa_error *);
 bool frontend_source_group_q3_ready(const qa_frontend *, size_t,
     const qa_q3_presentation_options *, const qa_q3_presentation_asset_options *, qa_error *);
@@ -297,6 +307,10 @@ bool frontend_source_effect(void *, qa_application *, qa_actor_owner, uint32_t,
 bool frontend_source_drain(qa_frontend *, qa_error *);
 void frontend_application_options(qa_frontend *, qa_application_options *);
 bool frontend_source_services(void *, qa_application *, qa_actor_owner, qa_qvm_role, uint32_t, qa_q3_host_options *, qa_error *);
+bool frontend_source_client_prepare(void *,qa_application *,const qa_application_q3_client_preparation *,qa_error *);
+bool frontend_source_registry_scope_read(const qa_frontend *,const qa_cvars *,qa_application_console_scope *);
+bool frontend_source_role_media_read(const qa_frontend *,qa_actor_owner,qa_qvm_role,uint32_t,uint64_t,qa_vfs **);
+bool frontend_source_role_media_current(const qa_frontend *,qa_actor_owner,qa_qvm_role,uint32_t,uint64_t,const qa_vfs *);
 bool frontend_source_frame(qa_frontend *, uint32_t, qa_scene_rect, qa_error *);
 bool frontend_source_retire_world(qa_frontend *, qa_error *);
 bool frontend_source_publish_world(qa_frontend *, qa_error *);

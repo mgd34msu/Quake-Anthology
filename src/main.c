@@ -137,22 +137,23 @@ int main(int argc, char **argv)
     }
     bool list = false;
     for (int i = 1; i < argc; ++i) list |= strcmp(argv[i], "--list-content") == 0;
-    bool ok;
+    bool ok, owners_released = true;
     if (list) {
         ok = qa_frontend_list_content(&options, stdout, &error);
     } else {
         qa_frontend *frontend = NULL;
         ok = qa_frontend_create(&options, &frontend, &error);
-        if (ok) {
-            ok = qa_frontend_run(&frontend, &error);
+        if (ok) ok = qa_frontend_run(&frontend, &error);
+        if (frontend) {
             qa_error cleanup = {0};
             if (!qa_frontend_destroy(frontend, &cleanup)) {
                 if (ok) error = cleanup;
                 else fprintf(stderr, "shutdown: %s\n", cleanup.message);
+                owners_released = false;
                 ok = false;
             }
         }
     }
-    qa_frontend_options_destroy(&options);
+    if (owners_released) qa_frontend_options_destroy(&options);
     return ok ? 0 : report_error("application", &error);
 }

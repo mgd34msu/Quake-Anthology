@@ -38,6 +38,8 @@ void qa_frontend_options_default(qa_frontend_options *);
  * and option pointer arrays are owned. Parsing never opens SDL or a session. */
 bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options *, qa_error *);
 void qa_frontend_options_destroy(qa_frontend_options *);
+/* On construction failure, a non-NULL output retains the actual frontend
+ * when checked cleanup rejects. Retry qa_frontend_destroy on that owner. */
 bool qa_frontend_create(const qa_frontend_options *, qa_frontend **, qa_error *);
 /* One frontend owns SDL global lifetime and the only platform event pump.
  * step measures no time: elapsed_ns comes from run or a replay caller. */

@@ -33,7 +33,7 @@ bool frontend_source_discard_unbound(qa_frontend *, qa_error *);
 bool frontend_source_identity_used(const qa_frontend *, uint64_t);
 bool frontend_source_group_role_read(const qa_frontend *, size_t group,
     size_t role, frontend_source_role_identity *);
-/* Exact key/listener/music ownership and actual role-time mirror continuation.
+/* Exact key profile alias/listener/music ownership and actual role-time mirror continuation.
  * The complete envelope qualifies before any private owner imports. AUDIO
  * engine buses and source guest state precede this late restore. */
 bool frontend_source_checkpoint(qa_frontend *, qa_buffer *, qa_error *);
