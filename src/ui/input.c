@@ -260,7 +260,7 @@ static bool key(qa_ui *ui, uint32_t code, bool down, double time, qa_error *erro
             if (handled || !ui->depth || ui->stack[ui->depth - 1].menu != menu.id) return true;
         }
         if (!down) return true;
-        if (code == QA_KEY_ESCAPE) return qa_ui_close(ui, time, error);
+        if (code == QA_KEY_ESCAPE) return qa_ui_close(ui, ui->time_ms, error);
         if (code == QA_KEY_KP_UP) code = QA_KEY_UP;
         else if (code == QA_KEY_KP_DOWN) code = QA_KEY_DOWN;
         else if (code == QA_KEY_KP_LEFT) code = QA_KEY_LEFT;
@@ -278,7 +278,7 @@ static bool key(qa_ui *ui, uint32_t code, bool down, double time, qa_error *erro
         break;
     }
     if (!down) return true;
-    if (code == QA_KEY_ESCAPE) return qa_ui_close(ui, time, error);
+    if (code == QA_KEY_ESCAPE) return qa_ui_close(ui, ui->time_ms, error);
     return code == QA_KEY_TAB || code == QA_KEY_UP || code == QA_KEY_DOWN
         ? ui_move(ui, code == QA_KEY_UP || (code == QA_KEY_TAB && ui->shift) ? -1 : 1, error) : true;
 }
@@ -362,7 +362,7 @@ static bool input(qa_ui *ui, const qa_input_event *event, qa_error *error) {
                                              event->down, event->time_ms, error) : true;
     if (event->kind == QA_INPUT_EVENT_BUTTON && event->input.kind == QA_PHYSICAL_MOUSE &&
         event->input.code == 3 && event->down)
-        return qa_ui_close(ui, event->time_ms, error);
+        return qa_ui_close(ui, ui->time_ms, error);
     qa_ui_menu menu;
     if (!ui_active(ui, &menu, error)) return false;
     if (!ui->depth) return true;
@@ -501,7 +501,7 @@ bool qa_ui_input(qa_ui *ui, const qa_input_event *event, bool *consumed, qa_erro
         ((event->kind == QA_INPUT_EVENT_MOUSE || event->kind == QA_INPUT_EVENT_WHEEL || event->kind == QA_INPUT_EVENT_TOUCH) &&
          (!isfinite(event->position.x) || !isfinite(event->position.y) || !isfinite(event->delta.x) || !isfinite(event->delta.y))))
         return ui_fail(error, "invalid UI physical event");
-    ui->time_ms = event->time_ms;
+    if (!ui->options.input_now_ms) ui->time_ms = event->time_ms;
     *consumed = ui->depth != 0;
     if (!*consumed) return true;
     ui->handling = true;
@@ -511,13 +511,15 @@ bool qa_ui_input(qa_ui *ui, const qa_input_event *event, bool *consumed, qa_erro
 }
 bool qa_ui_tick(qa_ui *ui, double time, qa_error *error) {
     if (!ui || !isfinite(time) || time < 0 || ui->handling) return ui_fail(error, "invalid UI tick");
+    double input_time;
+    if (!ui_input_time(ui,time,&input_time,error)) return false;
     ui->time_ms = time;
     ui->handling = true;
     bool ok = true;
     for (size_t axis = 0; axis < QA_AXIS_COUNT && ok && ui->depth; ++axis)
-        if (ui->held_direction[axis] && time >= ui->repeat_at[axis]) {
-            ui->repeat_at[axis] = time + 80;
-            ok = key(ui, (uint32_t)ui->held_direction[axis], true, time, error);
+        if (ui->held_direction[axis] && input_time >= ui->repeat_at[axis]) {
+            ui->repeat_at[axis] = input_time + 80;
+            ok = key(ui, (uint32_t)ui->held_direction[axis], true, input_time, error);
         }
     ui->handling = false;
     return ok;

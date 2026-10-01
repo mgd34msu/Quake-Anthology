@@ -14,6 +14,11 @@ bool ui_fail(qa_error *error, const char *message) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message);
     return false;
 }
+bool ui_input_time(qa_ui *ui,double fallback,double *out,qa_error *error) {
+    double time=ui->options.input_now_ms ? ui->options.input_now_ms(ui->options.context) : fallback;
+    if (!isfinite(time) || time<0) return ui_fail(error,"Invalid UI physical input clock");
+    *out=time; return true;
+}
 bool ui_reserve(void **data, size_t *capacity, size_t count, size_t stride, qa_error *error) {
     if (count <= *capacity)
         return true;
@@ -209,6 +214,8 @@ bool qa_ui_register(qa_ui *ui, const qa_ui_menu_registration *registration, qa_e
 bool qa_ui_open(qa_ui *ui, qa_ui_id id, double time, qa_error *error) {
     if (!ui || ui->drawing || !isfinite(time) || time < 0)
         return ui_fail(error, "invalid UI open");
+    double input_time;
+    if (!ui_input_time(ui,time,&input_time,error)) return false;
     ui->time_ms = time;
     qa_ui_menu_registration *found = ui_registration(ui, id);
     if (!found)
@@ -230,14 +237,14 @@ bool qa_ui_open(qa_ui *ui, qa_ui_id id, double time, qa_error *error) {
         return false;
     if (registration.open && !registration.open(registration.context, ui->options.seat, error))
         return false;
-    if (!ui->depth && !qa_input_seat_ui_push(ui->options.input, input_handler, ui, time,
+    if (!ui->depth && !qa_input_seat_ui_push(ui->options.input, input_handler, ui, input_time,
                                             &ui->input_token, error)) {
         if (registration.close)
             registration.close(registration.context, ui->options.seat);
         return false;
     }
-    if (!ui->depth && !qa_input_seat_set_focus(ui->options.input, QA_INPUT_UI, time, error)) {
-        (void)qa_input_seat_ui_remove(ui->options.input, ui->input_token, time, NULL);
+    if (!ui->depth && !qa_input_seat_set_focus(ui->options.input, QA_INPUT_UI, input_time, error)) {
+        (void)qa_input_seat_ui_remove(ui->options.input, ui->input_token, input_time, NULL);
         ui->input_token = 0;
         if (registration.close) registration.close(registration.context, ui->options.seat);
         return false;
@@ -253,10 +260,12 @@ bool qa_ui_open(qa_ui *ui, qa_ui_id id, double time, qa_error *error) {
 bool qa_ui_close(qa_ui *ui, double time, qa_error *error) {
     if (!ui || ui->drawing || !isfinite(time) || time < 0)
         return ui_fail(error, "invalid UI close");
+    double input_time;
+    if (!ui_input_time(ui,time,&input_time,error)) return false;
     ui->time_ms = time;
     if (!ui->depth)
         return true;
-    bool ok = ui->depth != 1 || qa_input_seat_ui_remove(ui->options.input, ui->input_token, time, error);
+    bool ok = ui->depth != 1 || qa_input_seat_ui_remove(ui->options.input, ui->input_token, input_time, error);
     /* Token retirement commits even when releasing a held source binding fails. */
     qa_ui_id id = ui->stack[--ui->depth].menu;
     if (!ui->depth)

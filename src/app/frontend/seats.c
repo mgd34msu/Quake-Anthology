@@ -14,6 +14,7 @@
 #include <stdio.h>
 
 static double now_ms(void *context) { frontend_seat *seat = context; return (double)seat->frontend->time_ns / 1000000.0; }
+static double input_now_ms(void *context) { frontend_seat *seat = context; return (double)seat->frontend->wall_time_ns / 1000000.0; }
 static bool connected(void *context)
 {
     frontend_seat *seat = context;
@@ -25,7 +26,7 @@ static bool connected(void *context)
 static bool focus(void *context, qa_input_focus kind, bool team, qa_error *error)
 {
     frontend_seat *seat = context;
-    if (!qa_input_seat_set_focus(seat->input, kind, now_ms(seat), error)) return false;
+    if (!qa_input_seat_set_focus(seat->input, kind, input_now_ms(seat), error)) return false;
     seat->chat_team = kind == QA_INPUT_CHAT && team;
     return true;
 }
@@ -242,7 +243,7 @@ static bool seat_services_create(frontend_seat *seat, bool restoring, qa_error *
     if (!seat->input || (!restoring && !qa_input_default_bindings(seat->input, (int32_t)i, error))) return false;
     qa_seat_console_options console = {.seat=i,.command = command, .commands = input.console,
         .context = seat,.context_ready=frontend_seat_context_ready,
-        .now_ms = now_ms, .connected = connected, .clipboard = clipboard, .focus = focus, .chat = chat};
+        .now_ms = input_now_ms, .connected = connected, .clipboard = clipboard, .focus = focus, .chat = chat};
     seat->console = qa_seat_console_create(&console, error);
     return seat->console != NULL;
 }
@@ -288,7 +289,8 @@ static bool seats_create(qa_frontend *frontend, const bool *mods, bool restoring
             !frontend_menu_font_selection(frontend, i, preferences.typeface == QA_UI_TYPEFACE_BOLD, &seat->fonts, error)) return false;
         qa_ui_options ui = {.seat = i, .input = seat->input, .fonts = seat->fonts,
             .white = qa_scene_white(frontend->ui_images), .context = seat, .clipboard = ui_clipboard, .localize = frontend_ui_localize,
-            .binding = frontend_binding_capture, .binding_cancel = frontend_binding_cancel};
+            .binding = frontend_binding_capture, .binding_cancel = frontend_binding_cancel,
+            .input_now_ms=input_now_ms};
         if (!qa_ui_create(&ui, &seat->ui, error) || !qa_ui_register(seat->ui,
             &(qa_ui_menu_registration){.id = FRONTEND_HOME, .context = seat, .factory = home}, error) ||
             !qa_ui_register(seat->ui, &(qa_ui_menu_registration){.id = FRONTEND_SETTINGS,
@@ -360,6 +362,14 @@ static bool local_context(const qa_command_context *command, const frontend_seat
         !command->actor.registry && !command->actor.generation && !command->actor.slot &&
         !command->script && !command->console_text &&
         frontend_seat_context_ready((void *)seat,seat->id,command,NULL);
+}
+bool frontend_seat_ui_clock_ready(void *context,const qa_ui *ui,double (*clock)(void *),
+    void *clock_context,qa_error *error)
+{
+    frontend_seat *seat=context;
+    return (saved_seat_ready(seat) && ui==seat->ui && qa_ui_idle(ui) &&
+        clock==input_now_ms && clock_context==seat) ||
+        frontend_fail(error,QA_ERROR_FORMAT,"UI physical clock differs from its actual frontend seat factory");
 }
 static bool input_services_encode(void *context, const qa_input_seat_options *options,
     uint64_t *out, qa_error *error)
@@ -438,7 +448,7 @@ static bool console_services(const frontend_seat *seat, const qa_seat_console_op
     return saved_seat_ready(seat) && options && options->seat==seat->id &&
         options->commands==qa_application_console(seat->frontend->application) && options->context==seat &&
         options->context_ready==frontend_seat_context_ready &&
-        options->now_ms==now_ms && options->connected==connected && options->clipboard==clipboard &&
+        options->now_ms==input_now_ms && options->connected==connected && options->clipboard==clipboard &&
         options->focus==focus && options->chat==chat;
 }
 static bool seat_console_encode(void *context, const qa_seat_console_options *options, qa_buffer *out, qa_error *error)

@@ -1,4 +1,5 @@
 #include "ui_restore.h"
+#include "seat_save.h"
 
 static bool actual_ui(const frontend_seat *seat, const qa_ui *ui, qa_ui_input_binding *binding)
 {
@@ -34,6 +35,6 @@ static bool input_decode(void *context, qa_ui *ui, uint64_t key,
     *out = key; return true;
 }
 qa_ui_checkpoint_refs frontend_seat_ui_refs(frontend_seat *seat)
-{ return (qa_ui_checkpoint_refs){seat, input_encode, input_decode}; }
+{ return (qa_ui_checkpoint_refs){seat, input_encode, input_decode,frontend_seat_ui_clock_ready}; }
 qa_hud_checkpoint_refs frontend_hud_image_refs(frontend_scene_namespace *space)
 { return (qa_hud_checkpoint_refs){space, frontend_scene_image_encode, frontend_scene_image_decode}; }

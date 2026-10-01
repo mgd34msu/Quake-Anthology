@@ -90,6 +90,10 @@ typedef struct qa_ui_options {
     const char *(*clipboard)(void *);
     bool (*binding)(void *, uint32_t, qa_physical_input, qa_error *);
     void (*binding_cancel)(void *, uint32_t);
+    /* Optional physical input clock for focus releases and held navigation.
+     * Open/close/tick arguments remain the UI presentation clock. The clock
+     * callback is a pure read of the retained context and returns finite ms. */
+    double (*input_now_ms)(void *);
 } qa_ui_options;
 typedef struct qa_ui_state {
     uint32_t seat;

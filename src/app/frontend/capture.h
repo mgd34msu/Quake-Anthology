@@ -8,6 +8,10 @@ bool frontend_owners_idle(const qa_frontend *);
 /* The whole frontend cannot be captured, stepped or destroyed until its real
  * seat callbacks have returned, including HUD codecs and wheel callbacks. */
 bool frontend_seat_callbacks_idle(const qa_frontend *);
+/* A retained input release can advance after callbacks return. Capture and
+ * retirement use the stricter idle predicate above, which also fences every
+ * actual physical seat's source release history. */
+bool frontend_seat_callbacks_returned(const qa_frontend *);
 bool frontend_sources_idle(const qa_frontend *);
 /* The application opens its own persistence/content lease while this actual
  * frontend lease is held. Collection opens unique Q3 registries before their

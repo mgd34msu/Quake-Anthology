@@ -30,6 +30,7 @@ struct qa_ui {
     qa_error error;
 };
 bool ui_fail(qa_error *, const char *);
+bool ui_input_time(qa_ui *,double fallback,double *,qa_error *);
 bool ui_reserve(void **, size_t *, size_t, size_t, qa_error *);
 qa_ui_menu_registration *ui_registration(qa_ui *, qa_ui_id);
 bool ui_active(qa_ui *, qa_ui_menu *, qa_error *);

@@ -4,6 +4,8 @@
 #include "native_q3_client.h"
 #include "equipment_media.h"
 #include "equipment_q3.h"
+#include "selected_character.h"
+#include "selected_character_lifetime.h"
 #include "save_commands.h"
 #include "qc_rerelease_events.h"
 #include "campaign_cinematic.h"
@@ -40,7 +42,7 @@ static bool library_idle(const qa_material_library *library)
 { return !library || qa_material_library_idle(library); }
 static bool fonts_idle(const qa_font_library *fonts)
 { return !fonts || qa_font_library_idle(fonts); }
-bool frontend_seat_callbacks_idle(const qa_frontend *f)
+bool frontend_seat_callbacks_returned(const qa_frontend *f)
 {
     if (!f) return false;
     if (!f->seats) return true;
@@ -51,11 +53,19 @@ bool frontend_seat_callbacks_idle(const qa_frontend *f)
     }
     return true;
 }
+bool frontend_seat_callbacks_idle(const qa_frontend *f)
+{
+    if (!frontend_seat_callbacks_returned(f)) return false;
+    if (f->seats) for (unsigned i=0;i<f->options.seats;++i)
+        if (!qa_input_release_idle(f->seats[i].input)) return false;
+    return true;
+}
 bool frontend_owners_idle(const qa_frontend *f)
 {
     if (!f || f->capture || (f->input && !qa_input_platform_settings_idle(f->input)) ||
         !frontend_cinematic_idle(f) || !frontend_qc_rerelease_idle(f) || !frontend_native_q2_children_idle(f) ||
-        !frontend_native_q3_idle(f) || !frontend_equipment_idle(f) || !frontend_equipment_q3_idle(f) || !frontend_sources_idle(f) ||
+        !frontend_native_q3_idle(f) || !frontend_equipment_idle(f) || !frontend_equipment_q3_idle(f) ||
+        !frontend_selected_character_idle(f) || !frontend_sources_idle(f) ||
         !resources_idle(f->images) || !resources_idle(f->ui_images) || !library_idle(f->materials) ||
         !fonts_idle(f->fonts) || (f->order && !qa_material_order_idle(f->order)) ||
         (f->scene_world && !qa_scene_world_idle(f->scene_world)) || !frontend_visuals_idle(f) ||
@@ -178,6 +188,7 @@ bool frontend_capture_begin(qa_frontend *f, frontend_capture **out, qa_error *er
         !f->application || !frontend_owners_idle(f) || !frontend_seat_callbacks_idle(f) ||
         !frontend_save_commands_capture_ready(f) || !frontend_cinematic_capture_ready(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend capture requires idle actual owners and an empty lease");
+    if (!frontend_selected_character_refresh(f,error)) return false;
     frontend_capture *capture=calloc(1,sizeof(*capture));
     if (!capture) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining the frontend capture lease");
     capture->frontend=f; f->capture=capture;
@@ -194,6 +205,11 @@ bool frontend_capture_begin(qa_frontend *f, frontend_capture **out, qa_error *er
     for (size_t i=0;ok && i<frontend_equipment_q3_count(f);++i) {
         frontend_equipment_q3_owner_view owner;
         ok=frontend_equipment_q3_at(f,i,&owner,error) && owner.assets &&
+            add(capture,CAPTURE_ASSETS,owner.assets,error);
+    }
+    for (size_t i=0;ok && i<frontend_selected_character_count(f);++i) {
+        frontend_selected_character_view owner;
+        ok=frontend_selected_character_at(f,i,&owner,error) && owner.assets &&
             add(capture,CAPTURE_ASSETS,owner.assets,error);
     }
     /* Registry entry preflights strict child idle, so it precedes child tokens. */

@@ -42,9 +42,11 @@ static bool topology(const qa_ui *saved, const qa_ui *qualified, qa_error *error
 }
 static bool fields(qa_source_save_io *io, qa_ui *saved, const qa_ui *qualified)
 {
-    uint8_t magic[4]={'Q','A','U','I'}; uint32_t schema=2,seat=qualified->options.seat;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QAUI",4) || !qa_source_save_u32(io,&schema) || schema!=2 ||
+    uint8_t magic[4]={'Q','A','U','I'}; uint32_t schema=3,seat=qualified->options.seat;
+    bool input_clock=qualified->options.input_now_ms!=NULL;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QAUI",4) || !qa_source_save_u32(io,&schema) || schema!=3 ||
         !qa_source_save_u32(io,&seat) || seat!=qualified->options.seat) return false;
+    if (!qa_source_save_bool(io,&input_clock) || input_clock!=(qualified->options.input_now_ms!=NULL)) return false;
     size_t menus=qualified->menu_count;
     if (!qa_source_save_count(io,&menus,SIZE_MAX) || menus!=qualified->menu_count) return false;
     for (size_t i=0;i<menus;++i) {
@@ -101,6 +103,13 @@ static bool fields(qa_source_save_io *io, qa_ui *saved, const qa_ui *qualified)
     return topology(saved,qualified,io->error);
 }
 #undef FIELD
+static bool clock_ready(const qa_ui *ui,const qa_ui_checkpoint_refs *refs,qa_error *error)
+{
+    if (!ui->options.input_now_ms) return true;
+    return (refs && refs->input_clock_ready && refs->input_clock_ready(refs->context,ui,
+        ui->options.input_now_ms,ui->options.context,error)) ||
+        ui_fail(error,"UI physical input clock has no actual factory qualifier");
+}
 static bool token_write(qa_source_save_io *io, const qa_ui *ui, const qa_ui_checkpoint_refs *refs)
 {
     uint64_t key=0;
@@ -112,6 +121,7 @@ static bool token_write(qa_source_save_io *io, const qa_ui *ui, const qa_ui_chec
 bool qa_ui_checkpoint(const qa_ui *ui, const qa_ui_checkpoint_refs *refs, qa_buffer *out, qa_error *error)
 {
     if (!ui || !out || ui->handling || ui->drawing) return ui_fail(error,"UI capture requires an idle controller");
+    if (!clock_ready(ui,refs,error)) return false;
     qa_ui saved=*ui; qa_source_save_io io;
     if (!qa_source_save_writer(&io,NULL,error)) return false;
     bool ok=fields(&io,&saved,ui) && token_write(&io,ui,refs) && qa_source_save_finish(&io,out);
@@ -122,6 +132,7 @@ bool qa_ui_restore(qa_ui *ui, const qa_ui_checkpoint_refs *refs, qa_bytes bytes,
 {
     if (!ui || ui->handling || ui->drawing || ui->depth || ui->field_count || ui->input_token)
         return ui_fail(error,"UI restore requires an empty idle qualified controller");
+    if (!clock_ready(ui,refs,error)) return false;
     qa_ui saved=*ui; saved.stack=NULL; saved.fields=NULL; saved.stack_capacity=saved.field_capacity=0;
     qa_source_save_io io;
     if (!qa_source_save_reader(&io,NULL,bytes,error)) return false;

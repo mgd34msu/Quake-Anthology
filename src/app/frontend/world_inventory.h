@@ -11,7 +11,8 @@ typedef enum frontend_scene_owner_kind {
     FRONTEND_SCENE_OWNER_NATIVE_Q3,
     FRONTEND_SCENE_OWNER_EQUIPMENT,
     FRONTEND_SCENE_OWNER_SELECTED_Q3,
-    FRONTEND_SCENE_OWNER_SOURCE
+    FRONTEND_SCENE_OWNER_SOURCE,
+    FRONTEND_SCENE_OWNER_CHARACTER
 } frontend_scene_owner_kind;
 typedef struct frontend_scene_owner {
     frontend_scene_owner_kind kind;
@@ -21,6 +22,7 @@ typedef struct frontend_scene_owner {
      * Equipment uses its actual retained media ordinal plus one and row one.
      * Selected Q3 uses its actual selected registry ordinal plus one.
      * Source maps use their actual source-group ordinal plus one and row one.
+     * Character uses its actual selected-character registry ordinal plus one.
      * The frontend map owner has owner and row zero. */
     uint64_t owner, row;
 } frontend_scene_owner;

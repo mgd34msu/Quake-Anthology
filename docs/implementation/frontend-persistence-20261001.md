@@ -260,9 +260,33 @@ collision and entity-span references then qualify that source's private owners;
 ordinary and native groups retain their actual global owners. The late
 SceneHost exchange binds every installed role to its imported backend world
 before core source finish compares host service inventories. The late exchange
-caller passed an independent source review; this combined private-map pipeline
-still awaits its own full source review. Selected CHARACTER and the complete
-native composition factory remain separate producer and integration work.
+caller passed an independent source review. The combined SOURCE10 private-map
+pipeline passed a separate complete source review and was pushed in `8bc9cf3`.
+That acceptance covers source-level ownership and ordering. The selected
+CHARACTER follow-on now adds its actual unique asset registries to the capture
+roster, QFQ3v6 private records and QFWR5 destructor scopes. PRESENTATION8 includes
+mandatory QFCT topology, prepared after real visual heaps and before dictionary
+import. QFCP private import runs under the same registry's genuine capture lease
+after asset restoration. Publication refresh retires stale declarations before
+capture opens any lease; failed-candidate cleanup destroys native compositions
+before retiring these global registries. This follow-on still awaits a complete
+independent source review. The complete native composition factory and selected
+EFFECTS remain separate producer and integration work.
+
+Native input settings and per-seat source release histories fence capture and
+retirement. The callback-returned predicate separately qualifies actual UI,
+HUD and wheel callbacks so the retained Settings coordinator can advance a
+waiting release. Strict seat-idle admission also requires each source release
+to be retired. QFTP4 preserves the exact raw wall clock alongside transformed
+frontend time. The native-ticket guard and raw clock passed independent source
+review and were pushed in `e4d305f`; the per-seat follow-on awaits its own review.
+
+The native module-cache QANM1 codec preserves actual immutable artifact ABI,
+profile, digest and opening name without native loading or source execution.
+It is a separate frozen source unit awaiting independent review. A native DLL
+executor's mutable globals, CRT allocations and TLS continuation remain an
+unimplemented source owner; neither this cache nor host-only checkpoints close
+that requirement.
 
 Original import now owns an exact copy of header values, source pairs, edicts,
 lightstyles and extension bytes across the real startup phase. Begin constructs

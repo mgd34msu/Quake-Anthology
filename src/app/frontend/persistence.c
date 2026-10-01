@@ -49,6 +49,8 @@
 #include "config_store.h"
 #include "keys.h"
 #include "client_registry.h"
+#include "remote_config.h"
+#include "selected_character_save.h"
 #include "qa/q3_product_policy.h"
 #include "qa/vfs_view_save.h"
 #include <SDL.h>
@@ -63,7 +65,8 @@ typedef enum frontend_section {
     SECTION_SEATS_INPUT, SECTION_PLATFORM, SECTION_TERMINAL, SECTION_SAVE_COMMANDS,
     SECTION_Q3, SECTION_SOURCE, SECTION_INPUT_PROFILE, SECTION_UI_FEATURES, SECTION_QC_DEBUG,
     SECTION_NATIVE_RUNTIME, SECTION_EQUIPMENT_TOPOLOGY, SECTION_SELECTED_Q3_TOPOLOGY,
-    SECTION_KEYS, SECTION_CONFIG_STORE, SECTION_CLIENT_REGISTRIES, SECTION_NATIVE_Q3_TOPOLOGY, SECTION_COUNT
+    SECTION_KEYS, SECTION_CONFIG_STORE, SECTION_CLIENT_REGISTRIES, SECTION_NATIVE_Q3_TOPOLOGY,
+    SECTION_CHARACTER_TOPOLOGY, SECTION_COUNT
 } frontend_section;
 typedef struct frontend_section_set {
     qa_buffer owned[SECTION_COUNT];
@@ -122,6 +125,11 @@ static bool key_registry_encode(void *context,const qa_cvars *registry,
         const frontend_config_source *source=frontend_config_store_source(f->config_store,console);
         if (source && frontend_config_source_cvars(source)==registry &&
             qa_application_console_scope_read(f->application,console,out)) return true;
+        frontend_remote_config *client=frontend_config_store_client(f->config_store,console);
+        frontend_remote_config_view view;
+        if (client && frontend_remote_config_read(client,&view) && view.cvars==registry &&
+            view.console==console && qa_application_console_scope_read(f->application,console,out) &&
+            out->provider==view.scope.provider && out->kind==view.scope.kind && out->seat==view.scope.seat) return true;
     }
     return frontend_source_registry_scope_read(f,registry,out) ||
         frontend_fail(error,QA_ERROR_FORMAT,"Key registry has no installed physical source scope");
@@ -192,7 +200,7 @@ static bool blob(qa_source_save_io *io, qa_bytes *bytes)
 static bool envelope(qa_source_save_io *io, qa_save_owner_kind expected,
     frontend_section_set *set, const frontend_section *ids, size_t count)
 {
-    uint8_t magic[4]={'Q','F','E','X'}; uint32_t required=expected==QA_SAVE_PRESENTATION?7:
+    uint8_t magic[4]={'Q','F','E','X'}; uint32_t required=expected==QA_SAVE_PRESENTATION?8:
         expected==QA_SAVE_AUDIO?3:expected==QA_SAVE_INPUT?3:expected==QA_SAVE_MEDIA?2:1,
         version=required,kind=expected; size_t saved=count;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFEX",4) ||
@@ -208,7 +216,7 @@ static const frontend_section presentation_sections[]={SECTION_TOPOLOGY,SECTION_
     SECTION_VISUAL_TOPOLOGY,SECTION_NATIVE_TOPOLOGY,SECTION_TOOLS,SECTION_IMAGES,SECTION_NAMESPACE,
     SECTION_IMAGE_OWNERS,SECTION_MATERIALS,SECTION_FONTS,SECTION_MODELS,SECTION_ROOTS,SECTION_FRAME,
     SECTION_EVENTS,SECTION_PARTICLES,SECTION_PLAYERS,SECTION_NATIVE,SECTION_SEATS_PRESENTATION,SECTION_SHADERS,SECTION_ALIASES,SECTION_RENDERER,SECTION_QC_DEBUG,
-    SECTION_EQUIPMENT_TOPOLOGY,SECTION_SELECTED_Q3_TOPOLOGY,SECTION_NATIVE_Q3_TOPOLOGY};
+    SECTION_EQUIPMENT_TOPOLOGY,SECTION_SELECTED_Q3_TOPOLOGY,SECTION_NATIVE_Q3_TOPOLOGY,SECTION_CHARACTER_TOPOLOGY};
 static const frontend_section audio_sections[]={SECTION_AUDIO_IDS,SECTION_BANKS,SECTION_ENGINE,SECTION_DEVICE,SECTION_UI_FEATURES};
 static const frontend_section input_sections[]={SECTION_SEATS_INPUT,SECTION_PLATFORM,SECTION_TERMINAL,SECTION_SAVE_COMMANDS,SECTION_INPUT_PROFILE,
     SECTION_KEYS,SECTION_CONFIG_STORE,SECTION_CLIENT_REGISTRIES};
@@ -622,6 +630,7 @@ static bool capture_components(frontend_persistence *operation, qa_error *error)
         frontend_visual_topology_checkpoint(f,set->owned+SECTION_VISUAL_TOPOLOGY,error) &&
         frontend_equipment_topology_checkpoint(f,set->owned+SECTION_EQUIPMENT_TOPOLOGY,error) &&
         frontend_equipment_q3_topology_checkpoint(f,set->owned+SECTION_SELECTED_Q3_TOPOLOGY,error) &&
+        frontend_selected_character_topology_checkpoint(f,set->owned+SECTION_CHARACTER_TOPOLOGY,error) &&
         frontend_native_q2_topology_checkpoint(f,set->owned+SECTION_NATIVE_TOPOLOGY,error) &&
         frontend_native_q3_topology_checkpoint(f,set->owned+SECTION_NATIVE_Q3_TOPOLOGY,error) &&
         frontend_tools_checkpoint(f,&tools,&llm,set->owned+SECTION_TOOLS,error) &&
@@ -728,6 +737,7 @@ static bool prepare_services(void *context, qa_application *candidate, const qa_
             &operation->native_topology,error) &&
         frontend_event_prepare_restored(f,section(&operation->sections,SECTION_EVENTS_TOPOLOGY),error) &&
         frontend_visual_prepare_restored(f,section(&operation->sections,SECTION_VISUAL_TOPOLOGY),error) &&
+        frontend_selected_character_prepare_restored(f,section(&operation->sections,SECTION_CHARACTER_TOPOLOGY),error) &&
         frontend_equipment_q3_prepare_restored(f,section(&operation->sections,SECTION_SELECTED_Q3_TOPOLOGY),error) &&
         frontend_equipment_prepare_restored(f,section(&operation->sections,SECTION_EQUIPMENT_TOPOLOGY),error) &&
         frontend_native_q2_prepare_restored(f,section(&operation->sections,SECTION_NATIVE_TOPOLOGY),error) &&
@@ -962,7 +972,7 @@ static bool validate(void *context,qa_application *application,const qa_save_ima
         ok=frontend_campaign_restore(f,qa_application_content_graph_read(application),
             (qa_bytes){operation->external[0].data,operation->external[0].size},error);
     }
-    if (ok) ok=frontend_equipment_q3_topology_ready(f,error);
+    if (ok) ok=frontend_equipment_q3_topology_ready(f,error) && frontend_selected_character_topology_ready(f,error);
     if (ok && operation->services && operation->services->validate)
         ok=operation->services->validate(operation->services->context,application,image,error);
     /* The dictionary imported into real owner fields retains its saved IDs.
@@ -995,12 +1005,15 @@ static bool discard_services(void *context,qa_application *candidate,qa_error *e
     if (!f->application) f->application=candidate;
     if (f->input && !qa_input_platform_settings_idle(f->input))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Failed candidate retains its native input settings preparation");
+    if (!frontend_seat_callbacks_idle(f))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Failed candidate retains actual seat callbacks or source release history");
     if (!frontend_network_close_client(f,error) || !frontend_cinematic_destroy(f,error)) return false;
     if (operation->services && operation->services->discard_services &&
         !operation->services->discard_services(operation->services->context,candidate,error)) return false;
     if (!frontend_qc_rerelease_idle(f) || !frontend_equipment_retire(f,error) ||
         !frontend_equipment_q3_retire(f,error) ||
-        !frontend_native_q3_destroy(f,error) || !frontend_save_commands_destroy(f,error) || !frontend_campaign_destroy(f,error)) return false;
+        !frontend_native_q3_destroy(f,error) || !frontend_selected_character_retire(f,error) ||
+        !frontend_save_commands_destroy(f,error) || !frontend_campaign_destroy(f,error)) return false;
     frontend_equipment_destroy(f);
     frontend_equipment_q3_destroy(f);
     frontend_qc_rerelease_destroy(f);
@@ -1027,7 +1040,8 @@ static bool publish_ready(void *context,qa_application *active,qa_application *c
         !frontend_seat_callbacks_idle(operation->active) || !frontend_seat_callbacks_idle(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend publication lost its idle active/candidate ownership cut");
     if (!frontend_campaign_publish_ready(f,error) || !frontend_client_registries_rebind_ready(f,f,error) ||
-        !frontend_equipment_q3_topology_ready(f,error) || !frontend_source_rebind_ready(f,operation->active,error) ||
+        !frontend_equipment_q3_topology_ready(f,error) || !frontend_selected_character_topology_ready(f,error) ||
+        !frontend_selected_character_rebind_ready(f,f,error) || !frontend_source_rebind_ready(f,operation->active,error) ||
         !frontend_native_q2_rebind_ready(f,operation->active,error) ||
         !frontend_native_q3_rebind_ready(f,operation->active,error) ||
         !frontend_tools_rebind_ready(f,operation->active,error) ||
@@ -1112,7 +1126,7 @@ static bool operation_init(frontend_persistence *operation,qa_frontend *active,
         operation->bindings[i]=(frontend_owner_binding){operation,kinds[i],i};
         operation->owners[i]=(qa_application_persistence_owner){
             .identity={.kind=kinds[i],.instance="",.schema=schemas[i],.schema_version=kinds[i]==QA_SAVE_CAMPAIGN?3:
-                kinds[i]==QA_SAVE_PRESENTATION?7:
+                kinds[i]==QA_SAVE_PRESENTATION?8:
                 kinds[i]==QA_SAVE_AUDIO?3:kinds[i]==QA_SAVE_INPUT?3:kinds[i]==QA_SAVE_MEDIA?2:1,.backend=""},
             .context=operation->bindings+i,.capture=capture_owner,.restore=restore_owner};
     }

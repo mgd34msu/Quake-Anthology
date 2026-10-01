@@ -10,6 +10,9 @@ typedef struct qa_ui_checkpoint_refs {
      * actual seat, handler function and context against input_binding_read and
      * qa_input_seat_ui_binding_read. No UI push/remove callbacks run. */
     bool (*input_decode)(void *, qa_ui *, uint64_t, qa_input_ui_token *, qa_error *);
+    /* Pure factory qualification of the optional physical clock and its
+     * actual borrowed context, including a controller with no open menu. */
+    bool (*input_clock_ready)(void *,const qa_ui *,double (*)(void *),void *,qa_error *);
 } qa_ui_checkpoint_refs;
 typedef struct qa_ui_input_binding {
     qa_input_seat *seat;
