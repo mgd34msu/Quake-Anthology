@@ -19,6 +19,8 @@ typedef struct application_player_carry {
     qa_q2_player_carry q2;
     qa_q2_weapon weapon2;
     qa_q3_weapon weapon3;
+    qa_q3_fire_stamp fire3;
+    int32_t arsenal3_time_ms;
     qa_q3_usercmd q3_command;
     qa_actor_id q3_previous_actor;
     qa_actor_owner character_owner, arsenal_owner;

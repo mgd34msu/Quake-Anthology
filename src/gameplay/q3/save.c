@@ -52,6 +52,7 @@ static bool player(qa_source_save_io *io, qa_q3_player_state *p)
     ENUM(p->weapon, QA_Q3_WEAPON_COUNT - 1); ENUM(p->requested_weapon, QA_Q3_WEAPON_COUNT - 1);
     ENUM(p->weapon_phase, QA_Q3_FIRING); ENUM(p->external_slot, QA_Q3_SLOT_RESUME_REQUESTED);
     FIELD(i32, p->weapon_time_ms); FIELD(i32, p->max_health); FIELD(i32, p->handicap);
+    FIELD(bool, p->has_last_fire); FIELD(i32, p->last_fire_ms);
     for (size_t i = 0; i < QA_Q3_POWERUP_COUNT; ++i) FIELD(i32, p->powerups[i]);
     for (size_t i = 0; i < QA_Q3_WEAPON_COUNT; ++i) FIELD(i32, p->ammo_time_ms[i]);
     for (size_t i = 0; i < QA_Q3_WEAPON_COUNT; ++i) FIELD(string, p->ammo_regeneration_items[i]);
@@ -288,7 +289,7 @@ static bool checkpoint(qa_source_save_io *io, qa_q3_game *game, qa_q3_checkpoint
 {
     FIELD(u32, p->version); FIELD(u32, p->random_state); FIELD(u32, p->death_animation);
     FIELD(u32, p->body_queue_index); ENUM(p->product, QA_Q3_TEAM_ARENA);
-    if (p->version != 11) return save_fail(io, "unsupported Q3 typed continuation");
+    if (p->version != 12) return save_fail(io, "unsupported Q3 typed continuation");
     FIELD(u32, p->max_clients);
     if (!p->max_clients || p->max_clients > 64) return save_fail(io, "invalid Q3 source client capacity");
     FIELD(u32, p->source_count);
@@ -580,9 +581,9 @@ static bool continuation(qa_source_save_io *io, qa_q3_game *game,
     static const uint8_t expected[8] = {'Q', 'A', 'Q', '3', 'S', 'A', 'V', 'E'};
     if (!qa_source_save_bytes(io, signature, sizeof(signature)) ||
         memcmp(signature, expected, sizeof(signature))) return save_fail(io, "invalid Q3 save signature");
-    uint32_t version = 11;
+    uint32_t version = 12;
     FIELD(u32, version);
-    if (version != 11) return save_fail(io, "unsupported Q3 save version");
+    if (version != 12) return save_fail(io, "unsupported Q3 save version");
     if (!checkpoint(io, game, native)) return false;
     bool has_map = game->map != NULL;
     FIELD(bool, has_map);

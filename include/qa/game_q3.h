@@ -106,6 +106,10 @@ typedef struct qa_q3_cutscene_state {
     qa_vec3 origin, angles, view_offset;
     bool active;
 } qa_q3_cutscene_state;
+typedef struct qa_q3_fire_stamp {
+    bool present;
+    int32_t time_ms;
+} qa_q3_fire_stamp;
 typedef struct qa_q3_player_state {
     uint32_t selections, flags, event_sequence, spawn_count;
     int32_t events[2], event_parameters[2];
@@ -115,6 +119,8 @@ typedef struct qa_q3_player_state {
     qa_q3_weapon_phase weapon_phase;
     qa_q3_external_slot external_slot;
     int32_t weapon_time_ms, max_health, handicap;
+    int32_t last_fire_ms;
+    bool has_last_fire;
     int32_t powerups[QA_Q3_POWERUP_COUNT], ammo_time_ms[QA_Q3_WEAPON_COUNT];
     qa_item_id ammo_regeneration_items[QA_Q3_WEAPON_COUNT];
     qa_q3_powerup persistent;
@@ -294,6 +300,7 @@ bool qa_q3_bind_player_validate(qa_q3_game *, const qa_q3_player_binding *, qa_e
 bool qa_q3_bind_player_commit(qa_q3_game *, qa_q3_player_binding *, qa_error *);
 bool qa_q3_bind_player_rollback(qa_q3_game *, qa_q3_player_binding *, qa_error *);
 bool qa_q3_player_read(const qa_q3_game *, qa_actor_id, qa_q3_player_state *);
+bool qa_q3_player_fire_read(const qa_q3_game *, qa_actor_id, qa_q3_fire_stamp *);
 bool qa_q3_player_notarget(qa_q3_game *, qa_actor_id, bool *enabled, qa_error *);
 bool qa_q3_player_set_view(qa_q3_game *, qa_actor_id, qa_vec3 angles, float view_height,
                            qa_error *);

@@ -1,6 +1,7 @@
 /* id Software cg_event.c and CG_PlayBufferedSounds; GPL-2.0-or-later. */
 #include "events_internal.h"
 #include "weapon.h"
+#include "qa/application_native_q3_wire.h"
 
 bool q3n_events_create(const q3n_event_options *options, q3n_events **out, qa_error *error)
 {
@@ -141,10 +142,26 @@ static bool team_sound(const q3n_frame *f, int32_t event, qa_error *error)
     default:return true;
     }
 }
+static bool reached_configstring(const q3n_frame *f, uint32_t index,
+    const char **text, uint64_t *revision, qa_error *error)
+{
+    qa_native_q3_wire_basis basis;
+    if(!q3ne_current(f,error) ||
+       !qa_native_q3_wire_reader_basis(f->reader,&basis,error))return false;
+    if(basis.application!=f->application || basis.session!=f->source.session ||
+       basis.source_game!=f->source.source_game || basis.source_owner!=f->source.source_owner ||
+       basis.product!=f->source.product || basis.seat!=f->seat ||
+       basis.physical_client!=f->viewing_client ||
+       !qa_actor_id_equal(basis.actor,f->viewing_actor) ||
+       basis.publication_generation!=f->source.publication_generation ||
+       basis.map_revision!=f->source.map_revision)
+        return q3ne_fail(error,QA_ERROR_ARGUMENT,"Native Q3 event configstrings require their actual local client reader");
+    return qa_native_q3_wire_reader_configstring(f->reader,index,text,revision,error);
+}
 static bool player_name(const q3n_frame *f, int32_t client, char out[32], bool *present, qa_error *error)
 {
     const char *text; uint64_t revision; char name[QA_Q3_GAMESTATE_CHARS];
-    if(!qa_application_native_q3_presentation_configstring(f->application,&f->source,544u+(uint32_t)client,&text,&revision,error))return false;
+    if(!reached_configstring(f,544u+(uint32_t)client,&text,&revision,error))return false;
     *present=text!=NULL;
     if(!*present) { out[0]=0; return true; }
     if(!qa_q3_info_value(text,"n",name,sizeof(name),error))return false;
@@ -372,9 +389,13 @@ static bool dispatch(const q3n_frame *f, qa_q3_entity *s, q3n_entity *cent, qa_v
         if(s->eventParm<0 || s->eventParm>=256)return q3ne_fail(error,QA_ERROR_FORMAT,"Unregistered game sound index");
         int32_t sound=m->game_sounds[s->eventParm];
         if(!sound) {
-            const char *name; uint64_t revision;
-            if(!qa_application_native_q3_presentation_configstring(f->application,&f->source,288u+(uint32_t)s->eventParm,&name,&revision,error) ||
-               !q3n_clients_custom_sound(f->clients,s->number,name?name:"",&sound,error) || !q3ne_current(f,error))return false;
+            const char *name; uint64_t revision, current_revision;
+            uint32_t index=288u+(uint32_t)s->eventParm;
+            if(!reached_configstring(f,index,&name,&revision,error) ||
+               !q3n_clients_custom_sound(f->clients,s->number,name?name:"",&sound,error) ||
+               !reached_configstring(f,index,&name,&current_revision,error))return false;
+            if(current_revision!=revision)
+                return q3ne_fail(error,QA_ERROR_ARGUMENT,"Native Q3 reached event sound changed during registration");
         }
         return q3ne_sound(f,sound,NULL,event==Q3N_EV_GENERAL_SOUND?s->number:f->local_player.clientNum,event==Q3N_EV_GENERAL_SOUND?3:0,false,error);
     }

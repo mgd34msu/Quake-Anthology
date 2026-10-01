@@ -171,6 +171,14 @@ bool qa_q3_player_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_player_s
     *out = entry->state.player;
     return true;
 }
+bool qa_q3_player_fire_read(const qa_q3_game *game, qa_actor_id actor,
+                          qa_q3_fire_stamp *out) {
+    const q3_actor *entry = q3_actor_const(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER || !out) return false;
+    *out = (qa_q3_fire_stamp){.present = entry->state.player.has_last_fire,
+                            .time_ms = entry->state.player.last_fire_ms};
+    return true;
+}
 bool qa_q3_grapple_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_grapple_state *out) {
     const q3_actor *entry = q3_actor_const(game, actor);
     if (!entry || entry->kind != Q3_ACTOR_PLAYER || !out)
@@ -537,6 +545,8 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
     player->entity_event_sequence = 0;
     player->external_event = player->external_event_parameter = player->external_event_time = 0;
     player->fractional_weapon_ms = 0;
+    player->has_last_fire = false;
+    player->last_fire_ms = 0;
     player->gauntlet_contact = player->damage_from_world = player->noclip = false;
     memset(player->ammo_time_ms, 0, sizeof(player->ammo_time_ms));
     player->legs_animation = 22;

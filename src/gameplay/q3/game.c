@@ -474,6 +474,10 @@ bool q3_player_event(qa_q3_game *game, qa_actor_id actor, int32_t code, int32_t 
     q3_actor *entry = q3_actor_get(game, actor);
     if (entry && entry->kind == Q3_ACTOR_PLAYER) {
         qa_q3_player_state *player = &entry->state.player;
+        if (code == 23) {
+            player->has_last_fire = true;
+            player->last_fire_ms = game->now_ms;
+        }
         uint32_t slot = player->event_sequence & 1u;
         player->events[slot] = code;
         player->event_parameters[slot] = parameter;
