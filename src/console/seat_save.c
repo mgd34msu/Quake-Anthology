@@ -239,14 +239,17 @@ static bool lines(seat_io *io, qa_seat_console *seat) {
 }
 static uint32_t capabilities(const qa_seat_console_options *options) {
     return (options->now_ms ? 1u : 0u) | (options->connected ? 2u : 0u) |
-        (options->focus ? 4u : 0u) | (options->chat ? 8u : 0u) | (options->clipboard ? 16u : 0u);
+        (options->focus ? 4u : 0u) | (options->chat ? 8u : 0u) | (options->clipboard ? 16u : 0u) |
+        (options->context_ready ? 32u : 0u);
 }
 static bool continuation(seat_io *io, qa_seat_console *seat, const qa_seat_console_options *candidate,
                           const qa_seat_console_save_resolvers *resolve, qa_bytes identity) {
-    uint32_t magic = 0x43534151u, version = 1, cap = capabilities(candidate);
-    if (!u32(io, &magic) || magic != 0x43534151u || !u32(io, &version) || version != 1 ||
+    uint32_t magic = 0x43534151u, version = 2, cap = capabilities(candidate), physical = candidate->seat;
+    if (!u32(io, &magic) || magic != 0x43534151u || !u32(io, &version) || version != 2 ||
         !u32(io, &cap) || cap != capabilities(candidate))
         return invalid(io, "seat console continuation owner or version changed");
+    if (!u32(io, &physical) || physical >= 4 || physical != candidate->seat)
+        return invalid(io, "seat console continuation names another physical route");
     qa_command_context *command = &seat->options.command;
     uint32_t dialect = command->dialect, origin = command->origin;
     if (!u32(io, &dialect) || !qac_dialect_valid((qa_console_dialect)dialect) ||
@@ -289,6 +292,7 @@ bool qa_seat_console_save_capture(qa_seat_console *seat, const qa_seat_console_s
         !qa_seat_console_idle(seat) ||
         seat->options.command.script != seat->script)
         return qac_fail(error, QA_ERROR_ARGUMENT, "seat console capture requires its idle actual owner");
+    if (!qac_seat_context_ready(&seat->options, &seat->options.command, error)) return false;
     ++seat->active_depth;
     qa_buffer identity = {0};
     seat_io io = {.error = error};
@@ -316,6 +320,7 @@ bool qa_seat_console_save_restore(qa_seat_console *seat, const qa_seat_console_s
     seat_io io = {.reading = true, .input = input, .error = error};
     bool okay = continuation(&io, scratch, &seat->options, resolve, (qa_bytes){0});
     if (okay && io.offset != input.size) okay = invalid(&io, "trailing seat console continuation bytes");
+    if (okay) okay = qac_seat_context_ready(&scratch->options, &scratch->options.command, error);
     if (okay) {
         qa_text_field *field = scratch->field, *chat = scratch->chat;
         qa_console_history *history = scratch->history;

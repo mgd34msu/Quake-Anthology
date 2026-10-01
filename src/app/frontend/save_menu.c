@@ -178,8 +178,9 @@ static bool queue(frontend_seat *seat, bool load, bool overwrite, qa_error *erro
     }
     const char *argv[] = {load ? "load" : "save", name,product_key};
     qa_command_invocation invocation = {.console = qa_application_console(seat->frontend->application),
-        .context = {.seat = seat->id, .origin = QA_COMMAND_SEAT, .dialect = QA_CONSOLE_Q1, .direct = true},
+        .context = qa_input_seat_context(seat->input),
         .argc = product_key?3:2, .argv = argv, .args_text = name, .raw = argv[0]};
+    invocation.context.dialect=QA_CONSOLE_Q1;
     bool ok = frontend_save_commands_queue(seat->frontend, &invocation, error);
     if (ok) { state->overwrite = false; state->save_error[0] = 0; }
     return ok;

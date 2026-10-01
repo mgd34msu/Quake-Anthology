@@ -17,7 +17,8 @@ bool frontend_chat_send(frontend_seat *seat, const char *text, bool team,
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Chat requires the admitted remote Q3 client seat");
     } else {
         qa_application_visual_view visual;
-        if (!qa_application_player_actor(frontend->application, seat->id, &context.actor))
+        if (!frontend_seat_launch_id_read(frontend,seat->id,&context.seat) ||
+            !qa_application_player_actor(frontend->application, context.seat, &context.actor))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "Chat requires the current admitted player actor");
         if (!qa_application_visual_read(frontend->application, context.actor, &visual, error)) return false;
         const qa_product *character = qa_catalog_product(qa_application_catalog(frontend->application), visual.character_content);

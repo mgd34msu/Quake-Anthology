@@ -7,10 +7,12 @@
 
 typedef struct qa_seat_console qa_seat_console;
 typedef struct qa_seat_console_options {
+    uint32_t seat; /* Physical route; command.seat is the authored launch ID. */
     qa_command_context command;
     qa_console *commands;
     bool staged;
     void *context;
+    bool (*context_ready)(void *, uint32_t physical_seat, const qa_command_context *, qa_error *);
     double (*now_ms)(void *);
     bool (*connected)(void *);
     bool (*clipboard)(void *, qa_buffer *, qa_error *);
@@ -21,6 +23,12 @@ typedef struct qa_seat_console_options {
  * or reconfigure this console until the active call returns. */
 qa_seat_console *qa_seat_console_create(const qa_seat_console_options *, qa_error *);
 void qa_seat_console_destroy(qa_seat_console *);
+qa_command_context qa_seat_console_context_read(const qa_seat_console *);
+/* Qualify an uncaptured ENGINE template at the idle owner boundary, then
+ * publish that same template without callbacks. The caller keeps the actual
+ * candidate/current publication and both input/console owners unchanged. */
+bool qa_seat_console_context_ready(const qa_seat_console *, const qa_command_context *, qa_error *);
+void qa_seat_console_context_publish(qa_seat_console *, const qa_command_context *);
 qa_console_buffer *qa_seat_console_buffer(qa_seat_console *);
 qa_text_field *qa_seat_console_field(qa_seat_console *, bool chat);
 qa_console_history *qa_seat_console_history(qa_seat_console *);

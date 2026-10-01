@@ -6,8 +6,9 @@ static bool items(void *context, uint32_t id, qa_hud_wheel_mode mode,
 {
     frontend_seat *seat = context; (void)id;
     *out = NULL; *count = 0;
-    qa_actor_id actor;
-    if (!qa_application_player_actor(seat->frontend->application, seat->id, &actor)) return true;
+    qa_actor_id actor; uint32_t launch_seat;
+    if (!frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat) ||
+        !qa_application_player_actor(seat->frontend->application, launch_seat, &actor)) return true;
     qa_inventory *inventory = qa_application_inventory(seat->frontend->application);
     size_t total;
     if (!qa_inventory_item_definitions(inventory, actor, NULL, 0, &total, error)) return false;
@@ -65,9 +66,10 @@ static bool active(void *context, uint32_t id, uint64_t *out, qa_error *error)
 {
     frontend_seat *seat = context; (void)id; (void)error;
     *out = 0;
-    qa_actor_id actor;
+    qa_actor_id actor; uint32_t launch_seat;
     qa_item_id weapon;
-    if (!qa_application_player_actor(seat->frontend->application, seat->id, &actor)) return true;
+    if (!frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat) ||
+        !qa_application_player_actor(seat->frontend->application, launch_seat, &actor)) return true;
     if (!qa_application_weapon_read(seat->frontend->application, actor, &weapon, error)) return false;
     *out = weapon; return true;
 }
@@ -75,8 +77,9 @@ static bool select_item(void *context, uint32_t id, qa_hud_wheel_mode mode,
                         qa_hud_wheel_identity identity, qa_error *error)
 {
     frontend_seat *seat = context; (void)id; (void)mode;
-    qa_actor_id actor;
-    if (!qa_application_player_actor(seat->frontend->application, seat->id, &actor) ||
+    qa_actor_id actor; uint32_t launch_seat;
+    if (!frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat) ||
+        !qa_application_player_actor(seat->frontend->application, launch_seat, &actor) ||
         identity.key != identity.item || !identity.item)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "wheel selection no longer belongs to a live player");
     return qa_inventory_item_action(qa_application_inventory(seat->frontend->application), actor, identity.item, QA_ITEM_USE, error);

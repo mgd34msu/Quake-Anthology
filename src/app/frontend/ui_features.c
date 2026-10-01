@@ -133,8 +133,9 @@ bool frontend_ui_source_message(qa_frontend *f,uint32_t seat,const qa_builtin_ev
     if (event->argument_count && !event->arguments)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Localized source message lost its actual argument tuple");
     if (event->actor.registry) {
-        qa_actor_id actor;
-        if (!qa_application_player_actor(f->application,seat,&actor) || !qa_actor_id_equal(actor,event->actor))
+        qa_actor_id actor; uint32_t launch_seat;
+        if (!frontend_seat_launch_id_read(f,seat,&launch_seat) ||
+            !qa_application_player_actor(f->application,launch_seat,&actor) || !qa_actor_id_equal(actor,event->actor))
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Localized source message belongs to another recipient");
     }
     if (event->argument_count>SIZE_MAX/(sizeof(const char *)+32))

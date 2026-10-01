@@ -24,5 +24,6 @@ struct qa_seat_console {
     bool staged, opened, suppress_toggle_text, targeted, control, shift;
     size_t active_depth;
 };
+bool qac_seat_context_ready(const qa_seat_console_options *, const qa_command_context *, qa_error *);
 
 #endif

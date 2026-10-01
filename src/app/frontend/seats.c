@@ -17,8 +17,10 @@ static double now_ms(void *context) { frontend_seat *seat = context; return (dou
 static bool connected(void *context)
 {
     frontend_seat *seat = context;
+    uint32_t launch_seat;
     return frontend_network_remote(seat->frontend) ? seat->id == 0 && frontend_network_client_ready(seat->frontend) :
-        qa_application_player_actor(seat->frontend->application, seat->id, &seat->actor);
+        frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat) &&
+        qa_application_player_actor(seat->frontend->application, launch_seat, &seat->actor);
 }
 static bool focus(void *context, qa_input_focus kind, bool team, qa_error *error)
 {
@@ -53,17 +55,20 @@ static bool source_input(void *context, qa_input_seat *input, const qa_input_eve
     frontend_seat *seat = context;
     if (!frontend_cinematic_input(seat->frontend,seat->id,qa_input_seat_focus(input),event,consumed,error)) return false;
     if (*consumed) return true;
-    return qa_application_guest_input(seat->frontend->application, seat->id, event, consumed, error);
+    uint32_t launch_seat;
+    return !frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat) ||
+        qa_application_guest_input(seat->frontend->application, launch_seat, event, consumed, error);
 }
 bool frontend_menu_open(frontend_seat *seat, qa_ui_id menu, qa_error *error)
 {
-    bool handled;
+    bool handled; uint32_t launch_seat;
     if (menu == FRONTEND_MODS) {
         if (!seat->mods && !qa_ui_mods_create(seat->ui, seat->frontend->application, FRONTEND_MODS, &seat->mods, error)) return false;
         if (!qa_ui_mods_cancel(seat->mods, error)) return false;
     }
-    return qa_application_guest_menu_set(seat->frontend->application, seat->id,
-            QA_APPLICATION_GUEST_MENU_NONE, &handled, error) &&
+    return (!frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat) ||
+        qa_application_guest_menu_set(seat->frontend->application, launch_seat,
+            QA_APPLICATION_GUEST_MENU_NONE, &handled, error)) &&
         qa_ui_open(seat->ui, menu, now_ms(seat), error);
 }
 bool frontend_game_menu(frontend_seat *seat, qa_error *error)
@@ -71,7 +76,9 @@ bool frontend_game_menu(frontend_seat *seat, qa_error *error)
     bool handled = false;
     qa_application_guest_menu menu = qa_application_launch(seat->frontend->application)
         ? QA_APPLICATION_GUEST_MENU_INGAME : QA_APPLICATION_GUEST_MENU_MAIN;
-    if (!qa_application_guest_menu_set(seat->frontend->application, seat->id, menu, &handled, error)) return false;
+    uint32_t launch_seat;
+    if (frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat) &&
+        !qa_application_guest_menu_set(seat->frontend->application, launch_seat, menu, &handled, error)) return false;
     return handled ? qa_ui_close_all(seat->ui, now_ms(seat), error) : frontend_menu_open(seat, FRONTEND_HOME, error);
 }
 static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out, qa_error *error)
@@ -79,8 +86,10 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
     frontend_seat *seat = context;
     qa_application_presentation_view source = {0};
     qa_ui_preferences preferences;
+    uint32_t launch_seat;
+    bool published=frontend_seat_launch_id_read(seat->frontend,seat->id,&launch_seat);
     if (!qa_ui_preferences_read(qa_application_cvars(seat->frontend->application), seat->id, &preferences, error)) return false;
-    (void)qa_application_presentation_read(seat->frontend->application, seat->id, &source);
+    if (published) (void)qa_application_presentation_read(seat->frontend->application, launch_seat, &source);
     out->source_vitals = source.source_hud;
     out->crosshair_visible = !source.source_hud && preferences.crosshair;
     out->crosshair_size = preferences.crosshair_size;
@@ -88,8 +97,8 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
         (qa_scene_vec4){1, .9f, .2f, 1} : (qa_scene_vec4){1, 1, 1, 1};
     if (!frontend_ui_features_captions(seat, &out->captions, &out->caption_count, error)) return false;
     uint32_t total, killed;
-    if (!source.source_hud && frame->show_scores &&
-        qa_application_q1_monster_counts(seat->frontend->application, seat->id, &total, &killed)) {
+    if (published && !source.source_hud && frame->show_scores &&
+        qa_application_q1_monster_counts(seat->frontend->application, launch_seat, &total, &killed)) {
         snprintf(seat->q1_monster_label, sizeof(seat->q1_monster_label), "Monsters: %u / %u", killed, total);
         seat->q1_monsters = (qa_hud_value){.label = seat->q1_monster_label, .value = killed, .maximum = total};
         out->bars = &seat->q1_monsters; out->bar_count = 1;
@@ -224,13 +233,16 @@ static bool seat_services_create(frontend_seat *seat, bool restoring, qa_error *
     unsigned i = seat->id;
     qa_cvars *cvars = qa_application_cvars(frontend->application);
     qa_command_context command = {.seat = i, .origin = QA_COMMAND_SEAT, .dialect = QA_CONSOLE_Q1, .direct = true};
-    qa_input_seat_options input = {.context = command, .console = qa_application_console(frontend->application),
+    (void)frontend_seat_launch_id_read(frontend,i,&command.seat);
+    qa_input_seat_options input = {.seat=i,.context = command, .console = qa_application_console(frontend->application),
         .cvars = cvars, .gamepad = qa_gamepad_defaults(), .ui = input_handler, .ui_user = seat,
-        .before_ui = source_input, .before_ui_user = seat};
+        .before_ui = source_input, .before_ui_user = seat,
+        .context_ready=frontend_seat_context_ready,.context_user=seat};
     seat->input = qa_input_seat_create(&input, error);
     if (!seat->input || (!restoring && !qa_input_default_bindings(seat->input, (int32_t)i, error))) return false;
-    qa_seat_console_options console = {.command = command, .commands = input.console,
-        .context = seat, .now_ms = now_ms, .connected = connected, .clipboard = clipboard, .focus = focus, .chat = chat};
+    qa_seat_console_options console = {.seat=i,.command = command, .commands = input.console,
+        .context = seat,.context_ready=frontend_seat_context_ready,
+        .now_ms = now_ms, .connected = connected, .clipboard = clipboard, .focus = focus, .chat = chat};
     seat->console = qa_seat_console_create(&console, error);
     return seat->console != NULL;
 }
@@ -341,22 +353,26 @@ static bool saved_seat_ready(const frontend_seat *seat)
         seat->id<seat->frontend->options.seats && seat==seat->frontend->seats+seat->id &&
         seat->input && seat->console;
 }
-static bool local_context(const qa_command_context *command, uint32_t seat)
+static bool local_context(const qa_command_context *command, const frontend_seat *seat)
 {
-    return command->seat==seat && command->origin==QA_COMMAND_SEAT && command->direct &&
+    return command->origin==QA_COMMAND_SEAT && command->direct &&
         !command->session && !command->owner && !command->client && !command->registry && !command->generation &&
-        !command->actor.registry && !command->actor.generation && !command->actor.slot;
+        !command->actor.registry && !command->actor.generation && !command->actor.slot &&
+        !command->script && !command->console_text &&
+        frontend_seat_context_ready((void *)seat,seat->id,command,NULL);
 }
 static bool input_services_encode(void *context, const qa_input_seat_options *options,
     uint64_t *out, qa_error *error)
 {
     frontend_seat *seat=context;
-    if (!saved_seat_ready(seat) || !options || !out || !local_context(&options->context,seat->id) ||
+    if (!saved_seat_ready(seat) || !options || !out || options->seat!=seat->id ||
+        !local_context(&options->context,seat) ||
         options->context.script || options->context.console_text ||
         options->console!=qa_application_console(seat->frontend->application) ||
         options->cvars!=qa_application_cvars(seat->frontend->application) ||
         options->ui!=input_handler || options->ui_user!=seat ||
-        options->before_ui!=source_input || options->before_ui_user!=seat)
+        options->before_ui!=source_input || options->before_ui_user!=seat ||
+        options->context_ready!=frontend_seat_context_ready || options->context_user!=seat)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Saved input services differ from their actual frontend seat binding");
     *out=(uint64_t)seat->id+1; return true;
 }
@@ -365,9 +381,14 @@ static bool input_services_decode(void *context, uint64_t key, qa_input_seat_opt
     frontend_seat *seat=context;
     if (!saved_seat_ready(seat) || !out || key!=(uint64_t)seat->id+1)
         return frontend_fail(error,QA_ERROR_FORMAT,"Saved input service descriptor names another prepared seat");
-    *out=(qa_input_seat_options){.context={.seat=seat->id,.origin=QA_COMMAND_SEAT,.dialect=QA_CONSOLE_Q1,.direct=true},
+    qa_command_context command={.seat=seat->id,.origin=QA_COMMAND_SEAT,.dialect=QA_CONSOLE_Q1,.direct=true};
+    (void)frontend_seat_launch_id_read(seat->frontend,seat->id,&command.seat);
+    if (!local_context(&command,seat))
+        return frontend_fail(error,QA_ERROR_FORMAT,"Saved input has no prepared current launch context");
+    *out=(qa_input_seat_options){.seat=seat->id,.context=command,
         .console=qa_application_console(seat->frontend->application),.cvars=qa_application_cvars(seat->frontend->application),
-        .gamepad=qa_gamepad_defaults(),.ui=input_handler,.ui_user=seat,.before_ui=source_input,.before_ui_user=seat};
+        .gamepad=qa_gamepad_defaults(),.ui=input_handler,.ui_user=seat,.before_ui=source_input,.before_ui_user=seat,
+        .context_ready=frontend_seat_context_ready,.context_user=seat};
     return true;
 }
 static bool input_ui_encode(void *context, qa_input_ui_handler handler, void *user, uint64_t *out, qa_error *error)
@@ -414,15 +435,16 @@ qa_input_checkpoint_refs frontend_seat_input_refs(frontend_seat *seat)
 }
 static bool console_services(const frontend_seat *seat, const qa_seat_console_options *options)
 {
-    return saved_seat_ready(seat) && options && local_context(&options->command,seat->id) &&
+    return saved_seat_ready(seat) && options && options->seat==seat->id &&
         options->commands==qa_application_console(seat->frontend->application) && options->context==seat &&
+        options->context_ready==frontend_seat_context_ready &&
         options->now_ms==now_ms && options->connected==connected && options->clipboard==clipboard &&
         options->focus==focus && options->chat==chat;
 }
 static bool seat_console_encode(void *context, const qa_seat_console_options *options, qa_buffer *out, qa_error *error)
 {
     frontend_seat *seat=context;
-    if (!console_services(seat,options) || !out || out->data || out->size)
+    if (!console_services(seat,options) || !local_context(&options->command,seat) || !out || out->data || out->size)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Seat console capture lacks its actual installed callbacks");
     uint8_t *data=malloc(8);
     if (!data) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining seat console service descriptor");
@@ -434,7 +456,7 @@ static bool seat_console_decode(void *context, const qa_seat_console_options *ca
 {
     frontend_seat *seat=context;
     if (!console_services(seat,candidate) || !command || !bytes.data || bytes.size!=8 ||
-        memcmp(bytes.data,"QFSC",4) || qa_load_u32le(bytes.data+4)!=seat->id || !local_context(command,seat->id))
+        memcmp(bytes.data,"QFSC",4) || qa_load_u32le(bytes.data+4)!=seat->id || !local_context(command,seat))
         return frontend_fail(error,QA_ERROR_FORMAT,"Saved console descriptor differs from its prepared actual seat");
     return true;
 }

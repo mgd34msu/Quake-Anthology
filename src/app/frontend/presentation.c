@@ -105,9 +105,11 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
         qa_ui_state ui;
         if (!qa_ui_tick(seat->ui, (double)frontend->time_ns / 1000000, error) || !qa_ui_state_read(seat->ui, &ui, error)) return false;
         qa_actor_id actor = {0}; qa_application_camera_view camera;
-        bool live = qa_application_player_actor(frontend->application, i, &actor) && qa_application_control_camera(frontend->application, actor, &camera);
+        uint32_t launch_seat;
+        bool published=frontend_seat_launch_id_read(frontend,i,&launch_seat);
+        bool live = published && qa_application_player_actor(frontend->application, launch_seat, &actor) && qa_application_control_camera(frontend->application, actor, &camera);
         qa_application_presentation_view source = {0};
-        (void)qa_application_presentation_read(frontend->application, i, &source);
+        if (published) (void)qa_application_presentation_read(frontend->application, launch_seat, &source);
         qa_scene_view view = {.viewport = rect, .seat = i, .clear_color = true, .clear_depth = true,
             .color = {.015f, .02f, .03f, 1}, .depth = 1};
         if (live) {
@@ -147,7 +149,7 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
         if (!source.source_world && (!frontend_event_debug(frontend, &view, error) ||
             !frontend_tools_debug(frontend, &view, error))) return false;
         uint32_t real_milliseconds = (uint32_t)((frontend->time_ns / 1000000) & UINT32_MAX);
-        if (!qa_application_present(frontend->application, i, real_milliseconds,
+        if (published && !qa_application_present(frontend->application, launch_seat, real_milliseconds,
                 frontend_network_remote(frontend) ? frontend_network_client_time(frontend) :
                     real_milliseconds, error)) return false;
         if (!frontend_native_q2_world_text(frontend, i, &view, error) ||

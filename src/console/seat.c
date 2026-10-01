@@ -13,12 +13,29 @@ static void clear_staged(qa_seat_console *seat) {
     }
     seat->staged_last = NULL;
 }
+static bool engine_template(const qa_command_context *command) {
+    return command && command->origin == QA_COMMAND_SEAT && command->direct &&
+        !command->session && !command->owner && !command->client && !command->registry &&
+        !command->generation && !command->actor.registry && !command->actor.generation &&
+        !command->actor.slot && !command->script && !command->console_text;
+}
+bool qac_seat_context_ready(const qa_seat_console_options *options,
+                           const qa_command_context *command, qa_error *error) {
+    if (!options || options->seat >= 4 || !command ||
+        !qac_dialect_valid(command->dialect) || command->origin > QA_COMMAND_REMOTE)
+        return qac_fail(error, QA_ERROR_ARGUMENT, "invalid physical console command owner");
+    if (options->context_ready)
+        return options->context_ready(options->context, options->seat, command, error);
+    return (engine_template(command) && command->seat == options->seat) ||
+        qac_fail(error, QA_ERROR_ARGUMENT, "console context lacks its actual owner qualifier");
+}
 qa_seat_console *qa_seat_console_create(const qa_seat_console_options *options, qa_error *error) {
     if (!options || !options->commands || !options->now_ms || !options->connected ||
         !options->focus || !options->chat) {
         qac_fail(error, QA_ERROR_ARGUMENT, "missing seat console services");
         return NULL;
     }
+    if (!qac_seat_context_ready(options, &options->command, error)) return NULL;
     qa_seat_console *seat = calloc(1, sizeof(*seat));
     if (!seat) {
         qac_fail(error, QA_ERROR_MEMORY, "allocating seat console");
@@ -65,6 +82,19 @@ qa_text_field *qa_seat_console_field(qa_seat_console *seat, bool chat) {
     return chat ? seat->chat : seat->field;
 }
 qa_console_history *qa_seat_console_history(qa_seat_console *seat) { return seat->history; }
+qa_command_context qa_seat_console_context_read(const qa_seat_console *seat) {
+    return seat->options.command;
+}
+bool qa_seat_console_context_ready(const qa_seat_console *seat,
+                                   const qa_command_context *command, qa_error *error) {
+    if (!qa_seat_console_idle(seat) || !engine_template(command))
+        return qac_fail(error, QA_ERROR_ARGUMENT, "console context requires its idle ENGINE template");
+    return qac_seat_context_ready(&seat->options, command, error);
+}
+void qa_seat_console_context_publish(qa_seat_console *seat, const qa_command_context *command) {
+    free(seat->script); seat->script = NULL;
+    seat->options.command = *command;
+}
 static bool print_inner(qa_seat_console *seat, const char *text, qa_error *error) {
     double time = seat->options.now_ms(seat->options.context);
     size_t length = strlen(text);
@@ -103,6 +133,7 @@ static bool adopt_inner(qa_seat_console *seat, qa_seat_console *candidate, qa_in
                            qa_error *error) {
     if (seat == candidate || !candidate->staged ||
         seat->options.commands != candidate->options.commands ||
+        seat->options.seat != candidate->options.seat ||
         seat->options.command.session != candidate->options.command.session ||
         seat->options.command.seat != candidate->options.command.seat)
         return qac_fail(error, QA_ERROR_ARGUMENT,
