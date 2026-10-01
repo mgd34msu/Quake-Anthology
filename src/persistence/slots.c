@@ -1,16 +1,57 @@
 #include "internal.h"
 #include "qa/persistence_slots.h"
+#include "qa/q1_save.h"
+
+void qa_q1_save_slot_metadata_dispose(qa_q1_save_slot_metadata *source)
+{
+    if (!source) return;
+    free(source->comment); free(source->map); free(source->game_directories); free(source->world_message);
+    free(source->killed_monsters); free(source->total_monsters);
+    free(source->found_secrets); free(source->total_secrets);
+    *source = (qa_q1_save_slot_metadata){0};
+}
+static bool source_value(const qa_q1_save_record *record, const char *key, char **out, qa_error *error)
+{
+    const char *value = NULL;
+    for (size_t i = 0; i < record->count; ++i)
+        if (!strcmp(record->pairs[i].key, key)) value = record->pairs[i].value;
+    if (!value) return true;
+    size_t size = strlen(value) + 1;
+    *out = malloc(size);
+    if (!*out) return persistence_fail(error, QA_ERROR_MEMORY, "Retaining original save metadata text");
+    memcpy(*out, value, size);
+    return true;
+}
 
 bool qa_save_slot_inspect(qa_fs_root *root, const char *name,
-                          qa_save_metadata *out, qa_error *error)
+    qa_save_slot_format *format, qa_save_metadata *out, qa_q1_save_slot_metadata *original, qa_error *error)
 {
-    if (!out)
+    if (!format || !out || !original)
         return persistence_fail(error, QA_ERROR_ARGUMENT, "Missing save slot metadata output");
-    qa_save_image *image = NULL;
-    if (!qa_save_read(root, name, &image, error))
+    qa_save_image *image = NULL; qa_q1_save_data *save = NULL;
+    if (!qa_saved_game_read(root, name, &image, &save, error))
         return false;
-    *out = *qa_save_image_metadata(image);
+    qa_save_slot_format kind = QA_SAVE_SLOT_SHARED;
+    qa_save_metadata shared = {0}; qa_q1_save_slot_metadata source = {0};
+    bool ok = true;
+    if (image) shared = *qa_save_image_metadata(image);
+    else {
+        kind = save->version == 5 ? QA_SAVE_SLOT_Q1_V5 : QA_SAVE_SLOT_Q1_V6;
+        source.comment = save->comment; save->comment = NULL;
+        source.map = save->map; save->map = NULL;
+        source.game_directories = save->game_directories; save->game_directories = NULL;
+        source.time = save->time; source.skill = save->skill; source.entity_count = save->entity_count;
+        source.player_record_present = save->entities[1].count != 0;
+        ok = source_value(save->entities, "message", &source.world_message, error) &&
+            source_value(&save->globals, "killed_monsters", &source.killed_monsters, error) &&
+            source_value(&save->globals, "total_monsters", &source.total_monsters, error) &&
+            source_value(&save->globals, "found_secrets", &source.found_secrets, error) &&
+            source_value(&save->globals, "total_secrets", &source.total_secrets, error);
+    }
     qa_save_image_destroy(image);
+    qa_q1_save_destroy(save);
+    if (!ok) { qa_q1_save_slot_metadata_dispose(&source); return false; }
+    *format = kind; *out = shared; *original = source;
     return true;
 }
 
@@ -44,8 +85,10 @@ void qa_save_slot_listing_free(qa_save_slot_listing *listing)
 {
     if (!listing)
         return;
-    for (size_t i = 0; i < listing->count; ++i)
+    for (size_t i = 0; i < listing->count; ++i) {
         free(listing->entries[i].name);
+        qa_q1_save_slot_metadata_dispose(&listing->entries[i].source);
+    }
     free(listing->entries);
     *listing = (qa_save_slot_listing){0};
 }
@@ -97,7 +140,7 @@ bool qa_save_slots_list(qa_fs_root *root, const char *directory,
         }
         qa_save_slot_entry *entry = candidate.entries + candidate.count++;
         entry->name = path;
-        if (!qa_save_slot_inspect(root, path, &entry->metadata, &entry->error)) {
+        if (!qa_save_slot_inspect(root, path, &entry->format, &entry->metadata, &entry->source, &entry->error)) {
             if (entry->error.code == QA_ERROR_MEMORY) {
                 if (error)
                     *error = entry->error;

@@ -3,10 +3,27 @@
 
 #include "qa/save.h"
 
+typedef enum qa_save_slot_format {
+    QA_SAVE_SLOT_SHARED, QA_SAVE_SLOT_Q1_V5, QA_SAVE_SLOT_Q1_V6
+} qa_save_slot_format;
+/* Owned original header and exact source text values. Missing globals remain
+ * NULL; these strings do not pretend to be interpreted QC numeric fields.
+ * The final authored duplicate is retained, matching source import order. */
+typedef struct qa_q1_save_slot_metadata {
+    char *comment, *map, *game_directories, *world_message;
+    char *killed_monsters, *total_monsters, *found_secrets, *total_secrets;
+    double time;
+    int32_t skill;
+    size_t entity_count;
+    bool player_record_present;
+} qa_q1_save_slot_metadata;
+
 typedef struct qa_save_slot_entry {
-    char *name; /* Contained path usable by qa_save_read and qa_save_write. */
-    qa_save_metadata metadata;
-    qa_error error; /* QA_OK means the complete save envelope was verified. */
+    char *name; /* Contained path usable by the selected save codec. */
+    qa_save_slot_format format;
+    qa_save_metadata metadata; /* Valid only for QA_SAVE_SLOT_SHARED. */
+    qa_q1_save_slot_metadata source; /* Owned only for original formats. */
+    qa_error error; /* QA_OK means the selected full codec was verified. */
 } qa_save_slot_entry;
 
 typedef struct qa_save_slot_listing {
@@ -14,10 +31,13 @@ typedef struct qa_save_slot_listing {
     size_t count;
 } qa_save_slot_listing;
 
-/* Reads and validates the complete image, including its digest and owner set.
- * Metadata does not establish compatibility with currently installed content.
- * Outputs remain unchanged on failure. */
-bool qa_save_slot_inspect(qa_fs_root *, const char *name, qa_save_metadata *, qa_error *);
+/* Strict signature selection reads the complete shared envelope or original
+ * source save. Shared digest/owner admission remains unchanged. Metadata does
+ * not establish installed product/backend compatibility. Outputs remain
+ * unchanged on failure; dispose previous source metadata before replacement. */
+bool qa_save_slot_inspect(qa_fs_root *, const char *name, qa_save_slot_format *,
+    qa_save_metadata *, qa_q1_save_slot_metadata *, qa_error *);
+void qa_q1_save_slot_metadata_dispose(qa_q1_save_slot_metadata *);
 /* Lists immediate regular .sav files in a contained directory. Empty selects
  * the root; a missing directory publishes an empty listing. Reserved current
  * names, links and invalid slot paths are excluded. Entries sort by exact path.
