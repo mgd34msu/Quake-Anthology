@@ -3,6 +3,12 @@
 
 #include "internal.h"
 
+struct application_q3_guest;
+struct q3g_role;
+/* The retained source client authors its UI VM independently of visible MENU. */
+bool application_guest_q3_source_ui_create(struct application_q3_guest *, uint32_t,
+    struct q3g_role **, qa_error *);
+
 /* Prepare the actual detached GAME engine and console before configuration.
  * No host, executor, source Init, or world publication occurs here. */
 bool application_guest_q3_console_prepare(qa_application *, application_provider *,

@@ -16,6 +16,7 @@ typedef struct qa_application_q3_remote_replacement {
     qa_product_id product;
     qa_vfs *prepared_mounts;
     const char *cgame_path, *ui_path;
+    qa_program_kind cgame_runtime;
     uint64_t connection_epoch;
 } qa_application_q3_remote_replacement;
 
@@ -29,6 +30,28 @@ typedef struct qa_application_q3_role_receipt {
     const qa_vfs_acquisition *acquisition;
     qa_vfs *artifact_view;
 } qa_application_q3_role_receipt;
+typedef struct qa_application_q3_role_artifact {
+    qa_application_q3_role_receipt source;
+    const char *path;
+} qa_application_q3_role_artifact;
+/* Actual retained opening, available before Init. Path comes from the real
+ * constructed role, including authored companion overrides. */
+bool qa_application_q3_role_artifact_read(qa_application *, qa_actor_owner,
+    qa_qvm_role, uint32_t seat, qa_application_q3_role_artifact *, qa_error *);
+typedef struct qa_application_q3_remote_recipe {
+    qa_application_q3_role_artifact cgame, ui;
+    const char *cgame_path, *ui_path;
+    qa_program_kind cgame_runtime;
+    qa_actor_owner menu_receiver;
+    /* Replaces this receiver's source UI helper, independently of MENU. */
+    bool replace_ui;
+} qa_application_q3_remote_recipe;
+/* decoded is the transport's current held gamestate at its idle decode
+ * boundary. SDK pure/demo policy can author bytecode replacement paths while
+ * cgame/ui retain the exact previous physical openings for qualification. */
+bool qa_application_q3_remote_recipe_read(qa_application *,
+    const qa_application_q3_remote_source *, const qa_q3_gamestate *decoded,
+    qa_application_q3_remote_recipe *, qa_error *);
 
 /* These borrow genuine retained engine metadata, including its owned VFS.
  * Initial descriptors and later client-only descriptors share this contract. */
@@ -36,6 +59,16 @@ bool qa_application_q3_remote_source_read(qa_application *, qa_actor_owner,
     uint32_t, uint64_t connection_epoch, qa_application_q3_remote_source *, qa_error *);
 bool qa_application_q3_remote_source_current(qa_application *,
     const qa_application_q3_remote_source *);
+/* Available only inside the real q3_services construction callback. The
+ * imports are the actual pending request; the frontend prepares its final
+ * private registry before retaining keys, AUTH, collision and host imports.
+ * source_client remains unbound until the real GAME binding follows. */
+bool qa_application_q3_preconstruction_source_read(qa_application *, qa_actor_owner,
+    qa_qvm_role, uint32_t seat, qa_application_q3_client_preparation *, qa_error *);
+/* Consume source Shutdown once at the idle decoder boundary. Actual hosts,
+ * registry and metadata remain retained, ready for content replacement. */
+bool qa_application_q3_remote_clear(qa_application *,
+    const qa_application_q3_remote_source *, qa_application_q3_remote_source *, qa_error *);
 /* Builds CGAME/UI hosts from independently cloned prepared content. No GAME,
  * actor, session clock or world configuration is constructed or changed.
  * Source Init remains a separate operation after decoded gamestate is ready. */
@@ -51,11 +84,18 @@ typedef struct qa_application_q3_remote_init {
 } qa_application_q3_remote_init;
 bool qa_application_q3_remote_initialize(qa_application *,
     const qa_application_q3_remote_init *, qa_error *);
+/* The actual CGAME Init update-screen trap draws its already initialized
+ * source UI helper. Other entries report drawn=false without a guest call. */
+bool qa_application_q3_source_loading_screen(qa_application *, qa_actor_owner,
+    uint32_t seat, bool *drawn, qa_error *);
 /* Successful Init is required, independently of an entered failing Init. */
 bool qa_application_q3_role_receipt_read(qa_application *, qa_actor_owner,
     qa_qvm_role, uint32_t, qa_application_q3_role_receipt *, qa_error *);
 bool qa_application_q3_role_receipt_current(qa_application *,
     const qa_application_q3_role_receipt *);
+/* Native/mixed providers without a cleared external guest role report false. */
+bool qa_application_q3_role_loading(qa_application *, qa_actor_owner,
+    qa_qvm_role, uint32_t seat, bool *, qa_error *);
 /* Visits actual retained descriptor, decoder and artifact content owners,
  * including private prior generations still retained by immutable caches. */
 bool qa_application_q3_content_visit(const qa_application *,

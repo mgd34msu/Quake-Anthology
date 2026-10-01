@@ -2,6 +2,9 @@
 #include "guest_q3_private.h"
 #include "guest_q3_console.h"
 #include "qa/application_q3_factory.h"
+#include "native_q3_console.h"
+#include "q3_product.h"
+#include "qa/network_q3.h"
 
 bool q3g_acquisition_copy(const qa_vfs_acquisition *source, qa_vfs_acquisition *out, qa_error *error)
 {
@@ -51,6 +54,88 @@ static bool same_descriptor(const qa_launch_instance *actual, const qa_launch_in
         qa_sha256_equal(&actual->identity, &retained->identity);
 }
 
+bool qa_application_q3_preconstruction_source_read(qa_application *app,
+    qa_actor_owner receiver, qa_qvm_role kind, uint32_t seat,
+    qa_application_q3_client_preparation *out, qa_error *error)
+{
+    application_provider *provider = receiver_provider(app, receiver);
+    struct application_q3_guest *engine = q3g_engine(provider);
+    q3g_role *role = engine ? engine->constructing_role : NULL;
+    qa_q3_host_options *services = engine ? engine->constructing_services : NULL;
+    if (!app || !out || !role || !services || !engine->calls || role->kind != kind ||
+        role->seat != seat || role->host || services->owner != receiver || services->role != kind ||
+        services->session != app->session || services->world != engine->world ||
+        services->service_owner != role->service_owner || services->mounts != role->descriptor->content ||
+        services->command_context.owner != receiver ||
+        services->command_context.seat != (kind == QA_QVM_GAME ? 0 : seat))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Source preparation requires its real pending host construction");
+    application_provider *source = kind == QA_QVM_GAME ? provider : q3g_game_source(app);
+    qa_console *console = NULL; qa_cvars *cvars = NULL;
+    if (source) {
+        if (source->close_pending || !source->product || !source->product_catalog ||
+            qa_catalog_product(source->product_catalog, source->product->id) != source->product)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Prepared GAME lost its actual source catalog");
+        if (source->kind == APPLICATION_PROVIDER_Q3) {
+            if (!application_native_q3_console_at(source, &console, &cvars, NULL))
+                return application_fail(error, QA_ERROR_ARGUMENT, "Prepared native GAME lost its actual console");
+        } else {
+            console = application_guest_q3_console_owner(source);
+            cvars = application_guest_q3_console_registry(source);
+        }
+        if (!console || !cvars)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Prepared original GAME lost its actual console");
+    }
+    *out = (qa_application_q3_client_preparation){.receiver_descriptor = role->descriptor,
+        .receiver_catalog = qa_launch_instance_catalog(role->descriptor),
+        .receiver_product = qa_catalog_product(qa_launch_instance_catalog(role->descriptor), role->descriptor->selection.product),
+        .game_descriptor = source ? source->launch : NULL, .receiver = receiver,
+        .source_owner = source ? source->owner : 0, .role = kind, .seat = seat,
+        .source_client = UINT32_MAX, .source_catalog = source ? source->product_catalog : NULL,
+        .source_product = source ? source->product : NULL, .source_console = console,
+        .source_cvars = cvars, .product_policy = application_q3_product_source_policy(app),
+        .services = services, .equipment_services = engine->constructing_equipment_services,
+        .restoring = engine->restore_pending, .restored_cvars = engine->restored_client_cvars,
+        .cvars_role = engine->restore_pending ? engine->restored_client_role : kind,
+        .cvars_seat = engine->restore_pending ? engine->restored_client_seat : seat};
+    return true;
+}
+
+bool qa_application_q3_equipment_requests(qa_application *app, qa_actor_owner receiver,
+    uint32_t seat, bool *hud, bool *view, qa_error *error)
+{
+    application_provider *provider = receiver_provider(app, receiver);
+    struct application_q3_guest *engine = q3g_engine(provider);
+    q3g_role *role = NULL;
+    if (engine) for (q3g_role *r = engine->roles; r; r = r->next)
+        if (r->kind == QA_QVM_CGAME && r->seat == seat && r->ready && !r->retired) {
+            if (role) return application_fail(error, QA_ERROR_ARGUMENT, "Ambiguous actual equipment receiver");
+            role = r;
+        }
+    qa_q3_host_client_context host;
+    if (!app || !hud || !view || app->destroy_requested || !provider ||
+        !provider->constructed || !provider->attached || provider->close_pending ||
+        !role || !role->committed || !role->init_succeeded || !role->equipment ||
+        !qa_q3_host_client_context_read(role->host, &host) || host.session != app->session ||
+        host.owner != receiver || host.role != QA_QVM_CGAME || host.service_owner != role->service_owner ||
+        host.command_context.owner != receiver || host.command_context.seat != seat ||
+        host.command_context.dialect != QA_CONSOLE_Q3)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Equipment requests lack their true current CGAME owner");
+    *hud = application_q3_equipment_hud(role->equipment);
+    *view = application_q3_equipment_view(role->equipment);
+    return true;
+}
+
+bool qa_application_q3_role_loading(qa_application *app, qa_actor_owner receiver,
+    qa_qvm_role kind, uint32_t seat, bool *out, qa_error *error)
+{
+    application_provider *provider = receiver_provider(app, receiver);
+    if (!app || !out || !provider || !provider->constructed || !provider->attached ||
+        provider->close_pending || app->destroy_requested || kind == QA_QVM_GAME || kind > QA_QVM_UI)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Loading observation requires its live actual receiver");
+    *out = application_q3_guest_role_loading(provider, kind, seat);
+    return true;
+}
+
 bool qa_application_q3_remote_source_read(qa_application *app, qa_actor_owner receiver,
     uint32_t seat, uint64_t epoch, qa_application_q3_remote_source *out, qa_error *error)
 {
@@ -84,6 +169,85 @@ static bool discard_role(q3g_role **role, qa_error *error)
     *role = NULL; return true;
 }
 
+static application_provider *menu_provider(qa_application *app, uint32_t seat)
+{
+    const qa_launch_snapshot *snapshot = app->routing_snapshot ? app->routing_snapshot : qa_application_launch(app);
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
+    const qa_launch_binding *binding = choices ? qa_launch_binding_for(choices,
+        (qa_launch_scope){.kind = QA_SCOPE_SEAT, .seat = seat}, QA_ROLE_MENU, "") : NULL;
+    if (!binding && choices) binding = qa_launch_binding_for(choices,
+        (qa_launch_scope){.kind = QA_SCOPE_WORLD}, QA_ROLE_MENU, "");
+    application_provider **providers = app->routing_providers ? app->routing_providers : app->providers;
+    size_t count = app->routing_providers ? app->routing_provider_count : app->provider_count;
+    for (size_t i = 0; binding && i < count; ++i)
+        if (providers[i] && providers[i]->launch &&
+            !strcmp(providers[i]->launch->selection.instance, binding->instance)) return providers[i];
+    return NULL;
+}
+
+bool qa_application_q3_remote_recipe_read(qa_application *app,
+    const qa_application_q3_remote_source *source, const qa_q3_gamestate *decoded,
+    qa_application_q3_remote_recipe *out, qa_error *error)
+{
+    if (!out || !decoded || decoded->client_number < 0 || decoded->client_number >= 64 ||
+        !qa_application_q3_remote_source_current(app, source))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Remote recipe requires its actual retained receiver");
+    qa_application_q3_remote_recipe recipe = {0};
+    if (!qa_application_q3_role_artifact_read(app, source->receiver.receiver,
+        QA_QVM_CGAME, source->receiver.seat, &recipe.cgame, error)) return false;
+    application_provider *menu = menu_provider(app, source->receiver.seat);
+    recipe.menu_receiver = menu ? menu->owner : 0;
+    recipe.replace_ui = true;
+    if (!qa_application_q3_role_artifact_read(app, source->receiver.receiver,
+        QA_QVM_UI, source->receiver.seat, &recipe.ui, error)) return false;
+    char pure[1024];
+    if (!qa_q3_info_value(qa_q3_configstring(decoded, 1), "sv_pure", pure, sizeof(pure), error)) return false;
+    application_provider *provider = receiver_provider(app, source->receiver.receiver);
+    struct application_q3_guest *engine = q3g_engine(provider);
+    q3g_role *cgame = NULL, *ui = NULL;
+    for (q3g_role *role = engine->roles; role; role = role->next)
+        if (role->seat == source->receiver.seat && role->ready && !role->retired) {
+            if (role->kind == QA_QVM_CGAME) cgame = role;
+            if (role->kind == QA_QVM_UI) ui = role;
+        }
+    bool bytecode = strtol(pure, NULL, 10) != 0;
+    const qa_cvar_view *restricted = qa_cvars_find(source->receiver.cvars, "fs_restrict");
+    bytecode |= restricted && restricted->number != 0;
+    recipe.cgame_path = bytecode && !cgame->artifact->qvm ? "vm/cgame.qvm" : recipe.cgame.path;
+    recipe.ui_path = bytecode && !ui->artifact->qvm ? "vm/ui.qvm" : recipe.ui.path;
+    recipe.cgame_runtime = bytecode || cgame->artifact->qvm ? QA_PROGRAM_QVM : QA_PROGRAM_NATIVE;
+    *out = recipe; return true;
+}
+
+bool qa_application_q3_remote_clear(qa_application *app,
+    const qa_application_q3_remote_source *previous,
+    qa_application_q3_remote_source *out, qa_error *error)
+{
+    if (!app || !out || app->operation != APPLICATION_IDLE || app->frame_preparing ||
+        app->q3_round_active || app->q3_world_restart || !qa_session_safe(app->session) ||
+        !qa_world_idle(app->world) || !qa_application_q3_remote_source_current(app, previous))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Remote clear requires its current idle decoder boundary");
+    application_provider *provider = receiver_provider(app, previous->receiver.receiver);
+    struct application_q3_guest *engine = q3g_engine(provider);
+    if (!engine || !application_q3_guest_idle(provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Remote clear has an active source callback");
+    for (q3g_role *role = engine->roles; role; role = role->next)
+        if (role->kind != QA_QVM_GAME && role->seat == previous->receiver.seat && role->local_client)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Remote clear encountered a real local GAME client");
+    for (q3g_role *role = engine->roles; role; role = role->next)
+        if (role->kind != QA_QVM_GAME && role->seat == previous->receiver.seat)
+            role->source_cleared = true;
+    app->operation = APPLICATION_CONFIGURING;
+    bool ok = true;
+    for (q3g_role *role = engine->roles; role && ok; role = role->next)
+        if (role->kind != QA_QVM_GAME && role->seat == previous->receiver.seat) {
+            ok = q3g_role_shutdown_source(role, false, error);
+        }
+    app->operation = APPLICATION_IDLE;
+    return ok && qa_application_q3_remote_source_read(app, provider->owner,
+        previous->receiver.seat, previous->connection_epoch, out, error);
+}
+
 bool qa_application_q3_remote_replace(qa_application *app,
     const qa_application_q3_remote_replacement *request, qa_application_q3_remote_source *out, qa_error *error)
 {
@@ -92,6 +256,7 @@ bool qa_application_q3_remote_replace(qa_application *app,
         !qa_session_safe(app->session) || qa_session_faulted(app->session) || !qa_world_idle(app->world) ||
         !request->catalog || !request->prepared_mounts || !request->cgame_path || !*request->cgame_path ||
         !request->ui_path || !*request->ui_path || request->connection_epoch != request->previous.connection_epoch ||
+        (request->cgame_runtime != QA_PROGRAM_QVM && request->cgame_runtime != QA_PROGRAM_NATIVE) ||
         request->previous.configuration_generation == UINT64_MAX ||
         !qa_application_q3_remote_source_current(app, &request->previous))
         return application_fail(error, QA_ERROR_ARGUMENT, "Remote replacement requires its current detached content and idle receiver");
@@ -101,7 +266,8 @@ bool qa_application_q3_remote_replace(qa_application *app,
         return application_fail(error, QA_ERROR_ARGUMENT, "Remote replacement has an active receiver source");
     qa_launch_instance_lease *descriptor = NULL;
     if (!qa_launch_instance_prepare_client_metadata(request->previous.descriptor, request->catalog,
-        request->product, request->prepared_mounts, request->cgame_path, &descriptor, error)) return false;
+        request->product, request->prepared_mounts, request->cgame_path, request->cgame_runtime,
+        &descriptor, error)) return false;
     q3g_role *cgame = NULL, *ui = NULL;
     app->operation = APPLICATION_CONFIGURING;
     engine->client_candidate = qa_launch_instance_lease_view(descriptor);
@@ -109,8 +275,10 @@ bool qa_application_q3_remote_replace(qa_application *app,
         request->cgame_path, true, &cgame, error) && q3g_role_create(engine, QA_QVM_UI,
         request->previous.receiver.seat, request->ui_path, false, &ui, error);
     engine->client_candidate = NULL;
-    if (ok && (cgame->local_client || ui->local_client))
+    if (ok && (cgame->local_client || (ui && ui->local_client)))
         ok = application_fail(error, QA_ERROR_ARGUMENT, "Remote replacement acquired a local GAME binding");
+    if (ok && engine->game) cgame->primary = false;
+    if (ok) { cgame->source_cleared = true; if (ui) ui->source_cleared = true; }
     if (ok) {
         q3g_role **position = &engine->roles;
         while (*position && ok) {
@@ -125,7 +293,7 @@ bool qa_application_q3_remote_replace(qa_application *app,
     }
     if (ok) {
         cgame->next = engine->roles; engine->roles = cgame;
-        ui->next = engine->roles; engine->roles = ui;
+        if (ui) { ui->next = engine->roles; engine->roles = ui; }
         qa_launch_instance_lease_release(engine->client_descriptor);
         engine->client_descriptor = descriptor; descriptor = NULL;
         engine->client_generation = request->previous.configuration_generation + 1;
@@ -141,8 +309,9 @@ bool qa_application_q3_remote_replace(qa_application *app,
         request->previous.receiver.seat, request->connection_epoch, out, error);
 }
 
-bool qa_application_q3_role_receipt_read(qa_application *app, qa_actor_owner receiver,
-    qa_qvm_role kind, uint32_t seat, qa_application_q3_role_receipt *out, qa_error *error)
+static bool role_artifact_read(qa_application *app, qa_actor_owner receiver,
+    qa_qvm_role kind, uint32_t seat, bool initialized,
+    qa_application_q3_role_artifact *out, qa_error *error)
 {
     application_provider *provider = receiver_provider(app, receiver);
     struct application_q3_guest *engine = q3g_engine(provider);
@@ -153,24 +322,38 @@ bool qa_application_q3_role_receipt_read(qa_application *app, qa_actor_owner rec
             role = current;
         }
     if (!out || !provider || !provider->constructed || !provider->attached || provider->close_pending ||
-        !app || app->destroy_requested || !role || !role->committed || !role->init_succeeded || !role->artifact ||
+        !app || app->destroy_requested || !role ||
+        (initialized && (!role->committed || !role->init_succeeded || role->source_cleared)) || !role->artifact ||
         !role->artifact->resource || !qa_vfs_acquisition_retained(role->artifact->view,
             &role->artifact->acquisition, error))
-        return application_fail(error, QA_ERROR_ARGUMENT, "Role receipt requires its retained artifact and successful Init");
-    *out = (qa_application_q3_role_receipt){.role = kind, .receiver = receiver, .seat = seat,
-        .service_owner = role->service_owner, .configuration_generation = engine->client_generation ?
+        return application_fail(error, QA_ERROR_ARGUMENT, "Role artifact requires its actual retained opening and lifecycle");
+    out->path = role->path;
+    out->source = (qa_application_q3_role_receipt){.role = kind, .receiver = receiver, .seat = seat,
+        .service_owner = role->service_owner, .configuration_generation = kind != QA_QVM_GAME && engine->client_generation ?
             engine->client_generation : qa_application_configuration_generation(app),
-        .connection_epoch = engine->connection_epoch, .descriptor = role->descriptor,
+        .connection_epoch = kind != QA_QVM_GAME ? engine->connection_epoch : 0, .descriptor = role->descriptor,
         .artifact = role->artifact->resource, .acquisition = &role->artifact->acquisition,
         .artifact_view = role->artifact->view};
     return true;
+}
+
+bool qa_application_q3_role_artifact_read(qa_application *app, qa_actor_owner receiver,
+    qa_qvm_role kind, uint32_t seat, qa_application_q3_role_artifact *out, qa_error *error)
+{ return role_artifact_read(app, receiver, kind, seat, false, out, error); }
+
+bool qa_application_q3_role_receipt_read(qa_application *app, qa_actor_owner receiver,
+    qa_qvm_role kind, uint32_t seat, qa_application_q3_role_receipt *out, qa_error *error)
+{
+    qa_application_q3_role_artifact actual;
+    if (!out || !role_artifact_read(app, receiver, kind, seat, true, &actual, error)) return false;
+    *out = actual.source; return true;
 }
 
 bool qa_application_q3_remote_initialize(qa_application *app,
     const qa_application_q3_remote_init *request, qa_error *error)
 {
     if (!app || !request || app->operation != APPLICATION_IDLE || !request->current ||
-        request->server_message < 0 || request->last_executed_server_command < 0 ||
+        request->server_message < 0 ||
         request->client_number < 0 || request->client_number >= 64 ||
         !qa_application_q3_remote_source_current(app, &request->source) ||
         !request->current(request->connection, request->source.connection_epoch,
@@ -178,12 +361,31 @@ bool qa_application_q3_remote_initialize(qa_application *app,
             request->client_number, error))
         return application_fail(error, QA_ERROR_ARGUMENT, "Remote Init requires its actual decoded connection counters");
     application_provider *provider = receiver_provider(app, request->source.receiver.receiver);
-    return application_q3_guest_role_initialize(provider, QA_QVM_CGAME, request->source.receiver.seat,
-        request->server_message, request->last_executed_server_command, request->client_number, false, error) &&
-        request->current(request->connection, request->source.connection_epoch,
-            request->server_message, request->last_executed_server_command, request->client_number, error) &&
-        application_q3_guest_role_initialize(provider, QA_QVM_UI, request->source.receiver.seat,
+    struct application_q3_guest *engine = q3g_engine(provider);
+    q3g_role *cgame = NULL, *ui = NULL;
+    for (q3g_role *role = engine->roles; role; role = role->next)
+        if (role->seat == request->source.receiver.seat && role->ready && !role->retired) {
+            if (role->kind == QA_QVM_CGAME) cgame = role;
+            if (role->kind == QA_QVM_UI) ui = role;
+        }
+    if (!cgame || !ui || engine->initializing_role)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Remote Init lost its retained source role");
+    engine->initializing_role = ui;
+    bool ok = application_q3_guest_role_initialize(provider, QA_QVM_UI, request->source.receiver.seat,
+        request->server_message, request->last_executed_server_command, request->client_number, true, error);
+    engine->initializing_role = NULL;
+    if (ok) ok = request->current(request->connection, request->source.connection_epoch,
+        request->server_message, request->last_executed_server_command, request->client_number, error);
+    if (ok) {
+        engine->initializing_role = cgame;
+        ok = application_q3_guest_role_initialize(provider, QA_QVM_CGAME, request->source.receiver.seat,
             request->server_message, request->last_executed_server_command, request->client_number, false, error);
+        engine->initializing_role = NULL;
+    }
+    if (ok) ok = request->current(request->connection, request->source.connection_epoch,
+        request->server_message, request->last_executed_server_command, request->client_number, error);
+    if (ok) { cgame->source_cleared = false; ui->source_cleared = false; }
+    return ok;
 }
 
 bool qa_application_q3_role_receipt_current(qa_application *app,
@@ -196,6 +398,35 @@ bool qa_application_q3_role_receipt_current(qa_application *app,
         actual.connection_epoch == receipt->connection_epoch && same_descriptor(actual.descriptor, receipt->descriptor) &&
         actual.artifact == receipt->artifact && actual.acquisition == receipt->acquisition &&
         actual.artifact_view == receipt->artifact_view;
+}
+
+bool qa_application_q3_source_loading_screen(qa_application *app, qa_actor_owner receiver,
+    uint32_t seat, bool *drawn, qa_error *error)
+{
+    application_provider *provider = receiver_provider(app, receiver);
+    struct application_q3_guest *engine = q3g_engine(provider);
+    if (!app || !drawn || !provider || !provider->constructed || !provider->attached ||
+        provider->close_pending || app->destroy_requested)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Loading screen requires its actual live source receiver");
+    *drawn = false;
+    q3g_role *cgame = engine ? engine->initializing_role : NULL;
+    if (!cgame || cgame->kind != QA_QVM_CGAME || cgame->seat != seat ||
+        !engine->calls || cgame->init_succeeded) return true;
+    q3g_role *ui = NULL;
+    for (q3g_role *role = engine->roles; role; role = role->next)
+        if (role->kind == QA_QVM_UI && role->seat == seat && role->ready && !role->retired) {
+            if (ui) return application_fail(error, QA_ERROR_ARGUMENT, "Ambiguous actual source loading UI");
+            ui = role;
+        }
+    if (!ui || !ui->committed || !ui->initialized || !ui->init_succeeded ||
+        !same_descriptor(ui->descriptor, cgame->descriptor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "CGAME loading lost its successfully initialized source UI");
+    int32_t overlay = 1, result;
+    engine->initializing_role = ui;
+    bool ok = q3g_call(ui, 10, &overlay, 1, &result, error);
+    engine->initializing_role = cgame;
+    if (ok) *drawn = true;
+    return ok;
 }
 
 bool qa_application_q3_content_visit(const qa_application *app,

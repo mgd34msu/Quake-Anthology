@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/launch_save.h"
+#include "qa/vfs_view_save.h"
 
 typedef struct qa_launch_instance_storage {
     size_t references, leases;
@@ -442,18 +443,20 @@ fail:
 
 bool qa_launch_instance_prepare_client_metadata(const qa_launch_instance *source,
     qa_catalog *catalog, qa_product_id selected, qa_vfs *prepared, const char *path,
-    qa_launch_instance_lease **out, qa_error *error)
+    qa_program_kind runtime, qa_launch_instance_lease **out, qa_error *error)
 {
     const qa_product *product = catalog ? qa_catalog_product(catalog, selected) : NULL;
     if (!source || !source->storage || !catalog || !product || product->family != QA_GAME_Q3 ||
         !prepared || !path || !*path || !out || *out ||
-        (source->selection.runtime != QA_PROGRAM_QVM && source->selection.runtime != QA_PROGRAM_NATIVE))
+        (source->selection.runtime != QA_PROGRAM_QVM && source->selection.runtime != QA_PROGRAM_NATIVE) ||
+        (runtime != QA_PROGRAM_QVM && runtime != QA_PROGRAM_NATIVE))
         return error_message(error, "Client metadata requires its actual Q3 source and prepared content");
     instance_owner *owner = calloc(1, sizeof(*owner));
     if (!owner) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining private Q3 client metadata"); return false; }
     owner->references = 1; owner->view.storage = owner;
     qa_launch_provider selection = source->selection;
     selection.product = selected; selection.artifact = path; selection.component = "";
+    selection.runtime = runtime;
     const qa_catalog_mod *component = NULL;
     for (size_t i = 0; i < qa_catalog_mod_count(catalog); ++i) {
         const qa_catalog_mod *mod = qa_catalog_mod_at(catalog, i);
@@ -511,13 +514,18 @@ bool qa_launch_instance_restore_client_metadata(const qa_launch_instance *source
     const qa_product *product = qa_catalog_product(saved->catalog, b->product);
     bool ok = product && product->family == QA_GAME_Q3 && b->instance && b->implementation &&
         b->artifact && *b->artifact && b->component && !strcmp(a->instance, b->instance) &&
-        !strcmp(a->implementation, b->implementation) && a->runtime == b->runtime &&
+        !strcmp(a->implementation, b->implementation) &&
+        (a->runtime == QA_PROGRAM_QVM || a->runtime == QA_PROGRAM_NATIVE) &&
+        (b->runtime == QA_PROGRAM_QVM || b->runtime == QA_PROGRAM_NATIVE) &&
         a->options.size == b->options.size && (!a->options.size ||
             (b->options.data && !memcmp(a->options.data, b->options.data, a->options.size))) &&
         a->clock.kind == b->clock.kind && a->clock.initial_time_ns == b->clock.initial_time_ns &&
         a->clock.interval_ns == b->clock.interval_ns && a->clock.minimum_frame_ns == b->clock.minimum_frame_ns &&
         a->clock.maximum_frame_ns == b->clock.maximum_frame_ns && a->clock.initial_lead_ns == b->clock.initial_lead_ns &&
         a->clock.maximum_steps == b->clock.maximum_steps && saved->artifact &&
+        qa_resource_pool_find(qa_vfs_resources(saved->content), qa_resource_id(saved->artifact)) == saved->artifact &&
+        (!saved->declaration || qa_resource_pool_find(qa_vfs_resources(saved->content),
+            qa_resource_id(saved->declaration)) == saved->declaration) &&
         saved->interface_count <= SIZE_MAX / sizeof(qa_launch_resource) && !saved->behavior_count;
     if (!ok) error_message(error, "Saved private client descriptor leaves its real source selection");
     if (ok) ok = launch_empty(saved->catalog, &owner->identity, error) &&
@@ -538,7 +546,9 @@ bool qa_launch_instance_restore_client_metadata(const qa_launch_instance *source
         if (!ok) qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring private client profile inventory");
         for (size_t i = 0; ok && i < saved->interface_count; ++i) {
             const qa_launch_resource *resource = saved->interfaces + i;
-            if (!resource->resource || !resource->path || resource->product != b->product) {
+            if (!resource->resource || !resource->path || resource->product != b->product ||
+                qa_resource_pool_find(qa_vfs_resources(saved->content),
+                    qa_resource_id(resource->resource)) != resource->resource) {
                 ok = error_message(error, "Private client profile has an invalid true resource owner"); break;
             }
             const char *path = launch_text(owner->identity, resource->path, error);

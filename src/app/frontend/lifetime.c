@@ -11,7 +11,10 @@
 #include "ui_features.h"
 #include "keys.h"
 #include "config_store.h"
+#include "client_registry.h"
+#include "native_q3_client.h"
 #include "equipment_media.h"
+#include "equipment_q3.h"
 #include "qc_rerelease_events.h"
 #include "qa/application_startup_prepare.h"
 #include <signal.h>
@@ -35,6 +38,7 @@ void frontend_application_options(qa_frontend *frontend, qa_application_options 
     application->console_print = frontend_console_print;
     application->q3_services = frontend_source_services;
     application->q3_client_prepare=frontend_source_client_prepare;
+    application->q3_client_registry_reference=frontend_source_client_registry_reference;
     application->q3_client_effect = frontend_source_effect;
     application->q3_campaign_command = frontend_campaign_source_command;
     application->q3_round_services = frontend_q3_round_services();
@@ -83,7 +87,8 @@ bool frontend_startup_replay(qa_frontend *frontend,qa_error *error)
                     qa_application_console_scope scope;
                     if (!qa_application_console_scope_read(application,candidate,&scope) || scope.provider!=context.owner ||
                         (scope.kind!=QA_APPLICATION_CONSOLE_QC && scope.kind!=QA_APPLICATION_CONSOLE_Q1_GAME &&
-                         scope.kind!=QA_APPLICATION_CONSOLE_NATIVE_Q2 && scope.kind!=QA_APPLICATION_CONSOLE_Q3_GAME)) continue;
+                         scope.kind!=QA_APPLICATION_CONSOLE_NATIVE_Q2 && scope.kind!=QA_APPLICATION_CONSOLE_Q2_GAME &&
+                         scope.kind!=QA_APPLICATION_CONSOLE_Q3_GAME)) continue;
                     if (console && console!=candidate)
                         return frontend_fail(error,QA_ERROR_FORMAT,"Startup source has multiple physical GAME consoles");
                     console=candidate;
@@ -252,6 +257,7 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "frontend frame, round or retained child owner is active");
     if (!frontend_network_close_client(frontend,error) || !frontend_cinematic_destroy(frontend,error) || !frontend_save_commands_destroy(frontend,error) ||
         !frontend_campaign_destroy(frontend,error)) return false;
+    if (!frontend_native_q3_destroy(frontend,error)) return false;
     /* Application guests borrow frontend services. Retire them before releasing
      * their seats, scene registry, device or SDL handles. */
     for (unsigned i = 0; i < frontend->options.seats; ++i)
@@ -276,6 +282,8 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     frontend_input_profile_destroy(frontend);
     if (!frontend_native_q2_discard_unbound(frontend, error)) return false;
     if (!frontend_source_discard_unbound(frontend, error)) return false;
+    if (!frontend_client_registries_retired(frontend,error)) return false;
+    if (!frontend_client_registries_discard_restore(frontend,error)) return false;
     if (!frontend_keys_destroy(frontend->keys,error)) return false;
     frontend->keys=NULL;
     qa_native_runtime_release(frontend->native_runtime); frontend->native_runtime=NULL;
@@ -287,6 +295,8 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     qa_scene_frame_destroy(&frontend->frame);
     if (!frontend_equipment_retire(frontend,error)) return false;
     frontend_equipment_destroy(frontend);
+    if (!frontend_equipment_q3_retire(frontend,error)) return false;
+    frontend_equipment_q3_destroy(frontend);
     frontend_visuals_destroy(frontend);
     frontend_particle_retire(frontend);
     frontend_event_retire(frontend);
@@ -324,10 +334,12 @@ bool qa_frontend_run(qa_frontend **slot, qa_error *error)
         if (seconds > UINT64_MAX / UINT64_C(1000000000)) { ok = frontend_fail(error, QA_ERROR_ARGUMENT, "monotonic duration overflow"); break; }
         uint64_t elapsed = seconds * UINT64_C(1000000000) +
             (uint64_t)((long double)(ticks % frequency) * 1000000000.0L / (long double)frequency);
-        ok = qa_frontend_step(frontend, elapsed, error);
+        if (!frontend_save_commands_restoring(frontend))
+            ok = qa_frontend_step(frontend, elapsed, error);
         if (ok) ok=frontend_save_commands_drain(slot,error);
         frontend=*slot;
-        if (frontend->options.frame_limit && frontend->frame_number >= frontend->options.frame_limit) break;
+        if (!frontend_save_commands_restoring(frontend) && frontend->options.frame_limit &&
+            frontend->frame_number >= frontend->options.frame_limit) break;
         SDL_Delay(1);
     }
     if (previous_int != SIG_ERR) signal(SIGINT, previous_int);

@@ -4,6 +4,7 @@
 #include "guest_qc_internal.h"
 #include "native_q3_console.h"
 #include "native_q1_console.h"
+#include "native_q2_console.h"
 #include "native_q3_wire.h"
 #include "native_q3_wire_state.h"
 #include "qa/application_q3_client.h"
@@ -41,6 +42,8 @@ bool application_guest_console_at(application_provider *provider, size_t index,
     if (!provider || !provider->constructed || !console) return false;
     if (provider->kind == APPLICATION_PROVIDER_Q1)
         return !index && application_native_q1_console_at(provider, console, cvars, context);
+    if (provider->kind == APPLICATION_PROVIDER_Q2)
+        return !index && application_native_q2_console_at(provider, console, cvars, context);
     if (provider->kind == APPLICATION_PROVIDER_Q3)
         return !index && application_native_q3_console_at(provider, console, cvars, context);
     if (provider->kind == APPLICATION_PROVIDER_QC) {
@@ -86,6 +89,11 @@ bool application_guest_console_scope(application_provider *provider,
         if (!application_native_q1_console_at(provider, &source, NULL, NULL) || source != console)
             return false;
         scope.kind = QA_APPLICATION_CONSOLE_Q1_GAME;
+    } else if (provider->kind == APPLICATION_PROVIDER_Q2) {
+        qa_console *source = NULL;
+        if (!application_native_q2_console_at(provider, &source, NULL, NULL) || source != console)
+            return false;
+        scope.kind = QA_APPLICATION_CONSOLE_Q2_GAME;
     } else if (provider->kind == APPLICATION_PROVIDER_Q3) {
         qa_console *source = NULL;
         if (!application_native_q3_console_at(provider, &source, NULL, NULL) || source != console)
@@ -118,6 +126,16 @@ bool application_guest_console_scope(application_provider *provider,
     }
     *out = scope;
     return true;
+}
+
+bool application_q3_guest_role_loading(const application_provider *provider,
+    qa_qvm_role kind, uint32_t seat)
+{
+    struct application_q3_guest *engine = q3g_engine((application_provider *)provider);
+    if (engine) for (const q3g_role *role = engine->roles; role; role = role->next)
+        if (role->kind == kind && role->seat == seat && role->ready && !role->retired)
+            return role->source_cleared;
+    return false;
 }
 
 static q3g_role *find_role(application_provider *provider, qa_qvm_role kind,
@@ -356,6 +374,7 @@ bool application_q3_guest_role_initialize(application_provider *provider, qa_qvm
     q3g_role *role = find_role(provider, kind, seat, error);
     if (!role) return false;
     if (kind == QA_QVM_GAME || role->engine->calls || role->initialized ||
+        (role->source_cleared && role->engine->initializing_role != role) ||
         role->engine->round.phase != Q3G_ROUND_NONE)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client initialization requires an idle fresh role");
     if (role->native_client && (!role->client_services.gamestate ||
@@ -375,7 +394,7 @@ bool application_q3_guest_role_initialize(application_provider *provider, qa_qvm
         int32_t argument = connecting ? 1 : 0;
         if (!q3g_call(role, 1, &argument, 1, &result, error)) return false;
     } else {
-        if (server_message < 0 || server_command < 0 || client_number < 0 || client_number >= 64 ||
+        if (server_message < 0 || client_number < 0 || client_number >= 64 ||
             !role->client_services.gamestate || !role->client_services.current_snapshot)
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 cgame requires admitted client and gamestate services");
         int32_t message, time;
@@ -396,8 +415,24 @@ bool application_q3_guest_role_initialize(application_provider *provider, qa_qvm
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 cgame source client ordinal differs from its seat");
         if (role->local_client && !q3g_client_effect(role, QA_APPLICATION_Q3_SYSTEM_INFO,
                 qa_q3_configstring(state, 1), error)) return false;
+        q3g_role *ui = NULL;
+        for (q3g_role *candidate = role->engine->roles; candidate; candidate = candidate->next)
+            if (candidate->kind == QA_QVM_UI && candidate->seat == seat && candidate->ready && !candidate->retired) {
+                if (ui) return application_fail(error, QA_ERROR_ARGUMENT, "Ambiguous actual CGAME source UI");
+                ui = candidate;
+            }
+        if (!ui || ui->descriptor->storage != role->descriptor->storage)
+            return application_fail(error, QA_ERROR_ARGUMENT, "CGAME initialization lost its actual source UI helper");
+        if (!ui->initialized && !application_q3_guest_role_initialize(provider, QA_QVM_UI, seat,
+                server_message, server_command, client_number, true, error)) return false;
+        if (!ui->init_succeeded)
+            return application_fail(error, QA_ERROR_ARGUMENT, "CGAME initialization requires successful source UI Init");
         int32_t arguments[] = {server_message, server_command, client_number};
-        if (!q3g_call(role, 0, arguments, 3, &result, error)) return false;
+        q3g_role *previous = role->engine->initializing_role;
+        role->engine->initializing_role = role;
+        bool initialized = q3g_call(role, 0, arguments, 3, &result, error);
+        role->engine->initializing_role = previous;
+        if (!initialized) return false;
     }
     role->initialized = true; return true;
 }

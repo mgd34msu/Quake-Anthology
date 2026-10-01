@@ -158,6 +158,8 @@ typedef struct application_q2_visual_record {
 } application_q2_visual_record;
 
 typedef struct application_publication {
+    struct application_publication *failed_next;
+    bool failed_retained;
     const qa_launch_snapshot *previous;
     const qa_launch_snapshot *candidate;
     application_provider **next;
@@ -187,7 +189,9 @@ typedef struct application_publication {
 } application_publication;
 
 struct qa_application {
+    application_publication *failed_publications;
     struct application_startup_flow *startup_flow;
+    application_publication *startup_publication;
     application_provider *startup_preinit_provider;
     const struct qa_application_startup_hooks *startup_hooks;
     struct application_startup *startup;
@@ -199,6 +203,7 @@ struct qa_application {
     void *guest_context;
     qa_application_q3_services_fn q3_services;
     qa_application_q3_client_prepare_fn q3_client_prepare;
+    qa_application_q3_client_registry_reference_fn q3_client_registry_reference;
     qa_application_q3_client_effect_fn q3_client_effect;
     qa_application_q3_campaign_command_fn q3_campaign_command;
     const struct qa_application_q3_round_services *q3_round_services;
@@ -448,6 +453,7 @@ bool application_q3_guest_client_command(application_provider *, uint32_t,
                                          const char *, qa_error *);
 bool application_q3_guest_publish_snapshot(application_provider *, uint32_t,
                                            const qa_q3_snapshot *, int32_t, qa_error *);
+bool application_q3_guest_role_loading(const application_provider *, qa_qvm_role, uint32_t);
 bool application_q3_guest_role_add(application_provider *, qa_qvm_role, uint32_t,
                                    const char *, qa_error *);
 bool application_q3_guest_role_initialize(application_provider *, qa_qvm_role,
@@ -540,6 +546,7 @@ bool application_match_prepare(qa_application *, application_publication *, qa_e
 bool application_match_prepare_modes(qa_application *, application_publication *, qa_error *);
 bool application_match_prepare_equipment(qa_application *, application_publication *, qa_error *);
 void application_publication_dispose(qa_application *, application_publication *);
+bool application_publication_retry_cleanup(qa_application *, qa_error *);
 bool application_publication_prepare(qa_application *,
                                      const qa_launch_snapshot *,
                                      const qa_launch_snapshot *, void **,

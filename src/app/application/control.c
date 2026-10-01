@@ -2167,6 +2167,72 @@ bool qa_application_control_read(const qa_application *application,
     return true;
 }
 
+bool qa_application_control_prediction_read(qa_application *application,
+    qa_actor_id actor, qa_application_control_prediction_configuration *out,
+    qa_error *error)
+{
+    if (!application || !out || !live(application, actor) ||
+        actor.slot >= application->control_capacity || !application->world ||
+        !application->combat || !application->physics ||
+        application->destroy_requested)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Prediction configuration needs its actual live player");
+    const application_control_record *record = &application->controls[actor.slot];
+    application_provider *movement = NULL;
+    application_provider *character = application_provider_for(application, actor, QA_ROLE_CHARACTER, "");
+    application_provider *arsenal = application_provider_for(application, actor, QA_ROLE_ARSENAL, "");
+    if (!record->active || record->retired || record->moving ||
+        !qa_actor_id_equal(record->actor, actor) ||
+        !movement_provider(application, actor, &movement, error))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Prediction configuration lost its selected control owner");
+    if (movement->close_pending || !character || !arsenal ||
+        !character->constructed || !character->attached || character->close_pending ||
+        !arsenal->constructed || !arsenal->attached || arsenal->close_pending ||
+        movement_kind(movement->component.clock.kind) != record->state.kind)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Prediction configuration lost an admitted selected role");
+    qa_body_state body;
+    qa_combat_state combat;
+    if (!qa_world_body_read(application->world, actor, &body, error) ||
+        !qa_combat_read_traits(application->combat, actor, &combat, error)) return false;
+    qa_application_control_prediction_configuration result = {
+        .movement = movement->owner, .character = character->owner, .arsenal = arsenal->owner,
+        .input = qa_movement_input_default(record->state.kind, actor),
+        .q2r_pml_origin = record->q2r_pml_origin,
+        .view_angles = record->view_angles, .command_angles = record->command_angles,
+        .ground = record->ground, .view_height = record->view_height,
+        .water_level = record->water_level, .water_type = record->water_type,
+        .q3_character = character->component.clock.kind == QA_CLOCK_Q3,
+        .q3_arsenal = arsenal->component.clock.kind == QA_CLOCK_Q3,
+    };
+    result.input.state = record->state;
+    result.input.profile = record->profile;
+    result.input.shape.bounds = result.input.current_bounds = body.bounds;
+    result.input.has_current_bounds = true;
+    result.input.view_offset = record->view_offset;
+    result.input.environment.health = combat.health;
+    result.input.environment.flight = record->flight;
+    result.input.environment.gravity_multiplier = record->gravity_multiplier;
+    result.input.environment.has_mode = record->player_mode_set;
+    result.input.environment.mode = record->player_mode;
+    result.input.prediction = true;
+    /* The selected character owns standing dimensions and view height. The
+     * actual current body bounds remain a separate snapshot field. */
+    qa_movement_input postures = qa_movement_input_default(
+        result.q3_character ? QA_MOVEMENT_Q3 : QA_MOVEMENT_NETQUAKE, actor);
+    result.input.standing = postures.standing;
+    result.input.crouched = postures.crouched;
+    result.input.dead = postures.dead;
+    result.input.invulnerability_bounds = postures.invulnerability_bounds;
+    if (record->state.kind == QA_MOVEMENT_NETQUAKE)
+        result.input.profile.data.nq.parameters.gravity = application->physics->gravity;
+    else if (record->state.kind == QA_MOVEMENT_QUAKEWORLD)
+        result.input.profile.data.qw.parameters.gravity = application->physics->gravity;
+    *out = result;
+    return true;
+}
+
 bool qa_application_control_camera(const qa_application *application,
                                    qa_actor_id actor,
                                    qa_application_camera_view *out)

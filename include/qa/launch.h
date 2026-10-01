@@ -202,9 +202,11 @@ void qa_launch_instance_lease_release(qa_launch_instance_lease *);
 qa_catalog *qa_launch_instance_catalog(const qa_launch_instance *);
 /* Own a client-only descriptor over a clone of the genuinely prepared view.
  * Opens its selected artifact once and retains that acquisition. This creates
- * metadata only; it never prepares a GAME provider or changes a snapshot. */
+ * metadata only; it never prepares a GAME provider or changes a snapshot.
+ * runtime is the source factory's independently selected client backend. */
 bool qa_launch_instance_prepare_client_metadata(const qa_launch_instance *, qa_catalog *,
-    qa_product_id, qa_vfs *, const char *artifact_path, qa_launch_instance_lease **, qa_error *);
+    qa_product_id, qa_vfs *, const char *artifact_path, qa_program_kind,
+    qa_launch_instance_lease **, qa_error *);
 struct qa_launch_restored_instance;
 /* Takes the actual claimed private content view, including on failure, after
  * the enclosing source owner has decoded and qualified its complete inventory. */

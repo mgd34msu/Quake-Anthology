@@ -15,6 +15,7 @@
 #include "startup_flow.h"
 #include "guest_q3_functions.h"
 #include "qa/persistence_content.h"
+#include "qa/launch_save.h"
 
 static bool state_fail(qa_source_save_io *io, qa_status status, const char *message)
 {
@@ -27,10 +28,10 @@ static bool state_signature(qa_source_save_io *io)
 {
     uint8_t magic[8] = {'Q','A','G','3','S','T',0,0};
     const uint8_t expected[8] = {'Q','A','G','3','S','T',0,0};
-    uint32_t version = 4;
+    uint32_t version = 5;
     return qa_source_save_bytes(io, magic, sizeof(magic)) &&
         qa_source_save_u32(io, &version) &&
-        ((!memcmp(magic, expected, sizeof(magic)) && version == 4) ||
+        ((!memcmp(magic, expected, sizeof(magic)) && version == 5) ||
          state_fail(io, QA_ERROR_FORMAT, "Invalid application Q3 state signature"));
 }
 
@@ -256,6 +257,8 @@ static bool client(qa_source_save_io *io, q3g_client *value)
     FLAG(pending_system_info); FLAG(pending_bot); FLAG(pending_retirement);
     FLAG(disconnect_pending); FLAG(disconnect_started); FLAG(roster_attached);
 #undef FLAG
+    if (!q3g_fire_fields(io, &value->fire) || !q3g_fire_valid(&value->fire, value->actor))
+        return state_fail(io, QA_ERROR_FORMAT, "Invalid original Q3 fire continuation");
     if (!isfinite(value->sensitivity) ||
         (!value->big_configstring && value->big_configstring_length) ||
         (value->connected && (!value->actor.registry || !value->allocated)) ||
@@ -371,7 +374,7 @@ bool application_guest_q3_state_restore(application_provider *provider, qa_bytes
 
 enum { ROLE_INITIALIZED = 1, ROLE_RETIRED = 2, ROLE_READY = 4,
        ROLE_PRIMARY = 8, ROLE_LOCAL_CLIENT = 16, ROLE_COMMITTED = 32,
-       ROLE_NATIVE_CLIENT = 64, ROLE_INIT_SUCCEEDED = 128 };
+       ROLE_NATIVE_CLIENT = 64, ROLE_INIT_SUCCEEDED = 128, ROLE_SOURCE_CLEARED = 256 };
 
 typedef struct saved_artifact {
     char *path;
@@ -389,6 +392,7 @@ typedef struct saved_interface {
 typedef struct saved_descriptor {
     uint64_t catalog, view, artifact_pool, artifact, declaration_pool, declaration;
     qa_product_id product;
+    uint32_t runtime;
     char *path, *component;
     qa_sha256_digest identity;
     qa_vfs_acquisition acquisition;
@@ -403,8 +407,16 @@ typedef struct saved_projection {
     uint64_t serial;
     bool bound;
 } saved_projection;
+typedef struct saved_registry {
+    uint32_t alias, kind, seat;
+    char *source_instance;
+    uint32_t source_seat;
+    qa_bytes cvars;
+    qa_buffer storage;
+    qa_cvars *actual;
+} saved_registry;
 typedef struct saved_role {
-    size_t artifact;
+    size_t artifact, registry;
     uint32_t seat, client, flags;
     qa_actor_owner source_owner;
     uint64_t sequence;
@@ -422,10 +434,12 @@ typedef struct q3g_restore {
     qa_bytes state, cvars;
     char *entity_text;
     uint32_t product;
-    uint64_t sequence;
+    uint64_t sequence, client_generation, connection_epoch;
     size_t game, artifact_count, role_count;
     size_t descriptor_count, current_descriptor;
     saved_descriptor *descriptors;
+    size_t registry_count;
+    saved_registry *registries;
     uint32_t seats[64];
     saved_artifact *artifacts;
     saved_role *roles;
@@ -452,6 +466,11 @@ static void saved_free(q3g_restore *saved)
         qa_launch_instance_lease_release(descriptor->actual);
     }
     free(saved->descriptors);
+    for (size_t i = 0; saved->registries && i < saved->registry_count; ++i) {
+        if (saved->owns_text) free(saved->registries[i].source_instance);
+        qa_buffer_free(&saved->registries[i].storage);
+    }
+    free(saved->registries);
     for (size_t i = 0; saved->roles && i < saved->role_count; ++i) {
         saved_role *role = &saved->roles[i];
         if (saved->owns_text) qa_command_tokens_free(&role->arguments);
@@ -489,13 +508,104 @@ static bool blob(qa_source_save_io *io, qa_bytes *bytes, size_t minimum)
     return qa_source_save_bytes(io, (void *)bytes->data, length);
 }
 
+static bool acquisition(qa_source_save_io *io, qa_vfs_acquisition *value)
+{
+    return (qa_source_save_u64(io, &value->mount) && value->mount &&
+        qa_source_save_u64(io, &value->resource_id) && value->resource_id &&
+        owned_text(io, &value->path) && value->path && *value->path &&
+        owned_text(io, &value->lookup_path) && value->lookup_path && *value->lookup_path &&
+        owned_text(io, &value->link_source) && owned_text(io, &value->link_target) &&
+        ((value->link_source != NULL) == (value->link_target != NULL))) ||
+        state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 actual opening acquisition");
+}
+
+static bool descriptor_fields(qa_source_save_io *io, q3g_restore *saved)
+{
+    if (!qa_source_save_count(io, &saved->descriptor_count, SIZE_MAX / sizeof(*saved->descriptors)) ||
+        !qa_source_save_count(io, &saved->current_descriptor, saved->descriptor_count)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ && saved->descriptor_count) {
+        if (saved->descriptor_count > (io->input.size - io->offset) / 128)
+            return state_fail(io, QA_ERROR_FORMAT, "Truncated Q3 private descriptor inventory");
+        saved->descriptors = calloc(saved->descriptor_count, sizeof(*saved->descriptors));
+        if (!saved->descriptors) return state_fail(io, QA_ERROR_MEMORY, "Restoring Q3 private descriptors");
+    }
+    for (size_t i = 0; i < saved->descriptor_count; ++i) {
+        saved_descriptor *d = saved->descriptors + i;
+        if (!qa_source_save_u64(io, &d->catalog) || !d->catalog ||
+            !qa_source_save_u64(io, &d->view) || !d->view ||
+            !qa_source_save_u32(io, &d->product) || !d->product ||
+            !qa_source_save_u32(io, &d->runtime) ||
+                (d->runtime != QA_PROGRAM_QVM && d->runtime != QA_PROGRAM_NATIVE) ||
+            !owned_text(io, &d->path) || !d->path || !*d->path ||
+            !owned_text(io, &d->component) || !d->component ||
+            !qa_source_save_bytes(io, d->identity.bytes, 32) ||
+            !qa_source_save_u64(io, &d->artifact_pool) || !d->artifact_pool ||
+            !qa_source_save_u64(io, &d->artifact) || !d->artifact ||
+            !qa_source_save_u64(io, &d->declaration_pool) ||
+            !qa_source_save_u64(io, &d->declaration) ||
+            (!!d->declaration_pool != !!d->declaration) ||
+            !acquisition(io, &d->acquisition) || d->acquisition.resource_id != d->artifact ||
+            !qa_source_save_count(io, &d->interface_count, SIZE_MAX / sizeof(*d->interfaces)))
+            return state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 private source descriptor");
+        for (size_t j = 0; j < i; ++j)
+            if (d->view == saved->descriptors[j].view)
+                return state_fail(io, QA_ERROR_FORMAT, "Duplicate Q3 owning descriptor view");
+        if (io->direction == QA_SOURCE_SAVE_READ && d->interface_count) {
+            if (d->interface_count > (io->input.size - io->offset) / 26)
+                return state_fail(io, QA_ERROR_FORMAT, "Truncated Q3 decoder inventory");
+            d->interfaces = calloc(d->interface_count, sizeof(*d->interfaces));
+            if (!d->interfaces) return state_fail(io, QA_ERROR_MEMORY, "Restoring Q3 decoder inventory");
+        }
+        for (size_t j = 0; j < d->interface_count; ++j) {
+            saved_interface *r = d->interfaces + j;
+            if (!owned_text(io, &r->path) || !r->path || !*r->path ||
+                !qa_source_save_u64(io, &r->pool) || !r->pool ||
+                !qa_source_save_u64(io, &r->resource) || !r->resource)
+                return state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 retained decoder resource");
+            for (size_t k = 0; k < j; ++k)
+                if (!strcmp(r->path, d->interfaces[k].path))
+                    return state_fail(io, QA_ERROR_FORMAT, "Duplicate Q3 retained decoder path");
+        }
+    }
+    return true;
+}
+
+static bool registry_fields(qa_source_save_io *io, q3g_restore *saved)
+{
+    if (!qa_source_save_count(io, &saved->registry_count, 128)) return false;
+    if (io->direction == QA_SOURCE_SAVE_READ && saved->registry_count) {
+        if (saved->registry_count > (io->input.size - io->offset) / 12)
+            return state_fail(io, QA_ERROR_FORMAT, "Truncated Q3 canonical client registry inventory");
+        saved->registries = calloc(saved->registry_count, sizeof(*saved->registries));
+        if (!saved->registries) return state_fail(io, QA_ERROR_MEMORY, "Restoring Q3 client registry aliases");
+    }
+    for (size_t i = 0; i < saved->registry_count; ++i) {
+        saved_registry *row = saved->registries + i;
+        if (!qa_source_save_u32(io, &row->alias) || row->alias > 3 ||
+            !qa_source_save_u32(io, &row->kind) || row->kind < QA_QVM_CGAME || row->kind > QA_QVM_UI ||
+            !qa_source_save_u32(io, &row->seat) || (row->alias == 2 && !blob(io, &row->cvars, 12)))
+            return state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 canonical client registry");
+        if (row->alias == 3) {
+            if (!owned_text(io, &row->source_instance) || !row->source_instance || !*row->source_instance ||
+                !qa_source_save_u32(io, &row->source_seat))
+                return state_fail(io, QA_ERROR_FORMAT, "Invalid physical shared client registry reference");
+            for (size_t j = 0; j < i; ++j)
+                if (saved->registries[j].alias == 3 && row->source_seat == saved->registries[j].source_seat &&
+                    !strcmp(row->source_instance, saved->registries[j].source_instance))
+                    return state_fail(io, QA_ERROR_FORMAT, "Duplicate physical shared client registry reference");
+        }
+    }
+    return true;
+}
+
 static uint32_t role_flags(const q3g_role *role)
 {
     uint32_t flags = (role->initialized ? ROLE_INITIALIZED : 0) |
         (role->retired ? ROLE_RETIRED : 0) | (role->ready ? ROLE_READY : 0) |
         (role->primary ? ROLE_PRIMARY : 0) | (role->local_client ? ROLE_LOCAL_CLIENT : 0) |
         (role->committed ? ROLE_COMMITTED : 0) | (role->native_client ? ROLE_NATIVE_CLIENT : 0) |
-        (role->init_succeeded ? ROLE_INIT_SUCCEEDED : 0);
+        (role->init_succeeded ? ROLE_INIT_SUCCEEDED : 0) |
+        (role->source_cleared ? ROLE_SOURCE_CLEARED : 0);
     const q3g_restore *pending = role->engine->restoration;
     if (pending && role->engine->restore_pending)
         for (size_t i = 0; i < pending->role_count; ++i)
@@ -537,15 +647,16 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
 {
     uint8_t magic[8] = {'Q','A','G','3','P','V',0,0};
     const uint8_t expected[8] = {'Q','A','G','3','P','V',0,0};
-    uint32_t version = 5;
+    uint32_t version = 8;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || !qa_source_save_u32(io, &version) ||
-        memcmp(magic, expected, sizeof(magic)) || version != 5 ||
+        memcmp(magic, expected, sizeof(magic)) || version != 8 ||
         !qa_source_save_u32(io, &saved->product) || saved->product > QA_Q3_TEAM_ARENA ||
         !qa_source_save_u64(io, &saved->sequence) || !owned_text(io, &saved->entity_text) ||
         !blob(io, &saved->state, 12))
         return state_fail(io, QA_ERROR_FORMAT, "Invalid coupled Q3 provider envelope");
     bool console = saved->cvars.size != 0;
     if (!qa_source_save_bool(io, &console) || (console && !blob(io, &saved->cvars, 12)) ||
+        !descriptor_fields(io, saved) || !registry_fields(io, saved) ||
         !qa_source_save_count(io, &saved->artifact_count, SIZE_MAX / sizeof(*saved->artifacts)))
         return state_fail(io, QA_ERROR_FORMAT, "Invalid original GAME console continuation");
     if (io->direction == QA_SOURCE_SAVE_READ) {
@@ -561,10 +672,16 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
             !qa_source_save_u32(io, &artifact->abi) || artifact->abi > QA_QVM_Q3_116N ||
             !qa_source_save_bytes(io, artifact->digest.bytes, 32) ||
             !qa_source_save_bytes(io, artifact->primary_digest.bytes, 32) ||
-            !qa_source_save_bytes(io, artifact->equipment_digest.bytes, 32))
+            !qa_source_save_bytes(io, artifact->equipment_digest.bytes, 32) ||
+            !qa_source_save_count(io, &artifact->descriptor, saved->descriptor_count) ||
+            !qa_source_save_u64(io, &artifact->pool) || !artifact->pool ||
+            !qa_source_save_u64(io, &artifact->resource) || !artifact->resource ||
+            !acquisition(io, &artifact->acquisition) ||
+            artifact->resource != artifact->acquisition.resource_id)
             return state_fail(io, QA_ERROR_FORMAT, "Invalid Q3 source artifact declaration");
         for (size_t j = 0; j < i; ++j)
-            if (artifact->kind == saved->artifacts[j].kind && !strcmp(artifact->path, saved->artifacts[j].path))
+            if (artifact->descriptor == saved->artifacts[j].descriptor &&
+                artifact->kind == saved->artifacts[j].kind && !strcmp(artifact->path, saved->artifacts[j].path))
                 return state_fail(io, QA_ERROR_FORMAT, "Duplicate Q3 immutable source artifact");
     }
     if (!qa_source_save_count(io, &saved->role_count, 129) || !saved->role_count ||
@@ -580,11 +697,12 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
     for (size_t i = 0; i < saved->role_count; ++i) {
         saved_role *role = &saved->roles[i];
         if (!qa_source_save_count(io, &role->artifact, saved->artifact_count - 1) ||
+            !qa_source_save_count(io, &role->registry, saved->registry_count) ||
             !qa_source_save_u32(io, &role->seat) || !qa_source_save_u32(io, &role->client) ||
             !qa_source_save_u32(io, &role->source_owner) ||
             !qa_source_save_u64(io, &role->sequence) || !role->sequence || role->sequence > saved->sequence ||
             !qa_source_save_u32(io, &role->owner) || !role->owner ||
-            !qa_source_save_u32(io, &role->flags) || role->flags > 255 || !(role->flags & ROLE_READY) ||
+            !qa_source_save_u32(io, &role->flags) || role->flags > 511 || !(role->flags & ROLE_READY) ||
             ((role->flags & ROLE_INIT_SUCCEEDED) && !(role->flags & ROLE_INITIALIZED)) ||
             ((role->flags & ROLE_INITIALIZED) &&
              (!(role->flags & ROLE_COMMITTED) || (role->flags & ROLE_RETIRED))))
@@ -593,6 +711,9 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
         primaries += (role->flags & ROLE_PRIMARY) != 0;
         games += artifact->kind == QA_QVM_GAME;
         if ((artifact->kind == QA_QVM_GAME) != (saved->game == i + 1) ||
+            (artifact->kind == QA_QVM_GAME) != (role->registry == 0) ||
+            ((role->flags & ROLE_SOURCE_CLEARED) &&
+                (artifact->kind == QA_QVM_GAME || (role->flags & ROLE_LOCAL_CLIENT))) ||
             (artifact->kind == QA_QVM_GAME && !(role->flags & ROLE_PRIMARY)) ||
             ((role->flags & ROLE_LOCAL_CLIENT) ? artifact->kind == QA_QVM_GAME || role->client >= 64 || !role->source_owner
                 : role->client != UINT32_MAX || role->source_owner) ||
@@ -628,8 +749,63 @@ static bool saved_fields(qa_source_save_io *io, q3g_restore *saved)
         }
         if (!blob(io, &role->executor, 160) || !portable_executor(role->executor, io->error)) return false;
     }
+    for (size_t i = 0; i < saved->registry_count; ++i) {
+        bool canonical = false;
+        const saved_registry *row = saved->registries + i;
+        if (row->alias == 1 && !games)
+            return state_fail(io, QA_ERROR_FORMAT, "Client registry aliases an absent GAME owner");
+        for (size_t j = 0; j < saved->role_count; ++j) {
+            const saved_role *role = saved->roles + j;
+            if (role->registry != i + 1) continue;
+            uint32_t kind = saved->artifacts[role->artifact].kind;
+            if (kind == row->kind && role->seat == row->seat) canonical = true;
+            if (kind == QA_QVM_CGAME && row->kind != QA_QVM_CGAME)
+                return state_fail(io, QA_ERROR_FORMAT, "Client registry changes its canonical CGAME scope");
+        }
+        if (!canonical) return state_fail(io, QA_ERROR_FORMAT, "Client registry has no actual canonical source role");
+    }
     return (primaries == 1 && games <= 1 && console == (games == 1)) ||
         state_fail(io, QA_ERROR_FORMAT, "Q3 source inventory has no unique primary/game role");
+}
+
+static bool collect_descriptor(const qa_application_content_graph *graph,
+    const qa_launch_instance *source, saved_descriptor *row, qa_error *error)
+{
+    *row = (saved_descriptor){.source = source,
+        .catalog = qa_application_content_catalog_id(graph, qa_launch_instance_catalog(source)),
+        .view = qa_application_content_view_id(graph, source->content),
+        .product = source->selection.product, .runtime = source->selection.runtime,
+        .path = (char *)source->selection.artifact,
+        .component = (char *)source->selection.component, .identity = source->identity,
+        .interface_count = source->interface_count};
+    if (!row->catalog || !row->view || !source->artifact_acquisition ||
+        !qa_vfs_acquisition_valid(source->content, source->artifact_acquisition, error) ||
+        !qa_application_content_resource_id(graph, source->artifact, &row->artifact_pool, &row->artifact) ||
+        (source->declaration && !qa_application_content_resource_id(graph, source->declaration,
+            &row->declaration_pool, &row->declaration)))
+        return application_fail(error, QA_ERROR_FORMAT, "Q3 private descriptor is absent from actual content inventory");
+    row->acquisition = *source->artifact_acquisition;
+    if (row->interface_count) {
+        if (row->interface_count > SIZE_MAX / sizeof(*row->interfaces))
+            return application_fail(error, QA_ERROR_FORMAT, "Q3 decoder inventory is too large");
+        row->interfaces = calloc(row->interface_count, sizeof(*row->interfaces));
+        if (!row->interfaces) return application_fail(error, QA_ERROR_MEMORY, "Capturing Q3 decoder inventory");
+    }
+    for (size_t i = 0; i < row->interface_count; ++i) {
+        row->interfaces[i].path = (char *)source->interfaces[i].path;
+        if (source->interfaces[i].product != source->selection.product ||
+            !qa_application_content_resource_id(graph, source->interfaces[i].resource,
+                &row->interfaces[i].pool, &row->interfaces[i].resource))
+            return application_fail(error, QA_ERROR_FORMAT, "Q3 decoder leaves its actual source content inventory");
+    }
+    return true;
+}
+
+static size_t descriptor_index(const q3g_restore *saved, const qa_launch_instance *source)
+{
+    for (size_t i = 0; i < saved->descriptor_count; ++i)
+        if (saved->descriptors[i].source->storage == source->storage) return i + 1;
+    return 0;
 }
 
 static bool saved_collect(application_provider *provider, q3g_restore **out, qa_error *error)
@@ -641,19 +817,41 @@ static bool saved_collect(application_provider *provider, q3g_restore **out, qa_
     if (!saved) return application_fail(error, QA_ERROR_MEMORY, "Capturing Q3 source inventory");
     saved->product = engine->product; saved->sequence = engine->role_sequence;
     saved->entity_text = engine->entity_text;
+    qa_application_content_graph *graph = qa_application_content_graph_read(provider->application);
+    if (!graph) { saved_free(saved); return application_fail(error, QA_ERROR_FORMAT, "Q3 source capture lacks actual content inventory"); }
     for (q3g_artifact *a = engine->artifacts; a; a = a->next) ++saved->artifact_count;
     for (q3g_role *r = engine->roles; r; r = r->next) ++saved->role_count;
     if (!saved->artifact_count || !saved->role_count || saved->role_count > 129 ||
-        saved->artifact_count > SIZE_MAX / sizeof(*saved->artifacts)) {
+        saved->artifact_count > SIZE_MAX / sizeof(*saved->artifacts) ||
+        saved->artifact_count >= SIZE_MAX / sizeof(*saved->descriptors)) {
         saved_free(saved); return application_fail(error, QA_ERROR_FORMAT, "Invalid actual Q3 source inventory extent");
     }
     saved->artifacts = calloc(saved->artifact_count, sizeof(*saved->artifacts));
     saved->roles = calloc(saved->role_count, sizeof(*saved->roles));
-    if (!saved->artifacts || !saved->roles) {
+    saved->registries = calloc(saved->role_count, sizeof(*saved->registries));
+    if (!saved->artifacts || !saved->roles || !saved->registries) {
         /* Counts describe allocated cleanup inventories only. */
         if (!saved->artifacts) saved->artifact_count = 0;
         if (!saved->roles) saved->role_count = 0;
         saved_free(saved); return application_fail(error, QA_ERROR_MEMORY, "Capturing Q3 source inventory rows");
+    }
+    saved->descriptors = calloc(saved->artifact_count + 1, sizeof(*saved->descriptors));
+    if (!saved->descriptors) { saved_free(saved); return application_fail(error, QA_ERROR_MEMORY, "Capturing Q3 private metadata owners"); }
+    for (q3g_artifact *a = engine->artifacts; a; a = a->next) {
+        const qa_launch_instance *source = qa_launch_instance_lease_view(a->descriptor);
+        if (!source) { saved_free(saved); return application_fail(error, QA_ERROR_FORMAT, "Q3 artifact lost its true metadata owner"); }
+        if (source->storage == provider->launch->storage || descriptor_index(saved, source)) continue;
+        saved_descriptor *row = saved->descriptors + saved->descriptor_count++;
+        if (!collect_descriptor(graph, source, row, error)) { saved_free(saved); return false; }
+    }
+    if (engine->client_descriptor) {
+        const qa_launch_instance *source = qa_launch_instance_lease_view(engine->client_descriptor);
+        saved->current_descriptor = descriptor_index(saved, source);
+        if (!saved->current_descriptor) {
+            saved_descriptor *row = saved->descriptors + saved->descriptor_count++;
+            if (!collect_descriptor(graph, source, row, error)) { saved_free(saved); return false; }
+            saved->current_descriptor = saved->descriptor_count;
+        }
     }
     size_t i = 0;
     for (q3g_artifact *a = engine->artifacts; a; a = a->next, ++i) {
@@ -661,7 +859,14 @@ static bool saved_collect(application_provider *provider, q3g_restore **out, qa_
             saved_free(saved); return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 native artifact cache requires its actual module owner");
         }
         saved->artifacts[i] = (saved_artifact){.path = a->path, .kind = a->kind,
-            .abi = a->abi, .digest = *qa_qvm_image_digest(a->image), .actual = a};
+            .abi = a->abi, .digest = *qa_qvm_image_digest(a->image), .actual = a,
+            .descriptor = descriptor_index(saved, qa_launch_instance_lease_view(a->descriptor)),
+            .acquisition = a->acquisition};
+        if (!a->resource || !qa_vfs_acquisition_valid(a->view, &a->acquisition, error) ||
+            !qa_application_content_resource_id(graph, a->resource,
+                &saved->artifacts[i].pool, &saved->artifacts[i].resource)) {
+            saved_free(saved); return application_fail(error, QA_ERROR_FORMAT, "Q3 artifact leaves its actual opening inventory");
+        }
         qa_sha256((qa_bytes){a->primary.data, a->primary.size}, &saved->artifacts[i].primary_digest);
         qa_sha256((qa_bytes){a->equipment_presentation.data, a->equipment_presentation.size},
             &saved->artifacts[i].equipment_digest);
@@ -682,6 +887,43 @@ static bool saved_collect(application_provider *provider, q3g_restore **out, qa_
             .source_owner = r->source_owner,
             .flags = role_flags(r), .sequence = r->service_sequence, .owner = r->service_owner,
             .arguments = r->arguments, .actual = r};
+        if (r->kind != QA_QVM_GAME) {
+            qa_cvars *registry = NULL;
+            if (!qa_q3_host_console(r->host, &registry, NULL) || !registry) {
+                saved_free(saved); return application_fail(error, QA_ERROR_FORMAT, "Client role lost its actual registry owner");
+            }
+            size_t index = 0;
+            while (index < saved->registry_count && saved->registries[index].actual != registry) ++index;
+            if (index == saved->registry_count) {
+                saved_registry *record = saved->registries + saved->registry_count++;
+                *record = (saved_registry){.actual = registry, .kind = r->kind, .seat = r->seat,
+                    .alias = registry == provider->application->cvars ? 0 :
+                        registry == application_guest_q3_console_registry(provider) ? 1 : 2};
+                if (record->alias == 2 && provider->application->q3_client_registry_reference) {
+                    const char *instance = NULL;
+                    uint32_t source_seat = 0;
+                    bool found = false;
+                    if (!provider->application->q3_client_registry_reference(provider->application->guest_context,
+                        registry, &instance, &source_seat, &found, error)) { saved_free(saved); return false; }
+                    if (found) {
+                        if (!instance || !*instance) {
+                            saved_free(saved); return application_fail(error, QA_ERROR_FORMAT,
+                                "Shared client registry has no actual source constructor reference");
+                        }
+                        record->alias = 3; record->source_instance = (char *)instance;
+                        record->source_seat = source_seat;
+                    }
+                }
+                if (record->alias == 2 && !qa_cvars_save_capture(registry, &record->storage, error)) {
+                    saved_free(saved); return false;
+                }
+                record->cvars = (qa_bytes){record->storage.data, record->storage.size};
+            } else if (r->kind == QA_QVM_CGAME && saved->registries[index].kind != QA_QVM_CGAME) {
+                saved->registries[index].kind = QA_QVM_CGAME;
+                saved->registries[index].seat = r->seat;
+            }
+            row->registry = index + 1;
+        }
         memcpy(row->keys, r->input_keys, sizeof(row->keys));
         if (r == engine->game) saved->game = i + 1;
         for (guest_projection_actor *p = r->projection ? r->projection->actors : NULL; p; p = p->next)
@@ -789,6 +1031,74 @@ static bool equal_bytes(qa_bytes a, qa_bytes b)
     return a.size == b.size && (!a.size || !memcmp(a.data, b.data, a.size));
 }
 
+static const qa_launch_instance *saved_source(application_provider *provider,
+    const q3g_restore *saved, size_t index)
+{
+    return index ? qa_launch_instance_lease_view(saved->descriptors[index - 1].actual) : provider->launch;
+}
+
+static bool qualify_content(application_provider *provider, q3g_restore *saved, qa_error *error)
+{
+    qa_application_content_graph *graph = qa_application_content_graph_read(provider->application);
+    if (!graph) return application_fail(error, QA_ERROR_FORMAT, "Restored Q3 lacks its actual content graph");
+    for (size_t i = 0; i < saved->descriptor_count; ++i) {
+        saved_descriptor *d = saved->descriptors + i;
+        qa_catalog *catalog = qa_application_content_catalog(graph, d->catalog);
+        qa_vfs *view = qa_application_content_view(graph, d->view);
+        const qa_product *product = qa_catalog_product(catalog, d->product);
+        const qa_resource *artifact = qa_application_content_resource(graph, d->artifact_pool, d->artifact);
+        if (!catalog || !view || !product || product->family != QA_GAME_Q3 || !artifact ||
+            qa_application_content_pool(graph, d->artifact_pool) != qa_vfs_resources(view) ||
+            (d->declaration && (qa_application_content_pool(graph, d->declaration_pool) != qa_vfs_resources(view) ||
+                !qa_application_content_resource(graph, d->declaration_pool, d->declaration))) ||
+            !qa_vfs_acquisition_valid(view, &d->acquisition, error))
+            return application_fail(error, QA_ERROR_FORMAT, "Q3 private descriptor changes its actual retained content");
+        for (size_t j = 0; j < d->interface_count; ++j)
+            if (qa_application_content_pool(graph, d->interfaces[j].pool) != qa_vfs_resources(view) ||
+                !qa_application_content_resource(graph, d->interfaces[j].pool, d->interfaces[j].resource))
+                return application_fail(error, QA_ERROR_FORMAT, "Q3 decoder changes its retained resource pool");
+    }
+    for (size_t i = 0; i < saved->artifact_count; ++i) {
+        saved_artifact *a = saved->artifacts + i;
+        qa_vfs *view = a->descriptor ? qa_application_content_view(graph,
+            saved->descriptors[a->descriptor - 1].view) : provider->launch->content;
+        const qa_resource *resource = qa_application_content_resource(graph, a->pool, a->resource);
+        if (!view || !resource || qa_application_content_pool(graph, a->pool) != qa_vfs_resources(view) ||
+            !qa_sha256_equal(qa_resource_digest(resource), &a->digest) ||
+            strcmp(a->path, a->acquisition.path) || !qa_vfs_acquisition_valid(view, &a->acquisition, error))
+            return application_fail(error, QA_ERROR_FORMAT, "Q3 artifact changes its true opening recipe");
+    }
+    return true;
+}
+
+static bool restore_descriptors(application_provider *provider, q3g_restore *saved, qa_error *error)
+{
+    qa_application_content_graph *graph = qa_application_content_graph_read(provider->application);
+    for (size_t i = 0; i < saved->descriptor_count; ++i) {
+        saved_descriptor *d = saved->descriptors + i;
+        qa_launch_resource *interfaces = d->interface_count ? calloc(d->interface_count, sizeof(*interfaces)) : NULL;
+        if (d->interface_count && !interfaces)
+            return application_fail(error, QA_ERROR_MEMORY, "Restoring true Q3 profile references");
+        for (size_t j = 0; j < d->interface_count; ++j)
+            interfaces[j] = (qa_launch_resource){d->product, d->interfaces[j].path,
+                qa_application_content_resource(graph, d->interfaces[j].pool, d->interfaces[j].resource)};
+        qa_launch_restored_instance value = {.catalog = qa_application_content_catalog(graph, d->catalog),
+            .selection = provider->launch->selection,
+            .artifact = qa_application_content_resource(graph, d->artifact_pool, d->artifact),
+            .declaration = d->declaration ? qa_application_content_resource(graph, d->declaration_pool, d->declaration) : NULL,
+            .artifact_acquisition = &d->acquisition, .interfaces = interfaces,
+            .interface_count = d->interface_count, .identity = d->identity};
+        value.selection.product = d->product; value.selection.artifact = d->path;
+        value.selection.runtime = (qa_program_kind)d->runtime;
+        value.selection.component = d->component;
+        bool ok = qa_application_content_claim_view(graph, d->view, &value.content, error);
+        if (ok) ok = qa_launch_instance_restore_client_metadata(provider->launch, &value, &d->actual, error);
+        free(interfaces);
+        if (!ok) return false;
+    }
+    return true;
+}
+
 static bool prepare_artifact(application_provider *provider, struct application_q3_guest *engine,
                               saved_artifact *saved, bool primary, qa_error *error)
 {
@@ -802,27 +1112,23 @@ static bool prepare_artifact(application_provider *provider, struct application_
     q3g_artifact **tail = &engine->artifacts;
     while (*tail) tail = &(*tail)->next;
     *tail = artifact; saved->actual = artifact;
-    artifact->view = provider->launch->content;
-    if (!qa_launch_instance_retain_metadata(provider->launch, &artifact->descriptor, error)) return false;
+    const qa_launch_instance *source = saved_source(provider, engine->restoration, saved->descriptor);
+    artifact->view = source->content;
+    if (!qa_launch_instance_retain_metadata(source, &artifact->descriptor, error)) return false;
     qa_qvm_compatibility compatibility = {0};
     bool ok;
-    if (primary) {
-        artifact->resource = (qa_resource *)provider->launch->artifact;
-        qa_resource_retain(artifact->resource);
-        if (!artifact->resource || !q3g_acquisition_copy(provider->launch->artifact_acquisition,
-            &artifact->acquisition, error)) return false;
+    artifact->resource = (qa_resource *)qa_application_content_resource(
+        qa_application_content_graph_read(provider->application), saved->pool, saved->resource);
+    qa_resource_retain(artifact->resource);
+    if (!artifact->resource || !q3g_acquisition_copy(&saved->acquisition, &artifact->acquisition, error)) return false;
+    if (primary && source == provider->launch) {
         artifact->image = provider->state.qvm.image;
         qa_qvm_image_retain(artifact->image);
-        ok = provider->launch->declaration ?
-            qa_qvm_compatibility_parse(qa_resource_bytes(provider->launch->declaration), saved->path,
-                qa_qvm_image_digest(artifact->image), artifact->kind, &compatibility, error) :
-            qa_qvm_compatibility_read(provider->launch->content, saved->path,
-                qa_qvm_image_digest(artifact->image), artifact->kind, &compatibility, error);
+        ok = q3g_compatibility(source, saved->path, artifact->image, artifact->kind, primary, &compatibility, error);
     } else {
-        ok = qa_vfs_acquire_receipt(artifact->view, saved->path, &artifact->resource,
-            &artifact->acquisition, error) && qa_qvm_image_load(qa_resource_bytes(artifact->resource),
-                &artifact->image, error) && qa_qvm_compatibility_read(artifact->view, saved->path,
-                    qa_qvm_image_digest(artifact->image), artifact->kind, &compatibility, error);
+        ok = qa_qvm_image_load(qa_resource_bytes(artifact->resource), &artifact->image, error) &&
+            q3g_compatibility(source, saved->path, artifact->image, artifact->kind,
+                !strcmp(saved->path, source->selection.artifact), &compatibility, error);
     }
     if (ok) {
         qa_sha256_digest primary_digest, equipment_digest;
@@ -859,6 +1165,8 @@ static bool qualify_base(application_provider *provider, qa_world *world, q3g_re
         fields(&io, base) && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
     if (ok && (saved->product != (uint32_t)base->product || saved->sequence != base->role_sequence ||
+        (!!saved->current_descriptor != !!base->client_generation) ||
+        (!!saved->current_descriptor != !!base->connection_epoch) ||
         ((saved->entity_text != NULL) != (base->entity_text != NULL)) ||
         (saved->entity_text && strcmp(saved->entity_text, base->entity_text))))
         ok = application_fail(error, QA_ERROR_FORMAT, "Q3 provider envelope changes its nested source identity");
@@ -875,7 +1183,11 @@ static bool qualify_base(application_provider *provider, qa_world *world, q3g_re
             (length && memcmp(base->entity_text, source.data, length)))
             ok = application_fail(error, QA_ERROR_FORMAT, "Q3 entity parser belongs to different immutable map source text");
     }
-    if (ok) memcpy(saved->seats, base->seats, sizeof(saved->seats));
+    if (ok) {
+        memcpy(saved->seats, base->seats, sizeof(saved->seats));
+        saved->client_generation = base->client_generation;
+        saved->connection_epoch = base->connection_epoch;
+    }
     q3g_clients_clear(base); qa_command_tokens_free(&base->arguments);
     free(base->entity_text); free(base);
     return ok;
@@ -909,12 +1221,18 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
     bool ok = qa_source_save_reader(&io, provider->application->session,
         (qa_bytes){saved->storage.data, saved->storage.size}, error) &&
         saved_fields(&io, saved) && qa_source_save_finish(&io, NULL) &&
-        qualify_base(provider, world, saved, product, choices, error);
+        qualify_base(provider, world, saved, product, choices, error) &&
+        qualify_content(provider, saved, error) && restore_descriptors(provider, saved, error);
     qa_source_save_dispose(&io);
     size_t primary = SIZE_MAX;
     for (size_t i = 0; ok && i < saved->role_count; ++i) {
         saved_role *role = saved->roles + i;
         saved_artifact *artifact = saved->artifacts + role->artifact;
+        const qa_launch_instance *source = saved_source(provider, saved, artifact->descriptor);
+        if (artifact->kind == QA_QVM_GAME && artifact->descriptor)
+            ok = application_fail(error, QA_ERROR_FORMAT, "Saved private client descriptor acquired GAME authority");
+        if (artifact->kind != QA_QVM_GAME && artifact->descriptor != saved->current_descriptor)
+            ok = application_fail(error, QA_ERROR_FORMAT, "Saved client role leaves its actual current descriptor");
         if (role->flags & ROLE_PRIMARY) {
             primary = role->artifact;
             uint32_t seat = choices->seat_count ? choices->seats[0].id : UINT32_MAX;
@@ -926,12 +1244,12 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
                         break;
                     }
             }
-            if (strcmp(artifact->path, provider->launch->selection.artifact) ||
-                artifact->kind != (uint32_t)q3g_primary_role(provider->launch->selection.artifact) ||
+            if (strcmp(artifact->path, source->selection.artifact) ||
+                artifact->kind != (uint32_t)q3g_primary_role(source->selection.artifact) ||
                 role->seat != seat)
                 ok = application_fail(error, QA_ERROR_FORMAT, "Q3 primary role differs from its selected source artifact");
         }
-        char identity[65], name[160]; qa_sha256_hex(&provider->launch->identity, identity);
+        char identity[65], name[160]; qa_sha256_hex(&source->identity, identity);
         snprintf(name, sizeof(name), "q3-service:%u:%s:%llu", provider->owner, identity,
             (unsigned long long)role->sequence);
         if (qa_strings_find(qa_session_strings(provider->application->session),
@@ -944,6 +1262,10 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
     }
     struct application_q3_guest *engine = q3g_engine(provider);
     engine->restoration = saved; engine->role_sequence = saved->sequence;
+    engine->client_generation = saved->client_generation;
+    engine->connection_epoch = saved->connection_epoch;
+    if (saved->current_descriptor && !qa_launch_instance_retain_metadata(
+        saved_source(provider, saved, saved->current_descriptor), &engine->client_descriptor, error)) return false;
     qa_cvars *cvars = application_guest_q3_console_registry(provider);
     if ((cvars != NULL) != (saved->game != 0))
         return application_fail(error, QA_ERROR_FORMAT, "Restored original GAME has another private console owner");
@@ -953,8 +1275,10 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
         if (!qa_cvars_save_commit(ticket, error)) { qa_cvars_save_abort(ticket); return false; }
         if (qa_cvars_find(cvars, "sv_cheats"))
             return application_fail(error, QA_ERROR_FORMAT, "Restored original GAME shadows shared engine sv_cheats");
+        qa_command_context command = {.owner = provider->owner, .dialect = QA_CONSOLE_Q3,
+            .origin = QA_COMMAND_SERVER};
         if (!application_startup_source_restore(provider,
-            application_guest_q3_console_owner(provider), cvars, error)) return false;
+            application_guest_q3_console_owner(provider), cvars, &command, error)) return false;
     }
     memcpy(engine->seats, saved->seats, sizeof(engine->seats));
     if (saved->entity_text && !(engine->entity_text = q3g_copy_text(saved->entity_text, error))) return false;
@@ -967,10 +1291,38 @@ bool application_guest_q3_save_prepare(application_provider *provider, qa_world 
         for (size_t i = 0; i < saved->role_count; ++i)
             if (!saved->roles[i].actual && (!next || saved->roles[i].sequence < next->sequence)) next = saved->roles + i;
         saved_artifact *artifact = saved->artifacts + next->artifact;
+        saved_registry *registry = next->registry ? saved->registries + next->registry - 1 : NULL;
+        if (registry) {
+            if (registry->alias == 0) registry->actual = provider->application->cvars;
+            if (registry->alias == 1) registry->actual = cvars;
+            engine->restored_client_registry = registry->actual;
+            engine->restored_client_cvars = registry->actual ? (qa_bytes){0} : registry->cvars;
+            engine->restored_client_role = (qa_qvm_role)registry->kind;
+            engine->restored_client_seat = registry->seat;
+            engine->restored_client_source_instance = registry->source_instance;
+            engine->restored_client_source_seat = registry->source_seat;
+        }
         q3g_role *role = NULL;
-        if (!q3g_role_create_restored(engine, (qa_qvm_role)artifact->kind, next->seat, artifact->path,
-            (next->flags & ROLE_PRIMARY) != 0, next->sequence, next->owner, &role, error)) return false;
+        bool created = q3g_role_create_restored(engine, (qa_qvm_role)artifact->kind, next->seat, artifact->path,
+            (next->flags & ROLE_PRIMARY) != 0, next->sequence, next->owner, &role, error);
+        engine->restored_client_registry = NULL;
+        engine->restored_client_cvars = (qa_bytes){0};
+        engine->restored_client_role = 0;
+        engine->restored_client_seat = 0;
+        engine->restored_client_source_instance = NULL;
+        engine->restored_client_source_seat = 0;
+        if (!created) return false;
         next->actual = role; role->next = engine->roles; engine->roles = role;
+        if (registry) {
+            qa_cvars *actual = NULL;
+            if (!qa_q3_host_console(role->host, &actual, NULL) || !actual ||
+                (registry->actual && registry->actual != actual))
+                return application_fail(error, QA_ERROR_FORMAT, "Restored client leaves its actual canonical registry");
+            for (size_t i = 0; i < saved->registry_count; ++i)
+                if (saved->registries + i != registry && saved->registries[i].actual == actual)
+                    return application_fail(error, QA_ERROR_FORMAT, "Distinct saved client registries collapsed into one owner");
+            registry->actual = actual;
+        }
         if (role->client != next->client || role->source_owner != next->source_owner ||
             role->local_client != ((next->flags & ROLE_LOCAL_CLIENT) != 0) ||
             (role->native_client != NULL) != ((next->flags & ROLE_NATIVE_CLIENT) != 0))
@@ -1009,6 +1361,7 @@ bool application_guest_q3_save_restore(application_provider *provider, qa_bytes 
         role->client = row->client; role->local_client = (row->flags & ROLE_LOCAL_CLIENT) != 0;
         role->retired = (row->flags & ROLE_RETIRED) != 0;
         role->committed = (row->flags & ROLE_COMMITTED) != 0;
+        role->source_cleared = (row->flags & ROLE_SOURCE_CLEARED) != 0;
         if (row->projection_count && (!role->projection || !role->projection->has_inventory))
             return application_fail(error, QA_ERROR_FORMAT, "Q3 source projections lack their actual immutable declaration");
         guest_projection_actor **tail = role->projection ? &role->projection->actors : NULL;

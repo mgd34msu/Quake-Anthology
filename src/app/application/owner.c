@@ -111,6 +111,7 @@ static bool create_application(const qa_application_options *options,
     application->startup_hooks = options->startup_hooks;
     application->q3_services = options->q3_services;
     application->q3_client_prepare = options->q3_client_prepare;
+    application->q3_client_registry_reference = options->q3_client_registry_reference;
     application->q3_client_effect = options->q3_client_effect;
     application->q3_campaign_command = options->q3_campaign_command;
     application->q3_round_services = options->q3_round_services;
@@ -626,6 +627,7 @@ bool qa_application_guest_context_rebind_ready(const qa_application *application
                                                 qa_error *error)
 {
     if (!application || application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
+        application->q1_original_save ||
         !application->session || !application->world || !application->console ||
         !qa_session_safe(application->session) ||
         !qa_session_destroy_ready(application->session) ||
@@ -675,6 +677,7 @@ uint64_t application_frame_revision(const qa_application *application)
 bool qa_application_complete_frame(qa_application *application, qa_error *error)
 {
     if (!application || application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
+        application->q1_original_save ||
         application->publication_started || application->destroy_requested ||
         application->finalizing || application->pending_close ||
         (application->state != QA_APPLICATION_READY &&
@@ -712,7 +715,7 @@ bool qa_application_advance(qa_application *application, uint64_t elapsed_ns,
     bool pending_map = qa_application_travel_read(application, &travel) &&
         travel.target.kind == QA_TRAVEL_MAP;
     if (application == NULL || application->operation != APPLICATION_IDLE || application->q3_round_active || application->frame_preparing ||
-        qa_application_startup_pending(application) || pending_map ||
+        qa_application_startup_pending(application) || pending_map || application->q1_original_save ||
         !application_guests_idle(application) || !application_rankings_idle(application) ||
         application->state != QA_APPLICATION_RUNNING)
         return application_fail(error, QA_ERROR_ARGUMENT,

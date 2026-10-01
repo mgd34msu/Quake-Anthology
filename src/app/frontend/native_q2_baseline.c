@@ -80,7 +80,9 @@ bool frontend_native_q2_baseline_create(void *context, const qa_application_opti
     }
     qa_application_options options=*supplied;
     options.guest_context=frontend; options.native_q2_services=services; options.console_print=console_print;
-    options.q3_services=NULL; options.q3_client_effect=NULL; options.q3_campaign_command=NULL;
+    options.q3_services=NULL; options.q3_client_prepare=NULL; options.q3_client_registry_reference=NULL;
+    options.q3_client_effect=NULL; options.q3_campaign_command=NULL;
+    options.startup_hooks=NULL;
     options.world_change_ready=NULL; options.before_world_change=NULL; options.world_retired=NULL;
     frontend->options.application=options;
     *out=options; *owned_context=baseline; return true;

@@ -21,7 +21,10 @@
 #include "audio_identity_save.h"
 #include "network_q3_restart.h"
 #include "equipment_source.h"
+#include "equipment_q3.h"
 #include "config_store.h"
+#include "client_registry.h"
+#include "native_q3_client.h"
 #include "qa/application_q3_factory.h"
 #include <limits.h>
 #include <stdio.h>
@@ -66,6 +69,7 @@ struct frontend_source_lease {
     qa_q3_host_common_services common;
     qa_console *console;
     qa_cvars *cvars;
+    frontend_client_registry *registry;
     qa_command_context command;
     frontend_equipment_source *equipment;
     qa_application_q3_client_context time_context;
@@ -86,6 +90,8 @@ static bool lease_dispose(frontend_source_lease *lease)
     if (*link!=lease) return false;
     qa_error error={0};
     if (!frontend_equipment_source_destroy(lease->equipment,&error)) return false;
+    lease->equipment=NULL;
+    if (!frontend_client_registry_release(&lease->registry,&error)) return false;
     *link=lease->next;
     free(lease->system_info); free(lease->disconnect_reason); free(lease); return true;
 }
@@ -302,7 +308,12 @@ bool frontend_source_effect(void *context,qa_application *application,qa_actor_o
 {
     qa_frontend *f=context; qa_application_q3_client_context view; uint32_t ordinal;
     if (!f || !application || application!=f->application || f->capture || f->source_restoring ||
-        !text || !qa_application_constructor_seat_ordinal(application,receiver,seat,&ordinal,error) ||
+        !text)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Q3 effect requires its actual frontend receiver lifetime");
+    bool handled=false;
+    if (!frontend_native_q3_effect(f,application,receiver,seat,effect,text,&handled,error)) return false;
+    if (handled) return true;
+    if (!qa_application_constructor_seat_ordinal(application,receiver,seat,&ordinal,error) ||
         ordinal>=f->options.seats || !time_context_read(f,receiver,seat,&view,error))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q3 effect requires its actual frontend receiver lifetime");
     if (effect==QA_APPLICATION_Q3_SYSTEM_INFO) return frontend_source_system_info(f,&view,text,error);
@@ -543,7 +554,11 @@ static bool configuration(void *context, uint8_t out[11332], qa_error *error)
 }
 static bool update_screen(void *context, qa_error *error)
 {
-    qa_frontend *frontend = ((frontend_source *)context)->frontend;
+    frontend_source *source=context;
+    qa_frontend *frontend=source->frontend;
+    bool drawn=false;
+    if (!qa_application_q3_source_loading_screen(source->application,source->owner,
+        source->launch_seat,&drawn,error)) return false;
     if (frontend->cpu) return qa_cpu_execute(frontend->cpu, &frontend->frame, error) && qa_cpu_present_frame(frontend->cpu, error);
     return qa_gl_execute(frontend->gl, &frontend->frame, error) && qa_gl_finish(frontend->gl, error) && qa_display_swap(frontend->display, error);
 }
@@ -772,10 +787,7 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Client keys require the prepared actual GAME profile and registry");
     if (frontend->source_restoring && (!frontend->seats || !frontend->seats[ordinal].input || !frontend->seats[ordinal].console))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "restored source imports require actual stable input and console owners");
-    if ((!frontend->source_restoring && !frontend_scene_sync(frontend, error)) ||
-        !frontend_network_client_services(frontend, application, owner, role, seat, host, error)) return false;
-    if (role == QA_QVM_CGAME && !frontend_network_remote(frontend) && !host->client.gamestate)
-        host->client_time_from_game = true;
+    if (!frontend->source_restoring && !frontend_scene_sync(frontend, error)) return false;
     frontend_source *source = frontend->sources;
     if (frontend->source_restoring) {
         for (; source; source = source->next) {
@@ -832,9 +844,18 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
     }
     lease->next = *link; *link = lease; ++source->leases;
     host->frontend_lifetime = lease; host->release_frontend = release_source;
+    host->keys = source->keys;
+    if (configured && !frontend_network_remote(frontend)) {
+        if (!frontend_config_source_acquire_seat_registry(configured,seat,&lease->registry,error)) return false;
+        host->cvars=frontend_client_registry_cvars(lease->registry); lease->cvars=host->cvars;
+        if (!host->cvars) return frontend_fail(error,QA_ERROR_ARGUMENT,"Client constructor lost its canonical prepared registry");
+    }
+    if (!frontend_network_client_services(frontend,application,owner,role,seat,host,error)) return false;
+    lease->common=host->common; lease->cvars=host->cvars;
+    if (role==QA_QVM_CGAME && !frontend_network_remote(frontend) && !host->client.gamestate)
+        host->client_time_from_game=true;
     host->seat = frontend->seats[ordinal].input;
     host->console_field = qa_seat_console_field(frontend->seats[ordinal].console, false);
-    host->keys = source->keys;
     host->scene_resources = source->images; host->scene_frame = &frontend->frame;
     host->scene_world = frontend->scene_world; host->sound_bank = source->sounds;
     host->presentation = (qa_q3_host_presentation_services){source, source->presentation,
@@ -892,11 +913,21 @@ bool frontend_source_client_prepare(void *context,qa_application *application,
         lease->role!=preparation->role || lease->service_owner!=host->service_owner ||
         host->presentation.seat!=lease->source->presentation)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Client preparation requires its actual constructed frontend role lease");
+    if (lease->registry) {
+        frontend_config_source *configured=preparation->source_console?
+            frontend_config_store_source(f->config_store,preparation->source_console):NULL;
+        if (!configured || host->cvars!=frontend_client_registry_cvars(lease->registry) ||
+            lease->cvars!=host->cvars)
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Client preparation changed its canonical source seat registry");
+        if (preparation->restoring && !frontend_config_source_restore_seat_registry(configured,
+            preparation->seat,lease->registry,NULL,error)) return false;
+    }
     if (preparation->role!=QA_QVM_CGAME) return true;
     if (!preparation->equipment_services || lease->equipment)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Equipment preparation requires its fresh actual CGAME output");
     frontend_equipment_source_options options={.frontend=f,.receiver=preparation->receiver,
-        .seat=preparation->seat,.assets=lease->source->assets,.presentation=lease->source->presentation,
+        .seat=preparation->seat,.physical_seat=lease->source->seat,
+        .assets=lease->source->assets,.presentation=lease->source->presentation,
         .lease=lease,.borrow=equipment_borrow,.current=equipment_current,.release=equipment_release};
     if (!frontend_equipment_source_create(&options,&lease->equipment,error)) return false;
     frontend_equipment_source_services(lease->equipment,preparation->equipment_services);
@@ -1094,6 +1125,7 @@ bool frontend_world_retired(void *context, qa_application *application, qa_error
     }
     if (!frontend_shader_retire(frontend, error)) return false;
     if (!frontend_equipment_retire(frontend,error)) return false;
+    if (!frontend_equipment_q3_retire(frontend,error)) return false;
     frontend_visuals_destroy(frontend);
     if (!frontend_source_retire_world(frontend, error)) return false;
     frontend_particle_retire(frontend);
@@ -1214,6 +1246,20 @@ bool frontend_source_registry_scope_read(const qa_frontend *frontend,const qa_cv
     }
     if (found) *out=scope;
     return found;
+}
+bool frontend_source_client_registry_reference(void *context,const qa_cvars *registry,
+    const char **instance,uint32_t *seat,bool *found,qa_error *error)
+{
+    qa_frontend *frontend=context;
+    if (!frontend || !registry || !instance || !seat || !found)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Client registry reference requires its actual frontend and outputs");
+    *found=false;
+    const frontend_client_registry *owner=frontend_client_registry_lookup(frontend,registry);
+    if (!owner) return true;
+    const qa_launch_instance *source;
+    if (!frontend_client_registry_source(owner,&source,seat) || !source->selection.instance)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Client registry lost its actual retained source constructor");
+    *instance=source->selection.instance; *found=true; return true;
 }
 bool frontend_source_role_media_read(const qa_frontend *frontend,qa_actor_owner receiver,
     qa_qvm_role role,uint32_t launch_seat,uint64_t service_owner,qa_vfs **out)

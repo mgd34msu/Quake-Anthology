@@ -8,6 +8,8 @@
 #include "guest_q3_console.h"
 #include "q3_product.h"
 #include "qa/application_q3_equipment_source.h"
+#include "native_q3_console.h"
+#include "qa/cvars_save.h"
 
 static bool equipment_entity(void *context, const qa_qvm_call *call, int32_t pointer,
     const qa_q3_ref_entity *entity, bool *suppress, qa_error *error)
@@ -98,7 +100,7 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
                           uint64_t saved_sequence, qa_string_id saved_owner,
                           q3g_role **out, qa_error *error)
 {
-    if (!engine || !path || !*path || !out || (unsigned)kind > QA_QVM_UI)
+    if (!engine || engine->constructing_role || !path || !*path || !out || (unsigned)kind > QA_QVM_UI)
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 role artifact");
     *out = NULL;
     if (saved_owner)
@@ -145,10 +147,41 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         role->service_sequence = engine->role_sequence;
     }
     ++engine->calls;
+    engine->constructing_role = role;
+    engine->constructing_equipment_services = &equipment_services;
     bool services_ready = application_q3_guest_services_descriptor(provider->application, provider, descriptor, kind, seat,
         role->service_owner, &options, error);
+    engine->constructing_role = NULL;
+    engine->constructing_equipment_services = NULL;
     --engine->calls;
     if (!services_ready) goto failed;
+    if (saved_owner && kind != QA_QVM_GAME) {
+        if (engine->restored_client_source_instance) {
+            const char *instance = NULL;
+            uint32_t source_seat = 0;
+            bool found = false;
+            if (!provider->application->q3_client_registry_reference) {
+                application_fail(error, QA_ERROR_FORMAT, "Restored shared client registry has no physical owner resolver");
+                goto failed;
+            }
+            if (!provider->application->q3_client_registry_reference(provider->application->guest_context,
+                options.cvars, &instance, &source_seat, &found, error)) goto failed;
+            if (!found || !instance || strcmp(instance, engine->restored_client_source_instance) ||
+                source_seat != engine->restored_client_source_seat) {
+                application_fail(error, QA_ERROR_FORMAT, "Restored client lost its physical shared registry reference");
+                goto failed;
+            }
+        }
+        if (engine->restored_client_registry && options.cvars != engine->restored_client_registry) {
+            application_fail(error, QA_ERROR_FORMAT, "Client construction changed its canonical restored registry alias");
+            goto failed;
+        }
+        if (engine->restored_client_cvars.size) {
+            qa_cvars_restore *ticket = NULL;
+            if (!qa_cvars_save_prepare(options.cvars, engine->restored_client_cvars, &ticket, error)) goto failed;
+            if (!qa_cvars_save_commit(ticket, error)) { qa_cvars_save_abort(ticket); goto failed; }
+        }
+    }
     if (kind == QA_QVM_GAME && !saved_owner && !engine->game &&
         (!application_q3_world_restart_cvars(provider->application, provider, options.cvars, error) ||
          !application_q3_campaign_launch_cvars(provider, options.cvars, role->service_owner, error) ||
@@ -218,14 +251,15 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
     qa_q3_host_client_services bound_client = options.client;
     qa_q3_host_options bound_services = options;
     if (kind != QA_QVM_GAME && provider->application->q3_client_prepare) {
-        application_provider *source = role->client_source;
+        application_provider *source = role->client_source ? role->client_source :
+            q3g_game_source(provider->application);
         qa_console *console = NULL; qa_cvars *cvars = NULL;
         if (source) {
             if (source->kind == APPLICATION_PROVIDER_Q3)
-                application_guest_console_at(source, 0, &console, &cvars, NULL);
+                application_native_q3_console_at(source, &console, &cvars, NULL);
             else {
-                struct application_q3_guest *game = q3g_engine(source);
-                if (game && game->game) console = qa_q3_host_console(game->game->host, &cvars, NULL);
+                console = application_guest_q3_console_owner(source);
+                cvars = application_guest_q3_console_registry(source);
             }
             if (!console || !cvars) {
                 application_fail(error, QA_ERROR_ARGUMENT, "Client preparation lost its actual GAME registry");
@@ -234,20 +268,26 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         }
         qa_application_q3_client_preparation preparation = {
             .receiver_descriptor = descriptor, .game_descriptor = source ? source->launch : NULL,
+            .receiver_catalog = qa_launch_instance_catalog(descriptor),
+            .receiver_product = qa_catalog_product(qa_launch_instance_catalog(descriptor), descriptor->selection.product),
             .receiver = provider->owner, .source_owner = source ? source->owner : 0,
             .role = kind, .seat = seat, .source_client = role->client,
             .source_catalog = source ? source->product_catalog : NULL,
             .source_product = source ? source->product : NULL,
             .source_console = console, .source_cvars = cvars,
             .product_policy = application_q3_product_source_policy(provider->application),
-            .services = &options, .equipment_services = &equipment_services};
+            .services = &options, .equipment_services = &equipment_services,
+            .restoring = engine->restore_pending, .restored_cvars = engine->restored_client_cvars,
+            .cvars_role = engine->restore_pending ? engine->restored_client_role : kind,
+            .cvars_seat = engine->restore_pending ? engine->restored_client_seat : seat};
         ++engine->calls;
         bool prepared = provider->application->q3_client_prepare(provider->application->guest_context,
             provider->application, &preparation, error);
         --engine->calls;
         if (!prepared) goto failed;
         if (options.role != kind || options.owner != provider->owner || options.session != provider->application->session ||
-            options.service_owner != role->service_owner || !options.cvars || !options.console ||
+            options.service_owner != role->service_owner || options.cvars != bound_services.cvars ||
+            options.console != bound_services.console || !options.cvars || !options.console ||
             options.mounts != descriptor->content || options.command_context.owner != provider->owner ||
             options.command_context.seat != seat || options.client.context != bound_client.context ||
             options.client.gamestate != bound_client.gamestate ||

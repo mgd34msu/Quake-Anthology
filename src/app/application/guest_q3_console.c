@@ -134,6 +134,9 @@ static bool read_script(void *context, const qa_command_context *command,
     if (application_startup_source_active(owner->engine->provider))
         return application_startup_script_read(owner->engine->provider, command,
             path, out, lease, error);
+    if (application_startup_source_scripts(owner->engine->provider))
+        return application_startup_source_script_read(owner->engine->provider, owner->console,
+            command, path, out, lease, error);
     qa_vfs *files = qa_application_context_files(owner->engine->provider->application, command, NULL);
     qa_resource *resource = NULL;
     if (!files || !qa_vfs_acquire(files, path, &resource, NULL, error)) return false;
@@ -147,6 +150,10 @@ static void release_script(void *context, void *lease)
     struct application_guest_q3_console *owner = context;
     if (application_startup_source_active(owner->engine->provider)) {
         application_startup_script_release(owner->engine->provider, lease);
+        return;
+    }
+    if (application_startup_source_scripts(owner->engine->provider)) {
+        application_startup_source_script_release(owner->engine->provider, owner->console, lease);
         return;
     }
     qa_resource_release(lease);
@@ -180,6 +187,7 @@ static bool register_engine(struct application_guest_q3_console *owner,
     const char *map_path, qa_error *error)
 {
     static const struct { const char *name, *value; uint32_t flags; } definitions[] = {
+        {"vm_game", "2", QA_CVAR_ARCHIVE},
         {"protocol", "68", QA_CVAR_SERVERINFO | QA_CVAR_READONLY},
         {"sv_pure", "1", QA_CVAR_SYSTEMINFO},
         {"sv_allowDownload", "0", QA_CVAR_SERVERINFO},

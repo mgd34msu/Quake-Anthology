@@ -98,6 +98,7 @@ bool application_guest_clients_drain(application_provider *provider, qa_error *e
             if (ok) { ok = false; first = current; }
             continue;
         }
+        client->fire = (q3g_fire_continuation){0};
         client->actor = (qa_actor_id){0};
         client->allocated = client->connected = client->begun = client->bot = false;
         client->carry_pending = false;

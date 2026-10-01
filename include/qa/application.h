@@ -17,6 +17,7 @@
 #include "qa/application_rankings.h"
 #include "qa/targets.h"
 #include "qa/q3_product_policy.h"
+#include "qa/network_q1.h"
 
 typedef struct qa_application qa_application;
 struct qa_application_q3_round_services;
@@ -151,6 +152,20 @@ typedef struct qa_application_control_view {
     bool flight, cutscene;
 } qa_application_control_view;
 
+/* A copied selected-player seed for private client prediction. Provider IDs
+ * identify the actual admitted roles. No command, source call or world write
+ * is performed; the prediction owner supplies its own scratch and clock. */
+typedef struct qa_application_control_prediction_configuration {
+    qa_actor_owner movement, character, arsenal;
+    qa_movement_input input;
+    qa_vec3 q2r_pml_origin;
+    qa_vec3 view_angles, command_angles;
+    qa_movement_ground ground;
+    float view_height;
+    int32_t water_level, water_type;
+    bool q3_character, q3_arsenal;
+} qa_application_control_prediction_configuration;
+
 typedef struct qa_application_camera_view {
     qa_actor_id actor;
     qa_vec3 origin, angles, view_offset;
@@ -194,6 +209,10 @@ typedef struct qa_application_q3_client_preparation {
 } qa_application_q3_client_preparation;
 typedef bool (*qa_application_q3_client_prepare_fn)(void *, qa_application *,
     const qa_application_q3_client_preparation *, qa_error *);
+/* Qualifies a physical shared registry by its retained source constructor.
+ * found=false leaves genuine provider-private registries with their owner. */
+typedef bool (*qa_application_q3_client_registry_reference_fn)(void *, const qa_cvars *,
+    const char **source_instance, uint32_t *authored_seat, bool *found, qa_error *);
 
 typedef enum qa_application_q3_client_effect {
     QA_APPLICATION_Q3_SYSTEM_INFO,
@@ -238,6 +257,7 @@ typedef struct qa_application_options {
     void *guest_context;
     qa_application_q3_services_fn q3_services;
     qa_application_q3_client_prepare_fn q3_client_prepare;
+    qa_application_q3_client_registry_reference_fn q3_client_registry_reference;
     qa_application_q3_client_effect_fn q3_client_effect;
     qa_application_q3_campaign_command_fn q3_campaign_command;
     const struct qa_application_q3_round_services *q3_round_services;
@@ -340,7 +360,8 @@ typedef enum qa_application_console_kind {
     QA_APPLICATION_CONSOLE_Q3_GAME,
     QA_APPLICATION_CONSOLE_Q3_CGAME,
     QA_APPLICATION_CONSOLE_Q3_UI,
-    QA_APPLICATION_CONSOLE_Q1_GAME
+    QA_APPLICATION_CONSOLE_Q1_GAME,
+    QA_APPLICATION_CONSOLE_Q2_GAME
 } qa_application_console_kind;
 typedef struct qa_application_console_scope {
     qa_actor_owner provider;
@@ -395,12 +416,17 @@ bool qa_application_control_commands(qa_application *, qa_actor_id,
     const qa_movement_command *, size_t count, qa_error *);
 bool qa_application_control_qw_commands(qa_application *, qa_actor_id,
     const qa_movement_command *, size_t count, qa_error *);
+/* Retain the physical NetQuake command until its genuine source actor turn. */
+bool qa_application_control_nq_command(qa_application *, qa_actor_id,
+    uint64_t tick_sequence, const qa_q1_command *, qa_error *);
 /* Preserve the received Q3 words independently of the transport sequence and
  * the actor's selected movement profile. */
 bool qa_application_control_q3_command(qa_application *, qa_actor_id,
     uint64_t transport_sequence, const qa_q3_usercmd *, qa_error *);
 bool qa_application_control_read(const qa_application *, qa_actor_id,
                                  qa_application_control_view *);
+bool qa_application_control_prediction_read(qa_application *, qa_actor_id,
+    qa_application_control_prediction_configuration *, qa_error *);
 bool qa_application_control_camera(const qa_application *, qa_actor_id,
                                    qa_application_camera_view *);
 /* Ends application-owned cinematic suppression without moving the actor.

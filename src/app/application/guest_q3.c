@@ -18,15 +18,20 @@ bool q3g_call(q3g_role *role, int32_t command, const int32_t *arguments, size_t 
                int32_t *result, qa_error *error)
 {
     if (!role || !role->host || role->retired || role->engine->restore_pending ||
+        (role->source_cleared && role->engine->initializing_role != role) ||
         (role->engine->round.phase != Q3G_ROUND_NONE && !role->engine->round.source_entry &&
             !(role->kind == QA_QVM_GAME && role->shutdown_entry && role->engine->calls && command == 6)) ||
         !result || count > 9 || (count && !arguments))
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 guest entry");
     if (!q3g_role_activate(role, error)) return false;
+    q3g_fire_scope fire = {0};
+    if (!q3g_fire_begin(role, &fire, error)) return false;
     bool drawing = role->equipment && role->kind == QA_QVM_CGAME && command == 3;
     ++role->engine->calls;
     if (drawing && !application_q3_equipment_draw_begin(role->equipment, error)) {
         --role->engine->calls;
+        qa_error fire_error = {0};
+        q3g_fire_end(&fire, &fire_error);
         return false;
     }
     bool init = command == (role->kind == QA_QVM_UI ? 1 : 0);
@@ -47,6 +52,11 @@ bool q3g_call(q3g_role *role, int32_t command, const int32_t *arguments, size_t 
     }
     if (drawing) application_q3_equipment_draw_end(role->equipment);
     --role->engine->calls;
+    qa_error fire_error = {0};
+    if (!q3g_fire_end(&fire, &fire_error)) {
+        if (ok && error) *error = fire_error;
+        ok = false;
+    }
     if (init && ok && role->initialized) role->init_succeeded = true;
     return ok;
 }
@@ -75,7 +85,7 @@ static bool begin_frame(void *state, qa_session *session, const qa_source_frame 
     qa_cvars *cvars = NULL;
     qa_q3_host_console(engine->game->host, &cvars, NULL);
     const qa_cvar_view *bots = cvars ? qa_cvars_find(cvars, "bot_enable") : NULL;
-    if (bots && bots->integer && application_bots_runtime(engine->provider->application) &&
+    if (bots && bots->integer && application_bots_guest_runtime(engine->provider->application, engine->provider) &&
         !q3g_call(engine->game, 10, &engine->milliseconds, 1, &result, error)) return false;
     bool ok = q3g_call(engine->game, 8, &engine->milliseconds, 1, &result, error);
     if (ok) ok = application_guest_bots_admit(engine->provider, error);
@@ -205,6 +215,16 @@ bool application_construct_q3_guest(qa_application *application, application_pro
             engine->roles = companion;
         }
     }
+    /* The source client owns its UI helper even when another provider owns
+     * the visible MENU. Selection does not transfer this source lifetime. */
+    if (kind == QA_QVM_CGAME)
+        for (size_t i = 0; i < choices->seat_count; ++i) {
+            if (!q3g_selected_client_seat(provider, choices, QA_QVM_CGAME, i)) continue;
+            q3g_role *ui = NULL;
+            if (!application_guest_q3_source_ui_create(engine, choices->seats[i].id,
+                &ui, error)) return false;
+            ui->next = engine->roles; engine->roles = ui;
+        }
     return true;
 }
 
@@ -358,6 +378,7 @@ bool application_q3_guest_actor_released(application_provider *provider, qa_acto
     for (size_t i = 0; i < 64; ++i)
         if (qa_actor_id_equal(engine->clients[i].actor, actor.id)) {
             q3g_client *client = &engine->clients[i];
+            client->fire = (q3g_fire_continuation){0};
             client->reserved = false;
             if (engine->round.phase == Q3G_ROUND_RETIRING &&
                 (engine->round.carried & (UINT64_C(1) << i))) {

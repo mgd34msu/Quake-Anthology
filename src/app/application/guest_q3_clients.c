@@ -465,7 +465,8 @@ application_provider *q3g_game_source(qa_application *application)
         if (!provider || !provider->launch || strcmp(provider->launch->selection.instance, binding->instance)) continue;
         if (provider->kind == APPLICATION_PROVIDER_Q3) return provider;
         struct application_q3_guest *engine = q3g_engine(provider);
-        if (engine && engine->game) return provider;
+        if (engine && (engine->game || (engine->console &&
+            q3g_primary_role(provider->launch->selection.artifact) == QA_QVM_GAME))) return provider;
     }
     return NULL;
 }

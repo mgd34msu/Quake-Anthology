@@ -4,6 +4,7 @@
 #include "internal.h"
 #include "guest_q3_equipment_profile.h"
 #include "guest_q3_equipment.h"
+#include "guest_q3_fire.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,6 +21,7 @@ typedef struct q3g_snapshot {
 } q3g_snapshot;
 typedef struct q3g_client {
     qa_actor_id actor;
+    q3g_fire_continuation fire;
     char *userinfo;
     char *retirement_reason;
     qa_q3_usercmd command;
@@ -86,7 +88,7 @@ typedef struct q3g_role {
     bool input_keys[256];
     bool initialized, retired, ready, primary, local_client, arguments_scoped;
     bool committed, activation_failed, shutdown_entry;
-    bool init_succeeded;
+    bool init_succeeded, source_cleared;
 } q3g_role;
 typedef enum q3g_round_phase {
     Q3G_ROUND_NONE, Q3G_ROUND_RETIRING, Q3G_ROUND_RESETTING,
@@ -104,6 +106,16 @@ struct application_q3_guest {
     application_provider *provider;
     qa_world *world;
     q3g_role *roles, *game;
+    q3g_role *constructing_role;
+    q3g_role *initializing_role;
+    qa_q3_host_options *constructing_services;
+    qa_application_q3_equipment_services *constructing_equipment_services;
+    qa_bytes restored_client_cvars;
+    qa_cvars *restored_client_registry;
+    qa_qvm_role restored_client_role;
+    uint32_t restored_client_seat;
+    const char *restored_client_source_instance;
+    uint32_t restored_client_source_seat;
     q3g_artifact *artifacts;
     struct application_guest_q3_console *console;
     qa_q3_product product;

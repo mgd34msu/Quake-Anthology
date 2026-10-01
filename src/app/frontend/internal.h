@@ -14,6 +14,7 @@
 #include "qa/q3_presentation.h"
 #include "qa/q3_key.h"
 #include "qa/application_q3_client.h"
+#include "qa/persistence_content.h"
 #include "qa/tools.h"
 #include "qa/http.h"
 #include "qa/llm.h"
@@ -25,6 +26,8 @@
 enum { FRONTEND_HOME = 1, FRONTEND_LIBRARY, FRONTEND_MODS, FRONTEND_SETTINGS, FRONTEND_RANKINGS, FRONTEND_ASSISTANCE, FRONTEND_BINDINGS };
 typedef struct qa_frontend_tools qa_frontend_tools;
 typedef struct qa_frontend_network qa_frontend_network;
+bool frontend_network_content_visit(const qa_frontend *,const qa_application *,const qa_application_content_visitor *,qa_error *);
+bool frontend_source_client_registry_reference(void *,const qa_cvars *,const char **source_instance,uint32_t *,bool *,qa_error *);
 typedef struct frontend_source frontend_source;
 typedef struct frontend_remap frontend_remap;
 typedef struct frontend_visual_owner frontend_visual_owner;
@@ -45,6 +48,8 @@ typedef struct frontend_restart frontend_restart;
 typedef struct frontend_equipment frontend_equipment;
 typedef struct frontend_equipment_q3 frontend_equipment_q3;
 typedef struct frontend_config_store frontend_config_store;
+typedef struct frontend_client_registry frontend_client_registry;
+typedef struct frontend_client_registry_import frontend_client_registry_import;
 typedef struct frontend_cinematic frontend_cinematic;
 typedef struct qa_application_q3_round_cut qa_application_q3_round_cut;
 typedef struct frontend_audio_identity { qa_actor_id actor; uint64_t id; bool retired; } frontend_audio_identity;
@@ -126,6 +131,8 @@ struct qa_frontend {
     frontend_equipment *equipment;
     frontend_equipment_q3 *equipment_q3;
     frontend_config_store *config_store;
+    frontend_client_registry *client_registries;
+    frontend_client_registry_import *client_registry_import;
     frontend_cinematic *cinematic;
     qa_catalog *input_catalog;
     uint64_t next_source_id;
