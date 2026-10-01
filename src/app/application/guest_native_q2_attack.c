@@ -383,6 +383,39 @@ bool application_native_q2_attack_read(struct application_native_q2 *engine, qa_
     if (!qa_attack_next(&p->sequence, &attack, error)) return false;
     *out = attack; return true;
 }
+bool application_native_q2_attack_weapon_read(struct application_native_q2 *engine, uint32_t slot,
+    qa_actor_id actor, qa_item_id *out, qa_error *error)
+{
+    struct application_native_q2_attack *p = engine ? engine->source_attack : NULL;
+    if (!p || !p->items_ready || !engine->provider->state.native.host || !out ||
+        !slot || slot >= 257 || !engine->clients[slot].connected || !engine->clients[slot].begun ||
+        engine->clients[slot].disconnect_started || !qa_actor_id_equal(engine->clients[slot].actor, actor) ||
+        !qa_actors_get(qa_session_actors(engine->provider->application->session), actor) ||
+        !application_native_q2_idle(engine->provider))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native selected weapon requires its prepared physical client and item roster");
+    qa_native_slot_binding binding;
+    qa_native_address entity, client, descriptor;
+    if (!qa_native_slot(instance(p), slot, &binding, error)) return false;
+    if (binding.kind == QA_NATIVE_SLOT_FREE || !qa_actor_id_equal(binding.actor, actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native selected weapon source binding changed its actor");
+    if (!qa_native_entity_address(instance(p), slot, &entity, error)) return false;
+    if (entity > UINT64_MAX - p->client_pointer)
+        return application_fail(error, QA_ERROR_FORMAT, "Native selected weapon client pointer address overflows");
+    if (!pointer_read(p, entity + p->client_pointer, &client, error)) return false;
+    if (!client || client > UINT64_MAX - p->weapon)
+        return application_fail(error, QA_ERROR_FORMAT, "Native selected weapon has no admitted client address");
+    if (!pointer_read(p, client + p->weapon, &descriptor, error)) return false;
+    if (!descriptor) { *out = 0; return true; }
+    const attack_item *selected = NULL;
+    for (size_t i = 0; i < p->count; ++i) if (p->items[i].descriptor == descriptor) {
+        if (selected) return application_fail(error, QA_ERROR_FORMAT, "Native selected weapon repeats its original descriptor");
+        selected = p->items + i;
+    }
+    if (!selected || !selected->item)
+        return application_fail(error, QA_ERROR_FORMAT, "Native selected weapon is outside its qualified canonical roster");
+    *out = selected->item;
+    return true;
+}
 void application_native_q2_attack_released(struct application_native_q2 *engine, qa_actor_id actor)
 {
     struct application_native_q2_attack *p = engine->source_attack;

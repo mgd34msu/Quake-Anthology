@@ -11,6 +11,9 @@ bool application_native_q2_attack_close(struct application_native_q2 *, qa_error
 void application_native_q2_attack_released(struct application_native_q2 *, qa_actor_id);
 bool application_native_q2_attack_read(struct application_native_q2 *, qa_actor_id attacker,
     qa_actor_id inflictor, qa_actor_id target, bool weapon_damage, qa_attack *, qa_error *);
+/* Readonly loan from the already prepared original descriptor roster. */
+bool application_native_q2_attack_weapon_read(struct application_native_q2 *, uint32_t source_slot,
+    qa_actor_id, qa_item_id *, qa_error *);
 bool application_native_q2_attack_capture(struct application_native_q2 *, qa_buffer *, qa_error *);
 bool application_native_q2_attack_restore_prepare(struct application_native_q2 *, qa_bytes,
     struct application_native_q2_attack_restore **, qa_error *);
