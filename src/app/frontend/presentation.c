@@ -3,6 +3,7 @@
 #include "ui_features.h"
 #include "menu_fonts.h"
 #include "qc_rerelease_events.h"
+#include "native_q3_client.h"
 #include <stdio.h>
 
 static qa_scene_family scene_family(qa_game_family family)
@@ -47,7 +48,9 @@ bool frontend_scene_sync(qa_frontend *frontend, qa_error *error)
     memcpy(name, map.name, length + 1);
     qa_resource *resource = map.resource;
     qa_resource_retain(resource);
-    if (!frontend_source_retire_world(frontend, error)) {
+    if (!frontend_native_q3_retire_ready(frontend, error) ||
+        !frontend_source_retire_world(frontend, error) ||
+        !frontend_native_q3_retire_world(frontend, error)) {
         qa_resource_release(resource); free(name);
         qa_scene_world_destroy(world); qa_audio_bank_destroy(sounds);
         qa_material_library_destroy(materials); qa_scene_resources_destroy(images); qa_vfs_destroy(mounts);
@@ -63,7 +66,9 @@ bool frontend_scene_sync(qa_frontend *frontend, qa_error *error)
     frontend->materials = materials; frontend->scene_world = world; frontend->sounds = sounds;
     frontend->map_resource = resource;
     frontend->configuration = configuration; frontend->map_revision = map.revision;
-    return frontend_material_remaps(frontend, frontend->materials, error) && frontend_source_publish_world(frontend, error);
+    return frontend_material_remaps(frontend, frontend->materials, error) &&
+        frontend_source_publish_world(frontend, error) &&
+        frontend_native_q3_publish_world(frontend, error);
 }
 qa_scene_rect frontend_viewport(const qa_frontend *frontend, unsigned seat)
 {

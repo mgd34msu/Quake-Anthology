@@ -14,6 +14,7 @@ typedef struct q3_engine_cvar {
 /* q3ServerCvarDefinitions and collisionMapCvarDefinitions registration order.
  * A NULL default is the actual incoming map identity, not a retained old map. */
 static const q3_engine_cvar engine_cvars[] = {
+    {"vm_game", "2", QA_CVAR_ARCHIVE},
     {"protocol", "68", QA_CVAR_SERVERINFO | QA_CVAR_READONLY},
     {"sv_pure", "1", QA_CVAR_SYSTEMINFO},
     {"sv_allowDownload", "0", QA_CVAR_SERVERINFO},
@@ -164,6 +165,9 @@ static bool read_script(void *context, const qa_command_context *command,
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 script publication has retired");
     if (application_startup_source_active(owner->provider))
         return application_startup_script_read(owner->provider, command, path, out, lease, error);
+    if (application_startup_source_scripts(owner->provider))
+        return application_startup_source_script_read(owner->provider, owner->console,
+            command, path, out, lease, error);
     qa_vfs *files = qa_application_context_files(owner->provider->application, command, NULL);
     qa_resource *resource = NULL;
     if (!files || !qa_vfs_acquire(files, path, &resource, NULL, error)) return false;
@@ -177,6 +181,8 @@ static void release_script(void *context, void *lease)
     struct application_native_q3_console *owner = context;
     if (application_startup_source_active(owner->provider))
         application_startup_script_release(owner->provider, lease);
+    else if (application_startup_source_scripts(owner->provider))
+        application_startup_source_script_release(owner->provider, owner->console, lease);
     else qa_resource_release(lease);
 }
 

@@ -29,6 +29,8 @@
 struct qa_fs_root {
     size_t references;
     int descriptor;
+    dev_t device;
+    ino_t inode;
     char *display_path;
     char *final_path;
 };
@@ -342,6 +344,8 @@ bool qa_fs_root_open(const char *path, qa_fs_root **out, qa_error *error)
     }
     root->references = 1;
     root->descriptor = descriptor;
+    root->device = opened.st_dev;
+    root->inode = opened.st_ino;
     root->display_path = display;
     root->final_path = final;
     *out = root;
@@ -352,6 +356,12 @@ void qa_fs_root_retain(qa_fs_root *root)
 {
     if (root != NULL)
         ++root->references;
+}
+
+bool qa_fs_root_same_object(const qa_fs_root *left, const qa_fs_root *right)
+{
+    return left != NULL && right != NULL
+        && left->device == right->device && left->inode == right->inode;
 }
 
 void qa_fs_root_close(qa_fs_root *root)

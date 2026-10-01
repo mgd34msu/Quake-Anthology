@@ -257,6 +257,10 @@ static bool blob(qa_source_save_io *io,qa_bytes *bytes)
     size_t count=bytes->size;
     if (!qa_source_save_count(io,&count,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX)) return false;
     if (io->direction==QA_SOURCE_SAVE_WRITE) return qa_source_save_bytes(io,(void *)bytes->data,count);
+    if (count>io->input.size-io->offset) {
+        io->failed=true;
+        return fail(io->error,QA_ERROR_FORMAT,"Key profile blob exceeds its admitted section");
+    }
     *bytes=(qa_bytes){io->input.data+io->offset,count}; io->offset+=count; return true;
 }
 static bool header(qa_source_save_io *io,uint64_t *next,uint64_t *active,size_t *count)

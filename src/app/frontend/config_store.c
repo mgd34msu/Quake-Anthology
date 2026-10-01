@@ -479,27 +479,150 @@ static bool registry_carry(frontend_config_source *source,const qa_cvars *previo
     }
     return ok;
 }
+static bool same_text(const char *left,const char *right)
+{ return (!left && !right) || (left && right && !strcmp(left,right)); }
+static bool same_resource(const qa_resource *left,const qa_resource *right)
+{
+    return (!left && !right) || (left && right &&
+        qa_sha256_equal(qa_resource_digest(left),qa_resource_digest(right)));
+}
+static bool primary_source(const qa_launch_snapshot *snapshot,const qa_launch_instance *selected)
+{
+    const qa_launch_binding *entities=qa_launch_binding_for(qa_launch_snapshot_choices(snapshot),
+        (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
+    return entities && !strcmp(entities->instance,selected->selection.instance);
+}
+static bool same_mounts(const qa_vfs *left,const qa_vfs *right)
+{
+    if (!left || !right || qa_vfs_resources(left)!=qa_vfs_resources(right) ||
+        qa_vfs_mount_count(left)!=qa_vfs_mount_count(right) ||
+        qa_vfs_prefix_count(left)!=qa_vfs_prefix_count(right)) return false;
+    for (size_t i=0;i<qa_vfs_mount_count(left);++i) {
+        qa_vfs_mount_info a,b;
+        if (!qa_vfs_mount_at(left,i,&a) || !qa_vfs_mount_at(right,i,&b) ||
+            a.id!=b.id || a.is_archive!=b.is_archive || a.format!=b.format ||
+            a.comparison!=b.comparison || a.writable!=b.writable ||
+            a.user_overlay!=b.user_overlay || a.q3_demo!=b.q3_demo ||
+            !same_text(qa_vfs_mount_path(left,a.id),qa_vfs_mount_path(right,b.id)) ||
+            (!a.is_archive && !qa_fs_root_same_object(qa_vfs_mount_root(left,a.id),
+                qa_vfs_mount_root(right,b.id))) ||
+            qa_vfs_archive(left,a.id)!=qa_vfs_archive(right,b.id)) return false;
+    }
+    for (size_t i=0;i<qa_vfs_prefix_count(left);++i) {
+        const char *a,*b; const qa_mount_id *ao,*bo; size_t ac,bc;
+        if (!qa_vfs_prefix_at(left,i,&a,&ao,&ac) || !qa_vfs_prefix_at(right,i,&b,&bo,&bc) ||
+            !same_text(a,b) || ac!=bc || (ac && memcmp(ao,bo,ac*sizeof(*ao)))) return false;
+    }
+    const qa_sha256_digest *a,*b; size_t ac,bc; bool ad,bd;
+    return qa_vfs_restrictions_read(left,&a,&ac,&ad) && qa_vfs_restrictions_read(right,&b,&bc,&bd) &&
+        ad==bd && ac==bc && (!ac || !memcmp(a,b,ac*sizeof(*a)));
+}
+static bool same_profile(const qa_launch_instance *previous,const qa_launch_instance *selected)
+{
+    const qa_launch_provider *a=&previous->selection,*b=&selected->selection;
+    const qa_product *ap=qa_catalog_product(qa_launch_instance_catalog(previous),a->product);
+    const qa_product *bp=qa_catalog_product(qa_launch_instance_catalog(selected),b->product);
+    if (!ap || !bp || !same_text(ap->key,bp->key) || !same_text(ap->identity,bp->identity) ||
+        !same_text(ap->directory,bp->directory) || !same_text(ap->campaign,bp->campaign) ||
+        ap->family!=bp->family || ap->edition!=bp->edition || ap->builtin!=bp->builtin ||
+        ap->program_kind!=bp->program_kind || !same_text(ap->program,bp->program) ||
+        !same_text(a->instance,b->instance) || a->runtime!=b->runtime ||
+        !same_text(a->implementation,b->implementation) || !same_text(a->artifact,b->artifact) ||
+        !same_text(a->component,b->component) || a->options.size!=b->options.size ||
+        (a->options.size && memcmp(a->options.data,b->options.data,a->options.size)) ||
+        a->clock.kind!=b->clock.kind || a->clock.interval_ns!=b->clock.interval_ns ||
+        a->clock.minimum_frame_ns!=b->clock.minimum_frame_ns ||
+        a->clock.maximum_frame_ns!=b->clock.maximum_frame_ns || a->clock.maximum_steps!=b->clock.maximum_steps ||
+        !same_resource(previous->artifact,selected->artifact) ||
+        !same_resource(previous->declaration,selected->declaration) ||
+        previous->interface_count!=selected->interface_count || previous->behavior_count!=selected->behavior_count ||
+        !same_mounts(previous->content,selected->content)) return false;
+    for (size_t i=0;i<previous->interface_count;++i) {
+        const qa_launch_resource *x=previous->interfaces+i,*y=selected->interfaces+i;
+        const qa_product *xp=qa_catalog_product(qa_launch_instance_catalog(previous),x->product);
+        const qa_product *yp=qa_catalog_product(qa_launch_instance_catalog(selected),y->product);
+        if (!xp || !yp || !same_text(xp->key,yp->key) || !same_text(x->path,y->path) ||
+            !same_resource(x->resource,y->resource)) return false;
+    }
+    for (size_t i=0;i<previous->behavior_count;++i) {
+        const qa_catalog_weapon_behavior *x=previous->behaviors[i],*y=selected->behaviors[i];
+        if (!same_text(x->id,y->id) || x->runtime!=y->runtime || x->role!=y->role ||
+            !same_text(x->artifact_path,y->artifact_path) ||
+            !qa_sha256_equal(&x->declaration_digest,&y->declaration_digest) ||
+            !qa_sha256_equal(&x->artifact_digest,&y->artifact_digest)) return false;
+    }
+    return true;
+}
+static frontend_config_source *previous_source(frontend_config_store *manager,qa_application *application,
+    const qa_launch_snapshot *candidate,const qa_launch_instance *selected)
+{
+    const qa_launch_snapshot *published=qa_application_launch(application);
+    const qa_launch_instance *old=published?qa_launch_snapshot_find(published,selected->selection.instance):NULL;
+    if (!old || !same_profile(old,selected)) return NULL;
+    for (frontend_config_source *source=manager->sources;source;source=source->next) {
+        const qa_launch_instance *retained=instance(source);
+        if (source->application!=application || !source->published || source->imported ||
+            !source->configured || !source->released || source->running || source->phase || !retained ||
+            retained->storage!=old->storage || retained->state!=old->state ||
+            source->primary!=primary_source(candidate,selected)) continue;
+        const qa_launch_choices *choices=qa_launch_snapshot_choices(candidate);
+        if (source->primary && !manager->frontend->options.dedicated &&
+            (!choices || choices->seat_count!=source->seat_count)) return NULL;
+        const qa_launch_binding *movement=qa_launch_binding_for(choices,
+            (qa_launch_scope){.kind=QA_SCOPE_DEFAULT_PLAYER},QA_ROLE_MOVEMENT,"");
+        const qa_launch_instance *movement_source=movement?qa_launch_snapshot_find(candidate,movement->instance):selected;
+        if (!movement_source || (qa_console_dialect)movement_source->selection.clock.kind!=source->movement_dialect)
+            return NULL;
+        for (size_t i=0;i<source->seat_count;++i) {
+            qa_console_dialect movement;
+            if (!choices || i>=choices->seat_count || choices->seats[i].id!=source->seats[i].logical ||
+                !seat_movement(candidate,source->seats[i].logical,&movement,NULL) ||
+                movement!=source->seats[i].movement_dialect) return NULL;
+        }
+        return source;
+    }
+    return NULL;
+}
+bool frontend_config_store_carry_variables(frontend_config_store *manager,qa_application *application,
+    const qa_launch_snapshot *candidate,const qa_launch_instance *selected,qa_cvars *cvars,
+    uint64_t cvar_owner,bool *carried,qa_error *error)
+{
+    if (!manager || !application || !candidate || !selected || !cvars ||
+        cvars==qa_application_cvars(application) || !cvar_owner || !carried ||
+        qa_launch_snapshot_find(candidate,selected->selection.instance)!=selected)
+        return fail(error,QA_ERROR_ARGUMENT,"GAME variable carry requires its fresh physical constructor tuple");
+    *carried=false;
+    frontend_config_source *previous=previous_source(manager,application,candidate,selected);
+    if (!previous) return true;
+    if (!previous->cvars || cvars==previous->cvars ||
+        qa_cvars_dialect(cvars)!=qa_cvars_dialect(previous->cvars) ||
+        !qa_cvars_observer_idle(previous->cvars) || !qa_cvars_observer_idle(cvars))
+        return fail(error,QA_ERROR_ARGUMENT,"GAME variable carry lost its actual idle private registries");
+    const bool q3=qa_cvars_dialect(cvars)==QA_CONSOLE_Q3;
+    for (size_t i=0;i<qa_cvars_count(previous->cvars);++i) {
+        const qa_cvar_view *value=qa_cvars_at(previous->cvars,i);
+        if (equal(value->name,"mapname") || equal(value->name,"sv_mapname") ||
+            (q3 && ((value->flags&QA_CVAR_INIT) || equal(value->name,"sv_cheats")))) continue;
+        uint64_t owner=value->owner==previous->command.owner?previous->command.owner:
+            value->owner?cvar_owner:0;
+        if (!qa_cvars_register(cvars,value->name,value->reset_value,value->flags,owner,value->description,error) ||
+            !qa_cvars_set(cvars,value->name,value->latched_value?value->latched_value:value->value,true,error)) return false;
+    }
+    *carried=true; return true;
+}
 static bool carry(frontend_config_store *manager,qa_application *application,
     const qa_launch_snapshot *candidate,const qa_launch_instance *selected,qa_console *console,
     qa_cvars *cvars,const qa_command_context *command,frontend_config_source **out,qa_error *error)
 {
-    const qa_launch_snapshot *published=qa_application_launch(application);
-    const qa_launch_binding *entities=qa_launch_binding_for(qa_launch_snapshot_choices(published),
-        (qa_launch_scope){.kind=QA_SCOPE_WORLD},QA_ROLE_ENTITIES,"");
-    const qa_launch_instance *old=entities?qa_launch_snapshot_find(published,entities->instance):NULL;
-    qa_console *old_console=NULL; qa_cvars *old_cvars=NULL; qa_command_context old_command;
-    if (!old || !qa_sha256_equal(&old->identity,&selected->identity) ||
-        !qa_application_startup_source_read(application,published,old,&old_console,&old_cvars,&old_command,error))
-        return fail(error,QA_ERROR_ARGUMENT,"Direct source preparation requires its actual unchanged published profile");
-    frontend_config_source *previous=frontend_config_store_source(manager,old_console);
-    if (!previous || !previous->published || !previous->primary || previous->cvars!=old_cvars ||
-        previous->running || !source_context(previous,&old_command))
+    frontend_config_source *previous=previous_source(manager,application,candidate,selected);
+    if (!previous || !previous->cvars || qa_cvars_dialect(previous->cvars)!=qa_cvars_dialect(cvars) ||
+        !qa_cvars_observer_idle(previous->cvars) || !qa_console_idle(previous->console))
         return fail(error,QA_ERROR_ARGUMENT,"Source carry lost its genuine live previous configuration owner");
     frontend_config_source *source=calloc(1,sizeof(*source));
     if (!source) return fail(error,QA_ERROR_MEMORY,"Retaining carried source configuration");
     source->manager=manager; source->application=application; source->candidate=candidate;
     source->console=console; source->cvars=cvars; source->command=*command;
-    source->primary=source->configured=source->released=true;
+    source->primary=previous->primary; source->configured=source->released=true;
     source->movement_dialect=previous->movement_dialect; source->has_mod=previous->has_mod;
     bool ok=qa_launch_instance_retain_metadata(selected,&source->metadata,error) &&
         frontend_config_files_clone(previous->files,&source->files,error) &&
@@ -555,6 +678,11 @@ static bool prepare(void *context,qa_application *application,const qa_launch_sn
     frontend_config_store *manager=context; qa_frontend *f=manager->frontend;
     if (!phase || *phase || !selected || !console || !cvars || !command || frontend_config_store_source(manager,console))
         return fail(error,QA_ERROR_ARGUMENT,"Source configuration requires its fresh actual console and registry");
+    if (previous_source(manager,application,candidate,selected)) {
+        frontend_config_source *carried=NULL;
+        if (!carry(manager,application,candidate,selected,console,cvars,command,&carried,error)) return false;
+        *phase=carried; return true;
+    }
     frontend_config_source *source=calloc(1,sizeof(*source));
     if (!source) return fail(error,QA_ERROR_MEMORY,"Retaining source configuration");
     source->manager=manager; source->application=application; source->candidate=candidate;
@@ -638,9 +766,14 @@ static bool prepare(void *context,qa_application *application,const qa_launch_sn
 static bool advance(void *context,void *phase,qa_console *console,bool *complete,qa_error *error)
 {
     frontend_config_source *source=phase;
-    if (!source || source->manager!=context || source->console!=console || source->released || source->running || !complete)
+    if (!source || source->manager!=context || source->console!=console || source->running || !complete)
         return fail(error,QA_ERROR_ARGUMENT,"Configuration frame has another actual source owner");
     *complete=false;
+    if (source->released) {
+        if (!source->configured || source->phase)
+            return fail(error,QA_ERROR_ARGUMENT,"Carried configuration has no completed actual source state");
+        *complete=true; return true;
+    }
     if (!source->primary) { source->configured=true; *complete=true; return true; }
     source->running=true; bool done=false;
     bool ok=frontend_startup_config_advance(source->phase,console,&done,error);
@@ -903,7 +1036,8 @@ bool frontend_config_store_save(frontend_config_store *manager,qa_error *error)
         qa_command_context command;
         if (!current_command(source,&command,error)) return false;
         const qa_launch_instance *selected=instance(source);
-        const qa_product *product=qa_catalog_product(frontend_config_files_catalog(source->files),selected->selection.product);
+        const qa_product *product=qa_catalog_product(frontend_config_files_catalog(source->files),
+            frontend_config_files_product(source->files));
         const char *owner[3]={"source",product->key,selected->selection.implementation};
         const char *dialects[]={"q1-netquake","q1-quakeworld","q2-classic","q2-rerelease","q3"};
         const char *movement_owner[2]={"movement",dialects[source->movement_dialect]};
@@ -975,6 +1109,10 @@ static bool config_blob(qa_source_save_io *io,qa_bytes *bytes)
     size_t maximum=io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX;
     if (!qa_source_save_count(io,&count,maximum)) return false;
     if (io->direction==QA_SOURCE_SAVE_WRITE) return qa_source_save_bytes(io,(void *)bytes->data,count);
+    if (count>io->input.size-io->offset) {
+        io->failed=true;
+        return fail(io->error,QA_ERROR_FORMAT,"Configuration blob exceeds its admitted section");
+    }
     *bytes=(qa_bytes){io->input.data+io->offset,count}; io->offset+=count; return true;
 }
 static bool registry_bytes(frontend_config_source *source,qa_source_save_io *io,qa_cvars **cvars)
@@ -1223,7 +1361,9 @@ static bool restore_source(void *context,qa_application *application,const qa_la
         source->primary!=(entities && !strcmp(entities->instance,selected->selection.instance)))
         return fail(error,QA_ERROR_FORMAT,"Decoded configuration product or primary role differs from its actual source");
     const qa_launch_choices *choices=qa_launch_snapshot_choices(candidate);
-    if (source->primary && source->seat_count && (!choices || choices->seat_count<source->seat_count))
+    size_t physical_seats=source->primary && !manager->frontend->options.dedicated?
+        manager->frontend->options.seats:0;
+    if (source->seat_count!=physical_seats || !choices || choices->seat_count<source->seat_count)
         return fail(error,QA_ERROR_FORMAT,"Decoded configuration lacks its actual authored seat roster");
     for (size_t i=0;i<source->seat_count;++i) {
         if (!choices || i>=choices->seat_count || source->seats[i].logical!=choices->seats[i].id)

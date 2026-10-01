@@ -16,6 +16,7 @@
 struct qa_fs_root {
     size_t references;
     HANDLE handle;
+    DWORD volume, file_index_high, file_index_low;
 };
 
 struct qa_fs_file {
@@ -367,6 +368,9 @@ bool qa_fs_root_open(const char *path, qa_fs_root **out, qa_error *error)
     }
     root->references = 1;
     root->handle = handle;
+    root->volume = legacy.dwVolumeSerialNumber;
+    root->file_index_high = legacy.nFileIndexHigh;
+    root->file_index_low = legacy.nFileIndexLow;
     *out = root;
     return true;
 }
@@ -375,6 +379,14 @@ void qa_fs_root_retain(qa_fs_root *root)
 {
     if (root != NULL)
         ++root->references;
+}
+
+bool qa_fs_root_same_object(const qa_fs_root *left, const qa_fs_root *right)
+{
+    return left != NULL && right != NULL
+        && left->volume == right->volume
+        && left->file_index_high == right->file_index_high
+        && left->file_index_low == right->file_index_low;
 }
 
 void qa_fs_root_close(qa_fs_root *root)

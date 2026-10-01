@@ -8,6 +8,11 @@
 #include "capture.h"
 #include "campaign.h"
 #include "ui_features.h"
+#include "native_q3_client.h"
+#include "config_store.h"
+#include "keys.h"
+#include "client_registry.h"
+#include "equipment_q3.h"
 
 static bool visit_view(const qa_application_content_visitor *visitor, const qa_vfs *view, qa_error *error)
 {
@@ -81,7 +86,13 @@ bool frontend_content_visit(void *context, const qa_application *application,
         if (!library) break;
         if (!visit_material_catalog(visitor,library,error)) return false;
     }
-    if (!frontend_ui_features_content_visit(frontend,visitor,error) ||
+    if (!frontend_native_q3_content_visit(frontend,visitor,error) ||
+        !frontend_equipment_q3_content_visit(frontend,visitor,error) ||
+        !frontend_client_registries_visit(frontend,visitor,error) ||
+        !frontend_network_content_visit(frontend,application,visitor,error) ||
+        !frontend_keys_visit(frontend->keys,visitor,error) ||
+        !frontend_config_store_visit(frontend->config_store,visitor,error) ||
+        !frontend_ui_features_content_visit(frontend,visitor,error) ||
         !frontend_campaign_content_visit(frontend,visitor,error) ||
         !frontend_tools_content_visit(frontend, visitor, error)) return false;
     if (frontend->seats) for (unsigned i = 0; i < frontend->options.seats; ++i) {

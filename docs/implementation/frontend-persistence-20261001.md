@@ -139,7 +139,7 @@ separate review unit. Original-format command writes bypass the frontend
 capture lease and require the command manager's corresponding admission guard.
 Component-owned Q3 movie continuation remains a separate captured owner.
 
-The PRESENTATION owner now uses schema version 2 with the mandatory QFQD1
+The earlier PRESENTATION schema version 3 introduced the mandatory QFQD1
 debug owner. Its actual per-provider generated lines, source expiry, first
 visible frame, world-text store and reserved capacities survive capture/import.
 Source events dispatch before presentation; the real world audience draws in
@@ -151,11 +151,15 @@ once-per-command prompt hook, four remaining required host imports, and remote
 recipient formatting/private delivery remain separate obligations; this is not
 acceptance of a complete rerelease host.
 
-The genuine player-switch preference helper was independently source accepted
+The genuine player-switch preference helper and its constructor registration were independently source accepted
 against physical QC client binding, canonical userinfo retention and the FTE
 implementation. It reads `w_switch`, then `b_switch` when absent or empty, and
-uses native decimal-prefix semantics. Its constructor registration remains a
-follow-on; the three navigation imports remain open.
+uses native decimal-prefix semantics. The real move-to-point and follow-entity
+imports now delegate to the admitted native bot population's persistent orders,
+preserving full actor bindings and its ERROR/SUCCESS/ACTIVE result. The helper,
+dispatcher and registration were independently source accepted with the actual
+population order, submit, drop and continuation owners. Advanced NPC walkpath
+remains open; no fallback callback claims that capability.
 
 The receipt follow-on stores seen/sequence and physical batch position in the
 actual QC client row, with engine schema version 11. Its mutable receive API
@@ -179,7 +183,81 @@ audience and gain before capture or private import. Requested intro/loop text,
 decoder phase, listener state and actual key continuation remain owned by the
 real source lease.
 
-The AUDIO owner follow-on uses schema version 2 with the mandatory real UI
+The source-group topology follow-on uses QFTP2 and retains physical seat ordinals
+separately from actual launch seat IDs. Actual application callbacks keep their
+launch identity, while array, renderer and audio routing use the physical ordinal.
+The PRESENTATION envelope and owner schema advance together to version 3. This
+follow-on awaits complete source review with the frontend factory and QFSO3 owner.
+
+The current inventory follow-on advances PRESENTATION to version 6, AUDIO
+to version 3 and INPUT to version 3. It records actual native Q3 image, material,
+font, sound-bank and asset-registry owners in physical row order, with distinct
+native audio bus and scene destructor domains. QFQ3 version 4 tags original
+source groups, native client rows and selected-equipment asset owners separately;
+it preserves both physical seat and launch seat IDs. Selected equipment borrows
+its real visual image/material owners and has no fabricated presentation or movie
+owner. Equipment's real held scene enters the capture lease and QFWR3 root inventory;
+its full or subset parsed holder retains the parent's actual resource and VFS
+provenance. Mandatory equipment topology precedes provider construction, and
+decoded visual roots precede binding and held-root adoption. These new helpers
+and aggregate callers remain under implementation and await full source review.
+Native QFNT1 topology retains the complete actual native GAME metadata recipe,
+private view, animation resource dictionary and opaque reader/client children.
+Its restored rows bind actual saved COMMANDS callbacks before COMMANDS import,
+then own claimed media heaps. After core guest restore finishes, the aggregate
+acquires each row's real reader and canonical registry, prepares its owned
+composition and imports private children under that row's asset capture lease.
+The native adapter and composition producers still require complete review.
+
+QFMI2 now records genuine held-model subsets through a prior physical parent
+holder. A subset owns its mesh descriptor and ordered triangles; it borrows the
+parent's actual source, frames, skins, tags and mesh arrays. Parent dependency
+references preserve those allocations independently of consumer leases during
+partial decode, installation and retirement. The three-file model/scene
+inventory follow-on was independently source accepted. Native metadata now has
+a separate pure producer that qualifies the full saved recipe against the
+actual restored native GAME storage before retaining saved roles. That producer
+and the moving native frontend aggregate require their own reviews. Immutable
+metadata and animation receipts use retained mounted-resource qualification;
+they do not reopen loose files. The native topology/metadata packet is frozen
+for its independent source review. Selected private restoration received a
+separate bounded review: its actual asset capture begins after registry import
+and ends on success or failure.
+
+Mandatory INPUT prefixes restore the actual key roster, configuration manager
+and canonical client registry roster before provider constructors. The manager
+is decoded into the same empty owner whose hook context the application retains.
+QFCR1 is the sole payload for shared client QACV; source and native leases bind
+that real heap rather than importing copies. Final validation qualifies all
+three prefixes after actual source bindings. These aggregate callers await
+complete independent source review.
+
+The original QC startup factory now prepares the genuine private engine, console
+and registry before instance creation. Ordinary construction reuses those owners
+and preserves startup mutations; it invokes the actual preinit hook before VM
+creation and derives spawn exclusion from the retained source rules. Script reads
+select the active startup phase, then the installed configuration manager, then
+the original VFS reader. Imported source registries bind their actual manager
+after complete engine import. Prepared and installed console retirement runs
+before the registry is freed. The eight-file factory/order unit and actual
+provider preparation and unconstructed cleanup callers were independently
+source accepted. Wider startup flow, portable restore manager staging and
+complete rerelease admission remain separate obligations.
+
+Original import now owns an exact copy of header values, source pairs, edicts,
+lightstyles and extension bytes across the real startup phase. Begin constructs
+the selected fresh application and genuine frontend destinations before source
+startup; advance runs that startup once per outer driver boundary. After it
+finishes, raw source import runs once before gameplay or rankings. The operation
+then captures the actual fresh owners and uses the shared native publication
+transaction. The active frontend suspends ordinary stepping and input polling
+while preparation holds its native guards. Only the operation's final capture
+and publication cut admits capture; pending startup stays excluded. Cancellation
+and retirement retain rejected source and final candidate heaps independently.
+The four lower producer/API files and the command-manager integration were
+independently source accepted with the actual pending-stage guards and driver.
+
+The AUDIO owner follow-on uses schema version 3 with the mandatory real UI
 feature continuation. Its assets join the same immutable bank/voice inventory;
 the restored engine has the actual frontend observer and stable context before
 private import. Feature import follows actual seats and engine restoration and

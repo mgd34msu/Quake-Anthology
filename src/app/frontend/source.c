@@ -26,6 +26,8 @@
 #include "client_registry.h"
 #include "native_q3_client.h"
 #include "qa/application_q3_factory.h"
+#include "qa/application_q3_scene_world.h"
+#include "qa/q3_presentation_save.h"
 #include <limits.h>
 #include <stdio.h>
 
@@ -82,6 +84,7 @@ struct frontend_source_lease {
     bool time_bound, released;
 };
 static void source_retry_retirement(frontend_source *);
+static bool source_publish_backend(frontend_source *,qa_error *);
 static bool lease_dispose(frontend_source_lease *lease)
 {
     if (lease->time_busy || !frontend_equipment_source_idle(lease->equipment)) return false;
@@ -865,7 +868,7 @@ bool frontend_source_services(void *context, qa_application *application, qa_act
         (host->common.client_command || frontend_network_remote(frontend)) ? common_command : NULL, host->common.installed_mods ? common_mods : NULL,
         common_clipboard};
     if (frontend->source_restoring) return true;
-    return frontend_source_publish_world(frontend, error) &&
+    return source_publish_backend(source, error) &&
         qa_q3_presentation_frame(source->presentation, &frontend->frame,
             (qa_scene_rect){0, 0, frontend->width, frontend->height}, error);
 }
@@ -1002,8 +1005,65 @@ void frontend_source_rebind(qa_frontend *owned, qa_frontend *destination)
             frontend_equipment_source_rebind(lease->equipment,destination);
     }
 }
+static qa_application_q3_scene_role source_scene_role(const frontend_source_lease *lease)
+{
+    return (qa_application_q3_scene_role){.receiver=lease->source->owner,.role=lease->role,
+        .seat=lease->source->launch_seat,.service_owner=lease->service_owner,.frontend_lifetime=lease};
+}
+static bool source_worlds_ready(qa_frontend *frontend,qa_scene_world *destination,
+    bool restored,qa_error *error)
+{
+    if (!frontend || !frontend->application || frontend->capture)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Source world exchange requires idle installed frontend owners");
+    for (frontend_source *source=frontend->sources;source;source=source->next) {
+        qa_q3_presentation_binding binding;
+        if (!source->constructed || source->frontend!=frontend || source->application!=frontend->application ||
+            source->role_operations || !qa_q3_presentation_idle(source->presentation))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Source world exchange leaves its actual backend owner");
+        if (!qa_q3_presentation_binding_read(source->presentation,&binding,error)) return false;
+        if (binding.options.context!=source || binding.options.owner!=source->identity ||
+            binding.options.seat!=source->seat || binding.options.assets!=source->assets ||
+            (!restored && destination && binding.world && binding.world!=destination))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Source backend retains a different renderer world");
+        qa_scene_world *target=restored?binding.world:destination;
+        size_t held=0;
+        for (frontend_source_lease *lease=source->lease_list;lease;lease=lease->next) {
+            if (lease->source!=source || lease->released || lease->time_busy || !lease->service_owner ||
+                (lease->role!=QA_QVM_CGAME && lease->role!=QA_QVM_UI))
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Source world exchange leaves its linked role lease");
+            qa_application_q3_scene_role role=source_scene_role(lease);
+            const qa_scene_world *current=NULL;
+            if (!qa_application_q3_scene_world_read(source->application,&role,&current,error)) return false;
+            if (current && current!=binding.world && current!=target)
+                return frontend_fail(error,QA_ERROR_ARGUMENT,"Source host retains an unrelated renderer world");
+            if (!qa_application_q3_scene_world_rebind_ready(source->application,&role,current,target,error)) return false;
+            ++held;
+        }
+        if (held!=source->leases)
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Source world exchange differs from its physical role roster");
+    }
+    return true;
+}
+static void source_worlds_bind(qa_frontend *frontend,qa_scene_world *destination,bool restored)
+{
+    for (frontend_source *source=frontend->sources;source;source=source->next) {
+        qa_q3_presentation_binding binding;
+        if (restored) (void)qa_q3_presentation_binding_read(source->presentation,&binding,NULL);
+        for (frontend_source_lease *lease=source->lease_list;lease;lease=lease->next) {
+            qa_application_q3_scene_role role=source_scene_role(lease);
+            qa_application_q3_scene_world_rebind(source->application,&role,restored?binding.world:destination);
+        }
+    }
+}
+bool frontend_source_worlds_rebind_restored(qa_frontend *frontend,qa_error *error)
+{
+    if (!source_worlds_ready(frontend,frontend?frontend->scene_world:NULL,true,error)) return false;
+    source_worlds_bind(frontend,NULL,true); return true;
+}
 bool frontend_source_retire_world(qa_frontend *frontend, qa_error *error)
 {
+    if (!source_worlds_ready(frontend,NULL,false,error)) return false;
+    source_worlds_bind(frontend,NULL,false);
     for (frontend_source *source = frontend->sources; source; source = source->next) {
         if (!qa_q3_presentation_retire_world(source->presentation, error)) return false;
         if (source->music_attached) {
@@ -1068,14 +1128,21 @@ bool frontend_source_reset_round(qa_frontend *frontend, qa_actor_owner owner, qa
     }
     return true;
 }
-bool frontend_source_publish_world(qa_frontend *frontend, qa_error *error)
+static bool source_publish_backend(frontend_source *source,qa_error *error)
 {
+    qa_frontend *frontend=source->frontend;
     qa_bsp_view bsp;
     if (!frontend->scene_world || !frontend->map_resource) return true;
     if (!qa_bsp_open(qa_resource_bytes(frontend->map_resource), &bsp, error)) return false;
+    return qa_q3_presentation_world(source->presentation,frontend->scene_world,
+        qa_world_geometry(qa_application_world(source->application)),bsp.lumps[QA_BSP_ENTITIES].bytes,error);
+}
+bool frontend_source_publish_world(qa_frontend *frontend, qa_error *error)
+{
+    if (!source_worlds_ready(frontend,frontend?frontend->scene_world:NULL,false,error)) return false;
     for (frontend_source *source = frontend->sources; source; source = source->next)
-        if (!qa_q3_presentation_world(source->presentation, frontend->scene_world,
-            qa_world_geometry(qa_application_world(source->application)), bsp.lumps[QA_BSP_ENTITIES].bytes, error)) return false;
+        if (!source_publish_backend(source,error)) return false;
+    source_worlds_bind(frontend,frontend->scene_world,false);
     return true;
 }
 bool frontend_source_frame(qa_frontend *frontend, uint32_t seat, qa_scene_rect rect, qa_error *error)

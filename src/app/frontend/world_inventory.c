@@ -1,5 +1,8 @@
 #include "world_inventory.h"
 #include "visual_restore.h"
+#include "native_q3_client.h"
+#include "equipment_media.h"
+#include "equipment_q3.h"
 #include "save_private.h"
 #include "qa/material_library_save.h"
 #include "qa/scene_resource_save.h"
@@ -58,6 +61,10 @@ static bool heap_read(const qa_frontend *f, root_heap heap, const qa_vfs **files
         frontend_visual_owner_view owner;
         if (heap.ordinal>SIZE_MAX || !frontend_visual_owner_read(f,(size_t)heap.ordinal,&owner)) return false;
         *files=owner.mounts; *images=owner.images; *materials=owner.materials;
+    } else if (heap.kind == 3) {
+        frontend_native_q3_view owner; qa_error error={0};
+        if (heap.ordinal>SIZE_MAX || !frontend_native_q3_read(f,(size_t)heap.ordinal,&owner,&error)) return false;
+        *files=owner.mounts; *images=owner.images; *materials=owner.materials;
     } else return false;
     return *files && *images && *materials && qa_scene_resources_files(*images)==*files &&
         qa_material_library_resource_owner(*materials)==*images;
@@ -66,8 +73,9 @@ static bool heap_find(frontend_world_inventory *inventory,const qa_vfs *files,
     qa_scene_resources *images,qa_material_library *materials,root_heap *out,qa_error *error)
 {
     qa_frontend *f=inventory->frontend;
-    for (uint32_t kind=0;kind<3;++kind) {
-        size_t count=kind==0?1:kind==1?frontend_source_group_count(f):frontend_visual_owner_count(f);
+    for (uint32_t kind=0;kind<4;++kind) {
+        size_t count=kind==0?1:kind==1?frontend_source_group_count(f):
+            kind==2?frontend_visual_owner_count(f):frontend_native_q3_count(f);
         for (size_t i=0;i<count;++i) {
             root_heap heap={kind,i,0}; const qa_vfs *actual_files=NULL;
             qa_scene_resources *actual_images=NULL; qa_material_library *actual_materials=NULL;
@@ -110,7 +118,9 @@ static bool owner_shape(frontend_scene_owner owner,bool world)
 {
     if (owner.kind==FRONTEND_SCENE_OWNER_FRONTEND) return world && !owner.owner && !owner.row;
     return owner.owner && owner.row && (owner.kind==FRONTEND_SCENE_OWNER_Q3 ||
-        (!world && owner.kind==FRONTEND_SCENE_OWNER_VISUAL));
+        owner.kind==FRONTEND_SCENE_OWNER_NATIVE_Q3 || owner.kind==FRONTEND_SCENE_OWNER_SELECTED_Q3 || (!world &&
+        (owner.kind==FRONTEND_SCENE_OWNER_VISUAL ||
+         (owner.kind==FRONTEND_SCENE_OWNER_EQUIPMENT && owner.row==1))));
 }
 static bool world_claim(frontend_world_inventory *inventory,const qa_scene_world *world,
     frontend_scene_owner owner,qa_error *error)
@@ -173,6 +183,49 @@ static bool owners_capture(frontend_world_inventory *inventory,qa_error *error)
                 if (!alias && !model_claim(inventory,model.scenes[k],owner,NULL,error)) return false;
             }
         }
+    }
+    for (size_t i=0;i<frontend_native_q3_count(f);++i) {
+        frontend_native_q3_view native;
+        if (!frontend_native_q3_read(f,i,&native,error) || !native.assets) return false;
+        size_t count=0;
+        if (!qa_q3_assets_model_count(native.assets,&count,error)) return false;
+        for (size_t j=0;j<count;++j) {
+            qa_q3_asset_model_holder model;
+            if (!qa_q3_assets_model_holder(native.assets,j,&model,error)) return false;
+            if (!model.present) continue;
+            frontend_scene_owner owner={FRONTEND_SCENE_OWNER_NATIVE_Q3,i+1,j+1};
+            if (model.owns_world && (!model.world || !world_claim(inventory,model.world,owner,error))) return false;
+            for (unsigned k=0;k<3;++k) if (model.scenes[k]) {
+                bool alias=false;
+                for (unsigned p=0;p<k;++p) if (model.scenes[p]==model.scenes[k]) alias=true;
+                if (!alias && !model_claim(inventory,model.scenes[k],owner,NULL,error)) return false;
+            }
+        }
+    }
+    for (size_t i=0;i<frontend_equipment_q3_count(f);++i) {
+        frontend_equipment_q3_owner_view selected;
+        if (!frontend_equipment_q3_at(f,i,&selected,error) || !selected.assets) return false;
+        size_t count=0;
+        if (!qa_q3_assets_model_count(selected.assets,&count,error)) return false;
+        for (size_t j=0;j<count;++j) {
+            qa_q3_asset_model_holder model;
+            if (!qa_q3_assets_model_holder(selected.assets,j,&model,error)) return false;
+            if (!model.present) continue;
+            frontend_scene_owner owner={FRONTEND_SCENE_OWNER_SELECTED_Q3,i+1,j+1};
+            if (model.owns_world && (!model.world || !world_claim(inventory,model.world,owner,error))) return false;
+            for (unsigned k=0;k<3;++k) if (model.scenes[k]) {
+                bool alias=false;
+                for (unsigned p=0;p<k;++p) if (model.scenes[p]==model.scenes[k]) alias=true;
+                if (!alias && !model_claim(inventory,model.scenes[k],owner,NULL,error)) return false;
+            }
+        }
+    }
+    for (size_t i=0;i<frontend_equipment_media_count(f);++i) {
+        frontend_equipment_media_view media;
+        if (!frontend_equipment_media_at(f,i,&media) || !media.declaration) return false;
+        if (media.declaration->none) continue;
+        if (!media.held_scene || !model_claim(inventory,media.held_scene,
+                (frontend_scene_owner){FRONTEND_SCENE_OWNER_EQUIPMENT,i+1,1},NULL,error)) return false;
     }
     return true;
 }
@@ -311,7 +364,7 @@ bool frontend_world_inventory_capture(qa_frontend *f,const frontend_scene_invent
 static bool owner_fields(qa_source_save_io *io,frontend_scene_owner *owner,bool world)
 {
     uint32_t kind=owner->kind;
-    if (!qa_source_save_u32(io,&kind) || kind>FRONTEND_SCENE_OWNER_VISUAL ||
+    if (!qa_source_save_u32(io,&kind) || kind>FRONTEND_SCENE_OWNER_SELECTED_Q3 ||
         !qa_source_save_u64(io,&owner->owner) || !qa_source_save_u64(io,&owner->row)) return false;
     owner->kind=(frontend_scene_owner_kind)kind; return owner_shape(*owner,world);
 }
@@ -393,9 +446,9 @@ static bool rows_fields(qa_source_save_io *io,frontend_world_inventory *inventor
 }
 static bool header(qa_source_save_io *io,size_t *worlds,size_t *models)
 {
-    uint8_t magic[4]={'Q','F','W','R'}; uint32_t version=1;
+    uint8_t magic[4]={'Q','F','W','R'}; uint32_t version=3;
     size_t maximum=io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFWR",4) && qa_source_save_u32(io,&version) && version==1 &&
+    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFWR",4) && qa_source_save_u32(io,&version) && version==3 &&
         qa_source_save_count(io,worlds,maximum) && qa_source_save_count(io,models,maximum);
 }
 bool frontend_world_inventory_checkpoint(const frontend_world_inventory *inventory,qa_buffer *out,qa_error *error)

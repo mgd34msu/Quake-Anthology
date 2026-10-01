@@ -1,6 +1,7 @@
 #include "material_inventory.h"
 #include "capture.h"
 #include "visual_restore.h"
+#include "native_q3_client.h"
 #include "save_private.h"
 #include "qa/material_library_save.h"
 #include "qa/material_save.h"
@@ -8,7 +9,7 @@
 #include "qa/q3_assets_save.h"
 #include "qa/scene_resource_save.h"
 
-typedef enum material_owner_kind { MATERIAL_FRONTEND, MATERIAL_SOURCE, MATERIAL_VISUAL } material_owner_kind;
+typedef enum material_owner_kind { MATERIAL_FRONTEND, MATERIAL_SOURCE, MATERIAL_VISUAL, MATERIAL_NATIVE_Q3 } material_owner_kind;
 typedef struct material_owner {
     qa_material_library *library;
     qa_scene_resources *images;
@@ -45,18 +46,25 @@ static bool provider_at(const qa_frontend *f,size_t ordinal,qa_q3_presentation_p
         return true;
     }
     ordinal-=groups;
-    frontend_visual_owner_view visual;
-    if (!frontend_visual_owner_read(f,ordinal,&visual)) return false;
-    *provider=(qa_q3_presentation_provider){visual.mounts,visual.images,visual.materials,visual.family}; return true;
+    size_t visuals=frontend_visual_owner_count(f);
+    if (ordinal<visuals) {
+        frontend_visual_owner_view visual;
+        if (!frontend_visual_owner_read(f,ordinal,&visual)) return false;
+        *provider=(qa_q3_presentation_provider){visual.mounts,visual.images,visual.materials,visual.family}; return true;
+    }
+    ordinal-=visuals;
+    frontend_native_q3_view native; qa_error error={0};
+    if (!frontend_native_q3_read(f,ordinal,&native,&error)) return false;
+    *provider=(qa_q3_presentation_provider){native.mounts,native.images,native.materials,QA_SCENE_Q3}; return true;
 }
 bool frontend_material_provider_encode(const qa_frontend *f,const qa_q3_presentation_provider *provider,
     uint64_t *key,qa_error *error)
 {
     if (!f || !provider || !key || provider->family>QA_SCENE_Q3)
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q3 provider lookup requires actual frontend heaps");
-    size_t groups=frontend_source_group_count(f),visuals=frontend_visual_owner_count(f);
-    if (groups==SIZE_MAX || visuals>SIZE_MAX-groups-1) return false;
-    size_t count=(f->materials?1:0)+groups+visuals;
+    size_t groups=frontend_source_group_count(f),visuals=frontend_visual_owner_count(f),native=frontend_native_q3_count(f);
+    if (groups==SIZE_MAX || visuals>SIZE_MAX-groups-1 || native>SIZE_MAX-groups-visuals-1) return false;
+    size_t count=(f->materials?1:0)+groups+visuals+native;
     for (size_t i=0;i<count;++i) {
         qa_q3_presentation_provider actual;
         if (provider_at(f,i,&actual) && actual.mounts==provider->mounts && actual.images==provider->images &&
@@ -102,10 +110,11 @@ static bool collect(qa_frontend *f, bool restoring, material_owner **out, size_t
         return error && error->code!=QA_OK?false:
             frontend_fail(error,QA_ERROR_ARGUMENT,"Material import requires completely constructed idle borrowers");
     qa_application_content_graph *graph=qa_application_content_graph_read(f->application);
-    size_t groups=frontend_source_group_count(f), visuals=frontend_visual_owner_count(f);
-    if (!graph || groups==SIZE_MAX || visuals>SIZE_MAX-groups-1 || groups+visuals+1>SIZE_MAX/sizeof(material_owner))
+    size_t groups=frontend_source_group_count(f), visuals=frontend_visual_owner_count(f),native=frontend_native_q3_count(f);
+    if (!graph || groups==SIZE_MAX || visuals>SIZE_MAX-groups-1 || native>SIZE_MAX-groups-visuals-1 ||
+        groups+visuals+native+1>SIZE_MAX/sizeof(material_owner))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Material inventory requires its bounded genuine content graph");
-    material_owner *owners=calloc(groups+visuals+1,sizeof(*owners));
+    material_owner *owners=calloc(groups+visuals+native+1,sizeof(*owners));
     if (!owners) return frontend_fail(error,QA_ERROR_MEMORY,"Collecting actual material library owners");
     bool ok=append(owners,count,graph,f->materials,f->images,f->mounts,MATERIAL_FRONTEND,0,0,0,NULL,0,error);
     for (size_t i=0;ok && i<groups;++i) {
@@ -120,6 +129,14 @@ static bool collect(qa_frontend *f, bool restoring, material_owner **out, size_t
         ok=frontend_visual_owner_read(f,i,&owner) && owner.materials;
         if (ok) ok=append(owners,count,graph,owner.materials,owner.images,owner.mounts,
             MATERIAL_VISUAL,i,owner.owner,0,NULL,owner.family,error);
+    }
+    for (size_t i=0;ok && i<native;++i) {
+        frontend_native_q3_view owner;
+        ok=frontend_native_q3_read(f,i,&owner,error) && owner.materials;
+        if (ok && restoring) ok=(!owner.presentation || qa_q3_presentation_idle(owner.presentation)) &&
+            (!owner.assets || qa_q3_assets_idle(owner.assets));
+        if (ok) ok=append(owners,count,graph,owner.materials,owner.images,owner.mounts,
+            MATERIAL_NATIVE_Q3,i,owner.receiver,owner.identity,owner.source_files,QA_SCENE_Q3,error);
     }
     for (size_t i=0;ok && i<*count;++i) {
         if (restoring) ok=qa_material_library_empty_detached(owners[i].library);
@@ -186,8 +203,8 @@ static bool metadata(qa_source_save_io *io,qa_frontend *f,const material_owner *
 }
 static bool header(qa_source_save_io *io,size_t count,bool *order)
 {
-    uint8_t magic[4]={'Q','F','M','A'}; uint32_t version=1; size_t saved=count;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFMA",4) && qa_source_save_u32(io,&version) && version==1 &&
+    uint8_t magic[4]={'Q','F','M','A'}; uint32_t version=2; size_t saved=count;
+    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFMA",4) && qa_source_save_u32(io,&version) && version==2 &&
         qa_source_save_count(io,&saved,SIZE_MAX) && saved==count && qa_source_save_bool(io,order) && (!count || *order);
 }
 static bool write_blob(qa_source_save_io *io,const qa_buffer *buffer)

@@ -52,6 +52,9 @@ bool qa_fs_identity_modified_time(const qa_fs_identity *, qa_fs_timestamp *);
 bool qa_fs_root_open(const char *path, qa_fs_root **out, qa_error *error);
 void qa_fs_root_retain(qa_fs_root *root);
 void qa_fs_root_close(qa_fs_root *root);
+/* Compares the native directory identity retained at admission, without I/O.
+ * Both roots must be non-NULL and remain retained by their callers. */
+bool qa_fs_root_same_object(const qa_fs_root *left, const qa_fs_root *right);
 /* Creates an actual directory below the held writable root. Existing ordinary
  * directories are accepted; child links and non-directory leaves are rejected. */
 bool qa_fs_root_create_directory(qa_fs_root *root, const char *relative,

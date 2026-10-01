@@ -2,6 +2,7 @@
 #include "ui_features.h"
 #include "save_private.h"
 #include "native_q2_save.h"
+#include "native_q3_client.h"
 #include "qa/persistence_content.h"
 #include "qa/binary.h"
 
@@ -59,6 +60,12 @@ static bool collect(qa_frontend *f, bank_inventory *inventory, qa_error *error)
         ok = add(inventory, graph, native.sounds, (bank_owner){.kind = 3, .ordinal = i,
             .identity = native.identity, .owner = native.owner, .variant = native.profile}, error);
     }
+    for (size_t i=0;ok && i<frontend_native_q3_count(f);++i) {
+        frontend_native_q3_view owner;
+        ok=frontend_native_q3_read(f,i,&owner,error) && owner.sounds &&
+            add(inventory,graph,owner.sounds,(bank_owner){.kind=4,.ordinal=i,
+                .identity=owner.identity,.owner=owner.receiver},error);
+    }
     return ok;
 }
 static bool append(qa_audio_asset ***all, size_t *count, qa_audio_asset **part, size_t size, qa_error *error)
@@ -82,6 +89,13 @@ static bool holders(qa_frontend *f, qa_audio_asset ***out, size_t *count, qa_err
             free(part); part = NULL;
         }
     }
+    for (size_t i=0;ok && i<frontend_native_q3_count(f);++i) {
+        frontend_native_q3_view owner;
+        ok=frontend_native_q3_read(f,i,&owner,error) && owner.assets &&
+            qa_q3_presentation_audio_assets_read(owner.assets,&part,&size,error) &&
+            append(out,count,part,size,error);
+        free(part); part=NULL; size=0;
+    }
     ok = ok && frontend_event_audio_assets_read(f, &part, &size, error) && append(out, count, part, size, error);
     free(part); part=NULL; size=0;
     ok=ok && frontend_ui_features_assets_read(f,&part,&size,error) && append(out,count,part,size,error);
@@ -89,9 +103,9 @@ static bool holders(qa_frontend *f, qa_audio_asset ***out, size_t *count, qa_err
 }
 static bool header(qa_source_save_io *io, const bank_inventory *inventory)
 {
-    uint8_t magic[4] = {'Q','F','A','G'}; uint32_t version = 1; size_t count = inventory->count;
+    uint8_t magic[4] = {'Q','F','A','G'}; uint32_t version = 2; size_t count = inventory->count;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFAG", 4) ||
-        !qa_source_save_u32(io, &version) || version != 1 ||
+        !qa_source_save_u32(io, &version) || version != 2 ||
         !qa_source_save_count(io, &count, SIZE_MAX / sizeof(bank_owner)) || count != inventory->count) return false;
     for (size_t i = 0; i < count; ++i) {
         bank_owner row = inventory->rows[i];

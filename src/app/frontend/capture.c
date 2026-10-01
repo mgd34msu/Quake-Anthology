@@ -1,6 +1,9 @@
 #include "capture.h"
 #include "visual_restore.h"
 #include "native_q2_save.h"
+#include "native_q3_client.h"
+#include "equipment_media.h"
+#include "equipment_q3.h"
 #include "save_commands.h"
 #include "qc_rerelease_events.h"
 #include "campaign_cinematic.h"
@@ -50,7 +53,8 @@ bool frontend_seat_callbacks_idle(const qa_frontend *f)
 }
 bool frontend_owners_idle(const qa_frontend *f)
 {
-    if (!f || f->capture || !frontend_cinematic_idle(f) || !frontend_qc_rerelease_idle(f) || !frontend_native_q2_children_idle(f) || !frontend_sources_idle(f) ||
+    if (!f || f->capture || !frontend_cinematic_idle(f) || !frontend_qc_rerelease_idle(f) || !frontend_native_q2_children_idle(f) ||
+        !frontend_native_q3_idle(f) || !frontend_equipment_idle(f) || !frontend_equipment_q3_idle(f) || !frontend_sources_idle(f) ||
         !resources_idle(f->images) || !resources_idle(f->ui_images) || !library_idle(f->materials) ||
         !fonts_idle(f->fonts) || (f->order && !qa_material_order_idle(f->order)) ||
         (f->scene_world && !qa_scene_world_idle(f->scene_world)) || !frontend_visuals_idle(f) ||
@@ -127,6 +131,23 @@ static bool heaps(frontend_capture *capture, qa_error *error)
             return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend capture native source is incomplete");
         if (!add(capture,CAPTURE_IMAGES,owner.images,error) || !add(capture,CAPTURE_FONTS,owner.fonts,error)) return false;
     }
+    for (size_t i=0;i<frontend_native_q3_count(f);++i) {
+        frontend_native_q3_view owner;
+        if (!frontend_native_q3_read(f,i,&owner,error) || !owner.assets || !owner.images ||
+            !owner.materials || !owner.fonts || !owner.core)
+            return error && error->code!=QA_OK?false:
+                frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend capture native Q3 owner is incomplete");
+        if (!add(capture,CAPTURE_IMAGES,owner.images,error) || !add(capture,CAPTURE_LIBRARY,owner.materials,error) ||
+            !add(capture,CAPTURE_FONTS,owner.fonts,error)) return false;
+    }
+    for (size_t i=0;i<frontend_equipment_media_count(f);++i) {
+        frontend_equipment_media_view media;
+        if (!frontend_equipment_media_at(f,i,&media) || !media.declaration || !media.held ||
+            (!media.declaration->none && (!media.held_scene || !media.held->model)))
+            return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend capture equipment media is incomplete");
+        if (media.declaration->none) continue;
+        if (!add(capture,CAPTURE_MODEL,media.held_scene,error)) return false;
+    }
     return add(capture,CAPTURE_WORLD,f->scene_world,error);
 }
 static bool registry_children(frontend_capture *capture, qa_error *error)
@@ -163,6 +184,16 @@ bool frontend_capture_begin(qa_frontend *f, frontend_capture **out, qa_error *er
     for (size_t i=0;ok && i<frontend_source_group_count(f);++i) {
         frontend_source_group_view group;
         ok=frontend_source_group_read(f,i,&group) && add(capture,CAPTURE_ASSETS,group.assets,error);
+    }
+    for (size_t i=0;ok && i<frontend_native_q3_count(f);++i) {
+        frontend_native_q3_view owner;
+        ok=frontend_native_q3_read(f,i,&owner,error) && owner.assets &&
+            add(capture,CAPTURE_ASSETS,owner.assets,error);
+    }
+    for (size_t i=0;ok && i<frontend_equipment_q3_count(f);++i) {
+        frontend_equipment_q3_owner_view owner;
+        ok=frontend_equipment_q3_at(f,i,&owner,error) && owner.assets &&
+            add(capture,CAPTURE_ASSETS,owner.assets,error);
     }
     /* Registry entry preflights strict child idle, so it precedes child tokens. */
     for (size_t i=0;ok && i<capture->count;++i) ok=hold(capture->rows+i,error);

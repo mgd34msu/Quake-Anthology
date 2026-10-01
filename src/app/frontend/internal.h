@@ -321,6 +321,9 @@ bool frontend_source_role_media_current(const qa_frontend *,qa_actor_owner,qa_qv
 bool frontend_source_frame(qa_frontend *, uint32_t, qa_scene_rect, qa_error *);
 bool frontend_source_retire_world(qa_frontend *, qa_error *);
 bool frontend_source_publish_world(qa_frontend *, qa_error *);
+/* Imported scene roots and Q3 backend bindings precede the host borrow exchange;
+ * final private guest service qualification follows it. */
+bool frontend_source_worlds_rebind_restored(qa_frontend *, qa_error *);
 bool frontend_source_listener(qa_frontend *, uint32_t, qa_audio_listener *);
 bool frontend_travel(qa_frontend *, qa_error *);
 bool frontend_source_rebind_ready(const qa_frontend *, const qa_frontend *, qa_error *);

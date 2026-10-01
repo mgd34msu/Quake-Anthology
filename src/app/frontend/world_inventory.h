@@ -7,12 +7,18 @@ typedef struct frontend_world_inventory frontend_world_inventory;
 typedef enum frontend_scene_owner_kind {
     FRONTEND_SCENE_OWNER_FRONTEND,
     FRONTEND_SCENE_OWNER_Q3,
-    FRONTEND_SCENE_OWNER_VISUAL
+    FRONTEND_SCENE_OWNER_VISUAL,
+    FRONTEND_SCENE_OWNER_NATIVE_Q3,
+    FRONTEND_SCENE_OWNER_EQUIPMENT,
+    FRONTEND_SCENE_OWNER_SELECTED_Q3
 } frontend_scene_owner_kind;
 typedef struct frontend_scene_owner {
     frontend_scene_owner_kind kind;
     /* Q3 uses its actual registry's first source-group ordinal plus one.
      * Visual caches use their actual appearance-owner ordinal plus one.
+     * Native Q3 uses its actual native-client ordinal plus one.
+     * Equipment uses its actual retained media ordinal plus one and row one.
+     * Selected Q3 uses its actual selected registry ordinal plus one.
      * The frontend map owner has owner and row zero. */
     uint64_t owner, row;
 } frontend_scene_owner;

@@ -431,6 +431,30 @@ memory_failure:
     return NULL;
 }
 
+bool qa_vfs_lookup_equal(const qa_vfs *left, const qa_vfs *right)
+{
+    if (!left || !right || left->pool != right->pool || left->count != right->count ||
+        left->pure_count != right->pure_count || left->q3_demo != right->q3_demo) return false;
+    for (size_t i = 0; i < left->count; ++i) {
+        const mount *a = left->mounts[i], *b = right->mounts[i];
+        if (a->id != b->id || a->archive != b->archive || a->archive_file != b->archive_file ||
+            a->root != b->root || !qa_fs_identity_equal(&a->identity, &b->identity) ||
+            strcmp(a->path, b->path) || a->comparison != b->comparison ||
+            a->writable != b->writable || a->user_overlay != b->user_overlay ||
+            a->q3_demo != b->q3_demo) return false;
+    }
+    const prefix_order *a = left->prefixes, *b = right->prefixes;
+    for (; a && b; a = a->next, b = b->next)
+        if (strcmp(a->prefix, b->prefix) ||
+            (left->count && memcmp(a->order, b->order, left->count * sizeof(*a->order)))) return false;
+    if (a || b) return false;
+    const resource_link *c = left->links, *d = right->links;
+    for (; c && d; c = c->next, d = d->next)
+        if (c->mount != d->mount || strcmp(c->source, d->source) || strcmp(c->target, d->target)) return false;
+    if (c || d) return false;
+    return !left->pure_count || !memcmp(left->pure, right->pure, left->pure_count * sizeof(*left->pure));
+}
+
 void vfs_mount_free(mount *source)
 {
     if (source->archive != NULL) vfs_package_release(source->archive);

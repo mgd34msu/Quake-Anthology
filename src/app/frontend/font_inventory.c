@@ -3,6 +3,7 @@
 #include "qa/persistence_content.h"
 #include "qa/scene_resource_save.h"
 #include "native_q2_save.h"
+#include "native_q3_client.h"
 #include "ui_features_private.h"
 
 typedef struct font_owner {
@@ -38,9 +39,11 @@ static bool collect(qa_frontend *frontend, font_owner **out, size_t *count, qa_e
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Font inventory requires idle actual frontend owners and empty output");
     qa_application_content_graph *graph=qa_application_content_graph_read(frontend->application);
     size_t groups=frontend_source_group_count(frontend), native=frontend_native_q2_owner_count(frontend);
-    if (!graph || groups==SIZE_MAX || native>SIZE_MAX-groups-1 || groups+native+1>SIZE_MAX/sizeof(font_owner))
+    size_t q3=frontend_native_q3_count(frontend);
+    if (!graph || groups==SIZE_MAX || native>SIZE_MAX-groups-1 || q3>SIZE_MAX-groups-native-1 ||
+        groups+native+q3+1>SIZE_MAX/sizeof(font_owner))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Font inventory requires a bounded genuine content graph");
-    font_owner *owners=calloc(groups+native+1,sizeof(*owners));
+    font_owner *owners=calloc(groups+native+q3+1,sizeof(*owners));
     if (!owners) return frontend_fail(error,QA_ERROR_MEMORY,"Collecting actual font library owners");
     bool ok=append(owners,count,graph,frontend->fonts,frontend->ui_images,frontend->ui_mounts,0,0,0,error);
     for (size_t i=0;ok && i<groups;++i) {
@@ -52,6 +55,11 @@ static bool collect(qa_frontend *frontend, font_owner **out, size_t *count, qa_e
         frontend_native_q2_owner_view owner;
         ok=frontend_native_q2_owner_read(frontend,i,&owner);
         if (ok) ok=append(owners,count,graph,owner.fonts,owner.images,owner.mounts,2,i,owner.identity,error);
+    }
+    for (size_t i=0;ok && i<q3;++i) {
+        frontend_native_q3_view owner;
+        ok=frontend_native_q3_read(frontend,i,&owner,error) && owner.fonts;
+        if (ok) ok=append(owners,count,graph,owner.fonts,owner.images,owner.mounts,3,i,owner.identity,error);
     }
     if (!ok) {
         free(owners); *count=0;
@@ -132,8 +140,8 @@ static bool fields(qa_source_save_io *io, qa_frontend *frontend, frontend_scene_
     const font_owner *owners, size_t count)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','F','F','O'}; uint32_t schema=2; size_t saved_count=count;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFFO",4) || !qa_source_save_u32(io,&schema) || schema!=2 ||
+    uint8_t magic[4]={'Q','F','F','O'}; uint32_t schema=3; size_t saved_count=count;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFFO",4) || !qa_source_save_u32(io,&schema) || schema!=3 ||
         !qa_source_save_count(io,&saved_count,SIZE_MAX) || saved_count!=count) return false;
     qa_application_content_graph *graph=qa_application_content_graph_read(frontend->application);
     for (size_t i=0;i<count;++i) {

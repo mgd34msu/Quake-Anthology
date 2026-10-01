@@ -1,5 +1,6 @@
 #include "image_inventory.h"
 #include "save_private.h"
+#include "native_q3_client.h"
 #include "qa/scene_resource_save.h"
 #include "qa/persistence_content.h"
 
@@ -51,13 +52,18 @@ static bool collect(qa_frontend *f, image_inventory *inventory, qa_error *error)
             ok = add(inventory, graph, images, kind, i, 0, error);
         }
     }
+    for (size_t i = 0; ok && i < frontend_native_q3_count(f); ++i) {
+        frontend_native_q3_view owner;
+        ok = frontend_native_q3_read(f, i, &owner, error) && owner.images &&
+            add(inventory, graph, owner.images, 6, i, owner.identity, error);
+    }
     return ok;
 }
 static bool header(qa_source_save_io *io, const image_inventory *inventory)
 {
-    uint8_t magic[4] = {'Q','F','I','M'}; uint32_t version = 1; size_t count = inventory->count;
+    uint8_t magic[4] = {'Q','F','I','M'}; uint32_t version = 2; size_t count = inventory->count;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFIM", 4) ||
-        !qa_source_save_u32(io, &version) || version != 1 ||
+        !qa_source_save_u32(io, &version) || version != 2 ||
         !qa_source_save_count(io, &count, SIZE_MAX / sizeof(image_owner)) || count != inventory->count) return false;
     for (size_t i = 0; i < count; ++i) {
         image_owner saved = inventory->entries[i];
