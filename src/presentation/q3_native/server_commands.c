@@ -699,3 +699,21 @@ bool q3n_server_commands_map_restart_taken(q3n_server_commands *o, const q3n_fra
     o->state.map_restart = false;
     return end(o, true);
 }
+bool q3n_server_commands_scores_clear(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
+{
+    if (!begin(o, f, true, e)) return false;
+    o->state.num_scores = 0;
+    return end(o, true);
+}
+bool q3n_server_commands_spectators_build(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
+{
+    if (!begin(o, f, true, e)) return false;
+    spectators(o);
+    return end(o, true);
+}
+bool q3n_server_commands_order_answered(q3n_server_commands *o, const q3n_frame *f, qa_error *e)
+{
+    if (!begin(o, f, true, e)) return false;
+    if (f->time < o->state.accept_order_time) o->state.accept_order_time = 0;
+    return end(o, true);
+}

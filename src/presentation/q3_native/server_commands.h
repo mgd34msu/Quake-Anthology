@@ -119,6 +119,11 @@ bool q3n_server_commands_warmup_drawn(q3n_server_commands *, const q3n_frame *,
 bool q3n_server_commands_chat_drawn(q3n_server_commands *, const q3n_frame *,
     int32_t last_position, qa_error *);
 bool q3n_server_commands_map_restart_taken(q3n_server_commands *, const q3n_frame *, qa_error *);
+/* The console calls scores_clear only for a new request while scores were
+ * hidden. An expired order remains unchanged when it is answered. */
+bool q3n_server_commands_scores_clear(q3n_server_commands *, const q3n_frame *, qa_error *);
+bool q3n_server_commands_spectators_build(q3n_server_commands *, const q3n_frame *, qa_error *);
+bool q3n_server_commands_order_answered(q3n_server_commands *, const q3n_frame *, qa_error *);
 /* Import binds already restored client/backend/producer owners and only reads
  * numeric sound holders under the aggregate backend capture lease. */
 bool q3n_server_commands_checkpoint(const q3n_server_commands *, qa_buffer *, qa_error *);
