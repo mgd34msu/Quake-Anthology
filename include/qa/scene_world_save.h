@@ -28,6 +28,44 @@ typedef struct qa_scene_world_checkpoint_refs {
  * geometry and are mapped by the enclosing frame/content dictionary. */
 bool qa_scene_world_checkpoint(const qa_scene_world *, const qa_scene_world_checkpoint_refs *, qa_buffer *, qa_error *);
 bool qa_scene_world_restore(qa_scene_world *, qa_bytes, const qa_scene_world_checkpoint_refs *, qa_error *);
+typedef enum qa_scene_world_identity_kind {
+    QA_SCENE_WORLD_IDENTITY_WORLD,
+    QA_SCENE_WORLD_IDENTITY_MODEL,
+    QA_SCENE_WORLD_IDENTITY_MESH
+} qa_scene_world_identity_kind;
+typedef struct qa_scene_world_owner_refs {
+    qa_scene_world_checkpoint_refs state;
+    void *context;
+    bool (*geometry_encode)(void *, const qa_scene_geometry *, uint64_t *, qa_error *);
+    bool (*geometry_decode)(void *, uint64_t, const qa_scene_geometry **, qa_error *);
+    /* Readonly qualification of actual immutable map/content inputs, including
+     * external lighting and palette/translation policy. No acquisition. */
+    bool (*source_qualify)(void *, qa_bytes, const qa_scene_world_options *, qa_error *);
+    /* Resolve the actual preallocated scene namespace. Material/frame imports
+     * use these same identities. It must not mint IDs or execute source code. */
+    bool (*identity_decode)(void *, qa_scene_world_identity_kind, size_t ordinal,
+        uint64_t saved, uint64_t *installed, qa_error *);
+} qa_scene_world_owner_refs;
+typedef struct qa_scene_world_saved_identity {
+    qa_scene_world_identity_kind kind;
+    size_t ordinal;
+    uint64_t saved;
+} qa_scene_world_saved_identity;
+/* Read the actual saved identity inventory before material/frame imports.
+ * The complete static owner is decoded into temporary detached allocations,
+ * qualified against real source/image/geometry owners and then destroyed.
+ * No namespace IDs are minted. Free the returned array with free(). */
+bool qa_scene_world_owner_identities_read(const qa_bsp_view *qualified_source, qa_scene_resources *, qa_bytes,
+    const qa_scene_world_owner_refs *, qa_scene_world_saved_identity **, size_t *, qa_error *);
+/* Full detached owner construction preserves saved static geometry allocations
+ * and mutable continuation. Resources/palette/images, geometry and material
+ * tables must exist first. Immutable BSP parsing qualifies source records; no
+ * world builder, image/material admission or lighting update runs. The caller
+ * owns qualified_source and every resolver target through the whole decode.
+ * Only a completely decoded owner is returned; outputs must be empty. */
+bool qa_scene_world_owner_checkpoint(const qa_scene_world *, const qa_scene_world_owner_refs *, qa_buffer *, qa_error *);
+bool qa_scene_world_owner_restore(const qa_bsp_view *qualified_source, qa_scene_resources *, qa_material_library *,
+    qa_bytes, const qa_scene_world_owner_refs *, qa_scene_world **, qa_error *);
 const qa_scene_mesh *qa_scene_world_mesh_at(const qa_scene_world *, size_t);
 size_t qa_scene_world_model_count(const qa_scene_world *);
 uint64_t qa_scene_world_model_identity_at(const qa_scene_world *, size_t);
@@ -36,6 +74,15 @@ qa_material_library *qa_scene_world_material_owner(const qa_scene_world *);
 uint64_t qa_scene_world_identity(const qa_scene_world *);
 /* Actual submission transactions must return before world owner changes. */
 bool qa_scene_world_idle(const qa_scene_world *);
+bool qa_scene_world_observation_ready(const qa_scene_world *);
+/* Borrow the actual retained constructor policy while its owner permits source
+ * observation. Text and byte spans stay owned by the world/capture lifetime. */
+bool qa_scene_world_options_read(const qa_scene_world *, qa_scene_world_options *);
+typedef struct qa_scene_world_capture qa_scene_world_capture;
+/* Actual submission/admission and destruction remain excluded for the whole
+ * aggregate. Read-only component capture may run under this opaque token. */
+bool qa_scene_world_capture_begin(const qa_scene_world *, qa_scene_world_capture **, qa_error *);
+void qa_scene_world_capture_end(qa_scene_world_capture *);
 typedef struct qa_scene_world_material_binding {
     const qa_material *current, *destination;
     const qa_material *base_current, *base_destination;

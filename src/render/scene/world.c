@@ -17,7 +17,30 @@ static bool world_error(qa_error *error, qa_status status, const char *message)
 uint64_t qa_scene_world_identity(const qa_scene_world *world)
 { return world ? world->identity : 0; }
 bool qa_scene_world_idle(const qa_scene_world *world)
-{ return world && !world->transaction_depth && !world->admission_change_count; }
+{ return qa_scene_world_observation_ready(world) && !world->capture; }
+bool qa_scene_world_observation_ready(const qa_scene_world *world)
+{ return world && !world->transaction_depth && !world->admission_change_count && !world->checkpoint_active; }
+bool qa_scene_world_options_read(const qa_scene_world *world, qa_scene_world_options *out)
+{
+    if (!out || !qa_scene_world_observation_ready(world)) return false;
+    *out = world->options;
+    return true;
+}
+struct qa_scene_world_capture { qa_scene_world *world; };
+bool qa_scene_world_capture_begin(const qa_scene_world *world, qa_scene_world_capture **out, qa_error *error)
+{
+    if (!out || *out || !qa_scene_world_idle(world))
+        return world_error(error,QA_ERROR_ARGUMENT,"World aggregate capture requires an idle actual owner and empty token");
+    qa_scene_world_capture *capture=malloc(sizeof(*capture));
+    if (!capture) return world_error(error,QA_ERROR_MEMORY,"Retaining the world owner capture lease");
+    capture->world=(qa_scene_world *)world; capture->world->capture=capture; *out=capture; return true;
+}
+void qa_scene_world_capture_end(qa_scene_world_capture *capture)
+{
+    if (!capture) return;
+    if (capture->world->capture==capture) capture->world->capture=NULL;
+    free(capture);
+}
 size_t qa_scene_world_material_binding_count(const qa_scene_world *world)
 { return world ? world->surface_count : 0; }
 bool qa_scene_world_material_binding_at(const qa_scene_world *world, size_t index, qa_scene_world_material_binding *out)
@@ -58,6 +81,7 @@ bool qa_scene_world_materials_rebind_ready(const qa_scene_world *world, const qa
 void qa_scene_world_materials_rebind(qa_scene_world *world, qa_material_library *destination,
     const qa_scene_world_material_binding *bindings)
 {
+    if (!qa_scene_world_idle(world)) return;
     for (size_t i = 0; i < world->surface_count; ++i) {
         world->surfaces[i].material = bindings[i].destination;
         world->surfaces[i].base_material = bindings[i].base_destination;
@@ -300,7 +324,7 @@ fail:
 
 void qa_scene_world_destroy(qa_scene_world *world)
 {
-    if (world == NULL) return;
+    if (!qa_scene_world_idle(world)) return;
     if (world->bsp.family == QA_BSP_Q3) qaw_destroy_q3(world);
     else qaw_destroy_legacy(world);
     for (size_t i = 0; i < world->surface_count && world->surfaces != NULL; ++i) {
@@ -499,6 +523,8 @@ static bool valid_input(const qa_scene_world *world, const qa_scene_world_input 
 {
     if (world == NULL || input == NULL)
         return world_error(error, QA_ERROR_ARGUMENT, "world submission requires world and input");
+    if (world->checkpoint_active || world->capture)
+        return world_error(error, QA_ERROR_ARGUMENT, "world continuation callback is active");
     if (!qa_vec_finite(input->view.origin) || !isfinite(input->seconds)
         || (input->use_pvs_origin && !qa_vec_finite(input->pvs_origin))
         || (input->light_count != 0 && input->lights == NULL)
@@ -892,7 +918,7 @@ static bool transaction_end(qa_scene_world *world, qa_scene_frame *frame,
 bool qa_scene_world_submit(qa_scene_world *world, const qa_scene_world_input *input,
                            qa_scene_frame *frame, qa_error *error)
 {
-    if (world == NULL || frame == NULL)
+    if (world == NULL || frame == NULL || world->checkpoint_active || world->capture)
         return world_error(error, QA_ERROR_ARGUMENT, "world submission requires world and frame");
     world_transaction start = transaction_begin(world, frame);
     return transaction_end(world, frame, &start, world_submit(world, input, frame, error));
@@ -902,7 +928,7 @@ bool qa_scene_world_submit_model(qa_scene_world *world, uint32_t model,
                                  const qa_model_transform *transform, const qa_scene_world_input *input,
                                  uint32_t entity, qa_scene_vec4 color, qa_scene_frame *frame, qa_error *error)
 {
-    if (world == NULL || frame == NULL)
+    if (world == NULL || frame == NULL || world->checkpoint_active || world->capture)
         return world_error(error, QA_ERROR_ARGUMENT, "inline model submission requires world and frame");
     world_transaction start = transaction_begin(world, frame);
     return transaction_end(world, frame, &start,
@@ -914,7 +940,7 @@ bool qa_scene_world_sky_drawn(const qa_scene_world *world)
     return world != NULL && world->sky_drawn;
 }
 
-bool qa_scene_world_shadow_caster(qa_scene_world *world, uint32_t model_index,
+static bool world_shadow_caster(qa_scene_world *world, uint32_t model_index,
                                   const qa_model_transform *transform,
                                   const qa_scene_world_input *input, qa_scene_frame *frame,
                                   qa_scene_shadow_caster *out, qa_error *error)
@@ -963,6 +989,18 @@ bool qa_scene_world_shadow_caster(qa_scene_world *world, uint32_t model_index,
     caster.meshes = meshes;
     *out = caster;
     return true;
+}
+
+bool qa_scene_world_shadow_caster(qa_scene_world *world, uint32_t model_index,
+                                  const qa_model_transform *transform,
+                                  const qa_scene_world_input *input, qa_scene_frame *frame,
+                                  qa_scene_shadow_caster *out, qa_error *error)
+{
+    if (!world || !frame || world->checkpoint_active || world->capture)
+        return world_error(error, QA_ERROR_ARGUMENT, "brush shadow submission requires idle continuation owners");
+    world_transaction start = transaction_begin(world, frame);
+    return transaction_end(world, frame, &start,
+        world_shadow_caster(world, model_index, transform, input, frame, out, error));
 }
 
 bool qa_scene_world_portal_view(qa_scene_world *world, const qa_scene_world_input *input,

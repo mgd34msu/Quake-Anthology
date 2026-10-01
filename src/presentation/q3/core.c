@@ -1,4 +1,55 @@
 #include "internal.h"
+#include "qa/q3_assets_save.h"
+#include "qa/q3_presentation_save.h"
+#include "qa/scene_model_save.h"
+#include "qa/scene_world_save.h"
+
+bool qa_q3_presentation_idle(const qa_q3_presentation *p)
+{
+    return p && !p->busy && qa_q3_assets_idle(p->options.assets);
+}
+static bool binding_observable(const qa_q3_presentation *p)
+{
+    const qa_q3_presentation_assets *a=p?p->options.assets:NULL;
+    if (!p || p->busy || !a || !a->users || a->codec_busy || (a->busy && !a->capturing)) return false;
+    if ((p->world && !qa_scene_world_observation_ready(p->world)) ||
+        (a->world && !qa_scene_world_observation_ready(a->world))) return false;
+    for (size_t i=0;i<a->model_count;++i) {
+        const q3p_model *model=a->models[i];
+        if (!model) continue;
+        if (model->world && !qa_scene_world_observation_ready(model->world)) return false;
+        for (unsigned j=0;j<3;++j)
+            if (model->scene[j] && !qa_scene_model_observation_ready(model->scene[j])) return false;
+    }
+    return true;
+}
+bool qa_q3_presentation_binding_read(const qa_q3_presentation *p,qa_q3_presentation_binding *out,qa_error *error)
+{
+    if (!out || !binding_observable(p) || p->world!=p->options.assets->world ||
+        p->geometry!=p->options.assets->geometry || (!p->world!=!p->geometry) ||
+        (p->entity_text.size && !p->entity_text.data))
+        return q3p_fail(error,QA_ERROR_ARGUMENT,"Q3 binding observation requires actual qualified idle owners");
+    *out=(qa_q3_presentation_binding){p->options,p->frame,p->world,p->geometry,p->entity_text}; return true;
+}
+bool qa_q3_presentation_prepare_restored(qa_q3_presentation *p,qa_scene_frame *frame,
+    qa_scene_world *world,qa_collision_geometry *geometry,qa_bytes entities,qa_error *error)
+{
+    qa_q3_presentation_assets *a=p?p->options.assets:NULL;
+    if (!p || !a || !qa_q3_presentation_idle(p) || p->world || p->geometry || p->entity_text.data || p->entity_text.size ||
+        p->world_loaded || p->material_view_valid || p->entity_count || p->entity_capacity ||
+        p->polygon_count || p->polygon_capacity || p->vertex_count || p->vertex_capacity ||
+        p->light_count || p->light_capacity || p->portal_capacity || p->movie_sources ||
+        ((a->world || a->geometry) && (a->world!=world || a->geometry!=geometry)) ||
+        a->name_count || a->name_capacity || a->model_count || a->model_capacity ||
+        a->skin_count || a->skin_capacity || a->shader_count || a->shader_capacity || a->sound_count || a->sound_capacity ||
+        (!world!=!geometry) || (entities.size && !entities.data) || (!world && (entities.data || entities.size)) ||
+        (world && !qa_scene_world_observation_ready(world)))
+        return q3p_fail(error,QA_ERROR_ARGUMENT,"Q3 restore binding requires genuine empty candidate owners");
+    for (size_t i=0;i<16;++i) if (p->movies[i].kind!=Q3P_MOVIE_EMPTY)
+        return q3p_fail(error,QA_ERROR_ARGUMENT,"Q3 restore binding retains an existing movie owner");
+    p->frame=frame; p->world=world; p->geometry=geometry; p->entity_text=entities;
+    a->world=world; a->geometry=geometry; return true;
+}
 
 bool q3p_fail(qa_error *error, qa_status code, const char *message)
 {
@@ -21,16 +72,33 @@ bool q3p_reserve(void **data, size_t *capacity, size_t count, size_t width, qa_e
 
 bool q3p_begin(qa_q3_presentation *p, qa_error *error)
 {
-    if (!p || p->busy) return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 presentation is absent or executing");
-    ++p->busy; return true;
+    if (!p || p->busy || !p->options.assets || p->options.assets->busy ||
+        !q3p_assets_children_idle(p->options.assets))
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 presentation or retained asset owner is absent or executing");
+    ++p->busy; ++p->options.assets->busy; return true;
 }
 
-bool q3p_end(qa_q3_presentation *p, bool ok) { --p->busy; return ok; }
+bool q3p_end(qa_q3_presentation *p, bool ok)
+{
+    --p->options.assets->busy; --p->busy; return ok;
+}
+
+bool qa_q3_presentation_round_ready(const qa_q3_presentation *p, const qa_scene_frame *frame,
+    const qa_scene_world *world, const qa_collision_geometry *geometry, qa_error *error)
+{
+    if (!p || p->busy || !p->options.assets || p->options.assets->busy ||
+        p->frame != frame || p->world != world || p->geometry != geometry ||
+        p->options.assets->world != world || p->options.assets->geometry != geometry)
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 round requires its idle retained scene and asset owners");
+    return qa_q3_presentation_frontend_rebind_ready(p, frame, p->options.audio,
+        p->options.owner, error);
+}
 
 bool qa_q3_presentation_frontend_rebind_ready(const qa_q3_presentation *p, const qa_scene_frame *current,
     qa_audio_engine *audio, uint64_t bus, qa_error *error)
 {
-    if (!p || p->busy || p->options.assets->busy || (p->frame && p->frame != current) ||
+    if (!p || p->busy || p->options.assets->busy || !q3p_assets_children_idle(p->options.assets) ||
+        (p->frame && p->frame != current) ||
         (p->options.audio != NULL) != (audio != NULL))
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 presentation exchange requires idle matching frame/audio owners");
     for (size_t i = 0; i < 16; ++i) {
@@ -45,6 +113,7 @@ bool qa_q3_presentation_frontend_rebind_ready(const qa_q3_presentation *p, const
 void qa_q3_presentation_frontend_rebind(qa_q3_presentation *p, const qa_scene_frame *current,
     qa_scene_frame *destination, qa_audio_engine *audio, uint64_t bus)
 {
+    if (!p || p->busy || p->options.assets->busy || !q3p_assets_children_idle(p->options.assets)) return;
     if (p->frame) p->frame = destination;
     p->options.audio = audio;
     for (size_t i = 0; i < 16; ++i) {
@@ -57,7 +126,8 @@ void qa_q3_presentation_frontend_rebind(qa_q3_presentation *p, const qa_scene_fr
 bool qa_q3_presentation_create(const qa_q3_presentation_options *options,
                                 qa_q3_presentation **out, qa_error *error)
 {
-    if (!options || !out || !options->assets || !options->clock.sample ||
+    if (!options || !out || !options->assets || options->assets->busy ||
+        !q3p_assets_children_idle(options->assets) || !options->clock.sample ||
         !options->owner || options->owner == QA_AUDIO_NO_OWNER || !options->viewport.width ||
         !options->viewport.height || options->seat == QA_AUDIO_WORLD ||
         !isfinite(options->near_clip) || !isfinite(options->far_clip) ||
@@ -94,12 +164,16 @@ bool qa_q3_presentation_destroy(qa_q3_presentation *p, qa_error *error)
             ok = false; if (error) *error = local;
         }
     }
+    /* A failed retirement keeps the actual seat owner for the caller's retry.
+     * Closed movie slots already describe the completed portion of teardown. */
+    if (!ok) return q3p_end(p,false);
     while (p->movie_sources) {
         q3p_movie_source *source = p->movie_sources;
         p->movie_sources = source->next;
         qa_cinematic_asset_release(source->asset);
         free(source->path); free(source);
     }
+    q3p_end(p, true);
     qa_q3_presentation_assets_destroy(p->options.assets);
     free(p->entities); free(p->polygons); free(p->vertices); free(p->lights); free(p->portals); free(p);
     return ok;
@@ -113,7 +187,8 @@ qa_q3_presentation_assets *qa_q3_presentation_resources(qa_q3_presentation *p)
 bool qa_q3_presentation_frame(qa_q3_presentation *p, qa_scene_frame *frame, qa_scene_rect viewport,
                                qa_error *error)
 {
-    if (!p || p->busy || !frame || !viewport.width || !viewport.height)
+    if (!p || p->busy || p->options.assets->busy || !q3p_assets_children_idle(p->options.assets) ||
+        !frame || !viewport.width || !viewport.height)
         return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 presentation frame");
     p->frame = frame; p->options.viewport = viewport; return true;
 }
@@ -121,7 +196,8 @@ bool qa_q3_presentation_frame(qa_q3_presentation *p, qa_scene_frame *frame, qa_s
 bool qa_q3_presentation_world(qa_q3_presentation *p, qa_scene_world *world,
                                qa_collision_geometry *geometry, qa_bytes entities, qa_error *error)
 {
-    if (!p || p->busy || (!world != !geometry) || (entities.size && !entities.data))
+    if (!p || p->busy || p->options.assets->busy || !q3p_assets_children_idle(p->options.assets) ||
+        (!world != !geometry) || (entities.size && !entities.data))
         return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 presentation world");
     qa_q3_presentation_assets *assets = p->options.assets;
     if (p->world == world && p->geometry == geometry &&
@@ -137,7 +213,7 @@ bool qa_q3_presentation_world(qa_q3_presentation *p, qa_scene_world *world,
 
 bool qa_q3_presentation_retire_world(qa_q3_presentation *p, qa_error *error)
 {
-    if (!p || p->busy || p->options.assets->busy)
+    if (!p || p->busy || p->options.assets->busy || !q3p_assets_children_idle(p->options.assets))
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 map presentation is executing");
     if (!qa_common_cursor_init(&p->cursor, (qa_bytes){0}, QA_COMMON_TERMINATED, error)) return false;
     qa_q3_presentation_assets *assets = p->options.assets;
@@ -166,7 +242,8 @@ bool qa_q3_presentation_retire_world(qa_q3_presentation *p, qa_error *error)
 
 bool qa_q3_presentation_load_world(qa_q3_presentation *p, const char *path, qa_error *error)
 {
-    if (!p || p->busy || !path || !p->world || !p->geometry)
+    if (!p || p->busy || p->options.assets->busy || !q3p_assets_children_idle(p->options.assets) ||
+        !path || !p->world || !p->geometry)
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 renderer has no selected map");
     if (!qa_common_cursor_init(&p->cursor, p->entity_text, QA_COMMON_TERMINATED, error)) return false;
     p->world_loaded = true; return true;
@@ -174,7 +251,7 @@ bool qa_q3_presentation_load_world(qa_q3_presentation *p, const char *path, qa_e
 
 bool qa_q3_presentation_entity_token(qa_q3_presentation *p, const char **token, bool *found, qa_error *error)
 {
-    if (!p || p->busy || !token || !found)
+    if (!p || p->busy || p->options.assets->busy || !q3p_assets_children_idle(p->options.assets) || !token || !found)
         return q3p_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 renderer entity token output");
     if (!qa_common_parse(&p->parser, &p->cursor, true, error)) return false;
     *token = p->parser.token; *found = !p->cursor.ended && p->parser.token_length;

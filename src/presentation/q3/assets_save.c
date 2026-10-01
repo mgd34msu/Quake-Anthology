@@ -1,200 +1,517 @@
 #include "internal.h"
+#include "qa/q3_assets_save.h"
+#include "qa/scene_model_save.h"
+#include "qa/scene_world_save.h"
+#include "qa/scene_resource_save.h"
+#include "qa/material_library_save.h"
 #include "qa/hash.h"
+#include "qa/binary.h"
+#include "qa/vfs_view_save.h"
 
+static bool observed(const qa_q3_presentation_assets *a, qa_error *error)
+{
+    return a && (!a->busy || (a->capturing && !a->codec_busy)) ? true :
+        q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 asset observation requires an idle or captured owner");
+}
+bool qa_q3_assets_capture_begin(qa_q3_presentation_assets *a, qa_error *error)
+{
+    if (!a || a->busy || !a->users || !q3p_assets_children_idle(a))
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 asset capture requires an idle live owner");
+    a->busy = 1; a->capturing = true; return true;
+}
+void qa_q3_assets_capture_end(qa_q3_presentation_assets *a)
+{
+    if (!a || !a->capturing || a->codec_busy) return;
+    a->capturing = false; a->busy = 0;
+}
+bool qa_q3_assets_model_count(const qa_q3_presentation_assets *a, size_t *out, qa_error *error)
+{
+    if (!out || !observed(a, error)) return false;
+    *out = a->model_count; return true;
+}
+bool qa_q3_assets_model_holder(const qa_q3_presentation_assets *a, size_t ordinal,
+    qa_q3_asset_model_holder *out, qa_error *error)
+{
+    if (!out || !observed(a, error) || ordinal >= a->model_count)
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 model holder ordinal is absent");
+    const q3p_model *m = a->models[ordinal]; *out = (qa_q3_asset_model_holder){0};
+    if (!m) return true;
+    out->present = true; out->has_lods = m->has_lods; out->owns_world = m->owns_world;
+    out->provider = m->provider; out->resource = m->resource; out->world = m->world;
+    out->inline_model = m->inline_model; out->lods = m->has_lods ? &m->lods : NULL;
+    for (unsigned i = 0; i < 3; ++i) {
+        out->lod_resources[i] = m->lod_resources[i]; out->scenes[i] = m->scene[i];
+        out->sources[i] = m->has_lods || !i ? q3p_model_source(m, i) : NULL;
+    }
+    return true;
+}
+bool qa_q3_assets_skin_count(const qa_q3_presentation_assets *a, size_t *out, qa_error *error)
+{
+    if (!out || !observed(a, error)) return false;
+    *out = a->skin_count; return true;
+}
+bool qa_q3_assets_skin_holder(const qa_q3_presentation_assets *a, size_t ordinal,
+    qa_q3_asset_skin_holder *out, qa_error *error)
+{
+    if (!out || !observed(a, error) || ordinal >= a->skin_count || !a->skins[ordinal])
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 skin holder ordinal is absent");
+    const q3p_skin *skin = a->skins[ordinal];
+    *out = (qa_q3_asset_skin_holder){skin->provider, skin->resource, &skin->map}; return true;
+}
+bool qa_q3_assets_services(const qa_q3_presentation_assets *a,
+    qa_q3_presentation_asset_options *out, qa_scene_world **world,
+    qa_collision_geometry **geometry, qa_error *error)
+{
+    if (!out || !world || !geometry || !observed(a, error)) return false;
+    *out = a->options; *world = a->world; *geometry = a->geometry; return true;
+}
+
+static bool same_bytes(qa_bytes a, qa_bytes b)
+{ return a.size == b.size && (!a.size || (a.data && b.data && !memcmp(a.data, b.data, a.size))); }
+static bool resource_owned(const qa_q3_presentation_provider *provider, const qa_resource *resource)
+{
+    return !resource || qa_resource_pool_find(qa_vfs_resources(provider->mounts),
+        qa_resource_id(resource)) == resource;
+}
+static bool reading(const qa_source_save_io *io) { return io->direction == QA_SOURCE_SAVE_READ; }
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t magic[4] = {'Q','3','A','S'}; uint32_t version = 1;
+    uint8_t magic[4] = {'Q','3','A','S'}; uint32_t version = 2;
     return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "Q3AS", 4) &&
-        qa_source_save_u32(io, &version) && version == 1;
+        qa_source_save_u32(io, &version) && version == 2;
 }
-static const q3p_name *handle_name(const qa_q3_presentation_assets *assets, q3p_resource_kind kind, int32_t handle)
+static bool refs_ready(const qa_q3_asset_owner_refs *r)
 {
-    const q3p_name *result = NULL;
-    for (size_t i = 0; i < assets->name_capacity; ++i)
-        for (const q3p_name *entry = assets->names[i]; entry; entry = entry->next)
-            if (entry->kind == kind && entry->handle == handle &&
-                (!result || (entry->generated && !result->generated) ||
-                 (entry->generated == result->generated && strcmp(entry->name, result->name) < 0))) result = entry;
-    return result;
+    return r && r->services_encode && r->services_qualify && r->provider_encode && r->provider_decode &&
+        r->resource_encode && r->resource_decode && r->model_encode && r->model_decode && r->model_retain &&
+        r->scene_encode && r->scene_decode && r->world_encode && r->world_decode &&
+        r->collision_encode && r->collision_decode && r->material_encode && r->material_decode &&
+        r->audio_encode && r->audio_decode && r->scene_owned_ready && r->world_owned_ready &&
+        r->scene_adopt && r->world_adopt;
 }
-static bool digest_fields(qa_source_save_io *io, const qa_resource *resource)
+static bool provider_fields(qa_source_save_io *io, qa_q3_presentation_provider *p,
+    const qa_q3_asset_owner_refs *r)
 {
-    bool present = resource != NULL;
-    if (!qa_source_save_bool(io, &present) || present != (resource != NULL)) return false;
-    if (!present) return true;
-    const qa_sha256_digest *actual = qa_resource_digest(resource);
-    if (!actual) return false;
-    qa_sha256_digest digest = *actual;
-    return qa_source_save_bytes(io, digest.bytes, sizeof(digest.bytes)) &&
-        !memcmp(digest.bytes, actual->bytes, sizeof(digest.bytes));
+    uint64_t id = 0; uint32_t family = p->family;
+    if ((!reading(io) && !r->provider_encode(r->context, p, &id, io->error)) ||
+        !qa_source_save_u64(io, &id) || !qa_source_save_u32(io, &family) || family > QA_SCENE_Q3) return false;
+    if (reading(io) && !r->provider_decode(r->context, id, p, io->error)) return false;
+    return p->family == (qa_scene_family)family && p->mounts && p->images && p->materials &&
+        qa_scene_resources_files(p->images) == p->mounts &&
+        qa_material_library_resource_owner(p->materials) == p->images;
 }
-static bool model_fields(qa_source_save_io *io, const q3p_model *model)
+static bool resource_fields(qa_source_save_io *io, qa_resource **value,
+    const qa_q3_asset_owner_refs *r)
 {
-    bool world = model->world != NULL, owned = model->owns_world, lods = model->has_lods;
-    if (!qa_source_save_bool(io, &world) || world != (model->world != NULL) ||
-        !qa_source_save_bool(io, &owned) || owned != model->owns_world ||
-        !qa_source_save_bool(io, &lods) || lods != model->has_lods || !digest_fields(io, model->resource)) return false;
-    uint32_t inline_model = model->inline_model;
-    if (!qa_source_save_u32(io, &inline_model) || inline_model != model->inline_model) return false;
-    if (lods) {
-        uint32_t load_count = model->lods.load_count, lod_count = model->lods.lod_count;
-        uint64_t byte_length = model->lods.byte_length;
-        if (!qa_source_save_u32(io, &load_count) || load_count != model->lods.load_count ||
-            !qa_source_save_u32(io, &lod_count) || lod_count != model->lods.lod_count ||
-            !qa_source_save_u64(io, &byte_length) || byte_length != model->lods.byte_length) return false;
-        for (uint32_t i = 0; i < 3; ++i) {
-            uint32_t state = model->lods.states[i], alias = model->lods.aliases[i], order = model->lods.load_order[i];
-            const char *path = model->lods.paths[i];
-            if (!qa_source_save_u32(io, &state) || state != (uint32_t)model->lods.states[i] ||
-                !qa_source_save_u32(io, &alias) || alias != model->lods.aliases[i] ||
-                !qa_source_save_u32(io, &order) || order != model->lods.load_order[i] || !qa_source_save_text(io, &path) ||
-                ((path == NULL) != (model->lods.paths[i] == NULL)) || (path && strcmp(path, model->lods.paths[i]))) return false;
-        }
+    bool present = *value != NULL;
+    if (!qa_source_save_bool(io, &present)) return false;
+    if (!present) return *value == NULL;
+    uint64_t pool = 0, id = 0; qa_sha256_digest digest = {{0}};
+    if (!reading(io)) {
+        const qa_sha256_digest *actual = qa_resource_digest(*value);
+        if (!actual || !r->resource_encode(r->context, *value, &pool, &id, io->error)) return false;
+        digest = *actual;
     }
-    if (lods) for (uint32_t i = 0; i < 3; ++i) {
-        const qa_model *lod = qa_model_at_lod(&model->lods, i); bool present = lod != NULL;
-        if (!qa_source_save_bool(io, &present) || present != (lod != NULL)) return false;
-        if (lod) {
-            qa_sha256_digest actual, expected;
-            qa_sha256((qa_bytes){lod->source.data, lod->source.size}, &actual); expected = actual;
-            if (!qa_source_save_bytes(io, expected.bytes, sizeof(expected.bytes)) ||
-                memcmp(actual.bytes, expected.bytes, sizeof(expected.bytes))) return false;
-        }
+    if (!qa_source_save_u64(io, &pool) || !qa_source_save_u64(io, &id) ||
+        !qa_source_save_bytes(io, digest.bytes, sizeof(digest.bytes))) return false;
+    if (reading(io)) {
+        const qa_resource *candidate = NULL;
+        if (*value || !r->resource_decode(r->context, pool, id, &candidate, io->error) || !candidate ||
+            !qa_resource_digest(candidate) || memcmp(digest.bytes, qa_resource_digest(candidate)->bytes, sizeof(digest.bytes))) return false;
+        qa_resource_retain((qa_resource *)candidate); *value = (qa_resource *)candidate;
     }
     return true;
 }
-static bool image_fields(qa_source_save_io *io, const qa_q3_asset_checkpoint_refs *refs,
-    const qa_scene_image *image, qa_scene_image **candidate)
+static bool source_fields(qa_source_save_io *io, const qa_model **value, const qa_resource *resource,
+    const qa_q3_asset_owner_refs *r)
 {
-    qa_buffer encoded = {0}; size_t count = 0;
-    if (io->direction == QA_SOURCE_SAVE_WRITE) {
-        if (!image || !refs || !refs->image_encode || !refs->image_encode(refs->context, image, &encoded, io->error)) {
-            if (!refs || !refs->image_encode) q3p_fail(io->error, QA_ERROR_ARGUMENT, "Generated Q3 picture encoder is absent");
-            qa_buffer_free(&encoded); return false;
-        }
-        count = encoded.size;
-    }
-    bool ok = qa_source_save_count(io, &count, io->direction == QA_SOURCE_SAVE_WRITE ? SIZE_MAX : io->input.size);
-    if (ok && io->direction == QA_SOURCE_SAVE_READ) {
-        encoded.data = count ? malloc(count) : NULL; encoded.size = count;
-        if (count && !encoded.data) ok = q3p_fail(io->error, QA_ERROR_MEMORY, "Restoring generated Q3 picture descriptor");
-    }
-    if (ok) ok = qa_source_save_bytes(io, encoded.data, count);
-    if (ok && io->direction == QA_SOURCE_SAVE_READ) {
-        ok = refs && refs->image_decode && refs->image_decode(refs->context, (qa_bytes){encoded.data, count}, candidate, io->error) && *candidate;
-        if (!refs || !refs->image_decode) q3p_fail(io->error, QA_ERROR_ARGUMENT, "Generated Q3 candidate picture resolver is absent");
-    }
-    qa_buffer_free(&encoded); return ok;
+    bool present = *value != NULL;
+    if (!qa_source_save_bool(io, &present)) return false;
+    if (!present) return *value == NULL;
+    uint64_t id = 0;
+    if ((!reading(io) && !r->model_encode(r->context, *value, &id, io->error)) || !qa_source_save_u64(io, &id) || !resource) return false;
+    qa_bytes bytes = qa_resource_bytes(resource);
+    if (reading(io) && !r->model_decode(r->context, id, bytes, value, io->error)) return false;
+    return *value && same_bytes(bytes, (qa_bytes){(*value)->source.data, (*value)->source.size});
 }
-static bool table_fields(qa_source_save_io *io, qa_q3_presentation_assets *assets, q3p_resource_kind kind,
-    const qa_q3_asset_checkpoint_refs *refs)
+static bool world_fields(qa_source_save_io *io, qa_scene_world **value, uint64_t *ordinal,
+    const qa_q3_asset_owner_refs *r)
 {
-    bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    size_t count = kind == Q3P_MODEL ? assets->model_count : kind == Q3P_SKIN ? assets->skin_count :
-        kind == Q3P_SHADER ? assets->shader_count : assets->sound_count;
-    size_t maximum = reading && io->input.size / 8 < INT32_MAX ? io->input.size / 8 : INT32_MAX;
-    if (!qa_source_save_count(io, &count, maximum)) return false;
-    for (size_t i = 0; i < count; ++i) {
-        bool present = kind != Q3P_MODEL || (!reading && assets->models[i] != NULL);
-        if (!qa_source_save_bool(io, &present) || (!present && kind != Q3P_MODEL)) return false;
-        if (!present) {
-            if (reading) {
-                if (!q3p_reserve((void **)&assets->models, &assets->model_capacity, i + 1, sizeof(*assets->models), io->error)) return false;
-                assets->models[assets->model_count++] = NULL;
-            }
-            continue;
-        }
-        const q3p_name *registration = reading ? NULL : handle_name(assets, kind, (int32_t)i + 1);
-        const char *name = registration ? registration->name : NULL;
-        bool option = registration && registration->option, generated = registration && registration->generated;
-        if ((!reading && !registration) || !qa_source_save_text(io, &name) || !name ||
-            !qa_source_save_bool(io, &option) || !qa_source_save_bool(io, &generated) || (generated && kind != Q3P_SHADER)) return false;
-        int32_t handle = (int32_t)i + 1;
-        if (kind == Q3P_SHADER && generated) {
-            qa_scene_image *image = NULL;
-            const qa_material *material = reading ? NULL : assets->shaders[i];
-            const qa_scene_image *source = material && material->stage_count == 1 && material->stages[0].image_count == 1 ?
-                material->stages[0].images[0] : NULL;
-            bool ok = image_fields(io, refs, source, &image);
-            if (ok && reading) {
-                ok = qa_q3_register_picture_image(assets, image, &handle, io->error);
-                const q3p_name *rebound = ok ? q3p_find_name(assets, Q3P_SHADER, name) : NULL;
-                ok = ok && rebound && rebound->handle == handle;
-            }
-            qa_scene_image_release(image); if (!ok) return false;
-        } else if (reading) {
-            bool ok = kind == Q3P_MODEL ? qa_q3_register_model(assets, name, &handle, io->error) :
-                kind == Q3P_SKIN ? qa_q3_register_skin(assets, name, &handle, io->error) :
-                kind == Q3P_SHADER ? qa_q3_register_shader(assets, name, option, &handle, io->error) :
-                qa_q3_register_sound(assets, name, option, &handle, io->error);
-            if (!ok) return false;
-        }
-        if (handle != (int32_t)i + 1) return false;
-        if (kind == Q3P_MODEL && !model_fields(io, assets->models[i])) return false;
-        if (kind == Q3P_SKIN && !digest_fields(io, assets->skins[i]->resource)) return false;
-        if (kind == Q3P_SOUND && !digest_fields(io, qa_audio_asset_resource(assets->sounds[i]))) return false;
+    bool present = *value != NULL; uint64_t id = 0;
+    if (!qa_source_save_bool(io, &present)) return false;
+    if (!present) return *value == NULL;
+    if ((!reading(io) && !r->world_encode(r->context, *value, &id, io->error)) || !qa_source_save_u64(io, &id)) return false;
+    if (reading(io) && (!r->world_decode(r->context, id, value, io->error) || !*value)) return false;
+    if (reading(io) && ordinal) *ordinal = id;
+    return qa_scene_world_observation_ready(*value);
+}
+static bool scene_fields(qa_source_save_io *io, qa_scene_model **value, uint64_t *ordinal,
+    const qa_q3_asset_owner_refs *r)
+{
+    bool present = *value != NULL; uint64_t id = 0;
+    if (!qa_source_save_bool(io, &present)) return false;
+    if (!present) return *value == NULL;
+    if ((!reading(io) && !r->scene_encode(r->context, *value, &id, io->error)) || !qa_source_save_u64(io, &id)) return false;
+    if (reading(io) && (!r->scene_decode(r->context, id, value, io->error) || !*value)) return false;
+    if (reading(io)) *ordinal = id;
+    return qa_scene_model_observation_ready(*value);
+}
+static bool audio_fields(qa_source_save_io *io, qa_audio_asset **value, const qa_q3_asset_owner_refs *r,
+    bool qualify)
+{
+    bool present = *value != NULL; uint64_t id = 0;
+    if (!qa_source_save_bool(io, &present)) return false;
+    if (!present) return *value == NULL;
+    if ((!reading(io) && !r->audio_encode(r->context, *value, &id, io->error)) || !qa_source_save_u64(io, &id)) return false;
+    if (reading(io)) {
+        qa_audio_asset *candidate = NULL;
+        if (!r->audio_decode(r->context, id, &candidate, io->error) || !candidate) return false;
+        if (qualify) return candidate == *value;
+        if (*value || !qa_audio_asset_retain(candidate)) return false;
+        *value = candidate;
     }
     return true;
 }
-static bool asset_fields(qa_source_save_io *io, qa_q3_presentation_assets *assets, const qa_q3_asset_checkpoint_refs *refs)
+static bool allocation_fields(qa_source_save_io *io, void **array, size_t *count,
+    size_t *capacity, size_t width)
 {
-    if (!signature(io) || !digest_fields(io, qa_audio_asset_resource(assets->options.zero_sound))) return false;
-    for (q3p_resource_kind kind = Q3P_MODEL; kind <= Q3P_SOUND; ++kind)
-        if (!table_fields(io, assets, kind, refs)) return false;
-    bool reading = io->direction == QA_SOURCE_SAVE_READ; size_t count = assets->name_count;
-    if (!qa_source_save_count(io, &count, reading ? io->input.size / 8 : SIZE_MAX)) return false;
-    if (!reading) {
-        for (size_t i = 0; i < assets->name_capacity; ++i)
-            for (q3p_name *entry = assets->names[i]; entry; entry = entry->next) {
-                uint32_t kind = entry->kind; int32_t handle = entry->handle;
-                const char *name = entry->name; bool option = entry->option, generated = entry->generated;
-                if (!qa_source_save_u32(io, &kind) || !qa_source_save_text(io, &name) || !qa_source_save_i32(io, &handle) ||
-                    !qa_source_save_bool(io, &option) || !qa_source_save_bool(io, &generated)) return false;
+    size_t n = *count, cap = *capacity;
+    size_t maximum = reading(io) ? io->input.size : INT32_MAX;
+    if (!qa_source_save_count(io, &n, maximum) || !qa_source_save_count(io, &cap,
+        reading(io) && io->input.size <= SIZE_MAX - 32 ? io->input.size + 32 : SIZE_MAX) ||
+        n > cap || n > INT32_MAX || cap > SIZE_MAX / width) return false;
+    if (reading(io)) {
+        if (*array) return false;
+        void *candidate = cap ? calloc(cap, width) : NULL;
+        if (cap && !candidate) return q3p_fail(io->error, QA_ERROR_MEMORY, "Allocating restored Q3 physical handle table");
+        *array = candidate; *count = n; *capacity = cap;
+    } else if (cap && !*array) return false;
+    return true;
+}
+static bool private_text(qa_source_save_io *io, char **text)
+{
+    bool present = !reading(io) && *text;
+    size_t length = present ? strlen(*text) : 0;
+    if (!qa_source_save_bool(io, &present)) return false;
+    if (!present) return !reading(io) || *text == NULL;
+    if (!qa_source_save_count(io, &length, reading(io) ? io->input.size - io->offset : SIZE_MAX - 1) ||
+        length == SIZE_MAX) return false;
+    if (!reading(io)) return qa_source_save_bytes(io, *text, length);
+    if (*text) return false;
+    char *copy = malloc(length + 1);
+    if (!copy) return q3p_fail(io->error, QA_ERROR_MEMORY, "Retaining restored private Q3 text");
+    if (!qa_source_save_bytes(io, copy, length) || memchr(copy, 0, length)) {
+        free(copy); return false;
+    }
+    copy[length] = 0; *text = copy;
+    return true;
+}
+static bool lod_fields(qa_source_save_io *io, q3p_model *m, const qa_q3_asset_owner_refs *r)
+{
+    if (!qa_source_save_u32(io, &m->lods.load_count) || m->lods.load_count > 3 ||
+        !qa_source_save_u32(io, &m->lods.lod_count) || m->lods.lod_count > 3 ||
+        !qa_source_save_count(io, &m->lods.byte_length, SIZE_MAX)) return false;
+    uint32_t loaded = 0; size_t total = 0; bool ordered[3] = {false};
+    for (unsigned i = 0; i < 3; ++i) {
+        uint32_t state = m->lods.states[i];
+        if (!qa_source_save_u32(io, &state) || state > QA_MODEL_LOD_ALIAS ||
+            !qa_source_save_u32(io, &m->lods.aliases[i]) || m->lods.aliases[i] >= 3 ||
+            !qa_source_save_u32(io, &m->lods.load_order[i]) || m->lods.load_order[i] >= 3 ||
+            !private_text(io, &m->lods.paths[i]) || !m->lods.paths[i] ||
+            !resource_fields(io, &m->lod_resources[i], r) ||
+            !resource_owned(&m->provider, m->lod_resources[i])) return false;
+        if (reading(io)) m->lods.states[i] = (qa_model_lod_state)state;
+        if (i < m->lods.load_count) {
+            uint32_t slot = m->lods.load_order[i];
+            if (ordered[slot] || (i && slot >= m->lods.load_order[i - 1])) return false;
+            ordered[slot] = true;
+        } else if (m->lods.load_order[i]) return false;
+        if (state == QA_MODEL_LOD_LOADED || state == QA_MODEL_LOD_ALIAS) ++loaded;
+    }
+    if (!m->lods.load_count || loaded != m->lods.lod_count || !loaded) return false;
+    for (unsigned i = 0; i < 3; ++i) {
+        qa_model_lod_state state = m->lods.states[i];
+        if ((state == QA_MODEL_LOD_LOADED || state == QA_MODEL_LOD_INVALID) != (m->lod_resources[i] != NULL) ||
+            ordered[i] != (m->lod_resources[i] != NULL)) return false;
+        const qa_model *source = reading(io) ? NULL : q3p_model_source(m, i);
+        const qa_resource *resource = m->lod_resources[i];
+        if (state == QA_MODEL_LOD_ALIAS) {
+            unsigned slot = i;
+            for (unsigned depth = 0; depth < 3 && m->lods.states[slot] == QA_MODEL_LOD_ALIAS; ++depth) {
+                if (m->lods.aliases[slot] != slot + 1 || m->lods.aliases[slot] >= 3) return false;
+                slot = m->lods.aliases[slot];
             }
+            if (m->lods.states[slot] != QA_MODEL_LOD_LOADED) return false;
+            resource = m->lod_resources[slot];
+        }
+        if (!source_fields(io, &source, resource, r)) return false;
+        if ((state == QA_MODEL_LOD_LOADED || state == QA_MODEL_LOD_ALIAS) != (source != NULL)) return false;
+        if (reading(io)) m->sources[i] = source;
+        if (state == QA_MODEL_LOD_LOADED) {
+            if (source->format != QA_MODEL_MD3 || source->source.size < 108) return false;
+            size_t length = qa_load_u32le(source->source.data + 104);
+            if (length > SIZE_MAX - total) return false;
+            total += length;
+        }
+    }
+    if (total != m->lods.byte_length || !q3p_model_source(m, 0)) return false;
+    for (unsigned i = 0; i < 3; ++i) if (m->lods.states[i] == QA_MODEL_LOD_ALIAS &&
+        q3p_model_source(m, i) != q3p_model_source(m, m->lods.aliases[i])) return false;
+    return true;
+}
+static bool model_fields(qa_source_save_io *io, q3p_model *m,
+    qa_q3_presentation_assets *a, const qa_q3_asset_owner_refs *r)
+{
+    if (!provider_fields(io, &m->provider, r) || !resource_fields(io, &m->resource, r) ||
+        !resource_owned(&m->provider, m->resource) ||
+        !qa_source_save_bool(io, &m->has_lods) || !qa_source_save_bool(io, &m->owns_world) ||
+        !qa_source_save_u32(io, &m->inline_model) ||
+        !qa_source_save_vec3(io, &m->bounds.mins) || !qa_source_save_vec3(io, &m->bounds.maxs) ||
+        !world_fields(io, &m->world, &m->world_ordinal, r)) return false;
+    if (m->world) {
+        if (m->has_lods || (m->owns_world != (m->resource != NULL)) ||
+            qa_scene_world_resource_owner(m->world) != m->provider.images ||
+            qa_scene_world_material_owner(m->world) != m->provider.materials ||
+            m->inline_model >= qa_scene_world_model_count(m->world)) return false;
+        if (!m->owns_world && (m->world != a->world || !a->geometry ||
+            m->inline_model >= qa_collision_model_count(a->geometry))) return false;
     } else {
-        for (size_t i = 0; i < assets->name_capacity; ++i) {
-            q3p_name *entry = assets->names[i];
-            while (entry) { q3p_name *next = entry->next; free(entry); entry = next; }
-            assets->names[i] = NULL;
+        if (!m->resource || m->owns_world || m->inline_model) return false;
+        if (m->has_lods) { if (!lod_fields(io, m, r)) return false; }
+        else {
+            const qa_model *source = reading(io) ? NULL : q3p_model_source(m, 0);
+            if (!source_fields(io, &source, m->resource, r) || !source) return false;
+            if (reading(io)) m->sources[0] = source;
         }
-        assets->name_count = 0;
-        for (size_t i = 0; i < count; ++i) {
-            uint32_t kind = 0; const char *name = NULL; int32_t handle = 0; bool option = false, generated = false;
-            if (!qa_source_save_u32(io, &kind) || kind > Q3P_SOUND || !qa_source_save_text(io, &name) || !name ||
-                !qa_source_save_i32(io, &handle) || handle < 0 || !qa_source_save_bool(io, &option) ||
-                !qa_source_save_bool(io, &generated) || (generated && kind != Q3P_SHADER)) return false;
-            size_t maximum = kind == Q3P_MODEL ? assets->model_count : kind == Q3P_SKIN ? assets->skin_count :
-                kind == Q3P_SHADER ? assets->shader_count : assets->sound_count;
-            if ((size_t)handle > maximum || (kind == Q3P_MODEL && handle && !assets->models[handle - 1]) ||
-                q3p_find_name(assets, (q3p_resource_kind)kind, name) ||
-                !q3p_add_name(assets, (q3p_resource_kind)kind, name, handle, option, io->error)) return false;
-            q3p_find_name(assets, (q3p_resource_kind)kind, name)->generated = generated;
-        }
-        for (q3p_resource_kind kind = Q3P_MODEL; kind <= Q3P_SOUND; ++kind) {
-            size_t maximum = kind == Q3P_MODEL ? assets->model_count : kind == Q3P_SKIN ? assets->skin_count :
-                kind == Q3P_SHADER ? assets->shader_count : assets->sound_count;
-            for (size_t i = 0; i < maximum; ++i)
-                if (!(kind == Q3P_MODEL && !assets->models[i]) && !handle_name(assets, kind, (int32_t)i + 1)) return false;
+    }
+    for (unsigned i = 0; i < 3; ++i) {
+        if (!scene_fields(io, &m->scene[i], &m->scene_ordinals[i], r)) return false;
+        const qa_model *source = m->has_lods || !i ? q3p_model_source(m, i) : NULL;
+        if ((source != NULL) != (m->scene[i] != NULL)) return false;
+        if (m->scene[i] && (qa_scene_model_source(m->scene[i]) != source ||
+            qa_scene_model_resource_owner(m->scene[i]) != m->provider.images ||
+            qa_scene_model_material_owner(m->scene[i]) != m->provider.materials)) return false;
+        for (unsigned j = 0; j < i; ++j)
+            if ((source && source == q3p_model_source(m, j)) != (m->scene[i] && m->scene[i] == m->scene[j])) return false;
+    }
+    if (reading(io) && !m->world) for (unsigned i = 0; i < (m->has_lods ? 3u : 1u); ++i) {
+        const qa_model *source = q3p_model_source(m, i); bool shared = false;
+        for (unsigned j = 0; j < i; ++j) if (source == q3p_model_source(m, j)) shared = true;
+        if (source && !shared && (!r->model_retain(r->context, source, &m->source_leases[i], io->error) ||
+            !m->source_leases[i].context || !m->source_leases[i].release)) return false;
+    }
+    return true;
+}
+static bool skin_fields(qa_source_save_io *io, q3p_skin *skin, const qa_q3_asset_owner_refs *r)
+{
+    size_t count = skin->map.count, capacity = skin->map.capacity;
+    if (!provider_fields(io, &skin->provider, r) || !resource_fields(io, &skin->resource, r) || !skin->resource ||
+        !resource_owned(&skin->provider, skin->resource) ||
+        !qa_source_save_count(io, &count, reading(io) ? io->input.size / 68 : SIZE_MAX) ||
+        !qa_source_save_count(io, &capacity, reading(io) ? io->input.size / 64 : SIZE_MAX) ||
+        count > capacity || (!count && capacity) || (capacity && (capacity < 8 || (capacity & (capacity - 1)))) ||
+        capacity > SIZE_MAX / sizeof(*skin->map.mappings)) return false;
+    if (reading(io) && capacity) {
+        skin->map.mappings = calloc(capacity, sizeof(*skin->map.mappings));
+        if (!skin->map.mappings) return q3p_fail(io->error, QA_ERROR_MEMORY, "Allocating restored Q3 skin mappings");
+    }
+    if (capacity && !skin->map.mappings) return false;
+    if (reading(io)) { skin->map.count = count; skin->map.capacity = capacity; }
+    for (size_t i = 0; i < capacity; ++i) {
+        qa_model_skin_mapping *mapping = &skin->map.mappings[i];
+        if (!qa_source_save_bytes(io, mapping->surface, sizeof(mapping->surface)) ||
+            !memchr(mapping->surface, 0, sizeof(mapping->surface)) ||
+            !private_text(io, &mapping->shader)) return false;
+        if (i < count) { if (!mapping->shader) return false; }
+        else {
+            const uint8_t zero[sizeof(mapping->surface)] = {0};
+            if (mapping->shader || memcmp(mapping->surface, zero, sizeof(zero))) {
+                if (reading(io)) { free(mapping->shader); mapping->shader = NULL; }
+                return false;
+            }
         }
     }
     return true;
 }
-bool qa_q3_presentation_assets_checkpoint(qa_q3_presentation_assets *assets, qa_session *session,
-    const qa_q3_asset_checkpoint_refs *refs, qa_buffer *out, qa_error *error)
+static bool handles(qa_source_save_io *io, qa_q3_presentation_assets *a, const qa_q3_asset_owner_refs *r)
 {
-    if (!assets || assets->busy || !session || !out) return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 handle checkpoint requires an idle owner");
-    qa_source_save_io io = {0};
-    bool ok = qa_source_save_writer(&io, session, error) && asset_fields(&io, assets, refs) && qa_source_save_finish(&io, out);
-    if (!ok && (!error || error->code == QA_OK)) q3p_fail(error, QA_ERROR_FORMAT, "Invalid retained Q3 handle table");
-    qa_source_save_dispose(&io); return ok;
+    if (!allocation_fields(io, (void **)&a->models, &a->model_count, &a->model_capacity, sizeof(*a->models)) ||
+        !allocation_fields(io, (void **)&a->skins, &a->skin_count, &a->skin_capacity, sizeof(*a->skins)) ||
+        !allocation_fields(io, (void **)&a->shaders, &a->shader_count, &a->shader_capacity, sizeof(*a->shaders)) ||
+        !allocation_fields(io, (void **)&a->sounds, &a->sound_count, &a->sound_capacity, sizeof(*a->sounds))) return false;
+    for (size_t i = 0; i < a->model_count; ++i) {
+        bool present = a->models[i] != NULL;
+        if (!qa_source_save_bool(io, &present)) return false;
+        if (!present) continue;
+        if (reading(io)) {
+            a->models[i] = calloc(1, sizeof(*a->models[i]));
+            if (!a->models[i]) return q3p_fail(io->error, QA_ERROR_MEMORY, "Allocating restored Q3 model holder");
+            a->models[i]->borrowed_models = a->models[i]->borrowed_scenes = a->models[i]->borrowed_world = true;
+        }
+        if (!model_fields(io, a->models[i], a, r)) return false;
+        for (size_t j = 0; j < i; ++j) if (a->models[j]) {
+            q3p_model *prior = a->models[j], *current = a->models[i];
+            if (current->owns_world && prior->owns_world && current->world == prior->world) return false;
+            for (unsigned x = 0; x < 3; ++x) for (unsigned y = 0; y < 3; ++y)
+                if (current->scene[x] && current->scene[x] == prior->scene[y]) return false;
+        }
+    }
+    for (size_t i = 0; i < a->skin_count; ++i) {
+        if (reading(io)) {
+            a->skins[i] = calloc(1, sizeof(*a->skins[i]));
+            if (!a->skins[i]) return q3p_fail(io->error, QA_ERROR_MEMORY, "Allocating restored Q3 skin holder");
+        }
+        if (!a->skins[i] || !skin_fields(io, a->skins[i], r)) return false;
+    }
+    for (size_t i = 0; i < a->shader_count; ++i) {
+        uint64_t id = 0;
+        if ((!reading(io) && (!a->shaders[i] || !r->material_encode(r->context, a->shaders[i], &id, io->error))) ||
+            !qa_source_save_u64(io, &id) ||
+            (reading(io) && (!r->material_decode(r->context, id, &a->shaders[i], io->error) || !a->shaders[i]))) return false;
+    }
+    for (size_t i = 0; i < a->sound_count; ++i)
+        if (!audio_fields(io, &a->sounds[i], r, false) || !a->sounds[i]) return false;
+    return true;
 }
-bool qa_q3_presentation_assets_restore(qa_q3_presentation_assets *assets, qa_session *session,
-    const qa_q3_asset_checkpoint_refs *refs, qa_bytes bytes, qa_error *error)
+static bool name_valid(const qa_q3_presentation_assets *a, const q3p_name *entry, size_t bucket)
 {
-    if (!assets || assets->busy || !session || assets->name_count || assets->model_count || assets->skin_count ||
-        assets->shader_count || assets->sound_count) return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 handle restore requires an empty candidate");
+    if (entry->kind > Q3P_SOUND || entry->handle < 0 ||
+        (entry->generated && entry->kind != Q3P_SHADER) || entry->hash != q3p_name_hash(entry->kind, entry->name) ||
+        (entry->hash & (a->name_capacity - 1)) != bucket) return false;
+    size_t count = entry->kind == Q3P_MODEL ? a->model_count : entry->kind == Q3P_SKIN ? a->skin_count :
+        entry->kind == Q3P_SHADER ? a->shader_count : a->sound_count;
+    if ((size_t)entry->handle > count ||
+        (entry->kind == Q3P_MODEL && entry->handle && !a->models[entry->handle - 1])) return false;
+    if (entry->kind == Q3P_SHADER) for (const char *p = entry->name; *p; ++p)
+        if (*p >= 'A' && *p <= 'Z') return false;
+    return true;
+}
+static bool names(qa_source_save_io *io, qa_q3_presentation_assets *a)
+{
+    if (!allocation_fields(io, (void **)&a->names, &a->name_count, &a->name_capacity, sizeof(*a->names)) ||
+        (a->name_capacity && (a->name_capacity < 32 || (a->name_capacity & (a->name_capacity - 1))))) return false;
+    size_t seen = 0;
+    for (size_t bucket = 0; bucket < a->name_capacity; ++bucket) {
+        size_t count = 0;
+        if (!reading(io)) for (const q3p_name *entry = a->names[bucket]; entry; entry = entry->next) {
+            if (++count > a->name_count) return false;
+        }
+        if (!qa_source_save_count(io, &count, a->name_count - seen)) return false;
+        q3p_name **tail = &a->names[bucket];
+        for (size_t i = 0; i < count; ++i) {
+            const q3p_name *entry = reading(io) ? NULL : *tail;
+            uint32_t kind = entry ? entry->kind : 0; int32_t handle = entry ? entry->handle : 0;
+            uint64_t hash = entry ? entry->hash : 0; char *name = entry ? (char *)entry->name : NULL;
+            bool option = entry && entry->option, generated = entry && entry->generated;
+            if (!qa_source_save_u32(io, &kind) || kind > Q3P_SOUND || !qa_source_save_u64(io, &hash) ||
+                !private_text(io, &name) || !name || !qa_source_save_i32(io, &handle) ||
+                !qa_source_save_bool(io, &option) || !qa_source_save_bool(io, &generated)) {
+                if (reading(io)) free(name);
+                return false;
+            }
+            if (reading(io)) {
+                size_t length = strlen(name);
+                if (length > SIZE_MAX - sizeof(q3p_name) - 1 || q3p_find_name(a, (q3p_resource_kind)kind, name)) {
+                    free(name); return false;
+                }
+                q3p_name *candidate = malloc(sizeof(*candidate) + length + 1);
+                if (!candidate) { free(name); return q3p_fail(io->error, QA_ERROR_MEMORY, "Allocating restored Q3 name bucket row"); }
+                *candidate = (q3p_name){.hash = hash, .kind = (q3p_resource_kind)kind, .handle = handle,
+                    .option = option, .generated = generated};
+                memcpy(candidate->name, name, length + 1); free(name); *tail = candidate; entry = candidate;
+            }
+            if (!name_valid(a, entry, bucket)) return false;
+            tail = &(*tail)->next;
+        }
+        seen += count;
+    }
+    if (seen != a->name_count) return false;
+    for (q3p_resource_kind kind = Q3P_MODEL; kind <= Q3P_SKIN; ++kind) {
+        size_t count = kind == Q3P_MODEL ? a->model_count : kind == Q3P_SKIN ? a->skin_count :
+            kind == Q3P_SHADER ? a->shader_count : a->sound_count;
+        for (size_t i = 0; i < count; ++i) {
+            if (kind == Q3P_MODEL && !a->models[i]) continue;
+            bool found = false;
+            for (size_t bucket = 0; bucket < a->name_capacity && !found; ++bucket)
+                for (const q3p_name *entry = a->names[bucket]; entry; entry = entry->next)
+                    if (entry->kind == kind && entry->handle == (int32_t)i + 1) { found = true; break; }
+            if (!found) return false;
+        }
+    }
+    return true;
+}
+static bool asset_fields(qa_source_save_io *io, qa_q3_presentation_assets *a, const qa_q3_asset_owner_refs *r)
+{
+    uint64_t services = 0; qa_q3_presentation_provider provider = a->options.provider;
+    if (!signature(io) || (!reading(io) && !r->services_encode(r->context, &a->options, &services, io->error)) ||
+        !qa_source_save_u64(io, &services) ||
+        (reading(io) && !r->services_qualify(r->context, services, &a->options, io->error)) ||
+        !provider_fields(io, &provider, r) || provider.mounts != a->options.provider.mounts ||
+        provider.images != a->options.provider.images || provider.materials != a->options.provider.materials ||
+        provider.family != a->options.provider.family || !audio_fields(io, &a->options.zero_sound, r, true)) return false;
+    qa_scene_world *world = reading(io) ? NULL : a->world;
+    if (!world_fields(io, &world, NULL, r) || world != a->world) return false;
+    bool present = a->geometry != NULL; uint64_t geometry = 0;
+    if (!qa_source_save_bool(io, &present) || present != (a->geometry != NULL) || present != (world != NULL)) return false;
+    if (present) {
+        qa_collision_geometry *candidate = NULL;
+        if ((!reading(io) && !r->collision_encode(r->context, a->geometry, &geometry, io->error)) ||
+            !qa_source_save_u64(io, &geometry) || (reading(io) &&
+            (!r->collision_decode(r->context, geometry, &candidate, io->error) || candidate != a->geometry))) return false;
+    }
+    return handles(io, a, r) && names(io, a);
+}
+static bool codec_begin(qa_q3_presentation_assets *a, bool *own_lease, qa_error *error)
+{
+    if (!a || a->codec_busy || (a->busy && !a->capturing))
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 asset codec requires its genuine idle capture lease");
+    *own_lease = !a->capturing;
+    if (*own_lease && !qa_q3_assets_capture_begin(a, error)) return false;
+    a->codec_busy = true; return true;
+}
+static void codec_end(qa_q3_presentation_assets *a, bool own_lease)
+{ a->codec_busy = false; if (own_lease) qa_q3_assets_capture_end(a); }
+bool qa_q3_assets_owner_checkpoint(qa_q3_presentation_assets *a, qa_session *session,
+    const qa_q3_asset_owner_refs *r, qa_buffer *out, qa_error *error)
+{
+    bool own_lease = false;
+    if (!session || !out || out->data || out->size || !refs_ready(r))
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 asset checkpoint requires actual owner references and empty output");
+    if (!codec_begin(a, &own_lease, error)) return false;
     qa_source_save_io io = {0};
-    bool ok = qa_source_save_reader(&io, session, bytes, error) && asset_fields(&io, assets, refs) && qa_source_save_finish(&io, NULL);
-    if (!ok && (!error || error->code == QA_OK)) q3p_fail(error, QA_ERROR_FORMAT, "Saved Q3 handle identity or content differs");
-    qa_source_save_dispose(&io); return ok;
+    bool ok = qa_source_save_writer(&io, session, error) && asset_fields(&io, a, r) && qa_source_save_finish(&io, out);
+    if (!ok && (!error || error->code == QA_OK)) q3p_fail(error, QA_ERROR_FORMAT, "Invalid retained Q3 asset owner graph");
+    qa_source_save_dispose(&io); codec_end(a, own_lease); return ok;
+}
+bool qa_q3_assets_owner_restore(qa_q3_presentation_assets *a, qa_session *session,
+    const qa_q3_asset_owner_refs *r, qa_bytes bytes, qa_error *error)
+{
+    bool own_lease = false;
+    if (!a || !session || !refs_ready(r) || a->name_count || a->name_capacity || a->model_count || a->model_capacity ||
+        a->skin_count || a->skin_capacity || a->shader_count || a->shader_capacity || a->sound_count || a->sound_capacity)
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 asset import requires a qualified empty candidate");
+    if (!codec_begin(a, &own_lease, error)) return false;
+    qa_source_save_io io = {0};
+    bool ok = qa_source_save_reader(&io, session, bytes, error) && asset_fields(&io, a, r) && qa_source_save_finish(&io, NULL);
+    if (ok) for (size_t i = 0; ok && i < a->model_count; ++i) if (a->models[i]) {
+        q3p_model *m = a->models[i];
+        for (unsigned x = 0; ok && x < 3; ++x) {
+            bool shared = false;
+            for (unsigned y = 0; y < x; ++y) if (m->scene[x] == m->scene[y]) shared = true;
+            if (m->scene[x] && !shared) ok = r->scene_owned_ready(r->context, m->scene_ordinals[x], i, error);
+        }
+        if (ok && m->owns_world) ok = r->world_owned_ready(r->context, m->world_ordinal, i, error);
+    }
+    if (ok) for (size_t i = 0; i < a->model_count; ++i) if (a->models[i]) {
+        q3p_model *m = a->models[i];
+        for (unsigned x = 0; x < 3; ++x) {
+            bool shared = false;
+            for (unsigned y = 0; y < x; ++y) if (m->scene[x] == m->scene[y]) shared = true;
+            if (m->scene[x] && !shared) r->scene_adopt(r->context, m->scene_ordinals[x]);
+        }
+        if (m->owns_world) r->world_adopt(r->context, m->world_ordinal);
+        m->borrowed_scenes = m->borrowed_world = false;
+    }
+    if (!ok && (!error || error->code == QA_OK)) q3p_fail(error, QA_ERROR_FORMAT, "Saved Q3 asset identity or content differs");
+    qa_source_save_dispose(&io); codec_end(a, own_lease); return ok;
 }
