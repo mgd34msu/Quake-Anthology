@@ -60,6 +60,20 @@ void qa_vfs_clear_references(qa_vfs *vfs);
  * mount inventory/order; flags follow qa_vfs_mount_at search order. No file is
  * opened or marked through a synthetic acquisition. */
 bool qa_vfs_restore_references(qa_vfs *,const bool *,size_t count,qa_error *);
+typedef struct qa_vfs_read_reference {
+    qa_mount_id mount;
+    const qa_resource *resource;
+    const char *path;
+    const char *lookup_path;
+    const char *link_source, *link_target;
+} qa_vfs_read_reference;
+/* Successful reads in this exact view retain their genuine resource and mount
+ * provenance once per pair. Probes do not enter this journal. Entries remain
+ * borrowed until references clear, their mount is removed, or the view closes.
+ * A journal generation changes when records are removed; append keeps it. */
+uint64_t qa_vfs_read_generation(const qa_vfs *);
+size_t qa_vfs_read_count(const qa_vfs *);
+bool qa_vfs_read_at(const qa_vfs *, size_t, qa_vfs_read_reference *);
 
 /* New mounts append at lowest priority. Paths are native filesystem paths.
  * Repeated archive mounts share storage when file identity and format agree.
@@ -100,6 +114,9 @@ const qa_sha256_digest *qa_vfs_archive_digest(const qa_vfs *vfs, qa_mount_id mou
 /* Borrow the already decoded archive for complete source entry enumeration.
  * Null for loose or missing mounts; valid until that mount is removed. */
 const qa_archive *qa_vfs_archive(const qa_vfs *vfs, qa_mount_id mount);
+/* Whole immutable bytes from this real mounted archive. Borrowed until unmount
+ * or view teardown; consumers retain an owned copy across source replacement. */
+bool qa_vfs_archive_bytes(const qa_vfs *, qa_mount_id, qa_bytes *, qa_error *);
 bool qa_vfs_archive_checksums(qa_vfs *vfs, qa_mount_id mount, uint32_t feed,
                                uint32_t *checksum, uint32_t *pure_checksum,
                                qa_error *error);
@@ -127,6 +144,8 @@ void qa_vfs_listing_free(qa_vfs_listing *listing);
  * loose files acquire a new immutable version. out_mount is optional. */
 bool qa_vfs_acquire(qa_vfs *vfs, const char *path, qa_resource **out,
                     qa_mount_id *out_mount, qa_error *error);
+/* Ordinary lookup and policy admission without producing a read reference. */
+bool qa_vfs_probe(qa_vfs *, const char *, bool *found, uint64_t *size, qa_error *);
 typedef bool (*qa_vfs_accept_mount)(qa_mount_id mount, void *context);
 /* The filter must not mutate this VFS during acquisition. A rejected link
  * destination counts as a miss without falling through to ordinary mounts. */

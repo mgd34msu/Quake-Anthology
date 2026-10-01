@@ -259,6 +259,7 @@ qa_vfs *qa_vfs_create(qa_resource_pool *pool, qa_error *error)
     }
     vfs->pool = pool;
     vfs->next_mount = 1;
+    vfs->read_generation = 1;
     pool->references++;
     return vfs;
 }
@@ -285,6 +286,81 @@ void qa_vfs_clear_references(qa_vfs *vfs)
 {
     if (vfs == NULL) return;
     for (size_t i = 0; i < vfs->count; i++) vfs->mounts[i]->referenced = false;
+    for (size_t i = 0; i < vfs->read_count; ++i) {
+        qa_resource_release((qa_resource *)vfs->reads[i].resource); free((char *)vfs->reads[i].path);
+        free((char *)vfs->reads[i].lookup_path); free((char *)vfs->reads[i].link_source); free((char *)vfs->reads[i].link_target);
+    }
+    free(vfs->reads); free(vfs->read_slots);
+    vfs->reads = NULL; vfs->read_slots = NULL;
+    vfs->read_count = vfs->read_capacity = vfs->read_slot_count = 0;
+    vfs->read_generation = vfs->read_generation == UINT64_MAX ? 0 : vfs->read_generation + 1;
+}
+uint64_t qa_vfs_read_generation(const qa_vfs *vfs) { return vfs ? vfs->read_generation : 0; }
+size_t qa_vfs_read_count(const qa_vfs *vfs) { return vfs ? vfs->read_count : 0; }
+bool qa_vfs_read_at(const qa_vfs *vfs, size_t index, qa_vfs_read_reference *out)
+{
+    if (!vfs || !out || index >= vfs->read_count) return false;
+    *out = vfs->reads[index]; return true;
+}
+static size_t read_hash(qa_mount_id mount_id, uint64_t resource_id, size_t capacity)
+{
+    uint64_t value = resource_id ^ (mount_id * UINT64_C(11400714819323198485));
+    value ^= value >> 33; value *= UINT64_C(14029467366897019727); value ^= value >> 29;
+    return (size_t)value & (capacity - 1);
+}
+static bool read_index(qa_vfs *vfs, size_t capacity, qa_error *error)
+{
+    if (capacity > SIZE_MAX / sizeof(*vfs->read_slots)) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "VFS read journal index exhausted"); return false;
+    }
+    size_t *slots = calloc(capacity, sizeof(*slots));
+    if (!slots) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining VFS read journal index"); return false; }
+    for (size_t i = 0; i < vfs->read_count; ++i) {
+        size_t index = read_hash(vfs->reads[i].mount, qa_resource_id(vfs->reads[i].resource), capacity);
+        while (slots[index]) index = (index + 1) & (capacity - 1);
+        slots[index] = i + 1;
+    }
+    free(vfs->read_slots); vfs->read_slots = slots; vfs->read_slot_count = capacity; return true;
+}
+bool vfs_read_record(qa_vfs *vfs, mount *source, qa_resource *resource, const char *path,
+    const char *lookup_path, const char *link_source, const char *link_target, qa_error *error)
+{
+    if (!vfs->read_generation || vfs->read_count == SIZE_MAX) {
+        qa_error_set(error, QA_ERROR_FORMAT, 0, "VFS read journal generation exhausted"); return false;
+    }
+    size_t capacity = vfs->read_slot_count;
+    if (!capacity || vfs->read_count + 1 > capacity - capacity / 4) {
+        if (capacity > SIZE_MAX / 2) { qa_error_set(error, QA_ERROR_MEMORY, 0, "VFS read journal exhausted"); return false; }
+        if (!read_index(vfs, capacity ? capacity * 2 : 64, error)) return false;
+        capacity = vfs->read_slot_count;
+    }
+    size_t index = read_hash(source->id, qa_resource_id(resource), capacity);
+    while (vfs->read_slots[index]) {
+        const qa_vfs_read_reference *entry = vfs->reads + vfs->read_slots[index] - 1;
+        if (entry->mount == source->id && entry->resource == resource) return true;
+        index = (index + 1) & (capacity - 1);
+    }
+    if (vfs->read_count == vfs->read_capacity) {
+        size_t next = vfs->read_capacity ? vfs->read_capacity * 2 : 32;
+        if (next < vfs->read_capacity || next > SIZE_MAX / sizeof(*vfs->reads)) {
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "VFS read journal extent exhausted"); return false;
+        }
+        qa_vfs_read_reference *records = realloc(vfs->reads, next * sizeof(*records));
+        if (!records) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining VFS source read provenance"); return false; }
+        vfs->reads = records; vfs->read_capacity = next;
+    }
+    char *requested = qa_vfs_normalize_path(path, error);
+    if (!requested) return false;
+    char *lookup = qa_vfs_normalize_path(lookup_path, error);
+    char *from = copy_string(link_source ? link_source : ""), *to = copy_string(link_target ? link_target : "");
+    if (!lookup || !from || !to) {
+        free(requested); free(lookup); free(from); free(to);
+        if (!error || error->code == QA_OK) qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining actual VFS lookup recipe");
+        return false;
+    }
+    qa_resource_retain(resource);
+    vfs->reads[vfs->read_count++] = (qa_vfs_read_reference){source->id, resource, requested, lookup, from, to};
+    vfs->read_slots[index] = vfs->read_count; return true;
 }
 bool qa_vfs_restore_references(qa_vfs *vfs,const bool *flags,size_t count,qa_error *error)
 {
@@ -368,6 +444,7 @@ void vfs_mount_free(mount *source)
 void qa_vfs_destroy(qa_vfs *vfs)
 {
     if (vfs == NULL) return;
+    qa_vfs_clear_references(vfs);
     for (size_t i = 0; i < vfs->count; i++) vfs_mount_free(vfs->mounts[i]);
     free(vfs->mounts);
     prefix_order *prefix = vfs->prefixes;
@@ -641,6 +718,16 @@ const qa_archive *qa_vfs_archive(const qa_vfs *vfs, qa_mount_id id)
     const mount *source = find_mount(vfs, id);
     return source != NULL && source->archive != NULL ? source->archive->archive : NULL;
 }
+bool qa_vfs_archive_bytes(const qa_vfs *vfs, qa_mount_id id, qa_bytes *out, qa_error *error)
+{
+    const mount *source = vfs ? find_mount(vfs, id) : NULL; bool unchanged = false;
+    if (!source || !source->archive || !out) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Whole package requires its actual mounted archive"); return false;
+    }
+    if (!qa_fs_file_path_unchanged(source->archive_file, &source->identity, &unchanged, error)) return false;
+    if (!unchanged) { qa_error_set(error, QA_ERROR_IO, 0, "Mounted package changed after admission"); return false; }
+    *out = (qa_bytes){source->archive->storage.data, source->archive->storage.size}; return true;
+}
 
 static bool archive_checksums(const package *archive, uint32_t feed,
                                uint32_t *checksum, uint32_t *pure_checksum,
@@ -809,6 +896,28 @@ bool qa_vfs_unmount(qa_vfs *vfs, qa_mount_id id, qa_error *error)
                     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "cannot unmount a required pure archive");
                     return false;
                 }
+            }
+        }
+        bool recorded = false;
+        for (size_t j = 0; j < vfs->read_count; ++j) if (vfs->reads[j].mount == id) recorded = true;
+        if (recorded && (!vfs->read_generation || vfs->read_generation == UINT64_MAX)) {
+            qa_error_set(error, QA_ERROR_FORMAT, 0, "VFS read journal generation exhausted"); return false;
+        }
+        if (recorded) {
+            size_t kept = 0;
+            for (size_t j = 0; j < vfs->read_count; ++j) {
+                if (vfs->reads[j].mount == id) {
+                    qa_resource_release((qa_resource *)vfs->reads[j].resource); free((char *)vfs->reads[j].path);
+                    free((char *)vfs->reads[j].lookup_path); free((char *)vfs->reads[j].link_source); free((char *)vfs->reads[j].link_target);
+                }
+                else vfs->reads[kept++] = vfs->reads[j];
+            }
+            vfs->read_count = kept; ++vfs->read_generation;
+            memset(vfs->read_slots, 0, vfs->read_slot_count * sizeof(*vfs->read_slots));
+            for (size_t j = 0; j < kept; ++j) {
+                size_t index = read_hash(vfs->reads[j].mount, qa_resource_id(vfs->reads[j].resource), vfs->read_slot_count);
+                while (vfs->read_slots[index]) index = (index + 1) & (vfs->read_slot_count - 1);
+                vfs->read_slots[index] = j + 1;
             }
         }
         vfs_mount_free(vfs->mounts[i]);
@@ -1073,30 +1182,32 @@ static bool cache_resource(qa_resource_pool *pool, qa_resource *resource, qa_err
     return true;
 }
 
+static bool archive_member(const mount *source, const char *path,
+    const qa_archive_entry **out, qa_error *error)
+{
+    const qa_archive_entry *selected = NULL;
+    size_t start = 0;
+    for (;;) {
+        const qa_archive_entry *entry = NULL;
+        if (!qa_archive_find_normalized(source->archive->archive, path, source->comparison, start, &entry, error)) return false;
+        if (entry == NULL) break;
+        if (!entry->is_directory) {
+            selected = entry;
+            if (qa_archive_get_kind(source->archive->archive) == QA_ARCHIVE_PAK) break;
+        }
+        start = entry->ordinal + 1;
+    }
+    *out = selected; return true;
+}
 static bool acquire_archive(qa_resource_pool *pool, const mount *source,
                              const char *path, qa_resource **out, qa_error *error)
 {
     package *archive = source->archive;
     bool unchanged = false;
-    if (!qa_fs_file_path_unchanged(source->archive_file, &source->identity,
-                                   &unchanged, error))
-        return false;
-    if (!unchanged) {
-        qa_error_set(error, QA_ERROR_IO, 0, "mounted archive changed: %s", path);
-        return false;
-    }
+    if (!qa_fs_file_path_unchanged(source->archive_file, &source->identity, &unchanged, error)) return false;
+    if (!unchanged) { qa_error_set(error, QA_ERROR_IO, 0, "mounted archive changed: %s", path); return false; }
     const qa_archive_entry *selected = NULL;
-    size_t start = 0;
-    for (;;) {
-        const qa_archive_entry *entry = NULL;
-        if (!qa_archive_find_normalized(archive->archive, path, source->comparison, start, &entry, error)) return false;
-        if (entry == NULL) break;
-        if (!entry->is_directory) {
-            selected = entry;
-            if (qa_archive_get_kind(archive->archive) == QA_ARCHIVE_PAK) break;
-        }
-        start = entry->ordinal + 1;
-    }
+    if (!archive_member(source, path, &selected, error)) return false;
     if (selected == NULL) {
         qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "archive member not found: %s", path);
         return false;
@@ -1170,7 +1281,8 @@ static bool acquire_loose(qa_resource_pool *pool, const mount *source,
 }
 
 static bool acquire_mount(qa_vfs *vfs, mount *source,
-                           const char *path, qa_resource **out, qa_error *error)
+                           const char *path, const char *requested, const resource_link *link,
+                           qa_resource **out, qa_error *error)
 {
     if (!source_allowed(vfs, source, path)) {
         qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "resource excluded by content policy: %s", path);
@@ -1178,7 +1290,12 @@ static bool acquire_mount(qa_vfs *vfs, mount *source,
     }
     bool result = source->archive != NULL ? acquire_archive(vfs->pool, source, path, out, error) :
                                            acquire_loose(vfs->pool, source, path, out, error);
-    if (result && source->archive != NULL) source->referenced = true;
+    if (result) {
+        if (!vfs_read_record(vfs, source, *out, requested, path, link ? link->source : NULL, link ? link->target : NULL, error)) {
+            qa_resource_release(*out); *out = NULL; return false;
+        }
+        if (source->archive != NULL) source->referenced = true;
+    }
     return result;
 }
 
@@ -1197,7 +1314,7 @@ bool qa_vfs_acquire_from(qa_vfs *vfs, qa_mount_id id, const char *path,
     }
     char *normalized = qa_vfs_normalize_path(path, error);
     if (normalized == NULL) return false;
-    bool result = acquire_mount(vfs, source, normalized, out, error);
+    bool result = acquire_mount(vfs, source, normalized, path, NULL, out, error);
     free(normalized);
     return result;
 }
@@ -1208,7 +1325,7 @@ bool qa_vfs_acquire(qa_vfs *vfs, const char *path, qa_resource **out,
     return qa_vfs_acquire_filtered(vfs, path, NULL, NULL, out, out_mount, error);
 }
 
-bool qa_vfs_acquire_filtered(qa_vfs *vfs, const char *path,
+static bool acquire_filtered_mode(qa_vfs *vfs, const char *path,
                               qa_vfs_accept_mount accept, void *context,
                               qa_resource **out, qa_mount_id *out_mount,
                               qa_error *error)
@@ -1225,7 +1342,7 @@ bool qa_vfs_acquire_filtered(qa_vfs *vfs, const char *path,
         mount *source = vfs->mounts[i];
         if (!source->user_overlay) continue;
         if (accept != NULL && !accept(source->id, context)) continue;
-        if (acquire_mount(vfs, source, normalized, out, &local)) {
+        if (acquire_mount(vfs, source, normalized, path, NULL, out, &local)) {
             if (out_mount != NULL) *out_mount = source->id;
             free(normalized);
             return true;
@@ -1264,7 +1381,7 @@ bool qa_vfs_acquire_filtered(qa_vfs *vfs, const char *path,
         free(target);
         if (normalized == NULL) return false;
         mount *source = find_mount(vfs, link->mount);
-        bool result = acquire_mount(vfs, source, normalized, out, error);
+        bool result = acquire_mount(vfs, source, normalized, path, link, out, error);
         if (result && out_mount != NULL) *out_mount = source->id;
         free(normalized);
         return result;
@@ -1287,7 +1404,7 @@ bool qa_vfs_acquire_filtered(qa_vfs *vfs, const char *path,
         mount *source = order == NULL ? vfs->mounts[i] : find_mount(vfs, order[i]);
         if (source->user_overlay) continue;
         if (accept != NULL && !accept(source->id, context)) continue;
-        if (acquire_mount(vfs, source, normalized, out, &local)) {
+        if (acquire_mount(vfs, source, normalized, path, NULL, out, &local)) {
             if (out_mount != NULL) *out_mount = source->id;
             free(normalized);
             return true;
@@ -1301,6 +1418,115 @@ bool qa_vfs_acquire_filtered(qa_vfs *vfs, const char *path,
     free(normalized);
     qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "resource not found: %s", path);
     return false;
+}
+bool qa_vfs_acquire_filtered(qa_vfs *vfs, const char *path, qa_vfs_accept_mount accept,
+    void *context, qa_resource **out, qa_mount_id *out_mount, qa_error *error)
+{ return acquire_filtered_mode(vfs, path, accept, context, out, out_mount, error); }
+static bool probe_mount(const qa_vfs *vfs, const mount *source, const char *path,
+    bool *found, uint64_t *size, qa_error *error)
+{
+    if (!source_allowed(vfs, source, path)) return true;
+    if (source->archive) {
+        bool unchanged = false;
+        if (!qa_fs_file_path_unchanged(source->archive_file, &source->identity, &unchanged, error)) return false;
+        if (!unchanged) { qa_error_set(error, QA_ERROR_IO, 0, "Mounted probe archive changed"); return false; }
+        const qa_archive_entry *entry = NULL;
+        if (!archive_member(source, path, &entry, error)) return false;
+        if (entry) { *found = true; *size = entry->size; }
+        return true;
+    }
+    qa_error local = {0}; char *resolved = resolve_spelling(source, path, &local);
+    if (!resolved) {
+        if (local.code == QA_ERROR_NOT_FOUND) return true;
+        if (error) *error = local; return false;
+    }
+    qa_fs_file *file = NULL; qa_fs_identity identity;
+    bool ok = qa_fs_root_file_open(source->root, resolved, &file, &identity, &local);
+    free(resolved);
+    if (!ok) {
+        if (local.code == QA_ERROR_NOT_FOUND) return true;
+        if (error) *error = local; return false;
+    }
+    qa_fs_file_close(file); *found = true; *size = qa_fs_identity_size(&identity); return true;
+}
+bool vfs_read_valid(const qa_vfs *vfs, const qa_vfs_read_reference *entry, qa_error *error)
+{
+    mount *source = find_mount(vfs, entry->mount);
+    const qa_resource *resource = entry->resource;
+    if (!source || !resource || qa_resource_pool_find(vfs->pool, resource->id) != resource ||
+        resource->archive != source->archive || !entry->path || !entry->lookup_path ||
+        !entry->link_source || !entry->link_target) goto invalid;
+    if (source->archive && *entry->link_source) goto invalid;
+    if (!*entry->link_source) {
+        if (*entry->link_target || strcmp(entry->path, entry->lookup_path)) goto invalid;
+    } else {
+        size_t from = strlen(entry->link_source), to = strlen(entry->link_target);
+        if (strncmp(entry->path, entry->link_source, from)) goto invalid;
+        size_t suffix = strlen(entry->path + from);
+        if (to > SIZE_MAX - suffix - 1) goto invalid;
+        char *target = malloc(to + suffix + 1);
+        if (!target) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Validating retained VFS lookup"); return false; }
+        memcpy(target, entry->link_target, to); memcpy(target + to, entry->path + from, suffix + 1);
+        char *normalized = qa_vfs_normalize_path(target, error); free(target);
+        bool matches = normalized && !strcmp(normalized, entry->lookup_path); free(normalized);
+        if (!matches) goto invalid;
+    }
+    if (source->archive) {
+        const qa_archive_entry *member = NULL;
+        if (!archive_member(source, entry->lookup_path, &member, error)) return false;
+        if (!member || member->ordinal != resource->ordinal || !source->referenced) goto invalid;
+    } else {
+        char *resolved = resolve_spelling(source, entry->lookup_path, error);
+        if (!resolved) return false;
+        qa_fs_file *file = NULL; qa_fs_identity identity;
+        bool opened = qa_fs_root_file_open(source->root, resolved, &file, &identity, error); free(resolved);
+        if (!opened) return false;
+        qa_fs_file_close(file);
+        if (!qa_fs_identity_equal(&identity, &resource->identity)) goto invalid;
+    }
+    return true;
+invalid:
+    qa_error_set(error, QA_ERROR_FORMAT, 0, "VFS read recipe differs from its actual mounted resource"); return false;
+}
+bool qa_vfs_probe(qa_vfs *vfs, const char *path, bool *found, uint64_t *size, qa_error *error)
+{
+    if (!vfs || !found || !size) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "VFS probe requires its view and outputs"); return false; }
+    *found = false; *size = 0;
+    char *normalized = qa_vfs_normalize_path(path, error);
+    if (!normalized) return false;
+    bool ok = true;
+    for (size_t i = 0; ok && !*found && i < vfs->count; ++i)
+        if (vfs->mounts[i]->user_overlay) ok = probe_mount(vfs, vfs->mounts[i], normalized, found, size, error);
+    if (!ok || *found) { free(normalized); return ok; }
+    for (resource_link *link = vfs->links; link; link = link->next) {
+        size_t from = strlen(link->source), to = strlen(link->target);
+        if (strncmp(normalized, link->source, from)) continue;
+        size_t suffix = strlen(normalized + from);
+        if (to > SIZE_MAX - suffix - 1) { free(normalized); qa_error_set(error, QA_ERROR_MEMORY, 0, "VFS probe link extent"); return false; }
+        char *target = malloc(to + suffix + 1);
+        if (!target) { free(normalized); qa_error_set(error, QA_ERROR_MEMORY, 0, "VFS probe link path"); return false; }
+        memcpy(target, link->target, to); memcpy(target + to, normalized + from, suffix + 1);
+        free(normalized); normalized = qa_vfs_normalize_path(target, error); free(target);
+        if (!normalized) return false;
+        mount *source = find_mount(vfs, link->mount);
+        ok = source && probe_mount(vfs, source, normalized, found, size, error);
+        free(normalized); return ok;
+    }
+    qa_mount_id *order = NULL; size_t length = strlen(normalized);
+    for (prefix_order *prefix = vfs->prefixes; prefix; prefix = prefix->next) {
+        size_t prefix_length = strlen(prefix->prefix);
+        if (prefix_length < length && normalized[prefix_length] == '/') {
+            normalized[prefix_length] = 0;
+            bool matches = qa_archive_paths_equal(normalized, prefix->prefix, QA_ARCHIVE_CASE_INSENSITIVE);
+            normalized[prefix_length] = '/';
+            if (matches) { order = prefix->order; break; }
+        }
+    }
+    for (size_t i = 0; ok && !*found && i < vfs->count; ++i) {
+        mount *source = order ? find_mount(vfs, order[i]) : vfs->mounts[i];
+        if (!source->user_overlay) ok = probe_mount(vfs, source, normalized, found, size, error);
+    }
+    free(normalized); return ok;
 }
 
 void qa_vfs_listing_free(qa_vfs_listing *listing)

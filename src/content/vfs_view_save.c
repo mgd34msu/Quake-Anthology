@@ -2,7 +2,7 @@
 #include "vfs_private.h"
 #include "vfs_save_io.h"
 
-static const uint8_t view_magic[8] = {'Q','A','V','F',1,0,0,0};
+static const uint8_t view_magic[8] = {'Q','A','V','F',2,0,0,0};
 typedef struct mount_binding {
     char *root_path;
     qa_fs_identity root_identity;
@@ -241,11 +241,43 @@ static bool restrictions(vfs_save_io *io, qa_vfs *vfs)
     return true;
 }
 
+static bool reads(vfs_save_io *io, qa_vfs *vfs)
+{
+    size_t count = vfs->read_count;
+    if (!vfs_save_u64(io, &vfs->read_generation) || !vfs->read_generation ||
+        !vfs_save_count(io, &count, 48, sizeof(qa_vfs_read_reference))) return false;
+    for (size_t i = 0; i < count; ++i) {
+        qa_mount_id mount_id = io->reading ? 0 : vfs->reads[i].mount;
+        uint64_t resource_id = io->reading ? 0 : qa_resource_id(vfs->reads[i].resource);
+        if (!vfs_save_u64(io, &mount_id) || !vfs_save_u64(io, &resource_id) || !resource_id) return false;
+        mount *source = find_mount(vfs, mount_id);
+        const qa_resource *resource = qa_resource_pool_find(vfs->pool, resource_id);
+        if (!source || !resource || resource->archive != source->archive ||
+            (source->archive && !source->referenced))
+            return vfs_save_fail(io, QA_ERROR_FORMAT, "VFS read provenance differs from its actual resource and mounted owner");
+        char *path = io->reading ? NULL : (char *)vfs->reads[i].path;
+        char *lookup = io->reading ? NULL : (char *)vfs->reads[i].lookup_path;
+        char *from = io->reading ? NULL : (char *)vfs->reads[i].link_source;
+        char *to = io->reading ? NULL : (char *)vfs->reads[i].link_target;
+        bool fields = vfs_save_text(io, &path) && normalized_prefix(io, path, false, false) &&
+            vfs_save_text(io, &lookup) && normalized_prefix(io, lookup, false, false) &&
+            vfs_save_text(io, &from) && vfs_save_text(io, &to);
+        if (!fields) { if (io->reading) { free(path); free(lookup); free(from); free(to); } return false; }
+        if (io->reading) {
+            size_t previous = vfs->read_count;
+            bool recorded = vfs_read_record(vfs, source, (qa_resource *)resource, path, lookup, from, to, io->error);
+            free(path); free(lookup); free(from); free(to);
+            if (!recorded || vfs->read_count != previous + 1)
+                return vfs_save_fail(io, QA_ERROR_FORMAT, "Duplicate VFS read provenance");
+        } else if (vfs->reads[i].resource != resource || !vfs_read_valid(vfs, vfs->reads + i, io->error)) return false;
+    }
+    return true;
+}
 static bool view_fields(vfs_save_io *io, qa_vfs *vfs, mount_binding **bindings)
 {
     bool success = vfs_save_magic(io, view_magic) && vfs_save_u64(io, &vfs->next_mount) &&
         vfs_save_u64(io, &vfs->next_temporary) && mounts(io, vfs, bindings) &&
-        prefixes(io, vfs) && links(io, vfs) && restrictions(io, vfs) && vfs_save_finish(io);
+        prefixes(io, vfs) && links(io, vfs) && restrictions(io, vfs) && reads(io, vfs) && vfs_save_finish(io);
     if (!success && io->error && io->error->code == QA_OK)
         vfs_save_fail(io, QA_ERROR_FORMAT, "invalid VFS view continuation");
     return success;
@@ -327,6 +359,8 @@ bool qa_vfs_create_restored(qa_resource_pool *pool, const qa_vfs_checkpoint_refs
     mount_binding *bindings = NULL;
     vfs_save_io io = {.reading = true, .input = bytes, .error = error};
     bool success = view_fields(&io, candidate, &bindings) && native_bind(&io, candidate, bindings, refs);
+    for (size_t i = 0; success && i < candidate->read_count; ++i)
+        success = vfs_read_valid(candidate, candidate->reads + i, error);
     bindings_free(bindings, candidate->count);
     if (!success) {
         if (error && error->code == QA_OK) vfs_save_fail(&io, QA_ERROR_FORMAT, "VFS native admission failed");

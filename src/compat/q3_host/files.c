@@ -84,6 +84,12 @@ static bool open_file(q3_call *call, int32_t *result, qa_error *error)
             *result = destination ? -1 : 0;
             ok = !destination || q3_write_word(call, destination, 0, error);
         } else {
+            if (!destination) {
+                bool found = false; uint64_t size = 0;
+                ok = qa_vfs_probe(host->options.mounts, path, &found, &size, error);
+                if (ok) *result = found ? 1 : 0;
+                qa_buffer_free(&name); return ok;
+            }
             qa_mount_id mount = 0;
             qa_error local = {0};
             ok = qa_vfs_acquire(host->options.mounts, path, &file.resource, &mount, &local);
@@ -92,9 +98,6 @@ static bool open_file(q3_call *call, int32_t *result, qa_error *error)
                 ok = !destination || q3_write_word(call, destination, 0, error);
             } else if (!ok) {
                 if (error) *error = local;
-            } else if (!destination) {
-                *result = 1;
-                q3_file_close(&file);
             } else {
                 qa_bytes bytes = qa_resource_bytes(file.resource);
                 if (bytes.size > INT32_MAX)

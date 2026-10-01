@@ -66,6 +66,11 @@ struct qa_vfs {
     resource_link *links;
     qa_sha256_digest *pure;
     size_t pure_count;
+    qa_vfs_read_reference *reads;
+    size_t read_count, read_capacity;
+    size_t *read_slots;
+    size_t read_slot_count;
+    uint64_t read_generation;
     bool q3_demo;
 };
 struct qa_vfs_file {
@@ -76,4 +81,6 @@ struct qa_vfs_file {
 };
 void vfs_package_release(package *);
 void vfs_mount_free(mount *);
+bool vfs_read_record(qa_vfs *, mount *, qa_resource *, const char *, const char *, const char *, const char *, qa_error *);
+bool vfs_read_valid(const qa_vfs *, const qa_vfs_read_reference *, qa_error *);
 #endif
