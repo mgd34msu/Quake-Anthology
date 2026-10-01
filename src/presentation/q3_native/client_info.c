@@ -508,7 +508,11 @@ static bool begin(q3n_clients *owner, qa_application *app, const qa_application_
     if (!source_current(owner, app, cut, error)) return false;
     const char *serverinfo; uint64_t revision;
     if (!qa_native_q3_wire_reader_configstring(owner->options.reader, 0, &serverinfo, &revision, error)) return false;
-    int32_t game_type = integer_key(serverinfo, "g_gametype"), max_clients = integer_key(serverinfo, "sv_maxclients");
+    char value[8192];
+    if (!qa_q3_info_value(serverinfo, "g_gametype", value, sizeof(value), error)) return false;
+    int32_t game_type = source_integer(value);
+    if (!qa_q3_info_value(serverinfo, "sv_maxclients", value, sizeof(value), error)) return false;
+    int32_t max_clients = source_integer(value);
     if (game_type < 0 || game_type > 7 || max_clients < 0 || max_clients > 64)
         return q3n_client_fail(error, QA_ERROR_FORMAT, "Invalid native Q3 reached client media serverinfo");
     owner->serverinfo_revision = revision; owner->game_type = game_type; owner->max_clients = (uint32_t)max_clients;
