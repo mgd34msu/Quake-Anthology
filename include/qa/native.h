@@ -203,6 +203,8 @@ typedef struct qa_native_options {
     uint32_t frame_milliseconds;
     /* Requires the matching instrumented helper even without inline regions. */
     bool observe;
+    /* Requires a separate source process without requesting instrumentation. */
+    bool isolate;
 } qa_native_options;
 
 typedef enum qa_native_backend {
@@ -232,6 +234,9 @@ typedef struct qa_native_runner_config {
     const char *linux_x86_64_drrun;
     const char *linux_i386_client;
     const char *linux_x86_64_client;
+    /* Exact process-target fallback, including AARCH64, when its ABI-specific
+     * runner slot is absent. It never supplies a foreign target helper. */
+    const char *same_host_runner;
     const char *wine;
     const char *wine_drive;
     size_t maximum_frame_bytes;
@@ -252,8 +257,9 @@ typedef enum qa_native_lifecycle {
 /* Direct instances accept only the current process OS, architecture and ABI,
  * and reject declarations with inline regions. Guest code is trusted native
  * code and may compromise the process. Imports are synchronous. Activation is
- * stacked, so permitted nested calls restore the previous instance; callbacks
- * from module-created threads are rejected. Creation outputs start empty. If
+ * stacked, so permitted nested calls restore the previous instance. The trusted
+ * caller confines source execution and imports to its owning thread; original
+ * host adapters require isolated execution instead. Creation outputs start empty. If
  * failed construction cannot unload its real library, it returns that owned
  * failed instance in *out so its callback context can survive until cleanup. */
 bool qa_native_create_direct(qa_native_module *module, const qa_native_options *options,
@@ -261,8 +267,9 @@ bool qa_native_create_direct(qa_native_module *module, const qa_native_options *
 bool qa_native_create_runner(qa_native_module *module, const qa_native_options *options,
                              const qa_native_runner_config *runner, qa_native_instance **out,
                              qa_error *error);
-/* Selects direct execution for an exact process target and otherwise requires
- * runner configuration. It never falls back to emulation or a different ABI. */
+/* Selects direct execution for an exact process target unless isolation or
+ * instrumentation is required. Other cases require the actual runner config.
+ * It never falls back to emulation or a different ABI. */
 bool qa_native_create(qa_native_module *module, const qa_native_options *options,
                       const qa_native_runner_config *runner, qa_native_instance **out,
                       qa_error *error);

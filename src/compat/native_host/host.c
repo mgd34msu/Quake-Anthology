@@ -63,7 +63,8 @@ static bool configure_instance(qa_native_host *host, qa_native_module *module,
         .tick_rate = options->tick_rate,
         .frame_seconds = options->frame_seconds,
         .frame_milliseconds = options->frame_milliseconds,
-        .observe = options->observe};
+        .observe = options->observe,
+        .isolate = true};
     return qa_native_create(module, &native, runner, &host->instance, error);
 }
 
@@ -103,7 +104,7 @@ bool qa_native_host_create_q2_game(qa_native_module *module,
                                    const qa_native_host_q2_game_options *options,
                                    qa_native_host **out, qa_error *error)
 {
-    if (!module || !options || !out || !options->world.session || !options->world.world ||
+    if (!module || !options || !out || *out || !options->world.session || !options->world.world ||
         !options->world.owner || !options->cvars) {
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "Q2 native game host requires canonical world services");
@@ -131,6 +132,7 @@ bool qa_native_host_create_q2_game(qa_native_module *module,
     if (!host->message ||
         !configure_instance(host, module, &options->instance, options->instance.runner,
                             error)) {
+        if (host->instance) { *out = host; return false; }
         free_records(host);
         free(host);
         return false;
@@ -143,7 +145,7 @@ bool qa_native_host_create_q2_cgame(qa_native_module *module,
                                     const qa_native_host_q2_cgame_options *options,
                                     qa_native_host **out, qa_error *error)
 {
-    if (!module || !options || !out || !options->cvars || !options->application)
+    if (!module || !options || !out || *out || !options->cvars || !options->application)
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "Q2 native cgame host requires cvars and presentation services");
     qa_native_host *host = allocate_host(module, NATIVE_HOST_Q2_CGAME,
@@ -161,6 +163,7 @@ bool qa_native_host_create_q2_cgame(qa_native_module *module,
     host->command_context = options->command_context;
     if (!configure_instance(host, module, &options->instance, options->instance.runner,
                             error)) {
+        if (host->instance) { *out = host; return false; }
         free_records(host);
         free(host);
         return false;
@@ -173,7 +176,7 @@ bool qa_native_host_create_q3(qa_native_module *module,
                               const qa_native_host_q3_options *options,
                               qa_native_host **out, qa_error *error)
 {
-    if (!module || !options || !out || !options->bridge.dispatch ||
+    if (!module || !options || !out || *out || !options->bridge.dispatch ||
         (unsigned)options->abi > QA_QVM_Q3_116N ||
         (options->role != QA_QVM_GAME && options->role != QA_QVM_CGAME &&
          options->role != QA_QVM_UI))
@@ -203,6 +206,7 @@ bool qa_native_host_create_q3(qa_native_module *module,
     host->command_context = options->command_context;
     if (!configure_instance(host, module, &options->instance, options->instance.runner,
                             error)) {
+        if (host->instance) { *out = host; return false; }
         free_records(host);
         free(host);
         return false;
@@ -250,17 +254,19 @@ bool qa_native_host_terminal_retired(const qa_native_host *host)
         host->world.session ? qa_session_actors(host->world.session) : NULL);
 }
 
-bool qa_native_host_destroy(qa_native_host *host, qa_error *error)
+bool qa_native_host_destroy_owned(qa_native_host **owner, qa_error *error)
 {
+    qa_native_host *host = owner ? *owner : NULL;
     if (!qa_native_host_destroy_ready(host) || host->reconstruction ||
         (qa_native_terminal(host->instance) && !qa_native_host_terminal_retired(host)))
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "live native host adapter is required");
     host->destroying = true;
-    bool ok = qa_native_destroy(host->instance, error);
-    host->instance = NULL;
+    bool ok = qa_native_destroy_owned(&host->instance, error);
+    if (host->instance) { host->destroying = false; return false; }
     free_records(host);
     free(host);
+    *owner = NULL;
     return ok;
 }
 
@@ -323,9 +329,11 @@ bool qa_native_host_initialize(qa_native_host *host, int32_t level_time,
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "native host adapter is required for initialization");
     bool ok;
-    if (host->profile == QA_NATIVE_QUAKE_LIVE_GAME_API10)
-        ok = qa_native_ql_register_cvars(host->instance, error) &&
+    if (host->profile == QA_NATIVE_QUAKE_LIVE_GAME_API10) {
+        bool restarting = qa_native_get_lifecycle(host->instance) == QA_NATIVE_RESTART_READY;
+        ok = (restarting || qa_native_ql_register_cvars(host->instance, error)) &&
              qa_native_ql_initialize(host->instance, level_time, random_seed, restart, error);
+    }
     else if (host->profile == QA_NATIVE_Q3_VMMAIN) {
         if (host->q3_role != QA_QVM_GAME)
             return native_host_fail(error, QA_ERROR_ARGUMENT, 0,

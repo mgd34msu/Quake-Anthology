@@ -3,13 +3,14 @@
 #include "qa/source_save.h"
 
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #if !defined(_WIN32)
 #include <unistd.h>
 #endif
 
-enum { RUNTIME_FILES = 13, WINE_FILE = 12 };
+enum { RUNTIME_FILES = 14, WINE_FILE = 12, SAME_HOST_FILE = 13 };
 typedef struct runtime_file {
     char *path;
     qa_fs_file *file;
@@ -47,7 +48,8 @@ static const runtime_slot slots[RUNTIME_FILES] = {
     SLOT(linux_x86_64_drrun, "linux-x86_64/dynamorio/bin64/drrun", QA_NATIVE_OS_LINUX, QA_NATIVE_ARCH_X86_64, true),
     SLOT(linux_i386_client, "linux-i386/qa-native-hooks.so", QA_NATIVE_OS_LINUX, QA_NATIVE_ARCH_I386, false),
     SLOT(linux_x86_64_client, "linux-x86_64/qa-native-hooks.so", QA_NATIVE_OS_LINUX, QA_NATIVE_ARCH_X86_64, false),
-    SLOT(wine, "wine/bin/wine", QA_NATIVE_OS_LINUX, QA_NATIVE_ARCH_X86_64, true)
+    SLOT(wine, "wine/bin/wine", QA_NATIVE_OS_LINUX, QA_NATIVE_ARCH_X86_64, true),
+    SLOT(same_host_runner, NULL, QA_NATIVE_OS_LINUX, QA_NATIVE_ARCH_X86_64, true)
 };
 #undef SLOT
 
@@ -55,6 +57,26 @@ static bool fail(qa_error *error, qa_status status, const char *message)
 {
     qa_error_set(error, status, 0, "%s", message);
     return false;
+}
+
+static bool targets_equal(qa_native_target a, qa_native_target b)
+{
+    return a.os == b.os && a.arch == b.arch && a.abi == b.abi && a.pointer_bytes == b.pointer_bytes;
+}
+
+static const char *relative_slot(size_t index, char *path, size_t capacity)
+{
+    if (index != SAME_HOST_FILE) return slots[index].relative;
+    qa_native_target target = qa_native_host_target();
+    const char *os = target.os == QA_NATIVE_OS_WINDOWS ? "windows" :
+        target.os == QA_NATIVE_OS_LINUX ? "linux" : NULL;
+    const char *arch = target.arch == QA_NATIVE_ARCH_I386 ? "i386" :
+        target.arch == QA_NATIVE_ARCH_X86_64 ? "x86_64" :
+        target.arch == QA_NATIVE_ARCH_AARCH64 ? "aarch64" : NULL;
+    if (!os || !arch) return NULL;
+    int written = snprintf(path, capacity, "%s-%s/qa-native-runner%s", os, arch,
+        target.os == QA_NATIVE_OS_WINDOWS ? ".exe" : "");
+    return written > 0 && (size_t)written < capacity ? path : NULL;
 }
 
 static char *copy(const char *text, qa_error *error)
@@ -125,30 +147,35 @@ static bool open_slot(qa_native_runtime *runtime, size_t index,
 {
     runtime_file *file = &runtime->files[index];
     const runtime_slot *slot = &slots[index];
+    char host_path[96];
+    const char *relative = relative_slot(index, host_path, sizeof(host_path));
     qa_fs_entry_kind kind = QA_FS_MISSING;
     bool explicit_path = override != NULL;
     if (explicit_path) {
         if (!absolute_file(override, &file->path, error) ||
             !qa_fs_path_status(file->path, true, &kind, NULL, error)) return false;
     } else if (runtime->root) {
-        if (!qa_fs_root_status(runtime->root, slot->relative, &kind, NULL, error)) return false;
-        if (kind != QA_FS_MISSING && !qa_fs_root_join(runtime->root, slot->relative, &file->path, error)) return false;
+        if (!relative) return fail(error, QA_ERROR_UNSUPPORTED, "Native package has no exact host helper directory");
+        if (!qa_fs_root_status(runtime->root, relative, &kind, NULL, error)) return false;
+        if (kind != QA_FS_MISSING && !qa_fs_root_join(runtime->root, relative, &file->path, error)) return false;
     }
     if (kind == QA_FS_MISSING)
         return !explicit_path || fail(error, QA_ERROR_NOT_FOUND, "Explicit native runtime program was not found");
     if (kind != QA_FS_REGULAR)
         return fail(error, QA_ERROR_FORMAT, "Native runtime artifact is not a regular file");
     bool okay = explicit_path ? qa_fs_file_open(file->path, &file->file, &file->identity, error) :
-        qa_fs_root_file_open(runtime->root, slot->relative, &file->file, &file->identity, error);
+        qa_fs_root_file_open(runtime->root, relative, &file->file, &file->identity, error);
     qa_buffer bytes = {0};
     qa_native_image_info image = {0};
     if (okay) okay = qa_fs_file_read_snapshot(file->file, &file->identity, &bytes, error);
     if (okay) okay = slot->program ? qa_native_inspect_program((qa_bytes){bytes.data, bytes.size}, &image, error) :
         qa_native_inspect((qa_bytes){bytes.data, bytes.size}, &image, error);
-    qa_native_target expected = index == WINE_FILE ? qa_native_host_target() :
+    qa_native_target expected = index == WINE_FILE || index == SAME_HOST_FILE ? qa_native_host_target() :
         (qa_native_target){.os = slot->os, .arch = slot->arch};
     if (okay && (image.target.os != expected.os || image.target.arch != expected.arch))
         okay = fail(error, QA_ERROR_FORMAT, "Native runtime artifact differs from its actual packaged ABI");
+    if (okay && index == SAME_HOST_FILE && !targets_equal(image.target, expected))
+        okay = fail(error, QA_ERROR_FORMAT, "Native same-host helper differs from the exact process ABI");
     if (okay && slot->program && image.target.os == qa_native_host_target().os)
         okay = executable_path(file, error);
     if (okay) {
@@ -163,11 +190,21 @@ static bool open_slot(qa_native_runtime *runtime, size_t index,
 static bool validate_target(void *context, qa_native_target target, bool instrumented, qa_error *error)
 {
     qa_native_runtime *runtime = context;
-    if (!runtime || (target.os != QA_NATIVE_OS_WINDOWS && target.os != QA_NATIVE_OS_LINUX) ||
-        (target.arch != QA_NATIVE_ARCH_I386 && target.arch != QA_NATIVE_ARCH_X86_64))
+    if (!runtime || (target.os != QA_NATIVE_OS_WINDOWS && target.os != QA_NATIVE_OS_LINUX))
         return fail(error, QA_ERROR_UNSUPPORTED, "Native runtime has no packaged capability for this target");
-    size_t runner = target.os == QA_NATIVE_OS_WINDOWS ? 0 : 2;
-    if (target.arch == QA_NATIVE_ARCH_X86_64) ++runner;
+    bool x86 = target.arch == QA_NATIVE_ARCH_I386 || target.arch == QA_NATIVE_ARCH_X86_64;
+    size_t runner = SAME_HOST_FILE;
+    if (x86) {
+        runner = target.os == QA_NATIVE_OS_WINDOWS ? 0 : 2;
+        if (target.arch == QA_NATIVE_ARCH_X86_64) ++runner;
+    }
+    if (!x86 || !runtime->files[runner].file) {
+        if (!targets_equal(target, qa_native_host_target()))
+            return fail(error, QA_ERROR_UNSUPPORTED, "Native helper fallback requires the exact host ABI");
+        runner = SAME_HOST_FILE;
+    }
+    if (instrumented && !x86)
+        return fail(error, QA_ERROR_UNSUPPORTED, "This native target has no packaged instrumentation capability");
     size_t launcher = target.os == QA_NATIVE_OS_WINDOWS ? 4 : 8;
     if (target.arch == QA_NATIVE_ARCH_X86_64) ++launcher;
     size_t client = launcher + 2;
@@ -260,10 +297,10 @@ static bool text(qa_source_save_io *io, const char *actual)
 static bool fields(qa_source_save_io *io, const qa_native_runtime *runtime)
 {
     uint8_t magic[4] = {'Q','N','R','T'};
-    uint32_t version = 1, count = RUNTIME_FILES;
+    uint32_t version = 2, count = RUNTIME_FILES;
     uint64_t maximum = runtime->config.maximum_frame_bytes;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QNRT", 4) ||
-        !qa_source_save_u32(io, &version) || version != 1 ||
+        !qa_source_save_u32(io, &version) || version != 2 ||
         !qa_source_save_u32(io, &count) || count != RUNTIME_FILES ||
         !qa_source_save_u64(io, &maximum) || maximum != runtime->config.maximum_frame_bytes ||
         !text(io, runtime->wine_drive)) return false;

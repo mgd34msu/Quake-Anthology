@@ -87,32 +87,33 @@ static char *wine_path(native_runner_command *command, const char *path, const c
 }
 
 static const char *runner_path(const qa_native_runner_config *config, qa_native_target target) {
+    const char *path = NULL;
     if (target.os == QA_NATIVE_OS_WINDOWS)
-        return target.arch == QA_NATIVE_ARCH_I386 ? config->windows_i386_runner
-                                                  : config->windows_x86_64_runner;
+        path = target.arch == QA_NATIVE_ARCH_I386 ? config->windows_i386_runner
+             : target.arch == QA_NATIVE_ARCH_X86_64 ? config->windows_x86_64_runner : NULL;
     if (target.os == QA_NATIVE_OS_LINUX)
-        return target.arch == QA_NATIVE_ARCH_I386 ? config->linux_i386_runner
-                                                  : config->linux_x86_64_runner;
-    return NULL;
+        path = target.arch == QA_NATIVE_ARCH_I386 ? config->linux_i386_runner
+             : target.arch == QA_NATIVE_ARCH_X86_64 ? config->linux_x86_64_runner : NULL;
+    return path ? path : targets_equal(target, qa_native_host_target()) ? config->same_host_runner : NULL;
 }
 
 static const char *drrun_path(const qa_native_runner_config *config, qa_native_target target) {
     if (target.os == QA_NATIVE_OS_WINDOWS)
         return target.arch == QA_NATIVE_ARCH_I386 ? config->windows_i386_drrun
-                                                  : config->windows_x86_64_drrun;
+             : target.arch == QA_NATIVE_ARCH_X86_64 ? config->windows_x86_64_drrun : NULL;
     if (target.os == QA_NATIVE_OS_LINUX)
         return target.arch == QA_NATIVE_ARCH_I386 ? config->linux_i386_drrun
-                                                  : config->linux_x86_64_drrun;
+             : target.arch == QA_NATIVE_ARCH_X86_64 ? config->linux_x86_64_drrun : NULL;
     return NULL;
 }
 
 static const char *client_path(const qa_native_runner_config *config, qa_native_target target) {
     if (target.os == QA_NATIVE_OS_WINDOWS)
         return target.arch == QA_NATIVE_ARCH_I386 ? config->windows_i386_client
-                                                  : config->windows_x86_64_client;
+             : target.arch == QA_NATIVE_ARCH_X86_64 ? config->windows_x86_64_client : NULL;
     if (target.os == QA_NATIVE_OS_LINUX)
         return target.arch == QA_NATIVE_ARCH_I386 ? config->linux_i386_client
-                                                  : config->linux_x86_64_client;
+             : target.arch == QA_NATIVE_ARCH_X86_64 ? config->linux_x86_64_client : NULL;
     return NULL;
 }
 
