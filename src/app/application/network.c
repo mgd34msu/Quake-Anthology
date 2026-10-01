@@ -814,27 +814,61 @@ bool qa_application_network_q3_host_capacity(qa_application *app,
 }
 
 bool qa_application_network_q3_host_slots(qa_application *app, qa_actor_owner owner,
-    bool occupied[64], qa_error *error)
+    qa_application_network_q3_host_slot slots[64], qa_error *error)
 {
-    if (!occupied) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q3 host slot observation");
+    if (!slots) return application_fail(error, QA_ERROR_ARGUMENT, "Missing Q3 host slot observation");
     application_provider *provider = q3_host_source(app, owner, error);
     if (!provider) return false;
     if (provider->kind == APPLICATION_PROVIDER_Q3) {
         qa_q3_round_source world;
         if (!qa_q3_round_read(provider->state.q3, &world, error)) return false;
-        memset(occupied, 0, 64 * sizeof(*occupied));
+        memset(slots, 0, 64 * sizeof(*slots));
         for (uint32_t i = 0; i < world.max_clients; ++i) {
             qa_q3_source_binding binding; qa_q3_native_client client;
+            application_native_q3_wire_client_view wire;
+            bool admitted;
             if (!qa_q3_source_binding_read(provider->state.q3, i, &binding, error) ||
-                !qa_q3_client_slot_read(provider->state.q3, i, &client, error)) return false;
-            occupied[i] = binding.actor.registry != 0 || client.connected != QA_Q3_CLIENT_DISCONNECTED;
+                !qa_q3_client_slot_read(provider->state.q3, i, &client, error) ||
+                !application_native_q3_wire_client_admission_read(provider, i, &wire, &admitted, error)) return false;
+            slots[i] = (qa_application_network_q3_host_slot){
+                .occupied = binding.actor.registry != 0 || client.connected != QA_Q3_CLIENT_DISCONNECTED,
+                .bot = admitted && wire.bot};
         }
         return true;
     }
     struct application_q3_guest *engine = q3g_engine(provider);
-    for (size_t i = 0; i < 64; ++i)
-        occupied[i] = engine->clients[i].allocated || engine->clients[i].connected || engine->clients[i].pending_retirement;
+    for (size_t i = 0; i < 64; ++i) {
+        const q3g_client *client = &engine->clients[i];
+        slots[i] = (qa_application_network_q3_host_slot){
+            .occupied = client->allocated || client->connected || client->pending_retirement,
+            .bot = client->allocated && client->bot};
+    }
     return true;
+}
+
+bool qa_application_network_q3_drop_bot(qa_application *app, qa_actor_owner owner,
+    uint32_t slot, qa_error *error)
+{
+    application_provider *provider = q3_host_source(app, owner, error);
+    uint32_t capacity;
+    if (!provider || !qa_application_network_q3_host_capacity(app, owner, &capacity, error)) return false;
+    if (slot >= capacity)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 bot replacement exceeds its actual source capacity");
+    if (provider->kind == APPLICATION_PROVIDER_Q3) {
+        application_native_q3_wire_client_view wire;
+        bool admitted;
+        if (!application_native_q3_wire_client_admission_read(provider, slot, &wire, &admitted, error)) return false;
+        if (!admitted || !wire.bot)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Q3 bot replacement has no genuine source bot admission");
+        return application_bots_catalog_remove_begin(app, slot, error) &&
+            application_native_q3_wire_drop(provider, slot, "only bots on server", error) &&
+            application_native_q3_clients_drain(app, error);
+    }
+    const q3g_client *client = &q3g_engine(provider)->clients[slot];
+    if (!client->allocated || !client->bot || client->pending_retirement)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 bot replacement has no genuine original source bot admission");
+    return application_bots_catalog_remove_begin(app, slot, error) &&
+        application_q3_guest_client_disconnect(provider, slot, error);
 }
 
 bool qa_application_network_q3_host_baselines(qa_application *app, qa_actor_owner owner,

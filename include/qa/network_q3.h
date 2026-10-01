@@ -256,6 +256,7 @@ typedef struct qa_q3_admission_slot {
     bool bot;
     uint16_t qport;
     int64_t last_connect_time;
+    bool has_address;
 } qa_q3_admission_slot;
 typedef struct qa_q3_accepted_connect {
     uint32_t slot;
@@ -273,7 +274,8 @@ typedef struct qa_q3_challenge {
 typedef struct qa_q3_admission_options {
     uint32_t private_clients;
     const char *private_password;
-    int32_t reconnect_limit_seconds, minimum_ping, maximum_ping;
+    int32_t reconnect_limit_seconds;
+    float minimum_ping, maximum_ping;
     bool demo_restricted;
     const qa_net_address *authorize_address;
 } qa_q3_admission_options;
@@ -287,6 +289,9 @@ typedef struct qa_q3_admission_hooks {
     bool (*admit)(void *, const qa_q3_accepted_connect *, char rejection[1024], qa_error *);
     bool (*drop_bot)(void *, uint32_t, qa_error *);
     bool (*query)(void *, const qa_net_address *, const qa_q3_connectionless *, qa_error *);
+    /* Pure actual source policy, reread after effectful admission callbacks. */
+    bool (*enabled)(void *, bool *, qa_error *);
+    void (*print)(void *, const char *);
 } qa_q3_admission_hooks;
 typedef struct qa_q3_server_admission qa_q3_server_admission;
 bool qa_q3_server_admission_create(const qa_q3_admission_hooks *, qa_q3_server_admission **, qa_error *);

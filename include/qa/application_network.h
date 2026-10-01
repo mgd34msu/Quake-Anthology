@@ -145,7 +145,15 @@ bool qa_application_network_q3_client_bound(qa_application *, qa_actor_owner,
  * Candidate source admission may be pending; no source callback runs. */
 bool qa_application_network_q3_owner(qa_application *, qa_actor_owner *, qa_q3_product *, qa_error *);
 qa_cvars *qa_application_network_q3_host_cvars(qa_application *, qa_actor_owner, qa_error *);
-bool qa_application_network_q3_host_slots(qa_application *, qa_actor_owner, bool occupied[64], qa_error *);
+typedef struct qa_application_network_q3_host_slot {
+    bool occupied, bot;
+} qa_application_network_q3_host_slot;
+bool qa_application_network_q3_host_slots(qa_application *, qa_actor_owner,
+    qa_application_network_q3_host_slot slots[64], qa_error *);
+/* Replace only a genuine physically admitted source bot. Queued Begin is
+ * removed before the actual GAME disconnect and canonical slot retirement. */
+bool qa_application_network_q3_drop_bot(qa_application *, qa_actor_owner,
+    uint32_t source_slot, qa_error *);
 /* Copy only complete linked physical baselines at accepted Connect. This
  * calls no source export and does not publish configstrings or a gamestate. */
 bool qa_application_network_q3_host_baselines(qa_application *, qa_actor_owner, qa_q3_gamestate *, qa_error *);

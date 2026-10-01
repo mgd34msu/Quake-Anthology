@@ -1,4 +1,5 @@
 #include "qa/network_q3.h"
+#include "qa/network_q3_pak_role.h"
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
@@ -128,6 +129,15 @@ bool qa_q3_pak_record_loose(qa_q3_pak_references *refs, const char *path, qa_err
     if (!isfinite(random) || random < 0 || random > 1)
         return fail(error, QA_ERROR_ARGUMENT, "Q3 filesystem random value is outside zero through one");
     refs->fake_checksum = (unsigned)random; return true;
+}
+bool qa_q3_pak_record_client_role(qa_q3_pak_references *refs, const qa_q3_pak_entry *pack,
+    qa_qvm_role role, qa_error *error) {
+    if (!refs || !pack || (role != QA_QVM_CGAME && role != QA_QVM_UI))
+        return fail(error, QA_ERROR_ARGUMENT, "Q3 client package role requires its actual CGAME or UI artifact");
+    uint16_t value = refs->identities[find_identity(refs, pack)];
+    if (!value) return fail(error, QA_ERROR_ARGUMENT, "Q3 client module package does not belong to this catalog");
+    refs->entries[value - 1].flags |= role == QA_QVM_CGAME ? QA_Q3_PAK_CGAME : QA_Q3_PAK_UI;
+    return true;
 }
 bool qa_q3_pak_clear(qa_q3_pak_references *refs, unsigned flags, qa_error *error) {
     if (!refs || flags > ALL_FLAGS) return fail(error, QA_ERROR_ARGUMENT, "Invalid Q3 package reference flags");

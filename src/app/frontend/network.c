@@ -7,6 +7,7 @@
 #include "qa/launch_identity.h"
 #include "qa/network_q3_runtime.h"
 #include "qa/network_q3_download.h"
+#include "qa/network_q3_server_authorization.h"
 #include "qa/network_save.h"
 #include "qa/network_services_save.h"
 #include "qa/network_downloads_save.h"
@@ -61,6 +62,7 @@ struct qa_frontend_network {
     uint64_t preparation_nonce;
     uint32_t rotation_random;
     qa_q3_server_admission *q3_admission;
+    qa_q3_server_authorization *q3_authorization;
     frontend_nq_host *nq_host;
     frontend_qw_host *qw_host;
     frontend_q3_packages *q3_packages;
@@ -558,6 +560,26 @@ static bool q3_admit(void *context, const qa_q3_accepted_connect *request, char 
     }
     return true;
 }
+static bool q3_query_field(qa_frontend_network *n, char info[1024], const char *key,
+    const char *value, qa_error *error)
+{
+    if (strchr(key, '\\') || strchr(value, '\\')) {
+        frontend_print(n->frontend, "Can't use keys or values with a \\\n"); return true;
+    }
+    if (strchr(key, ';') || strchr(value, ';')) {
+        frontend_print(n->frontend, "Can't use keys or values with a semicolon\n"); return true;
+    }
+    if (strchr(key, '"') || strchr(value, '"')) {
+        frontend_print(n->frontend, "Can't use keys or values with a \"\n"); return true;
+    }
+    if (!qa_q3_info_set(info, 1024, key, "", error)) return false;
+    if (!*value) return true;
+    size_t pair_size = strlen(key) + strlen(value) + 2;
+    if (pair_size >= 1024) pair_size = 1023;
+    size_t extent = strlen(info) + pair_size;
+    if (extent > 1024) { frontend_print(n->frontend, "Info string length exceeded\n"); return true; }
+    return qa_q3_info_set(info, 1024, key, value, error);
+}
 static bool q3_query(void *context, const qa_net_address *address, const qa_q3_connectionless *packet, qa_error *error)
 {
     qa_frontend_network *n = context;
@@ -571,65 +593,127 @@ static bool q3_query(void *context, const qa_net_address *address, const qa_q3_c
     qa_cvars *cvars = qa_application_network_q3_host_cvars(n->frontend->application, owner, error);
     if (!cvars) return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 query source cvars are unavailable");
     const qa_cvar_view *mode = qa_cvars_find(cvars, "g_gametype"), *single = qa_cvars_find(cvars, "ui_singlePlayerActive");
-    if ((mode && mode->integer == 2) || (!status && single && single->integer)) return true;
-    qa_buffer fields = {0}; char info[8192] = {0};
-    if (status && !qa_cvars_info(cvars, QA_CVAR_SERVERINFO, 8192, &fields, error)) return false;
+    if ((mode && mode->number == 2) || (!status && single && single->number != 0)) return true;
+    qa_buffer fields = {0}; char info[1024] = {0};
+    if (status && !qa_cvars_info(cvars, QA_CVAR_SERVERINFO, 1024, &fields, error)) return false;
     if (fields.data) { memcpy(info, fields.data, fields.size + 1); qa_buffer_free(&fields); }
-    qa_application_map_view map;
-    if (!qa_application_map_read(n->frontend->application, &map)) return true;
     uint32_t capacity;
     if (!qa_application_network_q3_host_capacity(n->frontend->application, owner, &capacity, error)) return false;
     const qa_cvar_view *private_clients = qa_cvars_find(cvars, "sv_privateClients");
-    uint32_t private_count = private_clients && private_clients->integer > 0 ? (uint32_t)private_clients->integer : 0;
-    if (private_count > capacity) private_count = capacity;
+    int32_t private_count = private_clients ? private_clients->integer : 0;
     size_t public_count = 0;
-    for (size_t i = 0; i < count; ++i) if (players[i].slot >= private_count) ++public_count;
-    char clients[32]; snprintf(clients, sizeof(clients), "%zu", status ? count : public_count);
+    for (size_t i = 0; i < count; ++i)
+        if ((int64_t)players[i].slot >= private_count && players[i].slot < capacity) ++public_count;
+    char clients[32]; snprintf(clients, sizeof(clients), "%zu", public_count);
     const qa_cvar_view *hostname = qa_cvars_find(cvars, "sv_hostname");
-    if (!qa_q3_info_set(info, sizeof(info), "challenge", qa_q3_token(&packet->tokens, 1), error) ||
-        !qa_q3_info_set(info, sizeof(info), "protocol", "68", error) ||
-        !qa_q3_info_set(info, sizeof(info), "hostname", hostname ? hostname->value : "Quake Anthology", error) ||
-        !qa_q3_info_set(info, sizeof(info), "mapname", map.name, error) ||
-        !qa_q3_info_set(info, sizeof(info), "clients", clients, error)) return false;
+    const qa_cvar_view *map = qa_cvars_find(cvars, "mapname");
+    if (!q3_query_field(n, info, "challenge", qa_q3_token(&packet->tokens, 1), error)) return false;
+    if (!status && (!q3_query_field(n, info, "protocol", "68", error) ||
+        !q3_query_field(n, info, "hostname", hostname ? hostname->value : "", error) ||
+        !q3_query_field(n, info, "mapname", map ? map->value : "", error) ||
+        !q3_query_field(n, info, "clients", clients, error))) return false;
     static const char *const keys[] = {"sv_maxclients", "gametype", "pure", "minPing", "maxPing", "game"};
     static const char *const sources[] = {"sv_maxclients", "g_gametype", "sv_pure", "sv_minPing", "sv_maxPing", "fs_game"};
     for (size_t i = 0; !status && i < sizeof(keys) / sizeof(*keys); ++i) {
         const qa_cvar_view *value = qa_cvars_find(cvars, sources[i]);
-        char maximum[32]; snprintf(maximum, sizeof(maximum), "%u", capacity - private_count);
-        if (!qa_q3_info_set(info, sizeof(info), keys[i], i ? value ? value->value : "0" : maximum, error)) return false;
+        char numeric[32];
+        if (!i) snprintf(numeric, sizeof(numeric), "%" PRId64, (int64_t)capacity - private_count);
+        else if (i < 5) snprintf(numeric, sizeof(numeric), "%d", value ? value->integer : 0);
+        if ((i == 3 || i == 4) && (!value || !value->integer)) continue;
+        if (!q3_query_field(n, info, keys[i], i < 5 ? numeric : value ? value->value : "", error)) return false;
     }
-    char line[QA_Q3_MESSAGE_BYTES];
-    int length = snprintf(line, sizeof(line), "%s\n%s\n", status ? "statusResponse" : "infoResponse", info);
+    qa_q3_product_policy policy;
+    if (status && !qa_application_q3_product_policy_read(n->frontend->application, &policy))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 status lost its genuine retained demo policy");
+    if (status && policy.filesystem_restricted) {
+        char keywords[1024], marked[1030];
+        if (!qa_q3_info_value(info, "sv_keywords", keywords, sizeof(keywords), error)) return false;
+        snprintf(marked, sizeof(marked), "demo %s", keywords);
+        if (!q3_query_field(n, info, "sv_keywords", marked, error)) return false;
+    }
+    char line[QA_Q3_MESSAGE_BYTES + 1056];
+    int length = snprintf(line, sizeof(line), "%s\n%s%s", status ? "statusResponse" : "infoResponse", info, status ? "\n" : "");
     if (length < 0 || (size_t)length >= sizeof(line)) return frontend_fail(error, QA_ERROR_FORMAT, "Q3 query response exceeds source capacity");
-    size_t used = (size_t)length;
+    size_t used = (size_t)length, player_bytes = 0;
     for (size_t i = 0; status && i < count; ++i) {
         char row[1152];
-        for (char *p = players[i].name; *p; ++p) if (*p == '"' || *p == '\r' || *p == '\n') *p = ' ';
         length = snprintf(row, sizeof(row), "%d %d \"%s\"\n", players[i].score, players[i].ping, players[i].name);
         if (length < 0 || (size_t)length >= sizeof(row)) return frontend_fail(error, QA_ERROR_FORMAT, "Q3 status row exceeds source capacity");
-        if ((size_t)length >= sizeof(line) - used) break;
+        if ((size_t)length >= QA_Q3_MESSAGE_BYTES - player_bytes) break;
+        player_bytes += (size_t)length;
         memcpy(line + used, row, (size_t)length); used += (size_t)length; line[used] = 0;
     }
     qa_buffer wire = {0};
     bool ok = qa_q3_connectionless_encode(line, &wire, error) && send_address(n, address, (qa_bytes){wire.data, wire.size}, error);
     qa_buffer_free(&wire); return ok;
 }
+static qa_cvars *q3_authorization_cvars(qa_frontend_network *n, qa_error *error)
+{
+    qa_actor_owner owner; qa_q3_product product;
+    if (!n || !n->frontend || !n->frontend->application || !n->frontend->options.network_host ||
+        n->frontend->options.network_protocol.kind != QA_NET_Q3_68 || n->q3_client_requested ||
+        n->q3_generation != qa_application_configuration_generation(n->frontend->application) ||
+        !qa_application_network_q3_owner(n->frontend->application, &owner, &product, error)) {
+        frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 authorization lost its actual primary source host"); return NULL;
+    }
+    return qa_application_network_q3_host_cvars(n->frontend->application, owner, error);
+}
+static bool q3_authorization_current(void *context, qa_error *error)
+{ return q3_authorization_cvars(context, error) != NULL; }
+static bool q3_authorization_policy(void *context, bool *enabled, const char **game,
+    const char **strict, qa_error *error)
+{
+    qa_cvars *cvars = q3_authorization_cvars(context, error);
+    if (!cvars) return false;
+    const qa_cvar_view *type = qa_cvars_find(cvars, "g_gametype"),
+        *single = qa_cvars_find(cvars, "ui_singlePlayerActive"), *directory = qa_cvars_find(cvars, "fs_game"),
+        *auth = qa_cvars_find(cvars, "sv_strictAuth");
+    if (!type || !single || !directory || !auth)
+        return frontend_fail(error, QA_ERROR_FORMAT, "Q3 authorization source lacks its actual admission policy rows");
+    *enabled = type->number != 2 && single->number == 0;
+    *game = directory->value; *strict = auth->value; return true;
+}
+static bool q3_admission_enabled(void *context, bool *enabled, qa_error *error)
+{
+    const char *game, *strict;
+    return q3_authorization_policy(context, enabled, &game, &strict, error);
+}
+static void q3_authorization_print(void *context, const char *text)
+{ qa_frontend_network *n = context; frontend_print(n->frontend, text); }
+static qa_q3_server_authorization_bindings q3_authorization_bindings(qa_frontend_network *n)
+{
+    return (qa_q3_server_authorization_bindings){.context = n, .current = q3_authorization_current,
+        .policy = q3_authorization_policy, .send = send_address, .print = q3_authorization_print};
+}
+static bool q3_authorize(void *context, const qa_q3_challenge *challenge, qa_error *error)
+{
+    qa_frontend_network *n = context;
+    return qa_q3_server_authorization_request(n->q3_authorization, challenge, error);
+}
+static bool q3_drop_bot(void *context, uint32_t slot, qa_error *error)
+{
+    qa_frontend_network *n = context;
+    qa_actor_owner owner; qa_q3_product product;
+    return qa_application_network_q3_owner(n->frontend->application, &owner, &product, error) &&
+        qa_application_network_q3_drop_bot(n->frontend->application, owner, slot, error);
+}
 static bool q3_slots(qa_frontend_network *n, qa_q3_admission_slot slots[64], size_t *count, qa_error *error)
 {
-    qa_actor_owner owner; qa_q3_product product; bool occupied[64];
+    qa_actor_owner owner; qa_q3_product product; qa_application_network_q3_host_slot physical[64];
     if (!qa_application_network_q3_owner(n->frontend->application, &owner, &product, error) ||
-        !qa_application_network_q3_host_slots(n->frontend->application, owner, occupied, error)) return false;
+        !qa_application_network_q3_host_slots(n->frontend->application, owner, physical, error)) return false;
     uint32_t capacity;
     if (!qa_application_network_q3_host_capacity(n->frontend->application, owner, &capacity, error)) return false;
     *count = capacity;
     for (size_t i = 0; i < *count; ++i) {
         frontend_q3_peer *peer = &n->q3_peers[i];
-        slots[i] = (qa_q3_admission_slot){.slot = (uint32_t)i, .phase = occupied[i] ? QA_Q3_ACTIVE : QA_Q3_FREE};
+        slots[i] = (qa_q3_admission_slot){.slot = (uint32_t)i,
+            .phase = physical[i].occupied ? QA_Q3_ACTIVE : QA_Q3_FREE, .bot = physical[i].bot};
         if (!peer->occupied) continue;
         qa_q3_server_state state;
         const qa_net_client *client = qa_net_connections_get(qa_network_connections(n->runtime), peer->client);
         if (!client || !qa_network_q3_state(n->runtime, peer->client, &state, error)) return false;
-        slots[i].phase = state.phase; slots[i].address = client->endpoint;
+        slots[i].phase = state.phase; slots[i].address = client->endpoint; slots[i].has_address = true;
         slots[i].qport = peer->qport; slots[i].last_connect_time = peer->connected_ms;
     }
     return true;
@@ -650,10 +734,15 @@ static bool q3_drain(qa_frontend_network *n, qa_error *error)
         const qa_cvar_view *private_clients = qa_cvars_find(cvars, "sv_privateClients"),
             *private_password = qa_cvars_find(cvars, "sv_privatePassword"), *reconnect = qa_cvars_find(cvars, "sv_reconnectlimit"),
             *minimum = qa_cvars_find(cvars, "sv_minPing"), *maximum = qa_cvars_find(cvars, "sv_maxPing");
+        qa_q3_product_policy policy;
+        if (!qa_application_q3_product_policy_read(n->frontend->application, &policy))
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "Q3 admission lost its retained resolved demo policy");
         qa_q3_admission_options options = {.private_clients = private_clients && private_clients->integer > 0 ? (uint32_t)private_clients->integer : 0,
             .private_password = private_password ? private_password->value : "",
             .reconnect_limit_seconds = reconnect ? reconnect->integer : 3,
-            .minimum_ping = minimum ? minimum->integer : 0, .maximum_ping = maximum ? maximum->integer : 0};
+            .minimum_ping = minimum ? (float)minimum->number : 0, .maximum_ping = maximum ? (float)maximum->number : 0,
+            .demo_restricted = policy.filesystem_restricted,
+            .authorize_address = qa_q3_server_authorization_address(n->q3_authorization)};
         if (!qa_q3_server_admission_receive(n->q3_admission, &options, slots, count, &packet->address,
             (qa_bytes){packet->bytes, packet->size}, (int64_t)(n->frontend->time_ns / UINT64_C(1000000)), &local)) {
             if (qa_application_get_state(n->frontend->application) == QA_APPLICATION_FAULTED) { if (error) *error = local; return false; }
@@ -1325,8 +1414,11 @@ bool frontend_network_create(qa_frontend *f, qa_error *error)
         udp.ipv6_only = udp.bind.kind == QA_NET_IPV6; udp.broadcast = udp.bind.kind == QA_NET_IPV4;
         if (f->options.network_protocol.kind == QA_NET_Q3_68) {
             qa_q3_admission_hooks hooks = {.context = n, .random = random_rotation, .send = send_address,
-                .admit = q3_admit, .query = q3_query};
+                .admit = q3_admit, .query = q3_query, .authorize = q3_authorize, .drop_bot = q3_drop_bot,
+                .enabled = q3_admission_enabled, .print = q3_authorization_print};
             if (!qa_q3_server_admission_create(&hooks, &n->q3_admission, error)) goto failed;
+            qa_q3_server_authorization_bindings authorization = q3_authorization_bindings(n);
+            if (!qa_q3_server_authorization_create(&authorization, &n->q3_authorization, error)) goto failed;
             n->q3_server_id = n->q3_restarted_server_id = 1; n->q3_checksum_feed = (int32_t)random_rotation(n);
             if (!q3_prepare(n, error)) goto failed;
             qa_actor_owner owner; qa_q3_product product; qa_q3_server_world world;
@@ -1397,7 +1489,9 @@ static qa_network_options saved_network_options(qa_frontend_network *n)
 static qa_browser_hooks saved_browser_hooks(qa_frontend_network *n)
 { return (qa_browser_hooks){.context = n, .send = send_address, .local = local_address}; }
 static qa_q3_admission_hooks saved_admission_hooks(qa_frontend_network *n)
-{ return (qa_q3_admission_hooks){.context = n, .random = random_rotation, .send = send_address, .admit = q3_admit, .query = q3_query}; }
+{ return (qa_q3_admission_hooks){.context = n, .random = random_rotation, .send = send_address,
+    .admit = q3_admit, .query = q3_query, .authorize = q3_authorize, .drop_bot = q3_drop_bot,
+    .enabled = q3_admission_enabled, .print = q3_authorization_print}; }
 static qa_admin_options saved_admin_options(qa_frontend_network *n)
 {
     return (qa_admin_options){.dialect = qa_cvars_dialect(qa_application_cvars(n->frontend->application)),
@@ -1423,9 +1517,9 @@ static bool detached_transport(const qa_net_address *address, qa_net_transport *
 }
 static bool network_header(qa_source_save_io *io, bool *installed)
 {
-    uint32_t magic = UINT32_C(0x464e4151), version = 9;
+    uint32_t magic = UINT32_C(0x464e4151), version = 10;
     return qa_source_save_u32(io, &magic) && magic == UINT32_C(0x464e4151) &&
-        qa_source_save_u32(io, &version) && version == 9 && qa_source_save_bool(io, installed);
+        qa_source_save_u32(io, &version) && version == 10 && qa_source_save_bool(io, installed);
 }
 bool frontend_network_prepare_restored(qa_frontend *f, qa_bytes bytes, qa_error *error)
 {
@@ -1789,6 +1883,9 @@ static bool network_blob(qa_source_save_io *io, qa_bytes *bytes)
 static bool network_runtime_check(qa_frontend_network *n, bool complete_world, bool finishing_round, qa_error *error)
 {
     if (!network_metadata_check(n, n->q3_admission != NULL, finishing_round, error)) return false;
+    if ((n->q3_authorization != NULL) != (n->q3_admission != NULL) ||
+        !qa_q3_server_authorization_idle(n->q3_authorization))
+        return frontend_fail(error, QA_ERROR_FORMAT, "Q3 hosting lost its actual idle authorization owner");
     if (n->nq_host) return frontend_nq_qualified(n->nq_host, complete_world, error) &&
         (!complete_world || network_nq_commands_valid(n, error));
     if (n->qw_host) return frontend_qw_qualified(n->qw_host, complete_world, error);
@@ -1868,7 +1965,7 @@ bool frontend_network_checkpoint(qa_frontend *f, qa_buffer *connections, qa_buff
         !frontend_network_world_change_ready(f, error)) return false;
     qa_frontend_network *n = f->network; bool installed = n != NULL;
     if (n && !network_runtime_valid(n, true, error)) return false;
-    qa_source_save_io io = {0}, history = {0}; qa_buffer runtime = {0}, browser = {0}, admin = {0}, commands = {0}, jobs = {0}, admission = {0}, nq_state = {0}, qw_state = {0};
+    qa_source_save_io io = {0}, history = {0}; qa_buffer runtime = {0}, browser = {0}, admin = {0}, commands = {0}, jobs = {0}, admission = {0}, authorization = {0}, nq_state = {0}, qw_state = {0};
     bool ok = qa_source_save_writer(&io, qa_application_session(f->application), error) && network_header(&io, &installed) &&
         qa_source_save_writer(&history, qa_application_session(f->application), error) && network_header(&history, &installed);
     if (ok && n) {
@@ -1878,11 +1975,14 @@ bool frontend_network_checkpoint(qa_frontend *f, qa_buffer *connections, qa_buff
             *copy = *n; qa_net_address address = *qa_network_local_address(n->runtime);
             bool hosting = n->q3_admission != NULL;
             ok = network_address_fields(&io, &address) && network_frontend_fields(&io, copy) && network_host_fields(&io, copy, &hosting, NULL, NULL);
-            if (ok && hosting) ok = qa_q3_server_admission_checkpoint(n->q3_admission, &admission, error);
+            if (ok && hosting) ok = qa_q3_server_admission_checkpoint(n->q3_admission, &admission, error) &&
+                qa_q3_server_authorization_checkpoint(n->q3_authorization, &authorization, error);
             free(copy);
         }
         qa_bytes admission_bytes = {admission.data, admission.size};
         if (ok && n->q3_admission) ok = network_blob(&io, &admission_bytes);
+        qa_bytes authorization_bytes = {authorization.data, authorization.size};
+        if (ok && n->q3_admission) ok = network_blob(&io, &authorization_bytes);
         bool nq = n->nq_host != NULL;
         if (ok) ok = qa_source_save_bool(&io, &nq);
         if (ok && nq) {
@@ -1916,7 +2016,7 @@ bool frontend_network_checkpoint(qa_frontend *f, qa_buffer *connections, qa_buff
     qa_buffer complete = {0}, predicted = {0};
     if (ok) ok = qa_source_save_finish(&io, &complete) && qa_source_save_finish(&history, &predicted);
     qa_source_save_dispose(&io); qa_source_save_dispose(&history);
-    qa_buffer_free(&runtime); qa_buffer_free(&browser); qa_buffer_free(&admin); qa_buffer_free(&commands); qa_buffer_free(&jobs); qa_buffer_free(&admission); qa_buffer_free(&nq_state); qa_buffer_free(&qw_state);
+    qa_buffer_free(&runtime); qa_buffer_free(&browser); qa_buffer_free(&admin); qa_buffer_free(&commands); qa_buffer_free(&jobs); qa_buffer_free(&admission); qa_buffer_free(&authorization); qa_buffer_free(&nq_state); qa_buffer_free(&qw_state);
     if (!ok) { qa_buffer_free(&complete); qa_buffer_free(&predicted); return false; }
     *connections = complete; *prediction = predicted; return true;
 }
@@ -1934,19 +2034,19 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
     }
     qa_frontend_network *n = f->network;
     uint32_t previous_cursor = 0; const qa_net_client *previous_client = NULL;
-    if (qa_net_connections_next(qa_network_connections(n->runtime), &previous_cursor, &previous_client) || n->q3_projection.owner || n->downloads || n->content || n->q3_admission || n->nq_host || n->qw_host || n->q3_packages) {
+    if (qa_net_connections_next(qa_network_connections(n->runtime), &previous_cursor, &previous_client) || n->q3_projection.owner || n->downloads || n->content || n->q3_admission || n->q3_authorization || n->nq_host || n->qw_host || n->q3_packages) {
         qa_source_save_dispose(&io);
         return frontend_fail(error, QA_ERROR_ARGUMENT, "network continuation may replace only an empty prepared candidate");
     }
     qa_frontend_network *state = calloc(1, sizeof(*state));
     if (!state) { qa_source_save_dispose(&io); return frontend_fail(error, QA_ERROR_MEMORY, "decoding network candidate fields"); }
     state->frontend = f; state->registered = n->registered; bool transferred = false;
-    qa_net_address local = {0}; qa_bytes runtime = {0}, browser = {0}, admin = {0}, jobs = {0}, admission = {0}, nq_state = {0}, qw_state = {0}, package_cut = {0};
+    qa_net_address local = {0}; qa_bytes runtime = {0}, browser = {0}, admin = {0}, jobs = {0}, admission = {0}, authorization = {0}, nq_state = {0}, qw_state = {0}, package_cut = {0};
     qa_bytes download_cuts[64] = {{0}};
     bool content = false, downloads = false, hosting = false, nq = false, qw = false;
     ok = ok && network_address_fields(&io, &local) && service_address_valid(&local) &&
         network_frontend_fields(&io, state) && network_host_fields(&io, state, &hosting, &package_cut, download_cuts) &&
-        (!hosting || network_blob(&io, &admission)) &&
+        (!hosting || (network_blob(&io, &admission) && network_blob(&io, &authorization))) &&
         qa_source_save_bool(&io, &nq) && (!nq || network_blob(&io, &nq_state)) &&
         qa_source_save_bool(&io, &qw) && (!qw || network_blob(&io, &qw_state)) &&
         network_blob(&io, &runtime) && network_blob(&io, &browser) && network_blob(&io, &admin) &&
@@ -1965,6 +2065,8 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
         qa_q3_download_source source = {.context = state, .resolve = q3_download_resolve};
         for (size_t i = 0; ok && i < 64; ++i) if (state->q3_peers[i].occupied)
             ok = qa_q3_download_window_restore(download_cuts[i], &source, &state->q3_peers[i].download, error);
+        qa_q3_server_authorization_bindings bindings = q3_authorization_bindings(state);
+        if (ok) ok = qa_q3_server_authorization_restore(authorization, &bindings, &state->q3_authorization, error);
     }
     if (ok) ok = network_metadata_valid(state, hosting, error);
     if (ok) {
@@ -1974,6 +2076,7 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
         for (size_t i = 0; i < 64; ++i) if (n->q3_peers[i].occupied) {
             n->q3_peers[i].network = n; qa_q3_download_window_rebind(n->q3_peers[i].download, n);
         }
+        qa_q3_server_authorization_rebind(n->q3_authorization, n);
         if (hosting) {
             qa_q3_admission_hooks admission_hooks = saved_admission_hooks(n);
             ok = qa_q3_server_admission_restore_checkpoint(admission, &admission_hooks, &n->q3_admission, error);
@@ -2008,6 +2111,8 @@ bool frontend_network_restore_connections(qa_frontend *f, qa_bytes bytes, qa_err
     if (state->nq_host && state->nq_host != n->nq_host) frontend_nq_destroy(state->nq_host);
     if (state->qw_host && state->qw_host != n->qw_host) frontend_qw_destroy(state->qw_host);
     if (state->q3_packages && state->q3_packages != n->q3_packages) frontend_q3_packages_destroy(state->q3_packages);
+    if (state->q3_authorization && state->q3_authorization != n->q3_authorization)
+        qa_q3_server_authorization_destroy(state->q3_authorization);
     for (size_t i = 0; !transferred && i < 64; ++i)
         qa_q3_download_window_destroy(state->q3_peers[i].download);
     free(state); qa_source_save_dispose(&io); return ok;
@@ -2036,15 +2141,18 @@ static bool network_host_cut(qa_frontend_network *n, qa_buffer *out, qa_error *e
     qa_frontend_network *copy = malloc(sizeof(*copy));
     if (!copy) return frontend_fail(error, QA_ERROR_MEMORY, "qualifying retained hosting cut");
     *copy = *n;
-    qa_source_save_io io = {0}; qa_buffer admission = {0}; bool hosting = n->q3_admission != NULL;
+    qa_source_save_io io = {0}; qa_buffer admission = {0}, authorization = {0}; bool hosting = n->q3_admission != NULL;
     bool ok = qa_source_save_writer(&io, NULL, error) && network_host_fields(&io, copy, &hosting, NULL, NULL);
     if (ok && hosting) {
-        ok = qa_q3_server_admission_checkpoint(n->q3_admission, &admission, error);
+        ok = qa_q3_server_admission_checkpoint(n->q3_admission, &admission, error) &&
+            qa_q3_server_authorization_checkpoint(n->q3_authorization, &authorization, error);
         qa_bytes bytes = {admission.data, admission.size};
+        if (ok) ok = network_blob(&io, &bytes);
+        bytes = (qa_bytes){authorization.data, authorization.size};
         if (ok) ok = network_blob(&io, &bytes);
     }
     if (ok) ok = qa_source_save_finish(&io, out);
-    qa_source_save_dispose(&io); qa_buffer_free(&admission); free(copy); return ok;
+    qa_source_save_dispose(&io); qa_buffer_free(&admission); qa_buffer_free(&authorization); free(copy); return ok;
 }
 bool frontend_network_rebind_ready(const qa_frontend *candidate, const qa_frontend *published, qa_error *error)
 {
@@ -2123,6 +2231,7 @@ void frontend_network_rebind(qa_frontend *owned, qa_frontend *destination)
 {
     if (owned->network) {
         owned->network->frontend = destination;
+        qa_q3_server_authorization_rebind(owned->network->q3_authorization, owned->network);
         frontend_nq_rebind(owned->network->nq_host, destination, owned->network->runtime);
         frontend_qw_rebind(owned->network->qw_host, destination, owned->network->runtime, owned->network->admin);
         frontend_q3_packages_rebind(owned->network->q3_packages, destination->application);
@@ -2166,7 +2275,8 @@ void frontend_network_publish_fresh(qa_frontend *active, qa_frontend *candidate,
 bool frontend_network_world_change_ready(qa_frontend *f, qa_error *error)
 {
     qa_frontend_network *n = f->network;
-    return !n || (!n->round && !n->busy && frontend_nq_idle(n->nq_host) && frontend_qw_idle(n->qw_host) && qa_network_callbacks_idle(n->runtime)) ||
+    return !n || (!n->round && !n->busy && qa_q3_server_authorization_idle(n->q3_authorization) &&
+        frontend_nq_idle(n->nq_host) && frontend_qw_idle(n->qw_host) && qa_network_callbacks_idle(n->runtime)) ||
         frontend_fail(error, QA_ERROR_ARGUMENT, "network callbacks must return before world publication");
 }
 bool frontend_network_close_client(qa_frontend *f, qa_error *error)
@@ -2189,6 +2299,7 @@ bool frontend_network_destroy(qa_frontend *f, qa_error *error)
     qa_cvars_remove_owner(qa_application_cvars(f->application), NETWORK_OWNER);
     qa_downloads_destroy(n->downloads); qa_server_browser_destroy(n->browser); qa_server_admin_destroy(n->admin);
     qa_network_destroy(n->runtime); qa_q3_server_admission_destroy(n->q3_admission);
+    qa_q3_server_authorization_destroy(n->q3_authorization);
     frontend_nq_destroy(n->nq_host);
     frontend_qw_destroy(n->qw_host);
     for (size_t i = 0; i < 64; ++i) qa_q3_download_window_destroy(n->q3_peers[i].download);

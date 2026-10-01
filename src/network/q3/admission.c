@@ -7,6 +7,12 @@
 #include <string.h>
 
 static bool fail(qa_error *e, qa_status code, const char *s) { qa_error_set(e, code, 0, "%s", s); return false; }
+static int32_t signed_word(uint32_t word) {
+    return word <= INT32_MAX ? (int32_t)word : -1 - (int32_t)(UINT32_MAX - word);
+}
+static int32_t elapsed_word(int64_t now, int64_t previous) {
+    return signed_word((uint32_t)now - (uint32_t)previous);
+}
 static unsigned char info_fold(unsigned char byte) {
     return byte >= 'A' && byte <= 'Z' ? (unsigned char)(byte + ('a' - 'A')) : byte;
 }
@@ -135,13 +141,7 @@ bool qa_q3_info_set(char *info, size_t capacity, const char *key, const char *va
     return true;
 }
 bool qa_q3_is_lan(const qa_net_address *a) {
-    if (a->kind == QA_NET_LOOPBACK || a->kind == QA_NET_IPX) return true;
-    if (a->kind == QA_NET_IPV6) {
-        const uint8_t *v = a->host.ipv6.bytes;
-        bool loopback = v[15] == 1;
-        for (unsigned i = 0; i < 15; ++i) loopback = loopback && v[i] == 0;
-        return loopback || (v[0] & 0xfe) == 0xfc || (v[0] == 0xfe && (v[1] & 0xc0) == 0x80);
-    }
+    if (a->kind != QA_NET_IPV4) return true;
     const uint8_t *v = a->host.ipv4;
     return v[0] == 127 || v[0] == 10 || (v[0] == 192 && v[1] == 168) || (v[0] == 172 && v[1] >= 16 && v[1] <= 31);
 }
@@ -242,7 +242,8 @@ bool qa_q3_client_admission_receive(qa_q3_client_admission *c, const qa_net_addr
 #include "../service_save_fields.h"
 struct qa_q3_server_admission { qa_q3_admission_hooks hooks; qa_q3_challenge challenges[1024]; };
 bool qa_q3_server_admission_create(const qa_q3_admission_hooks *hooks, qa_q3_server_admission **out, qa_error *error) {
-    if (!hooks || !hooks->random || !hooks->send || !hooks->admit || !hooks->query || !out)
+    if (!hooks || !hooks->random || !hooks->send || !hooks->admit || !hooks->query ||
+        !hooks->enabled || !hooks->print || !out)
         return fail(error, QA_ERROR_ARGUMENT, "Q3 admission requires shared authority, transport and query callbacks");
     qa_q3_server_admission *s = calloc(1, sizeof(*s));
     if (!s) return fail(error, QA_ERROR_MEMORY, "Allocating Q3 challenges");
@@ -295,19 +296,23 @@ static bool challenge_reply(qa_q3_server_admission *s, qa_q3_challenge *c, int64
     return server_reply(s, &c->address, text, e);
 }
 static bool server_challenge(qa_q3_server_admission *s, const qa_net_address *from, int64_t now, qa_error *e) {
+    bool enabled;
+    if (!s->hooks.enabled(s->hooks.context, &enabled, e)) return false;
+    if (!enabled) return true;
     qa_q3_challenge *found = NULL, *oldest = &s->challenges[0];
+    int64_t oldest_time = INT32_MAX;
     for (size_t i = 0; i < 1024; ++i) {
         qa_q3_challenge *c = &s->challenges[i];
         if (c->present && !c->connected && qa_net_address_equal(from, &c->address, true)) { found = c; break; }
-        if (c->time < oldest->time) oldest = c;
+        if (c->time < oldest_time) { oldest_time = c->time; oldest = c; }
     }
     if (!found) {
-        found = oldest; memset(found, 0, sizeof(*found)); found->present = true; found->address = *from;
+        found = oldest; found->present = true; found->connected = false; found->address = *from;
         uint32_t a = s->hooks.random(s->hooks.context), b = s->hooks.random(s->hooks.context);
         uint32_t raw = (a << 16) ^ b ^ (uint32_t)now;
         memcpy(&found->challenge, &raw, sizeof(raw)); found->time = found->first_time = now;
     }
-    if (qa_q3_is_lan(from) || now - found->first_time > 5000) return challenge_reply(s, found, now, e);
+    if (qa_q3_is_lan(from) || elapsed_word(now, found->first_time) > 5000) return challenge_reply(s, found, now, e);
     return !s->hooks.authorize || s->hooks.authorize(s->hooks.context, found, e);
 }
 static bool server_authorize(qa_q3_server_admission *s, const qa_q3_admission_options *o,
@@ -317,21 +322,33 @@ static bool server_authorize(qa_q3_server_admission *s, const qa_q3_admission_op
     int32_t n = number(qa_q3_token(tokens, 1));
     for (size_t i = 0; i < 1024; ++i) {
         qa_q3_challenge *c = &s->challenges[i];
-        if (!c->present || c->challenge != n) continue;
+        if (c->challenge != n) continue;
+        if (!c->present) return true;
+        c->ping_time = now;
         const char *result = qa_q3_token(tokens, 2);
         if (equal(result, "accept") || (equal(result, "demo") && o->demo_restricted)) return challenge_reply(s, c, now, e);
         char text[1100];
         snprintf(text, sizeof(text), "print\n%s\n", equal(result, "demo") ? "Server is not a demo server" : qa_q3_token(tokens, 3));
-        bool ok = server_reply(s, &c->address, text, e); memset(c, 0, sizeof(*c)); return ok;
+        if (!server_reply(s, &c->address, text, e)) return false;
+        memset(c, 0, sizeof(*c)); return true;
     }
     return true;
+}
+static bool server_userinfo_ip(qa_q3_server_admission *s, char info[1024], const char *ip, qa_error *e) {
+    if (!qa_q3_info_set(info, 1024, "ip", "", e)) return false;
+    size_t extent = strlen(info) + strlen(ip) + 4;
+    if (extent > 1024) { s->hooks.print(s->hooks.context, "Info string length exceeded\n"); return true; }
+    if (extent == 1024) return fail(e, QA_ERROR_FORMAT, "Q3 userinfo IP assignment overflows its source terminator");
+    return qa_q3_info_set(info, 1024, "ip", ip, e);
 }
 static bool server_connect(qa_q3_server_admission *s, const qa_q3_admission_options *o,
                            const qa_q3_admission_slot *slots, size_t count,
                            const qa_net_address *from, const char *input, int64_t now, qa_error *e) {
     qa_q3_accepted_connect request = {.address = *from};
-    if (strlen(input) >= sizeof(request.userinfo)) return fail(e, QA_ERROR_FORMAT, "Q3 connect userinfo exceeds 1023 bytes");
-    strcpy(request.userinfo, input); char value[1024];
+    size_t input_size = strlen(input);
+    if (input_size >= sizeof(request.userinfo)) input_size = sizeof(request.userinfo) - 1;
+    memcpy(request.userinfo, input, input_size); request.userinfo[input_size] = 0;
+    input = request.userinfo; char value[1024];
     if (!qa_q3_info_value(input, "protocol", value, sizeof(value), e)) return false;
     if (number(value) != 68) return server_reply(s, from, "print\nServer uses protocol version 68.\n", e);
     if (!qa_q3_info_value(input, "qport", value, sizeof(value), e)) return false;
@@ -343,9 +360,10 @@ static bool server_connect(qa_q3_server_admission *s, const qa_q3_admission_opti
     const qa_q3_admission_slot *selected = NULL;
     for (size_t i = 0; i < count; ++i) {
         const qa_q3_admission_slot *slot = &slots[i];
-        if (slot->phase != QA_Q3_FREE && qa_net_address_equal(from, &slot->address, false)
+        if (slot->phase != QA_Q3_FREE && slot->has_address && qa_net_address_equal(from, &slot->address, false)
             && (slot->qport == request.qport || (from->kind != QA_NET_LOOPBACK && slot->address.port == from->port))) {
-            if (now - slot->last_connect_time < (int64_t)o->reconnect_limit_seconds * 1000) return true;
+            if (elapsed_word(now, slot->last_connect_time) <
+                signed_word((uint32_t)o->reconnect_limit_seconds * UINT32_C(1000))) return true;
             selected = slot; break;
         }
     }
@@ -354,15 +372,16 @@ static bool server_connect(qa_q3_server_admission *s, const qa_q3_admission_opti
         for (size_t i = 0; i < 1024; ++i) if (s->challenges[i].present
             && s->challenges[i].challenge == request.challenge && qa_net_address_equal(from, &s->challenges[i].address, true)) { challenge = &s->challenges[i]; break; }
         if (!challenge) return server_reply(s, from, "print\nNo or bad challenge for address.\n", e);
-        if (!qa_net_address_format(from, value, sizeof(value), e) || !qa_q3_info_set(request.userinfo, sizeof(request.userinfo), "ip", value, e)) return false;
-        int64_t ping = now - challenge->ping_time; challenge->connected = true;
+        if (!qa_net_address_format(from, value, sizeof(value), e) || !server_userinfo_ip(s, request.userinfo, value, e)) return false;
+        float ping = (float)elapsed_word(now, challenge->ping_time); challenge->connected = true;
         if (!qa_q3_is_lan(from)) {
             if (o->minimum_ping && ping < o->minimum_ping) {
-                challenge->address.port = 0; return server_reply(s, from, "print\nServer is for high pings only\n", e);
+                if (!server_reply(s, from, "print\nServer is for high pings only\n", e)) return false;
+                challenge->address.port = 0; return true;
             }
             if (o->maximum_ping && ping > o->maximum_ping) return server_reply(s, from, "print\nServer is for low pings only\n", e);
         }
-    } else if (!qa_q3_info_set(request.userinfo, sizeof(request.userinfo), "ip", "localhost", e)) return false;
+    } else if (!server_userinfo_ip(s, request.userinfo, "localhost", e)) return false;
     if (!qa_q3_info_value(input, "password", value, sizeof(value), e)) return false;
     uint32_t start = !strcmp(value, o->private_password ? o->private_password : "") ? 0 : o->private_clients;
     if (!selected) for (size_t i = 0; i < count; ++i) if (slots[i].slot >= start && slots[i].phase == QA_Q3_FREE) { selected = &slots[i]; break; }
@@ -374,10 +393,16 @@ static bool server_connect(qa_q3_server_admission *s, const qa_q3_admission_opti
         }
         if (!selected || !s->hooks.drop_bot) return fail(e, QA_ERROR_FORMAT, "Q3 local connect has no replaceable bot");
         if (!s->hooks.drop_bot(s->hooks.context, selected->slot, e)) return false;
+        bool enabled;
+        if (!s->hooks.enabled(s->hooks.context, &enabled, e)) return false;
+        if (!enabled) return true;
     }
     request.slot = selected->slot;
     char rejection[1024] = {0};
     if (!s->hooks.admit(s->hooks.context, &request, rejection, e)) return false;
+    bool enabled;
+    if (!s->hooks.enabled(s->hooks.context, &enabled, e)) return false;
+    if (!enabled) return true;
     if (*rejection) { char text[1040]; snprintf(text, sizeof(text), "print\n%s\n", rejection); return server_reply(s, from, text, e); }
     return server_reply(s, from, "connectResponse", e);
 }
@@ -401,7 +426,7 @@ void qa_q3_server_admission_disconnect(qa_q3_server_admission *s, const qa_net_a
 const qa_q3_admission_slot *qa_q3_route(const qa_net_address *from, qa_bytes packet, const qa_q3_admission_slot *slots, size_t count) {
     if (!from || !packet.data || packet.size < 6 || (count && !slots)) return NULL;
     uint16_t qport = (uint16_t)(packet.data[4] | (uint16_t)packet.data[5] << 8);
-    for (size_t i = 0; i < count; ++i) if (slots[i].phase != QA_Q3_FREE && slots[i].qport == qport
+    for (size_t i = 0; i < count; ++i) if (slots[i].phase != QA_Q3_FREE && slots[i].has_address && slots[i].qport == qport
         && qa_net_address_equal(from, &slots[i].address, false)) return &slots[i];
     return NULL;
 }
