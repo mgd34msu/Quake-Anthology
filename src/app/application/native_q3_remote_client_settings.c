@@ -84,6 +84,33 @@ static void source_text(char *out,size_t capacity,const char *text)
     size_t length=strlen(text); if(length>=capacity)length=capacity-1;
     memcpy(out,text,length); out[length]=0;
 }
+bool application_native_q3_remote_client_info_settings(const qa_native_q3_remote_client_service *service,
+    size_t memory_remaining,bool loading,q3n_client_settings *out,qa_error *error)
+{
+    qa_native_q3_remote_client_cache witness; qa_native_q3_remote_client_basis basis;
+    if(!out || !qa_native_q3_remote_client_cache_read(service,&witness,error) ||
+       !qa_native_q3_remote_client_basis_read(service,&basis,error))return false;
+    q3n_client_settings value={.memory_remaining=memory_remaining,.loading=loading};
+    qa_native_q3_client_cvar cache;
+    if(!qa_native_q3_remote_client_cvar_read(service,"cg_forceModel",&cache,error))return false;
+    value.force_model=cache.integer;
+    if(!qa_native_q3_remote_client_cvar_read(service,"cg_deferPlayers",&cache,error))return false;
+    value.defer_players=cache.integer;
+    if(!qa_native_q3_remote_client_cvar_read(service,"cg_buildScript",&cache,error))return false;
+    value.build_script=cache.integer;
+    const qa_cvar_view *engine=qa_cvars_find(basis.client.cvars,"model");
+    source_text(value.model,sizeof(value.model),engine?engine->value:"");
+    engine=qa_cvars_find(basis.client.cvars,"headmodel");
+    source_text(value.head_model,sizeof(value.head_model),engine?engine->value:"");
+    if(basis.product==QA_Q3_TEAM_ARENA) {
+        if(!qa_native_q3_remote_client_cvar_read(service,"cg_redTeamName",&cache,error))return false;
+        source_text(value.red_team_name,sizeof(value.red_team_name),cache.value);
+        if(!qa_native_q3_remote_client_cvar_read(service,"cg_blueTeamName",&cache,error))return false;
+        source_text(value.blue_team_name,sizeof(value.blue_team_name),cache.value);
+    }
+    if(!completed(service,&witness,error))return false;
+    *out=value; return true;
+}
 bool application_native_q3_remote_client_frame_settings(const qa_native_q3_remote_client_service *service,
     int32_t dm_flags,bool ragepro,size_t memory_remaining,bool loading,bool demo,uint32_t stereo,
     q3n_native_frame_options *out,qa_error *error)
@@ -91,24 +118,14 @@ bool application_native_q3_remote_client_frame_settings(const qa_native_q3_remot
     qa_native_q3_remote_client_cache witness; qa_native_q3_remote_client_basis basis;
     if(!out || stereo>2 || !qa_native_q3_remote_client_cache_read(service,&witness,error) ||
        !qa_native_q3_remote_client_basis_read(service,&basis,error))return false;
-    q3n_native_frame_options value={.clients={.memory_remaining=memory_remaining,.loading=loading},
-        .weapons={.ragepro=ragepro},.events={.ragepro=ragepro,.demo_playback=demo},.stereo=stereo};
+    q3n_native_frame_options value={.weapons={.ragepro=ragepro},
+        .events={.ragepro=ragepro,.demo_playback=demo},.stereo=stereo};
     if(!application_native_q3_remote_client_view_settings(service,dm_flags,ragepro,&value.view,error) ||
-       !application_native_q3_remote_client_hud_settings(service,&value.hud,error))return false;
+       !application_native_q3_remote_client_hud_settings(service,&value.hud,error) ||
+       !application_native_q3_remote_client_info_settings(service,memory_remaining,loading,&value.clients,error))return false;
     qa_native_q3_client_cvar cache;
 #define READ(field,symbol,member) do { if(!qa_native_q3_remote_client_cvar_read(service,#symbol,&cache,error))return false; value.field=cache.member; } while(0)
-    READ(clients.force_model,cg_forceModel,integer);
-    READ(clients.defer_players,cg_deferPlayers,integer);
-    READ(clients.build_script,cg_buildScript,integer);
-    const qa_cvar_view *engine=qa_cvars_find(basis.client.cvars,"model");
-    source_text(value.clients.model,sizeof(value.clients.model),engine?engine->value:"");
-    engine=qa_cvars_find(basis.client.cvars,"headmodel");
-    source_text(value.clients.head_model,sizeof(value.clients.head_model),engine?engine->value:"");
     if(basis.product==QA_Q3_TEAM_ARENA) {
-        if(!qa_native_q3_remote_client_cvar_read(service,"cg_redTeamName",&cache,error))return false;
-        source_text(value.clients.red_team_name,sizeof(value.clients.red_team_name),cache.value);
-        if(!qa_native_q3_remote_client_cvar_read(service,"cg_blueTeamName",&cache,error))return false;
-        source_text(value.clients.blue_team_name,sizeof(value.clients.blue_team_name),cache.value);
         READ(events.single_player_active,cg_singlePlayerActive,integer);
         READ(packet.obelisk_respawn_delay,cg_obeliskRespawnDelay,integer);
         READ(player_fx.enable_breath,cg_enableBreath,integer);

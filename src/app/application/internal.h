@@ -518,6 +518,8 @@ bool application_control_cutscene(qa_application *, qa_actor_id, qa_vec3,
 bool application_control_motion_changed(qa_application *, qa_actor_id,
                                         const qa_builtin_motion_change *,
                                         qa_error *);
+bool application_control_source_spawn(qa_application *, qa_actor_id,
+                                      qa_vec3 view_angles, qa_error *);
 bool application_controlled(const qa_application *, qa_actor_id);
 bool application_control_player_mode(qa_application *, qa_actor_id,
                                       qa_movement_mode, bool spectator, qa_error *);

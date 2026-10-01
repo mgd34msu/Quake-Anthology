@@ -1184,11 +1184,23 @@ static bool prepare_input(application_move_call *move,
         return false;
     state_body(record, &body, combat.health);
     *input = qa_movement_input_default(record->state.kind, record->actor);
+    if (!move->character || !move->character->constructed ||
+        !move->character->attached || move->character->close_pending)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Movement posture lost its selected character owner");
+    qa_movement_input postures = qa_movement_input_default(
+        move->character->component.clock.kind == QA_CLOCK_Q3 ? QA_MOVEMENT_Q3 : QA_MOVEMENT_NETQUAKE,
+        record->actor);
+    input->standing = postures.standing;
+    input->crouched = postures.crouched;
+    input->dead = postures.dead;
+    input->invulnerability_bounds = postures.invulnerability_bounds;
     input->state = record->state;
     application_control_frames_state(application, record->actor, &input->state);
     input->command = *command;
     input->profile = record->profile;
-    input->shape.bounds = body.bounds;
+    input->shape.bounds = record->state.kind == QA_MOVEMENT_Q3
+        ? input->standing.bounds : body.bounds;
     input->current_bounds = body.bounds;
     input->has_current_bounds = true;
     input->environment.health = combat.health;
@@ -1441,7 +1453,8 @@ static qa_movement_call input_call(application_move_call *move)
 {
     qa_movement_input *input = move->input;
     return (qa_movement_call){.actor = input->actor, .state = &input->state,
-        .command = &input->command, .bounds = &input->shape.bounds,
+        .command = &input->command, .bounds = input->state.kind == QA_MOVEMENT_Q3
+            ? &input->current_bounds : &input->shape.bounds,
         .view_height = &move->control->view_height, .water_level = &move->control->water_level,
         .water_type = &move->control->water_type, .time_ns = input->time_ns,
         .milliseconds = input->command.milliseconds, .elapsed_seconds = (float)((double)input->elapsed_ns / 1e9),
@@ -1499,7 +1512,9 @@ static bool external_stage_locomotion(const application_control_external_stage *
     qa_movement_input input = *move->input;
     input.state = move->control->state; input.command = *command;
     input.elapsed_ns = (uint64_t)command->milliseconds * UINT64_C(1000000);
-    input.current_bounds = move->input->shape.bounds; input.has_current_bounds = true;
+    input.current_bounds = input.state.kind == QA_MOVEMENT_Q3
+        ? move->input->current_bounds : move->input->shape.bounds;
+    input.has_current_bounds = true;
     qa_movement_input *previous = move->input; move->input = &input;
     qa_movement_services services = movement_services(move);
     bool ok = qa_movement_move(&input, &services, &move->control->result, error);
@@ -1517,7 +1532,8 @@ static bool external_stage_locomotion(const application_control_external_stage *
     }
     move->input = previous;
     previous->state = move->control->state;
-    previous->shape.bounds = move->control->bounds;
+    previous->shape.bounds = previous->state.kind == QA_MOVEMENT_Q3
+        ? previous->standing.bounds : move->control->bounds;
     previous->current_bounds = move->control->bounds;
     previous->has_current_bounds = true;
     /* Kernel phase callbacks borrowed the nested state. Restore the retained
@@ -1690,7 +1706,7 @@ static bool control_move(qa_application *application,
     if (ok && physics) {
         qa_movement_call call = input_call(&move);
         ok = refresh_source_call(&move, &call, error);
-        input.current_bounds = input.shape.bounds;
+        if (input.state.kind != QA_MOVEMENT_Q3) input.current_bounds = input.shape.bounds;
     }
     if (ok && preparing && (!original_stage || record->state.kind == QA_MOVEMENT_NETQUAKE) && live(application, actor)) {
         qa_movement_call call = input_call(&move);
@@ -1710,7 +1726,7 @@ static bool control_move(qa_application *application,
         if (ok && foreign_nq && live(application, actor))
             ok = move_phase(&move, QA_MOVE_THINK, &call, error) != QA_MOVEMENT_ERROR;
         move.in_source_outer = false;
-        input.current_bounds = input.shape.bounds;
+        if (input.state.kind != QA_MOVEMENT_Q3) input.current_bounds = input.shape.bounds;
     }
     if (ok && live(application, actor)) effective_command = input.command;
     qa_movement_services services = movement_services(&move);
@@ -2417,6 +2433,8 @@ bool qa_application_control_prediction_read(qa_application *application,
     result.input.crouched = postures.crouched;
     result.input.dead = postures.dead;
     result.input.invulnerability_bounds = postures.invulnerability_bounds;
+    if (record->state.kind == QA_MOVEMENT_Q3)
+        result.input.shape.bounds = result.input.standing.bounds;
     if (record->state.kind == QA_MOVEMENT_NETQUAKE)
         result.input.profile.data.nq.parameters.gravity = application->physics->gravity;
     else if (record->state.kind == QA_MOVEMENT_QUAKEWORLD)
@@ -2735,8 +2753,104 @@ bool application_control_motion_changed(
     state_body(record, &change->body, combat.health);
     if (change->force_view_angles) {
         record->view_angles = change->view_angles;
-        record->command_angles = change->view_angles;
+        if (!change->preserve_command_angles)
+            record->command_angles = change->view_angles;
     }
+    return true;
+}
+
+bool application_control_source_spawn(qa_application *application,
+                                      qa_actor_id actor, qa_vec3 view_angles,
+                                      qa_error *error)
+{
+    if (!live(application, actor) || !qa_vec_finite(view_angles) ||
+        actor.slot >= application->control_capacity || !application->world ||
+        !application->combat || application->destroy_requested || application->finalizing)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Source spawn needs its admitted live control");
+    application_control_record *record = &application->controls[actor.slot];
+    application_provider *source = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    application_provider *character = application_provider_for(application, actor, QA_ROLE_CHARACTER, "");
+    uint32_t slot;
+    uint64_t source_time;
+    double source_elapsed;
+    if (!record->active || record->retired || !qa_actor_id_equal(record->actor, actor) ||
+        !source || source->kind != APPLICATION_PROVIDER_Q1 || !source->constructed ||
+        !source->attached || source->close_pending || !source->state.q1 ||
+        !character || !character->constructed || !character->attached || character->close_pending)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Source spawn lost its actual client or character owner");
+    if (!qa_q1_native_client_slot(source->state.q1, actor, &slot, error)) return false;
+    if (!qa_q1_game_clock_read(source->state.q1, &source_time, &source_elapsed))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Source spawn has no admitted Q1 client clock");
+    qa_body_state body;
+    qa_combat_state combat;
+    if (!qa_world_body_read(application->world, actor, &body, error) ||
+        !qa_combat_read_traits(application->combat, actor, &combat, error)) return false;
+    qa_movement_input postures = qa_movement_input_default(
+        character->component.clock.kind == QA_CLOCK_Q3 ? QA_MOVEMENT_Q3 : QA_MOVEMENT_NETQUAKE,
+        actor);
+    if (!same_bounds(body.bounds, postures.standing.bounds) || body.ground.registry ||
+        !same_vector(body.angles, view_angles))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Source spawn must follow its committed standing body");
+    qa_movement_state *active = application_control_frames_state_current(application, actor);
+    qa_movement_state state = active ? *active : record->state;
+    if ((record->moving && !active) || state.kind != record->state.kind)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Source spawn lost its active movement continuation");
+    if (!qa_movement_set_origin(&state, body.origin, error) ||
+        !qa_movement_set_velocity(&state, body.velocity, error)) return false;
+    switch (state.kind) {
+    case QA_MOVEMENT_NETQUAKE:
+        state.data.nq.old_origin = body.origin;
+        state.data.nq.angles = state.data.nq.view_angles = view_angles;
+        state.data.nq.flags &= ~APPLICATION_Q1_ONGROUND;
+        state.data.nq.move_type = 3;
+        state.data.nq.ground = (qa_movement_ground){0};
+        state.data.nq.fix_angle = false;
+        state.data.nq.teleport_time_seconds = (double)source_time / 1000000000.0;
+        state.data.nq.health = combat.health;
+        break;
+    case QA_MOVEMENT_QUAKEWORLD:
+        state.data.qw.angles = view_angles;
+        state.data.qw.ground = (qa_movement_ground){0};
+        break;
+    case QA_MOVEMENT_Q2_CLASSIC:
+        state.data.q2.flags = 0;
+        state.data.q2.time_eight_ms = 0;
+        memset(state.data.q2.delta_angle_shorts, 0, sizeof(state.data.q2.delta_angle_shorts));
+        state.data.q2.type = 0;
+        break;
+    case QA_MOVEMENT_Q2_RERELEASE:
+        state.data.q2r.flags = 0;
+        state.data.q2r.time_ms = 0;
+        state.data.q2r.delta_angles = qa_v3(0, 0, 0);
+        state.data.q2r.type = 0;
+        break;
+    case QA_MOVEMENT_Q3:
+        state.data.q3.view_angles = view_angles;
+        memset(state.data.q3.delta_angle_words, 0, sizeof(state.data.q3.delta_angle_words));
+        state.data.q3.movement_type = 0;
+        state.data.q3.ground = (qa_movement_ground){0};
+        state.data.q3.movement_flags &= ~(UINT32_C(32) | UINT32_C(64) | UINT32_C(256));
+        state.data.q3.movement_time_ms = 0;
+        break;
+    }
+    record->state = state;
+    if (active) *active = state;
+    record->ground = (qa_movement_ground){0};
+    record->standing_bounds = record->bounds = postures.standing.bounds;
+    record->view_angles = view_angles;
+    record->view_height = postures.standing.view_height;
+    record->view_offset = qa_v3(0, 0, record->view_height);
+    record->flight = record->cutscene = false;
+    record->cutscene_character = NULL;
+    record->saved_mode_valid = false;
+    record->player_mode = QA_MOVEMENT_MODE_NORMAL;
+    record->player_mode_set = true;
+    application_control_body_reset(application, actor);
     return true;
 }
 

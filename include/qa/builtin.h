@@ -104,6 +104,7 @@ typedef struct qa_builtin_motion_change {
     qa_vec3 view_angles, angular_kick;
     uint64_t hold_ns;
     bool force_view_angles, apply_angular_kick;
+    bool preserve_command_angles;
 } qa_builtin_motion_change;
 
 typedef enum qa_builtin_projectile_role {

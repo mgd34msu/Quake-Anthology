@@ -9,6 +9,8 @@ bool application_native_q3_remote_client_view_settings(const qa_native_q3_remote
     int32_t actual_dm_flags, bool actual_ragepro, q3n_view_settings *, qa_error *);
 bool application_native_q3_remote_client_hud_settings(const qa_native_q3_remote_client_service *,
     q3n_hud_settings *, qa_error *);
+bool application_native_q3_remote_client_info_settings(const qa_native_q3_remote_client_service *,
+    size_t actual_memory_remaining, bool actual_loading, q3n_client_settings *, qa_error *);
 bool application_native_q3_remote_client_frame_settings(const qa_native_q3_remote_client_service *,
     int32_t actual_dm_flags, bool actual_ragepro, size_t actual_memory_remaining,
     bool actual_loading, bool actual_demo_playback, uint32_t actual_stereo,

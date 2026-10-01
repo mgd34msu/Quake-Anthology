@@ -1,4 +1,5 @@
-#include "remote_q3_client.h"
+#include "remote_q3_private.h"
+#include "remote_q3_services.h"
 #include "remote_config.h"
 #include "qa/application_character_selection.h"
 #include "qa/scene_world_save.h"
@@ -7,16 +8,6 @@
 #include "qa/material_library_save.h"
 #include "qa/font_save.h"
 
-struct frontend_remote_q3 {
-    frontend_remote_q3 *next;
-    qa_frontend *frontend;
-    qa_application *application;
-    qa_launch_instance_lease *descriptor;
-    frontend_remote_q3_resources resources;
-    qa_resource *map;
-    size_t users;
-    bool resources_ready, constructing;
-};
 static bool linked(const frontend_remote_q3 *row)
 {
     for(const frontend_remote_q3 *p=row && row->frontend?row->frontend->remote_q3:NULL;p;p=p->next)
@@ -41,7 +32,8 @@ static bool same_domain(const frontend_network_client_domain *a,const frontend_n
 static bool resources_idle(const frontend_remote_q3 *row)
 {
     const frontend_remote_q3_resources *v=&row->resources;
-    return !row->constructing && !row->users && (!v->assets || qa_q3_assets_idle(v->assets)) &&
+    return !row->constructing && !row->users && frontend_remote_q3_services_idle(row->services) &&
+        (!v->assets || qa_q3_assets_idle(v->assets)) &&
         (!v->images || qa_scene_resources_idle(v->images)) &&
         (!v->materials || qa_material_library_idle(v->materials)) &&
         (!v->fonts || qa_font_library_idle(v->fonts)) && (!v->world || qa_scene_world_idle(v->world));
@@ -221,7 +213,8 @@ bool frontend_remote_q3_resources_destroy(frontend_remote_q3 **owned,qa_error *e
     frontend_remote_q3 *row=*owned;
     if(!linked(row) || row->frontend->capture || !resources_idle(row))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Native remote resources retain an actual constructor or renderer borrower");
-    if(!frontend_client_registry_release(&row->resources.registry,error)) return false;
+    if(!frontend_remote_q3_services_destroy(&row->services,error) ||
+        !frontend_client_registry_release(&row->resources.registry,error)) return false;
     frontend_remote_q3_resources *v=&row->resources;
     qa_q3_presentation_assets_destroy(v->assets); qa_scene_world_destroy(v->world);
     qa_collision_destroy(v->geometry); qa_resource_release(row->map);
