@@ -23,6 +23,14 @@
 #include "guest_q3_save.h"
 #include "save_content.h"
 #include "save_progression.h"
+#include "rankings.h"
+#include "events_save.h"
+#include "native_q3_console.h"
+#include "native_q3_ipfilters.h"
+#include "native_q3_settings.h"
+#include "native_q3_team_status.h"
+#include "native_q3_votes.h"
+#include "native_q3_wire_state.h"
 
 #include <string.h>
 #include <stdlib.h>
@@ -192,9 +200,9 @@ static bool controls_signature(qa_source_save_io *io)
 {
     unsigned char actual[8] = {'Q','A','C','T','R','L','S',0};
     static const unsigned char expected[8] = {'Q','A','C','T','R','L','S',0};
-    uint32_t version = 2;
+    uint32_t version = 6;
     return qa_source_save_bytes(io, actual, sizeof(actual)) && !memcmp(actual, expected, sizeof(actual)) &&
-        qa_source_save_u32(io, &version) && version == 2;
+        qa_source_save_u32(io, &version) && version == 6;
 }
 
 static bool application_controls_capture(qa_application *app, qa_buffer *out, qa_error *error)
@@ -305,7 +313,7 @@ static const qa_save_record *foundation_record(const qa_save_image *image,
 {
     const qa_save_record *record = qa_save_image_find(image, kind, "");
     if (record == NULL || strcmp(record->owner.schema, schema) ||
-        record->owner.schema_version != 1 || record->owner.backend[0] != '\0') {
+        record->owner.schema_version != (kind == QA_SAVE_PROGRESSION ? 2u : 1u) || record->owner.backend[0] != '\0') {
         application_fail(error, QA_ERROR_FORMAT, "foundation record schema or backend disagrees");
         return NULL;
     }
@@ -592,10 +600,11 @@ typedef struct application_persistence {
 
 static bool persistence_safe(qa_application *app)
 {
-    return app && app->operation == APPLICATION_IDLE && app->session && app->world &&
+    return app && app->operation == APPLICATION_IDLE && !app->q3_round_active && !app->frame_preparing && app->session && app->world &&
         app->configuration && qa_application_launch(app) && qa_session_safe(app->session) &&
         qa_world_idle(app->world) && qa_combat_idle(app->combat) &&
         application_guests_idle(app) && application_bots_can_destroy(app) &&
+        application_rankings_idle(app) &&
         !app->publication_started && !app->destroy_requested && !app->finalizing &&
         !app->pending_close && !app->routing_snapshot && !app->routing_providers &&
         !app->routing_provider_count &&
@@ -617,14 +626,14 @@ static bool persistence_lease(application_persistence *operation, qa_error *erro
 static bool persistence_unchanged(application_persistence *operation, qa_error *error)
 {
     qa_application *app = operation->active;
-    if (!operation->leased || app->operation != APPLICATION_PERSISTING ||
+    if (!operation->leased || app->operation != APPLICATION_PERSISTING || app->q3_round_active || app->frame_preparing ||
         app->destroy_requested || app->publication_started ||
         app->state == QA_APPLICATION_FAULTED || app->state == QA_APPLICATION_STOPPING ||
         qa_configuration_generation(app->configuration) != operation->configuration_generation ||
         app->publication_generation != operation->publication_generation ||
         qa_actors_revision(qa_session_actors(app->session)) != operation->actor_revision ||
         !qa_session_safe(app->session) || !qa_world_idle(app->world) ||
-        !qa_combat_idle(app->combat) || !application_guests_idle(app))
+        !qa_combat_idle(app->combat) || !application_guests_idle(app) || !application_rankings_idle(app))
         return application_fail(error, QA_ERROR_ARGUMENT, "application changed during persistence operation");
     return true;
 }
@@ -668,6 +677,7 @@ static const char *shared_schema(qa_save_owner_kind kind)
     case QA_SAVE_MODES: return "qa.modes";
     case QA_SAVE_EQUIPMENT: return "qa.equipment";
     case QA_SAVE_COMMANDS: return "qa.commands";
+    case QA_SAVE_EVENTS: return "qa.events.application";
     case QA_SAVE_NAVIGATION: return "qa.navigation.application";
     case QA_SAVE_BOTS: return "qa.bots.application";
     case QA_SAVE_PROGRESSION: return "qa.progression.application";
@@ -842,6 +852,147 @@ static bool application_restore(qa_application *app, qa_bytes bytes, qa_error *e
         application_portals_restore(app, parts[5], error);
 }
 
+typedef struct native_q3_record {
+    qa_bytes game, wire, settings, ipfilters, votes;
+    bool console_present, wire_present, settings_bound;
+    bool settings_present, settings_initialized;
+    bool ipfilters_present, ipfilters_initialized;
+    bool votes_present, team_present, team_bound;
+} native_q3_record;
+
+static bool native_q3_record_read(qa_bytes bytes, native_q3_record *out, qa_error *error)
+{
+    if (!bytes.data || bytes.size<56 || memcmp(bytes.data,"QAN3",4) ||
+        qa_load_u32le(bytes.data+4)!=2 || qa_load_u32le(bytes.data+8)>1023 ||
+        qa_load_u32le(bytes.data+12))
+        return application_fail(error,QA_ERROR_FORMAT,"Invalid native Q3 owner bundle");
+    uint32_t flags=qa_load_u32le(bytes.data+8);
+    uint64_t game=qa_load_u64le(bytes.data+16), wire=qa_load_u64le(bytes.data+24);
+    uint64_t settings=qa_load_u64le(bytes.data+32);
+    uint64_t ipfilters=qa_load_u64le(bytes.data+40);
+    uint64_t votes=qa_load_u64le(bytes.data+48);
+    if (!game || game>bytes.size-56 || wire>bytes.size-56-(size_t)game ||
+        settings>bytes.size-56-(size_t)game-(size_t)wire ||
+        ipfilters>bytes.size-56-(size_t)game-(size_t)wire-(size_t)settings ||
+        votes!=bytes.size-56-(size_t)game-(size_t)wire-(size_t)settings-(size_t)ipfilters ||
+        ((flags&2u)!=0)!=(wire!=0) || ((flags&16u)!=0)!=(settings!=0) ||
+        ((flags&32u)!=0)!=(ipfilters!=0) || ((flags&32u)!=0 && !(flags&1u)) ||
+        ((flags&64u)!=0 && (flags&48u)!=48u) ||
+        ((flags&128u)!=0)!=(votes!=0) || ((flags&128u)!=0 && !(flags&1u)) ||
+        ((flags&256u)!=0 && !(flags&1u)) || ((flags&512u)!=0 && (flags&260u)!=260u) ||
+        ((flags&8u)!=0 && !(flags&1u)) ||
+        ((flags&16u)!=0 && (flags&9u)!=9u) || ((flags&4u)!=0 && !(flags&16u)))
+        return application_fail(error,QA_ERROR_FORMAT,"Native Q3 source owner extent or presence differs");
+    *out=(native_q3_record){.game={bytes.data+56,(size_t)game},
+        .wire={wire ? bytes.data+56+(size_t)game : NULL,(size_t)wire},
+        .settings={settings ? bytes.data+56+(size_t)game+(size_t)wire : NULL,(size_t)settings},
+        .ipfilters={ipfilters ? bytes.data+56+(size_t)game+(size_t)wire+(size_t)settings : NULL,(size_t)ipfilters},
+        .votes={votes ? bytes.data+56+(size_t)game+(size_t)wire+(size_t)settings+(size_t)ipfilters : NULL,(size_t)votes},
+        .console_present=(flags&1u)!=0,.wire_present=(flags&2u)!=0,
+        .settings_bound=(flags&4u)!=0,.settings_present=(flags&8u)!=0,
+        .settings_initialized=(flags&16u)!=0,.ipfilters_present=(flags&32u)!=0,
+        .ipfilters_initialized=(flags&64u)!=0,.votes_present=(flags&128u)!=0,
+        .team_present=(flags&256u)!=0,.team_bound=(flags&512u)!=0};
+    return true;
+}
+
+static bool native_q3_saved_record(application_provider *provider,
+    const qa_save_image *image, native_q3_record *out, qa_error *error)
+{
+    const qa_save_record *saved=qa_save_image_find(image,QA_SAVE_PROVIDER,
+        provider->launch->selection.instance);
+    qa_bytes bytes=saved ? saved->payload : (qa_bytes){0};
+    if (!bytes.data || bytes.size<32 || memcmp(bytes.data,"QAPV",4) ||
+        qa_load_u32le(bytes.data+4)!=1 || qa_load_u32le(bytes.data+8)!=APPLICATION_PROVIDER_Q3 ||
+        qa_load_u64le(bytes.data+24)!=bytes.size-32)
+        return application_fail(error,QA_ERROR_FORMAT,"Missing actual native Q3 provider record");
+    return native_q3_record_read((qa_bytes){bytes.data+32,bytes.size-32},out,error);
+}
+
+static bool native_q3_capture(application_provider *provider, qa_buffer *out, qa_error *error)
+{
+    qa_buffer game={0}, wire={0}, settings={0}, ipfilters={0}, votes={0};
+    bool present=provider->native_q3_wire!=NULL;
+    bool console=provider->native_q3_console!=NULL;
+    bool bound=application_native_q3_console_settings_bound(provider);
+    bool cached=provider->native_q3_settings!=NULL;
+    bool initialized=application_native_q3_settings_initialized(provider);
+    bool filters=provider->native_q3_ipfilters!=NULL;
+    bool filters_initialized=application_native_q3_ipfilters_initialized(provider);
+    bool voting=provider->native_q3_votes!=NULL;
+    bool team=provider->native_q3_team_status!=NULL;
+    bool team_bound=application_native_q3_team_status_bound(provider);
+    bool ok=application_native_q3_console_idle(provider) &&
+        application_native_q3_settings_idle(provider) &&
+        application_native_q3_ipfilters_idle(provider) &&
+        application_native_q3_votes_idle(provider) &&
+        application_native_q3_team_status_idle(provider) &&
+        qa_q3_game_capture(provider->state.q3,&game,error);
+    if (ok && present) ok=application_native_q3_wire_capture(provider,&wire,error) && wire.size;
+    if (ok && initialized) ok=application_native_q3_settings_capture(provider,&settings,error) && settings.size;
+    if (ok && filters) ok=application_native_q3_ipfilters_capture(provider,&ipfilters,error) && ipfilters.size;
+    if (ok && voting) ok=application_native_q3_votes_capture(provider,&votes,error) && votes.size;
+    if (ok && (!game.size || (cached && !console) || (filters && !console) ||
+        (voting && !console) || (team && !console) || (team_bound && (!team || !bound)) ||
+        (bound && !initialized) || (initialized && !cached) ||
+        (filters_initialized && (!filters || !initialized)) ||
+        game.size>SIZE_MAX-56 || wire.size>SIZE_MAX-56-game.size ||
+        settings.size>SIZE_MAX-56-game.size-wire.size ||
+        ipfilters.size>SIZE_MAX-56-game.size-wire.size-settings.size ||
+        votes.size>SIZE_MAX-56-game.size-wire.size-settings.size-ipfilters.size))
+        ok=application_fail(error,QA_ERROR_FORMAT,"Unqualified native Q3 source, settings and wire owners");
+    if (ok) {
+        out->size=56+game.size+wire.size+settings.size+ipfilters.size+votes.size;
+        out->data=calloc(1,out->size);
+        if (!out->data) { out->size=0; ok=application_fail(error,QA_ERROR_MEMORY,"Retaining native Q3 owner bundle"); }
+    }
+    if (ok) {
+        memcpy(out->data,"QAN3",4); qa_store_u32le(out->data+4,2);
+        qa_store_u32le(out->data+8,(console ? 1u : 0u)|(present ? 2u : 0u)|(bound ? 4u : 0u)|
+            (cached ? 8u : 0u)|(initialized ? 16u : 0u)|(filters ? 32u : 0u)|
+            (filters_initialized ? 64u : 0u)|(voting ? 128u : 0u)|
+            (team ? 256u : 0u)|(team_bound ? 512u : 0u));
+        qa_store_u64le(out->data+16,game.size); qa_store_u64le(out->data+24,wire.size);
+        qa_store_u64le(out->data+32,settings.size);
+        qa_store_u64le(out->data+40,ipfilters.size);
+        qa_store_u64le(out->data+48,votes.size);
+        memcpy(out->data+56,game.data,game.size);
+        if (wire.size) memcpy(out->data+56+game.size,wire.data,wire.size);
+        if (settings.size) memcpy(out->data+56+game.size+wire.size,settings.data,settings.size);
+        if (ipfilters.size) memcpy(out->data+56+game.size+wire.size+settings.size,ipfilters.data,ipfilters.size);
+        if (votes.size) memcpy(out->data+56+game.size+wire.size+settings.size+ipfilters.size,votes.data,votes.size);
+    }
+    qa_buffer_free(&game); qa_buffer_free(&wire); qa_buffer_free(&settings); qa_buffer_free(&ipfilters); qa_buffer_free(&votes);
+    if (!ok && error && error->code==QA_OK)
+        application_fail(error,QA_ERROR_ARGUMENT,"Native Q3 owner bundle is borrowed or incomplete");
+    return ok;
+}
+
+static bool native_q3_restore(application_provider *provider, qa_bytes bytes, qa_error *error)
+{
+    native_q3_record record={0};
+    if (!native_q3_record_read(bytes,&record,error)) return false;
+    if (record.console_present!=(provider->native_q3_console!=NULL) ||
+        record.wire_present!=(provider->native_q3_wire!=NULL) ||
+        record.settings_present!=(provider->native_q3_settings!=NULL) ||
+        record.ipfilters_present!=(provider->native_q3_ipfilters!=NULL) ||
+        record.votes_present!=(provider->native_q3_votes!=NULL) ||
+        record.team_present!=(provider->native_q3_team_status!=NULL) ||
+        application_native_q3_console_settings_bound(provider) ||
+        application_native_q3_settings_initialized(provider) ||
+        application_native_q3_ipfilters_initialized(provider) ||
+        application_native_q3_team_status_bound(provider))
+        return application_fail(error,QA_ERROR_FORMAT,"Native Q3 bundle differs from its actual empty candidate services");
+    bool ok=qa_q3_game_restore(provider->state.q3,record.game,error) &&
+        (!record.settings_initialized || application_native_q3_settings_restore(provider,record.settings,error)) &&
+        (!record.ipfilters_present || application_native_q3_ipfilters_restore(provider,record.ipfilters,error)) &&
+        (!record.votes_present || application_native_q3_votes_restore(provider,record.votes,error)) &&
+        (!record.wire_present || application_native_q3_wire_restore(provider,record.wire,error));
+    if (ok && record.ipfilters_initialized!=application_native_q3_ipfilters_initialized(provider))
+        return application_fail(error,QA_ERROR_FORMAT,"Native Q3 filters differ from their imported source state");
+    return ok;
+}
+
 static bool provider_capture(application_provider *provider, qa_save_purpose purpose,
                               qa_buffer *out, qa_error *error)
 {
@@ -852,7 +1003,7 @@ static bool provider_capture(application_provider *provider, qa_save_purpose pur
     else if (provider->kind == APPLICATION_PROVIDER_Q2)
         ok = qa_q2_game_capture(provider->state.q2, &state, error);
     else if (provider->kind == APPLICATION_PROVIDER_Q3)
-        ok = qa_q3_game_capture(provider->state.q3, &state, error);
+        ok = native_q3_capture(provider, &state, error);
     else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
         ok = application_native_q2_save_capture(provider, purpose, &state, error);
     else ok = application_guest_checkpoint_capture(provider, &state, error);
@@ -897,7 +1048,7 @@ static bool provider_restore(application_persistence *operation,
     } else if (provider->kind == APPLICATION_PROVIDER_Q2)
         ok = qa_q2_game_restore(provider->state.q2, state, error);
     else if (provider->kind == APPLICATION_PROVIDER_Q3)
-        ok = qa_q3_game_restore(provider->state.q3, state, error);
+        ok = native_q3_restore(provider, state, error);
     else if (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.q2_engine)
         ok = application_native_q2_save_restore(provider, state, operation->options, operation->ops, error);
     else ok = application_guest_checkpoint_restore(provider, state, error);
@@ -924,12 +1075,13 @@ static bool persistence_inventory(application_persistence *operation, qa_applica
     for (size_t i = 0; ok && i < count; ++i) {
         qa_save_owner *owner = owners + i;
         const char *schema = NULL;
+        application_provider *provider = NULL;
         if (i < QA_SAVE_PROVIDER - 1u) {
             owner->kind = (qa_save_owner_kind)(i + 1); owner->instance = "";
             schema = shared_schema(owner->kind);
         } else {
             const qa_launch_instance *instance = qa_launch_snapshot_instance(launch, i - (QA_SAVE_PROVIDER - 1u));
-            application_provider *provider = saved_provider(app, instance->selection.instance);
+            provider = saved_provider(app, instance->selection.instance);
             if (!provider || provider != instance->state || !provider->constructed || !provider->attached) {
                 ok = application_fail(error, QA_ERROR_FORMAT, "selected provider is not an attached restored owner"); break;
             }
@@ -940,8 +1092,11 @@ static bool persistence_inventory(application_persistence *operation, qa_applica
         }
         if (schema) {
             owner->schema = schema;
-            owner->schema_version = owner->kind == QA_SAVE_APPLICATION ? 3 :
-                                    owner->kind == QA_SAVE_CONTROLS ? 2 : 1;
+            owner->schema_version = owner->kind == QA_SAVE_APPLICATION ||
+                                    (owner->kind == QA_SAVE_PROVIDER &&
+                                     provider->kind == APPLICATION_PROVIDER_Q3) ? 3 :
+                                    owner->kind == QA_SAVE_CONTROLS ? 6 :
+                                    owner->kind == QA_SAVE_PROGRESSION || owner->kind == QA_SAVE_TARGETS ? 2 : 1;
             if (!owner->backend) owner->backend = "";
         } else {
             const qa_application_persistence_owner *binding = NULL;
@@ -1033,6 +1188,7 @@ static bool persistence_capture_owner(void *opaque, const qa_save_owner *owner,
     case QA_SAVE_MODES: return qa_modes_capture(app->modes, out, error);
     case QA_SAVE_EQUIPMENT: return qa_equipment_capture(app->equipment, out, error);
     case QA_SAVE_COMMANDS: return application_commands_capture(app, out, error);
+    case QA_SAVE_EVENTS: return application_events_save_capture(app, out, error);
     case QA_SAVE_NAVIGATION: return application_navigation_save_capture(app, out, error);
     case QA_SAVE_BOTS: return application_bots_save_capture(app, out, error);
     case QA_SAVE_PROGRESSION: return application_save_progression_capture(app, operation->ops, out, error);
@@ -1209,14 +1365,19 @@ static bool persistence_restore_owner(void *opaque, void *value,
         bool ok = qa_modes_restore_bytes(candidate->modes, record->payload, error);
         for (size_t i = 0; ok && i < candidate->provider_count; ++i) {
             application_provider *provider = candidate->providers[i];
-            if (provider->kind == APPLICATION_PROVIDER_Q3)
-                ok = application_native_q3_settings_register(provider, error);
+            if (provider->kind == APPLICATION_PROVIDER_Q3) {
+                native_q3_record saved={0};
+                ok = native_q3_saved_record(provider, operation->image, &saved, error);
+                if (ok && saved.settings_bound)
+                    ok = application_native_q3_settings_register(provider, error);
+            }
         }
         return ok;
     }
     case QA_SAVE_EQUIPMENT: return qa_equipment_restore_bytes(candidate->equipment, record->payload, error);
     case QA_SAVE_COMMANDS: return application_commands_restore(candidate, record->payload,
         &operation->restored_command_generation, error);
+    case QA_SAVE_EVENTS: return application_events_save_restore(candidate, record->payload, error);
     case QA_SAVE_NAVIGATION: return application_navigation_save_restore(candidate, record->payload, error);
     case QA_SAVE_BOTS: return application_bots_save_restore(candidate, record->payload, error);
     case QA_SAVE_PROGRESSION: return application_save_progression_restore(candidate,
@@ -1247,7 +1408,7 @@ static bool persistence_shared_match(qa_application *app, const qa_save_image *i
 {
     static const qa_save_owner_kind owners[] = {QA_SAVE_COMBAT, QA_SAVE_INVENTORY, QA_SAVE_PICKUPS,
         QA_SAVE_TARGETS, QA_SAVE_CONTROLS, QA_SAVE_MODES, QA_SAVE_EQUIPMENT,
-        QA_SAVE_NAVIGATION, QA_SAVE_BOTS, QA_SAVE_APPLICATION};
+        QA_SAVE_NAVIGATION, QA_SAVE_BOTS, QA_SAVE_EVENTS, QA_SAVE_APPLICATION};
     for (size_t i = 0; i < sizeof(owners) / sizeof(*owners); ++i) {
         qa_buffer encoded = {0}; bool ok;
         switch (owners[i]) {
@@ -1260,6 +1421,9 @@ static bool persistence_shared_match(qa_application *app, const qa_save_image *i
         case QA_SAVE_EQUIPMENT: ok = qa_equipment_capture(app->equipment, &encoded, error); break;
         case QA_SAVE_NAVIGATION: ok = application_navigation_save_capture(app, &encoded, error); break;
         case QA_SAVE_BOTS: ok = application_bots_save_capture(app, &encoded, error); break;
+        case QA_SAVE_EVENTS: ok = app->operation==APPLICATION_PERSISTING
+            ? application_events_save_capture(app, &encoded, error)
+            : qa_application_events_checkpoint(app, &encoded, error); break;
         case QA_SAVE_APPLICATION: ok = application_capture(app, &encoded, error); break;
         default: ok = false; break;
         }
@@ -1340,11 +1504,34 @@ static bool persistence_finish(void *opaque, void *value, const qa_save_image *i
         ok = application_match_intents_reconnect(candidate->match_intents, candidate, error);
     for (size_t i = 0; ok && i < candidate->provider_count; ++i) {
         application_provider *provider = candidate->providers[i];
-        if (provider->kind == APPLICATION_PROVIDER_Q3)
-            ok = application_native_q3_settings_reconnect(provider, error);
+        if (provider->kind == APPLICATION_PROVIDER_Q3) {
+            native_q3_record saved={0};
+            ok = native_q3_saved_record(provider, image, &saved, error);
+            if (ok && saved.settings_bound!=application_native_q3_console_settings_bound(provider))
+                ok = application_fail(error, QA_ERROR_FORMAT, "Native Q3 settings differ from their restored source owner");
+            if (ok && (saved.settings_present!=(provider->native_q3_settings!=NULL) ||
+                saved.settings_initialized!=application_native_q3_settings_initialized(provider)))
+                ok = application_fail(error, QA_ERROR_FORMAT, "Native Q3 cache differs from its imported settings owner");
+            if (ok && (saved.ipfilters_present!=(provider->native_q3_ipfilters!=NULL) ||
+                saved.ipfilters_initialized!=application_native_q3_ipfilters_initialized(provider)))
+                ok = application_fail(error, QA_ERROR_FORMAT, "Native Q3 filters differ from their imported source owner");
+            if (ok && saved.votes_present!=(provider->native_q3_votes!=NULL))
+                ok = application_fail(error, QA_ERROR_FORMAT, "Native Q3 votes differ from their imported source owner");
+            if (ok && saved.team_present!=(provider->native_q3_team_status!=NULL))
+                ok = application_fail(error, QA_ERROR_FORMAT, "Native Q3 team capability differs from its source holder");
+            if (ok && saved.settings_bound)
+                ok = application_native_q3_settings_reconnect(provider, error);
+            if (ok && saved.team_bound)
+                ok = application_native_q3_team_status_reconnect(provider, error);
+            if (ok && saved.team_bound!=application_native_q3_team_status_bound(provider))
+                ok = application_fail(error, QA_ERROR_FORMAT, "Native Q3 team capability differs from its restored source binding");
+            if (ok && saved.wire_present)
+                ok = application_native_q3_wire_finish(provider, error);
+        }
         else if (provider->kind == APPLICATION_PROVIDER_QVM)
             ok = application_guest_q3_save_finish(provider, error);
     }
+    if (ok) ok = application_events_save_validate(candidate, error);
     if (ok && candidate->command_generation != operation->restored_command_generation)
         ok = application_fail(error, QA_ERROR_FORMAT, "Console publication generation differs from saved application metadata");
     if (ok && candidate->q1_paused) {
@@ -1416,6 +1603,8 @@ static bool persistence_publish(void *opaque, void *value, qa_error *error)
     application_save_content_publish(candidate->content_graph);
     application_save_content_destroy(candidate->content_graph);
     candidate->content_graph = NULL;
+    candidate->source_shutdown_admitted = true;
+    operation->active->source_shutdown_admitted = false;
     operation->displaced = operation->active;
     *operation->slot = value;
     return true;

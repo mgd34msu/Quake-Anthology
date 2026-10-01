@@ -1,4 +1,6 @@
 #include "guest_qc_profile.h"
+#include "control_frame.h"
+#include <float.h>
 #include <stdio.h>
 
 const qa_qc_definition *application_qc_field(struct application_qc_state *engine,
@@ -49,7 +51,7 @@ bool application_qc_named(struct application_qc_state *engine, const char *name,
         {"other", {QA_QC_GAME_ACTOR, {.actor = {0}}}}
     };
     return qa_qc_game_call(engine->provider->state.qc.game, name, NULL, 0,
-                            globals, 2, NULL, error);
+                            globals, 2, NULL, error) && application_qc_publish_client_outputs(engine, error);
 }
 bool application_qc_spectator_callback(struct application_qc_state *engine, const char *name,
                                        qa_actor_id actor, qa_error *error)
@@ -191,15 +193,34 @@ static bool source_callback(struct application_qc_state *engine, qa_actor_id act
         {"time", {QA_QC_GAME_FLOAT, {.number = seconds}}}
     };
     return qa_qc_game_call_index(engine->provider->state.qc.game, (uint32_t)function,
-        NULL, 0, globals, scoped_time ? 3 : 2, NULL, error);
+        NULL, 0, globals, scoped_time ? 3 : 2, NULL, error) && application_qc_publish_client_outputs(engine, error);
 }
-static bool source_think(void *opaque, qa_actor_id actor, const qa_source_frame *frame, qa_error *error)
+static bool schedule_think_after(struct application_qc_state *, qa_actor_id, uint64_t, qa_error *);
+static bool source_think(void *opaque, qa_actor_id actor, const qa_think_scope *scope, qa_error *error)
 {
     struct application_qc_state *engine = opaque;
-    int32_t reference;
+    if (!scope || scope->kind != QA_THINK_WORLD_FRAME)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC scheduled think requires an actual world frame");
+    const qa_source_frame *frame = &scope->source.frame;
+    if (frame->provider != engine->provider->owner || frame->kind != engine->provider->component.clock.kind ||
+        frame->start_ns > UINT64_MAX - frame->elapsed_ns)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC scheduled think has another source clock");
+    int32_t reference; float due;
     if (!application_qc_reference(engine, actor, &reference, error) ||
-        !application_qc_set_float(engine, reference, "nextthink", 0, error)) return false;
-    return source_callback(engine, actor, (qa_actor_id){0}, "think", (double)frame->time_ns / 1e9, error);
+        !application_qc_float(engine, reference, "nextthink", &due, error)) return false;
+    if (!isfinite(due)) return application_fail(error, QA_ERROR_FORMAT, "Nonfinite QuakeC think deadline");
+    if (!(due > 0)) return true;
+    double current = (double)frame->time_ns / 1e9;
+    double end = current + (double)frame->elapsed_ns / 1e9;
+    if ((double)due > end) {
+        uint64_t end_ns = frame->start_ns + frame->elapsed_ns;
+        return end_ns == UINT64_MAX || schedule_think_after(engine, actor, end_ns + 1, error);
+    }
+    qa_actor_owner execution;
+    if (!qa_session_execution(engine->services.session, actor, &execution) || execution != engine->provider->owner)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC think actor changed execution owner");
+    if (!application_qc_set_float(engine, reference, "nextthink", 0, error)) return false;
+    return source_callback(engine, actor, (qa_actor_id){0}, "think", fmax(current, (double)due), error);
 }
 bool application_qc_think_binding(application_provider *provider,qa_actor_id actor,uint32_t callback_id,
                                    qa_think_fn *callback,void **context,qa_error *error)
@@ -217,8 +238,8 @@ bool application_qc_think_binding(application_provider *provider,qa_actor_id act
         return application_fail(error,QA_ERROR_FORMAT,"saved QuakeC think field names no original function");
     *callback=source_think;*context=provider->state.qc.engine;return true;
 }
-static bool schedule_think(struct application_qc_state *engine, qa_actor_id actor,
-                           const qa_source_frame *frame, qa_error *error)
+static bool schedule_think_after(struct application_qc_state *engine, qa_actor_id actor,
+                                   uint64_t minimum_ns, qa_error *error)
 {
     int32_t reference; float due;
     if (!application_qc_reference(engine, actor, &reference, error) ||
@@ -226,27 +247,39 @@ static bool schedule_think(struct application_qc_state *engine, qa_actor_id acto
     if (!isfinite(due)) return application_fail(error, QA_ERROR_FORMAT, "Nonfinite QuakeC think deadline");
     if (!(due > 0)) { qa_scheduler_cancel(qa_session_scheduler(engine->services.session), actor); return true; }
     double ns = (double)due * 1e9;
-    uint64_t time = ns >= (double)UINT64_MAX ? UINT64_MAX : (uint64_t)ns;
+    if (ns >= (double)UINT64_MAX) {
+        qa_scheduler_cancel(qa_session_scheduler(engine->services.session), actor);
+        return true;
+    }
+    uint64_t time = (uint64_t)ceil(ns);
+    if (time < minimum_ns) time = minimum_ns;
     qa_think think = {.actor = actor, .execution_provider = engine->provider->owner,
         .callback_id = 1,
         .due_ns = time, .boundary = QA_THINK_DURING_PHYSICS, .callback = source_think, .context = engine};
-    (void)frame;
     return qa_session_schedule(engine->services.session, &think, error);
+}
+static bool schedule_think(struct application_qc_state *engine, qa_actor_id actor, qa_error *error)
+{
+    return schedule_think_after(engine, actor, 0, error);
 }
 static bool stored(void *opaque, qa_qc_instance *vm, const qa_qc_store_event *event, qa_error *error)
 {
     struct application_qc_state *engine = opaque;
     if (!application_qc_store_declared(engine, vm, event, error)) return false;
     if (!engine->provider->state.qc.qualified && !application_qc_project_body_store(engine, vm, event, error)) return false;
-    if (!engine->has_frame || event->kind != QA_QC_STORE_ENTITY || event->entity_reference == 0) return true;
+    if (event->kind != QA_QC_STORE_ENTITY || event->entity_reference == 0) return true;
+    if (!engine->has_frame) {
+        qa_source_command command;
+        if (!qa_session_active_command(engine->services.session, engine->provider->owner, &command)) return true;
+    }
     const qa_qc_definition *next = qa_qc_program_find_field(engine->provider->state.qc.program, "nextthink");
     if (next == NULL || next->offset < event->word || next->offset >= event->word + event->count) return true;
     qa_actor_id actor; qa_actor_owner execution;
     if (!qa_qc_reference_actor(vm, event->entity_reference, &actor, error)) return false;
     if (!qa_session_execution(engine->services.session, actor, &execution) || execution != engine->provider->owner) return true;
-    return schedule_think(engine, actor, &engine->frame, error);
+    return schedule_think(engine, actor, error);
 }
-static bool begin_frame(void *opaque, qa_session *session, const qa_source_frame *frame, qa_error *error)
+static bool prepare_frame(void *opaque, qa_session *session, const qa_source_frame *frame, qa_error *error)
 {
     struct application_qc_state *engine = opaque;
     if (session != engine->services.session)
@@ -255,6 +288,13 @@ static bool begin_frame(void *opaque, qa_session *session, const qa_source_frame
     engine->frame = *frame; engine->has_frame = true;
     if (!qa_qc_game_set_time(engine->provider->state.qc.game, (double)frame->time_ns / 1e9,
                               (double)frame->elapsed_ns / 1e9, error)) return false;
+    return true;
+}
+static bool begin_frame(void *opaque, qa_session *session, const qa_source_frame *frame, qa_error *error)
+{
+    struct application_qc_state *engine = opaque;
+    if (session != engine->services.session)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC frame belongs to another session");
     const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
     if (profile) {
         application_qc_inputs inputs = {.time_ns = frame->time_ns, .elapsed_ns = frame->elapsed_ns};
@@ -271,6 +311,574 @@ static bool begin_frame(void *opaque, qa_session *session, const qa_source_frame
     }
     return application_qc_named(engine, "StartFrame", (qa_actor_id){0}, error);
 }
+static bool control_current(struct application_qc_state *engine, int32_t reference,
+                              qa_actor_id actor, qa_error *error)
+{
+    qa_actor_id current;
+    return qa_qc_reference_actor(engine->provider->state.qc.instance, reference, &current, error) &&
+        (qa_actor_id_equal(current, actor) ||
+         application_fail(error, QA_ERROR_NOT_FOUND, "QC control actor changed generation"));
+}
+bool application_qc_control_input_active(const application_provider *provider)
+{
+    if (!provider || provider->kind != APPLICATION_PROVIDER_QC || !provider->state.qc.qualified) return false;
+    return provider->state.qc.qualified->input_count != 0 ||
+        (provider->state.qc.engine && provider->state.qc.engine->output_channels != 0);
+}
+bool application_qc_control_receipt_time(const application_provider *provider,
+    qa_actor_id actor, uint64_t *out, qa_error *error)
+{
+    const struct application_qc_state *engine = provider && provider->kind == APPLICATION_PROVIDER_QC
+        ? provider->state.qc.engine : NULL;
+    if (!engine || !out || !engine->initialized || !provider->constructed ||
+        !provider->attached || provider->close_pending || engine->profile != QA_QC_QUAKEWORLD ||
+        provider->component.clock.kind != QA_CLOCK_QUAKEWORLD ||
+        application_world_provider(provider->application, QA_ROLE_ENTITIES, "") != provider)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QW receipt time requires its actual physical source owner");
+    bool member;
+    if (!application_qc_control_source_client(provider, actor, &member, error)) return false;
+    if (!member)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QW receipt time requires an admitted physical source client");
+    *out = engine->source_time_ns;
+    return true;
+}
+bool application_qc_control_reserved(application_provider *provider, qa_actor_id actor,
+                                       bool *reserved, qa_error *error)
+{
+    struct application_qc_state *engine = provider && provider->kind == APPLICATION_PROVIDER_QC ?
+        provider->state.qc.engine : NULL;
+    if (!engine || !provider->state.qc.instance || !reserved)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC reserved client qualification has no source owner");
+    *reserved = false;
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(engine->services.session), actor);
+    if (!record) return true;
+    for (uint32_t slot = 1; slot <= engine->max_clients; ++slot) {
+        qa_qc_slot_binding binding;
+        if (!qa_qc_slot(provider->state.qc.instance, slot, &binding) ||
+            (binding.kind != QA_QC_SLOT_OWNED && binding.kind != QA_QC_SLOT_BORROWED) ||
+            !qa_actor_id_equal(binding.actor, actor)) continue;
+        const application_qc_client *client = &engine->clients[slot];
+        if (binding.owner != record->owner || binding.source_slot != (record->has_source ? record->source_slot : 0) ||
+            (binding.kind == QA_QC_SLOT_BORROWED ?
+             !client->connected || !qa_actor_id_equal(client->actor, actor) :
+             provider->state.qc.qualified || engine->profile != QA_QC_QUAKEWORLD ||
+             record->owner != provider->owner || !record->has_source || record->source_slot != slot))
+            return application_fail(error, QA_ERROR_FORMAT, "QC reserved client differs from its source slot owner");
+        *reserved = true;
+        return true;
+    }
+    return true;
+}
+static bool control_client(struct application_qc_state *engine, qa_actor_id actor,
+                             int32_t *reference, bool *spectator, qa_error *error)
+{
+    for (uint32_t i = 1; i <= engine->max_clients; ++i) {
+        application_qc_client *client = &engine->clients[i];
+        if (!client->spawned || !qa_actor_id_equal(client->actor, actor)) continue;
+        *spectator = client->spectator;
+        return application_qc_reference(engine, actor, reference, error);
+    }
+    return application_fail(error, QA_ERROR_NOT_FOUND, "QC control requires an admitted source client");
+}
+static bool control_scalar(struct application_qc_state *engine, int32_t reference, qa_actor_id actor,
+                             const char *name, float *value, qa_error *error)
+{
+    return application_qc_float(engine, reference, name, value, error) &&
+        (isfinite(*value) || application_fail(error, QA_ERROR_FORMAT, "QC control scalar is nonfinite")) &&
+        control_current(engine, reference, actor, error);
+}
+static bool control_vector(struct application_qc_state *engine, int32_t reference, qa_actor_id actor,
+                             const char *name, qa_vec3 *value, qa_error *error)
+{
+    const qa_qc_definition *field = application_qc_field(engine, name, QA_QC_VECTOR, error);
+    return field && qa_qc_entity_vector(engine->provider->state.qc.instance, reference, field->offset, value, error) &&
+        (qa_vec_finite(*value) || application_fail(error, QA_ERROR_FORMAT, "QC control vector is nonfinite")) &&
+        control_current(engine, reference, actor, error);
+}
+static bool control_store_scalar(struct application_qc_state *engine, int32_t reference, qa_actor_id actor,
+                                   const char *name, float value, qa_error *error)
+{
+    return control_current(engine, reference, actor, error) &&
+        application_qc_set_float(engine, reference, name, value, error) &&
+        control_current(engine, reference, actor, error);
+}
+static bool control_store_vector(struct application_qc_state *engine, int32_t reference, qa_actor_id actor,
+                                   const char *name, qa_vec3 value, qa_error *error)
+{
+    const qa_qc_definition *field = application_qc_field(engine, name, QA_QC_VECTOR, error);
+    return field && control_current(engine, reference, actor, error) &&
+        qa_qc_set_entity_vector(engine->provider->state.qc.instance, reference, field->offset, value, error) &&
+        control_current(engine, reference, actor, error);
+}
+static bool control_integer(float value, int32_t *out, qa_error *error)
+{
+    if ((double)value < INT32_MIN || (double)value > INT32_MAX)
+        return application_fail(error, QA_ERROR_FORMAT, "QC control integer exceeds source bounds");
+    *out = (int32_t)value;
+    return true;
+}
+static float control_flags(uint32_t bits)
+{
+    int32_t signed_bits; memcpy(&signed_bits, &bits, sizeof(bits));
+    return (float)signed_bits;
+}
+static bool control_word(double value, float *out, qa_error *error)
+{
+    if (!isfinite(value) || fabs(value) >= 0x1.ffffffp127)
+        return application_fail(error, QA_ERROR_FORMAT, "QC control value exceeds finite source float bounds");
+    *out = value > FLT_MAX ? FLT_MAX : value < -FLT_MAX ? -FLT_MAX : (float)value;
+    return true;
+}
+bool application_qc_control_state(application_provider *provider, qa_actor_id actor,
+                                    qa_movement_state *state, qa_bounds *bounds,
+                                    qa_movement_environment *environment, qa_vec3 *view_angles,
+                                    qa_error *error)
+{
+    struct application_qc_state *engine = provider ? provider->state.qc.engine : NULL;
+    if (!engine || !state) return application_fail(error, QA_ERROR_ARGUMENT, "QC control state is absent");
+    if (provider->state.qc.qualified) return true;
+    int32_t reference; bool spectator;
+    if (!control_client(engine, actor, &reference, &spectator, error)) return false;
+    qa_vec3 origin, velocity, angles, view, minimum, maximum;
+    float health, motion, fix; int32_t move_type;
+    if (!control_vector(engine, reference, actor, "origin", &origin, error) ||
+        !control_vector(engine, reference, actor, "velocity", &velocity, error) ||
+        !control_vector(engine, reference, actor, "angles", &angles, error) ||
+        !control_vector(engine, reference, actor, "v_angle", &view, error) ||
+        !control_vector(engine, reference, actor, "mins", &minimum, error) ||
+        !control_vector(engine, reference, actor, "maxs", &maximum, error) ||
+        !control_scalar(engine, reference, actor, "health", &health, error) ||
+        !control_scalar(engine, reference, actor, "movetype", &motion, error) ||
+        !control_scalar(engine, reference, actor, "fixangle", &fix, error) ||
+        !control_integer(motion, &move_type, error)) return false;
+    if (!qa_movement_set_origin(state, origin, error) || !qa_movement_set_velocity(state, velocity, error)) return false;
+    if (bounds) *bounds = (qa_bounds){minimum, maximum};
+    if (view_angles) *view_angles = fix != 0 && engine->profile != QA_QC_QUAKEWORLD ? angles : view;
+    if (environment) {
+        environment->health = health;
+        environment->has_body_bounds = true; environment->body_bounds = (qa_bounds){minimum, maximum};
+    }
+    if (state->kind == QA_MOVEMENT_NETQUAKE && engine->profile != QA_QC_QUAKEWORLD) {
+        qa_nq_movement_state *nq = &state->data.nq;
+        float flags, level, type, teleport, ideal; int32_t flag_bits;
+        nq->angles = angles; nq->view_angles = fix != 0 ? angles : view;
+        nq->move_type = spectator ? 8 : move_type; nq->fix_angle = fix != 0; nq->health = health;
+        if (!control_vector(engine, reference, actor, "oldorigin", &nq->old_origin, error) ||
+            !control_vector(engine, reference, actor, "avelocity", &nq->angular_velocity, error) ||
+            !control_vector(engine, reference, actor, "punchangle", &nq->punch_angles, error) ||
+            !control_vector(engine, reference, actor, "movedir", &nq->water_jump_direction, error) ||
+            !control_scalar(engine, reference, actor, "flags", &flags, error) ||
+            !control_scalar(engine, reference, actor, "waterlevel", &level, error) ||
+            !control_scalar(engine, reference, actor, "watertype", &type, error) ||
+            !control_scalar(engine, reference, actor, "teleport_time", &teleport, error) ||
+            !control_scalar(engine, reference, actor, "idealpitch", &ideal, error) ||
+            !control_integer(flags, &flag_bits, error) ||
+            !control_integer(level, &nq->water_level, error) ||
+            !control_integer(type, &nq->water_type, error)) return false;
+        nq->flags = (uint32_t)flag_bits; nq->teleport_time_seconds = teleport; nq->ideal_pitch = ideal;
+    } else if (state->kind == QA_MOVEMENT_QUAKEWORLD && engine->profile == QA_QC_QUAKEWORLD) {
+        qa_qw_movement_state *qw = &state->data.qw; float teleport;
+        qw->origin.x = (double)origin.x + minimum.x + 16;
+        qw->origin.y = (double)origin.y + minimum.y + 16;
+        qw->origin.z = (double)origin.z + minimum.z + 24;
+        qw->angles = view; qw->dead = health <= 0; qw->spectator = spectator ? 1 : 0;
+        if (!control_scalar(engine, reference, actor, "teleport_time", &teleport, error)) return false;
+        qw->water_jump_time_seconds = teleport;
+    }
+    if (spectator) {
+        if (state->kind == QA_MOVEMENT_NETQUAKE) state->data.nq.move_type = 8;
+        else if (state->kind == QA_MOVEMENT_QUAKEWORLD) state->data.qw.spectator = 1;
+        else if (state->kind == QA_MOVEMENT_Q2_CLASSIC) state->data.q2.type = 1;
+        else if (state->kind == QA_MOVEMENT_Q2_RERELEASE) state->data.q2r.type = 2;
+        else if (state->kind == QA_MOVEMENT_Q3) state->data.q3.movement_type = 1;
+    }
+    return control_current(engine, reference, actor, error);
+}
+bool application_qc_control_body(application_provider *provider, qa_actor_id actor,
+                                   const qa_movement_state *state, qa_body_state *body, qa_error *error)
+{
+    struct application_qc_state *engine = provider ? provider->state.qc.engine : NULL;
+    if (!engine || !state || !body)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC control body projection is absent");
+    if (provider->state.qc.qualified || engine->profile != QA_QC_QUAKEWORLD || state->kind != QA_MOVEMENT_QUAKEWORLD)
+        return true;
+    int32_t reference; bool spectator; qa_vec3 minimum;
+    if (!control_client(engine, actor, &reference, &spectator, error) ||
+        !control_vector(engine, reference, actor, "mins", &minimum, error) ||
+        !control_vector(engine, reference, actor, "angles", &body->angles, error) ||
+        !control_word((double)state->data.qw.origin.x - minimum.x - 16, &body->origin.x, error) ||
+        !control_word((double)state->data.qw.origin.y - minimum.y - 16, &body->origin.y, error) ||
+        !control_word((double)state->data.qw.origin.z - minimum.z - 24, &body->origin.z, error)) return false;
+    return true;
+}
+bool application_qc_control_profile(application_provider *provider, qa_actor_id actor,
+                                      qa_movement_profile *profile, qa_error *error)
+{
+    struct application_qc_state *engine = provider ? provider->state.qc.engine : NULL;
+    if (!engine || !profile) return application_fail(error, QA_ERROR_ARGUMENT, "QC control profile is absent");
+    if (provider->state.qc.qualified || engine->profile != QA_QC_QUAKEWORLD || profile->kind != QA_MOVEMENT_QUAKEWORLD)
+        return true;
+    int32_t reference; bool spectator;
+    if (!control_client(engine, actor, &reference, &spectator, error)) return false;
+    qa_q1_movement_parameters *parameters = &profile->data.qw.parameters;
+    const char *names[] = {"sv_gravity", "sv_stopspeed", "sv_spectatormaxspeed", "sv_accelerate", "sv_airaccelerate",
+        "sv_wateraccelerate", "sv_friction", "sv_waterfriction", "sv_maxspeed"};
+    float *values[] = {&parameters->gravity, &parameters->stop_speed, &parameters->spectator_max_speed,
+        &parameters->accelerate, &parameters->air_accelerate, &parameters->water_accelerate,
+        &parameters->friction, &parameters->water_friction, &parameters->max_speed};
+    for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i) {
+        const qa_cvar_view *variable = qa_cvars_find(engine->cvars, names[i]);
+        *values[i] = variable ? variable->number : 0;
+        if (!isfinite(*values[i])) return application_fail(error, QA_ERROR_FORMAT, "QC movement cvar is nonfinite");
+    }
+    parameters->entity_gravity = 1;
+    const char *fields[] = {"maxspeed", "gravity"};
+    float *outputs[] = {&parameters->max_speed, &parameters->entity_gravity};
+    for (size_t i = 0; i < sizeof(fields) / sizeof(*fields); ++i) {
+        const qa_qc_definition *field = qa_qc_program_find_field(provider->state.qc.program, fields[i]);
+        if (field && (!qa_qc_entity_float(provider->state.qc.instance, reference, field->offset, outputs[i], error) ||
+            !isfinite(*outputs[i])))
+            return application_fail(error, QA_ERROR_FORMAT, "QC movement field is invalid");
+    }
+    profile->data.qw.shared_controls = false;
+    return control_current(engine, reference, actor, error);
+}
+static bool control_frame_time(struct application_qc_state *engine, float elapsed, qa_error *error)
+{
+    if (!isfinite(elapsed)) return application_fail(error, QA_ERROR_FORMAT, "QC control interval is nonfinite");
+    const qa_qc_definition *field = qa_qc_program_find_global(engine->provider->state.qc.program, "frametime");
+    uint32_t word; memcpy(&word, &elapsed, sizeof(word));
+    return field && field->type == QA_QC_FLOAT ?
+        qa_qc_stage_globals(engine->provider->state.qc.instance, field->offset, &word, 1, error) :
+        application_fail(error, QA_ERROR_FORMAT, "QC control frametime is missing");
+}
+static bool control_ground(struct application_qc_state *engine, int32_t reference, qa_actor_id actor,
+                             qa_movement_ground ground, bool only_grounded, qa_error *error)
+{
+    float flags; int32_t bits;
+    if (!control_scalar(engine, reference, actor, "flags", &flags, error) || !control_integer(flags, &bits, error)) return false;
+    uint32_t next = ((uint32_t)bits & ~512u) | (ground.hit != QA_TRACE_HIT_NONE ? 512u : 0u);
+    if (!control_store_scalar(engine, reference, actor, "flags", control_flags(next), error)) return false;
+    if (only_grounded && ground.hit == QA_TRACE_HIT_NONE) return true;
+    int32_t other = 0;
+    if (ground.hit == QA_TRACE_HIT_ACTOR && !application_qc_reference(engine, ground.actor, &other, error)) return false;
+    const qa_qc_definition *field = application_qc_field(engine, "groundentity", QA_QC_ENTITY, error);
+    return field && control_current(engine, reference, actor, error) &&
+        qa_qc_set_entity_int(engine->provider->state.qc.instance, reference, field->offset, other, error) &&
+        control_current(engine, reference, actor, error);
+}
+static bool control_store_state(struct application_qc_state *engine, int32_t reference, qa_actor_id actor,
+                                  const qa_movement_call *call, qa_error *error)
+{
+    const qa_movement_state *state = call->state;
+    if (state->kind == QA_MOVEMENT_NETQUAKE && engine->profile != QA_QC_QUAKEWORLD) {
+        const qa_nq_movement_state *nq = &state->data.nq;
+        float teleport;
+        if (!control_word(nq->teleport_time_seconds, &teleport, error)) return false;
+        const char *names[] = {"oldorigin", "avelocity", "v_angle", "punchangle", "movedir"};
+        const qa_vec3 values[] = {nq->old_origin, nq->angular_velocity, nq->view_angles, nq->punch_angles, nq->water_jump_direction};
+        for (size_t i = 0; i < sizeof(names) / sizeof(*names); ++i)
+            if (!control_store_vector(engine, reference, actor, names[i], values[i], error)) return false;
+        return control_store_scalar(engine, reference, actor, "movetype", (float)nq->move_type, error) &&
+            control_store_scalar(engine, reference, actor, "flags", control_flags(nq->flags), error) &&
+            control_store_scalar(engine, reference, actor, "waterlevel", (float)nq->water_level, error) &&
+            control_store_scalar(engine, reference, actor, "watertype", (float)nq->water_type, error) &&
+            control_store_scalar(engine, reference, actor, "teleport_time", teleport, error) &&
+            control_store_scalar(engine, reference, actor, "idealpitch", nq->ideal_pitch, error) &&
+            control_store_scalar(engine, reference, actor, "fixangle", nq->fix_angle ? 1 : 0, error);
+    }
+    if (state->kind == QA_MOVEMENT_QUAKEWORLD && engine->profile == QA_QC_QUAKEWORLD) {
+        const qa_qw_movement_state *qw = &state->data.qw; qa_vec3 minimum;
+        if (!control_vector(engine, reference, actor, "mins", &minimum, error)) return false;
+        qa_vec3 origin;
+        if (!control_word((double)qw->origin.x - minimum.x - 16, &origin.x, error) ||
+            !control_word((double)qw->origin.y - minimum.y - 16, &origin.y, error) ||
+            !control_word((double)qw->origin.z - minimum.z - 24, &origin.z, error)) return false;
+        if (!control_store_vector(engine, reference, actor, "origin", origin, error) ||
+            !control_store_vector(engine, reference, actor, "velocity", qw->velocity, error) ||
+            !control_store_vector(engine, reference, actor, "v_angle", qw->angles, error) ||
+            !control_store_scalar(engine, reference, actor, "teleport_time", qw->water_jump_time_seconds, error) ||
+            !control_ground(engine, reference, actor, qw->ground, true, error)) return false;
+    }
+    return true;
+}
+static bool control_transition(struct application_qc_state *engine, int32_t reference, qa_actor_id actor,
+                                 int32_t *flags, qa_vec3 *velocity, qa_error *error)
+{
+    float value;
+    return control_scalar(engine, reference, actor, "flags", &value, error) &&
+        control_integer(value, flags, error) && control_vector(engine, reference, actor, "velocity", velocity, error);
+}
+static bool control_jump(const qa_movement_command *command)
+{
+    return command->kind == QA_MOVEMENT_NETQUAKE || command->kind == QA_MOVEMENT_QUAKEWORLD ?
+        (command->buttons & 2u) != 0 : command->kind == QA_MOVEMENT_Q2_RERELEASE ?
+        (command->buttons & 8u) != 0 : command->up_move >= 10;
+}
+static void control_consume_jump(qa_movement_command *command)
+{
+    if (command->kind == QA_MOVEMENT_NETQUAKE || command->kind == QA_MOVEMENT_QUAKEWORLD)
+        command->buttons &= ~2u;
+    else if (command->kind == QA_MOVEMENT_Q2_RERELEASE) command->buttons &= ~8u;
+    else if (command->up_move > 0) command->up_move = 0;
+}
+static bool control_clear_ground(struct application_qc_state *engine, qa_actor_id actor, qa_error *error)
+{
+    qa_body_state body;
+    if (!qa_world_body_read(engine->world, actor, &body, error)) return false;
+    body.ground = (qa_actor_id){0};
+    return qa_world_body_write(engine->world, actor, &body, error);
+}
+static bool control_qw_input(struct application_qc_state *engine, int32_t reference, qa_actor_id actor,
+                               const qa_movement_command *command, qa_error *error)
+{
+    float fix, health;
+    if (!control_scalar(engine, reference, actor, "fixangle", &fix, error) ||
+        !control_scalar(engine, reference, actor, "health", &health, error)) return false;
+    if ((fix == 0 && !control_store_vector(engine, reference, actor, "v_angle", command->angles, error)) ||
+        !control_store_scalar(engine, reference, actor, "button0", (command->buttons & 1u) ? 1 : 0, error) ||
+        !control_store_scalar(engine, reference, actor, "button2", control_jump(command) ? 1 : 0, error) ||
+        (command->impulse != 0 && !control_store_scalar(engine, reference, actor, "impulse", command->impulse, error))) return false;
+    if (health <= 0) return true;
+    qa_vec3 angles, velocity;
+    if (!control_vector(engine, reference, actor, "angles", &angles, error) ||
+        !control_vector(engine, reference, actor, "velocity", &velocity, error)) return false;
+    double pitch = fix == 0 ? -(double)command->angles.x / 3 : angles.x;
+    double yaw = fix == 0 ? command->angles.y : angles.y;
+    double scale = 3.14159265358979323846 * 2 / 360;
+    double sp = sin(pitch * scale), cp = cos(pitch * scale);
+    double sy = sin(yaw * scale), cy = cos(yaw * scale);
+    double sr = sin((double)angles.z * scale), cr = cos((double)angles.z * scale);
+    qa_vec3 right;
+    if (!control_word(-sr * sp * cy + -cr * -sy, &right.x, error) ||
+        !control_word(-sr * sp * sy + -cr * cy, &right.y, error) ||
+        !control_word(-sr * cp, &right.z, error)) return false;
+    double side = (double)velocity.x * right.x + (double)velocity.y * right.y + (double)velocity.z * right.z;
+    double roll = (fabs(side) < 200 ? fabs(side) * 2 / 200 : 2) * (side < 0 ? -1 : 1) * 4;
+    return control_word(pitch, &angles.x, error) && control_word(yaw, &angles.y, error) &&
+        control_word(roll, &angles.z, error) && control_store_vector(engine, reference, actor, "angles", angles, error);
+}
+static bool control_mixed_water(struct application_qc_state *engine, int32_t reference, qa_actor_id actor,
+                                  const qa_movement_call *call, qa_error *error)
+{
+    qa_movement_ground ground;
+    if (call->state->kind == QA_MOVEMENT_NETQUAKE) ground = call->state->data.nq.ground;
+    else if (call->state->kind == QA_MOVEMENT_QUAKEWORLD) ground = call->state->data.qw.ground;
+    else if (call->state->kind == QA_MOVEMENT_Q3) ground = call->state->data.q3.ground;
+    else {
+        qa_body_state body;
+        if (!qa_world_body_read(engine->world, actor, &body, error)) return false;
+        ground = body.ground.registry ? (qa_movement_ground){.hit = QA_TRACE_HIT_ACTOR, .actor = body.ground}
+            : (qa_movement_ground){0};
+    }
+    if (!call->water_level || !call->water_type)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Mixed QC postthink needs actual water outputs");
+    int32_t level = *call->water_level, type = *call->water_type;
+    int32_t source_type = level == 0 ? -1 :
+        call->state->kind == QA_MOVEMENT_NETQUAKE || call->state->kind == QA_MOVEMENT_QUAKEWORLD ? type :
+        (type & 16) != 0 ? -4 : (type & 8) != 0 ? -5 : -3;
+    return control_ground(engine, reference, actor, ground, false, error) &&
+        control_store_scalar(engine, reference, actor, "waterlevel", (float)level, error) &&
+        control_store_scalar(engine, reference, actor, "watertype", (float)source_type, error);
+}
+typedef struct control_think_invocation {
+    struct application_qc_state *engine;
+    qa_actor_id actor;
+    double time;
+} control_think_invocation;
+static bool control_invoke_think(void *opaque, qa_session *session, qa_error *error)
+{
+    control_think_invocation *call = opaque;
+    if (session != call->engine->services.session)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC think invocation belongs to another session");
+    return source_callback(call->engine, call->actor, (qa_actor_id){0}, "think", call->time, error);
+}
+static bool control_run_think(struct application_qc_state *engine, qa_actor_id actor,
+                                const qa_source_frame *frame, qa_error *error)
+{
+    qa_source_frame active;
+    if (!frame || frame->provider != engine->provider->owner ||
+        frame->kind != engine->provider->component.clock.kind ||
+        !qa_session_active_frame(engine->services.session, frame->provider, &active) ||
+        active.number != frame->number || active.start_ns != frame->start_ns ||
+        active.time_ns != frame->time_ns || active.elapsed_ns != frame->elapsed_ns)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC control think needs its actual physical source frame");
+    qa_actor_owner execution;
+    if (!qa_session_execution(engine->services.session, actor, &execution))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "QC think actor changed generation");
+    if (execution == engine->provider->owner) {
+        if (!schedule_think(engine, actor, error)) return false;
+        qa_think_result result;
+        return qa_scheduler_run_once(qa_session_scheduler(engine->services.session), actor,
+            frame, QA_THINK_DURING_PHYSICS, &result, error);
+    }
+    bool member;
+    if (engine->provider->component.clock.kind != QA_CLOCK_NETQUAKE)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Foreign QC source think requires a NetQuake client turn");
+    if (!application_qc_control_source_client(engine->provider, actor, &member, error)) return false;
+    if (!member)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC think actor has no admitted physical source client");
+    int32_t reference;
+    float due;
+    if (!application_qc_reference(engine, actor, &reference, error) ||
+        !control_scalar(engine, reference, actor, "nextthink", &due, error)) return false;
+    double current = (double)frame->time_ns / 1e9;
+    double end = current + (double)frame->elapsed_ns / 1e9;
+    if (!(due > 0) || (double)due > end) return true;
+    if (!control_store_scalar(engine, reference, actor, "nextthink", 0, error)) return false;
+    const qa_think *pending = qa_scheduler_pending(qa_session_scheduler(engine->services.session), actor);
+    if (pending && pending->execution_provider == engine->provider->owner)
+        qa_scheduler_cancel(qa_session_scheduler(engine->services.session), actor);
+    if (!qa_actors_get(qa_session_actors(engine->services.session), actor)) return true;
+    if (!application_qc_control_source_client(engine->provider, actor, &member, error)) return false;
+    if (!member)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC think actor changed its physical source membership");
+    control_think_invocation call = {engine, actor, fmax(current, (double)due)};
+    return qa_session_invoke(engine->services.session, actor, QA_INVOKE_THINK,
+                             control_invoke_think, &call, error);
+}
+static bool control_command_think(struct application_qc_state *engine, qa_actor_id actor,
+                                    const application_control_context *context, uint64_t elapsed_ns, qa_error *error)
+{
+    const qa_source_command *command = context ? &context->command : NULL;
+    qa_source_command active; bool member;
+    if (!command || !qa_session_active_command(engine->services.session, engine->provider->owner, &active) ||
+        !qa_actor_id_equal(command->actor, actor) || !qa_actor_id_equal(active.actor, actor) ||
+        command->provider != engine->provider->owner || active.provider != command->provider ||
+        command->kind != engine->provider->component.clock.kind || active.kind != command->kind ||
+        command->phase != QA_CLIENT_COMMAND || active.phase != command->phase ||
+        active.completed_frame_number != command->completed_frame_number || active.time_ns != command->time_ns ||
+        active.elapsed_ns != command->elapsed_ns || active.host_elapsed_ns != command->host_elapsed_ns)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC think needs its actual admitted source command");
+    if (!application_qc_control_source_client(engine->provider, actor, &member, error)) return false;
+    if (!member) return application_fail(error, QA_ERROR_ARGUMENT, "QC think actor has no admitted physical source client");
+    int32_t reference; float due;
+    if (!application_qc_reference(engine, actor, &reference, error) ||
+        !control_scalar(engine, reference, actor, "nextthink", &due, error)) return false;
+    double current = (double)engine->source_time_ns / 1e9;
+    double end = current + (double)elapsed_ns / 1e9;
+    if (!(due > 0) || (double)due > end) return true;
+    double time = (double)due < current ? current : due;
+    if (!control_store_scalar(engine, reference, actor, "nextthink", 0, error)) return false;
+    const qa_think *pending = qa_scheduler_pending(qa_session_scheduler(engine->services.session), actor);
+    if (pending && pending->execution_provider == command->provider)
+        qa_scheduler_cancel(qa_session_scheduler(engine->services.session), actor);
+    if (qa_actors_get(qa_session_actors(engine->services.session), actor) == NULL) return true;
+    if (!application_qc_control_source_client(engine->provider, actor, &member, error)) return false;
+    if (!member) return application_fail(error, QA_ERROR_ARGUMENT, "QC think actor changed its physical source membership");
+    control_think_invocation call = {engine, actor, time};
+    return qa_session_invoke(engine->services.session, actor, QA_INVOKE_THINK, control_invoke_think, &call, error);
+}
+bool application_qc_control_before_actor(application_provider *provider, qa_actor_id actor,
+                                           const qa_source_frame *frame, qa_error *error)
+{
+    struct application_qc_state *engine = provider ? provider->state.qc.engine : NULL;
+    if (!engine || !frame || frame->provider != provider->owner)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC actor control needs its actual execution frame");
+    if (provider->state.qc.qualified) return true;
+    const qa_qc_definition *field = qa_qc_program_find_global(provider->state.qc.program, "force_retouch");
+    if (!field) return true;
+    float value;
+    if (field->type != QA_QC_FLOAT || !qa_qc_global_float(provider->state.qc.instance, field->offset, &value, error)) return false;
+    return value == 0 || (qa_world_link(engine->world, actor, NULL, error) &&
+        (qa_actors_get(qa_session_actors(engine->services.session), actor) == NULL ||
+         qa_physics_touch_triggers(engine->services.physics, actor, error)));
+}
+bool application_qc_control_phase(application_provider *provider, qa_actor_id actor,
+                                    application_control_source_path path, qa_movement_phase phase,
+                                    const application_control_context *context, qa_movement_call *call, qa_error *error)
+{
+    struct application_qc_state *engine = provider ? provider->state.qc.engine : NULL;
+    if (!engine || !context || !call || !call->state || !call->command)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC control phase is absent");
+    if (provider->state.qc.qualified) return true;
+    const application_control_context *actual = application_control_frame_current(provider->application, actor);
+    if (!actual || actual->path != path || context->path != path ||
+        !qa_actor_id_equal(context->actor, actor) || actual->command_only != context->command_only ||
+        application_control_provider(context) != provider->owner ||
+        application_control_kind(context) != provider->component.clock.kind ||
+        application_control_time(actual) != application_control_time(context) ||
+        application_control_start(actual) != application_control_start(context) ||
+        application_control_elapsed(actual) != application_control_elapsed(context) ||
+        (context->command_only ? actual->command.completed_frame_number != context->command.completed_frame_number ||
+            actual->command.elapsed_ns != context->command.elapsed_ns || actual->command.host_elapsed_ns != context->command.host_elapsed_ns :
+            actual->frame.number != context->frame.number || actual->frame.elapsed_ns != context->frame.elapsed_ns))
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC control callback lost its genuine source admission");
+    if (phase != QA_MOVE_PRETHINK && phase != QA_MOVE_THINK && phase != QA_MOVE_POSTTHINK &&
+        phase != QA_MOVE_INPUT_END && phase != QA_MOVE_LINK && phase != QA_MOVE_LINK_TRIGGERS) return true;
+    int32_t reference; bool spectator;
+    if (!control_client(engine, actor, &reference, &spectator, error) ||
+        !control_store_state(engine, reference, actor, call, error)) return false;
+    if (path == APPLICATION_CONTROL_QW_GROUP && call->state->kind == QA_MOVEMENT_QUAKEWORLD &&
+        (phase == QA_MOVE_LINK || phase == QA_MOVE_LINK_TRIGGERS || phase == QA_MOVE_POSTTHINK)) {
+        if (call->water_level && !control_store_scalar(engine, reference, actor, "waterlevel", (float)*call->water_level, error)) return false;
+        if (call->water_type && !control_store_scalar(engine, reference, actor, "watertype", (float)*call->water_type, error)) return false;
+    }
+    if (phase == QA_MOVE_PRETHINK) {
+        int32_t before_flags = 0; qa_vec3 before_velocity = {0};
+        bool mixed = path == APPLICATION_CONTROL_MIXED ||
+            (path == APPLICATION_CONTROL_QW_GROUP && call->state->kind != QA_MOVEMENT_QUAKEWORLD);
+        if (mixed && !control_transition(engine, reference, actor, &before_flags, &before_velocity, error)) return false;
+        if (path == APPLICATION_CONTROL_QW_GROUP) {
+            const qa_movement_command *source_command = context->source_qwcmd &&
+                call->state->kind != QA_MOVEMENT_QUAKEWORLD ? &context->source_command : call->command;
+            if (!control_qw_input(engine, reference, actor, source_command, error)) return false;
+            if (spectator) goto refreshed;
+        }
+        if (path != APPLICATION_CONTROL_NQ_TURN) {
+            float elapsed;
+            double seconds = path == APPLICATION_CONTROL_QW_GROUP ? (double)call->milliseconds * 0.001 :
+                (double)application_control_elapsed(context) / 1e9;
+            if (!control_word(seconds, &elapsed, error) || !control_frame_time(engine, elapsed, error)) return false;
+        }
+        if (!spectator && !application_qc_named(engine, "PlayerPreThink", actor, error)) return false;
+        if (qa_actors_get(qa_session_actors(engine->services.session), actor) == NULL) return true;
+        if (mixed && path == APPLICATION_CONTROL_MIXED) {
+            int32_t after_flags; qa_vec3 after_velocity;
+            if (!control_transition(engine, reference, actor, &after_flags, &after_velocity, error)) return false;
+            bool requested = control_jump(call->command);
+            bool accepted = requested && ((uint32_t)before_flags & (512u | 4096u)) == (512u | 4096u) &&
+                ((uint32_t)after_flags & (512u | 4096u)) == 0 && after_velocity.z > before_velocity.z;
+            if (accepted && !control_clear_ground(engine, actor, error)) return false;
+            if (accepted || (requested && ((uint32_t)before_flags & 4096u) == 0)) control_consume_jump(call->command);
+        }
+        if (path != APPLICATION_CONTROL_NQ_TURN) {
+            if (!context->command_only)
+                return application_fail(error, QA_ERROR_ARGUMENT, "QC mixed input needs an actual source command");
+            uint64_t elapsed_ns = path == APPLICATION_CONTROL_QW_GROUP ?
+                (uint64_t)call->milliseconds * UINT64_C(1000000) : application_control_elapsed(context);
+            if (!control_command_think(engine, actor, context, elapsed_ns, error)) return false;
+        }
+        if (qa_actors_get(qa_session_actors(engine->services.session), actor) == NULL) return true;
+        if (mixed && path == APPLICATION_CONTROL_QW_GROUP) {
+            int32_t after_flags; qa_vec3 after_velocity;
+            if (!control_transition(engine, reference, actor, &after_flags, &after_velocity, error)) return false;
+            bool accepted = control_jump(call->command) && ((uint32_t)before_flags & (512u | 4096u)) == (512u | 4096u) &&
+                ((uint32_t)after_flags & 4096u) == 0;
+            if (accepted && after_velocity.z > before_velocity.z) {
+                if (!control_clear_ground(engine, actor, error)) return false;
+                control_consume_jump(call->command);
+            }
+        }
+    } else if (phase == QA_MOVE_THINK) {
+        if (path == APPLICATION_CONTROL_NQ_TURN) {
+            if (context->command_only)
+                return application_fail(error, QA_ERROR_ARGUMENT, "NetQuake actor turn needs an actual source frame");
+            if (!control_run_think(engine, actor, &context->frame, error)) return false;
+        }
+    } else if (phase == QA_MOVE_POSTTHINK) {
+        if ((path == APPLICATION_CONTROL_MIXED ||
+            (path == APPLICATION_CONTROL_QW_GROUP && call->state->kind != QA_MOVEMENT_QUAKEWORLD)) &&
+            !control_mixed_water(engine, reference, actor, call, error)) return false;
+        if (!context->defer_postthink && !(spectator ?
+            application_qc_spectator_callback(engine, "SpectatorThink", actor, error) :
+            application_qc_named(engine, "PlayerPostThink", actor, error))) return false;
+    }
+refreshed:
+    if (qa_actors_get(qa_session_actors(engine->services.session), actor) == NULL) return true;
+    qa_vec3 view;
+    return application_qc_control_state(provider, actor, call->state, call->bounds, call->environment, &view, error);
+}
 static bool actor_frame(void *opaque, qa_session *session, qa_actor_id actor,
                         const qa_source_frame *frame, qa_error *error)
 {
@@ -279,9 +887,10 @@ static bool actor_frame(void *opaque, qa_session *session, qa_actor_id actor,
     if (session != engine->services.session || !qa_session_execution(session, actor, &execution) ||
         execution != engine->provider->owner)
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC actor execution owner differs");
-    for (uint32_t slot = 1; slot <= engine->max_clients; ++slot)
-        if (engine->clients[slot].connected && !engine->clients[slot].spawned &&
-            qa_actor_id_equal(engine->clients[slot].actor, actor)) return true;
+    if (engine->provider->state.qc.qualified || engine->profile != QA_QC_QUAKEWORLD)
+        for (uint32_t slot = 1; slot <= engine->max_clients; ++slot)
+            if (engine->clients[slot].connected && !engine->clients[slot].spawned &&
+                qa_actor_id_equal(engine->clients[slot].actor, actor)) return true;
     int32_t reference;
     if (!application_qc_reference(engine, actor, &reference, error)) return false;
     const qa_qc_definition *retouch = qa_qc_program_find_global(engine->provider->state.qc.program, "force_retouch");
@@ -301,6 +910,11 @@ static bool actor_frame(void *opaque, qa_session *session, qa_actor_id actor,
             spectator = engine->clients[slot].spectator; break;
         }
     const struct application_qc_profile *profile = engine->provider->state.qc.qualified;
+    if (!profile && engine->profile == QA_QC_QUAKEWORLD) {
+        bool reserved;
+        if (!application_qc_control_reserved(engine->provider, actor, &reserved, error)) return false;
+        if (reserved) return true;
+    }
     if (player && !profile && !(spectator ? application_qc_spectator_callback(engine, "SpectatorThink", actor, error) :
         application_qc_named(engine, "PlayerPreThink", actor, error))) return false;
     if (qa_actors_get(qa_session_actors(session), actor) == NULL) return true;
@@ -320,14 +934,14 @@ static bool actor_frame(void *opaque, qa_session *session, qa_actor_id actor,
     }
     qa_physics_result result;
     if (!player && motion == 7) {
-        if (!schedule_think(engine, actor, frame, error)) return false;
+        if (!schedule_think(engine, actor, error)) return false;
         return qa_physics_step_q1_pusher(engine->services.physics, actor, frame, false, &result, error);
     }
     if (!player && motion == 4) {
         if (!qa_physics_step(engine->services.physics, actor, frame, &result, error)) return false;
         if (qa_actors_get(qa_session_actors(session), actor) == NULL) return true;
     }
-    if (!schedule_think(engine, actor, frame, error)) return false;
+    if (!schedule_think(engine, actor, error)) return false;
     qa_think_result thought;
     if (!(profile ?
         qa_scheduler_run(qa_session_scheduler(session), actor, frame, QA_THINK_DURING_PHYSICS, &thought, error) :
@@ -407,11 +1021,26 @@ bool application_qc_player_roster_ready(application_provider *provider,
     return count <= maximum ||
         application_fail(error, QA_ERROR_UNSUPPORTED, "Selected QC roster exceeds retained source client capacity");
 }
+static bool command_actor(void *opaque, qa_session *session, qa_actor_id actor)
+{
+    struct application_qc_state *engine = opaque;
+    application_provider *provider = engine ? engine->provider : NULL;
+    if (!provider || provider->state.qc.engine != engine || provider->application->session != session ||
+        engine->services.session != session || !provider->constructed || !provider->attached || provider->close_pending ||
+        !engine->initialized || engine->loading || !provider->state.qc.instance) return false;
+    bool member; qa_error ignored = {0};
+    return application_qc_control_source_client(provider, actor, &member, &ignored) && member;
+}
+static double source_time_seconds(void *opaque)
+{
+    const struct application_qc_state *engine = opaque;
+    return (double)engine->source_time_ns / 1e9;
+}
 bool application_construct_qc(qa_application *app, application_provider *provider, qa_world *world,
                                const qa_product *product, const qa_launch_choices *choices, qa_error *error)
 {
     if (app == NULL || provider == NULL || world == NULL || product == NULL || choices == NULL ||
-        provider->state.qc.engine != NULL || choices->seat_count >= UINT32_MAX)
+        provider->state.qc.engine != NULL || provider->state.qc.program == NULL || choices->seat_count >= UINT32_MAX)
         return application_fail(error, QA_ERROR_ARGUMENT, "Invalid QuakeC application construction");
     struct application_qc_state *engine = calloc(1, sizeof(*engine));
     if (engine == NULL) return application_fail(error, QA_ERROR_MEMORY, "Allocating QuakeC application state");
@@ -419,12 +1048,17 @@ bool application_construct_qc(qa_application *app, application_provider *provide
     engine->provider = provider; engine->world = world; engine->loading = true; engine->check_cluster = -1;
     engine->profile = product->edition == QA_EDITION_RERELEASE ? QA_QC_RERELEASE :
         provider->launch->selection.clock.kind == QA_CLOCK_QUAKEWORLD ? QA_QC_QUAKEWORLD : QA_QC_NETQUAKE;
+    qa_qc_program_info program = qa_qc_program_describe(provider->state.qc.program);
+    if ((engine->profile == QA_QC_QUAKEWORLD) != (program.api == QA_QC_API_QUAKEWORLD))
+        return application_fail(error, QA_ERROR_FORMAT, "QC selected source profile differs from its loaded program ABI");
     engine->protocol = (qa_net_protocol_id){engine->profile == QA_QC_QUAKEWORLD ? QA_NET_QW28 : QA_NET_NQ15, 0, 0};
     const struct application_qc_profile *profile = provider->state.qc.qualified;
     engine->max_clients = profile && profile->clients ? profile->maximum_clients :
+        !profile && program.api == QA_QC_API_QUAKEWORLD ? 32 :
         choices->seat_count ? (uint32_t)choices->seat_count : 1;
-    if (profile && selected_client_count(choices, provider->launch->selection.instance) > engine->max_clients)
-        return application_fail(error, QA_ERROR_FORMAT, "QC declared client capacity is below the selected roster");
+    size_t selected_clients = profile ? selected_client_count(choices, provider->launch->selection.instance) : choices->seat_count;
+    if (selected_clients > engine->max_clients)
+        return application_fail(error, QA_ERROR_FORMAT, "QC source client capacity is below the selected roster");
     engine->clients = calloc((size_t)engine->max_clients + 1, sizeof(*engine->clients));
     engine->actor_capacity = qa_actors_capacity(qa_session_actors(app->session));
     engine->actors = calloc(engine->actor_capacity, sizeof(*engine->actors));
@@ -443,8 +1077,14 @@ bool application_construct_qc(qa_application *app, application_provider *provide
         maximum, "1", "0", "0", "0", "0", "0", "0"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (!qa_cvars_register(engine->cvars, names[i], values[i], 0, provider->owner, NULL, error)) return false;
-    if (engine->profile == QA_QC_QUAKEWORLD &&
-        !qa_cvars_register(engine->cvars, "sv_phs", "1", 0, provider->owner, NULL, error)) return false;
+    if (engine->profile == QA_QC_QUAKEWORLD) {
+        static const char *qw_names[] = {"sv_phs", "sv_stopspeed", "sv_spectatormaxspeed", "sv_accelerate",
+            "sv_airaccelerate", "sv_wateraccelerate", "sv_friction", "sv_waterfriction"};
+        static const char *qw_values[] = {"1", "100", "500", "10", "0.7", "10", "4", "4"};
+        size_t qw_count = profile ? 1 : sizeof(qw_names) / sizeof(*qw_names);
+        for (size_t i = 0; i < qw_count; ++i)
+            if (!qa_cvars_register(engine->cvars, qw_names[i], qw_values[i], 0, provider->owner, NULL, error)) return false;
+    }
     if (!qa_cvars_set_number(engine->cvars, "skill", (float)choices->world.skill, error)) return false;
     bool deathmatch = false;
     if (choices->mode_count) {
@@ -482,6 +1122,7 @@ bool application_construct_qc(qa_application *app, application_provider *provide
             .host = {.owner = provider->owner, .default_definition = definition, .vfs = provider->launch->content,
                      .context = engine, .random_u32 = source_random, .may_move = application_qc_may_move,
                      .declared_projection = profile != NULL, .prepare_entity = application_qc_prepare_entity,
+                     .source_time_seconds = source_time_seconds,
                      .builtins = bindings, .builtin_count = sizeof(imports) / sizeof(imports[0])}},
         .services = engine->services, .cvars = engine->cvars, .console = engine->console,
         .command_context = engine->command_context, .max_clients = engine->max_clients,
@@ -491,7 +1132,8 @@ bool application_construct_qc(qa_application *app, application_provider *provide
     if (!qa_qc_game_create(provider->state.qc.program, &options, &provider->state.qc.game, error)) return false;
     provider->state.qc.instance = qa_qc_game_instance(provider->state.qc.game);
     provider->component = (qa_component){.owner = provider->owner, .clock = provider->launch->selection.clock,
-        .state = engine, .begin_frame = begin_frame, .actor_frame = actor_frame, .end_frame = end_frame};
+        .state = engine, .prepare_frame = prepare_frame, .begin_frame = begin_frame,
+        .actor_frame = actor_frame, .end_frame = end_frame, .command_actor = command_actor};
     if (provider->component.clock.initial_time_ns == 0)
         provider->component.clock.initial_time_ns = UINT64_C(1000000000);
     return true;
@@ -525,6 +1167,8 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
     if (engine == NULL || entities == NULL || map == NULL || entities->count == 0 || !engine->loading)
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC map is missing its world entity");
     qa_qc_instance *vm = provider->state.qc.instance;
+    engine->source_time_ns = UINT64_C(1000000000);
+    if (!application_qc_source_clients_initialize(engine, error)) return false;
     /* Geometry may come from a different product than this guest's assets. */
     qa_bsp_model world_model;
     if (bsp == NULL || !qa_bsp_read_model(bsp, 0, &world_model, error) ||
@@ -574,7 +1218,7 @@ static bool load_map(application_provider *provider, const qa_bsp_view *bsp,
             entities->properties + record.first_property, record.property_count, &reference, error)) return false;
     }
     if (!application_qc_flush(engine, error) || !qa_qc_game_loading(provider->state.qc.game, false, error)) return false;
-    engine->loading = false; engine->source_time_ns = UINT64_C(1000000000);
+    engine->loading = false; engine->initialized = true; engine->source_time_ns = UINT64_C(1000000000);
     qa_cvars_set_server_active(engine->cvars, true);
     return true;
 }
@@ -596,7 +1240,8 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
 {
     struct application_qc_state *engine = provider->state.qc.engine;
     if (engine == NULL) return true;
-    if (engine->input_scope || engine->client_think_time || !qa_world_idle(engine->world) ||
+    if (application_qc_has_source_admission(engine) || engine->input_scope || engine->parked_inputs ||
+        engine->client_think_time || !qa_world_idle(engine->world) ||
         (provider->state.qc.game && !qa_qc_game_idle(provider->state.qc.game)))
         return application_fail(error, QA_ERROR_ARGUMENT, "QuakeC collision contexts are borrowed by the world");
     for (uint32_t i = 0; engine->actors && i < engine->actor_capacity; ++i) {
@@ -604,8 +1249,10 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
         if (!qa_world_collision_unbind(engine->world, engine->actors[i].actor, &engine->actors[i], error)) return false;
         engine->actors[i].collision_bound = false;
     }
+    engine->initialized = false;
     if (!qa_qc_game_destroy(provider->state.qc.game, error)) return false;
     provider->state.qc.game = NULL; provider->state.qc.instance = NULL;
+    engine->output_channels = 0;
     qa_console_destroy(engine->console); qa_cvars_destroy(engine->cvars);
     for (size_t i = 0; i < engine->resource_count; ++i) {
         free(engine->resources[i].name); qa_resource_release(engine->resources[i].source);
@@ -622,14 +1269,17 @@ bool application_qc_deconstruct(application_provider *provider, qa_error *error)
 bool application_qc_actor_released(application_provider *provider, qa_actor_record record, qa_error *error)
 {
     struct application_qc_state *engine = provider->state.qc.engine;
-    (void)error;
     if (engine == NULL) return true;
+    if (!application_qc_source_client_released(engine, record, error)) return false;
     qa_qc_game_actor_released(provider->state.qc.game, record);
     if (record.id.slot < engine->actor_capacity && qa_actor_id_equal(engine->actors[record.id.slot].actor, record.id))
         engine->actors[record.id.slot] = (application_qc_actor){0};
     for (uint32_t i = 1; i <= engine->max_clients; ++i)
         if (qa_actor_id_equal(engine->clients[i].actor, record.id)) {
             engine->clients[i].actor = (qa_actor_id){0}; engine->clients[i].connected = false; engine->clients[i].spawned = false;
+            engine->clients[i].prepared = false;
+            engine->clients[i].output_published = false;
+            engine->clients[i].outputs = (application_client_outputs){0};
         }
     return true;
 }
@@ -707,5 +1357,12 @@ bool application_qc_blocked(application_provider *provider, qa_actor_id self, qa
 bool application_qc_pusher_think(application_provider *provider, qa_actor_id actor,
                                  const qa_source_frame *frame, qa_error *error)
 {
-    return source_think(provider->state.qc.engine, actor, frame, error);
+    struct application_qc_state *engine = provider ? provider->state.qc.engine : NULL;
+    qa_actor_owner execution;
+    if (!engine || !frame || frame->provider != provider->owner ||
+        frame->kind != provider->component.clock.kind ||
+        !qa_session_execution(engine->services.session, actor, &execution) || execution != provider->owner)
+        return application_fail(error, QA_ERROR_ARGUMENT, "QC pusher think needs its actual source actor frame");
+    qa_scheduler_cancel(qa_session_scheduler(engine->services.session), actor);
+    return source_callback(engine, actor, (qa_actor_id){0}, "think", (double)engine->source_time_ns / 1e9, error);
 }
