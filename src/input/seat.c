@@ -268,6 +268,31 @@ bool qa_input_seat_replace_bindings(qa_input_seat *s, const qa_input_binding *bi
     }
     replace_bindings(s, &candidate); return true;
 }
+bool qa_input_seat_configuration_ready(const qa_input_seat *active,
+                                        const qa_input_seat *candidate, qa_error *error) {
+    if (!active || !candidate || active == candidate ||
+        active->options.context.seat != candidate->options.context.seat ||
+        !qa_console_idle(active->options.console) || !qa_console_idle(candidate->options.console) ||
+        !qa_gamepad_tuning_valid(&candidate->options.gamepad)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0,
+                     "Input configuration requires distinct returned owners of the same seat");
+        return false;
+    }
+    return true;
+}
+void qa_input_seat_configuration_publish(qa_input_seat *active, qa_input_seat *candidate) {
+    qa_binding_record **bindings = active->bindings;
+    size_t count = active->binding_count, capacity = active->binding_capacity;
+    qa_gamepad_tuning gamepad = active->options.gamepad;
+    active->bindings = candidate->bindings;
+    active->binding_count = candidate->binding_count;
+    active->binding_capacity = candidate->binding_capacity;
+    active->options.gamepad = candidate->options.gamepad;
+    candidate->bindings = bindings;
+    candidate->binding_count = count;
+    candidate->binding_capacity = capacity;
+    candidate->options.gamepad = gamepad;
+}
 bool qa_input_seat_remap_controller(qa_input_seat *s, int32_t device, qa_error *error) {
     if (device < 0) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Negative controller instance");

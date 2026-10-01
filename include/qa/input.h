@@ -365,6 +365,14 @@ bool qa_input_seat_bind(qa_input_seat *, const qa_input_binding *, qa_error *);
 /* Validates/copies the complete list before publication. Held presses retain
  * their original binding until release, including after a settings reload. */
 bool qa_input_seat_replace_bindings(qa_input_seat *, const qa_input_binding *, size_t, qa_error *);
+/* Qualify a prepared configuration before its provider commits. The caller
+ * keeps both seats alive and unchanged between readiness and publication and
+ * holds their input/console dispatch boundary. Publication swaps only live
+ * bindings and gamepad tuning; held presses retain their original bindings.
+ * The candidate owns the displaced configuration for ordinary destruction. */
+bool qa_input_seat_configuration_ready(const qa_input_seat *active,
+                                        const qa_input_seat *candidate, qa_error *);
+void qa_input_seat_configuration_publish(qa_input_seat *active, qa_input_seat *candidate);
 bool qa_input_seat_unbind(qa_input_seat *, qa_physical_input);
 void qa_input_seat_unbind_all(qa_input_seat *);
 size_t qa_input_seat_binding_count(const qa_input_seat *);
