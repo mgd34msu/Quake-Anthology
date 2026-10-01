@@ -907,7 +907,7 @@ bool application_guest_q3_save_restore(application_provider *provider, qa_bytes 
         saved_role *row = saved->roles + i; q3g_role *role = row->actual;
         if (!client_topology(role, error)) return false;
         if (!portable_executor(row->executor, error) ||
-            !application_guest_input_restore(role, row->input, error) ||
+            !application_guest_input_restore(role, row->input, row->executor, error) ||
             !qa_qvm_restore_candidate(role->vm, row->executor, error)) return false;
         qa_command_tokens_free(&role->arguments);
         role->arguments = row->arguments; row->arguments = (qa_command_tokens){0};

@@ -9,8 +9,14 @@
 static bool safe_point(const qa_qvm *vm, qa_error *error)
 {
     if (!qa_qvm_mutable(vm,error)) return false;
-    return (!qa_qvm_execution_active(vm) && vm->write_delivery_depth == 0 && vm->lifecycle_depth == 0)
+    return qa_qvm_can_destroy(vm)
         || qa_qvm_error(error,QA_ERROR_ARGUMENT,0,"QVM operation requires a completed source call and write delivery");
+}
+
+bool qa_qvm_can_destroy(const qa_qvm *vm)
+{
+    return vm && !vm->retired && !vm->publication_depth &&
+        !qa_qvm_execution_active(vm) && !vm->write_delivery_depth && !vm->lifecycle_depth;
 }
 
 bool qa_qvm_create(qa_qvm_image *image, const qa_qvm_options *options, qa_qvm **out, qa_error *error)
@@ -68,6 +74,17 @@ bool qa_qvm_restart(qa_qvm *vm, qa_bytes replacement, qa_error *error)
     memset(vm->data,0,allocation);
     if (initialized.size > 0) memcpy(vm->data,initialized.data,initialized.size);
     qa_buffer_free(&initialized);
+    return true;
+}
+
+bool qa_qvm_restart_original(qa_qvm *vm, qa_error *error)
+{
+    if (!safe_point(vm, error)) return false;
+    qa_qvm_memory_close(vm);
+    qa_qvm_execution_reset(vm);
+    memset(vm->data, 0, vm->image->memory_size);
+    if (vm->image->initialized.size)
+        memcpy(vm->data, vm->image->initialized.data, vm->image->initialized.size);
     return true;
 }
 
@@ -154,9 +171,14 @@ bool qa_qvm_checkpoint(qa_qvm *vm, qa_buffer *out, qa_error *error)
     return true;
 }
 
-static bool restore(qa_qvm *vm, qa_bytes state, bool candidate, qa_error *error)
+typedef struct saved_execution {
+    uint32_t api;
+    uint64_t watch, counters[3];
+} saved_execution;
+
+static bool restore_envelope(qa_qvm *vm, qa_bytes state, bool candidate,
+    saved_execution *out, qa_error *error)
 {
-    if (!safe_point(vm,error)) return false;
     if (vm->options.restore == NULL)
         return qa_qvm_error(error,QA_ERROR_UNSUPPORTED,0,"QVM host has not bound restore services");
     if (state.data == NULL || state.size < CHECKPOINT_HEADER || memcmp(state.data,"QAVM",4) != 0
@@ -186,6 +208,23 @@ static bool restore(qa_qvm *vm, qa_bytes state, bool candidate, qa_error *error)
         (candidate && (vm->write_sequence || saved_watch < vm->next_watch)))
         return qa_qvm_error(error,QA_ERROR_FORMAT,20,"QVM source API or candidate execution generation differs");
     if (!qa_qvm_execution_checkpoint_ready(vm,execution,candidate,error)) return false;
+    *out = (saved_execution){api, saved_watch, {execution[0], execution[1], execution[2]}};
+    return true;
+}
+
+bool qa_qvm_restore_candidate_bindings(qa_qvm *vm, qa_bytes state,
+    const qa_qvm_saved_function *constructed, const qa_qvm_binding *saved,
+    size_t count, qa_error *error)
+{
+    saved_execution source;
+    if (!safe_point(vm, error) || !restore_envelope(vm, state, true, &source, error)) return false;
+    return qa_qvm_execution_restore_bindings(vm, source.counters[0], constructed, saved, count, error);
+}
+
+static bool restore(qa_qvm *vm, qa_bytes state, bool candidate, qa_error *error)
+{
+    saved_execution source;
+    if (!safe_point(vm, error) || !restore_envelope(vm, state, candidate, &source, error)) return false;
     /* Host restoration sees the restored guest RAM, as in the donor. A host
      * restore error leaves the committed RAM visible and must be reported. */
     qa_qvm_memory_close(vm);
@@ -193,9 +232,9 @@ static bool restore(qa_qvm *vm, qa_bytes state, bool candidate, qa_error *error)
     memmove(vm->data,state.data + CHECKPOINT_HEADER,vm->data_size);
     uint64_t saved_sequence = qa_load_u64le(state.data + 40);
     if (candidate || saved_sequence > vm->write_sequence) vm->write_sequence = saved_sequence;
-    if (candidate || saved_watch > vm->next_watch) vm->next_watch = saved_watch;
-    vm->api_version = api;
-    qa_qvm_execution_restore(vm,execution,candidate);
+    if (candidate || source.watch > vm->next_watch) vm->next_watch = source.watch;
+    vm->api_version = source.api;
+    qa_qvm_execution_restore(vm,source.counters,candidate);
     qa_bytes host = {state.data + CHECKPOINT_HEADER + vm->data_size,state.size - CHECKPOINT_HEADER - vm->data_size};
     ++vm->lifecycle_depth;
     bool restored = vm->options.restore(vm->options.context,host,error);

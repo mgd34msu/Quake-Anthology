@@ -88,9 +88,9 @@ typedef struct counter_evaluation {
 static atomic_uint_fast64_t next_call_token = ATOMIC_VAR_INIT(1);
 
 static bool execute(qa_qvm *, uint32_t, uint32_t, operands *, source_call *,
-                    const qa_qvm_region_evaluation *, const int32_t *, int32_t *, qa_error *);
+                    const qa_qvm_region_evaluation *, const int32_t *, int32_t *, bool *, qa_error *);
 static bool intercept(qa_qvm *, execution_frame *, uint32_t, int32_t, uint32_t,
-                      uint32_t, size_t, qa_qvm_function_hook, void *, binding *, int32_t *, qa_error *);
+                      uint32_t, size_t, qa_qvm_function_hook, void *, binding *, int32_t *, bool *, qa_error *);
 static bool qualify(const qa_qvm_image *, uint32_t, uint32_t, uint32_t,
                     const qa_qvm_region_evaluation *, bool, qa_error *);
 
@@ -346,6 +346,32 @@ bool qa_qvm_checkpoint_functions(const qa_qvm *vm, const qa_qvm_saved_function *
     }
     return actual == count || error_at(error,0,"QVM source callback inventory is incomplete");
 }
+bool qa_qvm_execution_restore_bindings(qa_qvm *vm, uint64_t generation,
+    const qa_qvm_saved_function *constructed, const qa_qvm_binding *saved,
+    size_t count, qa_error *error)
+{
+    if (count && !saved) return error_at(error, 0, "QVM candidate saved binding inventory is absent");
+    if (!qa_qvm_checkpoint_functions(vm, constructed, count, error)) return false;
+    execution *exec = state(vm);
+    if (exec->next_binding != count || vm->next_watch != 1 || vm->write_sequence ||
+        exec->instructions || exec->breaks || exec->failed || generation < count)
+        return error_at(error, 0, "QVM binding reconstruction requires untouched constructor identities");
+    for (size_t i = 0; i < count; ++i) {
+        if (!saved[i] || saved[i] > generation)
+            return error_at(error, i, "QVM saved binding leaves its source generation");
+        for (size_t j = 0; j < i; ++j)
+            if (saved[i] == saved[j])
+                return error_at(error, i, "QVM saved binding identity is duplicated");
+    }
+    /* All lookups use constructor identities before changing any binding. */
+    for (binding *value = exec->bindings; value; value = value->next) {
+        size_t i = 0;
+        while (constructed[i].binding != value->id) ++i;
+        value->id = saved[i];
+    }
+    exec->next_binding = generation;
+    return true;
+}
 void qa_qvm_execution_destroy(qa_qvm *vm)
 {
     execution *exec = state(vm); if (exec == NULL) return;
@@ -492,6 +518,13 @@ bool qa_qvm_cancel(const qa_qvm_call *call, qa_error *error)
     exec->cancelled = target->owner;
     return true;
 }
+bool qa_qvm_call_cancelled(const qa_qvm_call *call, bool *out, qa_error *error)
+{
+    if (!out) return error_at(error, 0, "QVM cancellation observation requires its destination");
+    if (!qa_qvm_execution_token(call, error)) return false;
+    *out = state(call->vm)->cancelled != NULL;
+    return true;
+}
 bool qa_qvm_local_word(const qa_qvm_call *call, uint32_t offset, int32_t *out, qa_error *error)
 {
     if (!qa_qvm_execution_token(call, error)) return false;
@@ -516,7 +549,7 @@ bool qa_qvm_proceed(const qa_qvm_call *call, int32_t *out, qa_error *error)
     if (!healthy(call->vm, error)) { if (exec->cancelled != NULL && !exec->failed) { *out = 0; return true; } return false; }
     source->proceeded = true;
     int32_t result;
-    bool ok = execute(call->vm, source->instruction, source->stack, source->operands, source, NULL, NULL, &result, error);
+    bool ok = execute(call->vm, source->instruction, source->stack, source->operands, source, NULL, NULL, &result, NULL, error);
     if (!ok && exec->cancelled != NULL && !exec->failed) { *out = 0; return true; }
     if (!ok) { latch(call->vm, error); return false; }
     *out = result; return true;
@@ -865,7 +898,7 @@ static bool region_callback(qa_qvm *vm, execution_frame *frame, source_call *own
 static bool intercept(qa_qvm *vm, execution_frame *frame, uint32_t stack, int32_t return_pc,
                       uint32_t instruction, uint32_t caller, size_t argument_count,
                       qa_qvm_function_hook hook, void *context, binding *observers,
-                      int32_t *out, qa_error *error)
+                      int32_t *out, bool *started, qa_error *error)
 {
     if (!function(vm->image, instruction, error) || !qa_qvm_raw_range(vm, stack + 8, argument_count * 4, error)) return false;
     execution *exec = state(vm);
@@ -886,6 +919,7 @@ static bool intercept(qa_qvm *vm, execution_frame *frame, uint32_t stack, int32_
         host_scope host;
         ok = open_host(vm, &host, frame, &source, HOST_FUNCTION, instruction, caller, stack + 8, argument_count, error);
         if (ok) {
+            if (started) *started = true;
             ok = hook == NULL ? qa_qvm_proceed(&host.call, &result, error) : hook(context, &host.call, &result, error);
             ok = close_host(vm, &host, ok, error);
         }
@@ -908,7 +942,7 @@ static bool intercept(qa_qvm *vm, execution_frame *frame, uint32_t stack, int32_
 
 static bool execute(qa_qvm *vm, uint32_t instruction, uint32_t entry_stack, operands *stack,
                     source_call *source, const qa_qvm_region_evaluation *evaluation,
-                    const int32_t *inputs, int32_t *out, qa_error *error)
+                    const int32_t *inputs, int32_t *out, bool *started, qa_error *error)
 {
     execution *exec = state(vm);
     execution_frame frame = {exec->active, source != NULL ? source : exec->host == NULL ? NULL : exec->host->owner,
@@ -979,6 +1013,7 @@ static bool execute(qa_qvm *vm, uint32_t instruction, uint32_t entry_stack, oper
             ++vm->publication_depth; ok = vm->options.trace(vm->options.context, vm, &trace, error); --vm->publication_depth;
             if (!ok) break;
         }
+        if (started) *started = true;
         switch (opcode) {
         case QA_QVM_UNDEF: case QA_QVM_IGNORE:
             if (vm->options.debug) ok = error_at(error, (size_t)opcode_pc, "Bad QVM debug instruction");
@@ -1064,7 +1099,7 @@ static bool execute(qa_qvm *vm, uint32_t instruction, uint32_t entry_stack, oper
                 } else {
                     uint32_t saved = exec->program_stack;
                     ok = stack_address(vm, (int64_t)frame.stack - 4, &exec->program_stack, error);
-                    if (ok) ok = intercept(vm, &frame, frame.stack, return_pc, (uint32_t)operand, original, count, hook, context, observers, &right, error);
+                    if (ok) ok = intercept(vm, &frame, frame.stack, return_pc, (uint32_t)operand, original, count, hook, context, observers, &right, NULL, error);
                     exec->program_stack = saved;
                     if (ok) ok = push(stack, right, true, error);
                     if (ok && !compiled) ok = read_word(vm, frame.stack, &pc, error);
@@ -1189,7 +1224,7 @@ static bool execute(qa_qvm *vm, uint32_t instruction, uint32_t entry_stack, oper
 
 static bool invoke(qa_qvm *vm, uint32_t instruction, const int32_t *words, size_t count,
                     const qa_qvm_region_evaluation *evaluation, const int32_t *inputs,
-                    uint32_t floor, int32_t *out, qa_error *error)
+                    uint32_t floor, int32_t *out, bool *started, qa_error *error)
 {
     qa_error local_error = {0};
     if (error == NULL) error = &local_error;
@@ -1219,8 +1254,12 @@ static bool invoke(qa_qvm *vm, uint32_t instruction, const int32_t *words, size_
     binding *bound = registered == NULL ? NULL : registered->hook;
     if (ok && bound != NULL && bound->active && bound->host_invocations) {
         ok = stack_address(vm, (int64_t)base - 4, &exec->program_stack, error);
-        if (ok) ok = intercept(vm, &setup, base, -1, instruction, NO_INSTRUCTION, reserved, bound->fn.hook, bound->context, NULL, &result, error);
-    } else if (ok) ok = execute(vm, instruction, base, &stack, NULL, evaluation, inputs, &result, error);
+        if (ok) {
+            ok = intercept(vm, &setup, base, -1, instruction, NO_INSTRUCTION, reserved, bound->fn.hook, bound->context, NULL, &result, started, error);
+        }
+    } else if (ok) {
+        ok = execute(vm, instruction, base, &stack, NULL, evaluation, inputs, &result, started, error);
+    }
     if (!ok && exec->cancelled != NULL && !exec->failed) { ok = true; result = 0; }
     if (!ok) latch(vm, error);
     if (exec->failed) { if (error != NULL) *error = exec->failure; ok = false; }
@@ -1233,7 +1272,102 @@ bool qa_qvm_invoke(qa_qvm *vm, uint32_t instruction, const int32_t *words, size_
 {
     execution *exec = state(vm);
     uint32_t floor = exec == NULL ? 0 : exec->counter != NULL ? exec->counter->floor : exec->active == NULL ? 0 : exec->active->floor;
-    return invoke(vm, instruction, words, count, NULL, NULL, floor, out, error);
+    return invoke(vm, instruction, words, count, NULL, NULL, floor, out, NULL, error);
+}
+bool qa_qvm_invoke_started(qa_qvm *vm, uint32_t instruction, const int32_t *words,
+    size_t count, int32_t *out, bool *started, qa_error *error)
+{
+    if (!started) return qa_qvm_error(error, QA_ERROR_ARGUMENT, 0, "QVM source attempt requires its owner marker");
+    *started = false;
+    execution *exec = state(vm);
+    uint32_t floor = exec == NULL ? 0 : exec->counter != NULL ? exec->counter->floor : exec->active == NULL ? 0 : exec->active->floor;
+    return invoke(vm, instruction, words, count, NULL, NULL, floor, out, started, error);
+}
+
+bool qa_qvm_execution_source_callback(const qa_qvm_call *call, const qa_qvm_image *image,
+    int32_t pointer, const int32_t *words, size_t count, int32_t *out, qa_error *error)
+{
+    qa_error local = {0};
+    if (!error) error = &local;
+    if (!qa_qvm_execution_token(call, error)) return false;
+    qa_qvm *vm = call->vm;
+    execution *exec = state(vm);
+    if (!image || image != vm->image || !out || (count && !words) ||
+        count > QVM_ARGUMENTS || exec->counter)
+        return error_at(error, 0, "QVM source callback differs from its admitted image or source scope");
+    if (pointer >= 0) {
+        if (!function(image, (uint32_t)pointer, error)) return false;
+        return qa_qvm_invoke(vm, (uint32_t)pointer, words, count, out, error);
+    }
+    if (!healthy(vm, error)) {
+        if (!exec->failed && exec->cancelled) { *out = 0; return true; }
+        return false;
+    }
+    int32_t arguments[QVM_ARGUMENTS];
+    if (count) memcpy(arguments, words, count * sizeof(*arguments));
+    uint32_t base;
+    if (!stack_address(vm, (int64_t)exec->program_stack - 8 - (int64_t)count * 4, &base, error) ||
+        base < exec->active->floor)
+        return error_at(error, 0, "QVM imported callback arguments exceed the active source stack reservation");
+    operands stack = {0};
+    execution_frame setup = {exec->active, exec->host->owner, &stack, base, exec->active->floor};
+    uint32_t previous_stack = exec->program_stack;
+    exec->active = &setup;
+    int32_t trap = (int32_t)(~(uint32_t)pointer);
+    bool ok = write_word(vm, base, -1, error) && write_word(vm, base + 4, trap, error);
+    for (size_t i = 0; ok && i < count; ++i)
+        ok = write_word(vm, base + 8 + (uint32_t)i * 4, arguments[i], error);
+    int32_t result = 0;
+    if (ok) ok = stack_address(vm, (int64_t)base - 4, &exec->program_stack, error);
+    host_scope host;
+    if (ok) ok = open_host(vm, &host, &setup, setup.scope, HOST_SYSCALL,
+        NO_INSTRUCTION, NO_INSTRUCTION, base + 8, count, error);
+    if (ok) {
+        ok = qa_qvm_dispatch(vm, &host.call, trap, &result, error);
+        ok = close_host(vm, &host, ok, error);
+    }
+    if (!ok && exec->cancelled && !exec->failed) { ok = true; result = 0; }
+    if (!ok) latch(vm, error);
+    if (exec->failed) { *error = exec->failure; ok = false; }
+    exec->program_stack = previous_stack;
+    exec->active = setup.parent;
+    if (ok) *out = result;
+    return ok;
+}
+
+bool qa_qvm_execution_source_scratch(const qa_qvm_call *call, const qa_qvm_image *image,
+    size_t length, qa_qvm_source_scratch_fn perform, void *context, qa_error *error)
+{
+    qa_error local = {0};
+    if (!error) error = &local;
+    if (!qa_qvm_execution_token(call, error)) return false;
+    qa_qvm *vm = call->vm;
+    execution *exec = state(vm);
+    uint32_t offset;
+    if (!image || image != vm->image || !perform || exec->counter ||
+        vm->data_size != image->memory_size)
+        return error_at(error, 0, "QVM source scratch differs from its admitted image or source scope");
+    if (!healthy(vm, error)) return false;
+    if (!qa_qvm_source_scratch_qualify(image, length, &offset, error)) return false;
+    uint64_t end = ((uint64_t)offset + length + 3) & ~UINT64_C(3);
+    if (end > exec->program_stack)
+        return error_at(error, offset, "QVM source scratch overlaps the paused caller stack");
+    uint8_t *saved = malloc(length);
+    if (!saved) return qa_qvm_error(error, QA_ERROR_MEMORY, offset, "Retaining scoped QVM source scratch");
+    memcpy(saved, vm->data + offset, length);
+    execution_frame *frame = exec->active;
+    uint32_t previous_floor = frame->floor;
+    if (end > frame->floor) frame->floor = (uint32_t)end;
+    bool ok = perform(context, call, offset, error);
+    if (!ok && (!exec->cancelled || error->code != QA_OK)) latch(vm, error);
+    qa_error first = *error, cleanup = {0};
+    bool restored = qa_qvm_memory_restore_scratch(vm, offset, (qa_bytes){saved, length}, &cleanup);
+    frame->floor = previous_floor;
+    free(saved);
+    if (exec->failed) { *error = exec->failure; return false; }
+    if (!ok) { *error = first; return false; }
+    if (!restored) { *error = cleanup; return false; }
+    return true;
 }
 uint32_t qa_qvm_break_count(const qa_qvm *vm) { return state(vm) == NULL ? 0 : (uint32_t)state(vm)->breaks; }
 
@@ -1245,8 +1379,11 @@ static bool evaluation_stack(qa_qvm *vm, const qa_qvm_evaluation_stack *requeste
     uint64_t data_end = initialized + vm->image->bss_length;
     uint32_t current = state(vm)->program_stack;
     uint64_t start = requested == NULL ? (data_end + 3) & ~UINT64_C(3) : requested->floor;
+    uint32_t inherited = state(vm)->active == NULL ? 0 : state(vm)->active->floor;
+    if (requested == NULL && start < inherited) start = inherited;
     uint64_t end = requested == NULL ? current : requested->top;
-    if (start < initialized || start >= end || end > vm->data_size || current > end || ((start | end) & 3) != 0)
+    if (start < initialized || start < inherited || start >= end || end > vm->data_size ||
+        current > end || ((start | end) & 3) != 0)
         return error_at(error, 0, "QVM evaluation stack is outside its reservation or active caller");
     *floor = (uint32_t)start; *top = current; return true;
 }
@@ -1269,7 +1406,7 @@ bool qa_qvm_evaluate_region(qa_qvm *vm, uint32_t owner, const int32_t *arguments
     int32_t *values = bytes == 0 ? NULL : (int32_t *)(storage + evaluation->input_count);
     if (bytes != 0) { memcpy(storage, evaluation->inputs, bytes); memcpy(values, inputs, bytes); }
     qa_qvm_region_evaluation copied = *evaluation; copied.inputs = storage;
-    bool ok = invoke(vm, owner, arguments, argument_count, &copied, values, floor, out, error);
+    bool ok = invoke(vm, owner, arguments, argument_count, &copied, values, floor, out, NULL, error);
     free(storage); return ok;
 }
 bool qa_qvm_evaluate_call_region(const qa_qvm_call *call, const qa_qvm_region_evaluation *evaluation,
@@ -1296,7 +1433,7 @@ bool qa_qvm_evaluate_call_region(const qa_qvm_call *call, const qa_qvm_region_ev
     qa_qvm_region_evaluation copied = *evaluation; copied.inputs = storage;
     source->proceeded = true;
     int32_t result;
-    bool ok = execute(vm, source->instruction, source->stack, source->operands, source, &copied, values, &result, error);
+    bool ok = execute(vm, source->instruction, source->stack, source->operands, source, &copied, values, &result, NULL, error);
     free(storage);
     if (!ok && exec->cancelled != NULL && !exec->failed) { *out = 0; return true; }
     if (!ok) { latch(vm, error); return false; }
@@ -1333,7 +1470,7 @@ bool qa_qvm_evaluate_counter(qa_qvm *vm, uint32_t address, int32_t initial,
     if (ok) {
         exec->counter = &counter;
         int32_t result;
-        ok = invoke(vm, instruction, arguments, argument_count, NULL, NULL, floor, &result, error);
+        ok = invoke(vm, instruction, arguments, argument_count, NULL, NULL, floor, &result, NULL, error);
         exec->counter = NULL;
     }
     free(ends);

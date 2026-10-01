@@ -23,4 +23,13 @@ typedef struct qa_qvm_saved_function {
 bool qa_qvm_checkpoint_functions(const qa_qvm *, const qa_qvm_saved_function *,
     size_t count, qa_error *);
 
+/* Reconstruct saved identities on a fresh isolated executor. The full saved
+ * executor envelope must match, and every real installed function must match
+ * its constructor descriptor. Identities are distinct, positive and bounded
+ * by the saved generation. Qualification precedes the no-fail reassignment;
+ * the owner must then adopt every returned identity before RAM restoration. */
+bool qa_qvm_restore_candidate_bindings(qa_qvm *, qa_bytes checkpoint,
+    const qa_qvm_saved_function *constructed, const qa_qvm_binding *saved,
+    size_t count, qa_error *);
+
 #endif

@@ -34,7 +34,7 @@ void application_guest_input_profile_free(application_guest_input_profile *);
 bool application_guest_input_attach(q3g_role *, qa_bytes primary, qa_error *);
 bool application_guest_input_detach(q3g_role *, qa_error *);
 bool application_guest_input_checkpoint(q3g_role *, qa_buffer *, qa_error *);
-bool application_guest_input_restore(q3g_role *, qa_bytes, qa_error *);
+bool application_guest_input_restore(q3g_role *, qa_bytes input, qa_bytes executor, qa_error *);
 bool application_arsenal_guest_move(qa_application *, qa_actor_id,
                                      const qa_movement_command *, bool *handled,
                                      qa_error *);

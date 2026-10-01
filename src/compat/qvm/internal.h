@@ -37,9 +37,19 @@ void qa_qvm_execution_reset(qa_qvm *);
 void qa_qvm_execution_checkpoint(const qa_qvm *, uint64_t values[3]);
 bool qa_qvm_execution_checkpoint_ready(const qa_qvm *, const uint64_t values[3], bool candidate, qa_error *);
 void qa_qvm_execution_restore(qa_qvm *, const uint64_t values[3], bool candidate);
+struct qa_qvm_saved_function;
+bool qa_qvm_execution_restore_bindings(qa_qvm *, uint64_t generation,
+    const struct qa_qvm_saved_function *, const qa_qvm_binding *, size_t, qa_error *);
 bool qa_qvm_execution_active(const qa_qvm *);
 bool qa_qvm_execution_reentry(const qa_qvm *, qa_error *);
 bool qa_qvm_execution_token(const qa_qvm_call *, qa_error *);
+bool qa_qvm_execution_source_callback(const qa_qvm_call *, const qa_qvm_image *,
+    int32_t, const int32_t *, size_t, int32_t *, qa_error *);
+bool qa_qvm_execution_source_scratch(const qa_qvm_call *, const qa_qvm_image *,
+    size_t, qa_qvm_source_scratch_fn, void *, qa_error *);
+/* Cleanup of a qualified active source scratch lease. RAM restoration commits
+ * before fallible publication and still commits when delivery cannot allocate. */
+bool qa_qvm_memory_restore_scratch(qa_qvm *, uint32_t, qa_bytes, qa_error *);
 typedef bool (*qa_qvm_effect_fn)(void *, qa_error *);
 bool qa_qvm_execution_effect(qa_qvm *, qa_qvm_effect_fn, void *, qa_error *);
 void qa_qvm_memory_close(qa_qvm *);
