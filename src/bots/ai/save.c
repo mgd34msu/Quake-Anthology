@@ -6,9 +6,9 @@
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'P', 'O', 'P', 'U', 0};
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=9;
+    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=10;
     return qa_source_save_bytes(io,actual,sizeof(actual)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(actual,magic,sizeof(actual)) && version==9?true:
+        (!memcmp(actual,magic,sizeof(actual)) && version==10?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported native bot population continuation schema"));
 }
 #define FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
@@ -177,8 +177,7 @@ static bool state_fields(qa_source_save_io *io, bot_ai_state *state)
     }
     if(!qa_source_save_bytes(io,state->team_leader_name,sizeof(state->team_leader_name))) return false;
     I(state->decisionmaker); I(state->long_term_goal); I(state->teammate);
-    I(state->last_goal_decisionmaker); I(state->last_goal_type); I(state->last_goal_teammate);
-    if(!goal_fields(io,&state->team_goal) || !goal_fields(io,&state->last_goal_team_goal)) return false;
+    if(!goal_fields(io,&state->team_goal)) return false;
     B(state->ordered); F(state->order_time); F(state->team_message_time); F(state->team_goal_time);
     F(state->teammate_visible_time); F(state->formation_distance); F(state->arrive_time);
     F(state->defend_away_time); F(state->harvest_away_time); F(state->attack_away_time);

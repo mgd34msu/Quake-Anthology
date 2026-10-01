@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_storage.h"
 #include "qa/network_q3.h"
 #include <stdio.h>
 
@@ -113,10 +114,12 @@ bool bot_ai_source_goals_load(qa_bots *b,qa_error *e) {
     bot_ai_source_orders_init(&b->source_orders);
     return true;
 }
-void bot_ai_remember_order(bot_ai_state *s) {
-    if(!s->ordered) return;
-    s->last_goal_decisionmaker=s->decisionmaker;s->last_goal_type=s->long_term_goal;
-    s->last_goal_team_goal=s->team_goal;s->last_goal_teammate=s->teammate;
+bool bot_ai_remember_order(qa_bots *b,bot_ai_state *s,qa_error *e) {
+    if(!s->ordered) return true;
+    return bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_DECISIONMAKER,&s->decisionmaker,true,e) &&
+        bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_LTG_TYPE,&s->long_term_goal,true,e) &&
+        bot_ai_storage_goal(b,s,QA_BOT_SOURCE_LAST_TEAM_GOAL,&s->team_goal,true,e) &&
+        bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_TEAMMATE,&s->teammate,true,e);
 }
 bool bot_ai_team_status(qa_bots *b,bot_ai_state *s,qa_error *e) {
     if(!s->team_arena) return true;
@@ -254,7 +257,9 @@ bool bot_ai_voice(qa_bots *b, bot_ai_state *s, int32_t channel, const char *text
             (initial_chat(b,s,"iamteamleader",NULL,0,QA_BOT_CHAT_TEAM,e) && voice_only(b,s,-1,"startleader",e));
     }
     if(command_word(text,"patrol")) {
-        s->decisionmaker=client;s->long_term_goal=BOT_LTG_NONE;s->lead_time=0;s->last_goal_type=0;
+        s->decisionmaker=client;s->long_term_goal=BOT_LTG_NONE;s->lead_time=0;
+        int32_t last_type=0;
+        if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_LTG_TYPE,&last_type,true,e)) return false;
         s->view.order=(qa_bot_order){0};
         return initial_chat(b,s,"dismissed",NULL,client,QA_BOT_CHAT_TELL,e) &&
             voice_only(b,s,-1,"onpatrol",e) && bot_ai_team_status(b,s,e);
@@ -320,6 +325,5 @@ bool bot_ai_voice(qa_bots *b, bot_ai_state *s, int32_t channel, const char *text
             qa_bot_actions_add(qa_bot_runtime_actions(b->runtime),s->view.client,QA_BOT_AFFIRMATIVE,e);
     } else return true;
     if(!bot_ai_team_status(b,s,e)) return false;
-    if(remember) bot_ai_remember_order(s);
-    return true;
+    return !remember || bot_ai_remember_order(b,s,e);
 }

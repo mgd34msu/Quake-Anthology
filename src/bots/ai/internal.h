@@ -41,6 +41,7 @@ typedef struct bot_source_goals {
 typedef struct bot_ai_state {
     uint32_t acquired_source_client;
     qa_bot_source_record source_record;
+    qa_bot_source_span source_span;
     qa_bot_view view;
     qa_bot_player player;
     qa_bot_view_state angles;
@@ -68,8 +69,7 @@ typedef struct bot_ai_state {
     } activations[8];
     char team_leader_name[32];
     int32_t decisionmaker, long_term_goal, teammate;
-    int32_t last_goal_decisionmaker, last_goal_type, last_goal_teammate;
-    qa_bot_goal team_goal, last_goal_team_goal;
+    qa_bot_goal team_goal;
     bool ordered;
     float order_time, team_message_time, team_goal_time, teammate_visible_time;
     float formation_distance, arrive_time, defend_away_time, harvest_away_time;
@@ -140,7 +140,7 @@ bool bot_ai_console(qa_bots *, bot_ai_state *, qa_error *);
 bool bot_ai_messages(qa_bots *, bot_ai_state *, qa_error *);
 bool bot_ai_voice(qa_bots *, bot_ai_state *, int32_t channel, const char *, qa_error *);
 bool bot_ai_carrying(qa_bots *,bot_ai_state *,bool *,qa_error *);
-void bot_ai_remember_order(bot_ai_state *);
+bool bot_ai_remember_order(qa_bots *,bot_ai_state *,qa_error *);
 bool bot_ai_team_status(qa_bots *,bot_ai_state *,qa_error *);
 bool bot_ai_source_goals_load(qa_bots *,qa_error *);
 bool bot_ai_session_read(qa_bots *,bot_ai_state *,qa_error *);

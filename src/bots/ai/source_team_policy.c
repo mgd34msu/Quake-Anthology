@@ -3,6 +3,7 @@
 #include "source_orders.h"
 #include "source_team_policy.h"
 #include "source_goal.h"
+#include "source_storage.h"
 #include "qa/network_q3.h"
 #include <stdio.h>
 
@@ -526,15 +527,24 @@ static bool refuse_order(qa_bots *b, bot_ai_state *s, qa_error *e) {
 }
 bool bot_ai_source_set_last_order(qa_bots *b, bot_ai_state *s, bool *out, qa_error *e) {
     *out=false;if(!alive(b,s)) return true;
-    int32_t team;
-    if(b->source_goals.game_type==4 && s->last_goal_type==BOT_LTG_RETURN_FLAG) {
+    int32_t team,last_type;
+    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_LTG_TYPE,&last_type,false,e)) return false;
+    if(b->source_goals.game_type==4 && last_type==BOT_LTG_RETURN_FLAG) {
         if(!source_team(b,s,&team,e)) return false;
         if(!alive(b,s)) return true;
-        if((team==1?s->source_order.red_flag_status:s->source_order.blue_flag_status)==0) s->last_goal_type=BOT_LTG_NONE;
+        if((team==1?s->source_order.red_flag_status:s->source_order.blue_flag_status)==0) {
+            last_type=BOT_LTG_NONE;
+            if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_LTG_TYPE,&last_type,true,e)) return false;
+        }
     }
-    if(!s->last_goal_type) return true;
-    s->decisionmaker=s->last_goal_decisionmaker;s->ordered=true;s->long_term_goal=s->last_goal_type;
-    s->team_goal=s->last_goal_team_goal;s->teammate=s->last_goal_teammate;s->team_goal_time=b->time+300.0f;
+    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_LTG_TYPE,&last_type,false,e)) return false;
+    if(!last_type) return true;
+    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_DECISIONMAKER,&s->decisionmaker,false,e)) return false;
+    s->ordered=true;
+    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_LTG_TYPE,&s->long_term_goal,false,e) ||
+       !bot_ai_storage_goal(b,s,QA_BOT_SOURCE_LAST_TEAM_GOAL,&s->team_goal,false,e) ||
+       !bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_TEAMMATE,&s->teammate,false,e)) return false;
+    s->team_goal_time=b->time+300.0f;
     if(!team_status(b,s,e)) return false;
     if(!alive(b,s)) return true;
     if(b->source_goals.game_type==4 && s->long_term_goal==BOT_LTG_GET_FLAG) {
@@ -602,7 +612,7 @@ static bool human_leader(qa_bots *b, bot_ai_state *s, bool *found, qa_error *e) 
             volatile float delay=2.0f*random;s->team_message_time=b->time+delay;
             s->long_term_goal=BOT_LTG_DEFEND;s->team_goal_time=b->time+600.0f;s->defend_away_time=0;
             if(!team_status(b,s,e)) return false;
-            if(alive(b,s)) bot_ai_remember_order(s);
+            if(alive(b,s) && !bot_ai_remember_order(b,s,e)) return false;
             if(alive(b,s) && qa_bot_runtime_debug(b->runtime) && !bot_ai_source_print_team_goal(b,s,e)) return false;
         }
         *found=alive(b,s);return true;
@@ -804,8 +814,10 @@ static bool common_seek(qa_bots *b, bot_ai_state *s, bool one_flag, bool harvest
         if(!known_bot_leader(b,s,&leader,e)) return false;
         if(!alive(b,s) || leader) return true;
     }
-    if(s->last_goal_type) s->team_goal_time=s->team_goal_time+60.0f;
-    if(!harvester && b->source_goals.game_type!=6 && !s->ordered && s->last_goal_type) s->long_term_goal=BOT_LTG_NONE;
+    int32_t last_type;
+    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_GOAL_LTG_TYPE,&last_type,false,e)) return false;
+    if(last_type) s->team_goal_time=s->team_goal_time+60.0f;
+    if(!harvester && b->source_goals.game_type!=6 && !s->ordered && last_type) s->long_term_goal=BOT_LTG_NONE;
     bool protected_goal=ctf_goal(s->long_term_goal,one_flag);
     if(harvester) protected_goal=(protected_goal && s->long_term_goal!=BOT_LTG_RUSH_BASE &&
         s->long_term_goal!=BOT_LTG_RETURN_FLAG) || s->long_term_goal==BOT_LTG_HARVEST;
