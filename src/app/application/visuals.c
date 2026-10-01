@@ -109,26 +109,26 @@ bool qa_application_visual_read(qa_application *application, qa_actor_id actor,
         *out = view;
         return true;
     }
-    application_provider *appearance =
-        application_provider_for(application, actor, QA_ROLE_APPEARANCE, "");
+    application_provider *body =
+        application_provider_for(application, actor, QA_ROLE_BODY, "");
     application_provider *character =
         application_provider_for(application, actor, QA_ROLE_CHARACTER, "");
-    if (!appearance || !appearance->constructed || appearance->close_pending)
-        return application_fail(error, QA_ERROR_NOT_FOUND, "Selected appearance owner is missing");
-    qa_application_visual_view view = {.actor = actor, .provider = appearance->owner,
+    if (!body || !body->constructed || body->close_pending)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Selected body owner is missing");
+    qa_application_visual_view view = {.actor = actor, .provider = body->owner,
         .character = character ? character->owner : 0,
-        .content = appearance->product->id,
+        .content = body->product->id,
         .character_content = character ? character->product->id : 0,
         .old_frame = -1, .alpha = 1, .scale = 1, .source_number = -1, .source_client = -1};
     if (!qa_world_body_read(application->world, actor, &view.body, error))
         return false;
     qa_error observed = {0};
-    if (!native_visual(appearance, actor, &view, &observed)) {
+    if (!native_visual(body, actor, &view, &observed)) {
         if (observed.code != QA_OK) {
             if (error)
                 *error = observed;
         } else
-            application_fail(error, QA_ERROR_NOT_FOUND, "Selected appearance has no source observation");
+            application_fail(error, QA_ERROR_NOT_FOUND, "Selected body has no source observation");
         return false;
     }
     qa_actor_collision collision;

@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "control_frame.h"
 #include "native_q2_combat_policy.h"
+#include "native_q1_wire.h"
 #include "qa/application_players.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_source.h"
@@ -379,6 +380,8 @@ static bool before_reaction(void *opaque, const qa_damage_outcome *outcome,
                             qa_error *error)
 {
     qa_application *application = opaque;
+    if (!application_native_q1_wire_damage(application, outcome, error))
+        return false;
     application_provider *effects = application_provider_for(
         application, outcome->request.target, QA_ROLE_EFFECTS, "");
     application_provider *character = application_provider_for(

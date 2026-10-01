@@ -183,6 +183,8 @@ static bool q1_damage(qa_combat *combat, const qa_combat_policy *policy,
     if (!qa_combat_live(combat, request->target))
         return true;
     float take = ceilf(after_power - regular);
+    *result = (qa_damage_result){.has_feedback = true, .feedback_family = QA_GAME_Q1,
+        .power_saved = power, .armor_saved = regular, .blood = take};
     if (!current(combat, request, &target, &attacker, &has_attacker, error))
         return false;
     if (source.walk && !target.no_knockback && source.has_momentum_direction &&
@@ -228,7 +230,8 @@ static bool q1_damage(qa_combat *combat, const qa_combat_policy *policy,
         return qa_combat_argument(error, "Q1 damage arithmetic overflow");
     if (!qa_combat_set_health(combat, request->target, health, error))
         return false;
-    *result = (qa_damage_result){.applied_damage = take, .reaction = reaction};
+    result->applied_damage = take;
+    result->reaction = reaction;
     return true;
 }
 
