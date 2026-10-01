@@ -234,12 +234,21 @@ bool qa_bot_runtime_weapon_choose_view(qa_bot_runtime *r, uint32_t id,
 bool qa_bot_runtime_weapon_weight(qa_bot_runtime *r, uint32_t id, uint32_t weapon,
                                    const int32_t *inventory, size_t count, float *out,
                                    bool *found, qa_error *e) {
+    qa_bot_inventory_view view={.data=inventory,.count=count};
+    return qa_bot_runtime_weapon_weight_view(r,id,weapon,&view,out,found,e);
+}
+bool qa_bot_runtime_weapon_weight_view(qa_bot_runtime *r,uint32_t id,uint32_t weapon,
+                                        const qa_bot_inventory_view *inventory,float *out,
+                                        bool *found,qa_error *e) {
     if (!bot_runtime_mutable(r, e)) return false;
     bot_weapon_state *s = weapon_state(r, id, e);
     if (!s) return false;
     if (!out || !found) return bot_runtime_fail(e, "missing weapon weight output");
     *found = false;
-    return !s->selector || qa_bot_weapon_weight(s->selector, weapon, inventory, count, out, found, e);
+    r->busy=true;
+    bool okay=!s->selector || qa_bot_weapon_weight_view(s->selector,weapon,inventory,out,found,e);
+    r->busy=false;
+    return okay;
 }
 bool qa_bot_runtime_chat_allocate(qa_bot_runtime *r, uint32_t *out, qa_error *e) {
     if (!bot_runtime_mutable(r, e)) return false;

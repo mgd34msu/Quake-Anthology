@@ -143,6 +143,8 @@ bool qa_bot_runtime_weapon_choose_view(qa_bot_runtime *, uint32_t,
                                         const qa_bot_inventory_view *, uint32_t *, qa_error *);
 bool qa_bot_runtime_weapon_weight(qa_bot_runtime *, uint32_t, uint32_t weapon,
                                    const int32_t *inventory, size_t, float *, bool *, qa_error *);
+bool qa_bot_runtime_weapon_weight_view(qa_bot_runtime *,uint32_t,uint32_t weapon,
+                                        const qa_bot_inventory_view *,float *,bool *,qa_error *);
 bool qa_bot_runtime_chat_allocate(qa_bot_runtime *, uint32_t *, qa_error *);
 bool qa_bot_runtime_chat_free(qa_bot_runtime *, uint32_t, qa_error *);
 qa_bot_chat *qa_bot_runtime_chat(qa_bot_runtime *, uint32_t);

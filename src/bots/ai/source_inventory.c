@@ -25,3 +25,23 @@ qa_bot_inventory_view bot_ai_source_inventory_view(bot_source_inventory *invento
     return (qa_bot_inventory_view){.count=QA_BOT_INVENTORY_SIZE,
         .context=inventory,.read=bot_ai_source_inventory_read};
 }
+
+static bool write(void *context,int32_t index,int32_t value,qa_error *error)
+{
+    return bot_ai_source_inventory_write(context,index,value,error);
+}
+
+qa_bot_inventory_target bot_ai_source_inventory_target(bot_source_inventory *inventory)
+{
+    return (qa_bot_inventory_target){.count=QA_BOT_INVENTORY_SIZE,
+        .context=inventory,.write=write};
+}
+
+bool bot_ai_source_inventory_snapshot(bot_source_inventory *inventory,
+                                      int32_t out[QA_BOT_INVENTORY_SIZE],qa_error *error)
+{
+    if(!out) return bot_ai_fail(error,"Inventory snapshot requires its explicit caller storage");
+    for(int32_t index=0;index<QA_BOT_INVENTORY_SIZE;++index)
+        if(!bot_ai_source_inventory_read(inventory,index,out+index,error)) return false;
+    return true;
+}
