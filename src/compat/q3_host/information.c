@@ -99,15 +99,19 @@ q3_service_result q3_client_state(q3_call *call, int32_t *result, qa_error *erro
     if (role == QA_QVM_UI || trap == 50) {
         const qa_q3_gamestate *state = services->gamestate ? services->gamestate(services->context) : NULL;
         if (!state) {
-            q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 client gamestate is unbound");
-            return Q3_FAILED;
+            if (role != QA_QVM_UI || !services->gamestate || !services->configstring_absent) {
+                q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 client gamestate is unbound");
+                return Q3_FAILED;
+            }
+            if (!services->configstring_absent(services->context, error)) return Q3_FAILED;
         }
         if (role == QA_QVM_UI) {
             int32_t index = q3_integer(call, 0);
             if (index < 0 || index >= 1024) return Q3_COMPLETED;
             if (!config_index(call, index, &index, error)) return Q3_FAILED;
-            const char *text = qa_q3_configstring(state, (uint32_t)index);
+            const char *text = state ? qa_q3_configstring(state, (uint32_t)index) : NULL;
             if (!text || !*text) {
+                *result = 0;
                 const uint8_t zero = 0;
                 ok = !q3_integer(call, 2) || q3_write(call, call->arguments[1], (qa_bytes){&zero, 1}, error);
             } else {

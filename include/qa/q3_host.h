@@ -73,6 +73,9 @@ typedef struct qa_q3_host_client_services {
     bool (*user_command)(void *, int32_t, qa_q3_usercmd *, bool *present, qa_error *);
     bool (*command_values)(void *, int32_t weapon, float sensitivity, qa_error *);
     bool (*source_actor)(void *, uint32_t source_number, qa_actor_id *, bool *present, qa_error *);
+    /* A bound initial UI can observe empty configstrings before gamestate.
+     * The actual physical CLIENT/module lease must qualify that absence. */
+    bool (*configstring_absent)(void *, qa_error *);
 } qa_q3_host_client_services;
 
 typedef struct qa_q3_host_collision_services {
@@ -110,6 +113,17 @@ typedef struct qa_q3_host_cvar_services {
     bool (*reference)(void *,const qa_cvars *,qa_q3_host_cvar_namespace *,qa_error *);
     bool (*resolve)(void *,qa_q3_host_cvar_namespace,qa_cvars **,qa_error *);
 } qa_q3_host_cvar_services;
+
+/* Cvar syscalls alone may borrow this host's actual entered source lifetime
+ * when its constructor command can no longer be captured normally. The pure
+ * callback qualifies this exact host, physical console and unchanged command
+ * against the retained factory tuple. It grants no command dispatch authority
+ * and is rechecked throughout the lexical cvar operation. */
+typedef struct qa_q3_host_cvar_entry_services {
+    void *context;
+    bool (*entered)(void *,const qa_q3_host *,const qa_console *,
+        const qa_command_context *,qa_error *);
+} qa_q3_host_cvar_entry_services;
 
 /* Binding traps follow the actual retained configuration dictionary through
  * preparation and publication. Physical keys, focus and catcher ownership
@@ -190,6 +204,7 @@ typedef struct qa_q3_host_options {
     qa_q3_host_collision_services collision;
     qa_q3_host_presentation_services presentation;
     qa_q3_host_cvar_services cvar_namespaces;
+    qa_q3_host_cvar_entry_services cvar_entry;
     qa_q3_host_input_services input;
     qa_q3_host_render_services render;
     /* Original CGAME QVM submissions retain their current syscall token and

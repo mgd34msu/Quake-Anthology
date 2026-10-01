@@ -523,13 +523,11 @@ static bool info_string(q3_call *call,uint32_t flags,qa_buffer *out,qa_error *er
     *out=(qa_buffer){(uint8_t *)copy,strlen(copy)+1}; return true;
 }
 
-q3_service_result q3_cvars(q3_call *call, int32_t *result, qa_error *error)
+static q3_service_result cvars_selected(q3_call *call, int32_t *result, qa_error *error)
 {
     bool ui = call->host->options.role == QA_QVM_UI;
     bool game = call->host->options.role == QA_QVM_GAME;
     int32_t trap = call->service;
-    if (ui ? !((trap >= 3 && trap <= 9) || trap == 50 || trap == 51)
-           : !(trap >= 3 && trap <= (game ? 7 : 6))) return Q3_UNHANDLED;
     qa_cvars *cvars = call->host->options.cvars;
     if (!cvars) {
         q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 cvar owner is unbound");
@@ -586,4 +584,37 @@ q3_service_result q3_cvars(q3_call *call, int32_t *result, qa_error *error)
     }
     qa_buffer_free(&name); qa_buffer_free(&value);
     return ok ? Q3_COMPLETED : Q3_FAILED;
+}
+
+typedef struct cvar_operation {
+    q3_call *call;
+    int32_t *result;
+} cvar_operation;
+static bool entered(void *context,const qa_console *console,
+    const qa_command_context *command,qa_error *error)
+{
+    const qa_q3_host *host=context;
+    const qa_q3_host_cvar_entry_services *services=&host->options.cvar_entry;
+    if (!host->calls || console!=host->options.console || !services->entered)
+        return q3_fail(error,QA_ERROR_ARGUMENT,0,"Cvar syscall lacks its actual entered host lifetime");
+    return services->entered(services->context,host,console,command,error);
+}
+static bool operate(void *context,const qa_command_context *command,qa_error *error)
+{
+    (void)command;
+    cvar_operation *operation=context;
+    return cvars_selected(operation->call,operation->result,error)==Q3_COMPLETED;
+}
+q3_service_result q3_cvars(q3_call *call,int32_t *result,qa_error *error)
+{
+    bool ui=call->host->options.role==QA_QVM_UI;
+    bool game=call->host->options.role==QA_QVM_GAME;
+    int32_t trap=call->service;
+    if (ui?!((trap>=3 && trap<=9) || trap==50 || trap==51):
+        !(trap>=3 && trap<=(game?7:6))) return Q3_UNHANDLED;
+    qa_q3_host_options *options=&call->host->options;
+    if (!options->console) return cvars_selected(call,result,error);
+    cvar_operation operation={call,result};
+    return qa_console_cvar_enter(options->console,&options->command_context,
+        entered,call->host,operate,&operation,error)?Q3_COMPLETED:Q3_FAILED;
 }
