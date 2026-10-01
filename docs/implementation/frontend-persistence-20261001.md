@@ -328,9 +328,47 @@ empty consumer; import follows the application's QERT2 owner and physical
 seats. Candidate discard checks and destroys gear delivery and selected FX
 before any external callback can retire their source parents. Nofail
 publication rebinds the gear consumer to its stable published frontend.
-This new nine-file caller packet awaits independent source review. The full
-native composition factory remains on its separate producer review; these
-callers still use the accepted equipment-only factory.
+This nine-file caller packet passed independent source review and was pushed
+in `891b959`. Normal construction and late restored native-client construction
+now select the same real full composition factory. That caller migration awaits
+its separate joined source review.
+
+The Gear registry caller follow-on advances PRESENTATION to version 10,
+QFQ3 to version 8 and QFWR to version 7. Actual private Gear namespaces enter
+the registry roster after FX, with separate graph identities for their retained
+runtime content and borrowed visual clone. QFGT preparation follows saved
+equipment-runtime construction and precedes image, material, model and scene
+dictionary import. QFGS imports only after the real registry adopts its decoded
+holders, under that registry's actual capture lease. Capture scans every
+registered model and preview root, including WORLD-only output with no authored
+gun or presenter rows. Those roots retain the Gear registry's destructor scope
+and its genuine visual heap; there is no separate WORLD owner.
+
+The strict owner guard includes Gear presenter and world-output leases. Both
+ordinary and failed-candidate cleanup destroy remote and native children before
+retiring the Gear cache, while its private runtime and definition remain alive.
+Candidate publication retains the same frontend heap, so Gear parent pointers
+need no transfer. This caller follow-on is authored and awaits independent whole
+source review with the changed ordinary lifetime.
+
+The SOURCE effects follow-on enters through the actual calling host's
+RenderScene prelude and retains its exact role lease through mandatory leave,
+including failed partial entry. Completed local CGAME renders borrow canonical
+full-actor event origins and the selected producer's actual map pool. Matching
+consumers share that pool, event cursor, RNG and WORLD sound owner; other map
+bindings are excluded. Lights are copied into the render token and merged with
+the renderer's actual normal and projected spans without changing its retained
+light list. The token closes after all main and portal views return. The SOURCE
+producer and RenderHost joins passed independent source review and were
+committed in `b63c299`. This acceptance does not install the complete composed
+factory or establish remote SOURCE effects.
+
+Final ENGINE shutdown uses a separate returned-owner check and exact retained
+native-ticket and physical-release associations. Ordinary idle admission keeps
+the native ticket fence; capture entry also rejects the retained shutdown phase.
+The shutdown phase alone supplies no detach authority. These final caller cuts
+and the normal/restored full-composition factory migration passed independent
+whole source review and were committed in `7bb5e69`.
 
 The display codec currently qualifies the same live native window state,
 including dimensions, title, position and focus. It truthfully rejects a saved

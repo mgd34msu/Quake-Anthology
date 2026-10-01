@@ -44,6 +44,7 @@
 #include "qc_rerelease_events.h"
 #include "equipment_media_save.h"
 #include "equipment_q3_save.h"
+#include "equipment_gear_save.h"
 #include "native_q3_client.h"
 #include "remote_q3_client.h"
 #include "native_q3_topology.h"
@@ -70,7 +71,7 @@ typedef enum frontend_section {
     SECTION_Q3, SECTION_SOURCE, SECTION_INPUT_PROFILE, SECTION_UI_FEATURES, SECTION_QC_DEBUG,
     SECTION_NATIVE_RUNTIME, SECTION_EQUIPMENT_TOPOLOGY, SECTION_SELECTED_Q3_TOPOLOGY,
     SECTION_KEYS, SECTION_CONFIG_STORE, SECTION_CLIENT_REGISTRIES, SECTION_NATIVE_Q3_TOPOLOGY,
-    SECTION_CHARACTER_TOPOLOGY, SECTION_EFFECTS_TOPOLOGY, SECTION_GEAR_EVENTS, SECTION_COUNT
+    SECTION_CHARACTER_TOPOLOGY, SECTION_EFFECTS_TOPOLOGY, SECTION_GEAR_EVENTS, SECTION_GEAR_TOPOLOGY, SECTION_COUNT
 } frontend_section;
 typedef struct frontend_section_set {
     qa_buffer owned[SECTION_COUNT];
@@ -204,7 +205,7 @@ static bool blob(qa_source_save_io *io, qa_bytes *bytes)
 static bool envelope(qa_source_save_io *io, qa_save_owner_kind expected,
     frontend_section_set *set, const frontend_section *ids, size_t count)
 {
-    uint8_t magic[4]={'Q','F','E','X'}; uint32_t required=expected==QA_SAVE_PRESENTATION?9:
+    uint8_t magic[4]={'Q','F','E','X'}; uint32_t required=expected==QA_SAVE_PRESENTATION?10:
         expected==QA_SAVE_AUDIO?4:expected==QA_SAVE_INPUT?3:expected==QA_SAVE_MEDIA?2:1,
         version=required,kind=expected; size_t saved=count;
     if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QFEX",4) ||
@@ -221,7 +222,7 @@ static const frontend_section presentation_sections[]={SECTION_TOPOLOGY,SECTION_
     SECTION_IMAGE_OWNERS,SECTION_MATERIALS,SECTION_FONTS,SECTION_MODELS,SECTION_ROOTS,SECTION_FRAME,
     SECTION_EVENTS,SECTION_PARTICLES,SECTION_PLAYERS,SECTION_NATIVE,SECTION_SEATS_PRESENTATION,SECTION_SHADERS,SECTION_ALIASES,SECTION_RENDERER,SECTION_QC_DEBUG,
     SECTION_EQUIPMENT_TOPOLOGY,SECTION_SELECTED_Q3_TOPOLOGY,SECTION_NATIVE_Q3_TOPOLOGY,SECTION_CHARACTER_TOPOLOGY,
-    SECTION_EFFECTS_TOPOLOGY,SECTION_GEAR_EVENTS};
+    SECTION_EFFECTS_TOPOLOGY,SECTION_GEAR_EVENTS,SECTION_GEAR_TOPOLOGY};
 static const frontend_section audio_sections[]={SECTION_AUDIO_IDS,SECTION_BANKS,SECTION_ENGINE,SECTION_DEVICE,SECTION_UI_FEATURES};
 static const frontend_section input_sections[]={SECTION_SEATS_INPUT,SECTION_PLATFORM,SECTION_TERMINAL,SECTION_SAVE_COMMANDS,SECTION_INPUT_PROFILE,
     SECTION_KEYS,SECTION_CONFIG_STORE,SECTION_CLIENT_REGISTRIES};
@@ -659,6 +660,7 @@ static bool capture_components(frontend_persistence *operation, qa_error *error)
         frontend_equipment_q3_topology_checkpoint(f,set->owned+SECTION_SELECTED_Q3_TOPOLOGY,error) &&
         frontend_selected_character_topology_checkpoint(f,set->owned+SECTION_CHARACTER_TOPOLOGY,error) &&
         frontend_selected_effects_topology_checkpoint(f,set->owned+SECTION_EFFECTS_TOPOLOGY,error) &&
+        frontend_equipment_gear_topology_checkpoint(f,set->owned+SECTION_GEAR_TOPOLOGY,error) &&
         frontend_native_q2_topology_checkpoint(f,set->owned+SECTION_NATIVE_TOPOLOGY,error) &&
         frontend_native_q3_topology_checkpoint(f,set->owned+SECTION_NATIVE_Q3_TOPOLOGY,error) &&
         frontend_tools_checkpoint(f,&tools,&llm,set->owned+SECTION_TOOLS,error) &&
@@ -825,7 +827,8 @@ static bool import_components(frontend_persistence *operation, qa_error *error)
     qa_audio_bank_checkpoint_refs banks=frontend_audio_content_refs(content);
     qa_tools_checkpoint_refs tools; qa_llm_checkpoint_refs llm;
     qa_bytes engine={0},device={0},platform={0},terminal={0};
-    bool ok=frontend_input_profile_restore(f,content,section(set,SECTION_INPUT_PROFILE),error) &&
+    bool ok=frontend_equipment_gear_prepare_restored(f,section(set,SECTION_GEAR_TOPOLOGY),error) &&
+        frontend_input_profile_restore(f,content,section(set,SECTION_INPUT_PROFILE),error) &&
         frontend_images_restore(f,section(set,SECTION_IMAGES),&operation->images,error) &&
         frontend_scene_namespace_restore(section(set,SECTION_NAMESPACE),operation->images,&operation->space,error) &&
         frontend_scene_namespace_bind_frame(operation->space,1,&f->frame,error) &&
@@ -1004,7 +1007,8 @@ static bool validate(void *context,qa_application *application,const qa_save_ima
         ok=frontend_campaign_restore(f,qa_application_content_graph_read(application),
             (qa_bytes){operation->external[0].data,operation->external[0].size},error);
     }
-    if (ok) ok=frontend_equipment_q3_topology_ready(f,error) && frontend_selected_character_topology_ready(f,error) &&
+    if (ok) ok=frontend_equipment_q3_topology_ready(f,error) && frontend_equipment_gear_topology_ready(f,error) &&
+        frontend_selected_character_topology_ready(f,error) &&
         frontend_selected_effects_topology_ready(f,error);
     if (ok && operation->services && operation->services->validate)
         ok=operation->services->validate(operation->services->context,application,image,error);
@@ -1042,17 +1046,21 @@ static bool discard_services(void *context,qa_application *candidate,qa_error *e
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Failed candidate retains actual seat callbacks or source release history");
     if (!frontend_ui_features_idle(f) || !frontend_remote_q3_idle(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Failed candidate retains UI preparation or remote CLIENT children");
-    if (!frontend_equipment_events_idle(f->gear_events) || !frontend_selected_effects_idle(f))
+    if (!frontend_equipment_events_idle(f->gear_events) || !frontend_equipment_gear_idle(f) ||
+        !frontend_selected_effects_idle(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Failed candidate retains gear delivery or selected effect callbacks");
     if (!frontend_network_close_client(f,error) || !frontend_cinematic_destroy(f,error) ||
         !frontend_selected_effects_retire(f,error) || !frontend_remote_q3_destroy(f,error) ||
+        !frontend_native_q3_destroy(f,error) ||
         !frontend_equipment_events_destroy(f->gear_events,error)) return false;
     f->gear_events=NULL;
+    if (!frontend_equipment_gear_retire(f,error)) return false;
+    frontend_equipment_gear_destroy(f);
     if (operation->services && operation->services->discard_services &&
         !operation->services->discard_services(operation->services->context,candidate,error)) return false;
     if (!frontend_qc_rerelease_idle(f) || !frontend_equipment_retire(f,error) ||
         !frontend_equipment_q3_retire(f,error) ||
-        !frontend_native_q3_destroy(f,error) || !frontend_selected_character_retire(f,error) ||
+        !frontend_selected_character_retire(f,error) ||
         !frontend_save_commands_destroy(f,error) || !frontend_campaign_destroy(f,error)) return false;
     frontend_equipment_destroy(f);
     frontend_equipment_q3_destroy(f);
@@ -1080,7 +1088,8 @@ static bool publish_ready(void *context,qa_application *active,qa_application *c
         !frontend_seat_callbacks_idle(operation->active) || !frontend_seat_callbacks_idle(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Frontend publication lost its idle active/candidate ownership cut");
     if (!frontend_campaign_publish_ready(f,error) || !frontend_client_registries_rebind_ready(f,f,error) ||
-        !frontend_equipment_q3_topology_ready(f,error) || !frontend_selected_character_topology_ready(f,error) ||
+        !frontend_equipment_q3_topology_ready(f,error) || !frontend_equipment_gear_topology_ready(f,error) ||
+        !frontend_selected_character_topology_ready(f,error) ||
         !frontend_selected_character_rebind_ready(f,f,error) || !frontend_selected_effects_topology_ready(f,error) ||
         !frontend_selected_effects_rebind_ready(f,f,error) || !frontend_source_rebind_ready(f,operation->active,error) ||
         !frontend_native_q2_rebind_ready(f,operation->active,error) ||
@@ -1170,7 +1179,7 @@ static bool operation_init(frontend_persistence *operation,qa_frontend *active,
         operation->bindings[i]=(frontend_owner_binding){operation,kinds[i],i};
         operation->owners[i]=(qa_application_persistence_owner){
             .identity={.kind=kinds[i],.instance="",.schema=schemas[i],.schema_version=kinds[i]==QA_SAVE_CAMPAIGN?3:
-                kinds[i]==QA_SAVE_PRESENTATION?9:
+                kinds[i]==QA_SAVE_PRESENTATION?10:
                 kinds[i]==QA_SAVE_AUDIO?4:kinds[i]==QA_SAVE_INPUT?3:kinds[i]==QA_SAVE_MEDIA?2:1,.backend=""},
             .context=operation->bindings+i,.capture=capture_owner,.restore=restore_owner};
     }

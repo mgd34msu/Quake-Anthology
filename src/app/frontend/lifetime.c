@@ -400,6 +400,8 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     if (!frontend_selected_effects_retire(frontend,error)) return false;
     if (!frontend_remote_q3_destroy(frontend,error)) return false;
     if (!frontend_native_q3_destroy(frontend,error)) return false;
+    if (!frontend_equipment_gear_retire(frontend,error)) return false;
+    frontend_equipment_gear_destroy(frontend);
     if (!frontend_equipment_events_destroy(frontend->gear_events,error)) return false;
     frontend->gear_events=NULL;
     /* Application guests borrow frontend services. Retire them before releasing
@@ -440,8 +442,6 @@ bool qa_frontend_destroy(qa_frontend *frontend, qa_error *error)
     frontend_equipment_destroy(frontend);
     if (!frontend_equipment_q3_retire(frontend,error)) return false;
     frontend_equipment_q3_destroy(frontend);
-    if (!frontend_equipment_gear_retire(frontend,error)) return false;
-    frontend_equipment_gear_destroy(frontend);
     if (!frontend_selected_character_retire(frontend,error)) return false;
     frontend_visuals_destroy(frontend);
     frontend_particle_retire(frontend);

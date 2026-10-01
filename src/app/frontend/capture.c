@@ -5,6 +5,7 @@
 #include "remote_q3_client.h"
 #include "equipment_media.h"
 #include "equipment_q3.h"
+#include "equipment_gear.h"
 #include "equipment_events.h"
 #include "selected_character.h"
 #include "selected_character_lifetime.h"
@@ -69,7 +70,7 @@ bool frontend_owners_returned(const qa_frontend *f)
     if (!f || f->capture ||
         !frontend_cinematic_idle(f) || !frontend_qc_rerelease_idle(f) || !frontend_native_q2_children_idle(f) ||
         !frontend_native_q3_idle(f) || !frontend_remote_q3_idle(f) || !frontend_ui_features_idle(f) ||
-        !frontend_equipment_idle(f) || !frontend_equipment_q3_idle(f) ||
+        !frontend_equipment_idle(f) || !frontend_equipment_q3_idle(f) || !frontend_equipment_gear_idle(f) ||
         !frontend_equipment_events_idle(f->gear_events) ||
         !frontend_selected_character_idle(f) || !frontend_selected_effects_idle(f) || !frontend_sources_idle(f) ||
         !resources_idle(f->images) || !resources_idle(f->ui_images) || !library_idle(f->materials) ||
@@ -225,6 +226,11 @@ bool frontend_capture_begin(qa_frontend *f, frontend_capture **out, qa_error *er
     for (size_t i=0;ok && i<frontend_selected_effects_count(f);++i) {
         frontend_selected_effects_view owner;
         ok=frontend_selected_effects_at(f,i,&owner,error) && owner.assets &&
+            add(capture,CAPTURE_ASSETS,owner.assets,error);
+    }
+    for (size_t i=0;ok && i<frontend_equipment_gear_count(f);++i) {
+        frontend_equipment_gear_owner_view owner;
+        ok=frontend_equipment_gear_at(f,i,&owner,error) && owner.assets &&
             add(capture,CAPTURE_ASSETS,owner.assets,error);
     }
     /* Registry entry preflights strict child idle, so it precedes child tokens. */

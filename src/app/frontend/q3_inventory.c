@@ -7,6 +7,7 @@
 #include "source_restore.h"
 #include "native_q3_client.h"
 #include "equipment_q3_save.h"
+#include "equipment_gear_save.h"
 #include "selected_character_save.h"
 #include "selected_effects_save.h"
 #include "qa/media_library_save.h"
@@ -17,9 +18,9 @@
 #include "qa/scene_resource_save.h"
 #include "qa/vfs_view_save.h"
 
-typedef enum q3_owner_kind { Q3_OWNER_SOURCE, Q3_OWNER_NATIVE, Q3_OWNER_SELECTED, Q3_OWNER_CHARACTER, Q3_OWNER_EFFECTS } q3_owner_kind;
+typedef enum q3_owner_kind { Q3_OWNER_SOURCE, Q3_OWNER_NATIVE, Q3_OWNER_SELECTED, Q3_OWNER_CHARACTER, Q3_OWNER_EFFECTS, Q3_OWNER_GEAR } q3_owner_kind;
 static bool assets_only(q3_owner_kind kind)
-{ return kind==Q3_OWNER_SELECTED || kind==Q3_OWNER_CHARACTER; }
+{ return kind==Q3_OWNER_SELECTED || kind==Q3_OWNER_CHARACTER || kind==Q3_OWNER_GEAR; }
 static bool private_owner(q3_owner_kind kind)
 { return assets_only(kind) || kind==Q3_OWNER_EFFECTS; }
 static frontend_scene_owner_kind scene_owner(q3_owner_kind kind)
@@ -30,6 +31,7 @@ static frontend_scene_owner_kind scene_owner(q3_owner_kind kind)
     case Q3_OWNER_SELECTED: return FRONTEND_SCENE_OWNER_SELECTED_Q3;
     case Q3_OWNER_CHARACTER: return FRONTEND_SCENE_OWNER_CHARACTER;
     case Q3_OWNER_EFFECTS: return FRONTEND_SCENE_OWNER_EFFECTS;
+    case Q3_OWNER_GEAR: return FRONTEND_SCENE_OWNER_GEAR;
     }
     return FRONTEND_SCENE_OWNER_FRONTEND;
 }
@@ -106,11 +108,12 @@ static bool collect(qa_frontend *f,const frontend_q3_refs *refs,bool restoring,
     if (!out || *out || !phase(f,refs,restoring,error)) return false;
     size_t sources=frontend_source_group_count(f),native=frontend_native_q3_count(f),
         selected=frontend_equipment_q3_count(f),character=frontend_selected_character_count(f),
-        effects=frontend_selected_effects_count(f);
+        effects=frontend_selected_effects_count(f),gear=frontend_equipment_gear_count(f);
     if (native>SIZE_MAX-sources || selected>SIZE_MAX-sources-native ||
-        character>SIZE_MAX-sources-native-selected || effects>SIZE_MAX-sources-native-selected-character)
+        character>SIZE_MAX-sources-native-selected || effects>SIZE_MAX-sources-native-selected-character ||
+        gear>SIZE_MAX-sources-native-selected-character-effects)
         return frontend_fail(error,QA_ERROR_MEMORY,"Q3 component owner inventory exceeds address space");
-    size_t count=sources+native+selected+character+effects;
+    size_t count=sources+native+selected+character+effects+gear;
     if (count>SIZE_MAX/sizeof(q3_group) || count>SIZE_MAX/sizeof(q3_registry) ||
         count>SIZE_MAX/sizeof(q3_media) || count>SIZE_MAX/sizeof(q3_presentation) || (count && !refs->audio))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Q3 source inventory exceeds its actual holder namespace");
@@ -129,10 +132,13 @@ static bool collect(qa_frontend *f,const frontend_q3_refs *refs,bool restoring,
         q3_group *group=inventory->groups+i; qa_scene_world *world=NULL; qa_collision_geometry *collision=NULL;
         group->kind=i<sources?Q3_OWNER_SOURCE:i<sources+native?Q3_OWNER_NATIVE:
             i<sources+native+selected?Q3_OWNER_SELECTED:
-            i<sources+native+selected+character?Q3_OWNER_CHARACTER:Q3_OWNER_EFFECTS;
+            i<sources+native+selected+character?Q3_OWNER_CHARACTER:
+            i<sources+native+selected+character+effects?Q3_OWNER_EFFECTS:Q3_OWNER_GEAR;
         group->ordinal=i<sources?i:i<sources+native?i-sources:
             i<sources+native+selected?i-sources-native:
-            i<sources+native+selected+character?i-sources-native-selected:i-sources-native-selected-character;
+            i<sources+native+selected+character?i-sources-native-selected:
+            i<sources+native+selected+character+effects?i-sources-native-selected-character:
+            i-sources-native-selected-character-effects;
         if (group->kind==Q3_OWNER_SOURCE) {
             frontend_source_group_view source;
             ok=frontend_source_group_read(f,group->ordinal,&source);
@@ -155,13 +161,20 @@ static bool collect(qa_frontend *f,const frontend_q3_refs *refs,bool restoring,
             if (ok) group->source=(q3_component_owner){.owner=source.selection.owner,
                 .launch_seat=source.launch_seat,.source_files=source.content.mounts,.mounts=source.content.mounts,
                 .images=source.content.images,.assets=source.assets,.selected_materials=source.content.materials};
-        } else {
+        } else if (group->kind==Q3_OWNER_EFFECTS) {
             frontend_selected_effects_view source;
             ok=frontend_selected_effects_at(f,group->ordinal,&source,error);
             if (ok) group->source=(q3_component_owner){.owner=source.provider,
                 .seat=source.physical_seat,.identity=source.identity,.source_files=source.source_files,
                 .mounts=source.content.mounts,.images=source.content.images,.assets=source.assets,
                 .presentation=source.presentation};
+        } else {
+            frontend_equipment_gear_owner_view source;
+            ok=frontend_equipment_gear_at(f,group->ordinal,&source,error) &&
+                qa_application_equipment_content_current(f->application,&source.source);
+            if (ok) group->source=(q3_component_owner){.owner=source.source.owner,
+                .source_files=source.source.files,.mounts=source.content.mounts,
+                .images=source.content.images,.assets=source.assets,.selected_materials=source.content.materials};
         }
         ok=ok && group->source.assets &&
             qa_q3_assets_services(group->source.assets,&group->services,&world,&collision,error);
@@ -184,7 +197,8 @@ static bool collect(qa_frontend *f,const frontend_q3_refs *refs,bool restoring,
         group->mounts=qa_application_content_view_id(refs->content,group->source.mounts);
         group->source_view=qa_application_content_view_id(refs->content,group->source.source_files);
         ok=group->mounts && group->source_view &&
-            (assets_only(group->kind)?group->mounts==group->source_view:
+            (assets_only(group->kind)?(group->kind==Q3_OWNER_GEAR?
+                qa_vfs_lookup_equal(group->source.mounts,group->source.source_files):group->mounts==group->source_view):
             (group->mounts!=group->source_view && group->binding.world==world && group->binding.geometry==collision &&
             (group->kind==Q3_OWNER_EFFECTS || qa_media_library_resource_owner(group->source.movies)==group->source.images))) &&
             qa_vfs_resources(group->source.mounts)==qa_vfs_resources(group->source.source_files) &&
@@ -232,11 +246,26 @@ static bool equal_count(qa_source_save_io *io,size_t expected)
 }
 static bool header(qa_source_save_io *io,const frontend_q3_inventory *inventory)
 {
-    uint8_t magic[4]={'Q','F','Q','3'}; uint32_t version=7;
+    uint8_t magic[4]={'Q','F','Q','3'}; uint32_t version=8;
     return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFQ3",4) &&
-        qa_source_save_u32(io,&version) && version==7 && equal_count(io,inventory->group_count) &&
+        qa_source_save_u32(io,&version) && version==8 && equal_count(io,inventory->group_count) &&
         equal_count(io,inventory->registry_count) && equal_count(io,inventory->presentation_count) &&
         equal_count(io,inventory->media_count);
+}
+static bool gear_namespace(qa_source_save_io *io,qa_application *application,qa_actor_owner *owner)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    qa_strings *strings=qa_session_strings(io->session);
+    char *text=!reading && *owner<=UINT32_MAX?(char *)qa_strings_cstr(strings,(qa_string_id)*owner):NULL;
+    if (!reading && (!text || !*text)) return false;
+    bool ok=frontend_save_text(io,&text);
+    if (reading) {
+        *owner=text?qa_strings_find(strings,(qa_bytes){(const uint8_t *)text,strlen(text)}):0;
+        free(text);
+    }
+    qa_application_equipment_content source;
+    return ok && *owner && qa_application_equipment_content_read(application,*owner,&source,io->error) &&
+        qa_application_equipment_content_current(application,&source);
 }
 static bool metadata(qa_source_save_io *io,frontend_q3_inventory *inventory,size_t ordinal)
 {
@@ -247,11 +276,13 @@ static bool metadata(qa_source_save_io *io,frontend_q3_inventory *inventory,size
     size_t assets=group->assets,presentation=group->presentation,media=group->media;
     bool ok=qa_source_save_u32(io,&kind) && kind==(uint32_t)group->kind &&
         qa_source_save_count(io,&row,SIZE_MAX) && row==group->ordinal &&
-        frontend_save_provider(io,inventory->frontend->application,&owner) && owner==group->source.owner;
+        (group->kind==Q3_OWNER_GEAR?gear_namespace(io,inventory->frontend->application,&owner):
+            frontend_save_provider(io,inventory->frontend->application,&owner)) && owner==group->source.owner;
     if (assets_only(group->kind)) return ok &&
         (group->kind!=Q3_OWNER_CHARACTER ||
             (qa_source_save_u32(io,&launch_seat) && launch_seat==group->source.launch_seat)) &&
         qa_source_save_u64(io,&mounts) && mounts==group->mounts &&
+        (group->kind!=Q3_OWNER_GEAR || (qa_source_save_u64(io,&source) && source==group->source_view)) &&
         qa_source_save_count(io,&assets,SIZE_MAX) && assets==group->assets;
     return ok &&
         qa_source_save_u32(io,&seat) && seat==group->source.seat &&
@@ -279,6 +310,22 @@ static bool resource_decode(void *context,uint64_t pool,uint64_t version,const q
     if (!out || !resource) return frontend_fail(error,QA_ERROR_FORMAT,"Saved Q3 resource is absent from the genuine restored content pool");
     *out=resource; return true;
 }
+static bool selected_view_encode(void *context,const qa_vfs *view,uint64_t *key,qa_error *error)
+{
+    q3_scope *scope=context;
+    uint64_t id=qa_application_content_view_id(scope->inventory->refs.content,view);
+    if (!key || !id) return frontend_fail(error,QA_ERROR_FORMAT,"Gear view is outside its actual content graph");
+    *key=id; return true;
+}
+static bool selected_view_decode(void *context,uint64_t key,qa_vfs **out,qa_error *error)
+{
+    q3_scope *scope=context;
+    const qa_vfs *view=qa_application_content_view(scope->inventory->refs.content,key);
+    if (!out || !view) return frontend_fail(error,QA_ERROR_FORMAT,"Saved gear view has no actual retained graph row");
+    *out=(qa_vfs *)view; return true;
+}
+static q3n_selected_media_refs selected_refs(q3_scope *scope)
+{ return (q3n_selected_media_refs){scope,selected_view_encode,selected_view_decode,resource_encode,resource_decode}; }
 static bool media_resources(qa_source_save_io *io,frontend_q3_inventory *inventory,q3_media *media)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
@@ -577,8 +624,10 @@ bool frontend_q3_checkpoint(qa_frontend *f,const frontend_q3_refs *refs,qa_buffe
     for (size_t i=0;ok && i<inventory->group_count;++i) if (private_owner(inventory->groups[i].kind)) {
         qa_buffer private={0};
         q3_group *group=inventory->groups+i;
+        q3_scope scope={inventory,i,NULL}; q3n_selected_media_refs selected=selected_refs(&scope);
         ok=(group->kind==Q3_OWNER_SELECTED?frontend_equipment_q3_checkpoint(f,group->ordinal,&private,error):
             group->kind==Q3_OWNER_CHARACTER?frontend_selected_character_checkpoint(f,group->ordinal,&private,error):
+            group->kind==Q3_OWNER_GEAR?frontend_equipment_gear_checkpoint(f,group->ordinal,&selected,&private,error):
             frontend_selected_effects_checkpoint(f,group->ordinal,&private,error)) && write_blob(&io,&private);
         qa_buffer_free(&private);
     }
@@ -654,7 +703,9 @@ bool frontend_q3_restore(frontend_q3_inventory *inventory,double wall_millisecon
         q3_group *group=inventory->groups+i;
         ok=qa_q3_assets_capture_begin(group->source.assets,error);
         if (ok) {
+            q3_scope scope={inventory,i,NULL}; q3n_selected_media_refs selected=selected_refs(&scope);
             ok=group->kind==Q3_OWNER_SELECTED?frontend_equipment_q3_restore(f,group->ordinal,group->selected,error):
+                group->kind==Q3_OWNER_GEAR?frontend_equipment_gear_restore(f,group->ordinal,&selected,group->selected,error):
                 frontend_selected_character_restore(f,group->ordinal,group->selected,error);
             qa_q3_assets_capture_end(group->source.assets);
         }

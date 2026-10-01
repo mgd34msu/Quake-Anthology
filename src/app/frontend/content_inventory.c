@@ -13,6 +13,7 @@
 #include "keys.h"
 #include "client_registry.h"
 #include "equipment_q3.h"
+#include "equipment_gear.h"
 #include "selected_character.h"
 #include "selected_effects.h"
 
@@ -92,6 +93,7 @@ bool frontend_content_visit(void *context, const qa_application *application,
         !frontend_equipment_q3_content_visit(frontend,visitor,error) ||
         !frontend_selected_character_content_visit(frontend,visitor,error) ||
         !frontend_selected_effects_content_visit(frontend,visitor,error) ||
+        !frontend_equipment_gear_content_visit(frontend,visitor,error) ||
         !frontend_client_registries_visit(frontend,visitor,error) ||
         !frontend_network_content_visit(frontend,application,visitor,error) ||
         !frontend_keys_visit(frontend->keys,visitor,error) ||

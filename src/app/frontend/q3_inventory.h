@@ -15,7 +15,9 @@ typedef struct frontend_q3_refs {
 } frontend_q3_refs;
 
 /* One record per genuine registry, presentation and media-library pointer,
- * with the actual physical source-group aliases. The frontend/content/root
+ * including distinct private gear registries over borrowed visual heaps.
+ * Gear namespaces and source views remain separate from selected providers.
+ * The actual physical aliases and frontend/content/root
  * capture leases remain held through this call and all resolver callbacks. */
 bool frontend_q3_checkpoint(qa_frontend *, const frontend_q3_refs *, qa_buffer *, qa_error *);
 /* Validate the entire envelope before importing source media-cache prefixes.
@@ -27,7 +29,10 @@ bool frontend_q3_prepare(qa_frontend *, const frontend_q3_refs *, qa_bytes,
     frontend_q3_inventory **, qa_error *);
 /* Actual QWON/QMON roots, materials, frame, collision, audio and map-resource
  * bindings precede late attachment. Registries adopt their unique scene/preview
- * roots once, then Q3PS/Q3MS import private continuation without source calls.
+ * roots once, then kind-specific private continuation imports under the actual
+ * registry capture lease. Gear topology requires the restored private runtime
+ * before dictionary import; QFGS follows its real asset and scene holders.
+ * Q3PS/Q3MS import private continuation without source calls.
  * Media header and opaque decoder reconstruction belong to their existing
  * qualified codecs; no registration or procedural renderer construction runs. */
 bool frontend_q3_restore(frontend_q3_inventory *, double wall_milliseconds, qa_error *);
