@@ -3,8 +3,12 @@
 
 static const char *const cvar_names[BOT_SOURCE_MATCH_CVARS] = {
     "bot_testsolid", "bot_testclusters", "bot_interbreedchar",
-    "bot_interbreedbots", "bot_interbreedcycle", "bot_interbreedwrite"
+    "bot_interbreedbots", "bot_interbreedcycle", "bot_interbreedwrite",
+    "bot_thinktime", "bot_memorydump", "bot_saveroutingcache", "bot_pause",
+    "bot_report", "bot_developer", "bot_rocketjump", "bot_grapple", "bot_fastchat",
+    "bot_nochat", "bot_testrchat", "bot_challenge", "bot_predictobstacles", "g_spSkill"
 };
+static void frame_controls(qa_bots *);
 
 static int32_t signed_word(uint32_t bits)
 {
@@ -74,6 +78,7 @@ bool bot_ai_source_match_setup(qa_bots *bots, qa_error *error)
     for (size_t index = 0; index < BOT_SOURCE_MATCH_CVARS; ++index)
         if (!bots->source_match.cvars[index].registered)
             return bot_ai_fail(error, "source bot match has no registered cached cvar");
+    frame_controls(bots);
     return true;
 }
 
@@ -94,6 +99,61 @@ static bool cvar_set(qa_bots *bots, const char *name, const char *value,
 {
     qa_cvars *registry = configuration(bots, error);
     return registry && qa_cvars_set(registry, name, value, true, error);
+}
+
+static void frame_controls(qa_bots *bots)
+{
+    const bot_source_match_cvar *cells = bots->source_match.cvars;
+    bots->controls = (qa_bot_controls){
+        .think_time_ms = cells[BOT_SOURCE_THINK_TIME].integer_value,
+        .paused = cells[BOT_SOURCE_PAUSE].integer_value != 0,
+        .challenge = cells[BOT_SOURCE_CHALLENGE].integer_value != 0,
+        .fast_chat = cells[BOT_SOURCE_FAST_CHAT].integer_value != 0,
+        .no_chat = cells[BOT_SOURCE_NO_CHAT].integer_value != 0,
+        .rocket_jump = cells[BOT_SOURCE_ROCKET_JUMP].integer_value != 0,
+        .grapple = cells[BOT_SOURCE_GRAPPLE].integer_value != 0,
+        .report = cells[BOT_SOURCE_REPORT].integer_value != 0
+    };
+}
+
+bool bot_ai_source_frame_cvars(qa_bots *bots, qa_error *error)
+{
+    static const size_t order[] = {
+        BOT_SOURCE_ROCKET_JUMP, BOT_SOURCE_GRAPPLE, BOT_SOURCE_FAST_CHAT,
+        BOT_SOURCE_NO_CHAT, BOT_SOURCE_TEST_RANDOM_CHAT, BOT_SOURCE_THINK_TIME,
+        BOT_SOURCE_MEMORY_DUMP, BOT_SOURCE_SAVE_ROUTING_CACHE, BOT_SOURCE_PAUSE,
+        BOT_SOURCE_REPORT
+    };
+    for (size_t index = 0; index < sizeof(order) / sizeof(*order); ++index)
+        if (!cvar_update(bots, order[index], error)) {frame_controls(bots);return false;}
+    frame_controls(bots);
+    return true;
+}
+
+bool bot_ai_source_frame_requests(qa_bots *bots, qa_error *error)
+{
+    static const size_t order[] = {BOT_SOURCE_MEMORY_DUMP, BOT_SOURCE_SAVE_ROUTING_CACHE};
+    for (size_t index = 0; index < sizeof(order) / sizeof(*order); ++index) {
+        size_t cell = order[index];
+        if (!bots->source_match.cvars[cell].integer_value) continue;
+        if (!qa_bot_library_variable_set(qa_bot_runtime_library(bots->runtime),
+            cvar_names[cell] + 4, "1", error) ||
+            !cvar_set(bots, cvar_names[cell], "0", error)) return false;
+    }
+    return true;
+}
+
+bool bot_ai_source_frame_limit_think(qa_bots *bots, qa_error *error)
+{
+    return bots->source_match.cvars[BOT_SOURCE_THINK_TIME].integer_value <= 200 ||
+        cvar_set(bots, "bot_thinktime", "200", error);
+}
+
+bool bot_ai_source_test_random_chat(qa_bots *bots,int32_t *out,qa_error *error)
+{
+    if(!cvar_update(bots,BOT_SOURCE_TEST_RANDOM_CHAT,error)) return false;
+    *out=bots->source_match.cvars[BOT_SOURCE_TEST_RANDOM_CHAT].integer_value;
+    return true;
 }
 
 static bot_ai_state *source_state(qa_bots *bots, uint32_t source_client)

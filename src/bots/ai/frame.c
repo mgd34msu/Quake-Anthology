@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_report.h"
 
 static int32_t signed_word(uint32_t bits) {
     int32_t value;
@@ -184,7 +185,8 @@ static bool retire_pending(qa_bots *b, qa_error *e) {
     return !first.code;
 }
 static bool frame(qa_bots *b, int32_t time, qa_error *e) {
-    if (b->services.controls && !b->services.controls(b->services.context, &b->controls, e)) return false;
+    if (!bot_ai_source_frame_cvars(b,e)) return false;
+    if (b->controls.report && !bot_ai_source_report(b,e)) return false;
     if (b->controls.paused) {
         for (uint32_t i = 0; i < 64; ++i) {
             bot_ai_state *s = b->source_clients[i]?b->clients[b->source_clients[i]-1]:NULL;
@@ -197,11 +199,9 @@ static bool frame(qa_bots *b, int32_t time, qa_error *e) {
         }
         return true;
     }
-    if(!bot_ai_source_interbreeding(b,e)) return false;
+    if(!bot_ai_source_frame_requests(b,e) || !bot_ai_source_interbreeding(b,e)) return false;
     int32_t period = b->controls.think_time_ms;
-    if(period<1) return bot_ai_fail(e,"bot think interval must advance time");
-    if (period > 200 && b->services.set_think_time &&
-        !b->services.set_think_time(b->services.context, 200, e)) return false;
+    if (!bot_ai_source_frame_limit_think(b,e)) return false;
     if (period != b->scheduled_think_ms) {
         b->scheduled_think_ms=period;if(!bot_ai_schedule(b,e)) return false;
     }

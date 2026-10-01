@@ -63,12 +63,13 @@ static bool source_setup_cvars(qa_bots *b,qa_error *e) {
     for(size_t i=0;i<sizeof(cvars)/sizeof(*cvars);++i)
         if(!b->services.register_cvar(b->services.context,cvars[i].name,cvars[i].value,cvars[i].flags,e) ||
            !bot_ai_source_match_register(b,cvars[i].name,e)) return false;
-    return bot_ai_source_match_setup(b,e);
+    return true;
 }
 static bool source_setup(qa_bots *b,qa_error *e) {
     if(!qa_bot_runtime_lease_begin(b->runtime,e)) return false;
     b->busy=true;
-    bool okay=source_setup_cvars(b,e) && bot_ai_source_goals_load(b,e);
+    bool okay=source_setup_cvars(b,e) && bot_ai_source_goals_load(b,e) &&
+        bot_ai_source_match_setup(b,e);
     b->busy=false;qa_bot_runtime_lease_end(b->runtime);return okay;
 }
 bool qa_bots_create(qa_bot_runtime *runtime, const qa_bot_services *services,
@@ -240,7 +241,7 @@ bool bot_ai_schedule(qa_bots *b,qa_error *e) {
     uint32_t ordinal = 0;
     for (uint32_t i = 0; i < 64; ++i) {
         uint32_t client=b->source_clients[i];if(!client) continue;
-        uint32_t bits = (uint32_t)b->controls.think_time_ms * ordinal++;
+        uint32_t bits = (uint32_t)b->source_match.cvars[BOT_SOURCE_THINK_TIME].integer_value * ordinal++;
         int32_t product;
         memcpy(&product, &bits, sizeof(product));
         b->clients[client-1]->residual_ms = (int32_t)((int64_t)product / b->count);

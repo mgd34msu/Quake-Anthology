@@ -6,9 +6,9 @@
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'P', 'O', 'P', 'U', 0};
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=8;
+    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=9;
     return qa_source_save_bytes(io,actual,sizeof(actual)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(actual,magic,sizeof(actual)) && version==8?true:
+        (!memcmp(actual,magic,sizeof(actual)) && version==9?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported native bot population continuation schema"));
 }
 #define FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
@@ -233,6 +233,8 @@ static bool topology(const qa_bots *bots, qa_error *error)
     if (bots->client_capacity > INT32_MAX || bots->count > bots->client_capacity ||
         (bots->client_capacity && !bots->clients) || (bots->actor_capacity && !bots->actor_clients) ||
         bots->actor_capacity > qa_actors_capacity(qa_session_actors(bots->services.shared.session))) goto invalid;
+    for (size_t i = 0; i < BOT_SOURCE_MATCH_CVARS; ++i)
+        if (!bots->source_match.cvars[i].registered) goto invalid;
     if(bots->shutdown_actor.registry && (!bots->shutting_down ||
        !bot_ai_actor(bots,bots->shutdown_actor) || !bot_ai_live(bots,bots->shutdown_actor))) goto invalid;
     bool waypoint_seen[BOT_SOURCE_WAYPOINTS]={0};

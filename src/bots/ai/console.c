@@ -47,35 +47,65 @@ bool bot_ai_console(qa_bots *b, bot_ai_state *s, qa_error *e) {
 bool bot_ai_messages(qa_bots *b,bot_ai_state *s,qa_error *e) {
     qa_bot_chat *chat=qa_bot_runtime_chat(b->runtime,s->chat);
     qa_bot_chat_system *system=qa_bot_runtime_chat_system(b->runtime);
-    qa_bot_console_message message;
+    qa_bot_console_message message;int32_t self;char bot_name[36];
+    if(!bot_ai_source_client(b,s,&self,e) ||
+       !bot_ai_client_name(b,self,bot_name,sizeof(bot_name),true,e)) return false;
     while(qa_bot_chat_console_first(chat,&message)) {
-        if(qa_bot_chat_console_count(chat)<10 && message.type==1 &&
-           message.time>b->time-(1+bot_ai_random(b))) break;
-        qa_bot_chat_match match;bool found;
-        if(!qa_bot_chat_find_match(system,message.text,128,&match,&found,e)) return false;
-        bool allowed=!b->controls.no_chat && !s->player.dead && !s->player.observer &&
-            !s->player.intermission && s->view.decision!=QA_BOT_STANDING;
-        if(b->services.modes && s->view.mode.generation) {
-            qa_mode_view mode;
-            if(!qa_modes_read(b->services.modes,s->view.mode,&mode,e)) return false;
-            allowed=allowed && (mode.rules.kind==QA_MODE_FFA || mode.rules.kind==QA_MODE_DUEL ||
-                               mode.rules.kind==QA_MODE_SINGLE_PLAYER);
+        if(qa_bot_chat_console_count(chat)<10 && message.type==1) {
+            float random;if(!bot_ai_random(b,&random,e)) return false;
+            volatile float delay=1+random,threshold=b->time-delay;
+            if(message.time>threshold) break;
         }
-        if(message.type==1 && found && !(match.subtype&32768) && allowed) {
+        qa_bot_chat_match match;bool found,matched;size_t offset=0;uint32_t synonym_context;
+        if(message.type==1) {
+            if(!qa_bot_chat_find_match(system,message.text,128,&match,&found,e)) return false;
+            if(found && match.variables[2].offset>=0) offset=(size_t)match.variables[2].offset;
+        }
+        if(offset>strlen(message.text)) return bot_ai_fail(e,"source reply message offset is outside its actual text");
+        if(!bot_ai_source_synonym_context(b,s,&synonym_context,e)) return false;
+        qa_bot_chat_unify_whitespace(message.text+offset);
+        if(!qa_bot_chat_replace_synonyms(system,message.text+offset,sizeof(message.text)-offset,
+                synonym_context,false,false,e) ||
+           !bot_ai_source_order_message(b,s,message.text,&matched,e)) return false;
+        if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
+        if(!matched && message.type==1 && !b->controls.no_chat) {
+            if(!qa_bot_chat_find_match(system,message.text,128,&match,&found,e)) return false;
+            if(!found || (match.subtype&32768)) {qa_bot_chat_console_remove(chat,message.handle);continue;}
             char name[36],body[256];
             if(!qa_bot_chat_match_variable(&match,0,name,sizeof(name),e) ||
                !qa_bot_chat_match_variable(&match,2,body,sizeof(body),e)) return false;
             qa_bot_chat_unify_whitespace(body);
-            if(!word(name,s->name)) {
+            int32_t sender;if(!bot_ai_source_client_from_name(b,name,&sender,e)) return false;
+            if(sender!=self) {
+                int32_t test;
+                if(!bot_ai_source_test_random_chat(b,&test,e)) return false;
+                const char *variables[8]={NULL,NULL,NULL,NULL,NULL,NULL,bot_name,name};
+                if(test) {
+                    bool reply;
+                    if(!qa_bot_library_variable_set(qa_bot_runtime_library(b->runtime),"bot_testrchat","1",e) ||
+                       !qa_bot_chat_reply_message(chat,body,synonym_context,16,variables,b->time,&reply,e) ||
+                       !bot_ai_source_print(b,reply?"------------------------\n":"**** no valid reply ****\n",e)) return false;
+                    qa_bot_chat_console_remove(chat,message.handle);continue;
+                }
+                bool allowed=false;
+                if(s->view.decision!=QA_BOT_STANDING &&
+                   !bot_ai_source_valid_chat_position(b,s,&allowed,e)) return false;
+                allowed=allowed && b->source_goals.game_type<3;
+                if(!allowed) {qa_bot_chat_console_remove(chat,message.handle);continue;}
                 float chance;
                 if(!bot_ai_character_float(b,s,BOT_C_CHAT_REPLY,0,1,&chance,e)) return false;
-                if(bot_ai_random(b)<1.5f/((float)b->count+1) && bot_ai_random(b)<chance) {
-                    const char *variables[8]={NULL,NULL,NULL,NULL,NULL,NULL,s->name,name};
+                float first,second;
+                if(!bot_ai_random(b,&first,e)) return false;
+                bool willing=first<1.5f/((float)b->count+1);
+                if(willing && !bot_ai_random(b,&second,e)) return false;
+                if(willing && second<chance) {
                     bool reply;
-                    if(!qa_bot_chat_reply_message(chat,body,1,16,variables,b->time,&reply,e)) return false;
+                    if(!qa_bot_chat_reply_message(chat,body,synonym_context,16,variables,b->time,&reply,e)) return false;
                     if(reply) {
+                        float duration;
+                        if(!bot_ai_source_chat_time(b,s,&duration,e)) return false;
                         qa_bot_chat_console_remove(chat,message.handle);
-                        s->chat_pending=true;s->stand_until=b->time+2;s->stand_enemy_time=0;
+                        s->stand_until=b->time+duration;s->stand_enemy_time=b->time+1;
                         s->view.decision=QA_BOT_STANDING;
                         return true;
                     }
