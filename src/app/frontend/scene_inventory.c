@@ -1,5 +1,6 @@
 #include "scene_inventory.h"
 #include "visual_restore.h"
+#include "equipment_media.h"
 #include "qa/q3_assets_save.h"
 #include "qa/scene_resource_save.h"
 #include "qa/material_library_save.h"
@@ -22,7 +23,8 @@ static bool model_add(sources *rows, frontend_model_source source, qa_error *err
     if (!source.model || !source.resource || !source.files)
         return frontend_fail(error,QA_ERROR_FORMAT,"Scene parsed holder has no actual source producer");
     for (size_t i=0;i<rows->model_count;++i) if (rows->models[i].model==source.model) {
-        return (rows->models[i].resource==source.resource && rows->models[i].files==source.files) ||
+        return (rows->models[i].resource==source.resource && rows->models[i].files==source.files &&
+            rows->models[i].parent==source.parent) ||
             frontend_fail(error,QA_ERROR_FORMAT,"Aliased scene parsed holder has conflicting actual provenance");
     }
     if (rows->model_count==SIZE_MAX/sizeof(*rows->models))
@@ -87,6 +89,14 @@ static bool producers(frontend_scene_inventory *inventory,sources *rows,qa_error
             if (!frontend_visual_model_read(f,i,j,&model) ||
                 !model_add(rows,(frontend_model_source){model.model,model.resource,owner.mounts},error)) return false;
         }
+    }
+    for (size_t i=0;i<frontend_equipment_media_count(f);++i) {
+        frontend_equipment_media_view media;
+        if (!frontend_equipment_media_at(f,i,&media) || !media.declaration || !media.held) return false;
+        if (media.declaration->none) continue;
+        if (!media.held_scene || !model_add(rows,(frontend_model_source){media.held->model,
+            media.held_parent.resource,media.owner.mounts,
+            media.held->model!=media.held_parent.model?media.held_parent.model:NULL},error)) return false;
     }
     for (size_t i=0;;++i) {
         const qa_q3_presentation_assets *assets=frontend_capture_assets_at(inventory->capture,i);

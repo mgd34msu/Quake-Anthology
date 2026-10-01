@@ -10,7 +10,8 @@ typedef struct model_holder {
     frontend_model_source source;
     qa_model owned;
     uint64_t pool, resource, view;
-    size_t references;
+    uint64_t parent;
+    size_t references, dependents;
 } model_holder;
 typedef struct animation_holder {
     frontend_animation_source source;
@@ -206,6 +207,75 @@ static bool model_shape(const qa_model *value)
     }
     return true;
 }
+static bool subset_aliases(const qa_model *a, const qa_model *b)
+{
+    if (!a || !b || a==b || a->format!=QA_MODEL_MDL || b->format!=QA_MODEL_MDL ||
+        a->mesh_count!=1 || b->mesh_count!=1 || !a->meshes || !b->meshes || a->meshes==b->meshes ||
+        memcmp(a->name,b->name,sizeof(a->name)) || a->flags!=b->flags || a->sync!=b->sync ||
+        a->orientation!=b->orientation || memcmp(&a->radius,&b->radius,sizeof(a->radius)) ||
+        memcmp(&a->size,&b->size,sizeof(a->size)) || memcmp(&a->beam_length,&b->beam_length,sizeof(a->beam_length)) ||
+        memcmp(a->scale,b->scale,sizeof(a->scale)) || memcmp(a->translation,b->translation,sizeof(a->translation)) ||
+        memcmp(a->eye_position,b->eye_position,sizeof(a->eye_position)) ||
+        a->skin_width!=b->skin_width || a->skin_height!=b->skin_height || a->declared_skin_count!=b->declared_skin_count ||
+        memcmp(&a->bounds,&b->bounds,sizeof(a->bounds)) ||
+        a->frame_count!=b->frame_count || a->frame_group_count!=b->frame_group_count ||
+        a->skin_count!=b->skin_count || a->skin_group_count!=b->skin_group_count ||
+        a->tag_count!=b->tag_count || a->sprite_count!=b->sprite_count || a->lod_count!=b->lod_count ||
+        a->bone_count!=b->bone_count || a->gl_command_count!=b->gl_command_count ||
+        a->frames!=b->frames || a->frame_groups!=b->frame_groups || a->skin_groups!=b->skin_groups ||
+        a->skins!=b->skins || a->tags!=b->tags || a->sprites!=b->sprites || a->lods!=b->lods ||
+        a->bones!=b->bones || a->bone_matrices!=b->bone_matrices || a->bind_pose!=b->bind_pose ||
+        a->gl_commands!=b->gl_commands || a->command_line.data!=b->command_line.data ||
+        a->command_line.size!=b->command_line.size || a->source.data!=b->source.data || a->source.size!=b->source.size)
+        return false;
+    const qa_model_mesh *x=a->meshes,*y=b->meshes;
+    return !memcmp(x->name,y->name,sizeof(x->name)) && x->flags==y->flags &&
+        x->vertex_count==y->vertex_count && x->texcoord_count==y->texcoord_count &&
+        x->frame_count==y->frame_count && x->shader_count==y->shader_count &&
+        x->weight_count==y->weight_count && x->bone_reference_count==y->bone_reference_count &&
+        x->vertices==y->vertices && x->texcoords==y->texcoords && x->shaders==y->shaders &&
+        x->weights==y->weights && x->vertex_weights==y->vertex_weights && x->bone_references==y->bone_references &&
+        x->triangles && x->triangles!=y->triangles && x->triangle_count && x->triangle_count<=y->triangle_count;
+}
+static bool subset_fields(qa_source_save_io *io, model_holder *holder, const model_holder *parent)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    const qa_model *base=parent->source.model;
+    const qa_model_mesh *source=base?base->meshes:NULL;
+    uint32_t count=reading?0:holder->source.model->meshes->triangle_count;
+    if (!base || base->format!=QA_MODEL_MDL || base->mesh_count!=1 || !source ||
+        !qa_source_save_u32(io,&count) || !count || count>source->triangle_count ||
+        (reading && (io->offset>io->input.size || count>(io->input.size-io->offset)/25))) return false;
+    if (reading) {
+        qa_model_mesh *owned=calloc(1,sizeof(*owned));
+        qa_model_triangle *triangles=calloc(count,sizeof(*triangles));
+        if (!owned || !triangles) {
+            free(owned); free(triangles);
+            return fail(io->error,QA_ERROR_MEMORY,"Retaining actual borrowed held-model subset");
+        }
+        holder->owned=*base; *owned=*source;
+        owned->triangles=triangles; owned->triangle_count=count;
+        holder->owned.meshes=owned;
+        holder->source.parent=base;
+    } else if (!subset_aliases(holder->source.model,base)) return false;
+    qa_model_triangle *triangles=reading?holder->owned.meshes->triangles:holder->source.model->meshes->triangles;
+    size_t source_at=0;
+    for (size_t i=0;i<count;++i) {
+        qa_model_triangle *triangle=triangles+i;
+        for (size_t j=0;j<3;++j)
+            if (!qa_source_save_u32(io,&triangle->vertex[j]) || triangle->vertex[j]>=source->vertex_count ||
+                !qa_source_save_u32(io,&triangle->texcoord[j]) || triangle->texcoord[j]>=source->texcoord_count) return false;
+        if (!qa_source_save_bool(io,&triangle->front)) return false;
+        bool found=false;
+        while (source_at<source->triangle_count) {
+            const qa_model_triangle *actual=source->triangles+source_at++;
+            if (actual->front==triangle->front && !memcmp(actual->vertex,triangle->vertex,sizeof(actual->vertex)) &&
+                !memcmp(actual->texcoord,triangle->texcoord,sizeof(actual->texcoord))) { found=true; break; }
+        }
+        if (!found) return false;
+    }
+    return true;
+}
 static bool model_fields(qa_source_save_io *io, qa_model *value, const qa_resource *resource)
 {
     uint32_t format = value->format;
@@ -312,7 +382,13 @@ static void dispose(frontend_model_inventory *inventory)
 {
     if (!inventory) return;
     for (size_t i = 0; inventory->models && i < inventory->model_count; ++i) {
-        if (inventory->owns_holders) qa_model_free(&inventory->models[i].owned);
+        if (inventory->owns_holders) {
+            model_holder *holder=&inventory->models[i];
+            if (holder->parent) {
+                if (holder->owned.meshes) free(holder->owned.meshes->triangles);
+                free(holder->owned.meshes);
+            } else qa_model_free(&holder->owned);
+        }
         qa_resource_release((qa_resource *)inventory->models[i].source.resource);
     }
     for (size_t i = 0; inventory->animations && i < inventory->animation_count; ++i) {
@@ -325,10 +401,18 @@ static void dispose(frontend_model_inventory *inventory)
 static void model_retire(frontend_model_inventory *inventory, size_t index)
 {
     model_holder *holder = &inventory->models[index];
-    if (!inventory->owns_holders || inventory->staging || holder->references || !holder->source.model) return;
-    qa_model_free(&holder->owned);
+    if (!inventory->owns_holders || inventory->staging || holder->references || holder->dependents || !holder->source.model) return;
+    uint64_t parent=holder->parent;
+    if (parent) {
+        if (holder->owned.meshes) free(holder->owned.meshes->triangles);
+        free(holder->owned.meshes); holder->owned=(qa_model){0};
+    } else qa_model_free(&holder->owned);
     qa_resource_release((qa_resource *)holder->source.resource);
     holder->source = (frontend_model_source){0};
+    if (parent) {
+        --inventory->models[parent-1].dependents;
+        model_retire(inventory,(size_t)parent-1);
+    }
 }
 static void animation_retire(frontend_model_inventory *inventory, size_t index)
 {
@@ -456,13 +540,21 @@ bool frontend_models_capture(qa_application_content_graph *graph,
         }
         for (size_t j = 0; j < inventory->model_count; ++j) if (inventory->models[j].source.model == source->model) {
             alias = true;
-            if (inventory->models[j].source.resource != source->resource || inventory->models[j].source.files != source->files)
+            if (inventory->models[j].source.resource != source->resource || inventory->models[j].source.files != source->files ||
+                inventory->models[j].source.parent!=source->parent)
                 ok = fail(error, QA_ERROR_FORMAT, "Aliased model holder has conflicting source provenance");
             break;
         }
         if (!ok || alias) continue;
         model_holder *holder = &inventory->models[inventory->model_count];
         ok = source_identity(graph, source->resource, source->files, &holder->pool, &holder->resource, &holder->view, error);
+        if (ok && source->parent) {
+            for (size_t j=0;j<inventory->model_count;++j)
+                if (inventory->models[j].source.model==source->parent) { holder->parent=j+1; break; }
+            if (!holder->parent || inventory->models[holder->parent-1].source.resource!=source->resource ||
+                inventory->models[holder->parent-1].source.files!=source->files || !subset_aliases(source->model,source->parent))
+                ok=fail(error,QA_ERROR_FORMAT,"Held subset lacks its actual prior parsed parent and shared allocations");
+        }
         if (ok) { holder->source = *source; qa_resource_retain((qa_resource *)source->resource); ++inventory->model_count; }
     }
     for (size_t i = 0; ok && i < animation_count; ++i) {
@@ -504,9 +596,9 @@ static bool digest_fields(qa_source_save_io *io, const qa_resource *resource)
 }
 static bool inventory_fields(qa_source_save_io *io, frontend_model_inventory *inventory)
 {
-    bool reading = io->direction == QA_SOURCE_SAVE_READ; uint8_t magic[4] = {'Q','F','M','I'}; uint32_t version = 1;
-    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFMI", 4) || !qa_source_save_u32(io, &version) || version != 1 ||
-        !qa_source_save_count(io, &inventory->model_count, reading ? io->input.size / 256 : SIZE_MAX / sizeof(model_holder)) ||
+    bool reading = io->direction == QA_SOURCE_SAVE_READ; uint8_t magic[4] = {'Q','F','M','I'}; uint32_t version = 2;
+    if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFMI", 4) || !qa_source_save_u32(io, &version) || version != 2 ||
+        !qa_source_save_count(io, &inventory->model_count, reading ? io->input.size / 64 : SIZE_MAX / sizeof(model_holder)) ||
         !qa_source_save_count(io, &inventory->animation_count, reading ? io->input.size / 64 : SIZE_MAX / sizeof(animation_holder)) ||
         inventory->model_count > SIZE_MAX / sizeof(model_holder) || inventory->animation_count > SIZE_MAX / sizeof(animation_holder)) return false;
     if (reading) {
@@ -525,9 +617,18 @@ static bool inventory_fields(qa_source_save_io *io, frontend_model_inventory *in
             qa_resource_retain((qa_resource *)resource);
             holder->source = (frontend_model_source){&holder->owned, resource, files};
         }
-        qa_model local = *holder->source.model;
-        if (!digest_fields(io, holder->source.resource) ||
-            !model_fields(io, reading ? &holder->owned : &local, holder->source.resource)) return false;
+        uint64_t parent_key=holder->parent;
+        if (!digest_fields(io, holder->source.resource) || !qa_source_save_u64(io,&parent_key) || parent_key>i) return false;
+        if (parent_key) {
+            model_holder *parent=&inventory->models[parent_key-1];
+            if (parent->pool!=holder->pool || parent->resource!=holder->resource || parent->view!=holder->view ||
+                parent->dependents==SIZE_MAX) return false;
+            if (reading) { holder->parent=parent_key; ++parent->dependents; }
+            if (!subset_fields(io,holder,parent)) return false;
+        } else {
+            qa_model local = *holder->source.model;
+            if (!model_fields(io, reading ? &holder->owned : &local, holder->source.resource)) return false;
+        }
     }
     for (size_t i = 0; i < inventory->animation_count; ++i) {
         animation_holder *holder = &inventory->animations[i];

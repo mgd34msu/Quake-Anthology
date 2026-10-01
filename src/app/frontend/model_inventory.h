@@ -10,6 +10,9 @@ typedef struct frontend_model_source {
     const qa_model *model;
     const qa_resource *resource;
     const qa_vfs *files;
+    /* Actual held subset borrows every parent allocation except its own mesh
+     * descriptor and triangles. NULL denotes a complete independent holder. */
+    const qa_model *parent;
 } frontend_model_source;
 typedef struct frontend_animation_source {
     const qa_model_animation *animation;
@@ -27,7 +30,8 @@ bool frontend_models_capture(qa_application_content_graph *,
     const frontend_model_source *, size_t, const frontend_animation_source *, size_t,
     frontend_model_inventory **, qa_error *);
 bool frontend_models_checkpoint(const frontend_model_inventory *, qa_buffer *, qa_error *);
-/* Decode owns all parsed arrays and copied source buffers. It runs no model
+/* Decode owns parsed arrays and source buffers, preserving actual subset
+ * aliases and their parent lifetime. It runs no model
  * parser, animation/scaling operation, acquisition, registration or callback.
  * Restored rows initially have construction holds. Actual cache and scene
  * consumers retain their holders before install drops those holds. The source
