@@ -14,9 +14,11 @@
 #include "qa/player_progress.h"
 #include "qa/q3_host.h"
 #include "qa/rankings.h"
+#include "qa/application_rankings.h"
 #include "qa/targets.h"
 
 typedef struct qa_application qa_application;
+struct qa_application_q3_round_services;
 
 typedef struct qa_application_map_request {
     qa_product_id geometry, presentation;
@@ -187,10 +189,13 @@ typedef struct qa_application_options {
     /* Borrowed backend context outlives the application; NULL retains the
      * documented unavailable service rather than selecting a new backend. */
     const qa_ranking_provider *ranking_provider;
+    const char *ranking_game_key;
+    qa_application_ranking_effect_fn ranking_effect;
     const qa_native_runner_config *native_runner;
     void *guest_context;
     qa_application_q3_services_fn q3_services;
     qa_application_q3_client_effect_fn q3_client_effect;
+    const struct qa_application_q3_round_services *q3_round_services;
     qa_application_native_q2_services_fn native_q2_services;
     qa_application_world_hook_fn world_change_ready;
     qa_application_world_hook_fn before_world_change;
@@ -225,6 +230,9 @@ bool qa_application_q1_paused(const qa_application *);
  * output work and before draining map/restart intents. Source simulation or
  * restart settlement steps do not publish this revision. */
 bool qa_application_complete_frame(qa_application *, qa_error *);
+/* Drain due source intents at the actual idle driver boundary, before any
+ * controls, source stepping, or presentation owners begin their next frame. */
+bool qa_application_prepare_frame(qa_application *, qa_error *);
 
 /* All returned owners are borrowed. The application is the only mutable
  * lifecycle owner; subsystem adapters use these to bind typed services. */
@@ -312,13 +320,24 @@ bool qa_application_q2_visual_read(const qa_application *, qa_actor_id,
 
 /* Admit an already-live actor with a shared body and combat record. Admission
  * derives its selected movement profile and is idempotent for the same actor
- * generation. Commands execute synchronously through that selected profile;
- * callbacks may retire the actor. A callback failure after movement starts
- * faults the application because committed effects are never replayed. */
+ * generation. Commands submitted outside a source turn are retained for its
+ * actual admitted frame. A guest's nested locomotion command executes in its
+ * active source turn. Callbacks may retire the actor; a failure after movement
+ * starts faults the application because committed effects are never replayed. */
 bool qa_application_control_admit(qa_application *, qa_actor_id,
                                   qa_vec3 view_angles, qa_error *);
 bool qa_application_control_move(qa_application *, qa_actor_id,
                                  const qa_movement_command *, qa_error *);
+/* A QuakeWorld packet's commands retain one packet sequence and their source
+ * order. The next packet must advance that sequence. */
+bool qa_application_control_commands(qa_application *, qa_actor_id,
+    const qa_movement_command *, size_t count, qa_error *);
+bool qa_application_control_qw_commands(qa_application *, qa_actor_id,
+    const qa_movement_command *, size_t count, qa_error *);
+/* Preserve the received Q3 words independently of the transport sequence and
+ * the actor's selected movement profile. */
+bool qa_application_control_q3_command(qa_application *, qa_actor_id,
+    uint64_t transport_sequence, const qa_q3_usercmd *, qa_error *);
 bool qa_application_control_read(const qa_application *, qa_actor_id,
                                  qa_application_control_view *);
 bool qa_application_control_camera(const qa_application *, qa_actor_id,
@@ -344,6 +363,7 @@ size_t qa_application_q2_player_event_count(const qa_application *);
 bool qa_application_q2_player_event_at(const qa_application *, size_t,
                                        qa_application_q2_player_event *);
 size_t qa_application_protocol_event_count(const qa_application *);
+uint64_t qa_application_protocol_events_generation(const qa_application *);
 bool qa_application_protocol_event_at(const qa_application *, size_t,
                                       qa_application_protocol_event *);
 bool qa_application_clear_events(qa_application *, qa_error *);

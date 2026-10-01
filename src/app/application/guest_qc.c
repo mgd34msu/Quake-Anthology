@@ -1084,6 +1084,13 @@ bool application_construct_qc(qa_application *app, application_provider *provide
         size_t qw_count = profile ? 1 : sizeof(qw_names) / sizeof(*qw_names);
         for (size_t i = 0; i < qw_count; ++i)
             if (!qa_cvars_register(engine->cvars, qw_names[i], qw_values[i], 0, provider->owner, NULL, error)) return false;
+        static const char *const policy_names[] = {
+            "password", "spectator_password", "sv_highchars", "maxspectators"
+        };
+        static const char *const policy_values[] = {"", "", "1", "8"};
+        for (size_t i = 0; i < sizeof(policy_names) / sizeof(*policy_names); ++i)
+            if (!qa_cvars_register(engine->cvars, policy_names[i], policy_values[i],
+                    i == 3 ? QA_CVAR_SERVERINFO : 0, provider->owner, NULL, error)) return false;
     }
     if (!qa_cvars_set_number(engine->cvars, "skill", (float)choices->world.skill, error)) return false;
     bool deathmatch = false;

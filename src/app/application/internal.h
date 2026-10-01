@@ -46,6 +46,11 @@ typedef enum application_provider_kind {
 
 typedef struct application_provider {
     struct application_native_q3_console *native_q3_console;
+    struct application_native_q3_settings *native_q3_settings;
+    struct application_native_q3_ipfilters *native_q3_ipfilters;
+    struct application_native_q3_wire *native_q3_wire;
+    struct application_native_q3_votes *native_q3_votes;
+    struct application_native_q3_team_status *native_q3_team_status;
     struct qa_application *application;
     application_provider_kind kind;
     const qa_launch_instance *launch;
@@ -186,6 +191,10 @@ struct qa_application {
     void *guest_context;
     qa_application_q3_services_fn q3_services;
     qa_application_q3_client_effect_fn q3_client_effect;
+    const struct qa_application_q3_round_services *q3_round_services;
+    qa_application_ranking_effect_fn ranking_effect;
+    char *ranking_game_key;
+    struct application_rankings *ranked_source;
     qa_application_native_q2_services_fn native_q2_services;
     qa_application_world_hook_fn world_change_ready;
     qa_application_world_hook_fn before_world_change;
@@ -195,6 +204,9 @@ struct qa_application {
     struct application_player_roster *players;
     struct application_bots *bots;
     struct application_match_intents *match_intents;
+    struct application_q3_world_restart *q3_world_restart;
+    bool frame_preparing;
+    bool source_shutdown_admitted;
     struct application_q1_signon *q1_signon;
     struct application_portals *portals;
     bool map_force_reload;
@@ -236,6 +248,7 @@ struct qa_application {
     size_t q2_player_event_count, q2_player_event_capacity;
     qa_application_protocol_event *protocol_events;
     size_t protocol_event_count, protocol_event_capacity;
+    uint64_t protocol_events_generation;
     qa_arena event_arena;
     application_motion_record *motion;
     uint32_t motion_capacity;
@@ -260,6 +273,7 @@ struct qa_application {
     qa_product_id map_geometry, map_presentation;
     bool map_view_ready;
     bool q1_paused;
+    bool q3_round_active;
     application_operation operation;
     qa_application_state state;
     bool discover_mods;
@@ -275,6 +289,8 @@ bool application_actor_released(void *, qa_session *, qa_actor_record,
                                 qa_error *);
 qa_combat_hooks application_combat_hooks(qa_application *);
 bool application_force_death(void *, const qa_damage_request *, qa_error *);
+bool application_source_force_death(qa_application *, const qa_damage_request *,
+    int32_t final_health, qa_error *);
 bool application_native_cheats_enabled(void *);
 bool application_native_console_motion(void *, qa_actor_id, bool, qa_error *);
 bool application_native_q3_console_print(void *, const char *, qa_error *);
@@ -328,11 +344,18 @@ bool application_bots_publish(qa_application *, const qa_launch_choices *,
                                const qa_bsp_view *, const qa_entities *, qa_error *);
 bool application_bots_prepare(qa_application *, const qa_launch_choices *,
                                const qa_bsp_view *, const qa_entities *, qa_error *);
+bool application_bots_native_q3_initialize(application_provider *, qa_error *);
+bool application_bots_native_q3_connect(application_provider *, qa_actor_id,
+    bool restart, bool *accepted, qa_error *);
+bool application_native_q3_match_bots_end(application_provider *, qa_error *);
+bool application_bots_test_aas(application_provider *, qa_vec3, qa_error *);
 qa_bot_runtime *application_bots_runtime(qa_application *);
-bool application_bots_frame(qa_application *, qa_error *);
+bool application_bots_frame_at(qa_application *, const qa_source_frame *, size_t,
+                                uint64_t host_ns, qa_error *);
 bool application_bots_actor_released(qa_application *, qa_actor_record, qa_error *);
 bool application_bots_destroy(qa_application *, qa_error *);
 bool application_bots_can_destroy(const qa_application *);
+bool application_native_q3_mode_frame_owned(qa_application *, qa_mode_id);
 bool application_emit_q2_player(application_provider *, const qa_q2_player_event *, qa_error *);
 bool application_emit_protocol(application_provider *, const qa_application_protocol_event *, qa_error *);
 bool application_map_server_command(application_provider *, qa_string_id, qa_error *);

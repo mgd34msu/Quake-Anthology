@@ -16,7 +16,7 @@ static bool valid_string(const qa_application *application, qa_string_id id)
 static bool valid_event(const qa_application *application,
                         const qa_builtin_event *event, qa_error *error)
 {
-    if (event == NULL || (unsigned)event->kind > QA_BUILTIN_EFFECT ||
+    if (event == NULL || (unsigned)event->kind > QA_BUILTIN_LOG ||
         (unsigned)event->family > QA_GAME_Q3 ||
         (event->argument_count != 0 && event->arguments == NULL) ||
         event->argument_count > SIZE_MAX / sizeof(*event->arguments) ||
@@ -27,6 +27,13 @@ static bool valid_event(const qa_application *application,
         !isfinite(event->attenuation) || !isfinite(event->value))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "gameplay emitted an invalid event");
+    if (event->kind == QA_BUILTIN_LOG &&
+        (event->family != QA_GAME_Q3 || !event->provider ||
+         event->text == QA_STRING_NONE || event->argument_count ||
+         !qa_actor_id_equal(event->actor, (qa_actor_id){0}) ||
+         !qa_actor_id_equal(event->other, (qa_actor_id){0})))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Q3 source log requires provider-owned text");
     for (size_t index = 0; index < event->argument_count; ++index) {
         const qa_builtin_message_arg *argument = &event->arguments[index];
         if ((argument->kind == QA_BUILTIN_MESSAGE_STRING &&
@@ -503,6 +510,11 @@ size_t qa_application_protocol_event_count(const qa_application *application)
     return application ? application->protocol_event_count : 0;
 }
 
+uint64_t qa_application_protocol_events_generation(const qa_application *application)
+{
+    return application ? application->protocol_events_generation : 0;
+}
+
 bool qa_application_protocol_event_at(const qa_application *application, size_t index,
                                       qa_application_protocol_event *out)
 {
@@ -561,9 +573,15 @@ bool qa_application_q3_map_event_at(const qa_application *application,
 bool qa_application_clear_events(qa_application *application, qa_error *error)
 {
     if (application == NULL || application->operation != APPLICATION_IDLE ||
-        application->destroy_requested)
+        application->destroy_requested || application->finalizing ||
+        application->q3_round_active || application->frame_preparing ||
+        application->publication_started)
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "event consumption requires an idle application");
+    if (application->protocol_events_generation == UINT64_MAX)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "protocol event generation is exhausted");
+    ++application->protocol_events_generation;
     application->event_count = 0;
     application->q2_map_event_count = 0;
     application->q3_map_event_count = 0;
