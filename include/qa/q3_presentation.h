@@ -208,6 +208,15 @@ bool qa_q3_presentation_selected_body_pass(qa_q3_presentation *,
 bool qa_q3_presentation_body_material_equal(qa_q3_presentation *,
     const qa_q3_presentation_assets *source_assets, const qa_q3_ref_entity *,
     const qa_q3_ref_entity *, bool *, qa_error *);
+/* Captured selected output uses its own model/shader namespace and actual
+ * source material clock during the primary submit_view lease. Lights must be
+ * added before RenderScene. Default model zero retains selected materials. */
+bool qa_q3_presentation_selected_effect(qa_q3_presentation *,
+    const qa_q3_presentation_assets *, const qa_q3_ref_entity *,
+    int32_t source_time_ms, const qa_q3_scene_options *, uint32_t order, qa_scene_frame *, qa_error *);
+bool qa_q3_presentation_selected_poly(qa_q3_presentation *,
+    const qa_q3_presentation_assets *, int32_t shader, const qa_scene_vertex *, size_t,
+    int32_t source_time_ms, const qa_q3_scene_options *, qa_scene_frame *, qa_error *);
 void qa_q3_presentation_color(qa_q3_presentation *, const qa_scene_vec4 *);
 bool qa_q3_presentation_picture(qa_q3_presentation *, int32_t shader, qa_scene_rect_f,
                                 qa_scene_vec4 uv, qa_error *);

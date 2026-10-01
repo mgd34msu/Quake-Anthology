@@ -54,6 +54,9 @@ typedef struct frontend_remote_prediction_options {
      * not own it; source item respawn/entity effects can change it separately. */
     bool (*item_misc_time)(void *, const frontend_remote_prediction_source *,
         const qa_q3_prediction_scene_entity_view *, int32_t *, qa_error *);
+    /* Active prediction clamps the actual CLIENT registry after interpolation
+     * and history guards. Its already captured frame scalar remains in use. */
+    bool (*set_pmove_msec)(void *, const frontend_remote_prediction_source *, int32_t, qa_error *);
     bool (*warning)(void *, const frontend_remote_prediction_source *, const char *, qa_error *);
 } frontend_remote_prediction_options;
 typedef enum frontend_remote_prediction_status {

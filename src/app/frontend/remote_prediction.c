@@ -688,7 +688,7 @@ static bool touch_triggers(frontend_remote_prediction *owner, const frontend_rem
 }
 static bool step(frontend_remote_prediction *owner, const frontend_remote_prediction_source *source,
     prediction_player *player, prediction_command *entry, const prediction_command *selected,
-    bool first, qa_vec3 *pml, uint32_t trace_mask, qa_error *error)
+    bool first, qa_vec3 *pml, uint32_t trace_mask, int32_t captured_pmove_msec, qa_error *error)
 {
     qa_movement_input input = source->configuration.input;
     input.state = player->view.movement;
@@ -697,15 +697,17 @@ static bool step(frontend_remote_prediction *owner, const frontend_remote_predic
     input.current_bounds = player->view.bounds; input.has_current_bounds = true;
     input.prediction = true;
     if (input.state.kind == QA_MOVEMENT_Q3) {
-        input.profile.data.q3.fixed_ms = source->settings.pmove_fixed ? (uint32_t)source->settings.pmove_msec : 0;
+        if (source->settings.pmove_fixed && captured_pmove_msec < 1)
+            return fail(error, QA_ERROR_ARGUMENT, "Prediction captured a nonpositive fixed movement subdivision");
+        input.profile.data.q3.fixed_ms = source->settings.pmove_fixed ? (uint32_t)captured_pmove_msec : 0;
         input.profile.data.q3.no_footsteps = (source->settings.dm_flags & 32) != 0;
         input.trace_policy.contents_mask = trace_mask;
         input.trace_policy.curves = input.trace_policy.player_curve_clip = true;
         input.has_trace_policy = true;
         if (source->settings.pmove_fixed) {
-            int32_t rounded = add_word(entry->source_time, source->settings.pmove_msec - 1);
-            int32_t quotient = rounded / source->settings.pmove_msec;
-            input.command.server_time_ms = signed_word((uint32_t)quotient * (uint32_t)source->settings.pmove_msec);
+            int32_t rounded = add_word(entry->source_time, captured_pmove_msec - 1);
+            int32_t quotient = rounded / captured_pmove_msec;
+            input.command.server_time_ms = signed_word((uint32_t)quotient * (uint32_t)captured_pmove_msec);
         }
     }
     input.view_offset = player->view.view_offset;
@@ -769,7 +771,6 @@ static bool source_valid(frontend_remote_prediction *owner,
         (!configuration->q3_character || configuration->native_q3_character) &&
         (!configuration->q3_arsenal || configuration->native_q3_arsenal) &&
         source->geometry && qa_collision_map_identity(source->geometry) && selected && source->scene.snapshot &&
-        source->settings.pmove_msec >= 8 && source->settings.pmove_msec <= 33 &&
         isfinite(source->settings.error_decay_value) &&
         (!source->settings.error_decay_integer || source->settings.error_decay_value != 0) &&
         (selected == source->scene.snapshot || selected == source->scene.next_snapshot) &&
@@ -841,6 +842,21 @@ static bool warning(frontend_remote_prediction *owner, const frontend_remote_pre
         (owner->options.source_current(owner->options.context, source) ||
             fail(error, QA_ERROR_NOT_FOUND, "Prediction diagnostic retired its genuine source owner"));
 }
+static bool clamp_pmove_msec(frontend_remote_prediction *owner,
+    frontend_remote_prediction_source *source, qa_error *error)
+{
+    int32_t value = source->settings.pmove_msec;
+    int32_t clamped = value < 8 ? 8 : value > 33 ? 33 : value;
+    if (clamped == value) return true;
+    if (!owner->options.source_current(owner->options.context, source))
+        return fail(error, QA_ERROR_NOT_FOUND, "Prediction movement clamp lost its actual CLIENT registry");
+    if (!owner->options.set_pmove_msec(owner->options.context, source, clamped, error)) return false;
+    /* The real registry now contains the clamp. The caller retains the prior
+     * frame scalar, just as CGAME's settings/vmCvar snapshot does. */
+    source->settings.pmove_msec = clamped;
+    return owner->options.source_current(owner->options.context, source) ||
+        fail(error, QA_ERROR_NOT_FOUND, "Prediction movement clamp changed its source receipt");
+}
 bool frontend_remote_prediction_create(const frontend_remote_prediction_options *options,
     frontend_remote_prediction **out, qa_error *error)
 {
@@ -849,7 +865,7 @@ bool frontend_remote_prediction_create(const frontend_remote_prediction_options 
     if (!options || !options->session || !options->configuration_current || !options->source_read || !options->source_current ||
         !options->trace || !options->point_contents || !options->is_bsp || !options->adjust_mover ||
         !options->trigger_count || !options->trigger_at || !options->trigger_overlap || !options->item_position || !options->item_misc_time ||
-        !options->warning ||
+        !options->set_pmove_msec || !options->warning ||
         !options->actor_at || !options->number_of || !out || *out ||
         !options->initial_configuration.movement || !options->initial_configuration.character ||
         !options->initial_configuration.arsenal || options->initial_configuration.input.q2r_pml_origin ||
@@ -1030,6 +1046,8 @@ bool frontend_remote_prediction_replay(frontend_remote_prediction *owner,
             next.predicted.view.status = FRONTEND_REMOTE_PREDICTION_HISTORY_EXHAUSTED;
         } else {
             bool moved = false;
+            int32_t captured_pmove_msec = source.settings.pmove_msec;
+            ok = clamp_pmove_msec(owner, &source, error);
             int32_t latest_time = next.count ? next.commands[next.count - 1].source_time : 0;
             int32_t last_time = 0;
             for (size_t i = 0; ok && i < next.count; ++i) {
@@ -1070,7 +1088,8 @@ bool frontend_remote_prediction_replay(frontend_remote_prediction *owner,
                     }
                 }
                 if (!ok) break;
-                ok = step(owner, &source, &next.predicted, entry, selected, !moved, &next.q2r_pml_origin, trace_mask, error);
+                ok = step(owner, &source, &next.predicted, entry, selected, !moved, &next.q2r_pml_origin,
+                    trace_mask, captured_pmove_msec, error);
                 if (ok) ok = touch_triggers(owner, &source, &next, error);
                 if (ok) { entry->continuation = next.predicted; entry->has_continuation = true; moved = true; }
                 if (ok && state->kind == QA_MOVEMENT_Q3 && source.settings.pmove_fixed)
@@ -1379,7 +1398,7 @@ bool frontend_remote_prediction_restore_new(const frontend_remote_prediction_opt
         !bindings->source_current || !bindings->actor_at || !bindings->number_of || !bindings->trace ||
         !bindings->point_contents || !bindings->is_bsp || !bindings->adjust_mover || !bindings->trigger_count ||
         !bindings->trigger_at || !bindings->trigger_overlap || !bindings->item_position || !bindings->item_misc_time ||
-        !bindings->warning || !out || *out)
+        !bindings->set_pmove_msec || !bindings->warning || !out || *out)
         return fail(error, QA_ERROR_ARGUMENT, "Prediction restore needs actual candidate bindings and an empty holder");
     prediction_state state = {0}; prediction_player initial = {0};
     qa_application_control_prediction_configuration configuration = {0};

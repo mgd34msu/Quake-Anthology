@@ -248,7 +248,7 @@ static void repair_frames(const qa_scene_model *model, qa_scene_model_input *inp
 }
 
 static bool select_image(qa_scene_model *model, const qa_scene_model_input *input, uint32_t index,
-                          scene_model_image **out, qa_error *error) {
+                          scene_model_image *external, scene_model_image **out, qa_error *error) {
     const qa_model_mesh *mesh = &model->source->meshes[index];
     *out = NULL;
     bool custom_allowed = model->source->format != QA_MODEL_MDL;
@@ -261,8 +261,14 @@ static bool select_image(qa_scene_model *model, const qa_scene_model_input *inpu
         if (model->source->format == QA_MODEL_MD5) { snprintf(generated, sizeof(generated), "mesh%u", index); name = generated; }
         else if (model->source->format == QA_MODEL_MD2 || model->source->format == QA_MODEL_MDL) name = "alias";
         for (size_t i = 0; i < input->custom_skin->count; ++i)
-            if (!strcmp(input->custom_skin->mappings[i].surface, name))
+            if (!strcmp(input->custom_skin->mappings[i].surface, name)) {
+                if (input->material_library) {
+                    if (!scene_model_external_material(model, input->material_library,
+                        input->custom_skin->mappings[i].shader, &external->material, error)) return false;
+                    *out = external; return true;
+                }
                 return scene_model_external(model, input->custom_skin->mappings[i].shader, out, error);
+            }
         return true;
     }
     const qa_model *skin_source = input->replacement ? input->replacement->source : model->source;
@@ -278,6 +284,13 @@ static bool select_image(qa_scene_model *model, const qa_scene_model_input *inpu
     } else if (mesh->shader_count) {
         uint32_t skin = model->source->format == QA_MODEL_MD3 ? input->skin % mesh->shader_count :
             input->skin < mesh->shader_count ? input->skin : 0;
+        if (input->material_library) {
+            scene_model_image *registered = model->meshes[index].shaders[skin];
+            if (!registered) return true;
+            if (!scene_model_external_material(model, input->material_library,
+                registered->name, &external->material, error)) return false;
+            *out = external; return true;
+        }
         *out = model->meshes[index].shaders[skin];
     }
     return true;
@@ -511,6 +524,7 @@ static bool submit_attachments(qa_scene_model *model, const qa_scene_model_input
         qa_model_transform_direction(&world_tag, delta, moved);
         child.previous_origin = qa_vec_add(model_origin(&child), model_vec(moved));
         child.view = input->view; child.seconds = input->seconds;
+        child.milliseconds = input->milliseconds; child.has_milliseconds = input->has_milliseconds;
         child.ambient = input->ambient; child.directed = input->directed; child.light_direction = input->light_direction;
         child.shadow_only = input->shadow_only;
         if (!model_submit(attachment->model, &child, frame, depth + 1, error)) return false;
@@ -528,6 +542,7 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
         (input.render_text_count && !input.render_texts) ||
         (input.shadow_light_count && !input.shadow_lights) ||
         (input.custom_skin && input.custom_skin->count && !input.custom_skin->mappings) ||
+        (input.material_library && model->options.family != QA_SCENE_Q3) ||
         !qa_vec_finite(input.previous_origin) || !qa_vec_finite(input.ambient) ||
         !qa_vec_finite(input.directed) || !qa_vec_finite(input.light_direction) ||
         input.alias_lighting < QA_ALIAS_CONTENT_LIGHTING || input.alias_lighting > QA_ALIAS_PREPARED_LIGHT ||
@@ -593,7 +608,9 @@ static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input 
         for (uint32_t i = first; i < first + count; ++i) {
             qa_scene_mesh mesh;
             scene_model_image *image;
-            if (!mesh_geometry(model, &input, i, frame, &mesh, error) || !select_image(model, &input, i, &image, error)) return false;
+            scene_model_image external = {0};
+            if (!mesh_geometry(model, &input, i, frame, &mesh, error) ||
+                !select_image(model, &input, i, &external, &image, error)) return false;
             bool weapon = input.family == QA_SCENE_Q2 && (input.view_model || (input.flags & 4));
             if (!input.no_cull && !input.shadow_only && !weapon && mesh.vertex_count) {
                 qa_model_bounds local = cull_bounds(model, original, &mesh), world;

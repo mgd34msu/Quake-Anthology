@@ -433,10 +433,16 @@ struct qa_scene_model_input {
     uint32_t frame, old_frame, skin, flags, entity, lod;
     float back_lerp, radius, rotation, shadow_plane, identity_light;
     double seconds, sync_base;
+    /* Optional exact source clock for material evaluation. */
+    int64_t milliseconds;
+    bool has_milliseconds;
     const qa_model_pose *pose;
     size_t pose_count;
     const qa_material *custom_material;
     const qa_model_skin_map *custom_skin;
+    /* Borrowed registration owner for Q3 surface, default and shadow materials.
+     * Geometry may belong to another content owner. No library is retained. */
+    qa_material_library *material_library;
     qa_scene_fog fog;
     const char *source_path;
     const qa_model_replacement *replacement;

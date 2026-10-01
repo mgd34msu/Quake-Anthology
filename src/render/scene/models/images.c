@@ -56,6 +56,15 @@ static scene_model_image *image_entry(qa_scene_model *model, const char *name, q
     return entry;
 }
 
+bool scene_model_external_material(qa_scene_model *model, qa_material_library *materials,
+    const char *name, const qa_material **out, qa_error *error) {
+    char *path = image_path(name, error);
+    if (!path) return false;
+    bool ok = qa_material_register(materials, path, &model->options, false, out, error);
+    free(path);
+    return ok;
+}
+
 bool scene_model_external(qa_scene_model *model, const char *name, scene_model_image **out,
                            qa_error *error) {
     char *path = image_path(name, error);

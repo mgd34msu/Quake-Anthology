@@ -67,6 +67,8 @@ static inline void model_bounds_add(qa_bounds *b, qa_vec3 p) {
 }
 
 bool scene_model_external(qa_scene_model *, const char *, scene_model_image **, qa_error *);
+bool scene_model_external_material(qa_scene_model *, qa_material_library *, const char *,
+                                   const qa_material **, qa_error *);
 bool scene_model_indexed(qa_scene_model *, const char *, qa_bytes, uint32_t, uint32_t,
                          bool sprite, scene_model_image **, qa_error *);
 void scene_model_images_destroy(qa_scene_model *);

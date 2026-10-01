@@ -32,7 +32,8 @@ static qa_material_context material_context(const qa_scene_model_input *input, b
     context.identity_light = input->identity_light;
     context.seconds = input->seconds;
     double milliseconds = input->seconds * 1000;
-    context.milliseconds = milliseconds <= (double)INT64_MIN ? INT64_MIN :
+    context.milliseconds = input->has_milliseconds ? input->milliseconds :
+        milliseconds <= (double)INT64_MIN ? INT64_MIN :
         milliseconds >= (double)INT64_MAX ? INT64_MAX : (int64_t)milliseconds;
     context.time_offset = input->shader_time;
     context.entity_texcoord = input->shader_texcoord;
@@ -77,14 +78,15 @@ static bool q3_model_shadow(qa_scene_model *model, const qa_scene_model_input *i
     if (effective->sort != 3) return true;
     size_t first = frame->command_count;
     const qa_material *shadow = NULL;
+    qa_material_library *materials = input->material_library ? input->material_library : model->materials;
     if (input->shadow_mode == 2) {
-        shadow = qa_material_find(model->materials, "<stencil shadow>");
+        shadow = qa_material_find(materials, "<stencil shadow>");
         if (!shadow) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model library has no canonical stencil shadow material"); return false; }
         if (!qa_scene_stencil_shadow(frame, &input->view, mesh, context->model,
                                       input->light_direction, qa_scene_white(model->resources), error)) return false;
     } else {
         if (!(input->flags & 256u)) return true;
-        if (!qa_material_register_kind(model->materials, "projectionShadow", &model->options,
+        if (!qa_material_register_kind(materials, "projectionShadow", &model->options,
                                          QA_MATERIAL_DYNAMIC, &shadow, error)) return false;
         context->projection_shadow = true;
         if (!qa_material_submit(shadow, mesh, context, frame, error)) return false;
@@ -200,7 +202,7 @@ bool scene_model_emit(qa_scene_model *model, const qa_scene_model_input *input,
     if (shell_image) material = NULL;
     if (!material && input->family == QA_SCENE_Q3 && !shell_image &&
         format != QA_MODEL_MDL && format != QA_MODEL_SPR) {
-        material = qa_material_find(model->materials, "*default");
+        material = qa_material_find(input->material_library ? input->material_library : model->materials, "*default");
         if (!material) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "model library has no canonical default material"); return false; }
     }
     if (material) {
