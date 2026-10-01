@@ -196,6 +196,8 @@ static bool cvar_apply(cvar_access access,const qa_cvars_edit_command *command,q
     case QA_CVARS_EDIT_APPLY_LATCHED: return qa_cvars_apply_latched(access.registry,command->name,error);
     case QA_CVARS_EDIT_RESET: return qa_cvars_reset(access.registry,command->name,command->force,error);
     case QA_CVARS_EDIT_RESTART: return qa_cvars_restart(access.registry,error);
+    case QA_CVARS_EDIT_SET_NUMBER: return qa_cvars_set_number(access.registry,command->name,command->number,error);
+    case QA_CVARS_EDIT_RETAIN_SHARED: return qa_cvars_retain_shared(access.registry,command->name,error);
     }
     return qac_fail(error,QA_ERROR_ARGUMENT,"unknown routed cvar operation");
 }
@@ -209,6 +211,29 @@ bool qa_console_cvar_read(qa_console *console,const qa_command_context *context,
     cvar_access access;
     if (!cvar_access_read(console,context,cvar_owner(console,context,name),&access,error)) return false;
     *out=cvar_find(access,name); return true;
+}
+bool qa_console_cvar_context(qa_console *console,const qa_command_context *source,
+    qa_command_context *out,qa_error *error)
+{
+    if (!console || !source || !out)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"cvar context requires its actual console and constructor context");
+    qa_command_context captured=*source;
+    if (console->options.capture_context &&
+        !console->options.capture_context(console->options.user,&captured,&captured,error)) return false;
+    if (!valid_context(console,&captured,error)) return false;
+    *out=captured; return true;
+}
+bool qa_console_cvar_access(qa_console *console,const qa_command_context *context,const char *name,
+    qa_cvars **registry,qa_cvars_edit **edit,qa_error *error)
+{
+    if (!console || !name || !registry || !edit)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"cvar access requires its actual routed name and outputs");
+    context=context_for(console,context);
+    if (!valid_context(console,context,error)) return false;
+    cvar_access access;
+    if (!cvar_access_read(console,context,cvar_owner(console,context,name),&access,error)) return false;
+    if (!access.registry) return qac_fail(error,QA_ERROR_NOT_FOUND,"cvar access has no actual name owner");
+    *registry=access.registry; *edit=access.edit; return true;
 }
 bool qa_console_cvar_snapshot_at(qa_console *console,const qa_command_context *context,
     qa_cvars *registry,size_t ordinal,const qa_cvar_view **out,qa_error *error)

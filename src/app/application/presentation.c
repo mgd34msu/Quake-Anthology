@@ -275,7 +275,6 @@ bool qa_application_present(qa_application *app, uint32_t seat,
     if (!ready(app, error)) return false;
     application_provider *hud_provider = selected(app, seat, QA_ROLE_HUD);
     q3g_role *hud = client_role(hud_provider, QA_QVM_CGAME, seat);
-    q3g_role *menu = client_role(selected(app, seat, QA_ROLE_MENU), QA_QVM_UI, seat);
     app->operation = APPLICATION_ADVANCING;
     bool ok = true;
     int32_t result;
@@ -286,6 +285,7 @@ bool qa_application_present(qa_application *app, uint32_t seat,
     }
     if (ok && native_q2_hud(hud_provider))
         ok = application_native_q2_draw_hud(hud_provider, seat, client_milliseconds, error);
+    q3g_role *menu = ok ? client_role(selected(app, seat, QA_ROLE_MENU), QA_QVM_UI, seat) : NULL;
     if (ok && menu && client_ready(menu)) {
         int32_t time;
         ok = source_time(menu, real_milliseconds, &time, error) &&

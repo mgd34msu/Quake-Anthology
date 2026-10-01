@@ -14,7 +14,9 @@ typedef enum qa_cvars_edit_kind {
     QA_CVARS_EDIT_STAGE,
     QA_CVARS_EDIT_APPLY_LATCHED,
     QA_CVARS_EDIT_RESET,
-    QA_CVARS_EDIT_RESTART
+    QA_CVARS_EDIT_RESTART,
+    QA_CVARS_EDIT_SET_NUMBER,
+    QA_CVARS_EDIT_RETAIN_SHARED
 } qa_cvars_edit_kind;
 typedef struct qa_cvars_edit_command {
     qa_cvars_edit_kind kind;
@@ -22,6 +24,7 @@ typedef struct qa_cvars_edit_command {
     uint32_t flags;
     uint64_t owner;
     bool force;
+    float number;
 } qa_cvars_edit_command;
 
 /* The ticket owns scalar records, while the registry retains its actual

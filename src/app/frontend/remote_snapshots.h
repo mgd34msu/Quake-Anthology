@@ -3,6 +3,7 @@
 
 #include "network_presentation.h"
 #include "../../presentation/q3_native/entity.h"
+#include "../../presentation/q3_native/remote_frame.h"
 
 typedef struct frontend_remote_snapshots frontend_remote_snapshots;
 typedef struct frontend_remote_centity {
@@ -16,22 +17,24 @@ typedef struct frontend_remote_snapshot_settings {
 } frontend_remote_snapshot_settings;
 typedef struct frontend_remote_snapshots_options {
     qa_frontend *frontend;
+    q3n_remote_source *source;
     qa_q3_product product;
     void *context;
-    bool (*reached)(void *, const frontend_network_presentation_command *, qa_error *);
-    bool (*respawn)(void *, const frontend_network_presentation_source *, qa_error *);
-    bool (*reset_player)(void *, const frontend_network_presentation_source *,
+    /* The real source executes and adopts each receipt before this dispatch. */
+    bool (*reached)(void *, const q3n_remote_command *, qa_error *);
+    bool (*respawn)(void *, const q3n_remote_source_view *, qa_error *);
+    bool (*reset_player)(void *, const q3n_remote_source_view *,
         frontend_remote_centity *, qa_error *);
-    bool (*event)(void *, const frontend_network_presentation_source *,
+    bool (*event)(void *, const q3n_remote_source_view *,
         frontend_remote_centity *, const qa_q3_entity *, qa_vec3 position, int32_t time, qa_error *);
-    bool (*transition_player)(void *, const frontend_network_presentation_source *,
+    bool (*transition_player)(void *, const q3n_remote_source_view *,
         const qa_q3_player *, const qa_q3_player *, qa_error *);
     bool (*lagometer)(void *, const qa_q3_snapshot *, int32_t ping, qa_error *);
     bool (*warning)(void *, const char *, qa_error *);
 } frontend_remote_snapshots_options;
 typedef struct frontend_remote_snapshots_view {
     const frontend_remote_snapshots *owner;
-    frontend_network_presentation_source source;
+    q3n_remote_source_view source;
     const qa_q3_snapshot *snapshot, *next_snapshot;
     int32_t time, processed_message, command_sequence;
     uint64_t revision;
@@ -42,7 +45,7 @@ typedef struct frontend_remote_snapshots_view {
 /* The enclosing native remote row retains the receiver, map and callbacks.
  * Construction uses the actual CG_Init tuple, before consuming its history. */
 bool frontend_remote_snapshots_create(const frontend_remote_snapshots_options *,
-    const frontend_network_presentation_source *, frontend_remote_snapshots **, qa_error *);
+    const q3n_remote_source_view *, frontend_remote_snapshots **, qa_error *);
 bool frontend_remote_snapshots_destroy(frontend_remote_snapshots *, qa_error *);
 bool frontend_remote_snapshots_idle(const frontend_remote_snapshots *);
 /* Actual contiguous native cache. The enclosing row retains this owner through
@@ -55,7 +58,7 @@ bool frontend_remote_snapshots_current(const frontend_remote_snapshots *, const 
 /* The actual entered transition callback borrows the in-progress cut. This
  * scope ends when that callback returns; it never admits a completed frame. */
 bool frontend_remote_snapshots_callback_read(const frontend_remote_snapshots *,
-    const frontend_network_presentation_source *, frontend_remote_snapshots_view *);
+    const q3n_remote_source_view *, frontend_remote_snapshots_view *);
 bool frontend_remote_snapshots_callback_current(const frontend_remote_snapshots *,
     const frontend_remote_snapshots_view *);
 bool frontend_remote_snapshots_entity(const frontend_remote_snapshots *, const frontend_remote_snapshots_view *,
@@ -74,6 +77,6 @@ bool frontend_remote_snapshots_consume_teleport(frontend_remote_snapshots *, qa_
 bool frontend_remote_snapshots_mark_teleport(frontend_remote_snapshots *, qa_error *);
 bool frontend_remote_snapshots_checkpoint(const frontend_remote_snapshots *, qa_buffer *, qa_error *);
 bool frontend_remote_snapshots_restore(const frontend_remote_snapshots_options *,
-    const frontend_network_presentation_source *, qa_bytes, frontend_remote_snapshots **, qa_error *);
+    const q3n_remote_source_view *, qa_bytes, frontend_remote_snapshots **, qa_error *);
 
 #endif

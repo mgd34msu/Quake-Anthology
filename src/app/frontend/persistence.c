@@ -36,6 +36,7 @@
 #include "qa/render_gl_save.h"
 #include "qa/display_save.h"
 #include "qa/application_profile.h"
+#include "qa/application_equipment_content.h"
 #include "input_profile.h"
 #include "campaign.h"
 #include "campaign_cinematic.h"
@@ -44,6 +45,7 @@
 #include "equipment_media_save.h"
 #include "equipment_q3_save.h"
 #include "native_q3_client.h"
+#include "remote_q3_client.h"
 #include "native_q3_topology.h"
 #include "equipment_native.h"
 #include "config_store.h"
@@ -350,6 +352,13 @@ static bool audio_encode(void *context, qa_audio_reference_kind kind, uint64_t i
         else if (id<=UINT32_MAX && qa_application_provider_instance(f->application,(qa_actor_owner)id)) {
             owner=(char *)qa_strings_cstr(qa_session_strings(qa_application_session(f->application)),(qa_string_id)id);
             valid=owner!=NULL;
+        } else if (id<=UINT32_MAX) {
+            qa_application_equipment_content gear;
+            if (qa_application_equipment_content_read(f->application,(qa_actor_owner)id,&gear,error) &&
+                qa_application_equipment_content_current(f->application,&gear)) {
+                owner=(char *)qa_strings_cstr(qa_session_strings(qa_application_session(f->application)),(qa_string_id)id);
+                tag=4; valid=owner!=NULL;
+            }
         }
         break;
     case QA_AUDIO_REFERENCE_BUS:
@@ -359,7 +368,7 @@ static bool audio_encode(void *context, qa_audio_reference_kind kind, uint64_t i
     case QA_AUDIO_REFERENCE_ACTOR: break;
     }
     bool ok=valid && qa_source_save_writer(&io,NULL,error) && qa_source_save_u32(&io,&tag) &&
-        (kind==QA_AUDIO_REFERENCE_OWNER && !tag?frontend_save_text(&io,&owner):qa_source_save_u64(&io,&key)) &&
+        (kind==QA_AUDIO_REFERENCE_OWNER && (!tag || tag==4)?frontend_save_text(&io,&owner):qa_source_save_u64(&io,&key)) &&
         qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io);
     return ok || frontend_fail(error,QA_ERROR_FORMAT,"Audio reference leaves its actual frontend owner graph");
@@ -370,7 +379,7 @@ static bool audio_decode(void *context, qa_audio_reference_kind kind, qa_bytes b
     if (kind==QA_AUDIO_REFERENCE_ACTOR) return frontend_audio_id_decode(f,bytes,out,error);
     qa_source_save_io io={0}; uint32_t tag=0; uint64_t key=0,id=0; char *owner=NULL;
     bool ok=f && out && qa_source_save_reader(&io,NULL,bytes,error) && qa_source_save_u32(&io,&tag) &&
-        (kind==QA_AUDIO_REFERENCE_OWNER && !tag?frontend_save_text(&io,&owner):qa_source_save_u64(&io,&key)) &&
+        (kind==QA_AUDIO_REFERENCE_OWNER && (!tag || tag==4)?frontend_save_text(&io,&owner):qa_source_save_u64(&io,&key)) &&
         qa_source_save_finish(&io,NULL);
     if (ok) switch (kind) {
     case QA_AUDIO_REFERENCE_OWNER:
@@ -378,6 +387,11 @@ static bool audio_decode(void *context, qa_audio_reference_kind kind, qa_bytes b
         else if (!tag && owner) {
             id=qa_strings_find(qa_session_strings(qa_application_session(f->application)),(qa_bytes){(const uint8_t *)owner,strlen(owner)});
             ok=id && id<=UINT32_MAX && qa_application_provider_instance(f->application,(qa_actor_owner)id);
+        } else if (tag==4 && owner) {
+            qa_application_equipment_content gear;
+            id=qa_strings_find(qa_session_strings(qa_application_session(f->application)),(qa_bytes){(const uint8_t *)owner,strlen(owner)});
+            ok=id && id<=UINT32_MAX && qa_application_equipment_content_read(f->application,
+                (qa_actor_owner)id,&gear,error) && qa_application_equipment_content_current(f->application,&gear);
         } else ok=false;
         break;
     case QA_AUDIO_REFERENCE_BUS: ok=(tag==0 || tag==2 || tag==3) && audio_scope_decode(f,tag?tag:1,key,&id); break;
@@ -1026,10 +1040,13 @@ static bool discard_services(void *context,qa_application *candidate,qa_error *e
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Failed candidate retains its native input settings preparation");
     if (!frontend_seat_callbacks_idle(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Failed candidate retains actual seat callbacks or source release history");
+    if (!frontend_ui_features_idle(f) || !frontend_remote_q3_idle(f))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Failed candidate retains UI preparation or remote CLIENT children");
     if (!frontend_equipment_events_idle(f->gear_events) || !frontend_selected_effects_idle(f))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Failed candidate retains gear delivery or selected effect callbacks");
     if (!frontend_network_close_client(f,error) || !frontend_cinematic_destroy(f,error) ||
-        !frontend_selected_effects_retire(f,error) || !frontend_equipment_events_destroy(f->gear_events,error)) return false;
+        !frontend_selected_effects_retire(f,error) || !frontend_remote_q3_destroy(f,error) ||
+        !frontend_equipment_events_destroy(f->gear_events,error)) return false;
     f->gear_events=NULL;
     if (operation->services && operation->services->discard_services &&
         !operation->services->discard_services(operation->services->context,candidate,error)) return false;

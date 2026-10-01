@@ -294,14 +294,17 @@ bool qa_cvars_restore_metadata(qa_cvars *registry, const qa_cvar_registry_state 
     registry->values.high_characters = state->high_characters; registry->values.cheats = state->cheats;
     return true;
 }
-bool qa_cvars_retain_shared(qa_cvars *registry, const char *name, qa_error *error)
+static bool retain_shared_variable(cvar_target target,const char *name,qa_error *error)
 {
-    if (!qac_cvars_touch(registry, error)) return false;
-    cvar *entry = find_variable(registry, canonical_name(registry,&registry->values,name));
+    if (!target_touch(target,error)) return false;
+    cvar *entry=find_values(target.registry,target.values,
+        canonical_name(target.registry,target.values,name));
     if (entry == NULL) return qac_fail(error, QA_ERROR_NOT_FOUND, "shared cvar is not registered");
     entry->view.owner = 0;
     return true;
 }
+bool qa_cvars_retain_shared(qa_cvars *registry,const char *name,qa_error *error)
+{ return retain_shared_variable(live_target(registry),name,error); }
 
 typedef enum cvar_edit_event_kind {
     CVAR_EDIT_NOTIFY, CVAR_EDIT_EFFECT, CVAR_EDIT_PRINT
@@ -1175,15 +1178,23 @@ static bool vm_bind_variable(cvar_target target,const char *name,const char *def
     uint32_t flags,uint64_t owner,size_t *handle,qa_error *error)
 {
     qa_cvars *registry=target.registry;
-    if (!registry || registry->options.dialect!=QA_CONSOLE_Q3 || !name || !default_value || !handle)
-        return qac_fail(error,QA_ERROR_ARGUMENT,"VM cvar binding requires an actual Q3 registry");
+    if (!registry || !name || !default_value || !handle)
+        return qac_fail(error,QA_ERROR_ARGUMENT,"VM cvar binding requires its actual registry");
     if (!target_touch(target,error)) return false;
+    name=source_name(registry,name);
     cvar_alias *alias=find_alias(registry,target.values,name);
+    if (registry->options.dialect!=QA_CONSOLE_Q3) {
+        if (alias && (flags&(QA_CVAR_USERINFO|QA_CVAR_SERVERINFO|QA_CVAR_SYSTEMINFO)))
+            return qac_fail(error,QA_ERROR_ARGUMENT,"guest cvar alias requires a canonical protocol info-key mapping");
+        if (!find_values(registry,target.values,canonical_name(registry,target.values,name)))
+            return qac_fail(error,QA_ERROR_NOT_FOUND,"unknown guest cvar requires its actual Q3 registry");
+    }
     if (!alias || alias->conversion==QA_CVAR_ALIAS_IDENTITY) {
         if (!find_values(registry,target.values,canonical_name(registry,target.values,name)) &&
             target.values->next_handle>=1024)
             return qac_fail(error,QA_ERROR_MEMORY,"MAX_CVARS");
-        if (!register_variable(target,name,default_value,flags,owner,NULL,error)) return false;
+        if (registry->options.dialect==QA_CONSOLE_Q3 &&
+            !register_variable(target,name,default_value,flags,owner,NULL,error)) return false;
         const cvar *entry=find_values(registry,target.values,canonical_name(registry,target.values,name));
         if (!entry) return qac_fail(error,QA_ERROR_NOT_FOUND,"VM canonical cvar is absent");
         *handle=entry->view.handle; return true;
@@ -1410,6 +1421,10 @@ bool qa_cvars_edit_apply(qa_cvars_edit *edit,const qa_cvars_edit_command *comman
         ok=reset_variable(target,command->name,command->force,&fault); break;
     case QA_CVARS_EDIT_RESTART:
         ok=restart_variables(target,&fault); break;
+    case QA_CVARS_EDIT_SET_NUMBER:
+        ok=set_number_variable(target,command->name,command->number,&fault); break;
+    case QA_CVARS_EDIT_RETAIN_SHARED:
+        ok=retain_shared_variable(target,command->name,&fault); break;
     default:
         ok=qac_fail(&fault,QA_ERROR_ARGUMENT,"unknown prepared cvar operation"); break;
     }

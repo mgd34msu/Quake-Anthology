@@ -2,6 +2,7 @@
 #include "visual_restore.h"
 #include "native_q2_save.h"
 #include "native_q3_client.h"
+#include "remote_q3_client.h"
 #include "equipment_media.h"
 #include "equipment_q3.h"
 #include "equipment_events.h"
@@ -11,6 +12,7 @@
 #include "save_commands.h"
 #include "qc_rerelease_events.h"
 #include "campaign_cinematic.h"
+#include "ui_features.h"
 #include "qa/scene_resource_save.h"
 #include "qa/material_library_save.h"
 #include "qa/material_save.h"
@@ -66,7 +68,8 @@ bool frontend_owners_idle(const qa_frontend *f)
 {
     if (!f || f->capture || (f->input && !qa_input_platform_settings_idle(f->input)) ||
         !frontend_cinematic_idle(f) || !frontend_qc_rerelease_idle(f) || !frontend_native_q2_children_idle(f) ||
-        !frontend_native_q3_idle(f) || !frontend_equipment_idle(f) || !frontend_equipment_q3_idle(f) ||
+        !frontend_native_q3_idle(f) || !frontend_remote_q3_idle(f) || !frontend_ui_features_idle(f) ||
+        !frontend_equipment_idle(f) || !frontend_equipment_q3_idle(f) ||
         !frontend_equipment_events_idle(f->gear_events) ||
         !frontend_selected_character_idle(f) || !frontend_selected_effects_idle(f) || !frontend_sources_idle(f) ||
         !resources_idle(f->images) || !resources_idle(f->ui_images) || !library_idle(f->materials) ||

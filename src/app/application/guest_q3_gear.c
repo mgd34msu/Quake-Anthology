@@ -119,7 +119,7 @@ bool q3gear_sound(application_q3_gear *gear, qa_actor_id actor, const char *path
     qa_builtin_event event = {.kind = QA_BUILTIN_SOUND, .family = QA_GAME_Q3,
         .provider = gear->options.host.owner, .actor = actor, .resource = resource,
         .time_ns = (uint64_t)gear->milliseconds*1000000, .origin = body.origin,
-        .direction = body.velocity, .volume = 1, .flags = loop ? 1u : 0u};
+        .direction = body.velocity, .volume = 1, .attenuation = 1, .flags = loop ? 1u : 0u};
     return qa_builtin_emit(&gear->options.services, &event, error);
 }
 

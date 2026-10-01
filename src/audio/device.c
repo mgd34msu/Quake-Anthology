@@ -20,6 +20,7 @@ typedef struct device_pcm {
 struct qa_audio_device {
     SDL_AudioDeviceID id;
     qa_audio_device_options options;
+    size_t requested_maximum_queued_frames;
     char *name;
     device_pcm pcm;
     size_t submitted;
@@ -43,6 +44,7 @@ struct qa_audio_device {
 struct qa_audio_device_selection {
     qa_audio_device *device;
     qa_audio_device_options selected;
+    size_t requested_maximum_queued_frames;
     SDL_AudioDeviceID previous, replacement;
     char *name;
     qa_audio_raw_stream *previous_conversion, *conversion;
@@ -381,6 +383,7 @@ bool qa_audio_device_open(const qa_audio_device_options *options, qa_audio_devic
     if (device == NULL)
         return device_error(error, QA_ERROR_MEMORY, "Allocating audio device");
     device->options = selected;
+    device->requested_maximum_queued_frames = options->maximum_queued_frames;
     bool unavailable;
     if (!copy_name(selected.name, &device->name, error) ||
         !qa_audio_raw_create(selected.format.sample_rate, &device->conversion, error))
@@ -501,6 +504,12 @@ qa_audio_device_options qa_audio_device_configuration(const qa_audio_device *dev
     return device != NULL ? device->options : (qa_audio_device_options){0};
 }
 
+qa_audio_device_options qa_audio_device_requested_configuration(const qa_audio_device *device) {
+    qa_audio_device_options options = qa_audio_device_configuration(device);
+    if (device) options.maximum_queued_frames = device->requested_maximum_queued_frames;
+    return options;
+}
+
 size_t qa_audio_device_queued(qa_audio_device *device) {
     if (device == NULL)
         return 0;
@@ -592,6 +601,7 @@ bool qa_audio_device_select(qa_audio_device *device, const qa_audio_device_optio
         selected.format.sample_bits == device->options.format.sample_bits &&
         selected.buffer_frames == device->options.buffer_frames &&
         selected.maximum_queued_frames == device->options.maximum_queued_frames) {
+        device->requested_maximum_queued_frames = options->maximum_queued_frames;
         free(name);
         return true;
     }
@@ -650,6 +660,7 @@ bool qa_audio_device_select(qa_audio_device *device, const qa_audio_device_optio
     free(device->name);
     device->name = name;
     device->options = selected;
+    device->requested_maximum_queued_frames = options->maximum_queued_frames;
     device->submitted = device->pcm.count;
     device->resume_on_attach = resume;
     if (resume)
@@ -733,6 +744,7 @@ bool qa_audio_device_selection_prepare(qa_audio_device *device,
     selection->previous_conversion = device->conversion;
     selection->unchanged = unchanged;
     selection->selected = selected;
+    selection->requested_maximum_queued_frames = options->maximum_queued_frames;
     if (!unchanged) {
         bool unavailable = false;
         if (!copy_name(selected.name, &selection->name, error)) goto failed;
@@ -851,6 +863,7 @@ void qa_audio_device_selection_publish(qa_audio_device_selection *selection) {
         device->resume_on_attach = selection->resume;
         if (selection->resume) start_playback(device);
     }
+    device->requested_maximum_queued_frames = selection->requested_maximum_queued_frames;
     device->selection = NULL;
     selection_discard_candidate(selection);
 }
@@ -1078,18 +1091,20 @@ static bool saved_device_fields(qa_source_save_io *io,qa_audio_device *device,
     bool *attached,bool *current_engine,qa_bytes *conversion)
 {
     bool reading=io->direction==QA_SOURCE_SAVE_READ;
-    uint8_t magic[4]={'Q','A','D','V'}; uint32_t version=1,channels=device->options.format.channels,
+    uint8_t magic[4]={'Q','A','D','V'}; uint32_t version=2,channels=device->options.format.channels,
         bits=device->options.format.sample_bits,buffer=device->options.buffer_frames;
     if (!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QADV",4) ||
-        !qa_source_save_u32(io,&version) || version!=1 || !qa_source_save_bool(io,attached) ||
+        !qa_source_save_u32(io,&version) || version!=2 || !qa_source_save_bool(io,attached) ||
         !qa_source_save_u32(io,&device->options.format.sample_rate) || !qa_source_save_u32(io,&channels) ||
         !qa_source_save_u32(io,&bits) || !qa_source_save_u32(io,&buffer) ||
-        !qa_source_save_count(io,&device->options.maximum_queued_frames,SIZE_MAX) || !saved_name(io,&device->name)) return false;
+        !qa_source_save_count(io,&device->options.maximum_queued_frames,SIZE_MAX) ||
+        !qa_source_save_count(io,&device->requested_maximum_queued_frames,SIZE_MAX) || !saved_name(io,&device->name)) return false;
     if (channels>UINT_MAX || bits>UINT_MAX || buffer>UINT_MAX) return false;
     device->options.format.channels=(unsigned)channels; device->options.format.sample_bits=(unsigned)bits;
     device->options.buffer_frames=(unsigned)buffer; device->options.name=device->name;
     qa_audio_device_options requested=device->options,qualified;
     requested.buffer_frames=1;
+    requested.maximum_queued_frames=device->requested_maximum_queued_frames;
     if (!buffer || buffer>UINT16_MAX || !device_options(&requested,&qualified,io->error) ||
         qualified.maximum_queued_frames!=device->options.maximum_queued_frames) return false;
     if (!qa_source_save_count(io,&device->pcm.capacity,SIZE_MAX/(2*sizeof(int16_t))) ||
@@ -1156,6 +1171,7 @@ static bool same_device_options(const qa_audio_device *a,const qa_audio_device *
     return a->options.format.sample_rate==b->options.format.sample_rate && a->options.format.channels==b->options.format.channels &&
         a->options.format.sample_bits==b->options.format.sample_bits && a->options.buffer_frames==b->options.buffer_frames &&
         a->options.maximum_queued_frames==b->options.maximum_queued_frames &&
+        a->requested_maximum_queued_frames==b->requested_maximum_queued_frames &&
         ((a->name && b->name)?!strcmp(a->name,b->name):a->name==b->name);
 }
 bool qa_audio_device_restore(qa_bytes bytes,const qa_audio_device *active,qa_audio_engine *engine,
@@ -1206,6 +1222,7 @@ bool qa_audio_device_create_detached(const qa_audio_device *active,qa_audio_engi
         free(candidate); free(guard); return device_error(error,QA_ERROR_MEMORY,"Allocating fresh detached audio owner");
     }
     candidate->options=active->options; candidate->frequency=active->frequency;
+    candidate->requested_maximum_queued_frames=active->requested_maximum_queued_frames;
     bool ok=copy_name(active->name,&candidate->name,error) &&
         qa_audio_raw_create(candidate->options.format.sample_rate,&candidate->conversion,error);
     candidate->options.name=candidate->name;

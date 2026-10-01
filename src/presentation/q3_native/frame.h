@@ -3,6 +3,7 @@
 
 #include "entity.h"
 #include "media.h"
+#include "remote_frame.h"
 #include "qa/ui_preferences.h"
 #include "qa/application_selected_effects.h"
 
@@ -22,6 +23,9 @@ typedef struct qa_native_q3_client_service qa_native_q3_client_service;
 typedef struct q3n_frame {
     qa_application *application;
     qa_application_native_q3_presentation source;
+    /* Mutually exclusive with local GAME and standalone selected EFFECTS.
+     * Remote rows and clocks borrow the actual Network/cache receipt. */
+    const q3n_remote_frame *remote;
     /* A standalone selected effect borrows its independent native producer.
      * It has no primary GAME snapshot, physical client or invented player S. */
     const qa_application_selected_effects *effects_source;

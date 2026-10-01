@@ -1,6 +1,7 @@
 #include "guest_q3_private.h"
 #include "guest_q3_client_console.h"
 #include "guest_q3_console.h"
+#include "guest_q3_factory.h"
 #include "guest_native_q2_private.h"
 #include "guest_projection_private.h"
 #include "guest_qc_internal.h"
@@ -480,9 +481,10 @@ bool application_q3_guest_role_initialize(application_provider *provider, qa_qvm
         if (role->local_client && !q3g_client_effect(role, QA_APPLICATION_Q3_SYSTEM_INFO,
                 qa_q3_configstring(state, 1), error)) return false;
         q3g_role *ui = NULL;
+        if (role->local_client && !application_guest_q3_source_ui_received(role, state, &ui, error)) return false;
         for (q3g_role *candidate = role->engine->roles; candidate; candidate = candidate->next)
             if (candidate->kind == QA_QVM_UI && candidate->seat == seat && candidate->ready && !candidate->retired) {
-                if (ui) return application_fail(error, QA_ERROR_ARGUMENT, "Ambiguous actual CGAME source UI");
+                if (ui && ui != candidate) return application_fail(error, QA_ERROR_ARGUMENT, "Ambiguous actual CGAME source UI");
                 ui = candidate;
             }
         if (!ui || ui->descriptor->storage != role->descriptor->storage)

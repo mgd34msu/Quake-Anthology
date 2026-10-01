@@ -110,7 +110,7 @@ static bool audio(void *context,qa_error *error)
 {
     frontend_restart *owner=context; qa_frontend *f=owner->options.frontend;
     if (!f->device) return fail(error,QA_ERROR_UNSUPPORTED,"Audio restart has no actual native output device owner");
-    qa_audio_device_options options=qa_audio_device_configuration(f->device);
+    qa_audio_device_options options=qa_audio_device_requested_configuration(f->device);
     float rate=number(owner,"s_outputRate",(float)options.format.sample_rate);
     float bits=number(owner,"s_outputBits",(float)options.format.sample_bits);
     float channels=number(owner,"s_outputChannels",(float)options.format.channels);

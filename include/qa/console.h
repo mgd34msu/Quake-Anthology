@@ -310,6 +310,13 @@ qa_cvars *qa_console_cvar_owner(qa_console *, const qa_command_context *, const 
  * actual registry. Contexts are already captured by the owning caller. */
 bool qa_console_cvar_read(qa_console *, const qa_command_context *, const char *,
                           const qa_cvar_view **out, qa_error *);
+/* Captures the real constructor's current source context without dispatch.
+ * Script text is borrowed from the supplied context. */
+bool qa_console_cvar_context(qa_console *,const qa_command_context *,qa_command_context *,qa_error *);
+/* Resolves one name's actual owner and optional canonical prepared view.
+ * Both pointers are borrowed; a rejected view never falls back to live state. */
+bool qa_console_cvar_access(qa_console *,const qa_command_context *,const char *,
+    qa_cvars **,struct qa_cvars_edit **,qa_error *);
 /* Reads one visible scalar/alias snapshot through the same admitted candidate
  * view. Registry must be an actual visible owner for this captured context.
  * Missing ordinal succeeds with NULL; a refused view never falls back live. */

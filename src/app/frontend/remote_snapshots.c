@@ -15,7 +15,7 @@ typedef struct remote_snapshot {
 } remote_snapshot;
 struct frontend_remote_snapshots {
     frontend_remote_snapshots_options options;
-    frontend_network_presentation_source source;
+    q3n_remote_source_view source;
     remote_snapshot snap, next;
     frontend_remote_centity entities[QA_Q3_ENTITIES];
     q3n_entity presentations[QA_Q3_ENTITIES];
@@ -28,41 +28,56 @@ static bool fail(qa_error *e, qa_status code, const char *s)
 static int32_t word(uint32_t bits)
 { int32_t out; memcpy(&out, &bits, sizeof(out)); return out; }
 static qa_vec3 vector(const float v[3]) { return qa_v3(v[0], v[1], v[2]); }
-static bool domain(const frontend_network_prediction_source *a,
-    const frontend_network_prediction_source *b)
+static bool domain(const qa_native_q3_remote_client_basis *a,
+    const qa_native_q3_remote_client_basis *b)
 {
-    const qa_application_q3_client_context *x=&a->receiver,*y=&b->receiver;
+    const qa_application_q3_client_context *x=&a->client,*y=&b->client;
     return qa_net_client_id_equal(a->connection,b->connection) && a->epoch==b->epoch &&
-        a->map==b->map && a->geometry==b->geometry && x->session==y->session &&
-        x->receiver==y->receiver && x->seat==y->seat && x->service_owner==y->service_owner &&
+        a->application==b->application && a->session==b->session && a->map==b->map && a->geometry==b->geometry &&
+        a->descriptor && b->descriptor && a->descriptor->storage==b->descriptor->storage &&
+        a->content==b->content && a->content_product==b->content_product && a->product==b->product &&
+        a->configuration_generation==b->configuration_generation &&
+        a->publication_generation==b->publication_generation && a->gamestate==b->gamestate &&
+        a->physical_client==b->physical_client && x->session==y->session &&
+        x->receiver==y->receiver && x->source_owner==y->source_owner &&
+        qa_actor_id_equal(x->source_actor,y->source_actor) && x->seat==y->seat &&
+        x->source_client==y->source_client && x->service_owner==y->service_owner &&
         x->frontend_lifetime==y->frontend_lifetime && x->console==y->console && x->cvars==y->cvars &&
+        x->source_cvars==y->source_cvars && x->client_time_cvars==y->client_time_cvars &&
+        x->client_time_owner==y->client_time_owner &&
         x->native_source==y->native_source;
 }
 static bool source_current(const frontend_remote_snapshots *s)
-{ return frontend_network_presentation_source_current(s->options.frontend,&s->source); }
-static bool retained_source(const frontend_remote_snapshots *s,frontend_network_presentation_source *out)
+{ return q3n_remote_source_current(&s->source); }
+static bool history_current(const frontend_remote_snapshots *s,const q3n_remote_source_view *source)
 {
-    bool present=false;
-    return frontend_network_presentation_source_read(s->options.frontend,out,&present,NULL) && present &&
-        domain(&s->source.prediction,&out->prediction) &&
-        out->prediction.restart_generation==s->source.prediction.restart_generation &&
-        out->initial_message==s->source.initial_message && out->initial_command==s->source.initial_command &&
-        out->executed_command==s->source.executed_command && out->latest_message>=s->latest;
+    return source->publication.has_snapshot?source->publication.latest_message>=s->latest:
+        !s->has_snap && !s->has_next && s->processed==source->publication.initial_message &&
+        s->latest==source->publication.initial_message;
+}
+static bool retained_source(const frontend_remote_snapshots *s,q3n_remote_source_view *out)
+{
+    return q3n_remote_source_read(s->options.source,out,NULL) && domain(&s->source.basis,&out->basis) &&
+        out->basis.restart_generation==s->source.basis.restart_generation &&
+        out->publication.initial_message==s->source.publication.initial_message &&
+        out->publication.initial_command==s->source.publication.initial_command &&
+        out->reached_command==s->command_sequence && history_current(s,out);
 }
 bool frontend_remote_snapshots_create(const frontend_remote_snapshots_options *o,
-    const frontend_network_presentation_source *source, frontend_remote_snapshots **out, qa_error *e)
+    const q3n_remote_source_view *source, frontend_remote_snapshots **out, qa_error *e)
 {
-    if(!o || !o->frontend || !o->reached || !o->respawn || !o->reset_player || !o->event ||
+    if(!o || !o->frontend || !o->source || !o->reached || !o->respawn || !o->reset_player || !o->event ||
         !o->transition_player || !o->lagometer || !o->warning || !source || !out || *out ||
         (o->product!=QA_Q3_ARENA && o->product!=QA_Q3_TEAM_ARENA) ||
-        !frontend_network_presentation_source_current(o->frontend,source))
+        source->owner!=o->source || source->basis.application!=qa_frontend_application(o->frontend) ||
+        source->basis.product!=o->product || !q3n_remote_source_current(source))
         return fail(e,QA_ERROR_ARGUMENT,"Remote centities require actual Init history and native consumers");
     frontend_remote_snapshots *s=calloc(1,sizeof(*s));
     if(!s) return fail(e,QA_ERROR_MEMORY,"Allocating remote native centities");
-    s->options=*o; s->source=*source; s->processed=source->initial_message;
+    s->options=*o; s->source=*source; s->processed=source->publication.initial_message;
     for(uint32_t i=0;i<QA_Q3_ENTITIES;++i) s->entities[i].presentation=&s->presentations[i];
-    s->latest=source->initial_message; s->revision=1;
-    s->command_sequence=source->initial_command;
+    s->latest=source->publication.initial_message; s->revision=1;
+    s->command_sequence=source->reached_command;
     *out=s; return true;
 }
 bool frontend_remote_snapshots_idle(const frontend_remote_snapshots *s) { return !s || !s->busy; }
@@ -151,12 +166,13 @@ static bool commands(frontend_remote_snapshots *s,int32_t sequence,qa_error *e)
     while(s->command_sequence<sequence) {
         if(s->command_sequence==INT32_MAX) return fail(e,QA_ERROR_FORMAT,"Remote reliable sequence is exhausted");
         ++s->command_sequence;
-        frontend_network_presentation_command reached;
-        if(!frontend_network_presentation_execute(s->options.frontend,&s->source,s->command_sequence,&reached,e)) return false;
-        if(!domain(&s->source.prediction,&reached.source.prediction) || !reached.source.gamestate)
+        q3n_remote_command reached; q3n_remote_source_view source;
+        if(!q3n_remote_source_command(s->options.source,s->command_sequence,&reached,e) ||
+            !q3n_remote_source_read(s->options.source,&source,e)) return false;
+        if(!domain(&s->source.basis,&source.basis) || !source.publication.gamestate)
             return fail(e,QA_ERROR_ARGUMENT,"Remote reliable execution retired its native receiver");
-        if(reached.source.prediction.restart_generation!=s->source.prediction.restart_generation) s->this_teleport=true;
-        s->source=reached.source;
+        if(source.basis.restart_generation!=s->source.basis.restart_generation) s->this_teleport=true;
+        s->source=source;
         if(!callback_begin(s,e)) return false;
         bool adopted=s->options.reached(s->options.context,&reached,e);
         s->in_callback=false;
@@ -233,7 +249,10 @@ static bool read_next(frontend_remote_snapshots *s,remote_snapshot *out,bool *pr
     while(s->processed<s->latest) {
         if(s->processed==INT32_MAX) return fail(e,QA_ERROR_FORMAT,"Remote snapshot sequence is exhausted");
         ++s->processed; const qa_q3_snapshot *snapshot=NULL; int32_t ping=0;
-        if(!frontend_network_presentation_snapshot(s->options.frontend,&s->source,s->processed,&snapshot,&ping,e)) return false;
+        qa_q3_host_client_services services;
+        if(!source_current(s) ||
+            !frontend_network_presentation_services(s->options.frontend,&s->source.basis.client,&services,e) ||
+            !services.snapshot(services.context,s->processed,&snapshot,&ping,e) || !source_current(s)) return false;
         if(!callback_begin(s,e)) return false;
         bool ok=s->options.lagometer(s->options.context,snapshot,ping,e);
         s->in_callback=false;
@@ -254,12 +273,16 @@ bool frontend_remote_snapshots_process(frontend_remote_snapshots *s,const fronte
 {
     if(!s || !settings || s->busy || s->faulted || s->revision==UINT64_MAX)
         return fail(e,QA_ERROR_ARGUMENT,"Remote snapshots require their returned native callbacks");
-    frontend_network_presentation_source source; bool present=false;
-    if(!frontend_network_presentation_source_read(s->options.frontend,&source,&present,e)) return false;
-    if(!present || !domain(&s->source.prediction,&source.prediction) || source.initial_message!=s->source.initial_message ||
-        source.initial_command!=s->source.initial_command || source.latest_message<s->latest)
+    q3n_remote_source_view source;
+    if(!q3n_remote_source_read(s->options.source,&source,e)) return false;
+    if(!domain(&s->source.basis,&source.basis) ||
+        source.publication.initial_message!=s->source.publication.initial_message ||
+        source.publication.initial_command!=s->source.publication.initial_command ||
+        source.reached_command!=s->command_sequence || !history_current(s,&source))
         return fail(e,QA_ERROR_ARGUMENT,"Remote snapshots lost their actual Init/history domain");
-    s->busy=true; s->source=source; s->latest=source.latest_message; s->time=source.presentation_time; ++s->revision;
+    s->busy=true; s->source=source;
+    if(source.publication.has_snapshot) s->latest=source.publication.latest_message;
+    s->time=source.publication.presentation_time; ++s->revision;
     bool ok=true;
     while(ok && !s->has_snap) {
         bool found=false; ok=read_next(s,&s->snap,&found,e);
@@ -285,7 +308,7 @@ bool frontend_remote_snapshots_process(frontend_remote_snapshots *s,const fronte
 }
 bool frontend_remote_snapshots_read(const frontend_remote_snapshots *s,frontend_remote_snapshots_view *out)
 {
-    frontend_network_presentation_source source;
+    q3n_remote_source_view source;
     if(!s || !out || s->busy || s->faulted || !retained_source(s,&source)) return false;
     *out=(frontend_remote_snapshots_view){s,source,s->has_snap?&s->snap.value:NULL,s->has_next?&s->next.value:NULL,
         s->time,s->processed,s->command_sequence,s->revision,s->this_teleport,s->next_teleport,0}; return true;
@@ -293,19 +316,20 @@ bool frontend_remote_snapshots_read(const frontend_remote_snapshots *s,frontend_
 static bool view_current(const frontend_remote_snapshots *s,const frontend_remote_snapshots_view *v)
 {
     return s && v && v->owner==s && !s->faulted && v->revision==s->revision &&
-        frontend_network_presentation_source_current(s->options.frontend,&v->source) &&
+        v->source.owner==s->options.source && q3n_remote_source_current(&v->source) &&
         v->snapshot==(s->has_snap?&s->snap.value:NULL) && v->next_snapshot==(s->has_next?&s->next.value:NULL) &&
         v->time==s->time && v->processed_message==s->processed && v->command_sequence==s->command_sequence &&
         v->this_frame_teleport==s->this_teleport &&
-        v->next_frame_teleport==s->next_teleport && domain(&v->source.prediction,&s->source.prediction) &&
-        v->source.prediction.restart_generation==s->source.prediction.restart_generation &&
-        v->source.initial_message==s->source.initial_message && v->source.initial_command==s->source.initial_command &&
-        v->source.executed_command==s->source.executed_command && v->source.latest_message>=s->latest;
+        v->next_frame_teleport==s->next_teleport && domain(&v->source.basis,&s->source.basis) &&
+        v->source.basis.restart_generation==s->source.basis.restart_generation &&
+        v->source.publication.initial_message==s->source.publication.initial_message &&
+        v->source.publication.initial_command==s->source.publication.initial_command &&
+        v->source.reached_command==s->command_sequence && history_current(s,&v->source);
 }
 bool frontend_remote_snapshots_current(const frontend_remote_snapshots *s,const frontend_remote_snapshots_view *v)
 { return s && !s->busy && v && !v->callback_scope && view_current(s,v); }
 bool frontend_remote_snapshots_callback_read(const frontend_remote_snapshots *s,
-    const frontend_network_presentation_source *source,frontend_remote_snapshots_view *out)
+    const q3n_remote_source_view *source,frontend_remote_snapshots_view *out)
 {
     if(!s || !source || !out || !s->busy || !s->in_callback || s->faulted) return false;
     frontend_remote_snapshots_view view={s,*source,s->has_snap?&s->snap.value:NULL,s->has_next?&s->next.value:NULL,
@@ -345,8 +369,16 @@ bool frontend_remote_snapshots_misc_time_read(const frontend_remote_snapshots *s
 {
     if(!s || s->busy || s->faulted || !source || !entity || !entity->entity || !out ||
         entity->source_number>=QA_Q3_ENTITY_NONE || !entity->published ||
-        !domain(&s->source.prediction,source) ||
-        source->restart_generation!=s->source.prediction.restart_generation ||
+        !qa_net_client_id_equal(s->source.basis.connection,source->connection) ||
+        source->epoch!=s->source.basis.epoch || source->map!=s->source.basis.map ||
+        source->geometry!=s->source.basis.geometry ||
+        source->receiver.receiver!=s->source.basis.client.receiver ||
+        source->receiver.seat!=s->source.basis.client.seat ||
+        source->receiver.service_owner!=s->source.basis.client.service_owner ||
+        source->receiver.frontend_lifetime!=s->source.basis.client.frontend_lifetime ||
+        source->receiver.console!=s->source.basis.client.console || source->receiver.cvars!=s->source.basis.client.cvars ||
+        source->restart_generation!=s->source.basis.restart_generation ||
+        !source_current(s) ||
         !frontend_network_prediction_entity_current(s->options.frontend,source,entity))
         return fail(e,QA_ERROR_ARGUMENT,"Remote item miscTime lacks its genuine centity publication");
     const frontend_remote_centity *row=&s->entities[entity->source_number];
@@ -357,14 +389,14 @@ bool frontend_remote_snapshots_misc_time_read(const frontend_remote_snapshots *s
 }
 bool frontend_remote_snapshots_consume_teleport(frontend_remote_snapshots *s,qa_error *e)
 {
-    frontend_network_presentation_source source;
+    q3n_remote_source_view source;
     if(!s || s->busy || s->faulted || !retained_source(s,&source) || s->revision==UINT64_MAX)
         return fail(e,QA_ERROR_ARGUMENT,"Remote teleport consumption requires its completed native frame");
     s->this_teleport=false; ++s->revision; return true;
 }
 bool frontend_remote_snapshots_mark_teleport(frontend_remote_snapshots *s,qa_error *e)
 {
-    frontend_network_presentation_source source;
+    q3n_remote_source_view source;
     if(!s || s->busy || s->faulted || !retained_source(s,&source) || s->revision==UINT64_MAX)
         return fail(e,QA_ERROR_ARGUMENT,"Remote teleport feedback requires its returned PS-transition frame");
     if(!s->this_teleport) { s->this_teleport=true; ++s->revision; }
@@ -442,22 +474,26 @@ static bool map_fields(qa_source_save_io *io,const qa_resource *map)
 static bool codec(qa_source_save_io *io,frontend_remote_snapshots *s)
 {
     uint8_t magic[4]={'Q','R','S','P'};
-    const frontend_network_prediction_source *source=&s->source.prediction;
+    const qa_native_q3_remote_client_basis *source=&s->source.basis;
     if(!qa_source_save_bytes(io,magic,sizeof(magic)) || memcmp(magic,"QRSP",sizeof(magic)) ||
         !same_u32(io,1) || !same_u32(io,(uint32_t)s->options.product) ||
         !same_u64(io,source->connection.owner) || !same_u64(io,source->connection.generation) ||
         !same_u32(io,source->connection.slot) || !same_u64(io,source->epoch) ||
-        !same_u64(io,source->restart_generation) || !same_u64(io,source->receiver.receiver) ||
-        !same_u64(io,source->receiver.service_owner) || !same_u32(io,source->receiver.seat) ||
-        !same_i32(io,s->source.initial_message) || !same_i32(io,s->source.initial_command) ||
-        !same_i32(io,s->source.executed_command) || !map_fields(io,source->map) ||
+        !same_u64(io,source->restart_generation) || !same_u64(io,source->client.receiver) ||
+        !same_u64(io,source->client.service_owner) || !same_u32(io,source->client.seat) ||
+        !same_i32(io,s->source.publication.initial_message) || !same_i32(io,s->source.publication.initial_command) ||
+        !same_i32(io,s->source.publication.executed_command) || !map_fields(io,source->map) ||
         !qa_source_save_i32(io,&s->processed) || !qa_source_save_i32(io,&s->latest) ||
         !qa_source_save_i32(io,&s->time) || !qa_source_save_i32(io,&s->command_sequence) ||
-        s->command_sequence<s->source.initial_command || s->command_sequence>s->source.received_command ||
+        s->command_sequence<s->source.publication.initial_command ||
+        s->command_sequence!=s->source.reached_command || s->command_sequence>s->source.publication.received_command ||
         !qa_source_save_u64(io,&s->revision) || !s->revision ||
-        s->processed<s->source.initial_message || s->processed>s->latest || s->latest>s->source.latest_message ||
+        s->processed<s->source.publication.initial_message || s->processed>s->latest ||
+        (s->source.publication.has_snapshot?s->latest>s->source.publication.latest_message:
+            s->latest!=s->source.publication.initial_message) ||
         !qa_source_save_bool(io,&s->has_snap) || !qa_source_save_bool(io,&s->has_next) ||
-        (s->has_next && !s->has_snap) || !qa_source_save_bool(io,&s->this_teleport) ||
+        (s->has_next && !s->has_snap) || (!s->source.publication.has_snapshot && (s->has_snap || s->has_next)) ||
+        !qa_source_save_bool(io,&s->this_teleport) ||
         !qa_source_save_bool(io,&s->next_teleport)) return false;
     if(s->has_snap && (!snapshot_fields(io,&s->snap,s->options.product) || s->snap.value.message_number>s->processed ||
         s->snap.value.server_time>s->time)) return false;
@@ -479,12 +515,12 @@ bool frontend_remote_snapshots_checkpoint(const frontend_remote_snapshots *s,qa_
 {
     if(!s || !out || out->data || out->size || s->busy || s->faulted)
         return fail(e,QA_ERROR_ARGUMENT,"Remote centity capture requires its completed native continuation");
-    frontend_network_presentation_source source; bool present=false;
-    if(!frontend_network_presentation_source_read(s->options.frontend,&source,&present,e)) return false;
-    if(!present || !domain(&s->source.prediction,&source.prediction) ||
-        source.prediction.restart_generation!=s->source.prediction.restart_generation ||
-        source.initial_message!=s->source.initial_message || source.initial_command!=s->source.initial_command ||
-        source.executed_command!=s->source.executed_command || source.latest_message<s->latest)
+    q3n_remote_source_view source;
+    if(!q3n_remote_source_read(s->options.source,&source,e)) return false;
+    if(!domain(&s->source.basis,&source.basis) || source.basis.restart_generation!=s->source.basis.restart_generation ||
+        source.publication.initial_message!=s->source.publication.initial_message ||
+        source.publication.initial_command!=s->source.publication.initial_command ||
+        source.reached_command!=s->command_sequence || !history_current(s,&source))
         return fail(e,QA_ERROR_ARGUMENT,"Remote centity capture lost its actual network and reached-command domain");
     frontend_remote_snapshots *copy=malloc(sizeof(*copy));
     if(!copy) return fail(e,QA_ERROR_MEMORY,"Copying remote centity capture fields");
@@ -492,19 +528,19 @@ bool frontend_remote_snapshots_checkpoint(const frontend_remote_snapshots *s,qa_
     for(uint32_t i=0;i<QA_Q3_ENTITIES;++i) copy->entities[i].presentation=&copy->presentations[i];
     copy->snap.value.entities=copy->snap.entities; copy->next.value.entities=copy->next.entities;
     qa_source_save_io io={0};
-    bool ok=qa_source_save_writer(&io,source.prediction.receiver.session,e) && codec(&io,copy) && qa_source_save_finish(&io,out);
+    bool ok=qa_source_save_writer(&io,source.basis.session,e) && codec(&io,copy) && qa_source_save_finish(&io,out);
     qa_source_save_dispose(&io); free(copy);
     if(!ok && (!e || e->code==QA_OK)) return fail(e,QA_ERROR_FORMAT,"Invalid remote centity capture fields");
     return ok;
 }
 bool frontend_remote_snapshots_restore(const frontend_remote_snapshots_options *options,
-    const frontend_network_presentation_source *source,qa_bytes bytes,frontend_remote_snapshots **out,qa_error *e)
+    const q3n_remote_source_view *source,qa_bytes bytes,frontend_remote_snapshots **out,qa_error *e)
 {
     if(!out || *out) return fail(e,QA_ERROR_ARGUMENT,"Remote centity restore requires an empty actual owner");
     frontend_remote_snapshots *s=NULL;
     if(!frontend_remote_snapshots_create(options,source,&s,e)) return false;
     qa_source_save_io io={0};
-    bool ok=qa_source_save_reader(&io,source->prediction.receiver.session,bytes,e) && codec(&io,s) && io.offset==io.input.size;
+    bool ok=qa_source_save_reader(&io,source->basis.session,bytes,e) && codec(&io,s) && io.offset==io.input.size;
     qa_source_save_dispose(&io);
     if(!ok) { free(s); if(!e || e->code==QA_OK) fail(e,QA_ERROR_FORMAT,"Invalid complete remote centity continuation"); return false; }
     *out=s; return true;

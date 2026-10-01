@@ -1,4 +1,5 @@
 #include "save_private.h"
+#include "qa/application_equipment_content.h"
 bool frontend_save_provider(qa_source_save_io *io, qa_application *application, qa_actor_owner *owner)
 {
     const char *instance = io->direction == QA_SOURCE_SAVE_WRITE && *owner ?
@@ -14,6 +15,35 @@ bool frontend_save_provider(qa_source_save_io *io, qa_application *application, 
         if (!resolved)
             return frontend_fail(io->error, QA_ERROR_FORMAT, "saved presentation provider is absent from candidate");
     }
+    return true;
+}
+bool frontend_save_sound_owner(qa_source_save_io *io, qa_application *application,
+    qa_actor_owner *owner, qa_audio_family *family)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    uint32_t tag = !reading && *owner ? 1 : 0, kind = *family;
+    qa_application_equipment_content gear;
+    if (!reading && *owner && !qa_application_provider_instance(application, *owner)) {
+        if (!qa_application_equipment_content_read(application, *owner, &gear, io->error)) return false;
+        tag = 2;
+    }
+    if (!qa_source_save_u32(io, &tag) || tag > 2 || !qa_source_save_u32(io, &kind) ||
+        kind > QA_AUDIO_Q3 || (tag == 2 && kind != QA_AUDIO_Q3)) return false;
+    if (tag == 1) {
+        if (!frontend_save_provider(io, application, owner) || !*owner) return false;
+    } else if (tag == 2) {
+        qa_strings *strings = qa_session_strings(qa_application_session(application));
+        char *name = !reading ? (char *)qa_strings_cstr(strings, *owner) : NULL;
+        if (!reading && !name) return false;
+        bool ok = frontend_save_text(io, &name);
+        if (reading) {
+            *owner = name ? qa_strings_find(strings, (qa_bytes){(const uint8_t *)name, strlen(name)}) : 0;
+            free(name);
+        }
+        if (!ok || !*owner || !qa_application_equipment_content_read(application, *owner, &gear, io->error))
+            return false;
+    } else *owner = 0;
+    *family = (qa_audio_family)kind;
     return true;
 }
 bool frontend_save_text(qa_source_save_io *io, char **owned)

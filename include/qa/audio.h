@@ -536,6 +536,10 @@ const char *qa_audio_device_name(const qa_audio_device *device);
 qa_audio_device_state qa_audio_device_get_state(const qa_audio_device *device);
 /* The returned name remains borrowed until selection or close. */
 qa_audio_device_options qa_audio_device_configuration(const qa_audio_device *device);
+/* Actual native format/buffer/name with the authored queue policy preserved:
+ * zero retains the format-dependent default; an explicit maximum stays exact.
+ * The name has the same borrowed lifetime as configuration(). */
+qa_audio_device_options qa_audio_device_requested_configuration(const qa_audio_device *device);
 /* Includes PCM retained after output failure or detachment. */
 size_t qa_audio_device_queued(qa_audio_device *device);
 /* Logical unpaused playback time expressed at the currently selected rate. */

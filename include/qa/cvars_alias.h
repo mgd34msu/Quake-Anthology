@@ -20,8 +20,10 @@ size_t qa_cvars_visible_count(const qa_cvars *);
 const qa_cvar_view *qa_cvars_visible_at(const qa_cvars *, size_t);
 size_t qa_cvars_edit_visible_count(const qa_cvars_edit *);
 const qa_cvar_view *qa_cvars_edit_visible_at(const qa_cvars_edit *, size_t);
-/* Converted aliases allocate a genuine separate Q3 VM handle on first bind;
- * identity aliases use the canonical handle. Find never allocates a handle. */
+/* Converted aliases allocate a genuine separate VM handle on first bind;
+ * identity aliases use the canonical handle. A foreign source registry only
+ * admits an existing row and keeps its declaration/default unchanged.
+ * Find never allocates a handle. */
 bool qa_cvars_vm_bind(qa_cvars *, const char *name, const char *default_value,
                       uint32_t flags, uint64_t owner, size_t *handle, qa_error *);
 bool qa_cvars_edit_vm_bind(qa_cvars_edit *, const char *name, const char *default_value,

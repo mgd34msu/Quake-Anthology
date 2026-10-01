@@ -1,5 +1,6 @@
 #include "guest_q3_factory.h"
 #include "guest_q3_private.h"
+#include "qa/network_q3.h"
 
 static void artifact_free(q3g_artifact *artifact)
 {
@@ -91,4 +92,64 @@ bool application_guest_q3_source_ui_create(struct application_q3_guest *engine,
         if (loaded) path = native_path;
     }
     return q3g_role_create(engine, QA_QVM_UI, seat, path, false, out, error);
+}
+
+static bool received_current(q3g_role *cgame, const qa_q3_gamestate *state, qa_error *error)
+{
+    struct application_q3_guest *engine = cgame->engine;
+    ++engine->calls;
+    const qa_q3_gamestate *actual = cgame->client_services.gamestate(cgame->client_services.context);
+    --engine->calls;
+    return actual == state && state->client_number == (int32_t)cgame->client ||
+        application_fail(error, QA_ERROR_ARGUMENT, "Source UI policy lost its actual received local gamestate");
+}
+
+static void discard_candidate(struct application_q3_guest *engine, q3g_role *role)
+{
+    role->retired = true;
+    if (!q3g_role_destroy(role, NULL)) { role->next = engine->roles; engine->roles = role; }
+}
+
+bool application_guest_q3_source_ui_received(q3g_role *cgame, const qa_q3_gamestate *state,
+    q3g_role **out, qa_error *error)
+{
+    if (!cgame || !state || !out || cgame->kind != QA_QVM_CGAME || !cgame->local_client ||
+        !cgame->ready || cgame->retired || cgame->initialized || !cgame->host ||
+        cgame->engine->calls || !cgame->client_services.gamestate ||
+        !received_current(cgame, state, error))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Source UI policy requires its post-Begin local client");
+    struct application_q3_guest *engine = cgame->engine;
+    q3g_role **position = NULL;
+    for (q3g_role **link = &engine->roles; *link; link = &(*link)->next)
+        if ((*link)->kind == QA_QVM_UI && (*link)->seat == cgame->seat &&
+            (*link)->ready && !(*link)->retired) {
+            if (position) return application_fail(error, QA_ERROR_ARGUMENT, "Ambiguous received source UI");
+            position = link;
+        }
+    q3g_role *ui = position ? *position : NULL;
+    if (!ui || ui->descriptor->storage != cgame->descriptor->storage ||
+        ui->descriptor->content != cgame->descriptor->content)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Received source UI has another physical descriptor");
+    char pure[QA_Q3_BIG_INFO_CHARS];
+    if (!qa_q3_info_value(qa_q3_configstring(state, 1), "sv_pure", pure, sizeof(pure), error)) return false;
+    if (!strtol(pure, NULL, 10) || ui->image) { *out = ui; return true; }
+    q3g_role *replacement = NULL;
+    if (!q3g_role_create(engine, QA_QVM_UI, cgame->seat, "vm/ui.qvm", false, &replacement, error)) return false;
+    bool current = received_current(cgame, state, error) &&
+        qa_q3_info_value(qa_q3_configstring(state, 1), "sv_pure", pure, sizeof(pure), error) &&
+        strtol(pure, NULL, 10) != 0;
+    if (!current) {
+        if (error && error->code == QA_OK)
+            application_fail(error, QA_ERROR_ARGUMENT, "Received source UI pure policy changed during preparation");
+        discard_candidate(engine, replacement); return false;
+    }
+    ui->source_cleared = true;
+    q3g_role *next = ui->next;
+    if (!q3g_role_shutdown_source(ui, false, error) || !q3g_role_destroy(ui, error)) {
+        discard_candidate(engine, replacement); return false;
+    }
+    replacement->next = next;
+    *position = replacement;
+    *out = replacement;
+    return true;
 }

@@ -883,13 +883,11 @@ static bool client_clear(void *context, qa_error *error)
 }
 static bool client_system_info(void *context, const char *info, qa_error *error)
 {
-    qa_frontend_network *n = context; char value[1024];
-    if (!qa_q3_info_value(info, "sv_pure", value, sizeof(value), error)) return false;
-    if (strtol(value, NULL, 10) != 0)
-        return frontend_fail(error, QA_ERROR_UNSUPPORTED, "Q3 remote pure admission requires live package-reference validation");
+    qa_frontend_network *n = context;
     qa_application_q3_client_context role;
-    return frontend_network_q3_client_context_read(n->frontend, n->q3_cgame_owner, n->q3_client_launch_seat, &role, error) &&
-        frontend_source_system_info(n->frontend, &role, info, error);
+    if (!frontend_network_q3_client_context_read(n->frontend, n->q3_cgame_owner, n->q3_client_launch_seat, &role, error)) return false;
+    return role.native_source ? qa_application_network_q3_client_native_system_info(n->frontend->application,
+        role.receiver, role.seat, info, error) : frontend_source_system_info(n->frontend, &role, info, error);
 }
 static bool client_gamestate(void *context, const qa_q3_gamestate *state, qa_error *error)
 {

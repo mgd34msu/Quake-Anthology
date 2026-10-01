@@ -232,7 +232,7 @@ bool qa_cvars_save_prepare(qa_cvars *registry, qa_bytes bytes, qa_cvars_restore 
         if (ok && (!actual || !saved.name || !saved.target || strcmp(saved.name,actual->name) ||
             strcmp(saved.target,actual->target) || saved.conversion!=actual->conversion ||
             (saved.vm_bound && (saved.conversion==QA_CVAR_ALIAS_IDENTITY ||
-                registry->options.dialect!=QA_CONSOLE_Q3 || saved.handle>=state->next_handle || saved.handle>=1024))))
+                saved.handle>=state->next_handle || saved.handle>=1024))))
             ok=qac_fail(error,QA_ERROR_FORMAT,"saved alias differs from its actual factory declaration");
         const cvar *target=state->first;
         while (ok && target && !same_name(registry->options.dialect,target->view.name,saved.target)) target=target->next;

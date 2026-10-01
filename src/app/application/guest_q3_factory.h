@@ -10,6 +10,9 @@ struct q3g_role;
 /* The retained source client authors its UI VM independently of visible MENU. */
 bool application_guest_q3_source_ui_create(struct application_q3_guest *, uint32_t,
     struct q3g_role **, qa_error *);
+/* Applies the received local SystemInfo policy after genuine client Begin. */
+bool application_guest_q3_source_ui_received(struct q3g_role *, const qa_q3_gamestate *,
+    struct q3g_role **, qa_error *);
 
 /* Prepare the actual detached GAME or CLIENT consoles before configuration.
  * No host, executor, source Init, or world publication occurs here. */
