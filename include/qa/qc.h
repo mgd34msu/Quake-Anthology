@@ -401,6 +401,9 @@ bool qa_qc_execute(qa_qc_instance *instance, uint32_t function,
 bool qa_qc_execute_named(qa_qc_instance *instance, const char *function,
                          uint32_t argument_count, qa_error *error);
 bool qa_qc_call_continue(qa_qc_call_next next, qa_error *error);
+/* While next's replacement is active, report a successfully continued source
+ * body. Skipped, cancelled, failed and expired continuations return false. */
+bool qa_qc_call_completed(qa_qc_call_next next);
 bool qa_qc_call_skip(qa_qc_call_next next, const uint32_t result[3],
                       qa_error *error);
 /* Cancel is valid only while the continued source function is on the stack.

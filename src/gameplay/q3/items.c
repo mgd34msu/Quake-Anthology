@@ -710,12 +710,43 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
     if (!pickup_original_live(game, offer, &entity, &recipient))
         return true;
     player = &recipient->state.player;
+    uint32_t source_client;
+    bool native_client = q3_source_client_pointer(game, offer->recipient, &source_client);
+    if (game->options.hooks.source_supply_take &&
+        native_client) {
+        q3_wire_entity_source *source = q3_wire_entity(game, offer->pickup);
+        if (!source || source->model != (int32_t)spawn.item_index)
+            return q3_fail(error, "Q3 source pickup lost its published item declaration");
+        qa_q3_supply_descriptor descriptor = {.pickup = offer->pickup, .recipient = offer->recipient,
+            .item = item, .count = spawn.count, .generic1 = source->generic1,
+            .game_type = game->options.rules.game_type, .dropped = spawn.dropped,
+            .weapon_respawn_seconds = game->options.rules.weapon_respawn_seconds,
+            .team_weapon_respawn_seconds = game->options.rules.team_weapon_respawn_seconds};
+        qa_q3_supply_kind kind = QA_Q3_SUPPLY_NATIVE;
+        bool supplied = false;
+        float respawn = 0;
+        if (!game->options.hooks.source_supply_take(game->options.hooks.context,
+                &descriptor, &kind, &supplied, &respawn, error)) return false;
+        if (!pickup_original_live(game, offer, &entity, &recipient)) return true;
+        if (kind == QA_Q3_SUPPLY_REJECTED) return true;
+        if (kind == QA_Q3_SUPPLY_SELECTED) {
+            if (!supplied) return true;
+            if (!pickup_log(call, offer, item, error)) return false;
+            if (!pickup_original_live(game, offer, NULL, NULL)) return true;
+            call->respawn = respawn;
+            *accepted = respawn != 0;
+            return true;
+        }
+        if (kind != QA_Q3_SUPPLY_NATIVE)
+            return q3_fail(error, "Q3 source pickup returned an invalid admission kind");
+        player = &recipient->state.player;
+    }
     float maximum = (float)player->max_health;
     int32_t quantity = spawn.count ? spawn.count : item->quantity;
     double given;
     switch (item->kind) {
     case QA_Q3_ITEM_WEAPON: {
-        if (!(player->selections & QA_Q3_ARSENAL))
+        if (!(player->selections & QA_Q3_ARSENAL) && !native_client)
             return true;
         int32_t ammo;
         if (!q3_ammo_read(game, offer->recipient, (qa_q3_weapon)item->tag, &ammo, error))
@@ -740,7 +771,7 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
         break;
     }
     case QA_Q3_ITEM_AMMO: {
-        if (!(player->selections & QA_Q3_ARSENAL))
+        if (!(player->selections & QA_Q3_ARSENAL) && !native_client)
             return true;
         int32_t ammo;
         if (!q3_ammo_read(game, offer->recipient, (qa_q3_weapon)item->tag, &ammo, error))
@@ -862,7 +893,11 @@ static bool pickup_original(void *context, const qa_pickup_offer *offer, bool *a
         if (!pickup_original_live(game, offer, &entity, &recipient))
             return true;
         player = &recipient->state.player;
-        memset(player->ammo_time_ms, 0, sizeof(player->ammo_time_ms));
+        for (int weapon = 0; weapon < QA_Q3_WEAPON_COUNT; ++weapon) {
+            if (!q3_ammo_timer_store(game, offer->recipient, (qa_q3_weapon)weapon, 0, error))
+                return false;
+            if (!pickup_original_live(game, offer, &entity, &recipient)) return true;
+        }
         break;
     }
     case QA_Q3_ITEM_TEAM:

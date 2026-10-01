@@ -54,6 +54,7 @@ bool q2_player_inventory_copy(qa_q2_game *, qa_actor_id, qa_inventory_entry **, 
                               qa_error *);
 bool q2_player_inventory_set(qa_q2_game *, qa_actor_id, const qa_inventory_entry *, size_t,
                              qa_error *);
+bool q2_player_start_items(qa_q2_game *, qa_actor_id, qa_error *);
 bool q2_player_spawn_select(qa_q2_game *, q2_actor *, const qa_q2_player_movement *,
                             const qa_q2_landmark *, qa_body_state *, bool *, qa_error *);
 bool q2_player_environment(qa_q2_game *, q2_actor *, const qa_q2_player_movement *, qa_error *);

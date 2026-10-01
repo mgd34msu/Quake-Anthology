@@ -94,7 +94,7 @@ typedef struct qa_q2_player_rules {
     qa_string_id next_map;
     bool map_list_shuffle;
     uint32_t max_spectators, max_clients;
-    bool cheats, coop_squad_respawn, coop_instanced_items, coop_lives, coop_player_collision;
+    bool cheats, teamplay, coop_squad_respawn, coop_instanced_items, coop_lives, coop_player_collision;
     int coop_num_lives;
     bool force_respawn, no_fall_damage, spawn_farthest;
     float force_respawn_seconds;
@@ -137,6 +137,9 @@ typedef struct qa_q2_player_services {
     bool (*persistent_inventory)(void *, qa_actor_id, qa_error *);
     bool (*select_spawn)(void *, qa_actor_id, qa_vec3 *, qa_vec3 *, bool *, qa_error *);
     bool (*death)(void *, qa_actor_id, const qa_attack *, qa_error *);
+    /* Cmd_Kill's already committed health-zero source boundary. This invokes
+     * direct CHARACTER death and confirmation without T_Damage modifiers. */
+    bool (*suicide)(void *, const qa_damage_request *, qa_error *);
     bool (*drop_inventory)(void *, qa_actor_id, const qa_attack *, qa_error *);
     bool (*before_death_inventory)(void *, qa_actor_id, const qa_attack *, qa_error *);
     bool (*disconnect)(void *, qa_actor_id, qa_error *);
@@ -215,6 +218,7 @@ typedef struct qa_q2_player_state {
     bool show_scores, show_inventory, show_help, bob_skip, nuke_inside, auto_shield_enabled;
     bool awaiting_respawn, spawned, player_collision, has_coop, has_pending_landmark, squad_spawn,
         corpse;
+    bool pending_start_items;
     qa_q2_landmark pending_landmark;
     qa_vec3 squad_origin, squad_angles;
 } qa_q2_player_state;
@@ -266,6 +270,7 @@ bool qa_q2_player_projection(qa_q2_game *, qa_actor_id, qa_builtin_player_info *
 bool qa_q2_player_score(qa_q2_game *, qa_actor_id, int score, int ping, qa_error *);
 bool qa_q2_player_spawn(qa_q2_game *, qa_actor_id, bool restore_loadout, const qa_q2_landmark *,
                         qa_error *);
+bool qa_q2_player_start_items(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_player_respawn(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_player_after_movement(qa_q2_game *, qa_actor_id, qa_error *);
 bool qa_q2_player_end_frame(qa_q2_game *, qa_actor_id, qa_error *);

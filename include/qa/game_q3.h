@@ -9,6 +9,7 @@
 #include "qa/game_q3_client_types.h"
 #include "qa/game_q3_source_types.h"
 #include "qa/game_q3_shader_remap.h"
+#include "qa/game_q3_supply.h"
 
 typedef struct qa_q3_game qa_q3_game;
 bool qa_q3_game_random(qa_q3_game *, float *, qa_error *);
@@ -219,6 +220,11 @@ typedef struct qa_q3_hooks {
     bool (*objective_expired)(void *, qa_actor_id item, uint32_t item_index, qa_error *);
     bool (*objective_nodrop)(void *, qa_actor_id item, uint32_t item_index, qa_error *);
     bool (*source_flags_cleared)(void *, qa_actor_id player, qa_error *);
+    bool (*source_supply_take)(void *, const qa_q3_supply_descriptor *, qa_q3_supply_kind *,
+                               bool *accepted, float *respawn_seconds, qa_error *);
+    bool (*source_ammo_regeneration)(void *, qa_actor_id, int32_t elapsed_ms,
+                                      bool *handled, qa_error *);
+    bool (*source_ammo_timer_stored)(void *, qa_actor_id, qa_q3_weapon, int32_t, qa_error *);
     bool (*source_obelisk_settings)(void *, qa_q3_obelisk_settings *, qa_error *);
     bool (*objective_obelisk_admitted)(void *, qa_actor_id, qa_actor_id, int32_t, qa_error *);
     bool (*objective_obelisk_touch)(void *, qa_actor_id, qa_actor_id, qa_error *);

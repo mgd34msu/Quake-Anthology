@@ -362,6 +362,18 @@ bool q3_add_ammo(qa_q3_game *game, qa_actor_id actor, qa_q3_weapon weapon, int32
     return qa_inventory_adjust(game->options.services.inventory, actor, game->ammo_items[weapon],
                                (double)next - old, &stored, error);
 }
+bool q3_ammo_timer_store(qa_q3_game *game, qa_actor_id actor, qa_q3_weapon weapon,
+                         int32_t value, qa_error *error) {
+    q3_actor *entry = q3_actor_get(game, actor);
+    if (!entry || entry->kind != Q3_ACTOR_PLAYER || (unsigned)weapon >= QA_Q3_WEAPON_COUNT)
+        return q3_fail(error, "Q3 ammo timer store lost its actual player or weapon");
+    entry->state.player.ammo_time_ms[weapon] = value;
+    uint32_t slot;
+    return !game->options.hooks.source_ammo_timer_stored ||
+        !qa_q3_native_client_slot(game, actor, &slot, NULL) ||
+        game->options.hooks.source_ammo_timer_stored(game->options.hooks.context,
+                                                     actor, weapon, value, error);
+}
 static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_state *spawn,
                         qa_team_id team, qa_error *error) {
     q3_actor *entry = q3_actor_get(game, actor);
@@ -548,7 +560,12 @@ static bool spawn_player(qa_q3_game *game, qa_actor_id actor, const qa_body_stat
     player->has_last_fire = false;
     player->last_fire_ms = 0;
     player->gauntlet_contact = player->damage_from_world = player->noclip = false;
-    memset(player->ammo_time_ms, 0, sizeof(player->ammo_time_ms));
+    for (int weapon = 0; weapon < QA_Q3_WEAPON_COUNT; ++weapon) {
+        if (!q3_ammo_timer_store(game, actor, (qa_q3_weapon)weapon, 0, error)) return false;
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+    }
+    player = &entry->state.player;
     player->legs_animation = 22;
     player->torso_animation = 11;
     player->legs_timer_ms = player->torso_timer_ms = 0;
@@ -644,8 +661,11 @@ static bool map_ammo_regeneration(qa_q3_game *game, qa_actor_id actor, qa_q3_wea
         if (!entry || entry->kind != Q3_ACTOR_PLAYER)
             return true;
     }
-    if (entry->state.player.ammo_regeneration_items[weapon] != ammo)
-        entry->state.player.ammo_time_ms[weapon] = 0;
+    if (entry->state.player.ammo_regeneration_items[weapon] != ammo) {
+        if (!q3_ammo_timer_store(game, actor, weapon, 0, error)) return false;
+        entry = q3_actor_get(game, actor);
+        if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+    }
     entry->state.player.ammo_regeneration_items[weapon] = ammo;
     return true;
 }
@@ -1229,6 +1249,15 @@ bool qa_q3_player_timers(qa_q3_game *game, qa_actor_id actor, int32_t elapsed, q
             return false;
     }
     if (player->persistent == QA_Q3_P_AMMOREGEN) {
+        if (native && game->options.hooks.source_ammo_regeneration) {
+            bool handled = false;
+            if (!game->options.hooks.source_ammo_regeneration(game->options.hooks.context,
+                                                               actor, elapsed, &handled, error))
+                return false;
+            entry = q3_actor_get(game, actor);
+            if (!entry || entry->kind != Q3_ACTOR_PLAYER || handled) return true;
+            player = &entry->state.player;
+        }
         static const int32_t maxima[14] = {0, 0, 50, 10, 10, 10, 50, 10, 50, 10, 0, 10, 5, 100};
         static const int32_t increments[14] = {0, 0, 4, 1, 1, 1, 5, 1, 5, 1, 0, 1, 1, 5};
         static const int32_t periods[14] = {0,    0,    1000, 1500, 2000, 1750, 1500,
@@ -1261,7 +1290,10 @@ bool qa_q3_player_timers(qa_q3_game *game, qa_actor_id actor, int32_t elapsed, q
             if (!entry)
                 return true;
             player = &entry->state.player;
-            player->ammo_time_ms[weapon] = total;
+            if (!q3_ammo_timer_store(game, actor, (qa_q3_weapon)weapon, total, error)) return false;
+            entry = q3_actor_get(game, actor);
+            if (!entry || entry->kind != Q3_ACTOR_PLAYER) return true;
+            player = &entry->state.player;
         }
     }
     return true;

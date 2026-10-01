@@ -591,7 +591,17 @@ bool qa_qc_call_continue(qa_qc_call_next next, qa_error *error)
         return true;
     }
     capture_result(instance, boundary);
+    boundary->body_completed = true;
     return true;
+}
+
+bool qa_qc_call_completed(qa_qc_call_next next)
+{
+    const qa_qc_instance *instance = next.instance;
+    const qc_boundary *boundary = instance == NULL ? NULL : instance->boundary;
+    return boundary != NULL && boundary->active && boundary->invocation == next.invocation
+        && boundary->used && boundary->body_completed && boundary->result_valid
+        && !boundary->executing && !boundary->cancelled && instance->cancelling == NULL;
 }
 
 bool qa_qc_call_skip(qa_qc_call_next next, const uint32_t result[3],

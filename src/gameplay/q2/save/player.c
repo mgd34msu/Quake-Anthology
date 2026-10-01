@@ -59,6 +59,7 @@ static bool state(q2_save_io *io, qa_q2_player_state *s) {
     Q2B(show_scores); Q2B(show_inventory); Q2B(show_help); Q2B(bob_skip); Q2B(nuke_inside);
     Q2B(auto_shield_enabled); Q2B(awaiting_respawn); Q2B(spawned); Q2B(player_collision);
     Q2B(has_coop); Q2B(has_pending_landmark); Q2B(squad_spawn); Q2B(corpse);
+    Q2B(pending_start_items);
     if (!q2_save_landmark(io, &s->pending_landmark)) return false;
     Q2V(squad_origin); Q2V(squad_angles); return true;
 }

@@ -71,6 +71,36 @@ bool q1_enable_combos(qa_q1_game *g, q1_player *player, qa_error *error) {
     }
     return true;
 }
+static bool combo_player_current(qa_q1_game *g, qa_actor_id actor,
+    const q1_player *player, qa_error *error) {
+    if (g && !g->continuation_pending && player && q1_player_get(g, actor) == player &&
+        player->arsenal) return true;
+    qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Selected Q1 combo lost its actual arsenal player");
+    return false;
+}
+bool q1_enable_combos_read(qa_q1_game *g, qa_actor_id actor, q1_player *player,
+    qa_error *error) {
+    if (!combo_player_current(g, actor, player, error)) return false;
+    if (g->options.program != QA_Q1_ROGUE) return true;
+    for (size_t i = 0; i < sizeof(combos) / sizeof(*combos); ++i) {
+        qa_inventory_entry powered, base, ammo;
+        if (!qa_inventory_entry_read(g->services.inventory, actor, g->weapons[combos[i].powered],
+                &powered, error) || !combo_player_current(g, actor, player, error)) return false;
+        if (powered.count != 0) continue;
+        if (!qa_inventory_entry_read(g->services.inventory, actor, g->weapons[combos[i].base],
+                &base, error) || !combo_player_current(g, actor, player, error)) return false;
+        if (base.count <= 0) continue;
+        if (!qa_inventory_entry_read(g->services.inventory, actor, g->ammo[combos[i].ammo],
+                &ammo, error) || !combo_player_current(g, actor, player, error)) return false;
+        if (ammo.count <= 0) continue;
+        double given;
+        if (!qa_inventory_give(g->services.inventory, actor, powered.item, 1, &given, error) ||
+            !combo_player_current(g, actor, player, error) ||
+            !q1_message(g, actor, combos[i].message, error) ||
+            !combo_player_current(g, actor, player, error)) return false;
+    }
+    return true;
+}
 qa_q1_weapon q1_combo_weapon(qa_q1_game *g, q1_player *player, qa_q1_weapon weapon) {
     if (g->options.program == QA_Q1_ROGUE)
         for (size_t i = 0; i < sizeof(combos) / sizeof(*combos); ++i)

@@ -2,6 +2,7 @@
 #include "guest_qc_original_save.h"
 #include "guest_qc_rerelease.h"
 #include "guest_qc_factory.h"
+#include "guest_qc_spawn.h"
 #include "startup_flow.h"
 #include "control_frame.h"
 #include <float.h>
@@ -1143,7 +1144,8 @@ bool application_construct_qc(qa_application *app, application_provider *provide
     if (!qa_strings_intern_cstr(qa_session_strings(app->session), "quakec:authored", &definition, error)) return false;
     qa_qc_game_options options = {
         .vm = {.profile = engine->profile, .entity_capacity = engine->actor_capacity,
-            .observers = {.context = engine, .stored = stored, .entered = application_qc_entered},
+            .observers = {.context = engine, .stored = stored, .entered = application_qc_entered,
+                .replace = application_qc_spawn_call},
             .host = {.owner = provider->owner, .default_definition = definition, .vfs = provider->launch->content,
                      .context = engine, .random_u32 = source_random, .may_move = application_qc_may_move,
                      .declared_projection = profile != NULL, .prepare_entity = application_qc_prepare_entity,

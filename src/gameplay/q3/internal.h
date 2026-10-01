@@ -246,6 +246,7 @@ bool q3_portal_step(qa_q3_game *, qa_actor_id, qa_error *);
 bool q3_combat_describe(void *, const qa_damage_request *, const qa_combat_state *,
                         const qa_combat_state *, qa_combat_context *, qa_error *);
 bool q3_ammo_read(qa_q3_game *, qa_actor_id, qa_q3_weapon, int32_t *, qa_error *);
+bool q3_ammo_timer_store(qa_q3_game *, qa_actor_id, qa_q3_weapon, int32_t, qa_error *);
 bool q3_add_ammo(qa_q3_game *, qa_actor_id, qa_q3_weapon, int32_t, qa_error *);
 bool q3_killbox(qa_q3_game *, qa_actor_id, qa_error *);
 bool q3_owns_weapon(qa_q3_game *, qa_actor_id, qa_q3_weapon);

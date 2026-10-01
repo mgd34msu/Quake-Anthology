@@ -2,6 +2,7 @@
 #include "qa/game_q1_maps.h"
 #include "qa/game_q1_checkpoint.h"
 #include "qa/game_q1_bots.h"
+#include "qa/game_q1_supply.h"
 #include <float.h>
 #include <stdio.h>
 
@@ -104,6 +105,136 @@ static bool supply_ammo(void *context, qa_actor_id actor, const qa_pickup_receip
         return true;
     return qa_q1_player_select(g, actor, q1_best_weapon(g, player), error);
 }
+bool qa_q1_player_auto_switch_read(const qa_q1_game *g, qa_actor_id actor,
+    qa_q1_auto_switch *out, qa_error *error) {
+    if (!g || !out || g->destroy_pending || g->continuation_pending ||
+        actor.slot >= g->capacity || !qa_actors_get(qa_session_actors(g->services.session), actor)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 pickup preference has no current source actor");
+        return false;
+    }
+    const q1_player *player = g->players[actor.slot];
+    if (!player || !player->active || !qa_actor_id_equal(player->id, actor)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 pickup preference has no actual player");
+        return false;
+    }
+    *out = player->auto_switch;
+    return true;
+}
+static bool selected_player_current(qa_q1_game_operation *operation, qa_actor_id actor,
+    const q1_player *player, qa_error *error) {
+    if (player && qa_q1_game_operation_live(operation) && q1_player_get(operation->game, actor) == player &&
+        player->arsenal) return true;
+    qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Selected Q1 pickup lost its admitted arsenal player");
+    return false;
+}
+bool qa_q1_source_arsenal_spawn_read(qa_q1_game *g, qa_actor_id actor,
+    qa_q1_weapon *weapon, float *max_health, qa_q1_auto_switch *preference, qa_error *error) {
+    if (!weapon || !max_health || !preference) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 source spawn requires complete output fields");
+        return false;
+    }
+    uint32_t slot;
+    if (!qa_q1_native_client_slot(g, actor, &slot, error)) return false;
+    q1_player *player = q1_player_get(g, actor);
+    if (!player || !qa_q1_player_source_present(g, actor) ||
+        player->weapon < QA_Q1_AXE || player->weapon >= QA_Q1_WEAPON_COUNT ||
+        !isfinite(player->max_health) || player->max_health <= 0 ||
+        player->auto_switch < QA_Q1_SWITCH_ALWAYS || player->auto_switch > QA_Q1_SWITCH_NEVER) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 source spawn has no valid physical player declaration");
+        return false;
+    }
+    *weapon = player->weapon;
+    *max_health = player->max_health;
+    *preference = player->auto_switch;
+    return true;
+}
+bool qa_q1_selected_arsenal_spawn(qa_q1_game *g, qa_actor_id actor, qa_q1_weapon weapon,
+    float max_health, const qa_q1_auto_switch *source_preference, qa_error *error) {
+    if (weapon < QA_Q1_AXE || weapon >= QA_Q1_WEAPON_COUNT ||
+        !isfinite(max_health) || max_health <= 0 || (source_preference &&
+        (*source_preference < QA_Q1_SWITCH_ALWAYS || *source_preference > QA_Q1_SWITCH_NEVER))) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Invalid selected Q1 spawn declaration");
+        return false;
+    }
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error)) return false;
+    q1_player *player = q1_player_get(g, actor);
+    bool ok = selected_player_current(&operation, actor, player, error);
+    qa_body_state body;
+    if (ok) ok = qa_world_body_read(g->services.world, actor, &body, error) &&
+        selected_player_current(&operation, actor, player, error);
+    if (ok) {
+        player->attack_finished = player->next_weapon_frame = player->lightning_sound_at = 0;
+        player->animation_base = player->nail_side = 1;
+        player->punch = qa_v3(0, 0, 0);
+        player->input = (qa_q1_input){.view_angles = body.angles};
+        player->hostile_until = player->drown_at = player->hazard_at = 0;
+        player->mega_rot_at = -1;
+        player->air_finished = g->time + 12;
+        player->drown_damage = 2;
+        memset(player->power_expires, 0, sizeof(player->power_expires));
+        memset(player->power_flash, 0, sizeof(player->power_flash));
+        player->power_warned = 0;
+        player->max_health = max_health;
+        player->auto_switch = source_preference ? *source_preference : QA_Q1_SWITCH_ALWAYS;
+        ok = q1_player_select_read(g, actor, player, weapon, error) &&
+            selected_player_current(&operation, actor, player, error);
+    }
+    qa_q1_game_operation_end(&operation);
+    return ok;
+}
+bool qa_q1_selected_pickup_ammo(qa_q1_game *g, qa_actor_id actor,
+    const qa_pickup_receipt *receipts, size_t count, bool auto_switch,
+    const qa_q1_auto_switch *source_preference, qa_error *error) {
+    if ((count && !receipts) || (source_preference &&
+        (*source_preference < QA_Q1_SWITCH_ALWAYS || *source_preference > QA_Q1_SWITCH_NEVER))) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Invalid selected Q1 ammunition receipts");
+        return false;
+    }
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error)) return false;
+    q1_player *player = q1_player_get(g, actor);
+    bool ok = selected_player_current(&operation, actor, player, error);
+    qa_q1_weapon before, after;
+    if (ok) ok = q1_enable_combos_read(g, actor, player, error) &&
+        selected_player_current(&operation, actor, player, error) &&
+        q1_best_weapon_before_read(g, actor, player, receipts, count, &before, error);
+    if (ok && auto_switch && (source_preference ? *source_preference : player->auto_switch) != QA_Q1_SWITCH_NEVER &&
+        player->weapon == before)
+        ok = q1_best_weapon_before_read(g, actor, player, NULL, 0, &after, error) &&
+            q1_player_select_read(g, actor, player, after, error) &&
+            selected_player_current(&operation, actor, player, error);
+    qa_q1_game_operation_end(&operation);
+    return ok;
+}
+bool qa_q1_selected_pickup_weapons(qa_q1_game *g, qa_actor_id actor,
+    const qa_item_id *items, size_t count, qa_pickup_selection_mode selection,
+    const qa_q1_auto_switch *source_preference, qa_error *error) {
+    if ((count && !items) || selection < QA_PICKUP_SWITCH_NEVER || selection > QA_PICKUP_SWITCH_IF_BETTER ||
+        (source_preference && (*source_preference < QA_Q1_SWITCH_ALWAYS || *source_preference > QA_Q1_SWITCH_NEVER))) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Invalid selected Q1 weapon receipts");
+        return false;
+    }
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error)) return false;
+    q1_player *player = q1_player_get(g, actor);
+    bool ok = player && selected_player_current(&operation, actor, player, error);
+    if (!player) qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Selected Q1 pickup player is absent");
+    if (ok) ok = q1_enable_combos_read(g, actor, player, error) && selected_player_current(&operation, actor, player, error);
+    if (ok && (source_preference ? *source_preference : player->auto_switch) == QA_Q1_SWITCH_NEVER)
+        selection = QA_PICKUP_SWITCH_NEVER;
+    for (size_t i = 0; ok && i < count; ++i)
+        for (unsigned weapon = 0; ok && weapon < QA_Q1_WEAPON_COUNT; ++weapon) {
+            if (items[i] != g->weapons[weapon]) continue;
+            if (selection == QA_PICKUP_SWITCH_ALWAYS ||
+                (selection == QA_PICKUP_SWITCH_IF_BETTER &&
+                 q1_weapon_rank(g, (qa_q1_weapon)weapon) < q1_weapon_rank(g, player->weapon)))
+                ok = q1_player_select_read(g, actor, player, (qa_q1_weapon)weapon, error) &&
+                    selected_player_current(&operation, actor, player, error);
+        }
+    qa_q1_game_operation_end(&operation);
+    return ok;
+}
 bool q1_pickup_supply_create(qa_q1_game *g, qa_error *error) {
     qa_supply_mapping weapons[QA_Q1_WEAPON_COUNT], ammo[QA_Q1_AMMO_COUNT];
     for (unsigned i = 0; i < QA_Q1_WEAPON_COUNT; ++i)
@@ -118,9 +249,11 @@ bool q1_pickup_supply_create(qa_q1_game *g, qa_error *error) {
         .context = g, .ammo_granted = supply_ammo, .weapon_granted = supply_weapons};
     return qa_supply_create(g->services.inventory, &profile, &hooks, &g->source_supply, error);
 }
-static qa_supply *supply(qa_q1_game *g, qa_actor_id actor) {
-    qa_supply *selected = g->host.supply ? g->host.supply(g->host.context, actor) : NULL;
-    return selected ? selected : g->source_supply;
+static bool supply(qa_q1_game *g, qa_actor_id actor, qa_supply **out, qa_error *error) {
+    qa_supply *selected = NULL;
+    if (g->host.supply && !g->host.supply(g->host.context, actor, &selected, error)) return false;
+    *out = selected ? selected : g->source_supply;
+    return true;
 }
 static bool weapon_leave(const qa_q1_game *g) {
     bool mission = g->options.program == QA_Q1_HIPNOTIC || g->options.program == QA_Q1_ROGUE;
@@ -515,7 +648,9 @@ static bool item_eligible(void *context, const qa_pickup_offer *offer, bool *eli
                 q1_target(g, touch->recipient, &target) && target.player;
     if (*eligible && item->kind == Q1_ITEM_WEAPON && weapon_leave(g)) {
         bool owned;
-        if (!qa_supply_owns(supply(g, touch->recipient), touch->recipient, item->item, &owned,
+        qa_supply *selected;
+        if (!supply(g, touch->recipient, &selected, error) ||
+            !qa_supply_owns(selected, touch->recipient, item->item, &owned,
                             error))
             return false;
         *eligible = !owned;
@@ -566,11 +701,14 @@ static bool item_original(void *context, const qa_pickup_offer *offer, bool *tak
         *taken = true;
         return qa_combat_set_regular_armor(g->services.combat, actor, &armor, error);
     }
-    case Q1_ITEM_AMMO:
-        return qa_supply_ammo(supply(g, actor), actor, (qa_pickup_grant){item->item, item->count},
+    case Q1_ITEM_AMMO: {
+        qa_supply *selected;
+        if (!supply(g, actor, &selected, error)) return false;
+        return qa_supply_ammo(selected, actor, (qa_pickup_grant){item->item, item->count},
                               (item->mission && g->options.edition == QA_Q1_CLASSIC) || !player ||
                                   player->auto_switch != QA_Q1_SWITCH_NEVER,
                               taken, error);
+    }
     case Q1_ITEM_WEAPON: {
         int ammo = q1_weapon_ammo(item->weapon);
         if (item->weapon == QA_Q1_MJOLNIR || item->weapon == QA_Q1_MG3_MJOLNIR)
@@ -583,7 +721,9 @@ static bool item_original(void *context, const qa_pickup_offer *offer, bool *tak
         qa_supply_options options = {.selection = g->options.deathmatch ? QA_PICKUP_SWITCH_IF_BETTER
                                                                         : QA_PICKUP_SWITCH_ALWAYS};
         bool owned;
-        if (!qa_supply_owns(supply(g, actor), actor, item->item, &owned, error))
+        qa_supply *selected;
+        if (!supply(g, actor, &selected, error) ||
+            !qa_supply_owns(selected, actor, item->item, &owned, error))
             return false;
         bool classic_mission =
             g->options.edition == QA_Q1_CLASSIC &&
@@ -594,7 +734,8 @@ static bool item_original(void *context, const qa_pickup_offer *offer, bool *tak
                         player->weapon == QA_Q1_ROGUE_GRAPPLE && player->input.attack)))
             options.selection = QA_PICKUP_SWITCH_NEVER;
         touch->leave = weapon_leave(g);
-        return qa_supply_apply(supply(g, actor), actor, &weapon, &options, taken, error);
+        if (!supply(g, actor, &selected, error)) return false;
+        return qa_supply_apply(selected, actor, &weapon, &options, taken, error);
     }
     case Q1_ITEM_KEY: {
         qa_inventory_entry entry;
@@ -622,9 +763,11 @@ static bool item_original(void *context, const qa_pickup_offer *offer, bool *tak
         return q1_sphere_pickup(g, touch->entity, actor, taken, error);
     case Q1_ITEM_BACKPACK: {
         qa_pickup_selection_mode selection = QA_PICKUP_SWITCH_NEVER;
+        qa_supply *selected;
         if (item->weapon < QA_Q1_WEAPON_COUNT) {
             bool owned;
-            if (!qa_supply_owns(supply(g, actor), actor, g->weapons[item->weapon], &owned, error))
+            if (!supply(g, actor, &selected, error) ||
+                !qa_supply_owns(selected, actor, g->weapons[item->weapon], &owned, error))
                 return false;
             bool auto_switch = !player || g->options.edition != QA_Q1_RERELEASE ||
                                player->auto_switch == QA_Q1_SWITCH_ALWAYS ||
@@ -636,7 +779,8 @@ static bool item_original(void *context, const qa_pickup_offer *offer, bool *tak
             if (auto_switch && !underwater)
                 selection = always ? QA_PICKUP_SWITCH_ALWAYS : QA_PICKUP_SWITCH_IF_BETTER;
         }
-        return qa_supply_cargo(supply(g, actor), actor, offer->cargo, offer->cargo_count, selection,
+        if (!supply(g, actor, &selected, error)) return false;
+        return qa_supply_cargo(selected, actor, offer->cargo, offer->cargo_count, selection,
                                false, taken, error);
     }
     case Q1_ITEM_MG3_SHARD: {
@@ -1167,7 +1311,9 @@ bool qa_q1_bot_supply_preview(qa_q1_game *g,qa_actor_id pickup,qa_actor_id recip
         *eligible=true;
         if(item.kind==Q1_ITEM_WEAPON && weapon_leave(g)) {
             bool owned;
-            ok=qa_supply_owns(supply(g,recipient),recipient,item.item,&owned,error);
+            qa_supply *selected;
+            ok=supply(g,recipient,&selected,error) &&
+                qa_supply_owns(selected,recipient,item.item,&owned,error);
             if(!ok) goto done;
             *eligible=!owned;
         }
@@ -1180,7 +1326,9 @@ bool qa_q1_bot_supply_preview(qa_q1_game *g,qa_actor_id pickup,qa_actor_id recip
                            .amount=item.count};
     qa_supply_offer offer={.kind=item.kind==Q1_ITEM_WEAPON?QA_SUPPLY_WEAPON:QA_SUPPLY_AMMO,
         .item=item.item,.ammo=&grant,.ammo_count=item.kind==Q1_ITEM_AMMO || ammo>=0?1:0};
-    ok=qa_supply_preview(supply(g,recipient),recipient,&offer,false,out,error);
+    qa_supply *selected;
+    ok=supply(g,recipient,&selected,error) &&
+        qa_supply_preview(selected,recipient,&offer,false,out,error);
     if(!ok || !q1_alive(g,pickup) || !q1_alive(g,recipient) || g->destroy_pending) {
         qa_supply_preview_free(out);*eligible=false;*found=false;
     }
@@ -1286,7 +1434,8 @@ static bool pickup_preview(qa_q1_game *g, qa_actor_id actor, const q1_pickup *it
     default:
         break;
     }
-    qa_supply *selected = supply(g, actor);
+    qa_supply *selected;
+    if (!supply(g, actor, &selected, error)) return false;
     qa_supply_preview_result preview = {0};
     bool ok;
     if (item->kind == Q1_ITEM_BACKPACK) {
@@ -1374,7 +1523,9 @@ static bool pickup_inspect(void *context, qa_actor_id pickup, qa_actor_id actor,
             eligible = false;
         if (eligible && item.kind == Q1_ITEM_WEAPON && item.drop == Q1_DROP_NONE && weapon_leave(g)) {
             bool owned;
-            ok = qa_supply_owns(supply(g, actor), actor, item.item, &owned, error);
+            qa_supply *selected;
+            ok = supply(g, actor, &selected, error) &&
+                qa_supply_owns(selected, actor, item.item, &owned, error);
             if (ok)
                 eligible = !owned;
         }

@@ -48,14 +48,59 @@ static bool fresh_inventory(qa_q2_game *g, q2_actor *a, qa_error *e) {
         return false;
     powers->maximum_health = 100;
     s->info.selected_item = s->use_inventory ? g->items[QA_Q2_BLASTER] : 0;
+    if (s->use_inventory)
+        s->pending_start_items = true;
     qa_q2_player_services *services = &g->player_runtime->services;
     if (s->use_inventory && services->persistent_inventory &&
         !services->persistent_inventory(services->context, a->id, e))
         return false;
     if (!q2_actor_live(g, a->id))
         return true;
-    return !*g->player_runtime->rules.start_items ||
-           qa_q2_items_start(g, a->id, g->player_runtime->rules.start_items, e);
+    return true;
+}
+bool q2_player_start_items(qa_q2_game *g, qa_actor_id id, qa_error *e) {
+    q2_actor *a = q2_client(g, id, e);
+    if (!a)
+        return false;
+    q2_client_state *s = a->client;
+    if (!s->pending_start_items)
+        return true;
+    const char *expression = g->player_runtime->rules.start_items;
+    if (*expression && !qa_q2_items_start(g, id, expression, e))
+        return false;
+    if (!q2_actor_live(g, id))
+        return true;
+    s->pending_start_items = false;
+    qa_inventory_entry *entries = NULL;
+    size_t count = 0;
+    if (!q2_player_inventory_copy(g, id, &entries, &count, e))
+        return false;
+    if (!q2_actor_live(g, id)) {
+        free(entries);
+        return true;
+    }
+    free(s->spawn_inventory);
+    s->spawn_inventory = entries;
+    s->spawn_count = count;
+    if (g->options.cooperative) {
+        qa_q2_player_carry carry = {0};
+        if (!qa_q2_player_carry_capture(g, id, &carry, e))
+            return false;
+        if (!q2_actor_live(g, id)) {
+            qa_q2_player_carry_free(&carry);
+            return true;
+        }
+        qa_q2_player_carry_free(&s->coop);
+        s->coop = carry;
+        s->has_coop = true;
+    }
+    return true;
+}
+static bool player_start_items(void *context, qa_actor_id id, qa_error *e) {
+    return q2_player_start_items(context, id, e);
+}
+bool qa_q2_player_start_items(qa_q2_game *g, qa_actor_id id, qa_error *e) {
+    return qa_q2_run_actor(g, id, player_start_items, g, e);
 }
 bool qa_q2_player_spawn(qa_q2_game *g, qa_actor_id id, bool restore, const qa_q2_landmark *landmark,
                         qa_error *e) {
@@ -183,6 +228,8 @@ bool qa_q2_player_spawn(qa_q2_game *g, qa_actor_id id, bool restore, const qa_q2
     if (!qa_combat_read_traits(g->services.combat, id, &combat, e))
         return false;
     combat.can_take_damage = !s->info.spectator;
+    combat.no_knockback = false;
+    a->character_no_damage_effects = false;
     combat.mass = 200;
     combat.invulnerable = s->info.god;
     if (!qa_combat_set_traits(g->services.combat, id, &combat, e))
@@ -249,6 +296,10 @@ bool qa_q2_player_spawn(qa_q2_game *g, qa_actor_id id, bool restore, const qa_q2
     if (!q2_actor_live(g, id))
         return true;
     if (p->services.spawned && !p->services.spawned(p->services.context, id, e))
+        return false;
+    if (!q2_actor_live(g, id))
+        return true;
+    if (restore && !q2_player_start_items(g, id, e))
         return false;
     if (!q2_actor_live(g, id))
         return true;

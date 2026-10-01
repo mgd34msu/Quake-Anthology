@@ -51,7 +51,7 @@ typedef struct qc_boundary {
     uint32_t staging[24], result[3];
     uint32_t staged_argument_count;
     bool active, used, executing, cancelled;
-    bool result_valid;
+    bool result_valid, body_completed;
 } qc_boundary;
 
 typedef struct qc_inline_boundary {

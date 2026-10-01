@@ -291,6 +291,7 @@ static bool player_admit(void *context, qa_actor_id id, qa_error *e) {
         .slot = admission->slot, .seat = admission->seat, .connected = true, .view_height = 22};
     s->use_weapons = admission->use_q2_weapons;
     s->use_inventory = admission->use_q2_inventory;
+    s->pending_start_items = admission->carry == NULL;
     s->bot = admission->bot;
     s->entered_ns = g->now_ns;
     s->air_ns = q2_deadline(g->now_ns, 12 * Q2_NS);
