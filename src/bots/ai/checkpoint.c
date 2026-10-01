@@ -3,6 +3,7 @@
 
 typedef struct bot_checkpoint_record {
     bot_ai_state state;
+    uint8_t source_bytes[QA_BOT_STATE_SOURCE_BYTES];
     qa_bot_goal_state goals;
     qa_bot_move_state movement;
     qa_bot_chat_state chat;
@@ -71,6 +72,7 @@ static bool capture(qa_bots *b,qa_bots_checkpoint **out,qa_error *e) {
             bot_ai_fail(e,"cannot checkpoint a retired bot continuation");goto failed;
         }
         bot_checkpoint_record *record=&checkpoint->records[checkpoint->count++];
+        if(!qa_bot_source_record_read(&b->services.memory,s->source_record,record->source_bytes,e)) goto failed;
         record->state=*s;
         record->state.admitted_character=NULL;
         record->state.admitted_name=NULL;
@@ -126,6 +128,8 @@ static bool validate(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
         const bot_ai_state *saved=&record->state;
         bot_ai_state *live=saved->acquired_source_client<64?b->source_cells[saved->acquired_source_client]:NULL;
         if(!live || live->retired || !qa_actor_id_equal(live->view.actor,saved->view.actor) ||
+           live->source_record.offset!=saved->source_record.offset ||
+           live->source_record.length!=saved->source_record.length ||
            (saved->view.actor.registry && !bot_ai_live(b,saved->view.actor)) ||
            live->view.client!=saved->view.client || live->view.source_client!=saved->view.source_client ||
            live->view.entity!=saved->view.entity ||
@@ -231,6 +235,15 @@ bool qa_bots_restore(qa_bots *b,const qa_bots_checkpoint *checkpoint,qa_error *e
             ok=bot_ai_fail(e,"bot checkpoint or actor retired during navigation validation");
     }
     if(ok) ok=validate(b,checkpoint,e) && prepare(b,checkpoint,prepared,e);
+    /* All aliases are qualified before writing the actual retained GAME bytes.
+     * Read/write callbacks have no source setup or allocation effects. */
+    for(uint32_t i=0;ok && i<count;++i) {
+        qa_bot_source_record probe={checkpoint->records[i].state.source_record.offset,0};
+        ok=qa_bot_source_record_write(&b->services.memory,probe,NULL,e);
+    }
+    for(uint32_t i=0;ok && i<count;++i)
+        ok=qa_bot_source_record_write(&b->services.memory,checkpoint->records[i].state.source_record,
+            checkpoint->records[i].source_bytes,e);
     for(uint32_t i=0;prepared && i<count;++i) {
         bot_goal_restore_finish(prepared[i].goals,ok);
         bot_weapon_restore_finish(prepared[i].weapons,ok);

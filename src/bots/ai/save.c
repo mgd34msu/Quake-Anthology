@@ -6,9 +6,9 @@
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'P', 'O', 'P', 'U', 0};
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=7;
+    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=8;
     return qa_source_save_bytes(io,actual,sizeof(actual)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(actual,magic,sizeof(actual)) && version==7?true:
+        (!memcmp(actual,magic,sizeof(actual)) && version==8?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported native bot population continuation schema"));
 }
 #define FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
@@ -147,7 +147,7 @@ static bool state_fields(qa_source_save_io *io, bot_ai_state *state)
     V(state->angles.angles); V(state->angles.ideal); V(state->angles.velocity);
     if (!command_fields(io, &state->last_command)) return false;
     U(state->character); U(state->goals); U(state->weapons); U(state->chat); U(state->movement);
-    U(state->area); U(state->travel_flags); U(state->setup_count); I(state->residual_ms); I(state->last_health);
+    U(state->area); U(state->travel_flags); I(state->setup_count); I(state->residual_ms); I(state->last_health);
     F(state->local_time); F(state->walker); F(state->admitted_skill); F(state->long_term_until); F(state->nearby_until);
     const char *character=state->admitted_character,*name=state->admitted_name;
     if (!bot_save_text(io,&character)) return false;
@@ -261,7 +261,7 @@ static bool topology(const qa_bots *bots, qa_error *error)
             state->view.source_client!=(int32_t)source ||
             (state->inuse && bots->source_clients[state->view.source_client]!=i+1) ||
             (!state->inuse && bots->source_clients[state->view.source_client]==i+1) ||
-            state->setup_count > 4 || !isfinite(state->admitted_skill) ||
+            !isfinite(state->admitted_skill) ||
             !state->admitted_character || !state->admitted_name ||
             state->view.decision > QA_BOT_BATTLE_NEARBY || state->view.order.kind > QA_BOT_ORDER_FOLLOW ||
             state->view.order.status > QA_BOT_ORDER_ACTIVE ||
@@ -385,6 +385,7 @@ static bool fields(qa_source_save_io *io, qa_bots *bots)
             return bot_save_fail(io, QA_ERROR_MEMORY, "Restoring native bot continuation");
         bot_ai_state *state=bots->source_cells[i];
         if(reading) state->acquired_source_client=i;
+        if(!qa_bot_source_record_fields(io,&bots->services.memory,&state->source_record)) return false;
         if (!state_fields(io, state)) return false;
         if(reading && state->view.actor.registry) {
             if(state->view.client>=bots->client_capacity || bots->clients[state->view.client]) return false;

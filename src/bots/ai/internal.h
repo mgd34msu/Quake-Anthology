@@ -2,6 +2,7 @@
 #define QA_BOT_AI_INTERNAL_H
 
 #include "qa/bots.h"
+#include "qa/bots_memory.h"
 #include "source_orders.h"
 #include "source_team_policy.h"
 #include "source_events.h"
@@ -39,12 +40,13 @@ typedef struct bot_source_goals {
 } bot_source_goals;
 typedef struct bot_ai_state {
     uint32_t acquired_source_client;
+    qa_bot_source_record source_record;
     qa_bot_view view;
     qa_bot_player player;
     qa_bot_view_state angles;
     qa_movement_command last_command;
-    uint32_t character, goals, weapons, chat, movement, area, travel_flags, setup_count;
-    int32_t residual_ms, last_health;
+    uint32_t character, goals, weapons, chat, movement, area, travel_flags;
+    int32_t setup_count,residual_ms,last_health;
     float local_time, walker, long_term_until, nearby_until, stand_until, stand_enemy_time;
     float admitted_skill;
     char *admitted_character;
@@ -118,7 +120,7 @@ bool bot_ai_mutable(qa_bots *, qa_error *);
 bool bot_ai_cleanup(qa_bots *, bot_ai_state *, qa_error *);
 bool bot_ai_source_shutdown_client(qa_bots *, bot_ai_state *, bool, qa_error *);
 void bot_ai_source_cell_clear(qa_bots *,bot_ai_state *);
-void bot_ai_schedule(qa_bots *);
+bool bot_ai_schedule(qa_bots *,qa_error *);
 bool bot_ai_reset(qa_bots *, bot_ai_state *, qa_error *);
 bool bot_ai_think(qa_bots *, bot_ai_state *, float, qa_error *);
 bool bot_ai_source_intermission(qa_bots *,bot_ai_state *,bool *,qa_error *);

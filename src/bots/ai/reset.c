@@ -1,16 +1,22 @@
 #include "internal.h"
+#include "source_storage.h"
 
 bool qa_bots_source_begin(qa_bots *b,qa_actor_id actor,qa_vec3 angles,int32_t weapon,qa_error *e) {
     if(!bot_ai_mutable(b,e)) return false;
     if(!bot_ai_live(b,actor)) return true;
     bot_ai_state *state=bot_ai_actor(b,actor);
     if(!state) return true;
+    if(!bot_ai_storage_vec3(b,state,QA_BOT_SOURCE_VIEW_ANGLES,&angles,true,e) ||
+       !bot_ai_storage_vec3(b,state,QA_BOT_SOURCE_IDEAL_VIEW_ANGLES,&angles,true,e) ||
+       !bot_ai_storage_i32(b,state,QA_BOT_SOURCE_WEAPON_NUMBER,&weapon,true,e)) return false;
     state->angles.angles=angles;state->angles.ideal=angles;state->view.weapon=weapon;return true;
 }
 
 bool bot_ai_reset(qa_bots *b, bot_ai_state *s, qa_error *e) {
     bot_ai_source_order_clear(b,s);
+    if(!qa_bot_source_record_clear(&b->services.memory,s->source_record,true,e)) return false;
     bot_ai_state fresh = {.acquired_source_client=s->acquired_source_client,
+        .source_record=s->source_record,
         .view = {.actor = s->view.actor, .client = s->view.client,
         .source_client=s->view.source_client,
         .entity = s->view.entity, .mode = s->view.mode, .decision = QA_BOT_SEEK_LONG_TERM,
@@ -43,7 +49,10 @@ bool qa_bots_level_reset(qa_bots *b, qa_error *e) {
         bot_ai_state *s = b->clients[i];
         if (!s || !s->inuse || s->retired) continue;
         ok = bot_ai_reset(b, s, e);
-        if (ok) s->setup_count = 4;
+        if (ok) {
+            s->setup_count=4;
+            ok=bot_ai_storage_i32(b,s,QA_BOT_SOURCE_SETUP_COUNT,&s->setup_count,true,e);
+        }
     }
     b->busy = false;
     qa_bot_runtime_lease_end(b->runtime);

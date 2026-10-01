@@ -93,8 +93,15 @@ typedef struct qa_bot_source_row {
     qa_string_id classname;
     bool present;
 } qa_bot_source_row;
+typedef struct qa_bot_source_memory {
+    void *context;
+    bool (*allocate)(void *,uint32_t,uint32_t *,qa_error *);
+    bool (*read)(void *,uint32_t,void *,uint32_t,qa_error *);
+    bool (*write)(void *,uint32_t,const void *,uint32_t,qa_error *);
+} qa_bot_source_memory;
 typedef struct qa_bot_services {
     void *context;
+    qa_bot_source_memory memory;
     bool team_arena;
     qa_builtin_services shared;
     qa_modes *modes;
@@ -168,6 +175,9 @@ bool qa_bots_shutdown(qa_bots *, bool restart, qa_error *);
 bool qa_bots_shutdown_client(qa_bots *, qa_actor_id, bool restart, qa_error *);
 bool qa_bots_can_destroy(const qa_bots *);
 bool qa_bots_admit(qa_bots *, const qa_bot_admission *, qa_error *);
+/* False accepted is the actual source SetupClient return, including a retained
+ * allocation whose raw inuse word is already set. Service errors return false. */
+bool qa_bots_admit_source(qa_bots *,const qa_bot_admission *,bool *accepted,qa_error *);
 bool qa_bots_setup_failed(const qa_bots *,qa_actor_id);
 bool qa_bots_release(qa_bots *, qa_actor_id, qa_error *);
 bool qa_bots_actor_released(qa_bots *, const qa_actor_record *, qa_error *);

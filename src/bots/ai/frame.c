@@ -95,7 +95,7 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
     bool setup_ready=true;
     if(ok) ok=bot_ai_source_setup_frame(b,s,&setup_ready,e);
     if(ok && (!setup_ready || s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
-    if (ok && !s->setup_count) {
+    if (ok && s->setup_count<=0) {
         bool intermission,observer;
         ok=bot_ai_source_intermission(b,s,&intermission,e);
         if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
@@ -173,7 +173,11 @@ static bool retire_pending(qa_bots *b, qa_error *e) {
         bot_ai_state *s = b->clients[i];
         if (!s || (!s->retired && bot_ai_live(b, s->view.actor))) continue;
         qa_error local = {0};
+        bool published=s->inuse;
         if (!bot_ai_cleanup(b, s, &local)) {if(!first.code) first=local;continue;}
+        if(published && !qa_bot_source_record_clear(&b->services.memory,s->source_record,false,&local)) {
+            if(!first.code) first=local;continue;
+        }
         bot_ai_source_cell_clear(b,s);
     }
     if (first.code && e) *e = first;
@@ -198,7 +202,9 @@ static bool frame(qa_bots *b, int32_t time, qa_error *e) {
     if(period<1) return bot_ai_fail(e,"bot think interval must advance time");
     if (period > 200 && b->services.set_think_time &&
         !b->services.set_think_time(b->services.context, 200, e)) return false;
-    if (period != b->scheduled_think_ms) { b->scheduled_think_ms = period; bot_ai_schedule(b); }
+    if (period != b->scheduled_think_ms) {
+        b->scheduled_think_ms=period;if(!bot_ai_schedule(b,e)) return false;
+    }
     int32_t elapsed = signed_word((uint32_t)time - (uint32_t)b->local_time_ms);
     b->local_time_ms = time;
     b->library_residual_ms = signed_word((uint32_t)b->library_residual_ms + (uint32_t)elapsed);

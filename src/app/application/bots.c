@@ -167,6 +167,41 @@ static int32_t entity_number(void *opaque,qa_actor_id actor) {
 static application_provider *bot_source(application_bots *bots) {
     return bots->source?bots->source:application_world_provider(bots->application,QA_ROLE_ENTITIES,"");
 }
+static bool bot_memory_allocate(void *opaque,uint32_t size,uint32_t *out,qa_error *error) {
+    application_bots *bots=opaque;application_provider *source=bot_source(bots);
+    if(bots->shared_world) {
+        application_bot_memory_alias alias;
+        if(!application_bot_world_memory_allocate(bots->shared_world,size,&alias,error)) return false;
+        *out=alias.offset;return true;
+    }
+    if(source && source->kind==APPLICATION_PROVIDER_Q3 && source->state.q3)
+        return qa_q3_source_memory_allocate(source->state.q3,size,out,error);
+    return application_fail(error,QA_ERROR_ARGUMENT,"BotState allocation has no actual GAME pool owner");
+}
+static bool bot_memory_read(void *opaque,uint32_t offset,void *out,uint32_t size,qa_error *error) {
+    application_bots *bots=opaque;application_provider *source=bot_source(bots);
+    if(bots->shared_world) {
+        application_bot_memory_view view;
+        if(!application_bot_world_memory_alias(bots->shared_world,
+                (application_bot_memory_alias){offset,size},&view,error)) return false;
+        if(size) memcpy(out,view.data,size);return true;
+    }
+    if(source && source->kind==APPLICATION_PROVIDER_Q3 && source->state.q3)
+        return qa_q3_source_memory_read(source->state.q3,offset,out,size,error);
+    return application_fail(error,QA_ERROR_ARGUMENT,"BotState read has no actual GAME pool owner");
+}
+static bool bot_memory_write(void *opaque,uint32_t offset,const void *bytes,uint32_t size,qa_error *error) {
+    application_bots *bots=opaque;application_provider *source=bot_source(bots);
+    if(bots->shared_world) {
+        application_bot_memory_view view;
+        if(!application_bot_world_memory_alias(bots->shared_world,
+                (application_bot_memory_alias){offset,size},&view,error)) return false;
+        if(size) memmove(view.data,bytes,size);return true;
+    }
+    if(source && source->kind==APPLICATION_PROVIDER_Q3 && source->state.q3)
+        return qa_q3_source_memory_write(source->state.q3,offset,bytes,size,error);
+    return application_fail(error,QA_ERROR_ARGUMENT,"BotState write has no actual GAME pool owner");
+}
 application_provider *application_bot_source(application_bots *bots) {
     return bot_source(bots);
 }
@@ -527,7 +562,7 @@ static bool bot_insert_command(void *opaque,const char *text,qa_error *error) {
     if(bots->shared_world) return application_bot_world_console(bots->shared_world,text,error);
     application_provider *source=bot_source(opaque);qa_console *console;
     if(!source || source->kind!=APPLICATION_PROVIDER_Q3 ||
-       !application_native_q3_console_at(source,&console,NULL,error)) return false;
+       !application_native_q3_console_at(source,&console,NULL,NULL)) return false;
     qa_command_context context={.owner=source->owner,.dialect=QA_CONSOLE_Q3,.origin=QA_COMMAND_SERVER};
     return qa_console_insert(console,&context,text,error);
 }
@@ -714,6 +749,7 @@ qa_bot_services application_bots_services(application_bots *bots) {
     qa_application *application=bots->application;
     application_provider *source=bot_source(bots);
     return (qa_bot_services){.context=bots,
+        .memory={.context=bots,.allocate=bot_memory_allocate,.read=bot_memory_read,.write=bot_memory_write},
         .team_arena=source && source->product && source->product->family==QA_GAME_Q3 &&
             !strcmp(source->product->campaign,"missionpack"),
         .shared=application_builtin_services(application,application->world,application->physics),
@@ -1017,10 +1053,8 @@ bool application_bots_shared_connect(application_bots *bots,uint32_t client,bool
     if(!isfinite(skill)) return application_fail(error,QA_ERROR_FORMAT,"shared bot skill is outside its finite source domain");
     qa_bot_admission admission={.actor=actor,.client=seat->library_client,.entity=(int32_t)client,
         .character_file=character,.name=name,.team=team,.skill=skill,.mode=bots->application->primary_mode,.restart=restart};
-    ++bots->calls;qa_error setup_error={0};bool okay=qa_bots_admit(bots->population,&admission,&setup_error);--bots->calls;
-    if(okay) {*accepted=true;return true;}
-    if(qa_bots_setup_failed(bots->population,actor)) return true;
-    if(error) *error=setup_error;return false;
+    ++bots->calls;bool okay=qa_bots_admit_source(bots->population,&admission,accepted,error);--bots->calls;
+    return okay;
 }
 
 bool application_bots_native_q3_connect(application_provider *provider,qa_actor_id actor,
@@ -1075,13 +1109,12 @@ bool application_bots_native_q3_connect(application_provider *provider,qa_actor_
         .team_arena=bots->population && provider->product && !strcmp(provider->product->campaign,"missionpack"),
         .restart=restart};
     ++bots->calls;
-    qa_error setup_error={0};bool okay=qa_bots_admit(bots->population,&admission,&setup_error);
+    bool okay=qa_bots_admit_source(bots->population,&admission,accepted,error);
     --bots->calls;
-    if(okay) {*accepted=true;return true;}
-    if(qa_bots_setup_failed(bots->population,actor))
+    if(!okay) return false;
+    if(!*accepted)
         return application_native_q3_wire_drop(provider,source_client,"BotAISetupClient failed",error);
-    if(error) *error=setup_error;
-    return false;
+    return true;
 }
 
 bool application_native_q3_match_bots_end(application_provider *provider,qa_error *error) {

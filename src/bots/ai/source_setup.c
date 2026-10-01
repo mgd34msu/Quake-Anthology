@@ -1,6 +1,7 @@
 /* ai-main.ts setupClient and ai-combat.ts BotDeathmatchAI setup continuation. */
 #include "internal.h"
 #include "source_setup.h"
+#include "source_storage.h"
 
 void bot_ai_source_setup_init(bot_source_setup_state *state) {
     *state=(bot_source_setup_state){0};
@@ -42,8 +43,10 @@ bool bot_ai_source_setup_gender(qa_bots *b,bot_ai_state *s,qa_error *e) {
 bool bot_ai_source_setup_published(qa_bots *b,bot_ai_state *s,bool restart,bool interbreed,
                                     qa_error *e) {
     if(!qa_bot_moves_allocate(qa_bot_runtime_moves(b->runtime),&s->movement,e)) return false;
+    if(!bot_ai_storage_u32(b,s,QA_BOT_SOURCE_MOVEMENT,&s->movement,true,e)) return false;
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_MOVE_STATE);
     if(!bot_ai_character_float(b,s,BOT_C_WALKER,0,1,&s->walker,e)) return false;
+    if(!bot_ai_storage_f32(b,s,QA_BOT_SOURCE_WALKER,&s->walker,true,e)) return false;
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_WALKER);
     ++b->count;
     s->counted=true;
@@ -56,7 +59,7 @@ bool bot_ai_source_setup_published(qa_bots *b,bot_ai_state *s,bool restart,bool 
         if(!qa_bot_library_variable_set(qa_bot_runtime_library(b->runtime),"bot_testichat","1",e) ||
            !bot_ai_source_chat_test(b,s,e)) return false;
     }
-    bot_ai_schedule(b);
+    if(!bot_ai_schedule(b,e)) return false;
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_SCHEDULED);
     if(interbreed && !qa_bot_goals_mutate(qa_bot_runtime_goals(b->runtime),s->goals,e)) return false;
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_INTERBRED);
@@ -103,8 +106,10 @@ static bool set_sex(qa_bots *b,char text[1024],const char *value,qa_error *e) {
 }
 bool bot_ai_source_setup_frame(qa_bots *b,bot_ai_state *s,bool *ready,qa_error *e) {
     *ready=true;
-    if(!s->setup_count) return true;
+    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_SETUP_COUNT,&s->setup_count,false,e)) return false;
+    if(s->setup_count<=0) return true;
     --s->setup_count;
+    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_SETUP_COUNT,&s->setup_count,true,e)) return false;
     if(s->setup_count) {*ready=false;return true;}
     char text[144],userinfo[1024];
     if(!gender(b,s,text,e)) return false;
@@ -113,6 +118,9 @@ bool bot_ai_source_setup_frame(qa_bots *b,bot_ai_state *s,bool *ready,qa_error *
     if(!b->services.get_userinfo(b->services.context,s->view.actor,userinfo,sizeof(userinfo),e) ||
        !set_sex(b,userinfo,text,e) ||
        !b->services.set_userinfo(b->services.context,s->view.actor,userinfo,e)) return false;
+    if(!bot_ai_storage_bool(b,s,QA_BOT_SOURCE_MAP_RESTART,&s->source_setup.map_restart,false,e) ||
+       !qa_bot_source_record_text_read(&b->services.memory,s->source_record,
+            QA_BOT_SOURCE_TEAM,s->source_setup.team,sizeof(s->source_setup.team),e)) return false;
     if(!s->source_setup.map_restart) {
         int32_t game_type;
         if(!b->services.source_game_type)
@@ -141,5 +149,8 @@ bool bot_ai_source_setup_frame(qa_bots *b,bot_ai_state *s,bool *ready,qa_error *
         return bot_ai_fail(e,"Bot setup lacks its retained source player state");
     s->source_chat.last_hit_count=s->player.source_state.persistant[1];
     s->setup_count=0;
+    if(!bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_FRAME_HEALTH,&s->source_chat.last_frame_health,true,e) ||
+       !bot_ai_storage_i32(b,s,QA_BOT_SOURCE_LAST_HIT_COUNT,&s->source_chat.last_hit_count,true,e) ||
+       !bot_ai_storage_i32(b,s,QA_BOT_SOURCE_SETUP_COUNT,&s->setup_count,true,e)) return false;
     return bot_ai_source_routes_setup(b,b->services.team_arena,e);
 }

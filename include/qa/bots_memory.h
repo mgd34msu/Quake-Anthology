@@ -4,12 +4,6 @@
 #include "qa/source_save.h"
 
 enum { QA_BOT_STATE_SOURCE_BYTES=9088, QA_BOT_GAME_MEMORY_BYTES=262144 };
-typedef struct qa_bot_source_memory {
-    void *context;
-    bool (*allocate)(void *,uint32_t,uint32_t *,qa_error *);
-    bool (*read)(void *,uint32_t,void *,uint32_t,qa_error *);
-    bool (*write)(void *,uint32_t,const void *,uint32_t,qa_error *);
-} qa_bot_source_memory;
 typedef struct qa_bot_source_record { uint32_t offset,length; } qa_bot_source_record;
 typedef struct qa_bot_source_activation {
     bool inuse,shoot,areas_disabled;

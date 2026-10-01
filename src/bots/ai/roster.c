@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "source_storage.h"
+#include <stdio.h>
 
 bool bot_ai_fail(qa_error *e, const char *message) {
     qa_error_set(e, QA_ERROR_ARGUMENT, 0, "%s", message);
@@ -22,7 +24,8 @@ static bool create(qa_bot_runtime *runtime, const qa_bot_services *services,
     if (!runtime || !services || !out || !services->shared.session ||
         !services->shared.world || !services->shared.combat || !services->shared.player_info || !services->player ||
         !services->inventory || !services->entity || !services->entity_extent || !services->entity_list || !services->arsenal || !services->arsenal_end ||
-        !services->submit || !services->random || !services->source_client || !services->source_actor)
+        !services->submit || !services->random || !services->source_client || !services->source_actor ||
+        !services->memory.allocate || !services->memory.read || !services->memory.write)
         return bot_ai_fail(e, "native bot population requires live shared gameplay and botlib services");
     if (client_capacity > INT32_MAX || (uint64_t)client_capacity > SIZE_MAX / sizeof(bot_ai_state *))
         return bot_ai_fail(e, "native bot client capacity exceeds its source memory extent");
@@ -159,6 +162,7 @@ bool qa_bots_destroy(qa_bots *b, qa_error *e) {
 }
 void bot_ai_source_cell_clear(qa_bots *b,bot_ai_state *s) {
     uint32_t source=s->acquired_source_client;
+    qa_bot_source_record record=s->source_record;
     if(s->view.actor.registry && s->view.actor.slot<b->actor_capacity &&
        b->actor_clients[s->view.actor.slot]==s->view.client+1)
         b->actor_clients[s->view.actor.slot]=0;
@@ -166,7 +170,7 @@ void bot_ai_source_cell_clear(qa_bots *b,bot_ai_state *s) {
         b->clients[s->view.client]=NULL;
     b->source_clients[source]=0;
     if(s->counted) --b->count;
-    *s=(bot_ai_state){.acquired_source_client=source};
+    *s=(bot_ai_state){.acquired_source_client=source,.source_record=record};
     bot_ai_source_order_init(&s->source_order);
     bot_ai_source_chat_init(&s->source_chat);
 }
@@ -194,7 +198,8 @@ bool bot_ai_source_shutdown_client(qa_bots *b,bot_ai_state *s,bool restart,qa_er
         s->shutdown_chat_pending=false;
     }
     s->shutdown_phase=BOT_SHUTDOWN_DONE;
-    if(!bot_ai_cleanup(b,s,e)) return false;
+    if(!bot_ai_cleanup(b,s,e) ||
+       !qa_bot_source_record_clear(&b->services.memory,s->source_record,false,e)) return false;
     bot_ai_source_cell_clear(b,s);return true;
 }
 bool qa_bots_shutdown_client(qa_bots *b,qa_actor_id actor,bool restart,qa_error *e) {
@@ -230,8 +235,8 @@ bool qa_bots_shutdown(qa_bots *b,bool restart,qa_error *e) {
     }
     b->busy=false;qa_bot_runtime_lease_end(b->runtime);return ok;
 }
-void bot_ai_schedule(qa_bots *b) {
-    if (!b->count) return;
+bool bot_ai_schedule(qa_bots *b,qa_error *e) {
+    if (!b->count) return true;
     uint32_t ordinal = 0;
     for (uint32_t i = 0; i < 64; ++i) {
         uint32_t client=b->source_clients[i];if(!client) continue;
@@ -239,7 +244,10 @@ void bot_ai_schedule(qa_bots *b) {
         int32_t product;
         memcpy(&product, &bits, sizeof(product));
         b->clients[client-1]->residual_ms = (int32_t)((int64_t)product / b->count);
+        if(!bot_ai_storage_i32(b,b->clients[client-1],QA_BOT_SOURCE_RESIDUAL,
+                &b->clients[client-1]->residual_ms,true,e)) return false;
     }
+    return true;
 }
 static bool character_string(qa_bots *b, bot_ai_state *s, uint32_t characteristic,
                                char text[144], qa_error *e) {
@@ -265,15 +273,18 @@ static bool admit_resources(qa_bots *b, bot_ai_state *s, const qa_bot_admission 
         return bot_ai_fail(e, "bot navigation is not bound to the admitted canonical actor");
     }
     if (!qa_bot_runtime_character_load(b->runtime, a->character_file, a->skill, &s->character, e)) return false;
+    if(!bot_ai_storage_u32(b,s,QA_BOT_SOURCE_CHARACTER,&s->character,true,e)) return false;
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_CHARACTER);
     if (!s->character) {
         bot_ai_source_setup_failed(&s->source_setup,BOT_SOURCE_SETUP_FAILED_CHARACTER,0);
         return bot_ai_fail(e, "native bot character handles are exhausted");
     }
     bot_ai_source_setup_team(&s->source_setup,a->team?a->team:"");
+    if(!bot_ai_storage_settings(b,s,a,e)) return false;
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_SETTINGS);
     qa_bot_goals *goals = qa_bot_runtime_goals(b->runtime);
     if (!qa_bot_goals_allocate(goals, (int32_t)a->client, &s->goals, e)) return false;
+    if(!bot_ai_storage_u32(b,s,QA_BOT_SOURCE_GOALS,&s->goals,true,e)) return false;
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_GOAL_STATE);
     char path[144], name[144];
     if (!character_string(b, s, BOT_C_ITEM_WEIGHTS, path, e)) return false;
@@ -287,6 +298,7 @@ static bool admit_resources(qa_bots *b, bot_ai_state *s, const qa_bot_admission 
     }
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_ITEM_WEIGHTS);
     if (!qa_bot_runtime_weapon_allocate(b->runtime, &s->weapons, e)) return false;
+    if(!bot_ai_storage_u32(b,s,QA_BOT_SOURCE_WEAPONS,&s->weapons,true,e)) return false;
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_WEAPON_STATE);
     if (!character_string(b, s, BOT_C_WEAPON_WEIGHTS, path, e) ||
         !qa_bot_runtime_weapon_weights(b->runtime, s->weapons, path, &result, e)) return false;
@@ -300,6 +312,7 @@ static bool admit_resources(qa_bots *b, bot_ai_state *s, const qa_bot_admission 
     }
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_WEAPON_WEIGHTS);
     if (!qa_bot_runtime_chat_allocate(b->runtime, &s->chat, e)) return false;
+    if(!bot_ai_storage_u32(b,s,QA_BOT_SOURCE_CHAT,&s->chat,true,e)) return false;
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_CHAT_STATE);
     if (!character_string(b, s, BOT_C_CHAT_FILE, path, e) ||
         !character_string(b, s, BOT_C_CHAT_NAME, name, e) ||
@@ -317,7 +330,7 @@ static bool admit_resources(qa_bots *b, bot_ai_state *s, const qa_bot_admission 
     bot_ai_source_setup_stage(&s->source_setup,BOT_SOURCE_SETUP_CHAT_FILE);
     return bot_ai_source_setup_gender(b,s,e);
 }
-bool qa_bots_admit(qa_bots *b, const qa_bot_admission *a, qa_error *e) {
+static bool admit(qa_bots *b,const qa_bot_admission *a,bool *rejected,qa_error *e) {
     if (!bot_ai_mutable(b, e)) return false;
     if (!a || !a->character_file || !a->name || !isfinite(a->skill) ||
         a->client >= b->client_capacity || a->entity < 0 || !bot_ai_live(b, a->actor) ||
@@ -326,10 +339,10 @@ bool qa_bots_admit(qa_bots *b, const qa_bot_admission *a, qa_error *e) {
         return bot_ai_fail(e, "invalid or duplicate native bot admission");
     int32_t source_client;
     if(!b->services.source_client(b->services.context,a->actor,&source_client,e)) return false;
-    if(source_client<0 || source_client>=64 || b->source_clients[source_client])
+    if(source_client<0 || source_client>=64)
         return bot_ai_fail(e,"bot admission has no unique actual source client slot");
     bot_ai_state *s=b->source_cells[source_client];
-    if((s && s->inuse) || (b->clients[a->client] && b->clients[a->client]!=s))
+    if(b->clients[a->client] && b->clients[a->client]!=s)
         return bot_ai_fail(e,"bot source or virtual client already has an active setup state");
     if (a->actor.slot >= b->actor_capacity) {
         uint32_t capacity=qa_actors_capacity(qa_session_actors(b->services.shared.session));
@@ -343,26 +356,40 @@ bool qa_bots_admit(qa_bots *b, const qa_bot_admission *a, qa_error *e) {
     if(!s) s=calloc(1,sizeof(*s));
     if (!s) { qa_error_set(e, QA_ERROR_MEMORY, 0, "allocating native bot continuation"); return false; }
     if(!acquired) {
+        b->busy=true;
+        bool allocated=qa_bot_source_record_allocate(&b->services.memory,&s->source_record,e);
+        b->busy=false;
+        if(!allocated) {free(s);return false;}
+        s->acquired_source_client=(uint32_t)source_client;
         bot_ai_source_order_init(&s->source_order);
         bot_ai_source_chat_init(&s->source_chat);
         bot_ai_source_setup_init(&s->source_setup);
+        b->source_cells[source_client]=s;
+    }
+    bool source_inuse;
+    if(!bot_ai_storage_bool(b,s,QA_BOT_SOURCE_INUSE,&source_inuse,false,e)) return false;
+    if(source_inuse) {
+        char text[144];snprintf(text,sizeof(text),"^1Fatal: BotAISetupClient: client %d already setup\n",source_client);
+        b->busy=true;bool printed=bot_ai_source_print(b,text,e);b->busy=false;
+        if(!printed) return false;
+        if(rejected) *rejected=true;
+        return bot_ai_fail(e,"bot actual source allocation is already in use");
     }
     size_t character_size = strlen(a->character_file) + 1;
     char *character_request=malloc(character_size);
     if (!character_request) {
-        if(!acquired) free(s);
         qa_error_set(e, QA_ERROR_MEMORY, character_size, "retaining original bot character request");return false;
     }
     memcpy(character_request,a->character_file,character_size);
     size_t admitted_name_size = strlen(a->name) + 1;
     char *admission_name=malloc(admitted_name_size);
     if (!admission_name) {
-        free(character_request);if(!acquired) free(s);
+        free(character_request);
         qa_error_set(e, QA_ERROR_MEMORY, admitted_name_size, "retaining original bot admission name");return false;
     }
     memcpy(admission_name,a->name,admitted_name_size);
     if (!qa_bot_runtime_lease_begin(b->runtime,e)) {
-        free(admission_name);free(character_request);if(!acquired) free(s);return false;
+        free(admission_name);free(character_request);return false;
     }
     if(acquired && s->view.actor.registry) {
         if(s->view.actor.slot<b->actor_capacity) b->actor_clients[s->view.actor.slot]=0;
@@ -385,6 +412,9 @@ bool qa_bots_admit(qa_bots *b, const qa_bot_admission *a, qa_error *e) {
     bool ok = admit_resources(b, s, a, e);
     if (ok && !bot_ai_live(b, a->actor)) ok = bot_ai_fail(e, "bot actor retired during resource admission");
     if (ok) {
+        ok=bot_ai_storage_publish(b,s,e);
+    }
+    if (ok) {
         s->inuse=true;
         s->setup_count=4;
         s->view.enter_time=b->time;
@@ -394,7 +424,19 @@ bool qa_bots_admit(qa_bots *b, const qa_bot_admission *a, qa_error *e) {
     }
     b->busy = false;
     qa_bot_runtime_lease_end(b->runtime);
+    if(!ok && rejected && s->source_setup.progress.kind==BOT_SOURCE_SETUP_FAILED) *rejected=true;
     return ok;
+}
+bool qa_bots_admit(qa_bots *b,const qa_bot_admission *a,qa_error *e) {
+    return admit(b,a,NULL,e);
+}
+bool qa_bots_admit_source(qa_bots *b,const qa_bot_admission *a,bool *accepted,qa_error *e) {
+    if(!accepted) return bot_ai_fail(e,"source bot admission requires its real SetupClient result");
+    *accepted=false;bool rejected=false;qa_error source_error={0};
+    bool okay=admit(b,a,&rejected,&source_error);
+    if(okay) {*accepted=true;return true;}
+    if(rejected) return true;
+    if(e) *e=source_error;return false;
 }
 bool qa_bots_release(qa_bots *b, qa_actor_id actor, qa_error *e) {
     if (!bot_ai_mutable(b, e)) return false;
@@ -402,9 +444,11 @@ bool qa_bots_release(qa_bots *b, qa_actor_id actor, qa_error *e) {
     if (!s) return true;
     if (!qa_bot_runtime_lease_begin(b->runtime,e)) return false;
     b->busy = true;
+    bool published=s->inuse;
     bool ok = bot_ai_cleanup(b, s, e);
     if (ok) {
-        bot_ai_source_cell_clear(b,s);bot_ai_schedule(b);
+        ok=!published || qa_bot_source_record_clear(&b->services.memory,s->source_record,false,e);
+        if(ok) {bot_ai_source_cell_clear(b,s);ok=bot_ai_schedule(b,e);}
     } else s->retired=true;
     b->busy = false;
     qa_bot_runtime_lease_end(b->runtime);
