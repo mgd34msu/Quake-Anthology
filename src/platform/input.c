@@ -1090,6 +1090,11 @@ struct qa_input_platform_settings_ticket {
     bool gyro_enabled[4], previous_gyro_enabled[4];
     SDL_Window *window;
     uint32_t window_id;
+    const qa_display_surface_ticket *surface;
+    const qa_display *active_display, *candidate_display;
+    SDL_Window *candidate_window;
+    uint32_t candidate_window_id;
+    bool candidate_grab, window_prepared;
     int keyboard;
     bool focused;
     qa_input_focus focus;
@@ -1249,6 +1254,61 @@ static bool settings_outputs_abort(qa_input_platform_settings_ticket *t, qa_erro
     }
     return true;
 }
+static bool settings_window_outputs(qa_input_platform_settings_ticket *t, qa_error *error) {
+    qa_input_platform *p = t->platform;
+    /* Keep original output snapshots when scalar preparation already touched
+     * a device. Window release adds only the actual route's rumble channel. */
+    for (size_t i = 0; i < p->device_count; ++i) {
+        struct device *d = &p->devices[i]; bool affected = false;
+        for (unsigned slot = 0; slot < 4; ++slot)
+            if (t->routes[slot].seat && t->routes[slot].haptic_instance == d->info.instance)
+                affected = true;
+        if (!affected) continue;
+        if (SDL_GameControllerGetAttached(d->handle) != SDL_TRUE)
+            return failed(error, "Retained window haptic controller disconnected");
+        if (!motor_retirement_known(&d->rumble, error)) return false;
+        input_output_transition *v = NULL;
+        for (size_t row = 0; row < t->output_count; ++row)
+            if (t->outputs[row].device == d) v = &t->outputs[row];
+        if (!v) {
+            v = &t->outputs[t->output_count++];
+            v->device = d; v->rumble = d->rumble; v->triggers = d->triggers;
+            for (unsigned sensor = 0; sensor < 6; ++sensor) if (d->info.sensors[sensor]) {
+                v->sensor_enabled[sensor] = SDL_GameControllerIsSensorEnabled(d->handle,
+                    (SDL_SensorType)(sensor + 1)) == SDL_TRUE;
+                v->sensor_desired[sensor] = v->sensor_enabled[sensor];
+            }
+        }
+    }
+    bool source = false;
+    for (unsigned slot = 0; slot < 4; ++slot)
+        if (t->routes[slot].seat && t->routes[slot].haptic_instance == p->joystick_instance)
+            source = true;
+    source = source && p->joystick && !device(p, p->joystick_instance);
+    if (source && !t->source_motor_attempted) {
+        if (!motor_retirement_known(&p->joystick_rumble, error)) return false;
+        t->source_rumble = p->joystick_rumble;
+    }
+    for (size_t i = 0; i < t->output_count; ++i) {
+        input_output_transition *v = &t->outputs[i]; bool affected = false;
+        for (unsigned slot = 0; slot < 4; ++slot)
+            if (t->routes[slot].seat && t->routes[slot].haptic_instance == v->device->info.instance)
+                affected = true;
+        const input_motor_output *old = &v->rumble;
+        if (!affected || v->motor_attempted[0] || !old->requested ||
+            !(old->low || old->high) || !motor_remaining(old)) continue;
+        v->motor_attempted[0] = true;
+        if (!controller_motor(v->device, false, 0, 0, 0, error)) return false;
+    }
+    if (source && !t->source_motor_attempted && t->source_rumble.requested &&
+        (t->source_rumble.low || t->source_rumble.high) && motor_remaining(&t->source_rumble)) {
+        t->source_motor_attempted = true;
+        if (!source_motor(p, 0, 0, 0, error)) return false;
+    }
+    for (unsigned slot = 0; slot < 4; ++slot)
+        if (t->routes[slot].seat) t->haptic_routes |= 1u << slot;
+    return true;
+}
 static bool settings_current(const qa_input_platform_settings_ticket *t, qa_error *error) {
     qa_input_platform *p = t ? t->platform : NULL;
     if (!p || t->terminal || p->settings_ticket != t || !p->native_owned ||
@@ -1257,6 +1317,12 @@ static bool settings_current(const qa_input_platform_settings_ticket *t, qa_erro
         p->window != t->window_id || p->keyboard != t->keyboard ||
         (t->window_id && SDL_GetWindowFromID(t->window_id) != t->window)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings ticket lost its actual native owner");
+        return false;
+    }
+    if (t->surface && (qa_display_surface_candidate(t->surface) != t->candidate_display ||
+        qa_display_surface_active(t->surface) != t->active_display ||
+        SDL_GetWindowFromID(t->candidate_window_id) != t->candidate_window)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input window child lost its retained native surface");
         return false;
     }
     for (unsigned i = 0; i < 4; ++i) {
@@ -1283,16 +1349,16 @@ static bool settings_current(const qa_input_platform_settings_ticket *t, qa_erro
     }
     return true;
 }
-static bool settings_capture(const qa_input_platform_settings_ticket *t, bool relative,
+static bool settings_capture(SDL_Window *window, bool relative,
     bool grab, bool text, qa_error *error) {
     bool success = true;
     if (SDL_GetRelativeMouseMode() != (relative ? SDL_TRUE : SDL_FALSE) &&
         SDL_SetRelativeMouseMode(relative ? SDL_TRUE : SDL_FALSE) < 0)
         success = failed(error, "Preparing input relative mouse capture");
-    if (t->window) SDL_SetWindowGrab(t->window, grab ? SDL_TRUE : SDL_FALSE);
+    if (window) SDL_SetWindowGrab(window, grab ? SDL_TRUE : SDL_FALSE);
     if (text) SDL_StartTextInput(); else SDL_StopTextInput();
     if (SDL_GetRelativeMouseMode() != (relative ? SDL_TRUE : SDL_FALSE) ||
-        (t->window && SDL_GetWindowGrab(t->window) != (grab ? SDL_TRUE : SDL_FALSE)) ||
+        (window && SDL_GetWindowGrab(window) != (grab ? SDL_TRUE : SDL_FALSE)) ||
         SDL_IsTextInputActive() != (text ? SDL_TRUE : SDL_FALSE)) {
         if (success) qa_error_set(error, QA_ERROR_IO, 0, "Native input capture did not reach the prepared mode");
         success = false;
@@ -1459,7 +1525,7 @@ static bool settings_prepare(qa_input_platform *p, const qa_input_platform_setti
     t->text = t->focused && (t->focus == QA_INPUT_CONSOLE || t->focus == QA_INPUT_CHAT || t->focus == QA_INPUT_UI);
     if (t->window) {
         t->capture_attempted = true;
-        if (!settings_capture(t, t->relative, t->relative, t->text, error)) return false;
+        if (!settings_capture(t->window, t->relative, t->relative, t->text, error)) return false;
     } else { t->relative = t->previous_relative; t->text = t->previous_text; }
     t->prepared = true; return settings_current(t, error);
 }
@@ -1576,7 +1642,7 @@ bool qa_input_platform_settings_release_scope(const qa_input_platform_settings_t
     }
     if (length) memcpy(keys, held, length * sizeof(*keys));
     *out = (qa_input_release_scope){
-        .all = t->desired.restart_requested && t->routes[slot].seat,
+        .all = (t->desired.restart_requested || t->surface) && t->routes[slot].seat,
         .clear_gamepad = t->routes[slot].seat && ((t->requirements.controller_routes & (1u << slot)) != 0 ||
             (t->requirements.source_changed && t->requirements.source_slot == (int)slot)),
         .controller = (t->requirements.controller_routes & (1u << slot)) ? t->routes[slot].instance : -1,
@@ -1651,7 +1717,7 @@ bool qa_input_platform_settings_enter(qa_input_platform_settings_ticket *t,
     *outcome = qa_input_platform_settings_result(t);
     return settings_current(t, error);
 }
-static bool settings_endpoints_ready(const qa_input_platform_settings_ticket *t, qa_error *error) {
+static bool settings_devices_ready(const qa_input_platform_settings_ticket *t, qa_error *error) {
     if (t->joystick && SDL_JoystickGetAttached(t->joystick) != SDL_TRUE)
         return failed(error, "Prepared source joystick disconnected");
     if (t->midi_fd >= 0) {
@@ -1682,10 +1748,94 @@ static bool settings_endpoints_ready(const qa_input_platform_settings_ticket *t,
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Prepared source motor retirement changed");
         return false;
     }
-    return !t->window || (SDL_GetRelativeMouseMode() == (t->relative ? SDL_TRUE : SDL_FALSE) &&
-        SDL_GetWindowGrab(t->window) == (t->relative ? SDL_TRUE : SDL_FALSE) &&
+    return true;
+}
+static bool settings_requested_grab(SDL_Window *window) {
+    return (SDL_GetWindowFlags(window) & (SDL_WINDOW_MOUSE_GRABBED | SDL_WINDOW_KEYBOARD_GRABBED)) != 0;
+}
+static bool settings_grab_matches(SDL_Window *window, bool requested) {
+    bool effective = requested && (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+    return settings_requested_grab(window) == requested &&
+        SDL_GetWindowGrab(window) == (effective ? SDL_TRUE : SDL_FALSE);
+}
+static bool settings_endpoints_ready(const qa_input_platform_settings_ticket *t, qa_error *error) {
+    if (t->surface && (!t->window_prepared || !qa_display_surface_ready(t->surface, error))) {
+        if (!error || error->code == QA_OK)
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input candidate window has not completed native preparation");
+        return false;
+    }
+    if (t->surface) {
+        bool focused = (SDL_GetWindowFlags(t->candidate_window) & SDL_WINDOW_INPUT_FOCUS) != 0;
+        for (unsigned slot = 0; slot < 4; ++slot) if (t->routes[slot].seat &&
+            qa_input_seat_focused(t->routes[slot].seat) != focused) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Prepared candidate window lost its physical input focus association");
+            return false;
+        }
+    }
+    if (!settings_devices_ready(t, error)) return false;
+    SDL_Window *window = t->surface ? t->candidate_window : t->window;
+    return !window || (SDL_GetRelativeMouseMode() == (t->relative ? SDL_TRUE : SDL_FALSE) &&
+        SDL_GetWindowGrab(window) == (t->relative ? SDL_TRUE : SDL_FALSE) &&
+        (!t->surface || settings_grab_matches(t->window, t->platform->old_grab)) &&
         SDL_IsTextInputActive() == (t->text ? SDL_TRUE : SDL_FALSE)) ||
         failed(error, "Prepared input capture changed before publication");
+}
+bool qa_input_platform_settings_window_stage(qa_input_platform_settings_ticket *t,
+    const qa_display_surface_ticket *surface, const qa_input_release *const release[4], qa_error *error) {
+    if (!surface || !t || t->aborting || t->retiring) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input window preparation requires its retained settings and surface tickets");
+        return false;
+    }
+    if (!settings_releases_ready(t, release, error)) return false;
+    qa_input_release_scope all = {.all = true, .controller = -1};
+    for (unsigned slot = 0; slot < 4; ++slot) if (t->routes[slot].seat &&
+        (!release || !qa_input_release_ready(release[slot], t->routes[slot].seat, &all, error))) {
+        if (!error || error->code == QA_OK)
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Window replacement requires every physical seat's completed ALL release");
+        return false;
+    }
+    if (t->surface) {
+        if (t->surface != surface || !t->window_prepared) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Retained input window preparation requires checked cleanup");
+            return false;
+        }
+        return settings_endpoints_ready(t, error);
+    }
+    if (!t->window) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input window replacement has no retained active native window");
+        return false;
+    }
+    /* Surface staging has already moved native focus, and SDL may have
+     * transferred the effective grab. Retained device/output proof remains
+     * required; the candidate capture is entered and checked below. */
+    if (!settings_devices_ready(t, error) || !qa_display_surface_ready(surface, error)) return false;
+    const qa_display *active = qa_display_surface_active(surface);
+    const qa_display *candidate = qa_display_surface_candidate(surface);
+    qa_display_info previous = {0}, next = {0};
+    if (!qa_display_info_get(active, &previous, error) ||
+        !qa_display_info_get(candidate, &next, error)) return false;
+    SDL_Window *window = next.window_id ? SDL_GetWindowFromID(next.window_id) : NULL;
+    if (previous.window_id != t->window_id || !window || window == t->window ||
+        SDL_GetWindowFromID(previous.window_id) != t->window) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input replacement requires its actual retained active and candidate display windows");
+        return false;
+    }
+    for (unsigned slot = 0; slot < 4; ++slot) if (t->routes[slot].seat &&
+        qa_input_seat_focused(t->routes[slot].seat) != next.focused) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Candidate native focus differs from the retained physical input focus");
+        return false;
+    }
+    t->surface = surface; t->active_display = active; t->candidate_display = candidate;
+    t->candidate_window = window; t->candidate_window_id = next.window_id;
+    t->candidate_grab = settings_requested_grab(window);
+    if (!settings_window_outputs(t, error)) return false;
+    /* Preserve the old external request even while its unfocused window has
+     * no effective grab. SDL focus determines the candidate's effective grab. */
+    t->capture_attempted = true;
+    SDL_SetWindowGrab(t->window, t->platform->old_grab ? SDL_TRUE : SDL_FALSE);
+    if (!settings_capture(window, t->relative, t->relative, t->text, error)) return false;
+    t->window_prepared = true;
+    return settings_current(t, error) && settings_endpoints_ready(t, error);
 }
 bool qa_input_platform_settings_ready(const qa_input_platform_settings_ticket *t,
     const qa_input_release *const release[4], qa_error *error) {
@@ -1703,6 +1853,7 @@ bool qa_input_platform_settings_ready(const qa_input_platform_settings_ticket *t
 static bool settings_dispose(qa_input_platform_settings_ticket *t, qa_error *error) {
     t->aborting = true;
     if (t->capture_attempted) {
+        if (t->surface) SDL_SetWindowGrab(t->candidate_window, t->candidate_grab ? SDL_TRUE : SDL_FALSE);
         if (t->previous_text) SDL_StartTextInput(); else SDL_StopTextInput();
         if (t->window) SDL_SetWindowGrab(t->window, t->previous_grab ? SDL_TRUE : SDL_FALSE);
         bool success = true;
@@ -1711,6 +1862,7 @@ static bool settings_dispose(qa_input_platform_settings_ticket *t, qa_error *err
             success = failed(error, "Restoring input relative mouse capture");
         if (SDL_GetRelativeMouseMode() != (t->previous_relative ? SDL_TRUE : SDL_FALSE) ||
             (t->window && SDL_GetWindowGrab(t->window) != (t->previous_grab ? SDL_TRUE : SDL_FALSE)) ||
+            (t->surface && !settings_grab_matches(t->candidate_window, t->candidate_grab)) ||
             SDL_IsTextInputActive() != (t->previous_text ? SDL_TRUE : SDL_FALSE)) {
             if (success) qa_error_set(error, QA_ERROR_IO, 0, "Input capture cleanup did not restore the retained native modes");
             success = false;
@@ -1788,8 +1940,8 @@ void qa_input_platform_settings_publish(qa_input_platform_settings_ticket *t) {
     p->windows_joystick = t->desired.windows_joystick;
     p->source_slot = t->requirements.next_source_slot; p->midi_slot = t->requirements.next_midi_slot;
     p->midi_channel = t->desired.midi_channel; p->now = t->now;
-    if (t->requirements.source_changed) p->source = (qa_source_joystick){0};
-    if (t->requirements.midi_changed) {
+    if (t->requirements.source_changed || t->surface) p->source = (qa_source_joystick){0};
+    if (t->requirements.midi_changed || t->surface) {
         p->midi = (qa_midi_decoder){0};
         memset(p->midi_held, 0, sizeof(p->midi_held));
     }
@@ -1805,6 +1957,11 @@ void qa_input_platform_settings_publish(qa_input_platform_settings_ticket *t) {
             qa_gamepad_calibration_reset(qa_input_seat_gamepad(r->seat));
             r->calibration_sensor = false; r->calibration_instance = -1;
         }
+    }
+    if (t->surface) {
+        p->window = t->candidate_window_id;
+        p->old_grab = t->candidate_grab;
+        memset(p->keys, 0, sizeof(p->keys));
     }
     if (t->window) p->capture = t->relative;
     p->settings_ticket = NULL; t->terminal = t->published = true;

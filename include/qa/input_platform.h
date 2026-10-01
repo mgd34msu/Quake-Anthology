@@ -1,6 +1,7 @@
 #ifndef QA_INPUT_PLATFORM_H
 #define QA_INPUT_PLATFORM_H
 #include "qa/display.h"
+#include "qa/display_settings.h"
 #include "qa/input.h"
 #include "qa/input_release.h"
 #include <SDL2/SDL.h>
@@ -124,6 +125,16 @@ bool qa_input_platform_settings_enter(qa_input_platform_settings_ticket *,
 qa_input_platform_settings_outcome qa_input_platform_settings_result(const qa_input_platform_settings_ticket *);
 bool qa_input_platform_settings_ready(const qa_input_platform_settings_ticket *,
     const qa_input_release *const release[4], qa_error *);
+/* Borrow the actual staged surface while both native windows remain alive.
+ * Every occupied physical seat must retain a completed ALL release before
+ * candidate capture is entered. A failed stage may retain native changes;
+ * keep the surface ticket through checked input cleanup. Readiness precedes
+ * input publication, which must precede surface publication. Restore the
+ * surface first on abort, then input capture/outputs, before destroying its
+ * candidate. No input events, source commands or endpoint restart occur here.
+ * Candidate native focus must match the actual retained physical seats. */
+bool qa_input_platform_settings_window_stage(qa_input_platform_settings_ticket *,
+    const qa_display_surface_ticket *, const qa_input_release *const release[4], qa_error *);
 bool qa_input_platform_settings_abort(qa_input_platform_settings_ticket *, qa_error *);
 /* Dispose an entered replacement only while every required actual source
  * release proof remains completed and retained. Checked cleanup restores the

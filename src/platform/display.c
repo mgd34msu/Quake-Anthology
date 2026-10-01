@@ -1202,6 +1202,8 @@ bool qa_display_surface_prepare(qa_display *active, const qa_display_settings *s
 
 qa_display *qa_display_surface_candidate(const qa_display_surface_ticket *ticket)
 { return ticket ? ticket->candidate : NULL; }
+const qa_display *qa_display_surface_active(const qa_display_surface_ticket *ticket)
+{ return ticket ? ticket->active : NULL; }
 
 bool qa_display_surface_stage(qa_display_surface_ticket *ticket, qa_error *error)
 {

@@ -17,6 +17,8 @@ bool qa_display_surface_prepare(qa_display *active,
                                 qa_display_surface_ticket **out,
                                 qa_error *error);
 qa_display *qa_display_surface_candidate(const qa_display_surface_ticket *ticket);
+/* Borrowed exact owner; use surface_ready to qualify its native state. */
+const qa_display *qa_display_surface_active(const qa_display_surface_ticket *ticket);
 /* Enter actual candidate native settings before preparing renderer/input
  * children. The old window and, for GL, the same context remain retained. */
 bool qa_display_surface_stage(qa_display_surface_ticket *ticket, qa_error *error);
