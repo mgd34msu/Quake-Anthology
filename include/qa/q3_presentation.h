@@ -136,6 +136,9 @@ typedef struct qa_q3_presentation_options {
     /* Renderer-wide remapping includes independently selected providers. */
     bool (*remap)(void *, const char *, const char *, float, qa_error *);
     void (*print)(void *, const char *);
+    /* The installed owner discards only retained supplemental scene packets.
+     * Called after the actual ClearScene resets its source collections. */
+    void (*scene_cleared)(void *);
 } qa_q3_presentation_options;
 /* One seat owner is shared by its native presentation and attached UI/cgame.
  * Resources may be shared by several seats. All calls are serialized; external
@@ -173,6 +176,21 @@ bool qa_q3_presentation_render(qa_q3_presentation *, const qa_q3_refdef *, qa_er
  * The scene, decoded source and transform remain owned by its content owner. */
 bool qa_q3_presentation_selected_model(qa_q3_presentation *, qa_scene_model *,
     const qa_model *, const char *source_path, const qa_model_transform *, const qa_q3_ref_entity *,
+    const qa_q3_scene_options *, uint32_t order, qa_scene_frame *, qa_error *);
+typedef struct qa_q3_foreign_view_lighting {
+    qa_scene_family content;
+    uint32_t flags;
+} qa_q3_foreign_view_lighting;
+/* Content flags retain their true family. Q3 authored parent flags remain on
+ * the refEntity; this policy supplies only the foreign view lighting branch. */
+bool qa_q3_presentation_selected_view_model(qa_q3_presentation *, qa_scene_model *,
+    const qa_model *, const char *source_path, const qa_model_transform *,
+    const qa_q3_ref_entity *, const qa_q3_scene_options *,
+    const qa_q3_foreign_view_lighting *, uint32_t order, qa_scene_frame *, qa_error *);
+/* Numeric model, skin and shader references resolve in the actual selected
+ * registry. The primary renderer still owns the current world/view lease. */
+bool qa_q3_presentation_selected_registered(qa_q3_presentation *,
+    const qa_q3_presentation_assets *, const qa_q3_ref_entity *,
     const qa_q3_scene_options *, uint32_t order, qa_scene_frame *, qa_error *);
 void qa_q3_presentation_color(qa_q3_presentation *, const qa_scene_vec4 *);
 bool qa_q3_presentation_picture(qa_q3_presentation *, int32_t shader, qa_scene_rect_f,

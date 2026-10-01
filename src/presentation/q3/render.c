@@ -136,13 +136,14 @@ static void model_frames(const qa_model *source, const qa_q3_ref_entity *entity,
         &source->frames[input->frame].bounds : &source->bounds);
 }
 
-static bool model_input(qa_q3_presentation *p, const qa_q3_scene_options *options,
+static bool model_input(qa_q3_presentation *p, const qa_q3_presentation_assets *assets,
+    const qa_q3_scene_options *options,
     const qa_q3_ref_entity *entity, uint32_t order, qa_model_transform transform,
     qa_scene_model_input *out, qa_error *error)
 {
     const qa_material *material; const qa_model_skin_map *skin;
-    if (!q3p_shader_get(p->options.assets, entity->custom_shader, &material, error) ||
-        !q3p_skin_get(p->options.assets, entity->custom_skin, &skin, error)) return false;
+    if (!q3p_shader_get(assets, entity->custom_shader, &material, error) ||
+        !q3p_skin_get(assets, entity->custom_skin, &skin, error)) return false;
     *out = (qa_scene_model_input){
         .view = weapon_view(&options->world.view,
             options->split_screen && !options->world.no_world && (entity->flags & 4)),
@@ -184,11 +185,12 @@ static void model_fog(qa_q3_presentation *p, const qa_q3_scene_options *options,
 static void selected_lighting(qa_q3_presentation *, const qa_q3_scene_options *,
     qa_scene_family, const qa_q3_ref_entity *, qa_scene_model_input *);
 
-static bool submit_model(qa_q3_presentation *p, const qa_q3_scene_options *options,
+static bool submit_model(qa_q3_presentation *p, const qa_q3_presentation_assets *assets,
+    const qa_q3_scene_options *options,
                           const qa_q3_ref_entity *entity, uint32_t order, qa_error *error)
 {
     const q3p_model *model;
-    if (!q3p_model_get(p->options.assets, entity->model, &model, error)) return false;
+    if (!q3p_model_get(assets, entity->model, &model, error)) return false;
     qa_model_transform transform = entity_transform(entity);
     qa_scene_view view = weapon_view(&options->world.view, options->split_screen && !options->world.no_world && (entity->flags & 4));
     if (!model) {
@@ -215,7 +217,7 @@ static bool submit_model(qa_q3_presentation *p, const qa_q3_scene_options *optio
             &world, order, q3p_color(entity->color), p->frame, error);
     }
     qa_scene_model_input input;
-    if (!model_input(p, options, entity, order, transform, &input, error)) return false;
+    if (!model_input(p, assets, options, entity, order, transform, &input, error)) return false;
     input.source_path = qa_resource_path(model->resource);
     float radius;
     const qa_model *base = q3p_model_source(model, 0);
@@ -273,9 +275,10 @@ static void selected_lighting(qa_q3_presentation *p, const qa_q3_scene_options *
     input->alias_light = qa_v3(sampled[0], sampled[1], sampled[2]);
 }
 
-bool qa_q3_presentation_selected_model(qa_q3_presentation *p, qa_scene_model *scene,
+static bool selected_model(qa_q3_presentation *p, qa_scene_model *scene,
     const qa_model *source, const char *source_path, const qa_model_transform *transform,
     const qa_q3_ref_entity *entity, const qa_q3_scene_options *options,
+    const qa_q3_foreign_view_lighting *view_lighting,
     uint32_t order, qa_scene_frame *frame, qa_error *error)
 {
     const qa_scene_image_options *images = qa_scene_model_image_options(scene);
@@ -283,10 +286,14 @@ bool qa_q3_presentation_selected_model(qa_q3_presentation *p, qa_scene_model *sc
         !p->busy || p->submission != options || p->frame != frame ||
         qa_scene_model_source(scene) != source || !images ||
         images->family < QA_SCENE_Q1 || images->family > QA_SCENE_Q3 ||
-        entity->kind != QA_Q3_REF_MODEL || order >= 1022)
+        entity->kind != QA_Q3_REF_MODEL || order >= 1022 ||
+        (view_lighting && (view_lighting->content != images->family ||
+            images->family == QA_SCENE_Q3 || !(entity->flags & 4) ||
+            (images->family == QA_SCENE_Q1 && view_lighting->flags) ||
+            (images->family == QA_SCENE_Q2 && (view_lighting->flags & ~(1u | 4u | 16u))))))
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Selected model requires its actual content and active Q3 view submission");
     qa_scene_model_input input;
-    if (!model_input(p, options, entity, order, *transform, &input, error)) return false;
+    if (!model_input(p, p->options.assets, options, entity, order, *transform, &input, error)) return false;
     input.source_path = source_path;
     float radius;
     model_frames(source, entity, &input, &radius);
@@ -299,7 +306,44 @@ bool qa_q3_presentation_selected_model(qa_q3_presentation *p, qa_scene_model *sc
             transform->scale[i]);
     model_fog(p, options, &placed, source, &input, radius);
     selected_lighting(p, options, images->family, &placed, &input);
+    if (view_lighting && view_lighting->content == QA_SCENE_Q2 && (view_lighting->flags & 1) &&
+        input.alias_light.x <= .1f && input.alias_light.y <= .1f && input.alias_light.z <= .1f)
+        input.alias_light = qa_v3(.1f, .1f, .1f);
     return qa_scene_model_submit(scene, &input, frame, error);
+}
+
+bool qa_q3_presentation_selected_model(qa_q3_presentation *p, qa_scene_model *scene,
+    const qa_model *source, const char *source_path, const qa_model_transform *transform,
+    const qa_q3_ref_entity *entity, const qa_q3_scene_options *options,
+    uint32_t order, qa_scene_frame *frame, qa_error *error)
+{
+    return selected_model(p, scene, source, source_path, transform, entity, options,
+        NULL, order, frame, error);
+}
+
+bool qa_q3_presentation_selected_view_model(qa_q3_presentation *p, qa_scene_model *scene,
+    const qa_model *source, const char *source_path, const qa_model_transform *transform,
+    const qa_q3_ref_entity *entity, const qa_q3_scene_options *options,
+    const qa_q3_foreign_view_lighting *lighting, uint32_t order, qa_scene_frame *frame, qa_error *error)
+{
+    if (!lighting) return q3p_fail(error, QA_ERROR_ARGUMENT, "Foreign view requires its actual content lighting policy");
+    return selected_model(p, scene, source, source_path, transform, entity, options,
+        lighting, order, frame, error);
+}
+
+bool qa_q3_presentation_selected_registered(qa_q3_presentation *p,
+    const qa_q3_presentation_assets *assets, const qa_q3_ref_entity *entity,
+    const qa_q3_scene_options *options, uint32_t order, qa_scene_frame *frame, qa_error *error)
+{
+    if (!p || !assets || !entity || !options || !frame || !p->busy ||
+        p->submission != options || p->frame != frame || !qa_q3_assets_idle(assets) ||
+        entity->kind != QA_Q3_REF_MODEL || entity->model <= 0 || order >= 1022)
+        return q3p_fail(error, QA_ERROR_ARGUMENT, "Selected registry requires its actual retained assets and active view lease");
+    const q3p_model *model;
+    if (!q3p_model_get(assets, entity->model, &model, error)) return false;
+    if (!model || model->world)
+        return q3p_fail(error, QA_ERROR_FORMAT, "Selected equipment registry has no actual non-world model holder");
+    return submit_model(p, assets, options, entity, order, error);
 }
 
 static bool submit_effect(qa_q3_presentation *p, const qa_q3_scene_options *options,
@@ -362,7 +406,7 @@ static bool submit_view(qa_q3_presentation *p, const qa_q3_scene_options *option
         }
         uint32_t order = options->first_entity + (uint32_t)i;
         if (entity.kind == QA_Q3_REF_MODEL) {
-            if (!submit_model(p, options, &entity, order, error)) return false;
+            if (!submit_model(p, p->options.assets, options, &entity, order, error)) return false;
         } else if (!(entity.flags & 2) || options->world.view.clip_enabled) {
             if (!submit_effect(p, options, &entity, order, error)) return false;
         }
