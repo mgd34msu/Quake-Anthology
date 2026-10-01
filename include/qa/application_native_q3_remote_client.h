@@ -53,6 +53,8 @@ bool qa_native_q3_remote_client_publication_read(qa_application *,
     const qa_application_q3_remote_source *, uint64_t *, qa_error *);
 bool qa_native_q3_remote_client_product_read(qa_application *,
     const qa_application_q3_remote_source *, qa_q3_product *, qa_error *);
+bool qa_native_q3_remote_client_character_selection_read(qa_application *,
+    const qa_application_q3_remote_source *, qa_native_q3_character_selection *, qa_error *);
 /* A borrowed physical attachment; NULL before the actual frontend constructs
  * the service. Its own current/initialized predicates qualify media use. */
 bool qa_native_q3_remote_client_service_read(qa_application *,
@@ -60,6 +62,7 @@ bool qa_native_q3_remote_client_service_read(qa_application *,
 bool qa_native_q3_remote_client_create(qa_native_q3_remote_client_services *,
     qa_native_q3_character_selection *, qa_native_q3_remote_client_service **, qa_error *);
 bool qa_native_q3_remote_client_destroy(qa_native_q3_remote_client_service *, qa_error *);
+bool qa_native_q3_remote_client_retire_ready(const qa_native_q3_remote_client_service *, qa_error *);
 bool qa_native_q3_remote_client_current(const qa_native_q3_remote_client_service *);
 bool qa_native_q3_remote_client_idle(const qa_native_q3_remote_client_service *);
 bool qa_native_q3_remote_client_basis_read(const qa_native_q3_remote_client_service *,

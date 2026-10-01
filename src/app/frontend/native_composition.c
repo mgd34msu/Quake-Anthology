@@ -13,6 +13,10 @@ typedef struct primary_pose {
     uint32_t physical;
     qa_vec3 origin;
 } primary_pose;
+typedef struct effects_consumer {
+    const frontend_selected_effects_group *group;
+    bool matches;
+} effects_consumer;
 typedef struct native_composition {
     qa_frontend *frontend;
     frontend_native_q3 *row;
@@ -20,13 +24,16 @@ typedef struct native_composition {
     frontend_native_character *character;
     const q3n_frame *frame;
     primary_pose *primary_poses;
+    effects_consumer *effects_roster;
+    size_t effects_groups;
     uint32_t effects_first, effects_count;
-    bool entered;
+    bool entered, effects_ready;
 } native_composition;
 static bool idle(const void *context)
 {
     const native_composition *owner = context;
     return owner && !owner->entered && !owner->frame && !owner->primary_poses &&
+        !owner->effects_roster && !owner->effects_groups && !owner->effects_ready &&
         (!owner->character || frontend_native_character_idle(owner->character)) &&
         (!owner->equipment.context || owner->equipment.idle(owner->equipment.context));
 }
@@ -70,6 +77,8 @@ static void end(void *context)
         primary_pose *next = owner->primary_poses->next;
         free(owner->primary_poses); owner->primary_poses = next;
     }
+    free(owner->effects_roster); owner->effects_roster = NULL;
+    owner->effects_groups = 0; owner->effects_ready = false;
     owner->frame = NULL; owner->entered = false;
     owner->effects_first = owner->effects_count = 0;
 }
@@ -107,6 +116,31 @@ static bool effect_pose_current(void *context)
     return captured_origin(scope->owner, scope->actor, &actual, &found, NULL) && found &&
         actual.x == scope->origin.x && actual.y == scope->origin.y && actual.z == scope->origin.z;
 }
+static bool effects_roster_current(const native_composition *owner)
+{
+    if (!owner || !owner->entered || !owner->frame || !owner->effects_ready ||
+        frontend_selected_effects_count(owner->frontend) != owner->effects_groups) return false;
+    for (size_t i = 0; i < owner->effects_groups; ++i)
+        if (frontend_selected_effects_group_at(owner->frontend, i) != owner->effects_roster[i].group) return false;
+    return qa_application_native_q3_presentation_current(owner->frame->application, &owner->frame->source);
+}
+static bool effects_roster_capture(native_composition *owner, const q3n_frame *frame, qa_error *error)
+{
+    if (owner->effects_ready || owner->effects_roster)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effect consumer roster is already entered");
+    size_t count = frontend_selected_effects_count(owner->frontend);
+    if (count > SIZE_MAX / sizeof(*owner->effects_roster))
+        return frontend_fail(error, QA_ERROR_MEMORY, "Selected effect consumer roster exceeds capacity");
+    effects_consumer *rows = count ? calloc(count, sizeof(*rows)) : NULL;
+    if (count && !rows) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual selected effect consumer rows");
+    for (size_t i = 0; i < count; ++i) {
+        rows[i].group = frontend_selected_effects_group_at(owner->frontend, i);
+        rows[i].matches = frontend_selected_effects_native_matches(owner->frontend, frame, i);
+    }
+    owner->effects_roster = rows; owner->effects_groups = count; owner->effects_ready = true;
+    return effects_roster_current(owner) ||
+        frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effect consumer roster changed before RenderScene");
+}
 static bool before_render(void *context, const q3n_frame *frame, qa_error *error)
 {
     native_composition *owner = context;
@@ -130,7 +164,7 @@ static bool before_render(void *context, const q3n_frame *frame, qa_error *error
     }
     return frontend_selected_effects_prepare(owner->frontend, frame, error) &&
         frontend_selected_effects_lights(owner->frontend, frame, error) &&
-        qa_application_native_q3_presentation_current(frame->application, &frame->source);
+        effects_roster_capture(owner, frame, error);
 }
 static bool body_hidden(void *context, const q3n_frame *frame,
     const qa_application_native_q3_entity *actual, bool *hidden, qa_error *error)
@@ -208,12 +242,12 @@ static bool prepare(void *context, const qa_q3_refdef *definition,
 {
     native_composition *owner = context;
     if (!owner || !owner->entered || !owner->frame || !options ||
-        !qa_application_native_q3_presentation_current(owner->frame->application, &owner->frame->source))
+        !effects_roster_current(owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Native scene order requires its actual entered frame");
     owner->effects_first = options->first_entity; owner->effects_count = 0;
     if (!options->world.no_world) {
-        size_t groups = frontend_selected_effects_count(owner->frontend);
-        for (size_t i = 0; i < groups; ++i) {
+        for (size_t i = 0; i < owner->effects_groups; ++i) {
+            if (!owner->effects_roster[i].matches) continue;
             frontend_selected_effects_view view;
             qa_application_selected_effects source;
             const frontend_selected_effects_group *group = frontend_selected_effects_group_at(owner->frontend, i);
@@ -228,7 +262,8 @@ static bool prepare(void *context, const qa_q3_refdef *definition,
         }
     }
     return frontend_native_character_prepare_view(owner->character, options, error) &&
-        owner->equipment.prepare_view(owner->equipment.context, definition, options, error);
+        owner->equipment.prepare_view(owner->equipment.context, definition, options, error) &&
+        effects_roster_current(owner);
 }
 static bool effects_current(native_composition *owner, size_t ordinal,
     const qa_q3_scene_options *options, qa_scene_frame *frame,
@@ -236,7 +271,9 @@ static bool effects_current(native_composition *owner, size_t ordinal,
     size_t refs, size_t polygons, qa_error *error)
 {
     const frontend_selected_effects_group *actual; frontend_selected_effects_view view;
-    return frontend_selected_effects_output_read(owner->frontend, owner->frame, ordinal,
+    return effects_roster_current(owner) && ordinal < owner->effects_groups &&
+        owner->effects_roster[ordinal].matches && owner->effects_roster[ordinal].group == expected &&
+        frontend_selected_effects_output_read(owner->frontend, owner->frame, ordinal,
         options, frame, &actual, &view, error) && actual == expected &&
         view.assets == saved->assets && view.source_time_ms == saved->source_time_ms &&
         frontend_selected_effects_ref_count(actual) == refs &&
@@ -246,9 +283,11 @@ static bool effects_submit(native_composition *owner, const qa_q3_scene_options 
     qa_scene_frame *frame, qa_error *error)
 {
     if (options->world.no_world) return true;
+    if (!effects_roster_current(owner))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effect consumer roster changed inside RenderScene");
     uint32_t order = owner->effects_first;
-    size_t groups = frontend_selected_effects_count(owner->frontend);
-    for (size_t i = 0; i < groups; ++i) {
+    for (size_t i = 0; i < owner->effects_groups; ++i) {
+        if (!owner->effects_roster[i].matches) continue;
         const frontend_selected_effects_group *group; frontend_selected_effects_view view;
         if (!frontend_selected_effects_output_read(owner->frontend, owner->frame, i,
             options, frame, &group, &view, error)) return false;
@@ -277,8 +316,7 @@ static bool effects_submit(native_composition *owner, const qa_q3_scene_options 
         order += (uint32_t)refs;
     }
     return order == owner->effects_first + owner->effects_count &&
-        frontend_selected_effects_count(owner->frontend) == groups &&
-        qa_application_native_q3_presentation_current(owner->frame->application, &owner->frame->source) ? true :
+        effects_roster_current(owner) ? true :
         frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effects changed their actual prepared scene roster");
 }
 static bool submit(void *context, const qa_q3_scene_options *options, qa_scene_frame *frame, qa_error *error)

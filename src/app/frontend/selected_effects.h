@@ -8,6 +8,7 @@
 
 typedef struct frontend_selected_effects frontend_selected_effects;
 typedef struct frontend_selected_effects_group frontend_selected_effects_group;
+typedef struct frontend_source_effects frontend_source_effects;
 typedef struct frontend_selected_effects_pose {
     /* Borrowed only during event(); the actual entered composer reobserves
      * its captured CHARACTER/presentation/world-body precedence. */
@@ -64,6 +65,18 @@ bool frontend_selected_effects_event(qa_frontend *, const q3n_frame *primary,
  * the far-world sample preserves each seat's camera-near cull independently. */
 bool frontend_selected_effects_prepare(qa_frontend *, const q3n_frame *primary, qa_error *);
 bool frontend_selected_effects_lights(qa_frontend *, const q3n_frame *primary, qa_error *);
+/* Capture matching physical rows before RenderScene enters the native backend.
+ * The caller retains that mask through its actual prepare/submit bracket. */
+bool frontend_selected_effects_native_matches(const qa_frontend *, const q3n_frame *, size_t);
+bool frontend_selected_effects_source_event(qa_frontend *, const frontend_source_effects *,
+    const qa_application_effect_event *, const frontend_selected_effects_pose *, bool *, qa_error *);
+bool frontend_selected_effects_source_prepare(qa_frontend *, const frontend_source_effects *, qa_error *);
+bool frontend_selected_effects_source_light_read(const qa_frontend *, const frontend_source_effects *, size_t,
+    const qa_scene_light **, size_t *, qa_error *);
+bool frontend_selected_effects_source_matches(const qa_frontend *, const frontend_source_effects *, size_t);
+bool frontend_selected_effects_source_output_read(const qa_frontend *, const frontend_source_effects *, size_t,
+    const qa_q3_scene_options *, const qa_scene_frame *, const frontend_selected_effects_group **,
+    frontend_selected_effects_view *, qa_error *);
 size_t frontend_selected_effects_ref_count(const frontend_selected_effects_group *);
 const frontend_selected_effects_ref *frontend_selected_effects_ref_at(
     const frontend_selected_effects_group *, size_t);

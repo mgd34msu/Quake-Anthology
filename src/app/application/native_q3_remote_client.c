@@ -114,11 +114,18 @@ bool qa_native_q3_remote_client_create(qa_native_q3_remote_client_services *serv
     *services = (qa_native_q3_remote_client_services){0}; *character = (qa_native_q3_character_selection){0};
     *out = service; return true;
 }
-bool qa_native_q3_remote_client_destroy(qa_native_q3_remote_client_service *service, qa_error *error)
+bool qa_native_q3_remote_client_retire_ready(const qa_native_q3_remote_client_service *service, qa_error *error)
 {
     if (!service) return true;
     if (!qa_native_q3_remote_client_idle(service))
         return native_client_fail(error, QA_ERROR_ARGUMENT, "Remote native CGAME retains an active frontend callback");
+    return !service->attached || application_native_q3_remote_role_detach_ready(service->provider,
+        service->services.basis.client.seat, service, error);
+}
+bool qa_native_q3_remote_client_destroy(qa_native_q3_remote_client_service *service, qa_error *error)
+{
+    if (!service) return true;
+    if (!qa_native_q3_remote_client_retire_ready(service, error)) return false;
     if (service->attached) {
         if (!application_native_q3_remote_role_detach(service->provider, service->services.basis.client.seat, service, error)) return false;
         service->attached = false;

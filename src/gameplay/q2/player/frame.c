@@ -162,7 +162,8 @@ static bool after_movement(void *context, qa_actor_id id, qa_error *e) {
             !q2_player_update_chase(g, watcher, e))
             return false;
     }
-    if (g->options.edition == QA_Q2_RERELEASE && q2_actor_live(g, id))
+    if (!s->character_configured && g->options.edition == QA_Q2_RERELEASE &&
+        q2_actor_live(g, id))
         return q2_player_falling(g, a, &m, e);
     return true;
 }
@@ -191,7 +192,7 @@ static bool end_frame(void *context, qa_actor_id id, qa_error *e) {
     if (!q2_actor_live(g, id))
         return true;
     if (!g->player_runtime->intermission) {
-        if (!q2_player_environment(g, a, &m, e))
+        if (!a->client->character_configured && !q2_player_environment(g, a, &m, e))
             return false;
         if (!q2_actor_live(g, id))
             return true;
@@ -212,7 +213,8 @@ static bool end_frame(void *context, qa_actor_id id, qa_error *e) {
                           : speed > 100 ? .125f
                                         : .0625f;
         s->bob_time += s->bob_move;
-        if (g->options.edition == QA_Q2_CLASSIC && !q2_player_falling(g, a, &m, e))
+        if (!s->character_configured && g->options.edition == QA_Q2_CLASSIC &&
+            !q2_player_falling(g, a, &m, e))
             return false;
     }
     if (!q2_actor_live(g, id))

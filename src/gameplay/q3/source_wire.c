@@ -180,6 +180,16 @@ void q3_wire_client_spawn_clear(qa_q3_game *game, uint32_t slot) {
     client->movement_detached = false;
 }
 
+void q3_wire_selected_client_clear(qa_q3_game *game, uint32_t slot) {
+    if (!game || !game->wire || slot >= QA_Q3_SOURCE_CLIENTS) return;
+    q3_wire_client *client = &game->wire->clients[slot];
+    client->clients_ready = 0;
+    client->loop_sound = 0;
+    client->foreign_policy = (qa_q3_wire_policy){0};
+    client->foreign_policy_written = true;
+    client->movement_detached = false;
+}
+
 void q3_wire_client_follow_copy(qa_q3_game *game, uint32_t slot, const qa_q3_player *source) {
     q3_wire_client *client = &game->wire->clients[slot];
     client->hits = source->persistant[1];

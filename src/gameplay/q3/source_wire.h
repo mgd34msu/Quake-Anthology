@@ -41,6 +41,8 @@ bool q3_wire_copy_body(qa_q3_game *, qa_actor_id player, qa_actor_id corpse,
 void q3_wire_client_clear(qa_q3_game *, uint32_t source_slot);
 /* ClientSpawn clears source PM/stats while retaining the persistant fields. */
 void q3_wire_client_spawn_clear(qa_q3_game *, uint32_t source_slot);
+/* Selected-source copyFrom preserves every canonical/special ammo authority. */
+void q3_wire_selected_client_clear(qa_q3_game *, uint32_t source_slot);
 /* Native copyFrom writes these existing source stats/persistant owners while
  * preserving this client's own shared inventory and body authorities. */
 void q3_wire_client_follow_copy(qa_q3_game *, uint32_t source_slot, const qa_q3_player *);

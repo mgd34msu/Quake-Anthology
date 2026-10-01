@@ -4,6 +4,14 @@
 #include "selected_effects.h"
 #include "qa/catalog_save.h"
 
+typedef struct frontend_effects_primary {
+    const q3n_frame *native;
+    const struct frontend_source_effects *source;
+    qa_q3_presentation *presentation;
+    uint32_t physical_seat;
+    qa_ui_preferences preferences;
+} frontend_effects_primary;
+
 struct frontend_selected_effects_group {
     struct frontend_selected_effects_group *next;
     frontend_selected_effects *owner;
@@ -21,7 +29,7 @@ struct frontend_selected_effects_group {
     const qa_application_selected_effects *active_source;
     const qa_application_effect_event *active_event;
     const frontend_selected_effects_pose *active_pose;
-    const q3n_frame *active_primary;
+    const frontend_effects_primary *active_primary;
     frontend_selected_effects_ref *refs;
     size_t ref_count, ref_capacity;
 };
@@ -31,7 +39,7 @@ struct frontend_selected_effects {
     bool busy;
 };
 
-bool frontend_selected_effects_constructor(qa_frontend *, const q3n_frame *,
+bool frontend_selected_effects_constructor(qa_frontend *, const frontend_effects_primary *,
     const qa_application_selected_effects *, const qa_application_effect_event *,
     frontend_selected_effects_group **, qa_error *);
 bool frontend_selected_effects_group_current(const frontend_selected_effects_group *,

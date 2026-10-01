@@ -72,6 +72,37 @@ static bool refdef(q3_call *call, qa_q3_refdef *out, qa_error *error)
     return true;
 }
 
+bool qa_q3_host_render_scope_current(const qa_q3_host *host, const qa_qvm_call *call,
+    const void *lifetime, uint64_t service_owner, qa_qvm_role role,
+    const qa_q3_presentation *presentation)
+{
+    const q3_call *entered = host ? host->render_call : NULL;
+    return host && entered && entered->host == host && host->calls &&
+        !host->retired && !host->restore_pending &&
+        entered->source_call == call && (call ? entered->vm == host->vm : entered->native != NULL) &&
+        role != QA_QVM_GAME && host->options.role == role &&
+        lifetime && host->options.frontend_lifetime == lifetime &&
+        service_owner && host->options.service_owner == service_owner &&
+        presentation && host->options.presentation.seat == presentation;
+}
+
+static bool render(q3_call *call, qa_q3_presentation *presentation,
+    const qa_q3_refdef *definition, qa_error *error)
+{
+    qa_q3_host *host = call->host;
+    const qa_q3_host_render_services *services = &host->options.render;
+    if (!!services->enter != !!services->leave || host->render_call)
+        return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 RenderScene requires paired callbacks and a returned host scope");
+    host->render_call = call;
+    void *token = NULL;
+    bool okay = !services->enter || services->enter(services->context, host,
+        call->source_call, definition, &token, error);
+    if (okay) okay = qa_q3_presentation_render(presentation, definition, error);
+    if (services->enter) services->leave(services->context, token, okay);
+    host->render_call = NULL;
+    return okay;
+}
+
 static bool polygons(q3_call *call, qa_q3_presentation *seat, bool multiple,
                       qa_error *error)
 {
@@ -291,7 +322,7 @@ q3_service_result q3_presentation(q3_call *call, int32_t *result, qa_error *erro
         }
     } else if (service == (ui ? 25 : 44)) {
         qa_q3_refdef view;
-        ok = refdef(call, &view, error) && qa_q3_presentation_render(seat, &view, error);
+        ok = refdef(call, &view, error) && render(call, seat, &view, error);
     } else if (service == (ui ? 26 : 45)) {
         qa_scene_vec4 color;
         uint8_t bytes[16];

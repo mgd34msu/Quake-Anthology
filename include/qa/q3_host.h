@@ -20,6 +20,7 @@ typedef struct qa_q3_presentation qa_q3_presentation;
 typedef struct qa_font_library qa_font_library;
 typedef struct qa_scene_image qa_scene_image;
 typedef struct qa_q3_ref_entity qa_q3_ref_entity;
+typedef struct qa_q3_refdef qa_q3_refdef;
 
 typedef struct qa_q3_host_calendar {
     int32_t second, minute, hour, day, month, year, weekday, year_day, is_dst;
@@ -89,6 +90,23 @@ typedef struct qa_q3_host_presentation_services {
     bool (*update_screen)(void *, qa_error *);
 } qa_q3_host_presentation_services;
 
+/* The actual RenderScene syscall supplies its host and optional original QVM
+ * call before the backend enters. Leave runs once after every enter invocation,
+ * including a failed enter that returned a partial token. It must close that
+ * scope without dispatching source code or destroying the calling host. */
+typedef struct qa_q3_host_render_services {
+    void *context;
+    bool (*enter)(void *, const qa_q3_host *, const qa_qvm_call *,
+        const qa_q3_refdef *, void **token, qa_error *);
+    void (*leave)(void *, void *token, bool rendered);
+} qa_q3_host_render_services;
+
+/* Pure identity proof available only inside this host's actual RenderScene
+ * enter/backend/leave bracket. A NULL source call denotes a native syscall. */
+bool qa_q3_host_render_scope_current(const qa_q3_host *, const qa_qvm_call *,
+    const void *frontend_lifetime, uint64_t service_owner, qa_qvm_role,
+    const qa_q3_presentation *);
+
 /* Pure decoding of the original fixed-width refEntity record. */
 bool qa_q3_host_ref_entity_decode(qa_bytes, qa_q3_ref_entity *, qa_error *);
 typedef bool (*qa_q3_host_source_entity_fn)(void *, const qa_qvm_call *,
@@ -141,6 +159,7 @@ typedef struct qa_q3_host_options {
     qa_q3_host_client_services client;
     qa_q3_host_collision_services collision;
     qa_q3_host_presentation_services presentation;
+    qa_q3_host_render_services render;
     /* Original CGAME QVM submissions retain their current syscall token and
      * unmasked signed pointer. The source role owns this callback/context. */
     qa_q3_host_source_entity_fn source_entity;

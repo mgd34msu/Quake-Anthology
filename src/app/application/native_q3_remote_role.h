@@ -29,6 +29,8 @@ bool application_native_q3_remote_role_initialized(application_provider *, uint3
     qa_native_q3_remote_client_service *, qa_error *);
 bool application_native_q3_remote_role_detach(application_provider *, uint32_t,
     qa_native_q3_remote_client_service *, qa_error *);
+bool application_native_q3_remote_role_detach_ready(application_provider *, uint32_t,
+    const qa_native_q3_remote_client_service *, qa_error *);
 bool application_native_q3_remote_role_command(application_provider *, uint32_t,
     const qa_q3_tokens *, qa_error *);
 bool application_native_q3_remote_role_arguments(application_provider *, uint32_t,
@@ -44,6 +46,8 @@ bool application_native_q3_remote_role_modules_attach(application_provider *,
     const qa_application_q3_remote_source *, application_native_q3_client_modules *, qa_error *);
 bool application_native_q3_remote_role_modules_read(application_provider *,
     const qa_application_q3_remote_source *, application_native_q3_client_modules **, qa_error *);
+bool application_native_q3_remote_role_modules_pointer_read(application_provider *, uint32_t,
+    application_native_q3_client_modules **, qa_error *);
 bool application_native_q3_remote_role_modules_source_read(application_provider *, uint32_t,
     qa_application_q3_remote_source *, application_native_q3_client_modules **, qa_error *);
 bool application_native_q3_remote_role_modules_current(application_provider *,

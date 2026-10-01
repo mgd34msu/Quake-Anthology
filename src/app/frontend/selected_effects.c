@@ -5,25 +5,63 @@
 #include "qa/scene_world_save.h"
 #include "native_q3_client.h"
 #include "capture.h"
+#include "source_effects.h"
 #include <math.h>
 
-static bool primary_current(const qa_frontend *frontend, const q3n_frame *frame)
+static bool primary_current(const qa_frontend *frontend, const frontend_effects_primary *primary)
 {
-    return frontend && frame && frame->application == frontend->application &&
-        !frame->effects_source && frame->physical_presentation_seat < frontend->options.seats &&
+    if (!frontend || !primary || (!!primary->native == !!primary->source)) return false;
+    if (primary->source) {
+        qa_q3_presentation *presentation; uint32_t seat; qa_ui_preferences preferences;
+        return frontend_source_effects_primary_read(primary->source, frontend, &presentation, &seat, &preferences) &&
+            presentation == primary->presentation && seat == primary->physical_seat;
+    }
+    const q3n_frame *frame = primary->native;
+    return frame->application == frontend->application && !frame->effects_source &&
+        frame->presentation == primary->presentation && frame->physical_presentation_seat == primary->physical_seat &&
+        frame->physical_presentation_seat < frontend->options.seats &&
         qa_application_native_q3_presentation_current(frame->application, &frame->source);
 }
 
+static frontend_effects_primary native_primary(const q3n_frame *frame)
+{ return (frontend_effects_primary){.native = frame, .presentation = frame ? frame->presentation : NULL,
+    .physical_seat = frame ? frame->physical_presentation_seat : 0,
+    .preferences = frame ? frame->preferences : (qa_ui_preferences){0}}; }
+
+static bool source_primary(const qa_frontend *frontend, const frontend_source_effects *source,
+    frontend_effects_primary *out)
+{
+    *out = (frontend_effects_primary){.source = source};
+    return frontend_source_effects_primary_read(source, frontend, &out->presentation,
+        &out->physical_seat, &out->preferences);
+}
+
+static bool primary_binding(const qa_frontend *frontend, const frontend_effects_primary *primary,
+    qa_q3_presentation_binding *out, qa_error *error)
+{
+    return primary_current(frontend, primary) && (primary->source ?
+        frontend_source_effects_binding_read(primary->source, frontend, out) :
+        qa_q3_presentation_binding_read(primary->presentation, out, error));
+}
+
+static bool group_binding(const frontend_selected_effects_group *group,
+    const qa_q3_presentation_binding *binding)
+{
+    return group && !group->restoring && binding && binding->world &&
+        binding->world == group->world && binding->geometry == group->geometry &&
+        binding->frame == &group->owner->frontend->frame;
+}
+
 static bool group_primary_current(const frontend_selected_effects_group *group,
-    const q3n_frame *primary, qa_error *error)
+    const frontend_effects_primary *primary, qa_error *error)
 {
     qa_q3_presentation_binding actual, retained;
     return group && group->owner && primary_current(group->owner->frontend, primary) &&
-        qa_q3_presentation_binding_read(primary->presentation, &actual, error) &&
+        primary_binding(group->owner->frontend, primary, &actual, error) &&
         qa_q3_presentation_binding_read(group->primary, &retained, error) &&
         actual.world == group->world && actual.geometry == group->geometry &&
         actual.frame == &group->owner->frontend->frame &&
-        actual.options.seat == primary->physical_presentation_seat &&
+        actual.options.seat == primary->physical_seat &&
         retained.world == group->world && retained.geometry == group->geometry &&
         retained.frame == actual.frame && retained.options.owner == group->view.primary_identity &&
         retained.options.seat == group->view.physical_seat;
@@ -174,7 +212,7 @@ bool frontend_selected_effects_empty(frontend_selected_effects_group *group,
     return okay;
 }
 
-bool frontend_selected_effects_constructor(qa_frontend *frontend, const q3n_frame *primary,
+bool frontend_selected_effects_constructor(qa_frontend *frontend, const frontend_effects_primary *primary,
     const qa_application_selected_effects *source, const qa_application_effect_event *event,
     frontend_selected_effects_group **out, qa_error *error)
 {
@@ -182,7 +220,7 @@ bool frontend_selected_effects_constructor(qa_frontend *frontend, const q3n_fram
     if (!out || !primary_current(frontend, primary) || !source || source->kind != QA_APPLICATION_EFFECTS_Q3 ||
         !qa_q3_presentation_binding_read(primary->presentation, &binding, error) ||
         !binding.world || !binding.geometry || binding.frame != &frontend->frame ||
-        binding.options.seat != primary->physical_presentation_seat ||
+        binding.options.seat != primary->physical_seat ||
         binding.options.audio != frontend->audio || !frontend->audio)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effects need their actual physical primary map and scene binding");
     frontend_selected_effects_group *group = calloc(1, sizeof(*group));
@@ -209,7 +247,7 @@ bool frontend_selected_effects_constructor(qa_frontend *frontend, const q3n_fram
 }
 
 static q3n_frame frame(frontend_selected_effects_group *group, const qa_application_selected_effects *source,
-    const qa_application_effect_event *event, const q3n_frame *primary, const q3n_event_settings *settings)
+    const qa_application_effect_event *event, const frontend_effects_primary *primary, const q3n_event_settings *settings)
 {
     return (q3n_frame){.application = group->owner->frontend->application, .effects_source = source,
         .effect_event = event, .effect_output_context = group, .effect_entity_output = capture_ref,
@@ -242,15 +280,17 @@ static q3n_event_settings effect_settings(const qa_frontend *frontend)
     return (q3n_event_settings){.blood = true, .gibs = true, .score_plum = true, .add_marks = true, .ragepro = ragepro};
 }
 
-bool frontend_selected_effects_prepare(qa_frontend *frontend, const q3n_frame *primary, qa_error *error)
+static bool prepare_primary(qa_frontend *frontend, const frontend_effects_primary *primary, qa_error *error)
 {
-    if (!primary_current(frontend, primary) || !frontend_selected_effects_idle(frontend))
+    qa_q3_presentation_binding consumer;
+    if (!primary_binding(frontend, primary, &consumer, error) || !frontend_selected_effects_idle(frontend))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effect sampling lost its real primary frame");
     frontend_selected_effects *owner = frontend->selected_effects;
     if (!owner) return true;
     owner->busy = true;
     bool okay = true;
     for (frontend_selected_effects_group *group = owner->groups; okay && group; group = group->next) {
+        if (!group_binding(group, &consumer)) continue;
         qa_application_selected_effects source;
         qa_q3_presentation_binding binding;
         okay = qa_application_effects_producer_read(frontend->application, group->view.provider, &source, error) &&
@@ -287,14 +327,16 @@ bool frontend_selected_effects_prepare(qa_frontend *frontend, const q3n_frame *p
     return okay;
 }
 
-bool frontend_selected_effects_lights(qa_frontend *frontend, const q3n_frame *primary, qa_error *error)
+static bool lights_primary(qa_frontend *frontend, const frontend_effects_primary *primary, qa_error *error)
 {
-    if (!primary_current(frontend, primary) || !frontend_selected_effects_idle(frontend))
+    qa_q3_presentation_binding consumer;
+    if (!primary_binding(frontend, primary, &consumer, error) || !frontend_selected_effects_idle(frontend))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effect lights require their actual open primary frame");
     frontend_selected_effects *owner = frontend->selected_effects;
     if (!owner) return true;
     owner->busy = true; bool okay = true;
     for (frontend_selected_effects_group *group = owner->groups; okay && group; group = group->next) {
+        if (!group_binding(group, &consumer)) continue;
         qa_application_selected_effects source;
         okay = group->prepared && group_primary_current(group, primary, error) &&
             qa_application_effects_producer_read(frontend->application, group->view.provider, &source, error) &&
@@ -311,7 +353,7 @@ bool frontend_selected_effects_lights(qa_frontend *frontend, const q3n_frame *pr
     owner->busy = false; return okay;
 }
 
-bool frontend_selected_effects_event(qa_frontend *frontend, const q3n_frame *primary,
+static bool event_primary(qa_frontend *frontend, const frontend_effects_primary *primary,
     const qa_application_effect_event *event, const frontend_selected_effects_pose *pose,
     bool *admitted, qa_error *error)
 {
@@ -337,8 +379,11 @@ bool frontend_selected_effects_event(qa_frontend *frontend, const q3n_frame *pri
     }
     frontend_selected_effects *owner = frontend->selected_effects;
     if (owner->busy) return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effect owner is already emitting");
+    qa_q3_presentation_binding consumer;
+    if (!primary_binding(frontend, primary, &consumer, error)) return false;
     frontend_selected_effects_group *group = owner->groups;
-    while (group && !frontend_selected_effects_group_current(group, &event->source)) group = group->next;
+    while (group && (!group_binding(group, &consumer) ||
+        !frontend_selected_effects_group_current(group, &event->source))) group = group->next;
     if (!group) {
         if (!frontend_selected_effects_constructor(frontend, primary, &event->source, event, &group, error)) return false;
         group->owner = owner;
@@ -381,6 +426,22 @@ const frontend_selected_effects_group *frontend_selected_effects_group_at(const 
 {
     const frontend_selected_effects_group *group = frontend && frontend->selected_effects ? frontend->selected_effects->groups : NULL;
     while (group && ordinal) { group = group->next; --ordinal; } return group;
+}
+bool frontend_selected_effects_source_matches(const qa_frontend *frontend,
+    const frontend_source_effects *source, size_t ordinal)
+{
+    const frontend_selected_effects_group *group = frontend_selected_effects_group_at(frontend, ordinal);
+    qa_q3_presentation_binding binding;
+    return group && group->owner && group->owner->frontend == frontend &&
+        frontend_source_effects_binding_read(source, frontend, &binding) && group_binding(group, &binding);
+}
+bool frontend_selected_effects_native_matches(const qa_frontend *frontend,
+    const q3n_frame *frame, size_t ordinal)
+{
+    const frontend_selected_effects_group *group = frontend_selected_effects_group_at(frontend, ordinal);
+    frontend_effects_primary primary = native_primary(frame); qa_q3_presentation_binding binding;
+    return group && group->owner && group->owner->frontend == frontend &&
+        primary_binding(frontend, &primary, &binding, NULL) && group_binding(group, &binding);
 }
 bool frontend_selected_effects_at(const qa_frontend *frontend, size_t ordinal, frontend_selected_effects_view *out, qa_error *error)
 {
@@ -458,26 +519,62 @@ bool frontend_selected_effects_q3_ready(const qa_frontend *frontend, size_t ordi
         !assets->context && !assets->select && !assets->print ? true :
         frontend_fail(error, QA_ERROR_FORMAT, "Selected effect dictionary differs from its genuine standalone constructor");
 }
-bool frontend_selected_effects_output_read(const qa_frontend *frontend, const q3n_frame *primary, size_t ordinal,
+static bool output_primary(const qa_frontend *frontend, const frontend_effects_primary *primary, size_t ordinal,
     const qa_q3_scene_options *options, const qa_scene_frame *frame,
     const frontend_selected_effects_group **out_group, frontend_selected_effects_view *out_view, qa_error *error)
 {
     const frontend_selected_effects_group *group = frontend_selected_effects_group_at(frontend, ordinal);
     qa_application_selected_effects source; qa_q3_presentation_binding actual, retained;
-    if (!out_group || !out_view || !group || group->active_source || group->active_primary || group->active_pose ||
+    if (!out_group || !out_view || !group || !primary ||
+        group->active_source || group->active_primary || group->active_pose ||
         frontend->selected_effects->busy || !primary_current(frontend, primary) || !group->prepared ||
         !qa_application_effects_producer_read(frontend->application, group->view.provider, &source, error) ||
         !frontend_selected_effects_group_current(group, &source) || group->prepared_application_frame != source.application_frame ||
         group->time != source.sample_time_ms || !q3n_media_effects_ready(group->view.media) ||
         !qa_q3_presentation_selected_binding_read(primary->presentation, options, frame, &actual, error) ||
         !qa_q3_presentation_binding_read(group->view.presentation, &retained, error) ||
-        actual.frame != &frontend->frame || actual.options.seat != primary->physical_presentation_seat ||
+        actual.frame != &frontend->frame || actual.options.seat != primary->physical_seat ||
         actual.world != group->world || actual.geometry != group->geometry ||
         retained.world != actual.world || retained.geometry != actual.geometry || retained.frame != actual.frame)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Selected effect output lost its actual source packet or primary view lease");
     *out_group = group; *out_view = group->view; out_view->source_time_ms = group->time;
     out_view->sampled_application_frame = group->prepared_application_frame; out_view->prepared = true; return true;
 }
+bool frontend_selected_effects_prepare(qa_frontend *frontend, const q3n_frame *frame, qa_error *error)
+{ frontend_effects_primary primary = native_primary(frame); return prepare_primary(frontend, &primary, error); }
+bool frontend_selected_effects_lights(qa_frontend *frontend, const q3n_frame *frame, qa_error *error)
+{ frontend_effects_primary primary = native_primary(frame); return lights_primary(frontend, &primary, error); }
+bool frontend_selected_effects_event(qa_frontend *frontend, const q3n_frame *frame,
+    const qa_application_effect_event *event, const frontend_selected_effects_pose *pose, bool *admitted, qa_error *error)
+{ frontend_effects_primary primary = native_primary(frame); return event_primary(frontend, &primary, event, pose, admitted, error); }
+bool frontend_selected_effects_output_read(const qa_frontend *frontend, const q3n_frame *frame, size_t ordinal,
+    const qa_q3_scene_options *options, const qa_scene_frame *scene,
+    const frontend_selected_effects_group **group, frontend_selected_effects_view *view, qa_error *error)
+{ frontend_effects_primary primary = native_primary(frame); return output_primary(frontend, &primary, ordinal, options, scene, group, view, error); }
+bool frontend_selected_effects_source_prepare(qa_frontend *frontend, const frontend_source_effects *source, qa_error *error)
+{ frontend_effects_primary primary; return source_primary(frontend, source, &primary) && prepare_primary(frontend, &primary, error); }
+bool frontend_selected_effects_source_light_read(const qa_frontend *frontend, const frontend_source_effects *scope,
+    size_t ordinal, const qa_scene_light **out, size_t *count, qa_error *error)
+{
+    const frontend_selected_effects_group *group = frontend_selected_effects_group_at(frontend, ordinal);
+    qa_application_selected_effects source; qa_q3_presentation_binding binding;
+    if (!out || !count || !frontend_selected_effects_source_matches(frontend, scope, ordinal) ||
+        !frontend_selected_effects_idle(frontend) || !group->prepared ||
+        !qa_application_effects_producer_read(frontend->application, group->view.provider, &source, error) ||
+        !frontend_selected_effects_group_current(group, &source) || group->prepared_application_frame != source.application_frame ||
+        group->time != source.sample_time_ms || !q3n_media_effects_ready(group->view.media) ||
+        !qa_q3_presentation_binding_read(group->view.presentation, &binding, error) ||
+        binding.world != group->world || binding.geometry != group->geometry || binding.frame != &frontend->frame)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Source effect lights lost their actual completed packet");
+    *out = group->view.presentation->lights; *count = group->view.presentation->light_count; return true;
+}
+bool frontend_selected_effects_source_event(qa_frontend *frontend, const frontend_source_effects *source,
+    const qa_application_effect_event *event, const frontend_selected_effects_pose *pose, bool *admitted, qa_error *error)
+{ frontend_effects_primary primary; return source_primary(frontend, source, &primary) && event_primary(frontend, &primary, event, pose, admitted, error); }
+bool frontend_selected_effects_source_output_read(const qa_frontend *frontend, const frontend_source_effects *source, size_t ordinal,
+    const qa_q3_scene_options *options, const qa_scene_frame *scene,
+    const frontend_selected_effects_group **group, frontend_selected_effects_view *view, qa_error *error)
+{ frontend_effects_primary primary; return source_primary(frontend, source, &primary) && output_primary(frontend, &primary, ordinal, options, scene, group, view, error); }
 size_t frontend_selected_effects_ref_count(const frontend_selected_effects_group *group)
 { return group && group->prepared && !group->active_source ? group->ref_count : 0; }
 const frontend_selected_effects_ref *frontend_selected_effects_ref_at(const frontend_selected_effects_group *group, size_t ordinal)

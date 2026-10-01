@@ -81,6 +81,7 @@ struct qa_q3_host {
     q3_game_data *game;
     qa_actor_definition slot_definition;
     unsigned calls;
+    const struct q3_call *render_call;
     bool retired, restore_pending, scripts_reporting, bots_shutdown;
 };
 

@@ -328,6 +328,21 @@ bool qa_q3_player_quad(qa_q3_game *, qa_actor_id, uint64_t duration_ns, qa_error
 /* Extend an active native quad deadline; otherwise start from this source's clock. */
 bool qa_q3_player_quad_stack(qa_q3_game *, qa_actor_id, uint64_t duration_ns, qa_error *);
 bool qa_q3_spawn_player(qa_q3_game *, qa_actor_id, const qa_body_state *, qa_team_id, qa_error *);
+typedef struct qa_q3_selected_source_pose {
+    qa_vec3 view_angles;
+    float view_height;
+    int32_t max_health, team, quad_until_ms, haste_until_ms;
+} qa_q3_selected_source_pose;
+typedef struct qa_q3_selected_source_services {
+    void *context;
+    bool (*pose)(void *, qa_actor_id, qa_q3_selected_source_pose *, qa_error *);
+} qa_q3_selected_source_services;
+/* Reset an already bound selected source client, then read its physical source
+ * pose after callback-bearing hook/item/timer cleanup. The physical GAME owns
+ * body placement, health, inventory and spawn effects; this resets only the
+ * selected Q3 client's private state. The caller qualifies that GAME owner. */
+bool qa_q3_selected_source_respawn(qa_q3_game *, qa_actor_id,
+    const qa_q3_selected_source_services *, qa_error *);
 typedef struct qa_q3_controls {
     bool attack, use_holdable, prediction;
     bool gauntlet_contact_known, gauntlet_contact;
