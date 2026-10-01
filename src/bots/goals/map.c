@@ -50,13 +50,13 @@ qa_bot_goal bot_goal_item(const qa_bot_goals *g, const bot_level_item *item) {
         .flags = QA_BOT_GOAL_ITEM | (item->timeout != 0 ? QA_BOT_GOAL_DROPPED : 0) |
                  (item->flags & 16 ? QA_BOT_GOAL_ROAM : 0), .item_info = info->number};
 }
-static uint32_t allocate(qa_bot_goals *g) {
-    uint32_t id = g->free_head;
-    if (id) {
-        g->free_head = g->level[id].next;
-        g->level[id] = (bot_level_item){0};
-    } else bot_goal_report(g, QA_SCRIPT_FATAL, "out of level items\n");
-    return id;
+static bool allocate(qa_bot_goals *g,uint32_t *id,qa_error *error) {
+    *id = g->free_head;
+    if (*id) {
+        g->free_head = g->level[*id].next;
+        g->level[*id] = (bot_level_item){0};
+    } else return bot_goal_report(g, QA_SCRIPT_FATAL, "out of level items\n",error);
+    return true;
 }
 static void add(qa_bot_goals *g, uint32_t id) {
     if (g->level_head) g->level[g->level_head].previous = id;
@@ -135,9 +135,9 @@ static bool load_info(qa_bot_goals *g, qa_bot_navigation *n, qa_error *e) {
     if (g->services.developer && g->services.developer(g->services.context)) {
         char line[64];
         (void)snprintf(line, sizeof(line), "%zu map locations\n", g->location_count);
-        bot_goal_report(g, QA_SCRIPT_INFO, line);
+        if(!bot_goal_report(g, QA_SCRIPT_INFO, line,e)) return false;
         (void)snprintf(line, sizeof(line), "%zu camp spots\n", g->camp_count);
-        bot_goal_report(g, QA_SCRIPT_INFO, line);
+        if(!bot_goal_report(g, QA_SCRIPT_INFO, line,e)) return false;
     }
     return true;
 }
@@ -185,7 +185,7 @@ static bool load_items(qa_bot_goals *g, qa_bot_navigation *n, qa_error *e) {
         if (!qa_bot_bsp_vector(g->entities, entity, "origin", &origin, &found, e)) return false;
         if (!found) {
             (void)snprintf(line, sizeof(line), "item %s without origin\n", info->classname);
-            bot_goal_report(g, QA_SCRIPT_ERROR, line);
+            if(!bot_goal_report(g, QA_SCRIPT_ERROR, line,e)) return false;
             continue;
         }
         qa_bounds bounds = {info->mins, info->maxs};
@@ -205,7 +205,8 @@ static bool load_items(qa_bot_goals *g, qa_bot_navigation *n, qa_error *e) {
                 }
             }
         }
-        uint32_t id = allocate(g);
+        uint32_t id;
+        if(!allocate(g,&id,e)) return false;
         if (!id) return true;
         bot_level_item *item = &g->level[id];
         item->number = ++g->initial_count;
@@ -238,8 +239,7 @@ static bool load_items(qa_bot_goals *g, qa_bot_navigation *n, qa_error *e) {
         add(g, id);
     }
     (void)snprintf(line, sizeof(line), "found %d level items\n", g->initial_count);
-    bot_goal_report(g, QA_SCRIPT_INFO, line);
-    return true;
+    return bot_goal_report(g, QA_SCRIPT_INFO, line,e);
 }
 bool qa_bot_goals_load_map(qa_bot_goals *g, const qa_entities *entities,
                           qa_bot_navigation *navigation, qa_error *e) {
@@ -325,7 +325,8 @@ static bool update(qa_bot_goals *g, qa_bot_navigation *n, const qa_bot_goal_enti
         size_t index = 0;
         while (index < items->count && items->items[index].model_index != entity->model_index) ++index;
         if (index == items->count) continue;
-        uint32_t id = allocate(g);
+        uint32_t id;
+        if(!allocate(g,&id,e)) return false;
         if (!id) continue;
         bot_level_item *item = &g->level[id];
         item->entity = entity->number;

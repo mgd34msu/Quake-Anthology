@@ -19,22 +19,16 @@ typedef struct bot_weight_topology {
 } bot_weight_topology;
 struct qa_bot_weights {
     atomic_uint references;
+    struct bot_fuzzy_owned *source;
+    struct bot_fuzzy_heap *standalone_heap;
     bot_weight_topology *topology;
     qa_bot_weight_value *values;
     size_t value_capacity;
     qa_bot_weights_view view;
     struct qa_bot_weights *next;
 };
-typedef struct bot_weight_frame {
-    uint32_t root, right;
-    unsigned stage;
-    float left;
-    bool undecided;
-} bot_weight_frame;
 struct qa_bot_weight_workspace {
     bool busy;
-    bot_weight_frame *frames;
-    size_t count, capacity;
 };
 struct qa_bot_character {
     atomic_uint references;
@@ -67,6 +61,7 @@ struct qa_bot_library {
     qa_bot_library_options options;
     qa_bot_memory *memory;
     qa_bot_log *log;
+    struct bot_fuzzy_store *fuzzy_store;
     qa_arena arena;
     qa_bot_weights *weights;
     qa_bot_character *characters, *last_character;
@@ -84,7 +79,6 @@ bool bot_integer(qa_script *, int32_t *, qa_error *);
 bool bot_fail(qa_script *, const char *, qa_error *);
 void bot_warning(qa_bot_library *, qa_script *, const char *);
 float bot_random(const qa_bot_random_source *);
-bool bot_weights_parse(qa_bot_library *, const char *, qa_bot_weights **, qa_error *);
 void bot_weights_view(qa_bot_weights *);
 void bot_weight_topology_release(bot_weight_topology *);
 typedef enum bot_field_kind {

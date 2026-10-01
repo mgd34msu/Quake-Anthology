@@ -24,6 +24,7 @@ bot_goal_slot *bot_goal_slot_get(const qa_bot_goals *g, uint32_t id, qa_error *e
 static bool release_weights(qa_bot_goals *g, bot_goal_slot *s,qa_error *error) {
     bot_goal_weights *w;
     if(!bot_goal_config_get(g,s,&w,error)) return false;
+    if(w && !qa_bot_weights_free(w->weights,error)) return false;
     qa_bot_memory_allocation indexes;bool present;
     if(!bot_goal_indexes_get(g,s,&indexes,&present,error) ||
        (present && !qa_bot_memory_free(g->memory,indexes,error)) ||
@@ -82,8 +83,11 @@ static bool bind_weights(qa_bot_goals *g,bot_goal_slot *s,qa_bot_weights *weight
     if(items->count>UINT32_MAX) return bot_goal_fail(e,"Item index count exceeds the source domain");
     qa_bot_memory_allocation indexes;
     if(!bot_goal_indexes_create(g,(uint32_t)items->count,&indexes,e)) return false;
-    for(uint32_t i=0;i<(uint32_t)items->count;++i)
-        if(!bot_goal_indexes_write(g,indexes,i,qa_bot_weights_find(weights,items->items[i].classname),e)) return false;
+    for(uint32_t i=0;i<(uint32_t)items->count;++i) {
+        int32_t index;
+        if(!qa_bot_weights_find_value(weights,items->items[i].classname,&index,e) ||
+           !bot_goal_indexes_write(g,indexes,i,index,e)) return false;
+    }
     return bot_goal_indexes_publish(g,s,indexes,e);
 }
 bool qa_bot_goals_create(qa_bot_items *items, const qa_bot_goal_options *options,
@@ -197,10 +201,10 @@ bool qa_bot_goals_weights(qa_bot_goals *g, uint32_t id, qa_bot_weights *w, qa_er
     bool ok=w?bind_weights(g,s,w,e):release_weights(g,s,e);
     g->busy=false;return ok;
 }
-static void breed_report(void *context, const char *message) {
+static bool breed_report(void *context, const char *message,qa_error *error) {
     char line[128];
     (void)snprintf(line, sizeof(line), "%s\n", message);
-    bot_goal_report(context, QA_SCRIPT_ERROR, line);
+    return bot_goal_report(context, QA_SCRIPT_ERROR, line,error);
 }
 bool qa_bot_goals_interbreed(qa_bot_goals *g, uint32_t first, uint32_t second, uint32_t child,
                             bool *matched, qa_error *e) {
@@ -214,7 +218,7 @@ bool qa_bot_goals_interbreed(qa_bot_goals *g, uint32_t first, uint32_t second, u
     bot_goal_weights *wa,*wb,*wc;
     bool ok=bot_goal_config_get(g,a,&wa,e) && bot_goal_config_get(g,b,&wb,e) && bot_goal_config_get(g,c,&wc,e);
     if(ok && (!wa || !wb || !wc))
-        bot_goal_report(g, QA_SCRIPT_FATAL, "goal fuzzy interbreeding requires loaded item weights");
+        ok=bot_goal_report(g, QA_SCRIPT_FATAL, "goal fuzzy interbreeding requires loaded item weights",e);
     else if(ok) ok=qa_bot_weights_interbreed_report(wc->weights,wa->weights,wb->weights,g,breed_report,matched,e);
     g->busy = false;
     return ok;
@@ -226,7 +230,7 @@ bool qa_bot_goals_mutate(qa_bot_goals *g, uint32_t id, qa_error *e) {
     g->busy = true;
     bot_goal_weights *weights;
     bool ok=bot_goal_config_get(g,s,&weights,e);
-    if(ok && !weights) bot_goal_report(g, QA_SCRIPT_FATAL, "goal fuzzy mutation requires loaded item weights");
+    if(ok && !weights) ok=bot_goal_report(g, QA_SCRIPT_FATAL, "goal fuzzy mutation requires loaded item weights",e);
     else if(ok) ok=qa_bot_weights_evolve(weights->weights,&g->options.random,e);
     g->busy = false;
     return ok;
@@ -250,8 +254,7 @@ static bool push(qa_bot_goals *g, bot_goal_slot *s, const qa_bot_goal *goal,
         return bot_goal_record_integer_read(&s->record,BOT_GOAL_STACK_TOP,&top,e) &&
             bot_goal_record_goal_write(&s->record,top,goal,e);
     } else {
-        bot_goal_report(g, QA_SCRIPT_ERROR, "goal heap overflow\n");
-        return bot_goal_dump_stack(g, s, e);
+        return bot_goal_report(g, QA_SCRIPT_ERROR, "goal heap overflow\n",e) && bot_goal_dump_stack(g, s, e);
     }
     return true;
 }
@@ -294,8 +297,7 @@ bool qa_bot_goals_push_source_from(qa_bot_goals *g,uint32_t id,void *context,
             read(context,&bytes,e) && bot_goal_record_integer_read(&s->record,BOT_GOAL_STACK_TOP,&top,e) &&
             bot_goal_record_goal_bytes_write(&s->record,top,bytes,e);
     } else {
-        bot_goal_report(g,QA_SCRIPT_ERROR,"goal heap overflow\n");
-        ok=bot_goal_dump_stack(g,s,e);
+        ok=bot_goal_report(g,QA_SCRIPT_ERROR,"goal heap overflow\n",e) && bot_goal_dump_stack(g,s,e);
     }
     g->busy=false;return ok;
 }

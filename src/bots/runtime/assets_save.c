@@ -4,14 +4,21 @@
 #include "../chat/internal.h"
 #include "../save_fields.h"
 #include "qa/bot_runtime_assets_save.h"
+#include "../library/source_fuzzy_save.h"
+#include "../library/source_fuzzy_view.h"
+#include "../library/source_fuzzy_standalone_save.h"
 
 typedef struct saved_asset {
     qa_bot_saved_asset_kind kind;
     void *object;
     bool cached;
 } saved_asset;
-struct qa_bot_saved_assets { saved_asset *assets; size_t count, capacity; };
-static const uint8_t magic[8] = {'Q', 'A', 'B', 'A', 'S', 'E', 'T', 0};
+struct qa_bot_saved_assets {
+    saved_asset *assets;size_t count,capacity;
+    bot_fuzzy_store *source;
+    bool owns_source;
+};
+static const uint8_t magic[8] = {'Q', 'A', 'B', 'A', 'R', 'A', 'W', 0};
 
 static bool fail(qa_error *error, const char *message)
 { qa_error_set(error, QA_ERROR_FORMAT, 0, "%s", message); return false; }
@@ -35,6 +42,7 @@ void qa_bot_saved_assets_free(qa_bot_saved_assets *set)
     case QA_BOT_SAVED_ITEMS: qa_bot_items_release(set->assets[i].object); break;
     case QA_BOT_SAVED_CHAT: qa_bot_chat_asset_release(set->assets[i].object); break;
     }
+    if(set->owns_source) bot_fuzzy_store_dispose(set->source);
     free(set->assets); free(set);
 }
 bool qa_bot_saved_asset_id(const qa_bot_saved_assets *set, qa_bot_saved_asset_kind kind,
@@ -78,12 +86,16 @@ static bool collect(const qa_bot_runtime *runtime, qa_bot_saved_assets *set, qa_
 #define CACHE(field, type, kind) \
     for (type *asset = library->field; asset; asset = asset->next) \
         if (!add(set, kind, asset, true, error)) return false;
-    CACHE(weights, qa_bot_weights, QA_BOT_SAVED_WEIGHTS)
     CACHE(characters, qa_bot_character, QA_BOT_SAVED_CHARACTER)
     CACHE(weapon_configs, qa_bot_weapons, QA_BOT_SAVED_WEAPONS)
     CACHE(item_configs, qa_bot_items, QA_BOT_SAVED_ITEMS)
     CACHE(chat_assets, qa_bot_chat_asset, QA_BOT_SAVED_CHAT)
 #undef CACHE
+    /* This is a native binding list, not the source cache. The real cache and
+     * its holes are encoded once by the source store below. */
+    for(qa_bot_weights *asset=library->weights;asset;asset=asset->next)
+        if(asset->source && asset->source->store==library->fuzzy_store && asset->source->owned &&
+           !asset->source->disposed && !add(set,QA_BOT_SAVED_WEIGHTS,asset,false,error)) return false;
     qa_bot_character *last = NULL;
     for (qa_bot_character *asset = library->characters; asset; asset = asset->next) last = asset;
     if (last != library->last_character)
@@ -112,21 +124,6 @@ static bool collect(const qa_bot_runtime *runtime, qa_bot_saved_assets *set, qa_
     }
     return true;
 }
-static bool same_topology(const qa_bot_weights *a, const qa_bot_weights *b)
-{
-    const qa_bot_weights_view *x = &a->view, *y = &b->view;
-    if (x->weight_count != y->weight_count || x->node_count != y->node_count ||
-        x->maximum_inventory_index != y->maximum_inventory_index || strcmp(x->path, y->path)) return false;
-    for (size_t i = 0; i < x->weight_count; ++i)
-        if (x->weights[i].root != y->weights[i].root || x->weights[i].end != y->weights[i].end ||
-            strcmp(x->weights[i].name, y->weights[i].name)) return false;
-    for (size_t i = 0; i < x->node_count; ++i) {
-        const qa_bot_weight_node *p = &x->nodes[i], *q = &y->nodes[i];
-        if (p->inventory != q->inventory || p->threshold != q->threshold || p->child != q->child ||
-            p->next != q->next || p->balanced != q->balanced) return false;
-    }
-    return true;
-}
 static bool asset_fields(qa_source_save_io *io, qa_bot_saved_assets *set, size_t index)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
@@ -137,20 +134,47 @@ static bool asset_fields(qa_source_save_io *io, qa_bot_saved_assets *set, size_t
     bool ok = false;
     switch (asset->kind) {
     case QA_BOT_SAVED_WEIGHTS: {
-        size_t group = index;
-        if (!reading) for (size_t i = 0; i < index; ++i)
-            if (set->assets[i].kind == QA_BOT_SAVED_WEIGHTS &&
-                ((qa_bot_weights *)set->assets[i].object)->topology == ((qa_bot_weights *)asset->object)->topology) { group = i; break; }
         qa_bot_weights *weights = reading ? NULL : asset->object;
-        ok = qa_source_save_count(io, &group, index) && bot_save_weights_fields(io, weights, reading ? &weights : NULL);
-        if (reading) asset->object = weights;
-        if (ok && reading && group != index) {
-            saved_asset *first = &set->assets[group];
-            ok = first->kind == QA_BOT_SAVED_WEIGHTS && same_topology(first->object, weights);
-            if (ok) {
-                bot_weight_topology *topology = ((qa_bot_weights *)first->object)->topology;
-                atomic_fetch_add_explicit(&topology->references, 1, memory_order_relaxed);
-                bot_weight_topology_release(weights->topology); weights->topology = topology; bot_weights_view(weights);
+        bool local=!reading && weights && weights->source && set->source && weights->source->store==set->source;
+        ok=qa_source_save_bool(io,&local) && !asset->cached;
+        if(ok && local) {
+            size_t reference=0;bot_fuzzy_owned *source=NULL;
+            ok=set->source!=NULL;
+            if(ok && !reading) ok=bot_fuzzy_store_reference(set->source,weights->source,&reference,io->error);
+            if(ok) ok=qa_source_save_count(io,&reference,SIZE_MAX);
+            if(ok && reading) {
+                ok=bot_fuzzy_store_resolve(set->source,reference,&source,io->error);
+                if(ok) {
+                    weights=calloc(1,sizeof(*weights));
+                    if(!weights) ok=bot_save_fail(io,QA_ERROR_MEMORY,"Restoring actual source weight binding");
+                    else {
+                        atomic_init(&weights->references,1);weights->source=source;bot_fuzzy_owned_retain(source);
+                        ok=bot_weights_source_view(weights,io->error);
+                    }
+                }
+            }
+        } else if(ok) {
+            size_t group=index;
+            if(!reading) for(size_t prior=0;prior<index;++prior) {
+                if(set->assets[prior].kind!=QA_BOT_SAVED_WEIGHTS) continue;
+                qa_bot_weights *first=set->assets[prior].object;
+                if(first->source->source.heap==weights->source->source.heap) {group=prior;break;}
+            }
+            ok=qa_source_save_count(io,&group,index);
+            if(ok && group==index) ok=bot_save_weights_fields(io,weights,reading?&weights:NULL);
+            else if(ok) {
+                saved_asset *first=&set->assets[group];
+                ok=first->kind==QA_BOT_SAVED_WEIGHTS &&
+                    bot_weights_source_alias_fields(io,first->object,weights,reading?&weights:NULL);
+            }
+        }
+        if(reading) {
+            asset->object=weights;
+            if(ok && local) for(size_t prior=0;prior<index;++prior) {
+                if(set->assets[prior].kind==QA_BOT_SAVED_WEIGHTS &&
+                   ((qa_bot_weights *)set->assets[prior].object)->source==weights->source) {
+                    ok=bot_save_fail(io,QA_ERROR_FORMAT,"Duplicate actual source weight binding");break;
+                }
             }
         }
         break;
@@ -175,10 +199,29 @@ static bool asset_fields(qa_source_save_io *io, qa_bot_saved_assets *set, size_t
     if (!ok && !io->failed) return bot_save_fail(io, QA_ERROR_FORMAT, "Mismatched shared bot weight topology");
     return ok;
 }
+static bool source_fields(qa_source_save_io *io,qa_bot_saved_assets *set,qa_bot_library *library)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ,present=!reading && set->source;
+    if(!qa_source_save_bool(io,&present)) return false;
+    if(!present) return true;
+    qa_buffer bytes={0};size_t extent=0;
+    bool ok=reading || bot_fuzzy_store_capture(set->source,&bytes,io->error);
+    if(!reading) extent=bytes.size;
+    if(ok) ok=qa_source_save_count(io,&extent,SIZE_MAX);
+    if(ok && reading) {
+        if(!library || io->offset>io->input.size || extent>io->input.size-io->offset)
+            ok=bot_save_fail(io,QA_ERROR_FORMAT,"Runtime fuzzy aliases require actual imported library MEMORY");
+        else {
+            ok=bot_fuzzy_store_restore(library,(qa_bytes){io->input.data+io->offset,extent},&set->source,io->error);
+            if(ok) {set->owns_source=true;io->offset+=extent;}
+        }
+    } else if(ok) ok=qa_source_save_bytes(io,bytes.data,extent);
+    qa_buffer_free(&bytes);if(!ok) io->failed=true;return ok;
+}
 static bool encode(qa_bot_saved_assets *set, qa_buffer *out, qa_error *error)
 {
     qa_source_save_io io = {0};
-    bool ok = qa_source_save_writer(&io, NULL, error) && bot_save_signature(&io, magic) &&
+    bool ok = qa_source_save_writer(&io, NULL, error) && bot_save_signature(&io, magic) && source_fields(&io,set,NULL) &&
         qa_source_save_count(&io, &set->count, SIZE_MAX);
     for (size_t i = 0; ok && i < set->count; ++i) ok = asset_fields(&io, set, i);
     if (ok) ok = qa_source_save_finish(&io, out);
@@ -203,17 +246,18 @@ bool qa_bot_runtime_assets_capture(const qa_bot_runtime *runtime, qa_buffer *out
         !qa_bot_runtime_can_destroy(runtime)) return fail(error, "Bot asset capture requires actual idle runtime owners");
     qa_bot_saved_assets *set = calloc(1, sizeof(*set));
     if (!set) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating actual bot asset registry"); return false; }
+    set->source=runtime->library->fuzzy_store;
     bool ok = collect(runtime, set, error) && encode(set, out, error);
     if (!ok) { qa_bot_saved_assets_free(set); return false; }
     *refs = set; return true;
 }
-bool qa_bot_saved_assets_decode(qa_bytes bytes, qa_bot_saved_assets **out, qa_error *error)
+static bool decode(qa_bytes bytes,qa_bot_library *library,qa_bot_saved_assets **out,qa_error *error)
 {
     if (!out || *out) return fail(error, "Bot asset decode requires an empty registry output");
     qa_bot_saved_assets *set = calloc(1, sizeof(*set));
     if (!set) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring bot asset registry"); return false; }
     qa_source_save_io io = {0};
-    bool ok = qa_source_save_reader(&io, NULL, bytes, error) && bot_save_signature(&io, magic) &&
+    bool ok = qa_source_save_reader(&io, NULL, bytes, error) && bot_save_signature(&io, magic) && source_fields(&io,set,library) &&
         qa_source_save_count(&io, &set->count, bytes.size / 5) && set->count <= SIZE_MAX / sizeof(*set->assets);
     if (ok && set->count && !(set->assets = calloc(set->count, sizeof(*set->assets))))
         ok = bot_save_fail(&io, QA_ERROR_MEMORY, "Restoring bot asset index");
@@ -225,6 +269,10 @@ bool qa_bot_saved_assets_decode(qa_bytes bytes, qa_bot_saved_assets **out, qa_er
     if (!ok && (!error || error->code == QA_OK)) fail(error, "Invalid runtime bot asset registry");
     qa_source_save_dispose(&io); return ok;
 }
+bool qa_bot_saved_assets_decode(qa_bytes bytes,qa_bot_saved_assets **out,qa_error *error)
+{
+    return decode(bytes,NULL,out,error);
+}
 bool qa_bot_runtime_assets_restore(qa_bot_runtime *runtime, qa_bytes bytes, qa_bot_saved_assets **out, qa_error *error)
 {
     qa_bot_library *library = runtime ? runtime->library : NULL;
@@ -232,13 +280,22 @@ bool qa_bot_runtime_assets_restore(qa_bot_runtime *runtime, qa_bytes bytes, qa_b
         library->weapon_configs || library->item_configs || library->chat_assets || library->last_character)
         return fail(error, "Bot asset restore requires an empty detached actual library cache");
     qa_bot_saved_assets *set = NULL;
-    if (!qa_bot_saved_assets_decode(bytes, &set, error)) return false;
+    if(!library->fuzzy_store || library->fuzzy_store->first || library->fuzzy_store->readers ||
+       library->fuzzy_store->cached_count || library->fuzzy_store->heap.first)
+        return fail(error,"Runtime fuzzy restore requires its actual empty source store");
+    if (!decode(bytes,library,&set,error)) return false;
+    if(!set->source) {qa_bot_saved_assets_free(set);return fail(error,"Runtime assets omit their actual fuzzy store");}
+    bot_fuzzy_store_dispose(library->fuzzy_store);
+    library->fuzzy_store=set->source;set->owns_source=false;
     {
         qa_bot_weights **weights = &library->weights; qa_bot_character **characters = &library->characters;
         qa_bot_weapons **weapons = &library->weapon_configs; qa_bot_items **items = &library->item_configs;
         qa_bot_chat_asset **chats = &library->chat_assets;
         for (size_t i = 0; i < set->count; ++i) {
-            saved_asset asset = set->assets[i]; if (!asset.cached) continue;
+            saved_asset asset = set->assets[i];
+            bool source_weight=asset.kind==QA_BOT_SAVED_WEIGHTS &&
+                ((qa_bot_weights *)asset.object)->source->store==library->fuzzy_store;
+            if (!asset.cached && !source_weight) continue;
             retain(asset);
             switch (asset.kind) {
             case QA_BOT_SAVED_WEIGHTS: *weights = asset.object; weights = &(*weights)->next; break;

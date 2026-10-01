@@ -257,9 +257,12 @@ bool qa_bot_weapon_selector_create(qa_bot_weapons *config, qa_bot_weights *weigh
         qa_bot_weapon_selector_destroy(s);
         return false;
     }
-    for (size_t i = 0; i < config->view.weapon_capacity; ++i)
-        s->indices[i] =
-            config->weapons[i].valid ? qa_bot_weights_find(weights, config->weapons[i].name) : -1;
+    for (size_t i = 0; i < config->view.weapon_capacity; ++i) {
+        const char *name=config->weapons[i].valid?config->weapons[i].name:"";
+        if(!qa_bot_weights_find_value(weights,name,&s->indices[i],e)) {
+            qa_bot_weapon_selector_destroy(s);return false;
+        }
+    }
     *out = s;
     return true;
 }

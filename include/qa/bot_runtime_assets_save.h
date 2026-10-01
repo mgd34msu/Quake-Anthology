@@ -12,8 +12,10 @@ typedef struct qa_bot_saved_assets qa_bot_saved_assets;
 /* Registry owns one retained reference per actual distinct asset, including
  * cache entries and assets referenced only by live runtime owners. Capture
  * returns this registry for encoding exact owner references. Restore preserves
- * source cache order and shared weight topology, and requires an empty detached
- * library cache. Other private owners import their references afterward. */
+ * source cache order and actual weight allocation aliases after MEMORY import,
+ * and requires an empty detached library cache. Other private owners import
+ * their references afterward. The native weight binding list is separate from
+ * the genuine fuzzy store cache. */
 bool qa_bot_runtime_assets_capture(const qa_bot_runtime *, qa_buffer *, qa_bot_saved_assets **, qa_error *);
 bool qa_bot_runtime_assets_restore(qa_bot_runtime *, qa_bytes, qa_bot_saved_assets **, qa_error *);
 /* Standalone goal owners capture their actual retained item/configuration

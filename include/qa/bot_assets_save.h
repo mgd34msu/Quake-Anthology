@@ -3,7 +3,9 @@
 
 #include "qa/bot_library.h"
 
-/* Explicit immutable resource and learned-weight field codecs. Restore runs
+/* Explicit resource codecs. Weights carry their actual standalone MEMORY and
+ * ordered raw source aliases, including allocation tails and orphan blocks.
+ * Restore runs
  * no script, file, diagnostic or RNG callbacks. Outputs remain unchanged on
  * failure; restored objects use their ordinary reference-counted release. */
 bool qa_bot_weights_save_capture(const qa_bot_weights *, qa_buffer *, qa_error *);

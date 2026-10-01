@@ -85,9 +85,12 @@ bool qa_bot_runtime_weapon_free(qa_bot_runtime *r, uint32_t id, qa_error *e) {
     if (!bot_runtime_mutable(r, e)) return false;
     bot_weapon_state *s = weapon_state(r, id, e);
     if (!s) return false;
+    r->busy=true;
+    if(s->weights && !qa_bot_weights_free(s->weights,e)) {r->busy=false;return false;}
     qa_bot_weapon_selector_destroy(s->selector);
     qa_bot_weights_release(s->weights);
     *s = (bot_weapon_state){0};
+    r->busy=false;
     return true;
 }
 bool qa_bot_runtime_weapon_reset(qa_bot_runtime *r, uint32_t id, qa_error *e) {
@@ -119,41 +122,79 @@ struct bot_weapon_restore {
     bot_weapon_state *destination;
     qa_bot_weights *weights;
     qa_bot_weapon_selector *selector;
-    const qa_bot_weights *values;
 };
-bool bot_weapon_checkpoint_capture(qa_bot_runtime *runtime,uint32_t id,qa_bot_weights **original,
-    qa_bot_weights **values,qa_error *error) {
-    bot_weapon_state *state=weapon_state(runtime,id,error);
-    if(!state || !original || !values || *original || *values)
-        return bot_runtime_fail(error,"Weapon checkpoint requires actual state and empty references");
-    if(!state->weights) return true;
-    if(!qa_bot_weights_clone(state->weights,values,error)) return false;
-    qa_bot_weights_retain(state->weights);*original=state->weights;return true;
+struct bot_weapon_history {
+    qa_bot_weights *weights;
+    qa_bot_weapons *config;
+    int32_t *indices;
+    size_t count;
+    bool has_selector;
+};
+void bot_weapon_history_destroy(bot_weapon_history *image) {
+    if(!image) return;
+    qa_bot_weights_release(image->weights);qa_bot_weapons_release(image->config);
+    free(image->indices);free(image);
 }
-bool bot_weapon_restore_prepare(qa_bot_runtime *r, uint32_t id, qa_bot_weights *weights,const qa_bot_weights *values,
+bool bot_weapon_checkpoint_capture(qa_bot_runtime *runtime,uint32_t id,bot_fuzzy_history *fuzzy,
+    bot_weapon_history **out,qa_error *error) {
+    bot_weapon_state *state=weapon_state(runtime,id,error);
+    if(!state || !out || *out)
+        return bot_runtime_fail(error,"Weapon checkpoint requires actual state and empty references");
+    bot_weapon_history *image=calloc(1,sizeof(*image));
+    if(!image) {qa_error_set(error,QA_ERROR_MEMORY,0,"Capturing actual weapon configuration binding");return false;}
+    image->weights=state->weights;qa_bot_weights_retain(image->weights);
+    if(state->weights && !bot_fuzzy_history_include(fuzzy,state->weights,error)) goto failed;
+    if(state->selector) {
+        const qa_bot_weapon_selector *selector=state->selector;
+        if(selector->weights!=state->weights || !selector->config || !selector->workspace || selector->workspace->busy) {
+            bot_runtime_fail(error,"Weapon checkpoint selector has another configuration or active workspace");goto failed;
+        }
+        image->has_selector=true;image->config=selector->config;qa_bot_weapons_retain(image->config);
+        image->count=selector->config->view.weapon_capacity;
+        if(image->count>SIZE_MAX/sizeof(*image->indices) || (image->count && !selector->indices)) {
+            bot_runtime_fail(error,"Weapon checkpoint index extent is invalid");goto failed;
+        }
+        if(image->count) {
+            image->indices=malloc(image->count*sizeof(*image->indices));
+            if(!image->indices) {qa_error_set(error,QA_ERROR_MEMORY,0,"Capturing actual weapon index mapping");goto failed;}
+            memcpy(image->indices,selector->indices,image->count*sizeof(*image->indices));
+        }
+    }
+    *out=image;return true;
+failed:
+    bot_weapon_history_destroy(image);return false;
+}
+bool bot_weapon_restore_prepare(qa_bot_runtime *r, uint32_t id,const bot_weapon_history *image,
                                 bot_weapon_restore **out, qa_error *e) {
     bot_weapon_state *destination=weapon_state(r,id,e);
     if (!destination) return false;
-    if((weights==NULL)!=(values==NULL) || (weights &&
-       (weights->topology!=values->topology || weights->view.node_count!=values->view.node_count ||
-        weights->value_capacity<values->view.node_count)))
-        return bot_runtime_fail(e,"Weapon snapshot differs from its captured shared configuration");
+    if(!image || !out || *out || (image->has_selector && (!image->weights || !image->config ||
+       image->count!=image->config->view.weapon_capacity || (image->count && !image->indices))))
+        return bot_runtime_fail(e,"Weapon snapshot differs from its actual captured selector");
     bot_weapon_restore *prepared=calloc(1,sizeof(*prepared));
     if (!prepared) { qa_error_set(e,QA_ERROR_MEMORY,0,"preparing weapon checkpoint");return false; }
-    if (weights && r->weapon_config &&
-        !qa_bot_weapon_selector_create(r->weapon_config,weights,&prepared->selector,e)) {
-        free(prepared);return false;
+    if(image->has_selector) {
+        prepared->selector=calloc(1,sizeof(*prepared->selector));
+        if(!prepared->selector) {qa_error_set(e,QA_ERROR_MEMORY,0,"Preparing captured weapon selector");goto failed;}
+        qa_bot_weapon_selector *selector=prepared->selector;
+        selector->weights=image->weights;selector->config=image->config;
+        qa_bot_weights_retain(selector->weights);qa_bot_weapons_retain(selector->config);
+        if(image->count) {
+            selector->indices=malloc(image->count*sizeof(*selector->indices));
+            if(!selector->indices) {qa_error_set(e,QA_ERROR_MEMORY,0,"Preparing captured weapon indices");goto failed;}
+            memcpy(selector->indices,image->indices,image->count*sizeof(*selector->indices));
+        }
+        if(!qa_bot_weight_workspace_create(&selector->workspace,e)) goto failed;
     }
-    qa_bot_weights_retain(weights);
-    prepared->weights=weights;prepared->values=values;prepared->destination=destination;
+    qa_bot_weights_retain(image->weights);
+    prepared->weights=image->weights;prepared->destination=destination;
     *out=prepared;return true;
+failed:
+    qa_bot_weapon_selector_destroy(prepared->selector);free(prepared);return false;
 }
 void bot_weapon_restore_finish(bot_weapon_restore *prepared, bool commit) {
     if (!prepared) return;
     if (commit) {
-        if(prepared->weights && prepared->values->view.node_count)
-            memcpy(prepared->weights->values,prepared->values->values,
-                prepared->values->view.node_count*sizeof(*prepared->weights->values));
         qa_bot_weapon_selector_destroy(prepared->destination->selector);
         qa_bot_weights_release(prepared->destination->weights);
         prepared->destination->selector=prepared->selector;
@@ -171,17 +212,28 @@ static bool weapon_weights(qa_bot_runtime *r, uint32_t id, const char *path, voi
     bot_weapon_state *s = weapon_state(r, id, e);
     if (!s) return false;
     if ((!path && !read) || !result) return bot_runtime_fail(e, "missing weapon weight path/result");
+    r->busy=true;
+    if(s->weights && !qa_bot_weights_free(s->weights,e)) {r->busy=false;return false;}
     qa_bot_weapon_selector_destroy(s->selector); s->selector = NULL;
     qa_bot_weights_release(s->weights); s->weights = NULL;
-    r->busy = true;
     if (read && !read(context, &path, e)) { r->busy = false; return false; }
     if (!path) { r->busy = false; return bot_runtime_fail(e, "missing weapon weight path"); }
     qa_error local = {0};
-    bool ok = qa_bot_weights_load(r->library, path, &s->weights, &local);
-    if (!ok && (local.code == QA_ERROR_FORMAT || local.code == QA_ERROR_NOT_FOUND)) {
-        if (r->services.diagnostic) r->services.diagnostic(r->services.context, QA_SCRIPT_ERROR, local.message);
-        *result = 11;
-        ok = true;
+    bool source_failure=false;
+    bool ok = qa_bot_weights_load_result(r->library, path, &s->weights, &source_failure, &local);
+    if (!ok && source_failure) {
+        static const char prefix[]="couldn't load weapon config ";size_t length=strlen(path);
+        if(length>SIZE_MAX-sizeof(prefix)) {
+            qa_error_set(&local,QA_ERROR_MEMORY,0,"Weapon weight diagnostic exceeds native extent");
+        } else {
+            char *message=malloc(sizeof(prefix)+length);
+            if(!message) qa_error_set(&local,QA_ERROR_MEMORY,0,"Retaining weapon weight source diagnostic");
+            else {
+                memcpy(message,prefix,sizeof(prefix)-1);memcpy(message+sizeof(prefix)-1,path,length+1);
+                ok=qa_bot_log_print(r->log,QA_SCRIPT_FATAL,message,&local);free(message);
+                if(ok) *result=11;
+            }
+        }
     } else if (ok && !r->weapon_config) *result = 12;
     else if (ok) {
         ok = qa_bot_weapon_selector_create(r->weapon_config, s->weights, &s->selector, &local);

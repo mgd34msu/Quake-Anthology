@@ -5,9 +5,10 @@
 bool bot_goal_log(qa_bot_goals *g, const char *text, qa_error *error) {
     return !g->services.log || g->services.log(g->services.context, text, error);
 }
-void bot_goal_report(qa_bot_goals *g, qa_script_severity severity, const char *text) {
-    if (g->services.report) g->services.report(g->services.context, severity, text);
+bool bot_goal_report(qa_bot_goals *g, qa_script_severity severity, const char *text,qa_error *error) {
+    if (g->services.report) return g->services.report(g->services.context, severity, text,error);
     else if (g->services.diagnostic) g->services.diagnostic(g->services.context, text);
+    return true;
 }
 bool bot_goal_position_report(qa_bot_goals *g, const char *prefix, qa_vec3 point,
                                 const char *suffix, qa_error *e) {
@@ -16,8 +17,7 @@ bool bot_goal_position_report(qa_bot_goals *g, const char *prefix, qa_vec3 point
         !qa_format_fixed(point.y, 1, y, sizeof(y), e) ||
         !qa_format_fixed(point.z, 1, z, sizeof(z), e)) return false;
     (void)snprintf(line, sizeof(line), "%s%s %s %s%s", prefix, x, y, z, suffix);
-    bot_goal_report(g, QA_SCRIPT_INFO, line);
-    return true;
+    return bot_goal_report(g, QA_SCRIPT_INFO, line,e);
 }
 bool bot_goal_dump_stack(qa_bot_goals *g, const bot_goal_slot *s, qa_error *e) {
     for (int32_t i = 1;; ++i) {
@@ -74,18 +74,19 @@ bool qa_bot_goals_load_weights(qa_bot_goals *g, uint32_t id, qa_bot_library *lib
     g->busy = true;
     qa_bot_weights *weights = NULL;
     qa_error local = {0};
-    bool loaded = qa_bot_weights_load(library, path, &weights, &local);
+    bool source_failure=false;
+    bool loaded = qa_bot_weights_load_result(library, path, &weights, &source_failure, &local);
     g->busy = false;
     if (!loaded) {
-        if (local.code != QA_ERROR_FORMAT && local.code != QA_ERROR_NOT_FOUND) {
+        if (!source_failure) {
             if (e) *e = local;
             return false;
         }
         if (!bot_goal_config_set(g,s,NULL,e)) return false;
         g->busy = true;
-        bot_goal_report(g, QA_SCRIPT_FATAL, "couldn't load weights\n");
+        bool ok=bot_goal_report(g, QA_SCRIPT_FATAL, "couldn't load weights\n",e);
         g->busy = false;
-        return true;
+        return ok;
     }
     bool ok = bot_goal_config_set(g,s,weights,e);
     qa_bot_weights_release(weights);
@@ -97,7 +98,8 @@ bool qa_bot_goals_load_weights(qa_bot_goals *g, uint32_t id, qa_bot_library *lib
         g->busy=false;return false;
     }
     for (size_t i = 0; i < items->count; ++i) {
-        int32_t index=qa_bot_weights_find(weights,items->items[i].classname);
+        int32_t index;
+        if(!qa_bot_weights_find_value(weights,items->items[i].classname,&index,e)) {g->busy=false;return false;}
         if(!bot_goal_indexes_write(g,indexes,(uint32_t)i,index,e)) {g->busy=false;return false;}
         if (index < 0) {
             char line[256];

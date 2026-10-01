@@ -55,7 +55,7 @@ typedef struct qa_bot_goal_services {
     bool (*pickup)(void *, int32_t client, qa_actor_id, qa_bot_pickup_goal *, bool *, qa_error *);
     bool (*owns_item)(void *, int32_t client, int32_t entity, bool *, qa_error *);
     void (*diagnostic)(void *, const char *);
-    void (*report)(void *, qa_script_severity, const char *);
+    bool (*report)(void *, qa_script_severity, const char *,qa_error *);
     bool (*log)(void *, const char *, qa_error *);
     bool (*developer)(void *);
     bool (*debug)(void *);

@@ -22,6 +22,8 @@ typedef struct qa_bot_log qa_bot_log;
  * Retained resource references survive library destruction. */
 bool qa_bot_library_create(const qa_bot_library_options *, qa_bot_library **, qa_error *);
 void qa_bot_library_destroy(qa_bot_library *);
+bool qa_bot_library_idle(const qa_bot_library *);
+bool qa_bot_library_weights_shutdown(qa_bot_library *,qa_error *);
 void qa_bot_library_reload(qa_bot_library *, bool);
 const qa_script_defines *qa_bot_library_global_defines(const qa_bot_library *);
 bool qa_bot_library_global_define(qa_bot_library *, const char *definition, qa_error *);
@@ -75,12 +77,19 @@ typedef struct qa_bot_weights_view {
 typedef struct qa_bot_weights qa_bot_weights;
 typedef struct qa_bot_weight_workspace qa_bot_weight_workspace;
 bool qa_bot_weights_load(qa_bot_library *, const char *, qa_bot_weights **, qa_error *);
+bool qa_bot_weights_load_result(qa_bot_library *,const char *,qa_bot_weights **,bool *source_failure,qa_error *);
 void qa_bot_weights_retain(qa_bot_weights *);
 void qa_bot_weights_release(qa_bot_weights *);
+/* Explicit source FreeWeightConfig; native reference release is pure. */
+bool qa_bot_weights_free(qa_bot_weights *,qa_error *);
+/* A metadata projection of the current source bytes. The borrowed projection
+ * lasts until the next read/release; an invalid source configuration returns
+ * NULL. Evaluation and mutation use the source allocation directly. */
 const qa_bot_weights_view *qa_bot_weights_read(const qa_bot_weights *);
 bool qa_bot_weights_clone(const qa_bot_weights *, qa_bot_weights **, qa_error *);
 bool qa_bot_weights_restore(const qa_bot_weights_view *, qa_bot_weights **, qa_error *);
 int32_t qa_bot_weights_find(const qa_bot_weights *, const char *);
+bool qa_bot_weights_find_value(const qa_bot_weights *,const char *,int32_t *,qa_error *);
 bool qa_bot_weight_workspace_create(qa_bot_weight_workspace **, qa_error *);
 void qa_bot_weight_workspace_destroy(qa_bot_weight_workspace *);
 typedef struct qa_bot_inventory_view {
@@ -104,7 +113,7 @@ bool qa_bot_weights_interbreed(qa_bot_weights *, const qa_bot_weights *, const q
                                bool *matched, qa_error *);
 bool qa_bot_weights_interbreed_report(qa_bot_weights *, const qa_bot_weights *,
                                        const qa_bot_weights *, void *context,
-                                       void (*report)(void *, const char *), bool *matched, qa_error *);
+                                       bool (*report)(void *, const char *,qa_error *), bool *matched, qa_error *);
 typedef enum qa_bot_character_value_kind {
     QA_BOT_CHARACTER_UNSET,
     QA_BOT_CHARACTER_INTEGER,

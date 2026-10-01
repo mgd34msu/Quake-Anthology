@@ -3,16 +3,9 @@
 #include "../checkpoint_internal.h"
 #include "qa/bots_allocator_checkpoint.h"
 
-typedef struct goal_weight_image {
-    qa_bot_weights *object;
-    qa_bot_weight_value *values;
-    size_t count;
-    struct goal_weight_image *next;
-} goal_weight_image;
 struct bot_goal_history {
     qa_bot_goals *owner;
     qa_bot_goals state;
-    goal_weight_image *values;
 };
 struct bot_goal_history_restore {
     qa_bot_goals *owner;
@@ -95,13 +88,9 @@ void bot_goal_history_destroy(bot_goal_history *image)
 {
     if(!image) return;
     clear(&image->state);
-    while(image->values) {
-        goal_weight_image *row=image->values;image->values=row->next;
-        free(row->values);free(row);
-    }
     free(image);
 }
-bool bot_goal_history_capture(qa_bot_goals *goals,bot_goal_history **out,qa_error *error)
+bool bot_goal_history_capture(qa_bot_goals *goals,bot_fuzzy_history *fuzzy,bot_goal_history **out,qa_error *error)
 {
     if(!bot_goal_mutable(goals,error) || goals->prepared_indexes || !out || *out)
         return bot_goal_fail(error,"Complete goal checkpoint requires an actual idle owner and empty output");
@@ -118,14 +107,8 @@ bool bot_goal_history_capture(qa_bot_goals *goals,bot_goal_history **out,qa_erro
     if(!image) {qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating complete goal checkpoint");return false;}
     image->owner=goals;
     if(!copy(goals,&image->state,error)) {free(image);return false;}
-    goal_weight_image **tail=&image->values;
     for(bot_goal_weights *config=goals->weights;config;config=config->next) {
-        *tail=calloc(1,sizeof(**tail));
-        if(!*tail) {qa_error_set(error,QA_ERROR_MEMORY,0,"Capturing shared goal weight values");goto failed;}
-        goal_weight_image *row=*tail;row->object=config->weights;row->count=config->weights->view.node_count;
-        row->values=copy_array(config->weights->values,row->count,sizeof(*row->values),error);
-        if(row->count && !row->values) goto failed;
-        tail=&row->next;
+        if(!bot_fuzzy_history_include(fuzzy,config->weights,error)) goto failed;
     }
     *out=image;return true;
 failed:
@@ -149,9 +132,6 @@ bool bot_goal_history_prepare(qa_bot_goals *goals,const bot_goal_history *image,
                &plan->state.states[i].record.allocation,error)) goto failed;
     for(bot_goal_indexes *row=plan->state.indexes;row;row=row->next)
         if(!qa_bot_memory_checkpoint_resolve(memory,row->allocation,&row->allocation,error)) goto failed;
-    for(const goal_weight_image *row=image->values;row;row=row->next)
-        if(row->object->view.node_count!=row->count || row->object->value_capacity<row->count ||
-           (row->count && !row->object->values)) {bot_goal_fail(error,"Captured shared goal weight extent changed");goto failed;}
     *out=plan;return true;
 failed:
     clear(&plan->state);free(plan);return false;
@@ -161,8 +141,6 @@ void bot_goal_history_finish(bot_goal_history_restore *plan,bool commit)
     if(!plan) return;
     if(commit) {
         qa_bot_goals *goals=plan->owner;
-        for(const goal_weight_image *row=plan->image->values;row;row=row->next)
-            if(row->count) memcpy(row->object->values,row->values,row->count*sizeof(*row->values));
         qa_bot_goals old=*goals;
         bool busy=goals->busy;*goals=plan->state;goals->busy=busy;
         clear(&old);

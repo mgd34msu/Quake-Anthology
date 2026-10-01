@@ -276,12 +276,13 @@ static void report(void *context, const char *message) {
     else if (r->services.diagnostic) r->services.diagnostic(r->services.context, QA_SCRIPT_WARNING, message);
     r->busy = previous;
 }
-static void severity(void *context, qa_script_severity kind, const char *message) {
+static bool severity(void *context, qa_script_severity kind, const char *message,qa_error *error) {
     qa_bot_runtime *r = context;
     bool previous = r->busy; r->busy = true;
-    if (r->services.goals.report) r->services.goals.report(r->services.goals.context, kind, message);
-    else if (r->services.diagnostic) r->services.diagnostic(r->services.context, kind, message);
+    bool ok=r->services.goals.report ? r->services.goals.report(r->services.goals.context,kind,message,error) :
+        qa_bot_log_print(r->log,kind,message,error);
     r->busy = previous;
+    return ok;
 }
 static bool log_text(void *context, const char *message, qa_error *error) {
     qa_bot_runtime *r = context;

@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "source_fuzzy_store.h"
 
 bool bot_grow(void **data, size_t *capacity, size_t need, size_t stride, qa_error *e) {
     if (need <= *capacity)
@@ -131,6 +132,9 @@ bool qa_bot_library_create(const qa_bot_library_options *options, qa_bot_library
             return false;
         }
     }
+    if(!bot_fuzzy_store_create(library,&library->fuzzy_store,e)) {
+        qa_bot_library_destroy(library);return false;
+    }
     *out = library;
     return true;
 }
@@ -139,6 +143,13 @@ const qa_script_defines *qa_bot_library_global_defines(const qa_bot_library *lib
 }
 qa_bot_memory *qa_bot_library_memory(const qa_bot_library *library) {
     return library?library->memory:NULL;
+}
+bool qa_bot_library_idle(const qa_bot_library *library) {
+    return !library || (qa_bot_memory_idle(library->memory) &&
+        (!library->fuzzy_store || !library->fuzzy_store->active));
+}
+bool qa_bot_library_weights_shutdown(qa_bot_library *library,qa_error *error) {
+    return library && library->fuzzy_store?bot_fuzzy_store_shutdown(library->fuzzy_store,error):true;
 }
 bool qa_bot_library_log_bind(qa_bot_library *library, qa_bot_log *log, qa_error *error) {
     if (!library) {
@@ -159,7 +170,7 @@ bool qa_bot_library_global_define(qa_bot_library *library, const char *definitio
     return qa_script_defines_add((qa_script_defines *)library->options.preprocessor.globals, definition, e);
 }
 void qa_bot_library_destroy(qa_bot_library *library) {
-    if (library == NULL)
+    if (library == NULL || !qa_bot_library_idle(library))
         return;
     for (qa_bot_weights *c = library->weights; c != NULL;) {
         qa_bot_weights *next = c->next;
@@ -182,6 +193,7 @@ void qa_bot_library_destroy(qa_bot_library *library) {
         c = next;
     }
     bot_chat_assets_close(library);
+    bot_fuzzy_store_dispose(library->fuzzy_store);
     qa_bot_library_variables_clear(library);
     qa_script_defines_release((qa_script_defines *)library->options.preprocessor.globals);
     qa_arena_destroy(&library->arena);

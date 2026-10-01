@@ -193,12 +193,26 @@ static bool handles_fields(qa_source_save_io *io, qa_bot_runtime *runtime, const
             if (ok && reading) {
                 if (indices > (io->input.size - io->offset) / 4)
                     ok = bot_save_fail(io, QA_ERROR_FORMAT, "Truncated bot weapon selector mapping");
-                if (ok) ok = qa_bot_weapon_selector_create(config, weights, &weapon->selector, io->error);
+                if (ok) {
+                    weapon->selector=calloc(1,sizeof(*weapon->selector));
+                    if(!weapon->selector) ok=bot_save_fail(io,QA_ERROR_MEMORY,"Restoring captured weapon selector");
+                    else {
+                        weapon->selector->config=config;qa_bot_weapons_retain(config);
+                        weapon->selector->weights=weights;qa_bot_weights_retain(weights);
+                        if(indices) {
+                            weapon->selector->indices=malloc(indices*sizeof(*weapon->selector->indices));
+                            if(!weapon->selector->indices)
+                                ok=bot_save_fail(io,QA_ERROR_MEMORY,"Restoring captured weapon index map");
+                        }
+                        if(ok) ok=qa_bot_weight_workspace_create(&weapon->selector->workspace,io->error);
+                    }
+                }
                 if (!ok) io->failed = true;
             }
             for (size_t j = 0; ok && j < indices; ++j) {
                 int32_t value = reading ? 0 : weapon->selector->indices[j];
-                ok = qa_source_save_i32(io, &value) && value == weapon->selector->indices[j];
+                ok = qa_source_save_i32(io, &value);
+                if(ok && reading) weapon->selector->indices[j]=value;
             }
         }
         bool chat = !reading && runtime->chats[i] != NULL; size_t index = 0;

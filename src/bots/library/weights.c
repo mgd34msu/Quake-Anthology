@@ -1,4 +1,9 @@
 #include "internal.h"
+#include "source_fuzzy_store.h"
+#include "source_fuzzy_operations.h"
+#include "source_fuzzy_view.h"
+#include "source_fuzzy_standalone.h"
+#include "qa/bot_assets_save.h"
 
 void bot_weights_view(qa_bot_weights *w) {
     const bot_weight_topology *t = w->topology;
@@ -24,69 +29,68 @@ void qa_bot_weights_retain(qa_bot_weights *w) {
 void qa_bot_weights_release(qa_bot_weights *w) {
     if (w != NULL && atomic_fetch_sub_explicit(&w->references, 1, memory_order_acq_rel) == 1) {
         bot_weight_topology_release(w->topology);
+        bot_fuzzy_owned_release(w->source);
+        if(w->standalone_heap) {
+            if(w->standalone_heap->standalone_users>1) --w->standalone_heap->standalone_users;
+            else {(void)bot_fuzzy_heap_clear(w->standalone_heap,NULL);free(w->standalone_heap);}
+        }
         free(w->values);
         free(w);
     }
 }
+bool qa_bot_weights_free(qa_bot_weights *weights,qa_error *error) {
+    if(!weights || !weights->source) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"Source weight free requires its actual configuration");return false;
+    }
+    bot_fuzzy_owned *config=weights->source;
+    if(config->store) return bot_fuzzy_store_free(config->store,config,error);
+    if(!bot_fuzzy_owned_open(config,error) || !bot_fuzzy_config_free(&config->source,error)) return false;
+    config->disposed=true;return true;
+}
 const qa_bot_weights_view *qa_bot_weights_read(const qa_bot_weights *w) {
+    if(w && w->source && !bot_weights_source_view((qa_bot_weights *)w,NULL)) return NULL;
     return w == NULL ? NULL : &w->view;
 }
-int32_t qa_bot_weights_find(const qa_bot_weights *w, const char *name) {
-    if (w == NULL || name == NULL)
-        return -1;
-    for (size_t i = 0; i < w->view.weight_count; ++i)
-        if (strcmp(w->view.weights[i].name, name) == 0)
-            return (int32_t)i;
-    return -1;
+bool qa_bot_weights_find_value(const qa_bot_weights *w,const char *name,int32_t *out,qa_error *error) {
+    if(!w || !w->source || !name || !out) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Missing fuzzy source lookup input/output");return false;}
+    return bot_fuzzy_owned_open(w->source,error) &&
+        bot_fuzzy_find(&w->source->source,(qa_bytes){(const uint8_t *)name,strlen(name)},out,error);
 }
-bool qa_bot_weights_load(qa_bot_library *library, const char *path, qa_bot_weights **out,
-                         qa_error *e) {
-    if (library == NULL || path == NULL || out == NULL) {
+int32_t qa_bot_weights_find(const qa_bot_weights *w, const char *name) {
+    int32_t index=-1;(void)qa_bot_weights_find_value(w,name,&index,NULL);return index;
+}
+bool qa_bot_weights_load_result(qa_bot_library *library, const char *path, qa_bot_weights **out,
+                         bool *source_failure,qa_error *e) {
+    if(source_failure) *source_failure=false;
+    if (library == NULL || path == NULL || out == NULL || !source_failure) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Invalid fuzzy weight resource path/output");
         return false;
     }
-    if (!bot_reload_characters(library)) {
-        for (qa_bot_weights *w = library->weights; w != NULL; w = w->next)
-            if (strcmp(w->view.path, path) == 0) {
-                qa_bot_weights_retain(w);
-                *out = w;
-                return true;
-            }
+    bot_fuzzy_owned *source=NULL;
+    if(!bot_fuzzy_store_load_result(library->fuzzy_store,path,&source,source_failure,e)) return false;
+    for(qa_bot_weights *w=library->weights;w;w=w->next) if(w->source==source) {
+        bot_fuzzy_owned_release(source);qa_bot_weights_retain(w);*out=w;return true;
     }
-    qa_bot_weights *w;
-    if (!bot_weights_parse(library, path, &w, e))
-        return false;
-    if (!bot_reload_characters(library)) {
-        qa_bot_weights_retain(w);
-        w->next = library->weights;
-        library->weights = w;
-    }
-    *out = w;
-    return true;
+    qa_bot_weights *w=calloc(1,sizeof(*w));
+    if(!w) {bot_fuzzy_owned_release(source);qa_error_set(e,QA_ERROR_MEMORY,0,"Retaining native source weight view");return false;}
+    atomic_init(&w->references,1);w->source=source;
+    if(!bot_weights_source_view(w,e)) {qa_bot_weights_release(w);return false;}
+    qa_bot_weights_retain(w);qa_bot_weights **tail=&library->weights;
+    while(*tail) tail=&(*tail)->next;
+    *tail=w;*out=w;return true;
+}
+bool qa_bot_weights_load(qa_bot_library *library,const char *path,qa_bot_weights **out,qa_error *error) {
+    bool source_failure;return qa_bot_weights_load_result(library,path,out,&source_failure,error);
 }
 bool qa_bot_weights_clone(const qa_bot_weights *source, qa_bot_weights **out, qa_error *e) {
     if (source == NULL || out == NULL) {
         qa_error_set(e, QA_ERROR_ARGUMENT, 0, "Missing fuzzy weight clone source/output");
         return false;
     }
-    qa_bot_weights *w = calloc(1, sizeof(*w));
-    if (w == NULL) {
-        qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating fuzzy weight clone");
-        return false;
-    }
-    atomic_init(&w->references, 1);
-    w->topology = source->topology;
-    atomic_fetch_add_explicit(&w->topology->references, 1, memory_order_relaxed);
-    if (!bot_grow((void **)&w->values, &w->value_capacity, source->view.node_count,
-                  sizeof(*w->values), e)) {
-        qa_bot_weights_release(w);
-        return false;
-    }
-    if (source->view.node_count != 0)
-        memcpy(w->values, source->values, source->view.node_count * sizeof(*w->values));
-    bot_weights_view(w);
-    *out = w;
-    return true;
+    qa_buffer encoded={0};
+    bool ok=qa_bot_weights_save_capture(source,&encoded,e) &&
+        qa_bot_weights_save_restore((qa_bytes){encoded.data,encoded.size},out,e);
+    qa_buffer_free(&encoded);return ok;
 }
 bool qa_bot_weights_restore(const qa_bot_weights_view *source, qa_bot_weights **out, qa_error *e) {
     if (source == NULL || out == NULL || source->path == NULL || source->weight_count > 128 ||
@@ -137,49 +141,7 @@ bool qa_bot_weights_restore(const qa_bot_weights_view *source, qa_bot_weights **
     free(incoming);
     if (!tree)
         goto invalid;
-    qa_bot_weights *w = calloc(1, sizeof(*w));
-    bot_weight_topology *t = calloc(1, sizeof(*t));
-    if (w == NULL || t == NULL) {
-        free(w);
-        free(t);
-        qa_error_set(e, QA_ERROR_MEMORY, 0, "Allocating restored fuzzy weights");
-        return false;
-    }
-    atomic_init(&w->references, 1);
-    atomic_init(&t->references, 1);
-    w->topology = t;
-    t->maximum_inventory_index = -1;
-    t->path =
-        bot_string(&t->arena, (qa_bytes){(const uint8_t *)source->path, strlen(source->path)}, e);
-    if (t->path == NULL ||
-        !bot_grow((void **)&t->nodes, &t->node_capacity, source->node_count, sizeof(*t->nodes),
-                  e) ||
-        !bot_grow((void **)&w->values, &w->value_capacity, source->node_count, sizeof(*w->values),
-                  e))
-        goto fail;
-    for (size_t i = 0; i < source->weight_count; ++i) {
-        t->weights[i] = source->weights[i];
-        const char *name = source->weights[i].name;
-        t->weights[i].name =
-            bot_string(&t->arena, (qa_bytes){(const uint8_t *)name, strlen(name)}, e);
-        if (t->weights[i].name == NULL)
-            goto fail;
-    }
-    if (source->node_count != 0) {
-        memcpy(t->nodes, source->nodes, source->node_count * sizeof(*t->nodes));
-        memcpy(w->values, source->values, source->node_count * sizeof(*w->values));
-    }
-    t->node_count = source->node_count;
-    t->weight_count = source->weight_count;
-    for (size_t i = 0; i < t->node_count; ++i)
-        if (t->nodes[i].inventory > t->maximum_inventory_index)
-            t->maximum_inventory_index = t->nodes[i].inventory;
-    bot_weights_view(w);
-    *out = w;
-    return true;
-fail:
-    qa_bot_weights_release(w);
-    return false;
+    return bot_weights_standalone_create(source,out,e);
 invalid:
     qa_error_set(e, QA_ERROR_FORMAT, 0, "Invalid fuzzy weight checkpoint topology/value");
     return false;
@@ -198,125 +160,13 @@ bool qa_bot_weight_workspace_create(qa_bot_weight_workspace **out, qa_error *e) 
     return true;
 }
 void qa_bot_weight_workspace_destroy(qa_bot_weight_workspace *w) {
-    if (w != NULL) {
-        free(w->frames);
-        free(w);
-    }
-}
-static bool leaf(const qa_bot_weights *w, uint32_t node, bool undecided,
-                 const qa_bot_random_source *random, qa_bot_weight_workspace *work, float *last,
-                 qa_error *e) {
-    uint32_t child = w->view.nodes[node].child;
-    if (child != QA_BOT_NO_INDEX) {
-        if (!bot_grow((void **)&work->frames, &work->capacity, work->count + 1,
-                      sizeof(*work->frames), e))
-            return false;
-        work->frames[work->count++] = (bot_weight_frame){.root = child, .undecided = undecided};
-    } else {
-        const qa_bot_weight_value *v = w->values + node;
-        *last = undecided ? v->minimum + bot_random(random) * (v->maximum - v->minimum) : v->weight;
-    }
-    return true;
-}
-static int32_t signed_bits(uint32_t value) {
-    int32_t out;
-    memcpy(&out, &value, sizeof(out));
-    return out;
-}
-static bool inventory_value(const qa_bot_inventory_view *inventory, int32_t index, int32_t *out,
-                            qa_error *e) {
-    if (inventory->read)
-        return inventory->read(inventory->context, index, out, e);
-    if (index < 0 || (size_t)index >= inventory->count) {
-        qa_error_set(e, QA_ERROR_ARGUMENT, (size_t)(uint32_t)index,
-                     "Fuzzy inventory index is outside observation");
-        return false;
-    }
-    *out = inventory->data[index];
-    return true;
-}
-static bool evaluate(const qa_bot_weights *w, uint32_t weight,
-                     const qa_bot_inventory_view *inventory, const qa_bot_random_source *random,
-                     qa_bot_weight_workspace *work, float *out, qa_error *e) {
-    if (!bot_grow((void **)&work->frames, &work->capacity, 1, sizeof(*work->frames), e))
-        return false;
-    work->count = 1;
-    work->frames[0] =
-        (bot_weight_frame){.root = w->view.weights[weight].root, .undecided = random != NULL};
-    float last = 0;
-    while (work->count != 0) {
-        bot_weight_frame *f = work->frames + work->count - 1;
-        if (f->stage == 1) {
-            --work->count;
-            continue;
-        }
-        if (f->stage == 2) {
-            f->left = last;
-            f->stage = 3;
-            uint32_t right = f->right;
-            bool undecided = f->undecided && w->view.nodes[right].child == QA_BOT_NO_INDEX;
-            if (!leaf(w, right, undecided, random, work, &last, e))
-                return false;
-            continue;
-        }
-        if (f->stage == 3) {
-            const qa_bot_weight_node *lower = w->view.nodes + f->root,
-                                     *upper = w->view.nodes + f->right;
-            int32_t value;
-            if (!inventory_value(inventory, lower->inventory, &value, e))
-                return false;
-            int32_t numerator = signed_bits((uint32_t)value - (uint32_t)lower->threshold),
-                    denominator =
-                        signed_bits((uint32_t)upper->threshold - (uint32_t)lower->threshold);
-            if (!denominator) {
-                qa_error_set(e, QA_ERROR_FORMAT, f->root,
-                             "Fuzzy interpolation thresholds divide by zero");
-                return false;
-            }
-            float scale = (float)((int64_t)numerator / (int64_t)denominator);
-            last = scale * f->left + (1 - scale) * last;
-            --work->count;
-            continue;
-        }
-        uint32_t index = f->root;
-        for (;;) {
-            const qa_bot_weight_node *n = w->view.nodes + index;
-            int32_t v;
-            if (!inventory_value(inventory, n->inventory, &v, e))
-                return false;
-            if (v < n->threshold) {
-                f->stage = 1;
-                if (!leaf(w, index, f->undecided, random, work, &last, e))
-                    return false;
-                break;
-            }
-            if (n->next == QA_BOT_NO_INDEX) {
-                last = w->values[index].weight;
-                --work->count;
-                break;
-            }
-            const qa_bot_weight_node *next = w->view.nodes + n->next;
-            if (!inventory_value(inventory, n->inventory, &v, e))
-                return false;
-            if (v < next->threshold) {
-                f->root = index;
-                f->right = n->next;
-                f->stage = 2;
-                if (!leaf(w, index, f->undecided, random, work, &last, e))
-                    return false;
-                break;
-            }
-            index = n->next;
-        }
-    }
-    *out = last;
-    return true;
+    if(w && !w->busy) free(w);
 }
 bool qa_bot_weights_evaluate_view(const qa_bot_weights *w, uint32_t weight,
                                   const qa_bot_inventory_view *inventory,
                                   const qa_bot_random_source *random, qa_bot_weight_workspace *work,
                                   float *out, qa_error *e) {
-    if (w == NULL || weight >= w->view.weight_count || work == NULL || work->busy || out == NULL ||
+    if (w == NULL || !w->source || weight>INT32_MAX || work == NULL || work->busy || out == NULL ||
         inventory == NULL ||
         (inventory->read == NULL && inventory->count != 0 && inventory->data == NULL) ||
         (random != NULL && random->next == NULL)) {
@@ -326,7 +176,8 @@ bool qa_bot_weights_evaluate_view(const qa_bot_weights *w, uint32_t weight,
     qa_bot_weights *retained = (qa_bot_weights *)w;
     qa_bot_weights_retain(retained);
     work->busy = true;
-    bool ok = evaluate(w, weight, inventory, random, work, out, e);
+    bool ok = bot_fuzzy_owned_open(w->source,e) &&
+        bot_fuzzy_evaluate(&w->source->source,(int32_t)weight,inventory,random,out,e);
     work->busy = false;
     qa_bot_weights_release(retained);
     return ok;
