@@ -2,6 +2,7 @@
 
 bool mode_obelisk_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id actor,
                         bool *accepted, qa_error *e) {
+    if (o->q3_source_owned) return true;
     if (v->value.rules.kind != QA_MODE_HARVESTER || !o->spec.team)
         return true;
     mode_member *p = mode_member_get(m, v, actor);
@@ -13,6 +14,7 @@ bool mode_obelisk_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_
     int count = p->stats.tokens;
     p->stats.tokens = 0;
     mode_stat_add(v, &p->stats.captures, count);
+    if (v->value.rules.source >= QA_MODE_Q3) mode_stat_add(v, &p->stats.q3_capture_count, count);
     int index = mode_team_index(v, team);
     if (index >= 0)
         v->value.team_captures[index] = mode_add_i32(v->value.team_captures[index], count);
@@ -35,6 +37,8 @@ bool qa_modes_object_damage(qa_modes *m, qa_mode_id id, qa_damage_request *reque
         return true;
     mode_object *o = mode_object_get(m, request->target);
     if (o && (o->mode.slot != id.slot || o->mode.generation != id.generation))
+        return true;
+    if (o && o->q3_source_owned && o->spec.kind == QA_MODE_OBJECT_OBELISK)
         return true;
     mode_member *target = mode_member_get(m, v, request->target);
     mode_member *attacker = mode_member_get(m, v, request->attack.attacker);
@@ -126,7 +130,7 @@ bool qa_modes_object_reaction(qa_modes *m, const qa_damage_outcome *outcome, qa_
     if (!m || !outcome)
         return mode_fail(e, "invalid objective reaction");
     mode_object *o = mode_object_get(m, outcome->request.target);
-    if (!o)
+    if (!o || o->q3_source_owned)
         return true;
     mode_instance *v = mode_get(m, o->mode);
     if (!v)
@@ -145,8 +149,14 @@ bool qa_modes_object_reaction(qa_modes *m, const qa_damage_outcome *outcome, qa_
         qa_team_id winner = index == 0 ? v->value.rules.teams[1] : v->value.rules.teams[0];
         if (!qa_modes_team_score(m, v->id, winner, 1, e))
             return false;
-        if (mode_member_get(m, v, attacker) && !qa_modes_add_score(m, v->id, attacker, 100, e))
-            return false;
+        mode_member *scorer = mode_member_get(m, v, attacker);
+        if (scorer) {
+            if (!qa_modes_add_score(m, v->id, attacker, 100, e)) return false;
+            scorer = mode_member_get(m, v, attacker);
+            if (!scorer) return mode_fail(e, "obelisk attacker retired during source score");
+            if (v->value.rules.source >= QA_MODE_Q3)
+                mode_stat_add(v, &scorer->stats.q3_capture_count, 1);
+        }
         qa_combat_state state;
         if (!qa_combat_read_traits(m->options.services.combat, o->actor, &state, e))
             return false;

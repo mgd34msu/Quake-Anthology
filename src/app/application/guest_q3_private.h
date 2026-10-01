@@ -3,6 +3,7 @@
 
 #include "internal.h"
 #include "guest_q3_equipment_profile.h"
+#include "guest_q3_equipment.h"
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,6 +45,10 @@ typedef struct q3g_artifact {
     qa_qvm_image *image;
     qa_native_module *module;
     qa_native_declaration *declaration;
+    qa_resource *resource;
+    qa_vfs_acquisition acquisition;
+    qa_launch_instance_lease *descriptor;
+    qa_vfs *view;
     qa_buffer primary, equipment_presentation;
     application_q3_equipment_profile equipment_profile;
     bool qvm;
@@ -57,6 +62,7 @@ typedef struct q3g_role {
     qa_actor_owner source_owner;
     struct application_native_q3_wire_client_lease *native_client;
     application_provider *client_source;
+    struct application_q3_guest *client_engine;
     uint64_t service_sequence;
     qa_string_id service_owner;
     qa_q3_host *host;
@@ -68,8 +74,10 @@ typedef struct q3g_role {
     qa_error activation_error;
     qa_native_declaration *declaration;
     q3g_artifact *artifact;
+    const qa_launch_instance *descriptor;
     struct application_guest_input *input;
     struct application_guest_projection *projection;
+    application_q3_equipment *equipment;
     char *path;
     qa_command_tokens arguments;
     qa_q3_host_common_services common;
@@ -78,6 +86,7 @@ typedef struct q3g_role {
     bool input_keys[256];
     bool initialized, retired, ready, primary, local_client, arguments_scoped;
     bool committed, activation_failed, shutdown_entry;
+    bool init_succeeded;
 } q3g_role;
 typedef enum q3g_round_phase {
     Q3G_ROUND_NONE, Q3G_ROUND_RETIRING, Q3G_ROUND_RESETTING,
@@ -109,7 +118,11 @@ struct application_q3_guest {
     uint8_t local_snapshot_server_bit;
     q3g_round round;
     unsigned calls;
+    size_t client_leases;
     uint64_t role_sequence;
+    qa_launch_instance_lease *client_descriptor;
+    const qa_launch_instance *client_candidate;
+    uint64_t client_generation, connection_epoch;
     bool map_ready, loaded_compatibility, draining_clients, restore_pending, startup_restart, handoff_ready;
 };
 
@@ -131,9 +144,15 @@ bool q3g_role_restart(q3g_role *, q3g_role **, qa_error *);
 void q3g_server_bind(q3g_role *, qa_q3_host_options *);
 bool q3g_client_bind(q3g_role *, qa_q3_host_options *, qa_error *);
 application_provider *q3g_native_game_source(qa_application *);
+application_provider *q3g_game_source(qa_application *);
 bool q3g_selected_client_seat(const application_provider *, const qa_launch_choices *,
     qa_qvm_role, size_t);
 bool q3g_arguments(void *, qa_native_host_command_view *, qa_error *);
+bool q3g_acquisition_copy(const qa_vfs_acquisition *, qa_vfs_acquisition *, qa_error *);
+bool q3g_compatibility(const qa_launch_instance *, const char *, const qa_qvm_image *,
+    qa_qvm_role, bool primary, qa_qvm_compatibility *, qa_error *);
+bool application_q3_guest_services_descriptor(qa_application *, application_provider *,
+    const qa_launch_instance *, qa_qvm_role, uint32_t, uint64_t, qa_q3_host_options *, qa_error *);
 char *q3g_copy_text(const char *, qa_error *);
 void q3g_clients_clear(struct application_q3_guest *);
 bool application_guest_q3_create_empty(qa_application *, application_provider *, qa_world *,

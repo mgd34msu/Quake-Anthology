@@ -1,5 +1,14 @@
 #include "map_private.h"
+#include "map_travel_private.h"
 #include "portals.h"
+#include "q3_round.h"
+#include "native_q3_console.h"
+#include "native_q1_console.h"
+#include "q3_world_restart.h"
+#include "native_q3_ipfilters.h"
+#include "native_q3_settings.h"
+#include "native_q3_session.h"
+#include "native_maps.h"
 #include "qa/text.h"
 
 #include <float.h>
@@ -215,6 +224,12 @@ bool application_map_prepare(qa_application *application,
     bool carry, unit;
     const qa_q2_landmark *landmark;
     application_map_travel_options(application, &carry, &unit, &landmark);
+    application_provider *old_source = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    if (application->world && old_source == publication->map_provider &&
+        old_source->kind == APPLICATION_PROVIDER_Q3 &&
+        !application_q3_world_restart_active(application) &&
+        !application_native_q3_session_capture_carry(old_source, error))
+        return false;
     if (!application_players_prepare(application, publication, carry, unit,
                                       landmark, &publication->players, error))
         return false;
@@ -237,9 +252,10 @@ bool application_map_prepare(qa_application *application,
                             (name.size == 21 && !memcmp(name.data, "info_vote_destination", 21));
         if (!player_point)
             continue;
-        if (i > UINT32_MAX - choices->seat_count)
-            return application_fail(error, QA_ERROR_MEMORY, "authored client source slots are exhausted");
         if (publication->map_provider->kind == APPLICATION_PROVIDER_Q3) {
+            if (i > UINT32_MAX)
+                return application_fail(error, QA_ERROR_MEMORY,
+                                        "Q3 authored entity ordinal is exhausted");
             /* Retain names without re-decoding source numeric fields or
              * admitting points that the native decoder filters out. */
             qa_bytes target_value;
@@ -248,10 +264,12 @@ bool application_map_prepare(qa_application *application,
                 !qa_strings_intern(strings, target_value, &target, error))
                 return false;
             if (target != QA_STRING_NONE && !application_players_point(publication->players,
-                    (qa_mode_spawnpoint){0}, target, (uint32_t)(i + choices->seat_count), error))
+                    (qa_mode_spawnpoint){0}, target, (uint32_t)i, error))
                 return false;
             continue;
         }
+        if (i > UINT32_MAX - choices->seat_count)
+            return application_fail(error, QA_ERROR_MEMORY, "authored client source slots are exhausted");
         qa_mode_spawnpoint point = {0};
         qa_string_id target = QA_STRING_NONE;
         bool angles_present;
@@ -408,6 +426,10 @@ static bool q1_lightstyle(void *opaque, int32_t style, qa_string_id pattern,
 
 static bool q1_integer_intent(void *opaque, int32_t value, qa_error *error)
 {
+    application_provider *provider = opaque;
+    qa_cvars *cvars = application_native_q1_console_registry(provider);
+    if (!cvars || value < 0 || value > 3 || !qa_cvars_set_number(cvars, "skill", (float)value, error))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q1 skill intent has no qualified source value");
     return emit_map_event(opaque,
                           (qa_builtin_event){.kind = QA_BUILTIN_TARGET,
                                              .family = QA_GAME_Q1,
@@ -580,6 +602,8 @@ static bool q1_control_player(void *opaque, qa_actor_id actor,
 static bool q1_finale(void *opaque, const qa_q1_map_finale_view *view,
                       qa_error *error)
 {
+    application_provider *provider = opaque;
+    qa_q1_game_finale_reset(provider->state.q1);
     return emit_map_event(opaque,
                           (qa_builtin_event){.kind = QA_BUILTIN_EFFECT,
                                              .family = QA_GAME_Q1,
@@ -594,8 +618,8 @@ static bool q1_finale(void *opaque, const qa_q1_map_finale_view *view,
 
 static bool q1_finale_finished(void *opaque)
 {
-    (void)opaque;
-    return false;
+    application_provider *provider = opaque;
+    return qa_q1_game_finale_finished(provider->state.q1);
 }
 
 static bool q1_finish_campaign(void *opaque, qa_error *error)
@@ -640,7 +664,7 @@ static bool q1_level_travel(void *opaque, qa_string_id map, qa_actor_id cause,
 {
     application_provider *provider = opaque;
     const char *destination = qa_strings_cstr(qa_session_strings(provider->application->session), map);
-    if (destination == NULL || !qa_application_queue_travel(provider->application,
+    if (destination == NULL || !application_source_queue_travel(provider->application,
         &(qa_application_travel_request){.provider = provider->owner, .cause = cause,
             .expression = destination, .carry_players = true, .complete_campaign = true}, error))
         return false;
@@ -706,9 +730,10 @@ static bool q1_campaign_write(void *opaque, qa_actor_id actor,
 
 static float q1_campaign_cvar(void *opaque, const char *name)
 {
-    (void)opaque;
-    (void)name;
-    return 0;
+    application_provider *provider = opaque;
+    qa_cvars *cvars = application_native_q1_console_registry(provider);
+    const qa_cvar_view *value = cvars ? qa_cvars_find(cvars, name) : NULL;
+    return value ? value->number : 0;
 }
 
 static bool q1_campaign_command(void *opaque, const char *command,
@@ -1263,7 +1288,7 @@ static bool q2_transition(void *opaque, qa_actor_id source,
     }
     application_provider *provider = opaque;
     const char *destination = qa_strings_cstr(qa_session_strings(provider->application->session), map);
-    if (destination == NULL || !qa_application_queue_travel(provider->application,
+    if (destination == NULL || !application_source_queue_travel(provider->application,
         &(qa_application_travel_request){.provider = provider->owner, .cause = activator,
             .expression = destination, .landmark = landmark, .new_unit = end_unit,
             .carry_players = true, .complete_campaign = true}, error))
@@ -1777,6 +1802,13 @@ static bool q3_event(void *opaque, const qa_q3_map_event *event,
                      qa_error *error)
 {
     application_provider *provider = opaque;
+    if (event->kind == QA_Q3_MAP_CVAR) {
+        qa_strings *strings = qa_session_strings(provider->application->session);
+        const char *name = qa_strings_cstr(strings, event->name);
+        const char *value = qa_strings_cstr(strings, event->text);
+        if (!name || !value || !application_native_q3_settings_force_set(provider, name, value, error))
+            return false;
+    }
     if (!application_emit_q3_map(provider, event, error))
         return false;
     return event->kind != QA_Q3_MAP_AREA_PORTAL ||
@@ -1785,9 +1817,23 @@ static bool q3_event(void *opaque, const qa_q3_map_event *event,
 
 static bool q3_item_disabled(void *opaque, uint32_t item_index)
 {
-    (void)opaque;
-    (void)item_index;
-    return false;
+    application_provider *provider = opaque;
+    qa_q3_product product = !strcmp(provider->product->campaign, "missionpack")
+        ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
+    const qa_q3_item *items = qa_q3_items(product, NULL);
+    char name[128];
+    snprintf(name, sizeof(name), "disable_%s", items[item_index].classname);
+    const qa_cvar_view *variable = qa_cvars_find(
+        application_native_q3_console_registry(provider), name);
+    const unsigned char *text = (const unsigned char *)(variable ? variable->value : "");
+    while (*text && (*text < 128 ? (int)*text : (int)*text - 256) <= 32) ++text;
+    bool negative = *text == '-';
+    if (*text == '+' || *text == '-') ++text;
+    uint32_t value = 0;
+    while (*text >= '0' && *text <= '9')
+        value = value * UINT32_C(10) + (uint32_t)(*text++ - '0');
+    if (negative) value = UINT32_C(0) - value;
+    return value != 0;
 }
 
 static bool q3_world_gravity(void *opaque, float gravity, qa_error *error)
@@ -1827,14 +1873,19 @@ static qa_q3_map_options q3_map_options(application_provider *provider,
             warmup = true;
             break;
         }
+    application_q3_world_startup replacement;
+    bool replacing = application_q3_world_restart_source(provider->application,
+                                                          provider, &replacement);
     return (qa_q3_map_options){
         .targets = provider->application->targets,
         .context = provider,
-        .random_seed = (uint32_t)(
+        .random_seed = replacing ? replacement.random_seed : (uint32_t)(
             provider->owner * UINT32_C(2246822519) ^
             (uint32_t)provider->application->publication_generation),
-        .start_time_ms = 0,
-        .warmup = warmup,
+        .start_time_ms = replacing
+            ? (int32_t)(uint32_t)(replacement.initial_time_ns / UINT64_C(1000000)) : 0,
+        .warmup = replacing ? replacement.warmup : warmup,
+        .restarted = replacing ? replacement.restarted : 0,
         .event = q3_event,
         .item_disabled = q3_item_disabled,
         .world_gravity = q3_world_gravity,
@@ -1846,6 +1897,10 @@ static bool q3_begin_map(application_provider *provider,
                          const qa_launch_choices *choices, qa_error *error)
 {
     qa_q3_map_options options = q3_map_options(provider, choices);
+    int32_t warmup;
+    if (!application_native_q3_settings_integer(provider, "g_doWarmup", &warmup, error) ||
+        !application_native_q3_settings_integer(provider, "g_restarted", &options.restarted, error)) return false;
+    options.warmup = warmup != 0;
     bool ok = provider->map_bound
                   ? qa_q3_maps_reset(provider->state.q3, &options, error)
                   : qa_q3_maps_bind(provider->state.q3, &options, error);
@@ -1884,8 +1939,10 @@ bool application_map_restore_bind(qa_application *application,
             if (!qa_q2_entities_configure(provider->state.q2, &services, error))
                 return false;
         } else if (provider->kind == APPLICATION_PROVIDER_Q3) {
-            if (!q3_begin_map(provider, choices, error))
+            qa_q3_map_options options = q3_map_options(provider, choices);
+            if (!qa_q3_maps_bind_restore(provider->state.q3, &options, error))
                 return false;
+            provider->map_bound = true;
         }
     }
     return application_players_restore_prepare(application, choices, error);
@@ -1894,9 +1951,15 @@ bool application_map_restore_bind(qa_application *application,
 static bool q3_spawn_map(application_provider *provider,
                          const qa_entities *entities, qa_error *error)
 {
-    size_t seats = qa_launch_snapshot_choices(provider->application->routing_snapshot)->seat_count;
+    const qa_launch_snapshot *snapshot = provider->application->routing_snapshot;
+    if (snapshot == NULL)
+        snapshot = qa_application_launch(provider->application);
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(snapshot);
+    if (choices == NULL)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Q3 authored spawn has no installed launch");
     for (size_t index = 0; index < entities->count; ++index) {
-        if (index > UINT32_MAX - seats)
+        if (index > UINT32_MAX)
             return application_fail(error, QA_ERROR_MEMORY,
                                     "Q3 authored entity ordinal is exhausted");
         size_t count;
@@ -1906,11 +1969,57 @@ static bool q3_spawn_map(application_provider *provider,
         if (!qa_q3_map_spawn(provider->state.q3,
                              &(qa_q3_map_fields){.properties = properties,
                                                  .count = count,
-                                                 .ordinal = (uint32_t)(index + seats)},
+                                                 .ordinal = (uint32_t)index},
                              &result, error))
             return false;
+        if (result.status == QA_Q3_MAP_WORLD)
+            provider->application->physics->world_actor = result.actor;
     }
-    return qa_q3_maps_post_spawn(provider->state.q3, error);
+    if (!qa_q3_maps_post_spawn(provider->state.q3, error))
+        return false;
+    if (!application_native_q3_settings_source_loaded(provider, error)) return false;
+    qa_cvars *cvars = application_native_q3_console_registry(provider);
+    static const char *const compatibility[] = {"g_gametype", "sv_maxclients"};
+    for (size_t i = 0; i < sizeof(compatibility) / sizeof(compatibility[0]); ++i) {
+        const qa_cvar_view *variable = qa_cvars_find(cvars, compatibility[i]);
+        if (variable == NULL || variable->owner != provider->owner)
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                                    "Q3 authored map lost its source settings");
+        qa_cvars_clear_modified(cvars, compatibility[i]);
+    }
+    return true;
+}
+
+bool application_q3_round_map_prepare(qa_application *application,
+    application_provider *provider, qa_entities *out, qa_error *error)
+{
+    if (!application || !provider || !out || out->records || out->properties ||
+        provider->application != application || !provider->constructed ||
+        !provider->attached || !provider->map_bound ||
+        provider != application_world_provider(application, QA_ROLE_ENTITIES, "") ||
+        !application->map_resource || !application->geometry ||
+        !application->map_view_ready)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Q3 round requires its retained authored map");
+    qa_bsp_view map;
+    if (!qa_bsp_open(qa_resource_bytes(application->map_resource), &map, error))
+        return false;
+    if (!map.lumps[QA_BSP_ENTITIES].present)
+        return application_fail(error, QA_ERROR_FORMAT,
+                                "Q3 round retained map has no entity source");
+    return qa_entities_parse(map.lumps[QA_BSP_ENTITIES].bytes,
+        map.family == QA_BSP_Q3 ? QA_ENTITY_Q3 : QA_ENTITY_Q1, out, error);
+}
+
+bool application_q3_round_map_spawn(application_provider *provider,
+    const qa_entities *entities, qa_error *error)
+{
+    if (!provider || provider->kind != APPLICATION_PROVIDER_Q3 || !entities ||
+        provider->application->operation != APPLICATION_CONFIGURING ||
+        !provider->map_bound || !provider->constructed || !provider->attached)
+        return application_fail(error, QA_ERROR_ARGUMENT,
+                                "Q3 round spawn requires its reset native source");
+    return q3_spawn_map(provider, entities, error);
 }
 
 bool application_map_spawn_point(qa_application *application,
@@ -2014,7 +2123,8 @@ bool application_map_publish(qa_application *application,
         if (provider != NULL && provider->attached && provider->constructed &&
             provider->kind == APPLICATION_PROVIDER_Q3 &&
             (!application_native_q3_settings_register(provider, error) ||
-             !application_native_q3_settings_install(provider, error)))
+             (provider->map_bound &&
+              !application_native_q3_settings_reset_cache(provider, __DATE__, error))))
             return false;
     }
     if (!application_bots_prepare(application, choices, &publication->map,
@@ -2054,7 +2164,10 @@ bool application_map_publish(qa_application *application,
                 return false;
             provider->map_bound = true;
         } else if (provider->kind == APPLICATION_PROVIDER_Q3) {
-            if (!q3_begin_map(provider, choices, error))
+            if (!q3_begin_map(provider, choices, error) ||
+                !application_native_q3_settings_source_init(provider, error) ||
+                !application_native_q3_ipfilters_init(provider, error) ||
+                !application_native_q3_settings_install(provider, error))
                 return false;
         }
     }
@@ -2101,6 +2214,9 @@ bool application_map_publish(qa_application *application,
                 &publication->entities, current_map, spawn_point, error))
             return false;
     }
+    if (publication->map_provider->kind == APPLICATION_PROVIDER_Q3 &&
+        !application_bots_native_q3_initialize(publication->map_provider, error))
+        return false;
     if (!application_players_publish(application, choices, publication->players, error))
         return false;
     for (size_t index = 0; index < application->provider_count; ++index) {

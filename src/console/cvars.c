@@ -990,7 +990,8 @@ const char *qa_cvars_archive_value(const qa_cvars *registry, const qa_cvar_view 
         ? variable->latched_value : variable->value;
 }
 
-bool qa_cvars_config(const qa_cvars *registry, qa_buffer *out, qa_error *error)
+bool qa_cvars_config_filtered(const qa_cvars *registry, qa_cvar_config_filter filter,
+                               void *context, qa_buffer *out, qa_error *error)
 {
     if (registry == NULL || out == NULL)
         return qac_fail(error, QA_ERROR_ARGUMENT, "invalid cvar config arguments");
@@ -999,7 +1000,7 @@ bool qa_cvars_config(const qa_cvars *registry, qa_buffer *out, qa_error *error)
     for (const cvar *entry = registry->first; entry != NULL; entry = entry->next) {
         const qa_cvar_view *variable = &entry->view;
         const char *value = qa_cvars_archive_value(registry, variable);
-        if (!value) continue;
+        if (!value || (filter && !filter(context, registry, variable))) continue;
         if (strpbrk(value, "\"\r\n") != NULL) {
             free(result.data);
             return qac_fail(error, QA_ERROR_FORMAT, "cvar value cannot be represented by source config quoting");
@@ -1015,4 +1016,9 @@ bool qa_cvars_config(const qa_cvars *registry, qa_buffer *out, qa_error *error)
     }
     if (!qac_text_finish(&result, out, error)) { free(result.data); return false; }
     return true;
+}
+
+bool qa_cvars_config(const qa_cvars *registry, qa_buffer *out, qa_error *error)
+{
+    return qa_cvars_config_filtered(registry, NULL, NULL, out, error);
 }

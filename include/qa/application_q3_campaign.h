@@ -25,6 +25,23 @@ typedef struct qa_application_q3_campaign {
     bool native_source;
 } qa_application_q3_campaign;
 
+typedef struct qa_application_q3_setting {
+    const char *name, *value;
+} qa_application_q3_setting;
+
+/* Construct fresh selected source owners with these actual GAME startup
+ * values before capacity admission and GAME Init. Values are borrowed only
+ * for this synchronous preparation/publication; source cvar owners retain
+ * their own copies. The caller supplies a current physical GAME cut. */
+bool qa_application_q3_campaign_launch(qa_application *,
+    const qa_application_q3_campaign *, const qa_launch_draft *,
+    const qa_application_q3_setting *, size_t, qa_error *);
+/* Start from actual selected catalog/draft metadata, including the initial
+ * launcher with no published GAME. Fresh source registries own the settings;
+ * this entry does not borrow a previous GAME registry. */
+bool qa_application_q3_campaign_start(qa_application *, const qa_launch_draft *,
+    const qa_application_q3_setting *, size_t, qa_error *);
+
 /* Borrows the actual published physical Q3 GAME without a player or
  * chosen-mode inference. Config root is the source's first writable mount;
  * profile root/store are the independent application player-profile owner.
@@ -43,6 +60,11 @@ bool qa_application_q3_campaign_postgame_context(qa_application *,
 bool qa_application_q3_campaign_local_seat(qa_application *,
     const qa_application_q3_campaign *, uint32_t source_client,
     bool *found, uint32_t *seat, qa_actor_id *, qa_error *);
+/* Copies the actual physical client's source name, including bots. Original
+ * GAME names come from its published PLAYER info; output holds at most 79
+ * source bytes plus NUL. A missing or retired binding fails without a label. */
+bool qa_application_q3_campaign_player_name(qa_application *,
+    const qa_application_q3_campaign *, uint32_t source_client, char name[80], qa_error *);
 /* MENU's actual local CGAME recipient must name this exact physical GAME and
  * live source actor; CGAME cvars never replace the returned GAME registry. */
 bool qa_application_q3_campaign_menu_read(qa_application *, qa_actor_owner receiver,

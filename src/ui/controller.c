@@ -1,12 +1,14 @@
 #include "internal.h"
 #include "qa/ui_save.h"
 
+bool qa_ui_idle(const qa_ui *ui) { return ui && !ui->handling && !ui->drawing; }
+
 float ui_glyph_width(qa_ui *ui, uint32_t scalar) {
     qa_font_glyph glyph;
     qa_font_info info;
     if (!qa_font_resolve(&ui->options.fonts, scalar, false, &glyph) ||
-        !qa_font_describe(glyph.font, &info)) return 8;
-    return glyph.advance * 8 / fmaxf(1, info.line_height);
+        !qa_font_describe(glyph.font, &info)) return 8 * ui->text_scale;
+    return glyph.advance * 8 * ui->text_scale / fmaxf(1, info.line_height);
 }
 bool ui_fail(qa_error *error, const char *message) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message);
@@ -172,7 +174,26 @@ bool qa_ui_create(const qa_ui_options *options, qa_ui **out, qa_error *error) {
     ui->options = *options;
     ui->cursor = (qa_input_pair){320, 240};
     ui->scale = 1;
+    ui->text_scale = 1;
     *out = ui;
+    return true;
+}
+bool qa_ui_set_presentation(qa_ui *ui, const qa_font_selection *fonts, float text_scale,
+    qa_ui_color_mode color_mode, qa_error *error)
+{
+    if (!qa_ui_idle(ui) || !fonts || fonts->seat != ui->options.seat ||
+        !isfinite(text_scale) || text_scale < .75f || text_scale > 2 ||
+        color_mode < QA_UI_COLOR_STANDARD || color_mode > QA_UI_COLOR_MONOCHROME)
+        return ui_fail(error, "UI presentation requires idle matching font and text owners");
+    qa_font_selection qualified;
+    if (!qa_font_selection_init(&qualified, fonts->seat, fonts->classic, fonts->primary,
+        fonts->fallbacks, fonts->fallback_count, error)) return false;
+    ui->options.fonts = qualified; ui->text_scale = text_scale; ui->color_mode = color_mode; return true;
+}
+bool qa_ui_presentation_read(const qa_ui *ui,qa_ui_presentation *out,qa_error *error)
+{
+    if (!qa_ui_idle(ui) || !out) return ui_fail(error,"Presentation view requires its idle actual UI owner");
+    *out=(qa_ui_presentation){.fonts=ui->options.fonts,.text_scale=ui->text_scale,.color_mode=ui->color_mode};
     return true;
 }
 bool qa_ui_register(qa_ui *ui, const qa_ui_menu_registration *registration, qa_error *error) {

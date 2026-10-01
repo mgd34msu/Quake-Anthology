@@ -34,6 +34,9 @@ struct qa_font_library {
     qa_font **fonts;
     size_t font_count, font_capacity;
     FT_Library freetype;
+    struct qa_font_library_capture *capture;
+    bool codec_active;
+    unsigned callbacks;
 };
 
 bool qa_font_fail(qa_error *, qa_status, size_t, const char *);
@@ -47,6 +50,7 @@ bool qa_font_internal_take_source(qa_font *, qa_resource *, qa_error *);
 bool qa_font_internal_publish(qa_font *, const qa_font **, qa_error *);
 void qa_font_internal_measure_cap_ink(qa_font *);
 bool qa_font_internal_freetype(qa_font_library *, FT_Library *, qa_error *);
+bool qa_font_internal_admission_ready(const qa_font_library *, qa_error *);
 bool qa_font_internal_picture(qa_font *, const char *, qa_scene_family, qa_scene_filter,
                               const qa_scene_image **, qa_error *);
 

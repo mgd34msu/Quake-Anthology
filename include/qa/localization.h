@@ -42,6 +42,11 @@ const qa_localization_entry *qa_localization_find(const qa_localization *catalog
 size_t qa_localize(const qa_localization *catalog, const char *base, const char *const *arguments,
                    size_t argument_count, bool allow_in_place, bool raw_bytes, char *out,
                    size_t capacity);
+/* Frontend presentation retains unknown mod keys, including substitutions,
+ * and truncates only at UTF-8 boundaries. Native guest buffers use qa_localize. */
+size_t qa_localize_presentation(const qa_localization *, const char *base,
+    const char *const *arguments, size_t argument_count, bool allow_in_place,
+    char *out, size_t capacity);
 const char *qa_localization_language(const char *locale);
 
 qa_localization_pool *qa_localization_pool_create(qa_error *error);

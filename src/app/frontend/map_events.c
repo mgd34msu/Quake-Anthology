@@ -3,6 +3,7 @@
 #include "audio_inventory.h"
 #include "event_restore.h"
 #include "scene_identity.h"
+#include "qc_rerelease_events.h"
 #include "round.h"
 #include "qa/persistence_content.h"
 #include "qa/scene_resource_save.h"
@@ -222,6 +223,17 @@ bool frontend_event_audio_owner_read(const qa_frontend *frontend, size_t index,
     *out = (frontend_event_audio_owner_view){entry->owner, entry->family, entry->files, entry->sounds};
     return true;
 }
+bool frontend_event_audio_view(const qa_frontend *frontend,const qa_audio_asset *asset,qa_vfs **out)
+{
+    if (!frontend || !asset || !out) return false;
+    qa_resource *resource=qa_audio_asset_resource(asset);
+    if (!resource) return false;
+    for (const frontend_event_resources *entry=frontend->events?frontend->events->resources:NULL;entry;entry=entry->next)
+        if (entry->sounds && qa_audio_bank_get(entry->sounds,qa_resource_id(resource),qa_audio_asset_family(asset))==asset) {
+            *out=entry->files; return *out!=NULL;
+        }
+    return false;
+}
 static bool append_asset(qa_audio_asset ***assets, size_t *count, qa_audio_asset *asset, qa_error *error)
 {
     if (!asset) return true;
@@ -422,6 +434,16 @@ static bool resources_read(qa_frontend *frontend, qa_actor_owner provider, qa_au
     }
     entry->next = state->resources; state->resources = entry; *out = entry; return true;
 }
+bool frontend_event_qc_resources(qa_frontend *frontend,qa_actor_owner owner,
+    qa_scene_resources **images,qa_audio_bank **sounds,qa_error *error)
+{
+    if (!frontend || !frontend->application || !owner || !images || !sounds)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"QC event resources require their actual source owner");
+    *images=NULL; *sounds=NULL;
+    frontend_event_resources *resources;
+    if (!resources_read(frontend,owner,QA_AUDIO_Q1,&resources,error)) return false;
+    *images=resources->images; *sounds=resources->sounds; return true;
+}
 void frontend_event_reset_round(qa_frontend *frontend)
 {
     if (frontend->capture) return;
@@ -576,6 +598,9 @@ bool frontend_map_events(qa_frontend *frontend, qa_error *error)
     for (size_t i = 0; i < qa_application_event_count(frontend->application); ++i) {
         qa_builtin_event event;
         if (!qa_application_event_at(frontend->application, i, &event)) return frontend_fail(error, QA_ERROR_ARGUMENT, "builtin queue changed during map presentation");
+        bool handled;
+        if (!frontend_qc_rerelease_event(frontend,&event,&handled,error)) return false;
+        if (handled) continue;
         if (event.family == QA_GAME_Q1 && event.kind == QA_BUILTIN_EFFECT) {
             const char *resource = qa_strings_cstr(strings, event.resource);
             if (resource && !strcmp(resource, "q1:fog")) {
@@ -920,7 +945,7 @@ bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, 
             frontend_retained_sound *entry = *link;
             if (!entry->static_key && entry->loop.sound.actor == actor && entry->loop.sound.owner == event->provider &&
                 entry->loop.sound.family == family) {
-                if (!qa_audio_engine_stop_loop(frontend->audio, actor, event->provider, QA_AUDIO_WORLD, error)) return false;
+                if (!qa_audio_engine_stop_loop(frontend->audio, actor, event->provider, entry->loop.sound.audience, error)) return false;
                 *link = entry->next; qa_audio_asset_release(entry->loop.sound.asset); free(entry);
                 loop_stopped = true;
             } else link = &entry->next;
@@ -932,6 +957,16 @@ bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, 
     qa_strings *strings = qa_session_strings(qa_application_session(frontend->application));
     const char *name = qa_strings_cstr(strings, event->resource);
     if (!name || !*name) return true;
+    uint32_t audience=QA_AUDIO_WORLD;
+    bool private_sound=event->family==QA_GAME_Q1 && (event->flags&2)!=0;
+    if (private_sound) {
+        for (uint32_t seat=0;seat<frontend->options.seats;++seat) {
+            qa_actor_id recipient;
+            if (qa_application_player_actor(frontend->application,seat,&recipient) &&
+                qa_actor_id_equal(recipient,event->actor)) { audience=seat; break; }
+        }
+        if (audience==QA_AUDIO_WORLD) return true;
+    }
     frontend_event_resources *resources;
     if (!resources_read(frontend, event->provider, family, &resources, error)) return false;
     qa_audio_asset *asset = NULL;
@@ -939,10 +974,11 @@ bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, 
     if (!asset) return true;
     bool live = event->actor.registry && qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), event->actor);
     qa_audio_play sound = {.sample = qa_audio_asset_sample(asset), .asset = asset, .name = name,
-        .family = family, .actor = actor, .owner = event->provider, .audience = QA_AUDIO_WORLD,
-        .origin_kind = live ? QA_AUDIO_ACTOR : QA_AUDIO_FIXED, .origin_actor = actor,
-        .origin = event->origin, .channel = event->channel, .volume = event->volume, .attenuation = event->attenuation};
-    if (live) {
+        .family = family, .actor = actor, .owner = event->provider, .audience = audience,
+        .origin_kind = private_sound ? QA_AUDIO_LOCAL : live ? QA_AUDIO_ACTOR : QA_AUDIO_FIXED, .origin_actor = actor,
+        .origin = private_sound ? (qa_vec3){0} : event->origin, .channel = event->channel,
+        .volume = event->volume, .attenuation = private_sound ? 0 : event->attenuation};
+    if (live && !private_sound) {
         qa_body_state body; qa_error observed = {0};
         if (qa_world_body_read(qa_application_world(frontend->application), event->actor, &body, &observed)) {
             sound.origin = body.origin;
@@ -966,7 +1002,8 @@ bool frontend_event_sound(qa_frontend *frontend, const qa_builtin_event *event, 
     }
     frontend_retained_sound *entry = state->sounds;
     while (entry && (ambient || entry->static_key || entry->loop.sound.actor != actor ||
-        entry->loop.sound.owner != event->provider || entry->loop.sound.family != family)) entry = entry->next;
+        entry->loop.sound.owner != event->provider || entry->loop.sound.family != family ||
+        entry->loop.sound.audience != audience)) entry = entry->next;
     if (!entry) {
         entry = calloc(1, sizeof(*entry));
         if (!entry) { qa_audio_asset_release(asset); return frontend_fail(error, QA_ERROR_MEMORY, "retaining builtin looping sound"); }
@@ -999,13 +1036,13 @@ bool frontend_event_audio(qa_frontend *frontend, qa_error *error)
         } else {
             if (!qa_actors_get(qa_world_actors(qa_application_world(frontend->application)), entry->actor)) {
                 if (!qa_audio_engine_stop_loop(frontend->audio, entry->loop.sound.actor,
-                    entry->loop.sound.owner, QA_AUDIO_WORLD, error)) return false;
+                    entry->loop.sound.owner, entry->loop.sound.audience, error)) return false;
                 *link = entry->next; qa_audio_asset_release(entry->loop.sound.asset); free(entry); continue;
             }
             qa_body_state body; qa_error observed = {0};
             if (!qa_world_body_read(qa_application_world(frontend->application), entry->actor, &body, &observed)) {
                 if (observed.code != QA_ERROR_NOT_FOUND) { if (error) *error = observed; return false; }
-            } else {
+            } else if (entry->loop.sound.origin_kind!=QA_AUDIO_LOCAL) {
                 entry->loop.velocity = body.velocity; entry->loop.sound.origin = body.origin;
                 if (!qa_audio_engine_position(frontend->audio, entry->loop.sound.actor, body.origin, error)) return false;
             }
@@ -1033,8 +1070,8 @@ bool frontend_event_images(qa_frontend *frontend, qa_actor_owner owner, qa_game_
 }
 static bool event_signature(qa_source_save_io *io)
 {
-    uint8_t magic[4] = {'Q','A','P','E'}; uint32_t version = 4;
-    return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QAPE", 4) && qa_source_save_u32(io, &version) && version == 4;
+    uint8_t magic[4] = {'Q','A','P','E'}; uint32_t version = 5;
+    return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QAPE", 4) && qa_source_save_u32(io, &version) && version == 5;
 }
 static bool fog_fields(qa_source_save_io *io, qa_q2_fog *fog)
 {
@@ -1088,6 +1125,17 @@ static bool audio_identity_matches(const qa_frontend *frontend, qa_actor_id acto
             return true;
     return false;
 }
+static bool audio_audience_matches(const qa_frontend *frontend, qa_actor_id actor,
+    const qa_audio_play *sound, uint32_t origin_kind, uint32_t audience)
+{
+    if (audience == QA_AUDIO_WORLD)
+        return origin_kind == QA_AUDIO_FIXED || (origin_kind == QA_AUDIO_ACTOR && actor.registry);
+    qa_actor_id recipient;
+    return audience < frontend->options.seats && sound->family == QA_AUDIO_Q1 && origin_kind == QA_AUDIO_LOCAL &&
+        actor.registry && qa_application_player_actor(frontend->application, audience, &recipient) &&
+        qa_actor_id_equal(actor, recipient) && sound->attenuation == 0 &&
+        sound->origin.x == 0 && sound->origin.y == 0 && sound->origin.z == 0;
+}
 static bool audio_projection_fields(qa_source_save_io *io, qa_frontend *frontend, const qa_audio_asset_inventory *inventory,
     frontend_audio_projection *entry)
 {
@@ -1104,12 +1152,10 @@ static bool audio_projection_fields(qa_source_save_io *io, qa_frontend *frontend
             !qa_source_save_i32(io, &sound->channel)) return false;
         sound->family = (qa_audio_family)family; return true;
     }
-    uint32_t origin_kind = sound->origin_kind;
+    uint32_t origin_kind = sound->origin_kind, audience = sound->audience;
     if (!retained_asset(io, frontend, inventory, &sound->owner, &sound->family, &sound->asset) ||
         !frontend_save_text(io, &entry->name) || !qa_source_save_i32(io, &entry->milliseconds) ||
-        !qa_source_save_u32(io, &origin_kind) ||
-        (origin_kind != QA_AUDIO_FIXED && origin_kind != QA_AUDIO_ACTOR) ||
-        (origin_kind == QA_AUDIO_ACTOR && !entry->actor.registry) ||
+        !qa_source_save_u32(io, &origin_kind) || !qa_source_save_u32(io, &audience) ||
         !qa_source_save_vec3(io, &sound->origin) || !qa_vec_finite(sound->origin) ||
         !qa_source_save_i32(io, &sound->channel) || !qa_source_save_f32(io, &sound->volume) ||
         !isfinite(sound->volume) || sound->volume < 0 || sound->volume > 1 ||
@@ -1117,13 +1163,14 @@ static bool audio_projection_fields(qa_source_save_io *io, qa_frontend *frontend
         !qa_source_save_u64(io, &sound->resource_id) ||
         !qa_source_save_f64(io, &sound->delay_seconds) || !isfinite(sound->delay_seconds) ||
         !qa_source_save_f64(io, &sound->server_milliseconds) || !isfinite(sound->server_milliseconds) ||
-        !qa_source_save_bool(io, &sound->has_server_time)) return false;
-    if (!reading && (sound->origin_actor != sound->actor || sound->audience != QA_AUDIO_WORLD ||
+        !qa_source_save_bool(io, &sound->has_server_time) ||
+        !audio_audience_matches(frontend, entry->actor, sound, origin_kind, audience)) return false;
+    if (!reading && (sound->origin_actor != sound->actor ||
         sound->sample != qa_audio_asset_sample(sound->asset) || sound->name != entry->name)) return false;
     if (reading) {
         sound->sample = qa_audio_asset_sample(sound->asset); sound->name = entry->name;
         sound->origin_kind = (qa_audio_origin_kind)origin_kind;
-        sound->origin_actor = sound->actor; sound->audience = QA_AUDIO_WORLD;
+        sound->origin_actor = sound->actor; sound->audience = audience;
     }
     return true;
 }
@@ -1217,7 +1264,7 @@ static bool sound_fields(qa_source_save_io *io, qa_frontend *frontend, const qa_
     frontend_scene_identity_scope *scope, size_t ordinal, frontend_retained_sound *entry)
 {
     qa_audio_play *sound = &entry->loop.sound; bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint32_t origin_kind = sound->origin_kind;
+    uint32_t origin_kind = sound->origin_kind, audience = sound->audience;
     bool is_static = entry->static_key != 0; uint32_t seats = entry->restored_static_seats;
     uint64_t static_key=entry->static_key;
     if (!reading && is_static &&
@@ -1229,18 +1276,21 @@ static bool sound_fields(qa_source_save_io *io, qa_frontend *frontend, const qa_
         !retained_asset(io, frontend, inventory, &sound->owner, &sound->family, &sound->asset) ||
         !qa_source_save_bool(io, &is_static) || !qa_source_save_u64(io, &static_key) ||
         is_static != (static_key != 0) || !qa_source_save_u32(io, &seats) || seats >= (1u << frontend->options.seats) ||
-        !qa_source_save_u32(io, &origin_kind) || (origin_kind != QA_AUDIO_FIXED && origin_kind != QA_AUDIO_ACTOR) ||
+        !qa_source_save_u32(io, &origin_kind) || !qa_source_save_u32(io, &audience) ||
         !qa_source_save_vec3(io, &sound->origin) || !qa_vec_finite(sound->origin) ||
         !qa_source_save_i32(io, &sound->channel) || !qa_source_save_f32(io, &sound->volume) ||
         !qa_source_save_f32(io, &sound->attenuation) || !isfinite(sound->volume) || sound->volume < 0 || sound->volume > 1 ||
         !isfinite(sound->attenuation) || sound->attenuation < 0 || !qa_source_save_vec3(io, &entry->loop.velocity) ||
         !qa_vec_finite(entry->loop.velocity) || !qa_source_save_i32(io, &entry->loop.frame_number) ||
-        !qa_source_save_bool(io, &entry->loop.persistent)) return false;
+        !qa_source_save_bool(io, &entry->loop.persistent) ||
+        !audio_audience_matches(frontend, entry->actor, sound, origin_kind, audience)) return false;
     if (sound->channel < 0 && !(sound->family == QA_AUDIO_Q1 && sound->channel == -1)) return false;
-    if (is_static ? entry->actor.registry != 0 || sound->family != QA_AUDIO_Q1 : !entry->actor.registry || seats != 0) return false;
+    if (is_static ? entry->actor.registry != 0 || sound->family != QA_AUDIO_Q1 || audience != QA_AUDIO_WORLD :
+        !entry->actor.registry || seats != 0) return false;
+    if (!reading && (sound->origin_actor != sound->actor || sound->sample != qa_audio_asset_sample(sound->asset))) return false;
     if (reading) {
         entry->static_key=static_key;
-        sound->sample = qa_audio_asset_sample(sound->asset); sound->audience = QA_AUDIO_WORLD;
+        sound->sample = qa_audio_asset_sample(sound->asset); sound->audience = audience;
         sound->origin_actor = sound->actor;
         sound->origin_kind = (qa_audio_origin_kind)origin_kind;
         if (is_static && (origin_kind != QA_AUDIO_FIXED || sound->sample->loop_start == QA_AUDIO_NO_LOOP)) return false;
@@ -1467,7 +1517,8 @@ bool frontend_event_restore(qa_frontend *frontend, const qa_audio_asset_inventor
             if (entry->static_key) ++ordinal;
             for (frontend_retained_sound *prior = state->sounds; ok && prior != entry; prior = prior->next)
                 if (!entry->static_key && !prior->static_key && prior->loop.sound.owner == entry->loop.sound.owner &&
-                    prior->loop.sound.family == entry->loop.sound.family && qa_actor_id_equal(prior->actor, entry->actor)) ok = false;
+                    prior->loop.sound.family == entry->loop.sound.family &&
+                    prior->loop.sound.audience == entry->loop.sound.audience && qa_actor_id_equal(prior->actor, entry->actor)) ok = false;
             sounds = &entry->next;
         }
         frontend_retained_light **lights = &state->lights;

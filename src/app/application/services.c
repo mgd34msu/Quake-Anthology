@@ -1,5 +1,9 @@
 #include "internal.h"
+#include "control_frame.h"
 #include "qa/application_players.h"
+#include "qa/game_q3_clients.h"
+#include "qa/game_q3_source.h"
+#include "qa/game_q3_wire.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -295,6 +299,7 @@ bool application_actor_released(void *opaque, qa_session *session,
             }
         }
     }
+    application_control_frames_release(application, released.id);
     if (released.id.slot < application->q2_visual_capacity) {
         application_q2_visual_record *visual =
             &application->q2_visuals[released.id.slot];
@@ -380,9 +385,19 @@ static bool before_reaction(void *opaque, const qa_damage_outcome *outcome,
     if (effects != NULL && effects->kind == APPLICATION_PROVIDER_Q3 &&
         !qa_q3_before_reaction(effects->state.q3, outcome, error))
         return false;
-    return character == NULL || character == effects ||
-           character->kind != APPLICATION_PROVIDER_Q3 ||
-           qa_q3_before_reaction(character->state.q3, outcome, error);
+    if (character != NULL && character != effects &&
+        character->kind == APPLICATION_PROVIDER_Q3 &&
+        !qa_q3_before_reaction(character->state.q3, outcome, error))
+        return false;
+    application_provider *source = application_world_provider(
+        application, QA_ROLE_ENTITIES, "");
+    uint32_t slot;
+    return source == NULL || source == effects || source == character ||
+           source->kind != APPLICATION_PROVIDER_Q3 || !source->constructed ||
+           !source->attached || source->close_pending ||
+           !qa_q3_native_client_slot(source->state.q3, outcome->request.target,
+                                      &slot, NULL) ||
+           qa_q3_before_reaction(source->state.q3, outcome, error);
 }
 
 static bool selected_source_reaction(void *opaque, const qa_damage_outcome *outcome,
@@ -391,6 +406,15 @@ static bool selected_source_reaction(void *opaque, const qa_damage_outcome *outc
                                      void *original_context, qa_error *error)
 {
     qa_application *application = opaque;
+    application_provider *source = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    const qa_actor_record *record = qa_actors_get(qa_session_actors(application->session),
+                                                outcome->request.target);
+    if (source && source->kind == APPLICATION_PROVIDER_Q3 && source->constructed &&
+        source->attached && !source->close_pending && record && record->owner == source->owner) {
+        bool handled;
+        if (!qa_q3_source_obelisk_reaction(source->state.q3, outcome, &handled, error)) return false;
+        if (handled) return true;
+    }
     if (application->modes != NULL &&
         !qa_modes_object_reaction(application->modes, outcome, error))
         return false;
@@ -506,12 +530,13 @@ static bool provider_invulnerable(application_provider *provider,
     return false;
 }
 
-bool application_force_death(void *opaque, const qa_damage_request *request,
-                              qa_error *error)
+static bool force_death(qa_application *application,
+                        const qa_damage_request *request, int32_t final_health,
+                        bool source_death, qa_error *error)
 {
-    qa_application *application = opaque;
     if (application == NULL || application->combat == NULL ||
         application->destroy_requested ||
+        final_health > 0 ||
         !qa_damage_request_validate(request, error))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "direct death requires an active combat owner");
@@ -528,13 +553,32 @@ bool application_force_death(void *opaque, const qa_damage_request *request,
     if (!qa_combat_read_traits(application->combat, request->target,
                                &traits, error))
         return false;
-    if (traits.health <= 0)
+    if (traits.health <= 0 && !source_death)
         return true;
+    bool react = true;
+    if (source_death) {
+        application_provider *source = application_world_provider(
+            application, QA_ROLE_ENTITIES, "");
+        qa_q3_player_state player;
+        qa_q3_wire_policy policy;
+        qa_q3_source_match_state match;
+        uint32_t slot;
+        if (!source || source->kind != APPLICATION_PROVIDER_Q3 ||
+            !source->constructed || !source->attached || source->close_pending ||
+            !qa_q3_native_client_slot(source->state.q3, request->target, &slot, error) ||
+            !qa_q3_player_read(source->state.q3, request->target, &player) ||
+            !qa_q3_wire_player_policy_read(source->state.q3, request->target,
+                                            &policy, error) ||
+            !qa_q3_source_match_state_read(source->state.q3, &match, error))
+            return application_fail(error, QA_ERROR_ARGUMENT,
+                                    "source death requires its actual native Q3 client state");
+        react = !player.dead && policy.pm_type != 3 && !match.intermission_time_ms;
+    }
     application_operation previous = application->operation;
     application->operation = APPLICATION_ADVANCING;
     qa_damage_mutation mutation = {
         .kind = QA_MUTATION_HEALTH,
-        .value.health = {.before = traits.health, .after = -999},
+        .value.health = {.before = traits.health, .after = final_health},
     };
     qa_damage_outcome outcome = {
         .request = *request,
@@ -547,15 +591,28 @@ bool application_force_death(void *opaque, const qa_damage_request *request,
     bool ok = qa_combat_set_traits(application->combat, request->target,
                                     &traits, error) &&
               qa_combat_set_health(application->combat, request->target,
-                                    -999, error) &&
-              qa_combat_source_reaction(application->combat, request,
+                                    final_health, error);
+    if (ok && react)
+        ok = qa_combat_source_reaction(application->combat, request,
                                          &outcome.result, error);
-    if (ok && qa_actors_get(actors, request->target) != NULL)
+    if (ok && react && qa_actors_get(actors, request->target) != NULL)
         ok = selected_reaction(application, &outcome, error);
-    if (ok)
+    if (ok && react)
         ok = confirmed_damage(application, &outcome, error);
     application->operation = previous;
     return ok;
+}
+
+bool application_force_death(void *opaque, const qa_damage_request *request,
+                              qa_error *error)
+{
+    return force_death(opaque, request, -999, false, error);
+}
+
+bool application_source_force_death(qa_application *application,
+    const qa_damage_request *request, int32_t final_health, qa_error *error)
+{
+    return force_death(application, request, final_health, true, error);
 }
 
 static bool combat_invulnerable(void *opaque, qa_actor_id actor)

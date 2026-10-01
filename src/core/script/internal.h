@@ -58,6 +58,7 @@ struct qa_script_defines {
     atomic_uint references;
     script_macro_table table;
     script_macro *first;
+    struct qa_script_defines *retired;
 };
 typedef struct script_expansion {
     const script_macro *macro;

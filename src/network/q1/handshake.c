@@ -402,7 +402,7 @@ static bool qw_command(const qa_qw_connection_host *host, qa_qw_challenges *chal
         int32_t sequence = -1; const char *text = NULL;
         if (args->count > 1 && !decimal_prefix(argument(args, 1), &sequence))
             return fail(error, QA_ERROR_FORMAT, "Invalid QuakeWorld log sequence");
-        if (!host->log) return fail(error, QA_ERROR_ARGUMENT, "Missing QuakeWorld log provider");
+        if (!host->log) return reply_text(reply, reply_context, "", "m", error);
         return host->log(host->context, sequence, &text, error) &&
                reply_text(reply, reply_context, "", text ? text : "m", error);
     }

@@ -224,6 +224,7 @@ bool qa_font_truetype_load(qa_font_library *library, const qa_font_truetype_opti
                            const qa_font **out, qa_error *error) {
     if (!library || !options || !options->path || !out || options->pixel_size == 0)
         return qa_font_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid TrueType font request");
+    if (!qa_font_internal_admission_ready(library,error)) return false;
     uint32_t atlas_width = options->atlas_width ? options->atlas_width : 1024u;
     uint32_t atlas_height = options->atlas_height ? options->atlas_height : 2048u;
     if (atlas_width > SIZE_MAX / atlas_height / 4u)

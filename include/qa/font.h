@@ -14,7 +14,8 @@ typedef enum qa_font_kind {
     QA_FONT_CLASSIC,
     QA_FONT_KFONT,
     QA_FONT_TRUETYPE,
-    QA_FONT_Q3
+    QA_FONT_Q3,
+    QA_FONT_ATLAS
 } qa_font_kind;
 
 typedef enum qa_font_color_policy { QA_FONT_TINTED, QA_FONT_BAKED_COLOR } qa_font_color_policy;
@@ -78,6 +79,10 @@ qa_font_library *qa_font_library_create(qa_vfs *, qa_scene_resources *, qa_error
 void qa_font_library_destroy(qa_font_library *);
 bool qa_font_classic_create(qa_font_library *, const char *name, const qa_scene_image *,
                             qa_font_color_policy, const qa_font **out, qa_error *);
+/* Explicit authored atlas metrics; the library retains the actual image and
+ * copies glyph values. Each glyph belongs to that single immutable image. */
+bool qa_font_atlas_create(qa_font_library *, const char *name, const qa_scene_image *,
+    const qa_font_glyph *, size_t, float line_height, const qa_font **, qa_error *);
 bool qa_font_kfont_load(qa_font_library *, const char *path, const qa_font **out, qa_error *);
 bool qa_font_truetype_load(qa_font_library *, const qa_font_truetype_options *, const qa_font **out,
                            qa_error *);

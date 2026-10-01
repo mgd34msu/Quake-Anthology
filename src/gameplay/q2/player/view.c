@@ -163,12 +163,16 @@ static bool flashing(uint64_t until, uint64_t now) {
            (until - now > 3 * Q2_NS || (((until - now + 50 * Q2_MS) / (100 * Q2_MS)) & 4) != 0);
 }
 bool q2_player_loop(qa_q2_game *g, q2_actor *a, qa_string_id loop, qa_error *e) {
+    if (!q2_actor_live(g, a->id))
+        return true;
     q2_client_state *s = a->client;
     if (loop == s->loop_sound)
         return true;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, a->id, &body, e))
-        return false;
+        return !q2_actor_live(g, a->id);
+    if (!q2_actor_live(g, a->id))
+        return true;
     qa_builtin_event event = {.family = QA_GAME_Q2,
                               .provider = g->options.owner,
                               .actor = a->id,

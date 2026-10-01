@@ -10,6 +10,8 @@
 #include "bot_world.h"
 #include "bots_transport.h"
 #include "bots_catalog.h"
+#include "bots_guests.h"
+#include "bots_knowledge.h"
 #include <limits.h>
 
 typedef struct bot_app_record {
@@ -20,9 +22,9 @@ static const uint8_t bots_magic[8]={'Q','A','B','A','P','P',0,0};
 static const uint8_t nav_magic[8]={'Q','A','N','A','P','P',0,0};
 
 static bool app_signature(qa_source_save_io *io) {
-    uint8_t magic[8];memcpy(magic,bots_magic,sizeof(magic));uint32_t version=7;
+    uint8_t magic[8];memcpy(magic,bots_magic,sizeof(magic));uint32_t version=9;
     return qa_source_save_bytes(io,magic,sizeof(magic)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(magic,bots_magic,sizeof(magic)) && version==7?true:
+        (!memcmp(magic,bots_magic,sizeof(magic)) && version==9?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported application bot continuation schema"));
 }
 
@@ -51,6 +53,36 @@ static bool provider_field(qa_source_save_io *io,qa_application *app,application
     if((owner && !actual) || (required && !actual)) return bot_save_fail(io,QA_ERROR_FORMAT,"Application bot provider identity is absent");
     if(io->direction==QA_SOURCE_SAVE_READ) *value=actual;
     else if(actual!=*value) return bot_save_fail(io,QA_ERROR_FORMAT,"Application bot provider is outside selected inventory");
+    return true;
+}
+static bool knowledge_field(qa_source_save_io *io,application_bots *bots) {
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    application_bot_knowledge_owner *owner=bots->knowledge_owner;
+    size_t count=reading?0:owner?owner->count:0;
+    if(!qa_source_save_count(io,&count,SIZE_MAX/sizeof(application_bot_knowledge_actor))) return false;
+    if(reading && count) {
+        if(count>(io->input.size-io->offset)/17)
+            return bot_save_fail(io,QA_ERROR_FORMAT,"Truncated weapon-handle knowledge map");
+        owner=calloc(1,sizeof(*owner));
+        if(!owner) return bot_save_fail(io,QA_ERROR_MEMORY,"Restoring actual weapon-handle knowledge owner");
+        bots->knowledge_owner=owner;
+        owner->actors=calloc(count,sizeof(*owner->actors));
+        if(!owner->actors) return bot_save_fail(io,QA_ERROR_MEMORY,"Restoring retained weapon-handle actor map");
+        owner->count=owner->capacity=count;
+    }
+    if(count && (!owner || !owner->actors || owner->count>owner->capacity))
+        return bot_save_fail(io,QA_ERROR_FORMAT,"Weapon-handle knowledge map has no actual allocation");
+    for(size_t i=0;i<count;++i) {
+        application_bot_knowledge_actor *entry=owner->actors+i;
+        if(!qa_source_save_u32(io,&entry->handle) || entry->handle>INT32_MAX ||
+           !qa_source_save_actor(io,&entry->actor) || !entry->actor.registry ||
+           !provider_field(io,bots->application,&entry->provider,true) ||
+           (entry->provider->kind!=APPLICATION_PROVIDER_Q1 && entry->provider->kind!=APPLICATION_PROVIDER_Q2 &&
+            entry->provider->kind!=APPLICATION_PROVIDER_Q3))
+            return bot_save_fail(io,QA_ERROR_FORMAT,"Invalid actual selected-arsenal knowledge identity");
+        for(size_t j=0;j<i;++j) if(owner->actors[j].handle==entry->handle)
+            return bot_save_fail(io,QA_ERROR_FORMAT,"Duplicate retained weapon-handle knowledge key");
+    }
     return true;
 }
 /* Bot file views are constructor clones with read-only script consumers. Their
@@ -163,8 +195,7 @@ static bool snapshot_field(qa_source_save_io *io,application_bots *bots) {
 static bool fields(qa_source_save_io *io,application_bots *bots,bot_app_record *record) {
     qa_application *app=bots->application;
     if(!provider_field(io,app,&bots->source,true) || !map_field(io,bots) || !files_field(io,bots) || !qa_source_save_u32(io,&bots->capacity) ||
-        bots->capacity>INT32_MAX || bots->capacity>SIZE_MAX/sizeof(*bots->seats) ||
-        !qa_source_save_u32(io,&bots->metadata_weapon)) return false;
+        bots->capacity>INT32_MAX || bots->capacity>SIZE_MAX/sizeof(*bots->seats)) return false;
     if(io->direction==QA_SOURCE_SAVE_READ && bots->capacity) {
         if(bots->capacity>(io->input.size-io->offset)/14) return bot_save_fail(io,QA_ERROR_FORMAT,"Truncated application bot seats");
         bots->seats=calloc(bots->capacity,sizeof(*bots->seats));
@@ -188,7 +219,7 @@ static bool fields(qa_source_save_io *io,application_bots *bots,bot_app_record *
         }
         if(!provider_field(io,app,&guest->provider,true) || !qa_source_save_u32(io,&guest->client_base) ||
             !qa_source_save_u32(io,&guest->entity_base) || guest->client_base>INT32_MAX-64u ||
-            guest->entity_base>INT32_MAX-1024u) return false;
+            guest->entity_base>INT32_MAX-1024u || !application_bots_guest_fields(io,guest)) return false;
         for(application_bot_guest *previous=bots->guests;previous!=guest;previous=previous->next)
             if(previous->provider==guest->provider ||
                 (guest->client_base<previous->client_base+64 && previous->client_base<guest->client_base+64) ||
@@ -202,7 +233,7 @@ static bool fields(qa_source_save_io *io,application_bots *bots,bot_app_record *
     return qa_source_save_bool(io,&shared) && (!shared || native_shared) &&
         qa_source_save_bool(io,&catalogue) && qa_source_save_bool(io,&bots->catalogue_ready) &&
         (!bots->catalogue_ready || catalogue) && (!catalogue || shared || bots->source->kind==APPLICATION_PROVIDER_Q3) &&
-        snapshot_field(io,bots) && section(io,&record->requirements) && record->requirements.size &&
+        snapshot_field(io,bots) && knowledge_field(io,bots) && section(io,&record->requirements) && record->requirements.size &&
         section(io,&record->runtime) && record->runtime.size && section(io,&record->population) &&
         section(io,&record->shared_world) && section(io,&record->transport) &&
         section(io,&record->catalogue) && (record->catalogue.size!=0)==catalogue &&
@@ -456,6 +487,7 @@ bool application_bots_save_restore(qa_application *app,qa_bytes bytes,qa_error *
     }
     ok=ok && (!saved.name || (name && !strcmp(saved.name,name))) &&
         qa_bot_runtime_save_restore(app->session,bots->runtime,bots->saved_runtime,saved.name?&map:NULL,error) &&
+        application_bots_guests_restore(bots,error) &&
         (!bots->population || qa_bots_population_restore(bots->population,bots->saved_population,error));
     if(ok && bots->saved_catalogue.size)
         ok=application_bots_catalog_create(bots,error) && qa_bot_catalog_restore(bots->catalogue,bots->saved_catalogue,error);
@@ -477,20 +509,17 @@ static bool guest_selected(application_provider *p) {
 static bool agreement(application_bots *bots,qa_error *error) {
     qa_application *app=bots->application;
     if(bots->map_resource!=app->map_resource || !bots->runtime ||
-        bots->metadata_weapon>bots->saved_requirements.runtime.maximum_states ||
-        (bots->population && !bots->metadata_weapon) ||
-        (bots->metadata_weapon && !qa_bot_runtime_closed(bots->runtime) &&
-            !qa_bot_runtime_weapon_has_handle(bots->runtime,bots->metadata_weapon)))
-        return application_fail(error,QA_ERROR_FORMAT,"Application bot map or metadata handle differs");
+       bots->saved_requirements.runtime.maximum_states!=64)
+        return application_fail(error,QA_ERROR_FORMAT,"Application bot map or actual source handle capacity differs");
     size_t guests=0;for(application_bot_guest *g=bots->guests;g;g=g->next) ++guests;
-    if(guests>UINT32_MAX/64 || bots->saved_requirements.runtime.minimum_clients<guests*64)
+    if(guests>UINT32_MAX/64 || bots->saved_requirements.runtime.observations!=QA_BOT_OBSERVATION_NATIVE)
         return application_fail(error,QA_ERROR_FORMAT,"Application guest bot namespace capacity differs");
-    uint32_t base=bots->saved_requirements.runtime.minimum_clients-(uint32_t)guests*64;
+    uint32_t base=bots->saved_requirements.runtime.minimum_clients;
     uint32_t entity_base=base>1024u?base:1024u;
     if(base>qa_actors_capacity(qa_session_actors(app->session)))
         return application_fail(error,QA_ERROR_FORMAT,"Application guest bot namespace origin exceeds restored actor extent");
     for(application_bot_guest *g=bots->guests;g;g=g->next) {
-        if(!guest_selected(g->provider) || g->client_base<base || (g->client_base-base)%64 ||
+        if(!g->runtime || g->runtime==bots->runtime || !guest_selected(g->provider) || g->client_base<base || (g->client_base-base)%64 ||
             (g->client_base-base)/64>=guests ||
             (uint64_t)entity_base+(uint64_t)((g->client_base-base)/64)*1024!=g->entity_base)
             return application_fail(error,QA_ERROR_FORMAT,"Application guest bot namespace differs from its source owner");
@@ -564,5 +593,6 @@ bool application_bots_save_finish(qa_application *app,qa_error *error) {
     }
     bots->saved_bot_record=(qa_bytes){0};bots->saved_navigation_record=(qa_bytes){0};
     bots->saved_runtime=(qa_bytes){0};bots->saved_population=(qa_bytes){0};
-    bots->saved_shared_world=(qa_bytes){0};bots->saved_transport=(qa_bytes){0};bots->saved_catalogue=(qa_bytes){0};return true;
+    bots->saved_shared_world=(qa_bytes){0};bots->saved_transport=(qa_bytes){0};bots->saved_catalogue=(qa_bytes){0};
+    application_bots_guests_finish(bots);return true;
 }

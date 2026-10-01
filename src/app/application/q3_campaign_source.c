@@ -129,7 +129,7 @@ bool qa_application_q3_campaign_local_seat(qa_application *app,
             !qa_q3_source_binding_read(view->source_game, slot, &binding, error) ||
             !qa_q3_client_slot_read(view->source_game, slot, &client, error))
             return application_fail(error, QA_ERROR_ARGUMENT, "Campaign result names an invalid physical client");
-        if (!binding.in_use || !binding.actor.registry || client.bot ||
+        if (!binding.in_use || !binding.actor.registry || (binding.server_flags & 8u) ||
             client.connected == QA_Q3_CLIENT_DISCONNECTED || !app->players) return true;
         source_actor = binding.actor;
         if (!qa_q3_native_client_slot(view->source_game, source_actor, &actual_slot, error) || actual_slot != slot)
@@ -155,6 +155,49 @@ bool qa_application_q3_campaign_local_seat(qa_application *app,
         if (*found) return application_fail(error, QA_ERROR_ARGUMENT, "Campaign physical client has ambiguous local seats");
         *found = true; *seat = row->seat; *actor = row->actor;
     }
+    return true;
+}
+bool qa_application_q3_campaign_player_name(qa_application *app,
+    const qa_application_q3_campaign *view, uint32_t slot, char out[80], qa_error *error)
+{
+    if (!out || !qa_application_q3_campaign_current(app, view))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Campaign name lookup lost its actual GAME cut");
+    char name[80] = {0}; qa_actor_id actor = {0}; uint32_t actual_slot;
+    if (view->native_source) {
+        uint32_t maximum; qa_q3_source_binding binding; qa_q3_native_client client;
+        if (!qa_q3_source_max_clients(view->source_game, &maximum, error) || slot >= maximum ||
+            !qa_q3_source_binding_read(view->source_game, slot, &binding, error) ||
+            !qa_q3_client_slot_read(view->source_game, slot, &client, error))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Campaign name lookup names an invalid physical client");
+        if (!binding.actor.registry || binding.client_slot != (int32_t)slot ||
+            client.connected == QA_Q3_CLIENT_DISCONNECTED ||
+            !qa_q3_native_client_slot(view->source_game, binding.actor, &actual_slot, error) || actual_slot != slot)
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Campaign name has no live physical native client binding");
+        if (!memchr(client.netname, 0, sizeof(client.netname)))
+            return application_fail(error, QA_ERROR_FORMAT, "Campaign native client name is unterminated");
+        actor = binding.actor;
+        memcpy(name, client.netname, strlen(client.netname));
+    } else {
+        struct application_q3_guest *engine = q3g_engine(primary(app));
+        if (slot >= (uint32_t)engine->loaded_max_clients || slot >= 64)
+            return application_fail(error, QA_ERROR_ARGUMENT, "Original campaign name lookup names an invalid physical client");
+        const q3g_client *client = engine->clients + slot;
+        if (!client->allocated || !client->connected || client->pending_retirement ||
+            client->disconnect_pending || !client->actor.registry ||
+            !qa_q3_host_actor_slot(view->original_host, client->actor, &actual_slot, error) || actual_slot != slot)
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Campaign name has no live physical original client binding");
+        actor = client->actor;
+        char value[8192];
+        const char *info = qa_q3_configstring(&engine->gamestate, 544u + slot);
+        if (!info || !qa_q3_info_value(info, "n", value, sizeof(value), error)) return false;
+        size_t length = strlen(value);
+        if (length >= sizeof(name)) length = sizeof(name) - 1;
+        memcpy(name, value, length);
+    }
+    if (!qa_actors_get(qa_session_actors(app->session), actor) ||
+        !qa_application_q3_campaign_current(app, view))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Campaign name lost its current source actor");
+    memcpy(out, name, sizeof(name));
     return true;
 }
 bool qa_application_q3_campaign_menu_read(qa_application *app, qa_actor_owner receiver,

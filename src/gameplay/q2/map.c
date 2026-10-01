@@ -65,7 +65,9 @@ bool qa_q2_begin_map(qa_q2_game *game, qa_string_id map_name, qa_string_id spawn
     char *owned[5];
     memcpy(owned, players->rule_strings, sizeof(owned));
     q2_player_list *lists = players->lists;
-    *players = (q2_players){.rules = rules, .services = services, .lists = lists};
+    qa_string_id *rotation_maps = players->rotation_maps;
+    *players = (q2_players){.rules = rules, .services = services,
+                            .rotation_maps = rotation_maps, .lists = lists};
     memcpy(players->rule_strings, owned, sizeof(owned));
     for (q2_player_list *list = lists; list; list = list->next)
         list->count = 0;

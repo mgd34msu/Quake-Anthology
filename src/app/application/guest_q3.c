@@ -5,6 +5,7 @@
 #include "guest_q3_restart.h"
 #include "guest_q3_console.h"
 #include "q3_campaign_launch.h"
+#include "guest_q3_factory.h"
 
 struct application_q3_guest *q3g_engine(application_provider *provider)
 {
@@ -22,7 +23,14 @@ bool q3g_call(q3g_role *role, int32_t command, const int32_t *arguments, size_t 
         !result || count > 9 || (count && !arguments))
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 guest entry");
     if (!q3g_role_activate(role, error)) return false;
+    bool drawing = role->equipment && role->kind == QA_QVM_CGAME && command == 3;
     ++role->engine->calls;
+    if (drawing && !application_q3_equipment_draw_begin(role->equipment, error)) {
+        --role->engine->calls;
+        return false;
+    }
+    bool init = command == (role->kind == QA_QVM_UI ? 1 : 0);
+    if (init) role->init_succeeded = false;
     bool ok;
     if (role->native) {
         ok = qa_native_host_q3_vm_call(role->native, command, arguments, count, result, error);
@@ -37,7 +45,9 @@ bool q3g_call(q3g_role *role, int32_t command, const int32_t *arguments, size_t 
             qa_qvm_invoke_started(role->vm, 0, words, count + 1, result, &role->initialized, error) :
             qa_qvm_invoke(role->vm, 0, words, count + 1, result, error);
     }
+    if (drawing) application_q3_equipment_draw_end(role->equipment);
     --role->engine->calls;
+    if (init && ok && role->initialized) role->init_succeeded = true;
     return ok;
 }
 
@@ -157,7 +167,9 @@ bool application_construct_q3_guest(qa_application *application, application_pro
                                       qa_world *world, const qa_product *product,
                                       const qa_launch_choices *choices, qa_error *error)
 {
-    if (!application_guest_q3_create_empty(application, provider, world, product, choices, false, error))
+    bool prepared = q3g_engine(provider) != NULL;
+    if (prepared ? !application_guest_q3_factory_reuse(application, provider, world, product, choices, error) :
+        !application_guest_q3_create_empty(application, provider, world, product, choices, false, error))
         return false;
     struct application_q3_guest *engine = q3g_engine(provider);
     const char *path = provider->launch->selection.artifact;
@@ -208,7 +220,7 @@ bool application_q3_guest_client_sources_rebuild(application_provider *provider,
         !qa_session_safe(application->session) || !qa_world_idle(engine->world) ||
         qa_actors_count(qa_session_actors(application->session)) ||
         !application_q3_guest_idle(provider) || !next_game || next_game->application != application ||
-        (next_game->kind == APPLICATION_PROVIDER_Q3 && q3g_native_game_source(application) != next_game))
+        q3g_game_source(application) != next_game)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client reconstruction requires its admitted empty world topology");
     const char *path = provider->launch->selection.artifact;
     qa_qvm_role kind = q3g_primary_role(path);
@@ -220,7 +232,7 @@ bool application_q3_guest_client_sources_rebuild(application_provider *provider,
     if (!selected)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 standalone client artifact has no selected actual seat");
     for (q3g_role *role = engine->roles; role; role = role->next)
-        if (role->native_client && role->client_source != next_game)
+        if (role->local_client && role->client_source && role->client_source != next_game)
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client still borrows its old physical GAME source");
     for (size_t i = 0; i < 64; ++i)
         engine->seats[i] = i < choices->seat_count ? choices->seats[i].id : UINT32_MAX;
@@ -366,7 +378,7 @@ bool application_q3_guest_deconstruct(application_provider *provider, qa_error *
 {
     struct application_q3_guest *engine = q3g_engine(provider);
     if (!engine) return true;
-    if (engine->calls || !qa_world_idle(engine->world) || !application_guest_q3_console_idle(engine))
+    if (engine->calls || engine->client_leases || !qa_world_idle(engine->world) || !application_guest_q3_console_idle(engine))
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 guest owner or world callbacks are executing");
     qa_error first = {0};
     bool ok = true;
@@ -409,11 +421,14 @@ bool application_q3_guest_deconstruct(application_provider *provider, qa_error *
         q3g_artifact *artifact = engine->artifacts; engine->artifacts = artifact->next;
         qa_qvm_image_release(artifact->image); qa_native_module_release(artifact->module);
         qa_native_declaration_destroy(artifact->declaration); qa_buffer_free(&artifact->primary);
+        qa_resource_release(artifact->resource); qa_vfs_acquisition_dispose(&artifact->acquisition);
+        qa_launch_instance_lease_release(artifact->descriptor);
         qa_buffer_free(&artifact->equipment_presentation);
         application_q3_equipment_profile_free(&artifact->equipment_profile);
         free(artifact->path); free(artifact);
     }
     application_guest_q3_save_clear(engine);
+    qa_launch_instance_lease_release(engine->client_descriptor);
     free(engine->entity_text); free(engine);
     if (!ok && error) *error = first;
     return ok;
@@ -468,6 +483,7 @@ bool application_q3_guest_idle(const application_provider *provider)
     if (!engine) return true;
     if (engine->calls || !application_guest_q3_console_idle(engine)) return false;
     for (const q3g_role *role = engine->roles; role; role = role->next) {
+        if (role->equipment && !application_q3_equipment_idle(role->equipment)) return false;
         if (role->vm && !qa_qvm_can_destroy(role->vm)) return false;
         if (role->native && !qa_native_can_destroy(qa_native_host_instance(role->native))) return false;
     }

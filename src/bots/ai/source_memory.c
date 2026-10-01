@@ -26,6 +26,18 @@ bool qa_bot_source_record_alias(qa_bot_source_record record,uint32_t offset,uint
     }
     *out=(qa_bot_source_record){record.offset+offset,length};return true;
 }
+bool qa_bot_source_record_span(const qa_bot_source_memory *memory,qa_bot_source_record record,
+    qa_bot_source_span *out,qa_error *error) {
+    if(!memory || !memory->borrow_span || !out || !bounds(record,error)) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"bot source span requires its actual bounded GAME pool owner");return false;
+    }
+    uint8_t *bytes=NULL;
+    if(!memory->borrow_span(memory->context,record.offset,record.length,&bytes,error)) return false;
+    if(!bytes && record.length) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"bot source span has no actual retained GAME bytes");return false;
+    }
+    *out=(qa_bot_source_span){bytes,record.length};return true;
+}
 bool qa_bot_source_record_read(const qa_bot_source_memory *memory,qa_bot_source_record record,void *out,qa_error *error) {
     if(!memory || !memory->read || (!out && record.length) || !bounds(record,error)) return false;
     return memory->read(memory->context,record.offset,out,record.length,error);

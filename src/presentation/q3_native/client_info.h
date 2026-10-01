@@ -2,6 +2,7 @@
 #define QA_Q3_NATIVE_CLIENT_INFO_H
 
 #include "qa/application_native_q3_presentation.h"
+#include "qa/application_native_q3_wire.h"
 #include "qa/q3_presentation.h"
 
 typedef struct q3n_clients q3n_clients;
@@ -30,6 +31,7 @@ typedef struct q3n_client_options {
     qa_vfs *content;
     qa_q3_presentation_assets *assets;
     qa_q3_product product;
+    qa_native_q3_wire_reader *reader;
     void *context;
     void (*print)(void *, const char *);
 } q3n_client_options;
@@ -37,7 +39,8 @@ bool q3n_clients_create(const q3n_client_options *, q3n_clients **, qa_error *);
 void q3n_clients_destroy(q3n_clients *);
 bool q3n_clients_idle(const q3n_clients *);
 const q3n_client_info *q3n_clients_get(const q3n_clients *, uint32_t physical_client);
-/* Reads CS_PLAYERS through the actual currently published GAME observer.
+/* Reads CS_PLAYERS through the borrowed wire client's reached gamestate.
+ * The physical GAME observer still qualifies source and actor lifetime.
  * Successful media replacement increments media_revision to reset real poses. */
 bool q3n_clients_sync(q3n_clients *, qa_application *,
     const qa_application_native_q3_presentation *, const q3n_client_settings *, qa_error *);

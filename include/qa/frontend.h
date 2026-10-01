@@ -14,9 +14,10 @@ typedef struct qa_frontend_options {
     qa_application_options application;
     qa_display_options display;
     const char *game, *map_game, *map;
-    const char *movement, *character;
+    const char *movement, *character, *character_model;
     const char *font_directory, *font_file;
     const char *network_host, *network_connect;
+    const char *native_runtime_root, *native_wine;
     qa_net_protocol_id network_protocol;
     uint16_t network_port;
     const char **mods;

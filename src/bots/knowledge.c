@@ -38,11 +38,16 @@ static int32_t inventory_value(const int32_t *inventory,int32_t index)
 }
 static bool owned(const qa_bot_weapon_knowledge *c,const int32_t *inventory)
 {
-    return inventory_value(inventory,c->weapon.weapon_inventory)>0;
+    if(c->personality_role<0) return inventory_value(inventory,c->weapon.weapon_inventory)>0;
+    const role_profile *p=profile(c->personality_role);
+    return p && inventory_value(inventory,p->weapon)>0;
 }
 static int32_t ammunition(const qa_bot_weapon_knowledge *c,const int32_t *inventory)
 {
-    return c->weapon.ammo_amount==0 ? 999 : inventory_value(inventory,c->weapon.ammo_inventory);
+    if(c->personality_role<0)
+        return c->weapon.ammo_amount==0 ? 999 : inventory_value(inventory,c->weapon.ammo_inventory);
+    const role_profile *p=profile(c->personality_role);
+    return !p?0:p->ammo<0?999:inventory_value(inventory,p->ammo);
 }
 bool qa_bot_knowledge_choose(qa_bot_runtime *runtime,uint32_t handle,
                               const qa_bot_weapon_knowledge *candidates,size_t count,
@@ -60,13 +65,13 @@ bool qa_bot_knowledge_choose(qa_bot_runtime *runtime,uint32_t handle,
         const qa_bot_weapon_knowledge *c=candidates+i;
         int32_t role=qa_bot_weapon_role(c);
         const int32_t *observed=inventory;
-        if (!c->weapon.valid || !owned(c,inventory) || ammunition(c,inventory)<c->weapon.ammo_amount ||
-            (c->ranged_limit && distance>c->maximum_range)) continue;
+        if (!c->weapon.valid) continue;
         const role_profile *p=profile(role);
         if (!p) continue;
-        bool projection=c->weapon.weapon_inventory!=p->weapon ||
-            (p->ammo>=0 && c->weapon.ammo_inventory!=p->ammo);
+        bool projection=c->personality_role<0;
         if (projection) {
+            if(!owned(c,inventory) || ammunition(c,inventory)<c->weapon.ammo_amount ||
+               (c->ranged_limit && distance>c->maximum_range)) continue;
             scratch[p->weapon]=1;
             if (p->ammo>=0) scratch[p->ammo]=ammunition(c,inventory);
             observed=scratch;
@@ -80,7 +85,7 @@ bool qa_bot_knowledge_choose(qa_bot_runtime *runtime,uint32_t handle,
         }
         if (!ok) return false;
         if (!found) continue;
-        double rate=c->weapon.reload>0 ? (double)c->projectile.damage*c->weapon.projectile_count/c->weapon.reload : 0;
+        double rate=c->weapon.reload>0 ? c->selected_projectile_damage*c->weapon.projectile_count/c->weapon.reload : 0;
         if (weight>best || (weight>0 && weight==best && role==best_role && rate>best_rate)) {
             best=weight; choice=c->weapon.number; best_role=role; best_rate=rate;
         }
@@ -99,7 +104,8 @@ int32_t qa_bot_knowledge_activation(const qa_bot_weapon_knowledge *candidates,si
             const qa_bot_weapon_knowledge *c=candidates+i;
             if (!c->weapon.valid || c->melee || c->projectile.gravity!=0 ||
                 !owned(c,inventory) || qa_bot_weapon_role(c)!=roles[r]) continue;
-            if (ammunition(c,inventory)>=c->weapon.ammo_amount)
+            if (c->personality_role<0?ammunition(c,inventory)>=c->weapon.ammo_amount:
+                ammunition(c,inventory)>0)
                 return c->weapon.number;
         }
     }

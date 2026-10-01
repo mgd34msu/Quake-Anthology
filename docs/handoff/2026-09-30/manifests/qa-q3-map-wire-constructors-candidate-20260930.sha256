@@ -1,0 +1,7 @@
+284e9b693873840e7a5c5783fd91e921a87fb48839032b7548a2403cb8ae1943  src/gameplay/q3/map/spawn.c
+eb3af1a74b412bc8698cd4da5d8adc444bd27febde7c66f2b62c62f62170c521  src/gameplay/q3/map/items.c
+e5b0865be480eda56419251db1126077e0aab9b1811bfff441bf9aafcef31928  src/gameplay/q3/map/movers.c
+a45b9eae05862027453cb11d4e633bce4a33c5c3ad3537f1f27bad935725e7f9  src/gameplay/q3/map/misc.c
+13d322708a213272a58a8088b2edc4a046b56b504069f759f1ab1f026fbdc62b  src/gameplay/q3/map/triggers.c
+4b0cb6e2ed3e6175e4dc573decb1605d612c49984f65d3b749462a781e4bb042  src/gameplay/q3/map/targets.c
+05a58890bb8abc64caafddd2e9b102cc10a1c1cb83e44314f006bb09dd26a715  src/gameplay/q3/movers.c

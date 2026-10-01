@@ -1,4 +1,5 @@
 #include "audio_restore.h"
+#include "ui_features.h"
 #include "save_private.h"
 #include "native_q2_save.h"
 #include "qa/persistence_content.h"
@@ -82,6 +83,8 @@ static bool holders(qa_frontend *f, qa_audio_asset ***out, size_t *count, qa_err
         }
     }
     ok = ok && frontend_event_audio_assets_read(f, &part, &size, error) && append(out, count, part, size, error);
+    free(part); part=NULL; size=0;
+    ok=ok && frontend_ui_features_assets_read(f,&part,&size,error) && append(out,count,part,size,error);
     free(part); return ok;
 }
 static bool header(qa_source_save_io *io, const bank_inventory *inventory)

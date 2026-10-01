@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "q3_product.h"
+#include "startup_flow.h"
 
 #include <stdlib.h>
 
@@ -109,6 +110,7 @@ bool application_composition_destroy(qa_application *application,
 {
     if (application == NULL || application->configuration == NULL)
         return true;
+    if (!qa_application_startup_abort(application, error)) return false;
     qa_configuration *configuration = application->configuration;
     if (!qa_configuration_destroy(configuration, error))
         return false;
@@ -119,6 +121,10 @@ bool application_composition_destroy(qa_application *application,
 bool application_apply(qa_application *application,
                        const qa_launch_draft *draft, qa_error *error)
 {
+    if (qa_application_startup_pending(application))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Startup configuration already retains a candidate");
+    if (application->startup_hooks)
+        return application_startup_flow_begin(application, draft, error);
     application_q3_product_preparation prepared = {0};
     if (!application_q3_product_prepare_draft(application, draft, &prepared, error))
         return false;

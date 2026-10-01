@@ -28,6 +28,8 @@ static void usage(FILE *stream)
           "  --host ADDRESS --port N  Select server endpoint\n"
           "  --connect ADDRESS        Select remote endpoint\n"
           "  --protocol NAME          Select explicit wire protocol\n"
+          "  --native-runtime-root PATH Native helper and runtime directory\n"
+          "  --native-wine FILE       Wine launcher override\n"
           "  --renderer cpu|gl        Select native output\n"
           "  --width N --height N     Set window dimensions\n"
           "  --seats 1..4             Local player seats\n"

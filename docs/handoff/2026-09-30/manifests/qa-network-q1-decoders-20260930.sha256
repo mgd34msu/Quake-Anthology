@@ -1,0 +1,3 @@
+30a086188972fbe2405b4911abe8342f4a91512922e4b48397236432fd0dd6ef  include/qa/network_q1_decoder_save.h
+35b6f8497ee62ca8cc4a1e2e4925b7c6a26911bfa12e2aebb113783dc95fff62  src/network/q1/netquake.c
+0e4c09e7181dae74dd81dc39bf47fd9678fc80c16b13267137d71726bfad3cc2  src/network/q1/quakeworld.c

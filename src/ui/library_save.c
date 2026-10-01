@@ -32,11 +32,17 @@ static bool text(qa_source_save_io *io, char **owned)
     }
     return true;
 }
+static bool optional_text(qa_source_save_io *io, char **owned)
+{
+    bool present = *owned != NULL;
+    if (!qa_source_save_bool(io, &present)) return false;
+    return !present || text(io, owned);
+}
 static bool profiles(qa_source_save_io *io, qa_ui_library *saved)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     size_t count = saved->local_player_count;
-    size_t maximum = reading ? (io->input.size - io->offset) / 47 : SIZE_MAX / sizeof(library_profile);
+    size_t maximum = reading ? (io->input.size - io->offset) / 51 : SIZE_MAX / sizeof(library_profile);
     if (maximum > SIZE_MAX / sizeof(library_profile)) maximum = SIZE_MAX / sizeof(library_profile);
     if (!qa_source_save_count(io, &count, maximum) || !count) return false;
     if (reading) {
@@ -48,19 +54,29 @@ static bool profiles(qa_source_save_io *io, qa_ui_library *saved)
     for (size_t i = 0; i < count; ++i) {
         library_profile copy = reading ? (library_profile){0} : saved->local_players[i];
         library_profile *p = reading ? &saved->local_players[i] : &copy;
-        if (!reading && (p->seat.name != p->name || p->seat.team != p->team)) return false;
+        if (!reading && (p->seat.name != p->name || p->seat.team != p->team ||
+            p->seat.character_model != p->character_model || p->seat.character_skin != p->character_skin ||
+            p->seat.character_head_model != p->character_head_model ||
+            p->seat.character_head_skin != p->character_head_skin)) return false;
         if (!qa_source_save_u32(io, &p->seat.id) ||
             !qa_source_save_u64(io, &p->seat.actor.registry) ||
             !qa_source_save_u64(io, &p->seat.actor.generation) ||
             !qa_source_save_u32(io, &p->seat.actor.slot) ||
             !text(io, &p->name) || !text(io, &p->team) ||
+            !optional_text(io, &p->character_model) || !optional_text(io, &p->character_skin) ||
+            !optional_text(io, &p->character_head_model) || !optional_text(io, &p->character_head_skin) ||
             !qa_source_save_u32(io, &p->seat.input_device) ||
             !qa_source_save_bool(io, &p->seat.local) ||
             !qa_source_save_bool(io, &p->seat.spectator) ||
             !qa_source_save_bool(io, &p->seat.bot) ||
             !qa_source_save_f32(io, &p->seat.bot_skill) ||
             !p->seat.local || p->seat.bot || p->seat.actor.registry) return false;
-        if (reading) { p->seat.name = p->name; p->seat.team = p->team; }
+        if (reading) {
+            p->seat.name = p->name; p->seat.team = p->team;
+            p->seat.character_model = p->character_model; p->seat.character_skin = p->character_skin;
+            p->seat.character_head_model = p->character_head_model;
+            p->seat.character_head_skin = p->character_head_skin;
+        }
         for (size_t j = 0; j < i; ++j)
             if (saved->local_players[j].seat.id == p->seat.id) return false;
         own_seat |= p->seat.id == saved->ui->options.seat;
@@ -169,10 +185,10 @@ static bool fields(qa_source_save_io *io, qa_ui_library *saved,
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
     uint8_t magic[4] = {'Q','L','I','B'};
-    uint32_t schema = 1, seat = qualified->ui->options.seat;
+    uint32_t schema = 2, seat = qualified->ui->options.seat;
     uint64_t menu = qualified->menu, catalog = 0;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QLIB", 4) ||
-        !qa_source_save_u32(io, &schema) || schema != 1 ||
+        !qa_source_save_u32(io, &schema) || schema != 2 ||
         !qa_source_save_u32(io, &seat) || seat != qualified->ui->options.seat ||
         !qa_source_save_u64(io, &menu) || menu != qualified->menu) return false;
     if (!reading && !refs->catalog_encode(refs->context, saved->catalog, &catalog, io->error)) return false;

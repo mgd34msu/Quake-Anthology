@@ -137,6 +137,7 @@ static bool spawn_trigger(qa_q3_game *game, qa_actor_id model, qa_vec3 origin,
     qa_body_state body = spawn.body;
     q3_wire_entity_source *wire = q3_wire_entity(game, actor);
     if (!wire) return q3_rollback_spawn(game, actor, error);
+    wire->type = 0;
     wire->authored_origin = origin;
     wire->position = (qa_trajectory){.type = QA_TRAJECTORY_STATIONARY, .base = origin};
     if (!(flags & 1u)) {

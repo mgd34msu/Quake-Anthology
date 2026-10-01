@@ -99,6 +99,13 @@ void q2_actor_order(qa_q2_game *g, q2_actor *a, uint64_t order) {
         g->actor_sequence = order;
 }
 float q2_random(qa_q2_game *g) { return qa_builtin_random_unit(&g->random); }
+bool qa_q2_game_random(qa_q2_game *g,float *out,qa_error *e) {
+    if(!g || !out || g->continuation_pending || g->continuation_failed || g->restoring_continuation) {
+        qa_error_set(e,QA_ERROR_ARGUMENT,0,"Q2 source random requires its actual constructed GAME owner");
+        return false;
+    }
+    *out=q2_random(g);return true;
+}
 float q2_crandom(qa_q2_game *g) { return q2_random(g) * 2.0f - 1.0f; }
 bool q2_noise_for_actor(qa_q2_game *g, qa_actor_id id, qa_vec3 origin, bool secondary,
                         qa_error *e) {

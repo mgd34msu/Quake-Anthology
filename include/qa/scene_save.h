@@ -17,4 +17,8 @@ size_t qa_scene_image_set_count(const qa_scene_image_set *);
 void qa_scene_image_set_destroy(qa_scene_image_set *);
 bool qa_scene_image_owner_index(const qa_scene_resources *const *owners, size_t count,
                                  const qa_scene_image *, size_t *index);
+/* A renderer retirement row has no active geometry allocation to revive.
+ * The returned descriptor owns one cache reference and is already inactive;
+ * its native buffer bytes belong exclusively to the restored renderer. */
+bool qa_scene_geometry_restore_retired(qa_scene_geometry **,qa_error *);
 #endif

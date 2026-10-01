@@ -164,8 +164,9 @@ static bool guest_load_collision(void *context, const char *path, qa_error *erro
     return true;
 }
 
-bool application_q3_guest_services(qa_application *application,
+bool application_q3_guest_services_descriptor(qa_application *application,
                                     application_provider *provider,
+                                    const qa_launch_instance *descriptor,
                                     qa_qvm_role role, uint32_t seat,
                                     uint64_t service_owner,
                                     qa_q3_host_options *out, qa_error *error)
@@ -173,7 +174,10 @@ bool application_q3_guest_services(qa_application *application,
     if (application == NULL || provider == NULL || out == NULL ||
         provider->application != application || !service_owner || (unsigned)role > QA_QVM_UI)
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 guest service request");
-    const qa_product *product = provider->product;
+    const qa_product *product = descriptor ? qa_catalog_product(qa_launch_instance_catalog(descriptor),
+        descriptor->selection.product) : NULL;
+    if (!descriptor || !product)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 services lack their real retained descriptor");
     const char *directory = product == NULL ? "" : product->directory;
     if (directory != NULL) {
         const char *last = strrchr(directory, '/');
@@ -182,7 +186,7 @@ bool application_q3_guest_services(qa_application *application,
     qa_q3_host_options services = {.role = role, .service_owner = service_owner,
         .session = application->session, .world = application->world,
         .owner = provider->owner, .cvars = application->cvars,
-        .console = application->console, .mounts = provider->launch->content,
+        .console = application->console, .mounts = descriptor->content,
         .game_directory = directory,
         .command_context = {.owner = provider->owner, .seat = seat,
             .dialect = QA_CONSOLE_Q3,
@@ -212,9 +216,15 @@ bool application_q3_guest_services(qa_application *application,
             provider->owner, role, seat, &services, error)) return false;
     if (role != QA_QVM_GAME && application->q3_services == NULL)
         return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 UI/cgame needs a platform/client service owner");
+    if (role != QA_QVM_GAME && descriptor != provider->launch &&
+        (!services.collision.geometry || !services.collision.load_map ||
+         services.collision.geometry == guest_geometry || services.collision.load_map == guest_load_collision))
+        return application_fail(error, QA_ERROR_ARGUMENT,
+            "Remote replacement requires its actual private map and collision services");
     if (services.session != application->session || services.owner != provider->owner ||
         services.service_owner != service_owner ||
         services.role != role || services.cvars == NULL || services.console == NULL ||
+        services.mounts != descriptor->content ||
         (role == QA_QVM_GAME &&
             (services.cvars != application_guest_q3_console_registry(provider) ||
              services.console != application_guest_q3_console_owner(provider) ||
@@ -222,6 +232,14 @@ bool application_q3_guest_services(qa_application *application,
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 services changed core ownership");
     *out = services;
     return true;
+}
+
+bool application_q3_guest_services(qa_application *application, application_provider *provider,
+    qa_qvm_role role, uint32_t seat, uint64_t service_owner,
+    qa_q3_host_options *out, qa_error *error)
+{
+    return application_q3_guest_services_descriptor(application, provider,
+        provider ? provider->launch : NULL, role, seat, service_owner, out, error);
 }
 
 bool application_q3_guest_native_options(qa_application *application,

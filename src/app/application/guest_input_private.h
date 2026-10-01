@@ -34,7 +34,21 @@ void application_guest_input_profile_free(application_guest_input_profile *);
 bool application_guest_input_attach(q3g_role *, qa_bytes primary, qa_error *);
 bool application_guest_input_detach(q3g_role *, qa_error *);
 bool application_guest_input_checkpoint(q3g_role *, qa_buffer *, qa_error *);
-bool application_guest_input_restore(q3g_role *, qa_bytes input, qa_bytes executor, qa_error *);
+/* These descriptors enumerate only this real owner. The composition owner
+ * qualifies the complete executor inventory together with equipment hooks. */
+bool application_guest_input_descriptors(q3g_role *, qa_qvm_saved_function [7],
+    size_t *count, qa_error *);
+typedef struct application_guest_input_saved {
+    qa_qvm_binding bindings[7];
+    size_t binding_count;
+    qa_movement_command applied_command;
+    qa_q3_usercmd projected_command;
+    bool command_projected, input_applied;
+} application_guest_input_saved;
+bool application_guest_input_prepare_restore(q3g_role *, qa_bytes,
+    application_guest_input_saved *, qa_error *);
+/* No-fail owner adoption after whole-executor identity reconstruction. */
+void application_guest_input_adopt_restore(q3g_role *, const application_guest_input_saved *);
 bool application_arsenal_guest_move(qa_application *, qa_actor_id,
                                      const qa_movement_command *, bool *handled,
                                      qa_error *);

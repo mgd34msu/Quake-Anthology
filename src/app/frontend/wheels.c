@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "wheels_save.h"
 
 static bool items(void *context, uint32_t id, qa_hud_wheel_mode mode,
                   const qa_hud_wheel_item **out, size_t *count, qa_error *error)
@@ -99,3 +100,19 @@ void frontend_wheel_command(void *context, qa_input_seat *input, bool powerups, 
         if (!ok) frontend_print(frontend, error.message);
     }
 }
+static bool wheel_item(void *context, qa_hud_wheel_mode mode, uint64_t item,
+    uint64_t *out, qa_error *error)
+{
+    frontend_seat *seat = context;
+    qa_frontend *frontend = seat ? seat->frontend : NULL;
+    if (!frontend || !frontend->application || !frontend->seats || !out ||
+        seat->id >= frontend->options.seats || frontend->seats + seat->id != seat || !seat->wheel ||
+        mode > QA_HUD_WHEEL_POWERUPS || !item || item > UINT32_MAX ||
+        !qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), (qa_string_id)item))
+        return frontend_fail(error, QA_ERROR_FORMAT, "Wheel item lacks its actual stable seat and saved item-string identity");
+    /* This producer uses the inventory's item string as its key. The complete
+     * string foundation preserves ordinals, including retired item names. */
+    *out = item; return true;
+}
+qa_hud_wheel_checkpoint_refs frontend_wheel_refs(frontend_seat *seat)
+{ return (qa_hud_wheel_checkpoint_refs){seat, wheel_item, wheel_item}; }

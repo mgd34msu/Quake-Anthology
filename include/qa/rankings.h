@@ -4,6 +4,10 @@
 #include "qa/common.h"
 
 typedef struct qa_rankings qa_rankings;
+/* Result classification of the last completed lifecycle operation. Only a
+ * failing installed provider callback sets this; local validation/allocation
+ * failures and an operation still in progress never qualify. */
+bool qa_rankings_backend_failed(const qa_rankings *);
 typedef struct qa_ranking_account {
     uint64_t player_id;
     double rank;
@@ -30,7 +34,9 @@ typedef struct qa_ranking_stat {
     int32_t key;
     union {
         struct {
-            int32_t value;
+            /* Source reports retain the Number value. Match cvar reports can
+             * exceed signed 32 bits; their actual producer performs trunc. */
+            double value;
             bool accumulate;
         } integer;
         const char *string;
@@ -103,7 +109,7 @@ bool qa_rankings_begin(qa_rankings *, bool enabled, bool single_player, const ch
 bool qa_rankings_account(qa_rankings *, int32_t slot, const qa_ranking_request *, qa_error *);
 /* -1 denotes the match itself (provider ID zero); inactive players are skipped. */
 bool qa_rankings_report_integer(qa_rankings *, int32_t self, int32_t other, int32_t key,
-                                int32_t value, bool accumulate, qa_error *);
+                                double value, bool accumulate, qa_error *);
 bool qa_rankings_report_string(qa_rankings *, int32_t self, int32_t other, int32_t key,
                                const char *value, qa_error *);
 bool qa_rankings_poll(qa_rankings *, qa_error *);

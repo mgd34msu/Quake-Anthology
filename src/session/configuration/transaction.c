@@ -7,6 +7,7 @@ typedef struct qa_launch_instance_storage {
     qa_launch_draft *identity;
     qa_configuration_hooks hooks;
     bool prepared, closing;
+    qa_vfs_acquisition artifact_acquisition;
 } instance_owner;
 struct qa_launch_instance_lease {
     instance_owner *owner;
@@ -39,6 +40,7 @@ struct qa_configuration_transaction {
     void *ticket;
     bool validated;
     bool restoring;
+    bool replacing;
     uint64_t restored_generation;
     const qa_launch_restore_content *content;
 };
@@ -46,9 +48,29 @@ struct qa_configuration_transaction {
 static bool error_message(qa_error *error, const char *message)
 { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message); return false; }
 
+static bool retain_acquisition(const qa_vfs_acquisition *source, qa_vfs_acquisition *out, qa_error *error)
+{
+    if (!source || !source->mount || !source->resource_id || !source->path || !source->lookup_path)
+        return error_message(error, "Restored artifact lacks its true retained acquisition");
+    *out = (qa_vfs_acquisition){.mount = source->mount, .resource_id = source->resource_id};
+    const char *values[] = {source->path, source->lookup_path, source->link_source, source->link_target};
+    char **targets[] = {&out->path, &out->lookup_path, &out->link_source, &out->link_target};
+    for (size_t i = 0; i < 4; ++i) if (values[i]) {
+        size_t length = strlen(values[i]);
+        *targets[i] = malloc(length + 1);
+        if (!*targets[i]) {
+            qa_vfs_acquisition_dispose(out);
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining actual restored artifact receipt"); return false;
+        }
+        memcpy(*targets[i], values[i], length + 1);
+    }
+    return true;
+}
+
 static void owner_dispose(instance_owner *owner)
 {
     qa_resource_release((qa_resource *)owner->view.artifact);
+    qa_vfs_acquisition_dispose(&owner->artifact_acquisition);
     qa_resource_release((qa_resource *)owner->view.declaration);
     for (size_t i = 0; i < owner->view.interface_count; ++i)
         qa_resource_release((qa_resource *)owner->view.interfaces[i].resource);
@@ -322,6 +344,12 @@ static bool restored_instance_content(qa_configuration_transaction *transaction,
     owner->view.declaration = saved.declaration;
     qa_resource_retain((qa_resource *)saved.artifact);
     qa_resource_retain((qa_resource *)saved.declaration);
+    if (saved.artifact) {
+        if (!retain_acquisition(saved.artifact_acquisition, &owner->artifact_acquisition, error) ||
+            owner->artifact_acquisition.resource_id != qa_resource_id(saved.artifact) ||
+            !qa_vfs_acquisition_valid(owner->view.content, &owner->artifact_acquisition, error)) return false;
+        owner->view.artifact_acquisition = &owner->artifact_acquisition;
+    }
     qa_launch_resource *interfaces = calloc(saved.interface_count ? saved.interface_count : 1,
                                              sizeof(*interfaces));
     const qa_catalog_weapon_behavior **behaviors = calloc(saved.behavior_count ? saved.behavior_count : 1,
@@ -373,8 +401,10 @@ static bool prepare_instance(qa_configuration_transaction *transaction, const qa
     if (!qa_catalog_open(candidate->draft->catalog, selection->product, &owner->view.content, error)) goto fail;
     if (selection->runtime != QA_PROGRAM_BUILTIN) {
         qa_resource *artifact;
-        if (!qa_vfs_acquire(owner->view.content, selection->artifact, &artifact, NULL, error)) goto fail;
+        if (!qa_vfs_acquire_receipt(owner->view.content, selection->artifact, &artifact,
+            &owner->artifact_acquisition, error)) goto fail;
         owner->view.artifact = artifact;
+        owner->view.artifact_acquisition = &owner->artifact_acquisition;
         if (!read_interfaces(owner, error)) goto fail;
     }
     if (*selection->component) {
@@ -392,7 +422,7 @@ static bool prepare_instance(qa_configuration_transaction *transaction, const qa
     }
     if (!selected_behaviors(owner, &candidate->draft->choices, error)) goto fail;
     if (!instance_identity(owner, &candidate->draft->choices, error)) goto fail;
-    if (transaction->previous) for (size_t i = 0; i < transaction->previous->instance_count; ++i) {
+    if (!transaction->replacing && transaction->previous) for (size_t i = 0; i < transaction->previous->instance_count; ++i) {
         instance_owner *previous = transaction->previous->instances[i].owner;
         if (strcmp(previous->view.selection.instance, selection->instance) ||
             !qa_sha256_equal(&previous->view.identity, &owner->view.identity)) continue;
@@ -408,6 +438,121 @@ construct:
     bind_instance(candidate,owner,roles); return true;
 fail:
     owner_release(owner); return false;
+}
+
+bool qa_launch_instance_prepare_client_metadata(const qa_launch_instance *source,
+    qa_catalog *catalog, qa_product_id selected, qa_vfs *prepared, const char *path,
+    qa_launch_instance_lease **out, qa_error *error)
+{
+    const qa_product *product = catalog ? qa_catalog_product(catalog, selected) : NULL;
+    if (!source || !source->storage || !catalog || !product || product->family != QA_GAME_Q3 ||
+        !prepared || !path || !*path || !out || *out ||
+        (source->selection.runtime != QA_PROGRAM_QVM && source->selection.runtime != QA_PROGRAM_NATIVE))
+        return error_message(error, "Client metadata requires its actual Q3 source and prepared content");
+    instance_owner *owner = calloc(1, sizeof(*owner));
+    if (!owner) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining private Q3 client metadata"); return false; }
+    owner->references = 1; owner->view.storage = owner;
+    qa_launch_provider selection = source->selection;
+    selection.product = selected; selection.artifact = path; selection.component = "";
+    const qa_catalog_mod *component = NULL;
+    for (size_t i = 0; i < qa_catalog_mod_count(catalog); ++i) {
+        const qa_catalog_mod *mod = qa_catalog_mod_at(catalog, i);
+        if (mod->product != selected || mod->runtime != selection.runtime || !mod->program_path ||
+            strcmp(mod->program_path, path)) continue;
+        if (component) { owner_release(owner); return error_message(error, "Client artifact has ambiguous real profile owners"); }
+        component = mod;
+    }
+    if (component) selection.component = component->key;
+    owner->view.roles = QA_ROLE_BIT(QA_ROLE_HUD) | QA_ROLE_BIT(QA_ROLE_MENU);
+    owner->view.state = source->state;
+    bool ok = launch_empty(catalog, &owner->identity, error) &&
+        qa_launch_set_provider(owner->identity, &selection, error);
+    if (ok) {
+        owner->view.selection = owner->identity->choices.providers[0];
+        owner->view.content = qa_vfs_clone(prepared, error);
+        ok = owner->view.content != NULL;
+    }
+    qa_resource *artifact = NULL;
+    if (ok) ok = qa_vfs_acquire_receipt(owner->view.content, path, &artifact,
+        &owner->artifact_acquisition, error);
+    owner->view.artifact = artifact;
+    owner->view.artifact_acquisition = &owner->artifact_acquisition;
+    if (ok && component) {
+        if (component->unavailable || !component->declaration_path ||
+            !qa_sha256_equal(&component->program_digest, qa_resource_digest(artifact)))
+            ok = error_message(error, "Client artifact differs from its actual selected profile");
+        qa_resource *declaration = NULL;
+        if (ok) ok = qa_vfs_acquire(owner->view.content, component->declaration_path,
+            &declaration, NULL, error);
+        owner->view.declaration = declaration;
+        if (ok && !qa_sha256_equal(&component->declaration_digest, qa_resource_digest(declaration)))
+            ok = error_message(error, "Client profile changed since actual content discovery");
+    }
+    if (ok) ok = read_interfaces(owner, error) &&
+        instance_identity(owner, &owner->identity->choices, error) &&
+        qa_launch_instance_retain_metadata(&owner->view, out, error);
+    owner_release(owner);
+    return ok;
+}
+
+bool qa_launch_instance_restore_client_metadata(const qa_launch_instance *source,
+    const qa_launch_restored_instance *saved, qa_launch_instance_lease **out, qa_error *error)
+{
+    if (!source || !saved || !saved->content || !saved->catalog || !out || *out)
+        return error_message(error, "Client metadata restoration requires its actual claimed owners");
+    instance_owner *owner = calloc(1, sizeof(*owner));
+    if (!owner) {
+        qa_vfs_destroy(saved->content);
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring private client metadata owner"); return false;
+    }
+    owner->references = 1; owner->view.storage = owner; owner->view.content = saved->content;
+    owner->view.state = source->state; owner->view.roles = QA_ROLE_BIT(QA_ROLE_HUD) | QA_ROLE_BIT(QA_ROLE_MENU);
+    const qa_launch_provider *a = &source->selection, *b = &saved->selection;
+    const qa_product *product = qa_catalog_product(saved->catalog, b->product);
+    bool ok = product && product->family == QA_GAME_Q3 && b->instance && b->implementation &&
+        b->artifact && *b->artifact && b->component && !strcmp(a->instance, b->instance) &&
+        !strcmp(a->implementation, b->implementation) && a->runtime == b->runtime &&
+        a->options.size == b->options.size && (!a->options.size ||
+            (b->options.data && !memcmp(a->options.data, b->options.data, a->options.size))) &&
+        a->clock.kind == b->clock.kind && a->clock.initial_time_ns == b->clock.initial_time_ns &&
+        a->clock.interval_ns == b->clock.interval_ns && a->clock.minimum_frame_ns == b->clock.minimum_frame_ns &&
+        a->clock.maximum_frame_ns == b->clock.maximum_frame_ns && a->clock.initial_lead_ns == b->clock.initial_lead_ns &&
+        a->clock.maximum_steps == b->clock.maximum_steps && saved->artifact &&
+        saved->interface_count <= SIZE_MAX / sizeof(qa_launch_resource) && !saved->behavior_count;
+    if (!ok) error_message(error, "Saved private client descriptor leaves its real source selection");
+    if (ok) ok = launch_empty(saved->catalog, &owner->identity, error) &&
+        qa_launch_set_provider(owner->identity, b, error);
+    if (ok) {
+        owner->view.selection = owner->identity->choices.providers[0];
+        owner->view.artifact = saved->artifact; qa_resource_retain((qa_resource *)saved->artifact);
+        owner->view.declaration = saved->declaration; qa_resource_retain((qa_resource *)saved->declaration);
+        ok = retain_acquisition(saved->artifact_acquisition, &owner->artifact_acquisition, error) &&
+            owner->artifact_acquisition.resource_id == qa_resource_id(saved->artifact) &&
+            qa_vfs_acquisition_valid(owner->view.content, &owner->artifact_acquisition, error);
+        owner->view.artifact_acquisition = &owner->artifact_acquisition;
+    }
+    if (ok && saved->interface_count) {
+        qa_launch_resource *interfaces = calloc(saved->interface_count, sizeof(*interfaces));
+        owner->view.interfaces = interfaces;
+        ok = interfaces != NULL && saved->interfaces != NULL;
+        if (!ok) qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring private client profile inventory");
+        for (size_t i = 0; ok && i < saved->interface_count; ++i) {
+            const qa_launch_resource *resource = saved->interfaces + i;
+            if (!resource->resource || !resource->path || resource->product != b->product) {
+                ok = error_message(error, "Private client profile has an invalid true resource owner"); break;
+            }
+            const char *path = launch_text(owner->identity, resource->path, error);
+            if (!path) { ok = false; break; }
+            interfaces[owner->view.interface_count++] = (qa_launch_resource){b->product, path, resource->resource};
+            qa_resource_retain((qa_resource *)resource->resource);
+        }
+    }
+    if (ok) ok = instance_identity(owner, &owner->identity->choices, error) &&
+        qa_sha256_equal(&owner->view.identity, &saved->identity);
+    if (!ok && error && error->code == QA_OK)
+        error_message(error, "Restored private descriptor identity differs from its actual retained content");
+    if (ok) ok = qa_launch_instance_retain_metadata(&owner->view, out, error);
+    owner_release(owner); return ok;
 }
 
 static bool resource_add(qa_launch_snapshot *s, qa_product_id product, const char *path, qa_error *error)
@@ -525,7 +670,8 @@ static void discard_transaction(qa_configuration_transaction *t)
 }
 
 static bool configuration_prepare(qa_configuration *manager, const qa_launch_draft *draft,
-    const qa_launch_restore_content *content, qa_configuration_transaction **out, qa_error *error)
+    const qa_launch_restore_content *content, bool replacing,
+    qa_configuration_transaction **out, qa_error *error)
 {
     if (!manager || !draft || !out || manager->busy) return error_message(error, "invalid or reentrant configuration preparation");
     if (!qa_launch_validate(draft, error)) return false;
@@ -534,6 +680,7 @@ static bool configuration_prepare(qa_configuration *manager, const qa_launch_dra
     if (!t || !s) { free(t); free(s); qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate configuration transaction"); return false; }
     s->references = 1; t->manager = manager; t->candidate = s; t->generation = manager->generation;
     t->content = content;
+    t->replacing = replacing;
     t->previous = manager->current; qa_launch_snapshot_retain(t->previous); ++manager->transactions;
     manager->busy = true;
     if (!qa_launch_draft_copy(draft, &s->draft, error)) goto fail;
@@ -565,7 +712,11 @@ fail:
 }
 bool qa_configuration_prepare(qa_configuration *manager, const qa_launch_draft *draft,
     qa_configuration_transaction **out, qa_error *error)
-{ return configuration_prepare(manager, draft, NULL, out, error); }
+{ return configuration_prepare(manager, draft, NULL, false, out, error); }
+
+bool qa_configuration_prepare_replacing(qa_configuration *manager, const qa_launch_draft *draft,
+    qa_configuration_transaction **out, qa_error *error)
+{ return configuration_prepare(manager, draft, NULL, true, out, error); }
 
 bool qa_configuration_validate(qa_configuration_transaction *t, qa_error *error)
 {
@@ -636,7 +787,7 @@ bool qa_configuration_prepare_restored(qa_configuration *manager, const qa_launc
         !content || !content->mounts || !content->instance || !content->resource ||
         !manager->hooks.safe(manager->hooks.context))
         return error_message(error, "configuration restoration requires a fresh isolated manager and saved current snapshot");
-    if (!configuration_prepare(manager, draft, content, out, error)) return false;
+    if (!configuration_prepare(manager, draft, content, false, out, error)) return false;
     (*out)->restoring = true;
     (*out)->restored_generation = checkpoint->generation;
     return true;

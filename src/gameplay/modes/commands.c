@@ -242,8 +242,9 @@ static bool console_command(qa_modes *m, qa_mode_id id, qa_actor_id actor,
             ok = qa_modes_follow(m, id, actor, (qa_actor_id){0}, follow_slot, 0, &accepted, e);
         if (ok && accepted && score_view) {
             mode_member *current = mode_member_get(m, v, actor);
-            if (q3 && current)
+            if (q3 && current) {
                 current->player.q3_spectator_state = QA_MODE_Q3_SPECTATOR_SCOREBOARD;
+            }
             ok = qa_modes_scoreboard(m, id, actor, true, e);
         }
         return ok;

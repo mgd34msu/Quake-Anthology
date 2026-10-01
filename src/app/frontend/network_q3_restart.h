@@ -1,6 +1,15 @@
 #ifndef QA_FRONTEND_NETWORK_Q3_RESTART_H
 #define QA_FRONTEND_NETWORK_Q3_RESTART_H
 #include "qa/frontend.h"
+#include "qa/application_q3_client.h"
+bool frontend_network_q3_client_context_read(qa_frontend *, qa_actor_owner,
+    uint32_t, qa_application_q3_client_context *, qa_error *);
+bool frontend_network_q3_client_context_current(qa_frontend *,
+    const qa_application_q3_client_context *);
+
+bool frontend_network_q3_client_effect(qa_frontend *,
+    const qa_application_q3_client_context *, qa_application_q3_client_effect,
+    const char *, qa_error *);
 #include "qa/network_q3_round.h"
 
 /* Actual absent hosting returns a NULL cut. An installed incompatible client

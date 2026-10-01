@@ -1,0 +1,4 @@
+decfc7d2defa60cf7eba40ed0b1cbf7c0f9a0a94ecbb86a02c6143c7cbcb5836  src/input/seat.c
+10a1d7937a0e620b6e853d2d6875c53ace9e82f85a4c92663837e9650623c6b2  src/input/internal.h
+70adba258c496aa054d06775d922926cb85bb4c0f2fb8b04c0b8e19cdd61bb78  src/input/save.c
+4afccad8a84cd63f414fac09c8c761587cab8fabe819daf78a6c74f1673fa176  include/qa/input_save.h

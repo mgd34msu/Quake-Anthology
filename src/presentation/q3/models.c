@@ -6,11 +6,24 @@ void q3p_model_free(q3p_model *model)
     for (unsigned i = 0; i < 3; ++i) {
         bool shared = false;
         for (unsigned j = 0; j < i; ++j) if (model->scene[i] == model->scene[j]) shared = true;
-        if (!shared) qa_scene_model_destroy(model->scene[i]);
+        if (!shared && !model->borrowed_scenes) qa_scene_model_destroy(model->scene[i]);
     }
-    if (model->owns_world) qa_scene_world_destroy(model->world);
-    qa_model_lods_free(&model->lods); qa_model_free(&model->model);
+    if (model->owns_world && !model->borrowed_world) qa_scene_world_destroy(model->world);
+    for (unsigned i = 0; i < 3; ++i)
+        if (model->source_leases[i].release) model->source_leases[i].release(model->source_leases[i].context);
+    if (!model->borrowed_models) {
+        qa_model_lods_free(&model->lods); qa_model_free(&model->model);
+    } else for (unsigned i = 0; i < 3; ++i) free(model->lods.paths[i]);
+    for (unsigned i = 0; i < 3; ++i) qa_resource_release(model->lod_resources[i]);
     qa_resource_release(model->resource); free(model);
+}
+
+const qa_model *q3p_model_source(const q3p_model *model, uint32_t slot)
+{
+    if (!model || model->world) return NULL;
+    if (!model->has_lods) return model->borrowed_models ? model->sources[0] : &model->model;
+    if (slot >= 3) return NULL;
+    return model->borrowed_models ? model->sources[slot] : qa_model_at_lod(&model->lods, slot);
 }
 
 bool q3p_model_get(const qa_q3_presentation_assets *a, int32_t handle,
@@ -27,10 +40,15 @@ static qa_bounds bounds(const qa_model_bounds *value)
                        {value->max[0], value->max[1], value->max[2]}};
 }
 
+typedef struct lod_reader { q3p_model *model; unsigned next_slot; } lod_reader;
 static bool read_lod(void *context, const char *path, qa_buffer *out, qa_error *error)
 {
+    lod_reader *reader = context;
+    if (reader->next_slot >= 3)
+        return q3p_fail(error, QA_ERROR_FORMAT, "Q3 model loader repeated its physical LOD read");
+    unsigned slot = 2 - reader->next_slot++;
     qa_resource *resource = NULL;
-    if (!qa_vfs_acquire(context, path, &resource, NULL, error)) return false;
+    if (!qa_vfs_acquire(reader->model->provider.mounts, path, &resource, NULL, error)) return false;
     qa_bytes source = qa_resource_bytes(resource);
     uint8_t *copy = source.size ? malloc(source.size) : NULL;
     if (source.size && !copy) {
@@ -38,7 +56,7 @@ static bool read_lod(void *context, const char *path, qa_buffer *out, qa_error *
         return q3p_fail(error, QA_ERROR_MEMORY, "retaining decoded model LOD source");
     }
     if (source.size) memcpy(copy, source.data, source.size);
-    *out = (qa_buffer){copy, source.size}; qa_resource_release(resource); return true;
+    *out = (qa_buffer){copy, source.size}; reader->model->lod_resources[slot] = resource; return true;
 }
 
 static bool extension(const char *path, const char *suffix)
@@ -71,7 +89,8 @@ static bool decode(q3p_model *model, const char *path, qa_error *error)
         model->bounds = (qa_bounds){first.bounds.min, first.bounds.max}; return true;
     }
     if (bytes.size >= 4 && !memcmp(bytes.data, "IDP3", 4)) {
-        if (!qa_model_md3_lods(path, read_lod, model->provider.mounts, &model->lods, error)) return false;
+        lod_reader reader = {model, 0};
+        if (!qa_model_md3_lods(path, read_lod, &reader, &model->lods, error)) return false;
         model->has_lods = true;
         const qa_model *base = qa_model_at_lod(&model->lods, 0);
         if (!base) return q3p_fail(error, QA_ERROR_FORMAT, "registered MD3 has no primary LOD");
@@ -178,7 +197,7 @@ bool qa_q3_presentation_model_has_tags(const qa_q3_presentation_assets *a, int32
 {
     const q3p_model *model;
     if (!out || !q3p_model_get(a, handle, &model, error)) return false;
-    const qa_model *source = model && model->has_lods ? qa_model_at_lod(&model->lods, 0) : NULL;
+    const qa_model *source = model && model->has_lods ? q3p_model_source(model, 0) : NULL;
     *out = source && source->format == QA_MODEL_MD3 && source->tag_count && source->frame_count;
     return true;
 }
@@ -189,7 +208,7 @@ bool qa_q3_presentation_tag(const qa_q3_presentation_assets *a, int32_t handle, 
 {
     const q3p_model *model;
     if (!out || !found || !q3p_model_get(a, handle, &model, error)) return false;
-    const qa_model *source = model && model->has_lods ? qa_model_at_lod(&model->lods, 0) : NULL;
+    const qa_model *source = model && model->has_lods ? q3p_model_source(model, 0) : NULL;
     bool match = source && name && first >= 0 && second >= 0 &&
         qa_model_lerp_tag(source, name, (uint32_t)first, (uint32_t)second, fraction, out);
     if (!match) *out = (qa_model_tag){.axes = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}};

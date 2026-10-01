@@ -3,6 +3,7 @@
 
 #include "qa/application_native_q3_presentation.h"
 #include "qa/q3_presentation.h"
+#include "qa/application_native_q3_wire.h"
 
 typedef struct q3n_media q3n_media;
 typedef enum q3n_missile_trail {
@@ -111,11 +112,12 @@ typedef struct q3n_media_options {
     qa_q3_product product;
     qa_q3_presentation_assets *assets;
 } q3n_media_options;
-/* Read the actual current GAME cut and real bound BSP model extent. World
- * binding itself belongs to the outer owner. */
+/* The GAME cut qualifies physical source ownership; the reader supplies reached
+ * client configstrings. World binding belongs to the outer owner. */
 typedef struct q3n_media_load {
     qa_application *application;
     const qa_application_native_q3_presentation *source;
+    qa_native_q3_wire_reader *reader;
     void *context;
     bool (*loading)(void *, const char *, int32_t item_or_minus_one, qa_error *);
     int32_t game_type;
@@ -131,8 +133,10 @@ bool q3n_media_load_sounds(q3n_media *, const q3n_media_load *, qa_error *);
 bool q3n_media_load_graphics(q3n_media *, const q3n_media_load *, qa_error *);
 bool q3n_media_register_item(q3n_media *, uint32_t, qa_error *);
 bool q3n_media_register_weapon(q3n_media *, uint32_t, qa_error *);
-bool q3n_media_sync_configstrings(q3n_media *, qa_application *,
-    const qa_application_native_q3_presentation *, qa_error *);
+/* CL_GetServerCommand has already reached this exact cs row. Registration is
+ * performed for this command even when its text repeats the previous value. */
+bool q3n_media_configstring_changed(q3n_media *, qa_native_q3_wire_reader *,
+    uint32_t index, qa_error *);
 /* Aggregate imports the actual backend registry first. These pure codecs
  * require its capture lease and retain only real numeric holder references. */
 bool q3n_media_checkpoint(const q3n_media *, qa_buffer *, qa_error *);

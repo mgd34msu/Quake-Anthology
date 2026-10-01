@@ -65,6 +65,17 @@ bool catalog_safe_name(const char *name)
     return true;
 }
 
+bool catalog_remote_name(const char *name)
+{
+    if (!name || !*name || !strcmp(name, ".") || strstr(name, "..")) return false;
+    for (; *name; ++name) {
+        unsigned char ch = (unsigned char)*name;
+        if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+            (ch >= '0' && ch <= '9') || strchr("_+.-", ch))) return false;
+    }
+    return true;
+}
+
 bool qa_catalog_mod_key(const char *key)
 {
     if (!key || !isalnum((unsigned char)*key)) return false;
@@ -108,7 +119,8 @@ bool catalog_add_product(qa_catalog *catalog, const qa_product *view,
     return true;
 }
 
-bool qa_catalog_discover(const qa_catalog_options *options, qa_catalog **out, qa_error *error)
+static bool discover(const qa_catalog_options *options, const char *remote_base,
+    const char *directory, qa_product_id *selected, qa_catalog **out, qa_error *error)
 {
     if (!options || !options->resources || !options->content_root || !*options->content_root || !out) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "catalog discovery requires a content root"); return false;
@@ -124,7 +136,8 @@ bool qa_catalog_discover(const qa_catalog_options *options, qa_catalog **out, qa
     catalog->root = catalog_string(catalog, options->content_root, error);
     if (options->user_root) catalog->user = catalog_string(catalog, options->user_root, error);
     if (!catalog->root || (options->user_root && !catalog->user) ||
-        !catalog_stock(catalog, error) || !catalog_scan(catalog, options->discover_mods, error)) goto fail;
+        !catalog_stock(catalog, error) || !catalog_scan(catalog, options->discover_mods,
+            remote_base, directory, selected, error)) goto fail;
     for (size_t i = 0; i < catalog->product_count; ++i) {
         catalog_product *p = &catalog->products[i];
         size_t first_mod = catalog->mod_count, first_behavior = catalog->behavior_count;
@@ -146,6 +159,50 @@ bool qa_catalog_discover(const qa_catalog_options *options, qa_catalog **out, qa
 fail:
     qa_catalog_release(catalog);
     return false;
+}
+
+bool qa_catalog_discover(const qa_catalog_options *options, qa_catalog **out, qa_error *error)
+{ return discover(options, NULL, NULL, NULL, out, error); }
+
+bool qa_catalog_discover_remote_q3(const qa_catalog *source, qa_product_id base_id,
+    const char *directory, uint64_t generation, qa_catalog **out,
+    qa_product_id *selected, qa_error *error)
+{
+    const qa_product *base = qa_catalog_product(source, base_id);
+    if (!base || base->family != QA_GAME_Q3 || !source->user || !*source->user ||
+        !directory || !out || *out || !selected) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Remote Q3 discovery requires its actual base and configured write root");
+        return false;
+    }
+    qa_catalog_options options = {.resources = source->resources, .content_root = source->root,
+        .user_root = source->user, .generation = generation};
+    qa_catalog *fresh = NULL; qa_product_id choice = QA_PRODUCT_NONE;
+    if (!discover(&options, base->key, directory, &choice, &fresh, error)) return false;
+    const qa_product *fresh_base = qa_catalog_find(fresh, base->key);
+    const qa_product *product = qa_catalog_product(fresh, choice);
+    if (!fresh_base || fresh_base->availability != QA_CONTENT_INSTALLED || !product ||
+        product->availability != QA_CONTENT_INSTALLED || !qa_catalog_q3_download_root(fresh)) {
+        qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Remote Q3 content requires its installed base and real writable directories");
+        qa_catalog_release(fresh); return false;
+    }
+    if (source->q3_demo_restricted && !qa_catalog_q3_restrict(fresh, error)) {
+        qa_catalog_release(fresh); return false;
+    }
+    *out = fresh; *selected = choice; return true;
+}
+
+qa_fs_root *qa_catalog_q3_download_root(const qa_catalog *catalog)
+{
+    const catalog_physical *physical = catalog_package(catalog, catalog ? catalog->q3_download_mount : 0);
+    if (!physical || physical->view.format != QA_ARCHIVE_AUTO || !physical->view.writable) return NULL;
+    const char *path = qa_vfs_mount_path(catalog->mounts, physical->view.id);
+    if (!path || strcmp(path, physical->view.path)) return NULL;
+    for (size_t i = 0; i < qa_vfs_mount_count(catalog->mounts); ++i) {
+        qa_vfs_mount_info mount;
+        if (qa_vfs_mount_at(catalog->mounts, i, &mount) && mount.id == physical->view.id)
+            return !mount.is_archive && mount.writable ? qa_vfs_mount_root(catalog->mounts, mount.id) : NULL;
+    }
+    return NULL;
 }
 
 void qa_catalog_retain(qa_catalog *catalog) { if (catalog) ++catalog->references; }
@@ -197,7 +254,7 @@ const qa_catalog_mount *catalog_mount(const qa_catalog *c, qa_mount_id id)
     return p ? &p->view : NULL;
 }
 const catalog_physical *catalog_package(const qa_catalog *c, qa_mount_id id)
-{ return id && id <= c->physical_count ? &c->physical[id - 1] : NULL; }
+{ return c && id && id <= c->physical_count ? &c->physical[id - 1] : NULL; }
 bool qa_catalog_product_mounts(const qa_catalog *c, qa_product_id id,
                                const qa_mount_id **mounts, size_t *count)
 {

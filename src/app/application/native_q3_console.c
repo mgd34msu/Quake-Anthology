@@ -1,5 +1,6 @@
 #include "native_q3_console.h"
 #include "q3_product.h"
+#include "startup_flow.h"
 
 #include <stdlib.h>
 #include <ctype.h>
@@ -78,15 +79,18 @@ qa_cvars *application_native_q3_cvar_owner(const application_provider *provider,
 
 static qa_cvars *cvar_owner(void *context, const qa_command_context *command, const char *name)
 {
-    (void)command;
     struct application_native_q3_console *owner = context;
+    qa_cvars *selected = application_startup_cvar_owner(owner->provider, owner->console, command, name);
+    if (selected) return selected;
     return application_native_q3_cvar_owner(owner->provider, name);
 }
 
 static qa_cvars *visible_cvars(void *context, const qa_command_context *command, size_t index)
 {
-    (void)command;
     struct application_native_q3_console *owner = context;
+    qa_cvars *selected = NULL;
+    if (application_startup_visible_cvars(owner->provider, owner->console, command, index, &selected))
+        return selected;
     return index == 0 ? owner->cvars : index == 1 ? owner->provider->application->cvars : NULL;
 }
 
@@ -158,6 +162,8 @@ static bool read_script(void *context, const qa_command_context *command,
     struct application_native_q3_console *owner = context;
     if (!active(owner, command))
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 script publication has retired");
+    if (application_startup_source_active(owner->provider))
+        return application_startup_script_read(owner->provider, command, path, out, lease, error);
     qa_vfs *files = qa_application_context_files(owner->provider->application, command, NULL);
     qa_resource *resource = NULL;
     if (!files || !qa_vfs_acquire(files, path, &resource, NULL, error)) return false;
@@ -168,8 +174,23 @@ static bool read_script(void *context, const qa_command_context *command,
 
 static void release_script(void *context, void *lease)
 {
-    (void)context;
-    qa_resource_release(lease);
+    struct application_native_q3_console *owner = context;
+    if (application_startup_source_active(owner->provider))
+        application_startup_script_release(owner->provider, lease);
+    else qa_resource_release(lease);
+}
+
+static void script_complete(void *context, const qa_command_context *command,
+    const char *path, bool success)
+{
+    struct application_native_q3_console *owner = context;
+    application_startup_script_complete(owner->provider, command, path, success);
+}
+
+static bool allow_command(void *context, const qa_command_invocation *command)
+{
+    struct application_native_q3_console *owner = context;
+    return application_startup_command_allowed(owner->provider, command);
 }
 
 static qa_command_result command(void *context, const qa_command_invocation *invocation,
@@ -263,7 +284,8 @@ bool application_native_q3_console_create(application_provider *provider,
         .origin = QA_COMMAND_SERVER}, .cvars = owner->cvars, .user = owner, .print = print,
         .cvar_owner = cvar_owner, .visible_cvars = visible_cvars,
         .capture_context = capture, .context_active = active, .read_script = read_script,
-        .release_script = release_script, .source_command = command};
+        .release_script = release_script, .script_complete = script_complete,
+        .allow_command = allow_command, .source_command = command};
     if (owner->cvars) owner->console = qa_console_create(&options, error);
     if (!owner->console || !application_startup_seed_source(provider, owner->cvars, error) ||
         !application_q3_product_register_source(application_q3_product_source_policy(provider->application),
@@ -283,6 +305,7 @@ bool application_native_q3_console_destroy(application_provider *provider, qa_er
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 console is borrowed");
     struct application_native_q3_console *owner = provider->native_q3_console;
     if (owner) {
+        if (!application_startup_source_retire(provider, owner->console, owner->cvars, error)) return false;
         qa_console_destroy(owner->console);
         qa_cvars_destroy(owner->cvars);
         free(owner);

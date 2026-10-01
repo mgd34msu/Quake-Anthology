@@ -33,6 +33,8 @@ typedef bool (*qa_component_frame_fn)(void *state, qa_session *session,
 typedef bool (*qa_component_actor_fn)(void *state, qa_session *session,
                                       qa_actor_id actor, const qa_source_frame *frame,
                                       qa_error *error);
+typedef bool (*qa_component_command_fn)(void *, qa_session *, const qa_source_command *, qa_error *);
+typedef bool (*qa_component_command_actor_fn)(void *, qa_session *, qa_actor_id);
 typedef void (*qa_component_release_fn)(void *state, qa_session *session,
                                         qa_actor_record released);
 
@@ -42,10 +44,14 @@ typedef struct qa_component {
     qa_clock_config clock;
     void *state;
     qa_cleanup_fn close;
+    /* Establish source time before command preparation and StartFrame. */
+    qa_component_frame_fn prepare_frame;
     qa_component_frame_fn begin_frame;
     qa_component_actor_fn actor_frame;
     qa_component_frame_fn end_frame;
     qa_component_release_fn actor_released;
+    /* Pure qualification of a full actor's actual physical source-client binding. */
+    qa_component_command_actor_fn command_actor;
 } qa_component;
 
 typedef enum qa_invocation_kind {
@@ -62,6 +68,12 @@ typedef struct qa_invocation {
 typedef bool (*qa_invocation_fn)(void *context, qa_session *session, qa_error *error);
 typedef bool (*qa_session_release_fn)(void *context, qa_session *session,
                                       qa_actor_record released, qa_error *error);
+typedef bool (*qa_session_frames_fn)(void *context, qa_session *session,
+                                      const qa_source_frame *frames, size_t count,
+                                      uint64_t host_time_ns, qa_error *error);
+typedef bool (*qa_session_control_fn)(void *context, qa_session *session,
+                                      qa_actor_id actor, const qa_source_frame *frame,
+                                      bool *handled, qa_error *error);
 
 typedef struct qa_session_options {
     uint32_t actor_capacity;
@@ -73,6 +85,11 @@ typedef struct qa_session_options {
      * before the actor's selected physics. Receives that source's own clock. */
     qa_component_actor_fn source_actor;
     qa_component_actor_fn after_actor;
+    /* Frames are borrowed from genuine admissions at one host boundary. */
+    qa_session_frames_fn prepare_commands;
+    qa_session_frames_fn run_commands;
+    qa_session_frames_fn end_commands;
+    qa_session_control_fn controlled_actor;
     void *release_context;
 } qa_session_options;
 
@@ -99,12 +116,26 @@ void qa_component_admission_abort(qa_component_admission *);
 bool qa_session_remove(qa_session *session, qa_actor_owner owner, qa_error *error);
 bool qa_session_pause(qa_session *session, qa_actor_owner owner, bool paused, qa_error *error);
 bool qa_session_clock(const qa_session *session, qa_actor_owner owner, qa_clock_state *out);
+/* Current admission only; a completed clock is never an active frame. */
+bool qa_session_active_frame(const qa_session *, qa_actor_owner, qa_source_frame *);
+bool qa_session_frame_host_time(const qa_session *, uint64_t *);
+bool qa_session_advance_interval(const qa_session *, uint64_t *);
+bool qa_session_frame_pending(const qa_session *, qa_actor_owner);
+bool qa_session_active_command(const qa_session *, qa_actor_owner, qa_source_command *);
+/* Admit the real source usercmd at its literal current time. Safe idle entry
+ * and source boundary hooks are supported, including a separate command
+ * admission while that source has a world frame in progress. A component's
+ * actual physical source clients may enter from a nested source callback. */
+bool qa_session_command_call(qa_session *, qa_actor_owner, qa_actor_id, uint64_t,
+                              qa_component_command_fn, void *, qa_error *);
 bool qa_session_restore_clock(qa_session *session, qa_actor_owner owner,
                               const qa_clock_state *state, qa_error *error);
 /* Elapsed time is explicit. The engine never reads wall time here. A callback
  * failure faults the session after already committed mutations; it is not retried. */
 bool qa_session_advance(qa_session *session, uint64_t elapsed_ns, qa_error *error);
 bool qa_session_safe(const qa_session *session);
+/* Pure owner/allocation-domain qualification, including release notifications. */
+bool qa_session_actor_allocation_ready(const qa_session *, qa_actor_owner);
 bool qa_session_faulted(const qa_session *session);
 const qa_error *qa_session_error(const qa_session *session);
 uint64_t qa_session_elapsed(const qa_session *session);
@@ -177,5 +208,15 @@ bool qa_session_replace_world(qa_session *session, void *candidate,
  * clears scheduled thinks and resets provider clocks. A release failure faults
  * the session after already committed retirements; world ownership is unchanged. */
 bool qa_session_retire_world(qa_session *, qa_error *);
+/* Retained-world round retirement preserves every clock and its pending debt. */
+bool qa_session_retire_actors(qa_session *, qa_error *);
+/* One retained Q3 round frame, with source start-time callbacks. A non-NULL
+ * callback owns the entire frame; NULL uses the selected component and the
+ * ordinary ordered actor/scheduler traversal. Command hooks do not run.
+ * Other sources retain their clocks and debt, and
+ * their host origins follow the host duration. The actual source counter,
+ * elapsed time and EXIT are committed by the session. */
+bool qa_session_round_step(qa_session *, qa_actor_owner, uint64_t,
+                            qa_component_frame_fn, void *, qa_error *);
 
 #endif

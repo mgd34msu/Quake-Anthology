@@ -1,4 +1,6 @@
 #include "resources_internal.h"
+#include "qa/scene_resource_save.h"
+#include "qa/scene_save.h"
 
 #include <ctype.h>
 #include <math.h>
@@ -17,6 +19,53 @@ struct qa_scene_geometry {
 static const char *const format_extensions[] = {".png", ".jpg", ".tga", ".jpeg", ".bmp", ".gif"};
 static bool image_from_rgba(qa_scene_resources *, const char *, const qa_image *,
                             const qa_scene_image_options *, qa_scene_image **, qa_error *);
+
+struct qa_scene_resources_capture {
+    qa_scene_resources *owner;
+    const qa_scene_image **images;
+    size_t count;
+};
+bool qa_scene_resources_idle(const qa_scene_resources *owner)
+{ return owner && !owner->capture && !owner->continuation_active; }
+static bool admission_ready(const qa_scene_resources *owner, qa_error *error)
+{
+    if (qa_scene_resources_idle(owner)) return true;
+    qa_error_set(error, QA_ERROR_ARGUMENT, 0, "scene resources are held by a continuation capture");
+    return false;
+}
+bool qa_scene_resources_capture_begin(const qa_scene_resources *borrowed,
+    qa_scene_resources_capture **out, qa_error *error)
+{
+    if (!borrowed || !out || *out || !qa_scene_resources_idle(borrowed)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "resource capture requires an idle owner and empty token"); return false;
+    }
+    size_t count = borrowed->names->image_count;
+    if (count > SIZE_MAX / sizeof(qa_scene_image *)) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "resource capture inventory exceeds addressable storage"); return false;
+    }
+    qa_scene_resources_capture *capture = calloc(1, sizeof(*capture));
+    if (!capture) goto failed;
+    capture->images = count ? malloc(count * sizeof(*capture->images)) : NULL;
+    if (count && !capture->images) { free(capture); goto failed; }
+    for (const owned_image *image = borrowed->names->images; image; image = image->next) {
+        if (capture->count == count) { free(capture->images); free(capture); goto failed; }
+        capture->images[capture->count++] = &image->image;
+    }
+    if (capture->count != count) { free(capture->images); free(capture); goto failed; }
+    for (size_t i = 0; i < count; ++i) qa_scene_image_retain(capture->images[i]);
+    capture->owner = (qa_scene_resources *)borrowed;
+    capture->owner->capture = capture; *out = capture;
+    return true;
+failed:
+    qa_error_set(error, QA_ERROR_MEMORY, 0, "retaining the actual resource capture inventory"); return false;
+}
+void qa_scene_resources_capture_end(qa_scene_resources_capture *capture)
+{
+    if (!capture) return;
+    if (capture->owner->capture == capture) capture->owner->capture = NULL;
+    for (size_t i = 0; i < capture->count; ++i) qa_scene_image_release(capture->images[i]);
+    free(capture->images); free(capture);
+}
 
 qa_scene_geometry *qa_scene_geometry_adopt(qa_scene_vertex *vertices, size_t vertex_count,
                                          uint32_t *indices, size_t index_count, qa_error *error)
@@ -84,6 +133,14 @@ bool qa_scene_geometry_active(const qa_scene_geometry *geometry)
 {
     return geometry != NULL && atomic_load_explicit(&geometry->active, memory_order_acquire) != 0;
 }
+bool qa_scene_geometry_restore_retired(qa_scene_geometry **out,qa_error *error)
+{
+    if (!out || *out) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"Retired geometry descriptor requires an empty cache owner"); return false; }
+    qa_scene_geometry *geometry=calloc(1,sizeof(*geometry));
+    if (!geometry) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating genuine renderer geometry retirement descriptor"); return false; }
+    atomic_init(&geometry->active,0); atomic_init(&geometry->references,1);
+    *out=geometry; return true;
+}
 
 static void policy_add_format(qa_scene_image_policy *policy, qa_scene_image_format format)
 {
@@ -150,6 +207,7 @@ bool qa_scene_resources_set_image_policy(qa_scene_resources *resources, qa_scene
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "image policy must be valid and set before content loads");
         return false;
     }
+    if (!admission_ready(resources, error)) return false;
     qa_scene_image_policy copy = {0};
     if (policy != NULL) {
         copy = *policy;
@@ -175,6 +233,7 @@ bool qa_scene_resources_set_fullbright_first(qa_scene_resources *resources, unsi
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "fullbright range must be set before content loads and start at 0 through 256");
         return false;
     }
+    if (!admission_ready(resources, error)) return false;
     resources->fullbright_first = first;
     return true;
 }
@@ -284,6 +343,7 @@ bool qa_scene_image_create(qa_scene_resources *resources, const char *name, qa_s
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid scene image declaration");
         return false;
     }
+    if (!admission_ready(resources, error)) return false;
     for (size_t i = 0; i < count; ++i) {
         if (!level_valid(&levels[i], error)) return false;
         if (i != 0 && (levels[i].width != (levels[i-1].width > 1 ? levels[i-1].width / 2 : 1) ||
@@ -439,7 +499,7 @@ bool qa_scene_image_sample(qa_scene_resources *resources, const qa_scene_image *
     *out = image; return true;
 }
 
-qa_scene_resources *qa_scene_resources_create(qa_vfs *vfs, qa_error *error)
+qa_scene_resources *qa_scene_resources_create_detached(qa_vfs *vfs, qa_error *error)
 {
     qa_scene_resources *resources = calloc(1, sizeof(*resources));
     if (resources == NULL) goto failed;
@@ -450,6 +510,16 @@ qa_scene_resources *qa_scene_resources_create(qa_vfs *vfs, qa_error *error)
         free(resources->names); free(resources); return NULL;
     }
     resources->vfs = vfs;
+    resources->detached = true;
+    return resources;
+failed:
+    qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate scene resource service");
+    return NULL;
+}
+qa_scene_resources *qa_scene_resources_create(qa_vfs *vfs, qa_error *error)
+{
+    qa_scene_resources *resources = qa_scene_resources_create_detached(vfs, error);
+    if (!resources) return NULL;
     resources->fullbright_first = 224;
     if (!qa_scene_resources_set_image_policy(resources, QA_SCENE_Q2, NULL, error)) {
         qa_scene_resources_destroy(resources); return NULL;
@@ -474,10 +544,8 @@ qa_scene_resources *qa_scene_resources_create(qa_vfs *vfs, qa_error *error)
     }
     resources->missing->border = (qa_scene_vec4){0,0,0,1};
     resources->registrations_started = false;
+    resources->detached = false;
     return resources;
-failed:
-    qa_error_set(error, QA_ERROR_MEMORY, 0, "cannot allocate scene resource service");
-    return NULL;
 }
 
 qa_vfs *qa_scene_resources_files(const qa_scene_resources *resources)
@@ -487,7 +555,7 @@ qa_vfs *qa_scene_resources_files(const qa_scene_resources *resources)
 
 void qa_scene_resources_destroy(qa_scene_resources *resources)
 {
-    if (resources == NULL) return;
+    if (!qa_scene_resources_idle(resources)) return;
     for (size_t i = 0; i < resources->cache_count; ++i) {
         qa_scene_image_release(resources->cache[i].image);
         qa_resource_release(resources->cache[i].source_record);
@@ -504,6 +572,15 @@ void qa_scene_resources_destroy(qa_scene_resources *resources)
 const qa_scene_image *qa_scene_white(const qa_scene_resources *resources) { return resources->white; }
 const qa_scene_image *qa_scene_missing(const qa_scene_resources *resources) { return resources->missing; }
 
+bool qa_scene_resources_palette_read(const qa_scene_resources *resources, qa_scene_family family, qa_bytes *out)
+{
+    if (!resources || !out || family < QA_SCENE_Q1 || family > QA_SCENE_Q3) return false;
+    const qa_buffer *stored = &resources->palettes[family];
+    if (!stored->data || !stored->size) return false;
+    *out = (qa_bytes){stored->data, stored->size};
+    return true;
+}
+
 bool qa_scene_resources_palette(qa_scene_resources *resources, qa_scene_family family,
                                 qa_bytes *out, qa_error *error)
 {
@@ -512,6 +589,7 @@ bool qa_scene_resources_palette(qa_scene_resources *resources, qa_scene_family f
     }
     qa_buffer *stored = &resources->palettes[family];
     if (stored->size != 0) { *out = (qa_bytes){stored->data, stored->size}; return true; }
+    if (!admission_ready(resources, error)) return false;
     if (resources->vfs == NULL) {
         qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "scene has no mounted palette source"); return false;
     }
@@ -873,6 +951,7 @@ bool qa_scene_image_load(qa_scene_resources *resources, const char *name,
         (options->translation.size != 0 && (options->translation.size != 256 || options->translation.data == NULL))) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid scene image load request"); return false;
     }
+    if (!admission_ready(resources, error)) return false;
     if (strcmp(name, "*white") == 0 || strcmp(name, "$whiteimage") == 0) {
         qa_scene_image_retain(resources->white); *out = resources->white; return true;
     }

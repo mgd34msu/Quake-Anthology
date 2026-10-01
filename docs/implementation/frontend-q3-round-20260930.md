@@ -1,0 +1,15 @@
+# Retained Q3 frontend round
+
+Source review only; no executable or build ran for this packet.
+
+`frontend/round.c` implements the typed application round services over installed frontend owners. Prepare captures the actual source groups and each role/service lease, local input/controller heaps, source actors and command profiles, world/geometry/map resource and revision, renderer and asset stores, and optional protocol 68 transport cut. Remote rows must agree on complete userinfo and every command field. A dedicated frontend has no invented graphical command owner.
+
+The application delivers old events, disposes the initial observation, and captures a fresh final cut. Begin marks the first native network epoch mutation, or the first actual frontend reset when networking is absent. It clears transient scene/effect/player presentation, active audio aliases and queued PCM. Source parsers, assets, cinematics, source CGAME/UI leases, controller widgets, held input, frontend time and frame number remain with their installed owners. The application owns actual source shutdown/reset, canonical retirement, three settlement frames, ordered client readmission and the final settlement frame.
+
+Each client resolves against its real application-owned row. Remote reliable restart/admission uses the actual network cut. A graphical local rebind requires a genuinely fresh source actor and the same installed control profile; it changes the actor command binding, preserves Q3 builder angles and sequence, and preserves the wheel widget. Old shutdown callback audio aliases become archived when their canonical generations actually retire. Their numeric listener provenance remains available to inactive mixer continuation without granting live actor access.
+
+Event delivery projects network and retained frontend events before releasing the shared event queue. The application executor calls the declared local snapshot producer at the completed final boundary; its implementation is owned by the separate snapshot worker and remains an integration dependency. Source settlement does not fabricate intermediate snapshots or replay CGAME initialization. Builtin local controls execute through the actual application command authority. The Q3 numeric scene adapter is not treated as a CGAME prediction heap.
+
+The frontend frame and destructor reject an owned cut before mutating time, input, widgets or resources. Final network publication follows completed client resolutions. Disposal releases only the transaction observations; a failure after the mutation marker faults the application and does not claim rollback.
+
+The audio producer, application executor, guest lifecycle, local snapshot producer, native wire producer and their aggregate save consumers require their own coherent peer review. The native Q2 owner's actual readonly qualifier rejects an installed external Q2 CGAME before mutation: its HUD requires a real KEX public player-state producer, which a numeric Q3 slot does not provide. This packet alone establishes neither full campaign nor multiplayer parity.

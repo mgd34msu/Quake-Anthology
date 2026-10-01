@@ -7,6 +7,9 @@
 
 typedef struct application_startup_row {
     char *command, *name, *value;
+    char *queued_instance;
+    uint32_t queued_kind, queued_seat;
+    uint64_t queued_generation;
     bool consumed, completed, pending, shared_seeded;
 } application_startup_row;
 struct application_startup {
@@ -30,6 +33,7 @@ void application_startup_dispose(qa_application *app)
         free(app->startup->rows[i].command);
         free(app->startup->rows[i].name);
         free(app->startup->rows[i].value);
+        free(app->startup->rows[i].queued_instance);
     }
     free(app->startup->rows);
     free(app->startup);
@@ -178,8 +182,86 @@ bool qa_application_startup_command_complete(qa_application *app, size_t ordinal
 {
     if (!app || !app->startup || ordinal >= app->startup->count || app->q3_product_preparing)
         return application_fail(error, QA_ERROR_ARGUMENT, "Startup completion requires its actual published ordinal");
+    qa_console *console = NULL;
+    if (!qa_application_startup_command_queued_console(app, ordinal, &console, error)) return false;
+    if (!console || !qa_console_idle(console) || qa_console_pending(console) || qa_console_drain_yielded(console))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Startup command has not returned from its actual source buffer");
+    free(app->startup->rows[ordinal].queued_instance);
+    app->startup->rows[ordinal].queued_instance = NULL;
+    app->startup->rows[ordinal].queued_kind = app->startup->rows[ordinal].queued_seat = 0;
+    app->startup->rows[ordinal].queued_generation = 0;
     app->startup->rows[ordinal].completed = true;
     return true;
+}
+
+bool qa_application_startup_command_queued_console(qa_application *app, size_t ordinal,
+    qa_console **out, qa_error *error)
+{
+    if (!app || !app->startup || ordinal >= app->startup->count || !out)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Startup buffer observation requires its retained ordinal");
+    *out = NULL;
+    application_startup_row *row = &app->startup->rows[ordinal];
+    if (!row->queued_instance) return true;
+    if (row->queued_generation != app->command_generation)
+        return application_fail(error, QA_ERROR_FORMAT, "Queued startup command belongs to another source publication");
+    for (size_t i = 0; i < qa_application_console_count(app); ++i) {
+        qa_console *console = qa_application_console_at(app, i, NULL);
+        qa_application_console_scope scope;
+        if (!qa_application_console_scope_read(app, console, &scope) ||
+            (uint32_t)scope.kind != row->queued_kind || scope.seat != row->queued_seat) continue;
+        const char *instance = scope.provider ? qa_application_provider_instance(app, scope.provider) : "";
+        if (instance && !strcmp(instance, row->queued_instance)) { *out = console; return true; }
+    }
+    return application_fail(error, QA_ERROR_FORMAT, "Queued startup command lost its actual source console");
+}
+
+bool qa_application_startup_command_queue(qa_application *app, size_t ordinal,
+    qa_console *console, const qa_command_context *context, qa_error *error)
+{
+    if (!app || !app->startup || ordinal >= app->startup->count || app->q3_product_preparing ||
+        !qa_application_startup_command_pending(app, ordinal) || !console || !context ||
+        context->origin == QA_COMMAND_REMOTE || !qa_console_idle(console))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Startup queue requires its actual idle published source");
+    application_startup_row *row = &app->startup->rows[ordinal];
+    if (row->queued_instance) return application_fail(error, QA_ERROR_ARGUMENT, "Startup ordinal is already queued");
+    for (size_t i = 0; i < app->startup->count; ++i)
+        if (app->startup->rows[i].queued_instance || (i < ordinal && qa_application_startup_command_pending(app, i)))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Startup source rows must retain their original order");
+    qa_application_console_scope scope;
+    if (!qa_application_console_scope_read(app, console, &scope))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Startup queue names an unowned source console");
+    const char *instance = scope.provider ? qa_application_provider_instance(app, scope.provider) : "";
+    if (!instance) return application_fail(error, QA_ERROR_ARGUMENT, "Startup source has no retained physical provider");
+    char *identity = startup_copy(instance, error);
+    size_t length = strlen(row->command);
+    char *text = length <= SIZE_MAX - 2 ? malloc(length + 2) : NULL;
+    if (!identity || !text) {
+        free(identity); free(text);
+        return application_fail(error, QA_ERROR_MEMORY, "Retaining actual queued startup command");
+    }
+    memcpy(text, row->command, length); text[length] = '\n'; text[length + 1] = 0;
+    bool okay = qa_console_append(console, context, text, error);
+    free(text);
+    if (!okay) { free(identity); return false; }
+    row->queued_instance = identity; row->queued_kind = scope.kind; row->queued_seat = scope.seat;
+    row->queued_generation = app->command_generation;
+    return true;
+}
+
+bool qa_application_startup_console_queued(const qa_application *app, const qa_console *console)
+{
+    if (!app || !app->startup || !console) return false;
+    qa_application_console_scope scope;
+    if (!qa_application_console_scope_read(app, console, &scope)) return false;
+    const char *instance = scope.provider ? qa_application_provider_instance(app, scope.provider) : "";
+    if (!instance) return false;
+    for (size_t i = 0; i < app->startup->count; ++i) {
+        const application_startup_row *row = &app->startup->rows[i];
+        if (row->queued_instance && row->queued_generation == app->command_generation &&
+            row->queued_kind == (uint32_t)scope.kind && row->queued_seat == scope.seat &&
+            !strcmp(instance, row->queued_instance)) return true;
+    }
+    return false;
 }
 
 bool application_startup_fields(qa_source_save_io *io, qa_application *app)
@@ -209,6 +291,32 @@ bool application_startup_fields(qa_source_save_io *io, qa_application *app)
         if (!qa_source_save_bytes(io, row->command, length) ||
             !qa_source_save_bool(io, &row->consumed) || !qa_source_save_bool(io, &row->completed) ||
             !qa_source_save_bool(io, &row->shared_seeded)) return false;
+        bool queued = row->queued_instance != NULL;
+        if (!qa_source_save_bool(io, &queued)) return false;
+        if (queued) {
+            size_t extent = io->direction == QA_SOURCE_SAVE_WRITE ? strlen(row->queued_instance) : 0;
+            size_t remaining = io->direction == QA_SOURCE_SAVE_READ ? io->input.size - io->offset : SIZE_MAX - 1;
+            if (!qa_source_save_u64(io, &row->queued_generation) || !row->queued_generation ||
+                !qa_source_save_u32(io, &row->queued_kind) || row->queued_kind > QA_APPLICATION_CONSOLE_Q1_GAME ||
+                !qa_source_save_u32(io, &row->queued_seat) || !qa_source_save_count(io, &extent, remaining) || extent == SIZE_MAX) return false;
+            if (io->direction == QA_SOURCE_SAVE_READ) {
+                row->queued_instance = malloc(extent + 1);
+                if (!row->queued_instance) return application_fail(io->error, QA_ERROR_MEMORY, "Restoring startup source buffer identity");
+                row->queued_instance[extent] = 0;
+            }
+            if (!qa_source_save_bytes(io, row->queued_instance, extent) || memchr(row->queued_instance, 0, extent) ||
+                (row->queued_kind == QA_APPLICATION_CONSOLE_ENGINE ? extent || row->queued_seat : !extent) ||
+                (row->queued_seat && row->queued_kind != QA_APPLICATION_CONSOLE_Q3_CGAME && row->queued_kind != QA_APPLICATION_CONSOLE_Q3_UI) ||
+                row->consumed || row->completed)
+                return application_fail(io->error, QA_ERROR_FORMAT, "Queued startup ordinal leaves its real source scope");
+            for (size_t j = 0; j < i; ++j)
+                if (app->startup->rows[j].queued_instance || qa_application_startup_command_pending(app, j))
+                    return application_fail(io->error, QA_ERROR_FORMAT, "Saved startup buffer leaves original command order");
+            if (io->direction == QA_SOURCE_SAVE_WRITE) {
+                qa_console *console = NULL;
+                if (!qa_application_startup_command_queued_console(app, i, &console, io->error) || !console) return false;
+            }
+        }
         if (io->direction == QA_SOURCE_SAVE_READ) {
             if (memchr(row->command, 0, length) || strpbrk(row->command, "\r\n") ||
                 qa_command_separator(row->command, length, QA_CONSOLE_Q3) != length)

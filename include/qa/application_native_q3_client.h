@@ -4,11 +4,11 @@
 #include "qa/application_native_q3_presentation.h"
 #include "qa/application_q3_client.h"
 #include "qa/application_character_selection.h"
+#include "qa/application_native_q3_wire.h"
 
 typedef struct qa_native_q3_client_service qa_native_q3_client_service;
 
-/* Called with the resolved physical GAME, before CGAME constructors, key
- * alias setup or campaign Init. It does not invoke a guest role. The caller
+/* Called with the resolved physical GAME, before CGAME constructors. The caller
  * owns the returned services and selection and releases each exactly once. */
 typedef struct qa_native_q3_client_services {
     qa_application_q3_client_context client;
@@ -16,9 +16,9 @@ typedef struct qa_native_q3_client_services {
     /* Numeric receipts/origins are absent when no real command/transport
      * claim exists. The input owner remains the genuine seat service. */
     qa_input_seat *input;
-    /* Actual physical GAME reader lease. Its release is part of release(context)
-     * and defers source/registry retirement while this role owns observers. */
-    void *source_lifetime;
+    /* Borrowed genuine physical GAME reader. The consumed context owns this
+     * exact lease; release(context) releases it after all role observers. */
+    qa_native_q3_wire_reader *wire_reader;
     uint64_t input_receipt, source_client_origin;
     qa_command_context reliable_origin, console_origin;
     void *context;
@@ -91,6 +91,10 @@ bool qa_native_q3_client_register(qa_native_q3_client_service *, qa_error *);
  * remains the separate private-cache refresh stage. */
 bool qa_native_q3_client_prepare(qa_native_q3_client_service *, qa_error *);
 bool qa_native_q3_client_refresh(qa_native_q3_client_service *, qa_error *);
+/* Actual CL SystemInfo effect, after CS1 reaches this reader and before the
+ * reliable acknowledgment. Refresh engine values/time only; CG_UpdateCvars
+ * retains its separate private-cache stage. */
+bool qa_native_q3_client_system_info(qa_native_q3_client_service *, qa_error *);
 bool qa_native_q3_client_frame_time(qa_native_q3_client_service *, double supplied_ms,
     double *source_ms, qa_error *);
 bool qa_native_q3_client_userinfo_initialize(qa_native_q3_client_service *,

@@ -1,6 +1,12 @@
 #include "internal.h"
 #include "capture.h"
 #include "save_commands.h"
+#include "campaign.h"
+#include "campaign_ui.h"
+#include "campaign_cinematic.h"
+#include "ui_features.h"
+#include "input_profile.h"
+#include "qa/application_startup_prepare.h"
 #include <stdio.h>
 
 static qa_console_dialect dialect(qa_movement_kind kind)
@@ -21,8 +27,9 @@ static bool controls(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error
     if (duration <= 0) return true;
     for (unsigned i = 0; i < frontend->options.seats; ++i) {
         frontend_seat *seat = &frontend->seats[i];
-        qa_actor_id actor;
-        if (!qa_application_player_actor(frontend->application, i, &actor)) continue;
+        qa_actor_id actor; uint32_t launch_seat;
+        if (!frontend_seat_launch_id_read(frontend,i,&launch_seat) ||
+            !qa_application_player_actor(frontend->application, launch_seat, &actor)) continue;
         qa_application_control_view state;
         if (!qa_application_control_read(frontend->application, actor, &state))
             return frontend_fail(error, QA_ERROR_ARGUMENT, "local player lacks its application control continuation");
@@ -64,6 +71,7 @@ static bool controls(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *error
 }
 static bool input_events(qa_frontend *frontend, qa_error *error)
 {
+    if (!frontend_ui_features_sync(frontend,error)) return false;
     SDL_Event event;
     double now = (double)frontend->time_ns / 1000000.0;
     while (SDL_PollEvent(&event)) {
@@ -77,9 +85,11 @@ static bool input_events(qa_frontend *frontend, qa_error *error)
             continue;
         }
         bool handled;
-        if (!qa_input_platform_event(frontend->input, &event, now, &handled, error)) return false;
+        if (!qa_input_platform_event(frontend->input, &event, now, &handled, error) ||
+            !frontend_ui_features_sync(frontend,error)) return false;
     }
-    return frontend->options.dedicated || qa_input_platform_frame(frontend->input, now, error);
+    return frontend->options.dedicated || (qa_input_platform_frame(frontend->input, now, error) &&
+        frontend_ui_features_sync(frontend,error));
 }
 bool frontend_events(qa_frontend *frontend, qa_error *error)
 {
@@ -90,15 +100,26 @@ bool frontend_events(qa_frontend *frontend, qa_error *error)
         if (event.kind == QA_BUILTIN_LOG) continue;
         const char *text = qa_strings_cstr(strings, event.text);
         if ((event.kind == QA_BUILTIN_MESSAGE || event.kind == QA_BUILTIN_CENTERPRINT) && text) {
+            bool printed=false;
             for (unsigned seat = 0; seat < frontend->options.seats && !frontend->options.dedicated; ++seat) {
-                qa_actor_id actor;
-                if (event.actor.registry && (!qa_application_player_actor(frontend->application, seat, &actor) || !qa_actor_id_equal(actor, event.actor))) continue;
+                qa_actor_id actor; uint32_t launch_seat;
+                if (event.actor.registry && (!frontend_seat_launch_id_read(frontend,seat,&launch_seat) ||
+                    !qa_application_player_actor(frontend->application, launch_seat, &actor) || !qa_actor_id_equal(actor, event.actor))) continue;
+                char localized[1024]; const char *recipient_text;
+                if (!frontend_ui_source_message(frontend,seat,&event,localized,&recipient_text,error)) return false;
                 bool ok = event.kind == QA_BUILTIN_CENTERPRINT ? qa_hud_center_print(frontend->seats[seat].hud,
-                    text, event.time_ns, UINT64_C(4000000000), true, 0, error) : qa_hud_notify(frontend->seats[seat].hud,
-                    text, false, event.time_ns, UINT64_C(4000000000), error);
-                if (!ok || !qa_seat_console_print(frontend->seats[seat].console, text, error)) return false;
+                    recipient_text, event.time_ns, UINT64_C(4000000000), true, 0, error) : qa_hud_notify(frontend->seats[seat].hud,
+                    recipient_text, false, event.time_ns, UINT64_C(4000000000), error);
+                if (!ok || !qa_seat_console_print(frontend->seats[seat].console, recipient_text, error)) return false;
+                if (!printed) { fputs(recipient_text,stdout); printed=true; }
             }
-            fputs(text, stdout);
+            if (!printed && frontend->options.dedicated) {
+                char localized[1024]; const char *recipient_text;
+                if (!event.actor.registry) {
+                    if (!frontend_ui_source_message(frontend,0,&event,localized,&recipient_text,error)) return false;
+                    fputs(recipient_text,stdout);
+                } else fputs(text,stdout);
+            }
         }
         if (!frontend_event_sound(frontend, &event, error)) return false;
     }
@@ -155,7 +176,17 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
         !frontend_owners_idle(frontend) || !frontend_seat_callbacks_idle(frontend) || frontend->frame_number == UINT64_MAX ||
         elapsed_ns > UINT64_MAX - frontend->time_ns)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid frontend frame duration or reentry");
-    if (!qa_application_should_stop(frontend->application)) {
+    if (qa_application_startup_pending(frontend->application)) {
+        frontend->preparing=true;
+        bool complete=false;
+        bool prepared=qa_application_startup_advance(frontend->application,&complete,error);
+        frontend->preparing=false;
+        if (!prepared) return false;
+    }
+    if (!frontend_startup_replay(frontend,error)) return false;
+    if (!qa_application_should_stop(frontend->application) && !frontend_startup_queued(frontend) &&
+        !qa_application_startup_pending(frontend->application) && frontend_cinematic_capture_ready(frontend) &&
+        qa_application_world(frontend->application)) {
         frontend->preparing = true;
         bool prepared = qa_application_prepare_frame(frontend->application, error);
         frontend->preparing = false;
@@ -178,20 +209,39 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
              qa_dedicated_console_drain(frontend->terminal, console, &context, &lines, error);
     }
     size_t executed;
-    if (ok) ok = qa_console_drain(console, 4096, &executed, error) &&
+    if (ok) ok = (qa_application_startup_console_queued(frontend->application,console) ||
+        qa_console_drain(console, 4096, &executed, error)) &&
         frontend_tools_sync(frontend, error) && frontend_network_pump(frontend, error);
+    if (ok) ok=frontend_cinematic_drain(frontend,error);
+    if (ok && frontend_cinematic_running(frontend)) {
+        bool rendered=false;
+        ok=frontend_cinematic_frame(frontend,elapsed_ns,&rendered,error);
+        if (ok && !rendered) {
+            bool console_open=false;
+            for (uint32_t i=0;i<frontend->options.seats;++i)
+                console_open|=qa_input_seat_focus(frontend->seats[i].input)==QA_INPUT_CONSOLE;
+            if (console_open) ok=frontend_present(frontend,error);
+        }
+        if (ok && frontend->audio) ok=audio_output(frontend,elapsed_ns,error);
+        frontend->stepping=false;
+        if (ok) ok=frontend_cinematic_drain(frontend,error);
+        if (ok) ++frontend->frame_number;
+        return ok;
+    }
     qa_profiler *profiler = qa_tools_profiler(frontend_tools_owner(frontend));
     if (ok && !qa_application_should_stop(frontend->application)) {
-        if (!retiring_map && !frontend->options.dedicated) {
+        if (!retiring_map && !qa_application_startup_pending(frontend->application) && !frontend->options.dedicated) {
             ok = qa_profiler_push(profiler, "controls", error);
             if (ok) ok = phase_end(profiler, controls(frontend, elapsed_ns, error), error);
         }
-        if (ok && !retiring_map && qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING && !frontend_network_remote(frontend)) {
+        if (ok && !retiring_map && !qa_application_startup_pending(frontend->application) &&
+            qa_application_get_state(frontend->application) == QA_APPLICATION_RUNNING && !frontend_network_remote(frontend)) {
             ok = frontend_network_tick(frontend, elapsed_ns, retiring_map, error) &&
                 qa_profiler_push(profiler, "application", error);
             if (ok) ok = phase_end(profiler, qa_application_advance(frontend->application, elapsed_ns, error), error);
         }
-        if (ok) ok = frontend_network_publish(frontend, error) && frontend_source_times_sync(frontend, false, error);
+        if (ok) ok = frontend_network_publish(frontend, error) && frontend_source_times_sync(frontend, false, error) &&
+            frontend_input_profile_bind(frontend,error) && frontend_campaign_drain(frontend,error);
         if (ok && !frontend->options.dedicated) ok = frontend_scene_sync(frontend, error) &&
             frontend_map_events(frontend, error) && frontend_particle_events(frontend, error) && frontend_player_events(frontend, error);
         if (ok && !frontend->options.dedicated) {
@@ -222,7 +272,7 @@ bool qa_frontend_step(qa_frontend *frontend, uint64_t elapsed_ns, qa_error *erro
     frontend->stepping = false;
     if (ok && !qa_application_should_stop(frontend->application))
         ok = qa_application_complete_frame(frontend->application, error);
-    if (ok) ok = frontend_source_drain(frontend, error);
+    if (ok) ok = frontend_source_drain(frontend, error) && frontend_campaign_ui_drain(frontend,error);
     if (ok) ++frontend->frame_number;
     return ok && frontend_travel(frontend, error);
 }

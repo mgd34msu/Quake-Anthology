@@ -1,6 +1,7 @@
 #ifndef APPLICATION_QC_PROFILE_H
 #define APPLICATION_QC_PROFILE_H
 #include "guest_qc_internal.h"
+#include "client_outputs.h"
 
 typedef enum application_qc_input_id {
     QC_INPUT_SELF, QC_INPUT_OTHER, QC_INPUT_TIME, QC_INPUT_ELAPSED,
@@ -53,6 +54,18 @@ typedef struct application_qc_input_binding {
 } application_qc_input_binding;
 typedef struct application_qc_cvar { char *name, *value; } application_qc_cvar;
 typedef struct application_qc_weapon_value { float value; qa_item_id item; } application_qc_weapon_value;
+typedef struct application_qc_client_output_value {
+    double value;
+    union { qa_movement_mode mode; bool crouched; } output;
+} application_qc_client_output_value;
+typedef struct application_qc_client_output {
+    application_client_output_channel channel;
+    const application_qc_bound_field *field, *maximum;
+    bool height, masked;
+    uint32_t mask;
+    application_qc_client_output_value *values;
+    size_t value_count;
+} application_qc_client_output;
 struct application_qc_profile {
     application_qc_bound_field *fields;
     size_t field_count;
@@ -61,6 +74,9 @@ struct application_qc_profile {
     application_qc_calls initialize, admit, userinfo, disconnect, client_frame, frame;
     application_qc_input_binding *input;
     size_t input_count;
+    application_qc_client_output client_outputs[APPLICATION_CLIENT_OUTPUT_COUNT];
+    size_t client_output_count;
+    uint8_t client_output_channels;
     application_qc_cvar *cvars;
     size_t cvar_count;
     const qa_qc_definition *weapon_field;
@@ -86,4 +102,11 @@ bool application_qc_load_declared_map(struct application_qc_state *, const qa_bs
                                         const qa_entities *, qa_string_id, qa_string_id, qa_error *);
 bool application_qc_client_think(struct application_qc_state *, qa_actor_id,
                                   const qa_source_frame *, qa_error *);
+bool application_qc_publish_client_outputs(struct application_qc_state *, qa_error *);
+bool application_qc_admit_client_outputs(struct application_qc_state *, uint32_t, qa_error *);
+bool application_qc_restore_client_outputs(struct application_qc_state *, qa_error *);
+bool application_qc_output_field_owned(const struct application_qc_state *, qa_actor_id,
+                                        const application_qc_bound_field *);
+bool application_qc_output_claim_available(const struct application_qc_state *, uint8_t, qa_error *);
+bool application_qc_capture_client_outputs(const struct application_qc_state *, qa_error *);
 #endif

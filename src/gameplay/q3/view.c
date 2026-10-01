@@ -1,10 +1,19 @@
 #include "map/internal.h"
 
+static qa_trajectory source_trajectory(const qa_q3_trajectory *source) {
+    return (qa_trajectory){.type = (qa_trajectory_type)source->type,
+        .time_ms = source->time, .duration_ms = source->duration,
+        .base = qa_v3(source->base[0], source->base[1], source->base[2]),
+        .delta = qa_v3(source->delta[0], source->delta[1], source->delta[2])};
+}
+
 static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_view *out,
                          qa_error *error) {
     const q3_actor *entry = q3_actor_const(game, actor);
     const qa_q3_map_actor_state *map = entry ? NULL : q3_map_const(game, actor);
-    if (!entry && (!map || map->kind < QA_Q3_MAP_MOVER_DOOR ||
+    uint32_t source_slot;
+    bool source = qa_q3_source_actor_slot(game, actor, &source_slot, NULL);
+    if (!entry && !source && (!map || map->kind < QA_Q3_MAP_MOVER_DOOR ||
                    map->kind > QA_Q3_MAP_MOVER_PENDULUM ||
                    (!q3_map_text(game, map->model) && !q3_map_text(game, map->model2))))
         return q3_fail(error, "missing Q3 entity view");
@@ -12,11 +21,35 @@ static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_
                              .source_client = -1};
     if (!qa_world_body_read(game->options.services.world, actor, &view.body, error))
         return false;
+    if (source) {
+        qa_q3_wire_visibility visibility;
+        uint32_t actual_slot;
+        if (!qa_q3_wire_entity_read(game, source_slot, &view.source_entity, &visibility, error) ||
+            !qa_q3_source_actor_slot(game, actor, &actual_slot, error)) return false;
+        if (actual_slot != source_slot)
+            return q3_fail(error, "Q3 presentation lost its actual source row during observation");
+        view.has_source_entity = true;
+        view.source_number = view.source_entity.number;
+    }
     view.position = (qa_trajectory){.type = QA_TRAJECTORY_STATIONARY, .base = view.body.origin};
     view.angular = (qa_trajectory){.type = QA_TRAJECTORY_STATIONARY, .base = view.body.angles};
+    entry = q3_actor_const(game, actor);
+    map = entry ? NULL : q3_map_const(game, actor);
+    if (view.has_source_entity && view.source_entity.eType == 12) {
+        const qa_q3_entity *s = &view.source_entity;
+        view.kind = QA_Q3_ENTITY_TEAM;
+        view.alpha = entry ? entry->alpha : map ? map->alpha : 1;
+        view.flags = (uint32_t)s->eFlags;
+        view.constant_light = (uint32_t)s->constantLight;
+        view.position = source_trajectory(&s->pos);
+        view.angular = source_trajectory(&s->apos);
+        *out = view;
+        return true;
+    }
     if (!entry) {
-        map = q3_map_const(game, actor);
-        if (!map || q3_actor_const(game, actor))
+        if (!map || map->kind < QA_Q3_MAP_MOVER_DOOR ||
+            map->kind > QA_Q3_MAP_MOVER_PENDULUM ||
+            (!q3_map_text(game, map->model) && !q3_map_text(game, map->model2)))
             return q3_fail(error, "Q3 authored presentation owner changed during observation");
         view.kind = map->linked ? QA_Q3_ENTITY_MOVER : QA_Q3_ENTITY_HIDDEN;
         view.alpha = map->alpha;
@@ -37,14 +70,8 @@ static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_
         view.powerups = (uint32_t)s->powerups;
         view.weapon = (qa_q3_weapon)s->weapon;
         view.legs_animation = s->legsAnim; view.torso_animation = s->torsoAnim;
-        view.position = (qa_trajectory){.type = (qa_trajectory_type)s->pos.type,
-            .time_ms = s->pos.time, .duration_ms = s->pos.duration,
-            .base = qa_v3(s->pos.base[0], s->pos.base[1], s->pos.base[2]),
-            .delta = qa_v3(s->pos.delta[0], s->pos.delta[1], s->pos.delta[2])};
-        view.angular = (qa_trajectory){.type = (qa_trajectory_type)s->apos.type,
-            .time_ms = s->apos.time, .duration_ms = s->apos.duration,
-            .base = qa_v3(s->apos.base[0], s->apos.base[1], s->apos.base[2]),
-            .delta = qa_v3(s->apos.delta[0], s->apos.delta[1], s->apos.delta[2])};
+        view.position = source_trajectory(&s->pos);
+        view.angular = source_trajectory(&s->apos);
         if (entry->kind == Q3_ACTOR_PODIUM && s->modelindex > 0 && s->modelindex <= 255)
             view.model = game->configstrings[32 + s->modelindex];
         uint32_t client;
@@ -140,6 +167,9 @@ static bool entity_read(const qa_q3_game *game, qa_actor_id actor, qa_q3_entity_
     case Q3_ACTOR_OBELISK:
         break;
     }
+    if (view.has_source_entity && (entry->kind == Q3_ACTOR_PLAYER ||
+        entry->kind == Q3_ACTOR_CORPSE || entry->kind == Q3_ACTOR_VICTORY_MODEL))
+        view.source_client = view.source_entity.clientNum;
     *out = view;
     return true;
 }

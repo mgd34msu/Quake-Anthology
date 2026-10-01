@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "match_intents.h"
 #include "q3_restart.h"
+#include "native_q3_clients.h"
 #include "qa/launch_identity.h"
 #include "qa/source_save.h"
 
@@ -97,13 +98,12 @@ static bool qualify(application_match_intents *state, qa_application *app,
     if (!p || !p->product->identity || !state->product_identity || !choices ||
         state->selection_index >= choices->mode_count ||
         strcmp(p->product->identity, state->product_identity) ||
-        strcmp(choices->modes[state->selection_index].instance, p->launch->selection.instance) ||
         !qa_sha256_equal(&p->launch->identity, &state->source_identity))
         return application_fail(error, QA_ERROR_ARGUMENT, "match map source selection changed");
     if (original_mode && (state->selection_index >= app->mode_count ||
         app->mode_ids[state->selection_index].slot != state->mode.slot ||
         app->mode_ids[state->selection_index].generation != state->mode.generation ||
-        application_mode_provider(app, state->mode) != p))
+        application_native_q3_mode_source_provider(app, state->mode) != p))
         return application_fail(error, QA_ERROR_ARGUMENT, "match map mode generation retired");
     qa_buffer identity = {0};
     if (!qa_launch_mode_identity_encode(current, state->selection_index, &identity, error)) return false;
@@ -185,7 +185,7 @@ bool application_match_intents_enqueue(application_match_intents *state, qa_appl
         return application_fail(error, QA_ERROR_ARGUMENT, "match map intent has no valid source snapshot");
     if (state->stage != MATCH_MAP_EMPTY)
         return application_fail(error, QA_ERROR_ARGUMENT, "another match map transition is pending");
-    application_provider *p = application_mode_provider(app, intent->mode);
+    application_provider *p = application_native_q3_mode_source_provider(app, intent->mode);
     if (!p || !p->product || !p->product->identity)
         return application_fail(error, QA_ERROR_NOT_FOUND, "match map has no actual source provider");
     application_match_intents next = {.restart = state->restart, .stage = MATCH_MAP_UNRESOLVED,

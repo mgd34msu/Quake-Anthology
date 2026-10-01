@@ -17,6 +17,9 @@ typedef struct catalog_product {
     size_t start_count;
     qa_catalog_episode episode;
     bool has_episode;
+    /* Discovery-only admission for an explicitly created empty write directory.
+     * Its resulting mounts/availability are saved; restore never rescans it. */
+    bool remote_directory;
     const char *witness;
     const char *required[4];
     size_t required_count;
@@ -37,6 +40,7 @@ struct qa_catalog {
     qa_vfs *mounts;
     qa_resource_pool *resources;
     const char *root, *user;
+    qa_mount_id q3_download_mount;
     catalog_product *products;
     size_t product_count, product_capacity;
     catalog_physical *physical;
@@ -53,10 +57,12 @@ const char *catalog_json_string(qa_catalog *, const qa_json_document *, qa_json_
 bool catalog_ascii_equal(const char *, const char *);
 bool catalog_suffix(const char *, const char *);
 bool catalog_safe_name(const char *);
+bool catalog_remote_name(const char *);
 bool catalog_requirement(qa_catalog *, catalog_product *, const char *, qa_error *);
 bool catalog_stock(qa_catalog *, qa_error *);
 bool catalog_add_product(qa_catalog *, const qa_product *, catalog_product **, qa_error *);
-bool catalog_scan(qa_catalog *, bool mods, qa_error *);
+bool catalog_scan(qa_catalog *, bool mods, const char *remote_base,
+    const char *remote_directory, qa_product_id *selected, qa_error *);
 bool catalog_index_product(qa_catalog *, catalog_product *, qa_error *);
 bool catalog_index_maps(qa_catalog *, catalog_product *, bool archives_only, qa_error *);
 bool catalog_read_mods(qa_catalog *, catalog_product *, qa_error *);

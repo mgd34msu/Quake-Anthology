@@ -46,6 +46,7 @@ typedef enum application_provider_kind {
 
 typedef struct application_provider {
     struct application_native_q1_console *native_q1_console;
+    struct application_native_q2_console *native_q2_console;
     struct application_native_q3_console *native_q3_console;
     struct application_native_q3_settings *native_q3_settings;
     struct application_native_q3_ipfilters *native_q3_ipfilters;
@@ -186,6 +187,9 @@ typedef struct application_publication {
 } application_publication;
 
 struct qa_application {
+    struct application_startup_flow *startup_flow;
+    application_provider *startup_preinit_provider;
+    const struct qa_application_startup_hooks *startup_hooks;
     struct application_startup *startup;
     qa_q3_product_policy q3_product;
     const qa_q3_product_policy *q3_product_preparing;
@@ -194,6 +198,7 @@ struct qa_application {
     const qa_native_runner_config *native_runner;
     void *guest_context;
     qa_application_q3_services_fn q3_services;
+    qa_application_q3_client_prepare_fn q3_client_prepare;
     qa_application_q3_client_effect_fn q3_client_effect;
     qa_application_q3_campaign_command_fn q3_campaign_command;
     const struct qa_application_q3_round_services *q3_round_services;
@@ -465,6 +470,7 @@ bool application_q3_guest_native_options(qa_application *, application_provider 
                                           qa_qvm_role, uint32_t,
                                           qa_native_host_instance_options *, qa_error *);
 bool application_console_create(qa_application *, qa_error *);
+void application_console_print(void *,const qa_command_context *,const char *);
 bool application_emit(void *, const qa_builtin_event *, qa_error *);
 bool application_record_motion_change(qa_application *, qa_actor_id,
                                       const qa_builtin_motion_change *,

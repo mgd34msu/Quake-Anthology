@@ -5,6 +5,16 @@
 #include "qa/modes.h"
 
 struct application_provider;
+bool application_native_q3_settings_source_init(struct application_provider *, qa_error *);
+bool application_native_q3_settings_source_loaded(struct application_provider *, qa_error *);
+bool application_native_q3_settings_source_modes(struct application_provider *, qa_error *);
+bool application_native_q3_settings_source_frame(void *, const qa_source_frame *, qa_error *);
+bool application_native_q3_source_team_items(void *, qa_error *);
+bool application_native_q3_source_end_frame(void *, const qa_source_frame *, qa_error *);
+bool application_native_mode_q3_team_status_bound(void *, qa_mode_id);
+bool application_native_mode_q3_source_match_exit(void *, qa_mode_id, qa_string_id, qa_error *);
+bool application_native_q3_source_world_initialize(void *, qa_error *);
+bool application_native_q3_settings_source_remap(void *, qa_error *);
 typedef struct application_map_assignment {
     char *name, *value;
     uint32_t set_flags;

@@ -181,6 +181,9 @@ bool qa_q3_presentation_movie_draw(qa_q3_presentation *p, int32_t handle, qa_err
 
 void qa_q3_presentation_movie_extents(qa_q3_presentation *p, int32_t handle, qa_scene_rect_f rect)
 {
-    if (p && !p->busy && handle >= 0 && handle < 16 && p->movies[handle].kind == Q3P_MOVIE_LOCAL)
+    qa_error ignored = {0};
+    if (!q3p_begin(p, &ignored)) return;
+    if (handle >= 0 && handle < 16 && p->movies[handle].kind == Q3P_MOVIE_LOCAL)
         p->movies[handle].rect = rect;
+    q3p_end(p, true);
 }

@@ -1,0 +1,3 @@
+1cac68fe2ae84f74eb37cd6db1758da9fd69cafb71783bf674ec2401ee9c555b  src/compat/q3_host/checkpoint.c
+7b9d35ddfd7f2178f50cb6f4e6bf81917cbd8feb17f6a1df25893a9198e3af33  src/compat/q3_host/game_checkpoint.c
+c75f2c0c2da57fa8b70c52fec7fadce6866fcdd0211efec237c29909dcfedd83  include/qa/q3_host_save.h

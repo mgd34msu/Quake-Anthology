@@ -66,5 +66,6 @@ bool qa_hud_wheel_prepare(qa_hud_wheel *, bool attack, uint64_t now_ns, qa_hud_w
 bool qa_hud_wheel_update(qa_hud_wheel *, uint64_t now_ns, qa_error *);
 /* Detached owner-thread state, also safe inside a read-only callback. */
 bool qa_hud_wheel_read(const qa_hud_wheel *, qa_hud_wheel_status *);
+bool qa_hud_wheel_round_ready(const qa_hud_wheel *);
 bool qa_hud_wheel_draw(qa_hud_wheel *, const qa_hud_wheel_draw_options *, qa_scene_frame *, qa_error *);
 #endif

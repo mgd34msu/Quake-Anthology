@@ -2,6 +2,7 @@
 #define QA_CATALOG_H
 
 #include "qa/session.h"
+#include "qa/filesystem.h"
 #include "qa/vfs.h"
 #include "qa/builtin.h"
 
@@ -89,6 +90,16 @@ typedef struct qa_catalog_options {
     bool discover_mods;
 } qa_catalog_options;
 bool qa_catalog_discover(const qa_catalog_options *, qa_catalog **, qa_error *);
+/* Safe normal-loop discovery, also used after a completed remote download.
+ * Builds a fresh snapshot from the configured roots, creates the actual Q3
+ * selected/base writable directories and admits an empty selected directory.
+ * The existing snapshot and its product/source views remain unchanged. */
+bool qa_catalog_discover_remote_q3(const qa_catalog *, qa_product_id base,
+    const char *directory, uint64_t generation, qa_catalog **out,
+    qa_product_id *selected, qa_error *);
+/* Borrows the real configured Q3 family download capability. Retain the root
+ * independently when it must outlive the catalog. NULL means no write owner. */
+qa_fs_root *qa_catalog_q3_download_root(const qa_catalog *);
 void qa_catalog_retain(qa_catalog *);
 void qa_catalog_release(qa_catalog *);
 uint64_t qa_catalog_generation(const qa_catalog *);

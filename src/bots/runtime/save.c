@@ -13,7 +13,7 @@
 #include "qa/bot_observations_save.h"
 #include "qa/script_defines_save.h"
 
-enum { VARIABLES, ASSETS, ACTIONS, BSP, GOALS, CHAT, MOVES, OBSERVATIONS, HANDLES, GLOBALS, PART_COUNT };
+enum { VARIABLES, ASSETS, ACTIONS, BSP, GOALS, CHAT, MOVES, OBSERVATIONS, HANDLES, GLOBALS, LOG, PART_COUNT };
 typedef struct runtime_state {
     uint32_t maximum, minimum, profile;
     bool debug, initialized, library_initialized, loaded, bsp_loaded, closed;
@@ -29,9 +29,9 @@ static bool fail(qa_error *error, const char *message)
 
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t bytes[8]; memcpy(bytes, magic, sizeof(bytes)); uint32_t version = 2;
+    uint8_t bytes[8]; memcpy(bytes, magic, sizeof(bytes)); uint32_t version = 3;
     return qa_source_save_bytes(io, bytes, sizeof(bytes)) && !memcmp(bytes, magic, sizeof(bytes)) &&
-        qa_source_save_u32(io, &version) && version == 2 ? true :
+        qa_source_save_u32(io, &version) && version == 3 ? true :
         bot_save_fail(io, QA_ERROR_FORMAT, "Unsupported bot runtime continuation schema");
 }
 
@@ -231,6 +231,7 @@ static bool capture_parts(qa_session *session, const qa_bot_runtime *runtime, qa
     if (ok && runtime->moves) ok = qa_bot_moves_save_capture(runtime->moves, &parts[MOVES], error);
     if (ok) ok = qa_bot_observations_capture(session, runtime, &parts[OBSERVATIONS], error);
     if (ok) ok = qa_script_defines_save_capture(runtime->globals, &parts[GLOBALS], error);
+    if (ok) ok = qa_bot_log_capture(runtime->log,&parts[LOG],error);
     qa_source_save_io io = {0};
     if (ok) ok = qa_source_save_writer(&io, session, error) && bot_save_signature(&io, handle_magic) &&
         handles_fields(&io, (qa_bot_runtime *)runtime, assets, NULL) && qa_source_save_finish(&io, &parts[HANDLES]);
@@ -240,7 +241,7 @@ bool qa_bot_runtime_save_capture(qa_session *session, const qa_bot_runtime *runt
 {
     if (!session || !runtime || !out || !qa_bot_runtime_can_destroy(runtime) || runtime->restore_pending)
         return fail(error, "Bot runtime capture requires its complete idle source owner");
-    if (!runtime->globals || runtime->options.library.preprocessor.globals != runtime->globals ||
+    if (!runtime->globals || !runtime->log || runtime->options.library.preprocessor.globals != runtime->globals ||
         (runtime->library && runtime->library->options.preprocessor.globals != runtime->globals))
         return fail(error, "Bot runtime global macro aliases differ from their actual owner");
     runtime_state state = {.maximum = runtime->options.maximum_states, .minimum = runtime->options.minimum_clients,
@@ -290,7 +291,9 @@ bool qa_bot_runtime_save_restore(qa_session *session, qa_bot_runtime *runtime, q
     if (!session || !runtime || !qa_bot_runtime_can_destroy(runtime) || runtime->restore_pending || runtime->closed ||
         runtime->initialized || runtime->library_initialized || runtime->loaded || runtime->bsp || runtime->map_name ||
         runtime->weapon_config || !runtime->library || !runtime->actions || !runtime->moves || !runtime->goals ||
-        !runtime->chat_system || runtime->chat_system->states || runtime->entity_capacity)
+        !runtime->chat_system || runtime->chat_system->states || runtime->entity_capacity || !runtime->globals ||
+        runtime->options.library.preprocessor.globals!=runtime->globals ||
+        runtime->library->options.preprocessor.globals!=runtime->globals)
         return fail(error, "Bot runtime import requires its actual empty detached constructor");
     for (size_t i = 0; i < runtime->options.maximum_states; ++i)
         if (runtime->characters[i] || runtime->chats[i] || runtime->weapons[i].used ||
@@ -303,16 +306,9 @@ bool qa_bot_runtime_save_restore(qa_session *session, qa_bot_runtime *runtime, q
         state.profile == (uint32_t)runtime->options.observations && state.debug == runtime->options.debug && map_matches(&state, map, error);
     qa_source_save_dispose(&io);
     qa_bot_saved_assets *assets = NULL; qa_bot_chat_restored_states chats = {0};
-    qa_script_defines *globals = NULL;
-    if (ok) ok = qa_script_defines_save_restore(parts[GLOBALS], &globals, error);
+    if (ok) ok = qa_script_defines_save_restore_into(runtime->globals,parts[GLOBALS],error);
     if (ok) {
         runtime->restore_pending = true;
-        qa_script_defines_release((qa_script_defines *)runtime->library->options.preprocessor.globals);
-        qa_script_defines_release(runtime->globals);
-        runtime->globals = globals; globals = NULL;
-        runtime->options.library.preprocessor.globals = runtime->globals;
-        runtime->library->options.preprocessor.globals = runtime->globals;
-        qa_script_defines_retain(runtime->globals);
         runtime->map_name = (char *)state.map.name; state.map.name = NULL;
         runtime->map = map ? *map : (qa_bot_runtime_map){0}; runtime->map.name = runtime->map_name;
         if (state.library) {
@@ -337,12 +333,12 @@ bool qa_bot_runtime_save_restore(qa_session *session, qa_bot_runtime *runtime, q
     if (ok) ok = qa_source_save_reader(&io, session, parts[HANDLES], error) && bot_save_signature(&io, handle_magic) &&
                  handles_fields(&io, runtime, assets, &chats) && qa_source_save_finish(&io, NULL);
     qa_source_save_dispose(&io);
+    if(ok) ok=qa_bot_log_restore(runtime->log,parts[LOG],error);
     if (ok) {
         runtime->time = state.time; runtime->initialized = state.initialized;
         runtime->library_initialized = state.library_initialized; runtime->loaded = state.loaded;
         runtime->bsp_loaded = state.bsp_loaded; runtime->closed = state.closed; runtime->restore_pending = false;
     }
-    qa_script_defines_release(globals);
     qa_bot_chat_restored_states_free(&chats); qa_bot_saved_assets_free(assets); qa_bot_runtime_saved_map_free(&state.map);
     if (!ok && (!error || error->code == QA_OK)) fail(error, "Invalid complete bot runtime continuation");
     return ok;

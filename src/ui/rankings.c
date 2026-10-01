@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "qa/ui_account_save.h"
+#include "qa/application_rankings.h"
 #include "qa/source_save.h"
 #include <stdio.h>
 
@@ -66,12 +67,12 @@ static bool action(void *context, uint32_t seat, qa_ui_id control,
         qa_ranking_request request = {.kind = menu->create ? QA_RANKING_CREATE_ACCOUNT : QA_RANKING_LOGIN,
                                       .username = username, .password = password, .email = email};
         erase(menu->password, sizeof(menu->password));
-        ok = qa_rankings_account(rankings, menu->slot, &request, error);
+        ok = qa_application_rankings_account(menu->application, menu->slot, &request, error);
         erase(username, sizeof(username)); erase(password, sizeof(password)); erase(email, sizeof(email));
-    } else if (control == RANK_RESET) ok = qa_rankings_reset(rankings, menu->slot, error);
+    } else if (control == RANK_RESET) ok = qa_application_rankings_reset(menu->application, menu->slot, error);
     else if (control == RANK_SPECTATE) {
         credentials_clear(menu);
-        ok = qa_rankings_spectate(rankings, menu->slot, error);
+        ok = qa_application_rankings_spectate(menu->application, menu->slot, error);
     }
     if (!ok) snprintf(menu->status, sizeof(menu->status), "%s",
         error ? error->message : "Ranking account operation failed");
@@ -150,8 +151,16 @@ bool qa_ui_rankings_create(qa_ui *ui, qa_application *application, qa_ui_id id, 
 bool qa_ui_rankings_set_slot(qa_ui_rankings *menu, int32_t slot, qa_error *error) {
     if (!menu || menu->busy || menu->ui->handling || slot < -1)
         return ui_fail(error, "cannot replace ranking account slot during callbacks");
+    if (menu->slot == slot) return true;
     credentials_clear(menu);
     menu->status[0] = 0; menu->slot = slot;
+    return true;
+}
+bool qa_ui_rankings_reset_binding(qa_ui_rankings *menu, qa_error *error) {
+    if (!menu || menu->busy || menu->ui->handling)
+        return ui_fail(error, "cannot reset ranking account binding during callbacks");
+    credentials_clear(menu);
+    menu->status[0] = 0; menu->slot = -1;
     return true;
 }
 bool qa_ui_rankings_destroy(qa_ui_rankings *menu, double time, qa_error *error) {

@@ -1,6 +1,6 @@
 #include "internal.h"
 #include "qa/hud.h"
-#include "qa/ui_save.h"
+#include "qa/source_save.h"
 #include <stdio.h>
 
 typedef struct hud_message { char *text; uint64_t starts, until, character_ns; bool chat, instant; } hud_message;
@@ -12,12 +12,29 @@ struct qa_hud {
     const qa_scene_image *pickup_icon;
     uint64_t pickup_until, hit_until;
     float hit_damage;
-    bool drawing;
+    bool drawing, checkpoint_active;
 };
+bool qa_hud_idle(const qa_hud *hud) { return hud && !hud->drawing && !hud->checkpoint_active; }
 static bool hud_signature(qa_source_save_io *io) {
-    uint8_t magic[4] = {'Q', 'A', 'H', 'D'}; uint32_t version = 1;
+    uint8_t magic[4] = {'Q', 'A', 'H', 'D'}; uint32_t version = 3;
     return qa_source_save_bytes(io, magic, 4) && !memcmp(magic, "QAHD", 4) &&
-        qa_source_save_u32(io, &version) && version == 1;
+        qa_source_save_u32(io, &version) && version == 3;
+}
+static bool hud_reservation(qa_source_save_io *io, size_t count, size_t capacity) {
+    if (count > capacity || capacity > SIZE_MAX / sizeof(hud_message)) return false;
+    if (capacity) {
+        size_t grown = 8;
+        while (grown < capacity && grown <= SIZE_MAX / 2 && grown * 2 <= SIZE_MAX / sizeof(hud_message)) grown *= 2;
+        if (capacity < 8 || (grown != capacity && capacity <= grown)) return false;
+    }
+    if (io->direction == QA_SOURCE_SAVE_READ && capacity > io->input.size - io->offset) return false;
+    /* Each real reserved slot has a saved presence cell. Inactive slots retain
+     * no message ownership; their old allocation bytes are operation scratch. */
+    for (size_t i = 0; i < capacity; ++i) {
+        bool active = i < count;
+        if (!qa_source_save_bool(io, &active) || active != (i < count)) return false;
+    }
+    return true;
 }
 static bool hud_text(qa_source_save_io *io, char **owned) {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
@@ -47,64 +64,76 @@ static bool hud_message_fields(qa_source_save_io *io, hud_message *message) {
         qa_source_save_u64(io, &message->until) && qa_source_save_u64(io, &message->character_ns) &&
         qa_source_save_bool(io, &message->chat) && qa_source_save_bool(io, &message->instant) && message->until >= message->starts;
 }
-static bool hud_image_fields(qa_source_save_io *io, const qa_ui_checkpoint_refs *refs, const qa_scene_image **image) {
+static bool hud_image_fields(qa_source_save_io *io, const qa_hud_checkpoint_refs *refs, const qa_scene_image **image) {
     bool present = *image != NULL;
     if (!qa_source_save_bool(io, &present) || !present) return !io->failed;
-    qa_buffer encoded = {0}; size_t size = 0;
+    uint64_t key = 0;
     if (io->direction == QA_SOURCE_SAVE_WRITE) {
-        if (!refs || !refs->image_encode || !refs->image_encode(refs->context, *image, &encoded, io->error)) {
+        if (!refs || !refs->image_encode || !refs->image_encode(refs->context, *image, &key, io->error) || !key) {
             if (!refs || !refs->image_encode) qa_error_set(io->error, QA_ERROR_ARGUMENT, 0, "HUD image identity encoder is absent");
-            qa_buffer_free(&encoded); return false;
+            return false;
         }
-        size = encoded.size;
     }
-    bool ok = qa_source_save_count(io, &size, io->direction == QA_SOURCE_SAVE_WRITE ? SIZE_MAX : io->input.size);
+    bool ok = qa_source_save_u64(io, &key) && key;
     if (ok && io->direction == QA_SOURCE_SAVE_READ) {
-        encoded.data = size ? malloc(size) : NULL; encoded.size = size;
-        if (size && !encoded.data) { qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Restoring HUD image identity"); ok = false; }
-    }
-    if (ok) ok = qa_source_save_bytes(io, encoded.data, size);
-    if (ok && io->direction == QA_SOURCE_SAVE_READ) {
-        ok = refs && refs->image_decode && refs->image_decode(refs->context, (qa_bytes){encoded.data, size}, image, io->error) && *image;
+        const qa_scene_image *decoded = NULL;
+        ok = refs && refs->image_decode && refs->image_decode(refs->context, key, &decoded, io->error) && decoded;
         if (!refs || !refs->image_decode) qa_error_set(io->error, QA_ERROR_ARGUMENT, 0, "HUD candidate image resolver is absent");
+        if (ok) { qa_scene_image_retain(decoded); *image = decoded; }
     }
-    qa_buffer_free(&encoded); return ok;
+    return ok;
 }
-bool qa_hud_checkpoint(qa_hud *hud, const qa_ui_checkpoint_refs *refs, qa_buffer *out, qa_error *error) {
-    if (!hud || !out || out->data || out->size || hud->drawing) return ui_fail(error, "HUD checkpoint requires completed draw callbacks and empty output");
+bool qa_hud_checkpoint(qa_hud *hud, const qa_hud_checkpoint_refs *refs, qa_buffer *out, qa_error *error) {
+    if (!hud || !out || out->data || out->size || hud->drawing || hud->checkpoint_active) return ui_fail(error, "HUD checkpoint requires completed callbacks and empty output");
     qa_source_save_io io = {0};
     if (!qa_source_save_writer(&io, qa_application_session(hud->options.application), error)) return false;
-    uint32_t seat = hud->options.seat; size_t count = hud->notice_count;
-    bool ok = hud_signature(&io) && qa_source_save_u32(&io, &seat) && qa_source_save_count(&io, &count, SIZE_MAX);
+    hud->checkpoint_active = true;
+    uint32_t seat = hud->options.seat; size_t count = hud->notice_count, capacity = hud->notice_capacity;
+    bool ok = hud_signature(&io) && qa_source_save_u32(&io, &seat) && qa_source_save_count(&io, &count, SIZE_MAX) &&
+        qa_source_save_count(&io, &capacity, SIZE_MAX / sizeof(hud_message)) &&
+        (!capacity || hud->notices) && hud_reservation(&io,count,capacity);
     for (size_t i = 0; ok && i < count; ++i) { hud_message copy = hud->notices[i]; ok = hud_message_fields(&io, &copy); }
-    count = hud->center_count; ok = ok && qa_source_save_count(&io, &count, SIZE_MAX);
+    count = hud->center_count; capacity = hud->center_capacity;
+    ok = ok && qa_source_save_count(&io, &count, SIZE_MAX) &&
+        qa_source_save_count(&io, &capacity, SIZE_MAX / sizeof(hud_message)) &&
+        (!capacity || hud->centers) && hud_reservation(&io,count,capacity);
     for (size_t i = 0; ok && i < count; ++i) { hud_message copy = hud->centers[i]; ok = hud_message_fields(&io, &copy); }
     char *pickup = hud->pickup; const qa_scene_image *icon = hud->pickup_icon;
     uint64_t pickup_until = hud->pickup_until, hit_until = hud->hit_until; float damage = hud->hit_damage;
     ok = ok && hud_text(&io, &pickup) && hud_image_fields(&io, refs, &icon) &&
-        qa_source_save_u64(&io, &pickup_until) && qa_source_save_u64(&io, &hit_until) && qa_source_save_f32(&io, &damage) && isfinite(damage);
+        qa_source_save_u64(&io, &pickup_until) && (pickup || (!icon && !pickup_until)) &&
+        qa_source_save_u64(&io, &hit_until) && qa_source_save_f32(&io, &damage) && isfinite(damage);
     if (ok) ok = qa_source_save_finish(&io, out);
     if (!ok && (!error || error->code == QA_OK)) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid retained HUD state");
-    qa_source_save_dispose(&io); return ok;
+    qa_source_save_dispose(&io); hud->checkpoint_active = false; return ok;
 }
-bool qa_hud_restore(qa_bytes bytes, const qa_hud_options *options, const qa_ui_checkpoint_refs *refs, qa_hud **out, qa_error *error) {
+bool qa_hud_restore(qa_bytes bytes, const qa_hud_options *options, const qa_hud_checkpoint_refs *refs, qa_hud **out, qa_error *error) {
     if (!options || !out || *out) return ui_fail(error, "HUD restore requires candidate options and empty output");
     qa_source_save_io io = {0}; uint32_t seat = 0; qa_hud *hud = NULL;
     bool ok = qa_source_save_reader(&io, qa_application_session(options->application), bytes, error) && hud_signature(&io) &&
         qa_source_save_u32(&io, &seat) && seat == options->seat && qa_hud_create(options, &hud, error);
-    size_t count = 0;
+    size_t count = 0, capacity = 0;
     if (ok) ok = qa_source_save_count(&io, &count, bytes.size / 8) &&
-        ui_reserve((void **)&hud->notices, &hud->notice_capacity, count, sizeof(*hud->notices), error);
+        qa_source_save_count(&io, &capacity, SIZE_MAX / sizeof(hud_message)) && hud_reservation(&io,count,capacity);
+    if (ok && capacity) {
+        hud->notices = calloc(capacity, sizeof(*hud->notices)); hud->notice_capacity = capacity;
+        if (!hud->notices) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring retained HUD notice storage"); ok = false; }
+    }
     for (size_t i = 0; ok && i < count; ++i) {
         hud_message *message = &hud->notices[hud->notice_count++]; *message = (hud_message){0}; ok = hud_message_fields(&io, message);
     }
     if (ok) ok = qa_source_save_count(&io, &count, bytes.size / 8) &&
-        ui_reserve((void **)&hud->centers, &hud->center_capacity, count, sizeof(*hud->centers), error);
+        qa_source_save_count(&io, &capacity, SIZE_MAX / sizeof(hud_message)) && hud_reservation(&io,count,capacity);
+    if (ok && capacity) {
+        hud->centers = calloc(capacity, sizeof(*hud->centers)); hud->center_capacity = capacity;
+        if (!hud->centers) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Restoring retained HUD center storage"); ok = false; }
+    }
     for (size_t i = 0; ok && i < count; ++i) {
         hud_message *message = &hud->centers[hud->center_count++]; *message = (hud_message){0}; ok = hud_message_fields(&io, message);
     }
     if (ok) ok = hud_text(&io, &hud->pickup) && hud_image_fields(&io, refs, &hud->pickup_icon) &&
-        qa_source_save_u64(&io, &hud->pickup_until) && qa_source_save_u64(&io, &hud->hit_until) &&
+        qa_source_save_u64(&io, &hud->pickup_until) && (hud->pickup || (!hud->pickup_icon && !hud->pickup_until)) &&
+        qa_source_save_u64(&io, &hud->hit_until) &&
         qa_source_save_f32(&io, &hud->hit_damage) && isfinite(hud->hit_damage) && qa_source_save_finish(&io, NULL);
     if (!ok) {
         qa_hud_destroy(hud, NULL);
@@ -135,28 +164,28 @@ bool qa_hud_create(const qa_hud_options *options, qa_hud **out, qa_error *error)
 }
 bool qa_hud_clear_notify(qa_hud *hud, qa_error *error) {
     if (!hud) return true;
-    if (hud->drawing) return ui_fail(error, "HUD draw callback is active");
+    if (hud->drawing || hud->checkpoint_active) return ui_fail(error, "HUD callback or checkpoint is active");
     for (size_t i = 0; i < hud->notice_count; ++i) free(hud->notices[i].text);
     hud->notice_count = 0;
     return true;
 }
 bool qa_hud_clear_center(qa_hud *hud, qa_error *error) {
     if (!hud) return true;
-    if (hud->drawing) return ui_fail(error, "HUD draw callback is active");
+    if (hud->drawing || hud->checkpoint_active) return ui_fail(error, "HUD callback or checkpoint is active");
     for (size_t i = 0; i < hud->center_count; ++i) free(hud->centers[i].text);
     hud->center_count = 0;
     return true;
 }
 bool qa_hud_destroy(qa_hud *hud, qa_error *error) {
     if (!hud) return true;
-    if (hud->drawing) return ui_fail(error, "HUD draw callback is active");
+    if (hud->drawing || hud->checkpoint_active) return ui_fail(error, "HUD callback or checkpoint is active");
     qa_hud_clear_notify(hud, NULL); qa_hud_clear_center(hud, NULL);
-    free(hud->notices); free(hud->centers); free(hud->pickup); free(hud);
+    free(hud->notices); free(hud->centers); free(hud->pickup); qa_scene_image_release(hud->pickup_icon); free(hud);
     return true;
 }
 bool qa_hud_notify(qa_hud *hud, const char *text, bool chat, uint64_t starts,
                     uint64_t duration, qa_error *error) {
-    if (!hud || hud->drawing) return ui_fail(error, "HUD message callback is active");
+    if (!hud || hud->drawing || hud->checkpoint_active) return ui_fail(error, "HUD message callback or checkpoint is active");
     char *copy = copy_text(text, error);
     if (!copy) return false;
     if (!ui_reserve((void **)&hud->notices, &hud->notice_capacity, hud->notice_count + 1,
@@ -167,7 +196,7 @@ bool qa_hud_notify(qa_hud *hud, const char *text, bool chat, uint64_t starts,
 }
 bool qa_hud_center_print(qa_hud *hud, const char *text, uint64_t starts, uint64_t duration,
                           bool instant, uint64_t character_ns, qa_error *error) {
-    if (!hud || hud->drawing) return ui_fail(error, "HUD center callback is active");
+    if (!hud || hud->drawing || hud->checkpoint_active) return ui_fail(error, "HUD center callback or checkpoint is active");
     char *copy = copy_text(text, error);
     if (!copy) return false;
     if (!ui_reserve((void **)&hud->centers, &hud->center_capacity, hud->center_count + 1,
@@ -186,13 +215,14 @@ bool qa_hud_center_print(qa_hud *hud, const char *text, uint64_t starts, uint64_
 }
 bool qa_hud_pickup(qa_hud *hud, const char *text, const qa_scene_image *icon, uint64_t until,
                     qa_error *error) {
-    if (!hud || hud->drawing) return ui_fail(error, "HUD pickup callback is active");
+    if (!hud || hud->drawing || hud->checkpoint_active) return ui_fail(error, "HUD pickup callback or checkpoint is active");
     char *copy = copy_text(text, error); if (!copy) return false;
+    qa_scene_image_retain(icon); qa_scene_image_release(hud->pickup_icon);
     free(hud->pickup); hud->pickup = copy; hud->pickup_icon = icon; hud->pickup_until = until;
     return true;
 }
 void qa_hud_hit_marker(qa_hud *hud, float damage, uint64_t until) {
-    if (hud && !hud->drawing && isfinite(damage)) { hud->hit_damage = damage; hud->hit_until = until; }
+    if (hud && !hud->drawing && !hud->checkpoint_active && isfinite(damage)) { hud->hit_damage = damage; hud->hit_until = until; }
 }
 static void expire(hud_message *messages, size_t *count, uint64_t now) {
     size_t retained = 0;
@@ -224,6 +254,77 @@ static bool number(qa_hud *hud, qa_scene_frame *scene, qa_scene_rect target, flo
     qa_scene_vec4 color = warning ? (qa_scene_vec4){1, .3f, .2f, 1} : (qa_scene_vec4){1, 1, 1, 1};
     return text(hud, scene, target, x, y, label, color, .9f, QA_FONT_ALIGN_CENTER, error) &&
            text(hud, scene, target, x, y + 13, numeric, color, 1.5f, QA_FONT_ALIGN_CENTER, error);
+}
+static bool caption_draw(qa_ui *ui,const qa_active_caption *values,size_t count,qa_scene_rect target,
+    qa_scene_rect_f area,float fit,qa_scene_frame *scene,qa_error *error)
+{
+    float width=area.width,height=area.height,scale=fit*ui->text_scale;
+    if (!count || width<16 || height<12) return true;
+    qa_font_info font;
+    if (!qa_font_describe(ui->options.fonts.primary?ui->options.fonts.primary:ui->options.fonts.classic,&font))
+        return ui_fail(error,"Caption presentation lost its actual font metrics");
+    float cap_height=font.has_cap_ink?font.cap_height:8,cap_top=font.has_cap_ink?font.cap_top:0;
+    float line_height=ceilf(cap_height*scale)+4;
+    if (line_height+8>height) return true;
+    if (count>SIZE_MAX/sizeof(qa_font_layout)) return ui_fail(error,"Caption layout count overflows");
+    qa_font_layout *layouts=qa_arena_alloc(&scene->storage,count*sizeof(*layouts),_Alignof(qa_font_layout),error);
+    if (!layouts) return false;
+    size_t lines=0;
+    for (size_t i=0;i<count;++i) {
+        const qa_active_caption *caption=values+i;
+        if (!caption->text) return ui_fail(error,"Caption presentation lost its localized text");
+        const char *speaker=caption->speaker?caption->speaker:"",*value=caption->text;
+        size_t speaker_size=strlen(speaker),text_size=strlen(value);
+        if (speaker_size>SIZE_MAX-3 || text_size>SIZE_MAX-speaker_size-3)
+            return ui_fail(error,"Caption text extent overflows");
+        char *joined=qa_arena_alloc(&scene->storage,speaker_size+text_size+3,1,error);
+        if (!joined) return false;
+        size_t offset=0;
+        if (speaker_size) { memcpy(joined,speaker,speaker_size); offset=speaker_size; joined[offset++]=':'; joined[offset++]=' '; }
+        memcpy(joined+offset,value,text_size+1);
+        qa_font_layout_options options={.text={(const uint8_t *)joined,offset+text_size},.scale=scale,
+            .color={1,1,1,1},.color_codes=QA_FONT_COLOR_LITERAL,.force_color=true,
+            .alignment=QA_FONT_ALIGN_CENTER,.max_width=width-8};
+        if (!qa_font_layout_build(&ui->options.fonts,&options,&scene->storage,layouts+i,error)) return false;
+        if (layouts[i].line_count>SIZE_MAX-lines) return ui_fail(error,"Caption line count overflows");
+        lines+=layouts[i].line_count;
+    }
+    long double maximum=floorl(((long double)height-8)/(long double)line_height);
+    size_t visible=maximum>=(long double)lines?lines:(size_t)maximum;
+    float panel_height=(float)visible*line_height+8;
+    float x=area.x,y=area.y+area.height-panel_height;
+    if (!qa_scene_frame_picture_f(scene,ui->options.white,target,(qa_scene_rect_f){x,y,width,panel_height},
+        (qa_scene_vec4){0,0,1,1},(qa_scene_vec4){0,0,0,.92f},error)) return false;
+    size_t skip=lines-visible,shown=0;
+    for (size_t i=0;i<count;++i) {
+        qa_font_layout *layout=layouts+i;
+        for (size_t row=0;row<layout->line_count;++row) {
+            if (skip) { --skip; continue; }
+            const qa_font_line *line=layout->lines+row;
+            qa_font_positioned_glyph *glyphs=(qa_font_positioned_glyph *)layout->glyphs+line->first_glyph;
+            for (size_t j=0;j<line->glyph_count;++j) glyphs[j].rect.y-=line->y;
+            qa_font_line single={line->width,0,0,line->glyph_count};
+            qa_font_layout draw=*layout; draw.glyphs=glyphs; draw.glyph_count=line->glyph_count;
+            draw.lines=&single; draw.line_count=1; draw.height=draw.line_height;
+            qa_font_draw_options options={.seat=ui->options.seat,.target=target,.space=QA_FONT_PIXELS,
+                .origin={x+4-(float)target.x,y+4+(float)shown*line_height-cap_top*scale-(float)target.y},.shadow_offset=fit};
+            if (!qa_font_draw_layout(scene,&draw,&options,error)) return false;
+            ++shown;
+        }
+    }
+    return true;
+}
+bool qa_ui_captions_draw(qa_ui *ui,qa_scene_frame *scene,qa_scene_rect target,qa_scene_rect_f area,
+    float fit,const qa_active_caption *values,size_t count,qa_error *error)
+{
+    if (!qa_ui_idle(ui) || !scene || (count && !values) || !isfinite(fit) || fit<=0 ||
+        !isfinite(area.x) || !isfinite(area.y) || !isfinite(area.width) || !isfinite(area.height) ||
+        area.width<0 || area.height<0 || !isfinite(area.x+area.width) || !isfinite(area.y+area.height))
+        return ui_fail(error,"Caption draw requires its idle actual seat UI and finite viewport region");
+    if (!target.width || !target.height) return true;
+    ui->handling=ui->drawing=true;
+    bool ok=caption_draw(ui,values,count,target,area,fit,scene,error);
+    ui->handling=ui->drawing=false; return ok;
 }
 static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, qa_error *error) {
     qa_ui *ui = hud->options.ui;
@@ -305,13 +406,17 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
             !number(hud, scene, target, 590, y, timer->label, seconds, seconds <= 5, error)) return false;
     }
     if (data.crosshair_visible && !frame->show_scores && !frame->show_inventory) {
+        float size=data.crosshair_size>0?data.crosshair_size:8;
+        if (!isfinite(size) || size<2 || size>32) return ui_fail(error,"Invalid HUD crosshair size");
         if (data.crosshair) {
-            qa_scene_rect_f pixels = {ui->bias_x + 312 * ui->scale, ui->bias_y + 232 * ui->scale,
-                                     16 * ui->scale, 16 * ui->scale};
+            float picture_size=data.crosshair_size>0?size:16;
+            qa_scene_rect_f pixels = {ui->bias_x + (320-picture_size*.5f) * ui->scale,
+                ui->bias_y + (240-picture_size*.5f) * ui->scale,
+                picture_size * ui->scale, picture_size * ui->scale};
             if (!qa_scene_frame_picture_f(scene, data.crosshair, target, pixels,
                 (qa_scene_vec4){0, 0, 1, 1}, data.crosshair_color, error)) return false;
-        } else if (!ui_fill(ui, scene, target, (qa_scene_rect_f){319, 236, 2, 8}, data.crosshair_color, error) ||
-                   !ui_fill(ui, scene, target, (qa_scene_rect_f){316, 239, 8, 2}, data.crosshair_color, error)) return false;
+        } else if (!ui_fill(ui, scene, target, (qa_scene_rect_f){320-size*.125f, 240-size*.5f, size*.25f, size}, data.crosshair_color, error) ||
+                   !ui_fill(ui, scene, target, (qa_scene_rect_f){320-size*.5f, 240-size*.125f, size, size*.25f}, data.crosshair_color, error)) return false;
     }
     if (frame->show_inventory && frame->actor.registry) {
         size_t count = 0;
@@ -344,7 +449,7 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
     for (size_t i = 0; i < hud->notice_count; ++i) {
         const hud_message *notice = &hud->notices[i];
         if (notice->starts > frame->time_ns) continue;
-        if (!text(hud, scene, target, 16, 20 + (float)i * 16, notice->text,
+        if (!ui_draw_source_text(ui, scene, target, 16, 20 + (float)i * 16, notice->text,
             notice->chat ? (qa_scene_vec4){.6f, 1, .6f, 1} : (qa_scene_vec4){1, 1, 1, 1},
             1, QA_FONT_ALIGN_LEFT, error)) return false;
     }
@@ -360,7 +465,7 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
             if (!shown) return false;
             memcpy(shown, value, offset); shown[offset] = 0; value = shown;
         }
-        if (!text(hud, scene, target, 320, 180, value, (qa_scene_vec4){1, 1, 1, 1}, 1.2f,
+        if (!ui_draw_source_text(ui, scene, target, 320, 180, value, (qa_scene_vec4){1, 1, 1, 1}, 1.2f,
             QA_FONT_ALIGN_CENTER, error)) return false;
     }
     if (hud->pickup && hud->pickup_until > frame->time_ns &&
@@ -375,18 +480,13 @@ static bool draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, 
     for (size_t i = 0; i < data.help_count; ++i)
         if (!text(hud, scene, target, 24, 108 + (float)i * 16, data.help_lines[i],
             (qa_scene_vec4){1, 1, 1, 1}, 1, QA_FONT_ALIGN_LEFT, error)) return false;
-    for (size_t i = 0; i < data.caption_count; ++i) {
-        const qa_active_caption *caption = &data.captions[i];
-        float y = 368 - (float)(data.caption_count - i - 1) * 18;
-        if (caption->speaker && *caption->speaker && !text(hud, scene, target, 320, y - 10,
-            caption->speaker, (qa_scene_vec4){1, .8f, .4f, 1}, .8f, QA_FONT_ALIGN_CENTER, error)) return false;
-        if (!text(hud, scene, target, 320, y, caption->text, (qa_scene_vec4){1, 1, 1, 1},
-            1, QA_FONT_ALIGN_CENTER, error)) return false;
-    }
-    return true;
+    float fit=fminf((float)target.width/640,(float)target.height/480);
+    return caption_draw(ui,data.captions,data.caption_count,target,
+        (qa_scene_rect_f){(float)target.x+8,(float)target.y+(float)target.height*.60f,
+            (float)target.width-16,(float)target.height*.22f},fit,scene,error);
 }
 bool qa_hud_draw(qa_hud *hud, const qa_hud_frame *frame, qa_scene_frame *scene, qa_error *error) {
-    if (!hud || !frame || !scene || frame->seat != hud->options.seat || hud->drawing ||
+    if (!hud || !frame || !scene || frame->seat != hud->options.seat || hud->drawing || hud->checkpoint_active ||
         hud->options.ui->handling ||
         !frame->safe_area.width || !frame->safe_area.height || !isfinite(frame->scale) || frame->scale <= 0 ||
         (double)frame->safe_area.x + frame->safe_area.width > INT32_MAX ||

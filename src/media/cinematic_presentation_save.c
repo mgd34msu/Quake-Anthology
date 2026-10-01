@@ -45,26 +45,31 @@ static bool fields(qa_source_save_io *io, const qa_cinematic *movie, const qa_sc
 bool qa_cinematic_presentation_checkpoint(const qa_cinematic *movie, const qa_scene_frame *frame,
     const qa_cinematic_image_checkpoint_refs *refs, qa_buffer *out, qa_error *error)
 {
-    if (!movie || !out || movie->busy || movie->faulted || (movie->image_frame && movie->image_frame!=frame))
+    if (!movie || !out || out->data || out->size || movie->busy || movie->faulted || movie->restore_pending ||
+        (movie->image_frame && movie->image_frame!=frame))
         return cinematic_fail(error,"Cinematic publication capture requires an idle matching frame");
+    qa_cinematic *owner=(qa_cinematic *)movie;
+    owner->busy=true;
     bool bound=movie->image_frame!=NULL; uint64_t revision=movie->image_revision, sequence=movie->image_sequence;
     const qa_scene_image *image=movie->image; qa_source_save_io io;
-    if (!qa_source_save_writer(&io,NULL,error)) return false;
+    if (!qa_source_save_writer(&io,NULL,error)) { owner->busy=false; return false; }
     bool ok=fields(&io,movie,frame,refs,&image,&bound,&revision,&sequence) && qa_source_save_finish(&io,out);
-    qa_source_save_dispose(&io); return ok;
+    qa_source_save_dispose(&io); owner->busy=false; return ok;
 }
 bool qa_cinematic_presentation_restore(qa_cinematic *movie, const qa_scene_frame *frame,
     const qa_cinematic_image_checkpoint_refs *refs, qa_bytes bytes, qa_error *error)
 {
-    if (!movie || movie->busy || movie->faulted || movie->image || movie->image_frame || movie->image_revision!=UINT64_MAX || movie->image_sequence)
+    if (!movie || movie->busy || movie->faulted || !movie->restore_pending || movie->image || movie->image_frame ||
+        movie->image_revision!=UINT64_MAX || movie->image_sequence)
         return cinematic_fail(error,"Cinematic publication restore requires an empty idle candidate cache");
+    movie->busy=true;
     const qa_scene_image *image=NULL; bool bound=false; uint64_t revision=UINT64_MAX,sequence=0;
     qa_source_save_io io;
-    if (!qa_source_save_reader(&io,NULL,bytes,error)) return false;
+    if (!qa_source_save_reader(&io,NULL,bytes,error)) { movie->busy=false; return false; }
     bool ok=fields(&io,movie,frame,refs,&image,&bound,&revision,&sequence) && qa_source_save_finish(&io,NULL);
     if (ok) {
         qa_scene_image_retain(image); movie->image=(qa_scene_image*)image;
         movie->image_frame=bound?frame:NULL; movie->image_revision=revision; movie->image_sequence=sequence;
     }
-    qa_source_save_dispose(&io); return ok;
+    qa_source_save_dispose(&io); movie->busy=false; return ok;
 }

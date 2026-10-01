@@ -1,8 +1,31 @@
 #include "internal.h"
+#include "qa/font_save.h"
 
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+
+struct qa_font_library_capture { qa_font_library *library; };
+bool qa_font_library_idle(const qa_font_library *library)
+{ return library && !library->capture && !library->codec_active && !library->callbacks; }
+bool qa_font_internal_admission_ready(const qa_font_library *library, qa_error *error)
+{
+    return qa_font_library_idle(library) || qa_font_fail(error,QA_ERROR_ARGUMENT,0,"Font owner callback or continuation capture is active");
+}
+bool qa_font_library_capture_begin(const qa_font_library *library, qa_font_library_capture **out, qa_error *error)
+{
+    if (!out || *out || !qa_font_library_idle(library))
+        return qa_font_fail(error,QA_ERROR_ARGUMENT,0,"Font capture requires an idle real library and empty token");
+    qa_font_library_capture *capture=malloc(sizeof(*capture));
+    if (!capture) return qa_font_fail(error,QA_ERROR_MEMORY,0,"Retaining the font library capture lease");
+    capture->library=(qa_font_library *)library; capture->library->capture=capture; *out=capture; return true;
+}
+void qa_font_library_capture_end(qa_font_library_capture *capture)
+{
+    if (!capture) return;
+    if (capture->library->capture==capture) capture->library->capture=NULL;
+    free(capture);
+}
 
 bool qa_font_fail(qa_error *error, qa_status status, size_t offset, const char *message) {
     qa_error_set(error, status, offset, "%s", message);
@@ -84,7 +107,7 @@ void qa_font_internal_destroy(qa_font *font) {
 }
 
 void qa_font_library_destroy(qa_font_library *library) {
-    if (!library)
+    if (!qa_font_library_idle(library))
         return;
     for (size_t i = 0; i < library->font_count; ++i)
         qa_font_internal_destroy(library->fonts[i]);
@@ -100,6 +123,7 @@ qa_font *qa_font_internal_create(qa_font_library *library, qa_font_kind kind, co
         qa_font_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid font construction");
         return NULL;
     }
+    if (!qa_font_internal_admission_ready(library,error)) return NULL;
     qa_font *font = calloc(1, sizeof(*font));
     if (!font) {
         qa_font_fail(error, QA_ERROR_MEMORY, 0, "Allocating font");
@@ -174,6 +198,7 @@ bool qa_font_internal_publish(qa_font *font, const qa_font **out, qa_error *erro
     if (!font || !out || !(font->line_height > 0) || !isfinite(font->line_height) ||
         !isfinite(font->ascent) || !isfinite(font->descent))
         return qa_font_fail(error, QA_ERROR_ARGUMENT, 0, "Incomplete font publication");
+    if (!qa_font_internal_admission_ready(font->library,error)) return false;
     qsort(font->glyphs, font->glyph_count, sizeof(*font->glyphs), compare_glyph);
     qa_font_library *library = font->library;
     if (!reserve((void **)&library->fonts, &library->font_capacity, library->font_count + 1,
@@ -245,6 +270,7 @@ void qa_font_internal_measure_cap_ink(qa_font *font) {
 bool qa_font_internal_freetype(qa_font_library *library, FT_Library *out, qa_error *error) {
     if (!library || !out)
         return qa_font_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid FreeType request");
+    if (!qa_font_internal_admission_ready(library,error)) return false;
     if (!library->freetype && FT_Init_FreeType(&library->freetype))
         return qa_font_fail(error, QA_ERROR_UNSUPPORTED, 0, "FreeType initialization failed");
     *out = library->freetype;
@@ -332,6 +358,28 @@ bool qa_font_describe(const qa_font *font, qa_font_info *out) {
         .glyph_count = font->glyph_count,
     };
     return true;
+}
+
+bool qa_font_atlas_create(qa_font_library *library, const char *name, const qa_scene_image *image,
+    const qa_font_glyph *glyphs, size_t count, float height, const qa_font **out, qa_error *error)
+{
+    if (!library || !name || !image || !glyphs || !count || !out || !isfinite(height) || height <= 0)
+        return qa_font_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid authored font atlas");
+    qa_font *font = qa_font_internal_create(library, QA_FONT_ATLAS, name, error);
+    if (!font) return false;
+    qa_scene_image_retain(image);
+    bool ok = qa_font_internal_take_image(font, image, error);
+    font->line_height = font->ascent = height;
+    for (size_t i = 0; ok && i < count; ++i) {
+        const qa_font_glyph *glyph = glyphs + i;
+        ok = glyph->image == image && glyph->uv.x >= 0 && glyph->uv.y >= 0 && glyph->uv.z <= 1 && glyph->uv.w <= 1 &&
+            glyph->uv.x <= glyph->uv.z && glyph->uv.y <= glyph->uv.w;
+        for (size_t j = 0; ok && j < i; ++j) ok = glyphs[j].codepoint != glyph->codepoint;
+        if (ok) ok = qa_font_internal_add_glyph(font, *glyph, error);
+    }
+    if (ok) { qa_font_internal_measure_cap_ink(font); ok = qa_font_internal_publish(font, out, error); }
+    if (!ok) { qa_font_internal_destroy(font); if (error && error->code == QA_OK) qa_font_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid authored atlas metrics"); }
+    return ok;
 }
 
 bool qa_font_find_glyph(const qa_font *font, uint32_t codepoint, qa_font_glyph *out) {

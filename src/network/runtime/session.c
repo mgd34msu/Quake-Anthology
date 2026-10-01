@@ -129,7 +129,8 @@ bool qa_network_pump(qa_network_runtime *runtime, uint64_t now, qa_error *error)
         for (uint32_t i = 0; !connectionless && i < runtime->options.clients; ++i) {
             qa_network_peer *peer = &runtime->peers[i];
             const qa_net_client *client = peer->occupied ? qa_net_connections_get(runtime->connections, peer->id) : NULL;
-            if (client && qa_net_address_equal(&client->endpoint, &packet.from, true)) { target = peer; break; }
+            if (client && (qa_network_qw_peer(peer) ? qa_network_qw_peer_matches(peer, &packet) :
+                qa_net_address_equal(&client->endpoint, &packet.from, true))) { target = peer; break; }
         }
         runtime->callback = true;
         if (target) {

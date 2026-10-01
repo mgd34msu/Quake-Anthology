@@ -28,6 +28,8 @@ uint64_t application_save_content_application_pool(const qa_application_content_
 uint64_t application_save_content_application_catalog(const qa_application_content_graph *);
 uint64_t application_save_content_launch_catalog(const qa_application_content_graph *);
 uint64_t application_save_content_launch_view(const qa_application_content_graph *);
+/* source.artifact_acquisition is the graph-owned recipe captured at the real
+ * executable opening and qualified against the restored owning VFS. */
 bool application_save_content_instance(const qa_application_content_graph *,
     const char *, application_saved_instance_content *, qa_error *);
 bool application_save_content_launch_resource(const qa_application_content_graph *,

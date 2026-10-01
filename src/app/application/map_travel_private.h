@@ -16,4 +16,8 @@ struct application_map_state {
 };
 bool application_map_checkpoint_capture(qa_application *, qa_buffer *, qa_error *);
 bool application_map_checkpoint_restore(qa_application *candidate, qa_bytes, qa_error *);
+bool application_source_queue_map_travel(qa_application *,
+    const qa_application_travel_request *, qa_error *);
+bool application_source_queue_travel(qa_application *,
+    const qa_application_travel_request *, qa_error *);
 #endif

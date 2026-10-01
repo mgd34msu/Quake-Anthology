@@ -2,6 +2,7 @@
 #define QA_NETWORK_RUNTIME_H
 
 #include "qa/network_unified.h"
+#include "qa/network_q3.h"
 
 #define QA_NETWORK_COMMAND_BACKUP 128u
 #define QA_NETWORK_MAX_SEATS 4u
@@ -16,6 +17,27 @@ typedef struct qa_network_command {
     bool has_arsenal;
     qa_unified_arsenal arsenal;
 } qa_network_command;
+/* One recovered QuakeWorld packet retains one source sequence. The movement
+ * owner receives all raw commands together and owns recursive msec splitting. */
+typedef struct qa_network_command_group {
+    qa_net_client_id client;
+    qa_net_seat_id seat;
+    qa_actor_id actor;
+    uint64_t epoch;
+    qa_movement_kind movement;
+    const qa_movement_command *commands;
+    size_t count;
+} qa_network_command_group;
+/* Original Q3 words remain intact until the actual source input owner adapts
+ * them. movement authenticates the separately selected control provider. */
+typedef struct qa_network_q3_source_command {
+    qa_net_client_id client;
+    qa_net_seat_id seat;
+    qa_actor_id actor;
+    uint64_t epoch, sequence;
+    qa_movement_kind movement;
+    qa_q3_usercmd command;
+} qa_network_q3_source_command;
 /* A snapshot borrows the admitted producer's complete owner checkpoint. The
  * runtime stores command history only, never another actor world/inventory. */
 typedef struct qa_network_snapshot {
@@ -39,6 +61,8 @@ typedef struct qa_network_hooks {
     bool (*connectionless)(void *, qa_network_runtime *, const qa_net_datagram *, qa_error *);
     /* Must authenticate retained identity before changing its endpoint. */
     bool (*reconnect)(void *, const qa_net_client *, const qa_net_address *, qa_bytes proof, qa_error *);
+    bool (*commands)(void *, const qa_network_command_group *, qa_error *);
+    bool (*q3_source_command)(void *, const qa_network_q3_source_command *, qa_error *);
 } qa_network_hooks;
 /* One adapter per connection. Source adapters own dialect histories, not
  * seats/world/clocks. receive must authenticate packets before invoking runtime
@@ -83,6 +107,11 @@ uint64_t qa_network_epoch(const qa_network_runtime *, qa_net_client_id);
  * sequences are ignored. Rejection never advances the accepted sequence. */
 bool qa_network_submit(qa_network_runtime *, const qa_network_command *, qa_error *);
 bool qa_network_accept(qa_network_runtime *, const qa_network_command *, qa_error *);
+/* Validate and admit the complete QW group once. Its accepted source sequence
+ * advances only after the command owner has accepted every retained command. */
+bool qa_network_accept_commands(qa_network_runtime *, const qa_network_command_group *, qa_error *);
+bool qa_network_accept_q3_source_command(qa_network_runtime *,
+    const qa_network_q3_source_command *, qa_error *);
 bool qa_network_snapshot_apply(qa_network_runtime *, qa_net_client_id,
                                 const qa_network_snapshot *, qa_error *);
 bool qa_network_restart(qa_network_runtime *, qa_net_client_id,

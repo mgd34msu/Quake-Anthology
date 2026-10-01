@@ -2,6 +2,7 @@
 #define QA_VFS_H
 
 #include "qa/archive.h"
+#include "qa/filesystem.h"
 #include "qa/hash.h"
 
 typedef struct qa_resource_pool qa_resource_pool;

@@ -18,7 +18,8 @@ bool qa_persistence_targets_binding(const qa_targets *targets, qa_actor_id actor
 static uint32_t callbacks(const qa_target_binding *binding)
 {
     return (binding->read ? 1u : 0u) | (binding->use ? 2u : 0u) | (binding->field ? 4u : 0u) |
-        (binding->set_targetname ? 8u : 0u) | (binding->set_target ? 16u : 0u) | (binding->set_delay ? 32u : 0u);
+        (binding->set_targetname ? 8u : 0u) | (binding->set_target ? 16u : 0u) |
+        (binding->set_delay ? 32u : 0u) | (binding->remap_shader ? 64u : 0u);
 }
 
 static bool fields(qa_source_save_io *io, qa_authored_target *target)
@@ -41,9 +42,9 @@ static bool signature(qa_source_save_io *io)
 {
     unsigned char actual[8] = {'Q','A','T','A','R','G','E','T'};
     static const unsigned char expected[8] = {'Q','A','T','A','R','G','E','T'};
-    uint32_t version = 1;
+    uint32_t version = 2;
     return qa_source_save_bytes(io, actual, sizeof(actual)) && !memcmp(actual, expected, sizeof(actual)) &&
-        qa_source_save_u32(io, &version) && version == 1;
+        qa_source_save_u32(io, &version) && version == 2;
 }
 
 static bool record(qa_source_save_io *io, qa_target_binding *binding, uint64_t *serial,
@@ -57,7 +58,7 @@ static bool record(qa_source_save_io *io, qa_target_binding *binding, uint64_t *
     if (!qa_source_save_actor(io, &binding->actor) ||
         !qa_actors_get(qa_session_actors(io->session), binding->actor) ||
         !qa_source_save_u64(io, serial) || !*serial || !qa_source_save_u32(io, &source) || source > QA_CLOCK_Q3 ||
-        !qa_source_save_u32(io, &mask) || !(mask & 1u) || (mask & ~63u) || !fields(io, &value)) return false;
+        !qa_source_save_u32(io, &mask) || !(mask & 1u) || (mask & ~127u) || !fields(io, &value)) return false;
     binding->source = (qa_clock_kind)source;
     if (reading) {
         qa_target_binding restored = {0}; qa_authored_target observed = {0};

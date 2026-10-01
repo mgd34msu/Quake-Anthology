@@ -3,6 +3,7 @@
 #include "qa/catalog_save.h"
 #include "qa/source_save.h"
 #include "qa/vfs_save.h"
+#include "qa/application_q3_factory.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -20,6 +21,7 @@ typedef struct content_instance {
     uint64_t *behaviors;
     const qa_catalog_weapon_behavior **behavior_values;
     qa_buffer options;
+    qa_vfs_acquisition artifact_acquisition;
     bool artifact_retained, declaration_retained;
 } content_instance;
 struct qa_application_content_graph {
@@ -163,6 +165,21 @@ static bool instance_collect(qa_application_content_graph *g, const qa_launch_in
     if (source->declaration) { row->declaration_pool = qa_application_content_pool_id(g, pool); row->declaration = qa_resource_id(source->declaration);
         if (qa_resource_pool_find(pool, row->declaration) != source->declaration) return fail(error, QA_ERROR_FORMAT, "Provider declaration is outside its actual pool"); }
     value->artifact = source->artifact; value->declaration = source->declaration;
+    if (source->artifact) {
+        const qa_vfs_acquisition *receipt = source->artifact_acquisition;
+        if (!receipt || receipt->resource_id != qa_resource_id(source->artifact) ||
+            !qa_vfs_acquisition_valid(source->content, receipt, error))
+            return fail(error, QA_ERROR_FORMAT, "Provider artifact lost its actual opening receipt");
+        row->artifact_acquisition = (qa_vfs_acquisition){.mount = receipt->mount, .resource_id = receipt->resource_id};
+        row->artifact_acquisition.path = copy_text(receipt->path, error);
+        row->artifact_acquisition.lookup_path = copy_text(receipt->lookup_path, error);
+        if (receipt->link_source) row->artifact_acquisition.link_source = copy_text(receipt->link_source, error);
+        if (receipt->link_target) row->artifact_acquisition.link_target = copy_text(receipt->link_target, error);
+        if (!row->artifact_acquisition.path || !row->artifact_acquisition.lookup_path ||
+            (receipt->link_source && !row->artifact_acquisition.link_source) ||
+            (receipt->link_target && !row->artifact_acquisition.link_target)) return false;
+        value->artifact_acquisition = &row->artifact_acquisition;
+    }
     if (value->artifact) { qa_resource_retain((qa_resource *)value->artifact); row->artifact_retained = true; }
     if (value->declaration) { qa_resource_retain((qa_resource *)value->declaration); row->declaration_retained = true; }
     if (source->interface_count > SIZE_MAX / sizeof(*row->interfaces) ||
@@ -223,6 +240,7 @@ bool application_save_content_collect(const qa_application *app, qa_application_
         ok = copy_resource(g, qa_vfs_resources(qa_launch_snapshot_mounts(launch)),
             qa_launch_snapshot_resource(launch, i), &g->resources[i], error);
     const qa_application_content_visitor visitor = {.context = g, .pool = add_pool, .catalog = add_catalog, .view = add_view};
+    if (ok) ok = qa_application_q3_content_visit(app, &visitor, error);
     if (ok && visit) ok = visit(context, app, &visitor, error);
     /* Preserve portable native admission only for the very same installed
      * view. Every encoding still checks its complete current native snapshot
@@ -269,6 +287,7 @@ void application_save_content_destroy(qa_application_content_graph *g)
         }
         if (row->artifact_retained) qa_resource_release((qa_resource *)v->artifact);
         if (row->declaration_retained) qa_resource_release((qa_resource *)v->declaration);
+        qa_vfs_acquisition_dispose(&row->artifact_acquisition);
         free(row->interfaces); free(row->interface_values); free(row->behaviors); free(row->behavior_values);
         qa_buffer_free(&row->options);
     }
@@ -340,7 +359,12 @@ bool application_save_content_instance(const qa_application_content_graph *g, co
 {
     if (!g || !name || !out) return fail(error, QA_ERROR_ARGUMENT, "Saved provider lookup has no actual graph/name/output");
     for (size_t i = 0; i < g->instance_count; ++i)
-        if (!strcmp(g->instances[i].value.source.selection.instance, name)) { *out = g->instances[i].value; return true; }
+        if (!strcmp(g->instances[i].value.source.selection.instance, name)) {
+            *out = g->instances[i].value;
+            out->source.artifact_acquisition = g->instances[i].artifact ?
+                &g->instances[i].artifact_acquisition : NULL;
+            return true;
+        }
     return fail(error, QA_ERROR_FORMAT, "Provider is absent from saved content inventory");
 }
 size_t application_save_content_launch_resource_count(const qa_application_content_graph *g) { return g ? g->resource_count : 0; }
@@ -404,6 +428,33 @@ static bool resource_fields(qa_source_save_io *io, content_resource *row)
     FIELD(u32, &row->value, product); FIELD(u64, row, pool); FIELD(u64, row, resource);
     return text_field(io, &row->value.path);
 }
+
+static bool acquisition_text(qa_source_save_io *io, char **value)
+{
+    bool present = *value != NULL;
+    if (!qa_source_save_bool(io, &present)) return false;
+    if (!present) return true;
+    const char *text = *value;
+    bool ok = text_field(io, &text);
+    if (io->direction == QA_SOURCE_SAVE_READ) *value = (char *)text;
+    return ok;
+}
+
+static bool acquisition_fields(qa_source_save_io *io, content_instance *row)
+{
+    qa_vfs_acquisition *receipt = &row->artifact_acquisition;
+    bool present = row->artifact != 0;
+    if (!qa_source_save_bool(io, &present) || present != (row->artifact != 0)) return false;
+    if (!present) return true;
+    if (!qa_source_save_u64(io, &receipt->mount) || !qa_source_save_u64(io, &receipt->resource_id) ||
+        !acquisition_text(io, &receipt->path) || !acquisition_text(io, &receipt->lookup_path) ||
+        !acquisition_text(io, &receipt->link_source) || !acquisition_text(io, &receipt->link_target) ||
+        !receipt->mount || receipt->resource_id != row->artifact || !receipt->path || !*receipt->path ||
+        !receipt->lookup_path || !*receipt->lookup_path ||
+        ((receipt->link_source != NULL) != (receipt->link_target != NULL))) return false;
+    row->value.source.artifact_acquisition = receipt;
+    return true;
+}
 static bool instance_fields(qa_source_save_io *io, content_instance *row)
 {
     qa_launch_restored_instance *v = &row->value.source; qa_launch_provider *p = &v->selection;
@@ -419,6 +470,7 @@ static bool instance_fields(qa_source_save_io *io, content_instance *row)
     if (!blob_field(io, &row->options)) return false;
     p->options = (qa_bytes){row->options.data, row->options.size};
     FIELD(u64, row, artifact_pool); FIELD(u64, row, artifact); FIELD(u64, row, declaration_pool); FIELD(u64, row, declaration);
+    if (!acquisition_fields(io, row)) return false;
     if (!qa_source_save_bytes(io, &v->identity, sizeof(v->identity)) ||
         !table_field(io, (void **)&row->interfaces, &v->interface_count, sizeof(*row->interfaces), 28)) return false;
     for (size_t i = 0; i < v->interface_count; ++i) if (!resource_fields(io, &row->interfaces[i])) return false;
@@ -428,10 +480,10 @@ static bool instance_fields(qa_source_save_io *io, content_instance *row)
 }
 static bool graph_fields(qa_source_save_io *io, qa_application_content_graph *g)
 {
-    uint8_t magic[8] = {'Q','A','C','G',0,0,0,0}; uint32_t version = 1;
+    uint8_t magic[8] = {'Q','A','C','G',0,0,0,0}; uint32_t version = 2;
     const uint8_t expected[8] = {'Q','A','C','G',0,0,0,0};
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, expected, sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || version != 1) return false;
+        !qa_source_save_u32(io, &version) || version != 2) return false;
     FIELD(u64, g, application_pool); FIELD(u64, g, application_catalog); FIELD(u64, g, launch_catalog); FIELD(u64, g, launch_view);
     if (!table_field(io, (void **)&g->pools, &g->pool_count, sizeof(*g->pools), 8)) return false;
     for (size_t i = 0; i < g->pool_count; ++i) if (!blob_field(io, &g->pools[i].bytes)) return false;
@@ -536,9 +588,14 @@ static bool resolve(qa_application_content_graph *g, qa_error *error)
         if (!source_product || !r->value.product || strcmp(source_product->identity, r->value.product->identity))
             return fail(error, QA_ERROR_FORMAT, "Saved provider product disagrees across retained catalogs");
         v->artifact = qa_application_content_resource(g, r->artifact_pool, r->artifact);
+        v->artifact_acquisition = r->artifact ? &r->artifact_acquisition : NULL;
         v->declaration = qa_application_content_resource(g, r->declaration_pool, r->declaration);
         if ((r->artifact && !v->artifact) || (r->declaration && !v->declaration))
             return fail(error, QA_ERROR_FORMAT, "Saved provider artifact/declaration lacks immutable resource authority");
+        if (v->artifact && (!v->artifact_acquisition ||
+            v->artifact_acquisition->resource_id != qa_resource_id(v->artifact) ||
+            !qa_vfs_acquisition_valid(v->content, v->artifact_acquisition, error)))
+            return fail(error, QA_ERROR_FORMAT, "Saved provider artifact receipt leaves its actual restored view");
         if (v->artifact && !r->artifact_retained) { qa_resource_retain((qa_resource *)v->artifact); r->artifact_retained = true; }
         if (v->declaration && !r->declaration_retained) { qa_resource_retain((qa_resource *)v->declaration); r->declaration_retained = true; }
         if (!r->interface_values && v->interface_count) r->interface_values = calloc(v->interface_count, sizeof(*r->interface_values));

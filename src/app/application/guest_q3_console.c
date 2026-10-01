@@ -1,6 +1,7 @@
 #include "guest_q3_console.h"
 #include "guest_q3_private.h"
 #include "q3_product.h"
+#include "startup_flow.h"
 
 #include <ctype.h>
 
@@ -41,6 +42,13 @@ bool application_guest_q3_console_startup(application_provider *provider, qa_err
 {
     struct application_q3_guest *engine = q3g_engine(provider);
     qa_cvars *cvars = application_guest_q3_console_registry(provider);
+    if (!provider || !engine || !cvars)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Original GAME startup lost its physical registry");
+    qa_command_context command = {.owner = provider->owner, .dialect = QA_CONSOLE_Q3,
+        .origin = QA_COMMAND_SERVER};
+    if (!provider->attached && !application_startup_source_preinit(provider,
+        application_guest_q3_console_owner(provider), cvars, &command, error)) return false;
+    if (!cvars || !qa_cvars_apply_latched(cvars, NULL, error)) return false;
     const qa_cvar_view *capacity = qa_cvars_find(cvars, "sv_maxclients");
     const qa_cvar_view *dedicated = qa_cvars_find(cvars, "dedicated");
     if (!engine || engine->restore_pending || engine->game || !capacity || !dedicated)
@@ -60,15 +68,19 @@ bool application_guest_q3_console_startup(application_provider *provider, qa_err
 
 static qa_cvars *cvar_owner(void *context, const qa_command_context *command, const char *name)
 {
-    (void)command;
     struct application_guest_q3_console *owner = context;
+    qa_cvars *routed = application_startup_cvar_owner(owner->engine->provider,
+        owner->console, command, name);
+    if (routed) return routed;
     return application_guest_q3_cvar_owner(owner->engine->provider, name);
 }
 
 static qa_cvars *visible_cvars(void *context, const qa_command_context *command, size_t index)
 {
-    (void)command;
     struct application_guest_q3_console *owner = context;
+    qa_cvars *routed = NULL;
+    if (application_startup_visible_cvars(owner->engine->provider, owner->console,
+        command, index, &routed)) return routed;
     return index == 0 ? owner->cvars : index == 1 ? owner->engine->provider->application->cvars : NULL;
 }
 
@@ -119,6 +131,9 @@ static bool read_script(void *context, const qa_command_context *command,
     struct application_guest_q3_console *owner = context;
     if (!active(owner, command))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original Q3 script publication has retired");
+    if (application_startup_source_active(owner->engine->provider))
+        return application_startup_script_read(owner->engine->provider, command,
+            path, out, lease, error);
     qa_vfs *files = qa_application_context_files(owner->engine->provider->application, command, NULL);
     qa_resource *resource = NULL;
     if (!files || !qa_vfs_acquire(files, path, &resource, NULL, error)) return false;
@@ -129,8 +144,25 @@ static bool read_script(void *context, const qa_command_context *command,
 
 static void release_script(void *context, void *lease)
 {
-    (void)context;
+    struct application_guest_q3_console *owner = context;
+    if (application_startup_source_active(owner->engine->provider)) {
+        application_startup_script_release(owner->engine->provider, lease);
+        return;
+    }
     qa_resource_release(lease);
+}
+
+static void script_complete(void *context, const qa_command_context *command,
+    const char *path, bool success)
+{
+    struct application_guest_q3_console *owner = context;
+    application_startup_script_complete(owner->engine->provider, command, path, success);
+}
+
+static bool allow_command(void *context, const qa_command_invocation *command)
+{
+    struct application_guest_q3_console *owner = context;
+    return application_startup_command_allowed(owner->engine->provider, command);
 }
 
 static qa_command_result command(void *context, const qa_command_invocation *invocation,
@@ -221,7 +253,8 @@ bool application_guest_q3_console_create(struct application_q3_guest *engine,
         .dialect = QA_CONSOLE_Q3, .origin = QA_COMMAND_SERVER}, .cvars = owner->cvars,
         .user = owner, .print = print, .cvar_owner = cvar_owner, .visible_cvars = visible_cvars,
         .capture_context = capture, .context_active = active, .read_script = read_script,
-        .release_script = release_script, .source_command = command};
+        .release_script = release_script, .script_complete = script_complete,
+        .allow_command = allow_command, .source_command = command};
     if (owner->cvars) owner->console = qa_console_create(&options, error);
     if (!owner->console || (!restoring && !register_engine(owner, map_path, error))) {
         qa_console_destroy(owner->console); qa_cvars_destroy(owner->cvars); free(owner);
@@ -243,6 +276,8 @@ bool application_guest_q3_console_destroy(struct application_q3_guest *engine, q
     if (!application_guest_q3_console_idle(engine))
         return application_fail(error, QA_ERROR_ARGUMENT, "Original GAME console is borrowed");
     if (engine && engine->console) {
+        if (!application_startup_source_retire(engine->provider, engine->console->console,
+            engine->console->cvars, error)) return false;
         qa_console_destroy(engine->console->console);
         qa_cvars_destroy(engine->console->cvars);
         free(engine->console); engine->console = NULL;

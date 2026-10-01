@@ -228,6 +228,12 @@ bool qa_launch_set_seat(qa_launch_draft *d, const qa_launch_seat *input, qa_erro
     v.name = launch_text(d, input->name, error); v.team = launch_text(d, input->team, error);
     v.bot_definition = input->bot_definition ? launch_text(d, input->bot_definition, error) : NULL;
     if (!v.name || !v.team || (input->bot_definition && !v.bot_definition)) return false;
+    v.character_model = input->character_model ? launch_text(d, input->character_model, error) : NULL;
+    v.character_skin = input->character_skin ? launch_text(d, input->character_skin, error) : NULL;
+    v.character_head_model = input->character_head_model ? launch_text(d, input->character_head_model, error) : NULL;
+    v.character_head_skin = input->character_head_skin ? launch_text(d, input->character_head_skin, error) : NULL;
+    if ((input->character_model && !v.character_model) || (input->character_skin && !v.character_skin) ||
+        (input->character_head_model && !v.character_head_model) || (input->character_head_skin && !v.character_head_skin)) return false;
     size_t n = d->choices.seat_count, i = 0;
     while (i < n && d->choices.seats[i].id != v.id) ++i;
     if (!launch_grow((void **)&d->choices.seats, &d->seat_capacity, i + 1, sizeof(v), error)) return false;

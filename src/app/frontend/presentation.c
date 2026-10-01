@@ -1,4 +1,8 @@
 #include "internal.h"
+#include "accessibility.h"
+#include "ui_features.h"
+#include "menu_fonts.h"
+#include "qc_rerelease_events.h"
 #include <stdio.h>
 
 static qa_scene_family scene_family(qa_game_family family)
@@ -89,12 +93,14 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
         if (frontend->cpu && !qa_cpu_resize(frontend->cpu, display.drawable_width, display.drawable_height, error)) return false;
         frontend->width = display.drawable_width; frontend->height = display.drawable_height;
     }
-    if (!frontend_scene_sync(frontend, error) || !frontend_shader_sync(frontend, error)) return false;
+    if (!frontend_ui_features_sync(frontend, error) || !frontend_scene_sync(frontend, error) || !frontend_shader_sync(frontend, error)) return false;
     qa_scene_frame_reset(&frontend->frame, frontend->frame_number);
     if (!qa_scene_frame_material_order(&frontend->frame, frontend->order, error)) return false;
     qa_audio_listener listeners[4]; size_t listener_count = 0;
     for (unsigned i = 0; i < frontend->options.seats; ++i) {
         frontend_seat *seat = &frontend->seats[i];
+        qa_ui_preferences preferences;
+        if (!qa_ui_preferences_read(qa_application_cvars(frontend->application), i, &preferences, error)) return false;
         qa_scene_rect rect = frontend_viewport(frontend, i);
         qa_ui_state ui;
         if (!qa_ui_tick(seat->ui, (double)frontend->time_ns / 1000000, error) || !qa_ui_state_read(seat->ui, &ui, error)) return false;
@@ -144,7 +150,8 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
         if (!qa_application_present(frontend->application, i, real_milliseconds,
                 frontend_network_remote(frontend) ? frontend_network_client_time(frontend) :
                     real_milliseconds, error)) return false;
-        if (!frontend_native_q2_world_text(frontend, i, &view, error)) return false;
+        if (!frontend_native_q2_world_text(frontend, i, &view, error) ||
+            !frontend_qc_rerelease_draw(frontend, i, &view, error)) return false;
         if (live && frontend->audio) {
             qa_audio_listener *listener = &listeners[listener_count++];
             *listener = (qa_audio_listener){.seat = i, .actor = frontend_audio_actor(frontend, actor, error),
@@ -154,27 +161,29 @@ bool frontend_present(qa_frontend *frontend, qa_error *error)
             frontend_source_listener(frontend, i, listener);
         }
         if (live && !ui.fullscreen && !source.source_world && seat->q2_view_ready &&
-                qa_actor_id_equal(actor, seat->q2_actor) && seat->q2_view.blend.w > 0) {
+                qa_actor_id_equal(actor, seat->q2_actor) && seat->q2_view.blend.w > 0 && !preferences.reduced_flashes) {
             qa_q2_blend blend = seat->q2_view.blend;
             if (!qa_scene_frame_picture(&frontend->frame, qa_scene_white(frontend->ui_images), rect, rect,
                     (qa_scene_vec4){0, 0, 1, 1}, (qa_scene_vec4){blend.x, blend.y, blend.z, blend.w}, error)) return false;
         }
         if (live && !qa_hud_draw(seat->hud, &(qa_hud_frame){.seat = i, .actor = actor,
             .time_ns = frontend->time_ns, .viewport = rect, .safe_area = rect,
-            .scale = 1, .show_scores = seat->scores || (seat->q2_view_ready && !seat->q2_help && (seat->q2_view.layouts & 1)),
+            .scale = preferences.hud_scale, .show_scores = seat->scores || (seat->q2_view_ready && !seat->q2_help && (seat->q2_view.layouts & 1)),
             .show_inventory = seat->q2_inventory, .visible = !ui.fullscreen}, &frontend->frame, error)) return false;
         if (live && !ui.fullscreen && !qa_hud_wheel_draw(seat->wheel,
             &(qa_hud_wheel_draw_options){.viewport = rect, .fonts = seat->fonts,
                 .white = qa_scene_white(frontend->ui_images), .text = {1, 1, 1, 1},
                 .accent = {.9f, .7f, .3f, 1}, .disabled = {.4f, .4f, .4f, 1},
-                .panel = {.05f, .05f, .05f, .85f}, .scale = 1}, &frontend->frame, error)) return false;
-        if (!qa_ui_draw(seat->ui, &frontend->frame, rect, 1, false, error)) return false;
+                .panel = {.05f, .05f, .05f, .85f}, .scale = preferences.hud_scale}, &frontend->frame, error)) return false;
+        if (!qa_ui_draw(seat->ui, &frontend->frame, rect, preferences.menu_scale, preferences.high_contrast, error)) return false;
         if (qa_input_seat_focus(seat->input) == QA_INPUT_CONSOLE) {
+            qa_font_selection console_fonts;
+            if (!frontend_console_font_selection(frontend, i, &console_fonts, error)) return false;
             qa_field_view field = qa_text_field_read(qa_seat_console_field(seat->console, false));
-            qa_console_draw_options console = {.target = rect, .font = &seat->fonts,
+            qa_console_draw_options console = {.target = rect, .font = &console_fonts,
                 .buffer = qa_seat_console_buffer(seat->console), .field = &field,
                 .background = frontend->console_background, .now_milliseconds = (double)frontend->time_ns / 1000000,
-                .height = (float)rect.height * .6f, .scale = 1};
+                .height = (float)rect.height * .6f, .scale = preferences.text_scale};
             if (!qa_console_draw(&frontend->frame, &console, error)) return false;
         }
     }

@@ -1,0 +1,4 @@
+e2c9100050edc2f239589f0d740b93f0c1a97b7a83245e87330ff492b9f4cf25  src/app/frontend/network.c
+94c42c1837ddfc2f578edc2c94472ff45d9c31c982348f0565a44a69a631d341  include/qa/network_save.h
+6f69155efba3bd4d7646cac2a67c5fa9923b337bdbafab0e16b5b0cd63c9ca92  src/network/runtime/save.c
+1289f02af7ee1618cd5cef8eefa0ba460ea5b8c33e5aa2737283cf240a8a9586  docs/implementation/network-20260930.md

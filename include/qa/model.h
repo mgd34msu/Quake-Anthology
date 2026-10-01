@@ -205,7 +205,7 @@ typedef struct qa_model_skin_mapping {
     char *shader;
 } qa_model_skin_mapping;
 typedef struct qa_model_skin_map {
-    size_t count;
+    size_t count, capacity;
     qa_model_skin_mapping *mappings;
 } qa_model_skin_map;
 bool qa_model_skin_map_load(qa_bytes text, qa_model_skin_map *out, qa_error *error);

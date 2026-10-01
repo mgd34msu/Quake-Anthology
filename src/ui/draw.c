@@ -23,19 +23,28 @@ bool ui_fill(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target, qa_scene_re
 }
 static bool draw_text(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target, float x, float y,
                    const char *text, qa_scene_vec4 color, float scale,
-                   qa_font_alignment alignment, bool literal, qa_error *error) {
+                   qa_font_alignment alignment, bool literal, bool localize, qa_error *error) {
     if (!text || !*text || !target.width || !target.height)
         return true;
-    if (!literal && ui->options.localize)
+    if (localize && ui->options.localize)
         text = ui->options.localize(ui->options.context, text);
     if (!text)
         return true;
     qa_font_layout layout;
     qa_font_layout_options options = {.text = {(const uint8_t *)text, strlen(text)},
-        .scale = scale * ui->scale, .color = color, .color_codes = literal ? QA_FONT_COLOR_LITERAL : QA_FONT_COLOR_Q3,
-        .alignment = alignment};
+        .scale = scale * ui->scale * ui->text_scale, .color = color,
+        .color_codes = literal ? QA_FONT_COLOR_LITERAL : QA_FONT_COLOR_Q3,
+        .force_color = ui->color_mode != QA_UI_COLOR_STANDARD, .alignment = alignment};
     if (!qa_font_layout_build(&ui->options.fonts, &options, &frame->storage, &layout, error))
         return false;
+    if (alignment!=QA_FONT_ALIGN_LEFT) {
+        qa_font_positioned_glyph *glyphs=(qa_font_positioned_glyph *)layout.glyphs;
+        for (size_t row=0;row<layout.line_count;++row) {
+            const qa_font_line *line=layout.lines+row;
+            float offset=line->width*(alignment==QA_FONT_ALIGN_CENTER?.5f:1);
+            for (size_t i=0;i<line->glyph_count;++i) glyphs[line->first_glyph+i].rect.x-=offset;
+        }
+    }
     qa_font_draw_options draw = {.seat = ui->options.seat, .target = target,
         .origin = {ui->bias_x + x * ui->scale - (float)target.x,
                    ui->bias_y + y * ui->scale - (float)target.y},
@@ -45,8 +54,11 @@ static bool draw_text(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target, fl
 bool ui_draw_text(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target, float x, float y,
                    const char *text, qa_scene_vec4 color, float scale,
                    qa_font_alignment alignment, qa_error *error) {
-    return draw_text(ui, frame, target, x, y, text, color, scale, alignment, false, error);
+    return draw_text(ui, frame, target, x, y, text, color, scale, alignment, false, true, error);
 }
+bool ui_draw_source_text(qa_ui *ui,qa_scene_frame *frame,qa_scene_rect target,float x,float y,
+    const char *text,qa_scene_vec4 color,float scale,qa_font_alignment alignment,qa_error *error)
+{ return draw_text(ui,frame,target,x,y,text,color,scale,alignment,false,false,error); }
 static bool field_draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
                         const qa_ui_control *control, bool focused,
                         qa_scene_vec4 color, qa_error *error) {
@@ -86,9 +98,10 @@ static bool field_draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
     if (!ui_draw_text(ui, frame, target, control->rect.x + 10, control->rect.y + 6,
         control->label, color, 1, QA_FONT_ALIGN_LEFT, error) ||
         !draw_text(ui, frame, target, x, control->rect.y + 6, display, color, 1,
-            QA_FONT_ALIGN_LEFT, true, error)) return false;
+            QA_FONT_ALIGN_LEFT, true, false, error)) return false;
     return !focused || fmod(floor(ui->time_ms / 256), 2) != 0 || ui_fill(ui, frame, target,
-        (qa_scene_rect_f){x + width, control->rect.y + 5, state->overstrike ? 8 : 1, 14}, color, error);
+        (qa_scene_rect_f){x + width, control->rect.y + 5,
+            state->overstrike ? 8 * ui->text_scale : 1, 14 * ui->text_scale}, color, error);
 }
 static bool list_draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect target,
                        const qa_ui_control *control, qa_scene_vec4 color,
@@ -147,6 +160,8 @@ static bool draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect viewport, float
     qa_scene_vec4 background = contrast ? (qa_scene_vec4){0, 0, 0, 1} : (qa_scene_vec4){.03f, .03f, .04f, .94f};
     qa_scene_vec4 accent = contrast ? (qa_scene_vec4){.15f, .15f, .15f, 1} : (qa_scene_vec4){.25f, .10f, .06f, 1};
     qa_scene_vec4 white = {1, 1, 1, 1};
+    if (ui->color_mode == QA_UI_COLOR_MONOCHROME) accent = (qa_scene_vec4){.25f, .25f, .25f, 1};
+    else if (ui->color_mode == QA_UI_COLOR_BLUE_YELLOW) accent = (qa_scene_vec4){.06f, .2f, .42f, 1};
     if (!ui_fill(ui, frame, viewport, (qa_scene_rect_f){0, 0, 640, 480}, background, error) ||
         !ui_draw_text(ui, frame, viewport, 320, 42, menu.title, white, 2,
                        QA_FONT_ALIGN_CENTER, error)) return false;
@@ -157,9 +172,9 @@ static bool draw(qa_ui *ui, qa_scene_frame *frame, qa_scene_rect viewport, float
         qa_scene_rect target = control.scrolls && menu.scrollable
             ? clip_rect(ui, viewport, menu.scroll_rect) : viewport;
         bool selected = control.id == focused;
-        qa_scene_vec4 color = control.enabled ? white : (qa_scene_vec4){.5f, .5f, .5f, 1};
+        qa_scene_vec4 color = control.enabled ? white : contrast ? (qa_scene_vec4){.65f, .65f, .65f, 1} : (qa_scene_vec4){.5f, .5f, .5f, 1};
         if (!ui_fill(ui, frame, target, control.rect,
-            selected ? accent : (qa_scene_vec4){.08f, .08f, .09f, 1}, error)) return false;
+            selected ? accent : contrast ? (qa_scene_vec4){0, 0, 0, 1} : (qa_scene_vec4){.08f, .08f, .09f, 1}, error)) return false;
         if (control.kind == QA_UI_OWNER_DRAW) {
             if (control.value.owner.draw && !control.value.owner.draw(control.context,
                 ui->options.seat, frame, target, control.rect, error)) return false;

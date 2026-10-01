@@ -256,26 +256,46 @@ static void publish(qa_scene_world *world, lighting_state *saved)
 }
 static bool ready(const qa_scene_world *world, const qa_scene_world_image_refs *refs, qa_error *error)
 {
-    return (world && qa_scene_world_idle(world) && world->bsp.family!=QA_BSP_Q3 && world->legacy_data &&
+    return (qa_scene_world_observation_ready(world) && world->bsp.family!=QA_BSP_Q3 && world->legacy_data &&
         refs && refs->encode && refs->decode) || failure(error,QA_ERROR_ARGUMENT,"Lighting continuation requires an idle legacy world and image resolver");
 }
-bool qa_scene_world_lighting_checkpoint(const qa_scene_world *world, const qa_scene_world_image_refs *refs, qa_buffer *out, qa_error *error)
+bool qaw_lighting_checkpoint_locked(const qa_scene_world *world, const qa_scene_world_image_refs *refs, qa_buffer *out, qa_error *error)
 {
-    if (!out || !ready(world,refs,error)) return false;
+    if (!world || !world->checkpoint_active || !out || !refs)
+        return failure(error,QA_ERROR_ARGUMENT,"Legacy lighting capture lease is missing");
     qa_source_save_io io; lighting_state saved={0};
     if (!qa_source_save_writer(&io,NULL,error)) return false;
     bool ok=fields(&io,world,refs,&saved) && qa_source_save_finish(&io,out);
     if (!ok && error && error->code==QA_OK) failure(error,QA_ERROR_FORMAT,"Invalid legacy lighting state");
     qa_source_save_dispose(&io); return ok;
 }
-bool qa_scene_world_lighting_restore(qa_scene_world *world, qa_bytes bytes, const qa_scene_world_image_refs *refs, qa_error *error)
+bool qa_scene_world_lighting_checkpoint(const qa_scene_world *world, const qa_scene_world_image_refs *refs, qa_buffer *out, qa_error *error)
 {
-    if (!ready(world,refs,error)) return false;
+    if (!out || !ready(world,refs,error)) return false;
+    qa_scene_world *owner=(qa_scene_world *)world;
+    owner->checkpoint_active=true;
+    bool ok=qaw_lighting_checkpoint_locked(world,refs,out,error);
+    owner->checkpoint_active=false;
+    return ok;
+}
+bool qaw_lighting_restore_locked(qa_scene_world *world, qa_bytes bytes, const qa_scene_world_image_refs *refs, qa_error *error)
+{
+    if (!world || !world->checkpoint_active || !refs)
+        return failure(error,QA_ERROR_ARGUMENT,"Legacy lighting restore lease is missing");
     qa_source_save_io io; lighting_state saved={0};
     if (!qa_source_save_reader(&io,NULL,bytes,error)) return false;
     bool ok=fields(&io,world,refs,&saved) && qa_source_save_finish(&io,NULL);
     if (ok) publish(world,&saved);
     else if (error && error->code==QA_OK) failure(error,QA_ERROR_FORMAT,"Invalid saved legacy lighting state");
     discard(world,&saved); qa_source_save_dispose(&io); return ok;
+}
+bool qa_scene_world_lighting_restore(qa_scene_world *world, qa_bytes bytes, const qa_scene_world_image_refs *refs, qa_error *error)
+{
+    if (!qa_scene_world_idle(world)) return failure(error,QA_ERROR_ARGUMENT,"Lighting import requires an uncaptured world owner");
+    if (!ready(world,refs,error)) return false;
+    world->checkpoint_active=true;
+    bool ok=qaw_lighting_restore_locked(world,bytes,refs,error);
+    world->checkpoint_active=false;
+    return ok;
 }
 #undef FIELD

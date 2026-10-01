@@ -7,6 +7,11 @@
 
 typedef struct frontend_keys frontend_keys;
 typedef struct frontend_key_profile frontend_key_profile;
+typedef struct frontend_keys_publication {
+    frontend_keys *owner;
+    frontend_key_profile *previous,*next;
+    qa_cvars *cvars;
+} frontend_keys_publication;
 typedef struct frontend_key_profile_view {
     const frontend_key_profile *profile;
     const qa_q3_key *state;
@@ -43,6 +48,15 @@ bool frontend_key_profile_bind(frontend_key_profile *,qa_cvars *,const frontend_
 /* Detaches only the retiring physical registry; the shared byte owner and UI
  * aliases survive source reconstruction. */
 bool frontend_key_profile_detach(frontend_key_profile *,const qa_cvars *,qa_error *);
+/* Records the genuine source scope while its physical registry is alive. */
+bool frontend_key_profile_scope(frontend_key_profile *,qa_application_console_scope,
+                                 const qa_cvars *,qa_error *);
+/* Ready reserves the future active reference. Keep the ticket and all source
+ * owners alive through publication; discard it before abort retirement. */
+bool frontend_keys_publication_ready(frontend_keys *,frontend_key_profile *,qa_cvars *,
+                                      frontend_keys_publication *,qa_error *);
+void frontend_keys_publication_publish(frontend_keys_publication *);
+void frontend_keys_publication_discard(frontend_keys_publication *);
 bool frontend_keys_publish(frontend_keys *,frontend_key_profile *,qa_cvars *,qa_error *);
 bool frontend_keys_authorization(const frontend_keys *,uint8_t out[33],bool *demo,qa_error *);
 /* Pure identity observation for capture, restore admission and native client

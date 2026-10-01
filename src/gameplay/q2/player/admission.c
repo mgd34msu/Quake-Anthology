@@ -181,7 +181,15 @@ bool qa_q2_player_connect(qa_q2_game *g, const char *info, bool bot, qa_q2_conne
     *out = r;
     return true;
 }
-bool qa_q2_player_userinfo(qa_q2_game *g, qa_actor_id id, const char *source, qa_error *e) {
+typedef struct player_userinfo_call {
+    qa_q2_game *game;
+    const char *source;
+} player_userinfo_call;
+
+static bool player_userinfo(void *context, qa_actor_id id, qa_error *e) {
+    player_userinfo_call *call = context;
+    qa_q2_game *g = call->game;
+    const char *source = call->source;
     q2_actor *a = q2_client(g, id, e);
     if (!a || !source)
         return false;
@@ -238,10 +246,16 @@ bool qa_q2_player_userinfo(qa_q2_game *g, qa_actor_id id, const char *source, qa
                 &(qa_q2_player_event){.kind = QA_Q2_PLAYER_DOGTAG, .actor = id, .text = s->dogtag},
                 e))
             return false;
+        if (!q2_actor_live(g, id))
+            return true;
         if (!s->bot)
             snprintf(s->info.name, sizeof(s->info.name), "##P%u", s->info.slot);
     }
     return true;
+}
+bool qa_q2_player_userinfo(qa_q2_game *g, qa_actor_id id, const char *source, qa_error *e) {
+    player_userinfo_call call = {.game = g, .source = source};
+    return qa_q2_run_actor(g, id, player_userinfo, &call, e);
 }
 typedef struct player_admission_call {
     qa_q2_game *game;
@@ -360,7 +374,8 @@ bool q2_player_collision(qa_q2_game *g, q2_actor *a, bool solid, qa_error *e) {
                                     .dead_monster = a->client->info.dead};
     return qa_world_set_collision(g->services.world, a->id, solid ? &collision : NULL, e);
 }
-bool qa_q2_player_disconnect(qa_q2_game *g, qa_actor_id id, qa_error *e) {
+static bool player_disconnect(void *context, qa_actor_id id, qa_error *e) {
+    qa_q2_game *g = context;
     q2_actor *a = q2_client(g, id, e);
     if (!a)
         return false;
@@ -398,8 +413,11 @@ bool qa_q2_player_disconnect(qa_q2_game *g, qa_actor_id id, qa_error *e) {
         return true;
     qa_body_state body;
     qa_string_id effect;
-    if (!qa_world_body_read(g->services.world, id, &body, e) ||
-        !qa_builtin_resource(&g->services, "q2:logout", &effect, e) ||
+    if (!qa_world_body_read(g->services.world, id, &body, e))
+        return !q2_actor_live(g, id);
+    if (!q2_actor_live(g, id))
+        return true;
+    if (!qa_builtin_resource(&g->services, "q2:logout", &effect, e) ||
         !qa_builtin_emit(&g->services,
                          &(qa_builtin_event){.kind = QA_BUILTIN_EFFECT,
                                              .family = QA_GAME_Q2,
@@ -420,4 +438,7 @@ bool qa_q2_player_disconnect(qa_q2_game *g, qa_actor_id id, qa_error *e) {
                                                 .text = "",
                                                 .skin = ""},
                           e);
+}
+bool qa_q2_player_disconnect(qa_q2_game *g, qa_actor_id id, qa_error *e) {
+    return qa_q2_run_actor(g, id, player_disconnect, g, e);
 }

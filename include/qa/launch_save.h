@@ -12,6 +12,7 @@ typedef struct qa_launch_restored_instance {
     qa_launch_provider selection;
     qa_vfs *content;
     const qa_resource *artifact, *declaration;
+    const qa_vfs_acquisition *artifact_acquisition;
     const qa_launch_resource *interfaces;
     size_t interface_count;
     const qa_catalog_weapon_behavior *const *behaviors;

@@ -132,6 +132,31 @@ static const setting_definition *definition_at(const struct application_native_q
     return index < FINAL_COUNT ? &final_settings[index] : NULL;
 }
 
+static bool prepare_table(application_provider *provider, const setting_definition *table,
+    size_t count, qa_error *error)
+{
+    for (size_t i = 0; i < count; ++i) {
+        const setting_definition *definition = table + i;
+        qa_cvars *registry = application_native_q3_cvar_owner(provider, definition->name);
+        if (!qa_cvars_register(registry, definition->name, definition->value, definition->flags,
+            !strcmp(definition->name, "sv_cheats") ? 0 : provider->owner, NULL, error)) return false;
+    }
+    return true;
+}
+
+bool application_native_q3_settings_prepare_definitions(application_provider *provider,
+    qa_q3_product product, qa_error *error)
+{
+    if (!provider || !provider->product || provider->constructed || provider->attached ||
+        !application_native_q3_console_registry(provider) ||
+        (product != QA_Q3_ARENA && product != QA_Q3_TEAM_ARENA) ||
+        (product == QA_Q3_TEAM_ARENA) != !strcmp(provider->product->campaign, "missionpack"))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 configuration definitions need their actual uninitialized source");
+    return prepare_table(provider, common_settings, COMMON_COUNT, error) &&
+        (product != QA_Q3_TEAM_ARENA || prepare_table(provider, missionpack_settings, MISSIONPACK_COUNT, error)) &&
+        prepare_table(provider, final_settings, FINAL_COUNT, error);
+}
+
 static bool ascii_equal(const char *a, const char *b)
 {
     if (!a || !b) return false;

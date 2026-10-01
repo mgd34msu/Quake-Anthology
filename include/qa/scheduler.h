@@ -23,15 +23,39 @@ typedef struct qa_source_frame {
     uint64_t time_ns;
 } qa_source_frame;
 
+/* A usercmd is a distinct source admission. Its current source time and
+ * completed world counter never imply another world frame has run. */
+typedef struct qa_source_command {
+    qa_actor_id actor;
+    qa_actor_owner provider;
+    qa_clock_kind kind;
+    qa_frame_phase phase;
+    uint64_t completed_frame_number, time_ns, elapsed_ns, host_elapsed_ns;
+} qa_source_command;
+
 typedef enum qa_think_boundary {
     QA_THINK_BEFORE_PHYSICS, QA_THINK_DURING_PHYSICS, QA_THINK_AFTER_PHYSICS
 } qa_think_boundary;
 
+typedef enum qa_think_scope_kind {
+    QA_THINK_WORLD_FRAME, QA_THINK_SOURCE_COMMAND
+} qa_think_scope_kind;
+typedef struct qa_think_scope {
+    qa_think_scope_kind kind;
+    union {
+        qa_source_frame frame;
+        qa_source_command command;
+    } source;
+    /* Due-time clamp for this callback; the admission keeps its own time. */
+    uint64_t time_ns;
+    uint64_t interval_start_ns, interval_elapsed_ns;
+} qa_think_scope;
+
 typedef bool (*qa_think_fn)(void *context, qa_actor_id actor,
-                            const qa_source_frame *frame, qa_error *error);
+                            const qa_think_scope *scope, qa_error *error);
 typedef bool (*qa_think_dispatch_fn)(void *context, qa_think_fn callback,
                                      void *callback_context, qa_actor_id actor,
-                                     const qa_source_frame *frame, qa_error *error);
+                                     const qa_think_scope *scope, qa_error *error);
 
 typedef struct qa_think {
     qa_actor_id actor;
@@ -81,6 +105,12 @@ bool qa_scheduler_run(qa_scheduler *scheduler, qa_actor_id actor,
 /* Source callbacks that run once per actor turn keep the real execution clock
  * and due-time clamp, but defer a same-actor reschedule to its next turn. */
 bool qa_scheduler_run_once(qa_scheduler *, qa_actor_id, const qa_source_frame *,
+    qa_think_boundary, qa_think_result *, qa_error *);
+/* Executes one pending source callback in an actual usercmd admission.
+ * source_time_ns is the callback owner's retained gameplay clock. The
+ * command's admission clock and physical interval remain separate. */
+bool qa_scheduler_run_command_once(qa_scheduler *, qa_actor_id, const qa_source_command *,
+    uint64_t source_time_ns, uint64_t source_elapsed_ns,
     qa_think_boundary, qa_think_result *, qa_error *);
 /* Later source-slot additions are visible; additions at/before the cursor wait
  * for the next traversal. Only providers represented by frames are eligible;

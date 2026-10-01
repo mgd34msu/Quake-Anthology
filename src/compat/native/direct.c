@@ -50,6 +50,145 @@ static const char *artifact_name(const qa_native_module *module) {
 }
 
 #if defined(_WIN32)
+static bool windows_error(qa_error *, qa_status, const char *);
+#endif
+
+#if defined(__linux__)
+static bool mapped_span(const struct dl_phdr_info *image, uintptr_t address, size_t size) {
+    for (ElfW(Half) i = 0; i < image->dlpi_phnum; ++i) {
+        const ElfW(Phdr) *segment = image->dlpi_phdr + i;
+        if (segment->p_type != PT_LOAD || segment->p_vaddr > UINTPTR_MAX - image->dlpi_addr)
+            continue;
+        uintptr_t start = (uintptr_t)(image->dlpi_addr + segment->p_vaddr);
+        if (address >= start && address - start <= segment->p_memsz &&
+            size <= segment->p_memsz - (address - start)) return true;
+    }
+    return false;
+}
+
+static const char *mapped_soname(const struct dl_phdr_info *image) {
+    const ElfW(Dyn) *dynamic = NULL;
+    size_t count = 0;
+    for (ElfW(Half) i = 0; i < image->dlpi_phnum; ++i) {
+        const ElfW(Phdr) *segment = image->dlpi_phdr + i;
+        if (segment->p_type != PT_DYNAMIC ||
+            segment->p_vaddr > UINTPTR_MAX - image->dlpi_addr) continue;
+        uintptr_t address = (uintptr_t)(image->dlpi_addr + segment->p_vaddr);
+        if (!mapped_span(image, address, (size_t)segment->p_memsz)) return NULL;
+        dynamic = (const ElfW(Dyn) *)address;
+        count = (size_t)segment->p_memsz / sizeof(*dynamic);
+        break;
+    }
+    uintptr_t strings = 0;
+    size_t bytes = 0, offset = SIZE_MAX;
+    for (size_t i = 0; i < count && dynamic[i].d_tag != DT_NULL; ++i) {
+        if (dynamic[i].d_tag == DT_STRTAB) strings = (uintptr_t)dynamic[i].d_un.d_ptr;
+        else if (dynamic[i].d_tag == DT_STRSZ)
+            bytes = (size_t)dynamic[i].d_un.d_val;
+        else if (dynamic[i].d_tag == DT_SONAME)
+            offset = (size_t)dynamic[i].d_un.d_val;
+    }
+    if (!strings || offset >= bytes) return NULL;
+    if (!mapped_span(image, strings, bytes)) {
+        if (strings > UINTPTR_MAX - image->dlpi_addr) return NULL;
+        strings += (uintptr_t)image->dlpi_addr;
+        if (!mapped_span(image, strings, bytes)) return NULL;
+    }
+    const char *name = (const char *)strings + offset;
+    return memchr(name, 0, bytes - offset) ? name : NULL;
+}
+
+typedef struct native_dependency_presence {
+    const qa_native_instance *instance;
+    bool present, qualify_path, wrong_mapping;
+    size_t wrong_index;
+} native_dependency_presence;
+
+static int declared_dependency_present(struct dl_phdr_info *image, size_t bytes, void *context) {
+    (void)bytes;
+    native_dependency_presence *presence = context;
+    const char *path = image->dlpi_name ? image->dlpi_name : "";
+    const char *name = strrchr(path, '/'); name = name ? name + 1 : path;
+    const char *soname = mapped_soname(image);
+    for (size_t i = 0; i < presence->instance->original_dependency_count; ++i) {
+        const char *dependency = presence->instance->original_dependencies[i].path;
+        const char *alias = presence->instance->original_dependency_sonames[i];
+        if (!strcmp(name, dependency) || (soname && !strcmp(soname, dependency)) ||
+            (alias && (!strcmp(name, alias) || (soname && !strcmp(soname, alias))))) {
+            if (presence->qualify_path) {
+                size_t prefix = strlen(presence->instance->materialized_directory);
+                if (strncmp(path, presence->instance->materialized_directory, prefix) ||
+                    path[prefix] != '/' || strcmp(path + prefix + 1, dependency)) {
+                    presence->wrong_mapping = true; presence->wrong_index = i;
+                    return 1;
+                }
+                continue;
+            }
+            presence->present = true;
+            return 1;
+        }
+    }
+    return 0;
+}
+#endif
+
+static bool original_dependencies_available(const qa_native_instance *instance, qa_error *error) {
+    if (!instance->original_dependency_count) return true;
+#if defined(_WIN32)
+    for (size_t i = 0; i < instance->original_dependency_count; ++i) {
+        HMODULE mapped = NULL;
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                instance->original_dependencies[i].path, &mapped))
+            return native_fail(error, QA_ERROR_UNSUPPORTED, i,
+                "original native dependency already has a shared loader owner");
+        if (GetLastError() != ERROR_MOD_NOT_FOUND) return windows_error(error, QA_ERROR_IO,
+            "qualifying original native dependency admission");
+    }
+    return true;
+#elif defined(__linux__)
+    native_dependency_presence presence = {.instance = instance};
+    dl_iterate_phdr(declared_dependency_present, &presence);
+    return !presence.present || native_fail(error, QA_ERROR_UNSUPPORTED, 0,
+        "original native dependency already has a shared name or SONAME owner");
+#else
+    return native_fail(error, QA_ERROR_UNSUPPORTED, 0,
+        "original native dependency admission is unqualified on this platform");
+#endif
+}
+
+static bool original_dependencies_loaded(const qa_native_instance *instance, qa_error *error) {
+    if (!instance->original_dependency_count) return true;
+#if defined(_WIN32)
+    for (size_t i = 0; i < instance->original_dependency_count; ++i) {
+        HMODULE mapped = NULL;
+        if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                instance->original_dependencies[i].path, &mapped)) {
+            if (GetLastError() == ERROR_MOD_NOT_FOUND) continue;
+            return windows_error(error, QA_ERROR_IO, "qualifying loaded original dependency");
+        }
+        char actual[MAX_PATH + 1], expected[MAX_PATH + 1];
+        DWORD length = GetModuleFileNameA(mapped, actual, (DWORD)sizeof(actual));
+        if (!length || length >= sizeof(actual)) return windows_error(error, QA_ERROR_IO,
+            "reading loaded original dependency path");
+        int written = snprintf(expected, sizeof(expected), "%s\\%s", instance->materialized_directory,
+            instance->original_dependencies[i].path);
+        if (written < 0 || (size_t)written >= sizeof(expected) || _stricmp(actual, expected))
+            return native_fail(error, QA_ERROR_UNSUPPORTED, i,
+                "native dependency resolved outside its admitted original file");
+    }
+    return true;
+#elif defined(__linux__)
+    native_dependency_presence presence = {.instance = instance, .qualify_path = true};
+    dl_iterate_phdr(declared_dependency_present, &presence);
+    return !presence.wrong_mapping || native_fail(error, QA_ERROR_UNSUPPORTED, presence.wrong_index,
+        "native dependency name or SONAME resolved outside its admitted original file");
+#else
+    return native_fail(error, QA_ERROR_UNSUPPORTED, 0,
+        "loaded native dependency identity is unqualified on this platform");
+#endif
+}
+
+#if defined(_WIN32)
 static bool windows_error(qa_error *error, qa_status code, const char *operation) {
     DWORD number = GetLastError();
     char message[160] = {0};
@@ -246,6 +385,10 @@ bool native_read_file(const char *path, qa_buffer *out, qa_error *error) {
 }
 
 bool native_direct_open(qa_native_instance *instance, qa_error *error) {
+#if !defined(_WIN32) && !defined(__linux__)
+    return native_fail(error, QA_ERROR_UNSUPPORTED, 0,
+        "native direct loading requires qualified original image retirement");
+#endif
     qa_native_target host = qa_native_host_target();
     qa_native_image_info image = instance->module->info.image;
     if (!same_target(host, image.target)) {
@@ -264,8 +407,8 @@ bool native_direct_open(qa_native_instance *instance, qa_error *error) {
     }
     if (!native_temp_directory(&instance->materialized_directory, error))
         return false;
-    for (size_t index = 0; index < instance->options.dependency_count; ++index) {
-        const qa_native_dependency *dependency = &instance->options.dependencies[index];
+    for (size_t index = 0; index < instance->original_dependency_count; ++index) {
+        const qa_native_dependency *dependency = &instance->original_dependencies[index];
         if (!safe_file_name(dependency->path) ||
             (!dependency->bytes.data && dependency->bytes.size) ||
             !strcmp(dependency->path, name)) {
@@ -277,7 +420,7 @@ bool native_direct_open(qa_native_instance *instance, qa_error *error) {
             return false;
         }
         for (size_t previous = 0; previous < index; ++previous) {
-            if (!strcmp(instance->options.dependencies[previous].path, dependency->path)) {
+            if (!strcmp(instance->original_dependencies[previous].path, dependency->path)) {
                 native_fail(error, QA_ERROR_ARGUMENT, index,
                             "native dependency file name is duplicated");
                 native_remove_tree(instance->materialized_directory);
@@ -302,6 +445,10 @@ bool native_direct_open(qa_native_instance *instance, qa_error *error) {
         native_remove_tree(instance->materialized_directory);
         free(instance->materialized_directory);
         instance->materialized_directory = NULL;
+        return false;
+    }
+    if (!original_dependencies_available(instance, error)) {
+        native_direct_close(instance);
         return false;
     }
 #if defined(_WIN32)
@@ -337,20 +484,106 @@ bool native_direct_open(qa_native_instance *instance, qa_error *error) {
 #endif
 #endif
     instance->image_bytes = image.image_bytes;
+    if (!original_dependencies_loaded(instance, error)) return false;
+    return true;
+}
+
+#if defined(__linux__)
+typedef struct native_image_presence {
+    const qa_native_instance *instance;
+    bool present;
+} native_image_presence;
+
+static int original_image_present(struct dl_phdr_info *image, size_t bytes, void *context) {
+    (void)bytes;
+    native_image_presence *presence = context;
+    const qa_native_instance *instance = presence->instance;
+    if (image->dlpi_name && !strcmp(image->dlpi_name, instance->materialized_path) &&
+        (!instance->image_base || (qa_native_address)image->dlpi_addr == instance->image_base)) {
+        presence->present = true;
+        return 1;
+    }
+    const char *path = image->dlpi_name ? image->dlpi_name : "";
+    size_t prefix = strlen(instance->materialized_directory);
+    if (!strncmp(path, instance->materialized_directory, prefix) && path[prefix] == '/') {
+        for (size_t i = 0; i < instance->original_dependency_count; ++i) {
+            if (!strcmp(path + prefix + 1, instance->original_dependencies[i].path)) {
+                presence->present = true;
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+#endif
+
+static bool original_image_retired(const qa_native_instance *instance, qa_error *error) {
+    if (!instance->materialized_path) return true;
+#if defined(_WIN32)
+    HMODULE mapped = NULL;
+    if (instance->image_base && GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            (LPCSTR)(uintptr_t)instance->image_base, &mapped))
+        return native_fail(error, QA_ERROR_ARGUMENT, 0,
+            "original native module remains mapped after releasing its loader reference");
+    if (instance->image_base) {
+        DWORD failure = GetLastError();
+        if (failure != ERROR_MOD_NOT_FOUND && failure != ERROR_INVALID_ADDRESS)
+            return windows_error(error, QA_ERROR_IO, "qualifying original native image retirement");
+    }
+    for (size_t i = 0; i < instance->original_dependency_count; ++i) {
+        char expected[MAX_PATH + 1];
+        int written = snprintf(expected, sizeof(expected), "%s\\%s", instance->materialized_directory,
+            instance->original_dependencies[i].path);
+        if (written < 0 || (size_t)written >= sizeof(expected))
+            return native_fail(error, QA_ERROR_IO, i, "original dependency retirement path is too long");
+        bool present = GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+            expected, &mapped) != 0;
+        DWORD failure = present ? ERROR_SUCCESS : GetLastError();
+        if (present) return native_fail(error, QA_ERROR_ARGUMENT, i,
+            "original native dependency remains mapped after releasing the main loader reference");
+        if (failure != ERROR_MOD_NOT_FOUND) {
+            SetLastError(failure);
+            return windows_error(error, QA_ERROR_IO, "qualifying original dependency retirement");
+        }
+    }
+    return true;
+#elif defined(__linux__)
+    native_image_presence presence = {.instance = instance};
+    dl_iterate_phdr(original_image_present, &presence);
+    return !presence.present || native_fail(error, QA_ERROR_ARGUMENT, 0,
+        "original native module or dependency remains mapped after releasing its loader reference");
+#else
+    return native_fail(error, QA_ERROR_UNSUPPORTED, 0,
+        "original native image retirement is unqualified on this platform");
+#endif
+}
+
+bool native_direct_unload(qa_native_instance *instance, qa_error *error) {
+    if (!instance) return native_fail(error, QA_ERROR_ARGUMENT, 0, "native loader owner is required");
+    if (instance->loader_handle) {
+#if defined(_WIN32)
+        if (!FreeLibrary((HMODULE)instance->loader_handle))
+            return windows_error(error, QA_ERROR_IO, "unloading original native module");
+#else
+        if (dlclose(instance->loader_handle)) {
+            const char *message = dlerror();
+            qa_error_set(error, QA_ERROR_IO, 0, "unloading original native module: %s",
+                message ? message : "dynamic loader error");
+            return false;
+        }
+#endif
+        instance->loader_handle = NULL;
+    }
+    if (!original_image_retired(instance, error)) return false;
+    instance->image_base = 0;
     return true;
 }
 
 void native_direct_close(qa_native_instance *instance) {
     if (!instance)
         return;
-    if (instance->loader_handle) {
-#if defined(_WIN32)
-        FreeLibrary((HMODULE)instance->loader_handle);
-#else
-        dlclose(instance->loader_handle);
-#endif
-        instance->loader_handle = NULL;
-    }
+    if (!native_direct_unload(instance, NULL)) return;
     if (instance->materialized_directory)
         native_remove_tree(instance->materialized_directory);
     free(instance->materialized_path);
@@ -358,6 +591,7 @@ void native_direct_close(qa_native_instance *instance) {
     instance->materialized_path = NULL;
     instance->materialized_directory = NULL;
     instance->image_base = 0;
+    instance->image_bytes = 0;
 }
 
 bool native_direct_export(const qa_native_instance *instance, const char *name,

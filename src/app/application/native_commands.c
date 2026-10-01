@@ -1,5 +1,7 @@
 #include "internal.h"
+#include "native_q3_console.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 static application_provider *selected_arsenal(void *opaque, qa_actor_id actor)
@@ -20,14 +22,38 @@ bool application_native_q3_console_print(void *opaque, const char *text,
 {
     application_provider *source = opaque;
     if (!source || source->kind != APPLICATION_PROVIDER_Q3 || !text ||
+        !source->application || !source->state.q3 ||
         !source->constructed || !source->attached || source->close_pending)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Q3 print source has retired");
+    qa_application *application = source->application;
+    qa_q3_game *game = source->state.q3;
+    struct application_native_q3_console *console = source->native_q3_console;
+    qa_actor_owner owner = source->owner;
     qa_command_context context = {.owner = source->owner, .dialect = QA_CONSOLE_Q3,
                                   .origin = QA_COMMAND_SERVER};
-    if (!qa_application_capture_command_context(source->application, &context, &context, error))
+    if (!qa_application_capture_command_context(application, &context, &context, error))
         return false;
-    application_console_print(source->application, &context, text);
-    return true;
+    size_t length = strlen(text);
+    if (length == SIZE_MAX)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 print exceeds addressable source storage");
+    char *retained = malloc(length + 1);
+    if (!retained)
+        return application_fail(error, QA_ERROR_MEMORY, "Retaining native Q3 print text");
+    memcpy(retained, text, length + 1);
+    if (!application_native_q3_console_borrow(source, error)) {
+        free(retained);
+        return false;
+    }
+    application_console_print(application, &context, retained);
+    bool current = source->kind == APPLICATION_PROVIDER_Q3 &&
+        source->application == application && source->state.q3 == game &&
+        source->native_q3_console == console && source->owner == owner &&
+        source->constructed && source->attached && !source->close_pending &&
+        qa_application_command_context_active(application, &context);
+    application_native_q3_console_release(source);
+    free(retained);
+    return current || application_fail(error, QA_ERROR_ARGUMENT,
+        "Q3 print callback retired or replaced its source publication");
 }
 
 bool application_native_console_motion(void *opaque, qa_actor_id actor,

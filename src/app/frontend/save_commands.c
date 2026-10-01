@@ -2,6 +2,7 @@
 #include "save_commands.h"
 #include "save_private.h"
 #include "tools_restore.h"
+#include "campaign_cinematic.h"
 #include "qa/frontend_save.h"
 #include "qa/application_save_policy.h"
 #include "qa/application_q1_save.h"
@@ -327,6 +328,8 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
     if (!ok) frontend_fail(&local, QA_ERROR_ARGUMENT, "Save command belongs to a retired world");
     if (ok) ok = qa_application_save_policy(f->application, frontend_network_save_authority(f),
         f->options.dedicated, request.load, QA_SAVE_MANUAL, &local);
+    if (ok && !request.load && request.format != SAVE_SHARED && !frontend_cinematic_capture_ready(f))
+        ok = frontend_fail(&local, QA_ERROR_ARGUMENT, "Original save export cannot capture standalone cinematic playback");
     if (ok && request.load)
         ok = restore_saved(slot, owner, &request, &image, &source, &displaced,
             &retained_source, &retained_candidate, &local);

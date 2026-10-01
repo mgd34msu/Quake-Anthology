@@ -7,7 +7,7 @@
 
 bool qa_cinematic_image(qa_cinematic *movie, qa_scene_resources *resources, qa_scene_frame *frame,
                         const qa_scene_image **out, qa_error *error) {
-    if (!movie || !resources || !frame || !out || movie->busy || movie->faulted)
+    if (!movie || !resources || !frame || !out || movie->busy || movie->faulted || movie->restore_pending)
         return cinematic_fail(error, "Cinematic image publication is unavailable");
     if (!movie->image || movie->image_revision != movie->revision) {
         static const uint8_t black[4] = {0, 0, 0, 255};
@@ -49,7 +49,8 @@ bool qa_cinematic_image(qa_cinematic *movie, qa_scene_resources *resources, qa_s
 bool qa_cinematic_fullscreen(qa_cinematic *movie, qa_cinematic_focus focus, qa_scene_rect viewport,
                              qa_scene_resources *resources, qa_scene_frame *frame, bool *blank,
                              qa_error *error) {
-    if (!movie || !blank || !resources || !frame || !viewport.width || !viewport.height ||
+    if (!movie || !blank || !resources || !frame || movie->busy || movie->faulted || movie->restore_pending ||
+        !viewport.width || !viewport.height ||
         movie->options.target.kind != QA_CINEMATIC_SEAT || focus < QA_CINEMATIC_GAME ||
         focus > QA_CINEMATIC_MENU)
         return cinematic_fail(error, "Invalid fullscreen cinematic target");

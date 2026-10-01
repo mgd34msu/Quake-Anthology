@@ -11,6 +11,9 @@ typedef struct qa_ui_rankings qa_ui_rankings;
 typedef struct qa_ui_library qa_ui_library;
 typedef struct qa_ui_llm qa_ui_llm;
 typedef struct qa_llm qa_llm;
+typedef enum qa_ui_color_mode {
+    QA_UI_COLOR_STANDARD, QA_UI_COLOR_BLUE_YELLOW, QA_UI_COLOR_MONOCHROME
+} qa_ui_color_mode;
 typedef uint64_t qa_ui_id;
 typedef enum qa_ui_action_kind {
     QA_UI_ACTIVATE, QA_UI_CHANGE_NUMBER, QA_UI_CHANGE_TEXT, QA_UI_SUBMIT,
@@ -96,6 +99,20 @@ typedef struct qa_ui_state {
     bool fullscreen, binding_capture;
 } qa_ui_state;
 bool qa_ui_create(const qa_ui_options *, qa_ui **, qa_error *);
+/* Publish borrowed typography and text metrics together between callbacks.
+ * The caller retains fonts and fallback arrays for the controller lifetime. */
+bool qa_ui_set_presentation(qa_ui *, const qa_font_selection *, float text_scale,
+    qa_ui_color_mode, qa_error *);
+typedef struct qa_ui_presentation {
+    qa_font_selection fonts;
+    float text_scale;
+    qa_ui_color_mode color_mode;
+} qa_ui_presentation;
+/* Pure borrowed view of the current seat presentation, between UI callbacks.
+ * Font resources and fallback spans keep their existing owner's lifetime. */
+bool qa_ui_presentation_read(const qa_ui *,qa_ui_presentation *,qa_error *);
+/* Read-only parent admission for actual input and drawing callbacks. */
+bool qa_ui_idle(const qa_ui *);
 /* Remove the borrowed input handler before releasing its context. */
 bool qa_ui_destroy(qa_ui *, double time_ms, qa_error *);
 bool qa_ui_register(qa_ui *, const qa_ui_menu_registration *, qa_error *);
@@ -127,6 +144,7 @@ bool qa_ui_mods_cancel(qa_ui_mods *, qa_error *);
 bool qa_ui_rankings_create(qa_ui *, qa_application *, qa_ui_id menu, int32_t source_slot,
                            qa_ui_rankings **, qa_error *);
 bool qa_ui_rankings_set_slot(qa_ui_rankings *, int32_t source_slot, qa_error *);
+bool qa_ui_rankings_reset_binding(qa_ui_rankings *, qa_error *);
 bool qa_ui_rankings_destroy(qa_ui_rankings *, double time_ms, qa_error *);
 
 /* Native product/map/start selection uses catalog ownership and application

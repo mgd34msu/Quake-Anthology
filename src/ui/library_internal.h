@@ -4,6 +4,7 @@
 typedef struct library_profile {
     qa_launch_seat seat;
     char *name, *team;
+    char *character_model, *character_skin, *character_head_model, *character_head_skin;
 } library_profile;
 struct qa_ui_library {
     qa_ui *ui;

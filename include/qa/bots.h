@@ -98,6 +98,7 @@ typedef struct qa_bot_source_memory {
     bool (*allocate)(void *,uint32_t,uint32_t *,qa_error *);
     bool (*read)(void *,uint32_t,void *,uint32_t,qa_error *);
     bool (*write)(void *,uint32_t,const void *,uint32_t,qa_error *);
+    bool (*borrow_span)(void *,uint32_t,uint32_t,uint8_t **,qa_error *);
 } qa_bot_source_memory;
 typedef struct qa_bot_services {
     void *context;
@@ -154,12 +155,18 @@ typedef struct qa_bot_services {
 } qa_bot_services;
 /* The runtime is borrowed and shared with botlib hosts. Actor allocation and
  * connection membership are supplied by the existing session/mode owners. */
-bool qa_bots_create(qa_bot_runtime *, const qa_bot_services *, qa_bots **, qa_error *);
+/* Initial source setup registers actual cached cvars before library setup and
+ * loads the real registered map before deathmatch AI. Nonzero result preserves
+ * the library's actual setup error code and leaves no published population. */
+bool qa_bots_create_source(qa_bot_runtime *,const qa_bot_services *,const char *,int32_t *,qa_bots **,qa_error *);
 /* Fresh round AI over the retained initialized library. No map reload or
  * actor admission occurs here; the caller reconnects actual preserved clients. */
 bool qa_bots_create_round(qa_bot_runtime *, const qa_bot_services *, qa_bots **, qa_error *);
 /* Borrow the actual admitted settings until the population is mutated. */
 bool qa_bots_admission_read(const qa_bots *, qa_actor_id, qa_bot_admission *, qa_error *);
+/* Reads the current source ws word from this actor's genuine retained record.
+ * The numeric word remains source state; this call does not create a handle. */
+bool qa_bots_source_weapon_handle(qa_bots *,qa_actor_id,uint32_t *,qa_error *);
 /* Construct an empty isolated population with the actual saved client capacity.
  * The runtime address remains stable; source setup/admission/frame callbacks do
  * not run. Its private continuation must restore before ordinary bot use. */

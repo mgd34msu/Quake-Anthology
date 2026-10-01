@@ -288,8 +288,13 @@ void qa_script_defines_retain(qa_script_defines *d) {
 }
 void qa_script_defines_release(qa_script_defines *d) {
     if (d != NULL && atomic_fetch_sub_explicit(&d->references, 1, memory_order_acq_rel) == 1) {
+        qa_script_defines *retired=d->retired;
         qa_arena_destroy(&d->table.arena);
         free(d);
+        while(retired) {
+            qa_script_defines *next=retired->retired;
+            qa_arena_destroy(&retired->table.arena);free(retired);retired=next;
+        }
     }
 }
 bool qa_script_defines_add(qa_script_defines *d, const char *text, qa_error *e) {

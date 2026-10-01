@@ -18,28 +18,50 @@ bool qa_modes_rank(qa_modes *m, qa_mode_id id, qa_error *e) {
     mode_instance *v = mode_get(m, id);
     if (!v)
         return mode_fail(e, "stale ranked mode");
+    bool q3 = v->value.rules.source >= QA_MODE_Q3;
+    qa_actor_owner native_owner;
+    bool native = q3 && m->options.hooks.q3_native_source &&
+        m->options.hooks.q3_native_source(m->options.hooks.context, id, &native_owner);
+    qa_mode_q3_rank_counts source_counts = {0};
+    if (native && (!m->options.hooks.q3_rank_counts ||
+        !MODE_CALLBACK(m, m->options.hooks.q3_rank_counts(m->options.hooks.context,
+            id, &source_counts, e)))) return false;
     size_t n = 0, playing = 0, voting = 0;
     for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
         uint32_t i = m->players_order.ids[ordinal].slot;
         mode_member *member = &v->members[i];
         mode_player *p = member->joined ? mode_player_get(m, member->actor) : NULL;
-        if (!p || !p->value.connected)
+        if (!p)
             continue;
+        qa_match_player value = p->value;
+        int32_t source_team = -1;
+        if (native && (!m->options.hooks.q3_rank_client ||
+            !MODE_CALLBACK(m, m->options.hooks.q3_rank_client(m->options.hooks.context,
+                id, value.actor, &value.connected, &value.connecting, &value.bot, &source_team, e))))
+            return false;
+        if (!value.connected) continue;
         int32_t score;
         if (!qa_modes_score(m, v->id, member->actor, &score, e))
             return false;
         if (!mode_player_get(m, member->actor))
             continue;
-        qa_match_player value = p->value;
         const qa_mode_player_state *state = &member->player;
-        bool q3 = v->value.rules.source >= QA_MODE_Q3;
+        uint32_t source_order = (uint32_t)ordinal;
+        if (native) {
+            qa_actor_owner owner;
+            if (!m->options.hooks.q3_client_slot ||
+                !MODE_CALLBACK(m, m->options.hooks.q3_client_slot(m->options.hooks.context,
+                    id, value.actor, &owner, &source_order, e)) ||
+                owner != native_owner || source_order >= 64)
+                return mode_fail(e, "native Q3 ranks lost their physical source client");
+        }
         uint8_t group = (q3 ? state->q3_spectator_state == QA_MODE_Q3_SPECTATOR_SCOREBOARD ||
                               state->q3_spectator_client < 0 : state->scoreboard)
             ? 3 : value.connecting ? 2 : state->spectator ? 1 : 0;
         v->ranks[n++] = (mode_rank_entry){.actor = value.actor, .score = score,
             .spectator_since = state->spectator_since_ns,
             .q3_spectator_time = state->q3_spectator_time_ms, .q3_source = q3,
-            .order = (uint32_t)ordinal, .group = group};
+            .order = source_order, .group = group};
         if (!state->spectator && !value.connecting) {
             ++playing;
             if (!value.bot)
@@ -47,6 +69,12 @@ bool qa_modes_rank(qa_modes *m, qa_mode_id id, qa_error *e) {
         }
     }
     qsort(v->ranks, n, sizeof(*v->ranks), rank_compare);
+    if (native) {
+        if (n != (size_t)source_counts.connected)
+            return mode_fail(e, "native Q3 ranks differ from the actual fixed source roster");
+        playing = (size_t)source_counts.playing;
+        voting = (size_t)source_counts.voting;
+    }
     v->value.playing = playing;
     v->value.voting = voting;
     v->value.sorted_count = n;
@@ -95,6 +123,30 @@ bool mode_set_phase(qa_modes *m, mode_instance *v, qa_mode_phase phase, uint64_t
     v->countdown_announced = false;
     return mode_event(m, v, QA_MODE_PHASE, (qa_actor_id){0}, (qa_actor_id){0}, (qa_actor_id){0}, 0,
                       phase, 0, e);
+}
+bool qa_modes_q3_source_phase(qa_modes *m, qa_mode_id id, qa_mode_phase phase,
+                             uint64_t source_time_ns, uint64_t deadline_ns, qa_error *e) {
+    mode_instance *v = mode_get(m, id);
+    if (!v || m->source_restored ||
+        v->value.rules.source < QA_MODE_Q3 ||
+        v->value.rules.source > QA_MODE_TEAM_ARENA ||
+        v->value.rules.kind < QA_MODE_FFA ||
+        v->value.rules.kind > QA_MODE_HARVESTER ||
+        phase < QA_MODE_WAITING || phase > QA_MODE_FINISHED ||
+        source_time_ns < v->value.time_ns)
+        return mode_fail(e, "invalid selected Q3 source phase effect");
+    v->value.time_ns = source_time_ns;
+    return mode_set_phase(m, v, phase, deadline_ns, e);
+}
+bool qa_modes_q3_source_reset_teams(qa_modes *m, qa_mode_id id, qa_error *e) {
+    mode_instance *v = mode_get(m, id);
+    if (!v || m->source_restored ||
+        v->value.rules.source < QA_MODE_Q3 ||
+        v->value.rules.source > QA_MODE_TEAM_ARENA ||
+        v->value.rules.kind < QA_MODE_FFA || v->value.rules.kind > QA_MODE_HARVESTER)
+        return mode_fail(e, "invalid selected Q3 source team reset");
+    v->value.team_scores[0] = v->value.team_scores[1] = 0;
+    return true;
 }
 static size_t playing_team(qa_modes *m, mode_instance *v, qa_team_id team) {
     size_t count = 0;
@@ -255,6 +307,14 @@ bool qa_modes_end(qa_modes *m, qa_mode_id id, qa_string_id reason, qa_error *e) 
     mode_instance *v = mode_get(m, id);
     if (!v)
         return mode_fail(e, "stale match end");
+    qa_actor_owner native_owner;
+    if (v->value.rules.source >= QA_MODE_Q3 && m->options.hooks.q3_native_source &&
+        m->options.hooks.q3_native_source(m->options.hooks.context, id, &native_owner)) {
+        if (!m->options.hooks.q3_source_match_exit)
+            return mode_fail(e, "native Q3 match end has no real source exit service");
+        return MODE_CALLBACK(m, m->options.hooks.q3_source_match_exit(
+            m->options.hooks.context, id, reason, e));
+    }
     if (v->value.phase >= QA_MODE_EXIT_PENDING)
         return true;
     if (v->value.rules.source == QA_MODE_THREEWAVE)
@@ -458,20 +518,48 @@ bool mode_match_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_error 
     if (v->value.phase == QA_MODE_EXIT_PENDING)
         return now >= v->value.deadline_ns ? intermission(m, v, e) : true;
     if (v->value.phase == QA_MODE_INTERMISSION) {
-        if (now < v->value.deadline_ns || r->kind == QA_MODE_SINGLE_PLAYER)
-            return true;
+        if (r->kind == QA_MODE_SINGLE_PLAYER) return true;
         size_t ready = 0, not_ready = 0;
+        qa_actor_owner native_owner;
+        bool native = r->source >= QA_MODE_Q3 && m->options.hooks.q3_native_source &&
+            m->options.hooks.q3_native_source(m->options.hooks.context, v->id, &native_owner);
+        int32_t ready_mask = 0;
         for (size_t ordinal = 0; ordinal < m->players_order.count; ++ordinal) {
             uint32_t i = m->players_order.ids[ordinal].slot;
             mode_member *member = &v->members[i];
             mode_player *p = member->joined ? mode_player_get(m, member->actor) : NULL;
-            if (!p || p->value.bot || !p->value.connected)
+            if (!p) continue;
+            bool client_ready = member->player.ready;
+            if (native) {
+                bool eligible;
+                if (!m->options.hooks.q3_intermission_client ||
+                    !MODE_CALLBACK(m, m->options.hooks.q3_intermission_client(m->options.hooks.context,
+                        v->id, p->value.actor, &eligible, &client_ready, e))) return false;
+                if (!eligible) continue;
+                member = mode_member_get(m, v, p->value.actor);
+                if (!member) return mode_fail(e, "native ready client retired during source access");
+            } else if (p->value.bot || !p->value.connected)
                 continue;
-            if (member->player.ready)
+            if (client_ready) {
                 ++ready;
-            else
+                if (native) {
+                    qa_actor_owner owner;
+                    uint32_t slot;
+                    if (!m->options.hooks.q3_client_slot ||
+                        !MODE_CALLBACK(m, m->options.hooks.q3_client_slot(m->options.hooks.context,
+                            v->id, p->value.actor, &owner, &slot, e)) || owner != native_owner || slot >= 64)
+                        return mode_fail(e, "intermission readiness lost its native source client");
+                    if (slot < 16) ready_mask |= (int32_t)(1u << slot);
+                }
+            } else
                 ++not_ready;
         }
+        if (native) {
+            if (!m->options.hooks.q3_intermission_ready_publish ||
+                !MODE_CALLBACK(m, m->options.hooks.q3_intermission_ready_publish(m->options.hooks.context,
+                    v->id, ready_mask, e))) return false;
+        }
+        if (now < v->value.deadline_ns) return true;
         if (!ready) {
             v->value.ready_exit = false;
             v->ready_since_ns = 0;

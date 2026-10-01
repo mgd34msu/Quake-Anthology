@@ -1,10 +1,12 @@
 #include "internal.h"
 #include "native_q2_save.h"
+#include "capture.h"
 #include "save_private.h"
 #include "source_restore.h"
 #include "qa/persistence_content.h"
 #include "qa/font_save.h"
 #include "qa/font_world_save.h"
+#include "qa/scene_resource_save.h"
 #include "qa/localization.h"
 #include "qa/binary.h"
 #include <SDL.h>
@@ -509,25 +511,36 @@ static bool platform_hud_view(void *context, uint32_t seat,
     --source->active_imports;
     return ok;
 }
-static void release_source(void *context)
+static bool source_free(frontend_native_q2 *source, qa_error *error)
 {
-    frontend_native_q2 *source = context;
-    frontend_native_q2 **item = &source->frontend->native_q2;
-    while (*item && *item != source) item = &(*item)->next;
-    if (*item) *item = source->next;
+    if (!frontend_owners_idle(source->frontend))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Native Q2 frontend source retains an active parent or child owner");
     if (source->frontend->audio && source->identity) {
-        qa_error error = {0};
-        if (!qa_audio_engine_stop_owner(source->frontend->audio, source->identity, QA_AUDIO_WORLD, &error))
-            fprintf(stderr, "native Q2 audio retirement: %s\n", error.message);
+        if (!qa_audio_engine_stop_owner(source->frontend->audio, source->identity, QA_AUDIO_WORLD, error))
+            return false;
         for (uint32_t seat = 0; seat < source->frontend->options.seats; ++seat)
-            if (!qa_audio_engine_stop_owner(source->frontend->audio, source->identity, seat, &error))
-                fprintf(stderr, "native Q2 audio retirement: %s\n", error.message);
+            if (!qa_audio_engine_stop_owner(source->frontend->audio, source->identity, seat, error))
+                return false;
     }
     while (source->pictures) { native_q2_picture *picture = source->pictures; source->pictures = picture->next; qa_scene_image_release(picture->image); free(picture->name); free(picture); }
     qa_font_world_store_destroy(source->world_text); qa_localization_pool_destroy(source->catalogs);
     qa_audio_bank_destroy(source->sounds); qa_font_library_destroy(source->fonts);
     qa_scene_resources_destroy(source->images); qa_vfs_destroy(source->mounts);
     free(source);
+    return true;
+}
+static void release_source(void *context)
+{
+    frontend_native_q2 *source = context;
+    /* The application has consumed its real lease. Retain only the frontend's
+     * owned row when a parent or independent child capture still holds it. */
+    source->owner_context = NULL; source->owner_idle = NULL;
+    source->application = NULL; source->provider_files = NULL; source->cvars = NULL;
+    source->prepared = true; source->seat_bound = false;
+    frontend_native_q2 **item = &source->frontend->native_q2;
+    while (*item && *item != source) item = &(*item)->next;
+    frontend_native_q2 *next = source->next;
+    if (source_free(source, NULL) && *item) *item = next;
 }
 bool frontend_native_q2_services(void *context, qa_application *application, qa_actor_owner owner,
     qa_native_profile profile, qa_native_host_engine_services *engine,
@@ -537,6 +550,8 @@ bool frontend_native_q2_services(void *context, qa_application *application, qa_
     if (!frontend || !application || !engine || !engine->content_files || !engine->cvars || !out || !application_context || !owner ||
         (profile != QA_NATIVE_Q2_GAME_API3 && profile != QA_NATIVE_Q2_GAME_API2023 && profile != QA_NATIVE_Q2_CGAME_API2023))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid native Q2 platform service binding");
+    if (!frontend_owners_idle(frontend))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Native Q2 source construction requires idle frontend parent and child owners");
     if (profile == QA_NATIVE_Q2_CGAME_API2023 && (frontend->options.dedicated || !frontend->options.seats))
         return frontend_fail(error, QA_ERROR_UNSUPPORTED, "native Q2 cgame requires a local presentation seat");
     frontend_native_q2 *source = NULL;
@@ -560,10 +575,10 @@ bool frontend_native_q2_services(void *context, qa_application *application, qa_
         source->identity = QA_FRONTEND_COMMAND_OWNER + ++frontend->next_source_id;
         source->frame_time_ns = frontend->time_ns;
         source->provider_files = engine->content_files;
+        source->next = frontend->native_q2; frontend->native_q2 = source;
         source->mounts = qa_vfs_clone(engine->content_files, error);
         source->catalogs = qa_localization_pool_create(error); source->world_text = qa_font_world_store_create(error);
         if (!source->mounts || !source->catalogs || !source->world_text) { release_source(source); return false; }
-        source->next = frontend->native_q2; frontend->native_q2 = source;
     }
     source->owner_context = engine->owner_context; source->owner_idle = engine->owner_idle;
     source->cvars = engine->cvars; source->prepared = false;
@@ -629,6 +644,32 @@ bool frontend_native_q2_callbacks_idle(const qa_frontend *frontend)
     if (!frontend || frontend->stepping) return false;
     for (const frontend_native_q2 *source=frontend->native_q2;source;source=source->next)
         if (source->frontend!=frontend || source->application!=frontend->application || source->active_imports) return false;
+    return true;
+}
+
+bool frontend_native_q2_children_idle(const qa_frontend *frontend)
+{
+    if (!frontend) return false;
+    for (const frontend_native_q2 *source = frontend->native_q2; source; source = source->next)
+        if (source->frontend != frontend || source->active_imports ||
+            (source->images && !qa_scene_resources_idle(source->images)) ||
+            (source->fonts && !qa_font_library_idle(source->fonts))) return false;
+    return true;
+}
+
+bool frontend_native_q2_q3_round_ready(const qa_frontend *frontend, qa_error *error)
+{
+    if (!frontend || !frontend->application || frontend->stepping)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 round admission requires an idle frontend owner");
+    for (const frontend_native_q2 *source = frontend->native_q2; source; source = source->next) {
+        if (source->frontend != frontend || source->application != frontend->application ||
+            source->prepared || source->restored || source->active_imports ||
+            !source->owner_idle || !source->owner_idle(source->owner_context))
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 round admission has an unfinished source lease");
+        if (source->profile == QA_NATIVE_Q2_CGAME_API2023)
+            return frontend_fail(error, QA_ERROR_UNSUPPORTED,
+                "native Q2 cgame requires a native KEX character source unavailable in a Q3 round");
+    }
     return true;
 }
 
@@ -728,6 +769,17 @@ bool frontend_native_q2_owner_read(const qa_frontend *frontend, size_t index,
         .images = source->images, .sounds = source->sounds, .fonts = source->fonts, .prepared = source->prepared};
     return true;
 }
+bool frontend_native_q2_audio_view(const qa_frontend *frontend,const qa_audio_asset *asset,qa_vfs **out)
+{
+    if (!frontend || !asset || !out) return false;
+    qa_resource *resource=qa_audio_asset_resource(asset);
+    if (!resource) return false;
+    for (const frontend_native_q2 *source=frontend->native_q2;source;source=source->next)
+        if (source->sounds && qa_audio_bank_get(source->sounds,qa_resource_id(resource),qa_audio_asset_family(asset))==asset) {
+            *out=source->mounts; return *out!=NULL;
+        }
+    return false;
+}
 bool frontend_native_q2_topology_checkpoint(const qa_frontend *frontend, qa_buffer *out, qa_error *error)
 {
     if (!frontend || !frontend->application || frontend->stepping || frontend->source_restoring ||
@@ -789,7 +841,7 @@ bool frontend_native_q2_prepare_restored(qa_frontend *frontend, qa_bytes bytes, 
         if (ok) source->catalogs = qa_localization_pool_create(error);
         if (ok) source->world_text = qa_font_world_store_create(error);
         ok = ok && source->catalogs && source->world_text;
-        if (ok && plans[i].images) ok = (source->images = qa_scene_resources_create(source->mounts, error)) != NULL;
+        if (ok && plans[i].images) ok = (source->images = qa_scene_resources_create_detached(source->mounts, error)) != NULL;
         if (ok && plans[i].sounds) ok = qa_audio_bank_create(source->mounts, &source->sounds, error);
         if (ok && plans[i].fonts) ok = (source->fonts = qa_font_library_create(source->mounts, source->images, error)) != NULL;
     }
@@ -812,12 +864,16 @@ void frontend_native_q2_topology_finish(qa_frontend *frontend)
 }
 bool frontend_native_q2_discard_unbound(qa_frontend *frontend, qa_error *error)
 {
-    if (!frontend || frontend->stepping)
+    if (!frontend || frontend->stepping || !frontend_owners_idle(frontend))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "native Q2 pending lease cleanup requires idle frontend");
     for (const frontend_native_q2 *source = frontend->native_q2; source; source = source->next)
         if (!source->prepared || source->active_imports || source->owner_context || source->owner_idle)
             return frontend_fail(error, QA_ERROR_ARGUMENT, "actual native Q2 application leases must retire before pending cleanup");
-    while (frontend->native_q2) release_source(frontend->native_q2);
+    while (frontend->native_q2) {
+        frontend_native_q2 *source = frontend->native_q2, *next = source->next;
+        if (!source_free(source, error)) return false;
+        frontend->native_q2 = next;
+    }
     return true;
 }
 

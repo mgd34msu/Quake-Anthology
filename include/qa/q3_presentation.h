@@ -8,6 +8,8 @@
 
 typedef struct qa_q3_presentation qa_q3_presentation;
 typedef struct qa_q3_presentation_assets qa_q3_presentation_assets;
+/* Pure parent-lifetime admission, including actual retained child captures. */
+bool qa_q3_presentation_idle(const qa_q3_presentation *);
 typedef struct qa_q3_presentation_provider {
     qa_vfs *mounts;
     qa_scene_resources *images;
@@ -35,24 +37,6 @@ void qa_q3_presentation_assets_destroy(qa_q3_presentation_assets *);
  * frees only the returned array. No registration or reference change runs. */
 bool qa_q3_presentation_audio_assets_read(const qa_q3_presentation_assets *,
     qa_audio_asset ***, size_t *, qa_error *);
-/* Isolated restore replaces the library before source handles are decoded.
- * The existing heap registry remains the installed service context. */
-bool qa_q3_presentation_materials_rebind_ready(const qa_q3_presentation *,
-    const qa_material_library *current, const qa_material_library *destination, qa_error *);
-void qa_q3_presentation_materials_rebind(qa_q3_presentation *, qa_material_library *);
-typedef struct qa_q3_asset_checkpoint_refs {
-    void *context;
-    bool (*image_encode)(void *, const qa_scene_image *, qa_buffer *, qa_error *);
-    /* Returns an owned immutable candidate image version. */
-    bool (*image_decode)(void *, qa_bytes, qa_scene_image **, qa_error *);
-} qa_q3_asset_checkpoint_refs;
-bool qa_q3_presentation_assets_checkpoint(qa_q3_presentation_assets *, qa_session *,
-    const qa_q3_asset_checkpoint_refs *, qa_buffer *, qa_error *);
-/* Existing candidate has qualified provider services and its map bindings,
- * but no registered handles. Failure retains partial candidate ownership;
- * the candidate must be discarded, never published or reused. */
-bool qa_q3_presentation_assets_restore(qa_q3_presentation_assets *, qa_session *,
-    const qa_q3_asset_checkpoint_refs *, qa_bytes, qa_error *);
 typedef struct qa_q3_registered_model {
     int32_t handle;
     const char *name;
@@ -157,9 +141,14 @@ typedef struct qa_q3_presentation_options {
  * Resources may be shared by several seats. All calls are serialized; external
  * callbacks queue owner destruction rather than destroying an active call. */
 bool qa_q3_presentation_create(const qa_q3_presentation_options *, qa_q3_presentation **, qa_error *);
+/* A failed retirement preserves the presentation for caller-owned retry. */
 bool qa_q3_presentation_destroy(qa_q3_presentation *, qa_error *);
 bool qa_q3_presentation_frontend_rebind_ready(const qa_q3_presentation *, const qa_scene_frame *,
                                                qa_audio_engine *, uint64_t bus, qa_error *);
+/* A same-map round retains the real renderer, parser, media and numeric asset
+ * registry. Only completed transient scene submissions may be cleared. */
+bool qa_q3_presentation_round_ready(const qa_q3_presentation *, const qa_scene_frame *,
+                                      const qa_scene_world *, const qa_collision_geometry *, qa_error *);
 void qa_q3_presentation_frontend_rebind(qa_q3_presentation *, const qa_scene_frame *current,
                                          qa_scene_frame *destination, qa_audio_engine *, uint64_t bus);
 qa_q3_presentation_assets *qa_q3_presentation_resources(qa_q3_presentation *);
@@ -180,6 +169,11 @@ bool qa_q3_presentation_poly(qa_q3_presentation *, int32_t shader, const qa_q3_p
 bool qa_q3_presentation_light(qa_q3_presentation *, qa_vec3, float radius, qa_vec3 color,
                               bool additive, qa_error *);
 bool qa_q3_presentation_render(qa_q3_presentation *, const qa_q3_refdef *, qa_error *);
+/* Only the actual submit_view callback may submit a retained selected model.
+ * The scene, decoded source and transform remain owned by its content owner. */
+bool qa_q3_presentation_selected_model(qa_q3_presentation *, qa_scene_model *,
+    const qa_model *, const char *source_path, const qa_model_transform *, const qa_q3_ref_entity *,
+    const qa_q3_scene_options *, uint32_t order, qa_scene_frame *, qa_error *);
 void qa_q3_presentation_color(qa_q3_presentation *, const qa_scene_vec4 *);
 bool qa_q3_presentation_picture(qa_q3_presentation *, int32_t shader, qa_scene_rect_f,
                                 qa_scene_vec4 uv, qa_error *);

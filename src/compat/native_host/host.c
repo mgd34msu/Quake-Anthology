@@ -328,6 +328,8 @@ bool qa_native_host_initialize(qa_native_host *host, int32_t level_time,
     if (!host || !host->instance)
         return native_host_fail(error, QA_ERROR_ARGUMENT, 0,
                                 "native host adapter is required for initialization");
+    if ((host->kind == NATIVE_HOST_Q2_GAME || host->kind == NATIVE_HOST_Q2_CGAME) &&
+        !native_host_refresh_cvars(host, error)) return false;
     bool ok;
     if (host->profile == QA_NATIVE_QUAKE_LIVE_GAME_API10) {
         bool restarting = qa_native_get_lifecycle(host->instance) == QA_NATIVE_RESTART_READY;

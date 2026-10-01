@@ -710,6 +710,126 @@ bool qa_audio_engine_round_ready(const qa_audio_engine *engine, qa_error *error)
     }
     return true;
 }
+struct qa_audio_stream_cut {
+    qa_audio_engine *destination, *source;
+    audio_bus *prepared;
+    size_t source_index;
+    bool published, publishing;
+};
+static qa_audio_mixer *cut_mixer(qa_audio_engine *engine, size_t index) {
+    return index < engine->seat_count ? engine->seats[index]->mixer :
+        engine->round_mixers[index - engine->seat_count].mixer;
+}
+static void cut_unlock(qa_audio_engine *engine) {
+    for (size_t i = 0; i < engine->seat_count + engine->round_mixer_count; ++i)
+        (void)qa_audio_mixer_round_unlock(cut_mixer(engine, i));
+    engine->round_resetting = false;
+    engine->round_destroy_requested = false;
+}
+static bool cut_lock(qa_audio_engine *engine, qa_error *error) {
+    size_t count = engine->seat_count + engine->round_mixer_count;
+    for (size_t i = 0; i < count; ++i) {
+        if (!qa_audio_mixer_round_lock(cut_mixer(engine, i), error)) {
+            for (size_t j = 0; j < i; ++j)
+                (void)qa_audio_mixer_round_unlock(cut_mixer(engine, j));
+            return false;
+        }
+    }
+    engine->round_resetting = true;
+    return true;
+}
+static bool cut_engine_current(qa_audio_engine *engine) {
+    if (!engine->round_resetting || engine->round_destroy_requested || engine->destroy_pending ||
+        engine->destroying || engine->operation_depth || engine->callback_depth)
+        return false;
+    for (size_t i = 0; i < engine->seat_count + engine->round_mixer_count; ++i) {
+        qa_audio_mixer *mixer = cut_mixer(engine, i);
+        if (!mixer->round_locked || mixer->round_destroy_requested || mixer->destroy_requested ||
+            mixer->destroying || mixer->callback_active || mixer->dispatching) return false;
+    }
+    return true;
+}
+bool qa_audio_engine_stream_cut_prepare(qa_audio_engine *destination, qa_audio_engine *source,
+    uint64_t id, uint32_t audience, float gain, qa_audio_stream_cut **out, qa_error *error) {
+    if (!out || *out || destination == source || !isfinite(gain) || gain < 0 ||
+        !qa_audio_engine_round_ready(destination, error) || !qa_audio_engine_round_ready(source, error))
+        return fail(error, QA_ERROR_ARGUMENT, "Audio stream cut requires distinct idle owners");
+    if (destination->options.sample_rate != source->options.sample_rate ||
+        destination->seat_count > SIZE_MAX - destination->round_mixer_count ||
+        source->seat_count > SIZE_MAX - source->round_mixer_count ||
+        destination->bus_count > destination->bus_capacity || source->bus_count > source->bus_capacity ||
+        (destination->bus_capacity && !destination->buses) || (source->bus_capacity && !source->buses))
+        return fail(error, QA_ERROR_ARGUMENT, "Audio stream cut has invalid rate or ownership storage");
+    size_t index = SIZE_MAX;
+    for (size_t i = 0; i < source->bus_count; ++i) {
+        const audio_bus *bus = &source->buses[i];
+        if (bus->id != id || !bus->raw) continue;
+        if (index != SIZE_MAX || bus->music || bus->audience != audience ||
+            memcmp(&bus->gain, &gain, sizeof(gain)) ||
+            qa_audio_raw_rate(bus->raw) != destination->options.sample_rate)
+            return fail(error, QA_ERROR_ARGUMENT, "Audio stream cut has another source route");
+        index = i;
+    }
+    if (index != SIZE_MAX) {
+        qa_audio_raw_stream *raw = source->buses[index].raw;
+        for (size_t i = 0; i < source->bus_count; ++i)
+            if (i != index && source->buses[i].raw == raw)
+                return fail(error, QA_ERROR_ARGUMENT, "Audio stream cut has duplicate source ownership");
+        for (size_t i = 0; i < destination->bus_count; ++i)
+            if (destination->buses[i].raw == raw)
+                return fail(error, QA_ERROR_ARGUMENT, "Audio stream cut raw queue already belongs to destination");
+    }
+    qa_audio_stream_cut *cut = calloc(1, sizeof(*cut));
+    if (!cut) return fail(error, QA_ERROR_MEMORY, "Allocating audio stream cut");
+    cut->prepared = malloc(sizeof(*cut->prepared));
+    if (!cut->prepared) { free(cut); return fail(error, QA_ERROR_MEMORY, "Reserving audio stream publication"); }
+    *cut->prepared = (audio_bus){id, audience, gain,
+        index == SIZE_MAX ? NULL : source->buses[index].raw, NULL};
+    if (!cut_lock(destination, error)) { free(cut->prepared); free(cut); return false; }
+    if (!cut_lock(source, error)) {
+        cut_unlock(destination); free(cut->prepared); free(cut); return false;
+    }
+    cut->destination = destination; cut->source = source; cut->source_index = index;
+    *out = cut;
+    return true;
+}
+bool qa_audio_engine_stream_cut_current(const qa_audio_stream_cut *cut) {
+    if (!cut || cut->published || cut->publishing || !cut->prepared || !cut_engine_current(cut->destination) ||
+        !cut_engine_current(cut->source)) return false;
+    if (cut->source_index == SIZE_MAX) {
+        for (size_t i = 0; i < cut->source->bus_count; ++i)
+            if (cut->source->buses[i].id == cut->prepared->id && cut->source->buses[i].raw) return false;
+        return cut->prepared->raw == NULL;
+    }
+    if (cut->source_index >= cut->source->bus_count) return false;
+    const audio_bus *bus = &cut->source->buses[cut->source_index];
+    return bus->id == cut->prepared->id && bus->audience == cut->prepared->audience &&
+        !memcmp(&bus->gain, &cut->prepared->gain, sizeof(bus->gain)) &&
+        bus->raw == cut->prepared->raw && !bus->music &&
+        qa_audio_raw_rate(bus->raw) == cut->destination->options.sample_rate;
+}
+void qa_audio_engine_stream_cut_publish(qa_audio_stream_cut *cut) {
+    if (!qa_audio_engine_stream_cut_current(cut)) return;
+    cut->publishing = true;
+    qa_audio_engine *destination = cut->destination, *source = cut->source;
+    stop_all_impl(destination);
+    if (cut->source_index != SIZE_MAX) {
+        memmove(source->buses + cut->source_index, source->buses + cut->source_index + 1,
+            (source->bus_count - cut->source_index - 1) * sizeof(*source->buses));
+        --source->bus_count;
+    }
+    free(destination->buses);
+    destination->buses = cut->prepared; destination->bus_capacity = 1;
+    destination->bus_count = cut->prepared->raw ? 1 : 0;
+    cut->prepared = NULL; cut->published = true;
+    cut_unlock(source); cut_unlock(destination);
+    cut->publishing = false;
+}
+void qa_audio_engine_stream_cut_destroy(qa_audio_stream_cut *cut) {
+    if (!cut || cut->publishing) return;
+    if (!cut->published) { cut_unlock(cut->source); cut_unlock(cut->destination); }
+    free(cut->prepared); free(cut);
+}
 bool qa_audio_engine_reset_round(qa_audio_engine *engine, qa_error *error) {
     if (!qa_audio_engine_round_ready(engine, error)) return false;
     if (engine->seat_count > SIZE_MAX - engine->round_mixer_count)

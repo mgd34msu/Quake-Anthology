@@ -23,6 +23,9 @@ typedef struct application_native_q3_settings_options {
  * the real registry; a save candidate imports the independent copied values. */
 bool application_native_q3_settings_create(application_provider *, qa_q3_product,
     const application_native_q3_settings_options *, qa_error *);
+/* Register the real source tables before configuration without copying the
+ * GAME cache or entering source Init. */
+bool application_native_q3_settings_prepare_definitions(application_provider *, qa_q3_product, qa_error *);
 bool application_native_q3_settings_destroy(application_provider *, qa_error *);
 bool application_native_q3_settings_initialized(const application_provider *);
 bool application_native_q3_settings_idle(const application_provider *);

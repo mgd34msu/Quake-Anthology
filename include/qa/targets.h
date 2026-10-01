@@ -35,6 +35,10 @@ typedef struct qa_target_binding {
     bool (*set_targetname)(void *, qa_actor_id, qa_string_id, qa_error *);
     bool (*set_target)(void *, qa_actor_id, qa_string_id, qa_error *);
     bool (*set_delay)(void *, qa_actor_id, float seconds, qa_error *);
+    /* Native source shader targets retain their own AddRemap registry and
+     * source clock. This callback belongs to the exact actor binding. */
+    bool (*remap_shader)(void *, qa_actor_id source, qa_string_id old_name,
+                          qa_string_id new_name, uint64_t time_ns, qa_error *);
 } qa_target_binding;
 typedef struct qa_target_use {
     qa_actor_id source, activator;

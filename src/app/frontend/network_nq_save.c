@@ -2,6 +2,7 @@
 #include "qa/application_network.h"
 #include "qa/launch_identity.h"
 #include "qa/network_save.h"
+#include <float.h>
 #include <limits.h>
 #include <math.h>
 #include <stdlib.h>
@@ -46,12 +47,14 @@ static bool entity_fields(qa_source_save_io *io, qa_q1_entity *v)
 }
 static bool fields(qa_source_save_io *io, frontend_nq_host *host)
 {
-    uint32_t magic = UINT32_C(0x484e4151), version = 2;
-    if (!qa_source_save_u32(io, &magic) || magic != UINT32_C(0x484e4151) || !qa_source_save_u32(io, &version) || version != 2 ||
+    uint32_t magic = UINT32_C(0x484e4151), version = 3;
+    if (!qa_source_save_u32(io, &magic) || magic != UINT32_C(0x484e4151) || !qa_source_save_u32(io, &version) || version != 3 ||
         !frontend_save_provider(io, host->frontend->application, &host->owner) || !host->owner ||
         !qa_source_save_bytes(io, host->composition.bytes, sizeof(host->composition.bytes)) ||
         !qa_source_save_u64(io, &host->generation) || !qa_source_save_u64(io, &host->submillisecond_ns) ||
-        !qa_source_save_bool(io, &host->previous_pause)) return false;
+        !qa_source_save_bool(io, &host->previous_pause) ||
+        !qa_source_save_u64(io, &host->published_source_time_ns) ||
+        !qa_source_save_u64(io, &host->next_admission_order)) return false;
     for (size_t i = 0; i < NQ_CLIENTS; ++i) {
         nq_frontend_peer *p = host->peers + i;
         bool bound = p->host != NULL;
@@ -62,8 +65,11 @@ static bool fields(qa_source_save_io *io, frontend_nq_host *host)
             !qa_source_save_u64(io, &p->seat.owner) || !qa_source_save_u32(io, &p->seat.index) ||
             !qa_source_save_u32(io, &p->source_slot) || !qa_source_save_u64(io, &p->entered_ns) ||
             !qa_source_save_u64(io, &p->input_sequence) || !qa_source_save_u64(io, &p->tick_sequence) ||
+            !qa_source_save_u64(io, &p->admission_order) || !qa_source_save_u8(io, &p->ping_count) ||
             !qa_source_save_u8(io, &p->impulse) || !command_fields(io, &p->latest) ||
             !qa_source_save_bytes(io, p->reason, sizeof(p->reason)) || !memchr(p->reason, 0, sizeof(p->reason))) return false;
+        for (size_t j = 0; j < NQ_PINGS; ++j)
+            if (!qa_source_save_f64(io, p->pings + j)) return false;
         if (io->direction == QA_SOURCE_SAVE_READ) p->host = bound ? host : NULL;
         size_t maximum = UINT16_MAX;
         if (io->direction == QA_SOURCE_SAVE_READ && maximum > (io->input.size - io->offset) / 59)
@@ -91,6 +97,8 @@ static bool fields(qa_source_save_io *io, frontend_nq_host *host)
         if (!frontend_save_text(io, &v->name) || !qa_source_save_i32(io, &v->frags) || !qa_source_save_f32(io, &v->source_frags) ||
             !qa_source_save_u8(io, &v->colors) || !qa_source_save_bool(io, &v->present)) return false;
     }
+    for (size_t i = 0; i < 256; ++i)
+        if (!frontend_save_text(io, host->published_names + i)) return false;
     for (size_t i = 0; i < 64; ++i) if (!frontend_save_text(io, host->styles + i)) return false;
     return true;
 }
@@ -101,7 +109,7 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
         host->frontend->options.network_protocol.kind != QA_NET_NQ15 || host->frontend->options.network_protocol.flags ||
         host->frontend->options.network_protocol.revision || !host->owner ||
         host->generation != qa_application_configuration_generation(host->frontend->application) ||
-        host->submillisecond_ns >= UINT64_C(1000000) || host->pending_count > NQ_PENDING)
+        host->submillisecond_ns >= UINT64_C(1000000) || host->pending_count > NQ_PENDING || !host->next_admission_order)
         return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake host lacks its actual source generation and idle policy");
     qa_actor_id actor; qa_actor_owner owner; uint32_t slot; qa_net_protocol_id protocol;
     if (!qa_application_player_actor(host->frontend->application, 0, &actor) ||
@@ -123,17 +131,26 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
         if ((p->host && p->host != host) || (p->client.owner && p->client.owner != QA_NETWORK_COMMAND_OWNER) ||
             (p->seat.owner && p->seat.owner != QA_NETWORK_COMMAND_OWNER) || (p->baseline_count && !p->baselines) ||
             p->baseline_count > UINT16_MAX || !memchr(p->reason, 0, sizeof(p->reason)) ||
-            (!p->occupied && (p->retiring || p->command_present || p->baseline_count)))
+            p->ping_count > NQ_PINGS ||
+            (!p->occupied && (p->retiring || p->command_present || p->baseline_count || p->ping_count || p->admission_order)))
             return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake physical peer has invalid owned storage");
+        double maximum_ping = ((double)UINT64_MAX / 1e9 + (double)FLT_MAX) * 1000;
+        for (size_t j = 0; j < NQ_PINGS; ++j)
+            if (!isfinite(p->pings[j]) || p->pings[j] < 0 || p->pings[j] > maximum_ping ||
+                (j >= p->ping_count && p->pings[j] != 0))
+                return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake ping history differs from its received timestamp domain");
         if (!p->occupied) continue;
         if (p->host != host || p->client.owner != QA_NETWORK_COMMAND_OWNER || !p->client.generation || p->client.slot >= NQ_CLIENTS ||
             p->seat.owner != QA_NETWORK_COMMAND_OWNER || !p->source_slot || p->source_slot > client_slots ||
             p->seat.index != 128u + p->source_slot || p->baseline_count < client_slots || !player_model ||
+            !p->admission_order || p->admission_order >= host->next_admission_order ||
+            p->ping_count != (p->input_sequence < NQ_PINGS ? p->input_sequence : NQ_PINGS) ||
             (p->command_present && !p->input_sequence) ||
             (!p->command_present && p->impulse) || (complete_clock && p->entered_ns > host->frontend->time_ns))
             return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake peer changes its actual native seat or input identity");
         for (size_t j = 0; j < i; ++j) if (host->peers[j].occupied &&
-            (qa_net_client_id_equal(p->client, host->peers[j].client) || p->source_slot == host->peers[j].source_slot))
+            (qa_net_client_id_equal(p->client, host->peers[j].client) || p->source_slot == host->peers[j].source_slot ||
+             p->admission_order == host->peers[j].admission_order))
             return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake peers alias one source client or connection");
         for (size_t j = 0; j < p->baseline_count; ++j) {
             const qa_q1_entity *e = p->baselines + j;
@@ -159,6 +176,8 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
     }
     for (size_t i = 0; i < 256; ++i) {
         const nq_status_cache *v = host->board + i;
+        if (host->published_names[i] && strlen(host->published_names[i]) > NQ_MESSAGE - 3)
+            return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake published name exceeds its real source service extent");
         if (!isfinite(v->source_frags) || (v->present && (!i || !v->name || (v->colors & 15) > 13 || (v->colors >> 4) > 13)) ||
             (!v->present && (v->name || v->frags || v->source_frags != 0 || v->colors)))
             return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake source status cache has invalid native ownership");

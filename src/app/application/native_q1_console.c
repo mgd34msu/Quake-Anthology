@@ -1,4 +1,5 @@
 #include "native_q1_console.h"
+#include "startup_flow.h"
 #include "qa/cvars_save.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -62,6 +63,22 @@ static void cvar_print(void *opaque, const char *text)
     qa_console_emit(owner->console, NULL, text);
 }
 
+static qa_cvars *cvar_owner(void *opaque, const qa_command_context *command, const char *name)
+{
+    struct application_native_q1_console *owner = opaque;
+    qa_cvars *selected = application_startup_cvar_owner(owner->provider, owner->console, command, name);
+    return selected ? selected : owner->cvars;
+}
+
+static qa_cvars *visible_cvars(void *opaque, const qa_command_context *command, size_t index)
+{
+    struct application_native_q1_console *owner = opaque;
+    qa_cvars *selected = NULL;
+    if (application_startup_visible_cvars(owner->provider, owner->console, command, index, &selected))
+        return selected;
+    return index == 0 ? owner->cvars : NULL;
+}
+
 static qa_command_result command(void *opaque, const qa_command_invocation *invocation, qa_error *error)
 {
     struct application_native_q1_console *owner = opaque;
@@ -77,6 +94,8 @@ static bool read_script(void *opaque, const qa_command_context *command,
     struct application_native_q1_console *owner = opaque;
     if (!active(owner, command))
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q1 script publication has retired");
+    if (application_startup_source_active(owner->provider))
+        return application_startup_script_read(owner->provider, command, path, out, lease, error);
     qa_resource *resource = NULL;
     if (!qa_vfs_acquire(owner->provider->launch->content, path, &resource, NULL, error)) return false;
     *out = qa_resource_bytes(resource);
@@ -86,8 +105,23 @@ static bool read_script(void *opaque, const qa_command_context *command,
 
 static void release_script(void *opaque, void *lease)
 {
-    (void)opaque;
-    qa_resource_release(lease);
+    struct application_native_q1_console *owner = opaque;
+    if (application_startup_source_active(owner->provider))
+        application_startup_script_release(owner->provider, lease);
+    else qa_resource_release(lease);
+}
+
+static void script_complete(void *opaque, const qa_command_context *command,
+    const char *path, bool success)
+{
+    struct application_native_q1_console *owner = opaque;
+    application_startup_script_complete(owner->provider, command, path, success);
+}
+
+static bool allow_command(void *opaque, const qa_command_invocation *command)
+{
+    struct application_native_q1_console *owner = opaque;
+    return application_startup_command_allowed(owner->provider, command);
 }
 
 bool application_native_q1_console_create_restored(application_provider *provider, qa_error *error)
@@ -104,8 +138,10 @@ bool application_native_q1_console_create_restored(application_provider *provide
     owner->cvars = qa_cvars_create(&cvars, error);
     qa_console_options options = {.context = {.owner = provider->owner, .dialect = dialect(provider),
         .origin = QA_COMMAND_SERVER}, .cvars = owner->cvars, .user = owner, .print = print,
+        .cvar_owner = cvar_owner, .visible_cvars = visible_cvars,
         .capture_context = capture, .context_active = active, .read_script = read_script,
-        .release_script = release_script, .source_command = command};
+        .release_script = release_script, .script_complete = script_complete,
+        .allow_command = allow_command, .source_command = command};
     if (owner->cvars) owner->console = qa_console_create(&options, error);
     if (!owner->console) {
         qa_console_destroy(owner->console);
@@ -195,6 +231,7 @@ bool application_native_q1_console_destroy(application_provider *provider, qa_er
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q1 console is borrowed");
     struct application_native_q1_console *owner = provider->native_q1_console;
     if (owner) {
+        if (!application_startup_source_retire(provider, owner->console, owner->cvars, error)) return false;
         qa_console_destroy(owner->console);
         qa_cvars_destroy(owner->cvars);
         free(owner);

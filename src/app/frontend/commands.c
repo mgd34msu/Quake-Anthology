@@ -1,5 +1,7 @@
 #include "internal.h"
 #include "save_commands.h"
+#include "campaign_cinematic.h"
+#include "qa/ui_preferences.h"
 #include <stdio.h>
 
 static qa_input_seat *input_seat(void *context, const qa_command_context *command)
@@ -24,6 +26,8 @@ static bool command(void *context, const qa_command_invocation *invocation, qa_e
 {
     qa_frontend *frontend = context;
     const char *name = invocation->argv[0];
+    if (!strcmp(name,"cinematic") || !strcmp(name,"cinematicpause") || !strcmp(name,"stopcinematic"))
+        return frontend_cinematic_command(frontend,invocation,error);
     if (!strcmp(name,"save") || !strcmp(name,"load"))
         return frontend_save_commands_queue(frontend,invocation,error);
     if (!strcmp(name, "quit")) { qa_application_request_stop(frontend->application); return true; }
@@ -46,11 +50,13 @@ bool frontend_commands(qa_frontend *frontend, qa_error *error)
 {
     qa_console *console = qa_application_console(frontend->application);
     const char *names[] = {"quit", "toggleconsole", "menu", "messagemode", "messagemode2", "weapnext", "weapprev",
-        "menu_anthology", "library", "mods", "settings", "rankings", "assistance", "controls", "save", "load"};
+        "menu_anthology", "library", "mods", "settings", "rankings", "assistance", "controls", "save", "load",
+        "cinematic", "cinematicpause", "stopcinematic"};
     for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
         if (!qa_console_register_owned(console, names[i], "Native frontend command", 0,
             QA_FRONTEND_COMMAND_OWNER, true, command, frontend, error)) return false;
     qa_cvars *cvars = qa_application_cvars(frontend->application);
+    if (!qa_ui_preferences_register(cvars, QA_FRONTEND_COMMAND_OWNER, error)) return false;
     if (!frontend->source_restoring && (!qa_cvars_register(cvars, "r_gamma", "1", QA_CVAR_ARCHIVE, QA_FRONTEND_COMMAND_OWNER,
         "Output brightness, 0.5 through 3", error) ||
         !qa_cvars_set_number(cvars, "r_gamma", frontend->options.gamma, error) ||

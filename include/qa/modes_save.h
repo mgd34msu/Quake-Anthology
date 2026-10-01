@@ -2,6 +2,7 @@
 #define QA_MODES_SAVE_H
 
 #include "qa/horde.h"
+#include "qa/modes_q3_session.h"
 
 typedef struct qa_mode_member_state {
     qa_actor_id actor;
@@ -101,7 +102,7 @@ typedef struct qa_mode_object_checkpoint {
     qa_physics_properties physics;
     uint64_t next_ns, owner_until_ns, animation_ns, expire_ns, born_ns;
     int32_t tag_stage;
-    bool targets_used, has_physics, dropped, global_animation;
+    bool targets_used, has_physics, dropped, global_animation, q3_source_owned;
 } qa_mode_object_checkpoint;
 typedef struct qa_mode_player_checkpoint {
     qa_match_player value;

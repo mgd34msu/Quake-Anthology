@@ -243,14 +243,19 @@ typedef struct qa_native_host_q3_options {
     size_t maximum_string_bytes;
 } qa_native_host_q3_options;
 
+/* Creation outputs start empty. A failed factory whose original library remains
+ * mapped returns its retained host in *out; keep all borrowed service contexts
+ * alive until destroy_owned clears it. */
 bool qa_native_host_create_q2_game(qa_native_module *, const qa_native_host_q2_game_options *,
                                    qa_native_host **, qa_error *);
 bool qa_native_host_create_q2_cgame(qa_native_module *, const qa_native_host_q2_cgame_options *,
                                     qa_native_host **, qa_error *);
 bool qa_native_host_create_q3(qa_native_module *, const qa_native_host_q3_options *,
                               qa_native_host **, qa_error *);
-bool qa_native_host_destroy(qa_native_host *, qa_error *);
-/* Admitted destruction consumes the host, including a returned cleanup fault. */
+/* Clears only a consumed host. Failed OS unload retains the original host and
+ * every borrowed source service until a later cleanup attempt can consume it. */
+bool qa_native_host_destroy_owned(qa_native_host **, qa_error *);
+/* Readonly initial admission. Actual checked OS unload can still reject. */
 bool qa_native_host_destroy_ready(const qa_native_host *);
 /* Terminal cleanup must retain every still-live source or borrowed actor. */
 bool qa_native_host_terminal_retired(const qa_native_host *);

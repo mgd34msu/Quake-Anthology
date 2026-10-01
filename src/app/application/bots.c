@@ -12,6 +12,11 @@
 #include "bots_transport.h"
 #include "bots_catalog.h"
 #include "bots_frame.h"
+#include "bots_setup.h"
+#include "bots_memory_bind.h"
+#include "bots_guests.h"
+#include "bots_knowledge.h"
+#include "bots_log.h"
 #include "qa/game_q3_configstrings.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
@@ -585,18 +590,20 @@ bool application_bots_guest_bind(qa_application *application,application_provide
     if(!bots) return application_fail(error,QA_ERROR_NOT_FOUND,"guest shared bot library was not prepared");
     for(application_bot_guest *guest=bots->guests;guest;guest=guest->next)
         if(guest->provider==provider)
-            return qa_q3_host_attach_bots(host,bots->runtime,guest->client_base,guest->entity_base,true,error);
+            return qa_q3_host_attach_bots(host,guest->runtime,guest->client_base,guest->entity_base,true,false,error);
     return application_fail(error,QA_ERROR_NOT_FOUND,"guest bot library namespace was not admitted");
 }
 static bool close_bots(application_bots *bots,qa_error *error) {
     if(!bots) return true;
     if(bots->calls || bots->arsenal_leases || bots->pickup_borrowed || bots->mover_borrowed ||
        !qa_bots_can_destroy(bots->population) || !qa_bot_runtime_can_destroy(bots->runtime) ||
+       !application_bots_guests_can_destroy(bots) ||
        !application_bot_world_can_destroy(bots->shared_world) || !application_bot_transport_can_destroy(bots->transport) ||
        !qa_bot_catalog_can_destroy(bots->catalogue) || bots->catalogue_seat)
         return application_fail(error,QA_ERROR_ARGUMENT,"application bot owners are executing a callback");
     if(application_q3_guest_bots_borrowed(bots->application,bots->runtime))
         return application_fail(error,QA_ERROR_ARGUMENT,"original GAME hosts still borrow the actual bot runtime");
+    if(!application_bots_guests_destroy(bots,error)) return false;
     if(!qa_bot_catalog_destroy(bots->catalogue,error)) return false;
     bots->catalogue=NULL;bots->catalogue_ready=false;
     if(!qa_bots_destroy(bots->population,error)) return false;
@@ -616,6 +623,7 @@ static bool close_bots(application_bots *bots,qa_error *error) {
         qa_navigation_destroy(graph->navigation);qa_nav_graph_release(graph->graph);
         qa_resource_release(graph->asset_resource);free(graph);}
     while(bots->guests) {application_bot_guest *guest=bots->guests;bots->guests=guest->next;free(guest);}
+    application_bots_knowledge_dispose(bots);
     qa_builtin_snapshot_free(&bots->pickup_snapshot);qa_entities_free(&bots->entities);
     qa_resource_release(bots->source_map_resource);qa_resource_release(bots->map_resource);qa_vfs_destroy(bots->files);
     qa_bots_save_requirements_free(&bots->saved_requirements);
@@ -628,6 +636,7 @@ bool application_bots_can_destroy(const qa_application *application) {
     application_bots *bots=application?application->bots:NULL;
     return !bots || (!bots->calls && !bots->arsenal_leases && !bots->pickup_borrowed && !bots->mover_borrowed &&
         qa_bots_can_destroy(bots->population) && qa_bot_runtime_can_destroy(bots->runtime) &&
+        application_bots_guests_can_destroy(bots) &&
         application_bot_world_can_destroy(bots->shared_world) && application_bot_transport_can_destroy(bots->transport) &&
         qa_bot_catalog_can_destroy(bots->catalogue) && !bots->catalogue_seat);
 }
@@ -673,6 +682,7 @@ bool application_bots_actor_released(qa_application *application,qa_actor_record
 }
 bool application_bots_frame_at(qa_application *application,const qa_source_frame *frames,
                                 size_t count,uint64_t host_ns,qa_error *error) {
+    if(!application_bots_frame_request(application,frames,count,host_ns,error)) return false;
     application_bots *bots=application->bots;if(!bots) return true;
     if(bots->round_phase==APPLICATION_BOT_ROUND_FAILED)
         return application_fail(error,QA_ERROR_ARGUMENT,"application bot round failed before completing its source lifetime");
@@ -717,7 +727,8 @@ qa_bot_services application_bots_services(application_bots *bots) {
     qa_application *application=bots->application;
     application_provider *source=bot_source(bots);
     return (qa_bot_services){.context=bots,
-        .memory={.context=bots,.allocate=bot_memory_allocate,.read=bot_memory_read,.write=bot_memory_write},
+        .memory={.context=bots,.allocate=bot_memory_allocate,.read=bot_memory_read,.write=bot_memory_write,
+            .borrow_span=application_bots_memory_span},
         .team_arena=source && source->product && source->product->family==QA_GAME_Q3 &&
             !strcmp(source->product->campaign,"missionpack"),
         .shared=application_builtin_services(application,application->world,application->physics),
@@ -737,9 +748,9 @@ qa_bot_services application_bots_services(application_bots *bots) {
         .check_spawn=application_bots_catalog_check_spawn,.activation=application_bot_activation,
         .predict_motion=application_bot_predict_motion};
 }
-bool application_bots_prepare(qa_application *application,const qa_launch_choices *choices,
-                               const qa_bsp_view *geometry,const qa_entities *entities,qa_error *error) {
-    (void)entities;uint32_t capacity=0;size_t count=0;size_t guest_count=0;
+static bool prepare_bots(qa_application *application,const qa_launch_choices *choices,
+                               const qa_bsp_view *geometry,bool requested,qa_error *error) {
+    uint32_t capacity=0;size_t count=0;size_t guest_count=0;
     if(choices->seat_count>INT32_MAX)
         return application_fail(error,QA_ERROR_ARGUMENT,"native bot roster exceeds source handle range");
     for(size_t i=0;i<choices->seat_count;++i) if(choices->seats[i].bot) {++count;capacity=(uint32_t)i+1;}
@@ -749,7 +760,7 @@ bool application_bots_prepare(qa_application *application,const qa_launch_choice
     }
     application_provider *actual_source=application_world_provider(application,QA_ROLE_ENTITIES,"");
     bool native_q3=actual_source && actual_source->kind==APPLICATION_PROVIDER_Q3;
-    if(!count && !guest_count && !native_q3) return true;
+    if(!count && !guest_count && !native_q3 && !requested) return true;
     if(application->bots) return application->bots->map_resource==application->map_resource ||
         application_fail(error,QA_ERROR_ARGUMENT,"retire the previous shared bot library before map preparation");
     if(count>=UINT32_MAX)
@@ -800,24 +811,16 @@ bool application_bots_prepare(qa_application *application,const qa_launch_choice
             }
             qa_vfs_destroy(files);if(local.code!=QA_ERROR_NOT_FOUND) {if(error)*error=local;goto fail;}
         }
-        if(!opened && (count || native_q3)) {application_fail(error,QA_ERROR_NOT_FOUND,"native bots require installed bot personality resources");goto fail;}
+        if(!opened && (count || native_q3 || requested)) {application_fail(error,QA_ERROR_NOT_FOUND,"native bots require installed bot personality resources");goto fail;}
     }
     if(!qa_entities_parse(geometry->lumps[QA_BSP_ENTITIES].bytes,
             geometry->family==QA_BSP_Q3?QA_ENTITY_Q3:QA_ENTITY_Q1,&bots->entities,error)) goto fail;
     if(!application_bot_navigation_prepare(bots,error)) goto fail;
     qa_bot_runtime_options options={.library={.scripts={.context=bots,.read=read_file,.release=release_file},
-        .preprocessor={.include_path="botfiles",.builtins=true}},.maximum_states=(uint32_t)((native_q3?64:count)+guest_count*64)+1,
-        .minimum_clients=actor_capacity+(uint32_t)guest_count*64,
-        .observations=guest_count?QA_BOT_OBSERVATION_MODULE:QA_BOT_OBSERVATION_NATIVE};
-    qa_bot_random_source random={bots,random_word};
-    qa_bot_runtime_services services={.context=bots,.random=random,.navigation=application_bot_navigation,.command=bot_command,
-        .diagnostic=bot_diagnostic,
-        .goals={.context=bots,.navigation=application_bot_navigation,.pickups=pickup_list,.pickups_end=pickup_end,
-            .pickup=pickup,.owns_item=owns_item},
-        .movement={.context=bots,.navigation=application_bot_navigation,.actor=application_bot_actor,
-            .entity_number=entity_number,.model=application_bot_travel_model,
-            .travel_weapon=application_bot_travel_weapon,.grapple_state=application_bot_grapple_state,.random=random}};
-    if(!qa_bot_runtime_create(&options,&services,&bots->runtime,error)) goto fail;
+        .preprocessor={.include_path="botfiles",.builtins=true}},.maximum_states=64,
+        .minimum_clients=actor_capacity,.observations=QA_BOT_OBSERVATION_NATIVE};
+    if(!application_bots_runtime_create(bots,&options,&bots->runtime,error) ||
+       !application_bots_guests_create(bots,&options,error)) goto fail;
     char clients[32],source_entities[32];snprintf(clients,sizeof(clients),"%u",actor_capacity);
     snprintf(source_entities,sizeof(source_entities),"%u",entity_base);
     if(!qa_bot_library_variable_set(qa_bot_runtime_library(bots->runtime),"maxclients",clients,error) ||
@@ -830,24 +833,40 @@ fail:
     {qa_error cleanup={0};if(!close_bots(bots,&cleanup)) {if(error && !error->code)*error=cleanup;}}
     return false;
 }
+bool application_bots_prepare(qa_application *application,const qa_launch_choices *choices,
+    const qa_bsp_view *geometry,const qa_entities *entities,qa_error *error) {
+    (void)entities;return prepare_bots(application,choices,geometry,false,error);
+}
+bool application_bots_prepare_requested(qa_application *application,const qa_launch_choices *choices,
+    const qa_bsp_view *geometry,qa_error *error) {
+    return prepare_bots(application,choices,geometry,true,error);
+}
 bool application_bots_construct_restored(application_bots *bots,qa_error *error) {
-    qa_application *application=bots->application;
-    qa_bot_runtime_options options=bots->saved_requirements.runtime;
+    if(!application_bots_runtime_create(bots,&bots->saved_requirements.runtime,&bots->runtime,error) ||
+       !application_bots_guests_construct_restored(bots,error)) return false;
+    if(!bots->saved_requirements.population) return true;
+    qa_bot_services ai=application_bots_services(bots);
+    return qa_bots_create_restored(bots->runtime,&ai,bots->saved_requirements.population_client_capacity,
+                                   &bots->population,error);
+}
+bool application_bots_runtime_create(application_bots *bots,const qa_bot_runtime_options *given,
+    qa_bot_runtime **out,qa_error *error) {
+    qa_bot_runtime_options options=*given;
     options.library.scripts.context=bots;
     options.library.scripts.read=read_file; options.library.scripts.release=release_file;
     qa_bot_random_source random={bots,random_word};
     qa_bot_runtime_services services={.context=bots,.random=random,.navigation=application_bot_navigation,.command=bot_command,
-        .diagnostic=bot_diagnostic,
+        .diagnostic=bot_diagnostic,.log=application_bots_log_services(bots),
         .goals={.context=bots,.navigation=application_bot_navigation,.pickups=pickup_list,.pickups_end=pickup_end,
             .pickup=pickup,.owns_item=owns_item},
         .movement={.context=bots,.navigation=application_bot_navigation,.actor=application_bot_actor,
             .entity_number=entity_number,.model=application_bot_travel_model,
             .travel_weapon=application_bot_travel_weapon,.grapple_state=application_bot_grapple_state,.random=random}};
-    if(!qa_bot_runtime_create(&options,&services,&bots->runtime,error)) return false;
-    if(!bots->saved_requirements.population) return true;
-    qa_bot_services ai=application_bots_services(bots);
-    return qa_bots_create_restored(bots->runtime,&ai,bots->saved_requirements.population_client_capacity,
-                                   &bots->population,error);
+    if(options.observations==QA_BOT_OBSERVATION_MODULE) {
+        services.movement.travel_weapon=NULL;
+        services.movement.grapple_state=NULL;
+    }
+    return qa_bot_runtime_create(&options,&services,out,error);
 }
 qa_bot_runtime *application_bots_runtime(qa_application *application) {
     return application && application->bots?application->bots->runtime:NULL;
@@ -885,6 +904,25 @@ static bool launch_pending_bot(qa_application *application,const qa_launch_seat 
         .public_name=seat->name,.team=seat->team,.skill=seat->bot_skill,.delay_ms=seat->bot_delay_ms};
     return application_bots_catalog_add_seat(application,seat,&request,error);
 }
+bool application_bots_source_initialize(application_bots *bots,qa_error *error) {
+    application_provider *source=bots?bot_source(bots):NULL;
+    if(!bots || !source || !source->constructed || !source->attached || !source->map_bound ||
+       source->close_pending || bots->restoring || bots->calls || bots->producing)
+        return application_fail(error,QA_ERROR_ARGUMENT,"Source bot setup requires its actual idle map owner");
+    if(bots->population) return application_bots_catalog_initialize(bots,false,error);
+    if(source->kind==APPLICATION_PROVIDER_Q1 || source->kind==APPLICATION_PROVIDER_Q2) {
+        if(!bots->shared_world && !application_bots_shared_construct(bots,false,error)) return false;
+    } else if(source->kind!=APPLICATION_PROVIDER_Q3)
+        return application_fail(error,QA_ERROR_UNSUPPORTED,"Source bot setup requires its actual native or shared GAME");
+    const char *name=qa_strings_cstr(qa_session_strings(bots->application->session),bots->application->current_map);
+    qa_bot_services services=application_bots_services(bots);int32_t result;
+    ++bots->calls;
+    bool okay=qa_bots_create_source(bots->runtime,&services,name,&result,&bots->population,error);
+    --bots->calls;
+    if(!okay) return false;
+    if(result) return application_fail(error,QA_ERROR_NOT_FOUND,"Source BotAISetup rejected required bot library resources");
+    return application_bots_catalog_initialize(bots,false,error);
+}
 bool application_bots_publish(qa_application *application,const qa_launch_choices *choices,
                                const qa_bsp_view *geometry,const qa_entities *entities,qa_error *error) {
     if(!application_bots_prepare(application,choices,geometry,entities,error)) return false;
@@ -904,22 +942,7 @@ bool application_bots_publish(qa_application *application,const qa_launch_choice
     for(size_t i=0;i<choices->seat_count;++i) native=native || choices->seats[i].bot;
     if(!native) return true;
     if(!bots || bots->population) return application_fail(error,QA_ERROR_ARGUMENT,"native bot population was already published");
-    if(!application_bots_shared_construct(bots,false,error)) return false;
-    if(!qa_bot_runtime_initialized(bots->runtime)) {
-        qa_cvars *configuration=bot_configuration(bots);
-        const qa_cvar_view *game_type=configuration?qa_cvars_find(configuration,"g_gametype"):NULL;
-        if(!qa_bot_library_variable_set(qa_bot_runtime_library(bots->runtime),"g_gametype",
-                game_type?game_type->value:"0",error)) return false;
-        int32_t result;
-        if(!qa_bot_runtime_setup(bots->runtime,&result,error)) return false;
-        if(result) return application_fail(error,QA_ERROR_NOT_FOUND,"native shared bot library setup rejected required resources");
-    }
-    const char *name=qa_strings_cstr(qa_session_strings(application->session),application->current_map);
-    if(!qa_bot_runtime_loaded(bots->runtime) && !qa_bot_runtime_load_map(bots->runtime,name,error)) return false;
-    if(!qa_bot_runtime_weapon_allocate(bots->runtime,&bots->metadata_weapon,error) || !bots->metadata_weapon) return false;
-    qa_bot_services ai=application_bots_services(bots);
-    if(!qa_bots_create(bots->runtime,&ai,&bots->population,error)) return false;
-    if(!application_bots_catalog_initialize(bots,false,error)) return false;
+    if(!application_bots_source_initialize(bots,error)) return false;
     for(size_t i=0;i<choices->seat_count;++i) {
         if(!choices->seats[i].bot) continue;
         qa_actor_id actor;
@@ -937,23 +960,7 @@ bool application_bots_native_q3_initialize(application_provider *provider,qa_err
        !provider->constructed || !provider->attached || !provider->map_bound ||
        provider->close_pending || bots->restoring || bots->calls || bots->producing)
         return application_fail(error,QA_ERROR_ARGUMENT,"native source BotAISetup requires its actual live prepared map owner");
-    if(bots->population) return application_bots_catalog_initialize(bots,false,error);
-    if(!qa_bot_runtime_initialized(bots->runtime)) {
-        const char *game_type;int32_t result;
-        if(!application_native_q3_settings_string(provider,"g_gametype",&game_type,error) ||
-           !qa_bot_library_variable_set(qa_bot_runtime_library(bots->runtime),"g_gametype",game_type,error)) return false;
-        if(provider->product && !strcmp(provider->product->campaign,"missionpack") &&
-           !qa_bot_library_global_define(qa_bot_runtime_library(bots->runtime),"MISSIONPACK",error)) return false;
-        if(!qa_bot_runtime_setup(bots->runtime,&result,error)) return false;
-        if(result) return application_fail(error,QA_ERROR_NOT_FOUND,"native source BotAISetup rejected required bot library resources");
-    }
-    const char *name=qa_strings_cstr(qa_session_strings(app->session),app->current_map);
-    if(!qa_bot_runtime_loaded(bots->runtime) && !qa_bot_runtime_load_map(bots->runtime,name,error)) return false;
-    if(!bots->metadata_weapon &&
-       (!qa_bot_runtime_weapon_allocate(bots->runtime,&bots->metadata_weapon,error) || !bots->metadata_weapon)) return false;
-    qa_bot_services services=application_bots_services(bots);
-    return qa_bots_create(bots->runtime,&services,&bots->population,error) &&
-        application_bots_catalog_initialize(bots,false,error);
+    return application_bots_source_initialize(bots,error);
 }
 
 static float bot_source_atof(const char *text) {

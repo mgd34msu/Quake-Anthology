@@ -97,6 +97,7 @@ void application_qc_release_qualification(application_provider *provider)
     for (size_t i = 0; i < sizeof(lists) / sizeof(lists[0]); ++i) free_calls(lists[i]);
     for (size_t i = 0; profile->input && i < profile->input_count; ++i) { free_calls(&profile->input[i].calls); free(profile->input[i].outputs); }
     free(profile->input);
+    for (size_t i = 0; i < profile->client_output_count; ++i) free(profile->client_outputs[i].values);
     for (size_t i = 0; profile->cvars && i < profile->cvar_count; ++i) { free(profile->cvars[i].name); free(profile->cvars[i].value); }
     free(profile->cvars); free(profile->weapon_values); free(profile); provider->state.qc.qualified = NULL;
 }
@@ -305,6 +306,103 @@ static bool selected_weapon(const qa_json_document *doc, qa_json_id node,
     return true;
 }
 
+static const application_qc_bound_field *client_output_field(const qa_json_document *doc,
+    qa_json_id node, const struct application_qc_profile *profile, bool vector, qa_error *error)
+{
+    char *name = string(doc, node, error);
+    if (!name) return NULL;
+    const application_qc_bound_field *found = NULL;
+    for (size_t i = 0; i < profile->field_count; ++i)
+        if (!strcmp(profile->fields[i].definition->name, name)) { found = profile->fields + i; break; }
+    free(name);
+    if (!found || found->definition->type != (vector ? QA_QC_VECTOR : QA_QC_FLOAT) ||
+        (found->kind != QC_FIELD_PRIVATE &&
+            !(vector && (found->kind == QC_FIELD_VIEW || found->kind == QC_FIELD_MIN || found->kind == QC_FIELD_MAX)) &&
+            !(!vector && found->kind == QC_FIELD_CLIENT_FLAGS))) {
+        application_fail(error, QA_ERROR_FORMAT, "QC client output requires its declared original field authority");
+        return NULL;
+    }
+    return found;
+}
+
+static bool client_outputs(const qa_json_document *doc, qa_json_id node,
+    struct application_qc_profile *profile, qa_error *error)
+{
+    if (!array(doc, node, true, error)) return false;
+    size_t count = qa_json_size(doc, node);
+    if (count > APPLICATION_CLIENT_OUTPUT_COUNT)
+        return application_fail(error, QA_ERROR_FORMAT, "QC client output channels are duplicated");
+    profile->client_output_count = count;
+    static const char *channels[] = {"view-offset", "movement-mode", "stance", "body-shape"};
+    for (size_t i = 0; i < count; ++i) {
+        qa_json_id row = qa_json_at(doc, node, i), kind = qa_json_get(doc, row, "kind");
+        size_t channel = 0;
+        while (channel < APPLICATION_CLIENT_OUTPUT_COUNT && !qa_json_string_equal(doc, kind, channels[channel])) ++channel;
+        if (channel == APPLICATION_CLIENT_OUTPUT_COUNT || (profile->client_output_channels & (1u << channel)))
+            return application_fail(error, QA_ERROR_FORMAT, "QC client output kind is unknown or duplicated");
+        application_qc_client_output *output = profile->client_outputs + i;
+        output->channel = (application_client_output_channel)channel;
+        profile->client_output_channels |= (uint8_t)(1u << channel);
+        if (channel == APPLICATION_CLIENT_BODY_SHAPE) {
+            output->field = client_output_field(doc, qa_json_get(doc, row, "min"), profile, true, error);
+            output->maximum = client_output_field(doc, qa_json_get(doc, row, "max"), profile, true, error);
+            if (!output->field || !output->maximum) return false;
+            if (output->field->kind != QC_FIELD_MIN || output->maximum->kind != QC_FIELD_MAX)
+                return application_fail(error, QA_ERROR_FORMAT, "QC body shape requires original declared mins and maxs");
+            continue;
+        }
+        qa_json_id height = qa_json_get(doc, row, "height");
+        output->height = channel == APPLICATION_CLIENT_VIEW_OFFSET && height != QA_JSON_NONE;
+        output->field = client_output_field(doc, output->height ? height : qa_json_get(doc, row, "field"),
+            profile, channel == APPLICATION_CLIENT_VIEW_OFFSET && !output->height, error);
+        if (!output->field) return false;
+        if (channel == APPLICATION_CLIENT_VIEW_OFFSET) {
+            if (output->field->kind == QC_FIELD_CLIENT_FLAGS)
+                return application_fail(error, QA_ERROR_FORMAT, "QC view height cannot own canonical client flags");
+            continue;
+        }
+        qa_json_id mask = qa_json_get(doc, row, "mask");
+        output->masked = mask != QA_JSON_NONE;
+        if (output->masked) {
+            uint64_t bits;
+            if (!qa_json_u64(doc, mask, &bits, error)) return false;
+            if (!bits || bits > UINT32_MAX)
+                return application_fail(error, QA_ERROR_FORMAT, "QC client output mask exceeds its source word");
+            output->mask = (uint32_t)bits;
+        }
+        if (output->field->kind == QC_FIELD_CLIENT_FLAGS &&
+            (!output->masked || (output->mask & ~output->field->private_mask)))
+            return application_fail(error, QA_ERROR_FORMAT, "QC flag outputs require an explicit source-private mask");
+        qa_json_id values = qa_json_get(doc, row, "values");
+        if (!array(doc, values, false, error)) return false;
+        output->value_count = qa_json_size(doc, values);
+        if (!output->value_count || output->value_count > SIZE_MAX / sizeof(*output->values))
+            return application_fail(error, QA_ERROR_FORMAT, "QC client output needs a bounded source value mapping");
+        output->values = calloc(output->value_count, sizeof(*output->values));
+        if (!output->values) return application_fail(error, QA_ERROR_MEMORY, "Allocating QC client output mapping");
+        for (size_t j = 0; j < output->value_count; ++j) {
+            qa_json_id entry = qa_json_at(doc, values, j);
+            application_qc_client_output_value *mapping = output->values + j;
+            if (!qa_json_number(doc, qa_json_get(doc, entry, "value"), &mapping->value, error)) return false;
+            if (!isfinite(mapping->value) || (output->masked &&
+                (mapping->value < 0 || mapping->value > UINT32_MAX || trunc(mapping->value) != mapping->value ||
+                    ((uint32_t)mapping->value & output->mask) != (uint32_t)mapping->value)))
+                return application_fail(error, QA_ERROR_FORMAT, "QC client output value leaves its declared source mask");
+            for (size_t k = 0; k < j; ++k)
+                if (output->values[k].value == mapping->value)
+                    return application_fail(error, QA_ERROR_FORMAT, "QC client output repeats a source value");
+            if (channel == APPLICATION_CLIENT_MOVEMENT_MODE) {
+                qa_json_id mode = qa_json_get(doc, entry, "mode");
+                if (qa_json_string_equal(doc, mode, "normal")) mapping->output.mode = QA_MOVEMENT_MODE_NORMAL;
+                else if (qa_json_string_equal(doc, mode, "noclip")) mapping->output.mode = QA_MOVEMENT_MODE_NOCLIP;
+                else if (qa_json_string_equal(doc, mode, "freeze")) mapping->output.mode = QA_MOVEMENT_MODE_FREEZE;
+                else return application_fail(error, QA_ERROR_FORMAT, "QC movement output mode is unknown");
+            } else if (!qa_json_bool(doc, qa_json_get(doc, entry, "crouched"), &mapping->output.crouched, error)) return false;
+        }
+    }
+    return true;
+}
+
 bool application_qc_qualify(application_provider *provider, qa_error *error)
 {
     if (!provider || !provider->state.qc.program || provider->state.qc.qualified || !provider->launch->selection.artifact)
@@ -344,7 +442,7 @@ bool application_qc_qualify(application_provider *provider, qa_error *error)
         uint64_t maximum = 0; profile->clients = true;
         ok = qa_json_u64(doc, qa_json_get(doc, clients, "maximum"), &maximum, error) && maximum > 0 && maximum < 8191;
         profile->maximum_clients = (uint32_t)maximum;
-        if (ok) ok = empty(doc, qa_json_get(doc, clients, "outputs"), error) &&
+        if (ok) ok = client_outputs(doc, qa_json_get(doc, clients, "outputs"), profile, error) &&
             calls(doc, qa_json_get(doc, clients, "admit"), false, provider->state.qc.program, lifecycle, &profile->admit, error) &&
             calls(doc, qa_json_get(doc, clients, "userinfo"), false, provider->state.qc.program, lifecycle, &profile->userinfo, error) &&
             calls(doc, qa_json_get(doc, clients, "disconnect"), false, provider->state.qc.program, lifecycle, &profile->disconnect, error) &&

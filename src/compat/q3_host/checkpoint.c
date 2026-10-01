@@ -9,7 +9,8 @@ bool qa_q3_host_checkpoint_portable_ready(const qa_q3_host *host, qa_error *erro
 {
     if (!host || host->retired || host->native || !host->vm || host->calls)
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Portable Q3 host requires an idle original QVM owner");
-    if (host->options.script_globals)
+    if (host->options.script_globals && (!host->options.bots ||
+        host->options.script_globals!=qa_bot_runtime_global_defines(host->options.bots)))
         return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 shared script defines require their real detached owner");
     for (size_t i = 1; i < 64; ++i)
         if (host->files[i].kind == Q3_FILE_WRITE)
@@ -36,7 +37,7 @@ bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_e
         return q3_fail(error, QA_ERROR_UNSUPPORTED, 0, "Q3 retained command context requires its qualified source registry owner");
     qa_source_save_io io = {0};
     uint8_t magic[8] = {'Q','A','G','3','S','V',0,0};
-    uint32_t version = 4, role = o->role, abi = o->abi, owner = o->owner;
+    uint32_t version = 6, role = o->role, abi = o->abi, owner = o->owner;
     bool engine_present = o->engine_cvars != NULL;
     bool engine_alias = engine_present && o->engine_cvars == o->cvars;
     uint32_t engine_dialect = engine_present ? qa_cvars_dialect(o->engine_cvars) : 0;
@@ -59,6 +60,9 @@ bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_e
     if (o->writable_mount && writable == UINT64_MAX)
         return q3_fail(error, QA_ERROR_FORMAT, 0, "Q3 writable mount is outside its actual source inventory");
     bool shared = o->shared_bot_lifetime, direct = c->direct, console_text = c->console_text;
+    bool remapped = o->remapped_bot_namespace;
+    bool globals=o->script_globals!=NULL;
+    bool globals_alias=globals && o->bots && o->script_globals==qa_bot_runtime_global_defines(o->bots);
     bool ok = qa_source_save_writer(&io, NULL, error) &&
         qa_source_save_bytes(&io, magic, sizeof(magic)) && qa_source_save_u32(&io, &version) &&
         qa_source_save_u32(&io, &role) && qa_source_save_u32(&io, &abi) && qa_source_save_u32(&io, &owner) &&
@@ -70,7 +74,9 @@ bool qa_q3_host_checkpoint_services(const qa_q3_host *host, qa_buffer *out, qa_e
         qa_source_save_u32(&io, &client_base) && qa_source_save_u32(&io, &entity_base) &&
         qa_source_save_u32(&io, &maximum_clients) && qa_source_save_u64(&io, &maximum_string) &&
         qa_source_save_count(&io, &mount_count, SIZE_MAX) && qa_source_save_u64(&io, &writable) &&
-        qa_source_save_bool(&io, &shared) && qa_source_save_u32(&io, &command_seat) &&
+        qa_source_save_bool(&io, &shared) && qa_source_save_bool(&io, &remapped) &&
+        qa_source_save_bool(&io, &globals) && qa_source_save_bool(&io, &globals_alias) &&
+        qa_source_save_u32(&io, &command_seat) &&
         qa_source_save_u32(&io, &dialect) && qa_source_save_u32(&io, &origin) &&
         qa_source_save_bool(&io, &direct) && qa_source_save_bool(&io, &console_text) &&
         service_text(&io, c->script) && service_text(&io, o->game_directory) &&

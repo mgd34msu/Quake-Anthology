@@ -6,6 +6,7 @@
 #include "qa/bot_chat.h"
 #include "qa/bot_goals.h"
 #include "qa/bot_movement.h"
+#include "qa/bot_log.h"
 
 typedef struct qa_bot_runtime qa_bot_runtime;
 typedef enum qa_bot_observation_profile {
@@ -31,6 +32,7 @@ typedef struct qa_bot_runtime_services {
     qa_bot_navigation *(*navigation)(void *, int32_t client);
     bool (*command)(void *, int32_t client, const char *, qa_error *);
     void (*diagnostic)(void *, qa_script_severity, const char *);
+    qa_bot_log_services log;
     qa_bot_goal_services goals;
     qa_bot_move_services movement;
 } qa_bot_runtime_services;
@@ -66,6 +68,9 @@ float qa_bot_runtime_time(const qa_bot_runtime *);
 bool qa_bot_runtime_debug(const qa_bot_runtime *);
 qa_bot_random_source qa_bot_runtime_random_source(const qa_bot_runtime *);
 qa_bot_library *qa_bot_runtime_library(qa_bot_runtime *);
+/* Borrowed from this retained runtime, including across real library shutdown. */
+qa_script_defines *qa_bot_runtime_global_defines(qa_bot_runtime *);
+qa_bot_log *qa_bot_runtime_log(qa_bot_runtime *);
 bool qa_bot_runtime_variable_get_from(qa_bot_runtime *, void *context,
                                        bool (*name_byte)(void *, size_t, uint8_t *, qa_error *),
                                        const char **, qa_error *);

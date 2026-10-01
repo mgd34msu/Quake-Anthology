@@ -120,6 +120,7 @@ bool qa_font_kfont_load(qa_font_library *library, const char *path, const qa_fon
                         qa_error *error) {
     if (!library || !path || !out)
         return qa_font_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid KFONT load request");
+    if (!qa_font_internal_admission_ready(library,error)) return false;
     for (size_t i = 0; i < library->font_count; ++i) {
         if (library->fonts[i]->kind == QA_FONT_KFONT && !strcmp(library->fonts[i]->name, path)) {
             *out = library->fonts[i];

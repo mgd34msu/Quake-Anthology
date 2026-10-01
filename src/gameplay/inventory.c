@@ -808,6 +808,24 @@ bool qa_inventory_entry_read(qa_inventory *table, qa_actor_id actor, qa_item_id 
     release_store(table, store); return ok;
 }
 
+bool qa_inventory_count_read(qa_inventory *table, qa_actor_id actor, qa_item_id item,
+                             double *out, qa_error *e)
+{
+    if (!out) return fail(e, QA_ERROR_ARGUMENT, "Missing inventory count output");
+    if (!table || actor.slot >= table->capacity || !qa_actors_get(table->actors, actor))
+        return fail(e, QA_ERROR_NOT_FOUND, "Inventory actor is not current");
+    if (!table->stores[actor.slot]) { *out = 0; return true; }
+    inventory_store *store = acquire(table, actor);
+    if (!store) return fail(e, QA_ERROR_NOT_FOUND, "Actor has no current inventory");
+    qa_inventory_entry entry; bool found;
+    item_group *group = group_for(store, item);
+    bool ok = find_in(table, store, group, item, &entry, &found, e);
+    if (ok && group_for(store, item) != group)
+        ok = fail(e, QA_ERROR_NOT_FOUND, "Inventory item owner changed during count read");
+    if (ok) *out = found ? entry.count : 0;
+    release_store(table, store); return ok;
+}
+
 bool qa_inventory_entries(qa_inventory *table, qa_actor_id actor, qa_inventory_entry *out,
                           size_t capacity, size_t *count, qa_error *e)
 {

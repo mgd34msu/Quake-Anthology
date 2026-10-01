@@ -1,0 +1,5 @@
+51c2043096e00e57f2d5289d5a1f16c9fa1f8f84a1a72c6a29ebd77bd098e2bb  src/gameplay/q3/items.c
+61d05b63fe33466dabaf9a9db2b2b8b8a393ed092be82dba4fb989d2ec7049f8  src/gameplay/q3/missiles.c
+11acf548d585de8370d1b550f112f39d3f8ce553efca7c3e2616f1adfb1327aa  src/gameplay/q3/death.c
+08e3aae699d3871f136a09d4e82c51b7296d0af4ec63ae772c7b7abd05351ee6  src/gameplay/q3/holdables.c
+f718809bd1f1d67bb5a94e6050e89c00143cf924ba3d67a83b8d8d1ff1881161  src/gameplay/q3/feedback.c

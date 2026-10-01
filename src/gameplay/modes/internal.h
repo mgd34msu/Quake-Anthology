@@ -78,7 +78,7 @@ typedef struct mode_object {
     qa_objective_lease objective;
     uint64_t next_ns, owner_until_ns, animation_ns, expire_ns, born_ns;
     int32_t tag_stage;
-    bool active, admitting, targets_used, has_physics, dropped, global_animation;
+    bool active, admitting, targets_used, has_physics, dropped, global_animation, q3_source_owned;
 } mode_object;
 typedef struct mode_objective {
     qa_objective_binding binding;

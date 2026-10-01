@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_q2_source.h"
 
 static bool client_head(qa_q2_game *g, q2_actor *a, float damage, qa_error *e) {
     q2_client_state *s = a->client;
@@ -58,6 +59,13 @@ static bool drop_death(qa_q2_game *g, q2_actor *a, qa_error *e) {
     bool quad = (g->options.deathmatch_flags & 16384) &&
                 powers.quad_until_ns > q2_deadline(g->now_ns, Q2_NS);
     bool quadfire = powers.quad_fire_until_ns > q2_deadline(g->now_ns, Q2_NS);
+    if (g->options.edition == QA_Q2_RERELEASE) {
+        qa_actor_id id = a->id;
+        float no_drop;
+        if (!qa_q2_source_value(g, "g_dm_no_quadfire_drop", 0, &no_drop, e)) return false;
+        if (!q2_actor_live(g, id)) return true;
+        if (no_drop != 0) quadfire = false;
+    }
     float spread = item ? (quad ? 22.5f : quadfire ? 12.5f : 0) : 0;
     qa_actor_id dropped;
     bool accepted;

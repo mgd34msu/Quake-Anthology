@@ -153,3 +153,24 @@ bool qa_script_defines_save_restore(qa_bytes bytes,qa_script_defines **out,qa_er
     if(!okay && (!error || error->code==QA_OK)) qa_error_set(error,QA_ERROR_FORMAT,io.offset,"Invalid actual global macro continuation");
     qa_source_save_dispose(&io);return okay;
 }
+
+bool qa_script_defines_save_restore_into(qa_script_defines *owner,qa_bytes bytes,qa_error *error)
+{
+    if(!owner) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Global macro import needs its actual retained owner");return false;}
+    qa_script_defines *decoded=NULL;
+    if(!qa_script_defines_save_restore(bytes,&decoded,error)) return false;
+    qa_script_defines *retired=NULL;
+    if(owner->table.arena.first) {
+        retired=calloc(1,sizeof(*retired));
+        if(!retired) {
+            qa_script_defines_release(decoded);
+            qa_error_set(error,QA_ERROR_MEMORY,0,"Retaining prior global macro token aliases");return false;
+        }
+        atomic_init(&retired->references,1);
+        retired->table=owner->table;retired->first=owner->first;retired->retired=owner->retired;
+    }
+    owner->table=decoded->table;owner->first=decoded->first;
+    if(retired) owner->retired=retired;
+    decoded->table=(script_macro_table){0};decoded->first=NULL;
+    qa_script_defines_release(decoded);return true;
+}

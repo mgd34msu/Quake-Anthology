@@ -4,6 +4,7 @@
 typedef struct qw_move {
     q1_move base;
     qa_vec3 forward, right;
+    double elapsed_seconds;
     int32_t water_level, water_type;
     bool shared_controls, posture_published;
     qa_movement_ground *touched;
@@ -23,7 +24,7 @@ static bool qw_posture(qw_move *m) {
     bool wants_crouch = e->has_stance ? e->crouched : up_move < 0;
     bool crouched = !e->flight && wants_crouch;
     qa_trace_shape shape = q1_shape(&m->base);
-    qa_vec3 origin = c->state->data.qw.origin;
+    qa_vec3 origin = qa_qw_origin_to_vec3(c->state->data.qw.origin);
     qa_trace_result trace;
     if (!crouched && previous.maxs.z < standing.maxs.z) {
         shape.bounds = standing;
@@ -56,7 +57,7 @@ static bool qw_posture(qw_move *m) {
 
 static bool qw_fly(qw_move *m) {
     q1_fly_result result;
-    return q1_fly(&m->base, m->base.c->dt, &result);
+    return q1_fly(&m->base, m->elapsed_seconds, &result);
 }
 
 static bool qw_ground_move(qw_move *m) {
@@ -64,25 +65,30 @@ static bool qw_ground_move(qw_move *m) {
     qa_qw_movement_state *s = &c->state->data.qw;
     s->velocity.z = 0;
     if (s->velocity.x == 0 && s->velocity.y == 0) return true;
-    qa_vec3 destination = q1_ma(s->origin, c->dt, s->velocity);
+    qa_qw_origin destination = q1_qw_ma(s->origin, m->elapsed_seconds, s->velocity);
     qa_trace_result trace;
-    if (!q1_trace(&m->base, s->origin, destination, &trace)) return false;
-    if (trace.fraction == 1) { s->origin = trace.end; return true; }
-    qa_vec3 original = s->origin, original_velocity = s->velocity;
+    if (!q1_trace(&m->base, qa_qw_origin_to_vec3(s->origin), qa_qw_origin_to_vec3(destination), &trace)) return false;
+    if (trace.fraction == 1) { s->origin = qa_qw_origin_from_vec3(trace.end); return true; }
+    qa_qw_origin original = s->origin;
+    qa_vec3 original_velocity = s->velocity;
     if (!qw_fly(m)) return false;
-    qa_vec3 down = s->origin, down_velocity = s->velocity;
+    qa_qw_origin down = s->origin;
+    qa_vec3 down_velocity = s->velocity;
     s->origin = original;
     s->velocity = original_velocity;
-    if (!q1_trace(&m->base, s->origin, qa_vec_add(s->origin, qa_v3(0, 0, 18)), &trace)) return false;
-    if (!trace.start_solid && !trace.all_solid) s->origin = trace.end;
+    if (!q1_trace(&m->base, qa_qw_origin_to_vec3(s->origin),
+                  qa_qw_origin_to_vec3(q1_qw_add(s->origin, qa_v3(0, 0, 18))), &trace)) return false;
+    if (!trace.start_solid && !trace.all_solid) s->origin = qa_qw_origin_from_vec3(trace.end);
     if (!qw_fly(m)) return false;
-    if (!q1_trace(&m->base, s->origin, qa_vec_add(s->origin, qa_v3(0, 0, -18)), &trace)) return false;
+    if (!q1_trace(&m->base, qa_qw_origin_to_vec3(s->origin),
+                  qa_qw_origin_to_vec3(q1_qw_add(s->origin, qa_v3(0, 0, -18))), &trace)) return false;
     bool use_down = trace.plane.normal.z < 0.7f;
     if (!use_down) {
-        if (!trace.start_solid && !trace.all_solid) s->origin = trace.end;
-        qa_vec3 down_delta = qa_vec_sub(down, original), up_delta = qa_vec_sub(s->origin, original);
-        float down_distance = down_delta.x * down_delta.x + down_delta.y * down_delta.y;
-        float up_distance = up_delta.x * up_delta.x + up_delta.y * up_delta.y;
+        if (!trace.start_solid && !trace.all_solid) s->origin = qa_qw_origin_from_vec3(trace.end);
+        qa_vec3 down_delta = qa_v3((float)(down.x - original.x), (float)(down.y - original.y), (float)(down.z - original.z));
+        qa_vec3 up_delta = qa_v3((float)(s->origin.x - original.x), (float)(s->origin.y - original.y), (float)(s->origin.z - original.z));
+        double down_distance = (double)down_delta.x * down_delta.x + (double)down_delta.y * down_delta.y;
+        double up_distance = (double)up_delta.x * up_delta.x + (double)up_delta.y * up_delta.y;
         use_down = down_distance > up_distance;
     }
     if (use_down) { s->origin = down; s->velocity = down_velocity; }
@@ -99,9 +105,9 @@ static bool qw_friction(qw_move *m) {
     if (speed < 1) { s->velocity.x = 0; s->velocity.y = 0; return true; }
     float friction = p->friction;
     if (s->ground.hit != QA_TRACE_HIT_NONE) {
-        qa_vec3 start = qa_v3(s->origin.x + s->velocity.x / speed * 16,
-                               s->origin.y + s->velocity.y / speed * 16,
-                               s->origin.z + c->result->bounds.mins.z);
+        qa_vec3 start = qa_v3((float)(s->origin.x + s->velocity.x / speed * 16),
+                             (float)(s->origin.y + s->velocity.y / speed * 16),
+                             (float)(s->origin.z + c->result->bounds.mins.z));
         qa_trace_result trace;
         if (!q1_trace(&m->base, start, qa_vec_add(start, qa_v3(0, 0, -34)), &trace)) return false;
         if (trace.fraction == 1) friction *= 2;
@@ -137,11 +143,11 @@ static bool qw_water_move(qw_move *m) {
         -60 : q1_speed(&m->base, (float)c->command.up_move);
     float speed = fminf(qa_vec_length(wish), q1_speed(&m->base, p->max_speed)) * 0.7f;
     qw_accelerate(m, qa_vec_normalize(wish), speed, p->water_accelerate, false);
-    qa_vec3 destination = q1_ma(s->origin, c->dt, s->velocity);
-    qa_vec3 start = qa_vec_add(destination, qa_v3(0, 0, 19));
+    qa_qw_origin destination = q1_qw_ma(s->origin, m->elapsed_seconds, s->velocity);
+    qa_qw_origin start = q1_qw_add(destination, qa_v3(0, 0, 19));
     qa_trace_result trace;
-    if (!q1_trace(&m->base, start, destination, &trace)) return false;
-    if (!trace.start_solid && !trace.all_solid) { s->origin = trace.end; return true; }
+    if (!q1_trace(&m->base, qa_qw_origin_to_vec3(start), qa_qw_origin_to_vec3(destination), &trace)) return false;
+    if (!trace.start_solid && !trace.all_solid) { s->origin = qa_qw_origin_from_vec3(trace.end); return true; }
     return qw_fly(m);
 }
 
@@ -174,28 +180,29 @@ static bool qw_categorize(qw_move *m) {
     if (s->velocity.z > 180) s->ground = q1_no_ground();
     else {
         qa_trace_result trace;
-        if (!q1_trace(&m->base, s->origin, qa_vec_add(s->origin, qa_v3(0, 0, -1)), &trace)) return false;
+        if (!q1_trace(&m->base, qa_qw_origin_to_vec3(s->origin),
+                      qa_qw_origin_to_vec3(q1_qw_add(s->origin, qa_v3(0, 0, -1))), &trace)) return false;
         s->ground = trace.plane.normal.z < 0.7f ? q1_no_ground() : qa_move_ground(&trace);
         if (s->ground.hit != QA_TRACE_HIT_NONE) {
             s->water_jump_time_seconds = 0;
-            if (!trace.start_solid && !trace.all_solid) s->origin = trace.end;
+            if (!trace.start_solid && !trace.all_solid) s->origin = qa_qw_origin_from_vec3(trace.end);
         }
         if (trace.hit == QA_TRACE_HIT_ACTOR && !qa_move_contact(c, &trace, false, false)) return false;
     }
     m->water_level = 0;
     m->water_type = Q1_CONTENTS_EMPTY;
-    qa_vec3 point = s->origin;
-    point.z += c->result->bounds.mins.z + 1;
+    qa_vec3 point = qa_v3((float)s->origin.x, (float)s->origin.y,
+                         (float)(s->origin.z + c->result->bounds.mins.z + 1));
     int32_t contents;
     if (!q1_contents(&m->base, point, &contents)) return false;
     if (contents > Q1_CONTENTS_WATER) return true;
     m->water_type = contents;
     m->water_level = 1;
-    point.z = s->origin.z + (c->result->bounds.mins.z + c->result->bounds.maxs.z) * 0.5f;
+    point.z = (float)(s->origin.z + ((double)c->result->bounds.mins.z + c->result->bounds.maxs.z) * 0.5);
     if (!q1_contents(&m->base, point, &contents)) return false;
     if (contents > Q1_CONTENTS_WATER) return true;
     m->water_level = 2;
-    point.z = s->origin.z + c->result->view_height;
+    point.z = (float)(s->origin.z + c->result->view_height);
     if (!q1_contents(&m->base, point, &contents)) return false;
     if (contents <= Q1_CONTENTS_WATER) m->water_level = 3;
     return true;
@@ -224,7 +231,7 @@ static bool qw_check_water_jump(qw_move *m) {
     qa_qw_movement_state *s = &m->base.c->state->data.qw;
     if (s->water_jump_time_seconds != 0 || s->velocity.z < -180) return true;
     qa_vec3 forward = qa_vec_normalize(qa_v3(m->forward.x, m->forward.y, 0));
-    qa_vec3 spot = qa_vec_add(q1_ma(s->origin, 24, forward), qa_v3(0, 0, 8));
+    qa_vec3 spot = qa_qw_origin_to_vec3(q1_qw_add(q1_qw_ma(s->origin, 24, forward), qa_v3(0, 0, 8)));
     int32_t contents;
     if (!q1_contents(&m->base, spot, &contents)) return false;
     if (contents != Q1_CONTENTS_SOLID) return true;
@@ -240,13 +247,13 @@ static bool qw_check_water_jump(qw_move *m) {
 static bool qw_nudge(qw_move *m) {
     const int offsets[3] = {0, -1, 1};
     qa_qw_movement_state *s = &m->base.c->state->data.qw;
-    qa_vec3 base = s->origin;
+    qa_qw_origin base = s->origin;
     for (unsigned z = 0; z < 3; ++z) {
         for (unsigned x = 0; x < 3; ++x) {
             for (unsigned y = 0; y < 3; ++y) {
-                s->origin = qa_vec_add(base, qa_v3((float)offsets[x] / 8, (float)offsets[y] / 8, (float)offsets[z] / 8));
+                s->origin = q1_qw_add(base, qa_v3((float)offsets[x] / 8, (float)offsets[y] / 8, (float)offsets[z] / 8));
                 bool free_position;
-                if (!q1_position_free(&m->base, s->origin, &free_position)) return false;
+                if (!q1_position_free(&m->base, qa_qw_origin_to_vec3(s->origin), &free_position)) return false;
                 if (free_position) return true;
             }
         }
@@ -278,7 +285,7 @@ static bool qw_spectator_move(qw_move *m, bool collide) {
     float acceleration = fmaxf(0, fminf(add, p->accelerate * c->dt * wish_speed));
     s->velocity = q1_ma(s->velocity, acceleration, direction);
     if (collide) return qw_fly(m);
-    s->origin = q1_ma(s->origin, c->dt, s->velocity);
+    s->origin = q1_qw_ma(s->origin, m->elapsed_seconds, s->velocity);
     return true;
 }
 
@@ -313,6 +320,7 @@ static bool qw_step_physics(qw_move *m) {
     const qa_movement_environment *e = &c->input->environment;
     c->milliseconds = c->command.milliseconds;
     c->dt = (float)c->milliseconds * 0.001f;
+    m->elapsed_seconds = (double)c->milliseconds * 0.001;
     if (!q1_phase(&m->base, QA_MOVE_PRETHINK)) return false;
     if (m->shared_controls) {
         if (!qw_posture(m) || !q1_body_shape(&m->base)) return false;

@@ -79,6 +79,9 @@ bool qa_inventory_lease_current(qa_inventory *, qa_inventory_lease);
 bool qa_inventory_close_items(qa_inventory *, qa_inventory_lease, qa_error *);
 bool qa_inventory_source_stored(qa_inventory *, qa_inventory_lease, const qa_inventory_change *, size_t, qa_error *);
 bool qa_inventory_entry_read(qa_inventory *, qa_actor_id, qa_item_id, qa_inventory_entry *, qa_error *);
+/* A current actor with no store or a missing item has count zero. Retired
+ * actors and changes to storage or item ownership during a read fail. */
+bool qa_inventory_count_read(qa_inventory *, qa_actor_id, qa_item_id, double *, qa_error *);
 bool qa_inventory_entries(qa_inventory *, qa_actor_id, qa_inventory_entry *, size_t capacity, size_t *count, qa_error *);
 bool qa_inventory_has(const qa_inventory *, qa_actor_id);
 bool qa_inventory_mutable_capacity(qa_inventory *, qa_actor_id, qa_item_id);

@@ -42,8 +42,8 @@ static bool topology(const qa_ui *saved, const qa_ui *qualified, qa_error *error
 }
 static bool fields(qa_source_save_io *io, qa_ui *saved, const qa_ui *qualified)
 {
-    uint8_t magic[4]={'Q','A','U','I'}; uint32_t schema=1,seat=qualified->options.seat;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QAUI",4) || !qa_source_save_u32(io,&schema) || schema!=1 ||
+    uint8_t magic[4]={'Q','A','U','I'}; uint32_t schema=2,seat=qualified->options.seat;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QAUI",4) || !qa_source_save_u32(io,&schema) || schema!=2 ||
         !qa_source_save_u32(io,&seat) || seat!=qualified->options.seat) return false;
     size_t menus=qualified->menu_count;
     if (!qa_source_save_count(io,&menus,SIZE_MAX) || menus!=qualified->menu_count) return false;
@@ -73,6 +73,11 @@ static bool fields(qa_source_save_io *io, qa_ui *saved, const qa_ui *qualified)
     }
     if (!pair(io,&saved->cursor) || !pair(io,&saved->pointer)) return false;
     FIELD(f32,saved,scale); FIELD(f32,saved,bias_x); FIELD(f32,saved,bias_y);
+    FIELD(f32,saved,text_scale);
+    uint32_t color_mode=saved->color_mode;
+    if (!qa_source_save_u32(io,&color_mode) || color_mode>QA_UI_COLOR_MONOCHROME ||
+        !isfinite(saved->text_scale) || saved->text_scale<.75f || saved->text_scale>2) return false;
+    saved->color_mode=(qa_ui_color_mode)color_mode;
     FIELD(i32,&saved->viewport,x); FIELD(i32,&saved->viewport,y);
     FIELD(u32,&saved->viewport,width); FIELD(u32,&saved->viewport,height);
     FIELD(u64,saved,dragging); FIELD(f32,saved,drag_offset);

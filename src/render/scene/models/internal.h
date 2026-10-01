@@ -2,6 +2,7 @@
 #define QA_SCENE_MODELS_INTERNAL_H
 
 #include "qa/material.h"
+#include "qa/scene_model_save.h"
 #include <math.h>
 #include <stdatomic.h>
 #include <stdlib.h>
@@ -28,9 +29,11 @@ typedef struct scene_model_shadow_identity {
     uint64_t identity;
     struct scene_model_shadow_identity *next;
 } scene_model_shadow_identity;
+typedef struct qa_scene_model_capture qa_scene_model_capture;
 
 struct qa_scene_model {
     const qa_model *source;
+    qa_scene_model_content_lease source_lease, replacement_source_lease, animation_lease;
     qa_scene_resources *resources;
     qa_material_library *materials;
     qa_scene_image_options options;
@@ -41,6 +44,10 @@ struct qa_scene_model {
     scene_model_image *images;
     struct qa_scene_model *replacement;
     struct qa_scene_model *replacement_next;
+    struct qa_scene_model *replacement_parent;
+    unsigned active_submissions;
+    bool checkpoint_active;
+    qa_scene_model_capture *capture;
     qa_model_replacement replacement_description;
     const qa_model_replacement *replacement_source;
     scene_model_image ***replacement_skins;

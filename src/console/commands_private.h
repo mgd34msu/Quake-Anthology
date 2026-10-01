@@ -64,5 +64,6 @@ struct qa_console {
     unsigned output_calls;
     size_t alias_count;
     bool draining;
+    bool drain_yielded;
 };
 #endif

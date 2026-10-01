@@ -1,4 +1,6 @@
 #include "models/internal.h"
+#include "qa/scene_model_save.h"
+#include <limits.h>
 #include <stdio.h>
 
 static bool model_array(size_t count, size_t size, void **out, qa_error *error) {
@@ -83,8 +85,11 @@ static void replacement_destroy(qa_scene_model *model) {
         free(model->replacement_skins); model->replacement_skins = NULL;
     }
     qa_scene_model *replacement = model->replacement;
+    model->replacement = NULL;
     while (replacement) {
         qa_scene_model *next = replacement->replacement_next;
+        replacement->replacement_next = NULL;
+        replacement->replacement_parent = NULL;
         qa_scene_model_destroy(replacement); replacement = next;
     }
     model->replacement = NULL;
@@ -93,11 +98,15 @@ static void replacement_destroy(qa_scene_model *model) {
 
 void qa_scene_model_destroy(qa_scene_model *model) {
     if (!model) return;
+    if (model->replacement_parent || !qa_scene_model_idle(model)) return;
     replacement_destroy(model);
     scene_model_topology_destroy(model);
     scene_model_images_destroy(model);
     scene_model_shadow_identity *identity = model->shadow_identities;
     while (identity) { scene_model_shadow_identity *next = identity->next; free(identity); identity = next; }
+    if (model->animation_lease.release) model->animation_lease.release(model->animation_lease.context);
+    if (model->replacement_source_lease.release) model->replacement_source_lease.release(model->replacement_source_lease.context);
+    if (model->source_lease.release) model->source_lease.release(model->source_lease.context);
     free(model);
 }
 
@@ -205,6 +214,7 @@ static bool prepare_replacement(qa_scene_model *model, const qa_model_replacemen
         }
     }
     next->replacement_next = model->replacement;
+    next->replacement_parent = model;
     model->replacement = next;
     return true;
 fail:
@@ -301,6 +311,25 @@ static qa_model_bounds cull_bounds(const qa_scene_model *model, const qa_scene_m
                             {mesh->bounds.maxs.x, mesh->bounds.maxs.y, mesh->bounds.maxs.z}};
 }
 
+static bool alias_diffuse(const qa_scene_model_input *input, const float normal[3],
+    qa_vec3 *out, qa_error *error)
+{
+    float incoming = qa_vec_dot(model_vec(normal), input->light_direction);
+    const float ambient[3] = {input->ambient.x * 255, input->ambient.y * 255, input->ambient.z * 255};
+    const float directed[3] = {input->directed.x * 255, input->directed.y * 255, input->directed.z * 255};
+    float color[3];
+    for (unsigned i = 0; i < 3; ++i) {
+        float value = incoming <= 0 ? ambient[i] : fminf(255, ambient[i] + incoming * directed[i]);
+        if (!isfinite(value) || (double)value < -2147483648.0 || (double)value >= 2147483648.0) {
+            qa_error_set(error, QA_ERROR_FORMAT, i, "Alias diffuse color exceeds source integer range");
+            return false;
+        }
+        color[i] = (float)((uint32_t)(int32_t)value & 255u) / 255;
+    }
+    *out = qa_v3(color[0], color[1], color[2]);
+    return true;
+}
+
 static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *input, uint32_t index,
                            qa_scene_frame *frame, qa_scene_mesh *out, qa_error *error) {
     const qa_model_mesh *source = &model->source->meshes[index];
@@ -333,7 +362,13 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
                                 sampled, source->vertex_count, error)) return false;
     } else if (!qa_model_sample_mesh(model->source, index, input->frame, input->old_frame,
                                       input->back_lerp, sampled, source->vertex_count, error)) return false;
-    qa_vec3 light = scene_model_alias_light(input);
+    qa_scene_model_input lighting = *input;
+    if (input->family == QA_SCENE_Q3 && model->options.family != QA_SCENE_Q3) {
+        lighting.family = model->options.family;
+        lighting.flags = 0;
+    }
+    qa_vec3 light = input->alias_lighting == QA_ALIAS_PREPARED_LIGHT ?
+        input->alias_light : scene_model_alias_light(&lighting);
     bool shell = scene_model_has_shell(input);
     out->bounds = model_bounds_empty();
     for (size_t i = 0; i < out->vertex_count; ++i) {
@@ -344,12 +379,24 @@ static bool mesh_geometry(qa_scene_model *model, const qa_scene_model_input *inp
         if (shell && (model->source->format == QA_MODEL_MD2 || model->source->format == QA_MODEL_MD5))
             vertices[i].position = qa_vec_add(vertices[i].position, qa_vec_scale(vertices[i].normal, 4));
         vertices[i].color = input->color;
-        if (!input->shadow_only && input->family != QA_SCENE_Q3) {
-            uint8_t normal = retained->normal_indices ? retained->normal_indices[(size_t)input->frame * source->vertex_count + source_index] : 255;
-            float shade = shell ? 1 : scene_model_shade(input, point->normal, normal);
-            if (!shell && input->family == QA_SCENE_Q1 && model->source->format == QA_MODEL_MDL && input->back_lerp != 0) {
+        if (!input->shadow_only && input->alias_lighting == QA_ALIAS_Q3_DIFFUSE) {
+            qa_vec3 color;
+            if (!alias_diffuse(input, point->normal, &color, error)) return false;
+            if (model->source->format == QA_MODEL_MDL && input->back_lerp != 0) {
+                qa_vec3 old;
                 size_t old_index = (size_t)input->old_frame * source->vertex_count + source_index;
-                shade = shade * (1 - input->back_lerp) + scene_model_shade(input,
+                if (!alias_diffuse(input, source->vertices[old_index].normal, &old, error)) return false;
+                color = qa_vec_add(qa_vec_scale(color, 1 - input->back_lerp), qa_vec_scale(old, input->back_lerp));
+            }
+            vertices[i].color.x *= color.x;
+            vertices[i].color.y *= color.y;
+            vertices[i].color.z *= color.z;
+        } else if (!input->shadow_only && lighting.family != QA_SCENE_Q3) {
+            uint8_t normal = retained->normal_indices ? retained->normal_indices[(size_t)input->frame * source->vertex_count + source_index] : 255;
+            float shade = shell ? 1 : scene_model_shade(&lighting, point->normal, normal);
+            if (!shell && lighting.family == QA_SCENE_Q1 && model->source->format == QA_MODEL_MDL && input->back_lerp != 0) {
+                size_t old_index = (size_t)input->old_frame * source->vertex_count + source_index;
+                shade = shade * (1 - input->back_lerp) + scene_model_shade(&lighting,
                     source->vertices[old_index].normal, retained->normal_indices[old_index]) * input->back_lerp;
             }
             vertices[i].color.x *= light.x * shade;
@@ -471,7 +518,7 @@ static bool submit_attachments(qa_scene_model *model, const qa_scene_model_input
     return true;
 }
 
-static bool model_submit(qa_scene_model *model, const qa_scene_model_input *original,
+static bool model_submit_body(qa_scene_model *model, const qa_scene_model_input *original,
                           qa_scene_frame *frame, unsigned depth, qa_error *error) {
     if (depth >= 64) { qa_error_set(error, QA_ERROR_ARGUMENT, depth, "model attachment graph is cyclic or too deep"); return false; }
     qa_scene_model_input input = *original;
@@ -483,6 +530,8 @@ static bool model_submit(qa_scene_model *model, const qa_scene_model_input *orig
         (input.custom_skin && input.custom_skin->count && !input.custom_skin->mappings) ||
         !qa_vec_finite(input.previous_origin) || !qa_vec_finite(input.ambient) ||
         !qa_vec_finite(input.directed) || !qa_vec_finite(input.light_direction) ||
+        input.alias_lighting < QA_ALIAS_CONTENT_LIGHTING || input.alias_lighting > QA_ALIAS_PREPARED_LIGHT ||
+        (input.alias_lighting == QA_ALIAS_PREPARED_LIGHT && !qa_vec_finite(input.alias_light)) ||
         !isfinite(input.color.x) || !isfinite(input.color.y) || !isfinite(input.color.z) ||
         !isfinite(input.shadow_plane) || !isfinite(input.shader_time) || !isfinite(input.rotation)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid scene model pose or optional span"); return false;
@@ -558,6 +607,23 @@ static bool model_submit(qa_scene_model *model, const qa_scene_model_input *orig
         }
     }
     return submit_attachments(model, &input, frame, depth, error);
+}
+
+static bool model_submit(qa_scene_model *model, const qa_scene_model_input *input,
+                         qa_scene_frame *frame, unsigned depth, qa_error *error) {
+    for (const qa_scene_model *owner = model; owner; owner = owner->replacement_parent)
+        if (owner->checkpoint_active || owner->capture) {
+            qa_error_set(error, QA_ERROR_ARGUMENT, depth, "model owner checkpoint is active");
+            return false;
+        }
+    if (model->active_submissions == UINT_MAX) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, depth, "model submission nesting exceeds its owner counter");
+        return false;
+    }
+    ++model->active_submissions;
+    bool ok = model_submit_body(model, input, frame, depth, error);
+    --model->active_submissions;
+    return ok;
 }
 
 bool qa_scene_model_submit(qa_scene_model *model, const qa_scene_model_input *input,

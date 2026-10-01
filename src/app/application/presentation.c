@@ -1,6 +1,11 @@
 #include "guest_q3_private.h"
 #include "guest_native_q2_private.h"
 #include "native_q3_wire.h"
+#include "native_q3_wire_state.h"
+#include "qa/game_q3_source.h"
+#include "qa/game_q3_clients.h"
+#include "qa/game_q3_configstrings.h"
+#include "guest_q3_restart.h"
 #include "qa/text.h"
 
 static application_provider *selected(qa_application *app, uint32_t seat, qa_launch_role role)
@@ -32,11 +37,64 @@ static q3g_role *client_role(application_provider *provider, qa_qvm_role kind, u
 
 static bool client_ready(q3g_role *role)
 {
+    if (role->native_client) {
+        const qa_q3_host_client_services *client = &role->client_services;
+        return client->gamestate != NULL &&
+               client->gamestate(client->context) != NULL;
+    }
     if (role->kind != QA_QVM_CGAME || role->local_client || role->initialized)
         return true;
     const qa_q3_host_client_services *client = &role->client_services;
     return client->gamestate != NULL &&
            client->gamestate(client->context) != NULL;
+}
+
+static bool native_local_snapshots(application_provider *provider,
+    qa_application_network_q3_frame **owned_frame, qa_error *error)
+{
+    uint32_t maximum;
+    int32_t time;
+    if (!qa_q3_source_max_clients(provider->state.q3, &maximum, error) ||
+        !application_q3_wire_time(provider, &time, error)) return false;
+    for (uint32_t slot = 0; slot < maximum; ++slot) {
+        application_native_q3_wire_publication publication;
+        bool wanted;
+        if (!application_native_q3_wire_local_publication(provider, slot,
+            &publication, &wanted, error)) return false;
+        if (!wanted || (publication.has_snapshot && publication.previous_time == time)) continue;
+        if (publication.gamestate_needed) {
+            qa_q3_gamestate *gamestate = malloc(sizeof(*gamestate));
+            if (!gamestate)
+                return application_fail(error, QA_ERROR_MEMORY, "Observing native Q3 local gamestate");
+            qa_q3_gamestate_init(gamestate);
+            gamestate->client_number = (int32_t)slot;
+            gamestate->command_sequence = publication.reliable_sequence;
+            bool ok = true;
+            for (uint32_t index = 0; ok && index < QA_Q3_CONFIGSTRINGS; ++index) {
+                const char *text;
+                ok = qa_q3_configstring_read(provider->state.q3, index, &text, error) &&
+                    qa_q3_configstring_set(gamestate, index, text, error);
+            }
+            if (ok) ok = application_q3_wire_host_baselines(provider, gamestate, error) &&
+                application_native_q3_wire_gamestate(provider, slot, gamestate, error);
+            free(gamestate);
+            if (!ok) return false;
+        }
+        if (!publication.snapshot_needed) continue;
+        if (!*owned_frame) {
+            *owned_frame = malloc(sizeof(**owned_frame));
+            if (!*owned_frame)
+                return application_fail(error, QA_ERROR_MEMORY, "Observing native Q3 local snapshot");
+        }
+        qa_q3_native_client source;
+        if (!qa_q3_client_slot_read(provider->state.q3, slot, &source, error) ||
+            !application_q3_wire_host_snapshot(provider, slot, publication.next_message,
+                publication.reliable_sequence, publication.snapshot_bit, *owned_frame, error)) return false;
+        (*owned_frame)->snapshot.delta_number = publication.has_snapshot ? publication.next_message - 1 : -1;
+        if (!application_native_q3_wire_snapshot(provider, slot, &(*owned_frame)->snapshot,
+                                                  source.ping, error)) return false;
+    }
+    return true;
 }
 
 bool application_q3_publish_local_snapshots(qa_application *app, qa_error *error)
@@ -52,9 +110,19 @@ bool application_q3_publish_local_snapshots(qa_application *app, qa_error *error
     bool ok = true;
     for (application_provider *provider = app->live_providers;
          provider && ok; provider = provider->next_live) {
+        if (provider->kind == APPLICATION_PROVIDER_Q3 && provider->state.q3 &&
+            provider->attached && provider->constructed && !provider->close_pending) {
+            ok = native_local_snapshots(provider, &frame, error);
+            continue;
+        }
         struct application_q3_guest *engine = q3g_engine(provider);
         if (!provider->attached || !provider->constructed || !engine ||
             !engine->map_ready || !engine->game || !engine->game->initialized) continue;
+        uint8_t snapshot_bit;
+        if (!application_q3_guest_snapshot_bit(provider, &snapshot_bit, error)) {
+            ok = false;
+            break;
+        }
         bool local[64] = {0};
         for (q3g_role *role = engine->roles; role; role = role->next)
             if (role->kind == QA_QVM_CGAME && role->ready && !role->retired &&
@@ -89,7 +157,8 @@ bool application_q3_publish_local_snapshots(qa_application *app, qa_error *error
                 }
             }
             ok = application_q3_wire_host_snapshot(provider, slot,
-                client->snapshot_sequence + 1, client->reliable.sequence, 0, frame, error);
+                client->snapshot_sequence + 1, client->reliable.sequence,
+                snapshot_bit, frame, error);
             if (ok) {
                 frame->snapshot.parse_entities_number = parse_cursor;
                 ok = application_q3_guest_publish_snapshot(provider, slot,
@@ -163,14 +232,15 @@ bool qa_application_guest_menu_set(qa_application *app, uint32_t seat,
             struct application_q3_guest *engine = q3g_engine(provider);
             if (!engine) continue;
             for (q3g_role *role = engine->roles; role && ok; role = role->next) {
-                if (role->kind != QA_QVM_UI || role->seat != seat || !role->initialized || role->retired) continue;
+                if (role->kind != QA_QVM_UI || role->seat != seat || !role->initialized ||
+                    role->retired || !client_ready(role)) continue;
                 ok = q3g_call(role, 7, &command, 1, &result, error);
                 *handled = true;
             }
         }
     } else {
         q3g_role *role = client_role(selected(app, seat, QA_ROLE_MENU), QA_QVM_UI, seat);
-        if (role) {
+        if (role && client_ready(role)) {
             ok = initialize(role, error) && q3g_call(role, 7, &command, 1, &result, error);
             *handled = true;
         }
@@ -180,14 +250,20 @@ bool qa_application_guest_menu_set(qa_application *app, uint32_t seat,
     return ok;
 }
 
-static int32_t source_time(q3g_role *role, uint32_t milliseconds)
+static bool source_time(q3g_role *role, uint32_t milliseconds, int32_t *out, qa_error *error)
 {
-    if (role->kind == QA_QVM_UI || !role->local_client) return (int32_t)milliseconds;
+    if (role->kind == QA_QVM_UI || !role->local_client) {
+        *out = (int32_t)milliseconds;
+        return true;
+    }
+    if (role->native_client)
+        return application_native_q3_wire_client_time(role->native_client, out, error);
     qa_clock_state clock;
     if (qa_session_clock(role->engine->provider->application->session,
                            role->engine->provider->owner, &clock))
-        return (int32_t)(uint32_t)(clock.frame.time_ns / UINT64_C(1000000));
-    return role->engine->milliseconds;
+        *out = (int32_t)(uint32_t)(clock.frame.time_ns / UINT64_C(1000000));
+    else *out = role->engine->milliseconds;
+    return true;
 }
 
 bool qa_application_present(qa_application *app, uint32_t seat,
@@ -202,14 +278,16 @@ bool qa_application_present(qa_application *app, uint32_t seat,
     bool ok = true;
     int32_t result;
     if (hud && client_ready(hud)) {
-        int32_t args[] = {source_time(hud, client_milliseconds), 0, 0};
-        ok = initialize(hud, error) && q3g_call(hud, 3, args, 3, &result, error);
+        int32_t args[] = {0, 0, 0};
+        ok = source_time(hud, client_milliseconds, &args[0], error) &&
+            initialize(hud, error) && q3g_call(hud, 3, args, 3, &result, error);
     }
     if (ok && native_q2_hud(hud_provider))
         ok = application_native_q2_draw_hud(hud_provider, seat, client_milliseconds, error);
-    if (ok && menu) {
-        int32_t time = source_time(menu, real_milliseconds);
-        ok = initialize(menu, error) && q3g_call(menu, 5, &time, 1, &result, error);
+    if (ok && menu && client_ready(menu)) {
+        int32_t time;
+        ok = source_time(menu, real_milliseconds, &time, error) &&
+            initialize(menu, error) && q3g_call(menu, 5, &time, 1, &result, error);
     }
     app->operation = APPLICATION_IDLE;
     if (!ok) application_fault(app, error);
@@ -291,7 +369,7 @@ bool qa_application_guest_input(qa_application *app, uint32_t seat,
             if (!engine) continue;
             for (q3g_role *role = engine->roles; role; role = role->next) {
                 if (role->kind == QA_QVM_GAME || role->seat != seat || !role->initialized ||
-                    role->retired || !role->input_keys[released]) continue;
+                    role->retired || !role->input_keys[released] || !client_ready(role)) continue;
                 app->operation = APPLICATION_ADVANCING;
                 bool ok = key(role, released, false, error);
                 app->operation = APPLICATION_IDLE;

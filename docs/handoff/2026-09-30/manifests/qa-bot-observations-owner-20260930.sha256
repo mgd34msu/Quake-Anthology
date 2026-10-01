@@ -1,0 +1,4 @@
+7685b384a866db04a44d9048e10cefacbdc2c63b47b0d06a64331f3370fb2832  include/qa/bot_observations_save.h
+e7d5f5d5227b572b8b915166ae03e1d7d5add6bab980206911eecd19a0ee7e28  src/bots/runtime/internal.h
+c2d8f58d7a5e973c6c37ddef98ae0539795d46f4b58e06e9492442b0fd3ae962  src/bots/runtime/observations.c
+23b0d1ed898b78681ee2b002fd3c86f6cd89052c59e9fe4afa469fde181ce435  src/bots/runtime/observations_save.c

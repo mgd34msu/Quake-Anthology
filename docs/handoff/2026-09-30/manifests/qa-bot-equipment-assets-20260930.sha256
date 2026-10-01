@@ -1,0 +1,4 @@
+bffc766f5f515bd9395000dd3f36dba2cec9a73f02209778b6cb579490c21bcc  include/qa/bot_assets_save.h
+46afdb868a4499303667ac9d3ee370731d0cfd0906f7dc77be243b9e502a0fe5  src/bots/save_fields.h
+abb85d49d85536440926da179021807b8d9f4855351a458025b33c3438ba028d  src/bots/library/equipment_save.c
+cb308ad3c846616b617495be7f31e848c1dc886ca655be389c09c6f6c73c3c68  docs/implementation/persistence-20260930.md

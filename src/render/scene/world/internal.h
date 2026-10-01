@@ -73,7 +73,15 @@ struct qa_scene_world {
     bool pvs_cached, pvs_all;
     uint32_t cluster_count;
     bool sky_drawn;
+    bool checkpoint_active;
+    struct qa_scene_world_capture *capture;
 };
+
+struct qa_scene_world_checkpoint_refs;
+struct qa_scene_world_image_refs;
+bool qaw_world_checkpoint_locked(const qa_scene_world *, const struct qa_scene_world_checkpoint_refs *, qa_buffer *, qa_error *);
+bool qaw_lighting_checkpoint_locked(const qa_scene_world *, const struct qa_scene_world_image_refs *, qa_buffer *, qa_error *);
+bool qaw_lighting_restore_locked(qa_scene_world *, qa_bytes, const struct qa_scene_world_image_refs *, qa_error *);
 
 bool qaw_build_legacy(qa_scene_world *, qa_error *);
 bool qawl_light_styles(qa_scene_world *, const qa_scene_world_input *, qa_error *);

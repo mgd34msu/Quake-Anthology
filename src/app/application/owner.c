@@ -8,6 +8,7 @@
 #include "native_q3_clients.h"
 #include "native_q3_wire.h"
 #include "q3_product.h"
+#include "startup_flow.h"
 #include "qa/rankings_save.h"
 #include "qa/player_progress_save.h"
 #include "qa/catalog_save.h"
@@ -106,7 +107,9 @@ static bool create_application(const qa_application_options *options,
     application->command_generation = 1;
     application->native_runner = options->native_runner;
     application->guest_context = options->guest_context;
+    application->startup_hooks = options->startup_hooks;
     application->q3_services = options->q3_services;
+    application->q3_client_prepare = options->q3_client_prepare;
     application->q3_client_effect = options->q3_client_effect;
     application->q3_campaign_command = options->q3_campaign_command;
     application->q3_round_services = options->q3_round_services;
@@ -643,7 +646,8 @@ bool qa_application_apply(qa_application *application,
     application->operation = APPLICATION_CONFIGURING;
     bool ok = application_apply(application, draft, error);
     application->operation = APPLICATION_IDLE;
-    if (ok && application->state == QA_APPLICATION_READY)
+    if (ok && application->state == QA_APPLICATION_READY &&
+        !qa_application_startup_pending(application))
         application->state = QA_APPLICATION_RUNNING;
     return ok;
 }

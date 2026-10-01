@@ -211,7 +211,7 @@ bool qa_application_network_q3_snapshot(qa_application *, qa_actor_id,
 /* Qualified external cgame consumes native client snapshots and owns source
  * prediction. Admission preserves the selected gameplay composition. */
 bool qa_application_network_q3_client_source(qa_application *, qa_actor_id,
-    qa_actor_owner *, qa_q3_product *, qa_error *);
+    qa_actor_owner *, qa_q3_product *, uint32_t *launch_seat, qa_error *);
 bool qa_application_network_q3_client_command(qa_application *, qa_actor_owner,
     uint32_t seat, const qa_q3_tokens *, qa_error *);
 bool qa_application_network_q3_client_clear(qa_application *, qa_actor_owner,

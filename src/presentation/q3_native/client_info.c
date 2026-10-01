@@ -17,14 +17,30 @@ void q3n_animation_dispose(q3n_animation_holder *holder)
     qa_vfs_acquisition_dispose(&holder->receipt);
     *holder = (q3n_animation_holder){0};
 }
+static bool source_current(const q3n_clients *owner, qa_application *app,
+    const qa_application_native_q3_presentation *cut, qa_error *error)
+{
+    qa_native_q3_wire_basis basis;
+    if (!qa_application_native_q3_presentation_current(app, cut) ||
+        !qa_native_q3_wire_reader_basis(owner->options.reader, &basis, error))
+        return q3n_client_fail(error, QA_ERROR_ARGUMENT, "Native Q3 media source publication was superseded");
+    return basis.application == app && basis.session == cut->session &&
+        basis.source_game == cut->source_game && basis.source_owner == cut->source_owner &&
+        basis.product == owner->options.product && cut->product == owner->options.product &&
+        cut->content == owner->options.content &&
+        basis.publication_generation == cut->publication_generation && basis.map_revision == cut->map_revision ? true :
+        q3n_client_fail(error, QA_ERROR_ARGUMENT, "Native Q3 client reader has another physical source");
+}
 static bool current(q3n_clients *owner, qa_error *error)
 {
     if (!owner->cut) return true;
-    if (!qa_application_native_q3_presentation_current(owner->application, owner->cut))
-        return q3n_client_fail(error, QA_ERROR_ARGUMENT, "Native Q3 media source publication was superseded");
+    if (!source_current(owner, owner->application, owner->cut, error)) return false;
+    const char *text; uint64_t revision;
+    if (!qa_native_q3_wire_reader_configstring(owner->options.reader, 0, &text, &revision, error)) return false;
+    if (revision != owner->serverinfo_revision)
+        return q3n_client_fail(error, QA_ERROR_ARGUMENT, "Native Q3 reached serverinfo changed during media registration");
     if (owner->active_info) {
-        const char *text; uint64_t revision;
-        if (!qa_application_native_q3_presentation_configstring(owner->application, owner->cut,
+        if (!qa_native_q3_wire_reader_configstring(owner->options.reader,
             544u + owner->active_client, &text, &revision, error)) return false;
         if (revision != owner->active_configstring_revision)
             return q3n_client_fail(error, QA_ERROR_ARGUMENT, "Native Q3 client-info publication was superseded");
@@ -464,7 +480,7 @@ static bool new_info(q3n_clients *owner, uint32_t index, const char *info, uint6
 }
 bool q3n_clients_create(const q3n_client_options *options, q3n_clients **out, qa_error *error)
 {
-    if (!options || !options->content || !options->assets || !out || *out ||
+    if (!options || !options->content || !options->assets || !options->reader || !out || *out ||
         (options->product != QA_Q3_ARENA && options->product != QA_Q3_TEAM_ARENA))
         return q3n_client_fail(error, QA_ERROR_ARGUMENT, "Invalid native Q3 client media services");
     q3n_clients *owner = calloc(1, sizeof(*owner));
@@ -485,25 +501,35 @@ const q3n_client_info *q3n_clients_get(const q3n_clients *owner, uint32_t index)
 static bool begin(q3n_clients *owner, qa_application *app, const qa_application_native_q3_presentation *cut,
     const q3n_client_settings *settings, qa_error *error)
 {
-    if (!q3n_clients_idle(owner) || !app || !cut || !settings || cut->max_clients > 64 ||
-        cut->product != owner->options.product || !qa_application_native_q3_presentation_current(app, cut) ||
+    if (!q3n_clients_idle(owner) || !app || !cut || !settings ||
         !memchr(settings->model, 0, 64) || !memchr(settings->head_model, 0, 64) ||
         !memchr(settings->red_team_name, 0, 64) || !memchr(settings->blue_team_name, 0, 64))
         return q3n_client_fail(error, QA_ERROR_ARGUMENT, "Native Q3 client media requires its current physical source");
+    if (!source_current(owner, app, cut, error)) return false;
+    const char *serverinfo; uint64_t revision;
+    if (!qa_native_q3_wire_reader_configstring(owner->options.reader, 0, &serverinfo, &revision, error)) return false;
+    int32_t game_type = integer_key(serverinfo, "g_gametype"), max_clients = integer_key(serverinfo, "sv_maxclients");
+    if (game_type < 0 || game_type > 7 || max_clients < 0 || max_clients > 64)
+        return q3n_client_fail(error, QA_ERROR_FORMAT, "Invalid native Q3 reached client media serverinfo");
+    owner->serverinfo_revision = revision; owner->game_type = game_type; owner->max_clients = (uint32_t)max_clients;
     owner->busy = true; owner->application = app; owner->cut = cut; return true;
 }
 static bool end(q3n_clients *owner, bool ok)
-{ owner->application = NULL; owner->cut = NULL; owner->active_info = false; owner->busy = false; return ok; }
+{
+    owner->application = NULL; owner->cut = NULL; owner->active_info = false;
+    owner->serverinfo_revision = 0; owner->max_clients = 0; owner->game_type = 0;
+    owner->busy = false; return ok;
+}
 static bool qualify_table(q3n_clients *owner, qa_error *error)
 {
     for (uint32_t i = 0; i < 64; ++i) {
         const char *text; uint64_t revision;
-        if (!qa_application_native_q3_presentation_configstring(owner->application, owner->cut,
+        if (!qa_native_q3_wire_reader_configstring(owner->options.reader,
             544u + i, &text, &revision, error)) return false;
         if (!owner->clients[i].observed || revision != owner->clients[i].configstring_revision)
             return q3n_client_fail(error, QA_ERROR_ARGUMENT, "Native Q3 client table changed during media registration");
     }
-    return true;
+    return current(owner, error);
 }
 bool q3n_clients_register_one(q3n_clients *owner, qa_application *app,
     const qa_application_native_q3_presentation *cut, const q3n_client_settings *settings,
@@ -512,10 +538,10 @@ bool q3n_clients_register_one(q3n_clients *owner, qa_application *app,
     if (index>=64) return q3n_client_fail(error, QA_ERROR_ARGUMENT, "Native Q3 client registration index is outside physical rows");
     if (!begin(owner,app,cut,settings,error)) return false;
     const char *text; uint64_t revision;
-    bool ok=qa_application_native_q3_presentation_configstring(app,cut,544u+index,&text,&revision,error);
+    bool ok=qa_native_q3_wire_reader_configstring(owner->options.reader,544u+index,&text,&revision,error);
     if (ok) {
         owner->active_info=true; owner->active_client=index; owner->active_configstring_revision=revision;
-        ok=new_info(owner,index,text,revision,cut->max_clients,cut->game_type,settings,error);
+        ok=new_info(owner,index,text,revision,owner->max_clients,owner->game_type,settings,error);
     }
     return end(owner,ok);
 }
@@ -527,15 +553,15 @@ static bool sync(q3n_clients *owner, qa_application *app,
     bool ok = true;
     for (uint32_t i = 0; i < 64 && ok; ++i) {
         const char *text; uint64_t revision = 0;
-        ok = qa_application_native_q3_presentation_configstring(app, cut, 544u + i, &text, &revision, error);
+        ok = qa_native_q3_wire_reader_configstring(owner->options.reader, 544u + i, &text, &revision, error);
         if (ok && (!owner->clients[i].observed || owner->clients[i].configstring_revision != revision || (reload && *text))) {
             owner->active_info = true; owner->active_client = i; owner->active_configstring_revision = revision;
-            ok = new_info(owner, i, text, revision, cut->max_clients, cut->game_type, settings, error);
+            ok = new_info(owner, i, text, revision, owner->max_clients, owner->game_type, settings, error);
             owner->active_info = false;
         }
     }
-    /* A registration callback may publish a different earlier client in this
-     * same physical frame. Admit the complete client table before rendering. */
+    /* A registration callback may reach a different earlier client row.
+     * Admit the complete reached client table before rendering. */
     if (ok) ok = qualify_table(owner, error);
     return end(owner, ok);
 }
@@ -549,6 +575,10 @@ bool q3n_clients_initialize(q3n_clients *owner, qa_application *app,
     uint32_t physical; qa_actor_id actor; qa_q3_player player; bool found;
     if (!qa_application_native_q3_presentation_local(app,cut,seat,&physical,&actor,&player,&found,error)) return false;
     if (!found) return q3n_client_fail(error,QA_ERROR_ARGUMENT,"Native Q3 client initialization requires its actual local viewing seat");
+    qa_native_q3_wire_basis basis;
+    if (!owner || !qa_native_q3_wire_reader_basis(owner->options.reader,&basis,error)) return false;
+    if (basis.seat!=seat || basis.physical_client!=physical || !qa_actor_id_equal(basis.actor,actor))
+        return q3n_client_fail(error,QA_ERROR_ARGUMENT,"Native Q3 client initialization has another wire recipient");
     if (!q3n_clients_register_one(owner,app,cut,settings,physical,error) ||
         !q3n_clients_sync(owner,app,cut,settings,error)) return false;
     uint32_t after; qa_actor_id after_actor;
@@ -564,10 +594,10 @@ bool q3n_clients_load_deferred(q3n_clients *owner, qa_application *app,
 {
     if (!begin(owner, app, cut, settings, error)) return false;
     bool ok = true;
-    for (uint32_t i = 0; i < cut->max_clients && ok; ++i) {
+    for (uint32_t i = 0; i < owner->max_clients && ok; ++i) {
         q3n_client_info *slot = &owner->clients[i]; if (!slot->info_valid || !slot->deferred) continue;
         const char *text; uint64_t revision = 0;
-        ok = qa_application_native_q3_presentation_configstring(app, cut, 544u + i, &text, &revision, error);
+        ok = qa_native_q3_wire_reader_configstring(owner->options.reader, 544u + i, &text, &revision, error);
         if (ok && revision != slot->configstring_revision) ok = q3n_client_fail(error, QA_ERROR_ARGUMENT, "Deferred Q3 client-info publication changed");
         owner->active_info = ok; owner->active_client = i; owner->active_configstring_revision = revision;
         if (!ok) break;
@@ -577,7 +607,7 @@ bool q3n_clients_load_deferred(q3n_clients *owner, qa_application *app,
             owner->active_info = false; continue;
         }
         q3n_client_info next = *slot; q3n_animation_holder holder = {0};
-        if (ok) ok = load(owner, &next, &holder, cut->game_type, settings, error);
+        if (ok) ok = load(owner, &next, &holder, owner->game_type, settings, error);
         if (ok && owner->next_media_revision == UINT64_MAX) ok = q3n_client_fail(error, QA_ERROR_MEMORY, "Q3 client media revision exhausted");
         if (ok) { next.media_revision = ++owner->next_media_revision; q3n_animation_dispose(&owner->holders[i]);
             owner->holders[i] = holder; holder = (q3n_animation_holder){0}; *slot = next; }
@@ -610,7 +640,8 @@ bool q3n_clients_dynamic_write(q3n_clients *owner, qa_application *app,
         owner->clients[index].media_revision != media_revision)
         return q3n_client_fail(error, QA_ERROR_ARGUMENT, "Native Q3 dynamic client state requires its exact physical media row");
     const char *text; uint64_t revision;
-    if (!qa_application_native_q3_presentation_configstring(app, cut, 544u + index, &text, &revision, error)) return false;
+    if (!source_current(owner, app, cut, error) ||
+        !qa_native_q3_wire_reader_configstring(owner->options.reader, 544u + index, &text, &revision, error)) return false;
     if (revision != configstring_revision)
         return q3n_client_fail(error, QA_ERROR_ARGUMENT, "Native Q3 dynamic client publication was superseded");
     owner->clients[index].dynamic = *value; return true;

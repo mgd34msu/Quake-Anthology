@@ -1,5 +1,6 @@
 #include "library_internal.h"
 #include "qa/ui_menu_save.h"
+#include "qa/application_character_selection.h"
 #include <stdio.h>
 enum { LIB_SEARCH = 1, LIB_PRODUCTS, LIB_MAPS, LIB_STARTS, LIB_SKILL, LIB_LAUNCH, LIB_REFRESH, LIB_STATUS };
 static void select_product(qa_ui_library *menu, qa_product_id product) {
@@ -68,6 +69,27 @@ static bool rows(qa_ui_library *menu, qa_error *error) {
     menu->dirty = false;
     return true;
 }
+static bool launch_seat(qa_launch_draft *draft, const qa_launch_seat *input, qa_error *error) {
+    qa_launch_seat seat = *input;
+    if (seat.local && !seat.character_model && !seat.character_skin &&
+        !seat.character_head_model && !seat.character_head_skin) {
+        const qa_launch_choices *choices = qa_launch_draft_choices(draft);
+        const qa_launch_binding *binding = qa_launch_binding_for(choices,
+            (qa_launch_scope){.kind = QA_SCOPE_SEAT, .seat = seat.id}, QA_ROLE_CHARACTER, "");
+        const qa_launch_provider *provider = NULL;
+        for (size_t i = 0; binding && i < choices->provider_count; ++i)
+            if (!strcmp(choices->providers[i].instance, binding->instance)) {
+                provider = &choices->providers[i]; break;
+            }
+        const qa_product *product = provider ? qa_catalog_product(qa_launch_draft_catalog(draft), provider->product) : NULL;
+        qa_native_q3_character_declaration declaration;
+        if (!product) return ui_fail(error, "menu character constructor lacks its selected product");
+        if (!qa_native_q3_character_default_declaration(product->family, &declaration, error)) return false;
+        seat.character_model = declaration.model; seat.character_skin = declaration.skin;
+        seat.character_head_model = declaration.head_model; seat.character_head_skin = declaration.head_skin;
+    }
+    return qa_launch_set_seat(draft, &seat, error);
+}
 static bool launch(qa_ui_library *menu, qa_error *error) {
     if (menu->selected_map >= menu->map_count) return ui_fail(error, "select an installed map or authored start");
     qa_launch_draft *draft = NULL;
@@ -90,10 +112,10 @@ static bool launch(qa_ui_library *menu, qa_error *error) {
     bool ok = qa_launch_set_world(draft, &world, error);
     if (active && active->seat_count) {
         for (size_t i = 0; i < active->seat_count && ok; ++i)
-            ok = qa_launch_set_seat(draft, &active->seats[i], error);
+            ok = launch_seat(draft, &active->seats[i], error);
     } else {
         for (size_t i = 0; i < menu->local_player_count && ok; ++i)
-            ok = qa_launch_set_seat(draft, &menu->local_players[i].seat, error);
+            ok = launch_seat(draft, &menu->local_players[i].seat, error);
     }
     if (ok) ok = qa_application_apply(menu->application, draft, error);
     qa_launch_draft_destroy(draft);
@@ -178,6 +200,8 @@ static bool factory(void *context, uint32_t seat, qa_ui_menu *out, qa_error *err
 static void release_profiles(qa_ui_library *menu) {
     for (size_t i = 0; i < menu->local_player_count; ++i) {
         free(menu->local_players[i].name); free(menu->local_players[i].team);
+        free(menu->local_players[i].character_model); free(menu->local_players[i].character_skin);
+        free(menu->local_players[i].character_head_model); free(menu->local_players[i].character_head_skin);
     }
     free(menu->local_players);
 }
@@ -238,6 +262,24 @@ bool qa_ui_library_create(qa_ui *ui, qa_application *application, qa_ui_id id,
         memcpy(profile->team, team, team_length + 1);
         profile->seat = *player;
         profile->seat.name = profile->name; profile->seat.team = profile->team;
+        const char *source[] = {player->character_model, player->character_skin,
+            player->character_head_model, player->character_head_skin};
+        char **owned[] = {&profile->character_model, &profile->character_skin,
+            &profile->character_head_model, &profile->character_head_skin};
+        for (size_t j = 0; j < 4; ++j) {
+            if (!source[j]) continue;
+            size_t length = strlen(source[j]);
+            *owned[j] = malloc(length + 1);
+            if (!*owned[j]) {
+                release_profiles(menu); free(menu);
+                qa_error_set(error, QA_ERROR_MEMORY, 0, "retaining menu CHARACTER choices"); return false;
+            }
+            memcpy(*owned[j], source[j], length + 1);
+        }
+        profile->seat.character_model = profile->character_model;
+        profile->seat.character_skin = profile->character_skin;
+        profile->seat.character_head_model = profile->character_head_model;
+        profile->seat.character_head_skin = profile->character_head_skin;
     }
     menu->catalog = qa_application_catalog(application); qa_catalog_retain(menu->catalog);
     menu->dirty = true; menu->skill = 1;

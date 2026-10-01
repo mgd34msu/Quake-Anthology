@@ -864,14 +864,17 @@ bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_e
     if (console == NULL || console->draining || console->frame != NULL)
         return qac_fail(error, QA_ERROR_ARGUMENT, "command buffer is already executing");
     console->draining = true;
+    console->drain_yielded = false;
     console->alias_count = 0;
     size_t count = 0;
     bool success = true;
     if (console->head == NULL && console->wait != 0) {
+        console->drain_yielded = true;
         console->wait = console->wait > 0 ? console->wait - 1 : console->wait == INT32_MIN ? INT32_MAX : console->wait - 1;
     }
     while (console->head != NULL && (budget == 0 || count < budget)) {
         if (console->wait_context.dialect == QA_CONSOLE_Q3 && console->wait != 0) {
+            console->drain_yielded = true;
             if (console->wait > INT32_MIN) --console->wait;
             else console->wait = INT32_MAX;
             break;
@@ -911,6 +914,7 @@ bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_e
         ++count;
         if (!success) break;
         if (console->wait_context.dialect != QA_CONSOLE_Q3 && console->wait != 0) {
+            console->drain_yielded = true;
             console->wait = 0;
             break;
         }
@@ -918,6 +922,11 @@ bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_e
     console->draining = false;
     if (executed != NULL) *executed = count;
     return success;
+}
+
+bool qa_console_drain_yielded(const qa_console *console)
+{
+    return console != NULL && console->drain_yielded;
 }
 
 bool qa_console_defer(qa_console *console, qa_error *error)

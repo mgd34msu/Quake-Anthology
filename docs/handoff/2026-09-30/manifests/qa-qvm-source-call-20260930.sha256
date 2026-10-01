@@ -1,0 +1,5 @@
+1a2ede34bd8a8f20a4ec24015ad9fa359c77b48a9d7b5701e03a84e9461bd94a  include/qa/qvm.h
+d8d99b84ec3c8da176043913147add03521c92e2a55f495932f27d2079881cbb  src/compat/qvm/internal.h
+ad2aecbb837529962d89a6afdb1d5dadd5c02d632cc7fbfc7cad84ed615fcf2e  src/compat/qvm/execute.c
+87600db6c4f216abb1c50690e6e5a56e86c2863a604c0d5989e45fa96650a97b  src/compat/qvm/memory.c
+390ada33e4f9df076c54e9f9a3d101b05a8b6ff919f1e4153aa7162e36d652f7  src/compat/qvm/source_call.c

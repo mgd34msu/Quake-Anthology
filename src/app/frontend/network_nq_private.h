@@ -3,7 +3,7 @@
 #include "network_nq.h"
 #include "save_private.h"
 
-enum { NQ_CLIENTS = 64, NQ_MESSAGE = 8000, NQ_DATAGRAM = 1024, NQ_PENDING = 32 };
+enum { NQ_CLIENTS = 64, NQ_MESSAGE = 8000, NQ_DATAGRAM = 1024, NQ_PENDING = 32, NQ_PINGS = 16 };
 typedef struct nq_frontend_peer {
     struct frontend_nq_host *host;
     qa_net_client_id client;
@@ -11,7 +11,9 @@ typedef struct nq_frontend_peer {
     qa_q1_entity *baselines;
     size_t baseline_count;
     qa_q1_command latest;
-    uint64_t input_sequence, tick_sequence, entered_ns;
+    uint64_t input_sequence, tick_sequence, entered_ns, admission_order;
+    double pings[NQ_PINGS];
+    uint8_t ping_count;
     uint32_t source_slot;
     uint8_t impulse;
     bool occupied, retiring, command_present;
@@ -35,7 +37,7 @@ struct frontend_nq_host {
     qa_network_runtime *runtime;
     qa_sha256_digest composition;
     qa_actor_owner owner;
-    uint64_t generation, submillisecond_ns;
+    uint64_t generation, submillisecond_ns, published_source_time_ns, next_admission_order;
     nq_frontend_peer peers[NQ_CLIENTS];
     nq_pending_control pending[NQ_PENDING];
     size_t pending_count;
@@ -43,6 +45,7 @@ struct frontend_nq_host {
     bool previous_pause;
     char reply_address[128];
     nq_status_cache board[256];
+    char *published_names[256];
     char *styles[64];
 };
 bool frontend_nq_source_hooks(frontend_nq_host *, const qa_net_client *,

@@ -71,6 +71,12 @@ static bool qualify(q3g_role *role, application_guest_input_profile *p, qa_error
             p->movement_mins % 4 || p->movement_maxs % 4 || p->movement_water % 4)
             return application_fail(error, QA_ERROR_FORMAT, "Guest movement projection is unaligned");
     }
+    if (p->has_duck && !entry(code, count, p->duck, error)) return false;
+    if (p->has_body_trace && (!p->has_duck || !p->has_locomotion ||
+        p->movement_trace_callback % 4 || p->movement_trace_mask % 4 ||
+        p->movement_trace_callback > memory - 4 || p->movement_trace_mask > memory - 4 ||
+        p->movement_mins > memory - 12 || p->movement_maxs > memory - 12))
+        return application_fail(error, QA_ERROR_FORMAT, "Guest body trace leaves its admitted movement record layout");
     if (p->has_weapons) {
         if (!entry(code, count, p->weapon_dispatcher, error)) return false;
         if (p->weapon_pointer_offset % 4 ||
@@ -119,6 +125,8 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
                 .noclip_mode = 1, .freeze_mode = 4, .has_locomotion = true,
                 .locomotion_entry = 35397, .locomotion_join = 35503, .movement_global = 1091860,
                 .movement_mins = 180, .movement_maxs = 192, .movement_water = 208,
+                .has_duck = true, .duck = 32561, .has_body_trace = true,
+                .movement_trace_callback = 224, .movement_trace_mask = 28,
                 .has_weapons = true, .weapon_dispatcher = 33648, .weapon_branch_count = 1,
                 .weapon_pointer_global = true, .weapon_pointer_base = 1091860,
                 .weapon_indirection_count = 1};
@@ -191,6 +199,17 @@ bool application_guest_input_profile_read(q3g_role *role, qa_bytes primary,
         if (ok && (move != p.move || slice != p.slice))
             ok = application_fail(error, QA_ERROR_FORMAT, "Guest input and weapon movement entries disagree");
         p.has_locomotion = ok;
+    }
+    qa_json_id duck = qa_json_get(doc, movement, "duck");
+    if (ok && duck != QA_JSON_NONE) {
+        ok = word(doc, movement, "duck", &p.duck, error);
+        p.has_duck = ok;
+    }
+    qa_json_id body_trace = qa_json_get(doc, movement, "bodyTrace");
+    if (ok && body_trace != QA_JSON_NONE) {
+        ok = word(doc, body_trace, "callback", &p.movement_trace_callback, error) &&
+             word(doc, body_trace, "mask", &p.movement_trace_mask, error);
+        p.has_body_trace = ok;
     }
     qa_json_id stage = qa_json_get(doc, weapons, "stage");
     qa_json_id branches = qa_json_get(doc, stage, "predicates");

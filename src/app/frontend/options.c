@@ -58,12 +58,8 @@ static bool startup(int argc, char *const argv[], int *index, qa_frontend_option
 {
     int begin = *index, end = begin + 1;
     const char *name = argv[begin] + 1;
-    unsigned required = !strcmp(name, "bind") || !strcmp(name, "set") || !strcmp(name, "seta") ||
-        !strcmp(name, "setu") || !strcmp(name, "sets") || !strcmp(name, "alias") ? 2 : 0;
-    while (end < argc && strncmp(argv[end], "--", 2) &&
-        ((unsigned)(end - begin - 1) < required || argv[end][0] != '+')) ++end;
-    if ((unsigned)(end - begin - 1) < required)
-        return frontend_fail(error, QA_ERROR_ARGUMENT, "startup command is missing required arguments");
+    if (!*name) return frontend_fail(error, QA_ERROR_ARGUMENT, "startup command needs a name");
+    while (end < argc && strncmp(argv[end], "--", 2) && argv[end][0] != '+') ++end;
     size_t bytes = strlen(argv[begin] + 1) + 1;
     for (int i = begin + 1; i < end; ++i) {
         size_t n = strlen(argv[i]);
@@ -107,11 +103,21 @@ bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options
         const char *value = argv[++i];
         if (!strcmp(arg, "--content-root")) options->application.content_root = value;
         else if (!strcmp(arg, "--user-content-root")) options->application.user_root = value;
+        else if (!strcmp(arg, "--native-runtime-root")) options->native_runtime_root = value;
+        else if (!strcmp(arg, "--native-wine")) options->native_wine = value;
         else if (!strcmp(arg, "--game")) options->game = value;
         else if (!strcmp(arg, "--map-game")) options->map_game = value;
         else if (!strcmp(arg, "--map")) options->map = value;
         else if (!strcmp(arg, "--movement")) options->movement = value;
-        else if (!strcmp(arg, "--character")) options->character = value;
+        else if (!strcmp(arg, "--character")) { options->character = value; options->character_model = NULL; }
+        else if (!strcmp(arg, "--model") || !strcmp(arg, "--character-model")) {
+            if (!*value) { frontend_fail(error, QA_ERROR_ARGUMENT, "character model needs a name"); goto fail; }
+            for (const unsigned char *p=(const unsigned char *)value;*p;++p)
+                if (!((*p>='a' && *p<='z') || (*p>='A' && *p<='Z') || (*p>='0' && *p<='9') || *p=='_' || *p=='-')) {
+                    frontend_fail(error, QA_ERROR_ARGUMENT, "invalid character model name"); goto fail;
+                }
+            options->character_model=value;
+        }
         else if (!strcmp(arg, "--font-directory")) options->font_directory = value;
         else if (!strcmp(arg, "--font")) options->font_file = value;
         else if (!strcmp(arg, "--host")) options->network_host = value;
@@ -147,7 +153,7 @@ bool qa_frontend_options_parse(int argc, char *const argv[], qa_frontend_options
             else options->frame_limit = number;
         }
     }
-    if (!options->game && (options->map || options->map_game || options->movement || options->character || options->mod_count)) {
+    if (!options->game && (options->map || options->map_game || options->movement || options->character || options->character_model || options->mod_count)) {
         frontend_fail(error, QA_ERROR_ARGUMENT, "explicit source selections require --game"); goto fail;
     }
     if (options->dedicated && !options->game) { frontend_fail(error, QA_ERROR_ARGUMENT, "dedicated startup requires --game"); goto fail; }
@@ -170,7 +176,11 @@ bool qa_frontend_list_content(const qa_frontend_options *options, FILE *stream, 
 {
     if (!options || !stream) return frontend_fail(error, QA_ERROR_ARGUMENT, "invalid content listing");
     qa_application *application = NULL;
-    if (!qa_application_create(&options->application, &application, error)) return false;
+    qa_application_options construction=options->application;
+    construction.startup_commands=options->startup;
+    construction.startup_command_count=options->startup_count;
+    construction.initial_product_key=options->game;
+    if (!qa_application_create(&construction, &application, error)) return false;
     qa_catalog *catalog = qa_application_catalog(application);
     for (size_t i = 0; i < qa_catalog_count(catalog); ++i) {
         const qa_product *product = qa_catalog_at(catalog, i);

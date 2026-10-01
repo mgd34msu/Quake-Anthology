@@ -1,9 +1,25 @@
 #include "internal.h"
 #include "qa/ui_menu_save.h"
+#include "qa/ui_save.h"
+#include "qa/binary.h"
+#include "seat_save.h"
+#include "source_restore.h"
+#include "chat.h"
+#include "accessibility.h"
+#include "save_menu.h"
+#include "menu_fonts.h"
+#include "ui_features.h"
+#include "campaign_menu.h"
+#include "campaign_cinematic.h"
 #include <stdio.h>
 
 static double now_ms(void *context) { frontend_seat *seat = context; return (double)seat->frontend->time_ns / 1000000.0; }
-static bool connected(void *context) { frontend_seat *seat = context; return qa_application_player_actor(seat->frontend->application, seat->id, &seat->actor); }
+static bool connected(void *context)
+{
+    frontend_seat *seat = context;
+    return frontend_network_remote(seat->frontend) ? seat->id == 0 && frontend_network_client_ready(seat->frontend) :
+        qa_application_player_actor(seat->frontend->application, seat->id, &seat->actor);
+}
 static bool focus(void *context, qa_input_focus kind, bool team, qa_error *error)
 {
     frontend_seat *seat = context;
@@ -30,20 +46,13 @@ static const char *ui_clipboard(void *context)
 }
 static bool chat(void *context, const char *text, bool team, bool targeted, int32_t target, qa_error *error)
 {
-    frontend_seat *seat = context;
-    if (targeted) return frontend_fail(error, QA_ERROR_UNSUPPORTED, "targeted chat requires a connected client route");
-    (void)target;
-    char message[1200];
-    snprintf(message, sizeof(message), "%sPlayer %u: %s", team ? "[team] " : "", seat->id + 1, text);
-    for (unsigned i = 0; i < seat->frontend->options.seats; ++i)
-        if (!qa_hud_notify(seat->frontend->seats[i].hud, message, true,
-            seat->frontend->time_ns, UINT64_C(6000000000), error)) return false;
-    frontend_print(seat->frontend, message);
-    return true;
+    return frontend_chat_send(context, text, team, targeted, target, error);
 }
 static bool source_input(void *context, qa_input_seat *input, const qa_input_event *event, bool *consumed, qa_error *error)
 {
-    frontend_seat *seat = context; (void)input;
+    frontend_seat *seat = context;
+    if (!frontend_cinematic_input(seat->frontend,seat->id,qa_input_seat_focus(input),event,consumed,error)) return false;
+    if (*consumed) return true;
     return qa_application_guest_input(seat->frontend->application, seat->id, event, consumed, error);
 }
 bool frontend_menu_open(frontend_seat *seat, qa_ui_id menu, qa_error *error)
@@ -69,9 +78,15 @@ static bool hud_data(void *context, const qa_hud_frame *frame, qa_hud_data *out,
 {
     frontend_seat *seat = context;
     qa_application_presentation_view source = {0};
+    qa_ui_preferences preferences;
+    if (!qa_ui_preferences_read(qa_application_cvars(seat->frontend->application), seat->id, &preferences, error)) return false;
     (void)qa_application_presentation_read(seat->frontend->application, seat->id, &source);
     out->source_vitals = source.source_hud;
-    out->crosshair_visible = !source.source_hud;
+    out->crosshair_visible = !source.source_hud && preferences.crosshair;
+    out->crosshair_size = preferences.crosshair_size;
+    out->crosshair_color = preferences.color_mode == QA_UI_COLOR_BLUE_YELLOW ?
+        (qa_scene_vec4){1, .9f, .2f, 1} : (qa_scene_vec4){1, 1, 1, 1};
+    if (!frontend_ui_features_captions(seat, &out->captions, &out->caption_count, error)) return false;
     uint32_t total, killed;
     if (!source.source_hud && frame->show_scores &&
         qa_application_q1_monster_counts(seat->frontend->application, seat->id, &total, &killed)) {
@@ -138,6 +153,9 @@ static bool menu_action(void *context, uint32_t id, qa_ui_id control, const qa_u
     case 6: qa_application_request_stop(frontend->application); return true;
     case 7: return frontend_menu_open(seat, FRONTEND_ASSISTANCE, error);
     case 8: return frontend_menu_open(seat, FRONTEND_BINDINGS, error);
+    case 9: return frontend_menu_open(seat, FRONTEND_ACCESSIBILITY, error);
+    case 10: return frontend_menu_open(seat, FRONTEND_SAVES, error);
+    case 11: return frontend_menu_open(seat, FRONTEND_ARENA_PROGRESS, error);
     default: return true;
     }
 }
@@ -150,12 +168,15 @@ static qa_ui_control button(frontend_seat *seat, qa_ui_id id, const char *label,
 static bool home(void *context, uint32_t id, qa_ui_menu *out, qa_error *error)
 {
     frontend_seat *seat = context; (void)id; (void)error;
-    const char *labels[] = {"Play a game", "Mods", "Settings", "Ranking account", "Resume", "Quit", "Assistance", "Controls"};
-    for (size_t i = 0; i < 8; ++i) seat->controls[i] = button(seat, i + 1, labels[i], 78 + (float)i * 40);
+    const char *labels[] = {"Play a game", "Mods", "Settings", "Ranking account", "Resume", "Quit", "Assistance", "Controls", "Accessibility", "Save / load", "Arena progress"};
+    for (size_t i = 0; i < 11; ++i) seat->controls[i] = button(seat, i + 1, labels[i], 70 + (float)i * 36);
     bool live = qa_application_launch(seat->frontend->application) != NULL;
     seat->controls[1].enabled = live; seat->controls[4].enabled = live;
+    bool campaign=false;
+    if (!frontend_campaign_menu_available(seat,&campaign,error)) return false;
+    seat->controls[10].enabled=campaign;
     *out = (qa_ui_menu){.id = FRONTEND_HOME, .title = "Quake Anthology", .controls = seat->controls,
-        .count = 8, .fullscreen = !live};
+        .count = 11, .fullscreen = !live};
     return true;
 }
 static bool settings_open(void *context, uint32_t id, qa_error *error)
@@ -250,15 +271,18 @@ static bool seats_create(qa_frontend *frontend, const bool *mods, bool restoring
     for (unsigned i = 0; i < frontend->options.seats; ++i) {
         frontend_seat *seat = &frontend->seats[i]; seat->frontend = frontend; seat->id = i;
         if (!restoring && !seat_services_create(seat, false, error)) return false;
-        if (!seat->console || !qa_font_selection_init(&seat->fonts, i, frontend->classic, frontend->primary, NULL, 0, error)) return false;
+        qa_ui_preferences preferences;
+        if (!seat->console || !qa_ui_preferences_read(qa_application_cvars(frontend->application), i, &preferences, error) ||
+            !frontend_menu_font_selection(frontend, i, preferences.typeface == QA_UI_TYPEFACE_BOLD, &seat->fonts, error)) return false;
         qa_ui_options ui = {.seat = i, .input = seat->input, .fonts = seat->fonts,
-            .white = qa_scene_white(frontend->ui_images), .context = seat, .clipboard = ui_clipboard,
+            .white = qa_scene_white(frontend->ui_images), .context = seat, .clipboard = ui_clipboard, .localize = frontend_ui_localize,
             .binding = frontend_binding_capture, .binding_cancel = frontend_binding_cancel};
         if (!qa_ui_create(&ui, &seat->ui, error) || !qa_ui_register(seat->ui,
             &(qa_ui_menu_registration){.id = FRONTEND_HOME, .context = seat, .factory = home}, error) ||
             !qa_ui_register(seat->ui, &(qa_ui_menu_registration){.id = FRONTEND_SETTINGS,
                 .context = seat, .factory = settings, .open = settings_open}, error)) return false;
-        if (!frontend_bindings_create(seat, error)) return false;
+        if (!frontend_bindings_create(seat, error) || !frontend_accessibility_create(seat, error) ||
+            !frontend_save_menu_create(seat, error) || !frontend_campaign_menu_create(seat,error)) return false;
         bool library = restoring ? qa_ui_library_create_restored(seat->ui, frontend->application,
             FRONTEND_LIBRARY, &seat->library, error) :
             qa_ui_library_create(seat->ui, frontend->application, FRONTEND_LIBRARY,
@@ -267,6 +291,8 @@ static bool seats_create(qa_frontend *frontend, const bool *mods, bool restoring
             !qa_ui_rankings_create(seat->ui, frontend->application, FRONTEND_RANKINGS, -1, &seat->rankings, error) ||
             !qa_hud_create(&(qa_hud_options){.ui = seat->ui, .application = frontend->application, .seat = i,
                 .context = seat, .read = hud_data}, &seat->hud, error) || !frontend_wheel_create(seat, error)) return false;
+        if (restoring && !qa_ui_llm_create(seat->ui, frontend_tools_llm(frontend),
+            FRONTEND_ASSISTANCE, &seat->assistance, error)) return false;
         if (restoring && mods[i] && !qa_ui_mods_create_restored(seat->ui, frontend->application,
             FRONTEND_MODS, &seat->mods, error)) return false;
     }
@@ -306,4 +332,119 @@ bool frontend_seats_destroy(qa_frontend *frontend, qa_error *error)
 void frontend_seats_rebind(qa_frontend *owned, qa_frontend *destination)
 {
     for (unsigned i = 0; i < owned->options.seats; ++i) owned->seats[i].frontend = destination;
+}
+
+static bool saved_seat_ready(const frontend_seat *seat)
+{
+    return seat && seat->frontend && seat->frontend->application && !seat->frontend->stepping &&
+        !seat->frontend->options.dedicated && seat->frontend->seats &&
+        seat->id<seat->frontend->options.seats && seat==seat->frontend->seats+seat->id &&
+        seat->input && seat->console;
+}
+static bool local_context(const qa_command_context *command, uint32_t seat)
+{
+    return command->seat==seat && command->origin==QA_COMMAND_SEAT && command->direct &&
+        !command->session && !command->owner && !command->client && !command->registry && !command->generation &&
+        !command->actor.registry && !command->actor.generation && !command->actor.slot;
+}
+static bool input_services_encode(void *context, const qa_input_seat_options *options,
+    uint64_t *out, qa_error *error)
+{
+    frontend_seat *seat=context;
+    if (!saved_seat_ready(seat) || !options || !out || !local_context(&options->context,seat->id) ||
+        options->context.script || options->context.console_text ||
+        options->console!=qa_application_console(seat->frontend->application) ||
+        options->cvars!=qa_application_cvars(seat->frontend->application) ||
+        options->ui!=input_handler || options->ui_user!=seat ||
+        options->before_ui!=source_input || options->before_ui_user!=seat)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Saved input services differ from their actual frontend seat binding");
+    *out=(uint64_t)seat->id+1; return true;
+}
+static bool input_services_decode(void *context, uint64_t key, qa_input_seat_options *out, qa_error *error)
+{
+    frontend_seat *seat=context;
+    if (!saved_seat_ready(seat) || !out || key!=(uint64_t)seat->id+1)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Saved input service descriptor names another prepared seat");
+    *out=(qa_input_seat_options){.context={.seat=seat->id,.origin=QA_COMMAND_SEAT,.dialect=QA_CONSOLE_Q1,.direct=true},
+        .console=qa_application_console(seat->frontend->application),.cvars=qa_application_cvars(seat->frontend->application),
+        .gamepad=qa_gamepad_defaults(),.ui=input_handler,.ui_user=seat,.before_ui=source_input,.before_ui_user=seat};
+    return true;
+}
+static bool input_ui_encode(void *context, qa_input_ui_handler handler, void *user, uint64_t *out, qa_error *error)
+{
+    frontend_seat *seat=context; qa_ui_input_binding binding;
+    if (!saved_seat_ready(seat) || !out)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Input UI encoder lacks its actual stable seat");
+    if (handler==input_handler && user==seat) { *out=1; return true; }
+    if (seat->ui && qa_ui_input_binding_read(seat->ui,&binding) && binding.seat==seat->input &&
+        handler==binding.handler && user==binding.context) { *out=2; return true; }
+    return frontend_fail(error,QA_ERROR_FORMAT,"Input overlay is outside its real frontend controller owner");
+}
+static bool input_ui_decode(void *context, uint64_t key, qa_input_ui_handler *handler, void **user, qa_error *error)
+{
+    frontend_seat *seat=context; qa_ui_input_binding binding;
+    if (!saved_seat_ready(seat) || !handler || !user)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Input UI decoder lacks its actual stable seat");
+    if (key==1) { *handler=input_handler; *user=seat; return true; }
+    if (key==2 && seat->ui && qa_ui_input_binding_read(seat->ui,&binding) && binding.seat==seat->input && binding.handler) {
+        *handler=binding.handler; *user=binding.context; return true;
+    }
+    return frontend_fail(error,QA_ERROR_FORMAT,"Saved input overlay lacks its prepared real controller binding");
+}
+static bool input_catcher_ready(void *context, uint64_t owner, qa_error *error)
+{
+    frontend_seat *seat=context;
+    if (!saved_seat_ready(seat) || !owner)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Input catcher has no actual stable source seat");
+    for (size_t i=0;i<frontend_source_group_count(seat->frontend);++i) {
+        frontend_source_group_view group;
+        if (!frontend_source_group_read(seat->frontend,i,&group))
+            return frontend_fail(error,QA_ERROR_FORMAT,"Input catcher source group is incomplete");
+        if (group.seat!=seat->id) continue;
+        frontend_source_role_identity role;
+        for (size_t j=0;frontend_source_group_role_read(seat->frontend,i,j,&role);++j)
+            if (role.service_owner==owner) return true;
+    }
+    return frontend_fail(error,QA_ERROR_FORMAT,"Input catcher names no actual source role lease for this seat");
+}
+qa_input_checkpoint_refs frontend_seat_input_refs(frontend_seat *seat)
+{
+    return (qa_input_checkpoint_refs){seat,input_services_encode,input_services_decode,
+        input_ui_encode,input_ui_decode,input_catcher_ready};
+}
+static bool console_services(const frontend_seat *seat, const qa_seat_console_options *options)
+{
+    return saved_seat_ready(seat) && options && local_context(&options->command,seat->id) &&
+        options->commands==qa_application_console(seat->frontend->application) && options->context==seat &&
+        options->now_ms==now_ms && options->connected==connected && options->clipboard==clipboard &&
+        options->focus==focus && options->chat==chat;
+}
+static bool seat_console_encode(void *context, const qa_seat_console_options *options, qa_buffer *out, qa_error *error)
+{
+    frontend_seat *seat=context;
+    if (!console_services(seat,options) || !out || out->data || out->size)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Seat console capture lacks its actual installed callbacks");
+    uint8_t *data=malloc(8);
+    if (!data) return frontend_fail(error,QA_ERROR_MEMORY,"Retaining seat console service descriptor");
+    memcpy(data,"QFSC",4); qa_store_u32le(data+4,seat->id);
+    *out=(qa_buffer){data,8}; return true;
+}
+static bool seat_console_decode(void *context, const qa_seat_console_options *candidate, qa_bytes bytes,
+    qa_command_context *command, qa_error *error)
+{
+    frontend_seat *seat=context;
+    if (!console_services(seat,candidate) || !command || !bytes.data || bytes.size!=8 ||
+        memcmp(bytes.data,"QFSC",4) || qa_load_u32le(bytes.data+4)!=seat->id || !local_context(command,seat->id))
+        return frontend_fail(error,QA_ERROR_FORMAT,"Saved console descriptor differs from its prepared actual seat");
+    return true;
+}
+qa_seat_console_save_resolvers frontend_seat_console_refs(frontend_seat *seat)
+{ return (qa_seat_console_save_resolvers){seat,seat_console_encode,seat_console_decode}; }
+bool frontend_seat_hud_options(frontend_seat *seat, qa_hud_options *out, qa_error *error)
+{
+    if (!saved_seat_ready(seat) || !seat->ui || !out)
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"HUD restore lacks its actual prepared frontend seat");
+    *out=(qa_hud_options){.ui=seat->ui,.application=seat->frontend->application,
+        .seat=seat->id,.context=seat,.read=hud_data};
+    return true;
 }

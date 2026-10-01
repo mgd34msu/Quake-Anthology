@@ -1,0 +1,3 @@
+e552043b3a55182678ba9ec5b607d71caa45ea5d51f01a243b0975452db83bf8  include/qa/game_q3_wire.h
+00b2e807a0fa951e2eaa34b771a0bdea95be6ea80486c34b7e8daa9064089505  src/gameplay/q3/source_wire.h
+eb184f66ce09fd8bea5f017a7d312cd450bc0195726a89897473dd7c5cbc8ff6  src/gameplay/q3/source_wire.c

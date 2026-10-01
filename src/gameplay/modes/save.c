@@ -73,6 +73,7 @@ static bool statistics(qa_source_save_io *io, qa_mode_statistics *p) {
     FIELD(i32, p->defenses); FIELD(i32, p->carrier_defenses); FIELD(i32, p->recoveries);
     FIELD(i32, p->assists); FIELD(i32, p->assist_awards); FIELD(i32, p->rank); FIELD(i32, p->tokens);
     FIELD(i32, p->streak); FIELD(u64, p->flag_since_ns); FIELD(u64, p->returned_ns);
+    FIELD(i32, p->q3_defend_count); FIELD(i32, p->q3_assist_count); FIELD(i32, p->q3_capture_count);
     FIELD(u64, p->carrier_killed_ns); FIELD(u64, p->hurt_carrier_ns); FIELD(u64, p->defended_ns);
     FIELD(u64, p->last_kill_ns); FIELD(bool, p->returned); FIELD(bool, p->carrier_killed);
     FIELD(bool, p->hurt_carrier); FIELD(bool, p->defended); return true;
@@ -236,11 +237,11 @@ static bool object(qa_source_save_io *io, qa_mode_object_checkpoint *p) {
     FIELD(u64, p->next_ns); FIELD(u64, p->owner_until_ns); FIELD(u64, p->animation_ns);
     FIELD(u64, p->expire_ns); FIELD(u64, p->born_ns); FIELD(i32, p->tag_stage);
     FIELD(bool, p->targets_used); FIELD(bool, p->has_physics); FIELD(bool, p->dropped);
-    FIELD(bool, p->global_animation); return true;
+    FIELD(bool, p->global_animation); FIELD(bool, p->q3_source_owned); return true;
 }
 static bool checkpoint(qa_source_save_io *io, qa_modes *m, qa_modes_checkpoint *p) {
     FIELD(u32, p->version);
-    if (p->version != 10) return save_fail(io, "unsupported typed mode checkpoint version");
+    if (p->version != 13) return save_fail(io, "unsupported typed mode checkpoint version");
     FIELD(u64, p->random); FIELD(u64, p->attack_sequence);
     ARRAY(p->mode_generations, p->generation_count, m->mode_capacity);
     if (p->generation_count != m->mode_capacity) return save_fail(io, "mode save capacity changed");
@@ -267,11 +268,11 @@ static bool checkpoint(qa_source_save_io *io, qa_modes *m, qa_modes_checkpoint *
 static bool header(qa_source_save_io *io) {
     static const uint8_t expected[8] = {'Q', 'A', 'M', 'O', 'D', 'E', 'S', 0};
     uint8_t signature[8] = {'Q', 'A', 'M', 'O', 'D', 'E', 'S', 0};
-    uint32_t version = 8;
+    uint32_t version = 11;
     if (!qa_source_save_bytes(io, signature, sizeof(signature)) || memcmp(signature, expected, sizeof(signature)))
         return save_fail(io, "invalid mode save signature");
     FIELD(u32, version);
-    return version == 8 || save_fail(io, "unsupported mode save version");
+    return version == 11 || save_fail(io, "unsupported mode save version");
 }
 static bool boundary(qa_modes *m, qa_error *e) {
     if (!m || m->callback_depth || !qa_session_safe(m->options.services.session) ||

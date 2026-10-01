@@ -34,6 +34,7 @@ typedef struct bot_original_pair {
 } bot_original_pair;
 struct application_bots_original {
     application_bots *bots;
+    qa_bot_runtime *runtime;
     application_publication *publication;
     qa_world *world;
     qa_resource *map;
@@ -108,8 +109,9 @@ static bool original_idle(const application_bots_original *cut,qa_error *error) 
         app->current_map==cut->map_name && !bots->population && !bots->restoring && !bots->round &&
         bots->round_phase==APPLICATION_BOT_ROUND_ACTIVE && !bots->producing &&
         application_bots_can_destroy(app) && qa_session_safe(app->session) &&
-        qa_bot_runtime_initialized(bots->runtime)==cut->initialized &&
-        qa_bot_runtime_loaded(bots->runtime)==cut->loaded && !qa_bot_runtime_closed(bots->runtime)?true:
+        application_bots_guest_runtime(app,cut->previous_source)==cut->runtime &&
+        qa_bot_runtime_initialized(cut->runtime)==cut->initialized &&
+        qa_bot_runtime_loaded(cut->runtime)==cut->loaded && !qa_bot_runtime_closed(cut->runtime)?true:
         application_fail(error,QA_ERROR_ARGUMENT,"original bot handoff lost its actual retained source/map/library");
 }
 bool application_bots_original_prepare(qa_application *app,application_publication *publication,
@@ -120,6 +122,7 @@ bool application_bots_original_prepare(qa_application *app,application_publicati
     application_q3_world_startup startup;
     application_provider *old_source=app->players?app->players->map_provider:NULL;
     struct application_q3_guest *old_engine=old_source?q3g_engine(old_source):NULL;
+    qa_bot_runtime *runtime=application_bots_guest_runtime(app,old_source);
     if(app->operation!=APPLICATION_CONFIGURING || !publication->travel || publication->restoring ||
        !application_q3_world_restart_source(app,publication->map_provider,&startup) || !startup.restart ||
        bots->source!=old_source || !old_engine || !old_engine->game || !old_engine->game->initialized || !old_source->constructed ||
@@ -127,14 +130,14 @@ bool application_bots_original_prepare(qa_application *app,application_publicati
        !publication->map_resource || !original_resource(publication->map_resource,bots->map_resource) ||
        bots->map_resource!=app->map_resource || !app->world || !bots->map_navigation || bots->population ||
        bots->original || bots->round || bots->round_phase!=APPLICATION_BOT_ROUND_ACTIVE || bots->restoring ||
-       !application_bots_can_destroy(app) || !qa_session_safe(app->session) || qa_bot_runtime_closed(bots->runtime))
+       !application_bots_can_destroy(app) || !qa_session_safe(app->session) || !runtime || qa_bot_runtime_closed(runtime))
         return application_fail(error,QA_ERROR_ARGUMENT,"original bot handoff requires its genuine idle same-map replacement");
     qa_cvars *configuration=NULL;qa_q3_host_console(old_engine->game->host,&configuration,NULL);
-    bool initialized=qa_bot_runtime_initialized(bots->runtime),loaded=qa_bot_runtime_loaded(bots->runtime);
+    bool initialized=qa_bot_runtime_initialized(runtime),loaded=qa_bot_runtime_loaded(runtime);
     if(!original_library_ready(configuration,initialized,loaded,error)) return false;
     application_bots_original *cut=calloc(1,sizeof(*cut));
     if(!cut) return application_fail(error,QA_ERROR_MEMORY,"allocating original bot lifetime handoff");
-    *cut=(application_bots_original){.bots=bots,.publication=publication,.world=app->world,
+    *cut=(application_bots_original){.bots=bots,.runtime=runtime,.publication=publication,.world=app->world,
         .map=bots->map_resource,.map_name=app->current_map,.initialized=initialized,.loaded=loaded,
         .previous_source=old_source,.next_source=publication->map_provider,
         .pair_count=publication->removed_count};
@@ -211,6 +214,8 @@ bool application_bots_original_rebind(application_bots_original *cut,qa_error *e
     qa_bot_runtime_map map={.name=name,.entities=&bots->entities,.navigation=cut->map_navigation};
     if(!qa_bot_runtime_rebind_round(bots->runtime,&map,error)) return false;
     for(application_bot_guest *guest=bots->guests;guest;guest=guest->next)
+        if(!qa_bot_runtime_rebind_round(guest->runtime,&map,error)) return false;
+    for(application_bot_guest *guest=bots->guests;guest;guest=guest->next)
         guest->provider=original_next(cut,guest->provider);
     bots->source=cut->next_source;
     for(uint32_t i=0;i<bots->capacity;++i) {
@@ -249,9 +254,9 @@ bool application_bots_original_validate_source(application_bots_original *cut,
        !source->constructed || source->application!=app || !engine || !engine->game ||
        actual!=configuration || !configuration || (next && engine->game->initialized) ||
        bots->population || bots->restoring || bots->source!=(cut->rebound?cut->next_source:cut->previous_source) ||
-       qa_bot_runtime_closed(bots->runtime) ||
-       qa_bot_runtime_initialized(bots->runtime)!=cut->initialized ||
-       qa_bot_runtime_loaded(bots->runtime)!=cut->loaded)
+       application_bots_guest_runtime(app,source)!=cut->runtime || qa_bot_runtime_closed(cut->runtime) ||
+       qa_bot_runtime_initialized(cut->runtime)!=cut->initialized ||
+       qa_bot_runtime_loaded(cut->runtime)!=cut->loaded)
         return application_fail(error,QA_ERROR_ARGUMENT,"original bot restart readiness lost its actual carried source/library");
     return original_library_ready(configuration,cut->initialized,cut->loaded,error);
 }
@@ -424,6 +429,8 @@ bool application_bots_round_bind(application_bots_round *cut,qa_error *error) {
     const char *name=qa_strings_cstr(qa_session_strings(bots->application->session),bots->application->current_map);
     qa_bot_runtime_map map={.name=name,.entities=&bots->entities,.navigation=cut->map_navigation};
     if(!qa_bot_runtime_rebind_round(bots->runtime,&map,error)) goto failed;
+    for(application_bot_guest *guest=bots->guests;guest;guest=guest->next)
+        if(!qa_bot_runtime_rebind_round(guest->runtime,&map,error)) goto failed;
     for(uint32_t i=0;i<bots->capacity;++i) {
         qa_bot_navigation_destroy(bots->seats[i].navigation);bots->seats[i].navigation=NULL;
         bots->seats[i].actor=(qa_actor_id){0};bots->seats[i].retired=true;

@@ -140,26 +140,35 @@ float q1_speed(const q1_move *m, float speed) {
     return speed * m->c->input->environment.speed_multiplier;
 }
 
-bool q1_fly(q1_move *m, float dt, q1_fly_result *out) {
+bool q1_fly(q1_move *m, double dt, q1_fly_result *out) {
     qa_move_context *c = m->c;
-    qa_vec3 *origin = m->qw ? &c->state->data.qw.origin : &c->state->data.nq.origin;
     qa_vec3 *velocity = m->qw ? &c->state->data.qw.velocity : &c->state->data.nq.velocity;
     qa_vec3 primal = *velocity, original = *velocity, planes[5];
     size_t plane_count = 0;
-    float remaining = dt;
+    double remaining = dt;
     *out = (q1_fly_result){0};
     for (unsigned bump = 0; bump < 4; ++bump) {
         if (q1_stopped(m)) return false;
         if (!m->qw && velocity->x == 0 && velocity->y == 0 && velocity->z == 0) break;
         qa_trace_result trace;
-        if (!q1_trace(m, *origin, q1_ma(*origin, remaining, *velocity), &trace)) return false;
+        qa_vec3 start, end;
+        if (m->qw) {
+            qa_qw_origin origin = c->state->data.qw.origin;
+            start = qa_qw_origin_to_vec3(origin);
+            end = qa_qw_origin_to_vec3(q1_qw_ma(origin, remaining, *velocity));
+        } else {
+            start = c->state->data.nq.origin;
+            end = q1_ma(start, (float)remaining, *velocity);
+        }
+        if (!q1_trace(m, start, end, &trace)) return false;
         if (trace.all_solid || (m->qw && trace.start_solid)) {
             *velocity = qa_v3(0, 0, 0);
             out->blocked = 3;
             return true;
         }
         if (trace.fraction > 0) {
-            *origin = trace.end;
+            if (m->qw) c->state->data.qw.origin = qa_qw_origin_from_vec3(trace.end);
+            else c->state->data.nq.origin = trace.end;
             if (!m->qw) original = *velocity;
             plane_count = 0;
         }
@@ -191,7 +200,8 @@ bool q1_fly(q1_move *m, float dt, q1_fly_result *out) {
         if (m->qw) {
             if (!qa_move_contact(c, &trace, false, false)) return false;
         } else if (!q1_touch(m, &trace, true)) return false;
-        remaining -= remaining * trace.fraction;
+        remaining = m->qw ? remaining - remaining * trace.fraction :
+            (float)((float)remaining - (float)((float)remaining * trace.fraction));
         if (plane_count >= 5) {
             *velocity = qa_v3(0, 0, 0);
             if (!m->qw) out->blocked = 3;

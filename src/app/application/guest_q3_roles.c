@@ -6,6 +6,17 @@
 #include "native_q3_wire_state.h"
 #include "q3_campaign_launch.h"
 #include "guest_q3_console.h"
+#include "q3_product.h"
+#include "qa/application_q3_equipment_source.h"
+
+static bool equipment_entity(void *context, const qa_qvm_call *call, int32_t pointer,
+    const qa_q3_ref_entity *entity, bool *suppress, qa_error *error)
+{
+    q3g_role *role = context;
+    if (!role->equipment)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Source entity submission lost its actual equipment owner");
+    return application_q3_equipment_source_entity(role->equipment, call, pointer, entity, suppress, error);
+}
 
 static bool qvm_path(const char *path)
 {
@@ -24,6 +35,10 @@ bool q3g_role_consume(q3g_role *role, qa_error *error)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 role executor has an admitted source or lifecycle callback");
     if (role->native && !qa_native_host_destroy_ready(role->native))
         return application_fail(error, QA_ERROR_ARGUMENT, "native Q3 role executor is active");
+    if (role->equipment) {
+        if (!application_q3_equipment_destroy(role->equipment, error)) return false;
+        role->equipment = NULL;
+    }
     if (!application_guest_projection_close(role, error)) return false;
     if (role->host) {
         if (!qa_q3_host_destroy_ready(role->host))
@@ -57,6 +72,9 @@ bool q3g_role_consume(q3g_role *role, qa_error *error)
         if (role == role->engine->game) q3g_game_aliases(role->engine, role);
     }
     if (!application_native_q3_wire_client_unbind(&role->native_client, error)) return false;
+    if (role->client_engine && role->client_engine != role->engine)
+        --role->client_engine->client_leases;
+    role->client_engine = NULL;
     role->client_source = NULL;
     /* Keep only the descriptor for a later close retry; consumed executors and
      * source shutdown callbacks must not be repeated after a cleanup fault. */
@@ -93,8 +111,13 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
     role->client = UINT32_MAX; role->path = q3g_copy_text(path, error);
     if (!role->path) { free(role); return false; }
     qa_q3_host_options options = {0};
+    qa_application_q3_equipment_services equipment_services = {0};
     qa_qvm_compatibility compatibility = {0};
     application_provider *provider = engine->provider;
+    const qa_launch_instance *descriptor = kind == QA_QVM_GAME ? provider->launch :
+        engine->client_candidate ? engine->client_candidate : engine->client_descriptor ?
+        qa_launch_instance_lease_view(engine->client_descriptor) : provider->launch;
+    role->descriptor = descriptor;
     if (!saved_owner && engine->role_sequence == UINT64_MAX) {
         application_fail(error, QA_ERROR_MEMORY, "Q3 role registration sequence exhausted"); goto failed;
     }
@@ -104,7 +127,7 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         goto failed;
     }
     char identity[65], service_name[160];
-    qa_sha256_hex(&provider->launch->identity, identity);
+    qa_sha256_hex(&descriptor->identity, identity);
     snprintf(service_name, sizeof(service_name), "q3-service:%u:%s:%llu",
         provider->owner, identity, (unsigned long long)(saved_owner ? saved_sequence : ++engine->role_sequence));
     qa_strings *strings = qa_session_strings(provider->application->session);
@@ -122,7 +145,7 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         role->service_sequence = engine->role_sequence;
     }
     ++engine->calls;
-    bool services_ready = application_q3_guest_services(provider->application, provider, kind, seat,
+    bool services_ready = application_q3_guest_services_descriptor(provider->application, provider, descriptor, kind, seat,
         role->service_owner, &options, error);
     --engine->calls;
     if (!services_ready) goto failed;
@@ -134,69 +157,54 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
     options.service_owner = role->service_owner;
     if (engine->entity_text)
         options.entity_text = (qa_bytes){(const uint8_t *)engine->entity_text, strlen(engine->entity_text)};
-    bool use_qvm = primary ? provider->kind == APPLICATION_PROVIDER_QVM : qvm_path(path);
+    bool use_qvm = primary ? descriptor->selection.runtime == QA_PROGRAM_QVM : qvm_path(path);
     for (q3g_artifact *shared = engine->artifacts; shared; shared = shared->next)
-        if (shared->kind == kind && shared->qvm == use_qvm && !strcmp(shared->path, path)) {
+        if (shared->view == descriptor->content && (shared->image || shared->module) && shared->kind == kind && shared->qvm == use_qvm && !strcmp(shared->path, path)) {
             role->artifact = shared; break;
         }
     if (role->artifact) {
         role->image = role->artifact->image; qa_qvm_image_retain(role->image);
         role->module = role->artifact->module; qa_native_module_retain(role->module);
         role->declaration = role->artifact->declaration; options.abi = role->artifact->abi;
-    } else if (use_qvm) {
-        if (primary && provider->kind == APPLICATION_PROVIDER_QVM) {
-            role->image = provider->state.qvm.image; qa_qvm_image_retain(role->image);
-            bool ok = provider->launch->declaration ?
-                qa_qvm_compatibility_parse(qa_resource_bytes(provider->launch->declaration), path,
-                    qa_qvm_image_digest(role->image), kind, &compatibility, error) :
-                qa_qvm_compatibility_read(provider->launch->content, path,
-                    qa_qvm_image_digest(role->image), kind, &compatibility, error);
-            if (!ok) goto failed;
-        } else {
-            for (q3g_role *shared = engine->roles; shared; shared = shared->next)
-                if (shared->image && shared->kind == kind && !strcmp(shared->path, path)) {
-                    role->image = shared->image; qa_qvm_image_retain(role->image); break;
-                }
-            bool ok = role->image ? qa_qvm_compatibility_read(provider->launch->content, path,
-                qa_qvm_image_digest(role->image), kind, &compatibility, error) :
-                qa_qvm_image_open(provider->launch->content, path, kind, &role->image, &compatibility, error);
-            if (!ok) goto failed;
-        }
-        options.abi = compatibility.abi;
     } else {
-        if (primary && provider->state.native.module) {
-            role->module = provider->state.native.module; qa_native_module_retain(role->module);
-        } else {
-            for (q3g_role *shared = engine->roles; shared; shared = shared->next)
-                if (shared->module && shared->kind == kind && !strcmp(shared->path, path)) {
-                    role->module = shared->module; qa_native_module_retain(role->module); break;
-                }
-            qa_resource *resource = NULL;
-            const qa_resource *artifact = primary ? provider->launch->artifact : NULL;
-            if (!role->module && !artifact && !qa_vfs_acquire(provider->launch->content, path, &resource, NULL, error)) goto failed;
-            bool ok = role->module || qa_native_module_load(qa_resource_bytes(artifact ? artifact : resource), path,
-                            QA_NATIVE_Q3_VMMAIN, NULL, &role->module, error);
-            qa_resource_release(resource);
-            if (!ok) goto failed;
-            if (primary) {
-                provider->state.native.module = role->module;
-                qa_native_module_retain(role->module);
-            }
-        }
-        if (primary && provider->launch->declaration &&
-            !qa_native_declaration_load(qa_resource_bytes(provider->launch->declaration),
-                                       path, role->module, &role->declaration, error)) goto failed;
-    }
-    if (!role->artifact) {
         q3g_artifact *shared = calloc(1, sizeof(*shared));
         if (!shared) { application_fail(error, QA_ERROR_MEMORY, "retaining immutable Q3 artifact"); goto failed; }
         shared->path = q3g_copy_text(path, error);
         if (!shared->path) { free(shared); goto failed; }
         shared->kind = kind; shared->abi = options.abi; shared->qvm = use_qvm;
+        shared->view = descriptor->content;
+        shared->next = engine->artifacts; engine->artifacts = shared; role->artifact = shared;
+        if (!qa_launch_instance_retain_metadata(descriptor, &shared->descriptor, error)) goto failed;
+        if (primary) {
+            shared->resource = (qa_resource *)descriptor->artifact;
+            qa_resource_retain(shared->resource);
+            if (!shared->resource || !q3g_acquisition_copy(descriptor->artifact_acquisition,
+                &shared->acquisition, error)) goto failed;
+        } else if (!qa_vfs_acquire_receipt(shared->view, path, &shared->resource,
+            &shared->acquisition, error)) goto failed;
+        if (use_qvm) {
+            if (primary && descriptor == provider->launch && provider->kind == APPLICATION_PROVIDER_QVM) {
+                role->image = provider->state.qvm.image; qa_qvm_image_retain(role->image);
+            } else if (!qa_qvm_image_load(qa_resource_bytes(shared->resource), &role->image, error)) goto failed;
+            bool ok = q3g_compatibility(descriptor, path, role->image, kind, primary,
+                &compatibility, error);
+            if (!ok) goto failed;
+            options.abi = shared->abi = compatibility.abi;
+        } else {
+            if (primary && descriptor == provider->launch && provider->state.native.module) {
+                role->module = provider->state.native.module; qa_native_module_retain(role->module);
+            } else if (!qa_native_module_load(qa_resource_bytes(shared->resource), path,
+                QA_NATIVE_Q3_VMMAIN, NULL, &role->module, error)) goto failed;
+            if (primary && descriptor == provider->launch && !provider->state.native.module) {
+                provider->state.native.module = role->module; qa_native_module_retain(role->module);
+            }
+            if (primary && descriptor->declaration && !qa_native_declaration_load(
+                qa_resource_bytes(descriptor->declaration), path, role->module, &role->declaration, error)) goto failed;
+        }
         if (role->image && kind == QA_QVM_CGAME && !application_q3_equipment_profile_read(role->image, kind,
             shared->abi, (qa_bytes){compatibility.equipment_presentation.data,
                 compatibility.equipment_presentation.size}, &shared->equipment_profile, error)) {
-            free(shared->path); free(shared); goto failed;
+            goto failed;
         }
         shared->image = role->image; qa_qvm_image_retain(shared->image);
         shared->module = role->module; qa_native_module_retain(shared->module);
@@ -204,17 +212,85 @@ static bool role_create(struct application_q3_guest *engine, qa_qvm_role kind,
         shared->primary = compatibility.primary; compatibility.primary = (qa_buffer){0};
         shared->equipment_presentation = compatibility.equipment_presentation;
         compatibility.equipment_presentation = (qa_buffer){0};
-        shared->next = engine->artifacts; engine->artifacts = shared; role->artifact = shared;
     }
     q3g_server_bind(role, &options);
     if (!q3g_client_bind(role, &options, error)) goto failed;
+    qa_q3_host_client_services bound_client = options.client;
+    qa_q3_host_options bound_services = options;
+    if (kind != QA_QVM_GAME && provider->application->q3_client_prepare) {
+        application_provider *source = role->client_source;
+        qa_console *console = NULL; qa_cvars *cvars = NULL;
+        if (source) {
+            if (source->kind == APPLICATION_PROVIDER_Q3)
+                application_guest_console_at(source, 0, &console, &cvars, NULL);
+            else {
+                struct application_q3_guest *game = q3g_engine(source);
+                if (game && game->game) console = qa_q3_host_console(game->game->host, &cvars, NULL);
+            }
+            if (!console || !cvars) {
+                application_fail(error, QA_ERROR_ARGUMENT, "Client preparation lost its actual GAME registry");
+                goto failed;
+            }
+        }
+        qa_application_q3_client_preparation preparation = {
+            .receiver_descriptor = descriptor, .game_descriptor = source ? source->launch : NULL,
+            .receiver = provider->owner, .source_owner = source ? source->owner : 0,
+            .role = kind, .seat = seat, .source_client = role->client,
+            .source_catalog = source ? source->product_catalog : NULL,
+            .source_product = source ? source->product : NULL,
+            .source_console = console, .source_cvars = cvars,
+            .product_policy = application_q3_product_source_policy(provider->application),
+            .services = &options, .equipment_services = &equipment_services};
+        ++engine->calls;
+        bool prepared = provider->application->q3_client_prepare(provider->application->guest_context,
+            provider->application, &preparation, error);
+        --engine->calls;
+        if (!prepared) goto failed;
+        if (options.role != kind || options.owner != provider->owner || options.session != provider->application->session ||
+            options.service_owner != role->service_owner || !options.cvars || !options.console ||
+            options.mounts != descriptor->content || options.command_context.owner != provider->owner ||
+            options.command_context.seat != seat || options.client.context != bound_client.context ||
+            options.client.gamestate != bound_client.gamestate ||
+            options.client.current_snapshot != bound_client.current_snapshot ||
+            options.client.snapshot != bound_client.snapshot ||
+            options.client.server_command != bound_client.server_command ||
+            options.client.current_command != bound_client.current_command ||
+            options.client.user_command != bound_client.user_command ||
+            options.client.command_values != bound_client.command_values ||
+            options.client.source_actor != bound_client.source_actor ||
+            options.frontend_lifetime != bound_services.frontend_lifetime ||
+            options.release_frontend != bound_services.release_frontend ||
+            options.client_time_cvars != bound_services.client_time_cvars ||
+            options.client_time_owner != bound_services.client_time_owner ||
+            options.collision.context != bound_services.collision.context ||
+            options.collision.geometry != bound_services.collision.geometry ||
+            options.collision.load_map != bound_services.collision.load_map) {
+            application_fail(error, QA_ERROR_ARGUMENT, "Client preparation changed its physical role ownership");
+            goto failed;
+        }
+    }
     role->abi = options.abi; role->client_services = options.client;
+    if (kind == QA_QVM_GAME) {
+        qa_bot_runtime *runtime = application_bots_guest_runtime(provider->application, provider);
+        if (runtime) {
+            options.bots = runtime;
+            options.remapped_bot_namespace = true;
+            options.shared_bot_lifetime = false;
+            options.script_globals = qa_bot_runtime_global_defines(runtime);
+        }
+    }
+    if (role->image && kind == QA_QVM_CGAME) {
+        options.source_entity = equipment_entity;
+        options.source_entity_context = role;
+    }
     if (!qa_q3_host_create(&options, &role->host, error)) goto failed;
     options.frontend_lifetime=NULL;options.release_frontend=NULL;
     if (role->image) {
         qa_qvm_options vm = qa_q3_host_qvm_options(role->host, QA_QVM_COMPILED_SEMANTICS);
         if (!qa_qvm_create(role->image, &vm, &role->vm, error) ||
             !qa_q3_host_attach_qvm(role->host, role->vm, error)) goto failed;
+        if (kind == QA_QVM_CGAME && !application_q3_equipment_create(role,
+            &equipment_services, &role->equipment, error)) goto failed;
     } else {
         qa_application *app = provider->application;
         qa_native_host_q3_options native = {.role = kind, .abi = options.abi,
@@ -279,7 +355,7 @@ bool q3g_role_activate(q3g_role *role, qa_error *error)
     struct application_q3_guest *engine = role->engine;
     if (engine->calls || !engine->provider->constructed || !engine->provider->attached)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 source activation requires a committed idle provider");
-    qa_bot_runtime *bots = application_bots_runtime(engine->provider->application);
+    qa_bot_runtime *bots = application_bots_guest_runtime(engine->provider->application, engine->provider);
     if (role->kind == QA_QVM_GAME && bots &&
         !application_bots_guest_bind(engine->provider->application,engine->provider,role->host,error)) return false;
     if (role->vm) { role->committed = true; return true; }
@@ -317,6 +393,7 @@ bool q3g_role_shutdown_source(q3g_role *role, bool restart, qa_error *error)
     /* Consume the callback attempt before source code can reenter its owner.
      * Failure does not authorize a second partially performed shutdown. */
     role->initialized = false;
+    role->init_succeeded = false;
     role->shutdown_entry = role->kind == QA_QVM_GAME;
     bool prior_entry = role->engine->round.source_entry;
     role->engine->round.source_entry = true;

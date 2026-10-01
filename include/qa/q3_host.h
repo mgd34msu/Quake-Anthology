@@ -132,6 +132,7 @@ typedef struct qa_q3_host_options {
     const char *game_directory;
     qa_bot_runtime *bots;
     uint32_t bot_client_base, bot_entity_base;
+    bool remapped_bot_namespace;
     bool shared_bot_lifetime;
     qa_script_defines *script_globals;
     const char *script_date, *script_time;
@@ -159,7 +160,8 @@ bool qa_q3_host_create(const qa_q3_host_options *, qa_q3_host **, qa_error *);
  * Attach at the idle boundary before source initialization, never by mutating
  * a copied options struct after the host was created. */
 bool qa_q3_host_attach_bots(qa_q3_host *, qa_bot_runtime *, uint32_t client_base,
-                           uint32_t entity_base, bool shared_lifetime, qa_error *);
+                           uint32_t entity_base, bool remapped_namespace,
+                           bool shared_lifetime, qa_error *);
 /* Pointer identity only; the borrowed runtime need not be entered or read. */
 bool qa_q3_host_borrows_bots(const qa_q3_host *, const qa_bot_runtime *);
 /* Admission only: portal/registry cleanup can still fail without consuming.

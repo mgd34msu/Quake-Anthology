@@ -16,6 +16,7 @@ struct qa_cinematic {
     } movie;
     double start_ms, paused_at, paused_duration, offset_ms;
     bool paused, dirty, completed, focus_paused, busy, suppress_audio, faulted;
+    bool restore_pending;
     qa_media_status status, decoder_status;
     qa_media_frame picture;
     bool has_picture;

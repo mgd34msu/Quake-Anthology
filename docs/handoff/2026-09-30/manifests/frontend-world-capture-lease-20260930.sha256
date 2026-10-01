@@ -1,0 +1,5 @@
+8e7e534cf39d56ad5921ce464e0f16a05d4ff0765194957aa0cc6085fed38501  src/render/scene/world/internal.h
+98c248b1a700d9ae73a1e5d2cde7bca83e90d275306f7df380bdb61d8446db13  src/render/scene/world.c
+3d81afe7bb5f9238018f8672612e26cdc122978d0e53ddd626f0ca872cc3fe21  src/render/scene/world/owner_save.c
+82ba8a45d2ee7071ab55f9d83550924acb1f4cd2520c0bde960a784c647308ba  src/render/scene/world/save.c
+d688b6e8378418c2658292bf5a5e7a14f30b7f93c90f8637f10ecd84f8e33481  src/render/scene/world/legacy/save.c

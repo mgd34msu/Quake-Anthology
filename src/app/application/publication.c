@@ -6,6 +6,13 @@
 #include "bots_save_private.h"
 #include "network_q1_signon.h"
 #include "portals.h"
+#include "q3_world_restart.h"
+#include "native_q3_clients.h"
+#include "rankings.h"
+#include "bots_round.h"
+#include "guest_q3_restart.h"
+#include "q3_campaign_launch.h"
+#include "startup_flow.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -294,7 +301,22 @@ static bool construct_and_reserve(qa_application *application,
     qa_world *world = publication->initial_world != NULL
                           ? publication->initial_world
                           : application->world;
-    for (size_t index = 0; index < publication->next_count; ++index) {
+    size_t primary = 0;
+    while (primary < publication->next_count && publication->next[primary] != publication->map_provider)
+        ++primary;
+    if (primary == publication->next_count) {
+        free(used);
+        return application_fail(error, QA_ERROR_ARGUMENT, "provider construction has no actual primary map source");
+    }
+    const qa_launch_snapshot *routing_snapshot = application->routing_snapshot;
+    application_provider **routing_providers = application->routing_providers;
+    size_t routing_count = application->routing_provider_count;
+    application->routing_snapshot = publication->candidate;
+    application->routing_providers = publication->next;
+    application->routing_provider_count = publication->next_count;
+    bool okay = true;
+    for (size_t ordinal = 0; ordinal < publication->next_count; ++ordinal) {
+        size_t index = ordinal == 0 ? primary : ordinal <= primary ? ordinal - 1 : ordinal;
         application_provider *provider = publication->next[index];
         application_provider_admission *admission =
             &publication->admissions[publication->admission_count++];
@@ -308,8 +330,8 @@ static bool construct_and_reserve(qa_application *application,
                 application_saved_instance_content saved = {0};
                 if (!application_save_content_instance(application->content_graph,
                     provider->launch->selection.instance, &saved, error)) {
-                    free(used);
-                    return false;
+                    okay = false;
+                    break;
                 }
                 provider_catalog = saved.product_catalog;
                 product = saved.product;
@@ -325,8 +347,8 @@ static bool construct_and_reserve(qa_application *application,
                     provider_catalog, product, choices, error);
             }
             if (!constructed) {
-                free(used);
-                return false;
+                okay = false;
+                break;
             }
             admission->constructed = true;
         }
@@ -336,8 +358,8 @@ static bool construct_and_reserve(qa_application *application,
             if (!qa_session_prepare_component(application->session,
                                               &provider->component, retiring,
                                               &admission->component, error)) {
-                free(used);
-                return false;
+                okay = false;
+                break;
             }
         }
         if (!provider->policy_attached && provider->policy.describe != NULL) {
@@ -349,13 +371,16 @@ static bool construct_and_reserve(qa_application *application,
             if (!qa_combat_prepare_policy(application->combat,
                                           &provider->policy, replacement,
                                           &admission->policy, error)) {
-                free(used);
-                return false;
+                okay = false;
+                break;
             }
         }
     }
+    application->routing_snapshot = routing_snapshot;
+    application->routing_providers = routing_providers;
+    application->routing_provider_count = routing_count;
     free(used);
-    return true;
+    return okay;
 }
 
 static bool prepare_world(qa_application *application,
@@ -395,10 +420,10 @@ static bool prepare_world(qa_application *application,
         : application_map_prepare(application, publication, error);
 }
 
-bool application_publication_prepare(qa_application *application,
+bool application_publication_begin(qa_application *application,
                                      const qa_launch_snapshot *previous,
                                      const qa_launch_snapshot *candidate,
-                                     void **out, qa_error *error)
+                                     application_publication **out, qa_error *error)
 {
     if (application == NULL || candidate == NULL || out == NULL ||
         application->publication_started ||
@@ -437,11 +462,33 @@ bool application_publication_prepare(qa_application *application,
     if (application->world_change_ready != NULL &&
         !application->world_change_ready(application->guest_context, application, error))
         return false;
-    if (!prepare_world(application, publication, error) ||
-        !construct_and_reserve(application, publication, NULL, error) ||
-        !application_match_prepare(application, publication, error))
+    return prepare_world(application, publication, error);
+}
+
+bool application_publication_finish(qa_application *application,
+                                    application_publication *publication, qa_error *error)
+{
+    if (!publication || !publication->candidate || publication->admissions)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Publication completion lost its detached ticket");
+    if (!publication->travel) return true;
+    if (!construct_and_reserve(application, publication, NULL, error) ||
+        !application_match_prepare(application, publication, error) ||
+        !application_q3_world_restart_prepared(application, publication, error))
         return false;
     return true;
+}
+
+bool application_publication_prepare(qa_application *application,
+                                     const qa_launch_snapshot *previous,
+                                     const qa_launch_snapshot *candidate,
+                                     void **out, qa_error *error)
+{
+    if (!out) return application_fail(error, QA_ERROR_ARGUMENT, "Publication requires ticket output");
+    application_publication *publication = application_startup_flow_take_publication(application,
+        previous, candidate);
+    bool ok = publication || application_publication_begin(application, previous, candidate, &publication, error);
+    *out = publication;
+    return ok && application_publication_finish(application, publication, error);
 }
 
 static void abort_admissions(application_publication *publication)
@@ -463,6 +510,8 @@ void application_publication_dispose(qa_application *application,
 {
     if (publication == NULL)
         return;
+    if (!publication->published)
+        application_startup_flow_discard_candidate(application, publication->candidate);
     abort_admissions(publication);
     qa_world_geometry_admission_abort(publication->geometry_admission);
     publication->geometry_admission = NULL;
@@ -474,6 +523,17 @@ void application_publication_dispose(qa_application *application,
                 qa_error ignored = {0};
                 if (!application_provider_deconstruct(admission->provider,
                                                       &ignored))
+                    application_fault(application, &ignored);
+            }
+        }
+    /* A startup continuation can own physical hosts before they reach GAME
+     * admission. Release all detached candidate owners before their world. */
+    if (!publication->published)
+        for (size_t index = publication->next_count; index-- > 0;) {
+            application_provider *provider = publication->next[index];
+            if (!provider->attached) {
+                qa_error ignored = {0};
+                if (!application_provider_deconstruct(provider, &ignored))
                     application_fault(application, &ignored);
             }
         }
@@ -550,6 +610,20 @@ static bool detach_removed(qa_application *application,
     if (!ok && error != NULL)
         *error = first;
     return ok;
+}
+
+static bool deconstruct_removed(application_publication *publication, qa_error *error)
+{
+    /* Original client roles own real leases on their primary native source. */
+    for (unsigned phase = 0; phase < 2; ++phase)
+        for (size_t i = 0; i < publication->removed_count; ++i) {
+            application_provider *provider = publication->removed[i];
+            bool guest = provider->kind == APPLICATION_PROVIDER_QVM ||
+                (provider->kind == APPLICATION_PROVIDER_NATIVE && provider->state.native.engine);
+            if (guest != (phase == 0)) continue;
+            if (!application_provider_deconstruct(provider, error)) return false;
+        }
+    return true;
 }
 
 static bool commit_admissions(application_publication *publication,
@@ -702,6 +776,11 @@ static bool retire_map_services(qa_application *application, bool carry,
         !application_bots_can_destroy(application))
         return application_fail(error, QA_ERROR_ARGUMENT,
                                 "map retirement has borrowed guest or bot state");
+    if (!application_rankings_close(application, error) ||
+        !application_bots_shutdown(application,
+            application_q3_world_restart_guest_shutdown(application,
+                application_world_provider(application, QA_ROLE_ENTITIES, "")), error))
+        return false;
     if (application->before_world_change != NULL &&
         !application->before_world_change(application->guest_context, application, error))
         return false;
@@ -733,8 +812,6 @@ static bool retire_map_services(qa_application *application, bool carry,
                 return false;
         }
     }
-    if (!application_bots_destroy(application, error))
-        return false;
     if (!application_portals_close(application, 0, error))
         return false;
     return application->world_retired == NULL ||
@@ -746,10 +823,34 @@ static bool publish_travel(qa_application *application,
                            qa_error *error)
 {
     bool ok = true;
+    bool native_map_cut = false;
     bool geometry_published = application->world == NULL;
     qa_error first = {0};
     qa_error current = {0};
-    if (!retire_map_services(application, true, false, error))
+    const qa_launch_snapshot *routing_snapshot = application->routing_snapshot;
+    application_provider **routing_providers = application->routing_providers;
+    size_t routing_count = application->routing_provider_count;
+    application->routing_snapshot = publication->previous;
+    application->routing_providers = application->providers;
+    application->routing_provider_count = application->provider_count;
+    application_provider *old_source = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    const qa_launch_choices *choices = qa_launch_snapshot_choices(publication->candidate);
+    bool retired_services = application_q3_world_restart_begin(application, publication, error);
+    for (size_t i = 0; retired_services && i < application->provider_count; ++i)
+        retired_services = application_q3_guest_client_sources_retire(application->providers[i],
+            old_source, publication->map_provider, choices, error);
+    if (retired_services)
+        retired_services = retire_map_services(application, true, false, error);
+    if (retired_services)
+        retired_services = application_native_q3_clients_drain(application, error) &&
+            application_q3_world_restart_shutdown(application, publication, error);
+    if (retired_services)
+        retired_services = application_q3_map_shutdown(application, publication,
+            &native_map_cut, error);
+    application->routing_snapshot = routing_snapshot;
+    application->routing_providers = routing_providers;
+    application->routing_provider_count = routing_count;
+    if (!retired_services)
         return false;
     application_q1_signon_reset(application);
     application->map_view_ready = false;
@@ -773,6 +874,28 @@ static bool publish_travel(qa_application *application,
     bool detached = detach_removed(application, publication, &current);
     remember_failure(detached, &current, "provider retirement failed", &ok,
                      &first);
+    if (detached) {
+        current = (qa_error){0};
+        bool consumed = true;
+        application->routing_snapshot = publication->previous;
+        application->routing_providers = application->providers;
+        application->routing_provider_count = application->provider_count;
+        for (size_t i = 0; consumed && i < application->provider_count; ++i) {
+            application_provider *provider = application->providers[i];
+            bool removed = false;
+            for (size_t j = 0; j < publication->removed_count; ++j)
+                removed |= publication->removed[j] == provider;
+            if (!removed) consumed = application_q3_guest_retire_executors(provider, &current);
+        }
+        if (consumed) consumed = deconstruct_removed(publication, &current);
+        bool retain_bots = false;
+        if (consumed) consumed = application_q3_world_restart_retired(application, publication, &retain_bots, &current);
+        if (consumed && !retain_bots) consumed = application_bots_destroy(application, &current);
+        application->routing_snapshot = routing_snapshot;
+        application->routing_providers = routing_providers;
+        application->routing_provider_count = routing_count;
+        remember_failure(consumed, &current, "source executor and bot service retirement failed", &ok, &first);
+    }
     if (publication->geometry_admission != NULL) {
         current = (qa_error){0};
         bool committed = qa_world_geometry_admission_commit(
@@ -821,8 +944,13 @@ static bool publish_travel(qa_application *application,
 
     if (ok && geometry_published) {
         current = (qa_error){0};
-        bool mapped = application_map_publish(application, publication,
-                                              &current);
+        bool mapped = true;
+        for (size_t i = 0; mapped && i < application->provider_count; ++i)
+            mapped = application_q3_guest_client_sources_rebuild(application->providers[i],
+                publication->map_provider, choices, &current);
+        if (mapped) mapped = application_q3_world_restart_admitted(application, publication, &current) &&
+            application_q3_campaign_launch_admitted(application, publication, &current) &&
+            application_map_publish(application, publication, &current);
         remember_failure(mapped, &current, "map publication failed", &ok,
                          &first);
         if (mapped) {
@@ -831,6 +959,15 @@ static bool publish_travel(qa_application *application,
                 qa_launch_snapshot_choices(publication->candidate),
                 &publication->map, &publication->entities, &current),
                 &current, "bot population publication failed", &ok, &first);
+        }
+        if (ok) {
+            current = (qa_error){0};
+            remember_failure(application_q3_world_restart_published(application, publication, &current),
+                &current, "Q3 replacement final publication failed", &ok, &first);
+            if (ok)
+                remember_failure(application_q3_map_published(application, publication,
+                    native_map_cut, &current), &current,
+                    "Q3 map wire publication failed", &ok, &first);
         }
     }
     ++application->publication_generation;
@@ -842,6 +979,10 @@ static bool publish_travel(qa_application *application,
 bool application_publication_retire(qa_application *application,
                                     qa_error *error)
 {
+    application_provider *old_source = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    for (size_t i = 0; i < application->provider_count; ++i)
+        if (!application_q3_guest_client_sources_retire(application->providers[i],
+                old_source, NULL, NULL, error)) return false;
     bool terminal_world = false;
     for (size_t index = 0; index < application->provider_count; ++index)
         if (terminal_native_q2(application->providers[index]))
@@ -858,6 +999,9 @@ bool application_publication_retire(qa_application *application,
     };
     if (!detach_removed(application, &publication, error))
         return false;
+    if (!deconstruct_removed(&publication, error)) return false;
+    if (!application_drain_provider_closes(application, error)) return false;
+    if (!application_bots_destroy(application, error)) return false;
     free(application->providers);
     application->providers = NULL;
     application->provider_count = 0;

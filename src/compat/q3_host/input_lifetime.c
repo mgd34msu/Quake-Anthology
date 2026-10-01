@@ -10,7 +10,7 @@ bool qa_q3_host_source_input(const qa_q3_host *host, qa_input_seat **seat, uint6
 
 bool qa_q3_host_attach_bots(qa_q3_host *host, qa_bot_runtime *runtime,
                            uint32_t client_base, uint32_t entity_base,
-                           bool shared_lifetime, qa_error *error)
+                           bool remapped_namespace, bool shared_lifetime, qa_error *error)
 {
     if (!host || host->retired || !runtime || host->calls ||
         (host->vm && qa_qvm_active(host->vm)) || (host->native && !qa_native_can_destroy(host->native)))
@@ -19,16 +19,21 @@ bool qa_q3_host_attach_bots(qa_q3_host *host, qa_bot_runtime *runtime,
         return q3_fail(error, QA_ERROR_ARGUMENT, 0, "Q3 host already borrows another bot library");
     if(client_base>INT32_MAX-64 || entity_base>INT32_MAX-1024)
         return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 bot namespace exceeds source signed range");
+    qa_script_defines *globals=qa_bot_runtime_global_defines(runtime);
+    if(!globals || (host->options.script_globals && host->options.script_globals!=globals))
+        return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 host global definitions differ from the actual bot library owner");
     host->options.bots = runtime;
+    host->options.script_globals=globals;
     host->options.bot_client_base = client_base;
     host->options.bot_entity_base = entity_base;
+    host->options.remapped_bot_namespace = remapped_namespace;
     host->options.shared_bot_lifetime = shared_lifetime;
     return true;
 }
 
 bool q3_bot_client_number(const q3_call *call,int32_t source,int32_t *out,qa_error *error)
 {
-    if(!call->host->options.shared_bot_lifetime) { *out=source;return true; }
+    if(!call->host->options.remapped_bot_namespace) { *out=source;return true; }
     if(source<0 || (uint32_t)source>=call->host->options.server.maximum_clients)
         return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 bot source client is outside its reserved range");
     *out=(int32_t)call->host->options.bot_client_base+source;return true;
@@ -37,7 +42,7 @@ qa_bot_runtime *q3_bot_runtime(const q3_call *call)
 { return call->host->bots_shutdown?NULL:call->host->options.bots; }
 bool q3_bot_entity_number(const q3_call *call,int32_t source,int32_t *out,qa_error *error)
 {
-    if(!call->host->options.shared_bot_lifetime) { *out=source;return true; }
+    if(!call->host->options.remapped_bot_namespace) { *out=source;return true; }
     if(source<0 || source>=1024)
         return q3_fail(error,QA_ERROR_ARGUMENT,0,"Q3 bot source entity is outside its reserved range");
     qa_actor_id actor=call->host->game?call->host->game->slots[source].actor:(qa_actor_id){0};
@@ -48,7 +53,7 @@ bool q3_bot_entity_number(const q3_call *call,int32_t source,int32_t *out,qa_err
 }
 bool q3_bot_source_entity(const q3_call *call,int32_t canonical,int32_t *out,qa_error *error)
 {
-    if(!call->host->options.shared_bot_lifetime || canonical<0) { *out=canonical;return true; }
+    if(!call->host->options.remapped_bot_namespace || canonical<0) { *out=canonical;return true; }
     uint32_t base=call->host->options.bot_entity_base;
     if((uint32_t)canonical>=base && (uint32_t)canonical-base<1024) {
         *out=(int32_t)((uint32_t)canonical-base);return true;

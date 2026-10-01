@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_q2_source.h"
 
 uint64_t q2_interval(q2_weapon_call *c, uint64_t native) {
     uint64_t interval =
@@ -28,6 +29,8 @@ static bool classic(q2_weapon_call *c, qa_error *e) {
     qa_q2_weapon_state *s = c->state;
     const qa_q2_weapon_definition *d = c->definition;
     int idle = d->fire_last + 1;
+    bool lmctf = c->input.source_rules == QA_Q2_WEAPON_RULES_LMCTF &&
+                 d->weapon != QA_Q2_LMCTF_PLASMA;
     if (s->phase == QA_Q2_DROPPING) {
         if (s->frame == d->deactivate_last)
             return q2_change_weapon(c, e);
@@ -37,6 +40,15 @@ static bool classic(q2_weapon_call *c, qa_error *e) {
         return true;
     }
     if (s->phase == QA_Q2_ACTIVATING) {
+        if (lmctf) {
+            float fastswitch;
+            if (!qa_q2_source_value(c->game, "fastswitch", 0, &fastswitch, e))
+                return false;
+            if (!q2_actor_live(c->game, c->actor->id))
+                return true;
+            if (fastswitch != 0)
+                s->frame = d->activate_last;
+        }
         if (s->frame == d->activate_last) {
             s->phase = QA_Q2_READY;
             s->frame = idle;
@@ -47,6 +59,15 @@ static bool classic(q2_weapon_call *c, qa_error *e) {
     if ((s->pending != QA_Q2_WEAPON_NONE || s->handoff == QA_Q2_PRIMARY_HOLSTERING) &&
         s->phase != QA_Q2_FIRING) {
         s->phase = QA_Q2_DROPPING;
+        if (lmctf && s->pending != QA_Q2_WEAPON_NONE) {
+            float fastswitch;
+            if (!qa_q2_source_value(c->game, "fastswitch", 0, &fastswitch, e))
+                return false;
+            if (!q2_actor_live(c->game, c->actor->id))
+                return true;
+            if (fastswitch != 0)
+                return q2_change_weapon(c, e);
+        }
         s->frame = d->idle_last + 1;
         return d->deactivate_last - s->frame >= 4 || q2_reverse_animation(c, e);
     }
@@ -80,8 +101,26 @@ static bool classic(q2_weapon_call *c, qa_error *e) {
                 return false;
         } else
             ++s->frame;
+        if (!q2_actor_live(c->game, c->actor->id))
+            return true;
+        if (lmctf && s->pending != QA_Q2_WEAPON_NONE) {
+            float fastswitch;
+            if (!qa_q2_source_value(c->game, "fastswitch", 0, &fastswitch, e))
+                return false;
+            if (!q2_actor_live(c->game, c->actor->id))
+                return true;
+            if (fastswitch != 0)
+                return q2_loop(c, "", e) && q2_change_weapon(c, e);
+        }
         if (s->frame == idle + 1)
             s->phase = QA_Q2_READY;
+        if (lmctf && c->game->ammo[d->weapon] != 0) {
+            int ammo;
+            if (!q2_ammo(c, &ammo, e))
+                return false;
+            if (ammo < d->quantity)
+                return q2_no_ammo(c, true, e);
+        }
     }
     return true;
 }

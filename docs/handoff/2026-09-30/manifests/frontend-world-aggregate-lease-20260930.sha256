@@ -1,0 +1,6 @@
+3f70f0e5ac5fd5ff7e9f69fdcc9951453153ba5cecdbf47f7fe0b1869532168c  include/qa/scene_world_save.h
+39a8933efd54f43a6cfda32cc148420b67cfc89b42fb030ae99cb74b8aee0d5a  src/render/scene/world/internal.h
+17605fa90b65b2a4e411f2bd22a68d42ee192f42a49ddfd3133648b570ead734  src/render/scene/world.c
+f9dfb2d5f9458a68df99ed71edd9a89ba378ddbee0f2ab58e7d61995e6194d62  src/render/scene/world/owner_save.c
+4a979d05fa9631b8757f98a6deefbae77aec1f808a9c2b8042380e91a6017f95  src/render/scene/world/legacy/save.c
+4c851f9a41a9f19a9e653f818ae049acdd47aaef4bf6e320cba63c3e238233a6  src/render/scene/world/save.c

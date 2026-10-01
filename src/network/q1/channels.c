@@ -214,7 +214,8 @@ bool qa_qw_channel_receive(qa_qw_channel *channel, qa_bytes bytes, uint64_t now_
 qa_qw_channel_stats qa_qw_channel_get_stats(const qa_qw_channel *channel) {
     if (!channel) return (qa_qw_channel_stats){0};
     return (qa_qw_channel_stats){qa_net_toggle_incoming(channel->reliable), qa_net_toggle_outgoing(channel->reliable),
-        channel->last_received_ns, channel->frame_latency, channel->frame_interval_ms};
+        channel->last_received_ns, channel->frame_latency, channel->frame_interval_ms,
+        channel->rate.bytes_per_second};
 }
 
 bool qa_q1_peer_send(qa_q1_peer *peer, qa_bytes bytes, qa_error *error) {

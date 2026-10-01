@@ -18,7 +18,7 @@ struct qa_material_order_entry {
 
 struct qa_material_order {
     qa_material_order_entry **entries, **sorted;
-    size_t count, capacity, references;
+    size_t count, capacity, references, capture_depth;
     uint64_t ordinal;
     bool dirty;
 };
@@ -26,6 +26,24 @@ struct qa_material_order {
 static bool fail(qa_error *error, qa_status code, const char *message)
 {
     qa_error_set(error, code, 0, "%s", message); return false;
+}
+
+bool qa_material_order_idle(const qa_material_order *order)
+{ return order && !order->capture_depth; }
+
+bool qa_material_order_capture_begin(const qa_material_order *borrowed, qa_error *error)
+{
+    qa_material_order *order = (qa_material_order *)borrowed;
+    if (!order || order->capture_depth == SIZE_MAX)
+        return fail(error, QA_ERROR_ARGUMENT, "Renderer order capture requires its actual retained owner");
+    ++order->capture_depth;
+    return true;
+}
+
+void qa_material_order_capture_end(const qa_material_order *borrowed)
+{
+    qa_material_order *order = (qa_material_order *)borrowed;
+    if (order && order->capture_depth) --order->capture_depth;
 }
 
 qa_material_order *qa_material_order_create(qa_error *error)
@@ -44,14 +62,14 @@ bool qa_material_order_retain(qa_material_order *order, qa_error *error)
 
 void qa_material_order_destroy(qa_material_order *order)
 {
-    if (!order || --order->references) return;
+    if (!qa_material_order_idle(order) || --order->references) return;
     free(order->entries); free(order->sorted); free(order);
 }
 
 bool qa_material_order_reserve(qa_material_order *order, const qa_material *material,
                                 qa_material_order_entry **out, qa_error *error)
 {
-    if (!order || !material || !out || order->ordinal == UINT64_MAX)
+    if (!qa_material_order_idle(order) || !material || !out || order->ordinal == UINT64_MAX)
         return fail(error, QA_ERROR_ARGUMENT, "invalid renderer material admission");
     if (order->count == order->capacity) {
         size_t capacity = order->capacity ? order->capacity * 2 : 64;
@@ -76,14 +94,14 @@ bool qa_material_order_reserve(qa_material_order *order, const qa_material *mate
 
 bool qa_material_order_publish(qa_material_order_entry *entry, qa_error *error)
 {
-    if (!entry || !isfinite(entry->material->sort))
+    if (!entry || !qa_material_order_idle(entry->owner) || !isfinite(entry->material->sort))
         return fail(error, QA_ERROR_FORMAT, "material sort priority is not finite");
     entry->published = true; entry->owner->dirty = true; return true;
 }
 
 void qa_material_order_remove(qa_material_order_entry *entry)
 {
-    if (!entry) return;
+    if (!entry || !qa_material_order_idle(entry->owner)) return;
     qa_material_order *order = entry->owner;
     qa_material_order_entry *last = order->entries[--order->count];
     if (last != entry) { order->entries[entry->slot] = last; last->slot = entry->slot; }
@@ -92,7 +110,7 @@ void qa_material_order_remove(qa_material_order_entry *entry)
 
 void qa_material_order_changed(qa_material_order_entry *entry)
 {
-    if (entry) entry->owner->dirty = true;
+    if (entry && qa_material_order_idle(entry->owner)) entry->owner->dirty = true;
 }
 
 static int compare(const void *left, const void *right)
@@ -106,7 +124,7 @@ static int compare(const void *left, const void *right)
 
 bool qa_material_order_prepare(qa_material_order *order, qa_error *error)
 {
-    if (!order) return fail(error, QA_ERROR_ARGUMENT, "renderer material order is absent");
+    if (!qa_material_order_idle(order)) return fail(error, QA_ERROR_ARGUMENT, "renderer material order is retained by capture");
     if (!order->dirty) return true;
     size_t count = 0;
     for (size_t i = 0; i < order->count; ++i) {
@@ -155,9 +173,15 @@ bool qa_material_order_snapshot(const qa_material_order *order, bool sorted, qa_
 
 static bool order_signature(qa_source_save_io *io)
 {
-    uint8_t magic[4] = {'Q', 'A', 'M', 'O'}; uint32_t version = 1;
+    uint8_t magic[4] = {'Q', 'A', 'M', 'O'}; uint32_t version = 2;
     return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QAMO", 4) &&
-        qa_source_save_u32(io, &version) && version == 1;
+        qa_source_save_u32(io, &version) && version == 2;
+}
+static bool order_capacity(size_t count, size_t capacity, uint64_t ordinal, bool dirty)
+{
+    if (count > capacity || count > ordinal || capacity > SIZE_MAX / sizeof(qa_material_order_entry *)) return false;
+    if (!capacity) return !ordinal && !dirty;
+    return capacity >= 64 && !(capacity & (capacity - 1)) && (ordinal || !dirty);
 }
 bool qa_material_order_has_record(const qa_material_order *order, const qa_material *material)
 {
@@ -171,10 +195,14 @@ bool qa_material_order_checkpoint(const qa_material_order *order, const qa_mater
 {
     if (!order || !refs || !refs->material_encode || !out)
         return fail(error, QA_ERROR_ARGUMENT, "material order checkpoint requires qualified records");
-    qa_source_save_io io = {0}; size_t count = order->count;
+    if (!qa_material_order_capture_begin(order, error)) return false;
+    qa_source_save_io io = {0}; size_t count = order->count, capacity = order->capacity;
     uint64_t ordinal = order->ordinal; bool dirty = order->dirty;
-    bool ok = qa_source_save_writer(&io, NULL, error) && order_signature(&io) &&
-        qa_source_save_count(&io, &count, SIZE_MAX) && qa_source_save_u64(&io, &ordinal) &&
+    bool ok = order_capacity(count, capacity, ordinal, dirty) &&
+        (capacity ? order->entries && order->sorted : !order->entries && !order->sorted) &&
+        qa_source_save_writer(&io, NULL, error) && order_signature(&io) &&
+        qa_source_save_count(&io, &count, SIZE_MAX) &&
+        qa_source_save_count(&io, &capacity, SIZE_MAX / sizeof(qa_material_order_entry *)) && qa_source_save_u64(&io, &ordinal) &&
         qa_source_save_bool(&io, &dirty);
     for (size_t i = 0; ok && i < count; ++i) {
         const qa_material_order_entry *entry = order->entries[i]; uint64_t key = 0;
@@ -188,7 +216,9 @@ bool qa_material_order_checkpoint(const qa_material_order *order, const qa_mater
     }
     if (ok) ok = qa_source_save_finish(&io, out);
     if (!ok && (!error || error->code == QA_OK)) fail(error, QA_ERROR_FORMAT, "invalid renderer material order");
-    qa_source_save_dispose(&io); return ok;
+    qa_source_save_dispose(&io);
+    qa_material_order_capture_end(order);
+    return ok;
 }
 
 bool qa_material_order_restore(qa_bytes bytes, const qa_material_checkpoint_refs *refs,
@@ -197,18 +227,19 @@ bool qa_material_order_restore(qa_bytes bytes, const qa_material_checkpoint_refs
     if (!out || *out || !refs || !refs->material_decode)
         return fail(error, QA_ERROR_ARGUMENT, "material order restore requires detached qualified records");
     *out = NULL;
-    qa_source_save_io io = {0}; size_t count = 0; uint64_t ordinal = 0; bool dirty = false;
+    qa_source_save_io io = {0}; size_t count = 0, capacity = 0; uint64_t ordinal = 0; bool dirty = false;
     bool ok = qa_source_save_reader(&io, NULL, bytes, error) && order_signature(&io) &&
-        qa_source_save_count(&io, &count, bytes.size / 21) && qa_source_save_u64(&io, &ordinal) &&
-        qa_source_save_bool(&io, &dirty) && count <= SIZE_MAX / sizeof(qa_material_order_entry *);
+        qa_source_save_count(&io, &count, bytes.size / 21) &&
+        qa_source_save_count(&io, &capacity, SIZE_MAX / sizeof(qa_material_order_entry *)) && qa_source_save_u64(&io, &ordinal) &&
+        qa_source_save_bool(&io, &dirty) && order_capacity(count, capacity, ordinal, dirty);
     qa_material_order *order = ok ? qa_material_order_create(error) : NULL;
     if (ok && !order) ok = false;
-    if (ok && count) {
-        order->entries = calloc(count, sizeof(*order->entries));
-        order->sorted = malloc(count * sizeof(*order->sorted));
+    if (ok && capacity) {
+        order->entries = calloc(capacity, sizeof(*order->entries));
+        order->sorted = malloc(capacity * sizeof(*order->sorted));
         if (!order->entries || !order->sorted) ok = fail(error, QA_ERROR_MEMORY, "allocating restored material order");
     }
-    if (order) order->capacity = count, order->ordinal = ordinal, order->dirty = dirty;
+    if (order) order->capacity = capacity, order->ordinal = ordinal, order->dirty = dirty;
     for (size_t i = 0; ok && i < count; ++i) {
         uint64_t key = 0, sequence = 0; uint32_t rank = 0; bool published = false; qa_material *material = NULL;
         ok = qa_source_save_u64(&io, &key) && qa_source_save_u64(&io, &sequence) && sequence < ordinal &&

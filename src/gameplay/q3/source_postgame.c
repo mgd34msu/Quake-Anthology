@@ -214,9 +214,17 @@ static bool spawn_model(qa_q3_game *game, qa_actor_id podium, uint32_t client,
     return true;
 }
 
+bool qa_q3_source_reset_podium_players(qa_q3_game *game, qa_error *error)
+{
+    if (!game || game->source_restored)
+        return q3_fail(error, "podium reset requires its actual source level");
+    for (size_t i = 0; i < 3; ++i) game->podium_players[i] = QA_Q3_SOURCE_NONE;
+    return true;
+}
+
 static bool spawn_victory_pads(qa_q3_game *game, qa_error *error)
 {
-    for (size_t i = 0; i < 3; ++i) game->podium_players[i] = QA_Q3_SOURCE_NONE;
+    if (!qa_q3_source_reset_podium_players(game, error)) return false;
     qa_actor_id podium, player;
     if (!spawn_podium(game, &podium, error) ||
         !spawn_model(game, podium, game->client_counts.sorted_clients[0], qa_v3(0, 0, 74),

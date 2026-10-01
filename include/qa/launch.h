@@ -77,6 +77,10 @@ typedef struct qa_launch_seat {
     /* Definition alias is separate from the public name; NULL uses name. */
     const char *bot_definition;
     int32_t bot_delay_ms;
+    /* Constructor declaration, independent of model resource paths. All four
+     * NULL denotes no declaration. An empty head model follows the body. */
+    const char *character_model, *character_skin;
+    const char *character_head_model, *character_head_skin;
 } qa_launch_seat;
 typedef struct qa_launch_loadout {
     qa_launch_scope scope;
@@ -169,6 +173,7 @@ typedef struct qa_launch_instance {
     uint64_t roles;
     qa_vfs *content;
     const qa_resource *artifact, *declaration;
+    const qa_vfs_acquisition *artifact_acquisition;
     const struct qa_launch_resource *interfaces;
     size_t interface_count;
     const qa_catalog_weapon_behavior *const *behaviors;
@@ -195,6 +200,16 @@ const qa_launch_instance *qa_launch_instance_lease_view(const qa_launch_instance
 void qa_launch_instance_lease_release(qa_launch_instance_lease *);
 /* The implementation's retained catalog can precede the current snapshot. */
 qa_catalog *qa_launch_instance_catalog(const qa_launch_instance *);
+/* Own a client-only descriptor over a clone of the genuinely prepared view.
+ * Opens its selected artifact once and retains that acquisition. This creates
+ * metadata only; it never prepares a GAME provider or changes a snapshot. */
+bool qa_launch_instance_prepare_client_metadata(const qa_launch_instance *, qa_catalog *,
+    qa_product_id, qa_vfs *, const char *artifact_path, qa_launch_instance_lease **, qa_error *);
+struct qa_launch_restored_instance;
+/* Takes the actual claimed private content view, including on failure, after
+ * the enclosing source owner has decoded and qualified its complete inventory. */
+bool qa_launch_instance_restore_client_metadata(const qa_launch_instance *,
+    const struct qa_launch_restored_instance *, qa_launch_instance_lease **, qa_error *);
 
 /* B25/B34 prepare native or qualified external state in detached ownership.
  * Preparation may warm the session's append-only string table, because an

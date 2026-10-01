@@ -1,0 +1,3 @@
+787032be76ace72ae0976ae636a1300d3c73fb4e14278cb70915ca2028292993  src/compat/q3_host/checkpoint.c
+e4a9945f053846ee976751838c6ffee85c922b018cbc405342ce8b3fc17ee19a  include/qa/q3_host.h
+079396566d55082f80e2209daa55e29ec50d443ce57cb9a195ce7bde8eeef95c  docs/implementation/persistence-20260930.md

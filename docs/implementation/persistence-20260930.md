@@ -590,3 +590,21 @@ busy/retiring/stopping frames and counter exhaustion. The frontend stopping
 iteration omits this notification, preserving ordinary quit behavior. These
 caller changes received source/diff checks only; executable qualification and
 the remaining installed frontend/native owners remain open.
+
+The native Q3 rankings source owner now retains its actual copied report FIFO,
+canonical client generations and physical source slots, observed account states,
+weapon timing, enabled/ended state, provider launch identity and map revision.
+`QARS` version 1 encodes that continuation and the owned optional game key;
+installed menu/status output requires a readonly logical bridge binding. The
+application progression envelope advances to `QAPR` version 2 and requires the
+source record alongside the actual backend and optional profile. Import owns
+scratch rows and strings, finishes complete frames before publication, and keeps
+source effects pending until full candidate qualification. No backend report,
+login, source spawn/team action or menu output runs during import.
+
+Independent source review found and confirmed repairs for a post-length text
+extent check and physical-slot effect ordering after reconnects. The five-file
+rankings core packet passed its final source/hash/whitespace review. Its actual
+native source-effect owner, frontend bridge and application lifecycle callers
+remain separate integration requirements; this does not close the baseline or
+qualify original native Q3 private module relocation.

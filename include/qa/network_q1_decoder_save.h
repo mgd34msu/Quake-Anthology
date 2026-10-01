@@ -13,4 +13,8 @@ bool qa_nq_decoder_restore_checkpoint(qa_bytes, qa_net_protocol_id, qa_nq_option
     qa_nq_decoder **, qa_error *);
 bool qa_qw_decoder_checkpoint(const qa_qw_decoder *, qa_net_protocol_id, qa_buffer *, qa_error *);
 bool qa_qw_decoder_restore_checkpoint(qa_bytes, qa_net_protocol_id, qa_qw_decoder **, qa_error *);
+/* Pure qualification of an actual server's baseline/transmitted-frame owner
+ * against its retained channel cut. Client precaches and requests are absent. */
+bool qa_qw_decoder_server_cut(const qa_qw_decoder *, qa_net_protocol_id,
+    uint32_t outgoing_sequence, qa_error *);
 #endif

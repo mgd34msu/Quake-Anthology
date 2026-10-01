@@ -34,14 +34,18 @@ bool qa_q3_register_sound(qa_q3_presentation_assets *a, const char *path, bool c
     qa_audio_asset_release(asset); --a->busy; return ok;
 }
 
+static bool sound_valid(qa_q3_presentation *p, int32_t handle)
+{
+    bool valid = handle >= 0 && (size_t)handle <= p->options.assets->sound_count;
+    if (!valid && p->options.print) p->options.print(p->options.context, "^3");
+    return valid;
+}
+
 bool qa_q3_presentation_sound_valid(qa_q3_presentation *p, int32_t handle)
 {
-    if (!p || p->busy) return false;
-    bool valid = handle >= 0 && (size_t)handle <= p->options.assets->sound_count;
-    if (!valid && p->options.print) {
-        ++p->busy; p->options.print(p->options.context, "^3"); --p->busy;
-    }
-    return valid;
+    qa_error ignored = {0};
+    if (!q3p_begin(p, &ignored)) return false;
+    return q3p_end(p, sound_valid(p, handle));
 }
 
 static bool actor(qa_q3_presentation *p, int32_t source, uint64_t *out, qa_error *error)
@@ -65,10 +69,10 @@ bool qa_q3_presentation_sound(qa_q3_presentation *p, int32_t handle, const qa_ve
 {
     if (!local && !origin && (entity < 0 || entity > 1024))
         return q3p_fail(error, QA_ERROR_ARGUMENT, "S_StartSound: bad entitynum");
-    if (!qa_q3_presentation_sound_valid(p, handle)) return true;
-    qa_audio_asset *asset = q3p_sound(p->options.assets, handle);
-    if (!asset) return true;
     if (!q3p_begin(p, error)) return false;
+    if (!sound_valid(p, handle)) return q3p_end(p, true);
+    qa_audio_asset *asset = q3p_sound(p->options.assets, handle);
+    if (!asset) return q3p_end(p, true);
     bool ok = p->options.audio && p->options.milliseconds;
     if (!ok) q3p_fail(error, QA_ERROR_UNSUPPORTED, "Q3 shared audio output or clock is unavailable");
     qa_audio_play play = sound(p, asset); play.channel = channel;
@@ -86,10 +90,10 @@ bool qa_q3_presentation_sound(qa_q3_presentation *p, int32_t handle, const qa_ve
 bool qa_q3_presentation_loop(qa_q3_presentation *p, int32_t handle, int32_t entity,
                              qa_vec3 origin, qa_vec3 velocity, bool persistent, qa_error *error)
 {
-    if (!qa_q3_presentation_sound_valid(p, handle)) return true;
-    qa_audio_asset *asset = q3p_sound(p->options.assets, handle);
-    if (!asset) return true;
     if (!q3p_begin(p, error)) return false;
+    if (!sound_valid(p, handle)) return q3p_end(p, true);
+    qa_audio_asset *asset = q3p_sound(p->options.assets, handle);
+    if (!asset) return q3p_end(p, true);
     bool ok = p->options.audio && p->options.frame_number;
     if (!ok) q3p_fail(error, QA_ERROR_UNSUPPORTED, "Q3 shared loop output or frame clock is unavailable");
     qa_audio_loop loop = {.sound = sound(p, asset), .velocity = velocity, .persistent = persistent};

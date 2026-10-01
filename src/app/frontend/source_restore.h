@@ -9,7 +9,7 @@ typedef struct frontend_source_role_identity {
 } frontend_source_role_identity;
 typedef struct frontend_source_group_plan {
     qa_actor_owner owner;
-    uint32_t seat;
+    uint32_t seat,launch_seat;
     uint64_t identity;
     uint64_t mounts_view, source_view;
     const frontend_source_role_identity *roles;

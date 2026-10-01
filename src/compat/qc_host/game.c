@@ -13,6 +13,10 @@ static uint32_t random_word(void *context) {
     qa_qc_game *game = context;
     return game->options.vm.host.random_u32(game->options.vm.host.context);
 }
+static double source_time_seconds(void *context) {
+    qa_qc_game *game = context;
+    return game->options.vm.host.source_time_seconds(game->options.vm.host.context);
+}
 static bool may_move(void *context, qa_actor_id actor) {
     qa_qc_game *game = context;
     return game->options.vm.host.may_move(game->options.vm.host.context, actor);
@@ -103,6 +107,7 @@ bool qa_qc_game_create(const qa_qc_program *program, const qa_qc_game_options *o
     vm.host.builtins = game->bindings; vm.host.builtin_count = count; vm.host.context = game;
     vm.host.server_active = active;
     vm.host.random_u32 = options->vm.host.random_u32 ? random_word : NULL;
+    vm.host.source_time_seconds = options->vm.host.source_time_seconds ? source_time_seconds : NULL;
     vm.host.may_move = options->vm.host.may_move ? may_move : NULL;
     vm.host.prepare_entity = options->vm.host.prepare_entity ? prepare : NULL;
     vm.host.unknown_builtin = options->vm.host.unknown_builtin ? unknown : NULL;
@@ -157,6 +162,7 @@ bool qa_qc_game_reset_level(qa_qc_game *game, qa_error *error) {
     vm.host.builtin_count = game->binding_count;
     vm.host.context = game; vm.host.server_active = active;
     vm.host.random_u32 = game->options.vm.host.random_u32 ? random_word : NULL;
+    vm.host.source_time_seconds = game->options.vm.host.source_time_seconds ? source_time_seconds : NULL;
     vm.host.may_move = game->options.vm.host.may_move ? may_move : NULL;
     vm.host.prepare_entity = game->options.vm.host.prepare_entity ? prepare : NULL;
     vm.host.unknown_builtin = game->options.vm.host.unknown_builtin ? unknown : NULL;

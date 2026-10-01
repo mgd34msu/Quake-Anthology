@@ -1,0 +1,4 @@
+f8d916ff8731ee9b76f3700903c21e3a1edae0bbe43c5b7812258787d58787c4  include/qa/cinematic_restore.h
+e456ac45813a54c8fdc1a6d1212c9b4cf997cc74e5eeb4b18361e4b4ada5304c  src/media/cinematic.c
+41d7b00a0578a92af8789c4f7f29af0c3e1bf62039655d7e7677377ce6df3e9d  include/qa/audio_save.h
+95a417fc53c5af296d17823cf33da7b245912b24b418300b72b46b93c6bde4dc  src/audio/engine_save.c

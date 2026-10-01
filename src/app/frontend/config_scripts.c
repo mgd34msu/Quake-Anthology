@@ -248,6 +248,20 @@ bool frontend_config_files_write_config(frontend_config_files *owner,const char 
     bool ok=qa_settings_save_config(store,seat_name?seat_name:path,cvars,seat,controllers,error);
     owner->writing=false; free(seat_name); free(path); return ok;
 }
+bool frontend_config_files_write_config_text(frontend_config_files *owner,const char *name,
+    const qa_command_context *source,qa_bytes text,qa_error *error)
+{
+    if (!owner || owner->writing || (text.size && !text.data) || !local(source,error)) return false;
+    char *path=qa_vfs_normalize_path(name,error); if (!path) return false;
+    qa_settings_store store=frontend_config_files_store(owner,false); char *seat_name=NULL;
+    if (source->origin==QA_COMMAND_SEAT) {
+        if (!seat_path(source->seat,path,&seat_name,error)) { free(path); return false; }
+        store=(qa_settings_store){owner->console,owner->console_writable};
+    }
+    owner->writing=true;
+    bool ok=qa_settings_write(store,seat_name?seat_name:path,text,error);
+    owner->writing=false; free(seat_name); free(path); return ok;
+}
 bool frontend_config_files_dump(frontend_config_files *owner,const char *name,const qa_command_context *source,
     const qa_console_buffer *buffer,qa_error *error)
 {

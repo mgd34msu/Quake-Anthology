@@ -55,6 +55,10 @@ bool qa_modes_team_info(qa_modes *m, qa_mode_id id, qa_actor_id recipient, qa_mo
     return true;
 }
 bool mode_team_info_frame(qa_modes *m, mode_instance *v, qa_error *e) {
+    if (m->options.hooks.q3_team_status_bound &&
+        MODE_CALLBACK(m, m->options.hooks.q3_team_status_bound(
+            m->options.hooks.context, v->id)))
+        return true;
     if (v->value.rules.source < QA_MODE_Q3 || v->value.rules.kind < QA_MODE_TEAM_DEATHMATCH ||
         v->value.time_ns - v->team_location_ns <= MODE_SECOND)
         return true;

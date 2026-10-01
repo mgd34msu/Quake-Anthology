@@ -286,13 +286,13 @@ bool application_q3_guest_publish_snapshot(application_provider *provider, uint3
 
 static q3g_client *role_client(q3g_role *role, qa_error *error)
 {
-    if (role->client >= 64) { application_fail(error, QA_ERROR_ARGUMENT, "Q3 client role has no source client ordinal"); return NULL; }
-    return &role->engine->clients[role->client];
+    if (!role->client_engine || role->client >= 64) { application_fail(error, QA_ERROR_ARGUMENT, "Q3 client role has no source client ordinal"); return NULL; }
+    return &role->client_engine->clients[role->client];
 }
 static const qa_q3_gamestate *gamestate(void *context)
 {
     q3g_role *role = context;
-    return role->client < 64 ? role->engine->clients[role->client].gamestate : NULL;
+    return role->client_engine && role->client < 64 ? role->client_engine->clients[role->client].gamestate : NULL;
 }
 static bool current_snapshot(void *context, int32_t *number, int32_t *time, qa_error *error)
 {
@@ -419,7 +419,7 @@ rescan: ;
 }
 static int32_t current_command(void *context)
 {
-    q3g_role *role = context; return role->client < 64 ? role->engine->clients[role->client].command_sequence : 0;
+    q3g_role *role = context; return role->client_engine && role->client < 64 ? role->client_engine->clients[role->client].command_sequence : 0;
 }
 static bool user_command(void *context, int32_t number, qa_q3_usercmd *out, bool *present, qa_error *error)
 {
@@ -441,13 +441,13 @@ static bool source_actor(void *context, uint32_t number, qa_actor_id *out,
     q3g_role *role = context;
     *out = (qa_actor_id){0}; *present = false;
     qa_q3_host_game_data data;
-    if (!role->engine->game || !qa_q3_host_game_data_read(role->engine->game->host, &data) ||
+    if (!role->client_engine || !role->client_engine->game || !qa_q3_host_game_data_read(role->client_engine->game->host, &data) ||
         number >= data.entity_count) return true;
-    if (!qa_q3_host_actor(role->engine->game->host, number, false, out, error)) return false;
+    if (!qa_q3_host_actor(role->client_engine->game->host, number, false, out, error)) return false;
     *present = out->registry && qa_actors_get(qa_session_actors(role->engine->provider->application->session), *out);
     return true;
 }
-application_provider *q3g_native_game_source(qa_application *application)
+application_provider *q3g_game_source(qa_application *application)
 {
     const qa_launch_snapshot *snapshot = application->routing_snapshot;
     if (!snapshot) snapshot = qa_application_launch(application);
@@ -462,10 +462,18 @@ application_provider *q3g_native_game_source(qa_application *application)
         application->routing_provider_count : application->provider_count;
     for (size_t i = 0; i < count; ++i) {
         application_provider *provider = providers[i];
-        if (provider && provider->launch && provider->kind == APPLICATION_PROVIDER_Q3 &&
-            !strcmp(provider->launch->selection.instance, binding->instance)) return provider;
+        if (!provider || !provider->launch || strcmp(provider->launch->selection.instance, binding->instance)) continue;
+        if (provider->kind == APPLICATION_PROVIDER_Q3) return provider;
+        struct application_q3_guest *engine = q3g_engine(provider);
+        if (engine && engine->game) return provider;
     }
     return NULL;
+}
+
+application_provider *q3g_native_game_source(qa_application *application)
+{
+    application_provider *source = q3g_game_source(application);
+    return source && source->kind == APPLICATION_PROVIDER_Q3 ? source : NULL;
 }
 
 bool q3g_client_bind(q3g_role *role, qa_q3_host_options *options, qa_error *error)
@@ -475,12 +483,15 @@ bool q3g_client_bind(q3g_role *role, qa_q3_host_options *options, qa_error *erro
             return application_fail(error, QA_ERROR_ARGUMENT, "Q3 timing source request requires a genuine local CGAME binding");
         return true;
     }
+    application_provider *source = q3g_game_source(role->engine->provider->application);
+    if (!source || !source->constructed || source->close_pending)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client role lacks its selected actual GAME source");
+    struct application_q3_guest *source_engine = q3g_engine(source);
+    const uint32_t *seats = source_engine ? source_engine->seats : role->engine->seats;
     for (uint32_t i = 0; i < 64; ++i)
-        if (role->engine->seats[i] == role->seat) { role->client = i; break; }
-    if (role->client >= 64) return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client role requires a configured seat");
-    application_provider *source = role->engine->game ? NULL :
-        q3g_native_game_source(role->engine->provider->application);
-    if (source) {
+        if (seats[i] == role->seat) { role->client = i; break; }
+    if (role->client >= 64) return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client role requires its actual GAME seat");
+    if (source->kind == APPLICATION_PROVIDER_Q3) {
         if (!source->constructed || !source->state.q3 || !source->native_q3_wire || source->close_pending)
             return application_fail(error, QA_ERROR_ARGUMENT,
                 "Q3 client role requires its constructed actual native GAME source");
@@ -490,15 +501,23 @@ bool q3g_client_bind(q3g_role *role, qa_q3_host_options *options, qa_error *erro
         role->source_owner = source->owner;
         role->client_source = source;
     } else {
+        if (!source_engine || !source_engine->game || !source_engine->game->host ||
+            source_engine->world != role->engine->world ||
+            (source_engine != role->engine && source_engine->client_leases == SIZE_MAX))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Q3 client binding lost its actual original GAME host");
         role->local_client = true;
-        role->source_owner = role->engine->provider->owner;
+        role->source_owner = source->owner;
+        role->client_source = source;
+        role->client_engine = source_engine;
+        if (source_engine != role->engine) ++source_engine->client_leases;
         options->client = (qa_q3_host_client_services){role, gamestate, current_snapshot, snapshot,
             server_command, current_command, user_command, command_values, source_actor};
     }
     if (options->client_time_from_game || options->client_time_cvars) {
-        qa_cvars *actual = source ? application_native_q3_console_registry(source) : NULL;
-        if (!source && role->engine->game)
-            qa_q3_host_console(role->engine->game->host, &actual, NULL);
+        qa_cvars *actual = source->kind == APPLICATION_PROVIDER_Q3 ?
+            application_native_q3_console_registry(source) : NULL;
+        if (source_engine && source_engine->game)
+            qa_q3_host_console(source_engine->game->host, &actual, NULL);
         if (!actual || (options->client_time_from_game &&
             (role->kind != QA_QVM_CGAME || options->client_time_cvars || options->client_time_owner)) ||
             (!options->client_time_from_game && (options->client_time_cvars != actual ||

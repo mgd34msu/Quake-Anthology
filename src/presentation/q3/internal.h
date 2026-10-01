@@ -2,6 +2,7 @@
 #define QA_Q3_PRESENTATION_INTERNAL_H
 
 #include "qa/q3_presentation.h"
+#include "qa/q3_assets_save.h"
 #include "qa/common_parse.h"
 #include "qa/scene_effects.h"
 #include "qa/text.h"
@@ -22,6 +23,9 @@ typedef struct q3p_name {
 } q3p_name;
 typedef struct q3p_model {
     qa_resource *resource;
+    qa_resource *lod_resources[3];
+    const qa_model *sources[3];
+    qa_q3_asset_model_lease source_leases[3];
     qa_q3_presentation_provider provider;
     qa_model model;
     qa_model_lod_set lods;
@@ -29,9 +33,14 @@ typedef struct q3p_model {
     qa_scene_world *world;
     qa_bounds bounds;
     uint32_t inline_model;
-    bool has_lods, owns_world;
+    uint64_t scene_ordinals[3], world_ordinal;
+    bool has_lods, owns_world, borrowed_models, borrowed_scenes, borrowed_world;
 } q3p_model;
-typedef struct q3p_skin { qa_resource *resource; qa_model_skin_map map; } q3p_skin;
+typedef struct q3p_skin {
+    qa_resource *resource;
+    qa_q3_presentation_provider provider;
+    qa_model_skin_map map;
+} q3p_skin;
 struct qa_q3_presentation_assets {
     qa_q3_presentation_asset_options options;
     q3p_name **names;
@@ -47,6 +56,7 @@ struct qa_q3_presentation_assets {
     qa_scene_world *world;
     qa_collision_geometry *geometry;
     unsigned busy, users;
+    bool capturing, codec_busy;
 };
 typedef struct q3p_polygon {
     int32_t shader;
@@ -72,6 +82,7 @@ typedef struct q3p_movie {
 struct qa_q3_presentation {
     qa_q3_presentation_options options;
     qa_scene_frame *frame;
+    const qa_q3_scene_options *submission;
     qa_scene_world *world;
     qa_collision_geometry *geometry;
     qa_bytes entity_text;
@@ -99,7 +110,10 @@ bool q3p_fail(qa_error *, qa_status, const char *);
 bool q3p_reserve(void **, size_t *capacity, size_t count, size_t width, qa_error *);
 bool q3p_begin(qa_q3_presentation *, qa_error *);
 bool q3p_end(qa_q3_presentation *, bool);
+bool q3p_capture_begin(qa_q3_presentation *, bool *owned_assets, qa_error *);
+void q3p_capture_end(qa_q3_presentation *, bool owned_assets);
 q3p_name *q3p_find_name(qa_q3_presentation_assets *, q3p_resource_kind, const char *);
+uint64_t q3p_name_hash(q3p_resource_kind, const char *);
 bool q3p_add_name(qa_q3_presentation_assets *, q3p_resource_kind, const char *,
                    int32_t handle, bool option, qa_error *);
 bool q3p_select(qa_q3_presentation_assets *, const char *, qa_q3_asset_kind,
@@ -109,6 +123,8 @@ bool q3p_shader_get(const qa_q3_presentation_assets *, int32_t, const qa_materia
 bool q3p_skin_get(const qa_q3_presentation_assets *, int32_t, const qa_model_skin_map **, qa_error *);
 qa_audio_asset *q3p_sound(const qa_q3_presentation_assets *, int32_t);
 void q3p_model_free(q3p_model *);
+const qa_model *q3p_model_source(const q3p_model *, uint32_t);
+bool q3p_assets_children_idle(const qa_q3_presentation_assets *);
 char *q3p_movie_path(const char *, qa_error *);
 bool q3p_movie_close(qa_q3_presentation *, uint32_t, qa_cinematic_end, qa_error *);
 bool q3p_picture(qa_q3_presentation *, const qa_material *, qa_scene_rect_f, qa_scene_vec4, qa_error *);

@@ -10,7 +10,7 @@ bool bot_runtime_mutable(qa_bot_runtime *r, qa_error *e) {
         bot_runtime_fail(e, "bot runtime is absent, closed or executing a callback");
 }
 bool qa_bot_runtime_can_destroy(const qa_bot_runtime *r) {
-    return !r || (!r->busy && !r->observation_leases && !r->owner_leases &&
+    return !r || (!r->busy && !r->observation_leases && !r->owner_leases && qa_bot_log_can_destroy(r->log) &&
         !qa_bot_moves_active(r->moves) && !qa_bot_goals_active(r->goals) &&
         !qa_bot_chat_system_active(r->chat_system));
 }
@@ -57,6 +57,19 @@ bool bot_runtime_integer(qa_bot_runtime *r, const char *name, const char *fallba
     *out = (int32_t)v->value;
     return true;
 }
+static bool log_open(void *context,const char *name,bool resume,uint64_t position,
+    qa_bot_log_stream *out,qa_error *error) {
+    qa_bot_runtime *runtime=context;
+    return runtime->services.log.open?runtime->services.log.open(runtime->services.log.context,name,resume,position,out,error):
+        bot_runtime_fail(error,"Bot log has no actual file host");
+}
+static bool log_print(void *context,qa_script_severity severity,const char *text,qa_error *error) {
+    qa_bot_runtime *runtime=context;
+    if(runtime->services.log.print)
+        return runtime->services.log.print(runtime->services.log.context,severity,text,error);
+    if(runtime->services.diagnostic) runtime->services.diagnostic(runtime->services.context,severity,text);
+    return true;
+}
 bool qa_bot_runtime_create(const qa_bot_runtime_options *options,
                             const qa_bot_runtime_services *services, qa_bot_runtime **out, qa_error *e) {
     if (!options || !services || !out || !services->random.next || !services->navigation ||
@@ -87,6 +100,10 @@ bool qa_bot_runtime_create(const qa_bot_runtime_options *options,
     r->globals = (qa_script_defines *)qa_bot_library_global_defines(r->library);
     qa_script_defines_retain(r->globals);
     r->options.library.preprocessor.globals = r->globals;
+    qa_bot_log_services log={.context=r,.open=log_open,.print=log_print};
+    if(!qa_bot_log_create(&log,&r->log,e)) {
+        (void)qa_bot_runtime_destroy(r,NULL);return false;
+    }
     if (!bot_runtime_owners_create(r, e)) {
         (void)qa_bot_runtime_destroy(r, NULL);
         return false;
@@ -94,14 +111,18 @@ bool qa_bot_runtime_create(const qa_bot_runtime_options *options,
     *out = r;
     return true;
 }
-static void close(qa_bot_runtime *r) {
+static bool close(qa_bot_runtime *r,bool source,qa_error *error) {
     bot_runtime_handles_close(r);
     qa_bot_moves_destroy(r->moves); r->moves = NULL;
     qa_bot_goals_destroy(r->goals); r->goals = NULL;
     qa_bot_chat_system_destroy(r->chat_system); r->chat_system = NULL;
     qa_bot_weapons_release(r->weapon_config); r->weapon_config = NULL;
     qa_bot_actions_shutdown(r->actions);
-    if (!r->closed) qa_script_defines_clear(r->globals);
+    if (!r->closed) {
+        qa_bot_library_variables_clear(r->library);
+        qa_script_defines_clear(r->globals);
+        if(source) {bool succeeded;if(!qa_bot_log_close(r->log,&succeeded,error)) return false;}
+    }
     qa_bot_library_destroy(r->library); r->library = NULL;
     if (r->options.observations != QA_BOT_OBSERVATION_MODULE) {
         bot_runtime_observations_close(r);
@@ -112,11 +133,13 @@ static void close(qa_bot_runtime *r) {
     }
     r->initialized = r->library_initialized = r->loaded = false;
     r->closed = true;
+    return true;
 }
 bool qa_bot_runtime_destroy(qa_bot_runtime *r, qa_error *e) {
     if (!r) return true;
     if (!bot_runtime_owners_idle(r, e)) return false;
-    close(r);
+    (void)close(r,false,NULL);
+    qa_bot_log_destroy(r->log);
     qa_bot_actions_destroy(r->actions);
     bot_runtime_observations_close(r);
     qa_bot_bsp_close(r->bsp);
@@ -130,8 +153,7 @@ bool qa_bot_runtime_shutdown(qa_bot_runtime *r, qa_error *e) {
     if (r && r->closed) return true;
     if (!bot_runtime_mutable(r, e)) return false;
     if (!bot_runtime_owners_idle(r, e)) return false;
-    close(r);
-    return true;
+    return close(r,true,e);
 }
 bool qa_bot_runtime_initialized(const qa_bot_runtime *r) { return r && r->initialized && !r->closed; }
 bool qa_bot_runtime_loaded(const qa_bot_runtime *r) { return r && r->loaded && !r->closed; }
@@ -142,6 +164,8 @@ qa_bot_random_source qa_bot_runtime_random_source(const qa_bot_runtime *r) {
     return r ? r->services.random : (qa_bot_random_source){0};
 }
 qa_bot_library *qa_bot_runtime_library(qa_bot_runtime *r) { return r ? r->library : NULL; }
+qa_script_defines *qa_bot_runtime_global_defines(qa_bot_runtime *r) { return r ? r->globals : NULL; }
+qa_bot_log *qa_bot_runtime_log(qa_bot_runtime *r) { return r ? r->log : NULL; }
 qa_bot_actions *qa_bot_runtime_actions(qa_bot_runtime *r) { return r ? r->actions : NULL; }
 qa_bot_goals *qa_bot_runtime_goals(qa_bot_runtime *r) { return r ? r->goals : NULL; }
 qa_bot_moves *qa_bot_runtime_moves(qa_bot_runtime *r) { return r ? r->moves : NULL; }

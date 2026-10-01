@@ -12,6 +12,9 @@ bool qa_q3_source_memory_allocate(qa_q3_game *, uint32_t size, uint32_t *offset,
 bool qa_q3_source_memory_rewind(qa_q3_game *, qa_error *);
 bool qa_q3_source_memory_read(const qa_q3_game *, uint32_t offset, void *, uint32_t size, qa_error *);
 bool qa_q3_source_memory_write(qa_q3_game *, uint32_t offset, const void *, uint32_t size, qa_error *);
+/* The byte span stays at its real GAME pool address through allocation/rewind.
+ * The caller must retain the source owner and obey its mutation lifetime. */
+bool qa_q3_source_memory_span(qa_q3_game *, uint32_t offset, uint32_t size, uint8_t **, qa_error *);
 bool qa_q3_source_memory_allocated(const qa_q3_game *, uint32_t *, qa_error *);
 bool qa_q3_source_memory_status(qa_q3_game *, qa_error *);
 #include "qa/game_q3_source_types.h"
@@ -48,5 +51,7 @@ bool qa_q3_source_team_sound(qa_q3_game *, qa_vec3, int32_t event_parameter, qa_
 bool qa_q3_source_team_gesture(qa_q3_game *, int32_t source_team, qa_error *);
 bool qa_q3_source_award_visual(qa_q3_game *, qa_actor_id, uint32_t flag, qa_error *);
 bool qa_q3_source_score_plum(qa_q3_game *, qa_actor_id, qa_vec3, int32_t score, qa_error *);
+/* Reset the three retained podium pointers without freeing their source rows. */
+bool qa_q3_source_reset_podium_players(qa_q3_game *, qa_error *);
 
 #endif

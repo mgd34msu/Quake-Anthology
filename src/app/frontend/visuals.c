@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "visual_restore.h"
+#include "visual_access.h"
 #include "save_private.h"
 #include "qa/persistence_content.h"
 #include "qa/material_library_save.h"
@@ -303,6 +304,43 @@ static bool model_read(frontend_visual_owner *owner, const char *path, const qa_
         qa_resource_release(model->resource); free(model); return false;
     }
     model->next = owner->models; owner->models = model; *out = model; return true;
+}
+static bool live_owner(qa_frontend *frontend, qa_actor_owner provider,
+    qa_game_family family, frontend_visual_owner **out, qa_error *error)
+{
+    if (!frontend || !frontend->application || !provider || !out ||
+        (family != QA_GAME_Q1 && family != QA_GAME_Q2 && family != QA_GAME_Q3) ||
+        !qa_application_provider_instance(frontend->application, provider))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Live model admission requires its actual selected provider");
+    qa_application_visual_view request = {.provider = provider, .family = family};
+    frontend_visual_owner *owner;
+    if (!visual_owner(frontend, &request, &owner, error)) return false;
+    qa_scene_family expected = family == QA_GAME_Q1 ? QA_SCENE_Q1
+        : family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q3;
+    if (owner->family != expected || !frontend_visuals_idle(frontend))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Live model admission differs from its idle appearance owner");
+    *out = owner; return true;
+}
+bool frontend_visual_media_acquire(qa_frontend *frontend, qa_actor_owner provider,
+    qa_game_family family, frontend_visual_owner_view *out, qa_error *error)
+{
+    frontend_visual_owner *owner;
+    if (!out || !live_owner(frontend, provider, family, &owner, error)) return false;
+    *out = (frontend_visual_owner_view){owner->owner, owner->family, owner->mounts, owner->images, owner->materials};
+    return true;
+}
+bool frontend_visual_model_acquire(qa_frontend *frontend, qa_actor_owner provider,
+    qa_game_family family, const char *path, const qa_resource *source,
+    frontend_visual_model_view *out, qa_error *error)
+{
+    if (!path || !*path || !out)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Live model admission requires its actual path and output");
+    frontend_visual_owner *owner;
+    if (!live_owner(frontend, provider, family, &owner, error)) return false;
+    frontend_model *model;
+    if (!model_read(owner, path, source, false, 0, &model, error)) return false;
+    *out = (frontend_visual_model_view){model->path, model->resource, model->model, model->scene};
+    return true;
 }
 static qa_model_transform transform(const qa_application_visual_view *view)
 {

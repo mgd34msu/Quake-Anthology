@@ -1,0 +1,4 @@
+0dfdf46081285bd3e42749e8704d7e2fd74236fd20772711139c7e363b90f553  src/app/application/native_q3_postgame.c
+b4b7ae409eb72282978973e9efcb950228d72608aa1c4d293f250744265d861a  src/app/application/native_q3_postgame.h
+cc459fc479931b826597e8405188b6eb05b8c4f0444436fd759747e984d79e2f  src/gameplay/q3/source_postgame.c
+24ab1ade0cb0674ab8c4a11d8b6669b3d201ad6a25c7f89663b9538bcf840bc2  src/gameplay/q3/source_postgame.h

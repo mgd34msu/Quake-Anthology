@@ -4,6 +4,7 @@
 #include "qa/strings.h"
 
 typedef struct owned_image owned_image;
+typedef struct qa_scene_resources_capture qa_scene_resources_capture;
 typedef struct scene_names { qa_strings *strings; size_t references; owned_image *images; size_t image_count; } scene_names;
 typedef struct image_lineage { uint64_t revision; size_t references; } image_lineage;
 struct owned_image {
@@ -33,5 +34,7 @@ struct qa_scene_resources {
     qa_scene_image_policy policies[3];
     bool has_policy[3], registrations_started;
     unsigned fullbright_first;
+    qa_scene_resources_capture *capture;
+    bool continuation_active, detached;
 };
 #endif

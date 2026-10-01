@@ -1,0 +1,4 @@
+d20ae45e5c0aae41fdec866575e9c2243cb58c8c7323b738c65d713952b4cc09  include/qa/console.h
+f2abfa1f34e55960c1b40c0f7b7b8818c8b4eeae6c603695d3992a595decbde7  src/console/commands.c
+bc33741b0fd04fad37546874524e033ed9bb2b098d4ac4b76ba4f182054d3e03  src/app/application/save.c
+85ab234e43a275a40df689bd98c5597d3b75643a0e4c7f208d9addf645ed6c94  docs/implementation/persistence-20260930.md

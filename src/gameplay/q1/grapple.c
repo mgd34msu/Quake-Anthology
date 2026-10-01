@@ -484,13 +484,6 @@ bool q1_grapple_frame(qa_q1_game *g, q1_player *player, qa_error *error) {
     }
     if (!q1_alive(g, hook->id) || !q1_alive(g, player->id))
         return true;
-    if (!ctf && player->weapon_frame == 1 && g->time >= player->animation_at + 0.1) {
-        player->weapon_frame = 2;
-        if (!q1_weapon_event(g, player, 0, 0, error))
-            return false;
-    }
-    if (!q1_alive(g, hook->id) || !q1_alive(g, player->id))
-        return true;
     if (ctf && g->options.edition == QA_Q1_CLASSIC)
         return true;
     qa_body_state body, head;

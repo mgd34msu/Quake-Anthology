@@ -25,10 +25,22 @@ static application_provider *physical_source(const qa_native_q3_client_service *
         provider->launch->selection.product==service->content_product &&
         application_native_q3_console_registry(provider)==service->services.client.source_cvars?provider:NULL;
 }
+static bool reader_binding(qa_application *app,const qa_native_q3_client_services *services,
+    const qa_q3_game *game,qa_native_q3_wire_basis *out,qa_error *error)
+{
+    return services->wire_reader && qa_native_q3_wire_reader_basis(services->wire_reader,out,error) &&
+        out->application==app && out->session==services->client.session && out->source_game==game &&
+        out->source_cvars==services->client.source_cvars && out->source_owner==services->client.source_owner &&
+        out->receiver==services->client.receiver && qa_actor_id_equal(out->actor,services->client.source_actor) &&
+        out->seat==services->client.seat && out->physical_client==services->client.source_client &&
+        out->publication_generation==services->publication_generation && out->map_revision==services->map_revision;
+}
 bool qa_native_q3_client_service_current(const qa_native_q3_client_service *service)
 {
     application_provider *provider=service?physical_source(service):NULL;
-    if (!provider || !service->services.current(service->services.context,&service->services) ||
+    qa_native_q3_wire_basis reader;
+    if (!provider || !reader_binding(service->application,&service->services,service->source_game,&reader,NULL) ||
+        reader.product!=service->product || !service->services.current(service->services.context,&service->services) ||
         !service->character.current(service->character.lifetime,&service->character)) return false;
     qa_actor_id actual; uint32_t physical; qa_q3_source_binding binding; qa_q3_native_client client;
     application_native_q3_wire_client_view transport; bool admitted;
@@ -54,7 +66,7 @@ bool qa_native_q3_client_source_basis_read(qa_application *app,
     const qa_native_q3_client_services *services,qa_native_q3_client_basis *out,qa_error *error)
 {
     if (!app || !services || !out || app->destroy_requested || services->client.session!=app->session ||
-        !services->source_lifetime || !services->current ||
+        !services->wire_reader || !services->current ||
         app->publication_generation!=services->publication_generation || app->map_revision!=services->map_revision)
         return native_client_fail(error,QA_ERROR_ARGUMENT,"Native CGAME import lacks its installed source-reader lease");
     application_provider *provider=application_world_provider(app,QA_ROLE_ENTITIES,"");
@@ -68,7 +80,7 @@ bool qa_native_q3_client_source_basis_read(qa_application *app,
     qa_actor_id actor; uint32_t slot; qa_q3_source_binding binding;
     qa_q3_native_client client;
     application_native_q3_wire_client_view transport; bool admitted;
-    qa_q3_product product; int32_t match_start;
+    qa_q3_product product; int32_t match_start; qa_native_q3_wire_basis reader;
     if (!qa_application_player_actor(app,services->client.seat,&actor) ||
         !qa_actor_id_equal(actor,services->client.source_actor) ||
         !qa_q3_native_client_slot(provider->state.q3,actor,&slot,error) || slot!=services->client.source_client ||
@@ -78,7 +90,8 @@ bool qa_native_q3_client_source_basis_read(qa_application *app,
         !application_native_q3_wire_client_read(provider,slot,&transport,&admitted,error) || !admitted ||
         !transport.begun || transport.bot || transport.seat!=services->client.seat ||
         !qa_actor_id_equal(transport.actor,actor) ||
-        !qa_q3_source_match_context_read(provider->state.q3,&product,&match_start,error))
+        !qa_q3_source_match_context_read(provider->state.q3,&product,&match_start,error) ||
+        !reader_binding(app,services,provider->state.q3,&reader,error) || reader.product!=product)
         return native_client_fail(error,QA_ERROR_ARGUMENT,"Native CGAME import lacks its true physical local client");
     *out=(qa_native_q3_client_basis){.application=app,.session=app->session,.source_game=provider->state.q3,
         .source_launch=provider->launch,.content=provider->launch->content,.source_owner=provider->owner,
@@ -96,7 +109,7 @@ bool native_client_allocate_bound(qa_application *app,const qa_native_q3_client_
         services->client.session!=source->session || services->client.source_owner!=source->source_owner ||
         !services->client.receiver || !services->client.service_owner || !services->client.frontend_lifetime ||
         !services->client.console || !services->client.cvars || !services->client.source_cvars || !services->input ||
-        !services->source_lifetime || !services->command_values ||
+        !services->wire_reader || !services->command_values ||
         qa_cvars_dialect(services->client.cvars)!=QA_CONSOLE_Q3 ||
         !services->client.native_source || services->publication_generation!=source->publication_generation ||
         services->map_revision!=source->map_revision || !services->current || !services->idle || !services->release ||
@@ -170,6 +183,7 @@ bool qa_native_q3_client_service_destroy(qa_native_q3_client_service *service,qa
 bool qa_native_q3_client_service_idle(const qa_native_q3_client_service *service)
 {
     return !service || (!service->updating && !service->time_busy && !service->action_busy &&
+        qa_native_q3_wire_reader_idle(service->services.wire_reader) &&
         service->services.idle(service->services.context) &&
         qa_cvars_observer_idle(service->services.client.cvars) &&
         qa_cvars_observer_idle(service->services.client.source_cvars) &&

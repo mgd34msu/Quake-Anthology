@@ -237,6 +237,7 @@ bool qa_model_skin_map_load(qa_bytes text, qa_model_skin_map *out, qa_error *err
             goto fail;
         memcpy(entry->shader, shader, shader_length + 1);
     }
+    map.capacity = capacity;
     *out = map;
     return true;
 fail:

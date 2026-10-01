@@ -8,6 +8,10 @@ typedef struct qa_font_checkpoint_refs {
     bool (*resource_encode)(void *, const qa_resource *, uint64_t *, qa_error *);
     bool (*resource_decode)(void *, uint64_t, const qa_resource **, qa_error *);
 } qa_font_checkpoint_refs;
+typedef struct qa_font_library_capture qa_font_library_capture;
+bool qa_font_library_capture_begin(const qa_font_library *, qa_font_library_capture **, qa_error *);
+void qa_font_library_capture_end(qa_font_library_capture *);
+bool qa_font_library_idle(const qa_font_library *);
 /* Call at the owning frontend's idle boundary. Resolvers return borrowed
  * versions already admitted to the library's actual image/content owners.
  * Restore retains atlas/source versions, preserves existing heap fonts in

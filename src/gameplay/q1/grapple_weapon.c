@@ -61,16 +61,62 @@ bool qa_q1_grapple_weapon_tick(qa_q1_game *g, qa_actor_id actor, const qa_q1_inp
                 return false;
         }
     }
-    if (q1_entity(g, player->hook))
-        return moving_frame(g, player, error);
+    return true;
+}
+static bool frame_event(qa_q1_game *g, q1_player *player, int32_t frame, qa_error *error) {
+    player->grapple_weapon.frame = player->weapon_frame = frame;
+    qa_builtin_event event = {.kind = QA_BUILTIN_ANIMATION,
+                              .family = QA_GAME_Q1,
+                              .provider = g->options.provider,
+                              .actor = player->id,
+                              .time_ns = g->time_ns,
+                              .frame = frame,
+                              .flags = QA_Q1_CTF_GRAPPLE};
+    if (!qa_builtin_resource(&g->services, "progs/v_star.mdl", &event.resource, error))
+        return false;
+    return qa_builtin_emit(&g->services, &event, error);
+}
+bool q1_grapple_weapon_frame(qa_q1_game *g, q1_player *player, qa_error *error) {
+    qa_actor_id actor = player->id;
+    q1_actor *hook = q1_entity(g, player->hook);
+    if (hook && hook->kind == Q1_PROJECTILE && hook->state.projectile.kind == Q1_CTF_HOOK) {
+        qa_body_state body;
+        if (!qa_world_body_read(g->services.world, actor, &body, error))
+            return !q1_player_get(g, actor);
+        player = q1_player_get(g, actor);
+        if (!player)
+            return true;
+        int32_t next = qa_vec_length(body.velocity) >= 750 ? 4 : 3;
+        return next == player->grapple_weapon.frame || frame_event(g, player, next, error);
+    }
     if (!q1_entity(g, player->grapple_weapon.animation) && player->grapple_weapon.frame != 0) {
         if (player->grapple_weapon.frame != 5) {
-            player->grapple_weapon.frame = 5;
-            player->grapple_weapon.release_time = g->time + 0.1;
-        } else if (g->time >= player->grapple_weapon.release_time)
-            player->grapple_weapon.frame = 0;
+            if (!frame_event(g, player, 5, error))
+                return false;
+            player = q1_player_get(g, actor);
+            if (!player)
+                return true;
+            return q1_think_deadline(g->time, 0.1, &player->grapple_weapon.release_time, error);
+        }
+        if (g->time >= player->grapple_weapon.release_time)
+            return frame_event(g, player, 0, error);
     }
     return true;
+}
+bool qa_q1_grapple_weapon_frame(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    q1_player *player = q1_player_get(g, actor);
+    bool ok = !player || q1_grapple_weapon_frame(g, player, error);
+    if (!qa_q1_game_operation_live(&operation)) {
+        if (ok || (error && error->code == QA_OK))
+            qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+                         "Q1 teardown requested during grapple weapon frame");
+        ok = false;
+    }
+    qa_q1_game_operation_end(&operation);
+    return ok;
 }
 bool q1_grapple_weapon_launch(qa_q1_game *g, q1_actor *timer, qa_error *error) {
     q1_player *player = q1_player_get(g, timer->owner);

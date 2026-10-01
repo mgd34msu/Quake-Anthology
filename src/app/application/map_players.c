@@ -14,6 +14,7 @@
 #include "bots_private.h"
 #include "bots_catalog.h"
 #include "bot_world.h"
+#include "character_selection.h"
 #include "qa/game_q3_client.h"
 #include "qa/game_q3_clients.h"
 #include "qa/game_q3_source.h"
@@ -323,19 +324,15 @@ static bool record_bot_choice(application_player_record *record,
     return true;
 }
 
-static bool q3_initial_userinfo(application_player_record *record,
-    const qa_launch_seat *seat, qa_error *error)
+static bool q3_initial_userinfo(qa_catalog *catalog, const qa_launch_choices *choices,
+    application_player_record *record, const qa_launch_seat *seat, qa_error *error)
 {
     if (record->userinfo != NULL)
         return true;
     char userinfo[1024];
-    int length = snprintf(userinfo, sizeof(userinfo),
-        "\\name\\%.900s\\model\\sarge\\team\\%s\\ip\\localhost",
-        strchr(seat->name, '\\') ? "badinfo" : seat->name,
-        seat->spectator ? "s" : seat->team && seat->team[0] ? seat->team : "free");
-    if (length < 0 || (size_t)length >= sizeof(userinfo))
-        return application_fail(error, QA_ERROR_ARGUMENT,
-                                "Q3 initial userinfo exceeds its source extent");
+    if (!application_character_userinfo(catalog, choices, seat, QA_GAME_Q3,
+            true, userinfo, sizeof(userinfo), error)) return false;
+    size_t length = strlen(userinfo);
     record->userinfo = malloc((size_t)length + 1);
     if (record->userinfo == NULL)
         return application_fail(error, QA_ERROR_MEMORY,
@@ -689,7 +686,8 @@ bool application_players_prepare(qa_application *application,
         }
         if ((character->component.clock.kind == QA_CLOCK_Q3 ||
              publication->map_provider->component.clock.kind == QA_CLOCK_Q3) &&
-            !q3_initial_userinfo(&travel->roster->records[i], seat, error)) {
+            !q3_initial_userinfo(qa_launch_snapshot_catalog(publication->candidate), choices,
+                &travel->roster->records[i], seat, error)) {
             application_players_dispose(travel);
             return false;
         }
@@ -1548,8 +1546,8 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         if (!reserved_bot && !bind_q3_player_roles(application, record, arsenal, error)) return false;
         if (!reserved_bot && map_source->kind == APPLICATION_PROVIDER_Q2 && map_source != character) {
             char userinfo[2304];
-            snprintf(userinfo, sizeof(userinfo), "\\name\\%.2000s\\skin\\male/grunt\\spectator\\%d",
-                strchr(seat->name, '\\') ? "badinfo" : seat->name, seat->spectator ? 1 : 0);
+            if (!application_character_userinfo(application->catalog, choices, seat, QA_GAME_Q2,
+                    false, userinfo, sizeof(userinfo), error)) return false;
             const char *info = "";
             qa_q2_connection_result connection;
             if (phase != PLAYER_ADMISSION_BOT_RESERVE) {
@@ -1689,10 +1687,19 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
         }
         if (character->kind == APPLICATION_PROVIDER_Q2) {
             char userinfo[2304];
-            snprintf(userinfo, sizeof(userinfo), "\\name\\%.2000s\\skin\\male/grunt\\spectator\\%d",
-                     strchr(seat->name, '\\') != NULL ? "badinfo" : seat->name, seat->spectator ? 1 : 0);
+            if (!application_character_userinfo(application->catalog, choices, seat, QA_GAME_Q2,
+                    false, userinfo, sizeof(userinfo), error)) return false;
+            const char *source_info = record->userinfo != NULL ? record->userinfo : userinfo;
+            char initial_info[2304];
+            if (!reserved_bot && seat->local && !record->remote && record->userinfo &&
+                map_source->component.clock.kind == QA_CLOCK_Q3 && !carry->present &&
+                !carry->q3_client && !round) {
+                if (!application_character_q2_initial_skin(application->catalog, choices, seat,
+                        record->userinfo, initial_info, sizeof(initial_info), error)) return false;
+                source_info = initial_info;
+            }
             qa_q2_connection_result connection;
-            if (!reserved_bot && !qa_q2_player_connect(character->state.q2, record->userinfo != NULL ? record->userinfo : userinfo, seat->bot, &connection, error))
+            if (!reserved_bot && !qa_q2_player_connect(character->state.q2, source_info, seat->bot, &connection, error))
                 return false;
             if (!reserved_bot && !connection.allowed)
                 return application_fail(error, QA_ERROR_ARGUMENT, connection.reason);
@@ -1745,9 +1752,8 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                     continue;
                 }
                 char userinfo[1024];
-                snprintf(userinfo, sizeof(userinfo), "\\name\\%.900s\\model\\sarge\\team\\%s",
-                    strchr(seat->name, '\\') != NULL ? "badinfo" : seat->name,
-                    seat->spectator ? "s" : seat->team != NULL && seat->team[0] ? seat->team : "free");
+                if (!application_character_userinfo(application->catalog, choices, seat, QA_GAME_Q3,
+                        false, userinfo, sizeof(userinfo), error)) return false;
                 bool accepted = false;
                 application_q3_world_startup startup;
                 bool replaced = carry->q3_client && provider == map_source &&
@@ -1769,9 +1775,8 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
             } else if (provider->kind == APPLICATION_PROVIDER_NATIVE &&
                        provider->state.native.q2_engine != NULL) {
                 char userinfo[2304];
-                snprintf(userinfo, sizeof(userinfo), "\\name\\%.2000s\\skin\\male/grunt\\spectator\\%d",
-                    strchr(seat->name, '\\') != NULL ? "badinfo" : seat->name,
-                    seat->spectator ? 1 : 0);
+                if (!application_character_userinfo(application->catalog, choices, seat, QA_GAME_Q2,
+                        false, userinfo, sizeof(userinfo), error)) return false;
                 bool accepted = false;
                 if (!application_native_q2_client_admit(provider, record->client_slot + 1,
                     actor, record->userinfo != NULL ? record->userinfo : userinfo,
@@ -1810,9 +1815,13 @@ static bool publish_player(qa_application *application, const qa_launch_choices 
                 return false;
         }
         if (keep_inventory && carry->has_weapon2 && arsenal->kind == APPLICATION_PROVIDER_Q2 &&
-            carry->arsenal_owner == arsenal->owner &&
-            !qa_q2_weapon_bind(arsenal->state.q2, actor, carry->weapon2, error))
-            return false;
+            carry->arsenal_owner == arsenal->owner) {
+            qa_q2_weapon_state state;
+            if (!qa_q2_weapon_read(arsenal->state.q2, actor, &state, error)) return false;
+            state.weapon = carry->weapon2;
+            state.pending = QA_Q2_WEAPON_NONE;
+            if (!qa_q2_weapon_restore(arsenal->state.q2, actor, &state, error)) return false;
+        }
         if (keep_inventory && carry->has_weapon3 && arsenal->kind == APPLICATION_PROVIDER_Q3 &&
             carry->arsenal_owner == arsenal->owner) {
             qa_q3_player_state state;

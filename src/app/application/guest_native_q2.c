@@ -1,12 +1,19 @@
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_attack.h"
 #include "guest_native_q2_combat.h"
+#include "guest_q2_control.h"
+#include "q3_product.h"
+#include "startup_flow.h"
+#include "qa/console_cvar_observer.h"
+
+static bool load_host(struct application_native_q2 *, qa_error *);
 
 bool application_native_q2_idle(const application_provider *provider)
 {
     const struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     return !engine || (!engine->baseline && !engine->calls && qa_world_idle(engine->world) &&
         (!engine->console || qa_console_idle(engine->console)) &&
+        (!engine->cvars || qa_cvars_observer_idle(engine->cvars)) &&
         (!provider->state.native.host || qa_native_host_destroy_ready(provider->state.native.host)));
 }
 
@@ -78,8 +85,9 @@ static void console_print(void *opaque, const qa_command_context *context, const
 static bool read_script(void *opaque, const qa_command_context *context, const char *path,
                          qa_bytes *out, void **lease, qa_error *error)
 {
-    (void)context;
     struct application_native_q2 *engine = opaque;
+    if (application_startup_source_active(engine->provider))
+        return application_startup_script_read(engine->provider, context, path, out, lease, error);
     qa_resource *resource = NULL;
     if (!qa_vfs_acquire(engine->provider->launch->content, path, &resource, NULL, error)) return false;
     *out = qa_resource_bytes(resource); *lease = resource;
@@ -87,25 +95,57 @@ static bool read_script(void *opaque, const qa_command_context *context, const c
 }
 static void release_script(void *opaque, void *lease)
 {
-    (void)opaque; qa_resource_release(lease);
+    struct application_native_q2 *engine = opaque;
+    if (application_startup_source_active(engine->provider)) {
+        application_startup_script_release(engine->provider, lease);
+        return;
+    }
+    qa_resource_release(lease);
+}
+static void script_complete(void *opaque, const qa_command_context *context,
+    const char *path, bool success)
+{
+    struct application_native_q2 *engine = opaque;
+    application_startup_script_complete(engine->provider, context, path, success);
+}
+static bool allow_command(void *opaque, const qa_command_invocation *command)
+{
+    struct application_native_q2 *engine = opaque;
+    return application_startup_command_allowed(engine->provider, command);
+}
+static qa_cvars *cvar_owner(void *opaque, const qa_command_context *command, const char *name)
+{
+    struct application_native_q2 *engine = opaque;
+    qa_cvars *owner = application_startup_cvar_owner(engine->provider, engine->console, command, name);
+    return owner ? owner : engine->cvars;
+}
+static qa_cvars *visible_cvars(void *opaque, const qa_command_context *command, size_t index)
+{
+    struct application_native_q2 *engine = opaque;
+    qa_cvars *owner = NULL;
+    if (application_startup_visible_cvars(engine->provider, engine->console, command, index, &owner))
+        return owner;
+    return index == 0 ? engine->cvars : NULL;
 }
 static qa_command_result console_command(void *opaque, const qa_command_invocation *command,
                                             qa_error *error)
 {
     struct application_native_q2 *engine = opaque;
     bool handled = false;
+    if (application_startup_source_active(engine->provider))
+        return application_command_fallback(engine->provider->application, command, error);
     if (!engine->initialized) return QA_COMMAND_UNHANDLED;
     if (!application_native_q2_console_command(engine->provider, command->context.actor,
             command->raw, &handled, error)) return QA_COMMAND_FAILED;
     return handled ? QA_COMMAND_HANDLED : QA_COMMAND_UNHANDLED;
 }
 
-bool application_construct_native_q2(qa_application *app, application_provider *provider,
+static bool prepare_owner(qa_application *app, application_provider *provider,
     qa_world *world, const qa_product *product, const qa_launch_choices *choices, qa_error *error)
 {
     if (!app || !provider || !world || !product || !choices || product->family != QA_GAME_Q2 ||
         provider->kind != APPLICATION_PROVIDER_NATIVE || !provider->launch->artifact ||
-        choices->seat_count > 256)
+        choices->seat_count > 256 || provider->state.native.q2_engine)
         return application_fail(error, QA_ERROR_ARGUMENT, "Invalid native Q2 owner admission");
     struct application_native_q2 *engine = calloc(1, sizeof(*engine));
     if (!engine) return application_fail(error, QA_ERROR_MEMORY, "Allocating native Q2 owner");
@@ -127,15 +167,19 @@ bool application_construct_native_q2(qa_application *app, application_provider *
             provider->state.native.module, &engine->declaration, error)) return false;
     if (!application_native_q2_inventory_prepare(engine, error) ||
         !application_native_q2_attack_prepare(engine, error)) return false;
-    if (!application_native_q2_combat_prepare(engine, error)) return false;
+    if (!application_native_q2_combat_prepare(engine, error) ||
+        !application_q2_control_prepare(engine, error)) return false;
     qa_console_dialect dialect = engine->profile == QA_NATIVE_Q2_GAME_API3 ? QA_CONSOLE_Q2 : QA_CONSOLE_Q2_RERELEASE;
     engine->command_context = (qa_command_context){.owner = provider->owner,
         .origin = QA_COMMAND_SERVER, .dialect = dialect};
     qa_cvar_options cvars = {.dialect = dialect};
     engine->cvars = qa_cvars_create(&cvars, error);
     if (!engine->cvars) return false;
+    if (!application_startup_seed_source(provider, engine->cvars, error)) return false;
     qa_console_options console = {.context = engine->command_context, .cvars = engine->cvars,
         .user = engine, .print = console_print, .read_script = read_script, .release_script = release_script,
+        .script_complete = script_complete, .allow_command = allow_command,
+        .cvar_owner = cvar_owner, .visible_cvars = visible_cvars,
         .source_command = console_command, .capture_context = capture_context, .context_active = context_active};
     engine->console = qa_console_create(&console, error);
     if (!engine->console) return false;
@@ -185,15 +229,55 @@ bool application_construct_native_q2(qa_application *app, application_provider *
         .clock = provider->launch->selection.clock, .state = engine,
         .begin_frame = cgame ? NULL : begin_frame, .end_frame = cgame ? NULL : end_frame,
         .actor_released = cgame ? NULL : actor_released};
+    engine->prepared = true;
     return true;
 }
 
-bool application_native_q2_activate(struct application_native_q2 *engine, qa_error *error)
+bool application_guest_native_q2_console_prepare(qa_application *app, application_provider *provider,
+    qa_world *world, const qa_product *product, const qa_launch_choices *choices,
+    qa_console **console, qa_cvars **cvars, qa_command_context *command, qa_error *error)
+{
+    if (!app || !provider || !world || !product || !choices || !console || !cvars || !command ||
+        provider->application != app || provider->constructed || provider->attached || provider->close_pending ||
+        provider->product != product || application_startup_flow_provider(app, provider->owner) != provider ||
+        !qa_session_safe(app->session) || !qa_world_idle(world))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 source preparation lost its actual detached candidate");
+    if (!prepare_owner(app, provider, world, product, choices, error) ||
+        !load_host(provider->state.native.q2_engine, error)) return false;
+    struct application_native_q2 *engine = provider->state.native.q2_engine;
+    *console = engine->console; *cvars = engine->cvars; *command = engine->command_context;
+    return true;
+}
+
+bool application_construct_native_q2(qa_application *app, application_provider *provider,
+    qa_world *world, const qa_product *product, const qa_launch_choices *choices, qa_error *error)
+{
+    struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
+    if (!engine) {
+        if (!prepare_owner(app, provider, world, product, choices, error)) return false;
+        engine = provider->state.native.q2_engine;
+    } else if (!app || !world || !product || !choices || provider->application != app ||
+        provider->product != product || product->family != QA_GAME_Q2 || engine->provider != provider ||
+        engine->world != world || !engine->prepared || !provider->constructed || provider->attached ||
+        engine->initialized || engine->map_ready || engine->shutting_down || engine->activation_failed ||
+        !provider->state.native.host || !application_native_q2_idle(provider) ||
+        qa_native_get_lifecycle(qa_native_host_instance(provider->state.native.host)) != QA_NATIVE_LOADED)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 construction lost its retained prepared owner");
+    return application_startup_source_preinit(provider, engine->console, engine->cvars,
+        &engine->command_context, error) && (app->operation == APPLICATION_PERSISTING ||
+        qa_cvars_apply_latched(engine->cvars, NULL, error));
+}
+
+static bool load_host(struct application_native_q2 *engine, qa_error *error)
 {
     application_provider *provider = engine->provider;
+    if (engine->activation_failed) {
+        if (error) *error = engine->activation_error;
+        return false;
+    }
     if (provider->state.native.host) return true;
-    if (!provider->constructed || !provider->attached || engine->calls)
-        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 loading requires its committed owner");
+    if (!engine->prepared || engine->calls)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 loading requires its complete idle source owner");
     uint64_t interval = provider->component.clock.interval_ns;
     if (engine->profile == QA_NATIVE_Q2_CGAME_API2023 && !engine->application &&
         provider->application->native_q2_services &&
@@ -201,7 +285,8 @@ bool application_native_q2_activate(struct application_native_q2 *engine, qa_err
             provider->application, provider->owner, engine->profile, &engine->platform,
             &engine->application, &engine->application_context, error)) return false;
     qa_native_host_instance_options instance = {.declaration = engine->declaration,
-        .observe = engine->source_attack != NULL || engine->source_combat != NULL,
+        .observe = engine->source_attack != NULL || engine->source_combat != NULL ||
+            engine->source_control != NULL,
         .declaration_digest = qa_native_declaration_digest(engine->declaration),
         .runner = provider->application->native_runner,
         .tick_rate = interval ? (uint32_t)(UINT64_C(1000000000) / interval) : 0,
@@ -239,7 +324,22 @@ bool application_native_q2_activate(struct application_native_q2 *engine, qa_err
             &provider->state.native.host, error);
     }
     --engine->calls;
+    if (!ok) {
+        engine->activation_failed = true;
+        engine->activation_error = error ? *error : (qa_error){0};
+        if (engine->activation_error.code == QA_OK)
+            qa_error_set(&engine->activation_error, QA_ERROR_UNSUPPORTED, 0,
+                "Native Q2 source owner activation failed");
+        if (error) *error = engine->activation_error;
+    }
     return ok;
+}
+
+bool application_native_q2_activate(struct application_native_q2 *engine, qa_error *error)
+{
+    if (!engine || !engine->provider->constructed || !engine->provider->attached || engine->calls)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 loading requires its committed owner");
+    return load_host(engine, error);
 }
 
 bool application_native_q2_spawn_map(application_provider *provider, const qa_bsp_view *map,
@@ -274,6 +374,7 @@ bool application_native_q2_spawn_map(application_provider *provider, const qa_bs
     }
     if (ok) ok = application_native_q2_attack_activate(engine, error);
     if (ok) ok = application_native_q2_combat_activate(engine, error);
+    if (ok) ok = application_q2_control_activate(engine, error);
     if (ok) ok = qa_native_host_spawn_entities(provider->state.native.host,
         qa_strings_cstr(qa_session_strings(provider->application->session), name), copy,
         spawn ? qa_strings_cstr(qa_session_strings(provider->application->session), spawn) : "", error);
@@ -298,14 +399,15 @@ bool application_native_q2_retire_map(application_provider *provider, qa_error *
                 ++engine->calls;
                 bool ok = qa_native_host_shutdown(provider->state.native.host, false, error);
                 --engine->calls;
+                if (qa_native_get_lifecycle(qa_native_host_instance(provider->state.native.host)) == QA_NATIVE_SHUT_DOWN)
+                    engine->initialized = false;
                 if (!ok) return false;
             }
             engine->initialized = false;
         }
         if (!qa_native_host_destroy_ready(provider->state.native.host))
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 cgame map shutdown has not drained");
-        bool ok = qa_native_host_destroy(provider->state.native.host, error);
-        provider->state.native.host = NULL;
+        bool ok = qa_native_host_destroy_owned(&provider->state.native.host, error);
         if (!ok) return false;
     }
     if (engine->profile == QA_NATIVE_Q2_CGAME_API2023) {
@@ -321,6 +423,7 @@ bool application_native_q2_retire_map(application_provider *provider, qa_error *
     }
     for (uint32_t i = 1; i < 257; ++i)
         if (engine->clients[i].actor.registry && !application_native_q2_client_disconnect(provider, i, error)) return false;
+    if (!application_q2_control_suspend(engine, error)) return false;
     engine->map_ready = provider->map_bound = false;
     qa_cvars_set_server_active(engine->cvars, false);
     return true;
@@ -345,6 +448,8 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
             ++engine->calls;
             ok = qa_native_host_shutdown(provider->state.native.host, false, &first);
             --engine->calls;
+            if (qa_native_get_lifecycle(qa_native_host_instance(provider->state.native.host)) == QA_NATIVE_SHUT_DOWN)
+                engine->initialized = false;
             if (!ok) {
                 engine->shutting_down = false;
                 if (error) *error = first;
@@ -354,16 +459,20 @@ bool application_native_q2_deconstruct(application_provider *provider, qa_error 
         }
         if (!application_native_q2_attack_close(engine, error)) return false;
         if (!application_native_q2_combat_close(engine, error)) return false;
+        if (!application_q2_control_close(engine, error)) return false;
         qa_error cleanup = {0};
         if (!qa_native_host_destroy_ready(provider->state.native.host))
             return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 host teardown has not drained");
         ++engine->calls;
-        bool closed = qa_native_host_destroy(provider->state.native.host, &cleanup);
-        --engine->calls; provider->state.native.host = NULL;
+        bool closed = qa_native_host_destroy_owned(&provider->state.native.host, &cleanup);
+        --engine->calls;
         if (!closed) { if (error) *error = cleanup; return false; }
     }
     if (!application_native_q2_attack_close(engine, error)) return false;
     if (!application_native_q2_combat_close(engine, error)) return false;
+    if (!application_q2_control_close(engine, error)) return false;
+    if (engine->console && engine->cvars &&
+        !application_startup_source_retire(provider, engine->console, engine->cvars, error)) return false;
     if (engine->platform.release_frontend)
         engine->platform.release_frontend(engine->platform.frontend_lifetime);
     qa_console_destroy(engine->console); qa_cvars_destroy(engine->cvars);

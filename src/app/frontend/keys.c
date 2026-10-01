@@ -13,11 +13,12 @@ struct frontend_key_profile {
     uint64_t id, nonce;
     qa_application_console_scope registry;
     size_t references;
-    bool demo, dedicated, imported_state, busy;
+    bool demo, dedicated, imported_state, busy, detached;
 };
 struct frontend_keys {
     frontend_key_profile *profiles, *active;
     uint64_t next_id;
+    frontend_keys_publication *publication;
     bool restoring;
 };
 static bool fail(qa_error *error,qa_status code,const char *text)
@@ -57,6 +58,7 @@ bool frontend_key_profile_release(frontend_key_profile *profile,qa_error *error)
 bool frontend_keys_destroy(frontend_keys *owner,qa_error *error)
 {
     if (!owner) return true;
+    if (owner->publication) return fail(error,QA_ERROR_ARGUMENT,"Q3 key publication still retains its actual candidate ticket");
     for (frontend_key_profile *profile=owner->profiles;profile;profile=profile->next)
         if (profile->busy || !frontend_config_files_idle(profile->files) ||
             profile->references>(size_t)(profile==owner->active)+(size_t)owner->restoring)
@@ -122,26 +124,64 @@ bool frontend_key_profile_bind(frontend_key_profile *profile,qa_cvars *cvars,con
         if (!ok) { qa_q3_key_destroy(state); return false; }
         profile->state=state;
     } else if (!qa_q3_key_rebind_cvars(profile->state,cvars,error)) return false;
-    profile->cvars=cvars; profile->imported_state=false; memset(profile->imported,0,sizeof(profile->imported)); return true;
+    profile->cvars=cvars; profile->detached=false; profile->imported_state=false; memset(profile->imported,0,sizeof(profile->imported)); return true;
+}
+bool frontend_key_profile_scope(frontend_key_profile *profile,qa_application_console_scope scope,
+    const qa_cvars *cvars,qa_error *error)
+{
+    if (!profile || profile->busy || profile->imported_state || profile->detached || profile->cvars!=cvars ||
+        !scope.provider || (scope.kind!=QA_APPLICATION_CONSOLE_Q3_GAME && scope.kind!=QA_APPLICATION_CONSOLE_Q3_CGAME) ||
+        (scope.kind==QA_APPLICATION_CONSOLE_Q3_GAME && scope.seat) || scope.seat>=QA_INPUT_LOCAL_SEATS)
+        return fail(error,QA_ERROR_ARGUMENT,"Q3 profile scope requires its actual live GAME or remote CGAME registry");
+    profile->registry=scope; return true;
+}
+bool frontend_keys_publication_ready(frontend_keys *owner,frontend_key_profile *profile,qa_cvars *cvars,
+    frontend_keys_publication *ticket,qa_error *error)
+{
+    if (!owner || owner->restoring || owner->publication || !ticket || ticket->owner ||
+        (owner->active && owner->active->busy) ||
+        (owner->active && owner->active!=profile && owner->active->references==1 && !frontend_config_files_idle(owner->active->files)) ||
+        (profile && (profile->owner!=owner || profile->imported_state || !profile->state || profile->busy ||
+            profile->detached || !cvars || profile->cvars!=cvars)))
+        return fail(error,QA_ERROR_ARGUMENT,"Key publication requires its completely prepared source profile");
+    if (profile && owner->active!=profile && !frontend_key_profile_retain(profile,error)) return false;
+    *ticket=(frontend_keys_publication){owner,owner->active,profile,cvars}; owner->publication=ticket; return true;
+}
+void frontend_keys_publication_publish(frontend_keys_publication *ticket)
+{
+    frontend_keys *owner=ticket->owner;
+    frontend_key_profile *previous=ticket->previous;
+    owner->active=ticket->next; owner->publication=NULL;
+    if (previous && previous!=ticket->next && !--previous->references) {
+        frontend_key_profile **at=&owner->profiles;
+        while (*at!=previous) at=&(*at)->next;
+        *at=previous->next; profile_free(previous);
+    }
+    *ticket=(frontend_keys_publication){0};
+}
+void frontend_keys_publication_discard(frontend_keys_publication *ticket)
+{
+    if (!ticket || !ticket->owner) return;
+    frontend_keys *owner=ticket->owner;
+    if (ticket->next && ticket->next!=ticket->previous && !--ticket->next->references) {
+        frontend_key_profile **at=&owner->profiles;
+        while (*at!=ticket->next) at=&(*at)->next;
+        *at=ticket->next->next; profile_free(ticket->next);
+    }
+    owner->publication=NULL; *ticket=(frontend_keys_publication){0};
 }
 bool frontend_keys_publish(frontend_keys *owner,frontend_key_profile *profile,qa_cvars *cvars,qa_error *error)
 {
-    if (!owner || owner->restoring || (owner->active && owner->active->busy) ||
-        (owner->active && owner->active!=profile && owner->active->references==1 && !frontend_config_files_idle(owner->active->files)) ||
-        (profile && (profile->owner!=owner || profile->imported_state || !profile->state || profile->busy)))
-        return fail(error,QA_ERROR_ARGUMENT,"Key publication requires its completely prepared source profile");
-    if (profile && !frontend_key_profile_bind(profile,cvars,NULL,error)) return false;
-    if (owner->active==profile) return true;
-    if (profile && !frontend_key_profile_retain(profile,error)) return false;
-    frontend_key_profile *previous=owner->active; owner->active=profile;
-    return frontend_key_profile_release(previous,error);
+    frontend_keys_publication ticket={0};
+    if (!frontend_keys_publication_ready(owner,profile,cvars,&ticket,error)) return false;
+    frontend_keys_publication_publish(&ticket); return true;
 }
 bool frontend_key_profile_detach(frontend_key_profile *profile,const qa_cvars *cvars,qa_error *error)
 {
     if (!profile || profile->busy || !cvars || profile->cvars!=cvars || !profile->state)
         return fail(error,QA_ERROR_ARGUMENT,"Key detachment requires the actual retiring source registry");
     if (!qa_q3_key_rebind_cvars(profile->state,NULL,error)) return false;
-    profile->cvars=NULL; return true;
+    profile->cvars=NULL; profile->registry=(qa_application_console_scope){0}; profile->detached=true; return true;
 }
 bool frontend_keys_authorization(const frontend_keys *owner,uint8_t out[33],bool *demo,qa_error *error)
 {
@@ -187,34 +227,40 @@ static bool blob(qa_source_save_io *io,qa_bytes *bytes)
 }
 static bool header(qa_source_save_io *io,uint64_t *next,uint64_t *active,size_t *count)
 {
-    uint8_t magic[4]={'Q','F','K','P'}; uint32_t version=1;
-    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFKP",4) && qa_source_save_u32(io,&version) && version==1 &&
+    uint8_t magic[4]={'Q','F','K','P'}; uint32_t version=2;
+    return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFKP",4) && qa_source_save_u32(io,&version) && version==2 &&
         qa_source_save_u64(io,next) && qa_source_save_u64(io,active) && *active<=*next &&
         qa_source_save_count(io,count,io->direction==QA_SOURCE_SAVE_READ?io->input.size-io->offset:SIZE_MAX);
 }
 static bool row(qa_source_save_io *io,const frontend_keys_cvar_refs *refs,frontend_key_profile *profile,qa_bytes *files)
 {
     uint32_t kind=profile->registry.kind;
-    return qa_source_save_u64(io,&profile->id) && profile->id &&
-        refs->provider(refs->context,io,&profile->registry.provider) && profile->registry.provider &&
-        qa_source_save_u32(io,&kind) && kind==QA_APPLICATION_CONSOLE_Q3_GAME &&
-        qa_source_save_u32(io,&profile->registry.seat) && !profile->registry.seat &&
-        qa_source_save_u64(io,&profile->nonce) && qa_source_save_bool(io,&profile->demo) &&
-        qa_source_save_bool(io,&profile->dedicated) && qa_source_save_bytes(io,profile->imported,sizeof(profile->imported)) &&
+    bool ok=qa_source_save_u64(io,&profile->id) && profile->id && qa_source_save_bool(io,&profile->detached);
+    if (ok && !profile->detached) ok=refs->provider(refs->context,io,&profile->registry.provider) && profile->registry.provider &&
+        qa_source_save_u32(io,&kind) &&
+        (kind==QA_APPLICATION_CONSOLE_Q3_GAME || kind==QA_APPLICATION_CONSOLE_Q3_CGAME) &&
+        qa_source_save_u32(io,&profile->registry.seat) && profile->registry.seat<QA_INPUT_LOCAL_SEATS &&
+        (kind!=QA_APPLICATION_CONSOLE_Q3_GAME || !profile->registry.seat);
+    if (ok) profile->registry=profile->detached?(qa_application_console_scope){0}:
+        (qa_application_console_scope){profile->registry.provider,(qa_application_console_kind)kind,profile->registry.seat};
+    return ok && qa_source_save_u64(io,&profile->nonce) && qa_source_save_bool(io,&profile->demo) &&
+        qa_source_save_bool(io,&profile->dedicated) &&
+        qa_source_save_bytes(io,profile->imported,sizeof(profile->imported)) &&
         !profile->imported[33] && blob(io,files) && files->size;
 }
 bool frontend_keys_checkpoint(const frontend_keys *owner,const qa_application_content_graph *graph,
     const frontend_keys_cvar_refs *refs,qa_buffer *out,qa_error *error)
 {
-    if (!owner || owner->restoring || !graph || !refs || !refs->encode || !refs->provider || !out || out->data || out->size)
+    if (!owner || owner->restoring || owner->publication || !graph || !refs || !refs->encode || !refs->provider || !out || out->data || out->size)
         return fail(error,QA_ERROR_ARGUMENT,"Key capture requires its actual profile and source registry inventory");
     size_t count=0; uint64_t next=owner->next_id,active=owner->active?owner->active->id:0;
     for (const frontend_key_profile *profile=owner->profiles;profile;profile=profile->next) ++count;
     qa_source_save_io io={0}; bool ok=qa_source_save_writer(&io,NULL,error) && header(&io,&next,&active,&count);
     for (const frontend_key_profile *profile=owner->profiles;ok && profile;profile=profile->next) {
         frontend_key_profile saved=*profile; qa_buffer files={0};
-        ok=!profile->busy && profile->state && !profile->imported_state && profile->cvars &&
-            refs->encode(refs->context,profile->cvars,&saved.registry,error) && saved.registry.provider &&
+        ok=!profile->busy && profile->state && !profile->imported_state &&
+            (profile->detached?!profile->cvars && !saved.registry.provider:
+                profile->cvars && refs->encode(refs->context,profile->cvars,&saved.registry,error) && saved.registry.provider) &&
             frontend_config_files_checkpoint(profile->files,graph,&files,error);
         if (ok) {
             qa_q3_key_capture(profile->state,saved.imported); qa_bytes bytes={files.data,files.size}; ok=row(&io,refs,&saved,&bytes);
@@ -245,6 +291,7 @@ bool frontend_keys_restore(qa_application_content_graph *graph,const qa_q3_produ
         if (ok) ok=qa_q3_key_create_detached(profile->dedicated,&profile->state,error) &&
             qa_q3_key_restore(profile->state,(qa_bytes){profile->imported,sizeof(profile->imported)},error) &&
             qa_q3_key_bind_storage(profile->state,stored,profile,error);
+        if (ok && profile->detached) { profile->imported_state=false; memset(profile->imported,0,sizeof(profile->imported)); }
         if (!ok) { profile_free(profile); break; }
         *tail=profile; tail=&profile->next;
         if (profile->id==active) { owner->active=profile; ++profile->references; }
@@ -259,7 +306,8 @@ bool frontend_keys_finish_restore(frontend_keys *owner,qa_error *error)
 {
     if (!owner || !owner->restoring) return fail(error,QA_ERROR_ARGUMENT,"Q3 key profiles have no pending pure admission");
     for (frontend_key_profile *profile=owner->profiles;profile;profile=profile->next)
-        if (!profile->state || profile->imported_state || profile->busy || profile->references==1)
+        if (!profile->state || profile->imported_state || profile->busy || profile->references==1 ||
+            (profile->detached?profile->cvars!=NULL:profile->cvars==NULL))
             return fail(error,QA_ERROR_FORMAT,"Restored key profile lacks its actual source or published alias");
     frontend_key_profile *profile=owner->profiles;
     while (profile) { frontend_key_profile *next=profile->next; if (!frontend_key_profile_release(profile,error)) return false; profile=next; }

@@ -4,6 +4,7 @@
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
 #include "bot_world.h"
+#include "bots_knowledge.h"
 #include <limits.h>
 #include <math.h>
 #include <string.h>
@@ -126,6 +127,7 @@ static bool native_player(application_bots *bots,application_provider *source,qa
 bool application_bot_inventory_update(void *opaque,qa_actor_id actor,const qa_bot_player *sample,
     int32_t *inventory,qa_error *error) {
     application_bots *bots=opaque;application_provider *source=application_bot_source(bots);
+    if(!application_bots_knowledge_update(bots,actor,error)) return false;
     if(bots->shared_world && sample && sample->source_state_available && inventory) {
         native_inventory(&sample->source_state,inventory,false);
         return application_bot_inventory(bots,actor,inventory,error);

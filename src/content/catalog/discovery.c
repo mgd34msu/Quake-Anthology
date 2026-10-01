@@ -135,13 +135,13 @@ static bool mount_file(qa_catalog *c, catalog_product *p, const char *path,
                         qa_archive_kind kind, bool writable, qa_error *error)
 {
     for (size_t i = 0; i < c->physical_count; ++i) if (!strcmp(c->physical[i].view.path, path))
-        return append_mount(p, c->physical[i].view.id, error);
+        return !p || append_mount(p, c->physical[i].view.id, error);
     qa_mount_id id;
     qa_error reason = {0};
     bool ok = kind == QA_ARCHIVE_AUTO ? qa_vfs_mount_directory(c->mounts, path, QA_ARCHIVE_CASE_INSENSITIVE, writable, &id, &reason)
         : qa_vfs_mount_archive(c->mounts, path, kind, QA_ARCHIVE_CASE_INSENSITIVE, &id, &reason);
     if (!ok) {
-        if (reason.code == QA_ERROR_MEMORY) { if (error) *error = reason; return false; }
+        if (!p || reason.code == QA_ERROR_MEMORY) { if (error) *error = reason; return false; }
         return catalog_requirement(c, p, reason.message, error);
     }
     if (!catalog_grow((void **)&c->physical, &c->physical_capacity, c->physical_count + 1, sizeof(*c->physical), error)) return false;
@@ -164,7 +164,7 @@ static bool mount_file(qa_catalog *c, catalog_product *p, const char *path,
     }
     for (size_t i = 0; i < c->physical_count; ++i)
         c->physical[i].view.digest = c->physical[i].view.format == QA_ARCHIVE_AUTO ? NULL : &c->physical[i].digest;
-    return append_mount(p, identity, error);
+    return !p || append_mount(p, identity, error);
 }
 
 static int folded_order(const char *a, const char *b)
@@ -377,6 +377,65 @@ static bool quakeworld_variants(qa_catalog *c, qa_error *error)
     return true;
 }
 
+static bool remote_q3_product(qa_catalog *c, const char *base_key,
+    const char *requested, qa_product_id *selected, qa_error *error)
+{
+    const qa_product *base = qa_catalog_find(c, base_key);
+    if (!base || base->family != QA_GAME_Q3) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Remote Q3 base is not a configured stock product"); return false;
+    }
+    const char *leaf = strrchr(base->directory, '/');
+    if (!leaf) { qa_error_set(error, QA_ERROR_FORMAT, 0, "Q3 base lacks its family directory"); return false; }
+    const char *name = *requested ? requested : leaf + 1;
+    if (!catalog_remote_name(name)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Remote game directory must be one safe name"); return false;
+    }
+    size_t length = strlen(name), parent = (size_t)(leaf - base->directory + 1);
+    if (!length || length > SIZE_MAX - parent - 1 || length > SIZE_MAX - 64) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Remote game directory is too long"); return false;
+    }
+    char *relative = malloc(parent + length + 1);
+    char *identity = malloc(length + 64);
+    if (!relative || !identity) {
+        free(relative); free(identity); qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining remote Q3 directory"); return false;
+    }
+    memcpy(relative, base->directory, parent);
+    for (size_t i = 0; i < length; ++i) {
+        unsigned char ch = (unsigned char)name[i];
+        relative[parent + i] = (char)(ch >= 'A' && ch <= 'Z' ? ch + ('a' - 'A') : ch);
+    }
+    relative[parent + length] = 0;
+    bool ok = false;
+    for (size_t i = 0; i < c->product_count; ++i) {
+        catalog_product *product = &c->products[i];
+        if (product->view.family != base->family || product->view.edition != base->edition ||
+            !catalog_ascii_equal(product->view.directory, relative)) continue;
+        const qa_product *ancestor = &product->view;
+        for (size_t j = 0; ancestor && j <= c->product_count; ++j) {
+            if (ancestor->id == base->id) {
+                product->remote_directory = product->view.id != base->id;
+                *selected = product->view.id; ok = true; goto done;
+            }
+            ancestor = qa_catalog_product(c, ancestor->base);
+        }
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Remote Q3 product does not inherit the requested base"); goto done;
+    }
+    static const char *editions[] = {"classic", "rerelease", "quakeworld", "demo"};
+    qa_product view = {.base = base->id, .family = QA_GAME_Q3, .edition = base->edition,
+        .directory = catalog_string(c, relative, error), .campaign = catalog_string(c, relative + parent, error)};
+    view.title = view.campaign;
+    snprintf(identity, length + 64, "q3-%s-%s", editions[view.edition], relative + parent);
+    view.key = catalog_string(c, identity, error);
+    snprintf(identity, length + 64, "q3:%s:%s:installed", editions[view.edition], relative + parent);
+    view.identity = catalog_string(c, identity, error);
+    catalog_product *product;
+    if (!view.directory || !view.campaign || !view.key || !view.identity ||
+        !catalog_add_product(c, &view, &product, error)) goto done;
+    product->remote_directory = true; *selected = product->view.id; ok = true;
+done:
+    free(relative); free(identity); return ok;
+}
+
 static bool user_product_directories(qa_catalog *c, qa_error *error)
 {
     if (!c->user) return true;
@@ -384,6 +443,30 @@ static bool user_product_directories(qa_catalog *c, qa_error *error)
     if (!qa_fs_path_create_directory(c->user, error) || !qa_fs_root_open(c->user, &root, error)) return false;
     bool ok = true;
     for (size_t i = 0; i < c->product_count; ++i) {
+        const qa_product *product = &c->products[i].view;
+        if (product->family == QA_GAME_Q3) {
+            const char *slash = strrchr(product->directory, '/');
+            char *family = NULL, *resolved = NULL;
+            qa_error issue = {0};
+            if (!qa_fs_root_resolve(root, "q3a", catalog_name_equal, NULL, false, &family, &issue)) {
+                if (issue.code != QA_ERROR_NOT_FOUND || !qa_fs_root_create_directory(root, "q3a", error) ||
+                    !qa_fs_root_resolve(root, "q3a", catalog_name_equal, NULL, false, &family, error)) {
+                    if (issue.code != QA_ERROR_NOT_FOUND && error) *error = issue;
+                    ok = false; break;
+                }
+            }
+            const char *relative = slash ? join(c, family, slash + 1, error) : NULL;
+            free(family);
+            issue = (qa_error){0};
+            if (!relative) { ok = false; break; }
+            if (!qa_fs_root_resolve(root, relative, catalog_name_equal, NULL, false, &resolved, &issue) &&
+                (issue.code != QA_ERROR_NOT_FOUND || !qa_fs_root_create_directory(root, relative, error))) {
+                if (issue.code != QA_ERROR_NOT_FOUND && error) *error = issue;
+                free(resolved); ok = false; break;
+            }
+            free(resolved);
+            continue;
+        }
         const char *path;
         if (!catalog_path(c, c->user, c->products[i].view.directory, &path, error)
             || (!path && !qa_fs_root_create_directory(root,
@@ -410,7 +493,8 @@ static bool product_content_directory(qa_catalog *c, const catalog_product *p,
     return true;
 }
 
-bool catalog_scan(qa_catalog *c, bool mods, qa_error *error)
+bool catalog_scan(qa_catalog *c, bool mods, const char *remote_base,
+    const char *remote_directory, qa_product_id *selected, qa_error *error)
 {
     if (mods) {
         static const struct { const char *directory, *base; } roots[] = {
@@ -423,13 +507,14 @@ bool catalog_scan(qa_catalog *c, bool mods, qa_error *error)
                 (c->user && !discover_directory(c, c->user, roots[i].directory, base, error))) return false;
         }
     }
+    if (remote_base && !remote_q3_product(c, remote_base, remote_directory, selected, error)) return false;
     if (!user_product_directories(c, error)) return false;
     for (size_t i = 0; i < c->product_count; ++i) {
         catalog_product *p = &c->products[i];
         if ((c->user && strcmp(c->user, c->root) && !scan_directory(c, p, c->user, true, error)) ||
             !scan_directory(c, p, c->root,
                             c->user && !strcmp(c->user, c->root), error)) return false;
-        for (size_t j = 0; j < p->required_count; ++j) {
+        for (size_t j = 0; !p->remote_directory && j < p->required_count; ++j) {
             const char *path;
             if (!catalog_path(c, c->root, p->required[j], &path, error)) return false;
             if (!path && c->user && !catalog_path(c, c->user, p->required[j], &path, error)) return false;
@@ -439,7 +524,7 @@ bool catalog_scan(qa_catalog *c, bool mods, qa_error *error)
         }
         bool content_present;
         if (!product_content_directory(c, p, &content_present, error)) return false;
-        if (!content_present && p->view.edition != QA_EDITION_QUAKEWORLD
+        if (!content_present && !p->remote_directory && p->view.edition != QA_EDITION_QUAKEWORLD
             && !catalog_requirement(c, p, p->view.directory, error)) return false;
         if (p->view.edition == QA_EDITION_RERELEASE && !p->view.base) {
             const char *archive = p->view.family == QA_GAME_Q1 ? "q1/rerelease/QuakeEX.kpf" : "q2/rerelease/Q2Game.kpf", *path;
@@ -449,6 +534,13 @@ bool catalog_scan(qa_catalog *c, bool mods, qa_error *error)
     }
     if (mods && !quakeworld_variants(c, error)) return false;
     for (size_t i = 0; i < c->product_count; ++i) if (!finalize_product(c, &c->products[i], 0, error)) return false;
+    if (c->user) {
+        const char *family;
+        if (!catalog_path(c, c->user, "q3a", &family, error) || !family ||
+            !mount_file(c, NULL, family, QA_ARCHIVE_AUTO, true, error)) return false;
+        for (size_t i = 0; i < c->physical_count; ++i)
+            if (!strcmp(c->physical[i].view.path, family)) c->q3_download_mount = c->physical[i].view.id;
+    }
     return true;
 }
 
@@ -581,7 +673,7 @@ bool catalog_index_product(qa_catalog *c, catalog_product *p, qa_error *error)
 {
     if (!catalog_index_maps(c, p, false, error)) return false;
     bool ok = false;
-    if (p->witness) {
+    if (p->witness && !p->remote_directory) {
         bool found;
         if (!catalog_has_path(c, p, p->witness, true, &found, error)) goto done;
         if (!found && !catalog_requirement(c, p, p->witness, error)) goto done;

@@ -1,0 +1,4 @@
+806a4c38f3b327ffd1ccffe97155c7b51a6e86421aa5692b5643474682cde6df  include/qa/application_network.h
+08ad86eb6af96a26cc4f4b577668c0ddffb3bd1a6a053d389cb0b843b5be66c8  src/app/application/network.c
+ae73d63229b7f5f44340905d40b8a3b7c4f3fb2491281437b240055e5de81306  src/app/frontend/network.c
+d965977a5aa40b9e6b687ff3726d89f67aa62dc814c281b3141c8b1df8760d9e  docs/implementation/network-20260930.md

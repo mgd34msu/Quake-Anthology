@@ -190,6 +190,11 @@ bool qa_cvars_info(const qa_cvars *registry, uint32_t flags, size_t maximum_leng
 /* Source .cfg commands cannot encode literal quotes or line breaks inside a
  * value. Such values return FORMAT; structured settings retain them separately. */
 bool qa_cvars_config(const qa_cvars *registry, qa_buffer *out, qa_error *error);
+/* The filter inspects borrowed views without mutating either registry. Archive
+ * eligibility, source quoting and latched values retain their ordinary rules. */
+typedef bool (*qa_cvar_config_filter)(void *, const qa_cvars *, const qa_cvar_view *);
+bool qa_cvars_config_filtered(const qa_cvars *, qa_cvar_config_filter, void *,
+                               qa_buffer *, qa_error *);
 /* NULL means excluded by this source's archive rules. Views come from this
  * registry; returned values remain borrowed until its next mutation. */
 const char *qa_cvars_archive_value(const qa_cvars *, const qa_cvar_view *);
@@ -312,6 +317,9 @@ bool qa_console_idle(const qa_console *);
 bool qa_console_output_redirected(const qa_console *);
 /* One frame of queued work, respecting wait. Zero budget is unlimited. */
 bool qa_console_drain(qa_console *console, size_t budget, size_t *executed, qa_error *error);
+/* Reports an actual wait boundary in the last admitted drain. This observation
+ * is transient; queued wait state is retained by the console checkpoint. */
+bool qa_console_drain_yielded(const qa_console *console);
 bool qa_console_defer(qa_console *console, qa_error *error);
 bool qa_console_resume(qa_console *console, qa_error *error);
 bool qa_console_pending(const qa_console *console);

@@ -37,7 +37,7 @@ bool application_qc_run_calls(struct application_qc_state *engine, const applica
         bool ok = qa_qc_game_call_index(engine->provider->state.qc.game, call->function, arguments,
             call->argument_count, globals, call->global_count, NULL, error);
         if (globals != local) free(globals);
-        if (!ok) return false;
+        if (!ok || !application_qc_publish_client_outputs(engine, error)) return false;
     }
     return true;
 }
@@ -69,10 +69,20 @@ bool application_qc_seed_fields(struct application_qc_state *engine, qa_actor_id
     if (!profile) return true;
     int32_t reference;
     if (!qa_qc_actor_reference(engine->provider->state.qc.instance, actor, false, &reference, error)) return false;
-    for (size_t i = 0; i < profile->field_count; ++i)
+    bool client = false;
+    for (uint32_t slot = 1; slot <= engine->max_clients; ++slot)
+        if (engine->clients[slot].connected && qa_actor_id_equal(engine->clients[slot].actor, actor)) { client = true; break; }
+    for (size_t i = 0; i < profile->field_count; ++i) {
         if (profile->fields[i].kind == QC_FIELD_CONSTANT &&
             !project_value(engine->provider->state.qc.instance, reference, profile->fields[i].definition,
                 profile->fields[i].constant.constant, error)) return false;
+        if (client && (profile->fields[i].kind == QC_FIELD_MIN || profile->fields[i].kind == QC_FIELD_MAX)) {
+            qa_body_state body;
+            if (!qa_world_body_read(engine->world, actor, &body, error) ||
+                !qa_qc_project_entity_vector(engine->provider->state.qc.instance, reference, profile->fields[i].definition->offset,
+                    profile->fields[i].kind == QC_FIELD_MIN ? body.bounds.mins : body.bounds.maxs, error)) return false;
+        }
+    }
     return true;
 }
 bool application_qc_prepare_markers(struct application_qc_state *engine, qa_error *error)
@@ -159,11 +169,13 @@ bool application_qc_project_declared(struct application_qc_state *engine, qa_qc_
             break;
         }
         case QC_FIELD_VIEW: {
+            if (application_qc_output_field_owned(engine, access->binding.actor, field)) continue;
             qa_builtin_player_info player;
             bool client = engine->services.player_info && engine->services.player_info(engine->services.context, access->binding.actor, &player) && player.connected;
             value.kind = QA_QC_GAME_VECTOR; value.value.vector = qa_v3(0, 0, client ? player.view_height : 0); break;
         }
         case QC_FIELD_ORIGIN: case QC_FIELD_VELOCITY: case QC_FIELD_ANGLES: case QC_FIELD_MIN: case QC_FIELD_MAX:
+            if (application_qc_output_field_owned(engine, access->binding.actor, field)) continue;
             ok = qa_world_body_read(engine->world, access->binding.actor, &body, error);
             value.kind = QA_QC_GAME_VECTOR;
             if (ok) value.value.vector = field->kind == QC_FIELD_ORIGIN ? body.origin : field->kind == QC_FIELD_VELOCITY ? body.velocity :
@@ -193,7 +205,18 @@ bool application_qc_store_declared(struct application_qc_state *engine, qa_qc_in
         float scalar; qa_vec3 vector; qa_body_state body;
         switch (field->kind) {
         case QC_FIELD_PRIVATE: case QC_FIELD_CONSTANT: case QC_FIELD_INPUT: case QC_FIELD_THINK: case QC_FIELD_NEXTTHINK: break;
-        case QC_FIELD_CLASSNAME: case QC_FIELD_VIEW:
+        case QC_FIELD_VIEW: {
+            bool client = false, declared = false;
+            for (uint32_t slot = 1; slot <= engine->max_clients; ++slot)
+                if (engine->clients[slot].connected && qa_actor_id_equal(engine->clients[slot].actor, actor)) { client = true; break; }
+            for (size_t j = 0; j < profile->client_output_count; ++j) {
+                const application_qc_client_output *output = profile->client_outputs + j;
+                if (output->channel == APPLICATION_CLIENT_VIEW_OFFSET && !output->height && output->field == field) { declared = true; break; }
+            }
+            if (client && declared) break;
+            ok = application_fail(error, QA_ERROR_ARGUMENT, "QC view offset store lacks its declared client output owner"); break;
+        }
+        case QC_FIELD_CLASSNAME:
             ok = application_fail(error, QA_ERROR_ARGUMENT, "QC store requires a declared canonical output owner"); break;
         case QC_FIELD_HEALTH:
             ok = qa_qc_entity_float(vm, event->entity_reference, def->offset, &scalar, error) &&
@@ -220,6 +243,7 @@ bool application_qc_store_declared(struct application_qc_state *engine, qa_qc_in
             break;
         }
         case QC_FIELD_ORIGIN: case QC_FIELD_VELOCITY: case QC_FIELD_ANGLES: case QC_FIELD_MIN: case QC_FIELD_MAX:
+            if (application_qc_output_field_owned(engine, actor, field)) break;
             ok = qa_world_body_read(engine->world, actor, &body, error) && qa_qc_entity_vector(vm, event->entity_reference, def->offset, &vector, error);
             if (ok) {
                 if (field->kind == QC_FIELD_ORIGIN) body.origin = vector;
@@ -323,7 +347,7 @@ bool application_qc_client_think(struct application_qc_state *engine, qa_actor_i
         bool invoked = qa_qc_game_call_index(engine->provider->state.qc.game, (uint32_t)function,
             NULL, 0, globals, 3, NULL, error);
         engine->client_think_time = previous_time;
-        if (!invoked) return false;
+        if (!invoked || !application_qc_publish_client_outputs(engine, error)) return false;
         if (engine->profile != QA_QC_QUAKEWORLD) return true;
     }
     return true;

@@ -2,6 +2,18 @@
 #include "qa/input_save.h"
 #include "qa/source_save.h"
 
+bool qa_input_seat_ui_binding_read(const qa_input_seat *seat, qa_input_ui_token token,
+    qa_input_ui_handler *handler, void **context)
+{
+    if (!seat || !handler || !context) return false;
+    for (size_t i = 0; i < seat->ui_count; ++i) {
+        const qa_ui_record *record = &seat->ui[i];
+        if (record->id != token || !record->active) continue;
+        *handler = record->handler; *context = record->user; return true;
+    }
+    return false;
+}
+
 #define FIELD(type, object, name) do { if (!qa_source_save_##type(io,&(object)->name)) return false; } while (0)
 static bool fail(qa_error *error, const char *message)
 { qa_error_set(error,QA_ERROR_FORMAT,0,"%s",message); return false; }

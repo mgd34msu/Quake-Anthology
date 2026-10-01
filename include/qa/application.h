@@ -20,6 +20,8 @@
 
 typedef struct qa_application qa_application;
 struct qa_application_q3_round_services;
+struct qa_application_startup_hooks;
+typedef struct qa_application_q3_equipment_services qa_application_q3_equipment_services;
 
 typedef struct qa_application_map_request {
     qa_product_id geometry, presentation;
@@ -170,6 +172,23 @@ typedef bool (*qa_application_q3_services_fn)(void *, qa_application *,
                                              qa_actor_owner, qa_qvm_role, uint32_t,
                                              qa_q3_host_options *, qa_error *);
 
+typedef struct qa_application_q3_client_preparation {
+    const qa_launch_instance *receiver_descriptor, *game_descriptor;
+    qa_actor_owner receiver, source_owner;
+    qa_qvm_role role;
+    uint32_t seat, source_client;
+    qa_catalog *source_catalog;
+    const qa_product *source_product;
+    qa_console *source_console;
+    qa_cvars *source_cvars;
+    const qa_q3_product_policy *product_policy;
+    /* The actual private client imports, before the host copies them. */
+    qa_q3_host_options *services;
+    qa_application_q3_equipment_services *equipment_services;
+} qa_application_q3_client_preparation;
+typedef bool (*qa_application_q3_client_prepare_fn)(void *, qa_application *,
+    const qa_application_q3_client_preparation *, qa_error *);
+
 typedef enum qa_application_q3_client_effect {
     QA_APPLICATION_Q3_SYSTEM_INFO,
     QA_APPLICATION_Q3_MAP_RESTART,
@@ -212,6 +231,7 @@ typedef struct qa_application_options {
     const qa_native_runner_config *native_runner;
     void *guest_context;
     qa_application_q3_services_fn q3_services;
+    qa_application_q3_client_prepare_fn q3_client_prepare;
     qa_application_q3_client_effect_fn q3_client_effect;
     qa_application_q3_campaign_command_fn q3_campaign_command;
     const struct qa_application_q3_round_services *q3_round_services;
@@ -222,6 +242,7 @@ typedef struct qa_application_options {
     void (*console_print)(void *, const qa_command_context *, const char *);
     bool discover_mods;
     bool mixed_source_order;
+    const struct qa_application_startup_hooks *startup_hooks;
 } qa_application_options;
 
 void qa_application_options_default(qa_application_options *);
@@ -317,6 +338,11 @@ typedef struct qa_application_console_scope {
     qa_application_console_kind kind;
     uint32_t seat;
 } qa_application_console_scope;
+bool qa_application_startup_command_queue(qa_application *, size_t, qa_console *,
+    const qa_command_context *, qa_error *);
+bool qa_application_startup_command_queued_console(qa_application *, size_t,
+    qa_console **, qa_error *);
+bool qa_application_startup_console_queued(const qa_application *, const qa_console *);
 /* Shared console aliases use the smallest provider instance/role/seat key. */
 bool qa_application_console_scope_read(const qa_application *, const qa_console *,
                                         qa_application_console_scope *);

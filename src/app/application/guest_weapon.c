@@ -59,5 +59,9 @@ bool application_guest_weapon_read(application_provider *provider, qa_actor_id a
     if (player.weapon == 0) { *out = 0; return true; }
     const char *name = qa_q3_weapon_identity_name((qa_q3_weapon)player.weapon);
     if (!name) return application_fail(error, QA_ERROR_FORMAT, "Q3 selected weapon exceeds the admitted source namespace");
-    return canonical(provider, actor, name, out, error);
+    char identity[64];
+    int length = snprintf(identity, sizeof(identity), "q3:weapon/%s", name);
+    if (length < 0 || (size_t)length >= sizeof(identity))
+        return application_fail(error, QA_ERROR_FORMAT, "Q3 selected weapon identity exceeds its canonical representation");
+    return canonical(provider, actor, identity, out, error);
 }

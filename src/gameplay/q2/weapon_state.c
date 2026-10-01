@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "qa/game_q2_items.h"
 #include "qa/game_q2_player.h"
+#include "qa/game_q2_source.h"
 
 static bool run(q2_weapon_call *, qa_error *);
 static q2_actor *weapon_actor(qa_q2_game *g, qa_actor_id id, qa_error *e) {
@@ -107,6 +108,12 @@ bool qa_q2_weapon_select(qa_q2_game *g, qa_actor_id id, qa_q2_weapon weapon, boo
     if (count < 1) {
         *out = QA_Q2_NOT_OWNED;
         return true;
+    }
+    if (!allow_empty) {
+        float selected;
+        if (!qa_q2_source_value(g, "g_select_empty", 0, &selected, e)) return false;
+        if (!q2_actor_live(g, id)) { *out = QA_Q2_NOT_OWNED; return true; }
+        allow_empty = selected != 0;
     }
     if (!allow_empty && g->ammo[weapon] != 0 && g->ammo[weapon] != g->items[weapon]) {
         if (!q2_count(g, id, g->ammo[weapon], &count, e))

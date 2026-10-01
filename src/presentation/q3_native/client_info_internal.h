@@ -18,7 +18,10 @@ struct q3n_clients {
     const qa_application_native_q3_presentation *cut;
     uint64_t next_media_revision;
     uint64_t active_configstring_revision;
+    uint64_t serverinfo_revision;
     uint32_t active_client;
+    uint32_t max_clients;
+    int32_t game_type;
     bool busy, active_info;
 };
 bool q3n_client_fail(qa_error *, qa_status, const char *);

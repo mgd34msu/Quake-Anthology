@@ -3,6 +3,7 @@
 
 #include "internal.h"
 #include "qa/network_q3.h"
+#include "qa/application_native_q3_wire.h"
 
 bool application_native_q3_wire_create(application_provider *, qa_world *source_world,
     bool restoring, qa_error *);

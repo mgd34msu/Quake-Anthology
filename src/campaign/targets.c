@@ -40,8 +40,8 @@ static void normalize(const qa_targets *targets, qa_authored_target *fields) {
     fields->target = nonempty(targets, fields->target);
     fields->killtarget = nonempty(targets, fields->killtarget);
     fields->message = nonempty(targets, fields->message);
-    fields->shader_old = nonempty(targets, fields->shader_old);
-    fields->shader_new = nonempty(targets, fields->shader_new);
+    /* Source shader fields distinguish an absent pointer from a present empty
+     * byte path. AddRemap accepts the latter as a real table key or value. */
 }
 qa_targets *qa_targets_create(const qa_target_options *options, qa_error *error) {
     if (!options || !options->session) {
@@ -437,13 +437,25 @@ static bool named(const qa_targets *targets, qa_string_id id, const char *text) 
 static bool use_now(qa_targets *targets, qa_target_use request, qa_error *error) {
     bool q1 = request.dialect == QA_CLOCK_NETQUAKE || request.dialect == QA_CLOCK_QUAKEWORLD;
     bool q3 = request.dialect == QA_CLOCK_Q3;
+    const qa_target_binding *source_binding = q3 ? binding(targets, request.source) : NULL;
+    uint64_t source_serial = source_binding ? targets->binding_serial[request.source.slot] : 0;
     if (q3) {
         if (request.fields.shader_old && request.fields.shader_new) {
-            if (!targets->options.remap_shader)
-                return fail(error, "Authored shader target has no remap owner");
-            if (!targets->options.remap_shader(targets->options.context, request.fields.shader_old,
-                                               request.fields.shader_new, request.time_ns, error))
-                return false;
+            if (source_binding && source_binding->remap_shader) {
+                qa_target_binding captured = *source_binding;
+                if (!captured.remap_shader(captured.context, request.source,
+                                            request.fields.shader_old, request.fields.shader_new,
+                                            request.time_ns, error)) return false;
+            } else {
+                if (!targets->options.remap_shader)
+                    return fail(error, "Authored shader target has no remap owner");
+                if (!targets->options.remap_shader(targets->options.context,
+                                                   request.fields.shader_old,
+                                                   request.fields.shader_new,
+                                                   request.time_ns, error)) return false;
+            }
+            if (source_serial && (!binding(targets, request.source) ||
+                targets->binding_serial[request.source.slot] != source_serial)) return true;
         }
     } else if (request.fields.message) {
         if (!targets->options.message)
@@ -495,7 +507,9 @@ static bool use_now(qa_targets *targets, qa_target_use request, qa_error *error)
                     !qa_targets_invoke(targets, current, request.source, request.activator, error))
                     return false;
             }
-            if (!live(targets, request.source)) {
+            if (!live(targets, request.source) ||
+                (q3 && source_serial && (!binding(targets, request.source) ||
+                 targets->binding_serial[request.source.slot] != source_serial))) {
                 if (q3 && targets->options.diagnostic)
                     targets->options.diagnostic(targets->options.context, request.source,
                                                 "Entity removed while using targets");

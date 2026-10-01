@@ -94,16 +94,24 @@ static bool cursor(qa_source_save_io *io, qa_q3_presentation *p)
     if (io->direction==QA_SOURCE_SAVE_READ) { qualified.offset=offset; qualified.ended=ended; p->cursor=qualified; }
     return true;
 }
+static bool allocation(qa_source_save_io *io, void **data, size_t *count,
+    size_t *capacity, size_t width, size_t maximum)
+{
+    if ((count && !qa_source_save_count(io,count,maximum)) ||
+        !qa_source_save_count(io,capacity,SIZE_MAX/width) || (count && *count>*capacity)) return false;
+    if (io->direction==QA_SOURCE_SAVE_WRITE) return (*data!=NULL)==(*capacity!=0);
+    *data=*capacity?calloc(*capacity,width):NULL;
+    if (*capacity && !*data) return q3p_fail(io->error,QA_ERROR_MEMORY,"Restoring Q3 scene allocation");
+    return true;
+}
 static bool arrays(qa_source_save_io *io, qa_q3_presentation *p)
 {
     size_t maximum=io->direction==QA_SOURCE_SAVE_READ?io->input.size:SIZE_MAX;
-    if (!qa_source_save_count(io,&p->entity_count,maximum/128) || !qa_source_save_count(io,&p->polygon_count,maximum/64) ||
-        !qa_source_save_count(io,&p->vertex_count,maximum/56) || !qa_source_save_count(io,&p->light_count,maximum/64)) return false;
-    if (io->direction==QA_SOURCE_SAVE_READ &&
-        (!q3p_reserve((void**)&p->entities,&p->entity_capacity,p->entity_count,sizeof(*p->entities),io->error) ||
-         !q3p_reserve((void**)&p->polygons,&p->polygon_capacity,p->polygon_count,sizeof(*p->polygons),io->error) ||
-         !q3p_reserve((void**)&p->vertices,&p->vertex_capacity,p->vertex_count,sizeof(*p->vertices),io->error) ||
-         !q3p_reserve((void**)&p->lights,&p->light_capacity,p->light_count,sizeof(*p->lights),io->error))) return false;
+    if (!allocation(io,(void**)&p->entities,&p->entity_count,&p->entity_capacity,sizeof(*p->entities),maximum/128) ||
+        !allocation(io,(void**)&p->polygons,&p->polygon_count,&p->polygon_capacity,sizeof(*p->polygons),maximum/64) ||
+        !allocation(io,(void**)&p->vertices,&p->vertex_count,&p->vertex_capacity,sizeof(*p->vertices),maximum/56) ||
+        !allocation(io,(void**)&p->lights,&p->light_count,&p->light_capacity,sizeof(*p->lights),maximum/64) ||
+        !allocation(io,(void**)&p->portals,NULL,&p->portal_capacity,sizeof(*p->portals),0)) return false;
     for (size_t i=0;i<p->entity_count;++i) {
         qa_q3_ref_entity e=io->direction==QA_SOURCE_SAVE_WRITE?p->entities[i]:(qa_q3_ref_entity){0};
         if (!entity(io,&e)) return false;
@@ -135,8 +143,8 @@ static bool arrays(qa_source_save_io *io, qa_q3_presentation *p)
 }
 static bool fields(qa_source_save_io *io, qa_q3_presentation *p)
 {
-    uint8_t magic[4]={'Q','3','P','S'}; uint32_t schema=1;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3PS",4) || !qa_source_save_u32(io,&schema) || schema!=1) return false;
+    uint8_t magic[4]={'Q','3','P','S'}; uint32_t schema=2;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3PS",4) || !qa_source_save_u32(io,&schema) || schema!=2) return false;
     FIELD(bool,p,world_loaded); FIELD(bool,p,material_view_valid);
     if (p->world_loaded && (!p->world || !p->geometry)) return false;
     FIELD(i32,p,render_milliseconds);
@@ -149,34 +157,40 @@ static bool fields(qa_source_save_io *io, qa_q3_presentation *p)
 #undef FIELD
 bool qa_q3_presentation_scene_checkpoint(const qa_q3_presentation *p, qa_buffer *out, qa_error *error)
 {
-    if (!p || !out || p->busy || p->options.assets->busy) return q3p_fail(error,QA_ERROR_ARGUMENT,"Q3 scene capture requires an idle presentation");
+    if (!p || !out || out->data || out->size) return q3p_fail(error,QA_ERROR_ARGUMENT,"Q3 scene capture requires an empty output");
+    bool owned_assets = false;
+    if (!q3p_capture_begin((qa_q3_presentation *)p, &owned_assets, error)) return false;
     qa_source_save_io io; qa_q3_presentation saved=*p;
-    if (!qa_source_save_writer(&io,NULL,error)) return false;
+    if (!qa_source_save_writer(&io,NULL,error)) { q3p_capture_end((qa_q3_presentation *)p, owned_assets); return false; }
     bool ok=fields(&io,&saved) && qa_source_save_finish(&io,out);
     if (!ok && error && error->code==QA_OK) q3p_fail(error,QA_ERROR_FORMAT,"Q3 retained scene state is inconsistent");
-    qa_source_save_dispose(&io); return ok;
+    qa_source_save_dispose(&io); q3p_capture_end((qa_q3_presentation *)p, owned_assets); return ok;
 }
 bool qa_q3_presentation_scene_restore(qa_q3_presentation *p, qa_bytes bytes, qa_error *error)
 {
-    if (!p || p->busy || p->options.assets->busy || p->entity_count || p->polygon_count || p->vertex_count || p->light_count)
+    if (!p || p->entity_count || p->polygon_count || p->vertex_count || p->light_count)
         return q3p_fail(error,QA_ERROR_ARGUMENT,"Q3 scene restore requires an empty idle candidate presentation");
+    bool owned_assets = false;
+    if (!q3p_capture_begin(p, &owned_assets, error)) return false;
     qa_q3_presentation saved=*p;
-    saved.entities=NULL; saved.polygons=NULL; saved.vertices=NULL; saved.lights=NULL;
-    saved.entity_capacity=saved.polygon_capacity=saved.vertex_capacity=saved.light_capacity=0;
+    saved.entities=NULL; saved.polygons=NULL; saved.vertices=NULL; saved.lights=NULL; saved.portals=NULL;
+    saved.entity_capacity=saved.polygon_capacity=saved.vertex_capacity=saved.light_capacity=saved.portal_capacity=0;
     qa_source_save_io io;
-    if (!qa_source_save_reader(&io,NULL,bytes,error)) return false;
+    if (!qa_source_save_reader(&io,NULL,bytes,error)) { q3p_capture_end(p, owned_assets); return false; }
     bool ok=fields(&io,&saved) && qa_source_save_finish(&io,NULL);
     if (ok) {
-        free(p->entities); free(p->polygons); free(p->vertices); free(p->lights);
+        free(p->entities); free(p->polygons); free(p->vertices); free(p->lights); free(p->portals);
         p->entities=saved.entities; p->polygons=saved.polygons; p->vertices=saved.vertices; p->lights=saved.lights;
+        p->portals=saved.portals;
         p->entity_count=saved.entity_count; p->polygon_count=saved.polygon_count; p->vertex_count=saved.vertex_count; p->light_count=saved.light_count;
         p->entity_capacity=saved.entity_capacity; p->polygon_capacity=saved.polygon_capacity; p->vertex_capacity=saved.vertex_capacity; p->light_capacity=saved.light_capacity;
+        p->portal_capacity=saved.portal_capacity;
         p->parser=saved.parser; p->cursor=saved.cursor; p->color=saved.color; p->material_view=saved.material_view;
         p->world_loaded=saved.world_loaded; p->material_view_valid=saved.material_view_valid;
         p->render_milliseconds=saved.render_milliseconds; p->options.viewport=saved.options.viewport;
     } else {
-        free(saved.entities); free(saved.polygons); free(saved.vertices); free(saved.lights);
+        free(saved.entities); free(saved.polygons); free(saved.vertices); free(saved.lights); free(saved.portals);
         if (error && error->code==QA_OK) q3p_fail(error,QA_ERROR_FORMAT,"saved Q3 retained scene state is inconsistent");
     }
-    qa_source_save_dispose(&io); return ok;
+    qa_source_save_dispose(&io); q3p_capture_end(p, owned_assets); return ok;
 }

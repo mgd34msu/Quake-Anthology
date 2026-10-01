@@ -345,8 +345,10 @@ static bool import_guest_handoff(application_q3_world_restart_state *state,
         return application_fail(error, QA_ERROR_MEMORY, "cannot qualify Q3 carried cvar ownership");
     qa_cvar_registry_state registry;
     bool okay = qa_cvars_capture_metadata(cvars, &registry, rows, count, error);
-    for (size_t i = 0; okay && i < count; ++i)
-        if (rows[i].owner == state->guest_cvar_owner) rows[i].owner = owner;
+    for (size_t i = 0; okay && i < count; ++i) {
+        if (rows[i].owner == state->source->owner) rows[i].owner = provider->owner;
+        else if (rows[i].owner == state->guest_cvar_owner) rows[i].owner = owner;
+    }
     if (okay) okay = qa_cvars_restore_metadata(cvars, &registry, rows, count, error);
     free(rows);
     for (size_t i = 0; okay && i < count; ++i) {

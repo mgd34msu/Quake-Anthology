@@ -680,7 +680,7 @@ bool qa_modes_source_award(qa_modes *m, qa_mode_id id, qa_actor_id actor,
     if (!v || !p ||
         (source_award != 11 && source_award != 12))
         return mode_fail(e, "invalid source mode award");
-    mode_stat_add(v, source_award == 11 ? &p->stats.defenses : &p->stats.assists, 1);
+    mode_stat_add(v, source_award == 11 ? &p->stats.q3_defend_count : &p->stats.q3_assist_count, 1);
     return true;
 }
 bool qa_modes_team_score(qa_modes *m, qa_mode_id id, qa_team_id team, int32_t amount, qa_error *e) {
@@ -757,6 +757,14 @@ bool qa_modes_choose_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team
     mode_instance *v = mode_get(m, id);
     if (!v || !out)
         return mode_fail(e, "invalid automatic team query");
+    qa_actor_owner native_owner;
+    if (v->value.rules.source >= QA_MODE_Q3 && m->options.hooks.q3_native_source &&
+        m->options.hooks.q3_native_source(m->options.hooks.context, id, &native_owner)) {
+        if (!m->options.hooks.q3_choose_team)
+            return mode_fail(e, "native Q3 team choice has no source client policy");
+        return MODE_CALLBACK(m, m->options.hooks.q3_choose_team(m->options.hooks.context,
+            id, actor, out, e));
+    }
     if (v->value.rules.forced_team) {
         *out = v->value.rules.forced_team;
         return true;
@@ -792,7 +800,8 @@ bool qa_modes_choose_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team
     *out = v->value.rules.teams[index];
     return true;
 }
-static bool frame(qa_modes *m, qa_mode_id id, uint64_t now, uint64_t elapsed, qa_error *e) {
+static bool frame(qa_modes *m, qa_mode_id id, uint64_t now, uint64_t elapsed,
+                  bool native_q3_tail, qa_error *e) {
     mode_instance *v = mode_get(m, id);
     if (!v || now < v->value.time_ns)
         return mode_fail(e, "invalid mode time");
@@ -838,6 +847,8 @@ static bool frame(qa_modes *m, qa_mode_id id, uint64_t now, uint64_t elapsed, qa
                 return false;
         }
     }
+    if (native_q3_tail)
+        return qa_modes_rank(m, id, e) && mode_update_ghosts(m, v, e);
     return mode_vote_frame(m, v, e) && mode_horde_frame(m, v, elapsed, e) &&
            mode_match_frame(m, v, elapsed, e) && mode_team_info_frame(m, v, e) &&
            mode_update_ghosts(m, v, e);
@@ -845,7 +856,17 @@ static bool frame(qa_modes *m, qa_mode_id id, uint64_t now, uint64_t elapsed, qa
 bool qa_modes_frame(qa_modes *m, qa_mode_id id, uint64_t now, uint64_t elapsed, qa_error *e) {
     if (!m || m->callback_depth)
         return mode_fail(e, "mode frame cannot reenter a synchronous callback");
-    return MODE_CALLBACK(m, frame(m, id, now, elapsed, e));
+    return MODE_CALLBACK(m, frame(m, id, now, elapsed, false, e));
+}
+bool qa_modes_q3_source_frame(qa_modes *m, qa_mode_id id, uint64_t now,
+                             uint64_t elapsed, qa_error *e) {
+    mode_instance *v = mode_get(m, id);
+    if (!v || m->callback_depth || m->source_restored ||
+        v->value.rules.source < QA_MODE_Q3 ||
+        v->value.rules.source > QA_MODE_TEAM_ARENA ||
+        v->value.rules.kind < QA_MODE_FFA || v->value.rules.kind > QA_MODE_HARVESTER)
+        return mode_fail(e, "native Q3 effects require their idle selected rule mode");
+    return MODE_CALLBACK(m, frame(m, id, now, elapsed, true, e));
 }
 bool qa_modes_actor_released(qa_modes *m, qa_actor_record released, qa_error *e) {
     if (!m || released.id.slot >= m->actor_capacity)
@@ -906,6 +927,7 @@ bool qa_modes_actor_released(qa_modes *m, qa_actor_record released, qa_error *e)
                 held->mode.generation == v->id.generation &&
                 qa_actor_id_equal(held->value.carrier, released.id)) {
                 held->value.carrier = (qa_actor_id){0};
+                if (held->q3_source_owned) continue;
                 if (held->spec.kind == QA_MODE_OBJECT_FLAG) {
                     if (!mode_flag_reset(m, v, held, true, e))
                         return false;

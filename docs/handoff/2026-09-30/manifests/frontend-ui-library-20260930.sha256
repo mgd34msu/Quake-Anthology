@@ -1,0 +1,4 @@
+7c3d7ac31693c9cac2ff28939b0eb549640c1360553d4c9b730c8486eda38364  src/ui/library.c
+a1be0dfcbd4b77881969b69dc7d06009947cef7488ddfcfaf3c3d533764f9ee8  src/ui/library_internal.h
+1941191b5a400ecfab7bf9d71c6c487a1d86f375adaed6934e672e38a916f657  src/ui/library_save.c
+fcd71b06df739368988c2a2da2924ab33230f4903ab58c1fc4103c32f7bcf853  include/qa/ui_menu_save.h

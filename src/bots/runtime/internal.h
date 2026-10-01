@@ -19,6 +19,7 @@ struct qa_bot_runtime {
     qa_bot_runtime_services services;
     qa_bot_library *library;
     qa_script_defines *globals;
+    qa_bot_log *log;
     qa_bot_actions *actions;
     qa_bot_goals *goals;
     qa_bot_moves *moves;

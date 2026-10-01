@@ -1,0 +1,4 @@
+ce6c4132740a628b12ee3e802666fe4b56790c143bf4e1443e0c598c851472ce  include/qa/scene_model_save.h
+f4a93b3f1f613e24ba4af5d520ab399aec46abf851bf3d9fff448494a22283a0  src/render/scene/models/owner_save.c
+03d502d248ef0bb5784a5e8609af8418bf2223aee948ca30d5147e3fc8a44cf8  src/app/frontend/scene_refs.c
+23a1123cd6fe4fae0d490f8abe2fb03c442b10409db305ab4aa789a52e2c9c6c  src/app/frontend/scene_refs.h

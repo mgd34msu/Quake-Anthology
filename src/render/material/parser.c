@@ -167,6 +167,10 @@ bool qa_material_script_catalog(qa_material_library *library, qa_bytes source, q
         script->name = key;
         script->text = text;
         script->size = length;
+        script->source = library->catalog_current;
+        script->source_offset = opening.start;
+        script->name_offset = name.start;
+        script->name_size = name.end - name.start;
         script->next = library->scripts[bucket];
         library->scripts[bucket] = script;
     }

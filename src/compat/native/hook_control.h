@@ -15,7 +15,8 @@ enum native_hook_operation {
     NATIVE_HOOK_BYPASS_ARM,
     NATIVE_HOOK_BYPASS_CLEAR,
     NATIVE_HOOK_DEPTH,
-    NATIVE_HOOK_REGION_SERVICE
+    NATIVE_HOOK_REGION_SERVICE,
+    NATIVE_HOOK_IMAGE
 };
 
 /* Fixed-width process-local marker packet. Both producer and DR client use the

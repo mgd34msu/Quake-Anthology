@@ -10,7 +10,10 @@ typedef struct qa_cinematic_image_checkpoint_refs {
 } qa_cinematic_image_checkpoint_refs;
 /* Playback/decoder state is restored separately. These fields preserve the
  * actual retained publication version and frame binding without emitting a
- * command or constructing a replacement image. */
+ * command or constructing a replacement image. Restore requires the genuine
+ * unadopted owner from qa_cinematic_restore_qualified; commit only after the
+ * enclosing complete stream qualifies. Both codecs hold actual owner activity
+ * through reference resolution and publication. */
 bool qa_cinematic_presentation_checkpoint(const qa_cinematic *, const qa_scene_frame *,
     const qa_cinematic_image_checkpoint_refs *, qa_buffer *, qa_error *);
 bool qa_cinematic_presentation_restore(qa_cinematic *, const qa_scene_frame *,

@@ -1,0 +1,4 @@
+87839989b35f04caf1fde3ca37b1b35e5e59aa3f0d389b251fc67554c9a90c20  include/qa/qvm_save.h
+de4c9e1e3492b483b87866ab3d75bf3e889de08460d54a19a2cf105f56a24026  src/compat/qvm/execute.c
+896e6005fe54026ccd5644b24d20c728d682ca3ca34369de2679f899856f3bab  src/app/application/arsenal_guest.c
+200b78c8c544a5f05b308cf865fad45048e7d377b81592098820fbf049d8ad51  src/app/application/guest_input_private.h

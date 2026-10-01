@@ -1,5 +1,6 @@
 #include "guest_q3_private.h"
 #include "guest_projection_private.h"
+#include "native_q3_wire_state.h"
 
 char *q3g_copy_text(const char *text, qa_error *error)
 {
@@ -12,6 +13,8 @@ char *q3g_copy_text(const char *text, qa_error *error)
 bool q3g_arguments(void *context, qa_native_host_command_view *out, qa_error *error)
 {
     q3g_role *role = context;
+    if (role->native_client && !role->arguments_scoped)
+        return application_native_q3_wire_client_arguments(role->native_client, out, error);
     if (role->kind != QA_QVM_GAME && !role->local_client && !role->arguments_scoped && role->common.arguments)
         return role->common.arguments(role->common.context, out, error);
     qa_command_tokens *args = role->kind == QA_QVM_GAME ? &role->engine->arguments : &role->arguments;
@@ -53,9 +56,11 @@ static bool clipboard(void *context, qa_buffer *out, qa_error *error)
 static bool client_command(void *context, const char *text, qa_error *error)
 {
     q3g_role *role = context;
+    if (role->native_client)
+        return application_native_q3_wire_client_command(role->native_client, text, error);
     if (role->common.client_command) return role->common.client_command(role->common.context, text, error);
-    if (role->client < 64)
-        return application_q3_guest_client_command(role->engine->provider, role->client, text, error);
+    if (role->client_engine && role->client < 64)
+        return application_q3_guest_client_command(role->client_engine->provider, role->client, text, error);
     return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 seat has no connected command recipient");
 }
 static bool configstring(void *context, uint32_t index, const char **out, qa_error *error)
@@ -71,25 +76,45 @@ static bool queue_room(const q3g_client *client, size_t count, qa_error *error)
             count <= (size_t)(INT32_MAX - client->reliable.sequence)) ||
         application_fail(error, QA_ERROR_FORMAT, "Q3 reliable command capacity exhausted");
 }
+static bool command_recipient(const struct application_q3_guest *engine, size_t slot)
+{
+    return !engine->clients[slot].pending_retirement && (engine->clients[slot].connected ||
+        (engine->round.phase != Q3G_ROUND_NONE && engine->round.phase != Q3G_ROUND_FAILED &&
+         (engine->round.carried & (UINT64_C(1) << slot))));
+}
+static bool retained_command_recipient(const struct application_q3_guest *engine, size_t slot)
+{
+    if (!command_recipient(engine, slot)) return false;
+    const q3g_client *client = &engine->clients[slot];
+    if (client->bot) return true;
+    const qa_application *app = engine->provider->application;
+    for (const application_provider *provider = app->live_providers; provider; provider = provider->next_live) {
+        const struct application_q3_guest *receiver = q3g_engine((application_provider *)provider);
+        if (!receiver) continue;
+        for (const q3g_role *role = receiver->roles; role; role = role->next)
+            if (role->kind == QA_QVM_CGAME && role->local_client && role->client_engine == engine &&
+                role->client == slot && role->host && role->ready && !role->retired) return true;
+    }
+    return false;
+}
 static bool send_command(void *context, int32_t client, const char *text, qa_error *error)
 {
     q3g_role *role = context;
     if (client < -1 || client >= 64 || strlen(text) >= QA_Q3_COMMAND_CHARS)
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 server command recipient or size");
     for (size_t i = 0; i < 64; ++i)
-        if ((client < 0 || i == (size_t)client) && role->engine->clients[i].connected &&
+        if ((client < 0 || i == (size_t)client) && retained_command_recipient(role->engine, i) &&
             !queue_room(&role->engine->clients[i], 1, error)) return false;
     /* A real transport owner receives the same reliable command. */
     if (role->server.send_command &&
         !role->server.send_command(role->server.context, client, text, error)) return false;
     for (size_t i = 0; i < 64; ++i)
-        if ((client < 0 || i == (size_t)client) && role->engine->clients[i].connected &&
+        if ((client < 0 || i == (size_t)client) && retained_command_recipient(role->engine, i) &&
             !qa_q3_reliable_add(&role->engine->clients[i].reliable, QA_Q3_SERVER, text, error)) return false;
     return true;
 }
-static bool set_configstring(void *context, uint32_t index, const char *text, qa_error *error)
+bool q3g_set_configstring(q3g_role *role, uint32_t index, const char *text, qa_error *error)
 {
-    q3g_role *role = context;
     if (index >= QA_Q3_CONFIGSTRINGS || !text)
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 configstring update");
     const char *prior = qa_q3_configstring(&role->engine->gamestate, index);
@@ -99,7 +124,7 @@ static bool set_configstring(void *context, uint32_t index, const char *text, qa
         return application_fail(error, QA_ERROR_FORMAT, "Q3 configstring exceeds gamestate capacity");
     size_t count = length <= chunk ? 1 : (length + chunk - 1) / chunk;
     for (size_t i = 0; i < 64; ++i)
-        if (role->engine->clients[i].connected && !queue_room(&role->engine->clients[i], count, error)) return false;
+        if (retained_command_recipient(role->engine, i) && !queue_room(&role->engine->clients[i], count, error)) return false;
     if (!qa_q3_configstring_set(&role->engine->gamestate, index, text, error)) return false;
     char command[QA_Q3_COMMAND_CHARS];
     if (length <= chunk) {
@@ -113,6 +138,11 @@ static bool set_configstring(void *context, uint32_t index, const char *text, qa
         if (!send_command(role, -1, command, error)) return false;
     }
     return true;
+}
+
+static bool set_configstring(void *context, uint32_t index, const char *text, qa_error *error)
+{
+    return q3g_set_configstring(context, index, text, error);
 }
 static bool userinfo(void *context, uint32_t client, const char **out, qa_error *error)
 {
@@ -209,7 +239,11 @@ static bool bot_user_command(void *context, int32_t client, const qa_q3_usercmd 
     if (client < 0 || client >= 64 || !role->engine->clients[client].bot)
         return application_fail(error, QA_ERROR_ARGUMENT, "invalid Q3 bot user command");
     if (!application_guest_bots_admit(role->engine->provider, error)) return false;
-    return application_q3_guest_client_think(role->engine->provider, (uint32_t)client, command, error);
+    bool prior = role->engine->round.source_entry;
+    role->engine->round.source_entry = true;
+    bool ok = application_q3_guest_client_think(role->engine->provider, (uint32_t)client, command, error);
+    role->engine->round.source_entry = prior;
+    return ok;
 }
 static bool admit_actor(void *context, qa_actor_id actor, qa_error *error)
 {

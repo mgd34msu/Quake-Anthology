@@ -2,13 +2,15 @@
 #define QA_NETWORK_Q1_DOWNLOAD_SAVE_H
 #include "qa/network_q1_session.h"
 #include "qa/filesystem.h"
+#include "qa/vfs.h"
 
 typedef struct qa_qw_download_admission {
     qa_fs_root *root;
     uint64_t maximum_bytes;
+    qa_vfs *content;
 } qa_qw_download_admission;
-/* The host supplies its already permission-qualified contained download root.
- * A found file transfers an immutable owned snapshot to the native signon.
+/* The host supplies exactly one admitted contained root or mounted content
+ * owner. A found file transfers an immutable owned snapshot to native signon.
  * These functions never execute signon/emit/source-host callbacks. */
 bool qa_qw_file_download_open(const qa_qw_download_admission *, const char *,
     bool *found, qa_qw_download *, qa_error *);

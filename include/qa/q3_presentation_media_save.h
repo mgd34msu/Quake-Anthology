@@ -15,8 +15,9 @@ typedef struct qa_q3_movie_checkpoint_refs {
 /* Actual local movie slots and prepared source cache. Installed delegated
  * system movies require their external lifetime owner and are rejected by
  * this local owner. Restore keeps the installed heap presentation unchanged
- * until all slots and source aliases qualify; failure requires candidate
- * discard because disposing a reconstructed movie retires its shared bus. */
+ * until the complete stream, all slots and source aliases qualify. Failure
+ * frees unadopted local owners without changing the restored engine queue;
+ * success transfers normal movie/stream retirement to the presentation. */
 bool qa_q3_presentation_media_checkpoint(const qa_q3_presentation *,
     const qa_q3_movie_checkpoint_refs *, qa_buffer *, qa_error *);
 bool qa_q3_presentation_media_restore(qa_q3_presentation *,

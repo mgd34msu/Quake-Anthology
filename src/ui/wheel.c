@@ -239,6 +239,7 @@ bool qa_hud_wheel_read(const qa_hud_wheel *w, qa_hud_wheel_status *out) {
         .cursor = {w->position.x / w->options.radius, w->position.y / w->options.radius}};
     return true;
 }
+bool qa_hud_wheel_round_ready(const qa_hud_wheel *wheel) { return wheel && !wheel->busy; }
 typedef struct wheel_draw {
     const qa_hud_wheel_draw_options *options;
     qa_scene_frame *frame;
@@ -259,6 +260,11 @@ static bool draw_text(wheel_draw *d, const char *text, float x, float y, qa_scen
     qa_font_layout_options options = {.text = {(const uint8_t *)text, strlen(text)}, .scale = d->scale,
         .color = color, .color_codes = QA_FONT_COLOR_LITERAL, .alignment = QA_FONT_ALIGN_CENTER};
     if (!qa_font_layout_build(&d->options->fonts, &options, &d->frame->storage, &layout, d->error)) return false;
+    qa_font_positioned_glyph *glyphs=(qa_font_positioned_glyph *)layout.glyphs;
+    for (size_t row=0;row<layout.line_count;++row) {
+        const qa_font_line *line=layout.lines+row;
+        for (size_t i=0;i<line->glyph_count;++i) glyphs[line->first_glyph+i].rect.x-=line->width*.5f;
+    }
     qa_font_draw_options draw = {.seat = d->options->fonts.seat, .target = d->options->viewport,
         .origin = {d->x + x * d->scale - d->options->viewport.x,
                    d->y + y * d->scale - d->options->viewport.y},

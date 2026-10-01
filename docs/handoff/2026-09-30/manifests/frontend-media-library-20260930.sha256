@@ -1,0 +1,4 @@
+e413bf03680f5d2dbef461db78359419df9ca838a71844211554ce69f1751769  src/media/library.c
+0952905a85408d032ed85554a58a108c9210c64a1a604325edcff2b54bf5520b  src/media/library_internal.h
+e93beec740bd098b78ed93b4f0344cda5faa8ceb42672affb70ae7b37e1ac25d  src/media/library_save.c
+3cb74756a2d455d205107228e6cf0921490b30a98cf7c395530eca96ec489f1e  include/qa/media_library_save.h

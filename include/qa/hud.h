@@ -42,6 +42,7 @@ typedef struct qa_hud_data {
     size_t score_count;
     const qa_scene_image *crosshair;
     qa_scene_vec4 crosshair_color;
+    float crosshair_size; /* Zero retains the source default. */
     bool crosshair_visible, source_vitals;
     qa_item_id selected_weapon;
     const char *help_title;
@@ -58,7 +59,16 @@ typedef struct qa_hud_options {
     bool (*read)(void *, const qa_hud_frame *, qa_hud_data *, qa_error *);
     bool (*source_draw)(void *, const qa_hud_frame *, qa_scene_frame *, qa_error *);
 } qa_hud_options;
+typedef struct qa_hud_checkpoint_refs {
+    void *context;
+    bool (*image_encode)(void *, const qa_scene_image *, uint64_t *, qa_error *);
+    /* Returns an existing borrowed image from the shared saved image graph. */
+    bool (*image_decode)(void *, uint64_t, const qa_scene_image **, qa_error *);
+} qa_hud_checkpoint_refs;
+bool qa_hud_checkpoint(qa_hud *, const qa_hud_checkpoint_refs *, qa_buffer *, qa_error *);
+bool qa_hud_restore(qa_bytes, const qa_hud_options *, const qa_hud_checkpoint_refs *, qa_hud **, qa_error *);
 bool qa_hud_create(const qa_hud_options *, qa_hud **, qa_error *);
+bool qa_hud_idle(const qa_hud *);
 bool qa_hud_destroy(qa_hud *, qa_error *);
 /* Message text is copied. Instant center prints replace the queue; slow prints
  * retain their source reveal interval and queue behind earlier prints. */
@@ -71,4 +81,9 @@ bool qa_hud_clear_center(qa_hud *, qa_error *);
 bool qa_hud_pickup(qa_hud *, const char *, const qa_scene_image *, uint64_t until_ns, qa_error *);
 void qa_hud_hit_marker(qa_hud *, float damage, uint64_t until_ns);
 bool qa_hud_draw(qa_hud *, const qa_hud_frame *, qa_scene_frame *, qa_error *);
+/* Literal already-localized captions use the actual seat UI fonts/preferences.
+ * Area is a caller-owned display-pixel region; scale is its viewport fit.
+ * This draws only the bounded caption panel between completed UI callbacks. */
+bool qa_ui_captions_draw(qa_ui *,qa_scene_frame *,qa_scene_rect viewport,qa_scene_rect_f area,
+    float scale,const qa_active_caption *,size_t,qa_error *);
 #endif

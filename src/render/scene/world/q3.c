@@ -10,7 +10,7 @@
 enum { Q3_LIGHTMAP_EDGE = 128, Q3_LIGHTMAP_BYTES = 128 * 128 * 3,
        Q3_LIGHTMAP_PIXELS = 128 * 128, Q3_LIGHTMAP_IMAGE_BYTES = 128 * 128 * 4 };
 
-static void shift_color(const uint8_t input[3], uint32_t shift, uint8_t output[3]) {
+void qaw_q3_shift_color(const uint8_t input[3], uint32_t shift, uint8_t output[3]) {
     uint32_t r = (uint32_t)input[0] << shift, g = (uint32_t)input[1] << shift;
     uint32_t b = (uint32_t)input[2] << shift;
     uint32_t maximum = r > g ? r : g;
@@ -20,7 +20,7 @@ static void shift_color(const uint8_t input[3], uint32_t shift, uint8_t output[3
 }
 
 static qa_scene_vertex vertex(const qa_bsp_vertex *source, uint32_t shift) {
-    uint8_t color[3]; shift_color(source->color, shift, color);
+    uint8_t color[3]; qaw_q3_shift_color(source->color, shift, color);
     return (qa_scene_vertex){source->position, source->normal,
         {source->texcoord[0], source->texcoord[1]},
         {source->lightmap_coord[0], source->lightmap_coord[1]},
@@ -49,7 +49,7 @@ static bool load_lightmaps(qa_scene_world *world, q3_data *data, qa_error *error
     }
     for (size_t i = 0; i < data->lightmap_count; ++i) {
         for (size_t p = 0; p < Q3_LIGHTMAP_PIXELS; ++p) {
-            shift_color(bytes.data + i * Q3_LIGHTMAP_BYTES + p * 3, world->options.q3_overbright, pixels + p * 4);
+            qaw_q3_shift_color(bytes.data + i * Q3_LIGHTMAP_BYTES + p * 3, world->options.q3_overbright, pixels + p * 4);
             pixels[p * 4 + 3] = 255;
         }
         char name[96];
@@ -123,10 +123,10 @@ static bool equal_key(qa_bytes key, const char *expected) {
     return true;
 }
 
-static bool grid_size(qa_scene_world *world, qa_error *error) {
-    world->grid_size = qa_v3(64, 64, 128);
+static bool grid_size(const qa_bsp_view *bsp, qa_vec3 *size, qa_error *error) {
+    *size = qa_v3(64, 64, 128);
     qa_entities entities = {0};
-    if (!qa_entities_parse(world->bsp.lumps[QA_BSP_ENTITIES].bytes, QA_ENTITY_Q3, &entities, error)) return false;
+    if (!qa_entities_parse(bsp->lumps[QA_BSP_ENTITIES].bytes, QA_ENTITY_Q3, &entities, error)) return false;
     if (entities.count) {
         const qa_entity_record *record = entities.records;
         for (size_t i = 0; i < record->property_count; ++i) {
@@ -134,7 +134,7 @@ static bool grid_size(qa_scene_world *world, qa_error *error) {
             if (!equal_key(property->key, "gridsize")) continue;
             char *text = qaw_string(property->value, error);
             if (!text) { qa_entities_free(&entities); return false; }
-            float *axis[3] = {&world->grid_size.x, &world->grid_size.y, &world->grid_size.z};
+            float *axis[3] = {&size->x, &size->y, &size->z};
             char *cursor = text;
             for (unsigned j = 0; j < 3; ++j) {
                 char *end;
@@ -148,9 +148,10 @@ static bool grid_size(qa_scene_world *world, qa_error *error) {
     qa_entities_free(&entities); return true;
 }
 
-static bool load_grid(qa_scene_world *world, q3_data *data, qa_error *error) {
-    if (!grid_size(world, error)) return false;
-    qa_vec3 size = world->grid_size;
+bool qaw_q3_grid_layout(const qa_scene_world *world, q3_grid_layout *layout, qa_error *error) {
+    *layout = (q3_grid_layout){0};
+    if (!grid_size(&world->bsp, &layout->size, error)) return false;
+    qa_vec3 size = layout->size;
     if (!qa_vec_finite(size) || size.x <= 0 || size.y <= 0 || size.z <= 0 || !world->model_count) return true;
     qa_bsp_bounds bounds = world->models[0].source.bounds;
     float minimum[3] = {bounds.min.x, bounds.min.y, bounds.min.z};
@@ -163,20 +164,31 @@ static bool load_grid(qa_scene_world *world, q3_data *data, qa_error *error) {
         float end = spacing[axis] * floorf(maximum[axis] / spacing[axis]);
         float samples = (end - origin[axis]) / spacing[axis] + 1;
         if (!isfinite(origin[axis]) || !isfinite(samples) || samples < 1 || (double)samples > (double)count) return true;
-        data->grid_bounds[axis] = (size_t)samples;
-        if (data->grid_bounds[axis] > count / total) return true;
-        total *= data->grid_bounds[axis];
+        layout->bounds[axis] = (size_t)samples;
+        if (layout->bounds[axis] > count / total) return true;
+        total *= layout->bounds[axis];
     }
     if (total != count) return true;
+    layout->count = count; layout->origin = qa_v3(origin[0], origin[1], origin[2]);
+    layout->inverse = qa_v3(1 / size.x, 1 / size.y, 1 / size.z);
+    return true;
+}
+static bool load_grid(qa_scene_world *world, q3_data *data, qa_error *error) {
+    q3_grid_layout layout;
+    if (!qaw_q3_grid_layout(world, &layout, error)) return false;
+    world->grid_size = layout.size;
+    memcpy(data->grid_bounds, layout.bounds, sizeof(data->grid_bounds));
+    size_t count = layout.count;
+    if (!count) return true;
     data->grid = calloc(count, sizeof(*data->grid));
     if (!data->grid) { qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating Q3 light grid"); return false; }
-    data->grid_count = count; data->grid_origin = qa_v3(origin[0], origin[1], origin[2]);
-    data->grid_inverse = qa_v3(1 / size.x, 1 / size.y, 1 / size.z);
+    data->grid_count = count; data->grid_origin = layout.origin;
+    data->grid_inverse = layout.inverse;
     for (size_t i = 0; i < count; ++i) {
         qa_bsp_grid_point point;
         if (!qa_bsp_read_grid_point(&world->bsp, i, &point, error)) return false;
-        shift_color(point.ambient, world->options.q3_overbright, data->grid[i].ambient);
-        shift_color(point.directed, world->options.q3_overbright, data->grid[i].directed);
+        qaw_q3_shift_color(point.ambient, world->options.q3_overbright, data->grid[i].ambient);
+        qaw_q3_shift_color(point.directed, world->options.q3_overbright, data->grid[i].directed);
         memcpy(data->grid[i].lat_long, point.lat_long, sizeof(point.lat_long));
     }
     return true;

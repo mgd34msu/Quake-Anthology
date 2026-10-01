@@ -28,6 +28,9 @@ void application_startup_dispose(qa_application *);
 bool application_startup_seed_engine(qa_application *, qa_product_id, qa_error *);
 bool application_startup_seed_source(struct application_provider *, qa_cvars *, qa_error *);
 bool application_startup_fields(qa_source_save_io *, qa_application *);
+bool qa_application_startup_command_queue(qa_application *, size_t, qa_console *, const qa_command_context *, qa_error *);
+bool qa_application_startup_command_queued_console(qa_application *, size_t, qa_console **, qa_error *);
+bool qa_application_startup_console_queued(const qa_application *, const qa_console *);
 /* Primitive fields in the application's existing versioned owner checkpoint. */
 bool application_q3_product_fields(qa_source_save_io *, qa_q3_product_policy *);
 typedef struct application_q3_product_preparation {

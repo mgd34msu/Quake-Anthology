@@ -18,6 +18,7 @@
 #include "qa/http.h"
 #include "qa/llm.h"
 #include "qa/recovery.h"
+#include "qa/native_runtime.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -28,6 +29,8 @@ typedef struct frontend_source frontend_source;
 typedef struct frontend_remap frontend_remap;
 typedef struct frontend_visual_owner frontend_visual_owner;
 typedef struct frontend_native_q2 frontend_native_q2;
+typedef struct frontend_native_q3 frontend_native_q3;
+typedef struct frontend_qc_rerelease frontend_qc_rerelease;
 bool frontend_native_q2_rebind_ready(const qa_frontend *, const qa_frontend *, qa_error *);
 bool frontend_native_q2_callbacks_idle(const qa_frontend *);
 void frontend_native_q2_rebind(qa_frontend *, qa_frontend *);
@@ -35,8 +38,21 @@ typedef struct frontend_event_state frontend_event_state;
 typedef struct frontend_particle_state frontend_particle_state;
 typedef struct frontend_capture frontend_capture;
 typedef struct frontend_save_commands frontend_save_commands;
+typedef struct frontend_campaign frontend_campaign;
+typedef struct frontend_ui_features frontend_ui_features;
+typedef struct frontend_keys frontend_keys;
+typedef struct frontend_restart frontend_restart;
+typedef struct frontend_equipment frontend_equipment;
+typedef struct frontend_config_store frontend_config_store;
+typedef struct frontend_cinematic frontend_cinematic;
 typedef struct qa_application_q3_round_cut qa_application_q3_round_cut;
 typedef struct frontend_audio_identity { qa_actor_id actor; uint64_t id; bool retired; } frontend_audio_identity;
+void frontend_audio_engine_options(qa_frontend *,qa_audio_engine_options *);
+bool frontend_startup_replay(qa_frontend *,qa_error *);
+bool frontend_startup_queued(const qa_frontend *);
+void frontend_source_audio_stopped(qa_frontend *);
+bool frontend_source_audio_view(const qa_frontend *,const qa_audio_asset *,qa_vfs **);
+bool frontend_event_audio_view(const qa_frontend *,const qa_audio_asset *,qa_vfs **);
 typedef struct frontend_seat {
     struct qa_frontend *frontend;
     uint32_t id;
@@ -94,11 +110,22 @@ struct qa_frontend {
     frontend_remap *remaps;
     frontend_visual_owner *visuals;
     frontend_native_q2 *native_q2;
+    frontend_native_q3 *native_q3;
+    frontend_qc_rerelease *qc_rerelease;
+    qa_native_runtime *native_runtime;
     frontend_event_state *events;
     frontend_particle_state *particles;
     qa_application_q3_round_cut *round;
     frontend_capture *capture;
     frontend_save_commands *save_commands;
+    frontend_campaign *campaign;
+    frontend_ui_features *ui_features;
+    frontend_keys *keys;
+    frontend_restart *restart;
+    frontend_equipment *equipment;
+    frontend_config_store *config_store;
+    frontend_cinematic *cinematic;
+    qa_catalog *input_catalog;
     uint64_t next_source_id;
     bool source_restoring;
     frontend_audio_identity *audio_ids;
@@ -112,6 +139,9 @@ struct qa_frontend {
     qa_input_console *input_commands;
     qa_dedicated_console *terminal;
     qa_vfs *ui_mounts, *mounts;
+    qa_vfs *input_config;
+    qa_product_id input_product;
+    char *default_user_root;
     qa_scene_resources *ui_images, *images;
     qa_scene_image *console_background;
     qa_font_library *fonts;
@@ -140,6 +170,7 @@ bool frontend_clipboard_write(qa_frontend *, const char *, qa_error *);
 bool frontend_tools_create_diagnostics(qa_frontend *, qa_vfs *, qa_error *);
 bool frontend_protocol(const char *, qa_net_protocol_id *, qa_error *);
 bool frontend_launch(qa_frontend *, qa_error *);
+const qa_product *frontend_product_selection(qa_catalog *,const char *);
 bool frontend_present(qa_frontend *, qa_error *);
 bool frontend_scene_sync(qa_frontend *, qa_error *);
 bool frontend_shader_remap(qa_frontend *, const char *, const char *, float, qa_error *);
@@ -158,6 +189,9 @@ bool frontend_seats_create_restored(qa_frontend *, const bool *mods, qa_error *)
 bool frontend_seats_destroy(qa_frontend *, qa_error *);
 void frontend_seats_rebind(qa_frontend *, qa_frontend *);
 bool frontend_commands(qa_frontend *, qa_error *);
+/* Physical input/audio slots follow the retained published seat array order.
+ * An absent publication/row has no admitted application seat identity. */
+bool frontend_seat_launch_id_read(const qa_frontend *,uint32_t ordinal,uint32_t *);
 bool frontend_events(qa_frontend *, qa_error *);
 bool frontend_map_events(qa_frontend *, qa_error *);
 bool frontend_event_world(qa_frontend *, unsigned, qa_scene_world_input *, qa_error *);
@@ -209,14 +243,16 @@ qa_save_authority frontend_network_save_authority(const qa_frontend *);
 bool frontend_network_client_actor(const qa_frontend *, qa_actor_id);
 bool frontend_network_client_ready(const qa_frontend *);
 uint32_t frontend_network_client_time(const qa_frontend *);
-bool frontend_network_client_services(qa_frontend *, qa_actor_owner, qa_qvm_role, uint32_t, qa_q3_host_options *, qa_error *);
+bool frontend_network_client_services(qa_frontend *, qa_application *, qa_actor_owner, qa_qvm_role, uint32_t, qa_q3_host_options *, qa_error *);
 bool frontend_network_client_command(qa_frontend *, const char *, qa_error *);
 bool frontend_network_client_input(qa_frontend *, qa_input_command_builder *, qa_input_command_frame *, qa_error *);
 bool frontend_network_create(qa_frontend *, qa_error *);
 bool frontend_network_destroy(qa_frontend *, qa_error *);
+bool frontend_network_close_client(qa_frontend *,qa_error *);
 bool frontend_network_pump(qa_frontend *, qa_error *);
 bool frontend_network_tick(qa_frontend *, uint64_t elapsed_ns, bool retiring_map, qa_error *);
 bool frontend_network_command(qa_frontend *, uint32_t, qa_actor_id, const qa_movement_command *, qa_error *);
+bool frontend_network_client_command_seat(qa_frontend *,uint32_t,const char *,qa_error *);
 bool frontend_network_publish(qa_frontend *, qa_error *);
 bool frontend_network_world_change_ready(qa_frontend *, qa_error *);
 bool frontend_network_prepare_restored(qa_frontend *, qa_bytes, qa_error *);
@@ -224,12 +260,14 @@ bool frontend_network_checkpoint(qa_frontend *, qa_buffer *, qa_buffer *, qa_err
 bool frontend_network_restore_connections(qa_frontend *, qa_bytes, qa_error *);
 bool frontend_network_restore_prediction(qa_frontend *, qa_bytes, qa_error *);
 bool frontend_network_rebind_ready(const qa_frontend *, const qa_frontend *, qa_error *);
+bool frontend_network_fresh_ready(const qa_frontend *,const qa_frontend *,const qa_frontend *,qa_error *);
+void frontend_network_publish_fresh(qa_frontend *,qa_frontend *,qa_frontend *);
 void frontend_network_rebind(qa_frontend *, qa_frontend *);
 void frontend_network_transport_exchange(qa_frontend *, qa_frontend *);
 bool frontend_network_source_services(qa_frontend *, qa_q3_host_options *, qa_error *);
 typedef struct frontend_source_group_view {
     qa_actor_owner owner;
-    uint32_t seat;
+    uint32_t seat,launch_seat;
     uint64_t identity;
     unsigned roles[3];
     const qa_vfs *source_files;
@@ -248,6 +286,8 @@ typedef struct frontend_source_group_view {
 } frontend_source_group_view;
 size_t frontend_source_group_count(const qa_frontend *);
 bool frontend_source_group_read(const qa_frontend *, size_t, frontend_source_group_view *);
+bool frontend_source_identity_allocate(qa_frontend *,uint64_t *,qa_error *);
+bool frontend_source_cgame_recipient(const qa_frontend *,uint32_t,qa_actor_owner *,qa_error *);
 bool frontend_source_group_q3_ready(const qa_frontend *, size_t,
     const qa_q3_presentation_options *, const qa_q3_presentation_asset_options *, qa_error *);
 bool frontend_source_system_info(qa_frontend *, const qa_application_q3_client_context *, const char *, qa_error *);

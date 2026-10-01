@@ -32,6 +32,48 @@ static void close_file(void *context)
 }
 static bool empty(const qa_qw_download *out)
 { return out && !out->state && !out->size && !out->read && !out->close; }
+typedef struct qw_mounted_download {
+    qa_resource *resource;
+    uint64_t maximum;
+    char *name;
+} qw_mounted_download;
+static bool read_mounted(void *context, uint64_t offset, uint8_t *out, size_t count, qa_error *error)
+{
+    const qw_mounted_download *mounted = context;
+    qa_bytes bytes = qa_resource_bytes(mounted->resource);
+    if ((count && !out) || offset > bytes.size || count > bytes.size - offset)
+        return fail(error, QA_ERROR_ARGUMENT, "QW mounted download read exceeds its immutable source");
+    if (count) memcpy(out, bytes.data + (size_t)offset, count);
+    return true;
+}
+static void close_mounted(void *context)
+{
+    qw_mounted_download *mounted = context;
+    if (!mounted) return;
+    qa_resource_release(mounted->resource); free(mounted->name); free(mounted);
+}
+static bool open_mounted(const qa_qw_download_admission *admission, const char *name,
+    bool *found, qa_qw_download *out, qa_error *error)
+{
+    qa_resource *resource = NULL; qa_error local = {0};
+    if (!qa_vfs_acquire(admission->content, name, &resource, NULL, &local)) {
+        if (local.code == QA_ERROR_NOT_FOUND) { *found = false; return true; }
+        if (error) *error = local; return false;
+    }
+    qa_bytes bytes = qa_resource_bytes(resource);
+    if (bytes.size > admission->maximum_bytes ||
+        (!strncmp(name, "maps/", 5) && qa_resource_archive_origin(resource, NULL, NULL))) {
+        qa_resource_release(resource); *found = false; return true;
+    }
+    qw_mounted_download *mounted = calloc(1, sizeof(*mounted));
+    if (mounted) mounted->name = malloc(strlen(name) + 1);
+    if (!mounted || !mounted->name) {
+        free(mounted); qa_resource_release(resource);
+        return fail(error, QA_ERROR_MEMORY, "Retaining QW mounted download owner");
+    }
+    strcpy(mounted->name, name); mounted->resource = resource; mounted->maximum = admission->maximum_bytes;
+    *out = (qa_qw_download){mounted, bytes.size, read_mounted, close_mounted}; *found = true; return true;
+}
 static bool ready(const qw_file_download *file, qa_error *error)
 {
     bool unchanged = false;
@@ -41,8 +83,10 @@ static bool ready(const qw_file_download *file, qa_error *error)
 bool qa_qw_file_download_open(const qa_qw_download_admission *admission, const char *name,
     bool *found, qa_qw_download *out, qa_error *error)
 {
-    if (!admission || !admission->root || !found || !empty(out) || !qa_qw_download_path_valid(name))
+    if (!admission || (!admission->root && !admission->content) || (admission->root && admission->content) ||
+        !found || !empty(out) || !qa_qw_download_path_valid(name))
         return fail(error, QA_ERROR_ARGUMENT, "QW hosted download requires an admitted contained root and empty output");
+    if (admission->content) return open_mounted(admission, name, found, out, error);
     qa_fs_entry_kind kind; qa_fs_identity identity;
     if (!qa_fs_root_status(admission->root, name, &kind, &identity, error)) return false;
     if (kind == QA_FS_MISSING) { *found = false; return true; }
@@ -64,6 +108,23 @@ bool qa_qw_file_download_open(const qa_qw_download_admission *admission, const c
 }
 bool qa_qw_file_download_checkpoint(const qa_qw_download *download, qa_buffer *out, qa_error *error)
 {
+    if (download && out && download->state && download->read == read_mounted && download->close == close_mounted) {
+        const qw_mounted_download *mounted = download->state;
+        qa_bytes source = qa_resource_bytes(mounted->resource);
+        const qa_sha256_digest *digest = qa_resource_digest(mounted->resource);
+        if (!digest || source.size != download->size || source.size > mounted->maximum)
+            return fail(error, QA_ERROR_FORMAT, "QW mounted download changes its immutable content identity");
+        size_t length = strlen(mounted->name);
+        if (length > SIZE_MAX - 57) return fail(error, QA_ERROR_MEMORY, "QW mounted identity extent overflows");
+        qa_buffer bytes = {malloc(57 + length), 0};
+        if (!bytes.data) return fail(error, QA_ERROR_MEMORY, "Capturing QW mounted download identity");
+        qa_net_writer writer; qa_net_writer_init(&writer, bytes.data, 57 + length, error);
+        bool ok = qa_net_write_u32(&writer, UINT32_C(0x444d5751)) && qa_net_write_u32(&writer, 1) &&
+            qa_net_write_u64(&writer, mounted->maximum) && qa_net_write_u64(&writer, download->size) &&
+            qa_net_write_data(&writer, digest->bytes, sizeof(digest->bytes)) && qa_net_write_string(&writer, mounted->name);
+        if (!ok) { qa_buffer_free(&bytes); return false; }
+        bytes.size = qa_net_writer_size(&writer); *out = bytes; return true;
+    }
     if (!download || !out || download->read != read_file || download->close != close_file || !download->state)
         return fail(error, QA_ERROR_UNSUPPORTED, "QW source download has no actual hosted file continuation owner");
     const qw_file_download *file = download->state;
@@ -83,21 +144,25 @@ bool qa_qw_file_download_checkpoint(const qa_qw_download *download, qa_buffer *o
 bool qa_qw_file_download_restore_checkpoint(qa_bytes bytes, const qa_qw_download_admission *admission,
     qa_qw_download *out, qa_error *error)
 {
-    if (!admission || !admission->root || !empty(out) || (bytes.size && !bytes.data))
+    if (!admission || (!admission->root && !admission->content) || (admission->root && admission->content) ||
+        !empty(out) || (bytes.size && !bytes.data))
         return fail(error, QA_ERROR_ARGUMENT, "QW file continuation requires an admitted empty resource owner");
     qa_net_reader reader; qa_net_reader_init(&reader, bytes, error);
     uint32_t magic = qa_net_read_u32(&reader), schema = qa_net_read_u32(&reader);
     uint64_t maximum = qa_net_read_u64(&reader), size = qa_net_read_u64(&reader);
     qa_bytes digest; const char *name;
-    if (magic != UINT32_C(0x44465751) || schema != 1 || maximum != admission->maximum_bytes || size > maximum ||
+    if (magic != (admission->content ? UINT32_C(0x444d5751) : UINT32_C(0x44465751)) ||
+        schema != 1 || maximum != admission->maximum_bytes || size > maximum ||
         !qa_net_read_bytes(&reader, 32, &digest) || !qa_q1_read_cstring(&reader, &name) ||
         !qa_qw_download_path_valid(name) || !qa_net_reader_finish(&reader))
         return fail(error, QA_ERROR_FORMAT, "QW hosted download identity differs from candidate admission");
     qa_qw_download candidate = {0}; bool found = false;
     if (!qa_qw_file_download_open(admission, name, &found, &candidate, error)) return false;
     if (!found) return fail(error, QA_ERROR_NOT_FOUND, "Saved QW hosted source file is missing");
-    const qw_file_download *file = candidate.state;
-    if (candidate.size != size || memcmp(file->digest.bytes, digest.data, 32)) {
+    const qa_sha256_digest *actual_digest = admission->content ?
+        qa_resource_digest(((qw_mounted_download *)candidate.state)->resource) :
+        &((qw_file_download *)candidate.state)->digest;
+    if (candidate.size != size || !actual_digest || memcmp(actual_digest->bytes, digest.data, 32)) {
         candidate.close(candidate.state); return fail(error, QA_ERROR_FORMAT, "QW hosted source file content differs from checkpoint");
     }
     *out = candidate; return true;

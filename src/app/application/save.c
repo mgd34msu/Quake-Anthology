@@ -804,7 +804,7 @@ static bool application_capture(qa_application *app, qa_buffer *out, qa_error *e
         if (!bytes.data) ok = application_fail(error, QA_ERROR_MEMORY, "allocating application continuation");
     }
     if (ok) {
-        memcpy(bytes.data, "QAAO", 4); qa_store_u32le(bytes.data + 4, 5);
+        memcpy(bytes.data, "QAAO", 4); qa_store_u32le(bytes.data + 4, 6);
         size_t offset = HEADER_SIZE;
         for (size_t i = 0; i < PART_COUNT; ++i) {
             qa_store_u64le(bytes.data + 8 + i * 8, parts[i].size);
@@ -823,7 +823,7 @@ static bool application_parts(qa_bytes bytes, qa_bytes parts[8], qa_error *error
 {
     enum { PART_COUNT = 8, HEADER_SIZE = 72 };
     if (!bytes.data || bytes.size < HEADER_SIZE || memcmp(bytes.data, "QAAO", 4) ||
-        qa_load_u32le(bytes.data + 4) != 5)
+        qa_load_u32le(bytes.data + 4) != 6)
         return application_fail(error, QA_ERROR_FORMAT, "invalid application continuation header");
     size_t offset = HEADER_SIZE;
     for (size_t i = 0; i < PART_COUNT; ++i) {
@@ -853,7 +853,7 @@ bool application_save_q3_product_decode(const qa_save_image *image,
     const qa_save_record *record = qa_save_image_find(image, QA_SAVE_APPLICATION, "");
     qa_bytes parts[8];
     if (!record || strcmp(record->owner.schema, "qa.application") ||
-        record->owner.schema_version != 5 || record->owner.backend[0] ||
+        record->owner.schema_version != 6 || record->owner.backend[0] ||
         !application_parts(record->payload, parts, error))
         return application_fail(error, QA_ERROR_FORMAT, "Saved Q3 product policy has no qualified application owner");
     return q3_product_decode(parts[6], policy, error);
@@ -864,7 +864,7 @@ bool application_save_startup_decode(const qa_save_image *image,
 {
     const qa_save_record *record = qa_save_image_find(image, QA_SAVE_APPLICATION, "");
     qa_bytes parts[8];
-    if (!record || record->owner.schema_version != 5 ||
+    if (!record || record->owner.schema_version != 6 ||
         !application_parts(record->payload, parts, error)) return false;
     qa_source_save_io io;
     bool okay = qa_source_save_reader(&io, NULL, parts[7], error) &&
@@ -880,7 +880,7 @@ static bool application_metadata_prepare(qa_application *app,
     const qa_save_record *record = qa_save_image_find(image, QA_SAVE_APPLICATION, "");
     qa_bytes parts[8];
     if (!record || strcmp(record->owner.schema, "qa.application") ||
-        record->owner.schema_version != 5 || record->owner.backend[0] ||
+        record->owner.schema_version != 6 || record->owner.backend[0] ||
         !application_parts(record->payload, parts, error))
         return application_fail(error, QA_ERROR_FORMAT, "Saved application metadata has no qualified owner");
     return application_save_metadata_restore(app, parts[0], error);
@@ -1193,7 +1193,7 @@ static bool persistence_inventory(application_persistence *operation, qa_applica
         }
         if (schema) {
             owner->schema = schema;
-            owner->schema_version = owner->kind == QA_SAVE_APPLICATION ? 5 :
+            owner->schema_version = owner->kind == QA_SAVE_APPLICATION ? 6 :
                                     (owner->kind == QA_SAVE_PROVIDER &&
                                      provider->kind == APPLICATION_PROVIDER_Q3) ? 3 :
                                     owner->kind == QA_SAVE_CONTROLS ? 6 :

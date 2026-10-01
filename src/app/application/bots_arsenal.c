@@ -1,4 +1,6 @@
 #include "bots_private.h"
+#include "bots_knowledge.h"
+#include "qa/game_q2_bots.h"
 #include <limits.h>
 #include <math.h>
 #include <string.h>
@@ -22,17 +24,13 @@ static const ballistics q2_base[QA_Q2_WEAPON_COUNT]={
     [QA_Q2_SUPERSHOTGUN]={6,0,1.2f,8192,0,20,2,1000,500},
     [QA_Q2_MACHINEGUN]={8,0,.1f,8192,0,1,1,300,500},
     [QA_Q2_CHAINGUN]={8,0,.1f,8192,0,3,3,300,500},
-    [QA_Q2_GRENADELAUNCHER]={120,600,1.2f,1500,160,1,1},
     [QA_Q2_ROCKETLAUNCHER]={109.5f,650,.9f,8000,120,1,1},
     [QA_Q2_HYPERBLASTER]={20,1000,.1f,2000,0,1,1},
     [QA_Q2_RAILGUN]={150,0,1.6f,8192,0,1,1},
-    [QA_Q2_BFG]={500,400,2.5f,8000,1000,1,50},
-    [QA_Q2_IONRIPPER]={50,500,.3f,1500,0,1,2,143},
-    [QA_Q2_PHALANX]={74.5f,725,1.6f,8000,120,2,1,214},
+    [QA_Q2_IONRIPPER]={50,500,.3f,1500,0,1,2},
+    [QA_Q2_PHALANX]={74.5f,725,1.6f,8000,120,2,1},
     [QA_Q2_ETF_RIFLE]={10,750,.1f,8000,0,1,1},
-    [QA_Q2_HEATBEAM]={15,0,.1f,8192,0,1,2},
-    [QA_Q2_DISINTEGRATOR]={45,1000,.6f,10000,0,1,1},
-    [QA_Q2_CHAINFIST]={15,0,.1f,64,0,1,0,0,0,true}
+    [QA_Q2_HEATBEAM]={15,0,.1f,8192,0,1,2}
 };
 static void describe(qa_bot_weapon_knowledge *out,int source,int slot,qa_item_id weapon,
                      qa_item_id ammo,ballistics fact,bool owned) {
@@ -41,6 +39,7 @@ static void describe(qa_bot_weapon_knowledge *out,int source,int slot,qa_item_id
         .projectile_count=fact.pellets,.reload=fact.cycle,.speed=fact.speed,
         .horizontal_spread=fact.horizontal,.vertical_spread=fact.vertical},
         .projectile={.damage=(int32_t)fact.damage,.radius=fact.radius,.damage_type=1|(fact.radius?2:0)},
+        .selected_projectile_damage=fact.damage,
         .maximum_range=fact.range,.ranged_limit=true,.melee=fact.melee,.personality_role=-1,
         .has_supply=true,.supply_weapon=weapon,.supply_ammo=ammo,.ammo_per_shot=fact.ammo,.owned=owned};
 }
@@ -49,25 +48,30 @@ static bool observe_arsenal(application_bots *bots,qa_actor_id actor,qa_error *e
     application_provider *provider=application_provider_for(application,actor,QA_ROLE_ARSENAL,NULL);
     bots->knowledge_count=0;
     if(provider && provider->kind==APPLICATION_PROVIDER_Q3) {
-        for(int source=1;source<QA_Q3_WEAPON_COUNT;++source) {
+        uint32_t handle;
+        if(!qa_bots_source_weapon_handle(bots->population,actor,&handle,error)) return false;
+        qa_actor_id observed=application_bots_knowledge_actor(bots,provider,handle);
+        for(int source=1;source<=QA_Q3_W_GRAPPLE;++source) {
             qa_bot_weapon_knowledge value={.personality_role=source,.has_supply=true};bool found;
-            if(!qa_bot_runtime_weapon_info(bots->runtime,bots->metadata_weapon,(uint32_t)source,
+            if(!qa_bot_runtime_weapon_info(bots->runtime,handle,(uint32_t)source,
                     &value.weapon,&value.projectile,&found,error)) return false;
-            if(!found) continue;
+            if(!found || !value.weapon.valid) continue;
+            value.selected_projectile_damage=value.projectile.damage;
             value.supply_weapon=qa_q3_weapon_item(provider->state.q3,(qa_q3_weapon)source,false);
             value.supply_ammo=qa_q3_weapon_item(provider->state.q3,(qa_q3_weapon)source,true);
-            value.ammo_per_shot=value.weapon.ammo_amount;
-            value.owned=count(bots,actor,value.supply_weapon)>0;
+            value.ammo_per_shot=value.supply_ammo?1:0;
+            value.owned=count(bots,observed,value.supply_weapon)>0;
             value.melee=source==QA_Q3_W_GAUNTLET;
-            value.ranged_limit=value.melee || source==QA_Q3_W_LIGHTNING;
-            value.maximum_range=value.melee?64:source==QA_Q3_W_LIGHTNING?768:8192;
+            value.ranged_limit=value.melee;
+            value.maximum_range=value.melee?60:0;
             value.travel_modes=source==QA_Q3_W_ROCKET?QA_NAV_CAPABILITY(QA_NAV_ROCKET_JUMP):
                 source==QA_Q3_W_BFG?QA_NAV_CAPABILITY(QA_NAV_BFG_JUMP):
                 source==QA_Q3_W_GRAPPLE?QA_NAV_CAPABILITY(QA_NAV_GRAPPLE):0;
             bots->knowledge[bots->knowledge_count++]=value;
         }
     } else if(provider && provider->kind==APPLICATION_PROVIDER_Q1) {
-        for(int source=0;source<QA_Q1_WEAPON_COUNT;++source) {
+        for(int source=0;source<=QA_Q1_LIGHTNING;++source) {
+            if(source==QA_Q1_GRENADE) continue;
             qa_q1_weapon_view view;bool found;
             if(!qa_q1_player_weapon_read(provider->state.q1,actor,(qa_q1_weapon)source,&view,&found,error)) return false;
             if(!qa_actors_get(qa_session_actors(application->session),actor) ||
@@ -86,6 +90,7 @@ static bool observe_arsenal(application_bots *bots,qa_actor_id actor,qa_error *e
                 .vertical_spread=atanf(view.vertical_spread)*(180.0f/3.14159265358979323846f)/6},
                 .projectile={.damage=integer(view.damage),.radius=view.blast_radius,
                     .damage_type=1|(view.blast_radius>0?2:0),.gravity=view.gravity,.detonation=view.lifetime},
+                .selected_projectile_damage=view.damage,
                 .maximum_range=view.range,.ranged_limit=true,.melee=view.melee,
                 .personality_role=view.grapple?10:-1,.has_supply=true,.owned=view.owned,
                 .supply_weapon=view.item,.supply_ammo=view.ammo,.ammo_per_shot=view.ammo_per_shot,
@@ -97,12 +102,9 @@ static bool observe_arsenal(application_bots *bots,qa_actor_id actor,qa_error *e
             if(view.grapple) value->travel_modes=QA_NAV_CAPABILITY(QA_NAV_GRAPPLE);
         }
     } else if(provider && provider->kind==APPLICATION_PROVIDER_Q2) {
-        const qa_product *product=qa_catalog_product(application->catalog,provider->launch->selection.product);
-        bool rerelease=product && product->edition==QA_EDITION_RERELEASE,deathmatch=false;
-        if(application->modes && application->primary_mode_ready) {
-            qa_mode_view mode;if(!qa_modes_read(application->modes,application->primary_mode,&mode,error)) return false;
-            deathmatch=mode.rules.kind!=QA_MODE_COOPERATIVE && mode.rules.kind!=QA_MODE_SINGLE_PLAYER && mode.rules.kind!=QA_MODE_HORDE;
-        }
+        qa_q2_bot_arsenal_configuration configuration;
+        if(!qa_q2_bot_arsenal_configuration_read(provider->state.q2,&configuration,error)) return false;
+        bool rerelease=configuration.edition==QA_Q2_RERELEASE,deathmatch=configuration.deathmatch;
         for(int source=1;source<QA_Q2_WEAPON_COUNT;++source) {
             const qa_q2_weapon_definition *definition=qa_q2_weapon_definition_at(provider->state.q2,(qa_q2_weapon)source);
             ballistics fact=q2_base[source];
@@ -111,29 +113,25 @@ static bool observe_arsenal(application_bots *bots,qa_actor_id actor,qa_error *e
             if(source==QA_Q2_CHAINGUN) fact.damage=deathmatch?6:8;
             if(source==QA_Q2_HYPERBLASTER) fact.damage=deathmatch?15:20;
             if(source==QA_Q2_RAILGUN) fact.damage=deathmatch?100:rerelease?125:150;
-            if(source==QA_Q2_BFG) fact.damage=deathmatch?200:500;
-            if(source==QA_Q2_DISINTEGRATOR) fact.damage=rerelease?(deathmatch?45:135):(deathmatch?30:45);
-            if(source==QA_Q2_CHAINFIST) fact.damage=rerelease?(deathmatch?15:7):(deathmatch?30:15);
             if(source==QA_Q2_IONRIPPER) fact.damage=deathmatch?30:50;
+            if(source==QA_Q2_IONRIPPER) fact.horizontal=tanf(3.14159265358979323846f/180)*8192;
+            if(source==QA_Q2_PHALANX) fact.horizontal=tanf(1.5f*3.14159265358979323846f/180)*8192;
             if(source==QA_Q2_ETF_RIFLE) fact.speed=rerelease?1150:750;
             const qa_q2_item_definition *item=qa_q2_item_lookup(provider->state.q2,definition->item);
             if(!item) continue;
             qa_bot_weapon_knowledge *value=&bots->knowledge[bots->knowledge_count++];
             describe(value,source,source,item->item,item->ammo,fact,count(bots,actor,item->item)>0);
             if(source==QA_Q2_ROCKETLAUNCHER) value->travel_modes=QA_NAV_CAPABILITY(QA_NAV_ROCKET_JUMP);
-            if(source==QA_Q2_BFG) value->personality_role=9;
             value->weapon.activate=(float)definition->activate_last*.1f;
             if(source==QA_Q2_CHAINGUN) value->weapon.spin_up=1;
             value->weapon.ammo_amount=definition->quantity;value->ammo_per_shot=definition->quantity;
             value->weapon.horizontal_spread=atanf(fact.horizontal/8192)*(180.0f/3.14159265358979323846f)/6;
             value->weapon.vertical_spread=atanf(fact.vertical/8192)*(180.0f/3.14159265358979323846f)/6;
-            value->weapon.offset=source==QA_Q2_BLASTER || source==QA_Q2_HYPERBLASTER || source==QA_Q2_DISINTEGRATOR?qa_v3(24,8,-8):
+            value->weapon.offset=source==QA_Q2_BLASTER || source==QA_Q2_HYPERBLASTER?qa_v3(24,8,-8):
                 source==QA_Q2_IONRIPPER?qa_v3(16,7,-8):source==QA_Q2_ETF_RIFLE?qa_v3(15,8,-8):
                 source==QA_Q2_HEATBEAM?qa_v3(7,2,-3):source==QA_Q2_RAILGUN?qa_v3(0,7,-8):
-                source==QA_Q2_CHAINFIST?qa_v3(0,rerelease?0:8,-4):
-                source==QA_Q2_ROCKETLAUNCHER || source==QA_Q2_BFG?qa_v3(8,8,-8):
-                source==QA_Q2_GRENADELAUNCHER?qa_v3(8,rerelease?0:8,-8):qa_v3(0,source==QA_Q2_PHALANX || !rerelease?8:0,-8);
-            if(source==QA_Q2_GRENADELAUNCHER) {value->projectile.gravity=1;value->projectile.detonation=2.5f;value->projectile.bounce=1.5f;value->weapon.extra_z_velocity=200;}
+                source==QA_Q2_ROCKETLAUNCHER?qa_v3(8,8,-8):
+                qa_v3(0,source==QA_Q2_PHALANX || !rerelease?8:0,-8);
         }
     } else return application_fail(error,QA_ERROR_UNSUPPORTED,"selected bot arsenal has no native observation adapter");
     return true;

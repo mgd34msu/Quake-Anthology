@@ -798,6 +798,27 @@ static bool decoder_admitted(const qa_qw_decoder *decoder, qa_net_protocol_id pr
     return decoder && profile_valid(protocol) && decoder->protocol.kind==protocol.kind &&
         decoder->protocol.revision==protocol.revision && decoder->protocol.flags==protocol.flags;
 }
+bool qa_qw_decoder_server_cut(const qa_qw_decoder *decoder, qa_net_protocol_id protocol,
+    uint32_t outgoing_sequence, qa_error *failure)
+{
+    if (!decoder_admitted(decoder,protocol) || outgoing_sequence>UINT32_C(0x80000000) ||
+        decoder->player_model || decoder->names || decoder->names_capacity)
+        return error(failure,QA_ERROR_FORMAT,"QuakeWorld server frame owner contains client-only state");
+    for (size_t i=0;i<decoder->baseline_capacity;++i) {
+        const baseline_slot *slot=&decoder->baselines[i];
+        if (slot->valid && (!i || slot->entity.number!=i ||
+            !entity_valid(protocol,&slot->entity) || slot->entity.effects || slot->entity.qw_flags))
+            return error(failure,QA_ERROR_FORMAT,"QuakeWorld server baseline differs from its physical source row");
+    }
+    for (size_t i=0;i<QA_QW_UPDATE_BACKUP;++i) {
+        const frame_slot *slot=&decoder->frames[i];
+        if (decoder->requests[i].valid || (slot->valid &&
+            (!frame_valid(protocol,&slot->frame) || slot->frame.sequence>=outgoing_sequence ||
+             (slot->frame.sequence&(QA_QW_UPDATE_BACKUP-1))!=i)))
+            return error(failure,QA_ERROR_FORMAT,"QuakeWorld server frame history exceeds its transmitted channel cut");
+    }
+    return true;
+}
 bool qa_qw_decoder_checkpoint(const qa_qw_decoder *decoder, qa_net_protocol_id protocol,
     qa_buffer *out, qa_error *failure)
 {

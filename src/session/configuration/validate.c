@@ -29,6 +29,16 @@ static bool enabled_mod(const qa_launch_choices *v, const char *key)
     return false;
 }
 
+static bool character_declaration_valid(const qa_launch_seat *seat)
+{
+    const char *fields[] = {seat->character_model, seat->character_skin,
+        seat->character_head_model, seat->character_head_skin};
+    if (!fields[0] && !fields[1] && !fields[2] && !fields[3]) return true;
+    for (size_t i = 0; i < 4; ++i)
+        if (!fields[i] || (i != 2 && !*fields[i]) || strpbrk(fields[i], "\\\";\r\n")) return false;
+    return true;
+}
+
 static bool mod_dependencies(const qa_launch_draft *d, qa_error *error)
 {
     const qa_launch_choices *v = &d->choices;
@@ -150,6 +160,8 @@ bool qa_launch_validate(const qa_launch_draft *d, qa_error *error)
         if (!isfinite(s->bot_skill) || s->bot_skill < 0) return fail(error, "invalid seat bot skill");
         if (s->bot_delay_ms < 0 || (s->bot_definition && !*s->bot_definition))
             return fail(error, "invalid seat bot definition or spawn delay");
+        if (!character_declaration_valid(s))
+            return fail(error, "invalid or incomplete seat character declaration");
         if (s->bot && s->local) return fail(error, "a bot is not a local input seat");
         for (size_t j = 0; j < i; ++j) {
             const qa_launch_seat *other = &v->seats[j];

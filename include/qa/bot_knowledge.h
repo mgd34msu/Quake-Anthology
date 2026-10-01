@@ -27,6 +27,7 @@ enum {
 typedef struct qa_bot_weapon_knowledge {
     qa_bot_weapon_info weapon;
     qa_bot_projectile_info projectile;
+    double selected_projectile_damage; /* Selected source means may be fractional. */
     float maximum_range;
     uint32_t travel_modes; /* Actual selected weapon travel, not its learned role. */
     int32_t personality_role; /* -1 derives a learned role from ballistics. */

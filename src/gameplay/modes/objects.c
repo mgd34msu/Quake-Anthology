@@ -9,10 +9,14 @@ static bool native_objective_read(void *context, qa_objective_state *out, qa_err
     mode_object *o = context;
     if (!o->active || !mode_live(o->modes, o->actor))
         return mode_fail(e, "native objective retired");
+    qa_mode_object_view view = o->value;
+    if (o->q3_source_owned && (!o->modes->options.hooks.q3_source_object_view ||
+        !o->modes->options.hooks.q3_source_object_view(o->modes->options.hooks.context,
+            o->mode, o->actor, &view, e))) return false;
     *out = (qa_objective_state){.actor = o->actor,
-                                .carrier = o->value.carrier,
-                                .phase = o->value.phase,
-                                .complete = o->value.phase == QA_OBJECTIVE_COMPLETE};
+                                .carrier = view.carrier,
+                                .phase = view.phase,
+                                .complete = view.phase == QA_OBJECTIVE_COMPLETE};
     return true;
 }
 bool mode_object_bind_objective(qa_modes *m, mode_object *o, qa_error *e) {
@@ -66,6 +70,8 @@ bool mode_object_count(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_i
     return mode_set_count(m, actor, item, count, e);
 }
 bool mode_object_sync(qa_modes *m, mode_object *o, qa_error *e) {
+    if (o->q3_source_owned)
+        return true;
     if (!mode_live(m, o->actor))
         return true;
     mode_instance *v = mode_get(m, o->mode);
@@ -543,6 +549,10 @@ bool qa_modes_object_read(qa_modes *m, qa_actor_id actor, qa_mode_object_view *o
     if (!o || !out)
         return false;
     *out = o->value;
+    if (o->q3_source_owned)
+        return m->options.hooks.q3_source_object_view &&
+            MODE_CALLBACK(m, m->options.hooks.q3_source_object_view(
+                m->options.hooks.context, o->mode, actor, out, NULL));
     mode_instance *v = mode_get(m, o->mode);
     if (!v || !v->value.rules.enabled)
         out->visible = false;
@@ -602,6 +612,8 @@ static bool touch(qa_modes *m, qa_actor_id object, qa_actor_id actor, bool *acce
     mode_object *o = mode_object_get(m, object);
     if (!o)
         return true;
+    if (o->q3_source_owned)
+        return true;
     mode_instance *v = mode_get(m, o->mode);
     if (!v || !v->value.rules.enabled)
         return true;
@@ -648,6 +660,8 @@ bool qa_modes_touch(qa_modes *m, qa_actor_id object, qa_actor_id actor, bool *ac
 }
 bool mode_object_drop(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id actor, bool death,
                       qa_error *e) {
+    if (o->q3_source_owned)
+        return true;
     qa_body_state player, body;
     if (!qa_world_body_read(m->options.services.world, actor, &player, e) ||
         !qa_world_body_read(m->options.services.world, o->actor, &body, e))
@@ -864,6 +878,8 @@ bool mode_objects_frame(qa_modes *m, mode_instance *v, uint64_t elapsed, qa_erro
         mode_object *o = &m->objects[i];
         if (!o->active || o->mode.slot != v->id.slot || o->mode.generation != v->id.generation ||
             !mode_live(m, o->actor))
+            continue;
+        if (o->q3_source_owned)
             continue;
         qa_actor_id actor = o->actor;
         if (o->spec.kind == QA_MODE_OBJECT_TAG && v->value.rules.source == QA_MODE_ROGUE) {

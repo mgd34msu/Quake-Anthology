@@ -4,6 +4,10 @@
 #include "qa/vfs_view_save.h"
 #include "qa/ui_menu_save.h"
 #include "qa/catalog_save.h"
+#include "qa/material_library_save.h"
+#include "capture.h"
+#include "campaign.h"
+#include "ui_features.h"
 
 static bool visit_view(const qa_application_content_visitor *visitor, const qa_vfs *view, qa_error *error)
 {
@@ -22,15 +26,35 @@ static bool visit_catalog(const qa_application_content_visitor *visitor, const q
         visit_view(visitor, qa_catalog_files(catalog), error) :
         frontend_fail(error, QA_ERROR_ARGUMENT, "frontend catalog has no actual pool");
 }
+static bool visit_material_catalog(const qa_application_content_visitor *visitor,
+    const qa_material_library *library,qa_error *error)
+{
+    const qa_scene_resources *images=qa_material_library_resource_owner(library);
+    const qa_vfs *files=images?qa_scene_resources_files(images):NULL;
+    qa_resource_pool *pool=files?qa_vfs_resources(files):NULL;
+    if (!library || !images || !files || !pool)
+        return frontend_fail(error,QA_ERROR_FORMAT,"Material catalog lacks its actual image and content owners");
+    if (!visit_view(visitor,files,error)) return false;
+    size_t count=qa_material_library_catalog_resource_count(library);
+    for (size_t i=0;i<count;++i) {
+        const qa_resource *resource=qa_material_library_catalog_resource_at(library,i);
+        if (!resource || qa_resource_pool_find(pool,qa_resource_id(resource))!=resource)
+            return frontend_fail(error,QA_ERROR_FORMAT,"Retained shader catalog source leaves its genuine content pool");
+    }
+    return true;
+}
 bool frontend_content_visit(void *context, const qa_application *application,
     const qa_application_content_visitor *visitor, qa_error *error)
 {
     const qa_frontend *frontend = context;
-    if (!frontend || !application || frontend->application != application || frontend->stepping || frontend->source_restoring ||
+    if (!frontend || !application || frontend->application != application || frontend->stepping || frontend->preparing ||
+        frontend->source_restoring || !frontend->capture ||
         !visitor || !visitor->pool || !visitor->view || !visitor->catalog ||
         !frontend_native_q2_callbacks_idle(frontend))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "frontend content inventory requires idle actual owners");
-    if (!visit_view(visitor, frontend->mounts, error) || !visit_view(visitor, frontend->ui_mounts, error)) return false;
+    if (!visit_catalog(visitor,frontend->input_catalog,error) ||
+        !visit_view(visitor, frontend->mounts, error) || !visit_view(visitor, frontend->ui_mounts, error) ||
+        !visit_view(visitor, frontend->input_config, error)) return false;
     for (size_t i = 0; i < frontend_source_group_count(frontend); ++i) {
         frontend_source_group_view group;
         if (!frontend_source_group_read(frontend, i, &group))
@@ -52,7 +76,14 @@ bool frontend_content_visit(void *context, const qa_application *application,
         if (!view) break;
         if (!visit_view(visitor, view, error)) return false;
     }
-    if (!frontend_tools_content_visit(frontend, visitor, error)) return false;
+    for (size_t i=0;;++i) {
+        const qa_material_library *library=frontend_capture_library_at(frontend->capture,i);
+        if (!library) break;
+        if (!visit_material_catalog(visitor,library,error)) return false;
+    }
+    if (!frontend_ui_features_content_visit(frontend,visitor,error) ||
+        !frontend_campaign_content_visit(frontend,visitor,error) ||
+        !frontend_tools_content_visit(frontend, visitor, error)) return false;
     if (frontend->seats) for (unsigned i = 0; i < frontend->options.seats; ++i) {
         const frontend_seat *seat = &frontend->seats[i];
         if (seat->frontend != frontend || seat->id != i)

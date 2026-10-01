@@ -41,6 +41,17 @@ bool application_guest_clients_drain(application_provider *provider, qa_error *e
     struct application_q3_guest *engine = q3g_engine(provider);
     if (!engine || !engine->game || engine->draining_clients || engine->calls ||
         !qa_world_idle(engine->world)) return true;
+    qa_source_frame frame;
+    bool round_frame = engine->round.phase == Q3G_ROUND_SETTLING && engine->round.source_entry &&
+        provider->application->operation == APPLICATION_ADVANCING &&
+        qa_session_active_frame(provider->application->session, provider->owner, &frame) &&
+        frame.kind == QA_CLOCK_Q3 && frame.phase == QA_FRAME_ENTRY &&
+        frame.elapsed_ns == UINT64_C(100000000) && frame.number == engine->round.last_frame;
+    if (engine->round.phase != Q3G_ROUND_NONE &&
+        (engine->round.phase != Q3G_ROUND_SETTLING ||
+         (provider->application->operation != APPLICATION_IDLE &&
+          provider->application->operation != APPLICATION_CONFIGURING && !round_frame)))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 round client retirement requires its completed publication boundary");
     engine->draining_clients = true;
     ++engine->calls;
     bool ok = true;
@@ -54,7 +65,10 @@ bool application_guest_clients_drain(application_provider *provider, qa_error *e
             client->disconnect_pending = false;
             if (engine->game->initialized && !engine->game->retired) {
                 int32_t argument = (int32_t)slot, result;
-                if (!q3g_call(engine->game, 5, &argument, 1, &result, &current) && ok) {
+                bool called = engine->round.phase == Q3G_ROUND_SETTLING ?
+                    q3g_round_call(engine->game, 5, &argument, 1, &result, &current) :
+                    q3g_call(engine->game, 5, &argument, 1, &result, &current);
+                if (!called && ok) {
                     ok = false; first = current;
                 }
             }
@@ -86,11 +100,15 @@ bool application_guest_clients_drain(application_provider *provider, qa_error *e
         }
         client->actor = (qa_actor_id){0};
         client->allocated = client->connected = client->begun = client->bot = false;
+        client->carry_pending = false;
+        client->reserved = false;
         client->pending_retirement = client->disconnect_started = false;
         free(client->retirement_reason); client->retirement_reason = NULL;
     }
     --engine->calls;
     engine->draining_clients = false;
+    if (!ok && engine->round.phase == Q3G_ROUND_SETTLING)
+        return q3g_round_fail(engine, &first, error);
     if (!ok && error) *error = first;
     return ok;
 }

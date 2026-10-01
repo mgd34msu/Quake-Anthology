@@ -14,8 +14,15 @@ struct qa_rankings {
     ranked_player *players;
     size_t count, capacity;
     uint64_t match;
-    bool configured, has_match, busy, restore_pending, restore_loaded;
+    bool configured, has_match, busy, restore_pending, restore_loaded, backend_failed;
 };
+bool qa_rankings_backend_failed(const qa_rankings *rankings) {
+    return rankings && !rankings->busy && rankings->backend_failed;
+}
+static bool backend(qa_rankings *rankings, bool ok) {
+    if (!ok) rankings->backend_failed = true;
+    return ok;
+}
 static bool fail(qa_error *error, const char *message) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0, "%s", message);
     return false;
@@ -37,6 +44,7 @@ static bool enter(qa_rankings *rankings, qa_error *error) {
     if (!rankings || rankings->busy || rankings->restore_pending)
         return fail(error, "Ranking owner is absent or already in an operation");
     rankings->busy = true;
+    rankings->backend_failed = false;
     return true;
 }
 static bool leave(qa_rankings *rankings, bool ok, qa_error *error) {
@@ -136,7 +144,7 @@ bool qa_rankings_begin(qa_rankings *rankings, bool enabled, bool single, const c
         ok = fail(error, "Missing ranking game key");
     else {
         state(rankings, QA_RANKING_STARTING, NULL);
-        ok = rankings->provider.begin(rankings->provider.context, key, &rankings->match, error);
+        ok = backend(rankings, rankings->provider.begin(rankings->provider.context, key, &rankings->match, error));
         if (ok) {
             rankings->has_match = true;
             state(rankings, QA_RANKING_ACTIVE, NULL);
@@ -160,8 +168,8 @@ bool qa_rankings_account(qa_rankings *rankings, int32_t slot, const qa_ranking_r
     if (!player(rankings, slot, (qa_ranking_player){.kind = QA_RANKING_PENDING_PLAYER}, error))
         return leave(rankings, false, error);
     qa_ranking_login login = {0};
-    bool ok = rankings->provider.login(rankings->provider.context, rankings->match, request, &login,
-                                       error);
+    bool ok = backend(rankings, rankings->provider.login(rankings->provider.context, rankings->match, request, &login,
+                                       error));
     if (ok && !login.accepted) {
         qa_ranking_player denied = {.kind = QA_RANKING_DENIED_PLAYER};
         memcpy(denied.reason, login.reason, sizeof(denied.reason));
@@ -181,8 +189,8 @@ bool qa_rankings_account(qa_rankings *rankings, int32_t slot, const qa_ranking_r
             }
         }
     if (ok)
-        ok = rankings->provider.join(rankings->provider.context, rankings->match, login.account,
-                                     error);
+        ok = backend(rankings, rankings->provider.join(rankings->provider.context, rankings->match, login.account,
+                                     error));
     qa_ranking_player next = {.kind = ok ? QA_RANKING_ACTIVE_PLAYER : QA_RANKING_DENIED_PLAYER,
                               .account = login.account};
     if (!ok)
@@ -212,13 +220,13 @@ static bool report(qa_rankings *rankings, int32_t self, int32_t other, qa_rankin
         if (report->stat.kind == QA_RANKING_STRING && !report->stat.value.string)
             ok = fail(error, "Missing ranking report text");
         else
-            ok = rankings->provider.report(rankings->provider.context, rankings->match, report,
-                                           error);
+            ok = backend(rankings, rankings->provider.report(rankings->provider.context, rankings->match, report,
+                                           error));
     }
     return leave(rankings, ok, error);
 }
 bool qa_rankings_report_integer(qa_rankings *rankings, int32_t self, int32_t other, int32_t key,
-                                int32_t value, bool accumulate, qa_error *error) {
+                                double value, bool accumulate, qa_error *error) {
     qa_ranking_report event = {
         .stat = {.kind = QA_RANKING_INTEGER, .key = key, .value.integer = {value, accumulate}}};
     return report(rankings, self, other, &event, error);
@@ -233,7 +241,7 @@ bool qa_rankings_poll(qa_rankings *rankings, qa_error *error) {
     if (!enter(rankings, error))
         return false;
     bool ok = rankings->state.kind != QA_RANKING_ACTIVE || !rankings->configured ||
-              rankings->provider.poll(rankings->provider.context, error);
+              backend(rankings, rankings->provider.poll(rankings->provider.context, error));
     return leave(rankings, ok, error);
 }
 bool qa_rankings_reset(qa_rankings *rankings, int32_t slot, qa_error *error) {
@@ -253,8 +261,8 @@ bool qa_rankings_spectate(qa_rankings *rankings, int32_t slot, qa_error *error) 
     if (ok && rankings->state.kind == QA_RANKING_ACTIVE) {
         qa_ranking_player current = qa_rankings_player(rankings, slot);
         if (current.kind == QA_RANKING_ACTIVE_PLAYER && rankings->has_match && rankings->configured)
-            ok = rankings->provider.logout(rankings->provider.context, rankings->match,
-                                           current.account, error);
+            ok = backend(rankings, rankings->provider.logout(rankings->provider.context, rankings->match,
+                                           current.account, error));
         if (ok)
             ok = player(rankings, slot, (qa_ranking_player){.kind = QA_RANKING_SPECTATOR}, error);
     }
@@ -270,8 +278,8 @@ bool qa_rankings_disconnect(qa_rankings *rankings, int32_t slot, qa_error *error
             qa_ranking_player current = rankings->players[index].state;
             if (current.kind == QA_RANKING_ACTIVE_PLAYER && rankings->has_match &&
                 rankings->configured)
-                ok = rankings->provider.logout(rankings->provider.context, rankings->match,
-                                               current.account, error);
+                ok = backend(rankings, rankings->provider.logout(rankings->provider.context, rankings->match,
+                                               current.account, error));
             memmove(rankings->players + index, rankings->players + index + 1,
                     (rankings->count - index - 1) * sizeof(*rankings->players));
             --rankings->count;
@@ -306,15 +314,15 @@ bool qa_rankings_end(qa_rankings *rankings, qa_error *error) {
         ranked_player *current = rankings->players + i;
         qa_error local = {0};
         if (current->state.kind == QA_RANKING_ACTIVE_PLAYER && rankings->configured &&
-            !rankings->provider.logout(rankings->provider.context, rankings->match,
-                                       current->state.account, &local))
+            !backend(rankings, rankings->provider.logout(rankings->provider.context, rankings->match,
+                                       current->state.account, &local)))
             collect(&first, &local, &failures);
         qa_ranking_player fresh = {.kind = QA_RANKING_NEW_PLAYER};
         notify(rankings, current->slot, &fresh);
     }
     qa_error local = {0};
     if (rankings->configured &&
-        !rankings->provider.finish(rankings->provider.context, rankings->match, &local))
+        !backend(rankings, rankings->provider.finish(rankings->provider.context, rankings->match, &local)))
         collect(&first, &local, &failures);
     rankings->has_match = false;
     rankings->match = 0;

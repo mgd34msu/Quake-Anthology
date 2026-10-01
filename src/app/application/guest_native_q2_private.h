@@ -27,6 +27,7 @@ struct application_native_q2 {
     struct application_native_q2_inventory *primary_inventory;
     struct application_native_q2_attack *source_attack;
     struct application_native_q2_combat *source_combat;
+    struct application_q2_control *source_control;
     qa_native_host_engine_services platform;
     qa_native_host_q2_application_fn application;
     void *application_context;
@@ -47,11 +48,15 @@ struct application_native_q2 {
     uint64_t current_command_sequence;
     uint64_t config_revision, hud_config_revision;
     qa_actor_owner hud_source_owner;
-    bool initialized, map_ready, shutting_down;
+    bool prepared, initialized, map_ready, shutting_down, activation_failed;
+    qa_error activation_error;
 };
 
 bool application_construct_native_q2(qa_application *, application_provider *, qa_world *,
                                        const qa_product *, const qa_launch_choices *, qa_error *);
+bool application_guest_native_q2_console_prepare(qa_application *, application_provider *, qa_world *,
+    const qa_product *, const qa_launch_choices *, qa_console **, qa_cvars **,
+    qa_command_context *, qa_error *);
 bool application_native_q2_spawn_map(application_provider *, const qa_bsp_view *,
                                       const qa_entities *, qa_string_id, qa_string_id, qa_error *);
 bool application_native_q2_retire_map(application_provider *, qa_error *);

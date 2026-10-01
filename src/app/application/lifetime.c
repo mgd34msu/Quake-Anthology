@@ -5,6 +5,8 @@
 #include "guest_qc_original_save.h"
 #include "native_q3_console.h"
 #include "native_q1_console.h"
+#include "native_q2_console.h"
+#include "startup_flow.h"
 #include "native_q3_ipfilters.h"
 #include "native_q3_settings.h"
 #include "native_q3_team_status.h"
@@ -26,6 +28,7 @@ bool application_guests_idle(const qa_application *application)
     for (const application_provider *provider = application->live_providers;
          provider != NULL; provider = provider->next_live) {
         if (!application_native_q1_console_idle(provider) ||
+            !application_native_q2_console_idle(provider) ||
             !application_native_q3_console_idle(provider) ||
             !application_native_q3_ipfilters_idle(provider) ||
             !application_native_q3_settings_idle(provider) ||
@@ -198,6 +201,7 @@ bool application_finalize(qa_application *application, qa_error *error)
     if (application == NULL)
         return true;
     if (!application->destroy_requested || application->finalizing ||
+        application->startup_flow ||
         application->q3_round_active || application->frame_preparing ||
         application->configuration != NULL || application->provider_states != 0 ||
         application->pending_close != NULL || application->live_providers != NULL)

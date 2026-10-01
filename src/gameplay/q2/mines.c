@@ -1,4 +1,5 @@
 #include "internal.h"
+#include "qa/game_q2_source.h"
 
 enum { MINE_FLIGHT, MINE_OPENING, MINE_ACTIVE, MINE_WARNING, MINE_CONSUMING, MINE_FINISHED };
 
@@ -235,7 +236,12 @@ static bool prox_open(qa_q2_game *g, q2_actor *a, qa_builtin_actor_snapshot *sna
             return sound(g, a, "weapons/proxwarn.wav", 2, e) && explode(g, a, false, e);
     }
     p->phase = MINE_ACTIVE;
-    p->expire_ns = q2_deadline(g->now_ns, mine_life(p->damage / 90));
+    qa_actor_id id = a->id;
+    float strong;
+    if (!qa_q2_source_value(g, g->options.edition == QA_Q2_RERELEASE ?
+            "g_dm_strong_mines" : "strong_mines", 0, &strong, e)) return false;
+    if (!q2_actor_live(g, id)) return true;
+    p->expire_ns = q2_deadline(g->now_ns, strong != 0 ? 45 * Q2_NS : mine_life(p->damage / 90));
     p->next_ns = q2_deadline(g->now_ns, 200 * Q2_MS);
     return true;
 }
@@ -688,8 +694,8 @@ bool q2_mine_touch(qa_q2_game *g, const qa_touch_contact *contact, qa_error *e) 
     if (p->kind == Q2_BAD_AREA || p->kind == Q2_TESLA_FIELD || p->kind == Q2_TRAP)
         return true;
     if (p->kind == Q2_PROX_FIELD) {
-        bool creature;
-        if (!q2_target_creature(g, contact->other, &creature, NULL, e))
+        bool creature, player;
+        if (!q2_target_creature(g, contact->other, &creature, &player, e))
             return false;
         if (!creature)
             return true;

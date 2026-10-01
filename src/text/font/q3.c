@@ -430,6 +430,7 @@ bool qa_font_q3_register(qa_font_library *library, const qa_font_q3_options *opt
                          const qa_font **out, qa_error *error) {
     if (!library || !options || !out)
         return qa_font_fail(error, QA_ERROR_ARGUMENT, 0, "Invalid Q3 font registration");
+    if (!qa_font_internal_admission_ready(library,error)) return false;
     int32_t point_size = options->point_size <= 0 ? 12 : options->point_size;
     char cache_name[64];
     int count = snprintf(cache_name, sizeof(cache_name), "fonts/fontImage_%d.dat", point_size);
@@ -464,11 +465,14 @@ bool qa_font_q3_export(const qa_font *font, qa_font_image_handle image_handle, v
                        uint8_t out[QA_Q3_FONT_RECORD_BYTES], qa_error *error) {
     if (!font || font->kind != QA_FONT_Q3 || !font->has_q3_record || !out)
         return qa_font_fail(error, QA_ERROR_ARGUMENT, 0, "Font is not a registered Q3 font");
+    if (!qa_font_internal_admission_ready(font->library,error)) return false;
+    ++font->library->callbacks;
     qa_q3_font_record record = font->q3_record;
     for (uint32_t code = 0; code < QA_Q3_FONT_GLYPHS; ++code) {
         qa_font_glyph glyph;
         const qa_scene_image *image = qa_font_find_glyph(font, code, &glyph) ? glyph.image : NULL;
         record.glyphs[code].handle = image_handle && image ? image_handle(context, image) : 0;
     }
-    return qa_q3_font_record_encode(&record, out, error);
+    bool ok=qa_q3_font_record_encode(&record, out, error);
+    --font->library->callbacks; return ok;
 }

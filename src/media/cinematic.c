@@ -52,7 +52,8 @@ static qa_audio_raw_stream *current_raw(const qa_cinematic *movie) {
 static void reset_audio(qa_cinematic *movie) {
     if (!movie->raw_attached)
         return;
-    qa_audio_engine_remove_stream(movie->options.audio, movie->options.audio_bus);
+    if (!movie->restore_pending)
+        qa_audio_engine_remove_stream(movie->options.audio, movie->options.audio_bus);
     movie->raw_attached = false;
 }
 static bool before_audio_reset(void *context, qa_error *error) {
@@ -287,6 +288,7 @@ static bool create(const qa_cinematic_source *source, const qa_cinematic_options
     }
     movie->options = *options;
     movie->format = source->format;
+    movie->restore_pending = qualified;
     movie->suppress_audio = saved != NULL;
     movie->status = movie->decoder_status = QA_MEDIA_PLAYING;
     movie->image_revision = UINT64_MAX;
@@ -369,7 +371,7 @@ static bool create(const qa_cinematic_source *source, const qa_cinematic_options
         free_movie(movie);
         return false;
     }
-    movie->suppress_audio = false;
+    movie->suppress_audio = movie->restore_pending;
     *out = movie;
     return true;
 }
@@ -386,6 +388,16 @@ bool qa_cinematic_restore_qualified(const qa_cinematic_source *source, const qa_
         return cinematic_fail(error,"Qualified cinematic restore requires an empty candidate and actual clock anchor");
     return create(source,options,saved,true,anchor,out,error);
 }
+void qa_cinematic_restore_commit(qa_cinematic *movie) {
+    if (!movie || movie->busy || !movie->restore_pending) return;
+    movie->restore_pending = false;
+    movie->suppress_audio = false;
+}
+void qa_cinematic_restore_discard(qa_cinematic *movie) {
+    if (!movie || movie->busy || !movie->restore_pending) return;
+    movie->busy = true;
+    free_movie(movie);
+}
 static bool finish(qa_cinematic *movie, qa_cinematic_end reason, qa_error *error) {
     if (movie->completed)
         return true;
@@ -399,7 +411,7 @@ static bool finish(qa_cinematic *movie, qa_cinematic_end reason, qa_error *error
     return true;
 }
 void qa_cinematic_destroy(qa_cinematic *movie) {
-    if (!movie || movie->busy)
+    if (!movie || movie->busy || movie->restore_pending)
         return;
     movie->busy = true;
     if (!movie->completed) {
@@ -413,7 +425,7 @@ void qa_cinematic_destroy(qa_cinematic *movie) {
     free_movie(movie);
 }
 bool qa_cinematic_tick(qa_cinematic *movie, qa_media_tick *out, qa_error *error) {
-    if (!movie || !out || movie->busy || movie->faulted)
+    if (!movie || !out || movie->busy || movie->faulted || movie->restore_pending)
         return cinematic_fail(error, "Cinematic is unavailable");
     movie->busy = true;
     bool ok = true, changed = movie->dirty, looped = false;
@@ -465,7 +477,7 @@ bool qa_cinematic_tick(qa_cinematic *movie, qa_media_tick *out, qa_error *error)
     return true;
 }
 bool qa_cinematic_pause(qa_cinematic *movie, bool paused, qa_error *error) {
-    if (!movie || movie->busy || movie->faulted)
+    if (!movie || movie->busy || movie->faulted || movie->restore_pending)
         return cinematic_fail(error, "Cannot pause active or failed cinematic");
     if ((paused && movie->status != QA_MEDIA_PLAYING) ||
         (!paused && movie->status != QA_MEDIA_PAUSED))
@@ -480,24 +492,29 @@ bool qa_cinematic_pause(qa_cinematic *movie, bool paused, qa_error *error) {
     return ok;
 }
 bool qa_cinematic_end_playback(qa_cinematic *movie, qa_cinematic_end reason, qa_error *error) {
-    if (!movie || movie->busy || reason < QA_CINEMATIC_FINISHED || reason > QA_CINEMATIC_STOPPED)
+    if (!movie || movie->busy || movie->restore_pending || reason < QA_CINEMATIC_FINISHED || reason > QA_CINEMATIC_STOPPED)
         return cinematic_fail(error, "Cannot end active cinematic");
     movie->busy = true;
     bool ok = finish(movie, reason, error);
     movie->busy = false;
     return ok;
 }
-qa_media_status qa_cinematic_status(const qa_cinematic *movie) { return movie->status; }
+qa_media_status qa_cinematic_status(const qa_cinematic *movie) {
+    return movie && !movie->restore_pending ? movie->status : QA_MEDIA_STOPPED;
+}
 qa_cinematic_target qa_cinematic_destination(const qa_cinematic *movie) {
-    return movie->options.target;
+    return movie && !movie->restore_pending ? movie->options.target :
+        (qa_cinematic_target){.kind=(qa_cinematic_target_kind)-1};
 }
 const qa_media_frame *qa_cinematic_frame(const qa_cinematic *movie) {
-    return movie->has_picture ? &movie->picture : NULL;
+    return movie && !movie->restore_pending && movie->has_picture ? &movie->picture : NULL;
 }
-uint64_t qa_cinematic_revision(const qa_cinematic *movie) { return movie->revision; }
+uint64_t qa_cinematic_revision(const qa_cinematic *movie) {
+    return movie && !movie->restore_pending ? movie->revision : 0;
+}
 bool qa_cinematic_time(qa_cinematic *movie, double *elapsed, double *source, uint64_t *loop,
                        qa_error *error) {
-    if (!movie || !elapsed || !source || !loop || movie->busy)
+    if (!movie || !elapsed || !source || !loop || movie->busy || movie->restore_pending)
         return cinematic_fail(error, "Cannot query active cinematic time");
     movie->busy = true;
     bool ok = cinematic_elapsed(movie, elapsed, error);
@@ -511,6 +528,7 @@ bool qa_cinematic_time(qa_cinematic *movie, double *elapsed, double *source, uin
     return ok;
 }
 static bool capture(qa_cinematic *movie, qa_cinematic_checkpoint *out, qa_error *error) {
+    qa_audio_raw_stream *raw = current_raw(movie);
     if (movie->raw_attached && (movie->format == QA_CINEMATIC_IMAGE || movie->completed ||
                                movie->options.silent || !movie->options.audio))
         return cinematic_fail(error, "Cinematic has an invalid shared audio attachment");
@@ -528,7 +546,7 @@ static bool capture(qa_cinematic *movie, qa_cinematic_checkpoint *out, qa_error 
                                      .dirty = movie->dirty,
                                      .completed = movie->completed,
                                      .focus_paused = movie->focus_paused,
-                                     .audio_attached = movie->raw_attached};
+                                     .audio_attached = raw != NULL};
     if (!cinematic_elapsed(movie, &saved.elapsed_ms, error))
         return false;
     size_t length = strlen(movie->name);
@@ -554,7 +572,6 @@ static bool capture(qa_cinematic *movie, qa_cinematic_checkpoint *out, qa_error 
         ok = true;
         break;
     }
-    qa_audio_raw_stream *raw = current_raw(movie);
     if (ok && raw)
         ok = qa_audio_raw_checkpoint(raw, &saved.audio, error);
     if (!ok) {
@@ -565,7 +582,7 @@ static bool capture(qa_cinematic *movie, qa_cinematic_checkpoint *out, qa_error 
     return true;
 }
 bool qa_cinematic_capture(qa_cinematic *movie, qa_cinematic_checkpoint *out, qa_error *error) {
-    if (!movie || !out || movie->busy || movie->faulted)
+    if (!movie || !out || movie->busy || movie->faulted || movie->restore_pending)
         return cinematic_fail(error, "Cannot checkpoint active or failed cinematic");
     movie->busy = true;
     bool ok = capture(movie, out, error);
@@ -596,7 +613,7 @@ void qa_cinematic_checkpoint_free(qa_cinematic_checkpoint *saved) {
 bool qa_cinematic_audio_rebind_ready(qa_cinematic *movie, qa_audio_engine *engine,
     uint64_t bus, qa_error *error)
 {
-    if (!movie || movie->busy || movie->faulted ||
+    if (!movie || movie->busy || movie->faulted || movie->restore_pending ||
         (!engine && (!movie->options.silent && movie->format != QA_CINEMATIC_IMAGE)))
         return cinematic_fail(error, "Cinematic audio exchange requires idle qualified owners");
     if (!movie->raw_attached) return true;
@@ -615,13 +632,14 @@ bool qa_cinematic_audio_rebind_ready(qa_cinematic *movie, qa_audio_engine *engin
 
 void qa_cinematic_audio_rebind(qa_cinematic *movie, qa_audio_engine *engine, uint64_t bus)
 {
+    if (!movie || movie->busy || movie->faulted || movie->restore_pending) return;
     movie->options.audio = engine; movie->options.audio_bus = bus;
 }
 
 bool qa_cinematic_frame_rebind_ready(const qa_cinematic *movie, const qa_scene_frame *current,
     qa_error *error)
 {
-    if (!movie || movie->busy || movie->faulted || (movie->image_frame && movie->image_frame != current))
+    if (!movie || movie->busy || movie->faulted || movie->restore_pending || (movie->image_frame && movie->image_frame != current))
         return cinematic_fail(error, "Cinematic publication exchange requires an idle matching frame");
     return true;
 }
@@ -629,5 +647,6 @@ bool qa_cinematic_frame_rebind_ready(const qa_cinematic *movie, const qa_scene_f
 void qa_cinematic_frame_rebind(qa_cinematic *movie, const qa_scene_frame *current,
     const qa_scene_frame *destination)
 {
+    if (!movie || movie->busy || movie->faulted || movie->restore_pending) return;
     if (movie->image_frame && movie->image_frame == current) movie->image_frame = destination;
 }

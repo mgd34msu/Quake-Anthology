@@ -167,6 +167,8 @@ static bool seat(qa_source_save_io *io, qa_launch_draft *draft, const qa_actor_r
     if (!actor(io,registry,&value->actor)) return false;
     T(value,name); T(value,team); F(bool,value,local); F(bool,value,spectator); F(bool,value,bot); F(f32,value,bot_skill);
     T(value,bot_definition); F(i32,value,bot_delay_ms);
+    T(value,character_model); T(value,character_skin);
+    T(value,character_head_model); T(value,character_head_skin);
     return value->name && value->team;
 }
 static bool loadout(qa_source_save_io *io, qa_launch_draft *draft, const qa_actor_registry *registry, qa_launch_loadout *value)
@@ -203,7 +205,7 @@ static bool choices(qa_source_save_io *io, qa_launch_draft *draft, const qa_acto
     ARRAY(mods,mod_count,mod_capacity,qa_launch_mod_selection,mod,9);
     ARRAY(modes,mode_count,mode_capacity,qa_launch_mode,mode,140);
     ARRAY(equipment,equipment_count,equipment_capacity,qa_launch_equipment,equipment,54);
-    ARRAY(seats,seat_count,seat_capacity,qa_launch_seat,seat,44);
+    ARRAY(seats,seat_count,seat_capacity,qa_launch_seat,seat,60);
     ARRAY(loadout,loadout_count,loadout_capacity,qa_launch_loadout,loadout,35);
     ARRAY(monsters,monster_count,monster_capacity,qa_launch_monster,monster,13);
     ARRAY(behaviors,behavior_count,behavior_capacity,qa_launch_weapon_behavior,behavior,38);
@@ -225,7 +227,7 @@ static bool choices(qa_source_save_io *io, qa_launch_draft *draft, const qa_acto
 bool qa_launch_draft_checkpoint(const qa_launch_draft *draft, const qa_actor_registry *registry, qa_buffer *out, qa_error *error)
 {
     if (!draft || !draft->catalog || !out) return fail(error,"Draft capture requires its actual private owner");
-    qa_source_save_io io; uint8_t magic[4]={'Q','L','D','R'}; uint32_t schema=2; qa_launch_draft saved=*draft;
+    qa_source_save_io io; uint8_t magic[4]={'Q','L','D','R'}; uint32_t schema=3; qa_launch_draft saved=*draft;
     if (!qa_source_save_writer(&io,NULL,error)) return false;
     bool ok=qa_source_save_bytes(&io,magic,4) && qa_source_save_u32(&io,&schema) && dictionary(&io,&saved) &&
         choices(&io,&saved,registry) && qa_source_save_finish(&io,out);
@@ -239,7 +241,7 @@ bool qa_launch_draft_restore(qa_catalog *catalog, const qa_actor_registry *regis
     if (!launch_empty(catalog,&draft,error)) return false;
     qa_source_save_io io; uint8_t magic[4]; uint32_t schema=0;
     if (!qa_source_save_reader(&io,NULL,bytes,error)) { qa_launch_draft_destroy(draft); return false; }
-    bool ok=qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"QLDR",4) && qa_source_save_u32(&io,&schema) && schema==2 &&
+    bool ok=qa_source_save_bytes(&io,magic,4) && !memcmp(magic,"QLDR",4) && qa_source_save_u32(&io,&schema) && schema==3 &&
         dictionary(&io,draft) && choices(&io,draft,registry) && qa_source_save_finish(&io,NULL);
     if (ok) *out=draft;
     else { qa_launch_draft_destroy(draft); if (error && error->code==QA_OK) fail(error,"Invalid or unqualified private draft continuation"); }

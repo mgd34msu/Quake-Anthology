@@ -1,7 +1,98 @@
 #include "library_internal.h"
+#include "qa/material_library_save.h"
+#include "qa/material_save.h"
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+
+static bool mutation_begin(qa_material_library *library, qa_error *error)
+{
+    if (!qa_material_library_idle(library)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Material library is retained by another operation");
+        return false;
+    }
+    library->mutating = true;
+    return true;
+}
+
+static bool mutation_end(qa_material_library *library, bool ok)
+{
+    library->mutating = false;
+    return ok;
+}
+
+bool qa_material_library_idle(const qa_material_library *library)
+{
+    return library && !library->capture_depth && !library->mutating &&
+        (!library->order || qa_material_order_idle(library->order));
+}
+
+bool qa_material_library_capture_begin(const qa_material_library *borrowed, qa_error *error)
+{
+    qa_material_library *library = (qa_material_library *)borrowed;
+    if (!library || !library->resources || !library->catalog_ready || library->mutating || library->capture_depth == SIZE_MAX) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Material capture requires an idle retained owner");
+        return false;
+    }
+    if (library->order && !qa_material_order_capture_begin(library->order, error)) return false;
+    ++library->capture_depth;
+    return true;
+}
+
+void qa_material_library_capture_end(const qa_material_library *borrowed)
+{
+    qa_material_library *library = (qa_material_library *)borrowed;
+    if (library && library->capture_depth) {
+        --library->capture_depth;
+        if (library->order) qa_material_order_capture_end(library->order);
+    }
+}
+
+qa_material_library *qa_material_library_create_detached(qa_scene_resources *resources, qa_error *error)
+{
+    if (!resources) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Detached material library requires its actual resource owner");
+        return NULL;
+    }
+    qa_material_library *library = calloc(1, sizeof(*library));
+    if (!library) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating detached material library");
+        return NULL;
+    }
+    library->resources = resources;
+    return library;
+}
+
+static bool catalog_add(qa_material_library *library, qa_bytes bytes, qa_resource *resource, qa_error *error)
+{
+    qa_material_catalog_source *source = calloc(1, sizeof(*source));
+    if (!source) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining shader catalog source");
+        return false;
+    }
+    if (resource) {
+        source->resource = resource;
+        qa_resource_retain(resource);
+        source->bytes = qa_resource_bytes(resource);
+    } else {
+        source->owned_bytes = bytes.size ? malloc(bytes.size) : NULL;
+        if (bytes.size && !source->owned_bytes) {
+            free(source);
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining inline shader source bytes");
+            return false;
+        }
+        if (bytes.size) memcpy(source->owned_bytes, bytes.data, bytes.size);
+        source->bytes = (qa_bytes){source->owned_bytes, bytes.size};
+    }
+    qa_sha256(source->bytes, &source->digest);
+    if (library->catalog_tail) library->catalog_tail->next = source;
+    else library->catalog_sources = source;
+    library->catalog_tail = source;
+    library->catalog_current = source;
+    bool ok = qa_material_script_catalog(library, source->bytes, error);
+    library->catalog_current = NULL;
+    return ok;
+}
 
 char *qa_material_string(const char *value, qa_error *error)
 {
@@ -540,9 +631,11 @@ bool qa_material_register_kind(qa_material_library *library, const char *name,
                                 qa_material_registration_kind kind,
                                 const qa_material **out, qa_error *error)
 {
+    if (out) *out = NULL;
+    if (!mutation_begin(library, error)) return false;
     int32_t index = kind == QA_MATERIAL_LIGHTMAP ? 0 : kind == QA_MATERIAL_WHITE ? -2 :
         kind == QA_MATERIAL_VERTEX ? -3 : kind == QA_MATERIAL_PICTURE ? -4 : -1;
-    return register_material(library, name, options, kind, 0, index, NULL, NULL, out, error);
+    return mutation_end(library, register_material(library, name, options, kind, 0, index, NULL, NULL, out, error));
 }
 
 bool qa_material_register_world(qa_material_library *library, const char *name,
@@ -551,13 +644,15 @@ bool qa_material_register_world(qa_material_library *library, const char *name,
                                  const char *base_name, const qa_scene_image *base_image,
                                  const qa_material **out, qa_error *error)
 {
+    if (out) *out = NULL;
     if (!world_identity || lightmap_index < -4) {
         if (out) *out = NULL;
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "World material requires an identity and valid lightmap index");
         return false;
     }
-    return register_material(library, name, options, kind, world_identity, lightmap_index,
-                              base_name, base_image, out, error);
+    if (!mutation_begin(library, error)) return false;
+    return mutation_end(library, register_material(library, name, options, kind, world_identity, lightmap_index,
+                              base_name, base_image, out, error));
 }
 
 bool qa_material_register(qa_material_library *library, const char *name,
@@ -568,7 +663,7 @@ bool qa_material_register(qa_material_library *library, const char *name,
         lightmapped ? QA_MATERIAL_LIGHTMAP : QA_MATERIAL_DYNAMIC, out, error);
 }
 
-bool qa_material_register_generated_picture(qa_material_library *library, const char *name,
+static bool generated_picture(qa_material_library *library, const char *name,
                                             const qa_scene_image *image, const qa_material **out,
                                             qa_error *error)
 {
@@ -646,15 +741,24 @@ bool qa_material_register_generated_picture(qa_material_library *library, const 
     if (recovered != NULL) { generated->picture = recovered; *out = recovered; return true; }
     qa_scene_image_options options = default_options(); options.mipmap = false;
     options.wrap = QA_SCENE_CLAMP; options.filter = QA_SCENE_LINEAR;
-    if (!qa_material_register_kind(library, name, &options, QA_MATERIAL_PICTURE, out, error)) return false;
+    if (!register_material(library, name, &options, QA_MATERIAL_PICTURE, 0, -4, NULL, NULL, out, error)) return false;
     generated->picture = *out;
     return true;
+}
+
+bool qa_material_register_generated_picture(qa_material_library *library, const char *name,
+                                            const qa_scene_image *image, const qa_material **out,
+                                            qa_error *error)
+{
+    if (out) *out = NULL;
+    if (!mutation_begin(library, error)) return false;
+    return mutation_end(library, generated_picture(library, name, image, out, error));
 }
 
 bool qa_material_library_animate(qa_material_library *library, double seconds,
                                  qa_scene_frame *frame, qa_error *error)
 {
-    if (library == NULL || frame == NULL || !isfinite(seconds)) {
+    if (!qa_material_library_idle(library) || frame == NULL || !isfinite(seconds)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid material animation clock"); return false;
     }
     for (size_t i = 0; i < library->count; ++i) {
@@ -711,12 +815,13 @@ bool qa_material_library_sun(const qa_material_library *library, qa_vec3 *light,
 void qa_material_library_set_video_start(qa_material_library *library,
                                           qa_material_video_start_fn start, void *context)
 {
-    if (!library) return;
+    if (!qa_material_library_idle(library)) return;
     library->video_start = start;
     library->video_context = context;
+    library->video_required = start != NULL;
 }
 
-bool qa_material_library_set_profile(qa_material_library *library, const qa_material_profile *profile,
+static bool set_profile(qa_material_library *library, const qa_material_profile *profile,
                                       qa_error *error)
 {
     if (!library || !profile) {
@@ -739,6 +844,13 @@ bool qa_material_library_set_profile(qa_material_library *library, const qa_mate
     return true;
 }
 
+bool qa_material_library_set_profile(qa_material_library *library, const qa_material_profile *profile,
+                                      qa_error *error)
+{
+    if (!mutation_begin(library, error)) return false;
+    return mutation_end(library, set_profile(library, profile, error));
+}
+
 bool qa_material_library_parse(qa_material_library *library, qa_bytes source,
                                 const qa_scene_image_options *options, qa_error *error)
 {
@@ -747,7 +859,8 @@ bool qa_material_library_parse(qa_material_library *library, qa_bytes source,
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid shader script bytes");
         return false;
     }
-    return qa_material_script_catalog(library, source, error);
+    if (!mutation_begin(library, error)) return false;
+    return mutation_end(library, catalog_add(library, source, NULL, error));
 }
 
 static int script_compare(const void *left, const void *right)
@@ -756,9 +869,10 @@ static int script_compare(const void *left, const void *right)
     return strcmp(*a, *b);
 }
 
-bool qa_material_library_load_scripts(qa_material_library *library, qa_vfs *vfs,
+static bool load_scripts(qa_material_library *library, qa_vfs *vfs,
                                        const qa_scene_image_options *options, qa_error *error)
 {
+    (void)options;
     if (!library || !vfs) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Shader loading requires a library and VFS");
         return false;
@@ -781,12 +895,19 @@ bool qa_material_library_load_scripts(qa_material_library *library, qa_vfs *vfs,
         qa_resource *resource = NULL;
         bool ok = qa_vfs_acquire(vfs, path, &resource, NULL, error);
         free(path);
-        if (ok) ok = qa_material_library_parse(library, qa_resource_bytes(resource), options, error);
+        if (ok) ok = catalog_add(library, qa_resource_bytes(resource), resource, error);
         qa_resource_release(resource);
         if (!ok) { qa_vfs_listing_free(&listing); return false; }
     }
     qa_vfs_listing_free(&listing);
     return true;
+}
+
+bool qa_material_library_load_scripts(qa_material_library *library, qa_vfs *vfs,
+                                       const qa_scene_image_options *options, qa_error *error)
+{
+    if (!mutation_begin(library, error)) return false;
+    return mutation_end(library, load_scripts(library, vfs, options, error));
 }
 
 static void registration_rollback(qa_material_library *library, size_t count)
@@ -821,7 +942,7 @@ static void registration_rollback(qa_material_library *library, size_t count)
     for (size_t i = 0; i < kept; ++i) library->ordered[i]->material.sorted_index = (uint32_t)i;
 }
 
-bool qa_material_remap(qa_material_library *library, const char *original,
+static bool remap_material(qa_material_library *library, const char *original,
                         const char *replacement, float offset, qa_error *error)
 {
     if (!library || !isfinite(offset)) {
@@ -888,7 +1009,7 @@ bool qa_material_remap(qa_material_library *library, const char *original,
     }
     if (!count) {
         const qa_material *target;
-        ok = qa_material_register(library, replacement, NULL, false, &target, error);
+        ok = register_material(library, replacement, NULL, QA_MATERIAL_DYNAMIC, 0, -1, NULL, NULL, &target, error);
         if (ok && target->default_shader) {
             qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "Remap target '%s' defaulted", replacement);
             ok = false;
@@ -917,18 +1038,22 @@ bool qa_material_remap(qa_material_library *library, const char *original,
     return true;
 }
 
+bool qa_material_remap(qa_material_library *library, const char *original,
+                        const char *replacement, float offset, qa_error *error)
+{
+    if (!mutation_begin(library, error)) return false;
+    return mutation_end(library, remap_material(library, original, replacement, offset, error));
+}
+
 qa_material_library *qa_material_library_create(qa_scene_resources *resources,
                                                   qa_material_order *order, qa_error *error)
 {
-    if (!resources || !order) {
+    if (!resources || !qa_material_order_idle(order)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Material library requires scene resources and shared renderer order");
         return NULL;
     }
-    qa_material_library *library = calloc(1, sizeof(*library));
-    if (!library) {
-        qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating material library");
-        return NULL;
-    }
+    qa_material_library *library = qa_material_library_create_detached(resources, error);
+    if (!library) return NULL;
     if (!qa_material_order_retain(order, error)) { free(library); return NULL; }
     library->resources = resources;
     library->order = order;
@@ -959,12 +1084,13 @@ qa_material_library *qa_material_library_create(qa_scene_resources *resources,
     if (ok) ok = qa_material_register_kind(library, "*default", NULL, QA_MATERIAL_DEFAULT, &internal, error);
     if (ok) ok = qa_material_register_kind(library, "<stencil shadow>", NULL, QA_MATERIAL_STENCIL_SHADOW, &internal, error);
     if (!ok) { qa_material_library_destroy(library); return NULL; }
+    library->catalog_ready = true;
     return library;
 }
 
 void qa_material_library_destroy(qa_material_library *library)
 {
-    if (!library) return;
+    if (!qa_material_library_idle(library)) return;
     for (size_t i = 0; i < QA_MATERIAL_BUCKETS; ++i) {
         qa_material_script *script = library->scripts[i];
         while (script) {
@@ -992,6 +1118,14 @@ void qa_material_library_destroy(qa_material_library *library)
         generated = next;
     }
     free(library->ordered);
+    qa_material_catalog_source *source = library->catalog_sources;
+    while (source) {
+        qa_material_catalog_source *next = source->next;
+        qa_resource_release(source->resource);
+        free(source->owned_bytes);
+        free(source);
+        source = next;
+    }
     qa_scene_image_release(library->fog_image);
     qa_scene_image_release(library->dlight_image);
     qa_material_order_destroy(library->order);

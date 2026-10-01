@@ -1,0 +1,2 @@
+e724cacd47c6e6ceb0ad9590956ebeae04c72b324fba442e8019f9710202619a  include/qa/network_q1_connection_save.h
+5cc7aa43bc02dd58b289d746f04cf4b7fe61ec08f69296bedf09e2c36d1554f2  src/network/q1/handshake.c

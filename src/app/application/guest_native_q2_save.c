@@ -1,6 +1,7 @@
 #include "guest_native_q2_private.h"
 #include "guest_native_q2_attack.h"
 #include "guest_native_q2_combat.h"
+#include "guest_q2_control.h"
 #include "qa/network.h"
 #include <limits.h>
 
@@ -55,6 +56,7 @@ bool application_native_q2_prepare_restore(application_provider *provider, qa_er
     struct application_native_q2 *engine = provider ? provider->state.native.q2_engine : NULL;
     if (!engine || !application_native_q2_idle(provider))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q2 private restore requires an idle detached candidate owner");
+    if (!application_q2_control_suspend(engine, error)) return false;
     if (!application_native_q2_combat_suspend(engine, error)) return false;
     for (uint32_t i = 1; i < 257; ++i)
         if (!application_native_q2_inventory_detach(engine, i, error)) return false;
@@ -70,6 +72,8 @@ bool application_native_q2_restore_finish(application_provider *provider, qa_err
         !qa_native_host_world_actor_bind(provider->state.native.host, engine->world_actor, error)) return false;
     if (!application_native_q2_attack_activate(engine, error)) return false;
     if (!application_native_q2_combat_activate(engine, error)) return false;
+    if (engine->initialized && engine->map_ready &&
+        !application_q2_control_activate(engine, error)) return false;
     if (!application_native_q2_combat_finish(provider, error)) return false;
     return application_native_q2_inventory_finish(provider, error);
 }

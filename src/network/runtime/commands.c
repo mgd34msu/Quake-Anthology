@@ -37,31 +37,38 @@ bool qa_network_accepted_sequence(const qa_network_runtime *runtime, qa_net_clie
     }
     return qa_network_fail(error, "Accepted-command lookup lacks its admitted source seat");
 }
+static bool authority_identity(qa_network_runtime *runtime, qa_net_client_id id,
+    qa_net_seat_id seat_id, qa_actor_id actor, uint64_t epoch, qa_movement_kind movement,
+    qa_bytes arsenal, qa_network_peer **peer, qa_network_seat **seat, qa_error *error)
+{
+    if (!runtime || !actor.registry || !actor.generation || (unsigned)movement > QA_MOVEMENT_Q3)
+        return qa_network_fail(error, "Invalid network command owner");
+    *peer = qa_network_peer_get(runtime, id, error);
+    if (!*peer || epoch != (*peer)->epoch)
+        return qa_network_fail(error, "Command belongs to another world epoch");
+    *seat = seat_get(*peer, seat_id, error);
+    if (!*seat) return false;
+    if ((*seat)->applying) return qa_network_fail(error, "Recursive seat command/prediction callback");
+    const qa_net_client *client = qa_net_connections_get(runtime->connections, id);
+    if (client->phase != QA_NET_ACTIVE) return qa_network_fail(error, "Connection has not completed signon");
+    bool previous = runtime->callback; runtime->callback = true;
+    (*seat)->applying = true;
+    bool ok = runtime->options.hooks.controlled(runtime->options.hooks.context, id,
+        seat_id, actor, movement, arsenal, error);
+    (*seat)->applying = false; runtime->callback = previous; return ok;
+}
 static bool authority(qa_network_runtime *runtime, const qa_network_command *command,
-                       qa_network_peer **peer, qa_network_seat **seat, qa_error *error) {
-    if (!runtime || !command || !command->actor.registry || !command->actor.generation ||
-        (unsigned)command->movement.kind > QA_MOVEMENT_Q3 ||
-        !isfinite(command->movement.forward_move) || !isfinite(command->movement.side_move) ||
+    qa_network_peer **peer, qa_network_seat **seat, qa_error *error)
+{
+    if (!command || !isfinite(command->movement.forward_move) || !isfinite(command->movement.side_move) ||
         !isfinite(command->movement.up_move) || !isfinite(command->movement.angles.x) ||
         !isfinite(command->movement.angles.y) || !isfinite(command->movement.angles.z) ||
         !isfinite(command->movement.acknowledged_server_seconds) ||
         (command->has_arsenal && (!command->arsenal.provider.data || !command->arsenal.provider.size ||
          (command->arsenal.weapon.size && !command->arsenal.weapon.data))))
         return qa_network_fail(error, "Invalid network command");
-    *peer = qa_network_peer_get(runtime, command->client, error);
-    if (!*peer || command->epoch != (*peer)->epoch)
-        return qa_network_fail(error, "Command belongs to another world epoch");
-    *seat = seat_get(*peer, command->seat, error);
-    if (!*seat) return false;
-    if ((*seat)->applying) return qa_network_fail(error, "Recursive seat command/prediction callback");
-    const qa_net_client *client = qa_net_connections_get(runtime->connections, command->client);
-    if (client->phase != QA_NET_ACTIVE) return qa_network_fail(error, "Connection has not completed signon");
-    bool previous = runtime->callback; runtime->callback = true;
-    (*seat)->applying = true;
-    bool ok = runtime->options.hooks.controlled(runtime->options.hooks.context, command->client,
-        command->seat, command->actor, command->movement.kind,
-        command->has_arsenal ? command->arsenal.provider : (qa_bytes){0}, error);
-    (*seat)->applying = false; runtime->callback = previous; return ok;
+    return authority_identity(runtime, command->client, command->seat, command->actor, command->epoch,
+        command->movement.kind, command->has_arsenal ? command->arsenal.provider : (qa_bytes){0}, peer, seat, error);
 }
 bool qa_network_accept(qa_network_runtime *runtime, const qa_network_command *command, qa_error *error) {
     qa_network_peer *peer; qa_network_seat *seat;
@@ -72,6 +79,50 @@ bool qa_network_accept(qa_network_runtime *runtime, const qa_network_command *co
     bool ok = runtime->options.hooks.command(runtime->options.hooks.context, command, error);
     seat->applying = false; runtime->callback = previous;
     if (ok) { seat->accepted = command->movement.sequence; seat->has_accepted = true; }
+    return ok;
+}
+bool qa_network_accept_commands(qa_network_runtime *runtime,
+    const qa_network_command_group *group, qa_error *error)
+{
+    if (!runtime || !group || !group->commands || !group->count || group->count > 20 ||
+        (unsigned)group->movement > QA_MOVEMENT_Q3 || !runtime->options.hooks.commands)
+        return qa_network_fail(error, "QuakeWorld group requires its complete command consumer");
+    uint64_t sequence = group->commands[0].sequence;
+    if (!sequence) return qa_network_fail(error, "QuakeWorld source packet sequence is zero");
+    for (size_t i = 0; i < group->count; ++i) {
+        const qa_movement_command *command = group->commands + i;
+        if (command->kind != QA_MOVEMENT_QUAKEWORLD || command->sequence != sequence ||
+            command->milliseconds > UINT8_MAX || command->buttons > UINT8_MAX ||
+            !isfinite(command->forward_move) || !isfinite(command->side_move) ||
+            !isfinite(command->up_move) || !isfinite(command->angles.x) ||
+            !isfinite(command->angles.y) || !isfinite(command->angles.z) ||
+            !isfinite(command->acknowledged_server_seconds))
+            return qa_network_fail(error, "QuakeWorld group changes its source sequence or command domain");
+    }
+    qa_network_peer *peer; qa_network_seat *seat;
+    if (!authority_identity(runtime, group->client, group->seat, group->actor, group->epoch,
+        group->movement, (qa_bytes){0}, &peer, &seat, error)) return false;
+    if (seat->has_accepted && sequence <= seat->accepted) return true;
+    bool previous = runtime->callback; runtime->callback = true; seat->applying = true;
+    bool ok = runtime->options.hooks.commands(runtime->options.hooks.context, group, error);
+    seat->applying = false; runtime->callback = previous;
+    if (ok) { seat->accepted = sequence; seat->has_accepted = true; }
+    return ok;
+}
+bool qa_network_accept_q3_source_command(qa_network_runtime *runtime,
+    const qa_network_q3_source_command *command, qa_error *error)
+{
+    if (!runtime || !command || !command->sequence ||
+        (unsigned)command->movement > QA_MOVEMENT_Q3 || !runtime->options.hooks.q3_source_command)
+        return qa_network_fail(error, "Q3 source command requires its complete raw command consumer");
+    qa_network_peer *peer; qa_network_seat *seat;
+    if (!authority_identity(runtime, command->client, command->seat, command->actor,
+        command->epoch, command->movement, (qa_bytes){0}, &peer, &seat, error)) return false;
+    if (seat->has_accepted && command->sequence <= seat->accepted) return true;
+    bool previous = runtime->callback; runtime->callback = true; seat->applying = true;
+    bool ok = runtime->options.hooks.q3_source_command(runtime->options.hooks.context, command, error);
+    seat->applying = false; runtime->callback = previous;
+    if (ok) { seat->accepted = command->sequence; seat->has_accepted = true; }
     return ok;
 }
 bool qa_network_submit(qa_network_runtime *runtime, const qa_network_command *command, qa_error *error) {

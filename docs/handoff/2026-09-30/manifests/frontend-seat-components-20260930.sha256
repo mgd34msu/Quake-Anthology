@@ -1,0 +1,5 @@
+d786ddf81002d45c846dc7eda14f2b112aafee0685de58cdc2e19b8ea05271ea  src/app/frontend/seat_inventory.c
+02a823653570cc7dbf123407f6f375c59bb27bd81a0dc07410d4ebad0dbfec5b  src/app/frontend/seat_inventory.h
+714021c4874c376e8b63342dbc8eb309644d4491ec1ad3d2c970c8ed54badff3  src/app/frontend/seats.c
+938c9e8466d6c5a0f34296cc6d99b2a61854aa7352a8ce6c9a8ab8b29e68283d  src/app/frontend/menu_save.c
+5da7ada78062f386b3190f71e85db9ca0f978f7c1b29913d926e8c71186f745b  src/app/frontend/menu_save.h

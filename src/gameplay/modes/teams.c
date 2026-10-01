@@ -43,14 +43,26 @@ static bool team_death(qa_modes *m, mode_instance *v, qa_actor_id actor, bool cl
     return mode_damage(m, family, &request, e);
 }
 static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_id team,
-                         bool observer, bool automatic, bool command, bool *accepted, qa_error *e) {
+                         bool observer, bool automatic, bool command, bool *accepted,
+                         qa_error *e) {
     mode_instance *v = mode_get(m, id);
     mode_player *player = mode_player_get(m, actor);
     mode_member *member = mode_member_get(m, v, actor);
     if (!v || !player || !member || !accepted)
         return mode_fail(e, "invalid team command");
     *accepted = false;
-    if (automatic && !qa_modes_choose_team(m, id, actor, &team, e))
+    qa_actor_owner native_owner;
+    bool native = v->value.rules.source >= QA_MODE_Q3 && m->options.hooks.q3_native_source &&
+        m->options.hooks.q3_native_source(m->options.hooks.context, id, &native_owner);
+    if (native) {
+        bool source_changed;
+        if (!m->options.hooks.q3_team_request)
+            return mode_fail(e, "native Q3 SetTeam has no actual source producer");
+        return MODE_CALLBACK(m, m->options.hooks.q3_team_request(m->options.hooks.context,
+            id, actor, team, observer, automatic,
+            observer ? QA_MODE_Q3_SPECTATOR_FREE : QA_MODE_Q3_SPECTATOR_NOT,
+            0, accepted, &source_changed, e));
+    } else if (automatic && !qa_modes_choose_team(m, id, actor, &team, e))
         return false;
     if (observer)
         team = 0;
@@ -59,15 +71,17 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
     qa_team_id previous;
     if (!qa_modes_team(m, v->id, actor, &previous, e))
         return false;
+    qa_mode_source source = v->value.rules.source;
     if (command && v->value.rules.source >= QA_MODE_Q3) {
         if (member->team_switch_ns > v->value.time_ns)
             return true;
         member->team_switch_ns = v->value.time_ns + 5 * MODE_SECOND;
-        if (v->value.rules.kind == QA_MODE_DUEL && !member->player.spectator)
+        if (v->value.rules.kind == QA_MODE_DUEL && !member->player.spectator) {
             member->player.losses = mode_add_i32(member->player.losses, 1);
+        }
     }
     if (previous == team && member->player.spectator == observer &&
-        (!observer || v->value.rules.source < QA_MODE_Q3)) {
+        source < QA_MODE_Q3) {
         *accepted = true;
         return true;
     }
@@ -75,20 +89,13 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
                       (v->value.rules.match_lock &&
                        (v->value.phase == QA_MODE_COUNTDOWN || v->value.phase == QA_MODE_PLAYING))))
         return true;
-    qa_mode_source source = v->value.rules.source;
     if (source == QA_MODE_LMCTF && !observer &&
         (v->value.rules.match_lock || (v->value.rules.flags & 8u)))
         return true;
     if (source == QA_MODE_LMCTF && !qa_modes_can_move(m, id, actor))
         return true;
     if (source >= QA_MODE_Q3) {
-        if (!observer && ((v->value.rules.kind == QA_MODE_DUEL && v->value.playing >= 2) ||
-                          (v->value.rules.max_game_players &&
-                           v->value.playing >= (size_t)v->value.rules.max_game_players))) {
-            observer = true;
-            team = 0;
-        }
-        if (!observer && v->value.rules.force_balance &&
+        if (!native && !observer && v->value.rules.force_balance &&
             v->value.rules.kind >= QA_MODE_TEAM_DEATHMATCH) {
             int counts[2] = {0};
             for (size_t i = 0; i < m->players_order.count; ++i) {
@@ -104,6 +111,16 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
             int index = mode_team_index(v, team);
             if (index >= 0 && index < 2 && counts[index] - counts[index ^ 1] > 1)
                 return true;
+        }
+        if (!native && !observer && ((v->value.rules.kind == QA_MODE_DUEL && v->value.playing >= 2) ||
+                          (v->value.rules.max_game_players &&
+                           v->value.playing >= (size_t)v->value.rules.max_game_players))) {
+            observer = true;
+            team = 0;
+        }
+        if (!observer && previous == team && !member->player.spectator) {
+            *accepted = true;
+            return true;
         }
     }
     if (source == QA_MODE_Q2_CTF && !observer &&
@@ -181,11 +198,13 @@ static bool request_team(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
             }
             mode_player *leader_player = leader ? mode_player_get(m, leader->actor) : NULL;
             if (!leader_player || (side == 1 && leader_player->value.bot && !player->value.bot)) {
-                if (leader)
+                if (leader) {
                     leader->player.leader = false;
+                }
                 mode_member *next = side == 1 ? member : human ? human : first;
-                if (next && mode_member_get(m, v, next->actor))
+                if (next && mode_member_get(m, v, next->actor)) {
                     next->player.leader = true;
+                }
             }
         }
     }
@@ -247,8 +266,9 @@ static bool follow(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_actor_id ta
     } else if (target.registry && !followable(m, v, actor, target))
         return true;
     if (!member->player.spectator) {
-        if (v->value.rules.kind == QA_MODE_DUEL)
+        if (v->value.rules.kind == QA_MODE_DUEL) {
             member->player.losses = mode_add_i32(member->player.losses, 1);
+        }
         if (!request_team(m, id, actor, 0, true, false, false, accepted, e))
             return false;
         if (!*accepted)
@@ -266,6 +286,12 @@ static bool follow(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_actor_id ta
     member->player.automatic_follow = (int8_t)automatic;
     member->player.scoreboard = false;
     *accepted = true;
+    qa_actor_owner native_owner;
+    if (!target.registry && !automatic && m->options.hooks.q3_stop_following &&
+        m->options.hooks.q3_native_source &&
+        m->options.hooks.q3_native_source(m->options.hooks.context, id, &native_owner) &&
+        !MODE_CALLBACK(m, m->options.hooks.q3_stop_following(m->options.hooks.context, id, actor, e)))
+        return false;
     return mode_event(m, v, QA_MODE_ROSTER, actor, target, (qa_actor_id){0}, 0, automatic, 4, e);
 }
 bool qa_modes_follow(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_actor_id target,

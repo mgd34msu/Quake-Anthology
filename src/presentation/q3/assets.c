@@ -1,12 +1,13 @@
 #include "internal.h"
-#include "qa/material_library_save.h"
+#include "qa/scene_model_save.h"
+#include "qa/scene_world_save.h"
 
 static unsigned char key_byte(q3p_resource_kind kind, unsigned char byte)
 {
     return kind == Q3P_SHADER && byte >= 'A' && byte <= 'Z' ? byte + ('a' - 'A') : byte;
 }
 
-static uint64_t name_hash(q3p_resource_kind kind, const char *name)
+uint64_t q3p_name_hash(q3p_resource_kind kind, const char *name)
 {
     uint64_t hash = UINT64_C(1469598103934665603) ^ (uint64_t)kind;
     for (size_t i = 0; name[i]; ++i) hash = (hash ^ key_byte(kind, (unsigned char)name[i])) * UINT64_C(1099511628211);
@@ -16,7 +17,7 @@ static uint64_t name_hash(q3p_resource_kind kind, const char *name)
 q3p_name *q3p_find_name(qa_q3_presentation_assets *a, q3p_resource_kind kind, const char *name)
 {
     if (!a->name_capacity) return NULL;
-    uint64_t hash = name_hash(kind, name);
+    uint64_t hash = q3p_name_hash(kind, name);
     for (q3p_name *entry = a->names[hash & (a->name_capacity - 1)]; entry; entry = entry->next) {
         if (entry->hash != hash || entry->kind != kind) continue;
         size_t i = 0;
@@ -52,7 +53,7 @@ bool q3p_add_name(qa_q3_presentation_assets *a, q3p_resource_kind kind, const ch
         }
         free(a->names); a->names = table; a->name_capacity = capacity;
     }
-    *entry = (q3p_name){.kind = kind, .handle = handle, .option = option, .hash = name_hash(kind, name)};
+    *entry = (q3p_name){.kind = kind, .handle = handle, .option = option, .hash = q3p_name_hash(kind, name)};
     for (size_t i = 0; i <= length; ++i) entry->name[i] = (char)key_byte(kind, (unsigned char)name[i]);
     size_t bucket = entry->hash & (a->name_capacity - 1);
     entry->next = a->names[bucket]; a->names[bucket] = entry; ++a->name_count;
@@ -83,15 +84,33 @@ bool qa_q3_presentation_assets_create(const qa_q3_presentation_asset_options *op
     *out = a; return true;
 }
 
+bool q3p_assets_children_idle(const qa_q3_presentation_assets *a)
+{
+    if (!a || (a->world && !qa_scene_world_idle(a->world))) return false;
+    for (size_t i = 0; i < a->model_count; ++i) {
+        const q3p_model *m = a->models[i];
+        if (!m) continue;
+        if (m->world && !qa_scene_world_idle(m->world)) return false;
+        for (unsigned j = 0; j < 3; ++j)
+            if (m->scene[j] && !qa_scene_model_idle(m->scene[j])) return false;
+    }
+    return true;
+}
+bool qa_q3_assets_idle(const qa_q3_presentation_assets *a)
+{
+    return a && a->users && !a->busy && !a->capturing && !a->codec_busy &&
+        q3p_assets_children_idle(a);
+}
 void qa_q3_presentation_assets_destroy(qa_q3_presentation_assets *a)
 {
-    if (!a || --a->users) return;
+    if (!a || a->busy || !a->users || !q3p_assets_children_idle(a) || --a->users) return;
     for (size_t i = 0; i < a->name_capacity; ++i) {
         q3p_name *next;
         for (q3p_name *row = a->names[i]; row; row = next) { next = row->next; free(row); }
     }
     for (size_t i = 0; i < a->model_count; ++i) q3p_model_free(a->models[i]);
     for (size_t i = 0; i < a->skin_count; ++i) {
+        if (!a->skins[i]) continue;
         qa_model_skin_map_free(&a->skins[i]->map); qa_resource_release(a->skins[i]->resource); free(a->skins[i]);
     }
     for (size_t i = 0; i < a->sound_count; ++i) qa_audio_asset_release(a->sounds[i]);
@@ -101,7 +120,7 @@ void qa_q3_presentation_assets_destroy(qa_q3_presentation_assets *a)
 bool qa_q3_presentation_audio_assets_read(const qa_q3_presentation_assets *a,
     qa_audio_asset ***out, size_t *count, qa_error *error)
 {
-    if (!a || a->busy || !out || *out || !count || a->sound_count > a->sound_capacity ||
+    if (!a || (a->busy && (!a->capturing || a->codec_busy)) || !out || *out || !count || a->sound_count > a->sound_capacity ||
         (a->sound_capacity && !a->sounds) || a->sound_count >= SIZE_MAX / sizeof(qa_audio_asset *))
         return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 sound holder inventory requires an idle registry and empty output");
     size_t size = a->sound_count + 1;
@@ -111,20 +130,6 @@ bool qa_q3_presentation_audio_assets_read(const qa_q3_presentation_assets *a,
     if (a->sound_count) memcpy(assets + 1, a->sounds, a->sound_count * sizeof(*assets));
     *out = assets; *count = size; return true;
 }
-bool qa_q3_presentation_materials_rebind_ready(const qa_q3_presentation *p,
-    const qa_material_library *current, const qa_material_library *destination, qa_error *error)
-{
-    const qa_q3_presentation_assets *a = p ? p->options.assets : NULL;
-    if (!p || p->busy || !a || a->busy || a->users != 2 || !current || !destination || a->options.provider.materials != current ||
-        a->options.provider.images != qa_material_library_resource_owner(destination) ||
-        !qa_material_library_order_ready(destination) || a->name_count || a->model_count || a->skin_count ||
-        a->shader_count || a->sound_count)
-        return q3p_fail(error, QA_ERROR_ARGUMENT, "Q3 library restore requires an idle empty installed handle registry");
-    return true;
-}
-void qa_q3_presentation_materials_rebind(qa_q3_presentation *p, qa_material_library *destination)
-{ p->options.assets->options.provider.materials = destination; }
-
 bool q3p_shader_get(const qa_q3_presentation_assets *a, int32_t handle, const qa_material **out, qa_error *error)
 {
     if (handle < 0 || (size_t)handle > a->shader_count)
@@ -162,7 +167,8 @@ bool qa_q3_register_skin(qa_q3_presentation_assets *a, const char *path, int32_t
                 a->skin_count + 1, sizeof(*a->skins), error);
             if (!ok && (!error || error->code == QA_OK)) q3p_fail(error, QA_ERROR_MEMORY, "allocating Q3 skin handle");
             if (ok) ok = qa_model_skin_map_load(qa_resource_bytes(resource), &skin->map, error);
-            if (ok) { skin->resource = resource; resource = NULL; handle = (int32_t)a->skin_count + 1; }
+            if (ok) { skin->resource = resource; skin->provider = provider;
+                resource = NULL; handle = (int32_t)a->skin_count + 1; }
         }
     }
     if (ok) ok = q3p_add_name(a, Q3P_SKIN, path, handle, false, error);
@@ -258,7 +264,7 @@ bool qa_q3_registered_models(const qa_q3_presentation_assets *assets, qa_arena *
         const q3p_model *model = assets->models[i]; if (!model) continue;
         const char *name = registered_name(assets, Q3P_MODEL, (int32_t)i + 1);
         if (!name) return q3p_fail(error, QA_ERROR_FORMAT, "source model handle has no retained registration name");
-        const qa_model *base = model->has_lods ? qa_model_at_lod(&model->lods, 0) : &model->model;
+        const qa_model *base = q3p_model_source(model, 0);
         rows[n++] = (qa_q3_registered_model){.handle = (int32_t)i + 1, .name = name,
             .world = model->world != NULL, .inline_model = model->world && !model->owns_world,
             .format = base ? base->format : QA_MODEL_MDL};

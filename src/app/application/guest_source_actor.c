@@ -25,7 +25,7 @@ bool qa_application_guest_source_actor(qa_application *app, qa_actor_owner owner
         if (engine)
             for (q3g_role *role = engine->roles; role; role = role->next)
                 if (role->kind == QA_QVM_CGAME && role->seat == seat &&
-                    role->ready && !role->retired && !role->local_client) {
+                    role->ready && !role->retired) {
                     external_client = true;
                     bool present = false;
                     if (role->client_services.source_actor &&

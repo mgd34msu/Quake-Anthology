@@ -1,0 +1,66 @@
+#ifndef QA_Q3_NATIVE_PLAYER_STATE_INTERNAL_H
+#define QA_Q3_NATIVE_PLAYER_STATE_INTERNAL_H
+
+#include "player_state.h"
+#include "events_internal.h"
+#include "weapon.h"
+#include "../q3/internal.h"
+
+typedef struct q3n_transition_history {
+    qa_actor_id viewing_actor, followed_actor;
+    uint32_t viewing_client;
+    uint64_t source_frame;
+    int32_t source_time, client_num, damage_event, viewheight, external_event, e_flags;
+    int32_t event_sequence, events[2], persistant[15], powerups[16], health;
+    bool valid;
+} q3n_transition_history;
+struct q3n_player_state {
+    q3n_player_state_options options;
+    const qa_q3_game *source_game;
+    qa_q3_product product;
+    q3n_transition_history history;
+    q3n_player_feedback feedback;
+    int32_t event_sequence, predictable_events[16];
+    bool map_restart, busy;
+};
+static inline int q3nh_weapons_stat(qa_q3_product p) { return p==QA_Q3_TEAM_ARENA?3:2; }
+static inline int q3nh_armor_stat(qa_q3_product p) { return p==QA_Q3_TEAM_ARENA?4:3; }
+static inline int q3nh_dead_yaw_stat(qa_q3_product p) { return p==QA_Q3_TEAM_ARENA?5:4; }
+static inline float q3nh_clamp(float x,float low,float high) { return x<low?low:x>high?high:x; }
+static inline void q3nh_vectors(qa_vec3 a,qa_vec3 *forward,qa_vec3 *right,qa_vec3 *up)
+{
+    float yaw=q3ne_mul(a.y,q3ne_div(3.14159274101257324219f,180));
+    float pitch=q3ne_mul(a.x,q3ne_div(3.14159274101257324219f,180));
+    float roll=q3ne_mul(a.z,q3ne_div(3.14159274101257324219f,180));
+    float sy=(float)sin((double)yaw),cy=(float)cos((double)yaw);
+    float sp=(float)sin((double)pitch),cp=(float)cos((double)pitch);
+    float sr=(float)sin((double)roll),cr=(float)cos((double)roll);
+    if(forward)*forward=qa_v3(q3ne_mul(cp,cy),q3ne_mul(cp,sy),-sp);
+    if(right)*right=qa_v3(q3ne_add(-q3ne_mul(q3ne_mul(sr,sp),cy),q3ne_mul(cr,sy)),
+        q3ne_add(-q3ne_mul(q3ne_mul(sr,sp),sy),-q3ne_mul(cr,cy)),-q3ne_mul(sr,cp));
+    if(up)*up=qa_v3(q3ne_add(q3ne_mul(q3ne_mul(cr,sp),cy),q3ne_mul(sr,sy)),
+        q3ne_add(q3ne_mul(q3ne_mul(cr,sp),sy),-q3ne_mul(sr,cy)),q3ne_mul(cr,cp));
+}
+static inline void q3nh_axis(qa_vec3 a,qa_vec3 axis[3])
+{ q3nh_vectors(a,&axis[0],&axis[1],&axis[2]); axis[1]=q3ne_scale(axis[1],-1); }
+static inline bool q3nh_float(qa_source_save_io *io,float *v)
+{ return qa_source_save_f32(io,v) && isfinite(*v); }
+static inline bool q3nh_vector(qa_source_save_io *io,qa_vec3 *v)
+{ return qa_source_save_vec3(io,v) && qa_vec_finite(*v); }
+static inline bool q3nh_handle(const qa_q3_presentation_assets *a,int32_t h,q3p_resource_kind kind)
+{
+    if(h<0)return false;
+    if(!h)return true;
+    size_t i=(size_t)h-1;
+    switch(kind) {
+    case Q3P_MODEL:return i<a->model_count && a->models[i];
+    case Q3P_SKIN:return i<a->skin_count && a->skins[i];
+    case Q3P_SHADER:return i<a->shader_count && a->shaders[i];
+    case Q3P_SOUND:return i<a->sound_count && a->sounds[i];
+    }
+    return false;
+}
+static inline bool q3nh_capture(const qa_q3_presentation_assets *a,bool busy,qa_error *e)
+{ return a && !busy && a->capturing && a->busy==1 && !a->codec_busy?true:
+    q3ne_fail(e,QA_ERROR_ARGUMENT,"Native Q3 private codec requires its actual asset capture lease"); }
+#endif

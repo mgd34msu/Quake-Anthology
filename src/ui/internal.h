@@ -18,7 +18,8 @@ struct qa_ui {
     size_t field_count, field_capacity;
     qa_input_ui_token input_token;
     qa_input_pair cursor, pointer;
-    float scale, bias_x, bias_y;
+    float scale, bias_x, bias_y, text_scale;
+    qa_ui_color_mode color_mode;
     qa_scene_rect viewport;
     qa_ui_id dragging;
     float drag_offset;
@@ -46,6 +47,8 @@ bool ui_inside(qa_scene_rect_f, qa_input_pair);
 bool ui_fill(qa_ui *, qa_scene_frame *, qa_scene_rect, qa_scene_rect_f, qa_scene_vec4, qa_error *);
 bool ui_draw_text(qa_ui *, qa_scene_frame *, qa_scene_rect, float, float, const char *,
                   qa_scene_vec4, float, qa_font_alignment, qa_error *);
+bool ui_draw_source_text(qa_ui *,qa_scene_frame *,qa_scene_rect,float,float,const char *,qa_scene_vec4,
+    float,qa_font_alignment,qa_error *);
 float ui_glyph_width(qa_ui *, uint32_t);
 bool ui_search(const char *, const char *, const char *, qa_bytes, bool *, qa_error *);
 #endif

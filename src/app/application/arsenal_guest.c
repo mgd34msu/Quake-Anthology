@@ -595,7 +595,7 @@ bool application_guest_input_detach(q3g_role *role, qa_error *error)
     return true;
 }
 
-static bool input_checkpoint_descriptors(q3g_role *role,
+bool application_guest_input_descriptors(q3g_role *role,
     qa_qvm_saved_function descriptors[7], size_t *out_count, qa_error *error)
 {
     application_guest_input *input = role ? role->input : NULL;
@@ -623,7 +623,6 @@ static bool input_checkpoint_descriptors(q3g_role *role,
         ++count;
     } else if (input && input->body_control)
         return application_fail(error, QA_ERROR_FORMAT, "Q3 body callback identity differs from its source owner");
-    if (!qa_qvm_checkpoint_functions(role->vm, descriptors, count, error)) return false;
     *out_count = count;
     return true;
 }
@@ -632,7 +631,7 @@ static bool input_checkpoint_idle(q3g_role *role, qa_error *error)
 {
     qa_qvm_saved_function descriptors[7] = {0};
     size_t count;
-    return input_checkpoint_descriptors(role, descriptors, &count, error);
+    return application_guest_input_descriptors(role, descriptors, &count, error);
 }
 
 static bool input_command_fields(qa_source_save_io *io, qa_movement_command *value)
@@ -698,12 +697,12 @@ bool application_guest_input_checkpoint(q3g_role *role, qa_buffer *out, qa_error
     return ok;
 }
 
-bool application_guest_input_restore(q3g_role *role, qa_bytes bytes,
-    qa_bytes executor, qa_error *error)
+bool application_guest_input_prepare_restore(q3g_role *role, qa_bytes bytes,
+    application_guest_input_saved *out, qa_error *error)
 {
     qa_qvm_saved_function descriptors[7] = {0};
     size_t count;
-    if (!input_checkpoint_descriptors(role, descriptors, &count, error)) return false;
+    if (!out || !application_guest_input_descriptors(role, descriptors, &count, error)) return false;
     if (!role->engine->restore_pending || role->initialized)
         return application_fail(error, QA_ERROR_ARGUMENT, "Q3 input restore requires an isolated source candidate");
     application_guest_input *input = role->input;
@@ -719,23 +718,33 @@ bool application_guest_input_restore(q3g_role *role, qa_bytes bytes,
     for (size_t i = input ? input->binding_count : 0; ok && i < 6; ++i)
         if (candidate.bindings[i])
             ok = application_fail(error, QA_ERROR_FORMAT, "Q3 input retains an undeclared saved callback identity");
-    qa_qvm_binding saved[7] = {0};
+    application_guest_input_saved saved = {.binding_count = count};
     if (input) {
-        memcpy(saved, candidate.bindings, input->binding_count * sizeof(*saved));
-        if (candidate.body_binding) saved[input->binding_count] = candidate.body_binding;
+        memcpy(saved.bindings, candidate.bindings, input->binding_count * sizeof(*saved.bindings));
+        if (candidate.body_binding) saved.bindings[input->binding_count] = candidate.body_binding;
+        saved.applied_command = candidate.applied_command;
+        saved.projected_command = candidate.projected_command;
+        saved.command_projected = candidate.command_projected;
+        saved.input_applied = candidate.input_applied;
     }
-    if (ok) ok = qa_qvm_restore_candidate_bindings(role->vm, executor, descriptors, saved, count, error);
-    if (ok && input) {
-        memcpy(input->bindings, candidate.bindings, sizeof(input->bindings));
-        input->body_binding = candidate.body_binding;
-        if (input->body_control)
-            application_guest_q3_control_restore_binding(input->body_control, candidate.body_binding);
-        input->applied_command = candidate.applied_command;
-        input->projected_command = candidate.projected_command;
-        input->command_projected = candidate.command_projected;
-        input->input_applied = candidate.input_applied;
-    }
+    if (ok) *out = saved;
     return ok;
+}
+
+void application_guest_input_adopt_restore(q3g_role *role,
+    const application_guest_input_saved *saved)
+{
+    application_guest_input *input = role->input;
+    if (!input) return;
+    memcpy(input->bindings, saved->bindings, input->binding_count * sizeof(*input->bindings));
+    if (input->body_control) {
+        input->body_binding = saved->bindings[input->binding_count];
+        application_guest_q3_control_restore_binding(input->body_control, input->body_binding);
+    }
+    input->applied_command = saved->applied_command;
+    input->projected_command = saved->projected_command;
+    input->command_projected = saved->command_projected;
+    input->input_applied = saved->input_applied;
 }
 
 bool application_guest_input_applying(const qa_application *app, qa_actor_id actor)

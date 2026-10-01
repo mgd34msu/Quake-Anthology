@@ -1,6 +1,7 @@
 #include "internal.h"
 #include "native_maps.h"
 #include "native_q3_console.h"
+#include "native_q3_clients.h"
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -131,7 +132,7 @@ static void parser_free(map_parser *parser) {
 }
 static bool source_console(map_parser *parser, qa_mode_id mode, qa_error *error) {
     qa_application *app = parser->application;
-    application_provider *source = application_mode_provider(app, mode);
+    application_provider *source = application_native_q3_mode_source_provider(app, mode);
     if (!source) return application_fail(error, QA_ERROR_NOT_FOUND, "nextmap source has retired");
     qa_console *selected = NULL;
     qa_command_context context = {.owner = source->owner, .dialect = QA_CONSOLE_Q3,

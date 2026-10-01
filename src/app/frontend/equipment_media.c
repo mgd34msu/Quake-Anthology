@@ -1,0 +1,180 @@
+#include "equipment_media.h"
+#include "equipment_held_stock.h"
+
+struct frontend_equipment_media {
+    struct frontend_equipment_media *next;
+    qa_actor_owner provider;
+    qa_game_family family;
+    qa_item_id item;
+    char *view_path;
+    frontend_visual_owner_view owner;
+    frontend_visual_model_view view, held_parent;
+    frontend_held_declaration declaration;
+    frontend_held_model held;
+    qa_scene_model *held_scene;
+};
+struct frontend_equipment {
+    frontend_equipment_media *media, *tail;
+    bool admitting;
+};
+
+static void dispose(frontend_equipment_media *media)
+{
+    qa_scene_model_destroy(media->held_scene);
+    frontend_held_model_free(&media->held);
+    frontend_held_declaration_free(&media->declaration);
+    qa_resource_release((qa_resource *)media->view.resource);
+    qa_resource_release((qa_resource *)media->held_parent.resource);
+    free(media->view_path); free(media);
+}
+
+bool frontend_equipment_idle(const qa_frontend *frontend)
+{
+    if (!frontend || !frontend->equipment) return true;
+    if (frontend->equipment->admitting) return false;
+    for (const frontend_equipment_media *row = frontend->equipment->media; row; row = row->next)
+        if (row->held_scene && !qa_scene_model_idle(row->held_scene)) return false;
+    return true;
+}
+
+bool frontend_equipment_retire(qa_frontend *frontend, qa_error *error)
+{
+    if (!frontend_equipment_idle(frontend))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment media has an active real scene or admission");
+    if (!frontend || !frontend->equipment) return true;
+    frontend_equipment_media *row = frontend->equipment->media;
+    while (row) { frontend_equipment_media *next = row->next; dispose(row); row = next; }
+    frontend->equipment->media = frontend->equipment->tail = NULL;
+    return true;
+}
+
+void frontend_equipment_destroy(qa_frontend *frontend)
+{
+    if (!frontend || !frontend->equipment) return;
+    qa_error error = {0};
+    if (!frontend_equipment_retire(frontend, &error)) return;
+    free(frontend->equipment); frontend->equipment = NULL;
+}
+
+static bool held_declaration(qa_frontend *frontend, const qa_application_equipment_view *view,
+    frontend_equipment_media *row, qa_error *error)
+{
+    size_t length = strlen(view->view_model);
+    if (length > SIZE_MAX - sizeof(".held.json"))
+        return frontend_fail(error, QA_ERROR_MEMORY, "Equipment declaration path exceeds address space");
+    char *path = malloc(length + sizeof(".held.json"));
+    if (!path) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual equipment declaration path");
+    memcpy(path, view->view_model, length);
+    memcpy(path + length, ".held.json", sizeof(".held.json"));
+    bool found = false;
+    bool ok = qa_vfs_probe(row->owner.mounts, path, &found, NULL, error);
+    if (ok && found) {
+        qa_resource *source = NULL;
+        ok = qa_vfs_acquire(row->owner.mounts, path, &source, NULL, error);
+        if (ok) ok = frontend_held_declaration_read(source, &row->declaration, error);
+        qa_resource_release(source);
+    } else if (ok) {
+        const char *item = view->item ?
+            qa_strings_cstr(qa_session_strings(qa_application_session(frontend->application)), view->item) : NULL;
+        ok = frontend_held_stock(view->family, view->view_model, item, &row->declaration, &found, error);
+        if (ok && !found)
+            ok = frontend_fail(error, QA_ERROR_NOT_FOUND, "Selected equipment has no authored held declaration");
+    }
+    free(path);
+    return ok;
+}
+
+static bool held_model(qa_frontend *frontend, frontend_equipment_media *row, qa_error *error)
+{
+    if (row->declaration.none) return true;
+    const char *path = row->declaration.path;
+    bool found = false;
+    if (!qa_vfs_probe(row->owner.mounts, path, &found, NULL, error)) return false;
+    if (!found && row->declaration.fallback) {
+        path = row->declaration.fallback;
+        if (!qa_vfs_probe(row->owner.mounts, path, &found, NULL, error)) return false;
+    }
+    if (!found) return frontend_fail(error, QA_ERROR_NOT_FOUND, "Actual source held model is absent");
+    if (!frontend_visual_model_acquire(frontend, row->provider, row->family, path, NULL,
+            &row->held_parent, error)) return false;
+    qa_resource_retain((qa_resource *)row->held_parent.resource);
+    if (row->family == QA_GAME_Q2 && !row->declaration.source) {
+        bool known;
+        if (!frontend_held_stock_q2_grip(row->held_parent.resource,
+                &row->declaration.grip, &known, error)) return false;
+    }
+    if (!frontend_held_model_prepare(&row->declaration, row->held_parent.resource,
+            row->held_parent.model, &row->held, error)) return false;
+    const qa_scene_image_options *options = qa_scene_model_image_options(row->held_parent.scene);
+    if (!options) return frontend_fail(error, QA_ERROR_FORMAT, "Held parent has no actual scene image policy");
+    return qa_scene_model_create(row->held.model, row->owner.images, row->owner.materials,
+        options, &row->held_scene, error);
+}
+
+bool frontend_equipment_media_prepare(qa_frontend *frontend, const qa_application_equipment_view *view,
+    frontend_equipment_media **out, qa_error *error)
+{
+    if (!frontend || !view || !out || !view->selected || !view->view_model || !view->view_model[0] ||
+        view->family == QA_GAME_Q3 || !qa_application_equipment_current(frontend->application, view) ||
+        !frontend_equipment_idle(frontend))
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Foreign equipment media requires its actual selected source observation");
+    if (!frontend->equipment) {
+        frontend->equipment = calloc(1, sizeof(*frontend->equipment));
+        if (!frontend->equipment) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating retained equipment media owner");
+    }
+    for (frontend_equipment_media *row = frontend->equipment->media; row; row = row->next)
+        if (row->provider == view->provider && row->family == view->family && row->item == view->item &&
+            !strcmp(row->view_path, view->view_model) && (!view->view_source || row->view.resource == view->view_source)) {
+            *out = row; return true;
+        }
+    frontend_equipment_media *row = calloc(1, sizeof(*row));
+    if (!row) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating physical selected equipment media row");
+    row->provider = view->provider; row->family = view->family; row->item = view->item;
+    size_t length = strlen(view->view_model) + 1;
+    row->view_path = malloc(length);
+    if (!row->view_path) { dispose(row); return frontend_fail(error, QA_ERROR_MEMORY, "Retaining selected model identity"); }
+    memcpy(row->view_path, view->view_model, length);
+    frontend->equipment->admitting = true;
+    bool ok = frontend_visual_media_acquire(frontend, view->provider, view->family, &row->owner, error) &&
+        frontend_visual_model_acquire(frontend, view->provider, view->family, view->view_model,
+            view->view_source, &row->view, error);
+    if (ok) {
+        qa_resource_retain((qa_resource *)row->view.resource);
+        ok = held_declaration(frontend, view, row, error) && held_model(frontend, row, error);
+    }
+    if (ok && !qa_application_equipment_current(frontend->application, view))
+        ok = frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment admission lost its actual selected source owner");
+    frontend->equipment->admitting = false;
+    if (!ok) { dispose(row); return false; }
+    if (frontend->equipment->tail) frontend->equipment->tail->next = row;
+    else frontend->equipment->media = row;
+    frontend->equipment->tail = row;
+    *out = row;
+    return true;
+}
+
+bool frontend_equipment_media_read(const frontend_equipment_media *row,
+    frontend_equipment_media_view *out)
+{
+    if (!row || !out) return false;
+    *out = (frontend_equipment_media_view){row->provider, row->family, row->item,
+        row->view_path, row->owner, row->view, row->held_parent, &row->declaration,
+        &row->held, row->held_scene};
+    return true;
+}
+
+size_t frontend_equipment_media_count(const qa_frontend *frontend)
+{
+    size_t count = 0;
+    if (frontend && frontend->equipment)
+        for (const frontend_equipment_media *row = frontend->equipment->media; row; row = row->next) ++count;
+    return count;
+}
+
+bool frontend_equipment_media_at(const qa_frontend *frontend, size_t ordinal,
+    frontend_equipment_media_view *out)
+{
+    const frontend_equipment_media *row = frontend && frontend->equipment ? frontend->equipment->media : NULL;
+    while (row && ordinal) { row = row->next; --ordinal; }
+    return frontend_equipment_media_read(row, out);
+}

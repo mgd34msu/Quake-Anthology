@@ -78,5 +78,8 @@ bool qa_q3_presentation_light(qa_q3_presentation *p, qa_vec3 origin, float radiu
 
 void qa_q3_presentation_color(qa_q3_presentation *p, const qa_scene_vec4 *color)
 {
-    if (p && !p->busy) p->color = color ? *color : (qa_scene_vec4){1, 1, 1, 1};
+    qa_error ignored = {0};
+    if (!q3p_begin(p, &ignored)) return;
+    p->color = color ? *color : (qa_scene_vec4){1, 1, 1, 1};
+    q3p_end(p, true);
 }

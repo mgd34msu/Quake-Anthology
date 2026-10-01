@@ -17,6 +17,7 @@ bool bot_ai_reset(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if(!qa_bot_source_record_clear(&b->services.memory,s->source_record,true,e)) return false;
     bot_ai_state fresh = {.acquired_source_client=s->acquired_source_client,
         .source_record=s->source_record,
+        .source_span=s->source_span,
         .view = {.actor = s->view.actor, .client = s->view.client,
         .source_client=s->view.source_client,
         .entity = s->view.entity, .mode = s->view.mode, .decision = QA_BOT_SEEK_LONG_TERM,

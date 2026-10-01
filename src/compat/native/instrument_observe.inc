@@ -64,6 +64,15 @@ static bool observer_control(native_hook_control *control) {
     }
     if (control->operation == NATIVE_HOOK_REGION_SERVICE)
         return region_service_qualified(control);
+    if (control->operation == NATIVE_HOOK_IMAGE) {
+        if (!module_base || !module_generation || region_frames || region_bypass_pc ||
+            observed_entries || observed_watches || pending_writes || bypass_entry)
+            return false;
+        control->id = module_generation;
+        control->address = (uint64_t)(ptr_uint_t)module_base;
+        control->size = module_image_bytes;
+        return true;
+    }
     if (control->operation == NATIVE_HOOK_ENTRY_ADD) {
         app_pc address = (app_pc)(ptr_uint_t)control->address;
         app_pc replacement = (app_pc)(ptr_uint_t)control->replacement;

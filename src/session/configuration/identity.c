@@ -117,7 +117,7 @@ bool qa_launch_identity_encode(const qa_launch_snapshot *snapshot, const qa_acto
     if (!snapshot || !v || !catalog || !out) return fail(error, "Missing immutable launch identity owner");
     qa_json_writer w = {0}; qa_json_writer_object(&w);
     qa_json_writer_key(&w, "schema"); text(&w, "qa-launch-identity");
-    qa_json_writer_key(&w, "version"); number(&w, 4);
+    qa_json_writer_key(&w, "version"); number(&w, 5);
     qa_json_writer_key(&w, "world"); qa_json_writer_array(&w);
     product(&w, catalog, v->world.preset); product(&w, catalog, v->world.geometry);
     product(&w, catalog, v->world.presentation); text(&w, v->world.map); text(&w, v->world.start_command);
@@ -158,6 +158,10 @@ bool qa_launch_identity_encode(const qa_launch_snapshot *snapshot, const qa_acto
         boolean(&w, p->local); boolean(&w, p->spectator); boolean(&w, p->bot); number(&w, p->bot_skill);
         if (p->bot_definition) text(&w, p->bot_definition); else qa_json_writer_null(&w);
         number(&w, p->bot_delay_ms);
+        if (p->character_model) text(&w, p->character_model); else qa_json_writer_null(&w);
+        if (p->character_skin) text(&w, p->character_skin); else qa_json_writer_null(&w);
+        if (p->character_head_model) text(&w, p->character_head_model); else qa_json_writer_null(&w);
+        if (p->character_head_skin) text(&w, p->character_head_skin); else qa_json_writer_null(&w);
     END;
     BEGIN("loadout", v->loadout_count);
         const qa_launch_loadout *p = &v->loadout[i]; scope(&w, registry, p->scope); text(&w, p->item);
@@ -242,6 +246,13 @@ static uint64_t read_word(identity_reader *r)
         n = n * 10 + (unsigned)(*s - '0');
     }
     return n;
+}
+static const char *read_optional_text(identity_reader *r)
+{
+    if (qa_json_type(r->document, qa_json_at(r->document, r->array, r->next)) == QA_JSON_NULL) {
+        (void)take(r); return NULL;
+    }
+    return read_text(r);
 }
 static int32_t read_signed(identity_reader *r)
 {
@@ -399,7 +410,7 @@ bool qa_launch_identity_decode(qa_catalog *catalog, const qa_actor_registry *reg
     qa_json_id root = qa_json_root(document); uint64_t version = 0;
     if (qa_json_type(document, root) != QA_JSON_OBJECT || qa_json_size(document, root) != 14 ||
         !qa_json_string_equal(document, qa_json_get(document, root, "schema"), "qa-launch-identity") ||
-        !qa_json_u64(document, qa_json_get(document, root, "version"), &version, error) || version != 4) {
+        !qa_json_u64(document, qa_json_get(document, root, "version"), &version, error) || version != 5) {
         qa_json_destroy(document); return fail(error, "Unsupported explicit launch identity schema");
     }
     qa_arena arena = {0}; qa_launch_draft *draft = NULL;
@@ -444,7 +455,7 @@ bool qa_launch_identity_decode(qa_catalog *catalog, const qa_actor_registry *reg
         v.selection.grenades.infinite_ammo = read_bool(&r); v.selection.grenades.initial_ammo = read_signed(&r);
         v.selection.grenades.capacity = read_signed(&r);
         DONE(qa_launch_set_equipment(draft, &v, error));
-    if (ok) EACH("seats", 11)
+    if (ok) EACH("seats", 15)
         qa_launch_seat v = {0}; v.id = read_unsigned(&r); v.actor = read_actor(&r); v.name = read_text(&r);
         v.team = read_text(&r); v.input_device = read_unsigned(&r); v.local = read_bool(&r);
         v.spectator = read_bool(&r); v.bot = read_bool(&r); v.bot_skill = read_float(&r);
@@ -452,6 +463,8 @@ bool qa_launch_identity_decode(qa_catalog *catalog, const qa_actor_registry *reg
             (void)take(&r);
         else v.bot_definition = read_text(&r);
         v.bot_delay_ms = read_signed(&r);
+        v.character_model = read_optional_text(&r); v.character_skin = read_optional_text(&r);
+        v.character_head_model = read_optional_text(&r); v.character_head_skin = read_optional_text(&r);
         DONE(qa_launch_set_seat(draft, &v, error));
     if (ok) EACH("loadout", 6)
         qa_launch_loadout v = {0}; v.scope = read_scope(&r); v.item = read_text(&r); v.quantity = read_signed(&r);

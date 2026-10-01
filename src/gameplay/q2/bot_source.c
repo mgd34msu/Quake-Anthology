@@ -1,6 +1,11 @@
 #include "player/internal.h"
 #include "qa/game_q2_bots.h"
 
+bool qa_q2_bot_arsenal_configuration_read(const qa_q2_game *game,qa_q2_bot_arsenal_configuration *out,qa_error *error) {
+    if(!game || !out) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q2 bot arsenal requires its actual source configuration");return false;}
+    *out=(qa_q2_bot_arsenal_configuration){game->options.edition,game->options.deathmatch};return true;
+}
+
 bool qa_q2_bot_entity_read(qa_q2_game *game,qa_actor_id actor,qa_q2_bot_entity *out,qa_error *error) {
     if(!game || !out) {qa_error_set(error,QA_ERROR_ARGUMENT,0,"Q2 bot entity requires its source owner and output");return false;}
     qa_q2_visual visual;qa_builtin_actor_traits traits;

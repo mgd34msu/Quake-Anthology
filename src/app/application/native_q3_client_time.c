@@ -133,8 +133,8 @@ static bool same_name(const char *text,const char *name)
 }
 static bool refresh_system_info(qa_native_q3_client_service *service,qa_error *error)
 {
-    const char *borrowed;
-    if (!qa_q3_configstring_read(service->source_game,1,&borrowed,error)) return false;
+    const char *borrowed; uint64_t revision;
+    if (!qa_native_q3_wire_reader_configstring(service->services.wire_reader,1,&borrowed,&revision,error)) return false;
     char *retained=retain_text(borrowed),*working=retain_text(borrowed);
     if (!retained || !working) { free(retained); free(working); return native_client_fail(error,QA_ERROR_MEMORY,"Retaining actual native SystemInfo"); }
     bool same=service->system_info && !strcmp(retained,service->system_info),ok=true;
@@ -199,6 +199,14 @@ bool qa_native_q3_client_refresh(qa_native_q3_client_service *service,qa_error *
         return native_client_fail(error,QA_ERROR_ARGUMENT,"Native CGAME frame refresh requires its actual seat owner");
     service->updating=true;
     bool ok=refresh_system_info(service,error) && refresh_settings(service,error);
+    service->updating=false; return ok;
+}
+bool qa_native_q3_client_system_info(qa_native_q3_client_service *service,qa_error *error)
+{
+    if (!service || service->updating || !qa_native_q3_client_service_current(service))
+        return native_client_fail(error,QA_ERROR_ARGUMENT,"Native CGAME SystemInfo requires its actual reached client gamestate");
+    service->updating=true;
+    bool ok=refresh_system_info(service,error);
     service->updating=false; return ok;
 }
 bool qa_native_q3_client_frame_time(qa_native_q3_client_service *service,double supplied,

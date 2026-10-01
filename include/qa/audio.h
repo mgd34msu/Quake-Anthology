@@ -415,6 +415,20 @@ bool qa_audio_engine_stop_loop(qa_audio_engine *engine, uint64_t actor, uint64_t
 bool qa_audio_engine_stop_owner(qa_audio_engine *engine, uint64_t owner, uint32_t audience,
                                 qa_error *error);
 void qa_audio_engine_stop_all(qa_audio_engine *engine);
+typedef struct qa_audio_stream_cut qa_audio_stream_cut;
+/* Preallocates publication storage and locks both idle engines and their mixers.
+ * The source keeps its raw stream until publication; cancellation leaves both
+ * queues intact. Engines must outlive the cut. Preflight movie/route callbacks
+ * before prepare, then check current immediately before publishing.
+ * Publication stops destination playback and moves the same source raw queue
+ * without allocation or decoder replay, including a genuinely absent queue.
+ * Reentrant mutation/destruction during publication is rejected with owners
+ * retained. Destroy the cut before ordinary engine cleanup; cuts are not saved. */
+bool qa_audio_engine_stream_cut_prepare(qa_audio_engine *destination, qa_audio_engine *source,
+    uint64_t id, uint32_t audience, float gain, qa_audio_stream_cut **out, qa_error *error);
+bool qa_audio_engine_stream_cut_current(const qa_audio_stream_cut *cut);
+void qa_audio_engine_stream_cut_publish(qa_audio_stream_cut *cut);
+void qa_audio_engine_stream_cut_destroy(qa_audio_stream_cut *cut);
 /* Bus attachment transfers ownership; replacing or removing a bus releases it.
  * Music and raw streams have separate ID namespaces; remove_bus removes both.
  */

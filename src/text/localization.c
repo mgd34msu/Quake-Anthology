@@ -1,6 +1,8 @@
 #include "qa/localization.h"
 #include "qa/strings.h"
 #include "qa/text.h"
+#include "qa/caption_save.h"
+#include "save_private.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -312,15 +314,16 @@ const qa_localization_entry *qa_localization_find(const qa_localization *catalog
     qa_string_id id = qa_strings_find(catalog->keys, (qa_bytes){(const uint8_t *)key, strlen(key)});
     return id ? &catalog->entries[id - 1].value : NULL;
 }
-size_t qa_localize(const qa_localization *catalog, const char *base, const char *const *arguments,
-                   size_t argument_count, bool allow_in_place, bool raw_bytes, char *out,
-                   size_t capacity) {
+static size_t localize(const qa_localization *catalog, const char *base, const char *const *arguments,
+                   size_t argument_count, bool allow_in_place, bool raw_bytes, bool preserve_unknown,
+                   char *out, size_t capacity) {
     if (!capacity)
         return 0;
     out[0] = 0;
     const qa_localization_entry *entry = NULL;
     qa_localization_entry parsed = {0};
     char format[1024];
+    const char *original = base;
     if (*base == '$')
         entry = qa_localization_find(catalog, ++base);
     else if (allow_in_place) {
@@ -342,8 +345,10 @@ size_t qa_localize(const qa_localization *catalog, const char *base, const char 
             }
         }
     }
-    if (!entry)
-        return append(out, 0, capacity, base, strlen(base), raw_bytes);
+    if (!entry) {
+        const char *text = preserve_unknown ? original : base;
+        return append(out, 0, capacity, text, strlen(text), raw_bytes);
+    }
     if (!entry->argument_count)
         return append(out, 0, capacity, entry->format, strlen(entry->format), raw_bytes);
     for (size_t i = 0; i < entry->argument_count; ++i)
@@ -358,12 +363,18 @@ size_t qa_localize(const qa_localization *catalog, const char *base, const char 
         used = append(out, used, capacity, entry->format + at, arg.start - at, raw_bytes);
         char value[1024];
         size_t n =
-            qa_localize(catalog, arguments[arg.index], NULL, 0, false, false, value, sizeof(value));
+            localize(catalog, arguments[arg.index], NULL, 0, false, false, preserve_unknown, value, sizeof(value));
         used = append(out, used, capacity, value, n, raw_bytes);
         at = arg.end;
     }
     return append(out, used, capacity, entry->format + at, strlen(entry->format + at), raw_bytes);
 }
+size_t qa_localize(const qa_localization *catalog, const char *base, const char *const *arguments,
+    size_t argument_count, bool allow_in_place, bool raw_bytes, char *out, size_t capacity)
+{ return localize(catalog, base, arguments, argument_count, allow_in_place, raw_bytes, false, out, capacity); }
+size_t qa_localize_presentation(const qa_localization *catalog, const char *base,
+    const char *const *arguments, size_t argument_count, bool allow_in_place, char *out, size_t capacity)
+{ return localize(catalog, base, arguments, argument_count, allow_in_place, false, true, out, capacity); }
 const char *qa_localization_language(const char *locale) {
     static const char *const codes[] = {"en", "fr", "de", "it", "ru", "es"};
     static const char *const names[] = {"english", "french",  "german",
@@ -410,7 +421,7 @@ bool qa_localization_acquire(qa_localization_pool *pool, qa_vfs *view, const cha
     qa_localization_options defaults = {0};
     if (!options)
         options = &defaults;
-    if (!pool || !view || !language || !*language || !out || strlen(language) > 64 ||
+    if (!pool || !view || !language || !*language || !out ||
         (options->profile != QA_LOCALIZATION_Q1_RERELEASE &&
          options->profile != QA_LOCALIZATION_Q2_RERELEASE) ||
         strspn(language, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-") !=
@@ -438,11 +449,23 @@ bool qa_localization_acquire(qa_localization_pool *pool, qa_vfs *view, const cha
     size_t count = !strcmp(language, "english") ? 2 : 4;
     bool ok = true;
     for (size_t i = 0; i < count; ++i) {
-        char path[128];
-        snprintf(path, sizeof(path), "localization/loc_%s%s.txt", i < 2 ? "english" : language,
-                 i & 1 ? "_mod" : "");
+        const char *name=i<2?"english":language;
+        size_t length=strlen(name);
+        if (length>SIZE_MAX-sizeof("localization/loc__mod.txt")) {
+            qa_error_set(error,QA_ERROR_MEMORY,0,"Localization resource path exceeds address space");
+            ok=false; break;
+        }
+        size_t capacity=length+sizeof("localization/loc__mod.txt");
+        char *path=malloc(capacity);
+        if (!path) {
+            qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating actual localization resource path");
+            ok=false; break;
+        }
+        snprintf(path,capacity,"localization/loc_%s%s.txt",name,i&1?"_mod":"");
         qa_error missing = {0};
-        if (!qa_vfs_acquire(view, path, &resources[i], NULL, &missing)) {
+        bool acquired=qa_vfs_acquire(view,path,&resources[i],NULL,&missing);
+        free(path);
+        if (!acquired) {
             if (missing.code == QA_ERROR_NOT_FOUND)
                 continue;
             if (error)
@@ -483,4 +506,105 @@ bool qa_localization_acquire(qa_localization_pool *pool, qa_vfs *view, const cha
     for (size_t i = 0; i < 4; ++i)
         qa_resource_release(resources[i]);
     return ok;
+}
+bool qa_localization_pool_catalog_key(const qa_localization_pool *pool, const qa_localization *catalog, uint64_t *out)
+{
+    if (!pool || !out) return false;
+    if (!catalog) { *out = 0; return true; }
+    uint64_t key = 1;
+    for (const loc_cache *row = pool->first; row; row = row->next, ++key)
+        if (row->catalog == catalog) { *out = key; return true; }
+    return false;
+}
+qa_localization *qa_localization_pool_catalog(const qa_localization_pool *pool, uint64_t key)
+{
+    if (!pool || !key) return NULL;
+    const loc_cache *row = pool->first;
+    while (row && --key) row = row->next;
+    return row ? row->catalog : NULL;
+}
+static bool compiled_fields(qa_source_save_io *io, qa_localization *catalog)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    size_t count = catalog->count, capacity = catalog->capacity;
+    if (!qa_source_save_count(io, &count, reading ? (io->input.size - io->offset) / 36 : SIZE_MAX / sizeof(loc_entry)) ||
+        !qa_source_save_count(io, &capacity, SIZE_MAX / sizeof(loc_entry)) || capacity < count) return false;
+    for (size_t i = 0; i < capacity; ++i) { uint8_t zero = 0; if (!qa_source_save_u8(io, &zero) || zero) return false; }
+    if (reading) {
+        if (!qa_strings_create(&catalog->keys, io->error)) return false;
+        catalog->entries = capacity ? calloc(capacity, sizeof(*catalog->entries)) : NULL;
+        if (capacity && !catalog->entries) { qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Restoring compiled localization table"); return false; }
+        catalog->capacity = capacity;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        char *key = reading ? NULL : (char *)qa_strings_cstr(catalog->keys, (qa_string_id)i + 1);
+        char *format = reading ? NULL : (char *)catalog->entries[i].value.format;
+        loc_entry entry = reading ? (loc_entry){0} : catalog->entries[i];
+        bool ok = qa_text_save_owned(io, &key) && key && *key && qa_text_save_owned(io, &format) && format &&
+            qa_source_save_count(io, &entry.layer, SIZE_MAX) && qa_source_save_u8(io, &entry.value.argument_count) && entry.value.argument_count <= 8;
+        size_t end = 0, length = format ? strlen(format) : 0;
+        for (unsigned j = 0; ok && j < 8; ++j) {
+            qa_localization_argument *argument = &entry.value.arguments[j];
+            ok = qa_source_save_u16(io, &argument->start) && qa_source_save_u16(io, &argument->end) && qa_source_save_u8(io, &argument->index);
+            if (ok && j < entry.value.argument_count) {
+                ok = argument->start >= end && argument->start < argument->end && argument->end <= length;
+                end = argument->end;
+            }
+        }
+        if (ok && reading) {
+            qa_string_id id = 0;
+            ok = !qa_strings_find(catalog->keys, (qa_bytes){(const uint8_t *)key, strlen(key)}) &&
+                qa_strings_intern_cstr(catalog->keys, key, &id, io->error) && id == i + 1;
+            if (ok) {
+                entry.value.format = format; format = NULL;
+                catalog->entries[i] = entry; ++catalog->count;
+            }
+        }
+        if (reading) { free(key); free(format); }
+        if (!ok) return false;
+    }
+    return true;
+}
+static bool pool_fields(qa_source_save_io *io, qa_localization_pool *pool)
+{
+    bool reading = io->direction == QA_SOURCE_SAVE_READ;
+    size_t count = qa_localization_pool_count(pool);
+    if (!qa_text_save_header(io, "QLOC") ||
+        !qa_source_save_count(io, &count, reading ? (io->input.size - io->offset) / 48 : SIZE_MAX)) return false;
+    loc_cache **link = &pool->first;
+    for (size_t i = 0; i < count; ++i) {
+        loc_cache *entry = *link;
+        if (reading) {
+            entry = calloc(1, sizeof(*entry));
+            if (!entry) { qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Restoring localization cache entry"); return false; }
+            *link = entry;
+            entry->catalog = calloc(1, sizeof(*entry->catalog));
+            if (!entry->catalog) { qa_error_set(io->error, QA_ERROR_MEMORY, 0, "Restoring compiled localization owner"); return false; }
+            entry->catalog->references = 1;
+        }
+        if (!qa_source_save_bytes(io, entry->key.bytes, sizeof(entry->key.bytes)) || !compiled_fields(io, entry->catalog)) return false;
+        for (loc_cache *prior = pool->first; prior != entry; prior = prior->next)
+            if (qa_sha256_equal(&prior->key, &entry->key)) return false;
+        link = &entry->next;
+    }
+    return true;
+}
+bool qa_localization_pool_checkpoint(const qa_localization_pool *pool, qa_buffer *out, qa_error *error)
+{
+    if (!pool || !out || out->data || out->size) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Localization capture requires its actual owner and empty output"); return false; }
+    qa_source_save_io io = {0};
+    bool ok = qa_source_save_writer(&io, NULL, error) && pool_fields(&io, (qa_localization_pool *)pool) && qa_source_save_finish(&io, out);
+    qa_source_save_dispose(&io);
+    if (!ok && error && error->code == QA_OK) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid actual localization pool"); return ok;
+}
+bool qa_localization_pool_restore(qa_localization_pool *pool, qa_bytes bytes, qa_error *error)
+{
+    if (!pool || pool->first) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Localization restore requires its empty actual pool"); return false; }
+    qa_localization_pool *candidate = qa_localization_pool_create(error);
+    if (!candidate) return false;
+    qa_source_save_io io = {0};
+    bool ok = qa_source_save_reader(&io, NULL, bytes, error) && pool_fields(&io, candidate) && qa_source_save_finish(&io, NULL);
+    if (ok) { pool->first = candidate->first; candidate->first = NULL; }
+    qa_source_save_dispose(&io); qa_localization_pool_destroy(candidate);
+    if (!ok && error && error->code == QA_OK) qa_error_set(error, QA_ERROR_FORMAT, 0, "Invalid saved localization pool"); return ok;
 }

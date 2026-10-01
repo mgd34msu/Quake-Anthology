@@ -293,6 +293,12 @@ static bool setup_chat(qa_bot_runtime *r, qa_error *e) {
     return ok;
 }
 static bool setup(qa_bot_runtime *r, int32_t *result, qa_error *e) {
+    bool log_opened;
+    if(!qa_bot_log_open(r->log,r->library,"botlib.log",&log_opened,e)) return false;
+    if(r->services.log.print) {
+        if(!r->services.log.print(r->services.log.context,QA_SCRIPT_INFO,"------- BotLib Initialization -------\n",e)) return false;
+    } else if(r->services.diagnostic)
+        r->services.diagnostic(r->services.context,QA_SCRIPT_INFO,"------- BotLib Initialization -------\n");
     int32_t clients, entities = 0;
     if (!bot_runtime_integer(r, "maxclients", "128", &clients, e)) return false;
     if (r->options.observations == QA_BOT_OBSERVATION_NATIVE &&

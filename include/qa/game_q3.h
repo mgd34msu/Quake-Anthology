@@ -582,7 +582,8 @@ typedef enum qa_q3_entity_kind {
     QA_Q3_ENTITY_GRAPPLE,
     QA_Q3_ENTITY_PORTAL,
     QA_Q3_ENTITY_CORPSE,
-    QA_Q3_ENTITY_KAMIKAZE
+    QA_Q3_ENTITY_KAMIKAZE,
+    QA_Q3_ENTITY_TEAM
 } qa_q3_entity_kind;
 typedef struct qa_q3_entity_view {
     qa_actor_id actor, owner, attachment;
@@ -595,6 +596,8 @@ typedef struct qa_q3_entity_view {
     qa_string_id loop_sound;
     const char *model, *secondary_model;
     float alpha;
+    qa_q3_entity source_entity;
+    bool has_source_entity;
 } qa_q3_entity_view;
 bool qa_q3_entity_read(const qa_q3_game *, qa_actor_id, qa_q3_entity_view *, qa_error *);
 /* Unified presentation extension; finite authored fade overshoot is retained. */

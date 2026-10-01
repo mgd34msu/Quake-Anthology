@@ -7,7 +7,8 @@ typedef struct qa_ui_checkpoint_refs {
     /* The input owner qualifies this actual controller's installed handler. */
     bool (*input_encode)(void *, const qa_ui *, qa_input_ui_token, uint64_t *, qa_error *);
     /* Read-only: returns an already restored handler token and verifies its
-     * actual seat, handler function and context against input_binding_read. */
+     * actual seat, handler function and context against input_binding_read and
+     * qa_input_seat_ui_binding_read. No UI push/remove callbacks run. */
     bool (*input_decode)(void *, qa_ui *, uint64_t, qa_input_ui_token *, qa_error *);
 } qa_ui_checkpoint_refs;
 typedef struct qa_ui_input_binding {

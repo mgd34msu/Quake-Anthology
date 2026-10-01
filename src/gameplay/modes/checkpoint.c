@@ -1,5 +1,18 @@
 #include "internal.h"
 
+static bool source_objects_current(qa_modes *m, qa_error *e) {
+    for (uint32_t index = 0; index < m->actor_capacity; ++index) {
+        const mode_object *object = &m->objects[index];
+        if (!object->active || !object->q3_source_owned) continue;
+        bool native = false;
+        if (!m->options.hooks.q3_source_object ||
+            !MODE_CALLBACK(m, m->options.hooks.q3_source_object(m->options.hooks.context,
+                object->mode, object->actor, &native, e)) || !native)
+            return mode_fail(e, "Q3 source objective has no genuine current GAME binding");
+    }
+    return true;
+}
+
 void qa_modes_checkpoint_free(qa_modes_checkpoint *saved) {
     if (!saved)
         return;
@@ -69,13 +82,14 @@ static qa_mode_object_checkpoint capture_object(const mode_object *o) {
                                        .has_physics = o->has_physics,
                                        .dropped = o->dropped,
                                        .global_animation = o->global_animation,
+                                       .q3_source_owned = o->q3_source_owned,
                                        .tag_stage = o->tag_stage};
 }
 static bool checkpoint_capture(qa_modes *m, qa_modes_checkpoint *out, qa_error *e) {
     for (uint32_t i = 0; i < m->mode_capacity; ++i)
         if (m->instances[i].active && !mode_relic_source_current(m, &m->instances[i], e)) return false;
     qa_modes_checkpoint saved = {
-        .version = 10, .random = m->random, .attack_sequence = m->attack_sequence};
+        .version = 13, .random = m->random, .attack_sequence = m->attack_sequence};
     saved.players = calloc(m->actor_capacity, sizeof(*saved.players));
     saved.modes = calloc(m->mode_capacity, sizeof(*saved.modes));
     saved.objects = calloc(m->actor_capacity, sizeof(*saved.objects));
@@ -164,6 +178,7 @@ memory:
 bool qa_modes_checkpoint_capture(qa_modes *m, qa_modes_checkpoint *out, qa_error *e) {
     if (!m || !out || m->callback_depth)
         return mode_fail(e, "mode checkpoint requires an idle boundary");
+    if (!source_objects_current(m, e)) return false;
     return MODE_CALLBACK(m, checkpoint_capture(m, out, e));
 }
 static bool reference(qa_modes *m, qa_actor_id actor) {
@@ -222,8 +237,6 @@ static bool validate_instance(qa_modes *m, const qa_mode_checkpoint *v, qa_error
             p->introduction_frames < 0 || p->suicide_count < 0 ||
             !reference(m, p->player.follow_target) || p->player.automatic_follow < 0 ||
             p->player.automatic_follow > 2 ||
-            p->player.q3_spectator_state < 0 || p->player.q3_spectator_state > 3 ||
-            p->player.q3_spectator_client < -2 || p->player.q3_spectator_client >= 64 ||
             (v->value.rules.source < QA_MODE_Q3 && (p->player.q3_spectator_state ||
                 p->player.q3_spectator_time_ms || p->player.q3_spectator_client)) ||
             !isfinite(p->player.ctf_status) || !isfinite(p->player.ctf_access) ||
@@ -373,7 +386,7 @@ static bool restore_instance(qa_modes *m, const qa_mode_checkpoint *saved, qa_er
 }
 static bool checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved,
                                 bool reconnect, qa_error *e) {
-    if (!m || m->callback_depth || !saved || saved->version != 10 ||
+    if (!m || m->callback_depth || !saved || saved->version != 13 ||
         saved->player_count > m->actor_capacity || saved->mode_count > m->mode_capacity ||
         saved->object_count > m->actor_capacity ||
         saved->external_objective_count > m->objective_capacity ||
@@ -463,6 +476,8 @@ static bool checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved,
         if (!owner || !owned_object(saved, o->mode, o->base) ||
             !owned_object(saved, o->mode, o->dropped_actor))
             return mode_fail(e, "saved objective has a conflicting mode owner");
+        if (o->q3_source_owned && (o->has_physics || o->next_ns || o->expire_ns))
+            return mode_fail(e, "saved Q3 source objective claims generic physics or timers");
         if (o->spec.item) {
             bool found = false;
             for (size_t j = 0; j < owner->item_count; ++j)
@@ -552,12 +567,14 @@ static bool checkpoint_restore(qa_modes *m, const qa_modes_checkpoint *saved,
                            .has_physics = s->has_physics,
                            .dropped = s->dropped,
                            .global_animation = s->global_animation,
+                           .q3_source_owned = s->q3_source_owned,
                            .tag_stage = s->tag_stage,
                            .active = true};
         if (reconnect && !mode_object_bind_objective(m, o, e))
             return false;
     }
     if (!reconnect) return true;
+    if (!source_objects_current(m, e)) return false;
     for (uint32_t i = 0; i < m->mode_capacity; ++i)
         if (m->instances[i].active && !mode_relic_source_current(m, &m->instances[i], e)) return false;
     if (!qa_builtin_players(&m->options.services, &m->players_order, e) ||
@@ -582,6 +599,7 @@ bool qa_modes_reconnect(qa_modes *m, qa_error *e) {
         !qa_world_idle(m->options.services.world) || !qa_combat_idle(m->options.services.combat))
         return mode_fail(e, "mode reconnect requires idle shared owners");
     if (!m->source_restored) return true;
+    if (!source_objects_current(m, e)) return false;
     for (uint32_t i = 0; i < m->mode_capacity; ++i)
         if (m->instances[i].active && !mode_relic_source_current(m, &m->instances[i], e)) return false;
     for (size_t i = 0; i < m->restored_objective_count; ++i) {
@@ -607,7 +625,10 @@ bool qa_modes_reconnect(qa_modes *m, qa_error *e) {
     if (!qa_builtin_players(&m->options.services, &m->players_order, e) ||
         !qa_builtin_observations(&m->options.services, &m->observations, e)) return false;
     for (uint32_t i = 0; i < m->mode_capacity; ++i)
-        if (m->instances[i].active && !qa_modes_rank(m, m->instances[i].id, e)) return false;
+        if (m->instances[i].active) {
+            mode_instance *v = &m->instances[i];
+            if (!qa_modes_rank(m, v->id, e)) return false;
+        }
     free(m->restored_objectives); m->restored_objectives = NULL;
     m->restored_objective_count = 0; m->source_restored = false;
     return true;

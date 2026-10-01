@@ -23,12 +23,22 @@ bool frontend_native_q2_topology_checkpoint(const qa_frontend *, qa_buffer *, qa
 bool frontend_native_q2_prepare_restored(qa_frontend *, qa_bytes, qa_error *);
 bool frontend_native_q2_topology_ready(const qa_frontend *, qa_error *);
 void frontend_native_q2_topology_finish(qa_frontend *);
-/* Retire real application leases first. Pending rows retain every partially
- * claimed view/heap on failure and are then consumed by this destructor. */
+/* Retire real application leases first. Pending constructors and consumed
+ * application leases retain their real views/heaps while a child is busy;
+ * this destructor retries those actual unbound rows before unlinking them. */
 bool frontend_native_q2_discard_unbound(qa_frontend *, qa_error *);
 size_t frontend_native_q2_owner_count(const qa_frontend *);
 bool frontend_native_q2_owner_read(const qa_frontend *, size_t,
     frontend_native_q2_owner_view *);
+/* Pure asset provenance lookup during the real voice observer boundary;
+ * does not require idle guest imports or advance their source clocks. */
+bool frontend_native_q2_audio_view(const qa_frontend *,const qa_audio_asset *,qa_vfs **);
+/* Pure physical child admission also works after the application lease retires.
+ * Nullable heaps are observed directly, including their held capture callbacks. */
+bool frontend_native_q2_children_idle(const qa_frontend *);
+/* A Q3 cut requires Q3 character ownership. Original Q2 cgame imports require
+ * a native KEX character producer, so installed cgame leases cannot join it. */
+bool frontend_native_q2_q3_round_ready(const qa_frontend *, qa_error *);
 /* Global image/font/audio families restore the actual heaps exposed above.
  * This section then imports true GAME lease clocks, classic-font selection and
  * retained world text. CGAME guest allocations/catalogs need a qualified full

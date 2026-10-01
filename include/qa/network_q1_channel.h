@@ -40,6 +40,7 @@ typedef struct qa_qw_channel_stats {
     uint32_t incoming_sequence, outgoing_sequence;
     uint64_t last_received_ns;
     double frame_latency, frame_interval_ms;
+    uint32_t bytes_per_second;
 } qa_qw_channel_stats;
 qa_qw_channel_stats qa_qw_channel_get_stats(const qa_qw_channel *);
 

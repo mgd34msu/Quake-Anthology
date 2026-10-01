@@ -319,6 +319,9 @@ typedef struct qa_qc_host {
     qa_qc_unknown_builtin_fn unknown_builtin;
     uint32_t (*random_u32)(void *context);
     bool (*server_active)(void *context);
+    /* Pure retained source clock in seconds for edict allocation and free
+     * metadata. Guest callback globals may carry a different invocation time. */
+    double (*source_time_seconds)(void *context);
     /* Optional selected movement authority. Called as a pure ownership lookup;
      * it must not execute guest code or alter the actor registry. When absent,
      * owned actors and this host's execution actors retain legacy authority. */
@@ -365,6 +368,13 @@ uint32_t qa_qc_argument_count(const qa_qc_instance *instance);
 bool qa_qc_bind_actor(qa_qc_instance *instance, uint32_t slot,
                       qa_actor_id actor, qa_qc_slot_kind kind,
                       qa_error *error);
+/* Reserved-row handoff retains source fields and performs normal body
+ * synchronization. It qualifies the exact previous full actor binding. OWNED
+ * requires this physical source slot; BORROWED retains canonical identity. */
+bool qa_qc_reserved_actor_rebind_ready(const qa_qc_instance *);
+bool qa_qc_rebind_reserved_actor(qa_qc_instance *, uint32_t slot,
+                                  qa_actor_id previous, qa_actor_id actor,
+                                  qa_qc_slot_kind kind, qa_error *);
 bool qa_qc_unbind_actor(qa_qc_instance *instance, uint32_t slot,
                         qa_error *error);
 bool qa_qc_slot(const qa_qc_instance *instance, uint32_t slot,

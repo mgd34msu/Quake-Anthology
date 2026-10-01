@@ -20,6 +20,8 @@ typedef struct qa_media_caption_options {
 qa_media_captions *qa_media_captions_create(const qa_media_caption_options *, qa_error *);
 void qa_media_captions_destroy(qa_media_captions *);
 void qa_media_captions_clear(qa_media_captions *);
+/* Pure exact qualification; NULL tuple denotes an unprepared owner. */
+bool qa_media_captions_prepared_is(const qa_media_captions *,const qa_vfs *,const char *source,const char *language);
 bool qa_media_captions_prepare(qa_media_captions *, qa_vfs *, const char *source,
                                const char *language, qa_error *);
 bool qa_media_captions_visit(qa_media_captions *, const char *source, double source_time_ms,
@@ -44,5 +46,11 @@ bool qa_sound_captions_prepare(qa_sound_captions *, const char *language, int64_
 bool qa_sound_captions_visit(qa_sound_captions *, int64_t delivered_frame, qa_caption_preferences,
                              void (*visit)(void *, const qa_active_caption *), void *, qa_error *);
 void qa_sound_captions_clear(qa_sound_captions *);
+bool qa_sound_captions_idle(const qa_sound_captions *);
+/* One borrowed entry for each actual owned asset reference, including stopped
+ * voices and prepared caches. Caller frees only the pointer array. */
+bool qa_sound_captions_assets_read(const qa_sound_captions *, qa_audio_asset ***, size_t *, qa_error *);
+bool qa_sound_captions_views_visit(const qa_sound_captions *,
+    bool (*)(void *, const qa_vfs *, qa_error *), void *, qa_error *);
 
 #endif

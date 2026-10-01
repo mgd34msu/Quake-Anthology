@@ -304,15 +304,26 @@ SOUND_GROUP(last_item_sounds, S(REGEN,"sound/items/regen.wav",false), S(PROTECT,
 static bool source_string(q3n_media *m, const q3n_media_load *load, uint32_t number,
     const char **text, uint64_t *revision, qa_error *e)
 {
-    if (!load || !load->application || !load->source || load->source->product != m->options.product)
+    qa_native_q3_wire_basis basis;
+    if (!load || !load->application || !load->source || load->source->product != m->options.product ||
+        !qa_native_q3_wire_reader_basis(load->reader, &basis, e) ||
+        basis.application != load->application || basis.product != m->options.product ||
+        basis.source_game != load->source->source_game || basis.source_owner != load->source->source_owner ||
+        basis.publication_generation != load->source->publication_generation ||
+        basis.map_revision != load->source->map_revision)
         return q3p_fail(e, QA_ERROR_ARGUMENT, "Native media requires its actual GAME observation");
-    return qa_application_native_q3_presentation_configstring(load->application, load->source, number, text, revision, e);
+    return qa_native_q3_wire_reader_configstring(load->reader, number, text, revision, e);
 }
 static bool load_valid(q3n_media *m,const q3n_media_load *load,qa_error *e)
 {
-    return load && load->application && load->source && load->loading && load->source->product==m->options.product &&
-        load->game_type==load->source->game_type && qa_application_native_q3_presentation_current(load->application,load->source) ? true :
-        q3p_fail(e,QA_ERROR_ARGUMENT,"Native media loading requires the actual source and loading producer");
+    if (!load || !load->application || !load->source || !load->loading ||
+        !qa_application_native_q3_presentation_current(load->application,load->source))
+        return q3p_fail(e,QA_ERROR_ARGUMENT,"Native media loading requires the actual source and loading producer");
+    const char *text; uint64_t revision; char value[8192];
+    if (!source_string(m,load,0,&text,&revision,e) ||
+        !qa_q3_info_value(text,"g_gametype",value,sizeof(value),e)) return false;
+    return load->game_type>=0 && load->game_type<=7 && strtol(value,NULL,10)==load->game_type ? true :
+        q3p_fail(e,QA_ERROR_ARGUMENT,"Native media loading differs from its reached serverinfo game type");
 }
 static bool bits(q3n_media *m, const q3n_media_load *load, const char **text, qa_error *e)
 {
@@ -582,27 +593,38 @@ static bool load_graphics_now(q3n_media *m,const q3n_media_load *load,qa_error *
 bool q3n_media_load_graphics(q3n_media *m,const q3n_media_load *load,qa_error *e)
 { return enter(m,e) && leave(m,load_graphics_now(m,load,e)); }
 
-bool q3n_media_sync_configstrings(q3n_media *m,qa_application *application,
-    const qa_application_native_q3_presentation *source,qa_error *e)
+bool q3n_media_configstring_changed(q3n_media *m,qa_native_q3_wire_reader *reader,
+    uint32_t index,qa_error *e)
 {
     if (!enter(m,e)) return false;
-    q3n_media_load load={.application=application,.source=source};
-    bool okay=true;
-    for (uint32_t i=0;i<256 && okay;++i) {
-        const char *text; uint64_t revision;
-        okay=source_string(m,&load,32+i,&text,&revision,e);
-        if (okay && (!m->model_observed[i] || m->model_revision[i]!=revision)) {
-            /* Initial holes were not passed to CG_RegisterGraphics. Later
-             * changed empty strings do clear the real server handle. */
-            if (m->model_observed[i] || *text) okay=model(m,text,&m->view.game_models[i],e);
-            if (okay) { m->model_observed[i]=true; m->model_revision[i]=revision; }
-        }
-        if (okay) okay=source_string(m,&load,288+i,&text,&revision,e);
-        if (okay && (!m->sound_observed[i] || m->sound_revision[i]!=revision)) {
-            if (*text!='*' && (m->sound_observed[i] || *text)) okay=sound(m,text,false,&m->view.game_sounds[i],e);
-            if (okay) { m->sound_observed[i]=true; m->sound_revision[i]=revision; }
-        }
+    qa_native_q3_wire_basis basis;
+    qa_native_q3_wire_publication reached;
+    const char *text; uint64_t revision;
+    bool okay=index>=32 && index<544 && qa_native_q3_wire_reader_basis(reader,&basis,e) &&
+        basis.product==m->options.product && qa_native_q3_wire_reader_publication(reader,&reached,e) &&
+        qa_native_q3_wire_reader_configstring(reader,index,&text,&revision,e);
+    if (!okay) return leave(m,q3p_fail(e,QA_ERROR_ARGUMENT,"Native media change requires its exact reached model/sound row"));
+    size_t length=strlen(text);
+    char *retained=malloc(length+1);
+    if (!retained) return leave(m,q3p_fail(e,QA_ERROR_MEMORY,"Retaining reached native media text"));
+    memcpy(retained,text,length+1);
+    uint32_t slot=index<288?index-32:index-288;
+    if (index<288) okay=model(m,retained,&m->view.game_models[slot],e);
+    else if (*retained!='*') okay=sound(m,retained,false,&m->view.game_sounds[slot],e);
+    if (okay) {
+        const char *actual; uint64_t current;
+        qa_native_q3_wire_publication after;
+        okay=qa_native_q3_wire_reader_configstring(reader,index,&actual,&current,e) &&
+            current==revision && !strcmp(actual,retained) &&
+            qa_native_q3_wire_reader_publication(reader,&after,e) &&
+            after.reached_command_sequence==reached.reached_command_sequence;
+        if (!okay && (!e || e->code==QA_OK)) q3p_fail(e,QA_ERROR_ARGUMENT,"Native media row changed during registration");
     }
+    if (okay) {
+        if (index<288) { m->model_observed[slot]=true; m->model_revision[slot]=revision; }
+        else { m->sound_observed[slot]=true; m->sound_revision[slot]=revision; }
+    }
+    free(retained);
     return leave(m,okay);
 }
 static bool captured(const q3n_media *m,qa_error *e)
@@ -667,8 +689,8 @@ static bool weapon_fields(qa_source_save_io *io,q3n_media *m,q3n_weapon_media *w
 }
 static bool media_fields(qa_source_save_io *io,q3n_media *m)
 {
-    uint8_t magic[4]={'Q','3','M','D'}; uint32_t schema=1,product=m->options.product;
-    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3MD",4) || !qa_source_save_u32(io,&schema) || schema!=1 ||
+    uint8_t magic[4]={'Q','3','M','D'}; uint32_t schema=2,product=m->options.product;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"Q3MD",4) || !qa_source_save_u32(io,&schema) || schema!=2 ||
         !qa_source_save_u32(io,&product) || product!=(uint32_t)m->options.product ||
         !qa_source_save_bool(io,&m->loading_graphics) || !qa_source_save_bool(io,&m->sounds_loaded) || !qa_source_save_bool(io,&m->graphics_loaded)) return false;
     for (size_t i=0;i<m->view.item_count;++i) {
@@ -695,7 +717,9 @@ static bool media_fields(qa_source_save_io *io,q3n_media *m)
     for (size_t i=0;i<256;++i)
         if (!handle_field(io,m,&m->view.game_models[i],Q3P_MODEL) || !handle_field(io,m,&m->view.game_sounds[i],Q3P_SOUND) ||
             !qa_source_save_u64(io,&m->model_revision[i]) || !qa_source_save_u64(io,&m->sound_revision[i]) ||
-            !qa_source_save_bool(io,&m->model_observed[i]) || !qa_source_save_bool(io,&m->sound_observed[i])) return false;
+            !qa_source_save_bool(io,&m->model_observed[i]) || !qa_source_save_bool(io,&m->sound_observed[i]) ||
+            m->model_revision[i]>INT32_MAX || m->sound_revision[i]>INT32_MAX ||
+            (!m->model_observed[i] && m->model_revision[i]) || (!m->sound_observed[i] && m->sound_revision[i])) return false;
     size_t count=m->view.inline_count;
     if (!qa_source_save_count(io,&count,io->direction==QA_SOURCE_SAVE_READ ? (io->input.size-io->offset)/16 : SIZE_MAX/sizeof(*m->inline_models)) || !count) return false;
     if (io->direction==QA_SOURCE_SAVE_READ) {

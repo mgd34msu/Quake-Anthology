@@ -1295,6 +1295,12 @@ static q3g_role *external_cgame(qa_application *app, qa_actor_owner owner, uint3
     }
     return NULL;
 }
+static bool remote_launch_seat(qa_application *app, uint32_t *out)
+{
+    const qa_launch_choices *choices = app ? qa_launch_snapshot_choices(qa_application_launch(app)) : NULL;
+    if (!choices || choices->seat_count != 1) return false;
+    *out = choices->seats[0].id; return true;
+}
 
 bool qa_application_network_q3_client_actor(qa_application *app,
     const qa_application_network_q3_projection *projection, uint32_t source_number,
@@ -1378,8 +1384,10 @@ bool qa_application_network_q3_client_project(qa_application *app, qa_actor_owne
     qa_application_network_q3_projection *projection, const qa_q3_snapshot *current,
     const qa_q3_snapshot *next, qa_error *error)
 {
+    uint32_t seat;
     if (!app || !projection || !current || app->destroy_requested || app->operation != APPLICATION_IDLE ||
-        !qa_session_safe(app->session) || qa_session_faulted(app->session) || !external_cgame(app, owner, 0) ||
+        !qa_session_safe(app->session) || qa_session_faulted(app->session) ||
+        !remote_launch_seat(app, &seat) || !external_cgame(app, owner, seat) ||
         (projection->owner && projection->owner != owner))
         return application_fail(error, QA_ERROR_ARGUMENT, "Remote Q3 publication requires its admitted idle cgame owner");
     qa_body_state bodies[QA_Q3_ENTITY_WORLD] = {0};
@@ -1408,15 +1416,18 @@ bool qa_application_network_q3_client_project(qa_application *app, qa_actor_owne
     return true;
 }
 bool qa_application_network_q3_client_source(qa_application *app, qa_actor_id actor,
-    qa_actor_owner *owner, qa_q3_product *product, qa_error *error)
+    qa_actor_owner *owner, qa_q3_product *product, uint32_t *launch_seat, qa_error *error)
 {
-    uint32_t slot;
-    struct application_q3_guest *engine = source(app, actor, &slot, error);
-    application_provider *hud = app ? application_provider_for(app, actor, QA_ROLE_HUD, NULL) : NULL;
-    if (!engine || !owner || !product || !hud || q3g_engine(hud) != engine ||
-        !external_cgame(app, hud->owner, 0))
-        return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 remote client requires the selected matching external cgame owner");
-    *owner = hud->owner; *product = engine->product; return true;
+    qa_actor_id viewing; uint32_t seat;
+    if (!app || !owner || !product || !launch_seat || !remote_launch_seat(app, &seat) ||
+        !qa_application_player_actor(app, seat, &viewing) ||
+        !qa_actor_id_equal(viewing, actor))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Q3 remote client requires its actual viewing seat actor");
+    application_provider *hud = application_provider_for(app, actor, QA_ROLE_HUD, NULL);
+    q3g_role *role = hud ? external_cgame(app, hud->owner, seat) : NULL;
+    if (!role)
+        return application_fail(error, QA_ERROR_UNSUPPORTED, "Q3 remote client requires its selected external CGAME owner");
+    *owner = hud->owner; *product = role->engine->product; *launch_seat = seat; return true;
 }
 bool qa_application_network_q3_client_clear(qa_application *app, qa_actor_owner owner,
     uint32_t seat, qa_error *error)

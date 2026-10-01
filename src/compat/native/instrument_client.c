@@ -42,6 +42,7 @@ static size_t region_count;
 static char *module_name;
 static uint64_t module_image_bytes;
 static app_pc module_base;
+static uint64_t module_generation;
 static uint64_t sequence = UINT64_C(0xc000000000000001);
 static uint32_t call_depth;
 static thread_id_t owner_thread;
@@ -412,6 +413,8 @@ static void module_load(void *drcontext, const module_data_t *module, bool loade
         }
     }
     module_base = module->start;
+    if (module_generation == UINT64_MAX) dr_abort();
+    ++module_generation;
     owner_thread = dr_get_thread_id(drcontext);
 }
 
@@ -420,6 +423,8 @@ static void module_unload(void *drcontext, const module_data_t *module) {
     if (module->start == module_base) {
         if (region_frames || region_bypass_pc) dr_abort();
         observer_module_unload();
+        if (module_generation == UINT64_MAX) dr_abort();
+        ++module_generation;
     }
 }
 

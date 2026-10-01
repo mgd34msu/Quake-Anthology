@@ -258,6 +258,17 @@ bool qa_qvm_write(qa_qvm *vm, uint32_t offset, qa_bytes bytes, qa_error *error)
     if (bytes.size > 0 && bytes.data == NULL) return qa_qvm_error(error,QA_ERROR_ARGUMENT,offset,"missing QVM write source");
     return mutate(vm,offset,bytes.size,MEMORY_WRITE,bytes.data,0,error);
 }
+
+bool qa_qvm_memory_restore_scratch(qa_qvm *vm, uint32_t offset, qa_bytes bytes, qa_error *error)
+{
+    if ((bytes.size && !bytes.data) || !qa_qvm_mutable(vm, error) ||
+        !qa_qvm_raw_range(vm, offset, bytes.size, error)) return false;
+    write_delivery *deliveries = NULL;
+    bool captured = capture_writes(vm, offset, bytes.size, &deliveries, error);
+    if (bytes.size) memmove(vm->data + offset, bytes.data, bytes.size);
+    if (!captured) return false;
+    return publish_writes(vm, deliveries, error);
+}
 bool qa_qvm_fill(qa_qvm *vm, uint32_t offset, size_t length, uint8_t value, qa_error *error)
 {
     return mutate(vm,offset,length,MEMORY_FILL,NULL,value,error);

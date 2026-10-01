@@ -58,7 +58,8 @@ bool qa_persistence_movement(qa_source_save_io *io, qa_movement_state *state)
     }
     case QA_MOVEMENT_QUAKEWORLD: {
         qa_qw_movement_state *s = &state->data.qw;
-        V(s->origin); V(s->velocity); V(s->angles); U(s->old_buttons); F(s->water_jump_time_seconds);
+        FIELD(f64, s->origin.x); FIELD(f64, s->origin.y); FIELD(f64, s->origin.z);
+        V(s->velocity); V(s->angles); U(s->old_buttons); F(s->water_jump_time_seconds);
         B(s->dead); I(s->spectator); return qa_persistence_ground(io, &s->ground);
     }
     case QA_MOVEMENT_Q2_CLASSIC: {

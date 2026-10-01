@@ -63,11 +63,22 @@ bool qa_modes_vote_start(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
         return mode_fail(e, "nextmap is not admitted by its source");
     member = mode_member_get(m, v, actor);
     if (!member) return mode_fail(e, "vote initiator retired during map admission");
+    qa_actor_owner native_owner;
+    bool native = source >= QA_MODE_Q3 && m->options.hooks.q3_native_source &&
+        m->options.hooks.q3_native_source(m->options.hooks.context, id, &native_owner);
+    int32_t native_calls = 0;
+    if (native && (!m->options.hooks.q3_vote_calls ||
+        !MODE_CALLBACK(m, m->options.hooks.q3_vote_calls(m->options.hooks.context,
+            id, actor, team != 0, &native_calls, e)))) return false;
+    member = mode_member_get(m, v, actor);
+    if (!member) return mode_fail(e, "vote initiator retired during native client access");
     mode_player *initiator = mode_player_get(m, actor);
     if (v->value.rules.voting_disabled || !initiator || !initiator->value.connected ||
         (source >= QA_MODE_Q3 &&
-         (initiator->value.bot || member->player.spectator || initiator->value.connecting)) ||
-        (v->value.rules.vote_limit &&
+         (member->player.spectator || (!native &&
+             (initiator->value.bot || initiator->value.connecting)))) ||
+        (native && native_calls >= 3) ||
+        (!native && v->value.rules.vote_limit &&
          member->vote_calls[slot] >= (uint32_t)v->value.rules.vote_limit))
         return mode_fail(e, "player cannot initiate this vote");
     if (source == QA_MODE_LMCTF)
@@ -125,7 +136,7 @@ bool qa_modes_vote_start(qa_modes *m, qa_mode_id id, qa_actor_id actor, qa_team_
                            .active = true};
     vote->intent.mode = id;
     v->vote_started[slot] = v->value.time_ns;
-    if (member->vote_calls[slot] != UINT32_MAX)
+    if (!native && member->vote_calls[slot] != UINT32_MAX)
         ++member->vote_calls[slot];
     if (source != QA_MODE_Q2_CTF) {
         member->ballots[slot] = 1;
@@ -206,8 +217,9 @@ static bool execute_vote(qa_modes *m, mode_instance *v, qa_mode_vote *vote, qa_e
             mode_member *member = &v->members[i];
             mode_player *p = member->joined ? mode_player_get(m, member->actor) : NULL;
             qa_team_id own;
-            if (p && qa_modes_team(m, v->id, member->actor, &own, NULL) && own == team)
+            if (p && qa_modes_team(m, v->id, member->actor, &own, NULL) && own == team) {
                 member->player.leader = false;
+            }
         }
         target->player.leader = true;
         return mode_event(m, v, QA_MODE_ROSTER, intent.actor, (qa_actor_id){0}, (qa_actor_id){0},
@@ -218,6 +230,9 @@ static bool execute_vote(qa_modes *m, mode_instance *v, qa_mode_vote *vote, qa_e
     return MODE_CALLBACK(m, m->options.hooks.intent(m->options.hooks.context, &intent, e));
 }
 bool mode_vote_frame(qa_modes *m, mode_instance *v, qa_error *e) {
+    qa_actor_owner native_owner;
+    if (v->value.rules.source >= QA_MODE_Q3 && m->options.hooks.q3_native_source &&
+        m->options.hooks.q3_native_source(m->options.hooks.context, v->id, &native_owner)) return true;
     for (int slot = 0; slot < 4; ++slot) {
         qa_mode_vote *vote = &v->votes[slot];
         if (vote->passed && v->value.time_ns >= vote->execute_ns) {

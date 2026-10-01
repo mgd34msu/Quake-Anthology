@@ -60,6 +60,16 @@ void frontend_particle_retire(qa_frontend *frontend)
     }
     free(frontend->particles); frontend->particles = NULL;
 }
+void frontend_particle_reset_round(qa_frontend *frontend)
+{
+    frontend_particle_state *state = frontend->particles;
+    if (!state) return;
+    for (frontend_particle_owner *owner = state->owners; owner; owner = owner->next)
+        owner->count = 0;
+    state->steam_count = 0;
+    memset(state->steam, 0, sizeof(state->steam));
+    state->sample_ns = qa_session_elapsed(qa_application_session(frontend->application));
+}
 static bool particle_signature(qa_source_save_io *io)
 {
     uint8_t magic[4] = {'Q', 'A', 'P', 'T'}; uint32_t version = 1;

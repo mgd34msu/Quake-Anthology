@@ -1,4 +1,5 @@
 #include "bots_catalog.h"
+#include "bots_setup.h"
 #include "bot_admission.h"
 #include "bot_world.h"
 #include "bots_transport.h"
@@ -210,12 +211,18 @@ bool application_bots_catalog_console(qa_application *app,const qa_command_invoc
     bool add=!strcmp(folded,"addbot"),list=!strcmp(folded,"botlist");
     if(!add && !list) return true;
     application_bots *bots=app->bots;
-    if(!bots || !bots->catalogue) return true;
+    if(!bots || !bots->catalogue) {
+        application_provider *source=application_world_provider(app,QA_ROLE_ENTITIES,"");
+        if(!source || (source->kind!=APPLICATION_PROVIDER_Q1 && source->kind!=APPLICATION_PROVIDER_Q2)) return true;
+        if(!application_bots_requested(app,error)) return false;
+        bots=app->bots;
+    }
     if(bots->restoring || bots->calls || bots->producing || bots->round_phase!=APPLICATION_BOT_ROUND_ACTIVE)
         return application_fail(error,QA_ERROR_ARGUMENT,"bot catalogue command requires its idle source map");
     *handled=true;return qa_bot_catalog_console(bots->catalogue,invocation->argv,invocation->argc,error);
 }
 bool application_bots_catalog_add(qa_application *app,const qa_bot_catalog_add_request *request,qa_error *error) {
+    if(app && (!app->bots || !app->bots->population) && !application_bots_requested(app,error)) return false;
     application_bots *bots=app?app->bots:NULL;
     if(!bots || !bots->catalogue || bots->restoring || bots->calls || bots->producing ||
        bots->round_phase!=APPLICATION_BOT_ROUND_ACTIVE)

@@ -5,6 +5,7 @@
 
 enum { QA_BOT_STATE_SOURCE_BYTES=9088, QA_BOT_GAME_MEMORY_BYTES=262144 };
 typedef struct qa_bot_source_record { uint32_t offset,length; } qa_bot_source_record;
+typedef struct qa_bot_source_span { uint8_t *data; uint32_t length; } qa_bot_source_span;
 typedef struct qa_bot_source_activation {
     bool inuse,shoot,areas_disabled;
     qa_bot_goal goal;
@@ -76,6 +77,7 @@ enum qa_bot_source_record_offset {
  * addresses that same pool through its real source owner; there is no mirror. */
 bool qa_bot_source_record_allocate(const qa_bot_source_memory *,qa_bot_source_record *,qa_error *);
 bool qa_bot_source_record_alias(qa_bot_source_record,uint32_t,uint32_t,qa_bot_source_record *,qa_error *);
+bool qa_bot_source_record_span(const qa_bot_source_memory *,qa_bot_source_record,qa_bot_source_span *,qa_error *);
 bool qa_bot_source_record_read(const qa_bot_source_memory *,qa_bot_source_record,void *,qa_error *);
 bool qa_bot_source_record_write(const qa_bot_source_memory *,qa_bot_source_record,const void *,qa_error *);
 bool qa_bot_source_record_i32(const qa_bot_source_memory *,qa_bot_source_record,uint32_t,int32_t *,bool write,qa_error *);

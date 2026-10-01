@@ -108,7 +108,9 @@ bool qa_catalog_remote(const qa_catalog *c, qa_product_id base_id, const char *d
     if (!base || !directory || !out) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid remote content selection"); return false; }
     if (base->edition == QA_EDITION_QUAKEWORLD && (!*directory || catalog_ascii_equal(directory, "id1") || catalog_ascii_equal(directory, "qw"))) { *out = base_id; return true; }
     if (!*directory && base->family != QA_GAME_Q1) { *out = base_id; return true; }
-    if (!catalog_safe_name(directory)) { qa_error_set(error, QA_ERROR_ARGUMENT, 0, "remote game directory must be one safe name"); return false; }
+    if (!(base->family == QA_GAME_Q3 ? catalog_remote_name(directory) : catalog_safe_name(directory))) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "remote game directory must be one safe name"); return false;
+    }
     const char *slash = strrchr(base->directory, '/');
     size_t parent = slash ? (size_t)(slash - base->directory + 1) : 0;
     for (size_t i = 0; i < c->product_count; ++i) {

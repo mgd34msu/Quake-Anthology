@@ -263,6 +263,8 @@ qa_component qa_q2_component(qa_q2_game *);
 /* Requires a detached instance at a session safe point. Remove an admitted
  * component before destroying its instance; keep the shared services alive. */
 bool qa_q2_destroy(qa_q2_game *, qa_error *);
+/* Uses the actual source GAME RNG retained by the provider checkpoint. */
+bool qa_q2_game_random(qa_q2_game *, float *, qa_error *);
 /* After shared world retirement and source clock reset, before actor admission.
  * Registry must be empty. Names are interned before publication; zero spawn
  * point means empty. Connection identity and player carry stay with the host. */

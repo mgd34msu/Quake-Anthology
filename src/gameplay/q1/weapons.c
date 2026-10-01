@@ -278,6 +278,24 @@ bool qa_q1_player_attach(qa_q1_game *g, qa_actor_id actor, bool initial_inventor
         player->input.view_angles = body.angles;
     return q1_weapon_event(g, player, 0, 0, error);
 }
+bool qa_q1_player_source_input(qa_q1_game *g, qa_actor_id actor, const qa_q1_input *input,
+                               qa_error *error) {
+    q1_player *player = q1_player_get(g, actor);
+    if (!qa_q1_player_source_present(g, actor) || !player || !input ||
+        !qa_vec_finite(input->view_angles) || input->water_level > 3) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "invalid Q1 source player input");
+        return false;
+    }
+    player->input = *input;
+    if (player->character) {
+        player->character_state.input.attack = input->attack;
+        player->character_state.input.jump = input->jump;
+        player->character_state.input.use = input->use;
+        player->character_state.input.water_level = input->water_level;
+        player->character_state.input.water_type = input->water_type;
+    }
+    return true;
+}
 bool qa_q1_player_input(qa_q1_game *g, qa_actor_id actor, const qa_q1_input *input,
                         qa_error *error) {
     q1_player *player = q1_player_get(g, actor);
@@ -380,6 +398,64 @@ double qa_q1_game_power_expires(const qa_q1_game *g, qa_actor_id actor, qa_q1_po
                ? player->power_expires[power]
                : 0;
 }
+static bool player_weapon_frame(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+    q1_player *player = q1_player_get(g, actor);
+    if (!player)
+        return true;
+    if (player->weapon == QA_Q1_CTF_GRAPPLE)
+        return q1_grapple_weapon_frame(g, player, error);
+    if (player->weapon == QA_Q1_ROGUE_GRAPPLE) {
+        q1_actor *hook = q1_entity(g, player->hook);
+        if (hook && hook->kind == Q1_PROJECTILE &&
+            hook->state.projectile.kind == Q1_ROGUE_HOOK && player->weapon_frame == 1 &&
+            g->time >= player->animation_at + 0.1) {
+            player->weapon_frame = 2;
+            return q1_weapon_event(g, player, 0, 0, error);
+        }
+        return true;
+    }
+    bool hammer = player->weapon == QA_Q1_MG3_MJOLNIR;
+    bool mission = player->weapon >= QA_Q1_LASER && player->weapon <= QA_Q1_PLASMA;
+    if ((!hammer && ((!mission && player->weapon > QA_Q1_LIGHTNING) || player->continuous)) ||
+        player->animation_at < 0)
+        return true;
+    double frame = floor((g->time - player->animation_at) / 0.1);
+    int32_t count = player->weapon == QA_Q1_AXE || hammer ? 4 : 6;
+    double value = frame >= count ? 0
+                     : player->weapon == QA_Q1_MJOLNIR ? fmin(4, frame + 1)
+                     : mission || hammer ? frame + 1
+                                         : player->animation_base + frame;
+    if (!isfinite(value) || value < INT32_MIN || value > INT32_MAX) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot, "Q1 weapon animation frame out of range");
+        return false;
+    }
+    int32_t next = (int32_t)value;
+    if (next != player->weapon_frame) {
+        player->weapon_frame = next;
+        if (!q1_weapon_event(g, player, 0, 0, error))
+            return false;
+        player = q1_player_get(g, actor);
+        if (!player)
+            return true;
+    }
+    if (frame >= count)
+        player->animation_at = -1;
+    return true;
+}
+bool qa_q1_player_weapon_frame(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    bool ok = player_weapon_frame(g, actor, error);
+    if (!qa_q1_game_operation_live(&operation)) {
+        if (ok || (error && error->code == QA_OK))
+            qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+                         "Q1 teardown requested during weapon frame");
+        ok = false;
+    }
+    qa_q1_game_operation_end(&operation);
+    return ok;
+}
 static bool player_prethink(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     q1_player *player = q1_player_get(g, actor);
     if (!player)
@@ -423,6 +499,11 @@ static bool player_prethink(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
         return false;
     if (!q1_alive(g, actor))
         return true;
+    if (!player_weapon_frame(g, actor, error))
+        return false;
+    player = q1_player_get(g, actor);
+    if (!player)
+        return true;
     if (player->mega_rot_at >= 0 && player->mega_rot_at <= g->time) {
         float health = q1_health(g, actor);
         if (!q1_alive(g, actor))
@@ -442,21 +523,6 @@ static bool player_prethink(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
             return false;
         if (!q1_alive(g, actor))
             return true;
-    }
-    if (!player->continuous && player->animation_at >= 0 && player->weapon != QA_Q1_ROGUE_GRAPPLE &&
-        player->weapon != QA_Q1_CTF_GRAPPLE) {
-        double frame = fmax(0, floor((g->time - player->animation_at) / 0.1));
-        int32_t count = player->weapon == QA_Q1_AXE || player->weapon == QA_Q1_MG3_MJOLNIR ? 4 : 6;
-        int32_t next = frame >= count ? 0 : player->animation_base + (int32_t)frame;
-        if (next != player->weapon_frame) {
-            player->weapon_frame = next;
-            if (!q1_weapon_event(g, player, 0, 0, error))
-                return false;
-            if (!q1_alive(g, actor))
-                return true;
-        }
-        if (frame >= count)
-            player->animation_at = -1;
     }
     float magnitude = qa_vec_length(player->punch);
     if (magnitude > 0)

@@ -7,6 +7,7 @@
 #include "qa/game_q3_configstrings.h"
 #include "qa/q3_abi.h"
 #include "qa/source_save.h"
+#include "qa/application_native_q3_wire.h"
 
 #include <limits.h>
 #include <math.h>
@@ -36,6 +37,7 @@ typedef struct native_q3_wire_client {
     qa_q3_usercmd commands[NATIVE_Q3_COMMAND_BACKUP];
     int32_t command_sequence;
     int32_t snapshot_sequence, consumed_server_command, server_id, weapon;
+    int32_t initial_server_command, config_commands[QA_Q3_CONFIGSTRINGS];
     uint64_t entered_ns;
     float sensitivity;
     qa_q3_gamestate *gamestate;
@@ -57,8 +59,14 @@ struct application_native_q3_wire_client_lease {
     qa_actor_owner receiver;
     uint32_t seat, slot;
     qa_command_tokens *arguments;
+    qa_command_tokens owned_arguments;
+    qa_q3_game *game;
+    qa_cvars *registry;
+    qa_actor_id actor;
+    uint64_t publication_generation, map_revision;
+    int32_t receipt_sequence;
     size_t calls;
-    bool cgame;
+    bool cgame, builtin, has_receipt, receipt_present;
 };
 
 struct application_native_q3_wire {
@@ -212,6 +220,8 @@ static void client_world_clear(native_q3_wire_client *client)
     client->big_configstring = NULL;
     client->big_configstring_length = 0;
     client->pending_system_info = false;
+    client->initial_server_command = 0;
+    memset(client->config_commands, 0, sizeof(client->config_commands));
     for (size_t i = 0; i < QA_Q3_PACKET_BACKUP; ++i) {
         free(client->snapshots[i].entities);
         client->snapshots[i] = (native_q3_wire_snapshot){0};
@@ -721,6 +731,9 @@ bool application_native_q3_wire_gamestate(application_provider *provider, uint32
     }
     free(client->gamestate);
     client->gamestate = copy;
+    client->initial_server_command = value->command_sequence;
+    for (size_t i = 0; i < QA_Q3_CONFIGSTRINGS; ++i)
+        client->config_commands[i] = value->command_sequence;
     if (!client->bot) client->consumed_server_command = client->reliable.sequence;
     return true;
 }
@@ -1084,6 +1097,29 @@ static native_q3_wire_client *leased_client(application_native_q3_wire_client_le
         application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 cgame lease belongs to another source seat");
         return NULL;
     }
+    if (lease->builtin) {
+        application_provider *provider = wire->provider;
+        qa_application *app = provider->application;
+        qa_actor_id physical;
+        qa_q3_source_binding binding;
+        qa_q3_native_client source;
+        if (!provider->constructed || !provider->attached || !provider->map_bound ||
+            provider != application_world_provider(app, QA_ROLE_ENTITIES, "") ||
+            provider->state.q3 != lease->game ||
+            application_native_q3_console_registry(provider) != lease->registry ||
+            app->publication_generation != lease->publication_generation ||
+            app->map_revision != lease->map_revision ||
+            !qa_actor_id_equal(client->actor, lease->actor) ||
+            !qa_application_player_actor(app, lease->seat, &physical) ||
+            !qa_actor_id_equal(physical, lease->actor) ||
+            !qa_q3_source_binding_read(lease->game, lease->slot, &binding, error) ||
+            !binding.in_use || !binding.body_attached ||
+            !qa_q3_client_slot_read(lease->game, lease->slot, &source, error) ||
+            source.connected != QA_Q3_CLIENT_CONNECTED) {
+            application_fail(error, QA_ERROR_ARGUMENT, "Native CGAME reader lost its installed source lifetime");
+            return NULL;
+        }
+    }
     return client;
 }
 
@@ -1253,6 +1289,7 @@ static bool leased_server_command(void *context, int32_t number, bool *present,
         bool changed = strcmp(qa_q3_configstring(client->gamestate, (unsigned)index), value) != 0;
         if (changed && !qa_q3_configstring_set(client->gamestate, (unsigned)index,
                                                value, error)) return false;
+        client->config_commands[index] = number;
         if (changed && index == 1) client->pending_system_info = true;
         if (index == 1 && client->pending_system_info) {
             if (!leased_effect(lease, QA_APPLICATION_Q3_SYSTEM_INFO,
@@ -1333,6 +1370,25 @@ static bool leased_source_actor(void *context, uint32_t number, qa_actor_id *out
     return true;
 }
 
+static application_native_q3_wire_client_lease *client_lease_create(
+    struct application_native_q3_wire *wire, qa_actor_owner receiver,
+    uint32_t seat, uint32_t slot, qa_command_tokens *arguments, bool cgame,
+    qa_error *error)
+{
+    application_native_q3_wire_client_lease *lease = calloc(1, sizeof(*lease));
+    if (!lease) {
+        application_fail(error, QA_ERROR_MEMORY, "Retaining native GAME client service lease");
+        return NULL;
+    }
+    *lease = (application_native_q3_wire_client_lease){.wire = wire, .receiver = receiver,
+        .seat = seat, .slot = slot, .arguments = arguments, .cgame = cgame};
+    ++wire->client_leases;
+    ++wire->slot_leases[slot];
+    wire->lease_seats[slot] = seat;
+    if (cgame) ++wire->slot_readers[slot];
+    return lease;
+}
+
 bool application_native_q3_wire_client_bind(application_provider *provider,
     qa_actor_owner receiver, uint32_t seat, uint32_t slot, qa_command_tokens *arguments,
     application_native_q3_wire_client_lease **out, qa_q3_host_options *options, qa_error *error)
@@ -1351,15 +1407,9 @@ bool application_native_q3_wire_client_bind(application_provider *provider,
         (wire->clients[slot].admitted &&
          (wire->clients[slot].bot || wire->clients[slot].seat != seat)))
         return application_fail(error, QA_ERROR_ARGUMENT, "Native Q3 client binding has no unique retained source seat");
-    application_native_q3_wire_client_lease *lease = calloc(1, sizeof(*lease));
-    if (!lease)
-        return application_fail(error, QA_ERROR_MEMORY, "Retaining native GAME client service lease");
-    *lease = (application_native_q3_wire_client_lease){.wire = wire, .receiver = receiver,
-        .seat = seat, .slot = slot, .arguments = arguments, .cgame = options->role == QA_QVM_CGAME};
-    ++wire->client_leases;
-    ++wire->slot_leases[slot];
-    wire->lease_seats[slot] = seat;
-    if (lease->cgame) ++wire->slot_readers[slot];
+    application_native_q3_wire_client_lease *lease = client_lease_create(wire, receiver,
+        seat, slot, arguments, options->role == QA_QVM_CGAME, error);
+    if (!lease) return false;
     options->client = (qa_q3_host_client_services){lease, leased_gamestate,
         leased_current_snapshot, leased_snapshot, leased_server_command,
         leased_current_command, leased_user_command, leased_command_values, leased_source_actor};
@@ -1381,6 +1431,7 @@ bool application_native_q3_wire_client_unbind(application_native_q3_wire_client_
     --lease->wire->slot_leases[lease->slot];
     if (!lease->wire->slot_leases[lease->slot]) lease->wire->lease_seats[lease->slot] = UINT32_MAX;
     if (lease->cgame) --lease->wire->slot_readers[lease->slot];
+    if (lease->builtin) qa_command_tokens_free(&lease->owned_arguments);
     *owned = NULL;
     free(lease);
     return true;
@@ -1435,6 +1486,167 @@ bool application_native_q3_wire_client_command(application_native_q3_wire_client
     --lease->calls;
     return ok;
 }
+
+bool qa_native_q3_wire_reader_acquire(qa_application *app, qa_actor_owner receiver,
+    uint32_t seat, uint32_t slot, qa_actor_id actor, qa_native_q3_wire_reader **out,
+    qa_error *error)
+{
+    application_provider *provider = app ? application_world_provider(app, QA_ROLE_ENTITIES, "") : NULL;
+    struct application_native_q3_wire *wire = wire_owner(provider, error);
+    qa_actor_id local;
+    qa_q3_source_binding binding;
+    qa_q3_native_client source;
+    if (!wire || !receiver || !out || *out || seat == UINT32_MAX ||
+        !provider->constructed || !provider->attached || !provider->map_bound ||
+        !application_native_q3_console_registry(provider) ||
+        wire->round_pending || slot >= wire->max_clients || wire->client_leases == SIZE_MAX ||
+        wire->slot_readers[slot] ||
+        (wire->slot_leases[slot] && wire->lease_seats[slot] != seat) ||
+        !qa_application_player_actor(app, seat, &local) || !qa_actor_id_equal(local, actor) ||
+        !source_binding(wire, slot, actor, error) ||
+        !qa_q3_source_binding_read(provider->state.q3, slot, &binding, error) ||
+        !binding.in_use || !binding.body_attached ||
+        !qa_q3_client_slot_read(provider->state.q3, slot, &source, error) ||
+        source.connected != QA_Q3_CLIENT_CONNECTED ||
+        !wire->clients[slot].admitted || !wire->clients[slot].begun ||
+        wire->clients[slot].bot || wire->clients[slot].drop_pending || wire->clients[slot].seat != seat)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native reader requires its installed sole local GAME client");
+    application_native_q3_wire_client_lease *lease = client_lease_create(wire, receiver,
+        seat, slot, NULL, true, error);
+    if (!lease) return false;
+    lease->builtin = true;
+    lease->arguments = &lease->owned_arguments;
+    lease->actor = actor;
+    lease->game = provider->state.q3;
+    lease->registry = application_native_q3_console_registry(provider);
+    lease->publication_generation = app->publication_generation;
+    lease->map_revision = app->map_revision;
+    *out = lease;
+    return true;
+}
+
+bool qa_native_q3_wire_reader_destroy(qa_native_q3_wire_reader **owned, qa_error *error)
+{
+    if (!owned || (*owned && !(*owned)->builtin))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native reader release requires its genuine owned lease");
+    return application_native_q3_wire_client_unbind(owned, error);
+}
+bool qa_native_q3_wire_reader_current(const qa_native_q3_wire_reader *reader)
+{ return reader && reader->builtin && leased_client((qa_native_q3_wire_reader *)reader, NULL); }
+bool qa_native_q3_wire_reader_idle(const qa_native_q3_wire_reader *reader)
+{ return reader && reader->builtin && !reader->calls && reader->wire && !reader->wire->calls; }
+
+bool qa_native_q3_wire_reader_basis(const qa_native_q3_wire_reader *reader,
+    qa_native_q3_wire_basis *out, qa_error *error)
+{
+    if (!out || !qa_native_q3_wire_reader_current(reader))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native reader has no current installed source basis");
+    application_provider *provider = reader->wire->provider;
+    qa_q3_product product; int32_t match_start;
+    if (!qa_q3_source_match_context_read(provider->state.q3, &product, &match_start, error)) return false;
+    *out = (qa_native_q3_wire_basis){.application = provider->application,
+        .session = provider->application->session, .source_game = reader->game,
+        .source_cvars = reader->registry, .source_owner = provider->owner,
+        .receiver = reader->receiver, .actor = reader->actor, .product = product,
+        .seat = reader->seat, .physical_client = reader->slot,
+        .publication_generation = reader->publication_generation, .map_revision = reader->map_revision};
+    return true;
+}
+bool qa_native_q3_wire_reader_publication(const qa_native_q3_wire_reader *reader,
+    qa_native_q3_wire_publication *out, qa_error *error)
+{
+    if (!out || !qa_native_q3_wire_reader_current(reader))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native reader publication has no current source");
+    const native_q3_wire_client *client = &reader->wire->clients[reader->slot];
+    *out = (qa_native_q3_wire_publication){.initial_command_sequence = client->initial_server_command,
+        .latest_command_sequence = client->reliable.sequence,
+        .reached_command_sequence = client->consumed_server_command,
+        .snapshot_number = client->has_snapshot ? client->snapshot_sequence : 0,
+        .user_command_number = client->command_sequence,
+        .has_gamestate = client->gamestate != NULL, .has_snapshot = client->has_snapshot};
+    if (client->has_snapshot) out->snapshot_time = client->snapshots[
+        (uint32_t)client->snapshot_sequence & (QA_Q3_PACKET_BACKUP - 1)].value.server_time;
+    return true;
+}
+bool qa_native_q3_wire_reader_command(qa_native_q3_wire_reader *reader, int32_t sequence,
+    qa_native_q3_wire_receipt *out, qa_error *error)
+{
+    if (!out || !qa_native_q3_wire_reader_current(reader) || reader->calls ||
+        reader->wire->calls == SIZE_MAX)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native reliable claim requires its idle actual reader");
+    native_q3_wire_client *client = &reader->wire->clients[reader->slot];
+    if (!client->gamestate || client->consumed_server_command == INT32_MAX ||
+        sequence != client->consumed_server_command + 1 || sequence > client->reliable.sequence)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native reliable claim must reach the next received command");
+    if ((int64_t)client->reliable.sequence - sequence >= QA_Q3_RELIABLE ||
+        !qa_q3_reliable_lookup(&client->reliable, sequence))
+        return application_fail(error, QA_ERROR_FORMAT, "Native reliable claim has left its retained command history");
+    *out = (qa_native_q3_wire_receipt){0};
+    reader->has_receipt = false;
+    /* LocalQ3ClientState claims lastExecuted before CL_GetServerCommand effects.
+     * An entered failing source effect is not replayed by this reader. */
+    client->consumed_server_command = sequence;
+    ++reader->calls; ++reader->wire->calls;
+    bool present = false;
+    bool okay = leased_server_command(reader, sequence, &present, error);
+    if (okay && !qa_native_q3_wire_reader_current(reader))
+        okay = application_fail(error, QA_ERROR_ARGUMENT, "Native reliable claim retired its physical source");
+    if (okay) {
+        reader->receipt_sequence = sequence;
+        reader->receipt_present = present;
+        reader->has_receipt = true;
+        *out = (qa_native_q3_wire_receipt){.reader = reader, .actor = reader->actor,
+            .publication_generation = reader->publication_generation, .map_revision = reader->map_revision,
+            .sequence = sequence, .present = present, .arguments = reader->arguments};
+    }
+    --reader->wire->calls; --reader->calls;
+    return okay;
+}
+bool qa_native_q3_wire_receipt_current(const qa_native_q3_wire_receipt *receipt)
+{
+    const qa_native_q3_wire_reader *reader = receipt ? receipt->reader : NULL;
+    return qa_native_q3_wire_reader_current(reader) && reader->has_receipt &&
+        receipt->present == reader->receipt_present && receipt->sequence == reader->receipt_sequence &&
+        receipt->arguments == reader->arguments &&
+        receipt->publication_generation == reader->publication_generation &&
+        receipt->map_revision == reader->map_revision && qa_actor_id_equal(receipt->actor, reader->actor) &&
+        receipt->sequence == reader->wire->clients[reader->slot].consumed_server_command;
+}
+bool qa_native_q3_wire_reader_configstring(const qa_native_q3_wire_reader *reader,
+    uint32_t index, const char **text, uint64_t *revision, qa_error *error)
+{
+    if (!text || !revision || index >= QA_Q3_CONFIGSTRINGS || !qa_native_q3_wire_reader_current(reader))
+        return application_fail(error, QA_ERROR_ARGUMENT, "Native reached configstring has no current reader/index");
+    const native_q3_wire_client *client = &reader->wire->clients[reader->slot];
+    if (!client->gamestate)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Native reader has not received its real gamestate baseline");
+    *text = qa_q3_configstring(client->gamestate, index);
+    *revision = (uint32_t)client->config_commands[index];
+    return true;
+}
+bool qa_native_q3_wire_reader_snapshot(qa_native_q3_wire_reader *reader, int32_t number,
+    const qa_q3_snapshot **out, int32_t *ping, qa_error *error)
+{ return reader && reader->builtin ? leased_snapshot(reader, number, out, ping, error) :
+    application_fail(error, QA_ERROR_ARGUMENT, "Snapshot read requires its native reader"); }
+bool qa_native_q3_wire_reader_user_command(qa_native_q3_wire_reader *reader, int32_t number,
+    qa_q3_usercmd *out, bool *present, qa_error *error)
+{ return reader && reader->builtin ? leased_user_command(reader, number, out, present, error) :
+    application_fail(error, QA_ERROR_ARGUMENT, "User command read requires its native reader"); }
+bool qa_native_q3_wire_reader_command_values(qa_native_q3_wire_reader *reader, int32_t weapon,
+    float sensitivity, qa_error *error)
+{ return reader && reader->builtin ? leased_command_values(reader, weapon, sensitivity, error) :
+    application_fail(error, QA_ERROR_ARGUMENT, "Command values require their native reader"); }
+bool qa_native_q3_wire_reader_actor(qa_native_q3_wire_reader *reader, uint32_t number,
+    qa_actor_id *out, bool *present, qa_error *error)
+{ return reader && reader->builtin ? leased_source_actor(reader, number, out, present, error) :
+    application_fail(error, QA_ERROR_ARGUMENT, "Source actor read requires its native reader"); }
+bool qa_native_q3_wire_reader_reliable(qa_native_q3_wire_reader *reader, const char *text, qa_error *error)
+{ return reader && reader->builtin ? application_native_q3_wire_client_command(reader, text, error) :
+    application_fail(error, QA_ERROR_ARGUMENT, "Reliable submission requires its native reader"); }
+bool qa_native_q3_wire_reader_effect(qa_native_q3_wire_reader *reader,
+    qa_application_q3_client_effect effect, const char *text, qa_error *error)
+{ return reader && reader->builtin ? leased_effect(reader, effect, text, error) :
+    application_fail(error, QA_ERROR_ARGUMENT, "Client effect requires its native reader"); }
 
 static bool fields_failure(qa_source_save_io *io, const char *message)
 {
@@ -1698,7 +1910,18 @@ static bool client_fields(qa_source_save_io *io, native_q3_wire_client *client, 
             !memchr(client->reliable.text[i], 0, QA_Q3_COMMAND_CHARS))
             return fields_failure(io, "Native Q3 saved reliable text has no terminator");
     if (!gamestate_fields(io, &client->gamestate) ||
-        !continued_string_fields(io, client)) return false;
+        !qa_source_save_i32(io, &client->initial_server_command) ||
+        client->initial_server_command < 0 ||
+        client->initial_server_command > client->reliable.sequence ||
+        (!client->gamestate && client->initial_server_command) ||
+        (client->gamestate && client->initial_server_command > client->gamestate->command_sequence))
+        return fields_failure(io, "Native Q3 initial reliable baseline is inconsistent");
+    for (size_t i = 0; i < QA_Q3_CONFIGSTRINGS; ++i)
+        if (!qa_source_save_i32(io, &client->config_commands[i]) ||
+            client->config_commands[i] < 0 || client->config_commands[i] > client->reliable.sequence ||
+            (client->gamestate ? client->config_commands[i] < client->initial_server_command : client->config_commands[i] != 0))
+            return fields_failure(io, "Native Q3 reached configstring sequence is inconsistent");
+    if (!continued_string_fields(io, client)) return false;
     for (size_t i = 0; i < QA_Q3_PACKET_BACKUP; ++i)
         if (!snapshot_fields(io, &client->snapshots[i], i)) return false;
     if (client->command_sequence < 0 || client->reliable.sequence < 0 ||
@@ -1741,10 +1964,10 @@ static bool wire_fields(qa_source_save_io *io, struct application_native_q3_wire
 {
     uint8_t magic[8] = {'Q','A','N','3','W','I','R',0};
     const uint8_t expected[8] = {'Q','A','N','3','W','I','R',0};
-    uint32_t version = 4, maximum = wire->max_clients;
+    uint32_t version = 5, maximum = wire->max_clients;
     qa_actor_owner owner = source_owner;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, expected, sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || version != 4 ||
+        !qa_source_save_u32(io, &version) || version != 5 ||
         !qa_source_save_string(io, &owner) || owner != source_owner ||
         !qa_source_save_u32(io, &maximum) || maximum < 1 || maximum > QA_Q3_SOURCE_CLIENTS ||
         (io->direction == QA_SOURCE_SAVE_WRITE && maximum != wire->max_clients) ||

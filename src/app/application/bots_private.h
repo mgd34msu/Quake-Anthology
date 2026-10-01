@@ -43,6 +43,9 @@ typedef struct application_bot_target {
 } application_bot_target;
 typedef struct application_bot_guest {
     application_provider *provider;
+    qa_bot_runtime *runtime;
+    qa_bots_save_requirements saved_requirements;
+    qa_bytes saved_runtime;
     uint32_t client_base, entity_base;
     struct application_bot_guest *next;
 } application_bot_guest;
@@ -70,8 +73,9 @@ typedef struct application_bots {
     application_bot_target *targets;
     application_bot_guest *guests;
     application_bot_seat *seats;
-    uint32_t capacity,metadata_weapon;
+    uint32_t capacity;
     qa_bot_weapon_knowledge knowledge[QA_Q2_WEAPON_COUNT];
+    struct application_bot_knowledge_owner *knowledge_owner;
     size_t knowledge_count,arsenal_leases;
     size_t calls;
     qa_builtin_actor_snapshot pickup_snapshot;
@@ -120,6 +124,8 @@ bool application_bots_shared_connect(application_bots *,uint32_t,bool,bool *,qa_
 bool application_bots_shared_construct(application_bots *,bool,qa_error *);
 bool application_bots_prepare(qa_application *,const qa_launch_choices *,const qa_bsp_view *,const qa_entities *,qa_error *);
 qa_bot_runtime *application_bots_runtime(qa_application *);
+bool application_bots_runtime_create(application_bots *,const qa_bot_runtime_options *,qa_bot_runtime **,qa_error *);
+qa_bot_runtime *application_bots_guest_runtime(qa_application *,application_provider *);
 bool application_bots_guest_admit(qa_application *,qa_actor_id,qa_error *);
 bool application_bots_guest_bind(qa_application *,application_provider *,qa_q3_host *,qa_error *);
 qa_actor_id application_bot_client_actor(application_bots *,int32_t);

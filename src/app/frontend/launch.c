@@ -1,8 +1,17 @@
 #include "internal.h"
+#include "qa/application_character_selection.h"
+bool frontend_seat_launch_id_read(const qa_frontend *f,uint32_t ordinal,uint32_t *out)
+{
+    if (!f || !f->application || !out || ordinal>=f->options.seats) return false;
+    const qa_launch_choices *choices=qa_launch_snapshot_choices(qa_application_launch(f->application));
+    if (!choices || ordinal>=choices->seat_count) return false;
+    *out=choices->seats[ordinal].id; return true;
+}
 #include <stdio.h>
 
-static const qa_product *selection(qa_catalog *catalog, const char *name)
+const qa_product *frontend_product_selection(qa_catalog *catalog, const char *name)
 {
+    if (!catalog || !name) return NULL;
     const qa_product *product = qa_catalog_find(catalog, name);
     if (product) return product;
     qa_game_family family;
@@ -20,7 +29,7 @@ static const qa_product *selection(qa_catalog *catalog, const char *name)
 static bool overlay(qa_launch_draft *draft, const char *name, uint64_t roles, const char *instance, qa_error *error)
 {
     qa_catalog *catalog = qa_launch_draft_catalog(draft);
-    const qa_product *product = selection(catalog, name);
+    const qa_product *product = frontend_product_selection(catalog, name);
     if (!product) return frontend_fail(error, QA_ERROR_ARGUMENT, "selected source product is not installed");
     qa_launch_draft *source = NULL;
     if (!qa_launch_draft_create(catalog, product->id, "", &source, error)) return false;
@@ -46,7 +55,7 @@ bool frontend_launch(qa_frontend *frontend, qa_error *error)
 {
     if (!frontend->options.game) return true;
     qa_catalog *catalog = qa_application_catalog(frontend->application);
-    const qa_product *product = selection(catalog, frontend->options.game);
+    const qa_product *product = frontend_product_selection(catalog, frontend->options.game);
     if (!product || product->availability != QA_CONTENT_INSTALLED)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "launch product is not installed");
     const char *map = frontend->options.map;
@@ -68,7 +77,7 @@ bool frontend_launch(qa_frontend *frontend, qa_error *error)
     if (starts && count) world.start_command = episode && episode->command && *episode->command ? episode->command : starts[0].bsp;
     bool ok = true;
     if (frontend->options.map_game) {
-        const qa_product *geometry = selection(catalog, frontend->options.map_game);
+        const qa_product *geometry = frontend_product_selection(catalog, frontend->options.map_game);
         if (!geometry || geometry->availability != QA_CONTENT_INSTALLED) ok = frontend_fail(error, QA_ERROR_ARGUMENT, "map source is not installed");
         else { world.geometry = geometry->id; world.start_command = NULL; }
     }
@@ -85,8 +94,21 @@ bool frontend_launch(qa_frontend *frontend, qa_error *error)
     }
     for (unsigned i = 0; i < frontend->options.seats && !frontend->options.dedicated && ok; ++i) {
         char name[32]; snprintf(name, sizeof(name), "Player %u", i + 1);
+        const qa_launch_choices *choices=qa_launch_draft_choices(draft);
+        const qa_launch_binding *binding=qa_launch_binding_for(choices,
+            (qa_launch_scope){.kind=QA_SCOPE_SEAT,.seat=i},QA_ROLE_CHARACTER,"");
+        const qa_launch_provider *provider=NULL;
+        for (size_t j=0;binding && j<choices->provider_count;++j)
+            if (!strcmp(choices->providers[j].instance,binding->instance)) { provider=&choices->providers[j]; break; }
+        const qa_product *character=provider?qa_catalog_product(catalog,provider->product):NULL;
+        qa_native_q3_character_declaration declaration;
+        if (!character) { ok=frontend_fail(error,QA_ERROR_ARGUMENT,"Local character constructor has no selected product"); break; }
+        if (!qa_native_q3_character_default_declaration(character->family,&declaration,error)) { ok=false; break; }
+        if (frontend->options.character_model)
+            declaration.model=declaration.head_model=frontend->options.character_model;
         ok = qa_launch_set_seat(draft, &(qa_launch_seat){.id = i, .name = name, .local = true,
-            .input_device = i}, error);
+            .input_device = i,.character_model=declaration.model,.character_skin=declaration.skin,
+            .character_head_model=declaration.head_model,.character_head_skin=declaration.head_skin}, error);
     }
     if (ok) ok = qa_application_apply(frontend->application, draft, error);
     qa_launch_draft_destroy(draft);

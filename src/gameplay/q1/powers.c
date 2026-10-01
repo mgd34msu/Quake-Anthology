@@ -80,12 +80,8 @@ qa_q1_weapon q1_combo_weapon(qa_q1_game *g, q1_player *player, qa_q1_weapon weap
     return weapon;
 }
 
-static bool commit_motion(qa_q1_game *g, qa_actor_id actor, const qa_body_state *body,
+static bool notify_motion(qa_q1_game *g, qa_actor_id actor, const qa_body_state *body,
                            qa_error *error) {
-    if (!q1_alive(g, actor))
-        return true;
-    if (!qa_world_body_write(g->services.world, actor, body, error))
-        return false;
     if (!q1_alive(g, actor))
         return true;
     if (!g->services.motion_changed) {
@@ -137,7 +133,8 @@ bool q1_power_frame(qa_q1_game *g, q1_player *player, qa_error *error) {
     if (!q1_alive(g, player->id))
         return true;
     uint8_t water =
-        player->arsenal ? player->input.water_level : player->character_state.input.water_level;
+        player->source_client || player->arsenal ? player->input.water_level
+                                                : player->character_state.input.water_level;
     if (g->services.physics && g->services.physics->services.read) {
         qa_physics_properties physics;
         if (g->services.physics->services.read(g->services.physics->services.context, player->id,
@@ -157,16 +154,27 @@ bool q1_power_frame(qa_q1_game *g, q1_player *player, qa_error *error) {
                     return true;
             }
             if (!player->wetsuit_scaled_level || player->wetsuit_scaled_frame != g->time_ns) {
+                qa_actor_id actor = player->id;
                 qa_body_state body;
-                if (!qa_world_body_read(g->services.world, player->id, &body, error))
-                    return false;
-                if (!q1_alive(g, player->id))
+                if (!qa_world_body_read(g->services.world, actor, &body, error))
+                    return !q1_player_get(g, actor);
+                player = q1_player_get(g, actor);
+                if (!player)
                     return true;
                 body.velocity = qa_vec_scale(body.velocity, water == 2 ? 1.25f : 1.5f);
-                player->wetsuit_scaled_frame = g->time_ns;
-                player->wetsuit_scaled_level = water;
-                if (!commit_motion(g, player->id, &body, error))
+                uint64_t scaled_frame = g->time_ns;
+                if (!qa_world_body_write(g->services.world, actor, &body, error))
                     return false;
+                player = q1_player_get(g, actor);
+                if (!player)
+                    return true;
+                player->wetsuit_scaled_frame = scaled_frame;
+                player->wetsuit_scaled_level = water;
+                if (!notify_motion(g, actor, &body, error))
+                    return false;
+                player = q1_player_get(g, actor);
+                if (!player)
+                    return true;
             }
         }
     }
@@ -176,16 +184,37 @@ bool q1_power_frame(qa_q1_game *g, q1_player *player, qa_error *error) {
                                                                          : entity->effects & ~8u;
     return true;
 }
-bool qa_q1_player_after_physics(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+static bool player_after_physics(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
     q1_player *player = q1_player_get(g, actor);
     if (!player || !player->wetsuit_scaled_level || player->wetsuit_scaled_frame != g->time_ns)
         return true;
     qa_body_state body;
     if (!qa_world_body_read(g->services.world, actor, &body, error))
-        return false;
+        return !q1_player_get(g, actor);
+    player = q1_player_get(g, actor);
+    if (!player)
+        return true;
     body.velocity = qa_vec_scale(body.velocity, player->wetsuit_scaled_level == 2 ? 0.8f : 0.66f);
-    player->wetsuit_scaled_level = 0;
-    return commit_motion(g, actor, &body, error);
+    if (!qa_world_body_write(g->services.world, actor, &body, error))
+        return false;
+    player = q1_player_get(g, actor);
+    if (player)
+        player->wetsuit_scaled_level = 0;
+    return notify_motion(g, actor, &body, error);
+}
+bool qa_q1_player_after_physics(qa_q1_game *g, qa_actor_id actor, qa_error *error) {
+    qa_q1_game_operation operation = {0};
+    if (!qa_q1_game_operation_begin(g, &operation, error))
+        return false;
+    bool ok = player_after_physics(g, actor, error);
+    if (!qa_q1_game_operation_live(&operation)) {
+        if (ok || (error && error->code == QA_OK))
+            qa_error_set(error, QA_ERROR_ARGUMENT, actor.slot,
+                         "Q1 teardown requested during player after physics");
+        ok = false;
+    }
+    qa_q1_game_operation_end(&operation);
+    return ok;
 }
 
 static bool shield_hit(qa_q1_game *g, q1_player *player, qa_error *error) {

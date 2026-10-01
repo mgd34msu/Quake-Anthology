@@ -1,5 +1,6 @@
 #include "map_travel_private.h"
 #include "qa/source_save.h"
+#include "rankings.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +28,9 @@ static struct application_map_state *map_state(qa_application *application,
 static bool map_safe(const qa_application *application)
 {
     return application != NULL && application->operation == APPLICATION_IDLE &&
+           !application->q3_round_active && !application->q3_world_restart &&
+           !application->frame_preparing &&
+           application_rankings_idle(application) &&
            !application->destroy_requested && !application->finalizing &&
            application->state != QA_APPLICATION_FAULTED &&
            application->state != QA_APPLICATION_STOPPING &&
@@ -255,6 +259,9 @@ bool qa_application_queue_travel(qa_application *application,
                                   const qa_application_travel_request *request,
                                   qa_error *error)
 {
+    if (application && (application->q3_round_active || application->frame_preparing ||
+        application->q3_world_restart || !application_rankings_idle(application)))
+        return application_fail(error, QA_ERROR_ARGUMENT, "travel request cannot reenter a source replacement");
     return queue_travel(application, request, false, error);
 }
 
@@ -262,8 +269,35 @@ bool qa_application_queue_map_travel(qa_application *application,
                                       const qa_application_travel_request *request,
                                       qa_error *error)
 {
+    if (application && (application->q3_round_active || application->frame_preparing ||
+        application->q3_world_restart || !application_rankings_idle(application)))
+        return application_fail(error, QA_ERROR_ARGUMENT, "travel request cannot reenter a source replacement");
     return queue_travel(application, request, true, error);
 }
+
+static bool source_queue_travel(qa_application *application,
+    const qa_application_travel_request *request, bool literal, qa_error *error)
+{
+    application_provider *provider = NULL;
+    for (size_t i = 0; application && request && i < application->provider_count; ++i)
+        if (application->providers[i]->owner == request->provider) {
+            provider = application->providers[i];
+            break;
+        }
+    if (!provider || !provider->constructed || !provider->attached || provider->close_pending ||
+        (application->operation != APPLICATION_IDLE && application->operation != APPLICATION_ADVANCING &&
+         application->operation != APPLICATION_CONFIGURING))
+        return application_fail(error, QA_ERROR_ARGUMENT, "source travel has no admitted producer");
+    return queue_travel(application, request, literal, error);
+}
+
+bool application_source_queue_travel(qa_application *application,
+    const qa_application_travel_request *request, qa_error *error)
+{ return source_queue_travel(application, request, false, error); }
+
+bool application_source_queue_map_travel(qa_application *application,
+    const qa_application_travel_request *request, qa_error *error)
+{ return source_queue_travel(application, request, true, error); }
 
 bool qa_application_travel_read(const qa_application *application,
                                  qa_application_travel_view *out)
@@ -402,6 +436,9 @@ void application_map_dispose(qa_application *application)
 bool application_map_server_command(application_provider *provider,
                                       qa_string_id command, qa_error *error)
 {
+    if (!provider || !provider->constructed || !provider->attached || provider->close_pending ||
+        provider->application->destroy_requested)
+        return application_fail(error, QA_ERROR_ARGUMENT, "authored map command has no live source producer");
     const char *text = qa_strings_cstr(qa_session_strings(provider->application->session), command);
     if (text == NULL)
         return application_fail(error, QA_ERROR_ARGUMENT, "authored server command has no text");
@@ -432,10 +469,10 @@ bool application_map_server_command(application_provider *provider,
     memcpy(expression, destination, size);
     expression[size] = '\0';
     if (size > 4 && !strcmp(expression + size - 4, ".bsp")) expression[size - 4] = '\0';
-    bool ok = qa_application_queue_travel(provider->application,
+    bool ok = queue_travel(provider->application,
         &(qa_application_travel_request){.provider = provider->owner,
             .expression = expression, .new_unit = map, .carry_players = !map,
-            .complete_campaign = changelevel}, error);
+            .complete_campaign = changelevel}, false, error);
     free(expression);
     return ok;
 }

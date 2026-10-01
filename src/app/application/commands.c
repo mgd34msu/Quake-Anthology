@@ -1,6 +1,11 @@
 #include "internal.h"
 #include "guest_native_q2_private.h"
 #include "match_intents.h"
+#include "native_q3_clients.h"
+#include "native_q3_ipfilters.h"
+#include "native_q3_postgame.h"
+#include "startup_flow.h"
+#include "bots_catalog.h"
 #include "qa/application_players.h"
 
 #include <string.h>
@@ -36,11 +41,11 @@ static qa_command_result q3_round_command(qa_application *application,
         return QA_COMMAND_UNHANDLED;
     qa_mode_id mode = application->primary_mode;
     application_provider *provider = application->primary_mode_ready
-        ? application_mode_provider(application, mode) : NULL;
+        ? application_native_q3_mode_source_provider(application, mode) : NULL;
     if (invocation->context.owner) {
         provider = NULL;
         for (size_t i = 0; i < application->mode_count; ++i) {
-            application_provider *candidate = application_mode_provider(application,
+            application_provider *candidate = application_native_q3_mode_source_provider(application,
                 application->mode_ids[i]);
             if (candidate && candidate->owner == invocation->context.owner) {
                 provider = candidate;
@@ -74,7 +79,8 @@ bool qa_application_command_context_active(const qa_application *application,
         context->registry != qa_actors_identity(qa_session_actors(application->session)) ||
         context->generation != application->command_generation)
         return false;
-    if (context->owner != 0 && command_owner(application, context->owner) == NULL)
+    if (context->owner != 0 && command_owner(application, context->owner) == NULL &&
+        application_startup_flow_provider(application, context->owner) == NULL)
         return false;
     if (context->origin == QA_COMMAND_SEAT ||
         (context->origin == QA_COMMAND_LOCAL && context->actor.registry != 0)) {
@@ -139,6 +145,7 @@ qa_vfs *qa_application_context_files(qa_application *application,
     qa_vfs *files;
     if (context->owner != 0) {
         application_provider *provider = command_owner(application, context->owner);
+        if (!provider) provider = application_startup_flow_provider(application, context->owner);
         files = provider == NULL || provider->launch == NULL ? NULL : provider->launch->content;
     } else {
         const qa_launch_snapshot *snapshot = application->routing_snapshot;
@@ -322,7 +329,37 @@ qa_command_result application_command_fallback(void *opaque,
     if (round != QA_COMMAND_UNHANDLED)
         return round;
     bool handled = false;
+    if (!application_bots_catalog_console(application, &command, &handled, error))
+        return QA_COMMAND_FAILED;
+    if (handled) return QA_COMMAND_HANDLED;
+    if (application->q3_campaign_command) {
+        if (!application->q3_campaign_command(
+                application->guest_context, application, &command,
+                &handled, error))
+            return QA_COMMAND_FAILED;
+        if (handled) return QA_COMMAND_HANDLED;
+    }
     qa_actor_id actor = command.context.actor;
+    application_provider *game = application_world_provider(application, QA_ROLE_ENTITIES, "");
+    uint32_t source_slot;
+    if (!actor.registry && game && game->kind == APPLICATION_PROVIDER_Q3 &&
+        command.context.dialect == QA_CONSOLE_Q3 &&
+        (!command.context.owner || command.context.owner == game->owner)) {
+        if (!application_native_q3_postgame_console(game, &command, &handled, error))
+            return QA_COMMAND_FAILED;
+        if (handled) return QA_COMMAND_HANDLED;
+        if (!application_native_q3_ipfilters_console(game, &command, &handled, error))
+            return QA_COMMAND_FAILED;
+        if (handled) return QA_COMMAND_HANDLED;
+    }
+    if (actor.registry && game && game->kind == APPLICATION_PROVIDER_Q3 &&
+        command.context.dialect == QA_CONSOLE_Q3 &&
+        (!command.context.owner || command.context.owner == game->owner) &&
+        qa_q3_native_client_slot(game->state.q3, actor, &source_slot, NULL)) {
+        if (!application_native_q3_client_command(game, actor, &command, &handled, error))
+            return QA_COMMAND_FAILED;
+        if (handled) return QA_COMMAND_HANDLED;
+    }
     if (actor.registry != 0 && application->primary_mode_ready &&
         !qa_modes_console_command(application->modes, application->primary_mode,
                                     actor, &command, &handled, error))

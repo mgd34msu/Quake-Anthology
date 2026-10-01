@@ -14,6 +14,13 @@ static bool valid_bounds(qa_bounds b) {
     return qa_vec_finite(b.mins) && qa_vec_finite(b.maxs) &&
         b.mins.x <= b.maxs.x && b.mins.y <= b.maxs.y && b.mins.z <= b.maxs.z;
 }
+static bool valid_origin(const qa_movement_state *state) {
+    if (state->kind == QA_MOVEMENT_QUAKEWORLD) {
+        qa_qw_origin value = state->data.qw.origin;
+        return isfinite(value.x) && isfinite(value.y) && isfinite(value.z);
+    }
+    return qa_vec_finite(qa_movement_origin(state));
+}
 static qa_collision_family family(qa_movement_kind kind) {
     return kind <= QA_MOVEMENT_QUAKEWORLD ? QA_COLLISION_Q1 :
         kind == QA_MOVEMENT_Q3 ? QA_COLLISION_Q3 : QA_COLLISION_Q2;
@@ -80,7 +87,7 @@ qa_movement_state qa_movement_state_default(qa_movement_kind kind, qa_vec3 origi
         s.data.nq.origin=origin; s.data.nq.old_origin=origin;
         s.data.nq.move_type=3; s.data.nq.health=100; s.data.nq.flags=4096;
         s.data.nq.water_type=-1; break;
-    case QA_MOVEMENT_QUAKEWORLD: s.data.qw.origin=origin; break;
+    case QA_MOVEMENT_QUAKEWORLD: s.data.qw.origin=qa_qw_origin_from_vec3(origin); break;
     case QA_MOVEMENT_Q2_CLASSIC:
         s.data.q2.gravity=800; (void)qa_movement_set_origin(&s,origin,NULL); break;
     case QA_MOVEMENT_Q2_RERELEASE:
@@ -109,7 +116,7 @@ qa_vec3 qa_movement_origin(const qa_movement_state *s) {
     if (!s) return qa_v3(0,0,0);
     switch (s->kind) {
     case QA_MOVEMENT_NETQUAKE: return s->data.nq.origin;
-    case QA_MOVEMENT_QUAKEWORLD: return s->data.qw.origin;
+    case QA_MOVEMENT_QUAKEWORLD: return qa_qw_origin_to_vec3(s->data.qw.origin);
     case QA_MOVEMENT_Q2_CLASSIC: return qa_v3(s->data.q2.origin_eighths[0]*0.125f,s->data.q2.origin_eighths[1]*0.125f,s->data.q2.origin_eighths[2]*0.125f);
     case QA_MOVEMENT_Q2_RERELEASE: return s->data.q2r.origin;
     case QA_MOVEMENT_Q3: return s->data.q3.origin;
@@ -135,7 +142,7 @@ static bool write_vector(qa_movement_state *s, qa_vec3 value, bool velocity, qa_
     case QA_MOVEMENT_NETQUAKE:
         if (velocity) s->data.nq.velocity=value; else s->data.nq.origin=value; break;
     case QA_MOVEMENT_QUAKEWORLD:
-        if (velocity) s->data.qw.velocity=value; else s->data.qw.origin=value; break;
+        if (velocity) s->data.qw.velocity=value; else s->data.qw.origin=qa_qw_origin_from_vec3(value); break;
     case QA_MOVEMENT_Q2_CLASSIC: {
         int16_t words[3];
         for (unsigned axis=0;axis<3;axis++) {
@@ -320,7 +327,7 @@ static bool move_stage(const qa_movement_input *input, const qa_movement_service
         input->state.kind!=input->profile.kind||input->command.kind!=input->profile.kind||
         !isfinite(input->command.forward_move)||!isfinite(input->command.side_move)||!isfinite(input->command.up_move)||
         (input->state.kind!=QA_MOVEMENT_NETQUAKE&&
-         (!qa_vec_finite(qa_movement_origin(&input->state))||!qa_vec_finite(qa_movement_velocity(&input->state))))||
+         (!valid_origin(&input->state)||!qa_vec_finite(qa_movement_velocity(&input->state))))||
         input->shape.kind<QA_SHAPE_POINT||input->shape.kind>QA_SHAPE_CAPSULE||
         (input->shape.kind!=QA_SHAPE_POINT&&!valid_bounds(input->shape.bounds))||
         (input->has_current_bounds&&!valid_bounds(input->current_bounds))||

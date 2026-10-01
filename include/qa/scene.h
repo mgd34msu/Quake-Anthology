@@ -88,6 +88,9 @@ unsigned qa_scene_resources_fullbright_first(const qa_scene_resources *);
 uint64_t qa_scene_identity(void);
 /* Returned palette borrows the resource service and is RGB, 256 entries. */
 bool qa_scene_resources_palette(qa_scene_resources *, qa_scene_family, qa_bytes *, qa_error *);
+/* Read the already installed palette without acquisition or cache changes.
+ * The borrowed span lasts until resource-owner restoration/destruction. */
+bool qa_scene_resources_palette_read(const qa_scene_resources *, qa_scene_family, qa_bytes *);
 bool qa_scene_image_create(qa_scene_resources *, const char *, qa_scene_image_kind,
                           const qa_scene_image_level *, size_t, qa_scene_wrap,
                           qa_scene_filter, qa_scene_vec4, qa_scene_image **, qa_error *);
@@ -411,6 +414,9 @@ bool qa_scene_world_fog_for_bounds(const qa_scene_world *, qa_bounds,
                                   qa_scene_fog_volume *out);
 
 typedef struct qa_scene_model_input qa_scene_model_input;
+typedef enum qa_scene_alias_lighting {
+    QA_ALIAS_CONTENT_LIGHTING, QA_ALIAS_Q3_DIFFUSE, QA_ALIAS_PREPARED_LIGHT
+} qa_scene_alias_lighting;
 typedef struct qa_scene_model_attachment {
     const char *tag;
     qa_scene_model *model;
@@ -422,6 +428,8 @@ struct qa_scene_model_input {
     qa_vec3 previous_origin, ambient, directed, light_direction;
     qa_scene_vec4 color;
     qa_scene_family family;
+    qa_scene_alias_lighting alias_lighting;
+    qa_vec3 alias_light;
     uint32_t frame, old_frame, skin, flags, entity, lod;
     float back_lerp, radius, rotation, shadow_plane, identity_light;
     double seconds, sync_base;

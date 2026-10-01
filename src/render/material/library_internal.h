@@ -6,10 +6,20 @@ enum { QA_MATERIAL_MAX_STAGES = 8, QA_MATERIAL_MAX_ANIMATION = 8,
        QA_MATERIAL_MAX_TCMODS = 4, QA_MATERIAL_MAX_DEFORMS = 3,
        QA_MATERIAL_BUCKETS = 1024, QA_MATERIAL_MAX_REGISTERED = 16384 };
 
+typedef struct qa_material_catalog_source {
+    qa_resource *resource;
+    qa_bytes bytes;
+    uint8_t *owned_bytes;
+    qa_sha256_digest digest;
+    struct qa_material_catalog_source *next;
+} qa_material_catalog_source;
+
 typedef struct qa_material_script {
     char *name;
     uint8_t *text;
     size_t size;
+    qa_material_catalog_source *source;
+    size_t source_offset, name_offset, name_size;
     struct qa_material_script *next;
 } qa_material_script;
 
@@ -42,6 +52,7 @@ struct qa_material_library {
     qa_material_order *order;
     qa_scene_image *fog_image, *dlight_image;
     qa_material_script *scripts[QA_MATERIAL_BUCKETS];
+    qa_material_catalog_source *catalog_sources, *catalog_tail, *catalog_current;
     qa_material_record *records[QA_MATERIAL_BUCKETS];
     qa_material_record **ordered;
     size_t count, capacity;
@@ -53,6 +64,8 @@ struct qa_material_library {
     qa_vec3 sun_light, sun_direction;
     float sky_height;
     bool has_sun;
+    size_t capture_depth;
+    bool mutating, catalog_ready, video_required;
 };
 
 bool qa_material_order_retain(qa_material_order *, qa_error *);

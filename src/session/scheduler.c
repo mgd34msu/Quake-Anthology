@@ -342,13 +342,14 @@ bool qa_frame_project(const qa_source_frame *frame, qa_actor_owner owner,
     return true;
 }
 
-static bool due_time(qa_clock_kind kind, uint64_t due, const qa_source_frame *frame, uint64_t *time)
+static bool due_time(qa_clock_kind kind, uint64_t due, uint64_t start,
+                       uint64_t elapsed, uint64_t *time)
 {
     if (due == 0) return false;
-    uint64_t end = frame->start_ns + frame->elapsed_ns;
+    uint64_t end = start + elapsed;
     if (kind == QA_CLOCK_NETQUAKE || kind == QA_CLOCK_QUAKEWORLD) {
         if (due > end) return false;
-        *time = due > frame->start_ns ? due : frame->start_ns;
+        *time = due > start ? due : start;
     } else {
         if (kind == QA_CLOCK_Q2_CLASSIC) {
             if (due > end && due - end > UINT64_C(1000000)) return false;
@@ -376,16 +377,16 @@ static bool scheduler_run(qa_scheduler *scheduler, qa_actor_id actor,
         if (clock == NULL || clock->kind != frame->kind || frame->provider != pending->execution_provider)
             return fail(error, QA_ERROR_ARGUMENT, "Think execution clock mismatch");
         uint64_t time;
-        if (!due_time(clock->kind, pending->due_ns, frame, &time)) break;
+        if (!due_time(clock->kind, pending->due_ns, frame->start_ns, frame->elapsed_ns, &time)) break;
         qa_think think = *pending;
         qa_clock_kind kind = clock->kind;
         qa_scheduler_cancel(scheduler, actor);
-        qa_source_frame callback_frame = *frame;
-        callback_frame.phase = QA_ENTITY_THINK;
-        callback_frame.time_ns = time;
+        qa_think_scope scope = {.kind = QA_THINK_WORLD_FRAME,
+            .source.frame = *frame, .time_ns = time,
+            .interval_start_ns = frame->start_ns, .interval_elapsed_ns = frame->elapsed_ns};
         ++scheduler->dispatch_depth;
-        bool ok = scheduler->dispatch == NULL ? think.callback(think.context, actor, &callback_frame, error)
-            : scheduler->dispatch(scheduler->context, think.callback, think.context, actor, &callback_frame, error);
+        bool ok = scheduler->dispatch == NULL ? think.callback(think.context, actor, &scope, error)
+            : scheduler->dispatch(scheduler->context, think.callback, think.context, actor, &scope, error);
         --scheduler->dispatch_depth;
         if (!ok) return false;
         ++result.invocations;
@@ -405,6 +406,42 @@ bool qa_scheduler_run_once(qa_scheduler *scheduler, qa_actor_id actor,
     const qa_source_frame *frame, qa_think_boundary boundary,
     qa_think_result *out, qa_error *error)
 { return scheduler_run(scheduler, actor, frame, boundary, true, out, error); }
+
+bool qa_scheduler_run_command_once(qa_scheduler *scheduler, qa_actor_id actor,
+    const qa_source_command *command, uint64_t source_time_ns, uint64_t source_elapsed_ns,
+    qa_think_boundary boundary,
+    qa_think_result *out, qa_error *error)
+{
+    if (!scheduler || !command || !out || !qa_actor_id_equal(command->actor, actor) ||
+        command->phase != QA_CLIENT_COMMAND ||
+        boundary < QA_THINK_BEFORE_PHYSICS || boundary > QA_THINK_AFTER_PHYSICS ||
+        source_time_ns > UINT64_MAX - source_elapsed_ns)
+        return fail(error, QA_ERROR_ARGUMENT, "Invalid source command think admission");
+    qa_think_result result = {0, qa_actors_get(scheduler->actors, actor) != NULL};
+    const qa_think *pending = qa_scheduler_pending(scheduler, actor);
+    if (pending && pending->boundary == boundary) {
+        provider_clock *clock = provider(scheduler, pending->execution_provider);
+        if (!clock || clock->kind != command->kind || command->provider != pending->execution_provider)
+            return fail(error, QA_ERROR_ARGUMENT, "Think command execution clock mismatch");
+        uint64_t time;
+        if (due_time(clock->kind, pending->due_ns, source_time_ns, source_elapsed_ns, &time)) {
+            qa_think think = *pending;
+            qa_scheduler_cancel(scheduler, actor);
+            qa_think_scope scope = {.kind = QA_THINK_SOURCE_COMMAND,
+                .source.command = *command, .time_ns = time,
+                .interval_start_ns = source_time_ns, .interval_elapsed_ns = source_elapsed_ns};
+            ++scheduler->dispatch_depth;
+            bool ok = scheduler->dispatch == NULL ? think.callback(think.context, actor, &scope, error)
+                : scheduler->dispatch(scheduler->context, think.callback, think.context, actor, &scope, error);
+            --scheduler->dispatch_depth;
+            if (!ok) return false;
+            result.invocations = 1;
+            result.alive = qa_actors_get(scheduler->actors, actor) != NULL;
+        }
+    }
+    *out = result;
+    return true;
+}
 
 bool qa_scheduler_advance(qa_scheduler *scheduler, const qa_source_frame *frames,
                           size_t count, qa_think_boundary boundary, qa_error *error)

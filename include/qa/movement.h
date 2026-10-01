@@ -60,8 +60,21 @@ typedef struct qa_nq_movement_state {
     float ideal_pitch;
     bool fix_angle;
 } qa_nq_movement_state;
+/* QW input centers an authored float origin with its authored float mins in
+ * binary64. It can retain that value when SpectatorMove returns before any
+ * vector store. QW vector operations still store float components. */
+typedef struct qa_qw_origin { double x, y, z; } qa_qw_origin;
+static inline qa_qw_origin qa_qw_origin_from_vec3(qa_vec3 value) {
+    return (qa_qw_origin){value.x, value.y, value.z};
+}
+/* Projection at a float body/collision boundary; it does not replace the
+ * authoritative QW origin with the projected components. */
+static inline qa_vec3 qa_qw_origin_to_vec3(qa_qw_origin value) {
+    return qa_v3((float)value.x, (float)value.y, (float)value.z);
+}
 typedef struct qa_qw_movement_state {
-    qa_vec3 origin, velocity, angles;
+    qa_qw_origin origin;
+    qa_vec3 velocity, angles;
     uint32_t old_buttons;
     float water_jump_time_seconds;
     bool dead;

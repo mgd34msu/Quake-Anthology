@@ -141,20 +141,21 @@ static bool equal_count(qa_source_save_io *io,size_t expected)
 }
 static bool header(qa_source_save_io *io,const frontend_q3_inventory *inventory)
 {
-    uint8_t magic[4]={'Q','F','Q','3'}; uint32_t version=1;
+    uint8_t magic[4]={'Q','F','Q','3'}; uint32_t version=2;
     return qa_source_save_bytes(io,magic,4) && !memcmp(magic,"QFQ3",4) &&
-        qa_source_save_u32(io,&version) && version==1 && equal_count(io,inventory->group_count) &&
+        qa_source_save_u32(io,&version) && version==2 && equal_count(io,inventory->group_count) &&
         equal_count(io,inventory->registry_count) && equal_count(io,inventory->presentation_count) &&
         equal_count(io,inventory->media_count);
 }
 static bool metadata(qa_source_save_io *io,frontend_q3_inventory *inventory,size_t ordinal)
 {
     q3_group *group=inventory->groups+ordinal;
-    qa_actor_owner owner=group->source.owner; uint32_t seat=group->source.seat;
+    qa_actor_owner owner=group->source.owner; uint32_t seat=group->source.seat,launch_seat=group->source.launch_seat;
     uint64_t identity=group->source.identity,mounts=group->mounts,source=group->source_view;
     size_t assets=group->assets,presentation=group->presentation,media=group->media;
     return frontend_save_provider(io,inventory->frontend->application,&owner) && owner==group->source.owner &&
         qa_source_save_u32(io,&seat) && seat==group->source.seat &&
+        qa_source_save_u32(io,&launch_seat) && launch_seat==group->source.launch_seat &&
         qa_source_save_u64(io,&identity) && identity==group->source.identity &&
         qa_source_save_u64(io,&mounts) && mounts==group->mounts &&
         qa_source_save_u64(io,&source) && source==group->source_view &&

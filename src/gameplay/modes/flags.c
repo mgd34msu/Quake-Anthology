@@ -7,6 +7,7 @@ static bool points(qa_modes *m, mode_instance *v, qa_actor_id actor, int32_t amo
     return !amount || qa_modes_add_score(m, v->id, actor, amount, e);
 }
 bool mode_flag_reset(qa_modes *m, mode_instance *v, mode_object *o, bool announce, qa_error *e) {
+    if (o->q3_source_owned) return true;
     qa_actor_id previous = o->value.carrier;
     mode_member *member = mode_member_get(m, v, previous);
     if (member && qa_actor_id_equal(member->flag, o->actor))
@@ -84,6 +85,7 @@ static bool capture(qa_modes *m, mode_instance *v, mode_object *flag, qa_actor_i
         team_bonus = 10 * (enemies + 1) / (allies + 1);
     }
     mode_stat_add(v, &carrier->stats.captures, 1);
+    if (source >= QA_MODE_Q3) mode_stat_add(v, &carrier->stats.q3_capture_count, 1);
     v->value.team_captures[index] = mode_add_i32(v->value.team_captures[index], 1);
     if (source >= QA_MODE_Q3 && !qa_modes_team_score(m, v->id, team, 1, e))
         return false;
@@ -130,6 +132,7 @@ static bool capture(qa_modes *m, mode_instance *v, mode_object *flag, qa_actor_i
                 return false;
             mode_stat_add(v, source >= QA_MODE_Q3 ? &carrier->stats.assists : &p->stats.assists, 1);
             mode_stat_add(v, &p->stats.assist_awards, 1);
+            if (source >= QA_MODE_Q3) mode_stat_add(v, &p->stats.q3_assist_count, 1);
             if (!mode_event(m, v, QA_MODE_AWARD, p->actor, actor, flag->actor, team, assist,
                             0x20000, e))
                 return false;
@@ -153,6 +156,7 @@ static bool capture(qa_modes *m, mode_instance *v, mode_object *flag, qa_actor_i
 }
 bool mode_flag_touch(qa_modes *m, mode_instance *v, mode_object *o, qa_actor_id actor,
                      bool *accepted, qa_error *e) {
+    if (o->q3_source_owned) return true;
     mode_member *p = mode_member_get(m, v, actor);
     qa_team_id team;
     if (!p || !qa_modes_team(m, v->id, actor, &team, e))
@@ -255,6 +259,7 @@ static bool award_defense(qa_modes *m, mode_instance *v, mode_member *p, qa_acto
         mode_stat_add(v, &p->stats.carrier_defenses, 1);
     else
         mode_stat_add(v, &p->stats.defenses, 1);
+    if (v->value.rules.source >= QA_MODE_Q3) mode_stat_add(v, &p->stats.q3_defend_count, 1);
     p->stats.defended = true;
     p->stats.defended_ns = v->value.time_ns;
     return points(m, v, p->actor, amount, e) &&

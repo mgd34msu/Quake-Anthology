@@ -137,7 +137,7 @@ static bool fields(qa_source_save_io *io, qa_q3_presentation *p, const qa_q3_mov
 static void discard(qa_q3_presentation *p)
 {
     for (size_t i=0;i<16;++i) {
-        qa_cinematic_destroy(p->movies[i].local); qa_cinematic_asset_release(p->movies[i].asset); free(p->movies[i].path);
+        qa_cinematic_restore_discard(p->movies[i].local); qa_cinematic_asset_release(p->movies[i].asset); free(p->movies[i].path);
     }
     while (p->movie_sources) {
         q3p_movie_source *source=p->movie_sources; p->movie_sources=source->next;
@@ -147,26 +147,34 @@ static void discard(qa_q3_presentation *p)
 bool qa_q3_presentation_media_checkpoint(const qa_q3_presentation *p,
     const qa_q3_movie_checkpoint_refs *refs, qa_buffer *out, qa_error *error)
 {
-    if (!p || !out || p->busy || p->options.assets->busy)
-        return q3p_fail(error,QA_ERROR_ARGUMENT,"Q3 movie capture requires an idle presentation");
+    if (!p || !out || out->data || out->size)
+        return q3p_fail(error,QA_ERROR_ARGUMENT,"Q3 movie capture requires an empty output");
+    bool owned_assets = false;
+    if (!q3p_capture_begin((qa_q3_presentation *)p, &owned_assets, error)) return false;
     qa_source_save_io io; qa_q3_presentation saved=*p;
-    if (!qa_source_save_writer(&io,NULL,error)) return false;
+    if (!qa_source_save_writer(&io,NULL,error)) { q3p_capture_end((qa_q3_presentation *)p, owned_assets); return false; }
     bool ok=fields(&io,&saved,refs,0,0) && qa_source_save_finish(&io,out);
     if (!ok && error && error->code==QA_OK) q3p_fail(error,QA_ERROR_FORMAT,"Q3 retained movie ownership is inconsistent");
-    qa_source_save_dispose(&io); return ok;
+    qa_source_save_dispose(&io); q3p_capture_end((qa_q3_presentation *)p, owned_assets); return ok;
 }
 bool qa_q3_presentation_media_restore(qa_q3_presentation *p,
     const qa_q3_movie_checkpoint_refs *refs, uint64_t bus, double anchor, qa_bytes bytes, qa_error *error)
 {
-    if (!p || p->busy || p->options.assets->busy || p->movie_sources)
+    if (!p || p->movie_sources)
         return q3p_fail(error,QA_ERROR_ARGUMENT,"Q3 movie restore requires an empty idle candidate");
     for (size_t i=0;i<16;++i) if (p->movies[i].kind!=Q3P_MOVIE_EMPTY)
         return q3p_fail(error,QA_ERROR_ARGUMENT,"Q3 candidate has existing movie ownership");
+    bool owned_assets = false;
+    if (!q3p_capture_begin(p, &owned_assets, error)) return false;
     qa_q3_presentation saved=*p; memset(saved.movies,0,sizeof(saved.movies)); saved.movie_sources=NULL;
     qa_source_save_io io;
-    if (!qa_source_save_reader(&io,NULL,bytes,error)) return false;
+    if (!qa_source_save_reader(&io,NULL,bytes,error)) { q3p_capture_end(p, owned_assets); return false; }
     bool ok=fields(&io,&saved,refs,bus,anchor) && qa_source_save_finish(&io,NULL);
-    if (ok) { memcpy(p->movies,saved.movies,sizeof(p->movies)); p->movie_sources=saved.movie_sources; }
+    if (ok) {
+        for (size_t i=0;i<16;++i) if (saved.movies[i].kind==Q3P_MOVIE_LOCAL)
+            qa_cinematic_restore_commit(saved.movies[i].local);
+        memcpy(p->movies,saved.movies,sizeof(p->movies)); p->movie_sources=saved.movie_sources;
+    }
     else { discard(&saved); if (error && error->code==QA_OK) q3p_fail(error,QA_ERROR_FORMAT,"Saved Q3 movie ownership is inconsistent"); }
-    qa_source_save_dispose(&io); return ok;
+    qa_source_save_dispose(&io); q3p_capture_end(p, owned_assets); return ok;
 }

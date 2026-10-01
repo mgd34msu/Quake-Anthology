@@ -20,22 +20,43 @@ static bool qualified(const frontend_seat *seat)
         seat == &seat->frontend->seats[seat->id] && seat->ui &&
         qa_ui_input_binding_read(seat->ui, &binding) && binding.seat == seat->input;
 }
+static bool reservation(qa_source_save_io *io,size_t capacity,size_t stride)
+{
+    if (!stride || capacity>SIZE_MAX/stride) return false;
+    /* One portable wire cell per reserved slot; stride only bounds allocation. */
+    size_t size=capacity;
+    if (io->direction==QA_SOURCE_SAVE_READ) {
+        if (size>io->input.size-io->offset) return false;
+        for (size_t i=0;i<size;++i) if (io->input.data[io->offset+i]) return false;
+        io->offset+=size; return true;
+    }
+    uint8_t zero[128]={0};
+    while (size) {
+        size_t part=size<sizeof(zero)?size:sizeof(zero);
+        if (!qa_source_save_bytes(io,zero,part)) return false;
+        size-=part;
+    }
+    return true;
+}
 static bool fields(qa_source_save_io *io, uint32_t seat, menu_state *state)
 {
     uint8_t magic[4] = {'Q','F','M','U'};
-    uint32_t version = 1, id = seat, kind = state->pending.kind;
+    uint32_t version = 2, id = seat, kind = state->pending.kind;
     if (!qa_source_save_bytes(io, magic, sizeof(magic)) || memcmp(magic, "QFMU", sizeof(magic)) ||
-        !qa_source_save_u32(io, &version) || version != 1 ||
+        !qa_source_save_u32(io, &version) || version != 2 ||
         !qa_source_save_u32(io, &id) || id != seat ||
         !frontend_save_text(io, &state->command) ||
         !qa_source_save_count(io, &state->binding_capacity, SIZE_MAX / sizeof(qa_ui_row)) ||
+        !reservation(io,state->binding_capacity,sizeof(qa_ui_row)) ||
         !qa_source_save_count(io, &state->label_capacity, SIZE_MAX) ||
+        !reservation(io,state->label_capacity,1) ||
         !qa_source_save_count(io, &state->selected_binding, SIZE_MAX) ||
         !qa_source_save_u32(io, &kind) || kind > QA_PHYSICAL_AXIS ||
         !qa_source_save_i32(io, &state->pending.device) || !qa_source_save_u32(io, &state->pending.code) ||
         !qa_source_save_bool(io, &state->pending.positive) || !qa_source_save_bool(io, &state->conflict) ||
         !qa_source_save_bytes(io, state->status, sizeof(state->status)) || !memchr(state->status, 0, sizeof(state->status)) ||
         !qa_source_save_count(io, &state->settings_capacity, SIZE_MAX / sizeof(qa_ui_row)) ||
+        !reservation(io,state->settings_capacity,sizeof(qa_ui_row)) ||
         !qa_source_save_count(io, &state->selected_setting, SIZE_MAX) ||
         !qa_source_save_bytes(io, state->value, sizeof(state->value)) || !memchr(state->value, 0, sizeof(state->value)) ||
         !qa_source_save_u64(io, &state->revision)) return false;

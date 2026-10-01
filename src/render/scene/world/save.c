@@ -106,7 +106,7 @@ static bool geometry(qa_source_save_io *io, const qa_scene_world *world)
         size_t expected_capacity=value.membership_from_tree?world->surface_count:value.faces.count;
         if (model.surface_capacity!=expected_capacity || model.surface_count>model.surface_capacity ||
             (model.surface_capacity && !model.surfaces))
-            return failure(io->error,QA_ERROR_STATE,"World model surface allocation changed");
+            return failure(io->error,QA_ERROR_ARGUMENT,"World model surface allocation changed");
         if (!range(io,&value.faces) || !range(io,&value.brushes) ||
             !qa_source_save_count(io,&model.surface_capacity,SIZE_MAX) ||
             !qa_source_save_count(io,&model.surface_count,model.surface_capacity)) return false;
@@ -302,9 +302,10 @@ static bool fields(qa_source_save_io *io, const qa_scene_world *world, qa_scene_
     }
     return true;
 }
-static bool ready(const qa_scene_world *world, const qa_scene_world_checkpoint_refs *refs, qa_error *error)
+static bool ready(const qa_scene_world *world, const qa_scene_world_checkpoint_refs *refs, bool leased, qa_error *error)
 {
-    return (qa_scene_world_idle(world) && refs && refs->images.encode && refs->images.decode &&
+    return (world && !world->transaction_depth && !world->admission_change_count && world->checkpoint_active==leased &&
+        refs && refs->images.encode && refs->images.decode &&
         refs->material_encode && refs->material_decode && refs->frame_encode && refs->frame_decode &&
         world->resources==qa_material_library_resource_owner(world->materials) && qa_material_library_order_ready(world->materials) &&
         (world->bsp.family==QA_BSP_Q3?world->q3_data!=NULL:world->legacy_data!=NULL)) ||
@@ -352,11 +353,11 @@ static void publish(qa_scene_world *world, qa_scene_world *saved, q3_data *q3)
     /* Traversal stack and inactive admission journal entries are operation
      * scratch. No active transaction crosses this owner boundary. */
 }
-bool qa_scene_world_checkpoint(const qa_scene_world *world, const qa_scene_world_checkpoint_refs *refs, qa_buffer *out, qa_error *error)
+bool qaw_world_checkpoint_locked(const qa_scene_world *world, const qa_scene_world_checkpoint_refs *refs, qa_buffer *out, qa_error *error)
 {
-    if (!out || !ready(world,refs,error)) return false;
+    if (!out || !ready(world,refs,true,error)) return false;
     qa_buffer lighting={0};
-    if (world->bsp.family!=QA_BSP_Q3 && !qa_scene_world_lighting_checkpoint(world,&refs->images,&lighting,error)) return false;
+    if (world->bsp.family!=QA_BSP_Q3 && !qaw_lighting_checkpoint_locked(world,&refs->images,&lighting,error)) return false;
     qa_bytes lighting_bytes={lighting.data,lighting.size}; qa_scene_world saved=*world;
     q3_data q3=world->bsp.family==QA_BSP_Q3?*(q3_data *)world->q3_data:(q3_data){0};
     qa_source_save_io io;
@@ -365,18 +366,29 @@ bool qa_scene_world_checkpoint(const qa_scene_world *world, const qa_scene_world
     if (!ok && error && error->code==QA_OK) failure(error,QA_ERROR_FORMAT,"Invalid retained scene world state");
     qa_source_save_dispose(&io); qa_buffer_free(&lighting); return ok;
 }
+bool qa_scene_world_checkpoint(const qa_scene_world *world, const qa_scene_world_checkpoint_refs *refs, qa_buffer *out, qa_error *error)
+{
+    if (!out || !ready(world,refs,false,error)) return false;
+    qa_scene_world *owner=(qa_scene_world *)world;
+    owner->checkpoint_active=true;
+    bool ok=qaw_world_checkpoint_locked(world,refs,out,error);
+    owner->checkpoint_active=false;
+    return ok;
+}
 bool qa_scene_world_restore(qa_scene_world *world, qa_bytes bytes, const qa_scene_world_checkpoint_refs *refs, qa_error *error)
 {
-    if (!ready(world,refs,error)) return false;
+    if (!qa_scene_world_idle(world) || !ready(world,refs,false,error))
+        return failure(error,QA_ERROR_ARGUMENT,"World restore requires its uncaptured idle candidate owner");
     qa_scene_world saved=*world; q3_data q3={0}; qa_bytes lighting={0};
     saved.surfaces=NULL; saved.surface_marks=saved.surface_lights=saved.visible_surfaces=NULL;
     saved.admitted_surfaces=NULL; saved.pvs=saved.secondary_pvs=NULL;
     qa_source_save_io io;
     if (!qa_source_save_reader(&io,NULL,bytes,error)) return false;
+    world->checkpoint_active=true;
     bool ok=fields(&io,world,&saved,&q3,refs,&lighting) && qa_source_save_finish(&io,NULL);
-    if (ok && world->bsp.family!=QA_BSP_Q3) ok=qa_scene_world_lighting_restore(world,lighting,&refs->images,error);
+    if (ok && world->bsp.family!=QA_BSP_Q3) ok=qaw_lighting_restore_locked(world,lighting,&refs->images,error);
     if (ok) publish(world,&saved,&q3);
     else if (error && error->code==QA_OK) failure(error,QA_ERROR_FORMAT,"Saved scene world differs from its qualified geometry or owners");
-    discard(world,&saved,&q3); qa_source_save_dispose(&io); return ok;
+    discard(world,&saved,&q3); qa_source_save_dispose(&io); world->checkpoint_active=false; return ok;
 }
 #undef FIELD

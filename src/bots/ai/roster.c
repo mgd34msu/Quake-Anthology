@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "source_storage.h"
+#include "source_library.h"
 #include <stdio.h>
 
 bool bot_ai_fail(qa_error *e, const char *message) {
@@ -19,13 +20,13 @@ bool bot_ai_mutable(qa_bots *b, qa_error *e) {
     return b && !b->busy && !b->source_match_exit_depth && !b->restore_pending && !b->shutting_down && !qa_bot_runtime_closed(b->runtime) ? true :
         bot_ai_fail(e, "bot population is absent, closed, restoring or executing a callback");
 }
-static bool create(qa_bot_runtime *runtime, const qa_bot_services *services,
+bool bot_ai_context_create(qa_bot_runtime *runtime, const qa_bot_services *services,
                     uint32_t client_capacity, qa_bots **out, qa_error *e) {
     if (!runtime || !services || !out || !services->shared.session ||
         !services->shared.world || !services->shared.combat || !services->shared.player_info || !services->player ||
         !services->inventory || !services->entity || !services->entity_extent || !services->entity_list || !services->arsenal || !services->arsenal_end ||
         !services->submit || !services->random || !services->source_client || !services->source_actor ||
-        !services->memory.allocate || !services->memory.read || !services->memory.write)
+        !services->memory.allocate || !services->memory.read || !services->memory.write || !services->memory.borrow_span)
         return bot_ai_fail(e, "native bot population requires live shared gameplay and botlib services");
     if (client_capacity > INT32_MAX || (uint64_t)client_capacity > SIZE_MAX / sizeof(bot_ai_state *))
         return bot_ai_fail(e, "native bot client capacity exceeds its source memory extent");
@@ -50,7 +51,7 @@ static bool create(qa_bot_runtime *runtime, const qa_bot_services *services,
     *out = b;
     return true;
 }
-static bool source_setup_cvars(qa_bots *b,qa_error *e) {
+bool bot_ai_source_setup_cvars(qa_bots *b,qa_error *e) {
     if(!b->services.register_cvar) return bot_ai_fail(e,"bot setup requires its actual source cvar registration owner");
     static const struct {const char *name,*value;uint32_t flags;} cvars[]={
         {"bot_thinktime","100",QA_CVAR_CHEAT},{"bot_memorydump","0",QA_CVAR_CHEAT},
@@ -68,24 +69,16 @@ static bool source_setup_cvars(qa_bots *b,qa_error *e) {
 static bool source_setup(qa_bots *b,qa_error *e) {
     if(!qa_bot_runtime_lease_begin(b->runtime,e)) return false;
     b->busy=true;
-    bool okay=source_setup_cvars(b,e) && bot_ai_source_goals_load(b,e) &&
+    bool okay=bot_ai_source_setup_cvars(b,e) && bot_ai_source_goals_load(b,e) &&
         bot_ai_source_match_setup(b,e);
     b->busy=false;qa_bot_runtime_lease_end(b->runtime);return okay;
-}
-bool qa_bots_create(qa_bot_runtime *runtime, const qa_bot_services *services,
-                      qa_bots **out, qa_error *e) {
-    if (!runtime || !qa_bot_runtime_initialized(runtime))
-        return bot_ai_fail(e, "native bot population requires live shared gameplay and botlib services");
-    if(!create(runtime, services, qa_bot_actions_capacity(qa_bot_runtime_actions(runtime)), out, e)) return false;
-    if(source_setup(*out,e)) return true;
-    qa_bots_destroy(*out,NULL);*out=NULL;return false;
 }
 bool qa_bots_create_round(qa_bot_runtime *runtime, const qa_bot_services *services,
                          qa_bots **out, qa_error *e) {
     if (!runtime || !qa_bot_runtime_initialized(runtime) || !qa_bot_runtime_loaded(runtime) ||
         !out || *out || !qa_bot_runtime_can_destroy(runtime))
         return bot_ai_fail(e, "new round AI requires an idle retained initialized bot library");
-    if (!create(runtime, services, qa_bot_actions_capacity(qa_bot_runtime_actions(runtime)), out, e)) return false;
+    if (!bot_ai_context_create(runtime, services, qa_bot_actions_capacity(qa_bot_runtime_actions(runtime)), out, e)) return false;
     (*out)->time = 0;
     (*out)->scheduled_think_ms = 0;
     if(source_setup(*out,e)) return true;
@@ -110,7 +103,7 @@ bool qa_bots_create_restored(qa_bot_runtime *runtime, const qa_bot_services *ser
                             uint32_t client_capacity, qa_bots **out, qa_error *e) {
     if (!runtime || !out || *out || !qa_bot_runtime_can_destroy(runtime))
         return bot_ai_fail(e, "restored native bot population requires idle detached owners and an empty output");
-    if (!create(runtime, services, client_capacity, out, e))
+    if (!bot_ai_context_create(runtime, services, client_capacity, out, e))
         return false;
     (*out)->restore_pending = true;
     return true;
@@ -217,9 +210,15 @@ bool qa_bots_shutdown_client(qa_bots *b,qa_actor_id actor,bool restart,qa_error 
 }
 bool qa_bots_shutdown(qa_bots *b,bool restart,qa_error *e) {
     if(!b) return true;
-    if(b->busy || b->checking_spawn || b->restore_pending || qa_bot_runtime_closed(b->runtime) ||
+    if(b->busy || b->checking_spawn || b->restore_pending ||
+       (restart && qa_bot_runtime_closed(b->runtime)) ||
        b->shutdown_actor.registry || (b->shutting_down && b->shutdown_restart!=restart))
         return bot_ai_fail(e,"bot source shutdown requires the same idle admitted lifetime");
+    if(!restart) {
+        b->busy=true;b->shutting_down=true;b->shutdown_restart=false;
+        bool okay=qa_bot_runtime_shutdown(b->runtime,e);
+        b->busy=false;return okay;
+    }
     if(!qa_bot_runtime_lease_begin(b->runtime,e)) return false;
     b->busy=true;b->shutting_down=true;b->shutdown_restart=restart;
     bool ok=true;
