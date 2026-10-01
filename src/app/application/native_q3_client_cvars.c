@@ -267,10 +267,17 @@ bool qa_native_q3_client_userinfo_initialize(qa_native_q3_client_service *servic
 static bool reload(qa_native_q3_client_service *service,qa_error *error)
 {
     for (uint32_t slot=0;slot<64;++slot) {
-        const char *text;
-        if (!qa_q3_configstring_read(service->source_game,544+slot,&text,error)) return false;
-        if (*text && (!service->services.reload_client_info(service->services.context,slot,text,error) ||
-            !qa_native_q3_client_service_current(service))) return false;
+        const char *text; uint64_t revision;
+        if (!qa_native_q3_wire_reader_configstring(service->services.wire_reader,544+slot,
+            &text,&revision,error)) return false;
+        size_t length=strlen(text);
+        if (!length) continue;
+        char *retained=malloc(length+1);
+        if (!retained) return native_client_fail(error,QA_ERROR_MEMORY,"Retaining reached native client-info value");
+        memcpy(retained,text,length+1);
+        bool ok=service->services.reload_client_info(service->services.context,slot,retained,error) &&
+            qa_native_q3_client_service_current(service);
+        free(retained); if (!ok) return false;
     }
     return true;
 }
