@@ -72,6 +72,8 @@ bool gl_api_load(qa_gl_renderer *renderer, qa_error *error)
     LOAD(TexSubImage2D);
     LOAD(CopyTexImage2D);
     LOAD(GetTexImage);
+    LOAD(GetTexLevelParameteriv);
+    LOAD(GetTexParameteriv);
     LOAD(PixelStorei);
     LOAD(ReadPixels);
     LOAD_ALIAS(GenBuffers, "glGenBuffersARB");
@@ -79,6 +81,7 @@ bool gl_api_load(qa_gl_renderer *renderer, qa_error *error)
     LOAD_ALIAS(BindBuffer, "glBindBufferARB");
     LOAD_ALIAS(BufferData, "glBufferDataARB");
     LOAD_ALIAS(BufferSubData, "glBufferSubDataARB");
+    LOAD_ALIAS(GetBufferSubData, "glGetBufferSubDataARB");
     LOAD(EnableVertexAttribArray);
     LOAD(DisableVertexAttribArray);
     LOAD(VertexAttribPointer);

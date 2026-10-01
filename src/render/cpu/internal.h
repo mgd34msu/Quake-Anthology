@@ -17,6 +17,9 @@ typedef struct cpu_target {
   cpu_framebuffer framebuffer;
   struct cpu_target *next;
 } cpu_target;
+typedef struct cpu_vertex {
+  double clip[4], color[4], uv[2][2], world[3], normal[3];
+} cpu_vertex;
 struct qa_cpu_renderer {
   qa_cpu_options options;
   cpu_framebuffer display, opacity;
@@ -25,6 +28,7 @@ struct qa_cpu_renderer {
   qa_scene_view view;
   qa_scene_rect opacity_viewport;
   bool opacity_active, opacity_skip, gamma_enabled, overdraw;
+  bool executing, presenting, capturing;
   float opacity_value;
   uint32_t stencil_maximum;
   uint8_t gamma[256], *output;

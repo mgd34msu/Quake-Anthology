@@ -1,5 +1,6 @@
 #include "internal.h"
 #include <limits.h>
+#include "../save_fields.h"
 
 static bool dimensions(uint32_t width, uint32_t height, size_t *count,
                        qa_error *error) {
@@ -385,15 +386,17 @@ bool qa_cpu_capture(qa_cpu_renderer *renderer, qa_buffer *out,
   return true;
 }
 bool qa_cpu_present_frame(qa_cpu_renderer *renderer, qa_error *error) {
-  if (!renderer || (renderer->opacity_active && renderer->opacity_value != 1)) {
+  if (!renderer || renderer->presenting || renderer->capturing || (renderer->opacity_active && renderer->opacity_value != 1)) {
     qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                  "Cannot present an active CPU opacity scope");
     return false;
   }
-  return !renderer->options.present ||
+  renderer->presenting=true;
+  bool ok = !renderer->options.present ||
          renderer->options.present(
              renderer->options.present_context, qa_cpu_pixels(renderer),
              renderer->display.width, renderer->display.height, error);
+  renderer->presenting=false; return ok;
 }
 bool qa_cpu_read_depth(const qa_cpu_renderer *renderer, uint32_t x, uint32_t y,
                        float *out, qa_error *error) {
@@ -444,7 +447,7 @@ bool qa_cpu_read_overdraw(const qa_cpu_renderer *renderer, uint8_t *destination,
   }
   return true;
 }
-bool qa_cpu_execute(qa_cpu_renderer *renderer, const qa_scene_frame *frame,
+static bool cpu_execute(qa_cpu_renderer *renderer, const qa_scene_frame *frame,
                     qa_error *error) {
   if (!renderer || !frame || frame->owner != renderer->options.owner ||
       (frame->command_count && !frame->commands) || renderer->opacity_active) {
@@ -557,4 +560,149 @@ bool qa_cpu_execute(qa_cpu_renderer *renderer, const qa_scene_frame *frame,
     return false;
   }
   return true;
+}
+bool qa_cpu_execute(qa_cpu_renderer *renderer,const qa_scene_frame *frame,qa_error *error)
+{
+  if (!renderer || renderer->executing || renderer->presenting || renderer->capturing) {
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"CPU renderer is absent or executing"); return false;
+  }
+  renderer->executing=true;
+  bool ok=cpu_execute(renderer,frame,error);
+  renderer->executing=false; return ok;
+}
+static bool cpu_checkpoint_idle(const qa_cpu_renderer *renderer,qa_error *error)
+{
+  if (!renderer || renderer->executing || renderer->presenting || renderer->capturing ||
+      renderer->opacity_active || renderer->opacity_parent) {
+    qa_error_set(error,QA_ERROR_ARGUMENT,0,"CPU continuation requires its completed idle renderer owner"); return false;
+  }
+  return true;
+}
+bool qa_cpu_checkpoint_resources(const qa_cpu_renderer *renderer,qa_render_resource_visit_fn visit,void *context,qa_error *error)
+{
+  if (!visit || !cpu_checkpoint_idle(renderer,error)) return false;
+  size_t ordinal=0;
+  for (size_t i=0;i<2;++i,++ordinal)
+    if (renderer->bound[i] && !visit(context,renderer->bound[i],NULL,ordinal,error)) return false;
+  for (const cpu_target *target=renderer->targets;target;target=target->next,++ordinal)
+    if (!visit(context,target->image,NULL,ordinal,error)) return false;
+  return true;
+}
+static bool cpu_saved_buffer(qa_source_save_io *io,qa_cpu_renderer *renderer,cpu_framebuffer *buffer)
+{
+  bool reading=io->direction==QA_SOURCE_SAVE_READ,present=buffer->width!=0;
+  if (!qa_source_save_bool(io,&present)) return false;
+  if (!present) return reading || (!buffer->height && !buffer->color && !buffer->depth && !buffer->stencil);
+  uint32_t width=buffer->width,height=buffer->height; bool depth_only=buffer->depth_only,alpha=buffer->alpha;
+  if (!qa_source_save_u32(io,&width) || !qa_source_save_u32(io,&height) ||
+      !qa_source_save_bool(io,&depth_only) || !qa_source_save_bool(io,&alpha)) return false;
+  size_t count=0;
+  if (!dimensions(width,height,&count,io->error)) return false;
+  if (reading) {
+    if (!buffer_create(buffer,width,height,depth_only,renderer,io->error)) return false;
+    buffer->alpha=alpha;
+  }
+  if (!buffer->depth || (!depth_only && !buffer->color) ||
+      ((buffer->stencil!=NULL)!=(renderer->options.stencil_bits!=0))) return false;
+  if (!depth_only && !qa_source_save_bytes(io,buffer->color,count*4)) return false;
+  for (size_t i=0;i<count;++i)
+    if (!qa_source_save_f64(io,buffer->depth+i) || !isfinite(buffer->depth[i])) return false;
+  for (size_t i=0;buffer->stencil && i<count;++i)
+    if (!qa_source_save_u32(io,buffer->stencil+i) || buffer->stencil[i]>renderer->stencil_maximum) return false;
+  return true;
+}
+static bool cpu_saved_fields(qa_source_save_io *io,qa_cpu_renderer *renderer,const qa_render_checkpoint_refs *refs,
+    const qa_cpu_options *installed)
+{
+  bool reading=io->direction==QA_SOURCE_SAVE_READ;
+  uint8_t magic[4]={'Q','C','P','U'}; uint32_t version=1;
+  bool presenter=reading?false:renderer->options.present!=NULL;
+  if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QCPU",4) ||
+      !qa_source_save_u32(io,&version) || version!=1 ||
+      !qa_source_save_u32(io,&renderer->options.width) || !qa_source_save_u32(io,&renderer->options.height) ||
+      !qa_source_save_u8(io,&renderer->options.subpixel_bits) || !qa_source_save_u8(io,&renderer->options.stencil_bits) ||
+      !qa_source_save_u8(io,&renderer->options.alpha_bits) || !qa_source_save_u64(io,&renderer->options.owner) ||
+      !qa_source_save_bool(io,&presenter) || renderer->options.subpixel_bits<4 || renderer->options.subpixel_bits>16 ||
+      renderer->options.stencil_bits>32 || (renderer->options.alpha_bits!=0 && renderer->options.alpha_bits!=8)) return false;
+  if (reading) {
+    if (!installed || installed->width!=renderer->options.width || installed->height!=renderer->options.height ||
+        installed->owner!=renderer->options.owner || installed->subpixel_bits!=renderer->options.subpixel_bits ||
+        installed->stencil_bits!=renderer->options.stencil_bits || installed->alpha_bits!=renderer->options.alpha_bits ||
+        (installed->present!=NULL)!=presenter) return false;
+    renderer->options.present=installed->present; renderer->options.present_context=installed->present_context;
+    renderer->stencil_maximum=renderer->options.stencil_bits==32?UINT32_MAX:
+        (uint32_t)((UINT64_C(1)<<renderer->options.stencil_bits)-1);
+  }
+  if (!cpu_saved_buffer(io,renderer,&renderer->display) || renderer->display.depth_only ||
+      renderer->display.alpha!=(renderer->options.alpha_bits!=0) ||
+      renderer->display.width!=renderer->options.width || renderer->display.height!=renderer->options.height ||
+      !cpu_saved_buffer(io,renderer,&renderer->opacity)) return false;
+  size_t count=0; uint64_t current=0;
+  if (!reading) {
+    if (renderer->current==&renderer->display) current=1;
+    for (cpu_target *target=renderer->targets;target;target=target->next) {
+      ++count; if (renderer->current==&target->framebuffer) current=count+1;
+    }
+  }
+  if (!qa_source_save_count(io,&count,SIZE_MAX/sizeof(cpu_target)) ||
+      !qa_source_save_u64(io,&current) || !current || current>count+1) return false;
+  cpu_target *target=renderer->targets,**tail=&renderer->targets;
+  for (size_t i=0;i<count;++i) {
+    if (reading) {
+      target=calloc(1,sizeof(*target)); if (!target) { qa_error_set(io->error,QA_ERROR_MEMORY,0,"Restoring CPU retained target row"); return false; }
+      *tail=target; tail=&target->next;
+    }
+    if (!target || !render_save_image(io,refs,&target->image) || !target->image || !cpu_image_valid(target->image,io->error) ||
+        !cpu_saved_buffer(io,renderer,&target->framebuffer) || target->framebuffer.width!=target->image->levels[0].width ||
+        target->framebuffer.height!=target->image->levels[0].height ||
+        target->framebuffer.depth_only!=(target->image->kind==QA_SCENE_DEPTH32F) ||
+        target->framebuffer.alpha!=(target->image->kind==QA_SCENE_RGBA8)) return false;
+    for (cpu_target *prior=renderer->targets;prior!=target;prior=prior->next)
+      if (prior->image==target->image || (prior->image->identity==target->image->identity &&
+          prior->image->revision==target->image->revision)) return false;
+    if (reading && current==i+2) renderer->current=&target->framebuffer;
+    target=target->next;
+  }
+  if (reading && current==1) renderer->current=&renderer->display;
+  if (!render_save_view(io,&renderer->view) || !render_save_rect(io,&renderer->opacity_viewport) ||
+      !qa_source_save_bool(io,&renderer->opacity_skip) || !qa_source_save_f32(io,&renderer->opacity_value) ||
+      !isfinite(renderer->opacity_value) || !qa_source_save_bool(io,&renderer->gamma_enabled) ||
+      !qa_source_save_bool(io,&renderer->overdraw) || !qa_source_save_bytes(io,renderer->gamma,256) ||
+      !qa_source_save_count(io,&renderer->vertex_capacity,SIZE_MAX/sizeof(cpu_vertex))) return false;
+  for (size_t i=0;i<2;++i) if (!render_save_image(io,refs,renderer->bound+i)) return false;
+  if (reading) {
+    size_t pixels=(size_t)renderer->options.width*renderer->options.height;
+    renderer->output=malloc(pixels*4);
+    if (renderer->vertex_capacity) renderer->vertices=malloc(renderer->vertex_capacity*sizeof(cpu_vertex));
+    if (!renderer->output || (renderer->vertex_capacity && !renderer->vertices)) {
+      qa_error_set(io->error,QA_ERROR_MEMORY,0,"Restoring CPU presentation/transform storage"); return false;
+    }
+  }
+  return true;
+}
+bool qa_cpu_checkpoint(const qa_cpu_renderer *renderer,const qa_render_checkpoint_refs *refs,qa_buffer *out,qa_error *error)
+{
+  if (!out || out->data || out->size || !cpu_checkpoint_idle(renderer,error)) return false;
+  qa_cpu_renderer state=*renderer; qa_source_save_io io={0};
+  if (renderer->current==&renderer->display) state.current=&state.display;
+  ((qa_cpu_renderer *)renderer)->capturing=true;
+  bool ok=qa_source_save_writer(&io,NULL,error) && cpu_saved_fields(&io,&state,refs,NULL) && qa_source_save_finish(&io,out);
+  qa_source_save_dispose(&io); ((qa_cpu_renderer *)renderer)->capturing=false;
+  if (!ok && (!error || error->code==QA_OK)) qa_error_set(error,QA_ERROR_FORMAT,0,"Invalid actual CPU renderer continuation");
+  return ok;
+}
+bool qa_cpu_restore(qa_bytes bytes,const qa_cpu_options *options,const qa_render_checkpoint_refs *refs,qa_cpu_renderer **out,qa_error *error)
+{
+  if (!out || *out || !options) { qa_error_set(error,QA_ERROR_ARGUMENT,0,"CPU restore requires detached owner output/options"); return false; }
+  qa_cpu_renderer *renderer=calloc(1,sizeof(*renderer));
+  if (!renderer) { qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating detached CPU renderer"); return false; }
+  qa_source_save_io io={0};
+  bool ok=qa_source_save_reader(&io,NULL,bytes,error) && cpu_saved_fields(&io,renderer,refs,options) && qa_source_save_finish(&io,NULL);
+  qa_source_save_dispose(&io);
+  if (!ok) {
+    qa_cpu_destroy(renderer);
+    if (!error || error->code==QA_OK) qa_error_set(error,QA_ERROR_FORMAT,0,"Invalid saved CPU renderer continuation");
+    return false;
+  }
+  *out=renderer; return true;
 }

@@ -56,6 +56,8 @@ typedef struct gl_api {
     void (APIENTRY *CopyTexImage2D)(GLenum, GLint, GLenum, GLint, GLint,
                                     GLsizei, GLsizei, GLint);
     void (APIENTRY *GetTexImage)(GLenum, GLint, GLenum, GLenum, void *);
+    void (APIENTRY *GetTexLevelParameteriv)(GLenum, GLint, GLenum, GLint *);
+    void (APIENTRY *GetTexParameteriv)(GLenum, GLenum, GLint *);
     void (APIENTRY *PixelStorei)(GLenum, GLint);
     void (APIENTRY *ReadPixels)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum,
                                 void *);
@@ -64,6 +66,7 @@ typedef struct gl_api {
     void (APIENTRY *BindBuffer)(GLenum, GLuint);
     void (APIENTRY *BufferData)(GLenum, GLsizeiptr, const void *, GLenum);
     void (APIENTRY *BufferSubData)(GLenum, GLintptr, GLsizeiptr, const void *);
+    void (APIENTRY *GetBufferSubData)(GLenum, GLintptr, GLsizeiptr, void *);
     void (APIENTRY *EnableVertexAttribArray)(GLuint);
     void (APIENTRY *DisableVertexAttribArray)(GLuint);
     void (APIENTRY *VertexAttribPointer)(GLuint, GLint, GLenum, GLboolean,
@@ -189,6 +192,7 @@ typedef struct gl_opacity_target {
     float value;
     bool parent_scissor_enabled, allocated, active, skip;
 } gl_opacity_target;
+typedef struct gl_restore_storage gl_restore_storage;
 
 struct qa_gl_renderer {
     qa_gl_options options;
@@ -208,8 +212,10 @@ struct qa_gl_renderer {
     float gamma;
     uint64_t sequence;
     uint32_t presented_width, presented_height;
-    bool overdraw, closed, presented;
+    bool overdraw, closed, presented, executing, capturing, preparing, detached;
+    gl_restore_storage *restore;
 };
+void gl_restore_storage_destroy(qa_gl_renderer *);
 
 bool gl_api_load(qa_gl_renderer *renderer, qa_error *error);
 bool gl_programs_create(qa_gl_renderer *renderer, qa_error *error);

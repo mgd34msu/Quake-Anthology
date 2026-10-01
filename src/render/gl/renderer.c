@@ -1,4 +1,6 @@
 #include "internal.h"
+#include "../save_fields.h"
+#include "qa/render_gl_save.h"
 
 #include <limits.h>
 #include <stdio.h>
@@ -138,7 +140,12 @@ void qa_gl_destroy(qa_gl_renderer *renderer)
     if (renderer == NULL || renderer->closed) return;
     renderer->closed = true;
     qa_error ignored = {0};
-    if (!qa_display_make_current(renderer->options.display, &ignored)) {
+    if (!renderer->gl.DeleteTextures || !qa_display_make_current(renderer->options.display, &ignored)) {
+        /* The context is unavailable, so native objects retire with it. */
+        if (renderer->restore) {
+            gl_api native=renderer->gl; renderer->gl.DeleteTextures=NULL;
+            gl_restore_storage_destroy(renderer); renderer->gl=native;
+        }
         qa_scene_image_release(renderer->target);
         for (size_t unit = 0; unit < 2; ++unit)
             qa_scene_image_release(renderer->bound[unit]);
@@ -157,7 +164,8 @@ void qa_gl_destroy(qa_gl_renderer *renderer)
         free(renderer);
         return;
     }
-    gl_mesh_unbind(renderer);
+    gl_restore_storage_destroy(renderer);
+    if (!renderer->detached) gl_mesh_unbind(renderer);
     gl_opacity_destroy(renderer);
     gl_output_destroy(renderer);
     if (renderer->target_framebuffer != 0)
@@ -522,7 +530,7 @@ static bool select_draw_buffer(qa_gl_renderer *renderer,
     return gl_check(renderer, "OpenGL draw-buffer selection", error);
 }
 
-bool qa_gl_execute(qa_gl_renderer *renderer, const qa_scene_frame *frame,
+static bool gl_execute(qa_gl_renderer *renderer, const qa_scene_frame *frame,
                    qa_error *error)
 {
     if (renderer == NULL || renderer->closed || frame == NULL ||
@@ -614,10 +622,48 @@ bool qa_gl_execute(qa_gl_renderer *renderer, const qa_scene_frame *frame,
     }
     return true;
 }
+bool qa_gl_execute(qa_gl_renderer *renderer,const qa_scene_frame *frame,qa_error *error)
+{
+    if (!renderer || renderer->detached || renderer->executing || renderer->capturing || renderer->preparing) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL renderer is absent or executing"); return false;
+    }
+    renderer->executing=true; bool ok=gl_execute(renderer,frame,error);
+    renderer->executing=false; return ok;
+}
+bool qa_gl_checkpoint_resources(const qa_gl_renderer *renderer,qa_render_resource_visit_fn visit,void *context,qa_error *error)
+{
+    if (!renderer || !visit || renderer->closed || renderer->executing || renderer->capturing || renderer->preparing || renderer->opacity.active) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL resource observation requires its idle actual renderer owner"); return false;
+    }
+    size_t ordinal=0;
+    for (const gl_texture_entry *entry=renderer->textures;entry;entry=entry->next,++ordinal)
+        if (!visit(context,entry->image,NULL,ordinal,error)) return false;
+    for (size_t i=0;i<2;++i,++ordinal)
+        if (renderer->bound[i] && !visit(context,renderer->bound[i],NULL,ordinal,error)) return false;
+    if (renderer->target && !visit(context,renderer->target,NULL,ordinal,error)) return false;
+    ordinal=0;
+    for (const gl_mesh_entry *entry=renderer->meshes;entry;entry=entry->next,++ordinal)
+        if (!entry->geometry || (qa_scene_geometry_active(entry->geometry) &&
+            !visit(context,NULL,entry->geometry,ordinal,error))) return false;
+    return true;
+}
+bool qa_gl_checkpoint_meshes(const qa_gl_renderer *renderer,qa_gl_mesh_visit_fn visit,void *context,qa_error *error)
+{
+    if (!renderer || !visit || renderer->closed || renderer->executing || renderer->capturing || renderer->preparing || renderer->opacity.active) {
+        qa_error_set(error,QA_ERROR_ARGUMENT,0,"OpenGL mesh observation requires its idle actual cache owner"); return false;
+    }
+    size_t ordinal=0;
+    for (const gl_mesh_entry *entry=renderer->meshes;entry;entry=entry->next,++ordinal) {
+        if (!entry->geometry) { qa_error_set(error,QA_ERROR_FORMAT,0,"OpenGL cache row has no retained geometry descriptor"); return false; }
+        if (qa_scene_geometry_active(entry->geometry) &&
+            !visit(context,entry->identity,entry->revision,entry->geometry,ordinal,error)) return false;
+    }
+    return true;
+}
 
 bool qa_gl_finish(qa_gl_renderer *renderer, qa_error *error)
 {
-    if (renderer == NULL || renderer->closed ||
+    if (renderer == NULL || renderer->closed || renderer->detached ||
         !qa_display_make_current(renderer->options.display, error) ||
         !gl_output_resolve(renderer, error)) {
         if (renderer == NULL || renderer->closed)
@@ -631,7 +677,7 @@ bool qa_gl_finish(qa_gl_renderer *renderer, qa_error *error)
 
 bool qa_gl_set_gamma(qa_gl_renderer *renderer, float gamma, qa_error *error)
 {
-    if (renderer == NULL || renderer->closed ||
+    if (renderer == NULL || renderer->closed || renderer->detached ||
         !qa_display_make_current(renderer->options.display, error)) {
         if (renderer == NULL || renderer->closed)
             qa_error_set(error, QA_ERROR_ARGUMENT, 0,
@@ -656,7 +702,7 @@ static bool pack_state(qa_gl_renderer *renderer, GLint alignment,
 static bool capture(qa_gl_renderer *renderer, bool presented, qa_buffer *out,
                      uint32_t *out_width, uint32_t *out_height, qa_error *error)
 {
-    if (renderer == NULL || renderer->closed || out == NULL ||
+    if (renderer == NULL || renderer->closed || renderer->detached || out == NULL ||
         renderer->opacity.active || renderer->target != NULL ||
         !qa_display_make_current(renderer->options.display, error) ||
         (presented ? !renderer->presented : !gl_output_resolve(renderer, error))) {
@@ -726,7 +772,7 @@ bool qa_gl_read_depth(qa_gl_renderer *renderer, uint32_t x, uint32_t y,
                       float *out, qa_error *error)
 {
     uint32_t width = 0, height = 0;
-    if (renderer == NULL || renderer->closed || out == NULL ||
+    if (renderer == NULL || renderer->closed || renderer->detached || out == NULL ||
         renderer->target != NULL || renderer->opacity.active ||
         !qa_display_make_current(renderer->options.display, error) ||
         !gl_dimensions(renderer, &width, &height, error) || x >= width ||
@@ -751,7 +797,7 @@ bool qa_gl_capture_depth_image(qa_gl_renderer *renderer,
                                uint32_t *out_width, uint32_t *out_height,
                                qa_error *error)
 {
-    if (renderer == NULL || renderer->closed || image == NULL || out == NULL ||
+    if (renderer == NULL || renderer->closed || renderer->detached || image == NULL || out == NULL ||
         image->kind != QA_SCENE_DEPTH32F ||
         !qa_display_make_current(renderer->options.display, error)) {
         if (renderer == NULL || renderer->closed || image == NULL || out == NULL ||
@@ -793,7 +839,7 @@ bool qa_gl_capture_depth_image(qa_gl_renderer *renderer,
 bool qa_gl_set_overdraw(qa_gl_renderer *renderer, bool enabled,
                         qa_error *error)
 {
-    if (renderer == NULL || renderer->closed ||
+    if (renderer == NULL || renderer->closed || renderer->detached ||
         (enabled && renderer->capabilities.stencil_bits == 0)) {
         qa_error_set(error, QA_ERROR_ARGUMENT, 0,
                      "OpenGL overdraw requires stencil storage");
@@ -807,7 +853,7 @@ bool qa_gl_read_overdraw(qa_gl_renderer *renderer, uint8_t *destination,
                          size_t bytes, qa_error *error)
 {
     uint32_t width, height;
-    if (renderer == NULL || renderer->closed || destination == NULL ||
+    if (renderer == NULL || renderer->closed || renderer->detached || destination == NULL ||
         renderer->capabilities.stencil_bits == 0 || renderer->target != NULL ||
         renderer->opacity.active ||
         !qa_display_make_current(renderer->options.display, error) ||

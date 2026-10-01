@@ -1,4 +1,6 @@
 #include "qa/display.h"
+#include "qa/display_save.h"
+#include "qa/source_save.h"
 
 #include <SDL.h>
 #include <SDL_opengl.h>
@@ -9,6 +11,14 @@
 #include <string.h>
 #include <strings.h>
 
+typedef struct display_native_lease {
+    size_t references;
+    qa_display_backend backend;
+    SDL_Window *window;
+    SDL_Renderer *renderer;
+    SDL_GLContext context;
+    bool library_loaded;
+} display_native_lease;
 struct qa_display {
     qa_display_backend backend;
     SDL_Window *window;
@@ -25,6 +35,8 @@ struct qa_display {
         } gl;
     } native;
     char fullscreen_failure[256];
+    bool native_borrowed, capturing;
+    display_native_lease *lease;
 };
 
 static bool display_error(qa_error *error, qa_status status, const char *operation)
@@ -467,6 +479,17 @@ qa_display *qa_display_create(const qa_display_options *input, qa_error *error)
     }
     ok = true;
 done:
+    if (ok) {
+        display->lease=calloc(1,sizeof(*display->lease));
+        if (!display->lease) {
+            qa_error_set(error,QA_ERROR_MEMORY,0,"Allocating the native display lifetime lease"); ok=false;
+        } else {
+            display->lease->references=1; display->lease->backend=display->backend;
+            display->lease->window=display->window;
+            if (display->backend==QA_DISPLAY_CPU) display->lease->renderer=display->native.cpu.renderer;
+            else { display->lease->context=display->native.gl.context; display->lease->library_loaded=display->native.gl.library_loaded; }
+        }
+    }
     if (!ok) {
         qa_display_destroy(display);
         return NULL;
@@ -477,17 +500,30 @@ done:
 void qa_display_destroy(qa_display *display)
 {
     if (display == NULL) return;
+    if (display->lease) {
+        if (display->backend==QA_DISPLAY_CPU && display->native.cpu.texture)
+            SDL_DestroyTexture(display->native.cpu.texture);
+        display_native_lease *lease=display->lease;
+        if (--lease->references==0) {
+            if (lease->backend==QA_DISPLAY_CPU && lease->renderer) SDL_DestroyRenderer(lease->renderer);
+            if (lease->backend==QA_DISPLAY_OPENGL && lease->context) SDL_GL_DeleteContext(lease->context);
+            if (lease->window) SDL_DestroyWindow(lease->window);
+            if (lease->library_loaded) SDL_GL_UnloadLibrary();
+            free(lease);
+        }
+        free(display); return;
+    }
     if (display->backend == QA_DISPLAY_CPU) {
         if (display->native.cpu.texture != NULL)
             SDL_DestroyTexture(display->native.cpu.texture);
-        if (display->native.cpu.renderer != NULL)
+        if (!display->native_borrowed && display->native.cpu.renderer != NULL)
             SDL_DestroyRenderer(display->native.cpu.renderer);
     } else {
-        if (display->native.gl.context != NULL)
+        if (!display->native_borrowed && display->native.gl.context != NULL)
             SDL_GL_DeleteContext(display->native.gl.context);
     }
-    if (display->window != NULL) SDL_DestroyWindow(display->window);
-    if (display->backend == QA_DISPLAY_OPENGL &&
+    if (!display->native_borrowed && display->window != NULL) SDL_DestroyWindow(display->window);
+    if (!display->native_borrowed && display->backend == QA_DISPLAY_OPENGL &&
         display->native.gl.library_loaded) SDL_GL_UnloadLibrary();
     free(display);
 }
@@ -774,3 +810,187 @@ bool qa_display_capture_cpu(qa_display *display, qa_buffer *out,
     if (height != NULL) *height = (uint32_t)h;
     return true;
 }
+typedef struct display_saved {
+    qa_display_info info;
+    int32_t x,y,swap_interval;
+    uint32_t texture_width,texture_height;
+    char *title;
+    char fullscreen_failure[256];
+    qa_buffer pixels;
+    bool texture,frame;
+} display_saved;
+struct qa_display_restore_guard {
+    qa_display *active,*candidate;
+    SDL_Window *window;
+    SDL_GLContext context;
+    SDL_Renderer *renderer;
+    display_saved saved;
+    bool prepared,transferred;
+};
+static bool display_save_error(qa_error *error,qa_status status,const char *message)
+{ qa_error_set(error,status,0,"%s",message); return false; }
+static void display_saved_free(display_saved *saved)
+{ free(saved->title); qa_buffer_free(&saved->pixels); }
+static bool display_save_fields(qa_source_save_io *io,display_saved *saved)
+{
+    bool reading=io->direction==QA_SOURCE_SAVE_READ;
+    uint8_t magic[4]={'Q','D','S','P'}; uint32_t version=1,backend=saved->info.backend,fullscreen=saved->info.fullscreen;
+    int32_t index=saved->info.display_index,refresh=saved->info.refresh_rate;
+    if (!qa_source_save_bytes(io,magic,4) || memcmp(magic,"QDSP",4) || !qa_source_save_u32(io,&version) || version!=1 ||
+        !qa_source_save_u32(io,&backend) || backend>QA_DISPLAY_OPENGL ||
+        !qa_source_save_u32(io,&fullscreen) || fullscreen>QA_DISPLAY_EXCLUSIVE ||
+        !qa_source_save_u32(io,&saved->info.logical_width) || !qa_source_save_u32(io,&saved->info.logical_height) ||
+        !qa_source_save_u32(io,&saved->info.drawable_width) || !qa_source_save_u32(io,&saved->info.drawable_height) ||
+        !valid_dimensions(saved->info.logical_width,saved->info.logical_height,io->error) ||
+        !valid_dimensions(saved->info.drawable_width,saved->info.drawable_height,io->error) ||
+        !qa_source_save_i32(io,&index) || index<0 || !qa_source_save_i32(io,&refresh) || refresh<0 ||
+        !qa_source_save_bool(io,&saved->info.visible) || !qa_source_save_bool(io,&saved->info.focused) ||
+        !qa_source_save_bool(io,&saved->info.minimized) || !qa_source_save_bool(io,&saved->info.maximized) ||
+        !qa_source_save_i32(io,&saved->x) || !qa_source_save_i32(io,&saved->y) ||
+        !qa_source_save_i32(io,&saved->swap_interval) || saved->swap_interval < -1 || saved->swap_interval>1) return false;
+    saved->info.backend=(qa_display_backend)backend; saved->info.fullscreen=(qa_display_fullscreen)fullscreen;
+    saved->info.display_index=index; saved->info.refresh_rate=refresh;
+    size_t title=reading?0:strlen(saved->title);
+    if (!qa_source_save_count(io,&title,reading?io->input.size-io->offset:SIZE_MAX-1) || title==SIZE_MAX) return false;
+    if (reading) {
+        saved->title=malloc(title+1);
+        if (!saved->title) return display_save_error(io->error,QA_ERROR_MEMORY,"Restoring display title");
+    }
+    if (!qa_source_save_bytes(io,saved->title,title) || memchr(saved->title,0,title) ||
+        !qa_source_save_bytes(io,saved->fullscreen_failure,sizeof(saved->fullscreen_failure)) ||
+        !memchr(saved->fullscreen_failure,0,sizeof(saved->fullscreen_failure)) ||
+        !qa_source_save_bool(io,&saved->texture) || !qa_source_save_bool(io,&saved->frame) ||
+        !qa_source_save_u32(io,&saved->texture_width) || !qa_source_save_u32(io,&saved->texture_height)) return false;
+    if (reading) saved->title[title]=0;
+    if (backend==QA_DISPLAY_OPENGL) return !saved->texture && !saved->frame && !saved->texture_width && !saved->texture_height;
+    if (saved->frame && !saved->texture) return false;
+    if (!saved->texture) return !saved->texture_width && !saved->texture_height;
+    if (!valid_dimensions(saved->texture_width,saved->texture_height,io->error)) return false;
+    if (!saved->frame) return true;
+    if (saved->texture_width!=saved->info.drawable_width || saved->texture_height!=saved->info.drawable_height ||
+        (size_t)saved->texture_width>SIZE_MAX/saved->texture_height/4) return false;
+    size_t size=(size_t)saved->texture_width*saved->texture_height*4;
+    if (reading) {
+        saved->pixels.data=malloc(size); saved->pixels.size=size;
+        if (!saved->pixels.data) return display_save_error(io->error,QA_ERROR_MEMORY,"Restoring display's genuine presented texture pixels");
+    }
+    return saved->pixels.size==size && qa_source_save_bytes(io,saved->pixels.data,size);
+}
+static bool display_observe(qa_display *display,display_saved *saved,bool pixels,qa_error *error)
+{
+    if (!display || !display->window || display->capturing || !qa_display_info_get(display,&saved->info,error)) return false;
+    int x=0,y=0; SDL_GetWindowPosition(display->window,&x,&y); saved->x=x; saved->y=y;
+    const char *title=SDL_GetWindowTitle(display->window); size_t size=strlen(title);
+    if (size==SIZE_MAX || !(saved->title=malloc(size+1))) return display_save_error(error,QA_ERROR_MEMORY,"Retaining display title");
+    memcpy(saved->title,title,size+1); memcpy(saved->fullscreen_failure,display->fullscreen_failure,sizeof(saved->fullscreen_failure));
+    if (display->backend==QA_DISPLAY_OPENGL) return qa_display_swap_interval(display,&saved->swap_interval,error);
+    saved->texture=display->native.cpu.texture!=NULL; saved->frame=display->native.cpu.has_frame;
+    saved->texture_width=display->native.cpu.width; saved->texture_height=display->native.cpu.height;
+    if (pixels && saved->frame) return qa_display_capture_cpu(display,&saved->pixels,NULL,NULL,error);
+    return true;
+}
+static bool display_current_equal(const display_saved *a,const display_saved *b)
+{
+    return a->info.backend==b->info.backend && a->info.logical_width==b->info.logical_width &&
+        a->info.logical_height==b->info.logical_height && a->info.drawable_width==b->info.drawable_width &&
+        a->info.drawable_height==b->info.drawable_height && a->info.display_index==b->info.display_index &&
+        a->info.refresh_rate==b->info.refresh_rate && a->info.fullscreen==b->info.fullscreen &&
+        a->info.visible==b->info.visible && a->info.focused==b->info.focused && a->info.minimized==b->info.minimized &&
+        a->info.maximized==b->info.maximized && a->x==b->x && a->y==b->y && a->swap_interval==b->swap_interval &&
+        !strcmp(a->title,b->title);
+}
+bool qa_display_checkpoint(qa_display *display,qa_buffer *out,qa_error *error)
+{
+    if (!out || out->data || out->size) return display_save_error(error,QA_ERROR_ARGUMENT,"Display checkpoint output must be empty");
+    display_saved saved={0}; qa_source_save_io io={0};
+    bool ok=display_observe(display,&saved,true,error);
+    if (ok) {
+        display->capturing=true;
+        ok=qa_source_save_writer(&io,NULL,error) && display_save_fields(&io,&saved) && qa_source_save_finish(&io,out);
+        display->capturing=false;
+    }
+    qa_source_save_dispose(&io); display_saved_free(&saved);
+    if (!ok && (!error || error->code==QA_OK)) display_save_error(error,QA_ERROR_FORMAT,"Invalid genuine display continuation");
+    return ok;
+}
+bool qa_display_restore(qa_bytes bytes,const qa_display *active,qa_display **out,qa_display_restore_guard **guard_out,qa_error *error)
+{
+    if (!active || active->native_borrowed || !active->lease || active->lease->references==SIZE_MAX || !out || *out || !guard_out || *guard_out)
+        return display_save_error(error,QA_ERROR_ARGUMENT,"Display restore requires separate active and detached native owners");
+    qa_display_restore_guard *guard=calloc(1,sizeof(*guard)); qa_display *candidate=calloc(1,sizeof(*candidate));
+    if (!guard || !candidate) { free(guard); free(candidate); return display_save_error(error,QA_ERROR_MEMORY,"Allocating detached display continuation"); }
+    qa_source_save_io io={0}; display_saved current={0};
+    bool ok=qa_source_save_reader(&io,NULL,bytes,error) && display_save_fields(&io,&guard->saved) && qa_source_save_finish(&io,NULL) &&
+        display_observe((qa_display *)active,&current,false,error) && display_current_equal(&guard->saved,&current);
+    if (ok) {
+        candidate->backend=active->backend; candidate->window=active->window; candidate->native_borrowed=true;
+        candidate->lease=active->lease; ++candidate->lease->references;
+        memcpy(candidate->fullscreen_failure,guard->saved.fullscreen_failure,sizeof(candidate->fullscreen_failure));
+        if (active->backend==QA_DISPLAY_CPU) candidate->native.cpu.renderer=active->native.cpu.renderer;
+        else candidate->native.gl=active->native.gl;
+        guard->active=(qa_display *)active; guard->candidate=candidate; guard->window=active->window;
+        if (active->backend==QA_DISPLAY_CPU) guard->renderer=active->native.cpu.renderer;
+        else guard->context=active->native.gl.context;
+        *out=candidate; *guard_out=guard; candidate=NULL; guard=NULL;
+    }
+    qa_source_save_dispose(&io); display_saved_free(&current); qa_display_destroy(candidate);
+    qa_display_restore_guard_destroy(guard);
+    if (!ok && (!error || error->code==QA_OK)) display_save_error(error,QA_ERROR_FORMAT,"Saved display differs from its current qualified native window");
+    return ok;
+}
+static bool display_guard_ready(const qa_display_restore_guard *guard,qa_error *error)
+{
+    if (!guard || guard->transferred || !guard->active || !guard->candidate || guard->active==guard->candidate ||
+        guard->active->native_borrowed || !guard->candidate->native_borrowed || guard->active->capturing || guard->candidate->capturing ||
+        guard->active->window!=guard->window || guard->candidate->window!=guard->window ||
+        !guard->active->lease || guard->active->lease!=guard->candidate->lease ||
+        guard->active->backend!=guard->candidate->backend ||
+        (guard->active->backend==QA_DISPLAY_CPU ? guard->active->native.cpu.renderer!=guard->renderer ||
+            guard->candidate->native.cpu.renderer!=guard->renderer : guard->active->native.gl.context!=guard->context ||
+            guard->candidate->native.gl.context!=guard->context))
+        return display_save_error(error,QA_ERROR_ARGUMENT,"Display handoff lost its genuine native window/context owner");
+    display_saved current={0}; bool ok=display_observe(guard->active,&current,false,error) && display_current_equal(&guard->saved,&current);
+    display_saved_free(&current);
+    if (!ok && (!error || error->code==QA_OK)) display_save_error(error,QA_ERROR_ARGUMENT,"Display native state changed after saved-cut qualification");
+    return ok;
+}
+bool qa_display_handoff_prepare(qa_display_restore_guard *guard,qa_error *error)
+{
+    if (!display_guard_ready(guard,error)) return false;
+    if (guard->prepared) return true;
+    if (guard->candidate->backend==QA_DISPLAY_CPU && guard->saved.texture) {
+        if (!resize_cpu_texture(guard->candidate,guard->saved.texture_width,guard->saved.texture_height,error)) return false;
+        if (guard->saved.frame && (SDL_UpdateTexture(guard->candidate->native.cpu.texture,NULL,guard->saved.pixels.data,
+                (int)(guard->saved.texture_width*4))<0 ||
+            SDL_RenderCopy(guard->renderer,guard->candidate->native.cpu.texture,NULL,NULL)<0))
+            return display_error(error,QA_ERROR_IO,"Preparing saved display presentation texture");
+        guard->candidate->native.cpu.has_frame=guard->saved.frame;
+    }
+    guard->prepared=true; return true;
+}
+bool qa_display_handoff_ready(const qa_display_restore_guard *guard,qa_error *error)
+{
+    if (!display_guard_ready(guard,error)) return false;
+    if (!guard->prepared) return display_save_error(error,QA_ERROR_ARGUMENT,"Display publication requires native presentation preparation");
+    return true;
+}
+bool qa_display_restore_checkpoint(const qa_display_restore_guard *guard,qa_buffer *out,qa_error *error)
+{
+    if (!out || out->data || out->size || !display_guard_ready(guard,error)) return false;
+    display_saved saved=guard->saved; saved.pixels=(qa_buffer){0}; qa_source_save_io io={0};
+    if (guard->prepared && saved.frame) {
+        if (!qa_display_capture_cpu(guard->candidate,&saved.pixels,NULL,NULL,error)) return false;
+    } else saved.pixels=guard->saved.pixels;
+    bool ok=qa_source_save_writer(&io,NULL,error) && display_save_fields(&io,&saved) && qa_source_save_finish(&io,out);
+    qa_source_save_dispose(&io);
+    if (guard->prepared && saved.frame) qa_buffer_free(&saved.pixels);
+    return ok;
+}
+void qa_display_handoff(qa_display_restore_guard *guard)
+{
+    guard->candidate->native_borrowed=false; guard->active->native_borrowed=true;
+    if (guard->candidate->backend==QA_DISPLAY_CPU && guard->saved.frame) SDL_RenderPresent(guard->renderer);
+    guard->transferred=true;
+}
+void qa_display_restore_guard_destroy(qa_display_restore_guard *guard)
+{ if (guard) { display_saved_free(&guard->saved); free(guard); } }

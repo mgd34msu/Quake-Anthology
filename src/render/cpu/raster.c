@@ -3,9 +3,6 @@
 
 /* Clip attributes remain unpacked only in reusable transform storage and the
  * bounded stack polygon. Texture versions and submitted meshes stay shared. */
-typedef struct cpu_vertex {
-  double clip[4], color[4], uv[2][2], world[3], normal[3];
-} cpu_vertex;
 typedef struct screen_vertex {
   double x, y, z, q, scale;
   const cpu_vertex *vertex;

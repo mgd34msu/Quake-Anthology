@@ -653,11 +653,11 @@ void gl_opacity_abort(qa_gl_renderer *renderer)
 void gl_opacity_destroy(qa_gl_renderer *renderer)
 {
     gl_opacity_target *opacity = &renderer->opacity;
-    if (opacity->color[0] != 0)
+    if (opacity->color[0] != 0 || opacity->color[1] != 0)
         renderer->gl.DeleteTextures(2, opacity->color);
     if (opacity->depth_stencil != 0)
         renderer->gl.DeleteRenderbuffers(1, &opacity->depth_stencil);
-    if (opacity->framebuffer[0] != 0)
+    if (opacity->framebuffer[0] != 0 || opacity->framebuffer[1] != 0)
         renderer->gl.DeleteFramebuffers(2, opacity->framebuffer);
     memset(opacity, 0, sizeof(*opacity));
 }

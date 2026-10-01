@@ -437,7 +437,7 @@ bool gl_programs_create(qa_gl_renderer *renderer, qa_error *error)
 void gl_programs_destroy(qa_gl_renderer *renderer)
 {
     gl_programs *p = &renderer->programs;
-    renderer->gl.UseProgram(0);
+    if (!renderer->detached) renderer->gl.UseProgram(0);
     if (p->stage != 0) renderer->gl.DeleteProgram(p->stage);
     if (p->opacity != 0) renderer->gl.DeleteProgram(p->opacity);
     if (p->gamma != 0) renderer->gl.DeleteProgram(p->gamma);
