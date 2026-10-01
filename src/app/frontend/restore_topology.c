@@ -2,6 +2,8 @@
 #include "save_private.h"
 #include "qa/persistence_content.h"
 #include "qa/font_save.h"
+#include "qa/material_library_save.h"
+#include "qa/scene_resource_save.h"
 
 struct frontend_restore_topology {
     uint32_t seats, width, height;
@@ -169,11 +171,11 @@ bool frontend_topology_prepare(qa_frontend *f, const frontend_restore_topology *
     f->next_audio_id = p->next_audio_id; f->silent_audio_remainder = p->silent_audio_remainder;
     if ((p->ui_view && !qa_application_content_claim_view(graph, p->ui_view, &f->ui_mounts, error)) ||
         (p->world_view && !qa_application_content_claim_view(graph, p->world_view, &f->mounts, error))) return false;
-    if (p->ui_images && !(f->ui_images = qa_scene_resources_create(f->ui_mounts, error))) return false;
+    if (p->ui_images && !(f->ui_images = qa_scene_resources_create_detached(f->ui_mounts, error))) return false;
     if (p->fonts && !(f->fonts = qa_font_library_create(f->ui_mounts, f->ui_images, error))) return false;
     if (p->order && !(f->order = qa_material_order_create(error))) return false;
-    if (p->images && !(f->images = qa_scene_resources_create(f->mounts, error))) return false;
-    if (p->materials && !(f->materials = qa_material_library_create(f->images, f->order, error))) return false;
+    if (p->images && !(f->images = qa_scene_resources_create_detached(f->mounts, error))) return false;
+    if (p->materials && !(f->materials = qa_material_library_create_detached(f->images, error))) return false;
     if (p->sounds && !qa_audio_bank_create(f->mounts, &f->sounds, error)) return false;
     if (p->audio && !qa_audio_engine_create(&(qa_audio_engine_options){.sample_rate = 48000, .output_channels = 2,
         .mix_frames = 1024, .initial_voices = 128}, &f->audio, error)) return false;

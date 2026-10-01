@@ -46,6 +46,10 @@ bool frontend_scene_namespace_capture_renderer_geometry(frontend_scene_namespace
     uint64_t owner, size_t ordinal, const qa_scene_geometry *, qa_error *);
 bool frontend_scene_namespace_qualify_renderer_geometry(frontend_scene_namespace *,
     uint64_t owner, size_t ordinal, const qa_scene_geometry *, qa_error *);
+bool frontend_scene_namespace_capture_renderer_mesh(frontend_scene_namespace *,
+    uint64_t owner, size_t ordinal, uint64_t identity, qa_error *);
+bool frontend_scene_namespace_qualify_renderer_mesh(frontend_scene_namespace *,
+    uint64_t owner, size_t ordinal, uint64_t identity, qa_error *);
 bool frontend_scene_namespace_seal(frontend_scene_namespace *, qa_error *);
 bool frontend_scene_namespace_checkpoint(const frontend_scene_namespace *, qa_buffer *, qa_error *);
 /* A final fresh capture follows the same real physical owner rows. Qualify

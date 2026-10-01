@@ -267,6 +267,15 @@ bool frontend_scene_namespace_capture_renderer_geometry(frontend_scene_namespace
         return fail(error,QA_ERROR_ARGUMENT,"Renderer geometry capture requires its actual physical owner row");
     return geometry_add(space,SCENE_RENDERER_OWNER,owner,0,ordinal,geometry,error);
 }
+bool frontend_scene_namespace_capture_renderer_mesh(frontend_scene_namespace *space,uint64_t owner,
+    size_t ordinal,uint64_t identity,qa_error *error)
+{
+    if (!open(space,false,error) || !owner || !identity)
+        return fail(error,QA_ERROR_ARGUMENT,"Renderer mesh capture requires its genuine live cache row");
+    for (size_t i=0;i<space->count;++i)
+        if (space->rows[i].kind==SCENE_MESH && space->rows[i].installed==identity) return true;
+    return number_add(space,SCENE_MESH,SCENE_RENDERER_OWNER,owner,0,ordinal,identity,error);
+}
 static bool pointer_encode(frontend_scene_namespace *space, scene_row_kind kind,
     const void *pointer, uint64_t *out, qa_error *error)
 {
@@ -440,6 +449,16 @@ bool frontend_scene_namespace_qualify_renderer_geometry(frontend_scene_namespace
         return fail(error,QA_ERROR_ARGUMENT,"Renderer geometry qualification requires its actual decoded holder row");
     return graph_geometry(space,false,SCENE_RENDERER_OWNER,owner,0,ordinal,geometry,error);
 }
+bool frontend_scene_namespace_qualify_renderer_mesh(frontend_scene_namespace *space,uint64_t owner,
+    size_t ordinal,uint64_t identity,qa_error *error)
+{
+    if (!open(space,true,error) || !owner || !identity)
+        return fail(error,QA_ERROR_ARGUMENT,"Renderer mesh qualification requires its actual decoded cache row");
+    scene_row *row=position(space,SCENE_MESH,SCENE_RENDERER_OWNER,owner,0,ordinal);
+    if (row) return number_qualify(space,SCENE_MESH,SCENE_RENDERER_OWNER,owner,0,ordinal,identity,error);
+    uint64_t key=0;
+    return frontend_scene_mesh_identity_encode(space,identity,&key,error);
+}
 static bool world_rows(frontend_scene_namespace *space, uint64_t owner, const qa_scene_world *world,
     bool capture, qa_error *error)
 {
@@ -567,8 +586,9 @@ static bool row_valid(const scene_row *row)
     case SCENE_WORLD: return row->origin == SCENE_WORLD_OWNER && row->owner && !row->node && !row->ordinal && row->saved;
     case SCENE_MODEL: return (row->origin == SCENE_WORLD_OWNER || row->origin == SCENE_MODEL_OWNER) && row->owner && row->saved &&
         (row->origin == SCENE_WORLD_OWNER ? !row->node : !row->ordinal);
-    case SCENE_MESH: return (row->origin == SCENE_WORLD_OWNER || row->origin == SCENE_MODEL_OWNER) && row->owner && row->saved &&
-        (row->origin != SCENE_WORLD_OWNER || !row->node);
+    case SCENE_MESH: return (row->origin == SCENE_WORLD_OWNER || row->origin == SCENE_MODEL_OWNER ||
+        row->origin == SCENE_RENDERER_OWNER) && row->owner && row->saved &&
+        (row->origin == SCENE_MODEL_OWNER || !row->node);
     case SCENE_SHADOW: return row->origin == SCENE_MODEL_OWNER && row->owner && row->saved;
     case SCENE_LIGHT: return row->origin == SCENE_LIGHT_OWNER && row->owner && !row->node && row->saved;
     case SCENE_STATIC_AUDIO: return row->origin == SCENE_STATIC_AUDIO_OWNER && row->owner && !row->node && row->saved;
@@ -578,10 +598,10 @@ static bool row_valid(const scene_row *row)
 static bool prefix(qa_source_save_io *io, frontend_scene_namespace *space, const qa_scene_image_set *images)
 {
     bool reading = io->direction == QA_SOURCE_SAVE_READ;
-    uint8_t magic[4] = {'Q','F','S','I'}; uint32_t version = 3;
+    uint8_t magic[4] = {'Q','F','S','I'}; uint32_t version = 4;
     size_t count = space->count, image_count = space->image_count;
     if (!qa_source_save_bytes(io, magic, 4) || memcmp(magic, "QFSI", 4) ||
-        !qa_source_save_u32(io, &version) || version != 3 ||
+        !qa_source_save_u32(io, &version) || version != 4 ||
         !qa_source_save_count(io, &count, reading ? io->input.size / 48 : SIZE_MAX / sizeof(scene_row)) ||
         !qa_source_save_count(io, &image_count, count) || (reading && image_count != qa_scene_image_set_count(images))) return false;
     if (reading) { space->image_count = image_count; space->images_captured = true; }
