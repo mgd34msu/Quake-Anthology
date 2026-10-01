@@ -4,6 +4,8 @@
 #include "tools_restore.h"
 #include "qa/frontend_save.h"
 #include "qa/application_save_policy.h"
+#include "qa/application_q1_save.h"
+#include "qa/q1_save_product.h"
 #include "qa/recovery.h"
 #include <stdio.h>
 
@@ -18,7 +20,7 @@ struct frontend_save_commands {
     qa_fs_root *root;
     uint64_t next_nonce;
     save_command_request request;
-    qa_frontend *retained;
+    qa_frontend *retained[3];
     bool pending, draining;
 };
 
@@ -35,6 +37,24 @@ static void request_free(save_command_request *request)
     free(request->name); free(request->product); free(request->script);
     *request = (save_command_request){0};
 }
+static bool cleanup_pending(const frontend_save_commands *owner)
+{
+    return owner->retained[0] || owner->retained[1] || owner->retained[2];
+}
+static bool cleanup_retained(frontend_save_commands *owner, qa_error *error)
+{
+    bool draining = owner->draining;
+    owner->draining = true;
+    for (size_t i = 0; i < 3; ++i) {
+        if (owner->retained[i] && !qa_frontend_destroy(owner->retained[i], error)) {
+            owner->draining = draining;
+            return false;
+        }
+        owner->retained[i] = NULL;
+    }
+    owner->draining = draining;
+    return true;
+}
 bool frontend_save_commands_create(qa_frontend *f, qa_error *error)
 {
     const char *path = frontend_tools_output_root(f);
@@ -48,9 +68,13 @@ bool frontend_save_commands_create(qa_frontend *f, qa_error *error)
 }
 bool frontend_save_commands_idle(const qa_frontend *f)
 { return f && (!f->save_commands || !f->save_commands->draining); }
+qa_fs_root *frontend_save_commands_root(const qa_frontend *f)
+{ return f && f->save_commands ? f->save_commands->root : NULL; }
+bool frontend_save_commands_pending(const qa_frontend *f)
+{ return f && f->save_commands && (f->save_commands->pending || f->save_commands->draining || cleanup_pending(f->save_commands)); }
 bool frontend_save_commands_capture_ready(const qa_frontend *f)
 {
-    return f && f->save_commands && !f->save_commands->retained
+    return f && f->save_commands && !cleanup_pending(f->save_commands)
         && (!f->save_commands->draining || !f->save_commands->pending);
 }
 bool frontend_save_commands_destroy(qa_frontend *f, qa_error *error)
@@ -59,8 +83,7 @@ bool frontend_save_commands_destroy(qa_frontend *f, qa_error *error)
     frontend_save_commands *owner = f->save_commands;
     if (owner->draining)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Save command is using its frontend owner");
-    if (owner->retained && !qa_frontend_destroy(owner->retained, error)) return false;
-    owner->retained = NULL;
+    if (!cleanup_retained(owner, error)) return false;
     request_free(&owner->request); qa_fs_root_close(owner->root);
     free(owner); f->save_commands = NULL; return true;
 }
@@ -134,6 +157,13 @@ static char *slot_name(frontend_save_commands *owner, const char *input, qa_erro
     if (!qa_save_slot_name(path, error)) { free(path); return NULL; }
     return path;
 }
+char *frontend_save_commands_slot_path(const qa_frontend *f, const char *name, qa_error *error)
+{
+    if (!f || !f->save_commands || !name || !*name) {
+        frontend_fail(error, QA_ERROR_ARGUMENT, "Save slot requires its actual directory and name"); return NULL;
+    }
+    return slot_name(f->save_commands, name, error);
+}
 bool frontend_save_commands_queue(qa_frontend *f, const qa_command_invocation *command, qa_error *error)
 {
     if (!f || !f->application || !f->save_commands || !command ||
@@ -142,7 +172,7 @@ bool frontend_save_commands_queue(qa_frontend *f, const qa_command_invocation *c
         (command->argc == 3 && (!command->argv[2] || !*command->argv[2])))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Usage: save <name or path> [shared|v5|v6], load <name or path> [source-product]");
     frontend_save_commands *owner = f->save_commands;
-    if (owner->pending || owner->draining || owner->retained)
+    if (owner->pending || owner->draining || cleanup_pending(owner))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Another save operation is in progress");
     save_command_request request = {0};
     request.load = !strcmp(command->argv[0], "load");
@@ -244,6 +274,38 @@ bool frontend_save_commands_restore(qa_frontend *f, qa_bytes bytes, qa_error *er
     if (!ok) { (void)frontend_save_commands_destroy(f, NULL); return false; }
     return true;
 }
+static bool restore_saved(qa_frontend **slot, frontend_save_commands *owner,
+    const save_command_request *request, qa_save_image **image, qa_q1_save_data **source,
+    qa_frontend **displaced, qa_frontend **retained_source, qa_frontend **retained_candidate,
+    qa_error *error)
+{
+    if (!qa_saved_game_read(owner->root, request->name, image, source, error)) return false;
+    qa_frontend *f = *slot;
+    if (*image) return qa_frontend_persistence_restore(slot, f->options.persistence_services,
+        *image, displaced, retained_candidate, error);
+    char *path = NULL; const qa_product *product = NULL;
+    bool ok = qa_fs_root_join(owner->root, request->name, &path, error) &&
+        qa_q1_save_select_product(qa_application_catalog(f->application), *source, path,
+            request->product, &product, error);
+    free(path);
+    return ok && qa_frontend_q1_save_restore(slot, f->options.persistence_services, *source,
+        product->key, displaced, retained_source, retained_candidate, error);
+}
+static bool write_original(qa_frontend *f, frontend_save_commands *owner,
+    const save_command_request *request, uint64_t nonce, qa_q1_save_data **source, qa_error *error)
+{
+    const char *leaf = strrchr(request->name, '/');
+    leaf = leaf ? leaf + 1 : request->name;
+    char *comment = copy_text(leaf, error);
+    if (!comment) return false;
+    size_t length = strlen(comment);
+    if (length >= 4 && !strcmp(comment + length - 4, ".sav")) comment[length - 4] = 0;
+    bool ok = qa_application_q1_save_capture(f->application,
+        request->format == SAVE_Q1_V5 ? 5 : 6, comment, source, error) &&
+        qa_q1_save_write(owner->root, request->name, *source, nonce, error);
+    free(comment);
+    return ok;
+}
 bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
 {
     if (!slot || !*slot || (*slot)->stepping || (*slot)->preparing)
@@ -252,47 +314,46 @@ bool frontend_save_commands_drain(qa_frontend **slot, qa_error *error)
     frontend_save_commands *owner = f->save_commands;
     if (!owner) return frontend_fail(error, QA_ERROR_ARGUMENT, "Frontend save command owner is absent");
     if (owner->draining) return frontend_fail(error, QA_ERROR_ARGUMENT, "Save command reentry");
-    if (owner->retained) {
-        qa_error cleanup = {0};
-        if (!qa_frontend_destroy(owner->retained, &cleanup)) return true;
-        owner->retained = NULL;
-    }
+    qa_error cleanup = {0};
+    if (!cleanup_retained(owner, &cleanup)) return true;
     if (!owner->pending) return true;
     save_command_request request = owner->request;
     owner->request = (save_command_request){0}; owner->pending = false; owner->draining = true;
     qa_save_image *image = NULL;
-    qa_frontend *displaced = NULL, *retained = NULL;
+    qa_q1_save_data *source = NULL;
+    qa_frontend *displaced = NULL, *retained_source = NULL, *retained_candidate = NULL;
     qa_error local = {0};
     bool ok = qa_application_command_context_active(f->application, &request.context);
     if (!ok) frontend_fail(&local, QA_ERROR_ARGUMENT, "Save command belongs to a retired world");
     if (ok) ok = qa_application_save_policy(f->application, frontend_network_save_authority(f),
         f->options.dedicated, request.load, QA_SAVE_MANUAL, &local);
-    if (ok && !request.load && request.format != SAVE_SHARED)
-        ok = frontend_fail(&local, QA_ERROR_UNSUPPORTED, "Original Quake save export requires its source field codec");
     if (ok && request.load)
-        ok = qa_save_read(owner->root, request.name, &image, &local)
-            && qa_frontend_persistence_restore(slot, f->options.persistence_services, image, &displaced, &retained, &local);
+        ok = restore_saved(slot, owner, &request, &image, &source, &displaced,
+            &retained_source, &retained_candidate, &local);
     else if (ok) {
         if (owner->next_nonce == UINT64_MAX) ok = frontend_fail(&local, QA_ERROR_ARGUMENT, "Save write sequence exhausted");
         else {
             uint64_t nonce = owner->next_nonce++;
-            ok = qa_frontend_persistence_capture(f, f->options.persistence_services, QA_SAVE_MANUAL, &image, &local)
-                && qa_save_write(owner->root, request.name, image, nonce, &local);
+            if (request.format == SAVE_SHARED)
+                ok = qa_frontend_persistence_capture(f, f->options.persistence_services, QA_SAVE_MANUAL, &image, &local)
+                    && qa_save_write(owner->root, request.name, image, nonce, &local);
+            else ok = write_original(f, owner, &request, nonce, &source, &local);
         }
     }
     owner->draining = false;
+    frontend_save_commands *current = (*slot)->save_commands;
+    current->retained[0] = displaced;
+    current->retained[1] = retained_source;
+    current->retained[2] = retained_candidate;
     qa_save_image_destroy(image);
+    qa_q1_save_destroy(source);
+    current->draining = true;
     char message[512];
     (void)snprintf(message, sizeof message, "%s%s.\n", ok ? request.load ? "Loaded " : "Saved " : "Save/load failed: ",
         ok ? request.name : local.message);
     qa_console_emit(qa_application_console((*slot)->application), ok && request.load ? NULL : &request.context, message);
     request_free(&request);
-    qa_frontend *retire = ok ? displaced : retained;
-    if (retire) {
-        frontend_save_commands *current = (*slot)->save_commands;
-        current->retained = retire;
-        qa_error cleanup = {0};
-        if (qa_frontend_destroy(retire, &cleanup)) current->retained = NULL;
-    }
+    current->draining = false;
+    (void)cleanup_retained(current, &cleanup);
     return true;
 }

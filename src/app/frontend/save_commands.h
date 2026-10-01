@@ -7,8 +7,15 @@ bool frontend_save_commands_create(qa_frontend *, qa_error *);
 bool frontend_save_commands_destroy(qa_frontend *, qa_error *);
 bool frontend_save_commands_idle(const qa_frontend *);
 bool frontend_save_commands_capture_ready(const qa_frontend *);
+/* Borrowed actual queue directory authority; no path is reopened. */
+qa_fs_root *frontend_save_commands_root(const qa_frontend *);
+bool frontend_save_commands_pending(const qa_frontend *);
+/* Owned contained path using the exact command queue admission rules. */
+char *frontend_save_commands_slot_path(const qa_frontend *, const char *, qa_error *);
 bool frontend_save_commands_queue(qa_frontend *, const qa_command_invocation *, qa_error *);
-/* Runs only after step returns; publishes through the driver's actual slot. */
+/* Runs only after step returns; publishes through the driver's actual slot.
+ * Original and shared signature selection is final. Every displaced/failed
+ * heap remains owned for ordinary cleanup, including after publication. */
 bool frontend_save_commands_drain(qa_frontend **slot, qa_error *);
 bool frontend_save_commands_checkpoint(qa_frontend *, qa_buffer *, qa_error *);
 /* The candidate's real tools root and core command generation must exist.
