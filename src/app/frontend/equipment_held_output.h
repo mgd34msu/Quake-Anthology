@@ -9,7 +9,7 @@ typedef struct frontend_equipment_held_output frontend_equipment_held_output;
  * media owner until this output is released. Construction performs no source
  * callback, registration or model acquisition. */
 bool frontend_equipment_held_output_create(qa_frontend *,
-    const qa_application_equipment_view *, const frontend_equipment_media *,
+    const qa_application_equipment_view *, frontend_equipment_media *,
     qa_q3_presentation_assets *, const qa_q3_ref_entity *authored_parent,
     frontend_equipment_held_output **, qa_error *);
 bool frontend_equipment_held_output_pass(frontend_equipment_held_output *,

@@ -27,10 +27,21 @@ void frontend_equipment_source_services(frontend_equipment_source *,
     qa_application_q3_equipment_services *);
 bool frontend_equipment_source_idle(const frontend_equipment_source *);
 bool frontend_equipment_source_destroy(frontend_equipment_source *, qa_error *);
+void frontend_equipment_source_clear(frontend_equipment_source *);
+bool frontend_equipment_source_rebind_ready(const frontend_equipment_source *,
+    const qa_frontend *owned, qa_error *);
+void frontend_equipment_source_rebind(frontend_equipment_source *, qa_frontend *destination);
+bool frontend_equipment_source_weapon(const frontend_equipment_source *,
+    qa_application_equipment_view *, bool *requested, qa_error *);
 /* Called by the real source renderer owner at its current view boundaries. */
 bool frontend_equipment_source_prepare_view(frontend_equipment_source *,
     const qa_q3_refdef *, qa_q3_scene_options *, qa_error *);
 bool frontend_equipment_source_submit(frontend_equipment_source *,
     const qa_q3_scene_options *, qa_scene_frame *, qa_error *);
+/* Retains the actual last Draw HUD observation. The caller supplies its fully
+ * qualified restored client tuple; decode invokes no constructor or service. */
+bool frontend_equipment_source_checkpoint(const frontend_equipment_source *, qa_buffer *, qa_error *);
+bool frontend_equipment_source_restore(frontend_equipment_source *,
+    const qa_application_q3_client_context *, qa_bytes, qa_error *);
 
 #endif

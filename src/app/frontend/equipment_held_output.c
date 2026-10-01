@@ -1,12 +1,14 @@
 #include "equipment_held_output.h"
 #include "qa/q3_assets_save.h"
 #include "qa/q3_asset_shader.h"
+#include <limits.h>
 #include <math.h>
 
 struct frontend_equipment_held_output {
     qa_frontend *frontend;
     qa_application_equipment_view source;
     frontend_equipment_media_view media;
+    frontend_equipment_media *media_owner;
     qa_q3_presentation_assets *assets;
     qa_q3_ref_entity parent;
     qa_model_transform transform;
@@ -34,7 +36,7 @@ static void parent_transform(const qa_q3_ref_entity *parent, qa_model_transform 
 }
 
 bool frontend_equipment_held_output_create(qa_frontend *frontend,
-    const qa_application_equipment_view *source, const frontend_equipment_media *media,
+    const qa_application_equipment_view *source, frontend_equipment_media *media,
     qa_q3_presentation_assets *assets, const qa_q3_ref_entity *parent,
     frontend_equipment_held_output **out, qa_error *error)
 {
@@ -55,6 +57,10 @@ bool frontend_equipment_held_output_create(qa_frontend *frontend,
     if (!output) return frontend_fail(error, QA_ERROR_MEMORY, "Retaining actual held replacement output");
     output->frontend = frontend; output->source = *source;
     output->media = retained; output->assets = assets; output->parent = *parent;
+    if (!frontend_equipment_media_retain(media, error)) {
+        free(output); return false;
+    }
+    output->media_owner = media;
     if (retained.declaration->none) { *out = output; return true; }
     qa_q3_asset_model_holder holder;
     qa_model_tag tag;
@@ -67,7 +73,8 @@ bool frontend_equipment_held_output_create(qa_frontend *frontend,
         parent->old_frame, parent->frame, 1 - parent->back_lerp, &tag, &found, error);
     if (ok && !found)
         ok = frontend_fail(error, QA_ERROR_FORMAT, "Original source torso has no weapon attachment");
-    if (ok && (!retained.held || !retained.held->model || !retained.held_scene))
+    if (ok && (!retained.held || !retained.held->model || !retained.held_scene ||
+            retained.held->reference_frame > INT32_MAX))
         ok = frontend_fail(error, QA_ERROR_FORMAT, "Held replacement has no real prepared model and scene");
     if (ok) {
         qa_model_transform parent_pose, socket, tagged;
@@ -85,7 +92,7 @@ bool frontend_equipment_held_output_create(qa_frontend *frontend,
         if (!ok) frontend_fail(error, QA_ERROR_FORMAT, "Actual held attachment exceeds finite transform coordinates");
     } else if (parent->model <= 0)
         frontend_fail(error, QA_ERROR_FORMAT, "Held replacement parent has no physical model handle");
-    if (!ok) { free(output); return false; }
+    if (!ok) { frontend_equipment_held_output_destroy(output); return false; }
     *out = output;
     return true;
 }
@@ -145,5 +152,7 @@ bool frontend_equipment_held_output_submit(frontend_equipment_held_output *outpu
 void frontend_equipment_held_output_destroy(frontend_equipment_held_output *output)
 {
     if (!output) return;
-    free(output->passes); free(output);
+    free(output->passes);
+    frontend_equipment_media_release(output->media_owner);
+    free(output);
 }

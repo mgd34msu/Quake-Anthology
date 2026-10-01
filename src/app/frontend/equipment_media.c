@@ -1,31 +1,15 @@
-#include "equipment_media.h"
+#include "equipment_media_private.h"
 #include "equipment_held_stock.h"
 
-struct frontend_equipment_media {
-    struct frontend_equipment_media *next;
-    qa_actor_owner provider;
-    qa_game_family family;
-    qa_item_id item;
-    char *view_path;
-    frontend_visual_owner_view owner;
-    frontend_visual_model_view view, held_parent;
-    frontend_held_declaration declaration;
-    frontend_held_model held;
-    qa_scene_model *held_scene;
-};
-struct frontend_equipment {
-    frontend_equipment_media *media, *tail;
-    bool admitting;
-};
-
-static void dispose(frontend_equipment_media *media)
+void frontend_equipment_media_dispose(frontend_equipment_media *media)
 {
     qa_scene_model_destroy(media->held_scene);
     frontend_held_model_free(&media->held);
+    frontend_model_release(media->held_lease);
     frontend_held_declaration_free(&media->declaration);
     qa_resource_release((qa_resource *)media->view.resource);
     qa_resource_release((qa_resource *)media->held_parent.resource);
-    free(media->view_path); free(media);
+    free(media->saved_parent_path); free(media->view_path); free(media);
 }
 
 bool frontend_equipment_idle(const qa_frontend *frontend)
@@ -33,7 +17,7 @@ bool frontend_equipment_idle(const qa_frontend *frontend)
     if (!frontend || !frontend->equipment) return true;
     if (frontend->equipment->admitting) return false;
     for (const frontend_equipment_media *row = frontend->equipment->media; row; row = row->next)
-        if (row->held_scene && !qa_scene_model_idle(row->held_scene)) return false;
+        if (row->users || (row->held_scene && !qa_scene_model_idle(row->held_scene))) return false;
     return true;
 }
 
@@ -43,7 +27,7 @@ bool frontend_equipment_retire(qa_frontend *frontend, qa_error *error)
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment media has an active real scene or admission");
     if (!frontend || !frontend->equipment) return true;
     frontend_equipment_media *row = frontend->equipment->media;
-    while (row) { frontend_equipment_media *next = row->next; dispose(row); row = next; }
+    while (row) { frontend_equipment_media *next = row->next; frontend_equipment_media_dispose(row); row = next; }
     frontend->equipment->media = frontend->equipment->tail = NULL;
     return true;
 }
@@ -116,8 +100,12 @@ bool frontend_equipment_media_prepare(qa_frontend *frontend, const qa_applicatio
 {
     if (!frontend || !view || !out || !view->selected || !view->view_model || !view->view_model[0] ||
         view->family == QA_GAME_Q3 || !qa_application_equipment_current(frontend->application, view) ||
-        !frontend_equipment_idle(frontend))
+        (frontend->equipment && frontend->equipment->admitting))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Foreign equipment media requires its actual selected source observation");
+    for (const frontend_equipment_media *row = frontend->equipment ? frontend->equipment->media : NULL;
+            row; row = row->next)
+        if (row->held_scene && !qa_scene_model_idle(row->held_scene))
+            return frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment admission requires idle physical scenes");
     if (!frontend->equipment) {
         frontend->equipment = calloc(1, sizeof(*frontend->equipment));
         if (!frontend->equipment) return frontend_fail(error, QA_ERROR_MEMORY, "Allocating retained equipment media owner");
@@ -132,7 +120,7 @@ bool frontend_equipment_media_prepare(qa_frontend *frontend, const qa_applicatio
     row->provider = view->provider; row->family = view->family; row->item = view->item;
     size_t length = strlen(view->view_model) + 1;
     row->view_path = malloc(length);
-    if (!row->view_path) { dispose(row); return frontend_fail(error, QA_ERROR_MEMORY, "Retaining selected model identity"); }
+    if (!row->view_path) { frontend_equipment_media_dispose(row); return frontend_fail(error, QA_ERROR_MEMORY, "Retaining selected model identity"); }
     memcpy(row->view_path, view->view_model, length);
     frontend->equipment->admitting = true;
     bool ok = frontend_visual_media_acquire(frontend, view->provider, view->family, &row->owner, error) &&
@@ -145,7 +133,8 @@ bool frontend_equipment_media_prepare(qa_frontend *frontend, const qa_applicatio
     if (ok && !qa_application_equipment_current(frontend->application, view))
         ok = frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment admission lost its actual selected source owner");
     frontend->equipment->admitting = false;
-    if (!ok) { dispose(row); return false; }
+    if (!ok) { frontend_equipment_media_dispose(row); return false; }
+    row->bound = true;
     if (frontend->equipment->tail) frontend->equipment->tail->next = row;
     else frontend->equipment->media = row;
     frontend->equipment->tail = row;
@@ -161,6 +150,19 @@ bool frontend_equipment_media_read(const frontend_equipment_media *row,
         row->view_path, row->owner, row->view, row->held_parent, &row->declaration,
         &row->held, row->held_scene};
     return true;
+}
+
+bool frontend_equipment_media_retain(frontend_equipment_media *row, qa_error *error)
+{
+    if (!row || row->users == SIZE_MAX)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment media retain exceeds its actual holder lifetime");
+    ++row->users;
+    return true;
+}
+
+void frontend_equipment_media_release(frontend_equipment_media *row)
+{
+    if (row) --row->users;
 }
 
 size_t frontend_equipment_media_count(const qa_frontend *frontend)

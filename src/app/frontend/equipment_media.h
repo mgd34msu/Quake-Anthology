@@ -23,6 +23,8 @@ typedef struct frontend_equipment_media_view {
 bool frontend_equipment_media_prepare(qa_frontend *, const qa_application_equipment_view *,
     frontend_equipment_media **, qa_error *);
 bool frontend_equipment_media_read(const frontend_equipment_media *, frontend_equipment_media_view *);
+bool frontend_equipment_media_retain(frontend_equipment_media *, qa_error *);
+void frontend_equipment_media_release(frontend_equipment_media *);
 bool frontend_equipment_idle(const qa_frontend *);
 bool frontend_equipment_retire(qa_frontend *, qa_error *);
 void frontend_equipment_destroy(qa_frontend *);
