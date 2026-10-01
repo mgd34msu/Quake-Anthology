@@ -398,7 +398,7 @@ static bool admit(qa_bots *b,const qa_bot_admission *a,bool *rejected,qa_error *
     s->acquired_source_client=(uint32_t)source_client;
     s->view=(qa_bot_view){.actor=a->actor,.client=a->client,.entity=a->entity,
         .source_client=source_client,.mode=a->mode,.decision=QA_BOT_SEEK_LONG_TERM};
-    s->player.source_state_available=true;s->team_arena=a->team_arena;s->admitted_skill=a->skill;
+    s->team_arena=a->team_arena;s->admitted_skill=a->skill;
     free(s->admitted_character);free(s->admitted_name);
     s->admitted_character=character_request;s->admitted_name=admission_name;
     size_t name_size = strlen(a->name);

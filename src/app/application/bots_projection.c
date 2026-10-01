@@ -63,26 +63,38 @@ bool application_bot_source_weapon(application_bots *bots,qa_actor_id actor,
     } else return application_fail(error,QA_ERROR_UNSUPPORTED,"selected original arsenal has no native bot weapon observation");
     return true;
 }
-static bool native_items(const qa_q3_player *ps,const qa_bot_inventory_target *inventory,qa_error *error) {
+static bool native_items(const qa_bot_player_state_view *ps,const qa_bot_inventory_target *inventory,qa_error *error) {
     bool team_arena=ps->product==QA_Q3_TEAM_ARENA;
-    if(!qa_bot_inventory_write(inventory,QA_BOT_INV_HEALTH,ps->stats[0],error)) return false;
+    int32_t value;
+    if(!qa_bot_player_state_slot(ps,QA_BOT_PS_STATS,0,&value,error) ||
+       !qa_bot_inventory_write(inventory,QA_BOT_INV_HEALTH,value,error)) return false;
     static const int holdable_inventory[]={QA_BOT_INV_TELEPORTER,QA_BOT_INV_MEDKIT,
         QA_BOT_INV_KAMIKAZE,QA_BOT_INV_PORTAL,QA_BOT_INV_INVULNERABILITY};
     static const int holdable_models[]={26,27,36,37,38};
     for(size_t i=0;i<(team_arena?5u:2u);++i)
-        if(!qa_bot_inventory_write(inventory,holdable_inventory[i],ps->stats[1]==holdable_models[i],error)) return false;
+        if(!qa_bot_player_state_slot(ps,QA_BOT_PS_STATS,1,&value,error) ||
+           !qa_bot_inventory_write(inventory,holdable_inventory[i],value==holdable_models[i],error)) return false;
     static const int powerup_inventory[]={0,QA_BOT_INV_QUAD,QA_BOT_INV_ENVIRO,QA_BOT_INV_HASTE,
         QA_BOT_INV_INVISIBILITY,QA_BOT_INV_REGEN,QA_BOT_INV_FLIGHT,QA_BOT_INV_RED_FLAG,
         QA_BOT_INV_BLUE_FLAG,QA_BOT_INV_NEUTRAL_FLAG};
     for(size_t i=1;i<(team_arena?10u:9u);++i)
-        if(!qa_bot_inventory_write(inventory,powerup_inventory[i],ps->powerups[i]!=0,error)) return false;
+        if(!qa_bot_player_state_slot(ps,QA_BOT_PS_POWERUPS,(int32_t)i,&value,error) ||
+           !qa_bot_inventory_write(inventory,powerup_inventory[i],value!=0,error)) return false;
     if(team_arena) {
         static const int persistent_inventory[]={QA_BOT_INV_SCOUT,QA_BOT_INV_GUARD,
             QA_BOT_INV_DOUBLER,QA_BOT_INV_AMMO_REGEN};
         for(size_t i=0;i<4;++i)
-            if(!qa_bot_inventory_write(inventory,persistent_inventory[i],ps->stats[2]==(int32_t)(42+i),error)) return false;
-        if(!qa_bot_inventory_write(inventory,QA_BOT_INV_RED_CUBE,ps->persistant[3]==1?ps->generic1:0,error) ||
-           !qa_bot_inventory_write(inventory,QA_BOT_INV_BLUE_CUBE,ps->persistant[3]==1?0:ps->generic1,error)) return false;
+            if(!qa_bot_player_state_slot(ps,QA_BOT_PS_STATS,2,&value,error) ||
+               !qa_bot_inventory_write(inventory,persistent_inventory[i],value==(int32_t)(42+i),error)) return false;
+        int32_t team,generic;
+        if(!qa_bot_player_state_slot(ps,QA_BOT_PS_PERSISTENT,3,&team,error)) return false;
+        generic=0;
+        if(team==1 && !qa_bot_player_state_generic(ps,&generic,error)) return false;
+        if(!qa_bot_inventory_write(inventory,QA_BOT_INV_RED_CUBE,generic,error) ||
+           !qa_bot_player_state_slot(ps,QA_BOT_PS_PERSISTENT,3,&team,error)) return false;
+        generic=0;
+        if(team!=1 && !qa_bot_player_state_generic(ps,&generic,error)) return false;
+        if(!qa_bot_inventory_write(inventory,QA_BOT_INV_BLUE_CUBE,generic,error)) return false;
     }
     return true;
 }
@@ -107,7 +119,7 @@ static bool shared_powers(application_bots *bots,application_provider *source,qa
         qa_bot_inventory_write(inventory,QA_BOT_INV_ENVIRO,enviro,error);
 }
 static bool native_player(application_bots *bots,application_provider *source,qa_actor_id actor,
-    qa_bot_player *out,qa_error *error) {
+    qa_bot_player *out,qa_q3_player *state,qa_error *error) {
     uint32_t slot;qa_q3_player ps;qa_q3_player_state source_player;
     application_native_q3_wire_client_view client;bool present;
     if(!qa_q3_native_client_slot(source->state.q3,actor,&slot,error) ||
@@ -128,31 +140,32 @@ static bool native_player(application_bots *bots,application_provider *source,qa
         .presence=(ps.pmFlags&1)?4:2,.current_weapon=ps.weapon,.weapon_state=ps.weaponState,
         .weapon_time_ms=ps.weaponTime,.deaths=ps.persistant[8],.spawn_sequence=source_player.spawn_count,
         .teleport_sequence=source_player.teleport_revision,.teleported=source_player.teleport_lock_ms>0,
-        .air_time=(float)source_player.air_out_time/1000,.last_damage_cause=source_player.last_hurt_mod,
-        .source_state=ps,.source_state_available=true};
+        .air_time=(float)source_player.air_out_time/1000,.last_damage_cause=source_player.last_hurt_mod};
+    if(state) *state=ps;
     out->eye.z+=(float)ps.viewheight;memcpy(out->delta_angles,ps.deltaAngles,sizeof(out->delta_angles));
     out->last_attacker=application_bot_actor(bots,ps.persistant[6]);
     out->last_victim=application_bot_actor(bots,source_player.last_killed_client);
     return true;
 }
 bool application_bot_inventory_update(void *opaque,qa_actor_id actor,const qa_bot_player *sample,
-    const qa_bot_inventory_target *inventory,qa_error *error) {
+    const qa_bot_player_state_view *state,const qa_bot_inventory_target *inventory,qa_error *error) {
     application_bots *bots=opaque;application_provider *source=application_bot_source(bots);
     if(!application_bots_knowledge_update(bots,actor,error)) return false;
-    if(bots->shared_world && sample && sample->source_state_available && inventory)
+    if(bots->shared_world && sample && state && state->bytes && inventory)
         return application_bot_inventory(bots,actor,inventory,error) &&
             shared_powers(bots,source,actor,inventory,error);
-    if(!source || source->kind!=APPLICATION_PROVIDER_Q3 || !sample || !sample->source_state_available ||
+    if(!source || source->kind!=APPLICATION_PROVIDER_Q3 || !sample || !state || !state->bytes ||
        !inventory || !qa_actors_get(qa_session_actors(bots->application->session),actor))
         return application_fail(error,QA_ERROR_UNSUPPORTED,"bot inventory requires its retained actual Q3 PS sample");
     application_provider *arsenal=application_provider_for(bots->application,actor,QA_ROLE_ARSENAL,NULL);
     if(!arsenal) return application_fail(error,QA_ERROR_NOT_FOUND,"bot inventory selected arsenal is absent");
-    unsigned shift=sample->source_state.product==QA_Q3_TEAM_ARENA?1u:0u;
+    unsigned shift=state->product==QA_Q3_TEAM_ARENA?1u:0u;int32_t armor;
     return application_bot_inventory(bots,actor,inventory,error) &&
-        qa_bot_inventory_write(inventory,QA_BOT_INV_ARMOR,sample->source_state.stats[3+shift],error) &&
-        native_items(&sample->source_state,inventory,error);
+        qa_bot_player_state_slot(state,QA_BOT_PS_STATS,(int32_t)(3+shift),&armor,error) &&
+        qa_bot_inventory_write(inventory,QA_BOT_INV_ARMOR,armor,error) &&
+        native_items(state,inventory,error);
 }
-bool application_bot_player(void *opaque,qa_actor_id actor,qa_bot_player *out,qa_error *error) {
+bool application_bot_player(void *opaque,qa_actor_id actor,qa_bot_player *out,qa_q3_player *state,qa_error *error) {
     application_bots *bots=opaque;qa_application *application=bots->application;
     application_provider *source=application_bot_source(bots);
     if(bots->shared_world) {
@@ -164,12 +177,13 @@ bool application_bot_player(void *opaque,qa_actor_id actor,qa_bot_player *out,qa
         *out=(qa_bot_player){.connected=actual.connected,.observer=ps->pmType==2,.dead=ps->pmType==3,
             .grounded=ps->groundEntityNum!=QA_Q3_ENTITY_NONE,.origin=source_vector(ps->origin),
             .velocity=source_vector(ps->velocity),.eye=source_vector(ps->origin),.view_angles=source_vector(ps->viewangles),
-            .presence=2,.current_weapon=ps->weapon,.weapon_state=ps->weaponState,
-            .source_state=*ps,.source_state_available=true};
+            .presence=2,.current_weapon=ps->weapon,.weapon_state=ps->weaponState};
+        if(state) *state=*ps;
         out->eye.z+=(float)ps->viewheight;
         return true;
     }
-    if(source && source->kind==APPLICATION_PROVIDER_Q3) return native_player(bots,source,actor,out,error);
+    if(source && source->kind==APPLICATION_PROVIDER_Q3) return native_player(bots,source,actor,out,state,error);
+    if(state) return application_fail(error,QA_ERROR_UNSUPPORTED,"bot source player copy requires its genuine GAME player state");
     qa_builtin_services services=application_builtin_services(application,application->world,application->physics);
     qa_builtin_player_info info;qa_application_control_view control={0};qa_body_state body;qa_combat_state combat;
     if(!services.player_info(services.context,actor,&info) ||
@@ -311,7 +325,7 @@ bool application_bot_entity(void *opaque,qa_actor_id actor,qa_bot_entity *out,qa
     qa_builtin_actor_traits traits;
     if(services.actor_traits(services.context,actor,&traits) && traits.player) {
         out->observation.type=1;qa_bot_player player;
-        if(!application_bot_player(bots,actor,&player,error)) return false;
+        if(!application_bot_player(bots,actor,&player,NULL,error)) return false;
         out->observation.weapon=player.current_weapon;
         if(player.dead) out->observation.flags|=1;
     }

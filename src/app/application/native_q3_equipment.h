@@ -17,6 +17,7 @@ typedef struct application_native_q3_equipment_view {
     qa_q3_source_binding binding;
     qa_q3_player player;
     qa_q3_player_state arsenal;
+    qa_q3_fire_stamp fire;
 } application_native_q3_equipment_view;
 
 /* The selected ARSENAL's fixed physical client may be independent of the

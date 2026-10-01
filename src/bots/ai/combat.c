@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "source_inventory.h"
+#include "source_player.h"
 
 enum { BOT_SOLID=1, BOT_LIQUID=8|16|32, BOT_FOG=64, BOT_PLAYERCLIP=0x10000,
        BOT_SHOT=1|0x2000000|0x4000000, BOT_FIRE_RELEASED=1, BOT_RADIAL=2 };
@@ -79,7 +80,7 @@ bool bot_ai_target(qa_bots *b, bot_ai_state *s, qa_actor_id actor, qa_bot_player
     if(!bot_ai_live(b,actor)) return true;
     qa_builtin_player_info info;
     if(b->services.shared.player_info(b->services.shared.context,actor,&info) && info.connected) {
-        if(!b->services.player(b->services.context,actor,out,e)) return false;
+        if(!b->services.player(b->services.context,actor,out,NULL,e)) return false;
         *present=!s->retired && bot_ai_live(b,s->view.actor) && bot_ai_live(b,actor) && out->connected;
         return true;
     }
@@ -158,7 +159,9 @@ static bool arsenal(qa_bots *b, bot_ai_state *s, const qa_bot_weapon_knowledge *
 bool bot_ai_choose_weapon(qa_bots *b, bot_ai_state *s, qa_error *e) {
     /* Q3 raising/dropping are source states 1 and 2. Providers project their
      * selected weapon phase instead of exposing another arsenal's numbering. */
-    if (s->player.weapon_state == 1 || s->player.weapon_state == 2) return true;
+    int32_t weapon_state;
+    if (!bot_ai_source_player_word(b,s,BOT_PS_WEAPON_STATE,&weapon_state,e)) return false;
+    if (weapon_state == 1 || weapon_state == 2) return true;
     const qa_bot_weapon_knowledge *weapons; size_t count; void *lease;
     if (!arsenal(b, s, &weapons, &count, &lease, e)) return false;
     int32_t choice = s->view.weapon;
@@ -350,7 +353,9 @@ bool bot_ai_attack(qa_bots *b, bot_ai_state *s, bool moving, qa_error *e) {
     if(selected.weapon.speed>0 && skill>.4f) {
         float flight=distance/selected.weapon.speed+selected.launch_delay;
         bool predicted=false;
-        if(skill>.8f && s->player.weapon_state==0 && b->services.predict_motion) {
+        int32_t weapon_state=0;
+        if(skill>.8f && !bot_ai_source_player_word(b,s,BOT_PS_WEAPON_STATE,&weapon_state,e)) return false;
+        if(skill>.8f && weapon_state==0 && b->services.predict_motion) {
             qa_bot_movement_prediction_query query={.origin=qa_vec_add(target.origin,qa_v3(0,0,1)),
                 .velocity=target.velocity,.presence=target.presence==4?4:2,.on_ground=target.grounded,
                 .maximum_frames=(int32_t)fminf(ceilf(flight*10),200),.frame_time=.1f};

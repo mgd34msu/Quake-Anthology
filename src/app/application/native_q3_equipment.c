@@ -48,7 +48,7 @@ bool application_native_q3_equipment_current(application_provider *provider,
     qa_clock_state clock;
     qa_q3_source_binding binding;
     uint32_t slot;
-    int32_t time;
+    int32_t time, wire_time;
     if (!view || !physical(provider, view->actor, &slot, &binding, NULL)) return false;
     qa_application *app = provider->application;
     return provider->owner == view->provider && provider->state.q3 == view->game &&
@@ -57,15 +57,18 @@ bool application_native_q3_equipment_current(application_provider *provider,
         slot == view->source_slot && binding.in_use == view->binding.in_use &&
         qa_session_clock(app->session, provider->owner, &clock) &&
         same_frame(&clock.frame, &view->source_frame) &&
-        application_q3_wire_time(provider, &time, NULL) &&
-        qa_q3_source_clock(view->game, &time, NULL) && time == view->source_time_ms;
+        application_q3_wire_time(provider, &wire_time, NULL) &&
+        qa_q3_source_clock(view->game, &time, NULL) && time == view->source_time_ms &&
+        (!clock.frame.number || time == wire_time);
 }
 
 bool application_native_q3_equipment_read(application_provider *provider, qa_actor_id actor,
     application_native_q3_equipment_view *out, qa_error *error)
 {
     application_native_q3_equipment_view view = {.actor = actor};
-    if (!out || !physical(provider, actor, &view.source_slot, &view.binding, error)) return false;
+    if (!out)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Selected native Q3 equipment requires an output");
+    if (!physical(provider, actor, &view.source_slot, &view.binding, error)) return false;
     qa_application *app = provider->application;
     qa_clock_state clock;
     int32_t wire_time;
@@ -75,8 +78,10 @@ bool application_native_q3_equipment_read(application_provider *provider, qa_act
     if (!qa_session_clock(app->session, provider->owner, &clock) ||
         !application_q3_wire_time(provider, &wire_time, error) ||
         !qa_q3_source_clock(view.game, &view.source_time_ms, error) ||
-        !qa_q3_wire_player_read(view.game, view.source_slot, &view.player, error) ||
-        !qa_q3_player_read(view.game, actor, &view.arsenal)) return false;
+        !qa_q3_wire_player_read(view.game, view.source_slot, &view.player, error)) return false;
+    if (!qa_q3_player_read(view.game, actor, &view.arsenal) ||
+        !qa_q3_player_fire_read(view.game, actor, &view.fire))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Selected native Q3 equipment lost its genuine arsenal continuation");
     view.source_frame = clock.frame;
     if ((clock.frame.number && view.source_time_ms != wire_time) ||
         !application_native_q3_equipment_current(provider, &view))

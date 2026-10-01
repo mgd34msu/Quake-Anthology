@@ -25,6 +25,8 @@ typedef struct qa_application_equipment_view {
     qa_q3_weapon q3_weapon;
     qa_q3_player_state q3_state;
     qa_q3_player q3_source;
+    int32_t q3_time_ms;
+    qa_q3_fire_stamp q3_fire;
     qa_application_ammo_warning warning;
     bool selected, visible, has_frame, has_skin, has_rate, has_source_gun_pose, has_q3_state, has_q3_source;
     bool has_weapon_status, finite_ammo, has_ammo_to_start, low_ammo, has_start_requirement;
@@ -36,5 +38,9 @@ typedef struct qa_application_equipment_view {
 bool qa_application_equipment_read(qa_application *, qa_actor_id,
     qa_application_equipment_view *, qa_error *);
 bool qa_application_equipment_current(qa_application *, const qa_application_equipment_view *);
+/* Pure product qualification for an actual retained equipment registry during
+ * capture/import. Reads its real constructed provider; no source call runs. */
+bool qa_application_equipment_q3_product_read(const qa_application *, qa_actor_owner,
+    qa_q3_product *, qa_error *);
 
 #endif

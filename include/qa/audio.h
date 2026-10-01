@@ -125,6 +125,9 @@ bool qa_audio_raw_queue(qa_audio_raw_stream *stream, const int16_t *samples, siz
                         unsigned channels, uint32_t rate, uint64_t source_frame, bool reset,
                         qa_error *error);
 bool qa_audio_raw_set_rate(qa_audio_raw_stream *stream, uint32_t rate, qa_error *error);
+/* Copies the genuine queued input and fractional cursor without advancing it. */
+bool qa_audio_raw_clone_rate(const qa_audio_raw_stream *, uint32_t output_rate,
+                             qa_audio_raw_stream **out, qa_error *);
 void qa_audio_raw_pause(qa_audio_raw_stream *stream, bool paused);
 uint64_t qa_audio_raw_position(const qa_audio_raw_stream *stream);
 uint64_t qa_audio_raw_queued(const qa_audio_raw_stream *stream);
@@ -462,6 +465,7 @@ void qa_audio_engine_update(qa_audio_engine *engine, double milliseconds);
  * devices only; the caller initializes SDL_INIT_AUDIO before using them.
  * Device calls are serialized by the application, including close and pump. */
 typedef struct qa_audio_device qa_audio_device;
+typedef struct qa_audio_device_selection qa_audio_device_selection;
 typedef struct qa_audio_device_options {
     qa_audio_output_format format;
     const char *name;             /* NULL selects system default; copied by open/select. */
@@ -490,6 +494,24 @@ void qa_audio_device_detach(qa_audio_device *device);
  * Failure retains/restores the previous output or its detached queued state. */
 bool qa_audio_device_select(qa_audio_device *device, const qa_audio_device_options *options,
                             qa_error *error);
+/* Prepare opens a distinct paused endpoint while retaining the live endpoint.
+ * A driver that cannot admit both outputs refuses without closing the old one.
+ * A genuine unchanged selection still owns a ticket. The device must outlive
+ * it; close, selection, pause, clear, detach, reset and capture are excluded.
+ * Ordinary queue/pump calls remain allowed until ready succeeds. */
+bool qa_audio_device_selection_prepare(qa_audio_device *, const qa_audio_device_options *,
+                                       qa_audio_device_selection **out, qa_error *);
+/* Final fallible cut: pauses native consumption, retains the actual unconsumed
+ * PCM and prepares all conversion/encoding resources. Failure resumes the old
+ * output. Success excludes queue/pump until immediate publish or abort.
+ * No source mix, voice notification or source clock advancement occurs. */
+bool qa_audio_device_selection_ready(qa_audio_device_selection *, qa_error *);
+/* Requires successful ready with no intervening owner mutation. Consumes the
+ * ticket and publishes without allocation or source/mixer callbacks. */
+void qa_audio_device_selection_publish(qa_audio_device_selection *);
+/* Checked cancellation consumes the ticket only on success. It retains the
+ * old endpoint, PCM/converter, source continuation and playback intent. */
+bool qa_audio_device_selection_abort(qa_audio_device_selection *, qa_error *);
 qa_audio_output_format qa_audio_device_format(const qa_audio_device *device);
 const char *qa_audio_device_name(const qa_audio_device *device);
 qa_audio_device_state qa_audio_device_get_state(const qa_audio_device *device);

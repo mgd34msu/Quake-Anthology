@@ -97,8 +97,8 @@ typedef struct application_bots {
     bool producing;
 } application_bots;
 
-bool application_bot_player(void *,qa_actor_id,qa_bot_player *,qa_error *);
-bool application_bot_inventory_update(void *,qa_actor_id,const qa_bot_player *,const qa_bot_inventory_target *,qa_error *);
+bool application_bot_player(void *,qa_actor_id,qa_bot_player *,qa_q3_player *,qa_error *);
+bool application_bot_inventory_update(void *,qa_actor_id,const qa_bot_player *,const qa_bot_player_state_view *,const qa_bot_inventory_target *,qa_error *);
 bool application_bot_source_weapon(application_bots *,qa_actor_id,int32_t *,int32_t *,qa_error *);
 bool application_bot_entity(void *,qa_actor_id,qa_bot_entity *,qa_error *);
 bool application_bot_arsenal(void *,qa_actor_id,const qa_bot_weapon_knowledge **,size_t *,void **,qa_error *);

@@ -2,6 +2,7 @@
 #include "source_inventory.h"
 #include "source_events.h"
 #include "source_orders.h"
+#include "source_player.h"
 #include <stdio.h>
 
 enum {
@@ -165,7 +166,7 @@ static bool current_entity(qa_bots *b,int32_t number,qa_q3_entity *entity,qa_err
     return true;
 }
 bool bot_ai_source_check_snapshot(qa_bots *b,bot_ai_state *s,qa_error *e) {
-    if(!s->player.source_state_available || !b->services.snapshot_entity)
+    if(!b->services.snapshot_entity)
         return bot_ai_fail(e,"Source bot snapshot lacks its actual admitted PS or native snapshot owner");
     qa_bot_avoid_spot clear={.origin={0},.radius=0,.type=0};
     if(!qa_bot_moves_avoid_spot(qa_bot_runtime_moves(b->runtime),s->movement,&clear,e)) return false;
@@ -189,15 +190,14 @@ bool bot_ai_source_check_snapshot(qa_bots *b,bot_ai_state *s,qa_error *e) {
     int32_t self;if(!bot_ai_source_client(b,s,&self,e)) return false;
     qa_q3_entity player;if(!current_entity(b,self,&player,e)) return false;
     if(!live(b,s)) return true;
-    player.event=s->player.source_state.externalEvent;
-    player.eventParm=s->player.source_state.externalEventParm;
+    if(!bot_ai_source_player_word(b,s,BOT_PS_EXTERNAL_EVENT,&player.event,e) ||
+       !bot_ai_source_player_word(b,s,BOT_PS_EXTERNAL_EVENT_PARAMETER,&player.eventParm,e)) return false;
     return bot_ai_source_check_event(b,s,&player,e);
 }
 bool bot_ai_source_set_teleport_time(qa_bots *b,bot_ai_state *s,qa_error *e) {
-    if(!s->player.source_state_available)
-        return bot_ai_fail(e,"Source bot teleport lacks its actual retained PS sample");
     if(!live(b,s)) return true;
-    int32_t flags=s->player.source_state.eFlags;
+    int32_t flags;
+    if(!bot_ai_source_player_word(b,s,BOT_PS_ENTITY_FLAGS,&flags,e)) return false;
     if((flags^s->source_events.last_e_flags)&4) s->teleport_time=b->time;
     s->source_events.last_e_flags=flags;return true;
 }

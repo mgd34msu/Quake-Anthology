@@ -2,6 +2,7 @@
 #include "guest_q3_private.h"
 #include "guest_qc_internal.h"
 #include "guest_native_q2_equipment.h"
+#include "guest_q3_fire.h"
 #include "native_q3_equipment.h"
 #include "qa/application_equipment.h"
 #include "qa/qc_weapon_visual.h"
@@ -13,6 +14,30 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+bool qa_application_equipment_q3_product_read(const qa_application *app,
+    qa_actor_owner owner, qa_q3_product *out, qa_error *error)
+{
+    if (!app || !out || !owner)
+        return application_fail(error, QA_ERROR_ARGUMENT, "Equipment registry requires its actual Q3 product owner");
+    application_provider *found = NULL;
+    for (size_t i = 0; i < app->provider_count; ++i)
+        if (app->providers[i]->owner == owner) {
+            if (found) return application_fail(error, QA_ERROR_FORMAT, "Equipment product has ambiguous actual providers");
+            found = app->providers[i];
+        }
+    if (!found || !found->constructed || found->close_pending || !found->product ||
+        found->product->family != QA_GAME_Q3)
+        return application_fail(error, QA_ERROR_FORMAT, "Equipment registry lost its actual constructed Q3 provider");
+    if (found->kind == APPLICATION_PROVIDER_Q3) {
+        *out = !strcmp(found->product->campaign, "missionpack") ? QA_Q3_TEAM_ARENA : QA_Q3_ARENA;
+        return true;
+    }
+    const struct application_q3_guest *engine = q3g_engine(found);
+    if (!engine || !engine->game)
+        return application_fail(error, QA_ERROR_FORMAT, "Equipment registry has no actual original Q3 GAME owner");
+    *out = engine->product; return true;
+}
 
 bool qa_application_equipment_current(qa_application *app,
     const qa_application_equipment_view *view)
@@ -207,9 +232,10 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
         if (!application_native_q3_equipment_read(provider, actor, &source, error)) return false;
         view.q3_source = source.player; view.has_q3_source = true;
         view.q3_state = source.arsenal; view.has_q3_state = true;
+        view.q3_time_ms = source.source_time_ms; view.q3_fire = source.fire;
         view.q3_weapon = (qa_q3_weapon)source.player.weapon; q3_product = source.player.product;
         view.item = qa_q3_weapon_item(provider->state.q3, view.q3_weapon, false);
-        view.visible = view.q3_state.external_slot != QA_Q3_SLOT_HOLSTERED;
+        view.visible = view.q3_weapon != QA_Q3_W_NONE && view.q3_state.external_slot != QA_Q3_SLOT_HOLSTERED;
         view.has_start_requirement = true;
     } else {
         struct application_q3_guest *engine = q3g_engine(provider); uint32_t slot;
@@ -217,8 +243,10 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
             !qa_q3_host_source_player(engine->game->host, slot, &view.q3_source, error))
             return application_fail(error, QA_ERROR_NOT_FOUND, "Source equipment has no actual begun GAME client");
         view.has_q3_source = true; view.q3_weapon = (qa_q3_weapon)view.q3_source.weapon;
+        view.q3_time_ms = engine->milliseconds;
+        if (engine->game->vm && !application_q3_guest_fire_read(provider, actor, &view.q3_fire, error)) return false;
         view.item = q3_identity(app, view.q3_weapon, false); q3_product = engine->product;
-        view.visible = true; view.has_start_requirement = true;
+        view.visible = view.q3_weapon != QA_Q3_W_NONE; view.has_start_requirement = true;
     }
     if (view.family == QA_GAME_Q3 && view.q3_weapon != QA_Q3_W_NONE) {
         if (!qa_q3_weapon_identity_name(view.q3_weapon) ||

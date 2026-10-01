@@ -3,6 +3,7 @@
 #include "source_command.h"
 #include "source_inventory.h"
 #include "source_alias.h"
+#include "source_player.h"
 
 static int32_t signed_word(uint32_t bits) {
     int32_t value;
@@ -11,18 +12,22 @@ static int32_t signed_word(uint32_t bits) {
 }
 bool bot_ai_source_intermission(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
     *out=false;
-    if(!s->player.source_state_available || !b->services.source_intermission)
+    if(!b->services.source_intermission)
         return bot_ai_fail(e,"bot intermission requires its actual source clock and retained player state");
     if(!b->services.source_intermission(b->services.context,out,e)) return false;
     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
-    *out=*out || s->player.source_state.pmType==4 || s->player.source_state.pmType==5;
+    if(!*out) {
+        int32_t type;
+        if(!bot_ai_source_player_word(b,s,BOT_PS_MOVE_TYPE,&type,e)) return false;
+        *out=type==4 || type==5;
+    }
     return true;
 }
 bool bot_ai_source_observer(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
     *out=false;
-    if(!s->player.source_state_available)
-        return bot_ai_fail(e,"bot observer test requires its retained source player state");
-    if(s->player.source_state.pmType==2) {*out=true;return true;}
+    int32_t type;
+    if(!bot_ai_source_player_word(b,s,BOT_PS_MOVE_TYPE,&type,e)) return false;
+    if(type==2) {*out=true;return true;}
     int32_t client,team;
     if(!bot_ai_source_client(b,s,&client,e) || !bot_ai_source_team(b,client,&team,e)) return false;
     if(s->retired || !bot_ai_live(b,s->view.actor)) return true;
@@ -37,8 +42,10 @@ static bool ready(qa_bots *b, bot_ai_state *s) {
 }
 static bool player(qa_bots *b, bot_ai_state *s, qa_error *e) {
     if (!bot_ai_live(b, s->view.actor)) { s->retired = true; return true; }
-    if (!b->services.player(b->services.context, s->view.actor, &s->player, e)) return false;
+    qa_q3_player source;
+    if (!b->services.player(b->services.context, s->view.actor, &s->player, &source, e)) return false;
     if (!bot_ai_live(b,s->view.actor)) {s->retired=true;return true;}
+    if(!bot_ai_source_player_copy(b,s,&source,e)) return false;
     if (!bot_ai_carrying(b,s,&s->player.carrying_objective,e)) return false;
     if (!bot_ai_live(b, s->view.actor)) s->retired = true;
     return true;
@@ -56,12 +63,19 @@ static bool submit(qa_bots *b, bot_ai_state *s, const qa_bot_input *input,
     command->sequence = ++s->command_sequence;
     return b->services.submit(b->services.context, s->view.actor, input, command, e);
 }
+static bool delta_angles(qa_bots *b,bot_ai_state *s,int32_t out[3],qa_error *e) {
+    for(int32_t i=0;i<3;++i)
+        if(!bot_ai_source_player_slot(b,s,BOT_PS_DELTA_ANGLES,i,out+i,e)) return false;
+    return true;
+}
 bool bot_ai_input(qa_bots *b, bot_ai_state *s, int32_t time, int32_t elapsed, qa_error *e) {
     float factor = .05f, maximum = 360;
     if (s->view.enemy.registry &&
         (!bot_ai_character_float(b, s, BOT_C_VIEW_FACTOR, .01f, 1, &factor, e) ||
          !bot_ai_character_float(b, s, BOT_C_VIEW_MAX, 1, 1800, &maximum, e))) return false;
-    qa_bot_view_delta(&s->angles, s->player.delta_angles, true);
+    int32_t delta[3];
+    if(!delta_angles(b,s,delta,e)) return false;
+    qa_bot_view_delta(&s->angles, delta, true);
     qa_bot_change_view(&s->angles, factor, maximum, (float)elapsed / 1000, b->controls.challenge);
     qa_bot_actions *actions = qa_bot_runtime_actions(b->runtime);
     qa_bot_input input;
@@ -71,9 +85,10 @@ bool bot_ai_input(qa_bots *b, bot_ai_state *s, int32_t time, int32_t elapsed, qa
     if (ok) ok = bot_ai_source_command_read(b, s, &command, e);
     if (ok && (input.action_flags & QA_BOT_RESPAWN) && (command.buttons & 1))
         input.action_flags &= ~(QA_BOT_RESPAWN | QA_BOT_ATTACK);
-    if (ok) ok = qa_bot_input_q3_command(&input, s->player.delta_angles, time, &command, e) &&
+    if (ok) ok = delta_angles(b,s,delta,e) && qa_bot_input_q3_command(&input, delta, time, &command, e) &&
         bot_ai_source_command_write(b, s, &command, e);
-    qa_bot_view_delta(&s->angles, s->player.delta_angles, false);
+    if(!delta_angles(b,s,delta,e)) return false;
+    qa_bot_view_delta(&s->angles, delta, false);
     return ok && submit(b, s, &input, &command, e);
 }
 bool bot_ai_point_area(qa_bots *b, bot_ai_state *s, qa_vec3 origin, uint32_t *area, qa_error *e) {
@@ -95,10 +110,19 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
     if (s->retired) return true;
     if (!bot_ai_console(b, s, e)) return false;
     if (s->retired || !bot_ai_live(b, s->view.actor)) return true;
-    qa_bot_view_delta(&s->angles, s->player.delta_angles, true);
+    int32_t delta[3];
+    if(!delta_angles(b,s,delta,e)) return false;
+    qa_bot_view_delta(&s->angles, delta, true);
     s->local_time += elapsed;
     s->view.think_time = elapsed;
-    bool ok = bot_ai_point_area(b, s, s->player.origin, &s->area, e);
+    int32_t height;
+    bool ok=bot_ai_source_player_vector(b,s,BOT_PS_ORIGIN,&s->player.origin,e);
+    if(ok) {
+        s->player.eye=s->player.origin;
+        ok=bot_ai_source_player_word(b,s,BOT_PS_VIEW_HEIGHT,&height,e);
+        if(ok) s->player.eye.z+=(float)height;
+    }
+    if(ok) ok=bot_ai_point_area(b, s, s->player.origin, &s->area, e);
     bool setup_ready=true;
     if(ok) ok=bot_ai_source_setup_frame(b,s,&setup_ready,e);
     if(ok && (!setup_ready || s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
@@ -109,9 +133,11 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
         if (ok && !intermission) {
             bot_source_inventory inventory={b,s};
             qa_bot_inventory_target target=bot_ai_source_inventory_target(&inventory);
+            qa_bot_player_state_view source;
             ok=bot_ai_source_set_teleport_time(b,s,e) &&
                 bot_ai_source_inventory_snapshot(&inventory,old_inventory,e) &&
-                b->services.inventory(b->services.context,s->view.actor,&s->player,&target,e);
+                bot_ai_source_player_view(b,s,&source,e) &&
+                b->services.inventory(b->services.context,s->view.actor,&s->player,&source,&target,e);
             if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
             if(ok) ok=bot_ai_source_task_preference(b,s,old_inventory,e);
             if(ok && (s->retired || !bot_ai_live(b,s->view.actor))) goto finished;
@@ -148,14 +174,14 @@ bool bot_ai_think(qa_bots *b, bot_ai_state *s, float elapsed, qa_error *e) {
         if (ok) ok = bot_ai_decide(b, s, e);
         if(ok && !s->retired && bot_ai_live(b,s->view.actor)) {
             s->source_chat.last_frame_health=bot_ai_inventory_value(s,QA_BOT_INV_HEALTH);
-            if(!s->player.source_state_available) ok=bot_ai_fail(e,"bot frame lacks its retained source player state");
-            else s->source_chat.last_hit_count=s->player.source_state.persistant[1];
+            ok=bot_ai_source_player_slot(b,s,BOT_PS_PERSISTENT,1,&s->source_chat.last_hit_count,e);
         }
     }
 finished:
     if (ok && !s->retired && bot_ai_live(b,s->view.actor))
         ok = qa_bot_actions_weapon(actions, s->view.client, s->view.weapon, e);
-    qa_bot_view_delta(&s->angles, s->player.delta_angles, false);
+    if(!delta_angles(b,s,delta,e)) return false;
+    qa_bot_view_delta(&s->angles, delta, false);
     return ok;
 }
 static bool observations(qa_bots *b, qa_error *e) {

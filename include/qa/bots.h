@@ -6,6 +6,7 @@
 #include "qa/modes.h"
 #include "qa/console.h"
 #include "qa/network_q3.h"
+#include "qa/bots_player.h"
 
 typedef struct qa_bots qa_bots;
 typedef enum qa_bot_decision {
@@ -39,8 +40,6 @@ typedef struct qa_bot_player {
     float air_time, teleport_time;
     uint64_t spawn_sequence;
     uint64_t teleport_sequence;
-    qa_q3_player source_state;
-    bool source_state_available;
 } qa_bot_player;
 typedef struct qa_bot_entity {
     qa_bot_entity_update observation;
@@ -105,9 +104,10 @@ typedef struct qa_bot_services {
     bool team_arena;
     qa_builtin_services shared;
     qa_modes *modes;
-    bool (*player)(void *, qa_actor_id, qa_bot_player *, qa_error *);
+    /* Optional source output is detached only until the BotAI copy stage. */
+    bool (*player)(void *, qa_actor_id, qa_bot_player *, qa_q3_player *, qa_error *);
     bool (*inventory)(void *, qa_actor_id, const qa_bot_player *,
-                       const qa_bot_inventory_target *, qa_error *);
+                       const qa_bot_player_state_view *,const qa_bot_inventory_target *, qa_error *);
     bool (*entity)(void *, qa_actor_id, qa_bot_entity *, qa_error *);
     bool (*entity_extent)(void *, uint32_t *, qa_error *);
     bool (*entity_list)(void *, qa_builtin_actor_snapshot *, qa_error *);

@@ -201,6 +201,45 @@ bool qa_audio_raw_set_rate(qa_audio_raw_stream *stream, uint32_t rate, qa_error 
     return true;
 }
 
+bool qa_audio_raw_clone_rate(const qa_audio_raw_stream *source, uint32_t rate,
+                             qa_audio_raw_stream **out, qa_error *error) {
+    if (!source || !rate || !out || *out) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Invalid PCM conversion copy destination");
+        return false;
+    }
+    qa_audio_raw_stream *copy = malloc(sizeof(*copy));
+    if (!copy) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "Allocating PCM conversion copy");
+        return false;
+    }
+    *copy = *source;
+    copy->samples = NULL;
+    if (copy->capacity_samples) {
+        copy->samples = malloc(copy->capacity_samples * sizeof(*copy->samples));
+        if (!copy->samples) {
+            free(copy);
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Copying queued PCM conversion input");
+            return false;
+        }
+        size_t capacity = copy->capacity_samples / copy->channels;
+        size_t first = capacity - copy->head;
+        if (first > copy->count) first = copy->count;
+        if (first)
+            memcpy(copy->samples + copy->head * copy->channels,
+                   source->samples + source->head * source->channels,
+                   first * copy->channels * sizeof(*copy->samples));
+        if (first < copy->count)
+            memcpy(copy->samples, source->samples,
+                   (copy->count - first) * copy->channels * sizeof(*copy->samples));
+    }
+    if (!qa_audio_raw_set_rate(copy, rate, error)) {
+        qa_audio_raw_destroy(copy);
+        return false;
+    }
+    *out = copy;
+    return true;
+}
+
 void qa_audio_raw_pause(qa_audio_raw_stream *stream, bool paused) {
     if (stream != NULL)
         stream->paused = paused;

@@ -1,5 +1,6 @@
 #include "qa/display.h"
 #include "qa/display_save.h"
+#include "qa/display_settings.h"
 #include "qa/source_save.h"
 
 #include <SDL.h>
@@ -37,6 +38,20 @@ struct qa_display {
     char fullscreen_failure[256];
     bool native_borrowed, capturing;
     display_native_lease *lease;
+};
+
+struct qa_display_surface_ticket {
+    qa_display *active, *candidate;
+    display_native_lease *active_lease;
+    qa_display_settings settings;
+    qa_display_info original, staged;
+    SDL_Window *previous_window;
+    SDL_GLContext previous_context, context;
+    SDL_DisplayMode original_mode;
+    int x, y, original_interval;
+    Uint32 previous_focus;
+    int visual[11];
+    bool interval_known, entered, staged_valid, native_restored;
 };
 
 static bool display_error(qa_error *error, qa_status status, const char *operation)
@@ -1004,3 +1019,322 @@ void qa_display_handoff(qa_display_restore_guard *guard)
 }
 void qa_display_restore_guard_destroy(qa_display_restore_guard *guard)
 { if (guard) { display_saved_free(&guard->saved); free(guard); } }
+
+static bool surface_owner(const qa_display_surface_ticket *ticket, qa_error *error)
+{
+    if (!ticket || !ticket->active || !ticket->active_lease ||
+        ticket->active->lease != ticket->active_lease ||
+        ticket->active_lease->references != 1 || ticket->active->native_borrowed ||
+        ticket->active->capturing || ticket->active->window != ticket->active_lease->window ||
+        (ticket->active->backend == QA_DISPLAY_OPENGL &&
+         (ticket->context != ticket->active->native.gl.context ||
+          ticket->context != ticket->active_lease->context)))
+        return display_save_error(error, QA_ERROR_ARGUMENT,
+            "Surface settings require the retained exclusive native display owner");
+    return true;
+}
+
+static bool surface_info_equal(const qa_display_info *a, const qa_display_info *b)
+{
+    return a->window_id == b->window_id && a->backend == b->backend &&
+        a->logical_width == b->logical_width && a->logical_height == b->logical_height &&
+        a->drawable_width == b->drawable_width && a->drawable_height == b->drawable_height &&
+        a->display_index == b->display_index && a->refresh_rate == b->refresh_rate &&
+        a->fullscreen == b->fullscreen && a->visible == b->visible &&
+        a->focused == b->focused && a->minimized == b->minimized && a->maximized == b->maximized;
+}
+
+static bool surface_restore_context(const qa_display_surface_ticket *ticket, qa_error *error)
+{
+    if (ticket->active->backend != QA_DISPLAY_OPENGL) return true;
+    if (SDL_GL_MakeCurrent(ticket->previous_window, ticket->previous_context) < 0)
+        return display_error(error, QA_ERROR_IO, "Restoring the previous surface context");
+    if (SDL_GL_GetCurrentWindow() != ticket->previous_window ||
+        SDL_GL_GetCurrentContext() != ticket->previous_context)
+        return display_save_error(error, QA_ERROR_IO,
+            "SDL did not restore the previous surface context");
+    return true;
+}
+
+static const SDL_GLattr surface_visual_attributes[11] = {
+    SDL_GL_RED_SIZE, SDL_GL_GREEN_SIZE, SDL_GL_BLUE_SIZE, SDL_GL_ALPHA_SIZE,
+    SDL_GL_BUFFER_SIZE, SDL_GL_DOUBLEBUFFER, SDL_GL_DEPTH_SIZE, SDL_GL_STENCIL_SIZE,
+    SDL_GL_STEREO, SDL_GL_MULTISAMPLEBUFFERS, SDL_GL_MULTISAMPLESAMPLES
+};
+
+static bool surface_gl_query(int values[11], qa_error *error)
+{
+    typedef void (APIENTRY *get_integer_proc)(GLenum, GLint *);
+    typedef void (APIENTRY *bind_framebuffer_proc)(GLenum, GLuint);
+    typedef GLenum (APIENTRY *get_error_proc)(void);
+    get_integer_proc get_integer = NULL;
+    bind_framebuffer_proc bind_framebuffer = NULL;
+    get_error_proc get_error = NULL;
+    _Static_assert(sizeof(get_integer) == sizeof(void *) &&
+        sizeof(bind_framebuffer) == sizeof(void *) && sizeof(get_error) == sizeof(void *),
+        "SDL GL procedure pointers must fit in void pointers");
+    void *address = SDL_GL_GetProcAddress("glGetIntegerv");
+    memcpy(&get_integer, &address, sizeof(get_integer));
+    address = SDL_GL_GetProcAddress("glBindFramebuffer");
+    if (!address) address = SDL_GL_GetProcAddress("glBindFramebufferEXT");
+    memcpy(&bind_framebuffer, &address, sizeof(bind_framebuffer));
+    address = SDL_GL_GetProcAddress("glGetError");
+    memcpy(&get_error, &address, sizeof(get_error));
+    if (!get_integer || !bind_framebuffer || !get_error)
+        return display_error(error, QA_ERROR_UNSUPPORTED, "Reading native GL framebuffer precision");
+    if (get_error() != GL_NO_ERROR)
+        return display_save_error(error, QA_ERROR_IO, "Active GL owner has an outstanding error");
+    GLint draw = 0, read = 0;
+    get_integer(GL_DRAW_FRAMEBUFFER_BINDING, &draw);
+    get_integer(GL_READ_FRAMEBUFFER_BINDING, &read);
+    if (get_error() != GL_NO_ERROR)
+        return display_save_error(error, QA_ERROR_IO, "Reading original GL framebuffer bindings");
+    bind_framebuffer(GL_FRAMEBUFFER, 0);
+    bool ok = get_error() == GL_NO_ERROR;
+    if (!ok) display_save_error(error, QA_ERROR_IO, "Selecting native GL framebuffer for visual query");
+    for (size_t i = 0; ok && i < 11; ++i)
+        if (SDL_GL_GetAttribute(surface_visual_attributes[i], values + i) < 0) {
+            display_error(error, QA_ERROR_UNSUPPORTED, "Reading the active compatible-window GL visual");
+            ok = false;
+        }
+    bind_framebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)draw);
+    bind_framebuffer(GL_READ_FRAMEBUFFER, (GLuint)read);
+    if (get_error() != GL_NO_ERROR)
+        return display_save_error(error, QA_ERROR_IO, "Restoring original GL framebuffer bindings");
+    return ok;
+}
+
+static bool surface_gl_visual(qa_display_surface_ticket *ticket, qa_error *error)
+{
+    if (!surface_gl_query(ticket->visual, error)) return false;
+    for (size_t i = 0; i < 11; ++i)
+        if (!set_gl_attribute(surface_visual_attributes[i], ticket->visual[i], error)) return false;
+    return true;
+}
+
+static bool surface_gl_visual_equal(const qa_display_surface_ticket *ticket, qa_error *error)
+{
+    int actual[11];
+    if (!surface_gl_query(actual, error)) return false;
+    for (size_t i = 0; i < 11; ++i) {
+        if (actual[i] != ticket->visual[i])
+            return display_save_error(error, QA_ERROR_UNSUPPORTED,
+                "The candidate window does not retain the active GL visual");
+    }
+    return true;
+}
+
+bool qa_display_surface_prepare(qa_display *active, const qa_display_settings *settings,
+                                qa_display_surface_ticket **out, qa_error *error)
+{
+    if (!out || *out || !active || !settings ||
+        (unsigned)settings->fullscreen > QA_DISPLAY_DESKTOP ||
+        settings->swap_interval < -1 || settings->swap_interval > 1 ||
+        !valid_dimensions(settings->width, settings->height, error))
+        return display_save_error(error, QA_ERROR_ARGUMENT, "Invalid shared display settings ticket");
+    qa_display_surface_ticket *ticket = calloc(1, sizeof(*ticket));
+    if (!ticket) return display_save_error(error, QA_ERROR_MEMORY, "Allocating surface settings ticket");
+    ticket->active = active;
+    ticket->active_lease = active->lease;
+    ticket->settings = *settings;
+    if (active->backend == QA_DISPLAY_OPENGL) {
+        ticket->context = active->native.gl.context;
+        ticket->previous_window = SDL_GL_GetCurrentWindow();
+        ticket->previous_context = SDL_GL_GetCurrentContext();
+    }
+    if (!surface_owner(ticket, error) || !qa_display_info_get(active, &ticket->original, error)) {
+        free(ticket); return false;
+    }
+    SDL_GetWindowPosition(active->window, &ticket->x, &ticket->y);
+    if (SDL_GetWindowDisplayMode(active->window, &ticket->original_mode) < 0) {
+        free(ticket); return display_error(error, QA_ERROR_IO, "Reading prior native window display mode");
+    }
+    SDL_Window *focus = SDL_GetKeyboardFocus();
+    ticket->previous_focus = focus ? SDL_GetWindowID(focus) : 0;
+    *out = ticket;
+    if (active->backend == QA_DISPLAY_OPENGL) {
+        if (!qa_display_make_current(active, error)) return false;
+        ticket->original_interval = SDL_GL_GetSwapInterval();
+        ticket->interval_known = true;
+        if (!surface_gl_visual(ticket, error)) return false;
+    }
+    qa_display *candidate = calloc(1, sizeof(*candidate));
+    display_native_lease *lease = calloc(1, sizeof(*lease));
+    if (!candidate || !lease) {
+        free(candidate); free(lease);
+        return display_save_error(error, QA_ERROR_MEMORY, "Allocating candidate surface ownership");
+    }
+    candidate->backend = active->backend;
+    candidate->lease = lease;
+    lease->references = 1; lease->backend = active->backend;
+    ticket->candidate = candidate;
+    Uint32 retained_flags = SDL_GetWindowFlags(active->window) &
+        (SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_BORDERLESS |
+         SDL_WINDOW_ALWAYS_ON_TOP | SDL_WINDOW_SKIP_TASKBAR | SDL_WINDOW_UTILITY |
+         SDL_WINDOW_TOOLTIP | SDL_WINDOW_POPUP_MENU);
+    if (active->backend == QA_DISPLAY_OPENGL) retained_flags |= SDL_WINDOW_OPENGL;
+    candidate->window = SDL_CreateWindow(SDL_GetWindowTitle(active->window), ticket->x, ticket->y,
+        (int)settings->width, (int)settings->height, retained_flags | SDL_WINDOW_HIDDEN);
+    lease->window = candidate->window;
+    if (!candidate->window) return display_error(error, QA_ERROR_IO, "Preparing candidate surface window");
+    if (active->backend == QA_DISPLAY_OPENGL) {
+        candidate->native.gl.context = ticket->context;
+        candidate->native_borrowed = true;
+        if (!qa_display_make_current(candidate, error) || !surface_gl_visual_equal(ticket, error) ||
+            !surface_restore_context(ticket, error)) return false;
+    } else {
+        if (!cpu_surface_create(candidate, error)) return false;
+        lease->renderer = candidate->native.cpu.renderer;
+    }
+    qa_display_info current;
+    if (!qa_display_info_get(active, &current, error) ||
+        !surface_info_equal(&current, &ticket->original))
+        return display_save_error(error, QA_ERROR_IO,
+            "Preparing a candidate changed the active native surface");
+    return true;
+}
+
+qa_display *qa_display_surface_candidate(const qa_display_surface_ticket *ticket)
+{ return ticket ? ticket->candidate : NULL; }
+
+bool qa_display_surface_stage(qa_display_surface_ticket *ticket, qa_error *error)
+{
+    if (!surface_owner(ticket, error) || !ticket->candidate || ticket->entered || ticket->native_restored)
+        return display_save_error(error, QA_ERROR_ARGUMENT, "Surface settings have no unstaged candidate");
+    qa_display_info active_info;
+    int x, y;
+    SDL_GetWindowPosition(ticket->active->window, &x, &y);
+    if (!qa_display_info_get(ticket->active, &active_info, error) ||
+        !surface_info_equal(&active_info, &ticket->original) || x != ticket->x || y != ticket->y)
+        return display_save_error(error, QA_ERROR_ARGUMENT,
+            "The native display changed before candidate settings were entered");
+    ticket->entered = true;
+    qa_display *candidate = ticket->candidate;
+    if (!qa_display_set_fullscreen(candidate, ticket->settings.fullscreen, error)) return false;
+    if (ticket->original.visible) SDL_ShowWindow(candidate->window);
+    else SDL_HideWindow(candidate->window);
+    if (ticket->original.focused && SDL_SetWindowInputFocus(candidate->window) < 0)
+        return display_error(error, QA_ERROR_IO, "Preparing candidate surface focus");
+    if (candidate->backend == QA_DISPLAY_OPENGL) {
+        if (!qa_display_set_swap_interval(candidate, ticket->settings.swap_interval, error) ||
+            SDL_GL_GetSwapInterval() != ticket->settings.swap_interval)
+            return display_save_error(error, QA_ERROR_IO,
+                "SDL did not enter the requested candidate swap interval");
+        if (!surface_gl_visual_equal(ticket, error)) return false;
+    }
+    if (!qa_display_info_get(candidate, &ticket->staged, error)) return false;
+    if (ticket->staged.fullscreen != ticket->settings.fullscreen ||
+        ticket->staged.visible != ticket->original.visible ||
+        (ticket->original.focused && !ticket->staged.focused) ||
+        (ticket->settings.fullscreen == QA_DISPLAY_WINDOWED &&
+         (ticket->staged.logical_width != ticket->settings.width ||
+          ticket->staged.logical_height != ticket->settings.height)))
+        return display_save_error(error, QA_ERROR_IO,
+            "SDL candidate native settings differ from the requested settings");
+    if (candidate->backend == QA_DISPLAY_CPU &&
+        !resize_cpu_texture(candidate, ticket->staged.drawable_width,
+                            ticket->staged.drawable_height, error)) return false;
+    ticket->staged_valid = true;
+    return qa_display_surface_ready(ticket, error);
+}
+
+bool qa_display_surface_ready(const qa_display_surface_ticket *ticket, qa_error *error)
+{
+    if (!surface_owner(ticket, error) || !ticket->candidate || !ticket->staged_valid)
+        return display_save_error(error, QA_ERROR_ARGUMENT, "Surface settings are not natively staged");
+    const qa_display *candidate = ticket->candidate;
+    qa_display_info current;
+    if (!qa_display_info_get(candidate, &current, error) ||
+        !surface_info_equal(&current, &ticket->staged))
+        return display_save_error(error, QA_ERROR_IO, "Candidate native surface changed before publication");
+    if (candidate->backend == QA_DISPLAY_OPENGL) {
+        if (candidate->native.gl.context != ticket->context ||
+            candidate->lease->context != NULL || SDL_GL_GetCurrentWindow() != candidate->window ||
+            SDL_GL_GetCurrentContext() != ticket->context ||
+            SDL_GL_GetSwapInterval() != ticket->settings.swap_interval)
+            return display_save_error(error, QA_ERROR_ARGUMENT,
+                "Candidate surface is not bound to the prepared active GL context");
+    } else if (candidate->native.cpu.width != current.drawable_width ||
+               candidate->native.cpu.height != current.drawable_height ||
+               !candidate->native.cpu.texture)
+        return display_save_error(error, QA_ERROR_ARGUMENT, "Candidate CPU texture is not prepared");
+    return true;
+}
+
+bool qa_display_surface_rollback(qa_display_surface_ticket *ticket, qa_error *error)
+{
+    if (!surface_owner(ticket, error)) return false;
+    if (!ticket->native_restored && ticket->candidate && ticket->candidate->window) {
+        if (!qa_display_set_fullscreen(ticket->candidate, QA_DISPLAY_WINDOWED, error)) return false;
+        SDL_HideWindow(ticket->candidate->window);
+    }
+    if (!ticket->native_restored && ticket->entered) {
+        qa_display_info actual;
+        if (!qa_display_info_get(ticket->active, &actual, error)) return false;
+        if (actual.fullscreen != ticket->original.fullscreen) {
+            if (SDL_SetWindowDisplayMode(ticket->active->window, &ticket->original_mode) < 0 ||
+                !qa_display_set_fullscreen(ticket->active, ticket->original.fullscreen, error))
+                return display_error(error, QA_ERROR_IO, "Restoring prior native fullscreen mode");
+        }
+        if (ticket->original.visible) SDL_ShowWindow(ticket->active->window);
+        else SDL_HideWindow(ticket->active->window);
+        if (ticket->original.minimized) SDL_MinimizeWindow(ticket->active->window);
+        else if (ticket->original.maximized) SDL_MaximizeWindow(ticket->active->window);
+        else SDL_RestoreWindow(ticket->active->window);
+        SDL_Window *focus = ticket->previous_focus ? SDL_GetWindowFromID(ticket->previous_focus) : NULL;
+        if (focus && SDL_SetWindowInputFocus(focus) < 0)
+            return display_error(error, QA_ERROR_IO, "Restoring prior native surface focus");
+    }
+    if (!ticket->native_restored && ticket->active->backend == QA_DISPLAY_OPENGL) {
+        if (ticket->interval_known &&
+            (!qa_display_set_swap_interval(ticket->active, ticket->original_interval, error) ||
+             SDL_GL_GetSwapInterval() != ticket->original_interval)) return false;
+        if (!surface_restore_context(ticket, error)) return false;
+    }
+    qa_display_info current;
+    int x, y;
+    SDL_GetWindowPosition(ticket->active->window, &x, &y);
+    if (!qa_display_info_get(ticket->active, &current, error) || x != ticket->x || y != ticket->y ||
+        !surface_info_equal(&current, &ticket->original))
+        return display_save_error(error, QA_ERROR_IO,
+            "The prior native surface has not recovered; retain the surface ticket");
+    if (ticket->active->backend == QA_DISPLAY_OPENGL &&
+        (SDL_GL_GetCurrentWindow() != ticket->previous_window ||
+         SDL_GL_GetCurrentContext() != ticket->previous_context) &&
+        !surface_restore_context(ticket, error)) return false;
+    ticket->native_restored = true;
+    ticket->staged_valid = false;
+    return true;
+}
+
+bool qa_display_surface_abort(qa_display_surface_ticket **out, qa_error *error)
+{
+    if (!out) return display_save_error(error, QA_ERROR_ARGUMENT, "Invalid surface settings abort");
+    qa_display_surface_ticket *ticket = *out;
+    if (!ticket) return true;
+    if (!qa_display_surface_rollback(ticket, error)) return false;
+    qa_display_destroy(ticket->candidate);
+    free(ticket); *out = NULL;
+    return true;
+}
+
+void qa_display_surface_publish(qa_display_surface_ticket **out,
+                                qa_display **active, qa_display **retired)
+{
+    if (!out || !*out || !active || !retired || *retired || *active != (*out)->active ||
+        !(*out)->staged_valid) return;
+    qa_display_surface_ticket *ticket = *out;
+    qa_display *candidate = ticket->candidate;
+    if (candidate->backend == QA_DISPLAY_OPENGL) {
+        candidate->lease->context = ticket->context;
+        candidate->lease->library_loaded = ticket->active_lease->library_loaded;
+        candidate->native.gl.library_loaded = candidate->lease->library_loaded;
+        candidate->native_borrowed = false;
+        ticket->active_lease->context = NULL;
+        ticket->active_lease->library_loaded = false;
+        ticket->active->native.gl.context = NULL;
+        ticket->active->native.gl.library_loaded = false;
+    }
+    *retired = ticket->active; *active = candidate;
+    free(ticket); *out = NULL;
+}

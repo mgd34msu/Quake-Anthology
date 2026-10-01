@@ -3,6 +3,7 @@
 #include "source_chat.h"
 #include "source_goal.h"
 #include "source_orders.h"
+#include "source_player.h"
 
 enum {
     SOURCE_CHAT_INSULT=24, SOURCE_CHAT_MISC=25, SOURCE_CHAT_START_END=26,
@@ -64,10 +65,10 @@ static bool player(qa_bots *b,int32_t client,qa_bot_source_player_state *out,qa_
 }
 static bool ranking(qa_bots *b,bot_ai_state *s,bool first,bool *out,qa_error *e) {
     *out=false;
-    if(!s->player.source_state_available) return bot_ai_fail(e,"Source chat ranking lacks retained curPs");
     int32_t max;
     CHAT_CALL(maximum(b,first?&b->source_chat.first_maxclients:&b->source_chat.last_maxclients,&max,e));
-    int32_t score=s->player.source_state.persistant[0];
+    int32_t score;
+    CHAT_CALL(bot_ai_source_player_slot(b,s,BOT_PS_PERSISTENT,0,&score,e));
     for(int32_t client=0;client<max;++client) {
         bool present;CHAT_CALL(active(b,client,&present,e));if(!present) continue;
         qa_bot_source_player_state current;CHAT_CALL(player(b,client,&current,e));
@@ -157,8 +158,8 @@ static bool observation(qa_bots *b,int32_t number,qa_bot_entity_info *out,qa_err
 }
 static bool observer(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
     *out=false;
-    if(!s->player.source_state_available) return bot_ai_fail(e,"Source chat observer test lacks retained curPs");
-    if(s->player.source_state.pmType==2) {*out=true;return true;}
+    int32_t type;CHAT_CALL(bot_ai_source_player_word(b,s,BOT_PS_MOVE_TYPE,&type,e));
+    if(type==2) {*out=true;return true;}
     int32_t self,team;CHAT_CALL(bot_ai_source_client(b,s,&self,e));
     CHAT_CALL(bot_ai_source_team(b,self,&team,e));*out=team==3;return true;
 }
@@ -191,8 +192,8 @@ static bool contents(qa_bots *b,qa_vec3 point,qa_actor_id pass,int32_t *out,qa_e
 }
 bool bot_ai_source_valid_chat_position(qa_bots *b,bot_ai_state *s,bool *out,qa_error *e) {
     *out=false;
-    if(!s->player.source_state_available) return bot_ai_fail(e,"Source chat position lacks retained curPs");
-    if(s->player.source_state.pmType==3) {*out=true;return true;}
+    int32_t type;CHAT_CALL(bot_ai_source_player_word(b,s,BOT_PS_MOVE_TYPE,&type,e));
+    if(type==3) {*out=true;return true;}
     static const int powerups[]={QA_BOT_INV_QUAD,QA_BOT_INV_HASTE,QA_BOT_INV_INVISIBILITY,QA_BOT_INV_REGEN,QA_BOT_INV_FLIGHT};
     for(size_t i=0;i<5;++i) if(bot_ai_inventory_value(s,powerups[i])!=0) return true;
     qa_vec3 below=s->player.origin,above=below;int32_t point;

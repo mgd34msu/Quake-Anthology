@@ -6,9 +6,9 @@
 static const uint8_t magic[8] = {'Q', 'A', 'B', 'P', 'O', 'P', 'U', 0};
 static bool signature(qa_source_save_io *io)
 {
-    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=12;
+    uint8_t actual[8];memcpy(actual,magic,sizeof(actual));uint32_t version=13;
     return qa_source_save_bytes(io,actual,sizeof(actual)) && qa_source_save_u32(io,&version) &&
-        (!memcmp(actual,magic,sizeof(actual)) && version==12?true:
+        (!memcmp(actual,magic,sizeof(actual)) && version==13?true:
             bot_save_fail(io,QA_ERROR_FORMAT,"Unsupported native bot population continuation schema"));
 }
 #define FIELD(kind, value) do { if (!qa_source_save_##kind(io, &(value))) return false; } while (0)
@@ -46,20 +46,6 @@ static bool player_fields(qa_source_save_io *io, qa_bot_player *player)
     U(player->presence); I(player->current_weapon); I(player->weapon_state); I(player->weapon_time_ms);
     A(player->last_attacker); A(player->last_victim); I(player->deaths); I(player->kills); I(player->last_damage_cause);
     F(player->air_time); F(player->teleport_time); L(player->spawn_sequence); L(player->teleport_sequence);
-    B(player->source_state_available);
-    qa_q3_player *ps=&player->source_state;
-    uint32_t product=ps->product;U(product);if(product>QA_Q3_TEAM_ARENA) return false;ps->product=(qa_q3_product)product;
-    I(ps->commandTime);I(ps->pmType);I(ps->bobCycle);I(ps->pmFlags);I(ps->pmTime);
-    I(ps->weaponTime);I(ps->gravity);I(ps->speed);I(ps->groundEntityNum);
-    I(ps->legsTimer);I(ps->legsAnim);I(ps->torsoTimer);I(ps->torsoAnim);I(ps->movementDir);
-    I(ps->eFlags);I(ps->eventSequence);I(ps->externalEvent);I(ps->externalEventParm);I(ps->externalEventTime);
-    I(ps->clientNum);I(ps->weapon);I(ps->weaponState);I(ps->viewheight);
-    I(ps->damageEvent);I(ps->damageYaw);I(ps->damagePitch);I(ps->damageCount);
-    I(ps->generic1);I(ps->loopSound);I(ps->jumppadEnt);I(ps->ping);I(ps->pmoveFramecount);
-    I(ps->jumppadFrame);I(ps->entityEventSequence);
-    for(size_t i=0;i<3;++i) {F(ps->origin[i]);F(ps->velocity[i]);I(ps->deltaAngles[i]);F(ps->grapplePoint[i]);F(ps->viewangles[i]);}
-    for(size_t i=0;i<2;++i) {I(ps->events[i]);I(ps->eventParms[i]);}
-    for(size_t i=0;i<16;++i) {I(ps->stats[i]);I(ps->persistant[i]);I(ps->powerups[i]);I(ps->ammo[i]);}
     return true;
 }
 static bool source_order_fields(qa_source_save_io *io,bot_source_order_state *order) {

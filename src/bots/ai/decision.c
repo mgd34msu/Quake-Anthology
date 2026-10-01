@@ -1,5 +1,6 @@
 #include "internal.h"
 #include "source_inventory.h"
+#include "source_player.h"
 
 enum { BOT_AIR_GOAL=128, BOT_DEFAULT_TRAVEL=0x011c0fbe, BOT_LIQUID=8|16|32 };
 static qa_bot_goals *goals(qa_bots *b) { return qa_bot_runtime_goals(b->runtime); }
@@ -486,9 +487,9 @@ bool bot_ai_decide(qa_bots *b, bot_ai_state *s, qa_error *e) {
                     DECISION_CALL(bot_ai_source_chat_hit_no_death(b,s,&chat,e));
                 }
                 if(!chat) {
-                    if(!s->player.source_state_available)
-                        return bot_ai_fail(e,"bot hit chat requires retained source player state");
-                    if(s->player.source_state.persistant[1]>s->source_chat.last_hit_count) {
+                    int32_t hit_count;
+                    DECISION_CALL(bot_ai_source_player_slot(b,s,BOT_PS_PERSISTENT,1,&hit_count,e));
+                    if(hit_count>s->source_chat.last_hit_count) {
                         DECISION_CALL(bot_ai_source_chat_hit_no_kill(b,s,&chat,e));
                     }
                 }
