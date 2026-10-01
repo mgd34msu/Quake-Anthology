@@ -68,9 +68,9 @@ static bool blob(qa_source_save_io *io,qa_buffer *b)
 }
 static bool fields(qa_source_save_io *io,q3n_mission_hud *o)
 {
-    uint8_t magic[4]={'Q','3','M','H'}; uint32_t version=1,seat=o->options.seat; bool shared_weapon_hud=o->options.shared_weapon_hud;
-    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,"Q3MH",4)||!qa_source_save_u32(io,&version)||version!=1||
-        !qa_source_save_u32(io,&seat)||seat!=o->options.seat||!qa_source_save_bool(io,&shared_weapon_hud)||shared_weapon_hud!=o->options.shared_weapon_hud)return false;
+    uint8_t magic[4]={'Q','3','M','H'}; uint32_t version=2,seat=o->options.seat;
+    if(!qa_source_save_bytes(io,magic,4)||memcmp(magic,"Q3MH",4)||!qa_source_save_u32(io,&version)||version!=2||
+        !qa_source_save_u32(io,&seat)||seat!=o->options.seat)return false;
     qa_buffer menus={0}; bool ok=true;
     if(io->direction==QA_SOURCE_SAVE_WRITE)ok=q3menu_checkpoint(o->menus,&menus,io->error);
     if(ok)ok=blob(io,&menus);

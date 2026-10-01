@@ -69,15 +69,26 @@ static void damage(q3n_player_state *o,const q3n_frame *f)
     g->damage_x=q3nh_clamp(g->damage_x,-1,1); g->damage_y=q3nh_clamp(g->damage_y,-1,1);
     g->damage_value=kick; g->damage_kick_end_time=q3ne_plus(f->time,500); g->damage_time=(float)f->source.source_time_ms;
 }
+static bool selected_ammo(q3n_player_state *o,const q3n_frame *f,bool *selected,qa_error *e)
+{
+    *selected=false;
+    if(o->options.weapon_warning) {
+        q3n_weapon_hud hud={0};
+        if(!o->options.weapon_warning(o->options.context,f,&hud,e) || !q3ne_current(f,e))return false;
+        if(hud.selected) {
+            *selected=true;
+            if(hud.warning<0 || hud.warning>2)return q3ne_fail(e,QA_ERROR_FORMAT,"Shared arsenal warning is outside its actual domain");
+            int32_t previous=o->feedback.low_ammo_warning; o->feedback.low_ammo_warning=hud.warning;
+            return !hud.warning || hud.warning==previous || sound(f,Q3N_S_NOAMMO,6,e);
+        }
+    }
+    return true;
+}
 static bool ammo(q3n_player_state *o,const q3n_frame *f,qa_error *e)
 {
-    if(o->options.weapon_warning) {
-        int32_t warning;
-        if(!o->options.weapon_warning(o->options.context,f,&warning,e) || !q3ne_current(f,e))return false;
-        if(warning<0 || warning>2)return q3ne_fail(e,QA_ERROR_FORMAT,"Shared arsenal warning is outside its actual domain");
-        int32_t previous=o->feedback.low_ammo_warning; o->feedback.low_ammo_warning=warning;
-        return !warning || warning==previous || sound(f,Q3N_S_NOAMMO,6,e);
-    }
+    bool selected;
+    if(!selected_ammo(o,f,&selected,e))return false;
+    if(selected)return true;
     const qa_q3_player *p=&f->local_player; int32_t total=0;
     int32_t extent=o->product==QA_Q3_TEAM_ARENA?14:11;
     for(int32_t i=2;i<extent;++i) {
@@ -194,7 +205,14 @@ bool q3n_player_state_transition(q3n_player_state *o,const q3n_frame *f,const q3
         memset(h,0,sizeof(*h)); memset(&o->feedback,0,sizeof(o->feedback));
         o->event_sequence=0; memset(o->predictable_events,0,sizeof(o->predictable_events));
     }
-    if(h->valid && h->source_frame==f->source.source_frame.number && h->source_time==f->time && !o->map_restart)return true;
+    if(h->valid && h->source_frame==f->source.source_frame.number && h->source_time==f->time && !o->map_restart) {
+        if(!o->options.weapon_warning)return true;
+        /* The admitted arsenal has its own completed clock. A repeated world
+         * cut retains primary transitions while its selected warning advances. */
+        o->busy=true; bool selected;
+        bool ok=selected_ammo(o,f,&selected,e);
+        o->busy=false; return ok;
+    }
     o->busy=true; o->feedback.this_frame_teleport=false;
     bool initial=!h->valid;
     if(initial)remember(h,f,actual.binding.actor);

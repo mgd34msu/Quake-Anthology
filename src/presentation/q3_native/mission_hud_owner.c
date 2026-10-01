@@ -44,7 +44,7 @@ float q3nm_value(int id)
     case CG_SELECTEDPLAYER_HEALTH:ci=selected(o); return ci?(float)ci->dynamic.health:-1;
     case CG_PLAYER_ARMOR_VALUE:return (float)p->stats[4];
     case CG_PLAYER_AMMO_VALUE:{
-        if(o->options.shared_weapon_hud) {
+        if(o->draw.weapon_hud.selected) {
             qa_application_equipment_view equipment;
             if(!qa_application_equipment_read(o->options.application,o->frame->viewing_actor,&equipment,o->menus->error)||
                 !qa_application_equipment_current(o->options.application,&equipment)||!q3nm_current(o,o->frame,o->menus->error)) {
@@ -124,7 +124,7 @@ static void armor(q3n_mission_hud *o,rectDef_t r,bool flat)
 }
 static void ammo(q3n_mission_hud *o,rectDef_t r,bool flat)
 {
-    if(o->options.shared_weapon_hud)return;
+    if(o->draw.weapon_hud.selected)return;
     const q3n_media_view *m=q3n_media_read(o->frame->media); int weapon;
     if(flat||(!o->settings.draw_3d_icons&&o->settings.draw_icons)) { weapon=o->frame->local_player.weapon;
         if(weapon>=0&&weapon<16&&m->weapons[weapon].ammo_icon)pic(o,r,m->weapons[weapon].ammo_icon); }
@@ -253,7 +253,7 @@ void q3nm_owner(float x,float y,float w,float h,float text_x,float text_y,int id
     switch(id) {
     case CG_PLAYER_ARMOR_ICON:armor(o,r,flat); break; case CG_PLAYER_ARMOR_ICON2D:armor(o,r,true); break;
     case CG_PLAYER_AMMO_ICON:ammo(o,r,flat); break; case CG_PLAYER_AMMO_ICON2D:ammo(o,r,true); break;
-    case CG_PLAYER_AMMO_VALUE:if(!o->options.shared_weapon_hud&&entity_weapon(o)&&q3nm_value(id)>-1)number(o,r,scale,color,(int)q3nm_value(id),picture,style); break;
+    case CG_PLAYER_AMMO_VALUE:if(!o->draw.weapon_hud.selected&&entity_weapon(o)&&q3nm_value(id)>-1)number(o,r,scale,color,(int)q3nm_value(id),picture,style); break;
     case CG_PLAYER_ARMOR_VALUE:case CG_PLAYER_HEALTH:case CG_PLAYER_SCORE:case CG_SELECTEDPLAYER_HEALTH:number(o,r,scale,color,(int)q3nm_value(id),picture,style); break;
     case CG_SELECTEDPLAYER_ARMOR:if(q3nm_value(id)>0)number(o,r,scale,color,(int)q3nm_value(id),picture,style); break;
     case CG_SELECTEDPLAYER_HEAD:case CG_VOICE_HEAD:q3nm_result(q3nh_head(&o->draw,x,y,w,h,id==CG_VOICE_HEAD?o->commands->current_voice_client:selected_index(o),qa_v3(0,180,0))); break;

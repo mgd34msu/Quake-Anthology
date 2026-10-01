@@ -305,8 +305,15 @@ static bool torso_frame(const qa_player_animation_config *config,int32_t frame,i
 }
 bool q3n_weapons_view(const q3n_frame *f,const q3n_weapon_view *view,qa_error *e)
 {
-    if (!frame_valid(f,e) || !view || !f->has_local_player || !view->predicted_entity || !view->predicted_state) return false;
+    if (!frame_valid(f,e) || !view || !f->has_local_player) return false;
     const qa_q3_player *ps=&f->local_player;
+    if (f->weapons->options.view_replacement) {
+        bool consumed=false;
+        if (!f->weapons->options.view_replacement(f->weapons->options.context,f,ps,&consumed,e) || !frame_valid(f,e)) return false;
+        if (consumed) return true;
+    }
+    if (!view->predicted_entity || !view->predicted_state)
+        return q3p_fail(e,QA_ERROR_ARGUMENT,"Primary view weapon requires its actual predicted entity and state");
     if (ps->persistant[3]==3 || ps->pmType==5 || f->third_person) return true;
     const q3n_weapon_settings *settings=f->weapon_settings;
     if (!settings->draw_gun) {
@@ -342,11 +349,6 @@ bool q3n_weapons_view(const q3n_frame *f,const q3n_weapon_view *view,qa_error *e
     }
     hands.flags=8|4|1;
     if (ps->persistant[3]<0 || ps->persistant[3]>3) return q3p_fail(e,QA_ERROR_FORMAT,"Invalid view weapon team");
-    if (f->weapons->options.view_replacement) {
-        bool suppressed=false;
-        if (!f->weapons->options.view_replacement(f->weapons->options.context,f,ps,&hands,&suppressed,e) || !frame_valid(f,e)) return false;
-        if (suppressed) return true;
-    }
     return q3n_weapons_player(f,&hands,ps,view->predicted_entity,view->predicted_state,e);
 }
 static qa_vec3 cross(qa_vec3 a,qa_vec3 b)

@@ -25,7 +25,7 @@ typedef struct q3n_hud_options {
     int32_t (*milliseconds)(void *);
     bool (*load_deferred)(void *, const q3n_frame *, qa_error *);
     bool (*client_command)(void *, const q3n_frame *, const char *, qa_error *);
-    bool (*weapon_warning)(void *, const q3n_frame *, int32_t *, qa_error *);
+    bool (*weapon_warning)(void *, const q3n_frame *, q3n_weapon_hud *, qa_error *);
     /* Team Arena paints its real parsed cgame menus and fonts through their
      * native owner. The base HUD never substitutes an approximate layout. */
     bool (*mission_paint)(void *, const q3n_frame *, bool scoreboard, bool first_time, qa_error *);
@@ -50,6 +50,7 @@ bool q3n_hud_create_restored(const q3n_hud_options *, q3n_hud **, qa_error *);
 void q3n_hud_destroy(q3n_hud *);
 bool q3n_hud_idle(const q3n_hud *);
 const q3n_hud_state *q3n_hud_read(const q3n_hud *);
+bool q3n_hud_weapon_read(q3n_hud *, const q3n_frame *, q3n_weapon_hud *, qa_error *);
 bool q3n_hud_center_print(q3n_hud *, const q3n_frame *, const char *, int32_t y, int32_t width, qa_error *);
 void q3n_hud_scores(q3n_hud *, bool show, int32_t source_time);
 bool q3n_hud_frame(q3n_hud *, const q3n_frame *, const q3n_hud_settings *,

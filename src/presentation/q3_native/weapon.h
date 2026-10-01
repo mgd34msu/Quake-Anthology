@@ -15,10 +15,11 @@ typedef struct q3n_weapon_options {
     qa_q3_product product;
     qa_q3_presentation_assets *assets;
     void *context;
-    /* A replacement has emitted its actual selected resources before setting
-     * suppressed. Its input is the authored hands and raw local PS. */
+    /* View admission precedes all primary weapon prerequisites. The receiver
+     * owns selected hands/pose and consumes only a genuinely admitted selected
+     * output or its source-qualified hidden state. Fallback runs once. */
     bool (*view_replacement)(void *, const q3n_frame *, const qa_q3_player *,
-        const qa_q3_ref_entity *hands, bool *suppressed, qa_error *);
+        bool *consumed, qa_error *);
     bool (*held_replacement)(void *, const q3n_frame *, const qa_q3_entity *,
         const qa_q3_ref_entity *torso, bool *suppressed, qa_error *);
     bool (*particle_explosion)(void *, const q3n_frame *, const char *animation,

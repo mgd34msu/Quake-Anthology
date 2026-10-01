@@ -34,10 +34,13 @@ bool frontend_config_userinfo_register(qa_cvars *cvars,uint32_t seat,const char 
     }
     if (dialect==QA_CONSOLE_Q3) {
         static const struct {const char *name,*value; uint32_t flags;} prefix[]={
+            {"vm_ui","2",QA_CVAR_ARCHIVE},{"vm_cgame","2",QA_CVAR_ARCHIVE},
+            {"cl_allowDownload","0",QA_CVAR_ARCHIVE},
             {"cl_timeNudge","0",QA_CVAR_TEMPORARY},{"rate","25000",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO},
             {"cl_maxpackets","30",QA_CVAR_ARCHIVE},{"cl_packetdup","1",QA_CVAR_ARCHIVE},
             {"snaps","20",QA_CVAR_ARCHIVE|QA_CVAR_USERINFO}};
-        for (size_t i=0;i<5;++i) if (!declare(cvars,prefix[i].name,prefix[i].value,prefix[i].flags,error)) return false;
+        for (size_t i=0;i<sizeof(prefix)/sizeof(*prefix);++i)
+            if (!declare(cvars,prefix[i].name,prefix[i].value,prefix[i].flags,error)) return false;
         if (!declare(cvars,"name",name,identity,error)) return false;
         size_t length=strlen(model);
         char *body=length<=SIZE_MAX-9?malloc(length+9):NULL;

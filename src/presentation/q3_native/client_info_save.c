@@ -117,7 +117,7 @@ static bool holder_fields(qa_source_save_io *io, q3n_clients *owner,
     }
     return holder->receipt.resource_id == qa_resource_id(holder->resource) &&
         qa_resource_pool_find(qa_vfs_resources(owner->options.content), holder->receipt.resource_id) == holder->resource &&
-        qa_vfs_acquisition_valid(owner->options.content, &holder->receipt, io->error);
+        qa_vfs_acquisition_retained(owner->options.content, &holder->receipt, io->error);
 }
 static bool fields(qa_source_save_io *io, q3n_clients *owner, const q3n_client_refs *refs)
 {

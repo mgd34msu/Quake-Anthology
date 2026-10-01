@@ -14,8 +14,6 @@ typedef struct q3n_mission_hud_options {
     qa_q3_presentation *presentation;
     qa_font_library *fonts;
     uint32_t seat;
-    /* Presence comes from the genuine physical-seat HUD/equipment reader. */
-    bool shared_weapon_hud;
     void *context;
     int32_t (*milliseconds)(void *);
     void (*print)(void *, const char *);

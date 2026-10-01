@@ -856,6 +856,14 @@ bool qa_vfs_set_restrictions(qa_vfs *vfs, const qa_sha256_digest *archives,
     return true;
 }
 
+bool qa_vfs_restrictions_read(const qa_vfs *vfs, const qa_sha256_digest **archives,
+    size_t *count, bool *q3_demo)
+{
+    if (!vfs || !archives || !count || !q3_demo) return false;
+    *archives = vfs->pure; *count = vfs->pure_count; *q3_demo = vfs->q3_demo;
+    return true;
+}
+
 bool qa_vfs_set_mount_q3_demo(qa_vfs *vfs, qa_mount_id id, bool enabled, qa_error *error)
 {
     mount *source = find_mount(vfs, id);

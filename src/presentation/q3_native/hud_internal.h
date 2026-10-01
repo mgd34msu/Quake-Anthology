@@ -25,6 +25,7 @@ typedef struct q3n_hud_draw {
     float anchor_x, anchor_y;
     qa_ui_presentation typography;
     qa_scene_frame *scene;
+    q3n_weapon_hud weapon_hud;
 } q3n_hud_draw;
 bool q3nh_preferences(q3n_hud_draw *);
 void q3nh_anchor(q3n_hud_draw *,float x,float y);

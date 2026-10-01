@@ -5,6 +5,12 @@
 #include "qa/application_native_q3_client.h"
 
 typedef struct q3n_player_state q3n_player_state;
+/* Prepared equipment admission for this actual source frame. Installation of
+ * a reader alone does not replace the primary game's weapon HUD. */
+typedef struct q3n_weapon_hud {
+    bool selected;
+    int32_t warning;
+} q3n_weapon_hud;
 typedef struct q3n_player_state_options {
     qa_application *application;
     const qa_application_native_q3_presentation *source;
@@ -13,9 +19,9 @@ typedef struct q3n_player_state_options {
     uint32_t seat;
     void *context;
     void (*print)(void *, const char *);
-    /* Installed shared arsenal HUD reader. Warning is the actual physical
-     * viewing actor's aggregate warning: 0 none, 1 low, 2 empty. */
-    bool (*weapon_warning)(void *, const q3n_frame *, int32_t *, qa_error *);
+    /* Actual admitted equipment decision; warning is 0 none, 1 low, 2 empty.
+     * A false selected result retains the donor's primary ammo calculation. */
+    bool (*weapon_warning)(void *, const q3n_frame *, q3n_weapon_hud *, qa_error *);
 } q3n_player_state_options;
 typedef struct q3n_player_state_context {
     int32_t warmup, timelimit, fraglimit, scores1;

@@ -1,5 +1,7 @@
 #include "qa/network_q3.h"
 #include "qa/network_q3_pak_role.h"
+#include "qa/network_q3_pak_save.h"
+#include "qa/source_save.h"
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
@@ -151,6 +153,96 @@ bool qa_q3_pak_reference_at(const qa_q3_pak_references *refs, size_t index, qa_q
     *out = refs->entries[refs->order[index]]; return true;
 }
 uint32_t qa_q3_pak_checksum_feed(const qa_q3_pak_references *refs) { return refs->checksum_feed; }
+
+static bool reference_order_valid(const uint16_t *order, size_t count, qa_error *error) {
+    uint8_t seen[QA_Q3_SEARCH_PATHS / 8] = {0};
+    for (size_t i = 0; i < count; ++i) {
+        unsigned index = order[i];
+        if (index >= count || (seen[index >> 3] & (1u << (index & 7))))
+            return fail(error, QA_ERROR_FORMAT, "Q3 saved package search order is not its complete slot permutation");
+        seen[index >> 3] |= (uint8_t)(1u << (index & 7));
+    }
+    return true;
+}
+static bool reference_valid(const qa_q3_pak_references *refs, qa_error *error) {
+    if (!refs || !refs->random || refs->count > QA_Q3_SEARCH_PATHS || refs->fake_checksum > 1 ||
+        !reference_order_valid(refs->order, refs->count, error))
+        return fail(error, QA_ERROR_FORMAT, "Q3 reference continuation lost its actual catalog or loose checksum cell");
+    for (size_t i = 0; i < refs->count; ++i) {
+        const qa_q3_pak_entry *pack = refs->entries[i].pack;
+        if (!pack || !pack->game || !pack->basename || !pack->archive_path ||
+            refs->entries[i].flags > ALL_FLAGS || refs->identities[find_identity(refs, pack)] != i + 1)
+            return fail(error, QA_ERROR_FORMAT, "Q3 reference continuation has another actual package identity or flag mask");
+    }
+    return true;
+}
+static bool reference_text(qa_source_save_io *io, const char *text) {
+    size_t length = strlen(text), saved = length;
+    if (!qa_source_save_count(io, &saved, length) || saved != length)
+        return fail(io->error, QA_ERROR_FORMAT, "Saved Q3 package spelling differs from its actual inventory slot");
+    if (io->direction == QA_SOURCE_SAVE_WRITE)
+        return qa_source_save_bytes(io, (void *)text, length);
+    if (io->offset > io->input.size || length > io->input.size - io->offset ||
+        (length && memcmp(io->input.data + io->offset, text, length)))
+        return fail(io->error, QA_ERROR_FORMAT, "Saved Q3 package spelling differs from its actual inventory slot");
+    io->offset += length; return true;
+}
+static bool reference_header(qa_source_save_io *io, size_t *count, uint32_t *feed, uint32_t *loose) {
+    uint32_t magic = UINT32_C(0x46525051), version = 1;
+    return qa_source_save_u32(io, &magic) && magic == UINT32_C(0x46525051) &&
+        qa_source_save_u32(io, &version) && version == 1 &&
+        qa_source_save_count(io, count, QA_Q3_SEARCH_PATHS) &&
+        qa_source_save_u32(io, feed) && qa_source_save_u32(io, loose) && *loose <= 1;
+}
+static bool reference_pack(qa_source_save_io *io, const qa_q3_pak_entry *pack, uint32_t *flags) {
+    uint32_t checksum = pack->checksum, pure = pack->pure_checksum;
+    return reference_text(io, pack->game) && reference_text(io, pack->basename) &&
+        reference_text(io, pack->archive_path) && qa_source_save_u32(io, &checksum) && checksum == pack->checksum &&
+        qa_source_save_u32(io, &pure) && pure == pack->pure_checksum &&
+        qa_source_save_u32(io, flags) && *flags <= ALL_FLAGS;
+}
+bool qa_q3_pak_references_checkpoint(const qa_q3_pak_references *refs, qa_buffer *out, qa_error *error) {
+    if (!out || out->data || out->size)
+        return fail(error, QA_ERROR_ARGUMENT, "Q3 reference capture requires its actual owner and empty output");
+    if (!reference_valid(refs, error)) return false;
+    qa_source_save_io io = {0}; size_t count = refs->count;
+    uint32_t feed = refs->checksum_feed, loose = refs->fake_checksum;
+    bool ok = qa_source_save_writer(&io, NULL, error) && reference_header(&io, &count, &feed, &loose);
+    for (size_t i = 0; ok && i < count; ++i) {
+        uint32_t flags = refs->entries[i].flags;
+        ok = reference_pack(&io, refs->entries[i].pack, &flags);
+    }
+    for (size_t i = 0; ok && i < count; ++i) {
+        uint16_t ordinal = refs->order[i]; ok = qa_source_save_u16(&io, &ordinal);
+    }
+    if (ok) ok = qa_source_save_finish(&io, out);
+    qa_source_save_dispose(&io); return ok;
+}
+bool qa_q3_pak_references_restore(qa_bytes bytes, const qa_q3_pak_entry *const *packs, size_t count,
+    uint32_t feed, qa_q3_pak_random_fn random, void *context, qa_q3_pak_references **out, qa_error *error) {
+    if (!out || *out || !random || count > QA_Q3_SEARCH_PATHS || (count && !packs))
+        return fail(error, QA_ERROR_ARGUMENT, "Q3 reference restore requires its actual inventory and empty output");
+    for (size_t i = 0; i < count; ++i) if (!packs[i] || !packs[i]->game || !packs[i]->basename || !packs[i]->archive_path)
+        return fail(error, QA_ERROR_ARGUMENT, "Q3 reference restore lacks an actual inventory slot");
+    uint32_t flags[QA_Q3_SEARCH_PATHS] = {0}, saved_feed = feed, loose = 0;
+    uint16_t order[QA_Q3_SEARCH_PATHS] = {0}; size_t saved_count = count;
+    qa_source_save_io io = {0};
+    bool ok = qa_source_save_reader(&io, NULL, bytes, error) &&
+        reference_header(&io, &saved_count, &saved_feed, &loose) && saved_count == count && saved_feed == feed;
+    for (size_t i = 0; ok && i < count; ++i) ok = reference_pack(&io, packs[i], flags + i);
+    for (size_t i = 0; ok && i < count; ++i) ok = qa_source_save_u16(&io, order + i);
+    if (ok) ok = reference_order_valid(order, count, error) && qa_source_save_finish(&io, NULL);
+    qa_source_save_dispose(&io);
+    if (!ok) {
+        if (!error || error->code == QA_OK) fail(error, QA_ERROR_FORMAT, "Q3 reference record differs from its admitted inventory and feed");
+        return false;
+    }
+    qa_q3_pak_references *refs = NULL;
+    if (!qa_q3_pak_references_create(packs, count, feed, random, context, &refs, error)) return false;
+    for (size_t i = 0; i < count; ++i) refs->entries[i].flags = flags[i];
+    memcpy(refs->order, order, count * sizeof(*order)); refs->fake_checksum = loose;
+    *out = refs; return true;
+}
 
 typedef struct info_output { char *data; size_t size, maximum; } info_output;
 static void append(info_output *info, const char *text) {

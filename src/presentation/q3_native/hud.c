@@ -28,6 +28,16 @@ bool q3n_hud_create_restored(const q3n_hud_options *options,q3n_hud **out,qa_err
 void q3n_hud_destroy(q3n_hud *o) { if(o && !o->busy)free(o); }
 bool q3n_hud_idle(const q3n_hud *o) { return o && !o->busy; }
 const q3n_hud_state *q3n_hud_read(const q3n_hud *o) { return o?&o->state:NULL; }
+bool q3n_hud_weapon_read(q3n_hud *o,const q3n_frame *f,q3n_weapon_hud *out,qa_error *e)
+{
+    if(!out || !q3nh_current(o,f,e))return false;
+    q3n_weapon_hud result={0};
+    if(o->options.weapon_warning && (!o->options.weapon_warning(o->options.context,f,&result,e) ||
+       !q3nh_current(o,f,e)))return false;
+    if(result.selected && (result.warning<0 || result.warning>2))
+        return q3ne_fail(e,QA_ERROR_FORMAT,"Shared arsenal warning is outside its actual domain");
+    *out=result; return true;
+}
 bool q3n_hud_center_print(q3n_hud *o,const q3n_frame *f,const char *text,int32_t y,int32_t width,qa_error *e)
 {
     if(!text || !o || o->busy || !q3nh_current(o,f,e))return false;
@@ -107,7 +117,7 @@ static bool status_bar(q3n_hud_draw *d)
     int32_t weapon=actual.state.weapon;
     if(weapon<0 || weapon>=16 || p->weapon<0 || p->weapon>=16)return q3ne_fail(d->error,QA_ERROR_FORMAT,"HUD actual source weapon is invalid");
     if(!q3nh_team_background(d,0,420,640,60,0.33f,p->persistant[3]))return false;
-    if(!d->owner->options.weapon_warning && weapon && m->weapons[weapon].ammo_model && !q3nh_model(d,100,432,48,48,m->weapons[weapon].ammo_model,0,
+    if(!d->weapon_hud.selected && weapon && m->weapons[weapon].ammo_model && !q3nh_model(d,100,432,48,48,m->weapons[weapon].ammo_model,0,
        qa_v3(70,0,0),qa_v3(0,q3ne_add(90,q3ne_mul(20,(float)sin((double)q3ne_div((float)d->frame->time,1000)))),0)))return false;
     if(!status_head(d,285))return false;
     if(p->powerups[7]) { if(!q3nh_flag(d,333,432,48,48,1,false))return false; }
@@ -116,7 +126,7 @@ static bool status_bar(q3n_hud_draw *d)
     int32_t armor=p->stats[q3nh_armor_stat(d->owner->product)];
     if(armor && !q3nh_model(d,470,432,48,48,m->graphics[Q3N_G_ARMOR],0,qa_v3(90,0,-10),
        qa_v3(0,q3ne_div(q3ne_mul((float)(d->frame->time&2047),360),2048),0)))return false;
-    if(!d->owner->options.weapon_warning && weapon && p->ammo[weapon]>-1) {
+    if(!d->weapon_hud.selected && weapon && p->ammo[weapon]>-1) {
         const float firing[4]={0.5f,0.5f,0.5f,1};
         if(!q3nh_color(d,p->weaponState==3 && p->weaponTime>100?firing:q3nh_normal) ||
            !q3nh_field(d,0,432,3,p->ammo[weapon]) || !q3nh_color(d,NULL))return false;
@@ -326,7 +336,7 @@ static bool active_status(q3n_hud_draw *d)
     } else if(!status_bar(d))return false;
     q3nh_anchor(d,320,0);
     int32_t warning=q3n_player_state_feedback(d->player)->low_ammo_warning;
-    if(!d->owner->options.weapon_warning && d->settings->draw_ammo_warning && warning &&
+    if(!d->weapon_hud.selected && d->settings->draw_ammo_warning && warning &&
        !q3nh_center(d,64,warning==2?"OUT OF AMMO":"LOW AMMO WARNING",1))return false;
     if(d->owner->product==QA_Q3_TEAM_ARENA) {
         q3n_hud_state *s=&d->owner->state;
@@ -341,7 +351,7 @@ static bool active_status(q3n_hud_draw *d)
     if(!crosshair(d) || !crosshair_names(d))return false;
     q3nh_anchor(d,320,480);
     q3n_weapon_drawing drawing={d,weapon_fade,weapon_color,weapon_picture,weapon_strlen,weapon_string};
-    if(!d->owner->options.weapon_warning && !q3n_weapons_draw_selection(d->frame,&drawing,d->error))return false;
+    if(!d->weapon_hud.selected && !q3n_weapons_draw_selection(d->frame,&drawing,d->error))return false;
     if(d->owner->product==QA_Q3_ARENA) {
         q3nh_anchor(d,640,240);
         int32_t item=d->frame->local_player.stats[1];
@@ -356,10 +366,9 @@ bool q3n_hud_frame(q3n_hud *o,const q3n_frame *f,const q3n_hud_settings *setting
     if(!settings || !commands || !player || !o || o->busy || !q3nh_current(o,f,e) ||
        !q3n_server_commands_idle(commands) || !q3n_player_state_idle(player) || !viewport.width || !viewport.height ||
        player->source_game!=o->source_game || player->options.application!=o->options.application ||
-       player->options.assets!=o->options.assets || player->options.seat!=o->options.seat ||
-       !!player->options.weapon_warning!=!!o->options.weapon_warning)return false;
+       player->options.assets!=o->options.assets || player->options.seat!=o->options.seat)return false;
     q3n_hud_draw d={.owner=o,.frame=f,.settings=settings,.commands=commands,.player=player,.viewport=viewport,.error=e};
-    if(!q3nh_preferences(&d))return false;
+    if(!q3nh_preferences(&d) || !q3n_hud_weapon_read(o,f,&d.weapon_hud,e))return false;
     o->busy=true; q3nh_anchor(&d,320,240);
     const q3n_command_state *c=q3n_server_commands_state(commands); const qa_q3_player *p=&f->local_player;
     bool ok=true;
