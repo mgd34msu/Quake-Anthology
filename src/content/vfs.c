@@ -307,6 +307,13 @@ static size_t read_hash(qa_mount_id mount_id, uint64_t resource_id, size_t capac
     value ^= value >> 33; value *= UINT64_C(14029467366897019727); value ^= value >> 29;
     return (size_t)value & (capacity - 1);
 }
+static bool read_recipe_equal(const qa_vfs_read_reference *entry, const char *path,
+    const char *lookup, const char *from, const char *to)
+{
+    return entry->path && entry->lookup_path && entry->link_source && entry->link_target &&
+        !strcmp(entry->path, path) && !strcmp(entry->lookup_path, lookup) &&
+        !strcmp(entry->link_source, from) && !strcmp(entry->link_target, to);
+}
 static bool read_index(qa_vfs *vfs, size_t capacity, qa_error *error)
 {
     if (capacity > SIZE_MAX / sizeof(*vfs->read_slots)) {
@@ -333,21 +340,6 @@ bool vfs_read_record(qa_vfs *vfs, mount *source, qa_resource *resource, const ch
         if (!read_index(vfs, capacity ? capacity * 2 : 64, error)) return false;
         capacity = vfs->read_slot_count;
     }
-    size_t index = read_hash(source->id, qa_resource_id(resource), capacity);
-    while (vfs->read_slots[index]) {
-        const qa_vfs_read_reference *entry = vfs->reads + vfs->read_slots[index] - 1;
-        if (entry->mount == source->id && entry->resource == resource) return true;
-        index = (index + 1) & (capacity - 1);
-    }
-    if (vfs->read_count == vfs->read_capacity) {
-        size_t next = vfs->read_capacity ? vfs->read_capacity * 2 : 32;
-        if (next < vfs->read_capacity || next > SIZE_MAX / sizeof(*vfs->reads)) {
-            qa_error_set(error, QA_ERROR_MEMORY, 0, "VFS read journal extent exhausted"); return false;
-        }
-        qa_vfs_read_reference *records = realloc(vfs->reads, next * sizeof(*records));
-        if (!records) { qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining VFS source read provenance"); return false; }
-        vfs->reads = records; vfs->read_capacity = next;
-    }
     char *requested = qa_vfs_normalize_path(path, error);
     if (!requested) return false;
     char *lookup = qa_vfs_normalize_path(lookup_path, error);
@@ -356,6 +348,29 @@ bool vfs_read_record(qa_vfs *vfs, mount *source, qa_resource *resource, const ch
         free(requested); free(lookup); free(from); free(to);
         if (!error || error->code == QA_OK) qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining actual VFS lookup recipe");
         return false;
+    }
+    size_t index = read_hash(source->id, qa_resource_id(resource), capacity);
+    while (vfs->read_slots[index]) {
+        const qa_vfs_read_reference *entry = vfs->reads + vfs->read_slots[index] - 1;
+        if (entry->mount == source->id && entry->resource == resource &&
+            read_recipe_equal(entry, requested, lookup, from, to)) {
+            free(requested); free(lookup); free(from); free(to);
+            return true;
+        }
+        index = (index + 1) & (capacity - 1);
+    }
+    if (vfs->read_count == vfs->read_capacity) {
+        size_t next = vfs->read_capacity ? vfs->read_capacity * 2 : 32;
+        if (next < vfs->read_capacity || next > SIZE_MAX / sizeof(*vfs->reads)) {
+            free(requested); free(lookup); free(from); free(to);
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "VFS read journal extent exhausted"); return false;
+        }
+        qa_vfs_read_reference *records = realloc(vfs->reads, next * sizeof(*records));
+        if (!records) {
+            free(requested); free(lookup); free(from); free(to);
+            qa_error_set(error, QA_ERROR_MEMORY, 0, "Retaining VFS source read provenance"); return false;
+        }
+        vfs->reads = records; vfs->read_capacity = next;
     }
     qa_resource_retain(resource);
     vfs->reads[vfs->read_count++] = (qa_vfs_read_reference){source->id, resource, requested, lookup, from, to};
@@ -1584,9 +1599,9 @@ static bool acquisition_valid(const qa_vfs *vfs, const qa_vfs_acquisition *recei
         for (size_t i = 0; i < vfs->read_count; ++i) {
             const qa_vfs_read_reference *row = vfs->reads + i;
             if (row->mount != receipt->mount || qa_resource_id(row->resource) != receipt->resource_id) continue;
-            qa_vfs_read_reference actual = {receipt->mount, row->resource, receipt->path,
-                receipt->lookup_path, receipt->link_source, receipt->link_target};
-            return read_recipe_valid(vfs, &actual, native_identity, error);
+            if (!read_recipe_equal(row, receipt->path, receipt->lookup_path,
+                receipt->link_source, receipt->link_target)) continue;
+            return read_recipe_valid(vfs, row, native_identity, error);
         }
     }
     qa_error_set(error, QA_ERROR_FORMAT, 0, "VFS acquisition receipt lacks its actual retained mounted resource"); return false;

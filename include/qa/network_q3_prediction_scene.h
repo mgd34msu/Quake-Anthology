@@ -6,7 +6,7 @@
 
 typedef struct qa_q3_prediction_scene qa_q3_prediction_scene;
 typedef struct qa_q3_prediction_scene_view {
-    const qa_q3_snapshot *snapshot, *next_snapshot;
+    const qa_q3_snapshot *snapshot, *next_snapshot, *prediction_snapshot;
     int32_t time, physics_time, processed_snapshot;
     bool this_frame_teleport, next_frame_teleport;
     uint64_t revision;
@@ -17,6 +17,12 @@ typedef struct qa_q3_prediction_scene_collision {
     bool (*actor_at)(void *, uint32_t number, qa_actor_id *, bool *, qa_error *);
     bool (*number_of)(void *, qa_actor_id, uint32_t *, bool *, qa_error *);
 } qa_q3_prediction_scene_collision;
+typedef struct qa_q3_prediction_scene_entity_view {
+    const qa_q3_entity *entity;
+    uint32_t source_number;
+    int32_t publication_message;
+    bool published, current_valid;
+} qa_q3_prediction_scene_entity_view;
 
 bool qa_q3_prediction_scene_create(qa_q3_product, qa_q3_prediction_scene **, qa_error *);
 void qa_q3_prediction_scene_destroy(qa_q3_prediction_scene *);
@@ -35,6 +41,24 @@ bool qa_q3_prediction_scene_current(const qa_q3_prediction_scene *, const qa_q3_
  * only at the actual packet-presentation boundary, after prediction. */
 bool qa_q3_prediction_scene_publish_poses(qa_q3_prediction_scene *, bool smooth_clients, qa_error *);
 bool qa_q3_prediction_scene_consume_teleport(qa_q3_prediction_scene *, qa_error *);
+/* Ordered membership borrows the actual current centity, including retained
+ * cold rows selected by the original BuildSolidList ordering. Publication is
+ * the decoded message which assigned current state, never a frame counter. */
+bool qa_q3_prediction_scene_solid_at(const qa_q3_prediction_scene *, const qa_q3_prediction_scene_view *,
+    size_t ordinal, qa_q3_prediction_scene_entity_view *, bool *present, qa_error *);
+bool qa_q3_prediction_scene_trigger_count(const qa_q3_prediction_scene *, const qa_q3_prediction_scene_view *,
+    size_t *, qa_error *);
+bool qa_q3_prediction_scene_trigger_at(const qa_q3_prediction_scene *, const qa_q3_prediction_scene_view *,
+    size_t ordinal, qa_q3_prediction_scene_entity_view *, bool *present, qa_error *);
+bool qa_q3_prediction_scene_entity_current(const qa_q3_prediction_scene *, const qa_q3_prediction_scene_view *,
+    const qa_q3_prediction_scene_entity_view *);
+bool qa_q3_prediction_scene_adjust_mover(const qa_q3_prediction_scene *, const qa_q3_prediction_scene_view *,
+    qa_vec3 origin, int32_t mover, int32_t from_time, int32_t to_time, qa_vec3 *, qa_error *);
+bool qa_q3_prediction_scene_trigger_overlap(const qa_q3_prediction_scene *, const qa_q3_prediction_scene_view *,
+    qa_collision_geometry *, const qa_q3_prediction_scene_entity_view *, qa_vec3 origin, qa_bounds,
+    bool *, qa_error *);
+bool qa_q3_prediction_scene_item_position(const qa_q3_prediction_scene *, const qa_q3_prediction_scene_view *,
+    const qa_q3_prediction_scene_entity_view *, qa_vec3 *, qa_error *);
 bool qa_q3_prediction_scene_trace(const qa_q3_prediction_scene *, const qa_q3_prediction_scene_view *,
     const qa_q3_prediction_scene_collision *, const qa_trace_query *, qa_trace_result *, qa_error *);
 bool qa_q3_prediction_scene_point_contents(const qa_q3_prediction_scene *, const qa_q3_prediction_scene_view *,

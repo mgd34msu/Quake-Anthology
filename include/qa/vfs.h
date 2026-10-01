@@ -79,8 +79,9 @@ typedef struct qa_vfs_read_reference {
     const char *link_source, *link_target;
 } qa_vfs_read_reference;
 /* Successful reads in this exact view retain their genuine resource and mount
- * provenance once per pair. Probes do not enter this journal. Entries remain
- * borrowed until references clear, their mount is removed, or the view closes.
+ * provenance once per pair and complete opening recipe. Distinct genuine
+ * alias openings remain separate rows. Probes do not enter this journal. Entries
+ * remain borrowed until references clear, their mount is removed, or the view closes.
  * A journal generation changes when records are removed; append keeps it. */
 uint64_t qa_vfs_read_generation(const qa_vfs *);
 size_t qa_vfs_read_count(const qa_vfs *);
@@ -163,8 +164,8 @@ void qa_vfs_listing_free(qa_vfs_listing *listing);
  * loose files acquire a new immutable version. out_mount is optional. */
 bool qa_vfs_acquire(qa_vfs *vfs, const char *path, qa_resource **out,
                     qa_mount_id *out_mount, qa_error *error);
-/* Owned receipt of this genuine acquisition, independent of the journal's
- * first request for a deduplicated resource. Strings belong to the receipt. */
+/* Owned receipt of this genuine acquisition's complete journal opening recipe.
+ * Strings belong to the receipt, independently of journal lifetime. */
 typedef struct qa_vfs_acquisition {
     qa_mount_id mount;
     uint64_t resource_id;
@@ -173,10 +174,10 @@ typedef struct qa_vfs_acquisition {
 bool qa_vfs_acquire_receipt(qa_vfs *, const char *, qa_resource **,
     qa_vfs_acquisition *empty_receipt, qa_error *);
 void qa_vfs_acquisition_dispose(qa_vfs_acquisition *);
-/* Qualify the retained actual recipe against a genuine journal resource and
+/* Match the complete actual opening recipe to its genuine journal resource and
  * mounted native identity. No admission, byte read or journal mutation. */
 bool qa_vfs_acquisition_valid(const qa_vfs *, const qa_vfs_acquisition *, qa_error *);
-/* Qualify a held immutable acquisition against its retained mounted resource
+/* Match a held immutable acquisition to its complete retained journal opening
  * without reopening a loose path. Immutable checkpoint capture/restore uses
  * this recipe; live native-file admission uses acquisition_valid. */
 bool qa_vfs_acquisition_retained(const qa_vfs *, const qa_vfs_acquisition *, qa_error *);
