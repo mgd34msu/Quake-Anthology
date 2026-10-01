@@ -154,7 +154,7 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
             !p->admission_order || p->admission_order >= host->next_admission_order ||
             p->ping_count != (p->input_sequence < NQ_PINGS ? p->input_sequence : NQ_PINGS) ||
             (p->command_present && !p->input_sequence) ||
-            (!p->command_present && p->impulse) || (complete_clock && p->entered_ns > host->frontend->time_ns))
+            (!p->command_present && p->impulse) || (complete_clock && p->entered_ns > host->frontend->wall_time_ns))
             return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake peer changes its actual native seat or input identity");
         for (size_t j = 0; j < i; ++j) if (host->peers[j].occupied &&
             (qa_net_client_id_equal(p->client, host->peers[j].client) || p->source_slot == host->peers[j].source_slot ||
@@ -179,7 +179,7 @@ static bool state_valid(const frontend_nq_host *host, bool complete_clock, qa_er
             (p->size && (p->size < 5 || p->bytes[0] != 128 || p->bytes[1] != 0 ||
                 p->bytes[4] < QA_NQ_CONNECT_REQUEST || p->bytes[4] > QA_NQ_RULE_INFO_REQUEST || !p->address.port ||
                 (p->address.kind != QA_NET_IPV4 && p->address.kind != QA_NET_IPV6))) ||
-            (complete_clock && p->received_ns > host->frontend->time_ns))
+            (complete_clock && p->received_ns > host->frontend->wall_time_ns))
             return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake query queue differs from its actual receive producer");
     }
     for (size_t i = 0; i < 256; ++i) {
@@ -216,6 +216,13 @@ bool frontend_nq_qualified(const frontend_nq_host *host, bool complete_clock, qa
             policy.queued_bytes != declared.queued_bytes || !qa_network_nq_server_state_read(host->runtime, p->client, &state, error) ||
             !state.started || !state.stage || state.input_sequence != p->input_sequence || state.retiring != p->retiring)
             return frontend_fail(error, QA_ERROR_FORMAT, "Retained NetQuake host/native channel/source policy inventories differ");
+        if (complete_clock) {
+            bool present; uint64_t sequence;
+            if (!qa_network_accepted_sequence(host->runtime, p->client, p->seat, &present, &sequence, error) ||
+                (present && (!sequence || sequence != p->tick_sequence || state.stage != 4)) ||
+                (!present && (sequence || (p->tick_sequence && qa_network_epoch(host->runtime, p->client) == 1))))
+                return frontend_fail(error, QA_ERROR_FORMAT, "NetQuake source tick differs from its actual accepted command owner");
+        }
         size_t cursor = 0; qa_application_network_player row;
         while (qa_application_network_player_next(host->frontend->application, &cursor, &row))
             if (qa_net_client_id_equal(row.client, p->client) && row.seat.owner == p->seat.owner && row.seat.index == p->seat.index &&

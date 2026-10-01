@@ -23,7 +23,9 @@ struct qa_console_program {
     qa_console *source, *candidate;
     qa_console_program_resolvers resolve;
     program_state original, prepared, publication, prefix;
-    bool ready, sealed, busy;
+    program_state parked;
+    uint64_t sealed_revision;
+    bool ready, sealed, busy, retained;
 };
 
 void qac_console_program_touch(qa_console *console, bool shared_namespace)
@@ -269,11 +271,12 @@ static bool declarations_live(const qa_console *candidate, const retired_id *own
 
 static void program_free(qa_console_program *program)
 {
-    if (program->source) --program->source->program_leases;
+    if (program->source && !program->retained) --program->source->program_leases;
     if (program->candidate->pending_program == program) program->candidate->pending_program = NULL;
     --program->candidate->program_leases;
     state_free(&program->original); state_free(&program->prepared);
     state_free(&program->publication); state_free(&program->prefix);
+    state_free(&program->parked);
     free(program);
 }
 
@@ -318,6 +321,29 @@ qa_console_program *qa_console_program_prepare(qa_console *source, qa_console *c
     return program;
 }
 
+qa_console_program *qa_console_program_retain(qa_console *console,
+    const qa_console_program_resolvers *resolve, qa_error *error)
+{
+    if (!console || !resolve || !resolve->identity || !resolve->command_context ||
+        !resolve->published_context || !resolve->published_candidate_context ||
+        !resolve->current || !resolve->published || !resolve->retained_abort ||
+        !qa_console_idle(console) || console->program_leases || console->release_leases ||
+        console->program_revision_exhausted || console->program_unpublished) {
+        qac_fail(error, QA_ERROR_ARGUMENT, "retained command program requires its actual idle physical owner"); return NULL;
+    }
+    qa_console_program *program = calloc(1, sizeof(*program));
+    if (!program) { qac_fail(error, QA_ERROR_MEMORY, "retaining physical command program"); return NULL; }
+    program->source = program->candidate = console; program->resolve = *resolve;
+    program->retained = program->busy = true; ++console->program_leases;
+    bool ok = state_capture(console, &program->original, error) &&
+        resolve->current(resolve->context, console, console, error);
+    if (ok && !state_current(&program->original, console))
+        ok = qac_fail(error, QA_ERROR_ARGUMENT, "physical command program changed during retention");
+    program->busy = false;
+    if (!ok) { program_free(program); return NULL; }
+    return program;
+}
+
 static bool empty_context(const qa_command_context *context)
 {
     const qa_command_context empty = {0}; return context_equal(context, &empty);
@@ -331,6 +357,7 @@ static bool map_context(qa_console_program *program, qa_command_context *context
         !map_identity(program, QA_CONSOLE_PROGRAM_OWNER, context->owner, &owner, error) ||
         !map_identity(program, QA_CONSOLE_PROGRAM_CLIENT, context->client, &client, error)) return false;
     if (mapped.session != program->candidate->options.context.session || mapped.owner != owner || mapped.client != client ||
+        (program->retained && (mapped.owner != context->owner || mapped.client != context->client)) ||
         mapped.dialect != context->dialect || mapped.origin != context->origin || mapped.seat != context->seat ||
         mapped.direct != context->direct || mapped.console_text != context->console_text ||
         !text_equal(mapped.script, context->script) ||
@@ -412,7 +439,7 @@ static void filter_tail(const qa_console *candidate, program_state *tail)
 bool qa_console_program_preflight(qa_console_program *program, qa_error *error)
 {
     if (!program || program->busy || program->ready || !state_current(&program->original, program->source) ||
-        !qa_console_idle(program->candidate) || qa_console_pending(program->candidate))
+        !qa_console_idle(program->candidate) || (!program->retained && qa_console_pending(program->candidate)))
         return qac_fail(error, QA_ERROR_ARGUMENT, "command program preflight requires its unchanged source and completed cfg prefix");
     program->busy = true; program_state prefix = {0};
     bool ok = state_capture(program->candidate, &prefix, error) &&
@@ -460,21 +487,34 @@ bool qa_console_program_seal(qa_console_program *program, qa_error *error)
     if (ok) ok = qa_console_program_ready(program, error);
     if (!ok) return false;
     qa_console *candidate = program->candidate; program_state *tail = &program->publication;
+    if (candidate->program_revision == UINT64_MAX)
+        return qac_fail(error, QA_ERROR_ARGUMENT, "command program cannot seal exhausted mutation history");
+    if (program->retained) {
+        program->parked = (program_state){.head = candidate->head, .tail = candidate->tail,
+            .deferred = candidate->deferred, .deferred_tail = candidate->deferred_tail,
+            .queued_bytes = candidate->queued_bytes, .deferred_bytes = candidate->deferred_bytes,
+            .wait = candidate->wait, .wait_context = candidate->wait_context,
+            .alias_count = candidate->alias_count, .startup = candidate->startup};
+    }
     candidate->head = tail->head; candidate->tail = tail->tail; tail->head = tail->tail = NULL;
     candidate->deferred = tail->deferred; candidate->deferred_tail = tail->deferred_tail;
     tail->deferred = tail->deferred_tail = NULL;
     candidate->queued_bytes = tail->queued_bytes; candidate->deferred_bytes = tail->deferred_bytes;
-    candidate->wait = tail->wait; free((char *)candidate->wait_context.script);
+    candidate->wait = tail->wait;
+    if (!program->retained) free((char *)candidate->wait_context.script);
     candidate->wait_context = tail->wait_context; tail->wait_context.script = NULL;
     candidate->program_wait_source = tail->wait_source;
     candidate->program_wait_source.script = candidate->wait_context.script;
     candidate->program_wait_pending = candidate->wait != 0;
     candidate->alias_count = tail->alias_count;
-    free(candidate->startup); candidate->startup = tail->startup; tail->startup = NULL;
+    if (!program->retained) free(candidate->startup);
+    candidate->startup = tail->startup; tail->startup = NULL;
     candidate->options.startup_commands = candidate->startup;
     candidate->pending_program = program; candidate->program_unpublished = true;
     qac_console_program_touch(candidate, false);
-    --program->source->program_leases; program->source = NULL; program->sealed = true;
+    program->sealed_revision = candidate->program_revision;
+    if (!program->retained) --program->source->program_leases;
+    program->source = NULL; program->sealed = true;
     return true;
 }
 
@@ -566,6 +606,32 @@ bool qa_console_program_abort(qa_console_program *program, qa_error *error)
 {
     if (!program || program->busy || (program->source && !qa_console_idle(program->source)) || !qa_console_idle(program->candidate))
         return qac_fail(error, QA_ERROR_ARGUMENT, "command program abort requires both retained idle owners");
-    if (program->sealed) program->candidate->program_aborted = true;
+    if (program->sealed && program->retained) {
+        bool restore = false; qa_console *console = program->candidate;
+        program->busy = true;
+        bool ok = program->resolve.retained_abort(program->resolve.context, &restore, error);
+        program->busy = false;
+        if (!ok) return false;
+        if (restore) {
+            if (console->program_revision_exhausted || console->program_revision != program->sealed_revision ||
+                console->pending_program != program || !qa_console_idle(console) || console->release_leases)
+                return qac_fail(error, QA_ERROR_ARGUMENT, "retained command program has entered work before restoration");
+            chunks_free(console->head); chunks_free(console->deferred);
+            free((char *)console->wait_context.script); free(console->startup);
+            program_state *old = &program->parked;
+            console->head = old->head; console->tail = old->tail; old->head = old->tail = NULL;
+            console->deferred = old->deferred; console->deferred_tail = old->deferred_tail;
+            old->deferred = old->deferred_tail = NULL;
+            console->queued_bytes = old->queued_bytes; console->deferred_bytes = old->deferred_bytes;
+            console->wait = old->wait; console->wait_context = old->wait_context; old->wait_context.script = NULL;
+            console->alias_count = old->alias_count;
+            console->startup = old->startup; old->startup = NULL;
+            console->options.startup_commands = console->startup;
+            console->program_unpublished = false;
+            console->program_wait_pending = false;
+            console->program_wait_source = console->program_wait_bound = (qa_command_context){0};
+            qac_console_program_touch(console, false);
+        } else console->program_aborted = true;
+    } else if (program->sealed) program->candidate->program_aborted = true;
     program_free(program); return true;
 }

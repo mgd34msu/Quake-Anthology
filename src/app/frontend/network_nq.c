@@ -482,7 +482,8 @@ static bool player_info(void *context, uint8_t ordinal, bool *present, qa_nq_con
         address = &client->endpoint; entered = peer->entered_ns; break;
     }
     if (!qa_net_address_format(address, host->reply_address, sizeof(host->reply_address), error)) return false;
-    uint64_t seconds = host->frontend->time_ns >= entered ? (host->frontend->time_ns - entered) / UINT64_C(1000000000) : 0;
+    uint64_t seconds = host->frontend->wall_time_ns >= entered ?
+        (host->frontend->wall_time_ns - entered) / UINT64_C(1000000000) : 0;
     *out = (qa_nq_control){.kind = QA_NQ_PLAYER_INFO, .data.player_info = {
         .player = (uint8_t)(player->source_slot - 1), .name = player->name, .colors = player->colors,
         .frags = player->frags, .seconds = seconds > INT32_MAX ? INT32_MAX : (int32_t)seconds, .address = host->reply_address}};
@@ -537,6 +538,10 @@ static bool connect_source(void *context, const qa_net_address *address, uint64_
     }
     if (host->next_admission_order == UINT64_MAX)
         return frontend_fail(error, QA_ERROR_FORMAT, "NetQuake source admission order exhausted");
+    qa_application_network_q1_host source;
+    if (!qa_application_network_q1_host_source(host->frontend->application, &source, error) ||
+        source.owner != host->owner)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "NetQuake connect lost its actual source admission");
     *peer = (nq_frontend_peer){.host = host, .source_slot = slot, .entered_ns = now,
         .seat = {QA_NETWORK_COMMAND_OWNER, 128u + slot}};
     qa_net_seat_binding seat = {peer->seat, 0};
@@ -550,7 +555,8 @@ static bool connect_source(void *context, const qa_net_address *address, uint64_
     peer->occupied = true; peer->admission_order = host->next_admission_order++;
     qa_application_remote_player_request player = {.client = peer->client, .seat = peer->seat,
         .application_seat = peer->seat.index, .source_slot = slot, .name = "unconnected",
-        .team = "", .skin = "", .userinfo = "", .defer_source_begin = true};
+        .team = "", .skin = "", .userinfo = source.source_board_events ? "\\language\\english" : "",
+        .defer_source_begin = true};
     if (!qa_application_remote_player_attach(host->frontend->application, &player, &actor, error) ||
         !peer_actor(peer, &actor, error) || !qa_network_nq_server_start(host->runtime, peer->client, error)) {
         qa_error first = error ? *error : (qa_error){0};
@@ -677,15 +683,17 @@ bool frontend_nq_tick(frontend_nq_host *host, uint64_t elapsed, bool retiring_ma
         if (!client || client->phase != QA_NET_ACTIVE) continue;
         qa_actor_id actor;
         if (peer->tick_sequence == UINT64_MAX) { ok = frontend_fail(error, QA_ERROR_FORMAT, "NetQuake source tick sequence exhausted"); break; }
+        qa_application_control_view selected;
         if (!peer_actor(peer, &actor, error)) { ok = false; break; }
-        qa_network_command command = {.client = peer->client, .seat = peer->seat, .actor = actor,
-            .epoch = qa_network_epoch(host->runtime, peer->client), .movement = {.kind = QA_MOVEMENT_NETQUAKE,
-            .sequence = peer->tick_sequence + 1, .milliseconds = (uint32_t)milliseconds,
-            .acknowledged_server_seconds = peer->latest.time,
-            .angles = {peer->latest.angles[0], peer->latest.angles[1], peer->latest.angles[2]},
-            .forward_move = peer->latest.forward, .side_move = peer->latest.side, .up_move = peer->latest.up,
-            .buttons = peer->latest.buttons, .impulse = peer->impulse}};
-        ok = qa_network_accept(host->runtime, &command, error);
+        if (!qa_application_control_read(host->frontend->application, actor, &selected)) {
+            ok = frontend_fail(error, QA_ERROR_ARGUMENT, "NetQuake source peer has no actual selected control state"); break;
+        }
+        qa_network_nq_source_command command = {.client = peer->client, .seat = peer->seat, .actor = actor,
+            .epoch = qa_network_epoch(host->runtime, peer->client), .sequence = peer->tick_sequence + 1,
+            .source_owner = host->owner, .source_slot = peer->source_slot,
+            .movement = selected.state.kind, .command = peer->latest};
+        command.command.impulse = peer->impulse;
+        ok = qa_network_accept_nq_source_command(host->runtime, &command, error);
         if (ok) { ++peer->tick_sequence; peer->impulse = 0; }
     }
     --host->busy; return ok;
@@ -716,10 +724,16 @@ static char *copy_text(const char *text, qa_error *error)
 static bool publish_status(frontend_nq_host *host,
     const qa_application_network_q1_world *world, qa_error *error)
 {
+    qa_application_network_q1_host source;
+    if (!qa_application_network_q1_host_source(host->frontend->application, &source, error) ||
+        source.owner != host->owner || source.protocol.kind != QA_NET_NQ15 ||
+        source.client_slots != world->max_clients)
+        return frontend_fail(error, QA_ERROR_ARGUMENT, "NetQuake status lost its actual source producer");
     qa_application_network_q1_status_player players[255]; size_t count;
     if (!qa_application_network_q1_status(host->frontend->application, host->owner, players, &count, error)) return false;
     nq_status_cache next[256] = {0}; char *styles[64] = {0};
     bool owned[256] = {0}, style_owned[64] = {0}, ok = true;
+    char *published[255] = {0}; bool published_owned[255] = {0};
     for (size_t i = 0; ok && i < count; ++i) {
         uint32_t slot = players[i].source_slot;
         char *name = host->board[slot].name;
@@ -736,8 +750,17 @@ static bool publish_status(frontend_nq_host *host,
         }
         ok = styles[i] != NULL;
     }
+    for (uint32_t slot = 1; ok && source.source_board_events && slot <= world->max_clients; ++slot) {
+        const char *name = next[slot].name ? next[slot].name : "";
+        published[slot - 1] = host->published_names[slot - 1];
+        if (!published[slot - 1] || strcmp(published[slot - 1], name)) {
+            published[slot - 1] = copy_text(name, error);
+            published_owned[slot - 1] = published[slot - 1] != NULL;
+        }
+        ok = published[slot - 1] != NULL;
+    }
     nq_batch batch = {.emit = broadcast_emit, .context = host, .host = host}; qa_nq_options options = {.standard_quake = world->standard_quake};
-    for (uint32_t slot = 1; ok && slot <= world->max_clients; ++slot) {
+    for (uint32_t slot = 1; ok && !source.source_board_events && slot <= world->max_clients; ++slot) {
         const nq_status_cache *old = host->board + slot, *current = next + slot;
         const char *before = old->name ? old->name : "", *after = current->name ? current->name : "";
         qa_nq_message message;
@@ -754,7 +777,7 @@ static bool publish_status(frontend_nq_host *host,
             ok = batch_message(&batch, &message, options, error);
         }
     }
-    for (unsigned i = 0; ok && i < 64; ++i)
+    for (unsigned i = 0; ok && !source.source_board_events && i < 64; ++i)
         if (!host->styles[i] || strcmp(host->styles[i], styles[i])) {
             qa_nq_message message = {.op = QA_NQ_LIGHTSTYLE, .data.indexed_text = {(uint8_t)i, styles[i]}};
             ok = batch_message(&batch, &message, options, error);
@@ -769,9 +792,14 @@ static bool publish_status(frontend_nq_host *host,
             if (host->styles[i] != styles[i]) free(host->styles[i]);
             host->styles[i] = styles[i]; style_owned[i] = false;
         }
+        for (uint32_t slot = 1; source.source_board_events && slot <= world->max_clients; ++slot) {
+            if (host->published_names[slot - 1] != published[slot - 1]) free(host->published_names[slot - 1]);
+            host->published_names[slot - 1] = published[slot - 1]; published_owned[slot - 1] = false;
+        }
     }
     for (size_t i = 0; i < 256; ++i) if (owned[i]) free(next[i].name);
     for (size_t i = 0; i < 64; ++i) if (style_owned[i]) free(styles[i]);
+    for (size_t i = 0; i < 255; ++i) if (published_owned[i]) free(published[i]);
     return ok;
 }
 static const qa_q1_entity *baseline(const nq_frontend_peer *peer, uint32_t number)
