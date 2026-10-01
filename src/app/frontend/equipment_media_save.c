@@ -111,6 +111,10 @@ static bool row_fields(qa_source_save_io *io, qa_application_content_graph *grap
 {
     uint32_t family = row->family;
     if (!owner_fields(io, &row->provider) || !qa_source_save_u32(io, &family) || family > QA_GAME_Q3 ||
+        !qa_source_save_string(io, &row->gear_namespace) ||
+        !qa_source_save_u64(io, &row->gear_service_owner) ||
+        (!row->gear_namespace != !row->gear_service_owner) ||
+        (row->gear_namespace && family != QA_GAME_Q3) ||
         !qa_source_save_string(io, &row->item) || !frontend_save_text(io, &row->view_path) ||
         !row->view_path || !*row->view_path ||
         !qa_source_save_count(io, &row->saved_owner, SIZE_MAX)) return false;
@@ -161,7 +165,7 @@ bool frontend_equipment_topology_checkpoint(const qa_frontend *frontend, qa_buff
     qa_application_content_graph *graph = qa_application_content_graph_read(frontend->application);
     if (!graph) return frontend_fail(error, QA_ERROR_ARGUMENT, "Equipment capture requires the leased actual content graph");
     qa_source_save_io io = {0}; size_t count = frontend_equipment_media_count(frontend);
-    uint8_t magic[4] = {'Q','F','E','T'}; uint32_t schema = 2;
+    uint8_t magic[4] = {'Q','F','E','T'}; uint32_t schema = 3;
     bool ok = qa_source_save_writer(&io, qa_application_session(frontend->application), error) &&
         qa_source_save_bytes(&io, magic, sizeof(magic)) && qa_source_save_u32(&io, &schema) &&
         qa_source_save_count(&io, &count, SIZE_MAX);
@@ -171,6 +175,7 @@ bool frontend_equipment_topology_checkpoint(const qa_frontend *frontend, qa_buff
         saved.saved_parent_path = (char *)row->held_parent.path;
         ok = row->bound && !row->users && (!row->held_scene || qa_scene_model_observation_ready(row->held_scene)) &&
             (row->declaration.none || (row->held_scene && row->held.model)) &&
+            frontend_equipment_media_namespace_current(frontend, row) &&
             physical_refs(frontend, &saved) && row_fields(&io, graph, &saved);
     }
     ok = ok && qa_source_save_finish(&io, out);
@@ -190,7 +195,7 @@ bool frontend_equipment_prepare_restored(qa_frontend *frontend, qa_bytes bytes, 
     qa_source_save_io io = {0}; size_t count = 0; uint8_t magic[4]; uint32_t schema = 0;
     bool ok = qa_source_save_reader(&io, qa_application_session(frontend->application), bytes, error) &&
         qa_source_save_bytes(&io, magic, sizeof(magic)) && !memcmp(magic, "QFET", sizeof(magic)) &&
-        qa_source_save_u32(&io, &schema) && schema == 2 && qa_source_save_count(&io, &count, bytes.size / 32);
+        qa_source_save_u32(&io, &schema) && schema == 3 && qa_source_save_count(&io, &count, bytes.size / 32);
     for (size_t i = 0; ok && i < count; ++i) {
         frontend_equipment_media *row = calloc(1, sizeof(*row));
         if (!row) { ok = frontend_fail(error, QA_ERROR_MEMORY, "Preparing restored physical equipment media row"); break; }
@@ -200,6 +205,7 @@ bool frontend_equipment_prepare_restored(qa_frontend *frontend, qa_bytes bytes, 
         if (ok) ok = frontend_visual_owner_read(frontend, row->saved_owner, &row->owner) &&
             row->owner.owner == row->provider && row->owner.family ==
                 (row->family == QA_GAME_Q3 ? QA_SCENE_Q3 : row->family == QA_GAME_Q2 ? QA_SCENE_Q2 : QA_SCENE_Q1) &&
+            frontend_equipment_media_namespace_current(frontend, row) &&
             (row->family == QA_GAME_Q3 || qa_resource_pool_find(qa_vfs_resources(row->owner.mounts),
                 qa_resource_id(row->view.resource)) == row->view.resource) &&
             (!row->declaration.source || qa_resource_pool_find(qa_vfs_resources(row->owner.mounts),
@@ -208,6 +214,7 @@ bool frontend_equipment_prepare_restored(qa_frontend *frontend, qa_bytes bytes, 
                 qa_resource_id(row->held_parent.resource)) == row->held_parent.resource);
         for (const frontend_equipment_media *prior = owner->media; ok && prior != row; prior = prior->next)
             if (prior->provider == row->provider && prior->family == row->family && prior->item == row->item &&
+                prior->gear_namespace == row->gear_namespace && prior->gear_service_owner == row->gear_service_owner &&
                 prior->view.resource == row->view.resource && !strcmp(prior->view_path, row->view_path)) ok = false;
     }
     ok = ok && qa_source_save_finish(&io, NULL);
@@ -342,6 +349,7 @@ bool frontend_equipment_topology_ready(const qa_frontend *frontend, qa_error *er
     for (const frontend_equipment_media *row = frontend->equipment ? frontend->equipment->media : NULL;
             row; row = row->next) {
         if (!row->bound || !qa_application_provider_instance(frontend->application, row->provider) ||
+            !frontend_equipment_media_namespace_current(frontend, row) ||
             (row->family != QA_GAME_Q3 && (!row->view.model || !row->view.scene)) ||
             (row->family == QA_GAME_Q3 && (!row->declaration.source || row->view.resource ||
                 row->view.model || row->view.scene)) || (!row->declaration.none &&

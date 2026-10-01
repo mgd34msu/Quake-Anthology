@@ -29,6 +29,7 @@ bool application_equipment_gear_presentation_current(qa_application *app,
         if (!application_equipment_runtime_source_at(app->equipment_runtime, i, &source, NULL)) return false;
         if (source.selected_owner == state.sources.grapple)
             return source.gear == view->source.gear && source.gear_owner == view->source.gear_owner &&
+                source.weapon_item == view->source.weapon_item &&
                 source.service_owner == view->source.service_owner && source.descriptor == view->source.descriptor &&
                 source.definition == view->source.definition && source.artifact == view->source.artifact &&
                 source.content == view->source.content && source.acquisition == view->source.acquisition;

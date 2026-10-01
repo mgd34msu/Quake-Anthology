@@ -633,6 +633,9 @@ add_library(qa_bots STATIC
     src/bots/random.c
     src/bots/runtime/characteristics.c
     src/bots/runtime/core.c
+    src/bots/runtime/source_weapon_state.c
+    src/bots/runtime/source_weapon_history.c
+    src/bots/runtime/source_weapon_save.c
     src/bots/runtime/log.c
     src/bots/runtime/log_save.c
     src/bots/runtime/assets_save.c
@@ -996,6 +999,7 @@ add_library(qa_application STATIC
     src/app/application/equipment_actions.c
     src/app/application/equipment_content.c
     src/app/application/equipment_gear_presentation.c
+    src/app/application/equipment_gear_world.c
     src/app/application/equipment_events.c
     src/app/application/weapon_availability.c
     src/app/application/q3_asset_selection.c
@@ -1110,6 +1114,7 @@ add_library(qa_application STATIC
     src/app/application/native_q3_client.c
     src/app/application/native_q3_remote_role.c
     src/app/application/native_q3_remote_role_save.c
+    src/app/application/native_q3_remote_character.c
     src/app/application/native_q3_remote_content.c
     src/app/application/native_q3_remote_client.c
     src/app/application/native_q3_remote_client_cvars.c
@@ -1359,6 +1364,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/remote_prediction.c
     src/app/frontend/remote_snapshots.c
     src/app/frontend/remote_q3_client.c
+    src/app/frontend/remote_q3_services.c
     src/app/frontend/native_q3_client.c
     src/app/frontend/native_q3_client_save.c
     src/app/frontend/native_q3_topology.c
@@ -1389,6 +1395,7 @@ add_library(qa_frontend STATIC
     src/app/frontend/selected_character_save.c
     src/app/frontend/selected_character_lifetime.c
     src/app/frontend/selected_effects.c
+    src/app/frontend/source_effects.c
     src/app/frontend/selected_effects_save.c
     src/app/frontend/selected_effects_particles_save.c
     src/app/frontend/selected_effects_q1_particles.c

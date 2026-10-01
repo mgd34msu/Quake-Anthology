@@ -2,12 +2,15 @@
 #include "guest_q3_private.h"
 #include "guest_qc_internal.h"
 #include "guest_native_q2_equipment.h"
+#include "guest_native_q2_private.h"
 #include "guest_q3_fire.h"
 #include "native_q3_equipment.h"
+#include "equipment_gear_presentation.h"
 #include "qa/application_equipment.h"
 #include "qa/qc_weapon_visual.h"
 #include "qa/game_q3_source.h"
 #include "qa/game_q3_wire.h"
+#include "qa/game_q1_bots.h"
 
 #include <limits.h>
 #include <math.h>
@@ -44,6 +47,25 @@ bool qa_application_equipment_current(qa_application *app,
 {
     if (!app || !view || !app->session ||
         !qa_actors_get(qa_session_actors(app->session), view->actor)) return false;
+    if (view->equipment_slot) {
+        qa_equipment_state state;
+        application_provider *primary = application_world_provider(app, QA_ROLE_ENTITIES, "");
+        if (!app->equipment || !qa_equipment_read(app->equipment, view->actor, &state) ||
+            state.selection.grapple != QA_GRAPPLE_Q3 || state.selection.binding != QA_EQUIPMENT_WEAPON_SLOT ||
+            !state.slot_active || state.sources.grapple != view->provider || !view->selected ||
+            view->family != QA_GAME_Q3 || !view->gear_namespace || !view->gear_service_owner ||
+            !primary || !primary->constructed || !primary->attached || primary->close_pending ||
+            primary->owner != view->primary ||
+            !application_equipment_runtime_owner_current(app->equipment_runtime, view->provider)) return false;
+        for (size_t i = 0; i < application_equipment_runtime_source_count(app->equipment_runtime); ++i) {
+            application_equipment_runtime_source source;
+            if (!application_equipment_runtime_source_at(app->equipment_runtime, i, &source, NULL)) return false;
+            if (source.selected_owner == view->provider)
+                return source.gear && source.definition && source.gear_owner == view->gear_namespace &&
+                    source.service_owner == view->gear_service_owner && source.weapon_item == view->item;
+        }
+        return false;
+    }
     application_provider *provider = application_provider_for(app, view->actor, QA_ROLE_ARSENAL, "");
     application_provider *primary = application_world_provider(app, QA_ROLE_ENTITIES, "");
     return provider && provider->constructed && provider->attached && !provider->close_pending &&
@@ -56,6 +78,84 @@ static qa_item_id identity(qa_application *app, const char *name)
 {
     return name ? qa_strings_find(qa_session_strings(app->session),
         (qa_bytes){(const uint8_t *)name, strlen(name)}) : 0;
+}
+
+static bool primary_visibility(qa_application *app, qa_actor_id actor,
+    bool *visible, qa_error *error)
+{
+    application_provider *source = application_world_provider(app, QA_ROLE_ENTITIES, "");
+    if (!source || !source->constructed || !source->attached || source->close_pending)
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Gear visibility lost its actual primary source");
+    if (source->kind == APPLICATION_PROVIDER_QVM ||
+        (source->kind == APPLICATION_PROVIDER_NATIVE && source->product->family == QA_GAME_Q3)) {
+        struct application_q3_guest *engine = q3g_engine(source);
+        uint32_t slot; qa_q3_player player;
+        if (!engine || !engine->game || !application_q3_guest_actor_client(source, actor, &slot))
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Gear visibility has no actual primary Q3 client");
+        if (!qa_q3_host_source_player(engine->game->host, slot, &player, error)) return false;
+        *visible = player.stats[0] > 0;
+        return true;
+    }
+    if (source->kind == APPLICATION_PROVIDER_NATIVE && source->state.native.q2_engine) {
+        struct application_native_q2 *engine = source->state.native.q2_engine;
+        uint32_t slot = 0;
+        for (uint32_t i = 1; i < 257; ++i) {
+            const application_native_q2_client *client = engine->clients + i;
+            if (!client->connected || !client->begun || client->disconnect_started ||
+                !qa_actor_id_equal(client->actor, actor)) continue;
+            if (slot) return application_fail(error, QA_ERROR_FORMAT, "Gear visibility repeats a primary Q2 client");
+            slot = i;
+        }
+        bool classic = engine->profile == QA_NATIVE_Q2_GAME_API3;
+        if (!slot || !application_native_q2_idle(source) || !engine->initialized || !engine->map_ready ||
+            engine->shutting_down || (!classic && engine->profile != QA_NATIVE_Q2_GAME_API2023))
+            return application_fail(error, QA_ERROR_NOT_FOUND, "Gear visibility lost its actual primary Q2 client");
+        qa_native_slot_binding binding;
+        if (!qa_native_slot(qa_native_host_instance(source->state.native.host), slot, &binding, error)) return false;
+        if (binding.kind == QA_NATIVE_SLOT_FREE || binding.owner != source->owner ||
+            binding.source_slot != slot || !qa_actor_id_equal(binding.actor, actor))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Gear visibility changed its primary Q2 binding");
+        qa_buffer player = {0};
+        bool ok = qa_native_host_q2_player_state(source->state.native.host, slot, &player, error);
+        if (ok && player.size != (classic ? 184u : 296u))
+            ok = application_fail(error, QA_ERROR_FORMAT, "Gear visibility changed its primary Q2 player extent");
+        if (ok) *visible = (int16_t)qa_load_u16le(player.data + (classic ? 122u : 168u)) > 0;
+        qa_buffer_free(&player);
+        return ok;
+    }
+    qa_actor_id health_actor = actor;
+    if (source->kind == APPLICATION_PROVIDER_Q2) {
+        qa_q2_player_info observer, target;
+        if (qa_q2_player_read(source->state.q2, actor, &observer) && observer.spectator &&
+            observer.chase_target.registry && qa_q2_player_read(source->state.q2, observer.chase_target, &target) &&
+            target.connected && !target.spectator) health_actor = observer.chase_target;
+    }
+    qa_combat_state combat; qa_application_control_view control;
+    if (!qa_combat_read_traits(app->combat, health_actor, &combat, error)) return false;
+    if (!qa_application_control_read(app, actor, &control))
+        return application_fail(error, QA_ERROR_NOT_FOUND, "Gear visibility has no actual primary player traits");
+    bool intermission = false;
+    if (source->kind == APPLICATION_PROVIDER_Q1) {
+        double time, exit_after;
+        if (!qa_q1_bot_clock_read(source->state.q1, &time, &intermission, &exit_after, error)) return false;
+    } else if (source->kind == APPLICATION_PROVIDER_Q2)
+        intermission = qa_q2_players_in_intermission(source->state.q2);
+    else if (source->kind == APPLICATION_PROVIDER_Q3) {
+        qa_q3_source_match_state match;
+        if (!qa_q3_source_match_state_read(source->state.q3, &match, error)) return false;
+        intermission = match.intermission_time_ms != 0;
+    } else if (source->kind == APPLICATION_PROVIDER_QC) {
+        const qa_qc_definition *definition = qa_qc_program_find_global(source->state.qc.program, "intermission_running");
+        if (definition) {
+            float value;
+            if (definition->type != QA_QC_FLOAT)
+                return application_fail(error, QA_ERROR_FORMAT, "Gear visibility lost its typed Quake intermission global");
+            if (!qa_qc_global_float(source->state.qc.instance, definition->offset, &value, error)) return false;
+            intermission = value != 0;
+        }
+    }
+    *visible = combat.health > 0 && !control.cutscene && !intermission;
+    return true;
 }
 
 static qa_item_id q3_identity(qa_application *app, qa_q3_weapon weapon, bool ammo)
@@ -167,6 +267,31 @@ bool qa_application_equipment_read(qa_application *app, qa_actor_id actor,
 {
     if (!app || !out || !app->session || !qa_actors_get(qa_session_actors(app->session), actor))
         return application_fail(error, QA_ERROR_ARGUMENT, "Equipment observation requires a live full actor");
+    application_equipment_gear_presentation gear;
+    bool gear_selected = false;
+    qa_equipment_state slot;
+    if (app->equipment && qa_equipment_read(app->equipment, actor, &slot) && slot.slot_active &&
+        slot.selection.grapple == QA_GRAPPLE_Q3 && slot.selection.binding == QA_EQUIPMENT_WEAPON_SLOT &&
+        !application_equipment_gear_presentation_read(app, actor, &gear, &gear_selected, error)) return false;
+    if (gear_selected) {
+        qa_application_equipment_view view = {.actor = actor, .provider = gear.source.selected_owner,
+            .primary = gear.primary, .gear_namespace = gear.source.gear_owner,
+            .gear_service_owner = gear.source.service_owner, .family = QA_GAME_Q3,
+            .item = gear.source.weapon_item, .label = "Grapple",
+            .view_model = gear.source.definition->presentation.view_model,
+            .q3_source = gear.gear.player, .has_q3_source = true,
+            .q3_weapon = (qa_q3_weapon)gear.source.definition->presentation.weapon_index,
+            .q3_time_ms = gear.gear.time_ms, .selected = true, .equipment_slot = true,
+            .has_frame = true, .rate = 10,
+            .has_weapon_status = true, .has_ammo_to_start = true};
+        if (!view.item || !view.view_model || !view.view_model[0])
+            return application_fail(error, QA_ERROR_NOT_FOUND,
+                "Active gear slot has no actual admitted weapon identity or authored view model");
+        if (!primary_visibility(app, actor, &view.visible, error)) return false;
+        if (!qa_application_equipment_current(app, &view))
+            return application_fail(error, QA_ERROR_ARGUMENT, "Gear equipment observation changed its actual slot or source");
+        *out = view; return true;
+    }
     application_provider *provider = application_provider_for(app, actor, QA_ROLE_ARSENAL, "");
     if (!provider || !provider->constructed || !provider->attached || provider->close_pending || !provider->product)
         return application_fail(error, QA_ERROR_NOT_FOUND, "Equipment observation has no actual selected arsenal");

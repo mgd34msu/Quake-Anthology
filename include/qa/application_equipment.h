@@ -12,6 +12,8 @@ typedef enum qa_application_ammo_warning {
 typedef struct qa_application_equipment_view {
     qa_actor_id actor;
     qa_actor_owner provider, primary;
+    qa_actor_owner gear_namespace;
+    uint64_t gear_service_owner;
     qa_game_family family;
     qa_item_id item, ammo;
     const char *label, *view_model;
@@ -30,9 +32,13 @@ typedef struct qa_application_equipment_view {
     qa_application_ammo_warning warning;
     bool selected, visible, has_frame, has_skin, has_rate, has_source_gun_pose, has_q3_state, has_q3_source;
     bool has_weapon_status, finite_ammo, has_ammo_to_start, low_ammo, has_start_requirement;
+    /* A controller-selected EQUIPMENT slot has its own genuine source
+     * namespace and is independent of the actor's ARSENAL binding. */
+    bool equipment_slot;
 } qa_application_equipment_view;
 
-/* Observes the actual selected arsenal and physical actor. Model, label and
+/* Observes the actual active equipment slot, otherwise the selected arsenal,
+ * and its physical actor. Model, label and
  * resource pointers borrow that owner until its next mutation or retirement.
  * Missing optional source fields remain explicit. Output is unchanged on error. */
 bool qa_application_equipment_read(qa_application *, qa_actor_id,

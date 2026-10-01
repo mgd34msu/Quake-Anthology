@@ -16,6 +16,8 @@ typedef struct frontend_equipment_media_view {
     const frontend_held_declaration *declaration;
     const frontend_held_model *held;
     qa_scene_model *held_scene;
+    qa_actor_owner gear_namespace;
+    uint64_t gear_service_owner;
 } frontend_equipment_media_view;
 
 /* Live admission creates actual retained media only. Import attaches saved

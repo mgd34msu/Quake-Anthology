@@ -54,6 +54,8 @@ bool frontend_equipment_held_output_create_from(qa_frontend *frontend,
         !qa_application_equipment_current(frontend->application, source) ||
         !frontend_equipment_media_read(media, &retained) ||
         retained.provider != source->provider || retained.family != source->family ||
+        retained.gear_namespace != source->gear_namespace ||
+        retained.gear_service_owner != source->gear_service_owner ||
         retained.item != source->item || !source->view_model ||
         strcmp(retained.view_path, source->view_model))
         return frontend_fail(error, QA_ERROR_ARGUMENT, "Held replacement requires its actual selected media and source actor");

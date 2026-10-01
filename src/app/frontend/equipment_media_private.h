@@ -6,6 +6,8 @@
 struct frontend_equipment_media {
     struct frontend_equipment_media *next;
     qa_actor_owner provider;
+    qa_actor_owner gear_namespace;
+    uint64_t gear_service_owner;
     qa_game_family family;
     qa_item_id item;
     char *view_path, *saved_parent_path;
@@ -25,5 +27,6 @@ struct frontend_equipment {
 };
 
 void frontend_equipment_media_dispose(frontend_equipment_media *);
+bool frontend_equipment_media_namespace_current(const qa_frontend *, const frontend_equipment_media *);
 
 #endif
