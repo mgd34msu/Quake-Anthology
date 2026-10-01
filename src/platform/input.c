@@ -1025,11 +1025,23 @@ fail:
     free(devices);
     return false;
 }
+static bool midi_capture_start(int fd, bool *pending, uint8_t *byte, uint64_t *reads, qa_error *error) {
+    *pending = false; *byte = 0;
+    ++*reads;
+    ssize_t count = read(fd, byte, 1);
+    if (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) return true;
+    if (count == 1) { *pending = true; return true; }
+    qa_error_set(error, QA_ERROR_IO, 0, "Starting MIDI input capture: %s",
+        count == 0 ? "end of stream" : strerror(errno));
+    return false;
+}
 static bool open_midi(qa_input_platform *p, qa_error *error) {
     if (p->midi_fd >= 0) {
         close(p->midi_fd);
         p->midi_fd = -1;
     }
+    p->midi_pending = false; p->midi_byte = 0;
+    p->midi_reads = 0;
     free(p->midi_devices);
     p->midi_devices = NULL;
     p->midi_count = 0;
@@ -1054,7 +1066,11 @@ static bool open_midi(qa_input_platform *p, qa_error *error) {
         qa_error_set(error, QA_ERROR_IO, 0, "MIDI input is not a character device");
         return false;
     }
+    if (!midi_capture_start(fd, &p->midi_pending, &p->midi_byte, &p->midi_reads, error)) {
+        close(fd); p->midi_byte = 0; p->midi_reads = 0; return false;
+    }
     p->midi_fd = fd;
+    ++p->midi_generation;
     return true;
 }
 typedef struct input_output_transition {
@@ -1080,6 +1096,9 @@ struct qa_input_platform_settings_ticket {
     SDL_Joystick *joystick, *previous_joystick;
     int32_t joystick_instance;
     int midi_fd, previous_midi_fd;
+    bool midi_pending;
+    uint8_t midi_byte;
+    uint64_t midi_reads, midi_generation;
     qa_midi_device *midi_devices;
     size_t midi_count;
     double now;
@@ -1090,6 +1109,7 @@ struct qa_input_platform_settings_ticket {
     bool owns_joystick, owns_midi, owns_midi_devices;
     bool previous_relative, previous_grab, previous_text, relative, text;
     bool capture_attempted, prepared, aborting, terminal, published;
+    bool midi_deferred, enter_complete, endpoint_entered;
     char diagnostic[320];
 };
 static uint32_t motor_remaining(const input_motor_output *v) {
@@ -1279,16 +1299,31 @@ static bool settings_capture(const qa_input_platform_settings_ticket *t, bool re
     }
     return success;
 }
-static bool settings_open_midi(qa_input_platform_settings_ticket *t, qa_error *error) {
+static bool settings_open_midi(qa_input_platform_settings_ticket *t, bool enumerate, qa_error *error) {
     t->midi_fd = -1;
-    t->owns_midi_devices = true;
-    if (!qa_input_midi_devices(&t->midi_devices, &t->midi_count, error)) return false;
+    t->midi_pending = false; t->midi_byte = 0;
+    t->midi_reads = 0;
+    if (enumerate) {
+        t->owns_midi_devices = true;
+        if (!qa_input_midi_devices(&t->midi_devices, &t->midi_count, error)) return false;
+    }
     if (t->desired.midi_device < 0 || (size_t)t->desired.midi_device >= t->midi_count) {
         qa_error_set(error, QA_ERROR_NOT_FOUND, 0, "MIDI device index %d is outside %zu devices",
             t->desired.midi_device, t->midi_count);
         return false;
     }
-    int fd = open(t->midi_devices[t->desired.midi_device].path,
+    const char *path = t->midi_devices[t->desired.midi_device].path;
+    if (enumerate && t->previous_midi_fd >= 0) {
+        struct stat previous, selected;
+        if (fstat(t->previous_midi_fd, &previous) < 0 || !S_ISCHR(previous.st_mode)) {
+            qa_error_set(error, QA_ERROR_IO, 0, "Active MIDI input lost its character endpoint");
+            return false;
+        }
+        if (lstat(path, &selected) == 0 && S_ISCHR(selected.st_mode) && previous.st_rdev == selected.st_rdev) {
+            t->midi_deferred = true; return true;
+        }
+    }
+    int fd = open(path,
         O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
     if (fd < 0) {
         qa_error_set(error, QA_ERROR_IO, 0, "Opening MIDI input: %s", strerror(errno));
@@ -1300,10 +1335,27 @@ static bool settings_open_midi(qa_input_platform_settings_ticket *t, qa_error *e
         qa_error_set(error, QA_ERROR_IO, 0, "MIDI input is not a character device");
         return false;
     }
+    if (!midi_capture_start(fd, &t->midi_pending, &t->midi_byte, &t->midi_reads, error)) return false;
+    t->midi_generation = t->platform->midi_generation + 1;
     return true;
 }
-bool qa_input_platform_settings_prepare(qa_input_platform *p, const qa_input_platform_settings *desired,
-    qa_input_seat *const configuration[4], double now, qa_input_platform_settings_ticket **out, qa_error *error) {
+static bool settings_midi_warning(qa_input_platform_settings_ticket *t, const qa_error *warning, qa_error *error) {
+    if (t->owns_midi) {
+        int fd = t->midi_fd; t->midi_fd = -1; t->owns_midi = false;
+        t->midi_pending = false; t->midi_byte = 0;
+        t->midi_reads = 0;
+        if (close(fd) < 0) {
+            qa_error_set(error, QA_ERROR_IO, 0, "Closing unqualified MIDI input: %s", strerror(errno));
+            return false;
+        }
+    }
+    size_t length = strlen(t->diagnostic);
+    snprintf(t->diagnostic + length, sizeof(t->diagnostic) - length, "WARNING: %s\n", warning->message);
+    return true;
+}
+static bool settings_prepare(qa_input_platform *p, const qa_input_platform_settings *desired,
+    qa_input_seat *const configuration[4], double now, bool retry_source, bool retry_midi,
+    qa_input_platform_settings_ticket **out, qa_error *error) {
     if (!native_owner(p, error)) return false;
     if (!desired || !configuration || !out || *out || !isfinite(now) || now < 0 ||
         !isfinite(desired->joystick_threshold) || !isfinite(desired->joystick_ball_scale) ||
@@ -1326,6 +1378,9 @@ bool qa_input_platform_settings_prepare(qa_input_platform *p, const qa_input_pla
     t->previous_joystick = t->joystick = p->joystick;
     t->joystick_instance = p->joystick_instance;
     t->previous_midi_fd = t->midi_fd = p->midi_fd;
+    t->midi_pending = p->midi_pending; t->midi_byte = p->midi_byte;
+    t->midi_reads = p->midi_reads;
+    t->midi_generation = p->midi_generation;
     t->midi_devices = p->midi_devices; t->midi_count = p->midi_count;
     t->window_id = p->window; t->window = p->window ? SDL_GetWindowFromID(p->window) : NULL;
     memcpy(t->routes, p->seats, sizeof(t->routes));
@@ -1351,7 +1406,7 @@ bool qa_input_platform_settings_prepare(qa_input_platform *p, const qa_input_pla
     midi = midi >= 1 && midi <= 4 && p->seats[midi - 1].seat ? midi - 1 : -1;
     bool enabled = integer(p, "in_joystick", 0) != 0;
     bool acquire_source = desired->joystick_enabled &&
-        (desired->restart_requested || !enabled || desired->windows_joystick != p->windows_joystick);
+        (retry_source || desired->restart_requested || !enabled || desired->windows_joystick != p->windows_joystick);
     if (acquire_source) {
         int count = SDL_NumJoysticks();
         if (count < 0) return failed(error, "Enumerating prepared source joystick");
@@ -1370,23 +1425,15 @@ bool qa_input_platform_settings_prepare(qa_input_platform *p, const qa_input_pla
     }
     bool midi_enabled = variable(p, "in_midi", 0) != 0;
     bool acquire_midi = desired->midi_enabled &&
-        (desired->restart_requested || !midi_enabled || desired->midi_device != integer(p, "in_mididevice", 0));
+        (retry_midi || desired->restart_requested || !midi_enabled || desired->midi_device != integer(p, "in_mididevice", 0));
     if (acquire_midi) {
         t->midi_devices = NULL; t->midi_count = 0;
         qa_error warning = {0};
-        if (!settings_open_midi(t, &warning)) {
-            if (t->owns_midi) {
-                int fd = t->midi_fd; t->midi_fd = -1; t->owns_midi = false;
-                if (close(fd) < 0) {
-                    qa_error_set(error, QA_ERROR_IO, 0, "Closing unqualified MIDI input: %s", strerror(errno));
-                    return false;
-                }
-            }
-            size_t length = strlen(t->diagnostic);
-            snprintf(t->diagnostic + length, sizeof(t->diagnostic) - length, "WARNING: %s\n", warning.message);
-        }
+        if (!settings_open_midi(t, true, &warning) && !settings_midi_warning(t, &warning, error)) return false;
     } else if (!desired->midi_enabled) {
         t->midi_fd = -1; t->midi_devices = NULL; t->midi_count = 0;
+        t->midi_pending = false; t->midi_byte = 0;
+        t->midi_reads = 0;
         t->owns_midi_devices = true;
     }
     qa_input_platform_settings_requirements *r = &t->requirements;
@@ -1416,10 +1463,41 @@ bool qa_input_platform_settings_prepare(qa_input_platform *p, const qa_input_pla
     } else { t->relative = t->previous_relative; t->text = t->previous_text; }
     t->prepared = true; return settings_current(t, error);
 }
+bool qa_input_platform_settings_prepare(qa_input_platform *p, const qa_input_platform_settings *desired,
+    qa_input_seat *const configuration[4], double now, qa_input_platform_settings_ticket **out, qa_error *error) {
+    return settings_prepare(p, desired, configuration, now, false, false, out, error);
+}
+bool qa_input_platform_reconnect_prepare(qa_input_platform *p, double now,
+    qa_input_platform_settings_ticket **out, qa_error *error) {
+    if (!native_owner(p, error)) return false;
+    if (!out || *out || !isfinite(now) || now < 0 || !isfinite(now + 1000)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input reconnect requires a finite clock and empty ticket");
+        return false;
+    }
+    if (p->native_startup != INPUT_NATIVE_READY || p->native_initializing || now < p->retry_at) return true;
+    p->retry_at = now + 1000;
+    bool source = integer(p, "in_joystick", 0) != 0 && !p->joystick;
+    bool midi = variable(p, "in_midi", 0) != 0 && p->midi_fd < 0;
+    if (!source && !midi) return true;
+    qa_input_platform_settings desired = {
+        .mouse_available = p->mouse_available, .no_grab = variable(p, "in_nograb", 0) != 0,
+        .joystick_enabled = integer(p, "in_joystick", 0) != 0, .windows_joystick = p->windows_joystick,
+        .midi_enabled = variable(p, "in_midi", 0) != 0,
+        .joystick_seat = integer(p, "in_joystickSeat", 1), .midi_seat = integer(p, "in_midiseat", 1),
+        .midi_device = integer(p, "in_mididevice", 0), .midi_channel = integer(p, "in_midichannel", 1),
+        .joystick_threshold = variable(p, "joy_threshold", .15f),
+        .joystick_ball_scale = variable(p, "in_joyBallScale", .02f)};
+    qa_input_seat *configuration[4];
+    for (unsigned slot = 0; slot < 4; ++slot) configuration[slot] = p->seats[slot].seat;
+    return settings_prepare(p, &desired, configuration, now, source, midi, out, error);
+}
 bool qa_input_platform_settings_requirements_read(const qa_input_platform_settings_ticket *t,
     qa_input_platform_settings_requirements *out, qa_error *error) {
     if (!out || !t || !t->prepared || !settings_current(t, error)) return false;
     *out = t->requirements; return true;
+}
+bool qa_input_platform_settings_idle(const qa_input_platform *p) {
+    return p && !p->settings_ticket;
 }
 const qa_input_platform *qa_input_platform_settings_owner(const qa_input_platform_settings_ticket *t) {
     return t && t->prepared && !t->terminal ? t->platform : NULL;
@@ -1487,7 +1565,7 @@ bool qa_input_platform_settings_release_scope(const qa_input_platform_settings_t
         .keys = keys, .key_count = length};
     return true;
 }
-bool qa_input_platform_settings_ready(const qa_input_platform_settings_ticket *t,
+static bool settings_releases_ready(const qa_input_platform_settings_ticket *t,
     const qa_input_release *const release[4], qa_error *error) {
     if (!t || !t->prepared || t->aborting || !settings_current(t, error)) return false;
     for (unsigned slot = 0; slot < 4; ++slot) if (t->routes[slot].seat &&
@@ -1496,7 +1574,10 @@ bool qa_input_platform_settings_ready(const qa_input_platform_settings_ticket *t
     for (unsigned slot = 0; slot < 4; ++slot) {
         int keys[528]; qa_input_release_scope scope;
         if (!qa_input_platform_settings_release_scope(t, slot, &scope, keys, 528, error)) return false;
-        if (scope.all || scope.clear_gamepad || scope.controller >= 0 || scope.key_count) {
+        bool source_seat = t->routes[slot].seat &&
+            ((t->requirements.source_changed && t->requirements.source_slot == (int)slot) ||
+             (t->requirements.midi_changed && t->requirements.midi_slot == (int)slot));
+        if (scope.all || scope.clear_gamepad || scope.controller >= 0 || scope.key_count || source_seat) {
             if (!release) {
                 qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input endpoint change has no completed source release continuation");
                 return false;
@@ -1504,6 +1585,42 @@ bool qa_input_platform_settings_ready(const qa_input_platform_settings_ticket *t
             if (!qa_input_release_ready(release[slot], t->routes[slot].seat, &scope, error)) return false;
         }
     }
+    return true;
+}
+qa_input_platform_settings_outcome qa_input_platform_settings_result(const qa_input_platform_settings_ticket *t) {
+    if (t && t->published) return QA_INPUT_PLATFORM_SETTINGS_PUBLISHED;
+    if (t && t->endpoint_entered) return QA_INPUT_PLATFORM_SETTINGS_ENTERED;
+    if (t && t->terminal) return QA_INPUT_PLATFORM_SETTINGS_ABORTED;
+    return QA_INPUT_PLATFORM_SETTINGS_UNENTERED;
+}
+static bool settings_endpoints_ready(const qa_input_platform_settings_ticket *, qa_error *);
+bool qa_input_platform_settings_enter(qa_input_platform_settings_ticket *t,
+    const qa_input_release *const release[4], qa_input_platform_settings_outcome *outcome, qa_error *error) {
+    if (outcome) *outcome = qa_input_platform_settings_result(t);
+    if (!outcome || !settings_releases_ready(t, release, error) || !settings_endpoints_ready(t, error)) return false;
+    if (t->enter_complete) return true;
+    if (t->midi_deferred) {
+        if (!t->endpoint_entered) {
+            int fd = t->previous_midi_fd;
+            t->endpoint_entered = true;
+            *outcome = QA_INPUT_PLATFORM_SETTINGS_ENTERED;
+            t->platform->midi_fd = t->previous_midi_fd = -1;
+            t->platform->midi_pending = false; t->platform->midi_byte = 0;
+            t->platform->midi_reads = 0;
+            if (close(fd) < 0) {
+                qa_error_set(error, QA_ERROR_IO, 0, "Retiring exclusive MIDI input: %s", strerror(errno));
+                return false;
+            }
+        }
+        qa_error warning = {0};
+        if (!settings_open_midi(t, false, &warning) && !settings_midi_warning(t, &warning, error)) return false;
+        t->midi_deferred = false;
+    }
+    t->enter_complete = true;
+    *outcome = qa_input_platform_settings_result(t);
+    return settings_current(t, error);
+}
+static bool settings_endpoints_ready(const qa_input_platform_settings_ticket *t, qa_error *error) {
     if (t->joystick && SDL_JoystickGetAttached(t->joystick) != SDL_TRUE)
         return failed(error, "Prepared source joystick disconnected");
     if (t->midi_fd >= 0) {
@@ -1539,8 +1656,22 @@ bool qa_input_platform_settings_ready(const qa_input_platform_settings_ticket *t
         SDL_IsTextInputActive() == (t->text ? SDL_TRUE : SDL_FALSE)) ||
         failed(error, "Prepared input capture changed before publication");
 }
+bool qa_input_platform_settings_ready(const qa_input_platform_settings_ticket *t,
+    const qa_input_release *const release[4], qa_error *error) {
+    if (!settings_releases_ready(t, release, error)) return false;
+    if (!t->enter_complete || t->midi_deferred) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "Input settings have not completed their endpoint entry");
+        return false;
+    }
+    return settings_endpoints_ready(t, error);
+}
 bool qa_input_platform_settings_abort(qa_input_platform_settings_ticket *t, qa_error *error) {
     if (!t || t->terminal || !settings_current(t, error)) return false;
+    if (t->endpoint_entered) {
+        qa_error_set(error, QA_ERROR_UNSUPPORTED, 0,
+            "Entered MIDI replacement retains its owners; its retired stream cannot be restored");
+        return false;
+    }
     t->aborting = true;
     if (t->capture_attempted) {
         if (t->previous_text) SDL_StartTextInput(); else SDL_StopTextInput();
@@ -1580,6 +1711,9 @@ void qa_input_platform_settings_publish(qa_input_platform_settings_ticket *t) {
     int previous_midi = p->midi_fd;
     bool retire_midi = previous_midi >= 0 && previous_midi != t->midi_fd;
     p->midi_fd = t->midi_fd; t->midi_fd = previous_midi; t->owns_midi = retire_midi;
+    p->midi_pending = t->midi_pending; p->midi_byte = t->midi_byte;
+    p->midi_reads = t->midi_reads;
+    p->midi_generation = t->midi_generation;
     if (t->owns_midi_devices) {
         qa_midi_device *previous_devices = p->midi_devices;
         p->midi_devices = t->midi_devices; p->midi_count = t->midi_count;
@@ -1733,7 +1867,14 @@ static bool midi_frame(qa_input_platform *p, double time, qa_error *error) {
     }
     uint8_t bytes[4096];
     for (unsigned reads = 0; reads < 16 && p->midi_fd >= 0; ++reads) {
-        ssize_t n = read(p->midi_fd, bytes, sizeof(bytes));
+        ssize_t n;
+        if (p->midi_pending) {
+            bytes[0] = p->midi_byte; n = 1;
+            p->midi_pending = false; p->midi_byte = 0;
+        } else {
+            ++p->midi_reads;
+            n = read(p->midi_fd, bytes, sizeof(bytes));
+        }
         if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
             return true;
         if (n <= 0) {
@@ -1743,6 +1884,8 @@ static bool midi_frame(qa_input_platform *p, double time, qa_error *error) {
             report(p, message);
             close(p->midi_fd);
             p->midi_fd = -1;
+            p->midi_pending = false; p->midi_byte = 0;
+            p->midi_reads = 0;
             return midi_release(p, time, error);
         }
         if (!qa_midi_feed(&p->midi, (qa_bytes){bytes, (size_t)n}, channel, time, midi_key, p,

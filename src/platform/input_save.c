@@ -137,6 +137,12 @@ static bool native_capture(const qa_input_platform *p, qa_buffer *out, qa_error 
     input_motor_output source_output = p->joystick_rumble;
     success = success && motor_fields(&io, &source_output, NULL);
     success = success && qa_source_save_bool(&io, &midi);
+    bool pending = p->midi_pending;
+    uint8_t byte = p->midi_byte;
+    uint64_t reads = p->midi_reads;
+    uint64_t generation = p->midi_generation;
+    success = success && qa_source_save_bool(&io, &pending) && qa_source_save_u8(&io, &byte) &&
+        qa_source_save_u64(&io, &reads) && qa_source_save_u64(&io, &generation);
     if (success && midi) {
         struct stat status;
         if (fstat(p->midi_fd, &status) || !S_ISCHR(status.st_mode)) success = false;
@@ -252,6 +258,11 @@ static bool state_fields(qa_source_save_io *io, qa_input_platform *p, const qa_i
         !integer(io, &p->source_slot) || !integer(io, &p->midi_slot) ||
         !qa_source_save_bool(io, &midi) || !integer(io, &p->midi_channel)) return false;
     if (reading) { if (midi != (native->midi_fd >= 0)) return false; p->midi_fd = native->midi_fd; }
+    if (!qa_source_save_bool(io, &p->midi_pending) || !qa_source_save_u8(io, &p->midi_byte) ||
+        !qa_source_save_u64(io, &p->midi_reads) || !qa_source_save_u64(io, &p->midi_generation) ||
+        (!p->midi_pending && p->midi_byte) || (!midi && (p->midi_pending || p->midi_reads)) ||
+        (reading && (p->midi_pending != native->midi_pending || p->midi_byte != native->midi_byte ||
+            p->midi_reads != native->midi_reads || p->midi_generation != native->midi_generation))) return false;
     if (!qa_source_save_u8(io, &p->midi.status) || !qa_source_save_u8(io, &p->midi.first) ||
         !qa_source_save_bool(io, &p->midi.has_first)) return false;
     for (unsigned i = 0; i < 256; ++i) if (!qa_source_save_bool(io, &p->midi_held[i])) return false;
@@ -273,6 +284,7 @@ static bool state_fields(qa_source_save_io *io, qa_input_platform *p, const qa_i
     if (!qa_source_save_u32(io, &startup) || startup > INPUT_NATIVE_FAILED) return false;
     if (reading) p->native_startup = (input_native_startup)startup;
     return qa_source_save_f64(io, &p->now) && isfinite(p->now) && p->now >= 0 &&
+        qa_source_save_f64(io, &p->retry_at) && isfinite(p->retry_at) && p->retry_at >= 0 &&
         slot_valid(p->keyboard, p) && p->source_slot >= -1 && p->source_slot < 4 &&
         p->midi_slot >= -1 && p->midi_slot < 4 &&
         (!p->midi.status || (p->midi.status >= 0x80 && p->midi.status < 0xf0)) && p->midi.first < 0x80;
@@ -283,9 +295,9 @@ static bool envelope(qa_source_save_io *io, qa_input_platform *p, const qa_input
     const qa_input_platform_checkpoint_refs *refs, qa_buffer *native_cut, qa_buffer *haptic)
 {
     uint8_t magic[4] = {'Q','I','P','L'};
-    uint32_t version = 3, callbacks = services(&p->options);
+    uint32_t version = 4, callbacks = services(&p->options);
     return qa_source_save_bytes(io, magic, sizeof(magic)) && !memcmp(magic, "QIPL", sizeof(magic)) &&
-        qa_source_save_u32(io, &version) && version == 3 && qa_source_save_u32(io, &callbacks) &&
+        qa_source_save_u32(io, &version) && version == 4 && qa_source_save_u32(io, &callbacks) &&
         callbacks == services(&p->options) && blob(io, native_cut) &&
         state_fields(io, p, native, refs) && blob(io, haptic);
 }
@@ -353,6 +365,11 @@ bool qa_input_platform_prepare_fresh(qa_input_platform *p, const qa_input_platfo
         candidate->joystick_instance = active->joystick_instance;
         candidate->joystick_rumble = active->joystick_rumble;
         candidate->midi_fd = active->midi_fd;
+        candidate->midi_pending = active->midi_pending;
+        candidate->midi_byte = active->midi_byte;
+        candidate->midi_reads = active->midi_reads;
+        candidate->midi_generation = active->midi_generation;
+        candidate->retry_at = active->retry_at;
         candidate->window = info.window_id;
         candidate->old_relative = active->old_relative;
         candidate->old_text = active->old_text;

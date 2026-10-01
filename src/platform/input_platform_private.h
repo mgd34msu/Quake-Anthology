@@ -50,10 +50,13 @@ struct qa_input_platform {
     bool windows_joystick, mouse_available;
     int source_slot, midi_slot, midi_fd, midi_channel;
     qa_midi_decoder midi;
+    bool midi_pending;
+    uint8_t midi_byte;
+    uint64_t midi_reads, midi_generation;
     bool midi_held[256];
     qa_midi_device *midi_devices;
     size_t midi_count;
-    double now;
+    double now, retry_at;
     bool native_owned;
     input_native_startup native_startup;
     bool native_initializing;

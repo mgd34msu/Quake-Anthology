@@ -68,6 +68,12 @@ typedef struct qa_input_platform_settings {
     float joystick_threshold, joystick_ball_scale;
 } qa_input_platform_settings;
 typedef struct qa_input_platform_settings_ticket qa_input_platform_settings_ticket;
+typedef enum qa_input_platform_settings_outcome {
+    QA_INPUT_PLATFORM_SETTINGS_UNENTERED,
+    QA_INPUT_PLATFORM_SETTINGS_ENTERED,
+    QA_INPUT_PLATFORM_SETTINGS_PUBLISHED,
+    QA_INPUT_PLATFORM_SETTINGS_ABORTED
+} qa_input_platform_settings_outcome;
 typedef struct qa_input_platform_settings_requirements {
     bool source_changed, midi_changed;
     int source_slot, next_source_slot, midi_slot, next_midi_slot;
@@ -83,6 +89,15 @@ typedef struct qa_input_platform_settings_requirements {
  * destruction. Readiness must precede publication under the held boundary. */
 bool qa_input_platform_settings_prepare(qa_input_platform *, const qa_input_platform_settings *,
     qa_input_seat *const configuration[4], double now_ms, qa_input_platform_settings_ticket **, qa_error *);
+/* Poll the retained 1000ms clock using actual active settings and physical
+ * seats. A successful NULL ticket means no disconnected endpoint needs an
+ * attempt. A returned ticket uses the same checked release and publication
+ * boundary as settings changes, without requesting a full input restart. */
+bool qa_input_platform_reconnect_prepare(qa_input_platform *, double now_ms,
+    qa_input_platform_settings_ticket **, qa_error *);
+/* Native capture, lifetime changes and ordinary input dispatch require the
+ * returned owner to have no retained settings preparation. */
+bool qa_input_platform_settings_idle(const qa_input_platform *);
 bool qa_input_platform_settings_requirements_read(const qa_input_platform_settings_ticket *,
     qa_input_platform_settings_requirements *, qa_error *);
 const qa_input_platform *qa_input_platform_settings_owner(const qa_input_platform_settings_ticket *);
@@ -96,6 +111,12 @@ bool qa_input_platform_settings_release_scope(const qa_input_platform_settings_t
 /* Borrowed requested-device diagnostic; emit only after publication, outside
  * its handoff, and before ticket destruction. Aborted warnings are discarded. */
 const char *qa_input_platform_settings_diagnostic(const qa_input_platform_settings_ticket *);
+/* Only an admitted completed source release can retire an exclusive active
+ * MIDI endpoint. ENTERED remains observable on failure; abort then refuses to
+ * claim restoration of that retired native stream and retains its parents. */
+bool qa_input_platform_settings_enter(qa_input_platform_settings_ticket *,
+    const qa_input_release *const release[4], qa_input_platform_settings_outcome *, qa_error *);
+qa_input_platform_settings_outcome qa_input_platform_settings_result(const qa_input_platform_settings_ticket *);
 bool qa_input_platform_settings_ready(const qa_input_platform_settings_ticket *,
     const qa_input_release *const release[4], qa_error *);
 bool qa_input_platform_settings_abort(qa_input_platform_settings_ticket *, qa_error *);

@@ -993,6 +993,8 @@ static bool discard_services(void *context,qa_application *candidate,qa_error *e
     if (!f || (f->application && f->application!=candidate))
         return frontend_fail(error,QA_ERROR_ARGUMENT,"Failed application belongs to another frontend graph");
     if (!f->application) f->application=candidate;
+    if (f->input && !qa_input_platform_settings_idle(f->input))
+        return frontend_fail(error,QA_ERROR_ARGUMENT,"Failed candidate retains its native input settings preparation");
     if (!frontend_network_close_client(f,error) || !frontend_cinematic_destroy(f,error)) return false;
     if (operation->services && operation->services->discard_services &&
         !operation->services->discard_services(operation->services->context,candidate,error)) return false;

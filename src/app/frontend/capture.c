@@ -53,7 +53,8 @@ bool frontend_seat_callbacks_idle(const qa_frontend *f)
 }
 bool frontend_owners_idle(const qa_frontend *f)
 {
-    if (!f || f->capture || !frontend_cinematic_idle(f) || !frontend_qc_rerelease_idle(f) || !frontend_native_q2_children_idle(f) ||
+    if (!f || f->capture || (f->input && !qa_input_platform_settings_idle(f->input)) ||
+        !frontend_cinematic_idle(f) || !frontend_qc_rerelease_idle(f) || !frontend_native_q2_children_idle(f) ||
         !frontend_native_q3_idle(f) || !frontend_equipment_idle(f) || !frontend_equipment_q3_idle(f) || !frontend_sources_idle(f) ||
         !resources_idle(f->images) || !resources_idle(f->ui_images) || !library_idle(f->materials) ||
         !fonts_idle(f->fonts) || (f->order && !qa_material_order_idle(f->order)) ||
