@@ -589,6 +589,12 @@ static bool mix_impl(qa_audio_engine *engine, int16_t *stereo, size_t frames, qa
     return true;
 }
 uint64_t qa_audio_engine_clock(const qa_audio_engine *engine) { return engine ? engine->clock : 0; }
+bool qa_audio_engine_observer_is(const qa_audio_engine *engine, qa_audio_voice_observer observer,
+    const void *context)
+{
+    return engine && !engine->destroy_pending && !engine->destroying &&
+        engine->options.observer == observer && engine->options.observer_user == context;
+}
 uint32_t qa_audio_engine_rate(const qa_audio_engine *engine) {
     return engine ? engine->options.sample_rate : 0;
 }

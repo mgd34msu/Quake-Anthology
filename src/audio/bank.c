@@ -358,3 +358,62 @@ bool qa_audio_bank_music(qa_audio_bank *bank, const char *path, qa_vfs_accept_mo
     *out = stream;
     return true;
 }
+
+static bool music_extension(const char *path, size_t length) {
+    if (length < 4 || path[length - 4] != '.')
+        return false;
+    unsigned char extension[3];
+    for (size_t i = 0; i < 3; ++i) {
+        unsigned char byte = (unsigned char)path[length - 3 + i];
+        extension[i] = byte >= 'A' && byte <= 'Z' ? (unsigned char)(byte + ('a' - 'A')) : byte;
+    }
+    return !memcmp(extension, "wav", 3) || !memcmp(extension, "ogg", 3);
+}
+
+bool qa_audio_bank_music_cue(qa_audio_bank *bank, const char *name, qa_audio_family family,
+                             qa_vfs_accept_mount accept, void *context,
+                             qa_audio_stream **out, qa_error *error) {
+    if (!bank || !name || !*name || !out ||
+        (family != QA_AUDIO_Q1 && family != QA_AUDIO_Q2 && family != QA_AUDIO_Q3)) {
+        qa_error_set(error, QA_ERROR_ARGUMENT, 0, "invalid authored music cue");
+        return false;
+    }
+    size_t length = strlen(name);
+    if (length > SIZE_MAX - 11) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "music cue path length overflows storage");
+        return false;
+    }
+    char *path = malloc(length + 11);
+    if (!path) {
+        qa_error_set(error, QA_ERROR_MEMORY, 0, "allocating authored music path");
+        return false;
+    }
+    for (size_t i = 0; i < length; ++i)
+        path[6 + i] = name[i] == '\\' ? '/' : name[i];
+    path[6 + length] = 0;
+    if (!strncmp(path + 6, "music/", 6))
+        memmove(path, path + 6, length + 1);
+    else {
+        memcpy(path, "music/", 6);
+        length += 6;
+    }
+    bool explicit = music_extension(path, length);
+    const char *extensions[2] = {family == QA_AUDIO_Q3 ? ".wav" : ".ogg",
+                                 family == QA_AUDIO_Q3 ? ".ogg" : ".wav"};
+    bool ok = true;
+    qa_audio_stream *stream = NULL;
+    for (size_t i = 0; i < (explicit ? 1u : 2u); ++i) {
+        if (!explicit)
+            memcpy(path + length, extensions[i], 5);
+        if (!qa_audio_bank_music(bank, path, accept, context, &stream, error)) {
+            ok = false;
+            break;
+        }
+        if (stream)
+            break;
+    }
+    free(path);
+    if (ok)
+        *out = stream;
+    return ok;
+}

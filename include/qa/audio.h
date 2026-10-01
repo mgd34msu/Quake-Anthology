@@ -109,6 +109,12 @@ qa_audio_family qa_audio_asset_family(const qa_audio_asset *asset);
  */
 bool qa_audio_bank_music(qa_audio_bank *bank, const char *path, qa_vfs_accept_mount accept,
                          void *context, qa_audio_stream **out, qa_error *error);
+/* Authored cues normalize separators and default to music/. Explicit WAV/OGG
+ * extensions select one path; otherwise Q3 tries WAV then OGG, Q1/Q2 reverse.
+ * A present invalid source fails without trying another format. */
+bool qa_audio_bank_music_cue(qa_audio_bank *bank, const char *name, qa_audio_family family,
+                             qa_vfs_accept_mount accept, void *context,
+                             qa_audio_stream **out, qa_error *error);
 
 typedef struct qa_audio_raw_stream qa_audio_raw_stream;
 bool qa_audio_raw_create(uint32_t output_rate, qa_audio_raw_stream **out, qa_error *error);
@@ -386,6 +392,8 @@ typedef struct qa_audio_engine_options {
 bool qa_audio_engine_create(const qa_audio_engine_options *options, qa_audio_engine **out,
                             qa_error *error);
 void qa_audio_engine_destroy(qa_audio_engine *engine);
+/* Pure callback identity qualification for installed owner restoration. */
+bool qa_audio_engine_observer_is(const qa_audio_engine *, qa_audio_voice_observer, const void *);
 bool qa_audio_engine_listeners(qa_audio_engine *engine, const qa_audio_listener *listeners,
                                size_t count, qa_error *error);
 bool qa_audio_engine_position(qa_audio_engine *engine, uint64_t actor, qa_vec3 origin,

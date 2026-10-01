@@ -338,6 +338,21 @@ qa_audio_raw_stream *qa_audio_engine_bus_stream(qa_audio_engine *engine, uint64_
             if (engine->buses[i].id == bus && engine->buses[i].raw) return engine->buses[i].raw;
     return NULL;
 }
+bool qa_audio_engine_music_ready(const qa_audio_engine *engine, uint64_t id,
+    uint32_t audience, float gain)
+{
+    if (!engine || engine->operation_depth || engine->callback_depth || engine->destroy_pending ||
+        engine->destroying || engine->round_resetting || engine->bus_count > engine->bus_capacity ||
+        (engine->bus_count && !engine->buses) || !isfinite(gain) || gain < 0) return false;
+    const audio_bus *bus = NULL;
+    for (size_t i = 0; i < engine->bus_count; ++i) {
+        const audio_bus *row = engine->buses + i;
+        if (row->id != id || !row->music) continue;
+        if (bus || row->raw) return false;
+        bus = row;
+    }
+    return bus && bus->audience == audience && !memcmp(&bus->gain, &gain, sizeof(gain));
+}
 
 bool qa_audio_engine_raw_checkpoint_ready(const qa_audio_engine *engine, uint64_t id,
     uint32_t audience, float gain, qa_bytes saved, qa_error *error)

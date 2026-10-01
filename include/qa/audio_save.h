@@ -54,6 +54,10 @@ bool qa_audio_engine_assets_read(const qa_audio_engine *, qa_audio_asset ***,
  * replacing the restored queues or decoder phase. */
 qa_audio_music *qa_audio_engine_bus_music(qa_audio_engine *, uint64_t bus);
 qa_audio_raw_stream *qa_audio_engine_bus_stream(qa_audio_engine *, uint64_t bus);
+/* Pure qualification of an actual installed music bus and its exact route.
+ * The engine retains the music continuation; no decoder or callback runs. */
+bool qa_audio_engine_music_ready(const qa_audio_engine *, uint64_t bus,
+    uint32_t audience, float gain);
 
 /* Read-only qualification of a separately restored cinematic queue and route.
  * An empty descriptor qualifies the actual absence of a raw queue. */
